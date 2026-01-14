@@ -1,7 +1,9 @@
 <Solution>
   <Configurations>
+    <Platform Name="Any CPU" />
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
-  <Project Path="Engine/Engine.vcxproj" />
+  <Project Path="Editor/Editor.csproj" Id="fbd41bc8-2108-4479-b909-3081d00767df" />
+  <Project Path="Engine/Engine.vcxproj" Id="cd0e018b-277f-4863-bb32-e44d7f5a654d" />
 </Solution>
