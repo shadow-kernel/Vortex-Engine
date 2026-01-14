@@ -198,7 +198,7 @@
                 </StackPanel>
 
                 <Border Grid.Row="1" Background="#1A2431" BorderBrush="{StaticResource BorderBrushDark}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,0,0,12" MinHeight="260" VerticalAlignment="Stretch">
-                    <ListView x:Name="ProjectsListView" Background="Transparent" BorderThickness="0" ItemsSource="{Binding Projects}" Margin="-6" ScrollViewer.VerticalScrollBarVisibility="Auto">
+                    <ListView x:Name="ProjectsListView" Background="Transparent" BorderThickness="0" ItemsSource="{Binding Projects}" SelectedIndex="0" Margin="-6" ScrollViewer.VerticalScrollBarVisibility="Auto">
                         <ListView.ItemContainerStyle>
                             <Style TargetType="ListViewItem">
                                 <Setter Property="Padding" Value="6"/>
@@ -254,8 +254,8 @@
                 </Border>
 
                 <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,14,0,0" FlowDirection="LeftToRight">
-                    <Button Content="Exit" Style="{StaticResource SecondaryButton}" Margin="0,0,10,0" IsCancel="True" />
-                    <Button Content="Open" Style="{StaticResource PrimaryButton}" IsDefault="true" />
+                    <Button Content="Exit" Click="ExitButton_Pressed" Style="{StaticResource SecondaryButton}" Margin="0,0,10,0" IsCancel="True" />
+                    <Button Content="Open" Click="OpenButton_Pressed" Style="{StaticResource PrimaryButton}" IsDefault="true" />
                 </StackPanel>
             </Grid>
         </Border>

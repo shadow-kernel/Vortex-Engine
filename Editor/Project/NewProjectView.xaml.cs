@@ -24,5 +24,15 @@ namespace Editor.Project
         {
             InitializeComponent();
         }
+
+        private void ExitButton_Pressed(object sender, System.Windows.RoutedEventArgs e)
+        {
+            Application.Current.Shutdown();
+        }
+
+        private void OpenButton_Pressed(object sender, RoutedEventArgs e)
+        {
+            MessageBox.Show("Open Project button pressed.");
+        }
     }
 }

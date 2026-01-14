@@ -30,20 +30,7 @@ namespace Editor
         private void OnMainWindowLoaded(object sender, RoutedEventArgs e)
         {
             Loaded -= OnMainWindowLoaded;
-            OpenProjectBrowserWindow();
         }
 
-        private void OpenProjectBrowserWindow()
-        {
-            var projectBrowserWindow = new ProjectBrowserWindow();
-            if(projectBrowserWindow.ShowDialog() == false)
-            {
-                Application.Current.Shutdown();
-            }
-            else
-            {
-
-            }
-        }
     }
 }

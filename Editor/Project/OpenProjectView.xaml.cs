@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -24,6 +25,16 @@ namespace Editor.Project
             _allProjects = items;
             Projects = new ObservableCollection<ProjectItem>(_allProjects);
             DataContext = this;
+        }
+
+        private void ExitButton_Pressed(object sender, System.Windows.RoutedEventArgs e)
+        {
+            Application.Current.Shutdown();
+        }
+
+        private void OpenButton_Pressed(object sender, RoutedEventArgs e)
+        {
+            MessageBox.Show("Open Project button pressed.");
         }
 
         private void SearchTextBox_OnTextChanged(object sender, TextChangedEventArgs e)
