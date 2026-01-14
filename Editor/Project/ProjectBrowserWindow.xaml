@@ -7,7 +7,7 @@
         mc:Ignorable="d"
         Background="#0F141C"
         Icon="{DynamicResource AppIcon}"
-        Title="Project Browser - Vortex Engine" Height="520" Width="880"
+        Title="Project Browser - Vortex Engine" Height="710" Width="880"
         ResizeMode="NoResize" WindowStartupLocation="CenterScreen">
 
     <Window.Resources>
