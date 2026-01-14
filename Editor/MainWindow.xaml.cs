@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Editor.Project;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -23,6 +24,26 @@ namespace Editor
         public MainWindow()
         {
             InitializeComponent();
+            Loaded += OnMainWindowLoaded;
+        }
+
+        private void OnMainWindowLoaded(object sender, RoutedEventArgs e)
+        {
+            Loaded -= OnMainWindowLoaded;
+            OpenProjectBrowserWindow();
+        }
+
+        private void OpenProjectBrowserWindow()
+        {
+            var projectBrowserWindow = new ProjectBrowserWindow();
+            if(projectBrowserWindow.ShowDialog() == false)
+            {
+                Application.Current.Shutdown();
+            }
+            else
+            {
+
+            }
         }
     }
 }

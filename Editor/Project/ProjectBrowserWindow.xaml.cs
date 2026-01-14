@@ -22,6 +22,36 @@ namespace Editor.Project
         public ProjectBrowserWindow()
         {
             InitializeComponent();
+
+            ShowOpenProject();
+        }
+
+        private void OnToggleButtonClick(object sender, RoutedEventArgs e)
+        {
+            if (sender == openProjectButton)
+            {
+                ShowOpenProject();
+            }
+            else if (sender == createProjectButton)
+            {
+                ShowCreateProject();
+            }
+        }
+
+        private void ShowOpenProject()
+        {
+            createProjectButton.IsChecked = false;
+            openProjectButton.IsChecked = true;
+            newProjectView.Visibility = Visibility.Collapsed;
+            openProjectView.Visibility = Visibility.Visible;
+        }
+
+        private void ShowCreateProject()
+        {
+            openProjectButton.IsChecked = false;
+            createProjectButton.IsChecked = true;
+            openProjectView.Visibility = Visibility.Collapsed;
+            newProjectView.Visibility = Visibility.Visible;
         }
     }
 }
