@@ -1,22 +1,10 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
 using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Shapes;
 
 namespace Editor.Project
 {
-    /// <summary>
-    /// Interaktionslogik für ProjectBrowserWindow.xaml
-    /// </summary>
     public partial class ProjectBrowserWindow : Window
     {
         public ProjectBrowserWindow()
@@ -24,6 +12,58 @@ namespace Editor.Project
             InitializeComponent();
 
             ShowOpenProject();
+        }
+
+        private void RootGrid_OnMouseDown(object sender, MouseButtonEventArgs e)
+        {
+            StartDrag(e);
+        }
+
+        private void MinimizeButton_OnClick(object sender, RoutedEventArgs e)
+        {
+            WindowState = WindowState.Minimized;
+        }
+
+        private void CloseButton_OnClick(object sender, RoutedEventArgs e)
+        {
+            Close();
+        }
+
+        private void TitleBar_OnMouseDown(object sender, MouseButtonEventArgs e)
+        {
+            StartDrag(e);
+        }
+
+        private void StartDrag(MouseButtonEventArgs e)
+        {
+            if (e.ChangedButton != MouseButton.Left)
+                return;
+
+            try
+            {
+                if (WindowState == WindowState.Maximized)
+                {
+                    var mousePos = e.GetPosition(this);
+                    var percentX = ActualWidth <= 0 ? 0.5 : mousePos.X / ActualWidth;
+                    var percentY = ActualHeight <= 0 ? 0.5 : mousePos.Y / ActualHeight;
+
+                    WindowState = WindowState.Normal;
+
+                    var screenPos = PointToScreen(mousePos);
+                    Left = screenPos.X - ActualWidth * percentX;
+                    Top = screenPos.Y - ActualHeight * percentY;
+                }
+
+                DragMove();
+            }
+            catch (InvalidOperationException)
+            {
+                // Ignore drag exceptions (e.g., mouse released mid-drag)
+            }
+            catch (Exception)
+            {
+                // Swallow unexpected drag-related exceptions to prevent crash
+            }
         }
 
         private void OnToggleButtonClick(object sender, RoutedEventArgs e)

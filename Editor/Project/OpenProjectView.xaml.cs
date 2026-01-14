@@ -8,9 +8,6 @@ using System.Windows.Media.Imaging;
 
 namespace Editor.Project
 {
-    /// <summary>
-    /// Interaktionslogik für OpenProjectView.xaml
-    /// </summary>
     public partial class OpenProjectView : UserControl
     {
         private readonly List<ProjectItem> _allProjects;
