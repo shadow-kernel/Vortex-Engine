@@ -119,8 +119,13 @@
     <Compile Include="Project\Control\ProjectManager.cs" />
     <Compile Include="Project\Data\Project.cs" />
     <Compile Include="Project\Data\ProjectRef.cs" />
+    <Compile Include="Project\Exceptions\DuplicateProjectPathException.cs" />
+    <Compile Include="Project\Exceptions\ProjectException.cs" />
+    <Compile Include="Project\Exceptions\ProjectIOException.cs" />
+    <Compile Include="Project\Exceptions\ProjectValidationException.cs" />
     <Compile Include="Project\Model\NewProjectModel.cs" />
     <Compile Include="Common\ViewModelBase.cs" />
+    <Compile Include="Project\Model\OpenProjectModel.cs" />
     <Compile Include="Project\Projection\NewProjectView.xaml.cs">
       <DependentUpon>NewProjectView.xaml</DependentUpon>
     </Compile>
@@ -130,6 +135,7 @@
     <Compile Include="Project\Projection\ProjectBrowserWindow.xaml.cs">
       <DependentUpon>ProjectBrowserWindow.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Project\Validation\ProjectValidator.cs" />
     <Compile Include="Properties\AssemblyInfo.cs">
       <SubType>Code</SubType>
     </Compile>

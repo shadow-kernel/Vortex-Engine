@@ -21,6 +21,8 @@ namespace Editor.Project.Projection
     /// </summary>
     public partial class NewProjectView : UserControl
     {
+        private NewProjectModel _dataContextModel;
+
         public NewProjectView()
         {
             InitializeComponent();
@@ -28,6 +30,7 @@ namespace Editor.Project.Projection
             {
                 DataContext = new NewProjectModel();
             }
+            _dataContextModel = DataContext as NewProjectModel;
         }
 
         private void ExitButton_Pressed(object sender, System.Windows.RoutedEventArgs e)
@@ -37,7 +40,17 @@ namespace Editor.Project.Projection
 
         private void OpenButton_Pressed(object sender, RoutedEventArgs e)
         {
-            MessageBox.Show("Open Project button pressed.");
+            try
+            {
+                if(this._dataContextModel.createProject())
+                {
+                    MessageBox.Show("Project created successfully!", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error creating project: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
         }
     }
 }

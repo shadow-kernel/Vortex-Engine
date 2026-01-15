@@ -4,6 +4,8 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Editor.Project.Data;
+using Editor.Project.Exceptions;
+using Editor.Project.Validation;
 using System.Text.Json;
 using System.IO;
 using System.Windows;
@@ -47,23 +49,106 @@ namespace Editor.Project.Control
 
         public void SaveProjectFile(ProjectRef project)
         {
-            loadedProjects[project.Id] = project;
+            try
+            {
+                // Validierung durchführen
+                ProjectValidator.ValidateProject(project, loadedProjects);
 
-            createNessesaryProjectFiles((ProjectEntity) project);
+                // Projekt speichern
+                loadedProjects[project.Id] = project;
 
-            string content = this.SerializeObject(loadedProjects);
-            File.WriteAllText(_projectRegistryFilePath, content);
+                createNessesaryProjectFiles((ProjectEntity)project);
+
+                string content = this.SerializeObject(loadedProjects);
+                File.WriteAllText(_projectRegistryFilePath, content);
+            }
+            catch (ProjectException)
+            {
+                throw;
+            }
+            catch (IOException ioEx)
+            {
+                throw new ProjectIOException(
+                    project?.Path ?? "unbekannt", 
+                    "Fehler beim Speichern des Projekts.", 
+                    ioEx
+                );
+            }
+            catch (UnauthorizedAccessException uaEx)
+            {
+                throw new ProjectIOException(
+                    project?.Path ?? "unbekannt", 
+                    "Keine Berechtigung zum Zugriff auf den Projektpfad.", 
+                    uaEx
+                );
+            }
+            catch (Exception ex)
+            {
+                throw new ProjectException(
+                    $"Unerwarteter Fehler beim Speichern des Projekts: {ex.Message}", 
+                    ex
+                );
+            }
+        }
+
+        public bool ProjectPathExists(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return false;
+            }
+
+            string normalizedPath = NormalizePathForComparison(path);
+
+            return loadedProjects.Values.Any(p => 
+                string.Equals(
+                    NormalizePathForComparison(p.Path), 
+                    normalizedPath, 
+                    StringComparison.OrdinalIgnoreCase
+                )
+            );
+        }
+
+        public Dictionary<Guid, ProjectRef> GetAllProjects()
+        {
+            return loadedProjects;
+        }
+
+        private string NormalizePathForComparison(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return string.Empty;
+            }
+
+            try
+            {
+                return Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            }
+            catch
+            {
+                return path;
+            }
         }
 
         private static Dictionary<Guid, ProjectRef> loadProjectsFromAppData()
         {
-            if (!File.Exists(_projectRegistryFilePath))
+            try
             {
+                if (!File.Exists(_projectRegistryFilePath))
+                {
+                    return new Dictionary<Guid, ProjectRef>();
+                }
+
+                string content = File.ReadAllText(_projectRegistryFilePath);
+                var projects = JsonSerializer.Deserialize<Dictionary<Guid, ProjectRef>>(content);
+                return projects ?? new Dictionary<Guid, ProjectRef>();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Fehler beim Laden der Projekte: {ex.Message}");
                 return new Dictionary<Guid, ProjectRef>();
             }
-
-            string content = File.ReadAllText(_projectRegistryFilePath);
-            return JsonSerializer.Deserialize<Dictionary<Guid, ProjectRef>>(content);
         }
 
 

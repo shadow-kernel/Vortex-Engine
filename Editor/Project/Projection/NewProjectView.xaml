@@ -211,6 +211,7 @@
                 <TextBlock Grid.Row="2" Text="C:/Projekte/projektname" Style="{StaticResource HintText}"/>
 
                 <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,14,0,0" FlowDirection="LeftToRight">
+
                     <Button Content="Exit" Click="ExitButton_Pressed" Style="{StaticResource SecondaryButton}" Margin="0,0,10,0" IsCancel="True" />
                     <Button Content="Create" Click="OpenButton_Pressed" Style="{StaticResource PrimaryButton}" IsDefault="true" />
                 </StackPanel>

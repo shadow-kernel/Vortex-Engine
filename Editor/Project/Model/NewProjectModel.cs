@@ -1,7 +1,9 @@
 ﻿using Editor;
 using Editor.Project.Control;
+using Editor.Project.Data;
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -13,7 +15,6 @@ namespace Editor.Project.Model
     {
         public NewProjectModel()
         {
-            var manager = ProjectManager.Instance;
         }
 
         private string _projectName = "New Project";
@@ -46,6 +47,9 @@ namespace Editor.Project.Model
             }
         }
 
-
+        public bool createProject()
+        {
+            return ProjectManager.Instance.CreateNewProject(ProjectName, Path);
+        }
     }
 }
