@@ -175,6 +175,44 @@ Background="Transparent">
                 </Setter.Value>
             </Setter>
         </Style>
+
+        <Style x:Key="DeleteButton" TargetType="Button">
+            <Setter Property="Width" Value="32"/>
+            <Setter Property="Height" Value="32"/>
+            <Setter Property="Background" Value="#8B1538"/>
+            <Setter Property="BorderBrush" Value="#A01B42"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Border"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="#A01B42"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="#6F112E"/>
+                                <Setter Property="BorderBrush" Value="#C62450"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.6"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </UserControl.Resources>
 
     <Border Background="{StaticResource PanelBackground}" Padding="20,24" CornerRadius="10">
@@ -239,6 +277,7 @@ Background="Transparent">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="80"/>
                                         <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
                                     <Border Width="64" Height="64" CornerRadius="8" Background="#0F141C" HorizontalAlignment="Center" VerticalAlignment="Center" BorderBrush="{StaticResource BorderBrushDark}" BorderThickness="1">
                                         <Image Source="{Binding Thumbnail}" Stretch="UniformToFill"/> 
@@ -251,6 +290,14 @@ Background="Transparent">
                                             <TextBlock Text="{Binding LastModifiedDisplay}" Foreground="#E5FFFFFF" FontSize="12" Margin="6,0,0,0"/>
                                         </StackPanel>
                                     </StackPanel>
+                                    <Button Grid.Column="2" 
+                                            Style="{StaticResource DeleteButton}" 
+                                            Content="&#xE74D;" 
+                                            ToolTip="Projekt löschen"
+                                            Tag="{Binding}"
+                                            Click="DeleteButton_Click"
+                                            VerticalAlignment="Center"
+                                            Margin="8,0,0,0"/>
                                 </Grid>
                             </DataTemplate>
                         </ListView.ItemTemplate>

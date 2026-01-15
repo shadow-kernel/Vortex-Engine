@@ -160,5 +160,15 @@ namespace Editor.Project.Model
                 return false;
             return source.IndexOf(value ?? string.Empty, StringComparison.OrdinalIgnoreCase) >= 0;
         }
+
+        public void DeleteProject(ProjectEntity project, bool deleteFiles)
+        {
+            if (project == null)
+                return;
+
+            ProjectFileManager.Instance.RemoveProject(project.Id, deleteFiles);
+            _allProjects.Remove(project);
+            ApplyFilter();
+        }
     }
 }

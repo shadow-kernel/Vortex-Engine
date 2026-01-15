@@ -208,5 +208,42 @@ namespace Editor.Project.Control
             }
         }
 
+        public void RemoveProject(Guid projectId, bool deleteFiles)
+        {
+            if (!loadedProjects.ContainsKey(projectId))
+                return;
+
+            var project = loadedProjects[projectId];
+            string projectPath = project.Path;
+
+            loadedProjects.Remove(projectId);
+
+            try
+            {
+                string content = this.SerializeObject(loadedProjects);
+                File.WriteAllText(_projectRegistryFilePath, content);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Fehler beim Speichern der Projektliste: {ex.Message}");
+            }
+
+            if (deleteFiles && !string.IsNullOrWhiteSpace(projectPath) && Directory.Exists(projectPath))
+            {
+                try
+                {
+                    Directory.Delete(projectPath, true);
+                }
+                catch (Exception ex)
+                {
+                    throw new ProjectIOException(
+                        projectPath,
+                        $"Fehler beim Löschen des Projektordners: {ex.Message}",
+                        ex
+                    );
+                }
+            }
+        }
+
     }
 }
