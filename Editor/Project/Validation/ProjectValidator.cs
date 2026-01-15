@@ -19,7 +19,7 @@ namespace Editor.Project.Validation
         /// <param name="existingProjects">Bereits existierende Projekte</param>
         /// <exception cref="ProjectValidationException">Wenn die Validierung fehlschlägt</exception>
         /// <exception cref="DuplicateProjectPathException">Wenn der Pfad bereits verwendet wird</exception>
-        public static void ValidateProject(ProjectRef project, Dictionary<Guid, ProjectRef> existingProjects)
+        public static void ValidateProject(ProjectFileRef project, Dictionary<Guid, ProjectFileRef> existingProjects)
         {
             if (project == null)
             {
@@ -88,7 +88,7 @@ namespace Editor.Project.Validation
         /// <param name="project">Das zu prüfende Projekt</param>
         /// <param name="existingProjects">Bereits existierende Projekte</param>
         /// <exception cref="DuplicateProjectPathException">Wenn der Pfad bereits verwendet wird</exception>
-        public static void ValidateProjectPathUniqueness(ProjectRef project, Dictionary<Guid, ProjectRef> existingProjects)
+        public static void ValidateProjectPathUniqueness(ProjectFileRef project, Dictionary<Guid, ProjectFileRef> existingProjects)
         {
             if (existingProjects == null || existingProjects.Count == 0)
             {

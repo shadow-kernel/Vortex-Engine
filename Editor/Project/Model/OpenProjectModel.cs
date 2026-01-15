@@ -65,7 +65,7 @@ namespace Editor.Project.Model
             OnPropertyChanged(nameof(Projects));
         }
 
-        private ProjectEntity ConvertToProjectEntity(ProjectRef projectRef)
+        private ProjectEntity ConvertToProjectEntity(ProjectFileRef projectRef)
         {
             return new ProjectEntity(projectRef.Id, projectRef.Path, projectRef.Name)
             {
@@ -169,6 +169,18 @@ namespace Editor.Project.Model
             ProjectFileManager.Instance.RemoveProject(project.Id, deleteFiles);
             _allProjects.Remove(project);
             ApplyFilter();
+        }
+
+        public event EventHandler<ProjectEntity> ProjectOpened;
+
+        internal void OpenProject(ProjectFileRef item)
+        {
+            var project = ProjectManager.Instance.loadProject(item);
+            if (project != null)
+            {
+                System.Diagnostics.Debug.WriteLine($"OpenProject: Scenes Count = {project.Scenes?.Count ?? -1}");
+                ProjectOpened?.Invoke(this, project);
+            }
         }
     }
 }

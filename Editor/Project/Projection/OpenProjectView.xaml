@@ -250,6 +250,7 @@ Background="Transparent">
                                 <Setter Property="BorderBrush" Value="Transparent"/>
                                 <Setter Property="BorderThickness" Value="1"/>
                                 <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                <EventSetter Event="MouseDoubleClick" Handler="DoubleClickListItem"/>
                                 <Setter Property="Template">
                                     <Setter.Value>
                                         <ControlTemplate TargetType="ListViewItem">
@@ -306,7 +307,7 @@ Background="Transparent">
 
                 <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,14,0,0" FlowDirection="LeftToRight">
                     <Button Content="Exit" Click="ExitButton_Pressed" Style="{StaticResource SecondaryButton}" Margin="0,0,10,0" IsCancel="True" />
-                    <Button Content="Open" Style="{StaticResource PrimaryButton}" IsDefault="true" />
+                    <Button Content="Open" Click="OpenButton_Pressed" Style="{StaticResource PrimaryButton}" IsDefault="true" />
                 </StackPanel>
             </Grid>
         </Border>

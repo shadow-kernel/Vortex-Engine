@@ -26,6 +26,24 @@ namespace Editor.Project.Control
 
         }
 
+        public ProjectEntity loadProject(ProjectFileRef project)
+        {
+            try
+            {
+                return ProjectFileManager.Instance.loadProject(project);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    $"Fehler beim Laden des Projekts: {ex.Message}",
+                    "Ladefehler",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error
+                );
+                return null;
+            }
+        }
+
         public bool CreateNewProject(string projectName, string projectPath)
         {
             try

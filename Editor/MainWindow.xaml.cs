@@ -1,6 +1,9 @@
 ﻿using Editor.Project;
+using Editor.Project.Data;
+using Editor.Project.Projection;
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -25,11 +28,41 @@ namespace Editor
         {
             InitializeComponent();
             Loaded += OnMainWindowLoaded;
+            Closing += OnWindowClosing;
+        }
+
+        private void OnWindowClosing(object sender, CancelEventArgs e)
+        {
+            Closing -= OnWindowClosing;
+            ProjectEntity.Current?.Unload();
         }
 
         private void OnMainWindowLoaded(object sender, RoutedEventArgs e)
         {
             Loaded -= OnMainWindowLoaded;
+            ShowProjectBrowser();
+        }
+
+        private void ShowProjectBrowser()
+        {
+            var browserWindow = new ProjectBrowserWindow
+            {
+                Owner = this
+            };
+
+            var result = browserWindow.ShowDialog();
+
+            if (result == true && browserWindow.SelectedProject != null)
+            {
+                ProjectEntity.Current?.Unload();
+                var project = browserWindow.SelectedProject;
+                DataContext = project;  
+                Title = $"Vortex Engine - {project.Name}";
+            }
+            else
+            {
+                Application.Current.Shutdown();
+            }
         }
 
     }
