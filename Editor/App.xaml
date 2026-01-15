@@ -4,6 +4,10 @@
              xmlns:local="clr-namespace:Editor"
              StartupUri="Project/Projection/ProjectBrowserWindow.xaml">
     <Application.Resources>
-         
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="Assets/Images/ImageResources.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
     </Application.Resources>
 </Application>

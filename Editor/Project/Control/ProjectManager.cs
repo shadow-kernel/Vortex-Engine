@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Editor.Project.Data;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -7,26 +8,26 @@ using System.Threading.Tasks;
 
 namespace Editor.Project.Control
 {
-    internal class ProjectManager
+    public class ProjectManager
     {
         private static readonly ProjectManager instance;
-        private static readonly string appDataPath;
 
         public static ProjectManager Instance => instance;
 
         static ProjectManager()
         {
             instance = new ProjectManager();
-            appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData) + "/VortexEngine";
-
-            if(!Directory.Exists(appDataPath))
-            {
-                Directory.CreateDirectory(appDataPath);
-            }
+            var a = ProjectFileManager.Instance;
+            var obj = new ProjectEntity("C:\\Users\\kernel\\VortexEngineProjects\\New Project", "Test Project");
+            a.SaveProjectFile(obj);
+            /*
+            
+            */
         }
 
         private ProjectManager()
         {
+
         }
 
     }
