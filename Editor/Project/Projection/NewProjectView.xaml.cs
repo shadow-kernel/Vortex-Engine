@@ -12,8 +12,9 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Shapes;
+using Editor.Project.Model;
 
-namespace Editor.Project
+namespace Editor.Project.Projection
 {
     /// <summary>
     /// Interaktionslogik für NewProjectView.xaml
@@ -23,6 +24,10 @@ namespace Editor.Project
         public NewProjectView()
         {
             InitializeComponent();
+            if(DataContext == null)
+            {
+                DataContext = new NewProjectModel();
+            }
         }
 
         private void ExitButton_Pressed(object sender, System.Windows.RoutedEventArgs e)

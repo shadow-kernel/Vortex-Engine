@@ -7,27 +7,20 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
-namespace Editor.Project
+namespace Editor.Project.Projection
 {
     public partial class OpenProjectView : UserControl
     {
-        private readonly List<ProjectItem> _allProjects;
-        public ObservableCollection<ProjectItem> Projects { get; }
 
         public OpenProjectView()
         {
             InitializeComponent();
 
-            var items = CreateDummyProjects()
-                .OrderByDescending(p => p.LastModified)
-                .ToList();
 
-            _allProjects = items;
-            Projects = new ObservableCollection<ProjectItem>(_allProjects);
-            DataContext = this;
         }
 
-        private void ExitButton_Pressed(object sender, System.Windows.RoutedEventArgs e)
+        /*
+         *         private void ExitButton_Pressed(object sender, System.Windows.RoutedEventArgs e)
         {
             Application.Current.Shutdown();
         }
@@ -128,5 +121,7 @@ namespace Editor.Project
         public DateTime LastModified { get; set; }
         public ImageSource Thumbnail { get; set; }
         public string LastModifiedDisplay => LastModified.ToString("dd.MM.yyyy HH:mm");
+    }
+        */
     }
 }
