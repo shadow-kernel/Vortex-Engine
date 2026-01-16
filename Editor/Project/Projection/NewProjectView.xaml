@@ -11,9 +11,9 @@
              Background="Transparent">
 
     <UserControl.Resources>
-        <SolidColorBrush x:Key="PanelBackground" Color="#0F141C"/>
-        <SolidColorBrush x:Key="CardBackground" Color="#131A24"/>
-        <SolidColorBrush x:Key="BorderBrushDark" Color="#26303D"/>
+        <SolidColorBrush x:Key="PanelBackground" Color="#1E1E1E"/>
+        <SolidColorBrush x:Key="CardBackground" Color="#252526"/>
+        <SolidColorBrush x:Key="BorderBrushDark" Color="#3C3C3C"/>
         <SolidColorBrush x:Key="AccentBrush" Color="#3FA9F5"/>
 
         <Style x:Key="LabelText" TargetType="TextBlock">
@@ -30,8 +30,8 @@
         </Style>
 
         <Style x:Key="DarkTextBox" TargetType="TextBox">
-            <Setter Property="Background" Value="#1A2431"/>
-            <Setter Property="Foreground" Value="#F5F7FA"/>
+            <Setter Property="Background" Value="#2D2D30"/>
+            <Setter Property="Foreground" Value="#C5C5C5"/>
             <Setter Property="BorderBrush" Value="{StaticResource BorderBrushDark}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Padding" Value="10,6"/>
@@ -68,7 +68,7 @@
         <Style x:Key="IconButton" TargetType="Button">
             <Setter Property="Width" Value="40"/>
             <Setter Property="Height" Value="34"/>
-            <Setter Property="Background" Value="#1A2431"/>
+            <Setter Property="Background" Value="#2D2D30"/>
             <Setter Property="BorderBrush" Value="{StaticResource BorderBrushDark}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Foreground" Value="#E5FFFFFF"/>
@@ -88,10 +88,10 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Border" Property="Background" Value="#223042"/>
+                                <Setter TargetName="Border" Property="Background" Value="#3C3C3C"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Border" Property="Background" Value="#1C2735"/>
+                                <Setter TargetName="Border" Property="Background" Value="#505050"/>
                                 <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
@@ -143,8 +143,8 @@
             <Setter Property="Height" Value="36"/>
             <Setter Property="MinWidth" Value="90"/>
             <Setter Property="Padding" Value="14,8"/>
-            <Setter Property="Background" Value="#1A2431"/>
-            <Setter Property="Foreground" Value="#E5FFFFFF"/>
+            <Setter Property="Background" Value="#2D2D30"/>
+            <Setter Property="Foreground" Value="#C5C5C5"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="BorderBrush" Value="{StaticResource BorderBrushDark}"/>
             <Setter Property="BorderThickness" Value="1"/>
@@ -161,10 +161,10 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Border" Property="Background" Value="#223042"/>
+                                <Setter TargetName="Border" Property="Background" Value="#3C3C3C"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Border" Property="Background" Value="#1C2735"/>
+                                <Setter TargetName="Border" Property="Background" Value="#505050"/>
                                 <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">

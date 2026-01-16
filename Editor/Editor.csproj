@@ -90,6 +90,24 @@
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>
+    <Page Include="Editors\WorldEditor\Components\FileExplorer\FileExplorerView.xaml">
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Editors\WorldEditor\Components\FileExplorer\FileTreeView.xaml">
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Editors\WorldEditor\Components\GamePreview\GamePreviewView.xaml">
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Editors\WorldEditor\Components\HeaderBar\HeaderBarView.xaml">
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Editors\WorldEditor\Components\Inspector\InspectorView.xaml">
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Editors\WorldEditor\Components\SceneHierarchy\SceneHierarchyView.xaml">
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
     <Page Include="Editors\WorldEditor\WorldEditorView.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
@@ -101,6 +119,24 @@
     <Compile Include="App.xaml.cs">
       <DependentUpon>App.xaml</DependentUpon>
       <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="Editors\WorldEditor\Components\FileExplorer\FileExplorerView.xaml.cs">
+      <DependentUpon>FileExplorerView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Editors\WorldEditor\Components\FileExplorer\FileTreeView.xaml.cs">
+      <DependentUpon>FileTreeView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Editors\WorldEditor\Components\GamePreview\GamePreviewView.xaml.cs">
+      <DependentUpon>GamePreviewView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Editors\WorldEditor\Components\HeaderBar\HeaderBarView.xaml.cs">
+      <DependentUpon>HeaderBarView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Editors\WorldEditor\Components\Inspector\InspectorView.xaml.cs">
+      <DependentUpon>InspectorView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Editors\WorldEditor\Components\SceneHierarchy\SceneHierarchyView.xaml.cs">
+      <DependentUpon>SceneHierarchyView.xaml</DependentUpon>
     </Compile>
     <Compile Include="Editors\WorldEditor\WorldEditorView.xaml.cs">
       <DependentUpon>WorldEditorView.xaml</DependentUpon>
