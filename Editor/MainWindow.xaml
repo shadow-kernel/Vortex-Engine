@@ -8,8 +8,8 @@
         mc:Ignorable="d"
         Icon="{DynamicResource AppIcon}"
         Title="World Editor - Vortex Engine" Height="450" Width="800"
-        WindowStartupLocation="CenterScreen">
+        WindowStartupLocation="CenterScreen" Background="#1E1E1E">
     <Grid>
-        <worldEditor:WorldEditorView/>
+        <worldEditor:WorldEditorView x:Name="WorldEditor"/>
     </Grid>
 </Window>

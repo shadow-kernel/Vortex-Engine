@@ -4,7 +4,6 @@
                     xmlns:avalonDockControls="clr-namespace:AvalonDock.Controls;assembly=AvalonDock"
                     xmlns:avalonDockConverters="clr-namespace:AvalonDock.Converters;assembly=AvalonDock">
 
-    <!-- BASE COLORS -->
     <Color x:Key="BackgroundColor">#1E1E1E</Color>
     <Color x:Key="PanelColor">#252526</Color>
     <Color x:Key="HeaderColor">#2D2D30</Color>
@@ -27,11 +26,12 @@
 
     <avalonDockConverters:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
 
-    <!-- BUTTON STYLE -->
+    <!-- Button Style for Dock Pane -->
     <Style x:Key="DockPaneButtonStyle" TargetType="{x:Type Button}">
         <Setter Property="Background" Value="Transparent"/>
         <Setter Property="Foreground" Value="{StaticResource TextDimBrush}"/>
         <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="BorderBrush" Value="Transparent"/>
         <Setter Property="Width" Value="18"/>
         <Setter Property="Height" Value="18"/>
         <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
@@ -41,7 +41,7 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type Button}">
-                    <Border x:Name="Border" Background="{TemplateBinding Background}" CornerRadius="2" Padding="2">
+                    <Border x:Name="Border" Background="{TemplateBinding Background}" BorderBrush="Transparent" BorderThickness="0" CornerRadius="2" Padding="2" SnapsToDevicePixels="True">
                         <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Border>
                     <ControlTemplate.Triggers>
@@ -55,26 +55,18 @@
         </Setter>
     </Style>
 
-    <!-- ANCHORABLE PANE TITLE - Header ueber dem Content -->
+    <!-- Anchorable Pane Title (Header above content) -->
     <Style TargetType="{x:Type avalonDockControls:AnchorablePaneTitle}">
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type avalonDockControls:AnchorablePaneTitle}">
-                    <Border Background="{StaticResource HeaderBrush}" 
-                            BorderBrush="{StaticResource BorderBrush}" 
-                            BorderThickness="0,0,0,1" 
-                            Padding="8,6">
+                    <Border Background="{StaticResource HeaderBrush}" BorderBrush="Transparent" BorderThickness="0" Padding="8,6" SnapsToDevicePixels="True">
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" 
-                                       Text="{Binding Path=Model.Title, RelativeSource={RelativeSource TemplatedParent}}" 
-                                       Foreground="{StaticResource TextBrush}" 
-                                       FontSize="12" 
-                                       FontWeight="SemiBold" 
-                                       VerticalAlignment="Center"/>
+                            <TextBlock Grid.Column="0" Text="{Binding Path=Model.Title, RelativeSource={RelativeSource TemplatedParent}}" Foreground="{StaticResource TextBrush}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
                             <StackPanel Grid.Column="1" Orientation="Horizontal">
                                 <Button x:Name="PART_AutoHidePin" Style="{StaticResource DockPaneButtonStyle}" Content="&#xE718;" ToolTip="Auto Hide"/>
                                 <Button x:Name="PART_HidePin" Style="{StaticResource DockPaneButtonStyle}" Content="&#xE711;" ToolTip="Close" Margin="4,0,0,0"/>
@@ -86,17 +78,19 @@
         </Setter>
     </Style>
 
-    <!-- ANCHORABLE TAB ITEM - Tab fuer Tool Windows -->
+    <!-- Anchorable Tab Item (Explorer, Console tabs) -->
     <Style TargetType="{x:Type avalonDockControls:LayoutAnchorableTabItem}">
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type avalonDockControls:LayoutAnchorableTabItem}">
                     <Border x:Name="Border" 
-                            Background="Transparent" 
+                            Background="{StaticResource HeaderBrush}" 
                             BorderBrush="Transparent" 
-                            BorderThickness="0,0,0,2" 
-                            Padding="10,6" 
-                            Cursor="Hand">
+                            BorderThickness="0" 
+                            Padding="8,4" 
+                            Margin="0,0,1,0"
+                            Cursor="Hand"
+                            SnapsToDevicePixels="True">
                         <TextBlock x:Name="Title" 
                                    Text="{Binding Path=Model.Title, RelativeSource={RelativeSource TemplatedParent}}" 
                                    Foreground="{StaticResource TextDimBrush}" 
@@ -104,106 +98,164 @@
                                    VerticalAlignment="Center"/>
                     </Border>
                     <ControlTemplate.Triggers>
-                                        <DataTrigger Binding="{Binding IsSelected}" Value="True">
-                                            <Setter TargetName="Border" Property="Background" Value="{StaticResource PanelBrush}"/>
-                                            <Setter TargetName="Border" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
-                                            <Setter TargetName="Title" Property="Foreground" Value="{StaticResource TextBrush}"/>
-                                            <Setter TargetName="Title" Property="FontWeight" Value="SemiBold"/>
-                                        </DataTrigger>
-                                        <Trigger Property="IsMouseOver" Value="True">
-                                            <Setter TargetName="Border" Property="Background" Value="{StaticResource HoverBrush}"/>
-                                            <Setter TargetName="Title" Property="Foreground" Value="{StaticResource TextBrush}"/>
-                                        </Trigger>
-                                    </ControlTemplate.Triggers>
-                                </ControlTemplate>
-                            </Setter.Value>
-                        </Setter>
-                    </Style>
+                        <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                            <Setter TargetName="Border" Property="Background" Value="{StaticResource PanelBrush}"/>
+                            <Setter TargetName="Border" Property="BorderBrush" Value="Transparent"/>
+                            <Setter TargetName="Border" Property="BorderThickness" Value="0,0,0,2"/>
+                            <Setter TargetName="Title" Property="Foreground" Value="{StaticResource TextBrush}"/>
+                            <Setter TargetName="Title" Property="FontWeight" Value="SemiBold"/>
+                        </DataTrigger>
+                        <MultiDataTrigger>
+                            <MultiDataTrigger.Conditions>
+                                <Condition Binding="{Binding IsSelected}" Value="True"/>
+                            </MultiDataTrigger.Conditions>
+                            <Setter TargetName="Border" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                        </MultiDataTrigger>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Border" Property="Background" Value="{StaticResource HoverBrush}"/>
+                            <Setter TargetName="Title" Property="Foreground" Value="{StaticResource TextBrush}"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
 
-                    <!-- DOCUMENT TAB ITEM - Tab fuer Dokumente -->
+    <!-- Document Tab Item -->
     <Style TargetType="{x:Type avalonDockControls:LayoutDocumentTabItem}">
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type avalonDockControls:LayoutDocumentTabItem}">
                     <Border x:Name="Border" 
-                            Background="Transparent" 
+                            Background="{StaticResource HeaderBrush}" 
                             BorderBrush="Transparent" 
-                            BorderThickness="0,0,0,2" 
-                            Padding="12,6" 
-                            Cursor="Hand">
+                            BorderThickness="0" 
+                            Padding="8,4" 
+                            Margin="0,0,1,0"
+                            Cursor="Hand"
+                            SnapsToDevicePixels="True">
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <TextBlock x:Name="Title" 
-                                       Grid.Column="0" 
-                                       Text="{Binding Path=Model.Title, RelativeSource={RelativeSource TemplatedParent}}" 
-                                       Foreground="{StaticResource TextDimBrush}" 
-                                       FontSize="11" 
-                                       VerticalAlignment="Center"/>
-                            <Button x:Name="PART_CloseButton" 
-                                    Grid.Column="1" 
-                                    Style="{StaticResource DockPaneButtonStyle}" 
-                                    Content="&#xE711;" 
-                                    Width="16" Height="16" 
-                                    Margin="6,0,0,0" 
-                                    Visibility="Collapsed"/>
+                            <TextBlock x:Name="Title" Grid.Column="0" Text="{Binding Path=Model.Title, RelativeSource={RelativeSource TemplatedParent}}" Foreground="{StaticResource TextDimBrush}" FontSize="11" VerticalAlignment="Center"/>
+                            <Button x:Name="PART_CloseButton" Grid.Column="1" Style="{StaticResource DockPaneButtonStyle}" Content="&#xE711;" Width="16" Height="16" Margin="6,0,0,0" Visibility="Collapsed"/>
                         </Grid>
                     </Border>
                     <ControlTemplate.Triggers>
-                                        <DataTrigger Binding="{Binding IsSelected}" Value="True">
-                                            <Setter TargetName="Border" Property="Background" Value="{StaticResource PanelBrush}"/>
-                                            <Setter TargetName="Border" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
-                                            <Setter TargetName="Title" Property="Foreground" Value="{StaticResource TextBrush}"/>
-                                            <Setter TargetName="Title" Property="FontWeight" Value="SemiBold"/>
-                                            <Setter TargetName="PART_CloseButton" Property="Visibility" Value="Visible"/>
-                                        </DataTrigger>
-                                        <Trigger Property="IsMouseOver" Value="True">
-                                            <Setter TargetName="Border" Property="Background" Value="{StaticResource HoverBrush}"/>
-                                            <Setter TargetName="Title" Property="Foreground" Value="{StaticResource TextBrush}"/>
-                                        </Trigger>
-                                    </ControlTemplate.Triggers>
-                                </ControlTemplate>
-                            </Setter.Value>
-                        </Setter>
-                    </Style>
+                        <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                            <Setter TargetName="Border" Property="Background" Value="{StaticResource PanelBrush}"/>
+                            <Setter TargetName="Border" Property="BorderThickness" Value="0,0,0,2"/>
+                            <Setter TargetName="Border" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                            <Setter TargetName="Title" Property="Foreground" Value="{StaticResource TextBrush}"/>
+                            <Setter TargetName="Title" Property="FontWeight" Value="SemiBold"/>
+                            <Setter TargetName="PART_CloseButton" Property="Visibility" Value="Visible"/>
+                        </DataTrigger>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Border" Property="Background" Value="{StaticResource HoverBrush}"/>
+                            <Setter TargetName="Title" Property="Foreground" Value="{StaticResource TextBrush}"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
 
-                    <!-- PANE CONTROLS -->
+    <!-- Anchorable Pane Control (Container for Explorer/Console) -->
     <Style TargetType="{x:Type avalonDockControls:LayoutAnchorablePaneControl}">
         <Setter Property="Background" Value="{StaticResource PanelBrush}"/>
-        <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
-        <Setter Property="BorderThickness" Value="1"/>
-        <Setter Property="TabStripPlacement" Value="Top"/>
+        <Setter Property="BorderBrush" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Padding" Value="0"/>
+        <Setter Property="TabStripPlacement" Value="Bottom"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type TabControl}">
+                    <Grid SnapsToDevicePixels="True" ClipToBounds="True">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <Border Grid.Row="0" 
+                                Background="{TemplateBinding Background}" 
+                                BorderBrush="Transparent" 
+                                BorderThickness="0"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter x:Name="PART_SelectedContentHost" 
+                                              ContentSource="SelectedContent" 
+                                              SnapsToDevicePixels="True"/>
+                        </Border>
+                        <Border Grid.Row="1" 
+                                Background="{StaticResource HeaderBrush}" 
+                                BorderBrush="Transparent" 
+                                BorderThickness="0"
+                                SnapsToDevicePixels="True">
+                            <StackPanel x:Name="HeaderPanel" 
+                                        IsItemsHost="True" 
+                                        Orientation="Horizontal"
+                                        Margin="0" 
+                                        Background="Transparent"/>
+                        </Border>
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
     </Style>
 
+    <!-- Document Pane Control -->
     <Style TargetType="{x:Type avalonDockControls:LayoutDocumentPaneControl}">
         <Setter Property="Background" Value="{StaticResource PanelBrush}"/>
-        <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
-        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="BorderBrush" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Padding" Value="0"/>
         <Setter Property="TabStripPlacement" Value="Top"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type TabControl}">
+                    <Grid SnapsToDevicePixels="True" ClipToBounds="True">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <Border Grid.Row="0" 
+                                Background="{StaticResource HeaderBrush}" 
+                                BorderBrush="Transparent" 
+                                BorderThickness="0"
+                                SnapsToDevicePixels="True">
+                            <StackPanel x:Name="HeaderPanel" 
+                                        IsItemsHost="True" 
+                                        Orientation="Horizontal"
+                                        Margin="0" 
+                                        Background="Transparent"/>
+                        </Border>
+                        <Border Grid.Row="1" 
+                                Background="{TemplateBinding Background}" 
+                                BorderBrush="Transparent" 
+                                BorderThickness="0"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter x:Name="PART_SelectedContentHost" 
+                                              ContentSource="SelectedContent" 
+                                              SnapsToDevicePixels="True"/>
+                        </Border>
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
     </Style>
 
-    <!-- RESIZER -->
+    <!-- Grid Resizer -->
     <Style TargetType="{x:Type avalonDockControls:LayoutGridResizerControl}">
         <Setter Property="Background" Value="{StaticResource BackgroundBrush}"/>
     </Style>
 
-    <!-- AUTO HIDE ANCHOR -->
+    <!-- Auto Hide Anchor -->
     <Style TargetType="{x:Type avalonDockControls:LayoutAnchorControl}">
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type avalonDockControls:LayoutAnchorControl}">
-                    <Border x:Name="Border" 
-                            Background="{StaticResource HeaderBrush}" 
-                            BorderBrush="{StaticResource BorderBrush}" 
-                            BorderThickness="1" 
-                            Padding="8,4" 
-                            Cursor="Hand">
-                        <TextBlock x:Name="Title" 
-                                   Text="{Binding Path=Model.Title, RelativeSource={RelativeSource TemplatedParent}}" 
-                                   Foreground="{StaticResource TextDimBrush}" 
-                                   FontSize="11"/>
+                    <Border x:Name="Border" Background="{StaticResource HeaderBrush}" BorderBrush="Transparent" BorderThickness="0" Padding="8,4" Cursor="Hand" SnapsToDevicePixels="True">
+                        <TextBlock x:Name="Title" Text="{Binding Path=Model.Title, RelativeSource={RelativeSource TemplatedParent}}" Foreground="{StaticResource TextDimBrush}" FontSize="11"/>
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
@@ -216,7 +268,7 @@
         </Setter>
     </Style>
 
-    <!-- FLOATING WINDOWS -->
+    <!-- Floating Windows -->
     <Style TargetType="{x:Type avalonDockControls:LayoutAnchorableFloatingWindowControl}">
         <Setter Property="Background" Value="{StaticResource BackgroundBrush}"/>
         <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
@@ -229,7 +281,7 @@
         <Setter Property="BorderThickness" Value="1"/>
     </Style>
 
-    <!-- DOCKING MANAGER -->
+    <!-- Docking Manager -->
     <Style TargetType="{x:Type avalonDock:DockingManager}">
         <Setter Property="Background" Value="{StaticResource BackgroundBrush}"/>
     </Style>

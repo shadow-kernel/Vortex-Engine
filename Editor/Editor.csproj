@@ -155,6 +155,7 @@
     <Compile Include="Editors\WorldEditor\Components\SceneHierarchy\SceneHierarchyView.xaml.cs">
       <DependentUpon>SceneHierarchyView.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Editors\WorldEditor\Services\WindowService.cs" />
     <Compile Include="Editors\WorldEditor\WorldEditorView.xaml.cs">
       <DependentUpon>WorldEditorView.xaml</DependentUpon>
     </Compile>

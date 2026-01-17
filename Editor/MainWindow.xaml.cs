@@ -23,10 +23,14 @@ namespace Editor
         private void OnMainWindowLoaded(object sender, RoutedEventArgs e)
         {
             Loaded -= OnMainWindowLoaded;
-            ShowProjectBrowser();
+            OpenProjectBrowser();
         }
 
-        private void ShowProjectBrowser()
+        /// <summary>
+        /// Öffnet den ProjectBrowser und lädt das ausgewählte Projekt.
+        /// Gibt true zurück wenn ein Projekt geladen wurde.
+        /// </summary>
+        public bool OpenProjectBrowser()
         {
             var browserWindow = new ProjectBrowserWindow
             {
@@ -37,15 +41,37 @@ namespace Editor
 
             if (result == true && browserWindow.SelectedProject != null)
             {
-                ProjectData.Current?.Unload();
-                var project = browserWindow.SelectedProject;
-                DataContext = project;
-                Title = $"Vortex Engine - {project.Name}";
+                LoadProject(browserWindow.SelectedProject);
+                return true;
             }
-            else
+            else if (ProjectData.Current == null)
             {
                 Application.Current.Shutdown();
             }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Lädt ein Projekt und zeigt den Editor-Inhalt an.
+        /// </summary>
+        public void LoadProject(ProjectData project)
+        {
+            ProjectData.Current?.Unload();
+            DataContext = project;
+            Title = $"Vortex Engine - {project.Name}";
+            WorldEditor.SetEditorVisible(true);
+        }
+
+        /// <summary>
+        /// Schließt das aktuelle Projekt und versteckt den Editor-Inhalt.
+        /// </summary>
+        public void CloseCurrentProject()
+        {
+            ProjectData.Current?.Unload();
+            DataContext = null;
+            Title = "Vortex Engine";
+            WorldEditor.SetEditorVisible(false);
         }
     }
 }
