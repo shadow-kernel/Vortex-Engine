@@ -277,6 +277,194 @@ namespace Game
 ";
         }
 
+        private void OnNewShaderClick(object sender, RoutedEventArgs e)
+        {
+            var newFile = _explorerService.CreateFile("NewShader.shader", GetDefaultShaderContent());
+            SelectAndRenameNewItem(newFile);
+        }
+
+        private void OnNewHlslClick(object sender, RoutedEventArgs e)
+        {
+            var newFile = _explorerService.CreateFile("NewShader.hlsl", GetDefaultHlslContent());
+            SelectAndRenameNewItem(newFile);
+        }
+
+        private void OnNewJsonClick(object sender, RoutedEventArgs e)
+        {
+            var newFile = _explorerService.CreateFile("NewFile.json", GetDefaultJsonContent());
+            SelectAndRenameNewItem(newFile);
+        }
+
+        private void OnNewXmlClick(object sender, RoutedEventArgs e)
+        {
+            var newFile = _explorerService.CreateFile("NewFile.xml", GetDefaultXmlContent());
+            SelectAndRenameNewItem(newFile);
+        }
+
+        private void OnNewSceneClick(object sender, RoutedEventArgs e)
+        {
+            var newFile = _explorerService.CreateFile("NewScene.scene", GetDefaultSceneContent());
+            SelectAndRenameNewItem(newFile);
+        }
+
+        private void OnNewPrefabClick(object sender, RoutedEventArgs e)
+        {
+            var newFile = _explorerService.CreateFile("NewPrefab.prefab", GetDefaultPrefabContent());
+            SelectAndRenameNewItem(newFile);
+        }
+
+        private void OnNewMaterialClick(object sender, RoutedEventArgs e)
+        {
+            var newFile = _explorerService.CreateFile("NewMaterial.mat", GetDefaultMaterialContent());
+            SelectAndRenameNewItem(newFile);
+        }
+
+        private void SelectAndRenameNewItem(FileSystemItem newItem)
+        {
+            if (newItem != null)
+            {
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    foreach (var item in _explorerService.CurrentFolderContents)
+                    {
+                        if (item.FullPath == newItem.FullPath)
+                        {
+                            FileList.SelectedItem = item;
+                            item.IsRenaming = true;
+                            break;
+                        }
+                    }
+                }), System.Windows.Threading.DispatcherPriority.Background);
+            }
+        }
+
+        private string GetDefaultShaderContent()
+        {
+            return @"Shader ""Custom/NewShader""
+{
+    Properties
+    {
+        _MainTex (""Texture"", 2D) = ""white"" {}
+        _Color (""Color"", Color) = (1, 1, 1, 1)
+    }
+    
+    SubShader
+    {
+        Pass
+        {
+            // Shader code here
+        }
+    }
+}
+";
+        }
+
+        private string GetDefaultHlslContent()
+        {
+            return @"// HLSL Shader
+
+cbuffer ConstantBuffer : register(b0)
+{
+    float4x4 WorldViewProjection;
+}
+
+struct VS_INPUT
+{
+    float4 Position : POSITION;
+    float2 TexCoord : TEXCOORD0;
+};
+
+struct PS_INPUT
+{
+    float4 Position : SV_POSITION;
+    float2 TexCoord : TEXCOORD0;
+};
+
+PS_INPUT VS_Main(VS_INPUT input)
+{
+    PS_INPUT output;
+    output.Position = mul(input.Position, WorldViewProjection);
+    output.TexCoord = input.TexCoord;
+    return output;
+}
+
+float4 PS_Main(PS_INPUT input) : SV_TARGET
+{
+    return float4(1.0, 1.0, 1.0, 1.0);
+}
+";
+        }
+
+        private string GetDefaultJsonContent()
+        {
+            return @"{
+    ""name"": ""NewFile"",
+    ""version"": ""1.0"",
+    ""data"": {
+    }
+}
+";
+        }
+
+        private string GetDefaultXmlContent()
+        {
+            return @"<?xml version=""1.0"" encoding=""utf-8""?>
+<root>
+    <data>
+    </data>
+</root>
+";
+        }
+
+        private string GetDefaultSceneContent()
+        {
+            return @"{
+    ""name"": ""NewScene"",
+    ""version"": ""1.0"",
+    ""entities"": [],
+    ""settings"": {
+        ""ambientLight"": { ""r"": 0.2, ""g"": 0.2, ""b"": 0.2, ""a"": 1.0 },
+        ""gravity"": { ""x"": 0.0, ""y"": -9.81, ""z"": 0.0 }
+    }
+}
+";
+        }
+
+        private string GetDefaultPrefabContent()
+        {
+            return @"{
+    ""name"": ""NewPrefab"",
+    ""version"": ""1.0"",
+    ""components"": [],
+    ""transform"": {
+        ""position"": { ""x"": 0.0, ""y"": 0.0, ""z"": 0.0 },
+        ""rotation"": { ""x"": 0.0, ""y"": 0.0, ""z"": 0.0, ""w"": 1.0 },
+        ""scale"": { ""x"": 1.0, ""y"": 1.0, ""z"": 1.0 }
+    }
+}
+";
+        }
+
+        private string GetDefaultMaterialContent()
+        {
+            return @"{
+    ""name"": ""NewMaterial"",
+    ""version"": ""1.0"",
+    ""shader"": ""Standard"",
+    ""properties"": {
+        ""color"": { ""r"": 1.0, ""g"": 1.0, ""b"": 1.0, ""a"": 1.0 },
+        ""metallic"": 0.0,
+        ""smoothness"": 0.5
+    },
+    ""textures"": {
+        ""albedo"": null,
+        ""normal"": null,
+        ""metallic"": null
+    }
+}
+";
+        }
+
         private void OnRenameClick(object sender, RoutedEventArgs e)
         {
             var menuItem = sender as MenuItem;

@@ -127,6 +127,44 @@
             </MenuItem>
         </ContextMenu>
 
+        <!-- Submenu MenuItem Style for Dark Theme -->
+        <Style x:Key="DarkSubMenuItemStyle" TargetType="MenuItem" BasedOn="{StaticResource DarkMenuItemStyle}">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="MenuItem">
+                        <Border x:Name="Border" Background="{TemplateBinding Background}" 
+                                Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="24"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <ContentPresenter Grid.Column="0" ContentSource="Icon" 
+                                                  HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                <ContentPresenter Grid.Column="1" ContentSource="Header" 
+                                                  Margin="4,0,0,0" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="2" Text="?" Foreground="#606060" FontSize="8" 
+                                           VerticalAlignment="Center" Margin="20,0,4,0"/>
+                                <Popup x:Name="SubMenuPopup" Placement="Right" IsOpen="{Binding IsSubmenuOpen, RelativeSource={RelativeSource TemplatedParent}}"
+                                       AllowsTransparency="True" Focusable="False" PopupAnimation="Fade">
+                                    <Border Background="#252526" BorderBrush="#3C3C3C" BorderThickness="1" 
+                                            CornerRadius="4" Padding="0,4">
+                                        <StackPanel IsItemsHost="True"/>
+                                    </Border>
+                                </Popup>
+                            </Grid>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="#3C3C3C"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- Context Menu for Empty Area -->
         <ContextMenu x:Key="EmptyAreaContextMenu" Style="{StaticResource DarkContextMenuStyle}">
             <MenuItem Header="New Folder" Click="OnNewFolderClick" Style="{StaticResource DarkMenuItemStyle}">
@@ -134,10 +172,55 @@
                     <TextBlock Text="&#xE8F4;" FontFamily="Segoe MDL2 Assets" Foreground="#E6B422" FontSize="12"/>
                 </MenuItem.Icon>
             </MenuItem>
-            <MenuItem Header="New Script" Click="OnNewScriptClick" Style="{StaticResource DarkMenuItemStyle}">
+            <MenuItem Header="Create" Style="{StaticResource DarkSubMenuItemStyle}">
                 <MenuItem.Icon>
-                    <TextBlock Text="&#xE943;" FontFamily="Segoe MDL2 Assets" Foreground="#9B59B6" FontSize="12"/>
+                    <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" Foreground="#3FA9F5" FontSize="12"/>
                 </MenuItem.Icon>
+                <!-- Code Files -->
+                <MenuItem Header="C# Script (.cs)" Click="OnNewScriptClick" Style="{StaticResource DarkMenuItemStyle}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE943;" FontFamily="Segoe MDL2 Assets" Foreground="#9B59B6" FontSize="12"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="Shader (.shader)" Click="OnNewShaderClick" Style="{StaticResource DarkMenuItemStyle}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE950;" FontFamily="Segoe MDL2 Assets" Foreground="#E91E63" FontSize="12"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="HLSL Shader (.hlsl)" Click="OnNewHlslClick" Style="{StaticResource DarkMenuItemStyle}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE950;" FontFamily="Segoe MDL2 Assets" Foreground="#E91E63" FontSize="12"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <Separator Style="{StaticResource DarkSeparatorStyle}"/>
+                <!-- Data Files -->
+                <MenuItem Header="JSON File (.json)" Click="OnNewJsonClick" Style="{StaticResource DarkMenuItemStyle}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE9D5;" FontFamily="Segoe MDL2 Assets" Foreground="#F39C12" FontSize="12"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="XML File (.xml)" Click="OnNewXmlClick" Style="{StaticResource DarkMenuItemStyle}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE9D5;" FontFamily="Segoe MDL2 Assets" Foreground="#3498DB" FontSize="12"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <Separator Style="{StaticResource DarkSeparatorStyle}"/>
+                <!-- Game Assets -->
+                <MenuItem Header="Scene (.scene)" Click="OnNewSceneClick" Style="{StaticResource DarkMenuItemStyle}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE81E;" FontFamily="Segoe MDL2 Assets" Foreground="#3FA9F5" FontSize="12"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="Prefab (.prefab)" Click="OnNewPrefabClick" Style="{StaticResource DarkMenuItemStyle}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE74C;" FontFamily="Segoe MDL2 Assets" Foreground="#2ECC71" FontSize="12"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="Material (.mat)" Click="OnNewMaterialClick" Style="{StaticResource DarkMenuItemStyle}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xEB9F;" FontFamily="Segoe MDL2 Assets" Foreground="#9B59B6" FontSize="12"/>
+                    </MenuItem.Icon>
+                </MenuItem>
             </MenuItem>
             <Separator Style="{StaticResource DarkSeparatorStyle}"/>
             <MenuItem Header="Refresh" Click="OnRefreshClick" InputGestureText="F5" Style="{StaticResource DarkMenuItemStyle}">
