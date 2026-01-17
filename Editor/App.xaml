@@ -8,6 +8,45 @@ StartupUri="MainWindow.xaml">
             <ResourceDictionary.MergedDictionaries>
                 <ResourceDictionary Source="Assets/Images/ImageResources.xaml"/>
             </ResourceDictionary.MergedDictionaries>
+            
+            <!-- Empty FocusVisualStyle to completely disable focus rectangles -->
+            <Style x:Key="EmptyFocusVisual">
+                <Setter Property="Control.Template">
+                    <Setter.Value>
+                        <ControlTemplate>
+                            <Rectangle Fill="Transparent" Stroke="Transparent" StrokeThickness="0"/>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+            
+            <!-- Global style to disable focus visual borders -->
+            <Style TargetType="{x:Type Control}" x:Key="NoFocusControl">
+                <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            </Style>
+            
+            <!-- Disable focus rectangles globally for common controls -->
+            <Style TargetType="{x:Type Button}">
+                <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            </Style>
+            <Style TargetType="{x:Type ToggleButton}">
+                <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            </Style>
+            <Style TargetType="{x:Type TabItem}">
+                <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            </Style>
+            <Style TargetType="{x:Type ListBoxItem}">
+                <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            </Style>
+            <Style TargetType="{x:Type TreeViewItem}">
+                <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            </Style>
+            <Style TargetType="{x:Type MenuItem}">
+                <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            </Style>
+            <Style TargetType="{x:Type RepeatButton}">
+                <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            </Style>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

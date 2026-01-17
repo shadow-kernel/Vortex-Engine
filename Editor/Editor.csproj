@@ -137,12 +137,15 @@
     <Compile Include="Core\Services\ProjectService.cs" />
     <Compile Include="Core\Validation\ProjectValidator.cs" />
     <Compile Include="Core\ViewModelBase.cs" />
+    <Compile Include="Editors\WorldEditor\Components\FileExplorer\Converters\BoolToVisibilityConverter.cs" />
     <Compile Include="Editors\WorldEditor\Components\FileExplorer\FileExplorerView.xaml.cs">
       <DependentUpon>FileExplorerView.xaml</DependentUpon>
     </Compile>
     <Compile Include="Editors\WorldEditor\Components\FileExplorer\FileTreeView.xaml.cs">
       <DependentUpon>FileTreeView.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Editors\WorldEditor\Components\FileExplorer\Models\FileSystemItem.cs" />
+    <Compile Include="Editors\WorldEditor\Components\FileExplorer\Services\FileExplorerService.cs" />
     <Compile Include="Editors\WorldEditor\Components\GamePreview\GamePreviewView.xaml.cs">
       <DependentUpon>GamePreviewView.xaml</DependentUpon>
     </Compile>

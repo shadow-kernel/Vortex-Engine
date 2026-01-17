@@ -168,13 +168,16 @@ namespace Editor.Core.Services
             return false;
             }
 
-            private void CreateProjectFiles(ProjectData project)
+        private void CreateProjectFiles(ProjectData project)
             {
                 // Projektverzeichnis erstellen
                 if (!Directory.Exists(project.Path))
                 {
                     Directory.CreateDirectory(project.Path);
                 }
+
+                // Standard-Projektordner erstellen
+                CreateDefaultProjectFolders(project.Path);
 
                 // .ve Verzeichnis erstellen (versteckt)
                 string veDir = Path.Combine(project.Path, ".ve");
@@ -247,6 +250,41 @@ namespace Editor.Core.Services
             catch
             {
                 return path;
+            }
+        }
+
+        /// <summary>
+        /// Erstellt die Standard-Ordnerstruktur für ein neues Projekt.
+        /// </summary>
+        private void CreateDefaultProjectFolders(string projectPath)
+        {
+            if (string.IsNullOrEmpty(projectPath))
+                return;
+
+            string[] defaultFolders = new[]
+            {
+                "Assets",
+                "Assets/Materials",
+                "Assets/Models",
+                "Assets/Prefabs",
+                "Assets/Scenes",
+                "Assets/Scripts",
+                "Assets/Textures",
+                "Assets/Audio",
+                "Assets/Shaders",
+                "Assets/Fonts",
+                "Assets/UI",
+                "Packages",
+                "ProjectSettings"
+            };
+
+            foreach (var folder in defaultFolders)
+            {
+                string fullPath = Path.Combine(projectPath, folder);
+                if (!Directory.Exists(fullPath))
+                {
+                    Directory.CreateDirectory(fullPath);
+                }
             }
         }
 

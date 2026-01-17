@@ -26,6 +26,52 @@
 
     <avalonDockConverters:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
 
+    <!-- Disable Focus Visual Style globally for dock elements -->
+    <Style x:Key="NoFocusVisualStyle">
+        <Setter Property="Control.Template">
+            <Setter.Value>
+                <ControlTemplate/>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Global TabItem Style to remove focus borders -->
+    <Style TargetType="{x:Type TabItem}">
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderBrush" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Foreground" Value="{StaticResource TextDimBrush}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type TabItem}">
+                    <Border x:Name="Border" Background="{StaticResource HeaderBrush}" 
+                            BorderBrush="Transparent" BorderThickness="0" 
+                            Padding="10,6" Margin="0,0,1,0" SnapsToDevicePixels="True">
+                        <ContentPresenter x:Name="ContentSite" ContentSource="Header" 
+                                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="Border" Property="Background" Value="{StaticResource PanelBrush}"/>
+                            <Setter TargetName="Border" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                            <Setter TargetName="Border" Property="BorderThickness" Value="0,2,0,0"/>
+                            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Border" Property="Background" Value="{StaticResource HoverBrush}"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Global Control style to disable focus visual -->
+    <Style x:Key="NoFocusBorderStyle" TargetType="{x:Type Control}">
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+    </Style>
+
     <!-- Button Style for Dock Pane -->
     <Style x:Key="DockPaneButtonStyle" TargetType="{x:Type Button}">
         <Setter Property="Background" Value="Transparent"/>
@@ -38,6 +84,7 @@
         <Setter Property="FontSize" Value="10"/>
         <Setter Property="Cursor" Value="Hand"/>
         <Setter Property="Focusable" Value="False"/>
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type Button}">
@@ -57,6 +104,7 @@
 
     <!-- Anchorable Pane Title (Header above content) -->
     <Style TargetType="{x:Type avalonDockControls:AnchorablePaneTitle}">
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type avalonDockControls:AnchorablePaneTitle}">
@@ -80,6 +128,8 @@
 
     <!-- Anchorable Tab Item (Explorer, Console tabs) -->
     <Style TargetType="{x:Type avalonDockControls:LayoutAnchorableTabItem}">
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+        <Setter Property="Focusable" Value="False"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type avalonDockControls:LayoutAnchorableTabItem}">
@@ -87,7 +137,7 @@
                             Background="{StaticResource HeaderBrush}" 
                             BorderBrush="Transparent" 
                             BorderThickness="0" 
-                            Padding="8,4" 
+                            Padding="10,6" 
                             Margin="0,0,1,0"
                             Cursor="Hand"
                             SnapsToDevicePixels="True">
@@ -101,7 +151,7 @@
                         <DataTrigger Binding="{Binding IsSelected}" Value="True">
                             <Setter TargetName="Border" Property="Background" Value="{StaticResource PanelBrush}"/>
                             <Setter TargetName="Border" Property="BorderBrush" Value="Transparent"/>
-                            <Setter TargetName="Border" Property="BorderThickness" Value="0,0,0,2"/>
+                            <Setter TargetName="Border" Property="BorderThickness" Value="0,2,0,0"/>
                             <Setter TargetName="Title" Property="Foreground" Value="{StaticResource TextBrush}"/>
                             <Setter TargetName="Title" Property="FontWeight" Value="SemiBold"/>
                         </DataTrigger>
@@ -123,6 +173,8 @@
 
     <!-- Document Tab Item -->
     <Style TargetType="{x:Type avalonDockControls:LayoutDocumentTabItem}">
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+        <Setter Property="Focusable" Value="False"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type avalonDockControls:LayoutDocumentTabItem}">
@@ -130,7 +182,7 @@
                             Background="{StaticResource HeaderBrush}" 
                             BorderBrush="Transparent" 
                             BorderThickness="0" 
-                            Padding="8,4" 
+                            Padding="10,6" 
                             Margin="0,0,1,0"
                             Cursor="Hand"
                             SnapsToDevicePixels="True">
@@ -146,7 +198,7 @@
                     <ControlTemplate.Triggers>
                         <DataTrigger Binding="{Binding IsSelected}" Value="True">
                             <Setter TargetName="Border" Property="Background" Value="{StaticResource PanelBrush}"/>
-                            <Setter TargetName="Border" Property="BorderThickness" Value="0,0,0,2"/>
+                            <Setter TargetName="Border" Property="BorderThickness" Value="0,2,0,0"/>
                             <Setter TargetName="Border" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
                             <Setter TargetName="Title" Property="Foreground" Value="{StaticResource TextBrush}"/>
                             <Setter TargetName="Title" Property="FontWeight" Value="SemiBold"/>
@@ -169,6 +221,7 @@
         <Setter Property="BorderThickness" Value="0"/>
         <Setter Property="Padding" Value="0"/>
         <Setter Property="TabStripPlacement" Value="Bottom"/>
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type TabControl}">
@@ -190,12 +243,14 @@
                                 Background="{StaticResource HeaderBrush}" 
                                 BorderBrush="Transparent" 
                                 BorderThickness="0"
+                                Padding="0"
                                 SnapsToDevicePixels="True">
                             <StackPanel x:Name="HeaderPanel" 
                                         IsItemsHost="True" 
                                         Orientation="Horizontal"
                                         Margin="0" 
-                                        Background="Transparent"/>
+                                        Background="Transparent"
+                                        FocusVisualStyle="{x:Null}"/>
                         </Border>
                     </Grid>
                 </ControlTemplate>
@@ -210,6 +265,7 @@
         <Setter Property="BorderThickness" Value="0"/>
         <Setter Property="Padding" Value="0"/>
         <Setter Property="TabStripPlacement" Value="Top"/>
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type TabControl}">
@@ -222,12 +278,14 @@
                                 Background="{StaticResource HeaderBrush}" 
                                 BorderBrush="Transparent" 
                                 BorderThickness="0"
+                                Padding="0"
                                 SnapsToDevicePixels="True">
                             <StackPanel x:Name="HeaderPanel" 
                                         IsItemsHost="True" 
                                         Orientation="Horizontal"
                                         Margin="0" 
-                                        Background="Transparent"/>
+                                        Background="Transparent"
+                                        FocusVisualStyle="{x:Null}"/>
                         </Border>
                         <Border Grid.Row="1" 
                                 Background="{TemplateBinding Background}" 
@@ -273,12 +331,29 @@
         <Setter Property="Background" Value="{StaticResource BackgroundBrush}"/>
         <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
         <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
     </Style>
 
     <Style TargetType="{x:Type avalonDockControls:LayoutDocumentFloatingWindowControl}">
         <Setter Property="Background" Value="{StaticResource BackgroundBrush}"/>
         <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
         <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+    </Style>
+
+    <!-- Dropdown Button for tabs overflow -->
+    <Style TargetType="{x:Type avalonDockControls:DropDownButton}">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderBrush" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Foreground" Value="{StaticResource TextDimBrush}"/>
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+    </Style>
+
+    <!-- Navigator Window -->
+    <Style TargetType="{x:Type avalonDockControls:NavigatorWindow}">
+        <Setter Property="Background" Value="{StaticResource PanelBrush}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
     </Style>
 
     <!-- Docking Manager -->
