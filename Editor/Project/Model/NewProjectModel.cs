@@ -1,55 +1,95 @@
-﻿using Editor;
-using Editor.Project.Control;
-using Editor.Project.Data;
+﻿using Editor.Core;
+using Editor.Core.Data;
+using Editor.Core.Exceptions;
+using Editor.Core.Services;
 using System;
-using System.Collections.Generic;
-using System.Collections.ObjectModel;
-using System.IO;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using System.Windows;
 
 namespace Editor.Project.Model
 {
     public class NewProjectModel : ViewModelBase
     {
+        private string _projectName = "New Project";
+        private string _path;
+
+        public event EventHandler<ProjectData> ProjectOpened;
+
         public NewProjectModel()
         {
+            _path = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), 
+                "VortexEngineProjects", 
+                "New Project");
         }
 
-        private string _projectName = "New Project";
         public string ProjectName
         {
             get => _projectName;
             set
             {
-                if (_projectName != value)
+                if (SetProperty(ref _projectName, value, nameof(ProjectName)))
                 {
-                    _projectName = value;
-                    OnPropertyChanged(nameof(ProjectName));
-
                     Path = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(_path), _projectName);
                 }
             }
         }
 
-        private string _path = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "VortexEngineProjects", "New Project");
         public string Path
         {
             get => _path;
-            set
-            {
-                if (_path != value)
-                {
-                    _path = value;
-                    OnPropertyChanged(nameof(Path));
-                }
-            }
+            set => SetProperty(ref _path, value, nameof(Path));
         }
 
-        public bool createProject()
+        public bool CreateProject()
         {
-            return ProjectManager.Instance.CreateNewProject(ProjectName, Path);
+            try
+            {
+                var project = ProjectService.Instance.CreateProject(ProjectName, Path);
+                ProjectOpened?.Invoke(this, project);
+                return true;
+            }
+            catch (DuplicateProjectPathException ex)
+            {
+                MessageBox.Show(
+                    $"Fehler: {ex.Message}\n\nBitte wählen Sie einen anderen Pfad.",
+                    "Projekt existiert bereits",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
+            catch (ProjectValidationException ex)
+            {
+                MessageBox.Show(
+                    $"Validierungsfehler: {ex.Message}",
+                    "Ungültige Eingabe",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+            catch (ProjectIOException ex)
+            {
+                MessageBox.Show(
+                    $"Fehler beim Zugriff auf das Dateisystem: {ex.Message}",
+                    "Dateisystemfehler",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+            catch (ProjectException ex)
+            {
+                MessageBox.Show(
+                    $"Ein Fehler ist aufgetreten: {ex.Message}",
+                    "Fehler",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    $"Ein unerwarteter Fehler ist aufgetreten: {ex.Message}",
+                    "Unerwarteter Fehler",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+
+            return false;
         }
     }
 }

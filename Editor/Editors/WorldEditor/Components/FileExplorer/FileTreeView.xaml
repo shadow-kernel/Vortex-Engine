@@ -85,34 +85,21 @@
         </Style>
     </UserControl.Resources>
 
-    <Border Background="#252526" CornerRadius="4">
-        <Grid>
-            <Grid.RowDefinitions>
-                <RowDefinition Height="28"/>
-                <RowDefinition Height="*"/>
-            </Grid.RowDefinitions>
-
-            <!-- Header -->
-            <Border Grid.Row="0" Background="#2D2D30" CornerRadius="4,4,0,0" Padding="8,0">
-                <TextBlock Text="Project" Foreground="#C5C5C5" FontSize="11" 
-                           FontWeight="SemiBold" VerticalAlignment="Center"/>
-            </Border>
-
-            <!-- Tree View -->
-            <TreeView Grid.Row="1" Background="Transparent" BorderThickness="0" Padding="4">
-                <TreeViewItem Header="Assets" IsExpanded="True" Style="{StaticResource TreeViewItemStyle}">
-                    <TreeViewItem Header="Materials" Style="{StaticResource TreeViewItemStyle}"/>
-                    <TreeViewItem Header="Models" Style="{StaticResource TreeViewItemStyle}">
-                        <TreeViewItem Header="Characters" Style="{StaticResource TreeViewItemStyle}"/>
-                        <TreeViewItem Header="Environment" Style="{StaticResource TreeViewItemStyle}"/>
-                    </TreeViewItem>
-                    <TreeViewItem Header="Prefabs" Style="{StaticResource TreeViewItemStyle}"/>
-                    <TreeViewItem Header="Scenes" Style="{StaticResource TreeViewItemStyle}"/>
-                    <TreeViewItem Header="Scripts" Style="{StaticResource TreeViewItemStyle}"/>
-                    <TreeViewItem Header="Textures" Style="{StaticResource TreeViewItemStyle}"/>
+    <Border Background="#252526">
+        <!-- Tree View -->
+        <TreeView Background="Transparent" BorderThickness="0" Padding="4">
+            <TreeViewItem Header="Assets" IsExpanded="True" Style="{StaticResource TreeViewItemStyle}">
+                <TreeViewItem Header="Materials" Style="{StaticResource TreeViewItemStyle}"/>
+                <TreeViewItem Header="Models" Style="{StaticResource TreeViewItemStyle}">
+                    <TreeViewItem Header="Characters" Style="{StaticResource TreeViewItemStyle}"/>
+                    <TreeViewItem Header="Environment" Style="{StaticResource TreeViewItemStyle}"/>
                 </TreeViewItem>
-                <TreeViewItem Header="Packages" Style="{StaticResource TreeViewItemStyle}"/>
-            </TreeView>
-        </Grid>
+                <TreeViewItem Header="Prefabs" Style="{StaticResource TreeViewItemStyle}"/>
+                <TreeViewItem Header="Scenes" Style="{StaticResource TreeViewItemStyle}"/>
+                <TreeViewItem Header="Scripts" Style="{StaticResource TreeViewItemStyle}"/>
+                <TreeViewItem Header="Textures" Style="{StaticResource TreeViewItemStyle}"/>
+            </TreeViewItem>
+            <TreeViewItem Header="Packages" Style="{StaticResource TreeViewItemStyle}"/>
+        </TreeView>
     </Border>
 </UserControl>

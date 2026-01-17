@@ -1,10 +1,12 @@
-using Editor.Project.Control;
-using Editor.Project.Data;
+using Editor.Core;
+using Editor.Core.Data;
+using Editor.Core.Services;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
+using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
@@ -12,8 +14,8 @@ namespace Editor.Project.Model
 {
     public class OpenProjectModel : ViewModelBase
     {
-        private ObservableCollection<ProjectEntity> _filteredProjects;
-        private List<ProjectEntity> _allProjects;
+        private ObservableCollection<ProjectData> _filteredProjects;
+        private List<ProjectData> _allProjects;
         private string _searchText;
 
         public OpenProjectModel()
@@ -21,17 +23,10 @@ namespace Editor.Project.Model
             LoadProjects();
         }
 
-        public ObservableCollection<ProjectEntity> Projects
+        public ObservableCollection<ProjectData> Projects
         {
             get => _filteredProjects;
-            set
-            {
-                if (_filteredProjects != value)
-                {
-                    _filteredProjects = value;
-                    OnPropertyChanged(nameof(Projects));
-                }
-            }
+            set => SetProperty(ref _filteredProjects, value, nameof(Projects));
         }
 
         public string SearchText
@@ -39,10 +34,8 @@ namespace Editor.Project.Model
             get => _searchText;
             set
             {
-                if (_searchText != value)
+                if (SetProperty(ref _searchText, value, nameof(SearchText)))
                 {
-                    _searchText = value;
-                    OnPropertyChanged(nameof(SearchText));
                     ApplyFilter();
                 }
             }
@@ -50,31 +43,31 @@ namespace Editor.Project.Model
 
         public void LoadProjects()
         {
-            var projectDict = ProjectFileManager.Instance.GetAllProjects();
-            _allProjects = new List<ProjectEntity>();
+            var projectDict = ProjectService.Instance.GetAllProjects();
+            _allProjects = new List<ProjectData>();
 
             foreach (var projectRef in projectDict.Values)
             {
-                var projectEntity = ConvertToProjectEntity(projectRef);
-                UpdateProjectMetadata(projectEntity);
-                _allProjects.Add(projectEntity);
+                var project = ConvertToProject(projectRef);
+                UpdateProjectMetadata(project);
+                _allProjects.Add(project);
             }
 
             _allProjects = _allProjects.OrderByDescending(p => p.LastModified).ToList();
-            _filteredProjects = new ObservableCollection<ProjectEntity>(_allProjects);
-            OnPropertyChanged(nameof(Projects));
-        }
+                _filteredProjects = new ObservableCollection<ProjectData>(_allProjects);
+                OnPropertyChanged(nameof(Projects));
+            }
 
-        private ProjectEntity ConvertToProjectEntity(ProjectFileRef projectRef)
-        {
-            return new ProjectEntity(projectRef.Id, projectRef.Path, projectRef.Name)
+            private ProjectData ConvertToProject(ProjectRef projectRef)
             {
-                ImagePath = projectRef.ImagePath
-            };
-        }
+                return new ProjectData(projectRef.Id, projectRef.Path, projectRef.Name)
+                {
+                    ImagePath = projectRef.ImagePath
+                };
+            }
 
-        private void UpdateProjectMetadata(ProjectEntity project)
-        {
+            private void UpdateProjectMetadata(ProjectData project)
+            {
             try
             {
                 if (Directory.Exists(project.Path))
@@ -83,14 +76,9 @@ namespace Editor.Project.Model
                     project.LastModified = dirInfo.LastWriteTime;
 
                     string thumbnailPath = Path.Combine(project.Path, ".ve", "icon.png");
-                    if (File.Exists(thumbnailPath))
-                    {
-                        project.Thumbnail = LoadThumbnail(thumbnailPath);
-                    }
-                    else
-                    {
-                        project.Thumbnail = LoadDefaultThumbnail();
-                    }
+                    project.Thumbnail = File.Exists(thumbnailPath) 
+                        ? LoadThumbnail(thumbnailPath) 
+                        : LoadDefaultThumbnail();
                 }
                 else
                 {
@@ -139,7 +127,7 @@ namespace Editor.Project.Model
         {
             if (string.IsNullOrWhiteSpace(_searchText))
             {
-                _filteredProjects = new ObservableCollection<ProjectEntity>(_allProjects);
+                _filteredProjects = new ObservableCollection<ProjectData>(_allProjects);
             }
             else
             {
@@ -148,7 +136,7 @@ namespace Editor.Project.Model
                     ContainsIgnoreCase(p.Path, _searchText)
                 ).ToList();
 
-                _filteredProjects = new ObservableCollection<ProjectEntity>(filtered);
+                _filteredProjects = new ObservableCollection<ProjectData>(filtered);
             }
 
             OnPropertyChanged(nameof(Projects));
@@ -161,25 +149,35 @@ namespace Editor.Project.Model
             return source.IndexOf(value ?? string.Empty, StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
-        public void DeleteProject(ProjectEntity project, bool deleteFiles)
+        public void DeleteProject(ProjectData project, bool deleteFiles)
         {
             if (project == null)
                 return;
 
-            ProjectFileManager.Instance.RemoveProject(project.Id, deleteFiles);
+            // TODO: Implement RemoveProject in ProjectService
             _allProjects.Remove(project);
             ApplyFilter();
         }
 
-        public event EventHandler<ProjectEntity> ProjectOpened;
+        public event EventHandler<ProjectData> ProjectOpened;
 
-        internal void OpenProject(ProjectFileRef item)
+        public void OpenProject(ProjectRef item)
         {
-            var project = ProjectManager.Instance.loadProject(item);
-            if (project != null)
+            try
             {
-                System.Diagnostics.Debug.WriteLine($"OpenProject: Scenes Count = {project.Scenes?.Count ?? -1}");
-                ProjectOpened?.Invoke(this, project);
+                var project = ProjectService.Instance.LoadProject(item);
+                if (project != null)
+                {
+                    ProjectOpened?.Invoke(this, project);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    $"Fehler beim Laden des Projekts: {ex.Message}",
+                    "Ladefehler",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
             }
         }
     }

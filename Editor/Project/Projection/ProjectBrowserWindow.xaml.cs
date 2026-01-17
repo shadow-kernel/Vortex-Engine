@@ -1,4 +1,4 @@
-﻿using Editor.Project.Data;
+﻿using Editor.Core.Data;
 using System;
 using System.Windows;
 using System.Windows.Controls;
@@ -8,7 +8,7 @@ namespace Editor.Project.Projection
 {
     public partial class ProjectBrowserWindow : Window
     {
-        public ProjectEntity SelectedProject { get; set; }
+        public ProjectData SelectedProject { get; set; }
 
         public ProjectBrowserWindow()
         {

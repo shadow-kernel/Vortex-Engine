@@ -1,27 +1,10 @@
-﻿using Editor.Project;
-using Editor.Project.Data;
+﻿using Editor.Core.Data;
 using Editor.Project.Projection;
-using System;
-using System.Collections.Generic;
 using System.ComponentModel;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
-using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Navigation;
-using System.Windows.Shapes;
 
 namespace Editor
 {
-    /// <summary>
-    /// Interaktionslogik für MainWindow.xaml
-    /// </summary>
     public partial class MainWindow : Window
     {
         public MainWindow()
@@ -34,7 +17,7 @@ namespace Editor
         private void OnWindowClosing(object sender, CancelEventArgs e)
         {
             Closing -= OnWindowClosing;
-            ProjectEntity.Current?.Unload();
+            ProjectData.Current?.Unload();
         }
 
         private void OnMainWindowLoaded(object sender, RoutedEventArgs e)
@@ -54,9 +37,9 @@ namespace Editor
 
             if (result == true && browserWindow.SelectedProject != null)
             {
-                ProjectEntity.Current?.Unload();
+                ProjectData.Current?.Unload();
                 var project = browserWindow.SelectedProject;
-                DataContext = project;  
+                DataContext = project;
                 Title = $"Vortex Engine - {project.Name}";
             }
             else
@@ -64,6 +47,5 @@ namespace Editor
                 Application.Current.Shutdown();
             }
         }
-
     }
 }

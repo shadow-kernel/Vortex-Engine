@@ -148,34 +148,28 @@
         </Style>
     </UserControl.Resources>
 
-    <Border Background="#252526" CornerRadius="4">
+    <Border Background="#252526">
         <Grid>
             <Grid.RowDefinitions>
-                <RowDefinition Height="28"/>
                 <RowDefinition Height="32"/>
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
 
-            <!-- Header -->
-            <Border Grid.Row="0" Background="#2D2D30" CornerRadius="4,4,0,0" Padding="8,0">
+            <!-- Search Bar with Add Button -->
+            <Border Grid.Row="0" Background="#1E1E1E" Padding="6,4">
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <TextBlock Text="Hierarchy" Foreground="#C5C5C5" FontSize="11" 
-                               FontWeight="SemiBold" VerticalAlignment="Center"/>
-                    <Button Grid.Column="1" Content="&#xE710;" Style="{StaticResource AddButtonStyle}" ToolTip="Add Entity"/>
+                    <TextBox Style="{StaticResource SearchBoxStyle}"/>
+                    <Button Grid.Column="1" Content="&#xE710;" Style="{StaticResource AddButtonStyle}" 
+                            ToolTip="Add Entity" Margin="4,0,0,0"/>
                 </Grid>
             </Border>
 
-            <!-- Search Bar -->
-            <Border Grid.Row="1" Padding="6,4">
-                <TextBox Style="{StaticResource SearchBoxStyle}"/>
-            </Border>
-
             <!-- Scene Tree -->
-            <TreeView Grid.Row="2" Background="Transparent" BorderThickness="0" Padding="4,0">
+            <TreeView Grid.Row="1" Background="Transparent" BorderThickness="0" Padding="4,0">
                 <TreeViewItem Header="Main Scene" IsExpanded="True" Style="{StaticResource SceneTreeItemStyle}">
                     <TreeViewItem Header="Main Camera" Style="{StaticResource SceneTreeItemStyle}"/>
                     <TreeViewItem Header="Directional Light" Style="{StaticResource SceneTreeItemStyle}"/>

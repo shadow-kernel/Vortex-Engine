@@ -1,6 +1,6 @@
 using System;
 
-namespace Editor.Project.Exceptions
+namespace Editor.Core.Exceptions
 {
     /// <summary>
     /// Basis-Exception für alle projektbezogenen Fehler

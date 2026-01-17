@@ -67,39 +67,27 @@
         </Style>
     </UserControl.Resources>
 
-    <Border Background="#252526" CornerRadius="4" Margin="2">
+    <Border Background="#252526">
         <Grid>
             <Grid.RowDefinitions>
-                <RowDefinition Height="32"/>
+                <RowDefinition Height="28"/>
                 <RowDefinition Height="*"/>
-                <RowDefinition Height="24"/>
+                <RowDefinition Height="22"/>
             </Grid.RowDefinitions>
 
-            <!-- Header with Tabs -->
-            <Border Grid.Row="0" Background="#2D2D30" CornerRadius="4,4,0,0">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-
-                    <!-- View Tabs -->
-                    <StackPanel Grid.Column="0" Orientation="Horizontal">
-                        <RadioButton Content="Scene" IsChecked="True" Style="{StaticResource ViewTabStyle}" GroupName="ViewTabs"/>
-                        <RadioButton Content="Game" Style="{StaticResource ViewTabStyle}" GroupName="ViewTabs"/>
-                    </StackPanel>
-
-                    <!-- Toolbar -->
-                    <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="8,0">
-                        <Button Content="&#xE759;" Style="{StaticResource ToolButtonStyle}" ToolTip="Move Tool"/>
-                        <Button Content="&#xE7AD;" Style="{StaticResource ToolButtonStyle}" ToolTip="Rotate Tool"/>
-                        <Button Content="&#xE740;" Style="{StaticResource ToolButtonStyle}" ToolTip="Scale Tool"/>
-                        <Rectangle Width="1" Fill="#404040" Margin="6,6"/>
-                        <Button Content="&#xE8B3;" Style="{StaticResource ToolButtonStyle}" ToolTip="Grid"/>
-                        <Button Content="&#xE81E;" Style="{StaticResource ToolButtonStyle}" ToolTip="Snap"/>
-                    </StackPanel>
-                </Grid>
+            <!-- Toolbar -->
+            <Border Grid.Row="0" Background="#1E1E1E">
+                <StackPanel Orientation="Horizontal" Margin="4,0">
+                    <Button Content="&#xE759;" Style="{StaticResource ToolButtonStyle}" ToolTip="Move Tool (W)"/>
+                    <Button Content="&#xE7AD;" Style="{StaticResource ToolButtonStyle}" ToolTip="Rotate Tool (E)"/>
+                    <Button Content="&#xE740;" Style="{StaticResource ToolButtonStyle}" ToolTip="Scale Tool (R)"/>
+                    <Rectangle Width="1" Fill="#404040" Margin="6,6"/>
+                    <Button Content="&#xE8B3;" Style="{StaticResource ToolButtonStyle}" ToolTip="Grid"/>
+                    <Button Content="&#xE81E;" Style="{StaticResource ToolButtonStyle}" ToolTip="Snap"/>
+                    <Rectangle Width="1" Fill="#404040" Margin="6,6"/>
+                    <Button Content="&#xE71E;" Style="{StaticResource ToolButtonStyle}" ToolTip="2D/3D View"/>
+                    <Button Content="&#xE7B3;" Style="{StaticResource ToolButtonStyle}" ToolTip="Gizmos"/>
+                </StackPanel>
             </Border>
 
             <!-- Preview Area -->
@@ -139,7 +127,7 @@
             </Border>
 
             <!-- Status Bar -->
-            <Border Grid.Row="2" Background="#2D2D30" CornerRadius="0,0,4,4">
+            <Border Grid.Row="2" Background="#2D2D30">
                 <Grid Margin="8,0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
