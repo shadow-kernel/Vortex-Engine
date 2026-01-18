@@ -343,16 +343,17 @@
                     </ListBox.ItemsPanel>
                     <ListBox.ItemTemplate>
                         <DataTemplate>
-                            <StackPanel HorizontalAlignment="Center" Width="64">
+                            <StackPanel HorizontalAlignment="Center" Width="64" ToolTip="{Binding Name}">
                                 <TextBlock Text="{Binding Icon}" FontFamily="Segoe MDL2 Assets" FontSize="32" 
                                            Foreground="{Binding IconColor}" HorizontalAlignment="Center"/>
                                 <TextBlock x:Name="NameText" Text="{Binding Name}" Foreground="#C5C5C5" FontSize="10" 
                                            HorizontalAlignment="Center" Margin="0,4,0,0" TextTrimming="CharacterEllipsis"
-                                           TextWrapping="Wrap" MaxHeight="28" TextAlignment="Center"
+                                           TextWrapping="Wrap" MaxHeight="32" TextAlignment="Center" LineHeight="12"
                                            Visibility="{Binding IsRenaming, Converter={StaticResource InverseBoolToVisConverter}}"/>
                                 <TextBox x:Name="RenameBox" Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}"
                                          Background="#1E1E1E" Foreground="#C5C5C5" BorderBrush="#3FA9F5" 
                                          BorderThickness="1" FontSize="10" TextAlignment="Center" Padding="2"
+                                         MaxWidth="76"
                                          Visibility="{Binding IsRenaming, Converter={StaticResource BoolToVisConverter}}"
                                          LostFocus="OnRenameBoxLostFocus" KeyDown="OnRenameBoxKeyDown"
                                          IsVisibleChanged="OnRenameBoxVisibleChanged"/>

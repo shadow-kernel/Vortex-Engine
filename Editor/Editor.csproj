@@ -135,6 +135,17 @@
     <Compile Include="Core\Exceptions\ProjectValidationException.cs" />
     <Compile Include="Core\Serialization\DataSerializer.cs" />
     <Compile Include="Core\Services\ProjectService.cs" />
+    <Compile Include="Core\UndoableViewModelBase.cs" />
+    <Compile Include="Core\UndoRedo\Commands\ActionCommand.cs" />
+    <Compile Include="Core\UndoRedo\Commands\CollectionCommands.cs" />
+    <Compile Include="Core\UndoRedo\Commands\CompositeCommand.cs" />
+    <Compile Include="Core\UndoRedo\Commands\FileSystemCommands.cs" />
+    <Compile Include="Core\UndoRedo\Commands\PropertyChangeCommand.cs" />
+    <Compile Include="Core\UndoRedo\IUndoableCommand.cs" />
+    <Compile Include="Core\UndoRedo\UndoableCommandBase.cs" />
+    <Compile Include="Core\UndoRedo\UndoRedoExtensions.cs" />
+    <Compile Include="Core\UndoRedo\UndoRedoManager.cs" />
+    <Compile Include="Core\UndoRedo\UndoScope.cs" />
     <Compile Include="Core\Validation\ProjectValidator.cs" />
     <Compile Include="Core\ViewModelBase.cs" />
     <Compile Include="Editors\WorldEditor\Components\FileExplorer\Converters\BoolToVisibilityConverter.cs" />

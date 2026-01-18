@@ -6,6 +6,8 @@ using System.Threading;
 using System.Windows;
 using System.Windows.Threading;
 using Editor.Core.Data;
+using Editor.Core.UndoRedo;
+using Editor.Core.UndoRedo.Commands;
 using Editor.Editors.WorldEditor.Components.FileExplorer.Models;
 
 namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
@@ -189,6 +191,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
 
         /// <summary>
         /// Erstellt einen neuen Ordner im aktuellen Verzeichnis.
+        /// Diese Operation ist Undo-fähig.
         /// </summary>
         public FileSystemItem CreateFolder(string name = "New Folder")
         {
@@ -207,7 +210,9 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
                     newPath = Path.Combine(_currentFolder.FullPath, name);
                 }
 
-                Directory.CreateDirectory(newPath);
+                // Undo-fähiges Command erstellen
+                var command = new CreateFolderCommand(newPath);
+                UndoRedoManager.Instance.Execute(command);
                 
                 var newItem = new FileSystemItem(newPath) { Parent = _currentFolder };
                 return newItem;
@@ -222,6 +227,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
 
         /// <summary>
         /// Erstellt eine neue Datei im aktuellen Verzeichnis.
+        /// Diese Operation ist Undo-fähig.
         /// </summary>
         public FileSystemItem CreateFile(string name, string content = "")
         {
@@ -241,7 +247,9 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
                     newPath = Path.Combine(_currentFolder.FullPath, name);
                 }
 
-                File.WriteAllText(newPath, content);
+                // Undo-fähiges Command erstellen
+                var command = new CreateFileCommand(newPath, content);
+                UndoRedoManager.Instance.Execute(command);
                 
                 var newItem = new FileSystemItem(newPath) { Parent = _currentFolder };
                 return newItem;
@@ -256,6 +264,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
 
         /// <summary>
         /// Benennt ein Element um.
+        /// Diese Operation ist Undo-fähig.
         /// </summary>
         public bool Rename(FileSystemItem item, string newName)
         {
@@ -264,36 +273,58 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
 
             try
             {
+                // Den echten aktuellen Namen aus dem Dateipfad extrahieren
+                // (item.Name könnte schon durch das UI-Binding geändert worden sein)
+                string currentActualName = Path.GetFileName(item.FullPath);
+                
+                // Keine Änderung wenn Name gleich bleibt
+                if (currentActualName == newName)
+                {
+                    // Name zurücksetzen falls Binding ihn geändert hat
+                    item.Name = currentActualName;
+                    return true;
+                }
+
                 string parentPath = Path.GetDirectoryName(item.FullPath);
                 string newPath = Path.Combine(parentPath, newName);
+                string oldPath = item.FullPath;
 
                 if (item.IsDirectory)
                 {
                     if (Directory.Exists(newPath))
                     {
+                        // Name zurücksetzen
+                        item.Name = currentActualName;
                         MessageBox.Show("Ein Ordner mit diesem Namen existiert bereits.", 
                             "Fehler", MessageBoxButton.OK, MessageBoxImage.Warning);
                         return false;
                     }
-                    Directory.Move(item.FullPath, newPath);
                 }
                 else
                 {
                     if (File.Exists(newPath))
                     {
+                        // Name zurücksetzen
+                        item.Name = currentActualName;
                         MessageBox.Show("Eine Datei mit diesem Namen existiert bereits.", 
                             "Fehler", MessageBoxButton.OK, MessageBoxImage.Warning);
                         return false;
                     }
-                    File.Move(item.FullPath, newPath);
                 }
 
+                // Undo-fähiges Command erstellen und ausführen
+                var command = new RenameFileCommand(oldPath, newPath, item.IsDirectory);
+                UndoRedoManager.Instance.Execute(command);
+
+                // FileSystemItem aktualisieren nach erfolgreicher Umbenennung
                 item.FullPath = newPath;
                 item.Name = newName;
                 return true;
             }
             catch (Exception ex)
             {
+                // Bei Fehler den ursprünglichen Namen wiederherstellen
+                item.Name = Path.GetFileName(item.FullPath);
                 MessageBox.Show($"Fehler beim Umbenennen: {ex.Message}", 
                     "Fehler", MessageBoxButton.OK, MessageBoxImage.Error);
                 return false;
@@ -302,6 +333,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
 
         /// <summary>
         /// Löscht ein Element.
+        /// Diese Operation ist Undo-fähig.
         /// </summary>
         public bool Delete(FileSystemItem item)
         {
@@ -311,7 +343,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
             try
             {
                 var result = MessageBox.Show(
-                    $"Möchten Sie '{item.Name}' wirklich löschen?",
+                    $"Möchten Sie '{item.Name}' wirklich löschen?\n\nDiese Aktion kann mit Strg+Z rückgängig gemacht werden.",
                     "Löschen bestätigen",
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Question);
@@ -319,13 +351,16 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
                 if (result != MessageBoxResult.Yes)
                     return false;
 
+                // Undo-fähiges Command erstellen
                 if (item.IsDirectory)
                 {
-                    Directory.Delete(item.FullPath, true);
+                    var command = new DeleteFolderCommand(item.FullPath);
+                    UndoRedoManager.Instance.Execute(command);
                 }
                 else
                 {
-                    File.Delete(item.FullPath);
+                    var command = new DeleteFileCommand(item.FullPath);
+                    UndoRedoManager.Instance.Execute(command);
                 }
 
                 return true;
@@ -340,6 +375,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
 
         /// <summary>
         /// Verschiebt ein Element in einen Zielordner.
+        /// Diese Operation ist Undo-fähig.
         /// </summary>
         public bool MoveItem(FileSystemItem item, FileSystemItem targetFolder)
         {
@@ -356,6 +392,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
 
             try
             {
+                string oldPath = item.FullPath;
                 string newPath = Path.Combine(targetFolder.FullPath, item.Name);
 
                 if (item.IsDirectory)
@@ -366,7 +403,6 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
                             "Fehler", MessageBoxButton.OK, MessageBoxImage.Warning);
                         return false;
                     }
-                    Directory.Move(item.FullPath, newPath);
                 }
                 else
                 {
@@ -376,8 +412,11 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
                             "Fehler", MessageBoxButton.OK, MessageBoxImage.Warning);
                         return false;
                     }
-                    File.Move(item.FullPath, newPath);
                 }
+
+                // Undo-fähiges Command erstellen und ausführen
+                var command = new MoveItemCommand(oldPath, newPath, item.IsDirectory);
+                UndoRedoManager.Instance.Execute(command);
 
                 return true;
             }

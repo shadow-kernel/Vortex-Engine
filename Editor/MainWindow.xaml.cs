@@ -1,7 +1,9 @@
 ﻿using Editor.Core.Data;
+using Editor.Core.UndoRedo;
 using Editor.Project.Projection;
 using System.ComponentModel;
 using System.Windows;
+using System.Windows.Input;
 
 namespace Editor
 {
@@ -10,13 +12,44 @@ namespace Editor
         public MainWindow()
         {
             InitializeComponent();
+            SetupGlobalKeyboardShortcuts();
             Loaded += OnMainWindowLoaded;
             Closing += OnWindowClosing;
+        }
+
+        private void SetupGlobalKeyboardShortcuts()
+        {
+            // Globale Undo/Redo Shortcuts (Ctrl+Z, Ctrl+Y)
+            CommandBindings.Add(new CommandBinding(ApplicationCommands.Undo, OnGlobalUndo, OnCanGlobalUndo));
+            CommandBindings.Add(new CommandBinding(ApplicationCommands.Redo, OnGlobalRedo, OnCanGlobalRedo));
+        }
+
+        private void OnCanGlobalUndo(object sender, CanExecuteRoutedEventArgs e)
+        {
+            e.CanExecute = UndoRedoManager.Instance.CanUndo;
+        }
+
+        private void OnGlobalUndo(object sender, ExecutedRoutedEventArgs e)
+        {
+            UndoRedoManager.Instance.Undo();
+            e.Handled = true;
+        }
+
+        private void OnCanGlobalRedo(object sender, CanExecuteRoutedEventArgs e)
+        {
+            e.CanExecute = UndoRedoManager.Instance.CanRedo;
+        }
+
+        private void OnGlobalRedo(object sender, ExecutedRoutedEventArgs e)
+        {
+            UndoRedoManager.Instance.Redo();
+            e.Handled = true;
         }
 
         private void OnWindowClosing(object sender, CancelEventArgs e)
         {
             Closing -= OnWindowClosing;
+            UndoRedoManager.Instance.Clear();
             ProjectData.Current?.Unload();
         }
 

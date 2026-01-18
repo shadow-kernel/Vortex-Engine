@@ -1,6 +1,8 @@
 using System;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
+using Editor.Core.UndoRedo;
 using Editor.Editors.WorldEditor.Services;
 
 namespace Editor.Editors.WorldEditor.Components.HeaderBar
@@ -10,6 +12,64 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
         public HeaderBarView()
         {
             InitializeComponent();
+            SetupKeyboardShortcuts();
+            UpdateUndoRedoMenuItems();
+            UndoRedoManager.Instance.StateChanged += OnUndoRedoStateChanged;
+        }
+
+        private void SetupKeyboardShortcuts()
+        {
+            // Ctrl+Z = Undo
+            var undoBinding = new CommandBinding(ApplicationCommands.Undo, OnUndoExecuted, OnCanUndo);
+            CommandBindings.Add(undoBinding);
+
+            // Ctrl+Y = Redo
+            var redoBinding = new CommandBinding(ApplicationCommands.Redo, OnRedoExecuted, OnCanRedo);
+            CommandBindings.Add(redoBinding);
+        }
+
+        private void OnCanUndo(object sender, CanExecuteRoutedEventArgs e)
+        {
+            e.CanExecute = UndoRedoManager.Instance.CanUndo;
+        }
+
+        private void OnUndoExecuted(object sender, ExecutedRoutedEventArgs e)
+        {
+            UndoRedoManager.Instance.Undo();
+        }
+
+        private void OnCanRedo(object sender, CanExecuteRoutedEventArgs e)
+        {
+            e.CanExecute = UndoRedoManager.Instance.CanRedo;
+        }
+
+        private void OnRedoExecuted(object sender, ExecutedRoutedEventArgs e)
+        {
+            UndoRedoManager.Instance.Redo();
+        }
+
+        private void OnUndoRedoStateChanged(object sender, EventArgs e)
+        {
+            Dispatcher.Invoke(UpdateUndoRedoMenuItems);
+        }
+
+        private void UpdateUndoRedoMenuItems()
+        {
+            if (UndoMenuItem != null)
+            {
+                UndoMenuItem.IsEnabled = UndoRedoManager.Instance.CanUndo;
+                UndoMenuItem.Header = UndoRedoManager.Instance.CanUndo 
+                    ? $"_Undo {UndoRedoManager.Instance.UndoName}" 
+                    : "_Undo";
+            }
+
+            if (RedoMenuItem != null)
+            {
+                RedoMenuItem.IsEnabled = UndoRedoManager.Instance.CanRedo;
+                RedoMenuItem.Header = UndoRedoManager.Instance.CanRedo 
+                    ? $"_Redo {UndoRedoManager.Instance.RedoName}" 
+                    : "_Redo";
+            }
         }
 
         private MainWindow GetMainWindow()
@@ -98,12 +158,12 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
 
         private void Undo_Click(object sender, RoutedEventArgs e)
         {
-            // TODO: Implement undo
+            UndoRedoManager.Instance.Undo();
         }
 
         private void Redo_Click(object sender, RoutedEventArgs e)
         {
-            // TODO: Implement redo
+            UndoRedoManager.Instance.Redo();
         }
 
         private void Cut_Click(object sender, RoutedEventArgs e)

@@ -292,12 +292,12 @@ d:DesignHeight="64" d:DesignWidth="1200">
             
             <!-- Edit Menu -->
             <MenuItem Header="_Edit">
-                <MenuItem Header="_Undo" InputGestureText="Ctrl+Z" Click="Undo_Click">
+                <MenuItem x:Name="UndoMenuItem" Header="_Undo" InputGestureText="Ctrl+Z" Click="Undo_Click">
                     <MenuItem.Icon>
                         <TextBlock Text="&#xE7A7;" FontFamily="Segoe MDL2 Assets" FontSize="12"/>
                     </MenuItem.Icon>
                 </MenuItem>
-                <MenuItem Header="_Redo" InputGestureText="Ctrl+Y" Click="Redo_Click">
+                <MenuItem x:Name="RedoMenuItem" Header="_Redo" InputGestureText="Ctrl+Y" Click="Redo_Click">
                     <MenuItem.Icon>
                         <TextBlock Text="&#xE7A6;" FontFamily="Segoe MDL2 Assets" FontSize="12"/>
                     </MenuItem.Icon>

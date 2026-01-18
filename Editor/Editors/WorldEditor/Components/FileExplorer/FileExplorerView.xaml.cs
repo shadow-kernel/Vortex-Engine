@@ -563,6 +563,8 @@ float4 PS_Main(PS_INPUT input) : SV_TARGET
             }
             else if (e.Key == Key.Escape)
             {
+                // Ursprünglichen Namen wiederherstellen
+                item.Name = System.IO.Path.GetFileName(item.FullPath);
                 item.IsRenaming = false;
                 e.Handled = true;
             }
@@ -570,14 +572,33 @@ float4 PS_Main(PS_INPUT input) : SV_TARGET
 
         private void FinishRename(FileSystemItem item, string newName)
         {
-            if (string.IsNullOrWhiteSpace(newName) || newName == item.Name)
+            item.IsRenaming = false;
+            
+            if (string.IsNullOrWhiteSpace(newName))
             {
-                item.IsRenaming = false;
+                // Bei leerem Namen: Originalnamen wiederherstellen
+                item.Name = System.IO.Path.GetFileName(item.FullPath);
                 return;
             }
 
-            _explorerService.Rename(item, newName);
-            item.IsRenaming = false;
+            // Den echten aktuellen Namen aus dem Pfad holen
+            string currentActualName = System.IO.Path.GetFileName(item.FullPath);
+            
+            if (newName == currentActualName)
+            {
+                // Keine Änderung - Name wiederherstellen falls Binding ihn geändert hat
+                item.Name = currentActualName;
+                return;
+            }
+
+            // Umbenennung durchführen
+            bool success = _explorerService.Rename(item, newName);
+            
+            if (!success)
+            {
+                // Bei Fehler: Originalnamen wiederherstellen
+                item.Name = System.IO.Path.GetFileName(item.FullPath);
+            }
         }
 
         #endregion
