@@ -61,7 +61,7 @@ jobs:
         Set-Content $issFile $content
     
     - name: Build C++ Engine (x64)
-      run: msbuild Engine/Engine.vcxproj /p:Configuration=${{ env.BUILD_CONFIGURATION }} /p:Platform=x64 /m
+      run: msbuild Engine/Engine.vcxproj /p:Configuration=${{ env.BUILD_CONFIGURATION }} /p:Platform=x64 /p:PlatformToolset=v143 /m
     
     - name: Build Editor Application
       run: msbuild Editor/Editor.csproj /p:Configuration=${{ env.BUILD_CONFIGURATION }} /p:Platform=AnyCPU /m
