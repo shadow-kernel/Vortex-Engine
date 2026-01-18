@@ -1,12 +1,7 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Collections.ObjectModel;
-using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using Editor.Project.Data;
+using Editor.Core.Data;
 using Editor.Project.Model;
 
 namespace Editor.Project.Projection
@@ -30,7 +25,7 @@ namespace Editor.Project.Projection
             }
         }
 
-        private void OnProjectOpened(object sender, ProjectEntity project)
+        private void OnProjectOpened(object sender, ProjectData project)
         {
             var window = Window.GetWindow(this) as ProjectBrowserWindow;
             if (window != null)
@@ -41,7 +36,7 @@ namespace Editor.Project.Projection
             }
         }
 
-        private void ExitButton_Pressed(object sender, System.Windows.RoutedEventArgs e)
+        private void ExitButton_Pressed(object sender, RoutedEventArgs e)
         {
             var window = Window.GetWindow(this) as ProjectBrowserWindow;
             if (window != null)
@@ -51,16 +46,16 @@ namespace Editor.Project.Projection
             }
         }
 
-        private void OpenButton_Pressed(object sender, System.Windows.RoutedEventArgs e)
+        private void OpenButton_Pressed(object sender, RoutedEventArgs e)
         {
-            var item = ProjectsListView.SelectedItem as ProjectFileRef;
+            var item = ProjectsListView.SelectedItem as ProjectRef;
             if (item != null)
             {
                 _dataContextModel.OpenProject(item);
             }
         }
 
-        private void DoubleClickListItem(object sender, System.Windows.RoutedEventArgs e)
+        private void DoubleClickListItem(object sender, RoutedEventArgs e)
         {
             OpenButton_Pressed(sender, e);
         }
@@ -77,7 +72,7 @@ namespace Editor.Project.Projection
         private void DeleteButton_Click(object sender, RoutedEventArgs e)
         {
             var button = sender as Button;
-            var project = button?.Tag as ProjectEntity;
+            var project = button?.Tag as ProjectData;
 
             if (project == null)
                 return;

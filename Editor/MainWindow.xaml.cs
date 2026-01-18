@@ -1,49 +1,117 @@
-﻿using Editor.Project;
-using Editor.Project.Data;
+﻿using Editor.Core.Data;
+using Editor.Core.Services;
+using Editor.Core.UndoRedo;
 using Editor.Project.Projection;
-using System;
-using System.Collections.Generic;
 using System.ComponentModel;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
 using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Navigation;
-using System.Windows.Shapes;
 
 namespace Editor
 {
-    /// <summary>
-    /// Interaktionslogik für MainWindow.xaml
-    /// </summary>
     public partial class MainWindow : Window
     {
         public MainWindow()
         {
             InitializeComponent();
+            SetupGlobalKeyboardShortcuts();
             Loaded += OnMainWindowLoaded;
             Closing += OnWindowClosing;
+        }
+
+        private void SetupGlobalKeyboardShortcuts()
+        {
+            // Globale Undo/Redo Shortcuts (Ctrl+Z, Ctrl+Y)
+            CommandBindings.Add(new CommandBinding(ApplicationCommands.Undo, OnGlobalUndo, OnCanGlobalUndo));
+            CommandBindings.Add(new CommandBinding(ApplicationCommands.Redo, OnGlobalRedo, OnCanGlobalRedo));
+        }
+
+        private void OnCanGlobalUndo(object sender, CanExecuteRoutedEventArgs e)
+        {
+            // Always allow execution - sound will play if at limit
+            e.CanExecute = true;
+        }
+
+        private void OnGlobalUndo(object sender, ExecutedRoutedEventArgs e)
+        {
+            UndoRedoManager.Instance.Undo();
+            e.Handled = true;
+        }
+
+        private void OnCanGlobalRedo(object sender, CanExecuteRoutedEventArgs e)
+        {
+            // Always allow execution - sound will play if at limit
+            e.CanExecute = true;
+        }
+
+        private void OnGlobalRedo(object sender, ExecutedRoutedEventArgs e)
+        {
+            UndoRedoManager.Instance.Redo();
+            e.Handled = true;
         }
 
         private void OnWindowClosing(object sender, CancelEventArgs e)
         {
             Closing -= OnWindowClosing;
-            ProjectEntity.Current?.Unload();
+            UndoRedoManager.Instance.Clear();
+            ProjectData.Current?.Unload();
         }
 
         private void OnMainWindowLoaded(object sender, RoutedEventArgs e)
         {
             Loaded -= OnMainWindowLoaded;
-            ShowProjectBrowser();
+            
+            // Prüfe ob ein gültiges letztes Projekt existiert
+            if (EditorStateService.Instance.IsLastProjectValid())
+            {
+                TryLoadLastProject();
+            }
+            else
+            {
+                // Kein gültiges letztes Projekt - zeige Browser
+                EditorStateService.Instance.ClearLastProject();
+                OpenProjectBrowser();
+            }
         }
 
-        private void ShowProjectBrowser()
+        /// <summary>
+        /// Versucht das zuletzt geöffnete Projekt zu laden.
+        /// Bei Fehlern wird der ProjectBrowser geöffnet.
+        /// </summary>
+        private void TryLoadLastProject()
+        {
+            try
+            {
+                var lastProjectId = EditorStateService.Instance.LastProjectId;
+                var lastProjectPath = EditorStateService.Instance.LastProjectPath;
+
+                if (lastProjectId.HasValue)
+                {
+                    var projects = ProjectService.Instance.GetAllProjects();
+                    if (projects.TryGetValue(lastProjectId.Value, out var projectRef))
+                    {
+                        var project = ProjectService.Instance.LoadProject(projectRef);
+                        LoadProject(project);
+                        return;
+                    }
+                }
+
+                // Projekt nicht in Registry gefunden - Browser öffnen
+                EditorStateService.Instance.ClearLastProject();
+                OpenProjectBrowser();
+            }
+            catch
+            {
+                // Bei Fehlern Browser öffnen
+                EditorStateService.Instance.ClearLastProject();
+                OpenProjectBrowser();
+            }
+        }
+
+        /// <summary>
+        /// Öffnet den ProjectBrowser und lädt das ausgewählte Projekt.
+        /// Gibt true zurück wenn ein Projekt geladen wurde.
+        /// </summary>
+        public bool OpenProjectBrowser()
         {
             var browserWindow = new ProjectBrowserWindow
             {
@@ -54,16 +122,43 @@ namespace Editor
 
             if (result == true && browserWindow.SelectedProject != null)
             {
-                ProjectEntity.Current?.Unload();
-                var project = browserWindow.SelectedProject;
-                DataContext = project;  
-                Title = $"Vortex Engine - {project.Name}";
+                LoadProject(browserWindow.SelectedProject);
+                return true;
             }
-            else
+            else if (ProjectData.Current == null)
             {
                 Application.Current.Shutdown();
             }
+
+            return false;
         }
 
+        /// <summary>
+        /// Lädt ein Projekt und zeigt den Editor-Inhalt an.
+        /// </summary>
+        public void LoadProject(ProjectData project)
+        {
+            ProjectData.Current?.Unload();
+            DataContext = project;
+            Title = $"Vortex Engine - {project.Name}";
+            WorldEditor.SetEditorVisible(true);
+            
+            // Speichere als letztes geöffnetes Projekt
+            EditorStateService.Instance.SetLastProject(project.Id, project.Path);
+        }
+
+        /// <summary>
+        /// Schließt das aktuelle Projekt und versteckt den Editor-Inhalt.
+        /// </summary>
+        public void CloseCurrentProject()
+        {
+            ProjectData.Current?.Unload();
+            DataContext = null;
+            Title = "Vortex Engine";
+            WorldEditor.SetEditorVisible(false);
+            
+            // Lösche letztes Projekt - beim nächsten Start wird Browser geöffnet
+            EditorStateService.Instance.ClearLastProject();
+        }
     }
 }

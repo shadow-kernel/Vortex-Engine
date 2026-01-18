@@ -1,0 +1,300 @@
+<UserControl x:Class="Editor.Editors.WorldEditor.Components.Inspector.InspectorView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+             mc:Ignorable="d" 
+             d:DesignHeight="500" d:DesignWidth="280">
+
+    <UserControl.Resources>
+        <Style x:Key="PropertyLabelStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#808080"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Width" Value="70"/>
+        </Style>
+
+        <Style x:Key="PropertyTextBoxStyle" TargetType="TextBox">
+            <Setter Property="Background" Value="#1E1E1E"/>
+            <Setter Property="Foreground" Value="#C5C5C5"/>
+            <Setter Property="BorderBrush" Value="#3C3C3C"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="6,3"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border Background="{TemplateBinding Background}" 
+                                BorderBrush="{TemplateBinding BorderBrush}" 
+                                BorderThickness="{TemplateBinding BorderThickness}" 
+                                CornerRadius="3">
+                            <ScrollViewer x:Name="PART_ContentHost" Margin="0"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsFocused" Value="True">
+                                <Setter Property="BorderBrush" Value="#3FA9F5"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="VectorInputStyle" TargetType="TextBox" BasedOn="{StaticResource PropertyTextBoxStyle}">
+            <Setter Property="Width" Value="50"/>
+            <Setter Property="TextAlignment" Value="Center"/>
+        </Style>
+
+        <Style x:Key="SectionHeaderStyle" TargetType="Expander">
+            <Setter Property="Background" Value="#2D2D30"/>
+            <Setter Property="Foreground" Value="#C5C5C5"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="IsExpanded" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Expander">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <Border Grid.Row="0" Background="{TemplateBinding Background}" 
+                                    CornerRadius="4" Padding="8,6">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <ToggleButton x:Name="HeaderSite" Grid.Column="0" 
+                                                  IsChecked="{Binding IsExpanded, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                                        <ToggleButton.Template>
+                                            <ControlTemplate TargetType="ToggleButton">
+                                                <Path x:Name="Arrow" Data="M0,0 L4,4 L0,8 Z" 
+                                                      Fill="#606060" Margin="0,0,6,0">
+                                                    <Path.RenderTransform>
+                                                        <RotateTransform x:Name="ArrowRotation" Angle="0" CenterX="2" CenterY="4"/>
+                                                    </Path.RenderTransform>
+                                                </Path>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsChecked" Value="True">
+                                                        <Setter TargetName="Arrow" Property="RenderTransform">
+                                                            <Setter.Value>
+                                                                <RotateTransform Angle="90" CenterX="2" CenterY="4"/>
+                                                            </Setter.Value>
+                                                        </Setter>
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </ToggleButton.Template>
+                                    </ToggleButton>
+                                    <TextBlock Grid.Column="1" Text="{TemplateBinding Tag}" FontFamily="Segoe MDL2 Assets" 
+                                               FontSize="14" Foreground="#3FA9F5" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                    <ContentPresenter Grid.Column="2" ContentSource="Header" 
+                                                      VerticalAlignment="Center"/>
+                                    <Button Grid.Column="3" Content="&#xE712;" FontFamily="Segoe MDL2 Assets" 
+                                            FontSize="10" Foreground="#606060" Background="Transparent" 
+                                            BorderThickness="0" Cursor="Hand" ToolTip="Options"/>
+                                </Grid>
+                            </Border>
+                            <ContentPresenter x:Name="ExpandSite" Grid.Row="1" 
+                                              Visibility="Collapsed" Margin="0,4,0,0"/>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsExpanded" Value="True">
+                                <Setter TargetName="ExpandSite" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="ComponentButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="#3FA9F5"/>
+            <Setter Property="Foreground" Value="#FFFFFF"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="12,6"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Border" Background="{TemplateBinding Background}" 
+                                Padding="{TemplateBinding Padding}" CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="#5BB8F7"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="#2F8DD6"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
+    <Border Background="#252526">
+        <!-- Content -->
+        <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="8">
+            <StackPanel Margin="4">
+                <!-- Entity Header -->
+                <Border Background="#2D2D30" CornerRadius="4" Padding="8" Margin="0,0,0,8">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <CheckBox Grid.Column="0" IsChecked="True" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <TextBox Grid.Column="1" Text="Player" Style="{StaticResource PropertyTextBoxStyle}" 
+                                 FontSize="12" FontWeight="SemiBold"/>
+                        <ComboBox Grid.Column="2" Width="80" Margin="8,0,0,0" SelectedIndex="0">
+                            <ComboBoxItem Content="Static"/>
+                            <ComboBoxItem Content="Dynamic"/>
+                            </ComboBox>
+                        </Grid>
+                    </Border>
+
+                    <!-- Transform Component -->
+                    <Expander Header="Transform" Tag="&#xE759;" Style="{StaticResource SectionHeaderStyle}" Margin="0,0,0,8">
+                        <StackPanel Margin="8,0">
+                            <!-- Position -->
+                            <Grid Margin="0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="70"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Position" Style="{StaticResource PropertyLabelStyle}"/>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                    <TextBlock Text="X" Foreground="#E06666" FontSize="10" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                                    <TextBox Text="0.0" Style="{StaticResource VectorInputStyle}"/>
+                                    <TextBlock Text="Y" Foreground="#6AA84F" FontSize="10" VerticalAlignment="Center" Margin="8,0,4,0"/>
+                                    <TextBox Text="1.5" Style="{StaticResource VectorInputStyle}"/>
+                                    <TextBlock Text="Z" Foreground="#6FA8DC" FontSize="10" VerticalAlignment="Center" Margin="8,0,4,0"/>
+                                    <TextBox Text="0.0" Style="{StaticResource VectorInputStyle}"/>
+                                </StackPanel>
+                            </Grid>
+
+                            <!-- Rotation -->
+                            <Grid Margin="0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="70"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Rotation" Style="{StaticResource PropertyLabelStyle}"/>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                    <TextBlock Text="X" Foreground="#E06666" FontSize="10" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                                    <TextBox Text="0.0" Style="{StaticResource VectorInputStyle}"/>
+                                    <TextBlock Text="Y" Foreground="#6AA84F" FontSize="10" VerticalAlignment="Center" Margin="8,0,4,0"/>
+                                    <TextBox Text="0.0" Style="{StaticResource VectorInputStyle}"/>
+                                    <TextBlock Text="Z" Foreground="#6FA8DC" FontSize="10" VerticalAlignment="Center" Margin="8,0,4,0"/>
+                                    <TextBox Text="0.0" Style="{StaticResource VectorInputStyle}"/>
+                                </StackPanel>
+                            </Grid>
+
+                            <!-- Scale -->
+                            <Grid Margin="0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="70"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Scale" Style="{StaticResource PropertyLabelStyle}"/>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                    <TextBlock Text="X" Foreground="#E06666" FontSize="10" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                                    <TextBox Text="1.0" Style="{StaticResource VectorInputStyle}"/>
+                                    <TextBlock Text="Y" Foreground="#6AA84F" FontSize="10" VerticalAlignment="Center" Margin="8,0,4,0"/>
+                                    <TextBox Text="1.0" Style="{StaticResource VectorInputStyle}"/>
+                                    <TextBlock Text="Z" Foreground="#6FA8DC" FontSize="10" VerticalAlignment="Center" Margin="8,0,4,0"/>
+                                    <TextBox Text="1.0" Style="{StaticResource VectorInputStyle}"/>
+                                </StackPanel>
+                            </Grid>
+                        </StackPanel>
+                    </Expander>
+
+                    <!-- Mesh Renderer Component -->
+                    <Expander Header="Mesh Renderer" Tag="&#xF158;" Style="{StaticResource SectionHeaderStyle}" Margin="0,0,0,8">
+                        <StackPanel Margin="8,0">
+                            <Grid Margin="0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="70"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Mesh" Style="{StaticResource PropertyLabelStyle}"/>
+                                <Border Grid.Column="1" Background="#1E1E1E" BorderBrush="#3C3C3C" 
+                                        BorderThickness="1" CornerRadius="3" Padding="6,3">
+                                    <TextBlock Text="Player.fbx" Foreground="#C5C5C5" FontSize="11"/>
+                                </Border>
+                            </Grid>
+                            <Grid Margin="0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="70"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Material" Style="{StaticResource PropertyLabelStyle}"/>
+                                <Border Grid.Column="1" Background="#1E1E1E" BorderBrush="#3C3C3C" 
+                                        BorderThickness="1" CornerRadius="3" Padding="6,3">
+                                    <TextBlock Text="PlayerMaterial" Foreground="#C5C5C5" FontSize="11"/>
+                                </Border>
+                            </Grid>
+                            <Grid Margin="0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="70"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Cast Shadow" Style="{StaticResource PropertyLabelStyle}"/>
+                                <CheckBox Grid.Column="1" IsChecked="True"/>
+                            </Grid>
+                        </StackPanel>
+                    </Expander>
+
+                    <!-- Rigidbody Component -->
+                    <Expander Header="Rigidbody" Tag="&#xE81A;" Style="{StaticResource SectionHeaderStyle}" Margin="0,0,0,8">
+                        <StackPanel Margin="8,0">
+                            <Grid Margin="0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="70"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Mass" Style="{StaticResource PropertyLabelStyle}"/>
+                                <TextBox Text="1.0" Style="{StaticResource PropertyTextBoxStyle}" Width="80" HorizontalAlignment="Left"/>
+                            </Grid>
+                            <Grid Margin="0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="70"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Drag" Style="{StaticResource PropertyLabelStyle}"/>
+                                <TextBox Text="0.0" Style="{StaticResource PropertyTextBoxStyle}" Width="80" HorizontalAlignment="Left"/>
+                            </Grid>
+                            <Grid Margin="0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="70"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Use Gravity" Style="{StaticResource PropertyLabelStyle}"/>
+                                <CheckBox Grid.Column="1" IsChecked="True"/>
+                            </Grid>
+                            <Grid Margin="0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="70"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Is Kinematic" Style="{StaticResource PropertyLabelStyle}"/>
+                                <CheckBox Grid.Column="1" IsChecked="False"/>
+                            </Grid>
+                        </StackPanel>
+                    </Expander>
+
+                    <!-- Add Component Button -->
+                    <Button Content="Add Component" Style="{StaticResource ComponentButtonStyle}" 
+                            HorizontalAlignment="Stretch" Margin="0,8"/>
+                </StackPanel>
+            </ScrollViewer>
+    </Border>
+</UserControl>

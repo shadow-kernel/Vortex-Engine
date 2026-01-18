@@ -4,9 +4,117 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
              xmlns:local="clr-namespace:Editor.Editors.WorldEditor"
-             mc:Ignorable="d" Background="DarkGreen"
-             d:DesignHeight="450" d:DesignWidth="800">
-    <Grid>
+             xmlns:avalonDock="https://github.com/Dirkster99/AvalonDock"
+             xmlns:headerBar="clr-namespace:Editor.Editors.WorldEditor.Components.HeaderBar"
+             xmlns:gamePreview="clr-namespace:Editor.Editors.WorldEditor.Components.GamePreview"
+             xmlns:fileExplorer="clr-namespace:Editor.Editors.WorldEditor.Components.FileExplorer"
+             xmlns:sceneHierarchy="clr-namespace:Editor.Editors.WorldEditor.Components.SceneHierarchy"
+             xmlns:inspector="clr-namespace:Editor.Editors.WorldEditor.Components.Inspector"
+             mc:Ignorable="d" Background="#1E1E1E"
+             d:DesignHeight="720" d:DesignWidth="1280">
+
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="Themes/DarkDockTheme.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
             
+            <!-- Override focus visual styles to remove white borders -->
+            <Style x:Key="{x:Static SystemParameters.FocusVisualStyleKey}">
+                <Setter Property="Control.Template">
+                    <Setter.Value>
+                        <ControlTemplate>
+                            <Rectangle StrokeThickness="0" Stroke="Transparent" Fill="Transparent"/>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <!-- Header Bar (Fixed) -->
+            <RowDefinition Height="60"/>
+            <!-- Dockable Content -->
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- Top Header Bar (Not Dockable) -->
+        <headerBar:HeaderBarView Grid.Row="0"/>
+
+        <!-- AvalonDock DockingManager -->
+        <avalonDock:DockingManager x:Name="DockManager" Grid.Row="1"
+                                   AllowMixedOrientation="True"
+                                   Background="#1E1E1E">
+            
+            <avalonDock:DockingManager.Resources>
+                <ResourceDictionary>
+                    <ResourceDictionary.MergedDictionaries>
+                        <ResourceDictionary Source="Themes/DarkDockTheme.xaml"/>
+                    </ResourceDictionary.MergedDictionaries>
+                </ResourceDictionary>
+            </avalonDock:DockingManager.Resources>
+            
+            <avalonDock:LayoutRoot>
+                <!-- Main Horizontal Layout -->
+                <avalonDock:LayoutPanel Orientation="Horizontal">
+                    
+                    <!-- Left/Center Area -->
+                    <avalonDock:LayoutPanel Orientation="Vertical" DockWidth="*">
+                        
+                        <!-- Document Area (Game Preview) -->
+                        <avalonDock:LayoutDocumentPane DockHeight="*">
+                            <avalonDock:LayoutDocument Title="Scene" CanClose="False" CanFloat="True">
+                                <gamePreview:GamePreviewView/>
+                            </avalonDock:LayoutDocument>
+                        </avalonDock:LayoutDocumentPane>
+                        
+                        <!-- Bottom Panel: File Explorer -->
+                        <avalonDock:LayoutAnchorablePaneGroup Orientation="Horizontal" DockHeight="200">
+                            <avalonDock:LayoutAnchorablePane DockWidth="200">
+                                <avalonDock:LayoutAnchorable Title="Project" CanClose="False" CanFloat="True" 
+                                                             CanAutoHide="True" AutoHideWidth="200">
+                                    <fileExplorer:FileTreeView/>
+                                </avalonDock:LayoutAnchorable>
+                            </avalonDock:LayoutAnchorablePane>
+                            
+                            <avalonDock:LayoutAnchorablePane DockWidth="*">
+                                <avalonDock:LayoutAnchorable Title="Explorer" CanClose="False" CanFloat="True" 
+                                                             CanAutoHide="True">
+                                    <fileExplorer:FileExplorerView/>
+                                </avalonDock:LayoutAnchorable>
+                                <avalonDock:LayoutAnchorable Title="Console" CanClose="False" CanFloat="True" 
+                                                             CanAutoHide="True">
+                                    <Border Background="#252526">
+                                        <TextBlock Text="Console Output..." Foreground="#808080" 
+                                                   Margin="8" VerticalAlignment="Top"/>
+                                    </Border>
+                                </avalonDock:LayoutAnchorable>
+                            </avalonDock:LayoutAnchorablePane>
+                        </avalonDock:LayoutAnchorablePaneGroup>
+                        
+                    </avalonDock:LayoutPanel>
+                    
+                    <!-- Right Panel: Hierarchy + Inspector -->
+                    <avalonDock:LayoutAnchorablePaneGroup Orientation="Vertical" DockWidth="280">
+                        <avalonDock:LayoutAnchorablePane DockHeight="*">
+                            <avalonDock:LayoutAnchorable Title="Hierarchy" CanClose="False" CanFloat="True" 
+                                                         CanAutoHide="True" AutoHideWidth="280">
+                                <sceneHierarchy:SceneHierarchyView/>
+                            </avalonDock:LayoutAnchorable>
+                        </avalonDock:LayoutAnchorablePane>
+                        
+                        <avalonDock:LayoutAnchorablePane DockHeight="*">
+                            <avalonDock:LayoutAnchorable Title="Inspector" CanClose="False" CanFloat="True" 
+                                                         CanAutoHide="True" AutoHideWidth="280">
+                                <inspector:InspectorView/>
+                            </avalonDock:LayoutAnchorable>
+                        </avalonDock:LayoutAnchorablePane>
+                    </avalonDock:LayoutAnchorablePaneGroup>
+                    
+                </avalonDock:LayoutPanel>
+            </avalonDock:LayoutRoot>
+        </avalonDock:DockingManager>
     </Grid>
 </UserControl>

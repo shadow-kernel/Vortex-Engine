@@ -1,0 +1,410 @@
+<UserControl x:Class="Editor.Editors.WorldEditor.Components.FileExplorer.FileExplorerView"
+         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+         xmlns:converters="clr-namespace:Editor.Editors.WorldEditor.Components.FileExplorer.Converters"
+         mc:Ignorable="d" 
+         d:DesignHeight="200" d:DesignWidth="400">
+
+<UserControl.Resources>
+    <converters:BoolToVisibilityConverter x:Key="BoolToVisConverter"/>
+    <converters:InverseBoolToVisibilityConverter x:Key="InverseBoolToVisConverter"/>
+        
+    <Style x:Key="BreadcrumbButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#808080"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="6,2"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Border" Background="{TemplateBinding Background}" 
+                                Padding="{TemplateBinding Padding}" CornerRadius="3">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="#3C3C3C"/>
+                                <Setter Property="Foreground" Value="#FFFFFF"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Context Menu for Items -->
+        <!-- MenuItem Style for Dark Theme -->
+        <Style x:Key="DarkMenuItemStyle" TargetType="MenuItem">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#C5C5C5"/>
+            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="MenuItem">
+                        <Border x:Name="Border" Background="{TemplateBinding Background}" 
+                                Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="24"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <ContentPresenter Grid.Column="0" ContentSource="Icon" 
+                                                  HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                <ContentPresenter Grid.Column="1" ContentSource="Header" 
+                                                  Margin="4,0,0,0" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="2" Text="{TemplateBinding InputGestureText}" 
+                                           Foreground="#606060" FontSize="10" VerticalAlignment="Center" Margin="20,0,0,0"/>
+                            </Grid>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="#3C3C3C"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="#606060"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Context Menu Style for Dark Theme -->
+        <Style x:Key="DarkContextMenuStyle" TargetType="ContextMenu">
+            <Setter Property="Background" Value="#252526"/>
+            <Setter Property="BorderBrush" Value="#3C3C3C"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="0,4"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ContextMenu">
+                        <Border Background="{TemplateBinding Background}" 
+                                BorderBrush="{TemplateBinding BorderBrush}" 
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                Padding="{TemplateBinding Padding}"
+                                CornerRadius="4" SnapsToDevicePixels="True">
+                            <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Separator Style for Dark Theme -->
+        <Style x:Key="DarkSeparatorStyle" TargetType="Separator">
+            <Setter Property="Background" Value="#3C3C3C"/>
+            <Setter Property="Height" Value="1"/>
+            <Setter Property="Margin" Value="8,4"/>
+        </Style>
+
+        <ContextMenu x:Key="ItemContextMenu" Style="{StaticResource DarkContextMenuStyle}">
+            <MenuItem Header="Open" Click="OnOpenClick" FontWeight="SemiBold" Style="{StaticResource DarkMenuItemStyle}">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE8E5;" FontFamily="Segoe MDL2 Assets" Foreground="#3FA9F5" FontSize="12"/>
+                </MenuItem.Icon>
+            </MenuItem>
+            <Separator Style="{StaticResource DarkSeparatorStyle}"/>
+            <MenuItem Header="Cut" Click="OnCutClick" InputGestureText="Ctrl+X" Style="{StaticResource DarkMenuItemStyle}">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE8C6;" FontFamily="Segoe MDL2 Assets" Foreground="#808080" FontSize="12"/>
+                </MenuItem.Icon>
+            </MenuItem>
+            <MenuItem Header="Copy" Click="OnCopyClick" InputGestureText="Ctrl+C" Style="{StaticResource DarkMenuItemStyle}">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE8C8;" FontFamily="Segoe MDL2 Assets" Foreground="#808080" FontSize="12"/>
+                </MenuItem.Icon>
+            </MenuItem>
+            <Separator Style="{StaticResource DarkSeparatorStyle}"/>
+            <MenuItem Header="Rename" Click="OnRenameClick" InputGestureText="F2" Style="{StaticResource DarkMenuItemStyle}">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE8AC;" FontFamily="Segoe MDL2 Assets" Foreground="#808080" FontSize="12"/>
+                </MenuItem.Icon>
+            </MenuItem>
+            <MenuItem Header="Delete" Click="OnDeleteClick" InputGestureText="Del" Style="{StaticResource DarkMenuItemStyle}">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE74D;" FontFamily="Segoe MDL2 Assets" Foreground="#E74C3C" FontSize="12"/>
+                </MenuItem.Icon>
+            </MenuItem>
+            <Separator Style="{StaticResource DarkSeparatorStyle}"/>
+            <MenuItem Header="Show in Explorer" Click="OnShowInExplorerClick" Style="{StaticResource DarkMenuItemStyle}">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xEC50;" FontFamily="Segoe MDL2 Assets" Foreground="#3FA9F5" FontSize="12"/>
+                </MenuItem.Icon>
+            </MenuItem>
+        </ContextMenu>
+
+        <!-- Submenu MenuItem Style for Dark Theme -->
+        <Style x:Key="DarkSubMenuItemStyle" TargetType="MenuItem" BasedOn="{StaticResource DarkMenuItemStyle}">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="MenuItem">
+                        <Border x:Name="Border" Background="{TemplateBinding Background}" 
+                                Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="24"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <ContentPresenter Grid.Column="0" ContentSource="Icon" 
+                                                  HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                <ContentPresenter Grid.Column="1" ContentSource="Header" 
+                                                  Margin="4,0,0,0" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="2" Text="?" Foreground="#606060" FontSize="8" 
+                                           VerticalAlignment="Center" Margin="20,0,4,0"/>
+                                <Popup x:Name="SubMenuPopup" Placement="Right" IsOpen="{Binding IsSubmenuOpen, RelativeSource={RelativeSource TemplatedParent}}"
+                                       AllowsTransparency="True" Focusable="False" PopupAnimation="Fade">
+                                    <Border Background="#252526" BorderBrush="#3C3C3C" BorderThickness="1" 
+                                            CornerRadius="4" Padding="0,4">
+                                        <StackPanel IsItemsHost="True"/>
+                                    </Border>
+                                </Popup>
+                            </Grid>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="#3C3C3C"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Context Menu for Empty Area -->
+        <ContextMenu x:Key="EmptyAreaContextMenu" Style="{StaticResource DarkContextMenuStyle}">
+            <MenuItem Header="New Folder" Click="OnNewFolderClick" Style="{StaticResource DarkMenuItemStyle}">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE8F4;" FontFamily="Segoe MDL2 Assets" Foreground="#E6B422" FontSize="12"/>
+                </MenuItem.Icon>
+            </MenuItem>
+            <MenuItem Header="Create" Style="{StaticResource DarkSubMenuItemStyle}">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" Foreground="#3FA9F5" FontSize="12"/>
+                </MenuItem.Icon>
+                <!-- Code Files -->
+                <MenuItem Header="C# Script (.cs)" Click="OnNewScriptClick" Style="{StaticResource DarkMenuItemStyle}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE943;" FontFamily="Segoe MDL2 Assets" Foreground="#9B59B6" FontSize="12"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="Shader (.shader)" Click="OnNewShaderClick" Style="{StaticResource DarkMenuItemStyle}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE950;" FontFamily="Segoe MDL2 Assets" Foreground="#E91E63" FontSize="12"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="HLSL Shader (.hlsl)" Click="OnNewHlslClick" Style="{StaticResource DarkMenuItemStyle}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE950;" FontFamily="Segoe MDL2 Assets" Foreground="#E91E63" FontSize="12"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <Separator Style="{StaticResource DarkSeparatorStyle}"/>
+                <!-- Data Files -->
+                <MenuItem Header="JSON File (.json)" Click="OnNewJsonClick" Style="{StaticResource DarkMenuItemStyle}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE9D5;" FontFamily="Segoe MDL2 Assets" Foreground="#F39C12" FontSize="12"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="XML File (.xml)" Click="OnNewXmlClick" Style="{StaticResource DarkMenuItemStyle}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE9D5;" FontFamily="Segoe MDL2 Assets" Foreground="#3498DB" FontSize="12"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <Separator Style="{StaticResource DarkSeparatorStyle}"/>
+                <!-- Game Assets -->
+                <MenuItem Header="Scene (.scene)" Click="OnNewSceneClick" Style="{StaticResource DarkMenuItemStyle}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE81E;" FontFamily="Segoe MDL2 Assets" Foreground="#3FA9F5" FontSize="12"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="Prefab (.prefab)" Click="OnNewPrefabClick" Style="{StaticResource DarkMenuItemStyle}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE74C;" FontFamily="Segoe MDL2 Assets" Foreground="#2ECC71" FontSize="12"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="Material (.mat)" Click="OnNewMaterialClick" Style="{StaticResource DarkMenuItemStyle}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xEB9F;" FontFamily="Segoe MDL2 Assets" Foreground="#9B59B6" FontSize="12"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+            </MenuItem>
+            <Separator Style="{StaticResource DarkSeparatorStyle}"/>
+            <MenuItem Header="Paste" Click="OnPasteClick" InputGestureText="Ctrl+V" Style="{StaticResource DarkMenuItemStyle}">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE77F;" FontFamily="Segoe MDL2 Assets" Foreground="#808080" FontSize="12"/>
+                </MenuItem.Icon>
+            </MenuItem>
+            <Separator Style="{StaticResource DarkSeparatorStyle}"/>
+            <MenuItem Header="Refresh" Click="OnRefreshClick" InputGestureText="F5" Style="{StaticResource DarkMenuItemStyle}">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" Foreground="#808080" FontSize="12"/>
+                </MenuItem.Icon>
+            </MenuItem>
+            <Separator Style="{StaticResource DarkSeparatorStyle}"/>
+            <MenuItem Header="Show in Explorer" Click="OnShowCurrentInExplorerClick" Style="{StaticResource DarkMenuItemStyle}">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xEC50;" FontFamily="Segoe MDL2 Assets" Foreground="#3FA9F5" FontSize="12"/>
+                </MenuItem.Icon>
+            </MenuItem>
+        </ContextMenu>
+
+        <Style x:Key="FileItemStyle" TargetType="ListBoxItem">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#C5C5C5"/>
+            <Setter Property="Padding" Value="8"/>
+            <Setter Property="Margin" Value="2"/>
+            <Setter Property="ContextMenu" Value="{StaticResource ItemContextMenu}"/>
+            <Setter Property="AllowDrop" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="Border" Background="{TemplateBinding Background}" 
+                                Padding="{TemplateBinding Padding}" CornerRadius="4" Width="80">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="#37373D"/>
+                                <Setter TargetName="Border" Property="BorderBrush" Value="#3FA9F5"/>
+                                <Setter TargetName="Border" Property="BorderThickness" Value="1"/>
+                            </Trigger>
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions>
+                                    <Condition Property="IsMouseOver" Value="True"/>
+                                    <Condition Property="IsSelected" Value="False"/>
+                                </MultiTrigger.Conditions>
+                                <Setter TargetName="Border" Property="Background" Value="#2A2D2E"/>
+                            </MultiTrigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <EventSetter Event="MouseDoubleClick" Handler="OnItemDoubleClick"/>
+            <EventSetter Event="PreviewMouseLeftButtonDown" Handler="OnItemMouseDown"/>
+            <EventSetter Event="Drop" Handler="OnItemDrop"/>
+            <EventSetter Event="DragOver" Handler="OnItemDragOver"/>
+        </Style>
+    </UserControl.Resources>
+
+    <Border Background="#252526" ContextMenu="{StaticResource EmptyAreaContextMenu}">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="28"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <!-- Breadcrumb Navigation -->
+            <Border Grid.Row="0" Background="#1E1E1E" Padding="4,0">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    
+                    <!-- Navigation Buttons -->
+                    <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button x:Name="BackButton" Content="&#xE72B;" FontFamily="Segoe MDL2 Assets" FontSize="10" 
+                                Style="{StaticResource BreadcrumbButtonStyle}" ToolTip="Back" Click="OnBackClick"/>
+                        <Button x:Name="UpButton" Content="&#xE74A;" FontFamily="Segoe MDL2 Assets" FontSize="10" 
+                                Style="{StaticResource BreadcrumbButtonStyle}" ToolTip="Up" Margin="2,0" Click="OnUpClick"/>
+                        <Rectangle Width="1" Fill="#404040" Margin="4,4"/>
+                    </StackPanel>
+                    
+                    <!-- Breadcrumb Path -->
+                    <ItemsControl x:Name="BreadcrumbPath" Grid.Column="1" VerticalAlignment="Center">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Horizontal"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Content="{Binding Name}" Style="{StaticResource BreadcrumbButtonStyle}"
+                                            Tag="{Binding}" Click="OnBreadcrumbClick"/>
+                                    <TextBlock Text="/" Foreground="#505050" VerticalAlignment="Center" Margin="0"/>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    
+                    <!-- Action Buttons -->
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Rectangle Width="1" Fill="#404040" Margin="4,4"/>
+                        <Button Content="&#xE8B5;" FontFamily="Segoe MDL2 Assets" FontSize="10" 
+                                Style="{StaticResource BreadcrumbButtonStyle}" ToolTip="Search" Click="OnSearchClick"/>
+                        <Button Content="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="10" 
+                                Style="{StaticResource BreadcrumbButtonStyle}" ToolTip="New" Click="OnNewFolderClick"/>
+                        <Button Content="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="10" 
+                                Style="{StaticResource BreadcrumbButtonStyle}" ToolTip="Refresh" Click="OnRefreshClick"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- File Grid with Selection Rectangle -->
+            <Grid Grid.Row="1" x:Name="FileGridContainer">
+                <ScrollViewer x:Name="FileScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                AllowDrop="True" Drop="OnEmptyAreaDrop" DragOver="OnEmptyAreaDragOver"
+                PreviewMouseLeftButtonDown="OnScrollViewerMouseDown"
+                PreviewMouseMove="OnScrollViewerMouseMove"
+                PreviewMouseLeftButtonUp="OnScrollViewerMouseUp"
+                SizeChanged="OnScrollViewerSizeChanged">
+                    <ListBox x:Name="FileList" Background="Transparent" BorderThickness="0" Padding="8"
+                    ItemContainerStyle="{StaticResource FileItemStyle}"
+                    SelectionMode="Extended" AllowDrop="True"
+                    ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                    ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                    PreviewMouseWheel="OnFileListMouseWheel">
+                        <ListBox.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel x:Name="FileWrapPanel" Orientation="Horizontal"/>
+                            </ItemsPanelTemplate>
+                        </ListBox.ItemsPanel>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel HorizontalAlignment="Center" Width="64" ToolTip="{Binding Name}"
+                                            Opacity="{Binding ItemOpacity}">
+                                    <TextBlock Text="{Binding Icon}" FontFamily="Segoe MDL2 Assets" FontSize="32" 
+                                               Foreground="{Binding IconColor}" HorizontalAlignment="Center"/>
+                                    <TextBlock x:Name="NameText" Text="{Binding Name}" Foreground="#C5C5C5" FontSize="10" 
+                                               HorizontalAlignment="Center" Margin="0,4,0,0" TextTrimming="CharacterEllipsis"
+                                               TextWrapping="Wrap" MaxHeight="32" TextAlignment="Center" LineHeight="12"
+                                               Visibility="{Binding IsRenaming, Converter={StaticResource InverseBoolToVisConverter}}"/>
+                                    <TextBox x:Name="RenameBox" Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}"
+                                             Background="#1E1E1E" Foreground="#C5C5C5" BorderBrush="#3FA9F5" 
+                                             BorderThickness="1" FontSize="10" TextAlignment="Center" Padding="2"
+                                             MaxWidth="76"
+                                             Visibility="{Binding IsRenaming, Converter={StaticResource BoolToVisConverter}}"
+                                             LostFocus="OnRenameBoxLostFocus" KeyDown="OnRenameBoxKeyDown"
+                                             IsVisibleChanged="OnRenameBoxVisibleChanged"/>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </ScrollViewer>
+                
+                <!-- Selection Rectangle Overlay -->
+                <Canvas x:Name="SelectionCanvas" IsHitTestVisible="False">
+                    <Border x:Name="SelectionRectangle" 
+                            Background="#203FA9F5" 
+                            BorderBrush="#3FA9F5" 
+                            BorderThickness="1"
+                            Visibility="Collapsed"
+                            CornerRadius="2"/>
+                </Canvas>
+            </Grid>
+            
+            <!-- Empty State -->
+            <TextBlock x:Name="EmptyText" Grid.Row="1" Text="This folder is empty" 
+                       Foreground="#606060" FontSize="11" 
+                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                       Visibility="Collapsed"/>
+        </Grid>
+    </Border>
+</UserControl>

@@ -1,6 +1,6 @@
 using System;
 
-namespace Editor.Project.Exceptions
+namespace Editor.Core.Exceptions
 {
     /// <summary>
     /// Exception wird geworfen, wenn ein Ein-/Ausgabe-Fehler beim Arbeiten mit Projekten auftritt
@@ -9,13 +9,13 @@ namespace Editor.Project.Exceptions
     {
         public string FilePath { get; }
 
-        public ProjectIOException(string filePath, string message) 
+        public ProjectIOException(string filePath, string message)
             : base($"Fehler beim Zugriff auf '{filePath}': {message}")
         {
             FilePath = filePath;
         }
 
-        public ProjectIOException(string filePath, string message, Exception innerException) 
+        public ProjectIOException(string filePath, string message, Exception innerException)
             : base($"Fehler beim Zugriff auf '{filePath}': {message}", innerException)
         {
             FilePath = filePath;

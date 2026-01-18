@@ -62,7 +62,7 @@
                 <Setter Property="Height" Value="30"/>
                 <Setter Property="Background" Value="Transparent"/>
                 <Setter Property="BorderThickness" Value="0"/>
-                <Setter Property="Foreground" Value="#E5FFFFFF"/>
+                <Setter Property="Foreground" Value="#C5C5C5"/>
                 <Setter Property="FontFamily" Value="Segoe UI"/>
                 <Setter Property="FontWeight" Value="Bold"/>
                 <Setter Property="FontSize" Value="14"/>
@@ -75,10 +75,10 @@
                             </Border>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="Border" Property="Background" Value="#223042"/>
+                                    <Setter TargetName="Border" Property="Background" Value="#3C3C3C"/>
                                 </Trigger>
                                 <Trigger Property="IsPressed" Value="True">
-                                    <Setter TargetName="Border" Property="Background" Value="#1C2735"/>
+                                    <Setter TargetName="Border" Property="Background" Value="#505050"/>
                                 </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
@@ -89,7 +89,7 @@
     </Window.Resources>
 
     <Grid x:Name="RootGrid" MouseDown="RootGrid_OnMouseDown" Background="Transparent">
-        <Border Background="#0F141C" CornerRadius="14" Padding="0" SnapsToDevicePixels="True">
+        <Border Background="#1E1E1E" CornerRadius="14" Padding="0" SnapsToDevicePixels="True">
             <Border.Effect>
                 <DropShadowEffect Color="#000000" Opacity="0.45" BlurRadius="18" ShadowDepth="0"/>
             </Border.Effect>
@@ -103,7 +103,7 @@
                 </Grid.RowDefinitions>
 
                 <!-- Title Bar -->
-                <Grid Grid.Row="0" Background="#131A24" MouseDown="RootGrid_OnMouseDown">
+                <Grid Grid.Row="0" Background="#252526" MouseDown="RootGrid_OnMouseDown">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition/>
                         <ColumnDefinition Width="Auto"/>
@@ -114,7 +114,7 @@
                     </StackPanel>
                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,6,0">
                         <Button Style="{StaticResource TitleBarButton}" Width="48" FontSize="16" Content="-" Click="MinimizeButton_OnClick"/>
-                        <Button Style="{StaticResource TitleBarButton}" Content="X" Click="CloseButton_OnClick" Background="#2A3544" Margin="4,0,0,0"/>
+                        <Button Style="{StaticResource TitleBarButton}" Content="X" Click="CloseButton_OnClick" Background="#3C3C3C" Margin="4,0,0,0"/>
                     </StackPanel>
                 </Grid>
 

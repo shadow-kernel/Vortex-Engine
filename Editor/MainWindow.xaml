@@ -6,9 +6,10 @@
         xmlns:local="clr-namespace:Editor"
         xmlns:worldEditor="clr-namespace:Editor.Editors.WorldEditor"
         mc:Ignorable="d"
-        Title="Vortex Engine" Height="450" Width="800"
-        WindowStartupLocation="CenterScreen">
+        Icon="{DynamicResource AppIcon}"
+        Title="World Editor - Vortex Engine" Height="450" Width="800"
+        WindowStartupLocation="CenterScreen" Background="#1E1E1E">
     <Grid>
-        <worldEditor:WorldEditorView/>
+        <worldEditor:WorldEditorView x:Name="WorldEditor"/>
     </Grid>
 </Window>

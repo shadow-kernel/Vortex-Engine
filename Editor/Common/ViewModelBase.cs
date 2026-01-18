@@ -1,16 +1,12 @@
-﻿using System.ComponentModel;
-using System.Text.Json.Serialization;
+﻿// Diese Datei ist veraltet - verwende stattdessen Editor.Core.ViewModelBase
+// Wird aus Kompatibilitätsgründen beibehalten
 
 namespace Editor
 {
-
-    public class ViewModelBase : INotifyPropertyChanged
+    /// <summary>
+    /// Veraltet: Verwende Editor.Core.ViewModelBase stattdessen
+    /// </summary>
+    public class ViewModelBase : Core.ViewModelBase
     {
-        public event PropertyChangedEventHandler PropertyChanged;
-
-        protected void OnPropertyChanged(string propertyName)
-        {
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
-        }
     }
 }
