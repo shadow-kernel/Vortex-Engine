@@ -6,4 +6,15 @@
   </Configurations>
   <Project Path="Editor/Editor.csproj" Id="fbd41bc8-2108-4479-b909-3081d00767df" />
   <Project Path="Engine/Engine.vcxproj" Id="cd0e018b-277f-4863-bb32-e44d7f5a654d" />
+  
+  <!-- Solution Folders -->
+  <Folder Name="/Installer/">
+    <File Path="Installer/VortexEngine.iss" />
+    <File Path="Installer/README.md" />
+  </Folder>
+  <Folder Name="/.github/">
+    <Folder Name=".github/workflows">
+      <File Path=".github/workflows/build-release.yml" />
+    </Folder>
+  </Folder>
 </Solution>
