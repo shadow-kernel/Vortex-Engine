@@ -16,6 +16,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Models
         private bool _isExpanded;
         private bool _isSelected;
         private bool _isRenaming;
+        private bool _isCut;
         private ObservableCollection<FileSystemItem> _children;
         private FileSystemItem _parent;
 
@@ -79,6 +80,26 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Models
             get => _isRenaming;
             set => SetProperty(ref _isRenaming, value, nameof(IsRenaming));
         }
+
+        /// <summary>
+        /// Gibt an, ob dieses Element ausgeschnitten wurde (Ctrl+X).
+        /// </summary>
+        public bool IsCut
+        {
+            get => _isCut;
+            set
+            {
+                if (SetProperty(ref _isCut, value, nameof(IsCut)))
+                {
+                    OnPropertyChanged(nameof(ItemOpacity));
+                }
+            }
+        }
+
+        /// <summary>
+        /// Opacity für die Anzeige (reduziert wenn ausgeschnitten).
+        /// </summary>
+        public double ItemOpacity => IsCut ? 0.5 : 1.0;
 
         public FileSystemItem Parent
         {

@@ -30,7 +30,8 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
 
         private void OnCanUndo(object sender, CanExecuteRoutedEventArgs e)
         {
-            e.CanExecute = UndoRedoManager.Instance.CanUndo;
+            // Always allow - sound will play if at limit
+            e.CanExecute = true;
         }
 
         private void OnUndoExecuted(object sender, ExecutedRoutedEventArgs e)
@@ -40,7 +41,8 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
 
         private void OnCanRedo(object sender, CanExecuteRoutedEventArgs e)
         {
-            e.CanExecute = UndoRedoManager.Instance.CanRedo;
+            // Always allow - sound will play if at limit
+            e.CanExecute = true;
         }
 
         private void OnRedoExecuted(object sender, ExecutedRoutedEventArgs e)

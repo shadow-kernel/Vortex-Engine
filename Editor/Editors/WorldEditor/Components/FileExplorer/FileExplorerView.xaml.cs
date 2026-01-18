@@ -1,9 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using Editor.Core.Data;
+using Editor.Core.UndoRedo;
+using Editor.Core.UndoRedo.Commands;
 using Editor.Editors.WorldEditor.Components.FileExplorer.Models;
 using Editor.Editors.WorldEditor.Components.FileExplorer.Services;
 
@@ -14,7 +18,17 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer
         private FileExplorerService _explorerService;
         private Point _dragStartPoint;
         private FileSystemItem _draggedItem;
+        private List<FileSystemItem> _draggedItems = new List<FileSystemItem>();
         private Stack<FileSystemItem> _navigationHistory = new Stack<FileSystemItem>();
+        
+        // Clipboard for Copy/Cut operations
+        private List<FileSystemItem> _clipboardItems = new List<FileSystemItem>();
+        private bool _isCutOperation = false;
+        
+        // Marquee Selection fields
+        private bool _isMarqueeSelecting = false;
+        private Point _marqueeStartPoint;
+        private bool _isDragDropOperation = false;
 
         public FileExplorerView()
         {
@@ -29,6 +43,42 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer
         private void OnKeyDown(object sender, KeyEventArgs e)
         {
             var selectedItem = FileList.SelectedItem as FileSystemItem;
+            var selectedItems = FileList.SelectedItems.Cast<FileSystemItem>().ToList();
+
+            // Handle Ctrl key combinations
+            if (Keyboard.Modifiers == ModifierKeys.Control)
+            {
+                switch (e.Key)
+                {
+                    case Key.C:
+                        // Copy
+                        if (selectedItems.Count > 0)
+                        {
+                            CopyToClipboard(selectedItems, isCut: false);
+                            e.Handled = true;
+                        }
+                        break;
+                    case Key.X:
+                        // Cut
+                        if (selectedItems.Count > 0)
+                        {
+                            CopyToClipboard(selectedItems, isCut: true);
+                            e.Handled = true;
+                        }
+                        break;
+                    case Key.V:
+                        // Paste
+                        PasteFromClipboard();
+                        e.Handled = true;
+                        break;
+                    case Key.A:
+                        // Select All
+                        FileList.SelectAll();
+                        e.Handled = true;
+                        break;
+                }
+                return;
+            }
 
             switch (e.Key)
             {
@@ -40,12 +90,13 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer
                     }
                     break;
                 case Key.Delete:
-                    if (selectedItem != null)
-                    {
-                        _explorerService.Delete(selectedItem);
-                        e.Handled = true;
-                    }
-                    break;
+                // Delete all selected items
+                if (selectedItems.Count > 0)
+                {
+                    DeleteSelectedItems(selectedItems);
+                    e.Handled = true;
+                }
+                break;
                 case Key.F5:
                     _explorerService.RefreshCurrentFolderContents();
                     e.Handled = true;
@@ -75,6 +126,281 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer
             }
         }
 
+        #region Clipboard Operations (Copy/Cut/Paste)
+
+        private void CopyToClipboard(List<FileSystemItem> items, bool isCut)
+        {
+            // Clear previous cut state
+            ClearCutState();
+            
+            _clipboardItems = new List<FileSystemItem>(items);
+            _isCutOperation = isCut;
+            
+            // Set visual cut state
+            if (isCut)
+            {
+                foreach (var item in items)
+                {
+                    item.IsCut = true;
+                }
+            }
+            
+            // Also copy to Windows clipboard for external paste
+            var filePaths = items.Select(i => i.FullPath).ToArray();
+            var dataObject = new DataObject();
+            dataObject.SetData(DataFormats.FileDrop, filePaths);
+            
+            // Set preferred drop effect (Move for Cut, Copy for Copy)
+            var dropEffect = isCut ? DragDropEffects.Move : DragDropEffects.Copy;
+            var effectData = new System.IO.MemoryStream(BitConverter.GetBytes((int)dropEffect));
+            dataObject.SetData("Preferred DropEffect", effectData);
+            
+            Clipboard.SetDataObject(dataObject, true);
+        }
+
+        private void ClearCutState()
+        {
+            // Clear visual cut state from previous items
+            foreach (var item in _clipboardItems)
+            {
+                item.IsCut = false;
+            }
+        }
+
+        private void PasteFromClipboard()
+        {
+            if (_explorerService.CurrentFolder == null)
+                return;
+
+            string targetFolder = _explorerService.CurrentFolder.FullPath;
+            var commands = new List<IUndoableCommand>();
+
+            // First try internal clipboard
+            if (_clipboardItems.Count > 0)
+            {
+                foreach (var item in _clipboardItems)
+                {
+                    string destPath = System.IO.Path.Combine(targetFolder, item.Name);
+                    
+                    if (_isCutOperation)
+                    {
+                        // Move the item - create MoveItemCommand
+                        item.IsCut = false; // Clear cut state before moving
+                        destPath = GetUniqueFileName(destPath, item.IsDirectory);
+                        commands.Add(new MoveItemCommand(item.FullPath, destPath, item.IsDirectory));
+                    }
+                    else
+                    {
+                        // Copy the item - create CopyFileCommand or CopyFolderCommand
+                        destPath = GetUniqueFileName(destPath, item.IsDirectory);
+                        if (item.IsDirectory)
+                        {
+                            commands.Add(new CopyFolderCommand(item.FullPath, destPath));
+                        }
+                        else
+                        {
+                            commands.Add(new CopyFileCommand(item.FullPath, destPath));
+                        }
+                    }
+                }
+
+                // Execute as a single undoable command
+                if (commands.Count > 0)
+                {
+                    var pasteCommand = new PasteItemsCommand(commands, _isCutOperation);
+                    UndoRedoManager.Instance.Execute(pasteCommand);
+                }
+
+                // Clear clipboard after cut operation
+                if (_isCutOperation)
+                {
+                    _clipboardItems.Clear();
+                    _isCutOperation = false;
+                }
+
+                _explorerService.RefreshCurrentFolderContents();
+                return;
+            }
+
+            // Try Windows clipboard
+            if (Clipboard.ContainsFileDropList())
+            {
+                var files = Clipboard.GetFileDropList();
+                bool isCut = false;
+
+                // Check if it was a cut operation
+                var dataObject = Clipboard.GetDataObject();
+                if (dataObject != null && dataObject.GetDataPresent("Preferred DropEffect"))
+                {
+                    var effectStream = dataObject.GetData("Preferred DropEffect") as System.IO.MemoryStream;
+                    if (effectStream != null)
+                    {
+                        var bytes = new byte[4];
+                        effectStream.Read(bytes, 0, 4);
+                        var effect = (DragDropEffects)BitConverter.ToInt32(bytes, 0);
+                        isCut = (effect & DragDropEffects.Move) == DragDropEffects.Move;
+                    }
+                }
+
+                foreach (string file in files)
+                {
+                    try
+                    {
+                        string destPath = System.IO.Path.Combine(targetFolder, System.IO.Path.GetFileName(file));
+                        bool isDirectory = System.IO.Directory.Exists(file);
+                        destPath = GetUniqueFileName(destPath, isDirectory);
+                        
+                        if (isDirectory)
+                        {
+                            if (isCut)
+                            {
+                                commands.Add(new MoveItemCommand(file, destPath, true));
+                            }
+                            else
+                            {
+                                commands.Add(new CopyFolderCommand(file, destPath));
+                            }
+                        }
+                        else if (System.IO.File.Exists(file))
+                        {
+                            if (isCut)
+                            {
+                                commands.Add(new MoveItemCommand(file, destPath, false));
+                            }
+                            else
+                            {
+                                commands.Add(new CopyFileCommand(file, destPath));
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show($"Error pasting {file}: {ex.Message}", "Error",
+                            MessageBoxButton.OK, MessageBoxImage.Error);
+                    }
+                }
+
+                // Execute as a single undoable command
+                if (commands.Count > 0)
+                {
+                    var pasteCommand = new PasteItemsCommand(commands, isCut);
+                    UndoRedoManager.Instance.Execute(pasteCommand);
+                }
+
+                // Clear clipboard after cut
+                if (isCut)
+                {
+                    Clipboard.Clear();
+                }
+
+                _explorerService.RefreshCurrentFolderContents();
+            }
+        }
+
+        private void CopyItem(FileSystemItem item, string targetFolder)
+        {
+            try
+            {
+                string destPath = System.IO.Path.Combine(targetFolder, item.Name);
+                
+                // Handle name conflicts
+                destPath = GetUniqueFileName(destPath, item.IsDirectory);
+
+                if (item.IsDirectory)
+                {
+                    CopyDirectoryRecursive(item.FullPath, destPath);
+                }
+                else
+                {
+                    System.IO.File.Copy(item.FullPath, destPath, false);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error copying {item.Name}: {ex.Message}", "Error",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private string GetUniqueFileName(string path, bool isDirectory)
+        {
+            if (isDirectory)
+            {
+                if (!System.IO.Directory.Exists(path))
+                    return path;
+            }
+            else
+            {
+                if (!System.IO.File.Exists(path))
+                    return path;
+            }
+
+            string directory = System.IO.Path.GetDirectoryName(path);
+            string fileName = System.IO.Path.GetFileNameWithoutExtension(path);
+            string extension = System.IO.Path.GetExtension(path);
+            int counter = 1;
+
+            while (true)
+            {
+                string newPath = System.IO.Path.Combine(directory, $"{fileName} - Copy{(counter > 1 ? $" ({counter})" : "")}{extension}");
+                
+                if (isDirectory)
+                {
+                    if (!System.IO.Directory.Exists(newPath))
+                        return newPath;
+                }
+                else
+                {
+                    if (!System.IO.File.Exists(newPath))
+                        return newPath;
+                }
+                
+                counter++;
+            }
+        }
+
+        private void CopyDirectoryRecursive(string sourceDir, string destDir)
+        {
+            System.IO.Directory.CreateDirectory(destDir);
+
+            foreach (var file in System.IO.Directory.GetFiles(sourceDir))
+            {
+                string destFile = System.IO.Path.Combine(destDir, System.IO.Path.GetFileName(file));
+                System.IO.File.Copy(file, destFile, false);
+            }
+
+            foreach (var dir in System.IO.Directory.GetDirectories(sourceDir))
+            {
+                string destSubDir = System.IO.Path.Combine(destDir, System.IO.Path.GetFileName(dir));
+                CopyDirectoryRecursive(dir, destSubDir);
+            }
+        }
+
+        private void OnCopyClick(object sender, RoutedEventArgs e)
+        {
+            var selectedItems = FileList.SelectedItems.Cast<FileSystemItem>().ToList();
+            if (selectedItems.Count > 0)
+            {
+                CopyToClipboard(selectedItems, isCut: false);
+            }
+        }
+
+        private void OnCutClick(object sender, RoutedEventArgs e)
+        {
+            var selectedItems = FileList.SelectedItems.Cast<FileSystemItem>().ToList();
+            if (selectedItems.Count > 0)
+            {
+                CopyToClipboard(selectedItems, isCut: true);
+            }
+        }
+
+        private void OnPasteClick(object sender, RoutedEventArgs e)
+        {
+            PasteFromClipboard();
+        }
+
+        #endregion
+
         private void OnLoaded(object sender, RoutedEventArgs e)
         {
             _explorerService = FileExplorerService.Instance;
@@ -83,6 +409,9 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer
 
             // Initial binding
             UpdateView();
+            
+            // Update WrapPanel width
+            UpdateWrapPanelWidth();
         }
 
         private void OnUnloaded(object sender, RoutedEventArgs e)
@@ -91,6 +420,55 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer
             {
                 _explorerService.CurrentFolderChanged -= OnCurrentFolderChanged;
                 _explorerService.FolderContentsChanged -= OnFolderContentsChanged;
+            }
+        }
+
+        private void OnScrollViewerSizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            UpdateWrapPanelWidth();
+        }
+
+        private void UpdateWrapPanelWidth()
+        {
+            // Find the WrapPanel and set its width to match the ScrollViewer's viewport
+            if (FileScrollViewer != null && FileList != null)
+            {
+                var wrapPanel = FindVisualChild<WrapPanel>(FileList);
+                if (wrapPanel != null)
+                {
+                    // Account for padding and scrollbar
+                    double scrollbarWidth = SystemParameters.VerticalScrollBarWidth;
+                    double availableWidth = FileScrollViewer.ActualWidth - scrollbarWidth - 16; // 16 for padding
+                    if (availableWidth > 0)
+                    {
+                        wrapPanel.Width = availableWidth;
+                    }
+                }
+            }
+        }
+
+        private static T FindVisualChild<T>(DependencyObject parent) where T : DependencyObject
+        {
+            for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+            {
+                var child = VisualTreeHelper.GetChild(parent, i);
+                if (child is T typedChild)
+                    return typedChild;
+                    
+                var result = FindVisualChild<T>(child);
+                if (result != null)
+                    return result;
+            }
+            return null;
+        }
+
+        private void OnFileListMouseWheel(object sender, MouseWheelEventArgs e)
+        {
+            // Forward mouse wheel events to the outer ScrollViewer
+            if (FileScrollViewer != null)
+            {
+                FileScrollViewer.ScrollToVerticalOffset(FileScrollViewer.VerticalOffset - e.Delta);
+                e.Handled = true;
             }
         }
 
@@ -479,13 +857,69 @@ float4 PS_Main(PS_INPUT input) : SV_TARGET
 
         private void OnDeleteClick(object sender, RoutedEventArgs e)
         {
-            var menuItem = sender as MenuItem;
-            var contextMenu = menuItem?.Parent as ContextMenu;
-            var item = (contextMenu?.PlacementTarget as FrameworkElement)?.DataContext as FileSystemItem;
-
-            if (item != null)
+            // Delete all selected items
+            var selectedItems = FileList.SelectedItems.Cast<FileSystemItem>().ToList();
+            if (selectedItems.Count > 0)
             {
-                _explorerService.Delete(item);
+                DeleteSelectedItems(selectedItems);
+            }
+        }
+
+        /// <summary>
+        /// Löscht mehrere Items als ein einzelner Undo-fähiger Command.
+        /// </summary>
+        private void DeleteSelectedItems(List<FileSystemItem> items)
+        {
+            if (items == null || items.Count == 0)
+                return;
+
+            // Bestätigungsdialog
+            string message = items.Count == 1
+                ? $"Möchten Sie '{items[0].Name}' wirklich löschen?"
+                : $"Möchten Sie {items.Count} Elemente wirklich löschen?";
+
+            var result = MessageBox.Show(
+                $"{message}\n\nDiese Aktion kann mit Strg+Z rückgängig gemacht werden.",
+                "Löschen bestätigen",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+
+            if (result != MessageBoxResult.Yes)
+                return;
+
+            try
+            {
+                var commands = new List<IUndoableCommand>();
+
+                foreach (var item in items)
+                {
+                    if (item.IsDirectory)
+                    {
+                        commands.Add(new DeleteFolderCommand(item.FullPath));
+                    }
+                    else
+                    {
+                        commands.Add(new DeleteFileCommand(item.FullPath));
+                    }
+                }
+
+                // Als ein einzelner Command ausführen
+                if (commands.Count == 1)
+                {
+                    UndoRedoManager.Instance.Execute(commands[0]);
+                }
+                else if (commands.Count > 1)
+                {
+                    var compositeCommand = new DeleteItemsCommand(commands, items.Count);
+                    UndoRedoManager.Instance.Execute(compositeCommand);
+                }
+
+                _explorerService.RefreshCurrentFolderContents();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Fehler beim Löschen: {ex.Message}",
+                    "Fehler", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -612,6 +1046,21 @@ float4 PS_Main(PS_INPUT input) : SV_TARGET
                 _dragStartPoint = e.GetPosition(null);
                 var listBoxItem = sender as ListBoxItem;
                 _draggedItem = listBoxItem?.DataContext as FileSystemItem;
+                
+                // Collect all selected items for multi-drag
+                // If the clicked item is already selected, drag all selected items
+                // If not selected, only drag the clicked item
+                if (_draggedItem != null)
+                {
+                    if (FileList.SelectedItems.Contains(_draggedItem))
+                    {
+                        _draggedItems = FileList.SelectedItems.Cast<FileSystemItem>().ToList();
+                    }
+                    else
+                    {
+                        _draggedItems = new List<FileSystemItem> { _draggedItem };
+                    }
+                }
             }
         }
 
@@ -619,7 +1068,7 @@ float4 PS_Main(PS_INPUT input) : SV_TARGET
         {
             base.OnPreviewMouseMove(e);
 
-            if (e.LeftButton != MouseButtonState.Pressed || _draggedItem == null)
+            if (e.LeftButton != MouseButtonState.Pressed || _draggedItem == null || _draggedItems.Count == 0)
                 return;
 
             Point currentPosition = e.GetPosition(null);
@@ -628,37 +1077,57 @@ float4 PS_Main(PS_INPUT input) : SV_TARGET
             if (Math.Abs(diff.X) > SystemParameters.MinimumHorizontalDragDistance ||
                 Math.Abs(diff.Y) > SystemParameters.MinimumVerticalDragDistance)
             {
-                var data = new DataObject("FileSystemItem", _draggedItem);
+                // Use a list for multi-item drag
+                var data = new DataObject("FileSystemItems", _draggedItems);
                 DragDrop.DoDragDrop(this, data, DragDropEffects.Move);
                 _draggedItem = null;
+                _draggedItems.Clear();
             }
         }
 
         private void OnItemDragOver(object sender, DragEventArgs e)
         {
             var targetItem = (sender as ListBoxItem)?.DataContext as FileSystemItem;
-            var sourceItem = e.Data.GetData("FileSystemItem") as FileSystemItem;
+            var sourceItems = e.Data.GetData("FileSystemItems") as List<FileSystemItem>;
 
-            if (targetItem == null || sourceItem == null || !targetItem.IsDirectory ||
-                targetItem == sourceItem || targetItem.FullPath.StartsWith(sourceItem.FullPath + System.IO.Path.DirectorySeparatorChar))
+            if (targetItem == null || sourceItems == null || sourceItems.Count == 0 || !targetItem.IsDirectory)
             {
                 e.Effects = DragDropEffects.None;
+                e.Handled = true;
+                return;
             }
-            else
+
+            // Check if any source item is invalid for the drop
+            foreach (var sourceItem in sourceItems)
             {
-                e.Effects = DragDropEffects.Move;
+                if (targetItem == sourceItem || 
+                    targetItem.FullPath.StartsWith(sourceItem.FullPath + System.IO.Path.DirectorySeparatorChar))
+                {
+                    e.Effects = DragDropEffects.None;
+                    e.Handled = true;
+                    return;
+                }
             }
+
+            e.Effects = DragDropEffects.Move;
             e.Handled = true;
         }
 
         private void OnItemDrop(object sender, DragEventArgs e)
         {
             var targetItem = (sender as ListBoxItem)?.DataContext as FileSystemItem;
-            var sourceItem = e.Data.GetData("FileSystemItem") as FileSystemItem;
+            var sourceItems = e.Data.GetData("FileSystemItems") as List<FileSystemItem>;
 
-            if (targetItem != null && sourceItem != null && targetItem.IsDirectory)
+            if (targetItem != null && sourceItems != null && targetItem.IsDirectory)
             {
-                _explorerService.MoveItem(sourceItem, targetItem);
+                // Move all selected items to the target folder
+                foreach (var sourceItem in sourceItems)
+                {
+                    if (sourceItem != targetItem)
+                    {
+                        _explorerService.MoveItem(sourceItem, targetItem);
+                    }
+                }
             }
             e.Handled = true;
         }
@@ -694,7 +1163,7 @@ float4 PS_Main(PS_INPUT input) : SV_TARGET
                             
                             if (System.IO.Directory.Exists(file))
                             {
-                                CopyDirectory(file, destPath);
+                                CopyDirectoryRecursive(file, destPath);
                             }
                             else if (System.IO.File.Exists(file))
                             {
@@ -709,26 +1178,199 @@ float4 PS_Main(PS_INPUT input) : SV_TARGET
                     }
                 }
             }
-            e.Handled = true;
-        }
+                        e.Handled = true;
+                    }
 
-        private void CopyDirectory(string sourceDir, string destDir)
-        {
-            System.IO.Directory.CreateDirectory(destDir);
+                    #endregion
 
-            foreach (var file in System.IO.Directory.GetFiles(sourceDir))
-            {
-                string destFile = System.IO.Path.Combine(destDir, System.IO.Path.GetFileName(file));
-                System.IO.File.Copy(file, destFile, false);
+                    #region Marquee Selection (Drag Selection Rectangle)
+
+                    private void OnScrollViewerMouseDown(object sender, MouseButtonEventArgs e)
+                    {
+                        // Check if clicking on the scrollbar - don't start marquee selection
+                        Point positionInScrollViewer = e.GetPosition(FileScrollViewer);
+                        if (IsClickOnScrollbar(positionInScrollViewer))
+                        {
+                            return; // Let scrollbar handle the click
+                        }
+
+                        // Only start marquee selection if clicking on empty area (not on an item)
+                        Point positionInFileList = e.GetPosition(FileList);
+                        var hitTestResult = VisualTreeHelper.HitTest(FileList, positionInFileList);
+            
+                        if (hitTestResult != null)
+                        {
+                            var listBoxItem = FindParent<ListBoxItem>(hitTestResult.VisualHit);
+                            if (listBoxItem != null)
+                            {
+                                // Clicked on an item - allow normal selection/drag behavior
+                                _isDragDropOperation = true;
+                                return;
+                            }
+                        }
+
+                        // Start marquee selection
+                        _isDragDropOperation = false;
+                        _isMarqueeSelecting = true;
+            
+                        // Get position relative to the Grid that contains both ScrollViewer and Canvas
+                        var parentGrid = SelectionCanvas.Parent as Grid;
+                        _marqueeStartPoint = e.GetPosition(parentGrid);
+            
+                        // Clear selection if Ctrl is not pressed
+                        if ((Keyboard.Modifiers & ModifierKeys.Control) == 0)
+                        {
+                            FileList.SelectedItems.Clear();
+                        }
+
+                        // Capture mouse
+                        Mouse.Capture(parentGrid, CaptureMode.SubTree);
+            
+                        // Initialize selection rectangle
+                        SelectionRectangle.Visibility = Visibility.Visible;
+                        Canvas.SetLeft(SelectionRectangle, _marqueeStartPoint.X);
+                        Canvas.SetTop(SelectionRectangle, _marqueeStartPoint.Y);
+                        SelectionRectangle.Width = 0;
+                        SelectionRectangle.Height = 0;
+
+                        e.Handled = true;
+                    }
+
+                    private bool IsClickOnScrollbar(Point positionInScrollViewer)
+                    {
+                        // Check if click is in the scrollbar area (right side)
+                        double scrollbarWidth = SystemParameters.VerticalScrollBarWidth;
+                        double contentWidth = FileScrollViewer.ActualWidth - scrollbarWidth;
+                        
+                        // If clicking on the right edge where the scrollbar would be
+                        if (positionInScrollViewer.X >= contentWidth)
+                        {
+                            return true;
+                        }
+                        
+                        return false;
+                    }
+
+                    private void OnScrollViewerMouseMove(object sender, MouseEventArgs e)
+                    {
+                        if (!_isMarqueeSelecting || _isDragDropOperation)
+                            return;
+
+                        if (e.LeftButton != MouseButtonState.Pressed)
+                        {
+                            // Mouse was released outside - end selection
+                            EndMarqueeSelection();
+                            return;
+                        }
+
+                        var parentGrid = SelectionCanvas.Parent as Grid;
+                        Point currentPoint = e.GetPosition(parentGrid);
+
+                        // Clamp to grid bounds
+                        currentPoint.X = Math.Max(0, Math.Min(currentPoint.X, parentGrid.ActualWidth));
+                        currentPoint.Y = Math.Max(0, Math.Min(currentPoint.Y, parentGrid.ActualHeight));
+
+                        // Calculate rectangle bounds
+                        double x = Math.Min(_marqueeStartPoint.X, currentPoint.X);
+                        double y = Math.Min(_marqueeStartPoint.Y, currentPoint.Y);
+                        double width = Math.Abs(currentPoint.X - _marqueeStartPoint.X);
+                        double height = Math.Abs(currentPoint.Y - _marqueeStartPoint.Y);
+
+                        // Update selection rectangle
+                        Canvas.SetLeft(SelectionRectangle, x);
+                        Canvas.SetTop(SelectionRectangle, y);
+                        SelectionRectangle.Width = width;
+                        SelectionRectangle.Height = height;
+
+                        // Create the selection rect for hit testing (in Grid coordinates)
+                        Rect selectionRect = new Rect(x, y, width, height);
+
+                        // Select items within the rectangle
+                        SelectItemsInRect(selectionRect);
+                    }
+
+                    private void OnScrollViewerMouseUp(object sender, MouseButtonEventArgs e)
+                    {
+                        if (_isMarqueeSelecting)
+                        {
+                            EndMarqueeSelection();
+                            e.Handled = true;
+                        }
+                        _isDragDropOperation = false;
+                    }
+
+                    private void EndMarqueeSelection()
+                    {
+                        _isMarqueeSelecting = false;
+                        SelectionRectangle.Visibility = Visibility.Collapsed;
+                        Mouse.Capture(null);
+                    }
+
+                    private void SelectItemsInRect(Rect selectionRect)
+                    {
+                        // Get all ListBoxItems and check if they intersect with the selection rectangle
+                        var itemsToSelect = new List<FileSystemItem>();
+                        var parentGrid = SelectionCanvas.Parent as Grid;
+            
+                        foreach (var item in FileList.Items)
+                        {
+                            var listBoxItem = FileList.ItemContainerGenerator.ContainerFromItem(item) as ListBoxItem;
+                            if (listBoxItem == null) continue;
+
+                            // Get the bounds of the ListBoxItem relative to the parent Grid
+                            var itemBounds = GetBoundsRelativeToAncestor(listBoxItem, parentGrid);
+                
+                            if (itemBounds.HasValue && selectionRect.IntersectsWith(itemBounds.Value))
+                            {
+                                itemsToSelect.Add(item as FileSystemItem);
+                            }
+                        }
+
+                        // If Ctrl is pressed, add to existing selection; otherwise replace
+                        if ((Keyboard.Modifiers & ModifierKeys.Control) == 0)
+                        {
+                            FileList.SelectedItems.Clear();
+                        }
+
+                        foreach (var item in itemsToSelect)
+                        {
+                            if (item != null && !FileList.SelectedItems.Contains(item))
+                            {
+                                FileList.SelectedItems.Add(item);
+                            }
+                        }
+                    }
+
+                    private Rect? GetBoundsRelativeToAncestor(FrameworkElement element, Visual ancestor)
+                    {
+                        try
+                        {
+                            var transform = element.TransformToAncestor(ancestor);
+                            var topLeft = transform.Transform(new Point(0, 0));
+                            var bottomRight = transform.Transform(new Point(element.ActualWidth, element.ActualHeight));
+                            return new Rect(topLeft, bottomRight);
+                        }
+                        catch
+                        {
+                            return null;
+                        }
+                    }
+
+                    private T FindParent<T>(DependencyObject child) where T : DependencyObject
+                    {
+                        var parent = VisualTreeHelper.GetParent(child);
+            
+                        while (parent != null)
+                        {
+                            if (parent is T typedParent)
+                                return typedParent;
+                    
+                            parent = VisualTreeHelper.GetParent(parent);
+                        }
+            
+                        return null;
+                    }
+
+                    #endregion
+                }
             }
-
-            foreach (var dir in System.IO.Directory.GetDirectories(sourceDir))
-            {
-                string destSubDir = System.IO.Path.Combine(destDir, System.IO.Path.GetFileName(dir));
-                CopyDirectory(dir, destSubDir);
-            }
-        }
-
-        #endregion
-    }
-}

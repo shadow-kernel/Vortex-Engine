@@ -310,51 +310,253 @@ namespace Editor.Core.UndoRedo.Commands
     }
 
     /// <summary>
-    /// Befehl für das Verschieben einer Datei oder eines Ordners.
-    /// </summary>
-    public class MoveItemCommand : UndoableCommandBase
-    {
-        private readonly string _oldPath;
-        private readonly string _newPath;
-        private readonly bool _isDirectory;
+        /// Befehl für das Verschieben einer Datei oder eines Ordners.
+        /// </summary>
+        public class MoveItemCommand : UndoableCommandBase
+        {
+            private readonly string _oldPath;
+            private readonly string _newPath;
+            private readonly bool _isDirectory;
 
-        public override string Name => $"Move {Path.GetFileName(_oldPath)}";
+            public override string Name => $"Move {Path.GetFileName(_oldPath)}";
+
+            /// <summary>
+            /// Erstellt einen neuen MoveItemCommand.
+            /// </summary>
+            /// <param name="oldPath">Alter Pfad.</param>
+            /// <param name="newPath">Neuer Pfad.</param>
+            /// <param name="isDirectory">True wenn es sich um einen Ordner handelt.</param>
+            public MoveItemCommand(string oldPath, string newPath, bool isDirectory)
+            {
+                _oldPath = oldPath ?? throw new ArgumentNullException(nameof(oldPath));
+                _newPath = newPath ?? throw new ArgumentNullException(nameof(newPath));
+                _isDirectory = isDirectory;
+            }
+
+            public override void Execute()
+            {
+                if (_isDirectory && Directory.Exists(_oldPath))
+                {
+                    Directory.Move(_oldPath, _newPath);
+                }
+                else if (!_isDirectory && File.Exists(_oldPath))
+                {
+                    File.Move(_oldPath, _newPath);
+                }
+            }
+
+            public override void Undo()
+            {
+                if (_isDirectory && Directory.Exists(_newPath))
+                {
+                    Directory.Move(_newPath, _oldPath);
+                }
+                else if (!_isDirectory && File.Exists(_newPath))
+                {
+                    File.Move(_newPath, _oldPath);
+                }
+            }
+        }
 
         /// <summary>
-        /// Erstellt einen neuen MoveItemCommand.
+        /// Befehl für das Kopieren einer Datei.
+        /// Bei Undo wird die kopierte Datei gelöscht.
         /// </summary>
-        /// <param name="oldPath">Alter Pfad.</param>
-        /// <param name="newPath">Neuer Pfad.</param>
-        /// <param name="isDirectory">True wenn es sich um einen Ordner handelt.</param>
-        public MoveItemCommand(string oldPath, string newPath, bool isDirectory)
+        public class CopyFileCommand : UndoableCommandBase
         {
-            _oldPath = oldPath ?? throw new ArgumentNullException(nameof(oldPath));
-            _newPath = newPath ?? throw new ArgumentNullException(nameof(newPath));
-            _isDirectory = isDirectory;
+            private readonly string _sourcePath;
+            private readonly string _destPath;
+            private readonly string _fileName;
+
+            public override string Name => $"Copy {_fileName}";
+
+            /// <summary>
+            /// Erstellt einen neuen CopyFileCommand.
+            /// </summary>
+            /// <param name="sourcePath">Quellpfad der zu kopierenden Datei.</param>
+            /// <param name="destPath">Zielpfad für die kopierte Datei.</param>
+            public CopyFileCommand(string sourcePath, string destPath)
+            {
+                _sourcePath = sourcePath ?? throw new ArgumentNullException(nameof(sourcePath));
+                _destPath = destPath ?? throw new ArgumentNullException(nameof(destPath));
+                _fileName = Path.GetFileName(sourcePath);
+            }
+
+            public override void Execute()
+            {
+                if (File.Exists(_sourcePath) && !File.Exists(_destPath))
+                {
+                    var directory = Path.GetDirectoryName(_destPath);
+                    if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+                    {
+                        Directory.CreateDirectory(directory);
+                    }
+                    File.Copy(_sourcePath, _destPath, false);
+                }
+            }
+
+            public override void Undo()
+            {
+                if (File.Exists(_destPath))
+                {
+                    File.Delete(_destPath);
+                }
+            }
         }
 
-        public override void Execute()
+        /// <summary>
+        /// Befehl für das Kopieren eines Ordners.
+        /// Bei Undo wird der kopierte Ordner gelöscht.
+        /// </summary>
+        public class CopyFolderCommand : UndoableCommandBase
         {
-            if (_isDirectory && Directory.Exists(_oldPath))
+            private readonly string _sourcePath;
+            private readonly string _destPath;
+            private readonly string _folderName;
+
+            public override string Name => $"Copy Folder {_folderName}";
+
+            /// <summary>
+            /// Erstellt einen neuen CopyFolderCommand.
+            /// </summary>
+            /// <param name="sourcePath">Quellpfad des zu kopierenden Ordners.</param>
+            /// <param name="destPath">Zielpfad für den kopierten Ordner.</param>
+            public CopyFolderCommand(string sourcePath, string destPath)
             {
-                Directory.Move(_oldPath, _newPath);
+                _sourcePath = sourcePath ?? throw new ArgumentNullException(nameof(sourcePath));
+                _destPath = destPath ?? throw new ArgumentNullException(nameof(destPath));
+                _folderName = Path.GetFileName(sourcePath);
             }
-            else if (!_isDirectory && File.Exists(_oldPath))
+
+            public override void Execute()
             {
-                File.Move(_oldPath, _newPath);
+                if (Directory.Exists(_sourcePath) && !Directory.Exists(_destPath))
+                {
+                    CopyDirectoryRecursive(_sourcePath, _destPath);
+                }
+            }
+
+            private void CopyDirectoryRecursive(string sourceDir, string destDir)
+            {
+                Directory.CreateDirectory(destDir);
+
+                foreach (var file in Directory.GetFiles(sourceDir))
+                {
+                    string destFile = Path.Combine(destDir, Path.GetFileName(file));
+                    File.Copy(file, destFile, false);
+                }
+
+                foreach (var dir in Directory.GetDirectories(sourceDir))
+                {
+                    string destSubDir = Path.Combine(destDir, Path.GetFileName(dir));
+                    CopyDirectoryRecursive(dir, destSubDir);
+                }
+            }
+
+            public override void Undo()
+            {
+                if (Directory.Exists(_destPath))
+                {
+                    Directory.Delete(_destPath, true);
+                }
             }
         }
 
-        public override void Undo()
-        {
-            if (_isDirectory && Directory.Exists(_newPath))
+        /// <summary>
+            /// Composite-Befehl für das Einfügen mehrerer Dateien/Ordner.
+            /// </summary>
+            public class PasteItemsCommand : UndoableCommandBase
             {
-                Directory.Move(_newPath, _oldPath);
+                private readonly List<IUndoableCommand> _commands;
+                private readonly bool _isCutOperation;
+                private readonly int _itemCount;
+
+                public override string Name => _isCutOperation 
+                    ? $"Move {_itemCount} item(s)" 
+                    : $"Paste {_itemCount} item(s)";
+
+                /// <summary>
+                /// Erstellt einen neuen PasteItemsCommand.
+                /// </summary>
+                /// <param name="commands">Liste der auszuführenden Befehle.</param>
+                /// <param name="isCutOperation">True wenn es sich um eine Ausschneiden-Operation handelt.</param>
+                public PasteItemsCommand(List<IUndoableCommand> commands, bool isCutOperation)
+                {
+                    _commands = commands ?? throw new ArgumentNullException(nameof(commands));
+                    _isCutOperation = isCutOperation;
+                    _itemCount = commands.Count;
+                }
+
+                public override void Execute()
+                {
+                    foreach (var command in _commands)
+                    {
+                        command.Execute();
+                    }
+                }
+
+                public override void Undo()
+                {
+                    // Rückwärts ausführen
+                    for (int i = _commands.Count - 1; i >= 0; i--)
+                    {
+                        _commands[i].Undo();
+                    }
+                }
+
+                public override void Redo()
+                {
+                    foreach (var command in _commands)
+                    {
+                        command.Redo();
+                    }
+                }
             }
-            else if (!_isDirectory && File.Exists(_newPath))
+
+            /// <summary>
+            /// Composite-Befehl für das Löschen mehrerer Dateien/Ordner.
+            /// </summary>
+            public class DeleteItemsCommand : UndoableCommandBase
             {
-                File.Move(_newPath, _oldPath);
+                private readonly List<IUndoableCommand> _commands;
+                private readonly int _itemCount;
+
+                public override string Name => $"Delete {_itemCount} item(s)";
+
+                /// <summary>
+                /// Erstellt einen neuen DeleteItemsCommand.
+                /// </summary>
+                /// <param name="commands">Liste der Delete-Befehle.</param>
+                /// <param name="itemCount">Anzahl der zu löschenden Elemente.</param>
+                public DeleteItemsCommand(List<IUndoableCommand> commands, int itemCount)
+                {
+                    _commands = commands ?? throw new ArgumentNullException(nameof(commands));
+                    _itemCount = itemCount;
+                }
+
+                public override void Execute()
+                {
+                    foreach (var command in _commands)
+                    {
+                        command.Execute();
+                    }
+                }
+
+                public override void Undo()
+                {
+                    // Rückwärts ausführen (wichtig für Ordnerstruktur)
+                    for (int i = _commands.Count - 1; i >= 0; i--)
+                    {
+                        _commands[i].Undo();
+                    }
+                }
+
+                public override void Redo()
+                {
+                    foreach (var command in _commands)
+                    {
+                        command.Redo();
+                    }
+                }
             }
         }
-    }
-}

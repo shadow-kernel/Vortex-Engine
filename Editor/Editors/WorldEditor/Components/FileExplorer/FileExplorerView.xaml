@@ -109,6 +109,17 @@
                 </MenuItem.Icon>
             </MenuItem>
             <Separator Style="{StaticResource DarkSeparatorStyle}"/>
+            <MenuItem Header="Cut" Click="OnCutClick" InputGestureText="Ctrl+X" Style="{StaticResource DarkMenuItemStyle}">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE8C6;" FontFamily="Segoe MDL2 Assets" Foreground="#808080" FontSize="12"/>
+                </MenuItem.Icon>
+            </MenuItem>
+            <MenuItem Header="Copy" Click="OnCopyClick" InputGestureText="Ctrl+C" Style="{StaticResource DarkMenuItemStyle}">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE8C8;" FontFamily="Segoe MDL2 Assets" Foreground="#808080" FontSize="12"/>
+                </MenuItem.Icon>
+            </MenuItem>
+            <Separator Style="{StaticResource DarkSeparatorStyle}"/>
             <MenuItem Header="Rename" Click="OnRenameClick" InputGestureText="F2" Style="{StaticResource DarkMenuItemStyle}">
                 <MenuItem.Icon>
                     <TextBlock Text="&#xE8AC;" FontFamily="Segoe MDL2 Assets" Foreground="#808080" FontSize="12"/>
@@ -223,6 +234,12 @@
                 </MenuItem>
             </MenuItem>
             <Separator Style="{StaticResource DarkSeparatorStyle}"/>
+            <MenuItem Header="Paste" Click="OnPasteClick" InputGestureText="Ctrl+V" Style="{StaticResource DarkMenuItemStyle}">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE77F;" FontFamily="Segoe MDL2 Assets" Foreground="#808080" FontSize="12"/>
+                </MenuItem.Icon>
+            </MenuItem>
+            <Separator Style="{StaticResource DarkSeparatorStyle}"/>
             <MenuItem Header="Refresh" Click="OnRefreshClick" InputGestureText="F5" Style="{StaticResource DarkMenuItemStyle}">
                 <MenuItem.Icon>
                     <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" Foreground="#808080" FontSize="12"/>
@@ -330,38 +347,58 @@
                 </Grid>
             </Border>
 
-            <!-- File Grid -->
-            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
-                          AllowDrop="True" Drop="OnEmptyAreaDrop" DragOver="OnEmptyAreaDragOver">
-                <ListBox x:Name="FileList" Background="Transparent" BorderThickness="0" Padding="8"
-                         ItemContainerStyle="{StaticResource FileItemStyle}"
-                         SelectionMode="Extended" AllowDrop="True">
-                    <ListBox.ItemsPanel>
-                        <ItemsPanelTemplate>
-                            <WrapPanel/>
-                        </ItemsPanelTemplate>
-                    </ListBox.ItemsPanel>
-                    <ListBox.ItemTemplate>
-                        <DataTemplate>
-                            <StackPanel HorizontalAlignment="Center" Width="64" ToolTip="{Binding Name}">
-                                <TextBlock Text="{Binding Icon}" FontFamily="Segoe MDL2 Assets" FontSize="32" 
-                                           Foreground="{Binding IconColor}" HorizontalAlignment="Center"/>
-                                <TextBlock x:Name="NameText" Text="{Binding Name}" Foreground="#C5C5C5" FontSize="10" 
-                                           HorizontalAlignment="Center" Margin="0,4,0,0" TextTrimming="CharacterEllipsis"
-                                           TextWrapping="Wrap" MaxHeight="32" TextAlignment="Center" LineHeight="12"
-                                           Visibility="{Binding IsRenaming, Converter={StaticResource InverseBoolToVisConverter}}"/>
-                                <TextBox x:Name="RenameBox" Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}"
-                                         Background="#1E1E1E" Foreground="#C5C5C5" BorderBrush="#3FA9F5" 
-                                         BorderThickness="1" FontSize="10" TextAlignment="Center" Padding="2"
-                                         MaxWidth="76"
-                                         Visibility="{Binding IsRenaming, Converter={StaticResource BoolToVisConverter}}"
-                                         LostFocus="OnRenameBoxLostFocus" KeyDown="OnRenameBoxKeyDown"
-                                         IsVisibleChanged="OnRenameBoxVisibleChanged"/>
-                            </StackPanel>
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
-            </ScrollViewer>
+            <!-- File Grid with Selection Rectangle -->
+            <Grid Grid.Row="1" x:Name="FileGridContainer">
+                <ScrollViewer x:Name="FileScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                AllowDrop="True" Drop="OnEmptyAreaDrop" DragOver="OnEmptyAreaDragOver"
+                PreviewMouseLeftButtonDown="OnScrollViewerMouseDown"
+                PreviewMouseMove="OnScrollViewerMouseMove"
+                PreviewMouseLeftButtonUp="OnScrollViewerMouseUp"
+                SizeChanged="OnScrollViewerSizeChanged">
+                    <ListBox x:Name="FileList" Background="Transparent" BorderThickness="0" Padding="8"
+                    ItemContainerStyle="{StaticResource FileItemStyle}"
+                    SelectionMode="Extended" AllowDrop="True"
+                    ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                    ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                    PreviewMouseWheel="OnFileListMouseWheel">
+                        <ListBox.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel x:Name="FileWrapPanel" Orientation="Horizontal"/>
+                            </ItemsPanelTemplate>
+                        </ListBox.ItemsPanel>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel HorizontalAlignment="Center" Width="64" ToolTip="{Binding Name}"
+                                            Opacity="{Binding ItemOpacity}">
+                                    <TextBlock Text="{Binding Icon}" FontFamily="Segoe MDL2 Assets" FontSize="32" 
+                                               Foreground="{Binding IconColor}" HorizontalAlignment="Center"/>
+                                    <TextBlock x:Name="NameText" Text="{Binding Name}" Foreground="#C5C5C5" FontSize="10" 
+                                               HorizontalAlignment="Center" Margin="0,4,0,0" TextTrimming="CharacterEllipsis"
+                                               TextWrapping="Wrap" MaxHeight="32" TextAlignment="Center" LineHeight="12"
+                                               Visibility="{Binding IsRenaming, Converter={StaticResource InverseBoolToVisConverter}}"/>
+                                    <TextBox x:Name="RenameBox" Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}"
+                                             Background="#1E1E1E" Foreground="#C5C5C5" BorderBrush="#3FA9F5" 
+                                             BorderThickness="1" FontSize="10" TextAlignment="Center" Padding="2"
+                                             MaxWidth="76"
+                                             Visibility="{Binding IsRenaming, Converter={StaticResource BoolToVisConverter}}"
+                                             LostFocus="OnRenameBoxLostFocus" KeyDown="OnRenameBoxKeyDown"
+                                             IsVisibleChanged="OnRenameBoxVisibleChanged"/>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </ScrollViewer>
+                
+                <!-- Selection Rectangle Overlay -->
+                <Canvas x:Name="SelectionCanvas" IsHitTestVisible="False">
+                    <Border x:Name="SelectionRectangle" 
+                            Background="#203FA9F5" 
+                            BorderBrush="#3FA9F5" 
+                            BorderThickness="1"
+                            Visibility="Collapsed"
+                            CornerRadius="2"/>
+                </Canvas>
+            </Grid>
             
             <!-- Empty State -->
             <TextBlock x:Name="EmptyText" Grid.Row="1" Text="This folder is empty" 

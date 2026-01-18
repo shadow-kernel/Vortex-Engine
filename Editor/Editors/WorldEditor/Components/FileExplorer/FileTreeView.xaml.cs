@@ -343,6 +343,8 @@ namespace Game
 
         #region Drag and Drop
 
+        private bool _isDragging;
+
         private void OnTreeViewItemMouseDown(object sender, MouseButtonEventArgs e)
         {
             if (e.LeftButton == MouseButtonState.Pressed)
@@ -350,14 +352,26 @@ namespace Game
                 _dragStartPoint = e.GetPosition(null);
                 var treeViewItem = sender as TreeViewItem;
                 _draggedItem = treeViewItem?.DataContext as FileSystemItem;
+                _isDragging = false;
             }
+        }
+
+        protected override void OnPreviewMouseLeftButtonUp(MouseButtonEventArgs e)
+        {
+            base.OnPreviewMouseLeftButtonUp(e);
+            // Reset drag state when mouse is released without dragging
+            if (!_isDragging)
+            {
+                _draggedItem = null;
+            }
+            _isDragging = false;
         }
 
         protected override void OnPreviewMouseMove(MouseEventArgs e)
         {
             base.OnPreviewMouseMove(e);
 
-            if (e.LeftButton != MouseButtonState.Pressed || _draggedItem == null)
+            if (e.LeftButton != MouseButtonState.Pressed || _draggedItem == null || _isDragging)
                 return;
 
             Point currentPosition = e.GetPosition(null);
@@ -366,9 +380,14 @@ namespace Game
             if (Math.Abs(diff.X) > SystemParameters.MinimumHorizontalDragDistance ||
                 Math.Abs(diff.Y) > SystemParameters.MinimumVerticalDragDistance)
             {
-                var data = new DataObject("FileSystemItem", _draggedItem);
-                DragDrop.DoDragDrop(this, data, DragDropEffects.Move);
+                _isDragging = true;
+                var draggedItem = _draggedItem;
                 _draggedItem = null;
+                
+                var data = new DataObject("FileSystemItem", draggedItem);
+                DragDrop.DoDragDrop(this, data, DragDropEffects.Move);
+                
+                _isDragging = false;
             }
         }
 

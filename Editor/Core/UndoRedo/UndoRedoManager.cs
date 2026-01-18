@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Media;
 using System.Runtime.CompilerServices;
 
 namespace Editor.Core.UndoRedo
@@ -38,6 +39,12 @@ namespace Editor.Core.UndoRedo
         private readonly Stack<IUndoableCommand> _undoStack = new Stack<IUndoableCommand>();
         private readonly Stack<IUndoableCommand> _redoStack = new Stack<IUndoableCommand>();
         private bool _isExecuting = false;
+
+        /// <summary>
+        /// Aktiviert oder deaktiviert den Sound bei Undo/Redo-Limit.
+        /// Standard: true.
+        /// </summary>
+        public bool EnableLimitSound { get; set; } = true;
 
         /// <summary>
         /// Maximale Anzahl von Befehlen im Undo-Stack.
@@ -90,6 +97,11 @@ namespace Editor.Core.UndoRedo
         /// Event wird ausgelöst, wenn ein Befehl ausgeführt wurde.
         /// </summary>
         public event EventHandler<CommandExecutedEventArgs> CommandExecuted;
+
+        /// <summary>
+        /// Event wird ausgelöst, wenn Undo/Redo am Limit ist (keine weiteren Aktionen möglich).
+        /// </summary>
+        public event EventHandler<UndoRedoLimitEventArgs> LimitReached;
 
         public event PropertyChangedEventHandler PropertyChanged;
 
@@ -152,7 +164,12 @@ namespace Editor.Core.UndoRedo
         public bool Undo()
         {
             if (!CanUndo || _isExecuting)
+            {
+                // Am Limit - Sound abspielen
+                PlayLimitSound(true);
+                OnLimitReached(true);
                 return false;
+            }
 
             try
             {
@@ -180,7 +197,12 @@ namespace Editor.Core.UndoRedo
         public bool Redo()
         {
             if (!CanRedo || _isExecuting)
+            {
+                // Am Limit - Sound abspielen
+                PlayLimitSound(false);
+                OnLimitReached(false);
                 return false;
+            }
 
             try
             {
@@ -286,6 +308,30 @@ namespace Editor.Core.UndoRedo
             CommandExecuted?.Invoke(this, new CommandExecutedEventArgs(command, executionType));
         }
 
+        private void OnLimitReached(bool isUndo)
+        {
+            LimitReached?.Invoke(this, new UndoRedoLimitEventArgs(isUndo));
+        }
+
+        /// <summary>
+        /// Spielt einen Sound ab, wenn Undo/Redo am Limit ist.
+        /// </summary>
+        private void PlayLimitSound(bool isUndo)
+        {
+            if (!EnableLimitSound)
+                return;
+
+            try
+            {
+                // Windows System-Sound für "Hinweis" - ähnlich wie Windows Explorer bei Limit
+                SystemSounds.Exclamation.Play();
+            }
+            catch
+            {
+                // Sound-Fehler ignorieren
+            }
+        }
+
         protected void OnPropertyChanged([CallerMemberName] string propertyName = null)
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
@@ -303,17 +349,33 @@ namespace Editor.Core.UndoRedo
     }
 
     /// <summary>
-    /// Event-Argumente für ausgeführte Befehle.
-    /// </summary>
-    public class CommandExecutedEventArgs : EventArgs
-    {
-        public IUndoableCommand Command { get; }
-        public CommandExecutionType ExecutionType { get; }
-
-        public CommandExecutedEventArgs(IUndoableCommand command, CommandExecutionType executionType)
+        /// Event-Argumente für ausgeführte Befehle.
+        /// </summary>
+        public class CommandExecutedEventArgs : EventArgs
         {
-            Command = command;
-            ExecutionType = executionType;
+            public IUndoableCommand Command { get; }
+            public CommandExecutionType ExecutionType { get; }
+
+            public CommandExecutedEventArgs(IUndoableCommand command, CommandExecutionType executionType)
+            {
+                Command = command;
+                ExecutionType = executionType;
+            }
+        }
+
+        /// <summary>
+        /// Event-Argumente wenn Undo/Redo am Limit ist.
+        /// </summary>
+        public class UndoRedoLimitEventArgs : EventArgs
+        {
+            /// <summary>
+            /// True wenn Undo am Limit ist, False wenn Redo am Limit ist.
+            /// </summary>
+            public bool IsUndo { get; }
+
+            public UndoRedoLimitEventArgs(bool isUndo)
+            {
+                IsUndo = isUndo;
+            }
         }
     }
-}

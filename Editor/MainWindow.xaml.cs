@@ -26,7 +26,8 @@ namespace Editor
 
         private void OnCanGlobalUndo(object sender, CanExecuteRoutedEventArgs e)
         {
-            e.CanExecute = UndoRedoManager.Instance.CanUndo;
+            // Always allow execution - sound will play if at limit
+            e.CanExecute = true;
         }
 
         private void OnGlobalUndo(object sender, ExecutedRoutedEventArgs e)
@@ -37,7 +38,8 @@ namespace Editor
 
         private void OnCanGlobalRedo(object sender, CanExecuteRoutedEventArgs e)
         {
-            e.CanExecute = UndoRedoManager.Instance.CanRedo;
+            // Always allow execution - sound will play if at limit
+            e.CanExecute = true;
         }
 
         private void OnGlobalRedo(object sender, ExecutedRoutedEventArgs e)
