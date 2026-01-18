@@ -2,7 +2,15 @@ using System;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using Editor.Core.Data;
 using Editor.Core.UndoRedo;
+using Editor.ECS;
+using Editor.ECS.Components;
+using Editor.ECS.Components.Audio;
+using Editor.ECS.Components.Lighting;
+using Editor.ECS.Components.Physics;
+using Editor.ECS.Components.Rendering;
+using Editor.ECS.Components.Scripting;
 using Editor.Editors.WorldEditor.Services;
 
 namespace Editor.Editors.WorldEditor.Components.HeaderBar
@@ -246,6 +254,166 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
                 "Über Vortex Engine",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
+        }
+
+        #endregion
+
+        #region GameObject Menu Helpers
+
+        private Scene GetActiveScene()
+        {
+            return ProjectData.Current?.ActiveScene;
+        }
+
+        private GameEntity CreateEntityInActiveScene(string name)
+        {
+            var scene = GetActiveScene();
+            if (scene == null)
+            {
+                MessageBox.Show("Keine aktive Szene vorhanden.", "Fehler", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return null;
+            }
+            return scene.CreateEntity(name);
+        }
+
+        #endregion
+
+        #region GameObject Menu
+
+        private void CreateEmpty_Click(object sender, RoutedEventArgs e)
+        {
+            CreateEntityInActiveScene("New Entity");
+        }
+
+        private void CreateCube_Click(object sender, RoutedEventArgs e)
+        {
+            GetActiveScene()?.CreatePrimitive(PrimitiveType.Cube);
+        }
+
+        private void CreateSphere_Click(object sender, RoutedEventArgs e)
+        {
+            GetActiveScene()?.CreatePrimitive(PrimitiveType.Sphere);
+        }
+
+        private void CreateCapsule_Click(object sender, RoutedEventArgs e)
+        {
+            GetActiveScene()?.CreatePrimitive(PrimitiveType.Capsule);
+        }
+
+        private void CreateCylinder_Click(object sender, RoutedEventArgs e)
+        {
+            GetActiveScene()?.CreatePrimitive(PrimitiveType.Cylinder);
+        }
+
+        private void CreatePlane_Click(object sender, RoutedEventArgs e)
+        {
+            GetActiveScene()?.CreatePrimitive(PrimitiveType.Plane);
+        }
+
+        private void CreateDirectionalLight_Click(object sender, RoutedEventArgs e)
+        {
+            GetActiveScene()?.CreateLight(LightType.Directional);
+        }
+
+        private void CreatePointLight_Click(object sender, RoutedEventArgs e)
+        {
+            GetActiveScene()?.CreateLight(LightType.Point);
+        }
+
+        private void CreateSpotLight_Click(object sender, RoutedEventArgs e)
+        {
+            GetActiveScene()?.CreateLight(LightType.Spot);
+        }
+
+        private void CreateCamera_Click(object sender, RoutedEventArgs e)
+        {
+            GetActiveScene()?.CreateCamera();
+        }
+
+        #endregion
+
+        #region Component Menu
+
+        private GameEntity GetSelectedEntity()
+        {
+            return GetActiveScene()?.SelectedEntity;
+        }
+
+        private void AddRigidbody_Click(object sender, RoutedEventArgs e)
+        {
+            var entity = GetSelectedEntity();
+            if (entity == null)
+            {
+                MessageBox.Show("Bitte wählen Sie zuerst eine Entity aus.", "Hinweis", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            entity.AddComponent(new Rigidbody(entity));
+        }
+
+        private void AddBoxCollider_Click(object sender, RoutedEventArgs e)
+        {
+            var entity = GetSelectedEntity();
+            if (entity == null)
+            {
+                MessageBox.Show("Bitte wählen Sie zuerst eine Entity aus.", "Hinweis", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            entity.AddComponent(new BoxCollider(entity));
+        }
+
+        private void AddSphereCollider_Click(object sender, RoutedEventArgs e)
+        {
+            var entity = GetSelectedEntity();
+            if (entity == null)
+            {
+                MessageBox.Show("Bitte wählen Sie zuerst eine Entity aus.", "Hinweis", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            entity.AddComponent(new SphereCollider(entity));
+        }
+
+        private void AddCapsuleCollider_Click(object sender, RoutedEventArgs e)
+        {
+            var entity = GetSelectedEntity();
+            if (entity == null)
+            {
+                MessageBox.Show("Bitte wählen Sie zuerst eine Entity aus.", "Hinweis", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            entity.AddComponent(new CapsuleCollider(entity));
+        }
+
+        private void AddMeshRenderer_Click(object sender, RoutedEventArgs e)
+        {
+            var entity = GetSelectedEntity();
+            if (entity == null)
+            {
+                MessageBox.Show("Bitte wählen Sie zuerst eine Entity aus.", "Hinweis", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            entity.AddComponent(new MeshRenderer(entity));
+        }
+
+        private void AddAudioSource_Click(object sender, RoutedEventArgs e)
+        {
+            var entity = GetSelectedEntity();
+            if (entity == null)
+            {
+                MessageBox.Show("Bitte wählen Sie zuerst eine Entity aus.", "Hinweis", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            entity.AddComponent(new AudioSource(entity));
+        }
+
+        private void AddScript_Click(object sender, RoutedEventArgs e)
+        {
+            var entity = GetSelectedEntity();
+            if (entity == null)
+            {
+                MessageBox.Show("Bitte wählen Sie zuerst eine Entity aus.", "Hinweis", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            entity.AddComponent(new Script(entity));
         }
 
         #endregion

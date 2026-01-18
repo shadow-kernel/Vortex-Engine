@@ -1,17 +1,18 @@
 ﻿<UserControl x:Class="Editor.Editors.WorldEditor.WorldEditorView"
-             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
-             xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
-             xmlns:local="clr-namespace:Editor.Editors.WorldEditor"
-             xmlns:avalonDock="https://github.com/Dirkster99/AvalonDock"
-             xmlns:headerBar="clr-namespace:Editor.Editors.WorldEditor.Components.HeaderBar"
-             xmlns:gamePreview="clr-namespace:Editor.Editors.WorldEditor.Components.GamePreview"
-             xmlns:fileExplorer="clr-namespace:Editor.Editors.WorldEditor.Components.FileExplorer"
-             xmlns:sceneHierarchy="clr-namespace:Editor.Editors.WorldEditor.Components.SceneHierarchy"
-             xmlns:inspector="clr-namespace:Editor.Editors.WorldEditor.Components.Inspector"
-             mc:Ignorable="d" Background="#1E1E1E"
-             d:DesignHeight="720" d:DesignWidth="1280">
+xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+xmlns:local="clr-namespace:Editor.Editors.WorldEditor"
+xmlns:avalonDock="https://github.com/Dirkster99/AvalonDock"
+xmlns:headerBar="clr-namespace:Editor.Editors.WorldEditor.Components.HeaderBar"
+xmlns:gamePreview="clr-namespace:Editor.Editors.WorldEditor.Components.GamePreview"
+xmlns:fileExplorer="clr-namespace:Editor.Editors.WorldEditor.Components.FileExplorer"
+xmlns:sceneHierarchy="clr-namespace:Editor.Editors.WorldEditor.Components.SceneHierarchy"
+xmlns:inspector="clr-namespace:Editor.Editors.WorldEditor.Components.Inspector"
+xmlns:historyLog="clr-namespace:Editor.Editors.WorldEditor.Components.HistoryLog"
+mc:Ignorable="d" Background="#1E1E1E"
+d:DesignHeight="720" d:DesignWidth="1280">
 
     <UserControl.Resources>
         <ResourceDictionary>
@@ -96,7 +97,7 @@
                         
                     </avalonDock:LayoutPanel>
                     
-                    <!-- Right Panel: Hierarchy + Inspector -->
+                    <!-- Right Panel: Hierarchy + Inspector + History -->
                     <avalonDock:LayoutAnchorablePaneGroup Orientation="Vertical" DockWidth="280">
                         <avalonDock:LayoutAnchorablePane DockHeight="*">
                             <avalonDock:LayoutAnchorable Title="Hierarchy" CanClose="False" CanFloat="True" 
@@ -109,6 +110,10 @@
                             <avalonDock:LayoutAnchorable Title="Inspector" CanClose="False" CanFloat="True" 
                                                          CanAutoHide="True" AutoHideWidth="280">
                                 <inspector:InspectorView/>
+                            </avalonDock:LayoutAnchorable>
+                            <avalonDock:LayoutAnchorable Title="History" CanClose="False" CanFloat="True" 
+                                                         CanAutoHide="True" AutoHideWidth="280">
+                                <historyLog:HistoryLogView/>
                             </avalonDock:LayoutAnchorable>
                         </avalonDock:LayoutAnchorablePane>
                     </avalonDock:LayoutAnchorablePaneGroup>

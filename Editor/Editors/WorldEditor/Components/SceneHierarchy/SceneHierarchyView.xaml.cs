@@ -1,99 +1,733 @@
+using System;
+using System.IO;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
+using Editor.Core.Data;
+using Editor.Core.Services;
+using Editor.Core.UndoRedo;
+using Editor.ECS;
 
 namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
 {
     public partial class SceneHierarchyView : UserControl
     {
+        private SceneHierarchyViewModel ViewModel => DataContext as SceneHierarchyViewModel;
+
         public SceneHierarchyView()
         {
             InitializeComponent();
-            LoadDummyData();
+            Loaded += OnLoaded;
+            
+            // PreviewKeyDown für Keyboard-Shortcuts (vor TreeView)
+            this.PreviewKeyDown += OnPreviewKeyDown;
         }
 
-        private void LoadDummyData()
+        private void OnLoaded(object sender, RoutedEventArgs e)
         {
-            // Main Scene
-            var mainScene = CreateTreeItem("Main Scene", "\uE81E", "#DCDCAA"); // Scene icon - yellow
-            mainScene.IsExpanded = true;
-
-            // Camera
-            mainScene.Items.Add(CreateTreeItem("Main Camera", "\uE722", "#569CD6")); // Camera icon - blue
-
-            // Lights
-            mainScene.Items.Add(CreateTreeItem("Directional Light", "\uE793", "#FFD700")); // Light icon - gold
-            mainScene.Items.Add(CreateTreeItem("Point Light", "\uE793", "#FFD700"));
-            mainScene.Items.Add(CreateTreeItem("Spot Light", "\uE793", "#FFD700"));
-
-            // Player (Prefab)
-            var player = CreateTreeItem("Player", "\uE74C", "#3FA9F5"); // Prefab icon - light blue
-            player.IsExpanded = true;
-            player.Items.Add(CreateTreeItem("PlayerMesh", "\uE809", "#4EC9B0")); // Mesh icon - teal
-            player.Items.Add(CreateTreeItem("PlayerCollider", "\uE73C", "#4FC14F")); // Collider icon - green
-            player.Items.Add(CreateTreeItem("FootstepAudio", "\uE767", "#CE9178")); // Audio icon - orange
-            mainScene.Items.Add(player);
-
-            // Environment (Empty Container)
-            var environment = CreateTreeItem("Environment", "\uE734", "#808080"); // Empty icon - gray
-            environment.IsExpanded = true;
-            environment.Items.Add(CreateTreeItem("Ground", "\uE809", "#4EC9B0"));
-            environment.Items.Add(CreateTreeItem("Skybox", "\uE809", "#4EC9B0"));
-
-            var props = CreateTreeItem("Props", "\uE734", "#808080");
-            props.Items.Add(CreateTreeItem("Tree_01", "\uE809", "#4EC9B0"));
-            props.Items.Add(CreateTreeItem("Tree_02", "\uE809", "#4EC9B0"));
-            props.Items.Add(CreateTreeItem("Rock_01", "\uE809", "#4EC9B0"));
-            props.Items.Add(CreateTreeItem("Barrel_01", "\uE74C", "#3FA9F5"));
-            environment.Items.Add(props);
-            mainScene.Items.Add(environment);
-
-            // UI Canvas
-            var uiCanvas = CreateTreeItem("UI Canvas", "\uE8A1", "#C586C0"); // Canvas icon - purple
-            uiCanvas.IsExpanded = true;
-            uiCanvas.Items.Add(CreateTreeItem("HealthBar", "\uEA86", "#C5C5C5")); // GameObject icon - light gray
-            uiCanvas.Items.Add(CreateTreeItem("ScoreText", "\uEA86", "#C5C5C5"));
-            uiCanvas.Items.Add(CreateTreeItem("PauseMenu", "\uEA86", "#C5C5C5"));
-            mainScene.Items.Add(uiCanvas);
-
-            SceneTree.Items.Add(mainScene);
+            // Verbinde mit dem aktuellen Projekt
+            var project = ProjectData.Current;
+            if (project != null)
+            {
+                ViewModel?.SetProject(project);
+            }
         }
 
-        private TreeViewItem CreateTreeItem(string name, string iconCode, string colorHex)
+        /// <summary>
+        /// Setzt das aktuelle Projekt für die Hierarchy-Ansicht
+        /// </summary>
+        public void SetProject(ProjectData project)
         {
-            var color = (Color)ColorConverter.ConvertFromString(colorHex);
-            var brush = new SolidColorBrush(color);
-
-            var stackPanel = new StackPanel
-            {
-                Orientation = Orientation.Horizontal
-            };
-
-            var icon = new TextBlock
-            {
-                Text = iconCode,
-                FontFamily = new FontFamily("Segoe MDL2 Assets"),
-                FontSize = 12,
-                Foreground = brush,
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(0, 0, 6, 0)
-            };
-
-            var text = new TextBlock
-            {
-                Text = name,
-                Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#C5C5C5")),
-                VerticalAlignment = VerticalAlignment.Center
-            };
-
-            stackPanel.Children.Add(icon);
-            stackPanel.Children.Add(text);
-
-            return new TreeViewItem
-            {
-                Header = stackPanel,
-                Style = (Style)FindResource("SceneTreeItemStyle")
-            };
+            ViewModel?.SetProject(project);
         }
+
+        /// <summary>
+        /// Setzt die aktuelle Szene für die Hierarchy-Ansicht
+        /// </summary>
+        public void SetScene(Scene scene)
+        {
+            ViewModel?.SetScene(scene);
+        }
+
+        #region Keyboard Shortcuts
+
+        private void OnPreviewKeyDown(object sender, KeyEventArgs e)
+        {
+            if (ViewModel == null) return;
+
+            var ctrl = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
+            var shift = Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);
+
+            switch (e.Key)
+            {
+                // Clipboard Operations
+                case Key.X when ctrl:
+                    if (ViewModel.CutCommand.CanExecute(null))
+                    {
+                        ViewModel.CutCommand.Execute(null);
+                        e.Handled = true;
+                    }
+                    break;
+                    
+                case Key.C when ctrl:
+                    if (ViewModel.CopyCommand.CanExecute(null))
+                    {
+                        ViewModel.CopyCommand.Execute(null);
+                        e.Handled = true;
+                    }
+                    break;
+                    
+                case Key.V when ctrl:
+                    if (ViewModel.PasteCommand.CanExecute(null))
+                    {
+                        ViewModel.PasteCommand.Execute(null);
+                        e.Handled = true;
+                    }
+                    break;
+
+                // Delete
+                case Key.Delete:
+                    if (ViewModel.DeleteEntityCommand.CanExecute(null))
+                    {
+                        ViewModel.DeleteEntityCommand.Execute(null);
+                        e.Handled = true;
+                    }
+                    break;
+
+                // Duplicate
+                case Key.D when ctrl:
+                    if (ViewModel.DuplicateEntityCommand.CanExecute(null))
+                    {
+                        ViewModel.DuplicateEntityCommand.Execute(null);
+                        e.Handled = true;
+                    }
+                    break;
+
+                // Select All
+                case Key.A when ctrl:
+                    if (ViewModel.SelectAllCommand.CanExecute(null))
+                    {
+                        ViewModel.SelectAllCommand.Execute(null);
+                        e.Handled = true;
+                    }
+                    break;
+
+                // Rename
+                case Key.F2:
+                    if (ViewModel.SelectedEntity != null)
+                    {
+                        RenameEntity_Click(sender, null);
+                        e.Handled = true;
+                    }
+                    break;
+
+                // Escape to clear selection
+                case Key.Escape:
+                    ViewModel.ClearSelection();
+                    e.Handled = true;
+                    break;
+            }
+        }
+
+        #endregion
+
+        #region Toolbar Buttons
+
+        private void AddScene_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel?.CreateSceneCommand.Execute(null);
+        }
+
+        private void AddEntity_Click(object sender, RoutedEventArgs e)
+        {
+            // Show context menu for adding entities
+            var contextMenu = FindResource("SceneContextMenu") as ContextMenu;
+            if (contextMenu != null)
+            {
+                contextMenu.PlacementTarget = AddEntityButton;
+                contextMenu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+                contextMenu.IsOpen = true;
+            }
+        }
+
+        #endregion
+
+        #region Tree Selection
+
+        private void HierarchyTree_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
+        {
+            if (ViewModel == null) return;
+
+            // Bei normaler Selektion (ohne Modifier) - wird bereits über PreviewMouseDown behandelt
+            if (e.NewValue is GameEntity entity)
+            {
+                // Setze SelectedEntity für Inspector usw.
+                ViewModel.SelectedEntity = entity;
+                
+                // Wenn keine Modifier-Taste gedrückt ist, ersetze die Selektion
+                if (!Keyboard.Modifiers.HasFlag(ModifierKeys.Control) && 
+                    !Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))
+                {
+                    ViewModel.SetSelection(entity);
+                }
+            }
+            else if (e.NewValue is Scene scene)
+            {
+                ViewModel.SelectedScene = scene;
+                ViewModel.ClearSelection();
+            }
+        }
+
+        private void HierarchyTree_MouseRightButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            // Allow right-click on empty space to show scene menu
+            var treeViewItem = GetTreeViewItemFromPoint(e.GetPosition(HierarchyTree));
+            if (treeViewItem == null && ViewModel?.SelectedScene != null)
+            {
+                var contextMenu = FindResource("SceneContextMenu") as ContextMenu;
+                if (contextMenu != null)
+                {
+                    contextMenu.PlacementTarget = HierarchyTree;
+                    contextMenu.IsOpen = true;
+                }
+                e.Handled = true;
+            }
+        }
+
+        private TreeViewItem GetTreeViewItemFromPoint(Point point)
+        {
+            var element = HierarchyTree.InputHitTest(point) as DependencyObject;
+            while (element != null && !(element is TreeViewItem))
+            {
+                element = System.Windows.Media.VisualTreeHelper.GetParent(element);
+            }
+            return element as TreeViewItem;
+        }
+
+        #endregion
+
+        #region Clipboard Operations
+
+        private void Cut_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel?.CutCommand.Execute(null);
+        }
+
+        private void Copy_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel?.CopyCommand.Execute(null);
+        }
+
+        private void Paste_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel?.PasteCommand.Execute(null);
+        }
+
+        #endregion
+
+        #region Prefab Operations
+
+        private void SaveAsPrefab_Click(object sender, RoutedEventArgs e)
+        {
+            if (ViewModel?.SelectedEntity == null) return;
+
+            var project = ProjectData.Current;
+            if (project == null) return;
+
+            try
+            {
+                ProjectService.Instance.SavePrefab(project, ViewModel.SelectedEntity);
+                MessageBox.Show(
+                    $"Prefab '{ViewModel.SelectedEntity.Name}.ventity' saved successfully!",
+                    "Save Prefab",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+            }
+            catch (System.Exception ex)
+            {
+                MessageBox.Show(
+                    $"Error saving prefab: {ex.Message}",
+                    "Error",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+        }
+
+        #endregion
+
+        #region Entity Creation - 3D Objects
+
+        private void CreateEmpty_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel?.CreateEmptyEntityCommand.Execute(null);
+        }
+
+        private void CreateFolder_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel?.CreateFolderCommand.Execute(null);
+        }
+
+        private void CreateCube_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel?.CreateCubeCommand.Execute(null);
+        }
+
+        private void CreateSphere_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel?.CreateSphereCommand.Execute(null);
+        }
+
+        private void CreateCapsule_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel?.CreateCapsuleCommand.Execute(null);
+        }
+
+        private void CreateCylinder_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel?.CreateCylinderCommand.Execute(null);
+        }
+
+        private void CreatePlane_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel?.CreatePlaneCommand.Execute(null);
+        }
+
+        private void CreateQuad_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel?.CreateQuadCommand.Execute(null);
+        }
+
+
+        #endregion
+
+        #region Prefab Instantiation
+
+        private void InstantiatePrefab_Click(object sender, RoutedEventArgs e)
+        {
+            if (ViewModel?.SelectedScene == null) return;
+
+            var project = ProjectData.Current;
+            if (project == null) return;
+
+            // Öffne Datei-Dialog zum Auswählen eines Prefabs
+            var dialog = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "Select Prefab to Instantiate",
+                Filter = "Prefab Files (*.ventity)|*.ventity",
+                InitialDirectory = System.IO.Path.Combine(project.Path, "Assets", "Prefabs")
+            };
+
+            // Erstelle Prefabs-Ordner falls nicht vorhanden
+            if (!System.IO.Directory.Exists(dialog.InitialDirectory))
+            {
+                System.IO.Directory.CreateDirectory(dialog.InitialDirectory);
+            }
+
+            if (dialog.ShowDialog() == true)
+            {
+                try
+                {
+                    var entity = SceneService.Instance.LoadEntityFromPrefab(dialog.FileName);
+                    if (entity != null)
+                    {
+                        entity.Scene = ViewModel.SelectedScene;
+                        entity.RegenerateIds(); // Neue IDs für die Instanz
+                        ViewModel.SelectedScene.AddEntity(entity);
+                        ViewModel.SelectedEntity = entity;
+                    }
+                }
+                catch (System.Exception ex)
+                {
+                    MessageBox.Show(
+                        $"Error loading prefab: {ex.Message}",
+                        "Error",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Error);
+                }
+            }
+        }
+
+        #endregion
+
+        #region Entity Creation - Lights
+
+        private void CreateDirectionalLight_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel?.CreateDirectionalLightCommand.Execute(null);
+        }
+
+        private void CreatePointLight_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel?.CreatePointLightCommand.Execute(null);
+        }
+
+        private void CreateSpotLight_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel?.CreateSpotLightCommand.Execute(null);
+        }
+
+        #endregion
+
+        #region Entity Creation - Other
+
+        private void CreateCamera_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel?.CreateCameraCommand.Execute(null);
+        }
+
+
+        private void CreateAudioSource_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel?.CreateAudioSourceCommand.Execute(null);
+        }
+
+        #endregion
+
+        #region Entity Creation - UI
+
+        private void CreateUICanvas_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel?.CreateUICanvasCommand.Execute(null);
+        }
+
+        private void CreateUIText_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel?.CreateUITextCommand.Execute(null);
+        }
+
+        private void CreateUIImage_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel?.CreateUIImageCommand.Execute(null);
+        }
+
+        private void CreateUIButton_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel?.CreateUIButtonCommand.Execute(null);
+        }
+
+        #endregion
+
+        #region Entity Actions
+
+        private void CreateChildEntity_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel?.CreateChildEntityCommand.Execute(null);
+        }
+
+        private void RenameEntity_Click(object sender, RoutedEventArgs e)
+        {
+            // Rename dialog
+            if (ViewModel?.SelectedEntity != null)
+            {
+                var dialog = new Window
+                {
+                    Title = "Rename Entity",
+                    Width = 300,
+                    Height = 120,
+                    WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                    Owner = Window.GetWindow(this),
+                    Background = new System.Windows.Media.SolidColorBrush(
+                        (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#252526"))
+                };
+
+                var stack = new StackPanel { Margin = new Thickness(10) };
+                var textBox = new TextBox 
+                { 
+                    Text = ViewModel.SelectedEntity.Name,
+                    Background = new System.Windows.Media.SolidColorBrush(
+                        (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#1E1E1E")),
+                    Foreground = new System.Windows.Media.SolidColorBrush(
+                        (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#C5C5C5")),
+                    BorderBrush = new System.Windows.Media.SolidColorBrush(
+                        (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#3C3C3C")),
+                    Padding = new Thickness(8, 6, 8, 6),
+                    FontSize = 13
+                };
+                textBox.SelectAll();
+
+                var okButton = new Button 
+                { 
+                    Content = "OK", 
+                    Width = 80, 
+                    Height = 28,
+                    Margin = new Thickness(0, 10, 0, 0),
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                    Background = new System.Windows.Media.SolidColorBrush(
+                        (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#0E639C")),
+                    Foreground = System.Windows.Media.Brushes.White,
+                    BorderThickness = new Thickness(0)
+                };
+
+                okButton.Click += (s, args) =>
+                {
+                    if (!string.IsNullOrWhiteSpace(textBox.Text))
+                    {
+                        ViewModel.SelectedEntity.Name = textBox.Text;
+                    }
+                    dialog.Close();
+                };
+
+                stack.Children.Add(textBox);
+                stack.Children.Add(okButton);
+                dialog.Content = stack;
+                
+                textBox.KeyDown += (s, args) =>
+                {
+                    if (args.Key == Key.Enter)
+                        okButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    else if (args.Key == Key.Escape)
+                        dialog.Close();
+                };
+
+                dialog.Loaded += (s, args) => textBox.Focus();
+                dialog.ShowDialog();
+            }
+        }
+
+        private void DuplicateEntity_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel?.DuplicateEntityCommand.Execute(null);
+        }
+
+        private void DeleteEntity_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel?.DeleteEntityCommand.Execute(null);
+        }
+
+        #endregion
+
+        #region Scene Actions
+
+        private void SaveScene_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel?.SaveSceneCommand.Execute(null);
+        }
+
+        private void DeleteScene_Click(object sender, RoutedEventArgs e)
+        {
+            if (ViewModel?.SelectedScene != null && ViewModel.Scenes?.Count > 1)
+            {
+                var result = MessageBox.Show(
+                    $"Are you sure you want to delete the scene '{ViewModel.SelectedScene.Name}'?",
+                    "Delete Scene",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning);
+
+                if (result == MessageBoxResult.Yes)
+                {
+                    ViewModel.DeleteSceneCommand.Execute(null);
+                }
+            }
+            else
+            {
+                MessageBox.Show("Cannot delete the only scene in the project.", "Delete Scene", 
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+        }
+
+        #endregion
+
+        #region Drag & Drop
+
+        private Point _dragStartPoint;
+        private bool _isDragging = false;
+        private GameEntity _draggedEntity = null;
+
+        private void HierarchyTree_PreviewMouseMove(object sender, MouseEventArgs e)
+        {
+            if (e.LeftButton == MouseButtonState.Pressed && !_isDragging && _draggedEntity != null)
+            {
+                var currentPoint = e.GetPosition(HierarchyTree);
+                var diff = currentPoint - _dragStartPoint;
+
+                if (Math.Abs(diff.X) > SystemParameters.MinimumHorizontalDragDistance ||
+                    Math.Abs(diff.Y) > SystemParameters.MinimumVerticalDragDistance)
+                {
+                    _isDragging = true;
+                    var data = new DataObject(typeof(GameEntity), _draggedEntity);
+                    DragDrop.DoDragDrop(HierarchyTree, data, DragDropEffects.Move);
+                    _isDragging = false;
+                    _draggedEntity = null;
+                }
+            }
+        }
+
+        private void HierarchyTree_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (ViewModel == null) return;
+
+            _dragStartPoint = e.GetPosition(HierarchyTree);
+            
+            // Finde das angeklickte TreeViewItem
+            var treeViewItem = GetTreeViewItemFromPoint(e.GetPosition(HierarchyTree));
+            if (treeViewItem == null)
+            {
+                _draggedEntity = null;
+                return;
+            }
+
+            var entity = treeViewItem.DataContext as GameEntity;
+            _draggedEntity = entity;
+
+            if (entity == null) return;
+
+            var ctrl = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
+            var shift = Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);
+
+            if (ctrl)
+            {
+                // Toggle selection bei Ctrl+Click
+                if (ViewModel.SelectedEntities.Contains(entity))
+                {
+                    ViewModel.RemoveFromSelection(entity);
+                }
+                else
+                {
+                    ViewModel.AddToSelection(entity);
+                }
+                e.Handled = true;
+            }
+            else if (shift && ViewModel.SelectedEntity != null)
+            {
+                // Extend selection bei Shift+Click
+                ViewModel.ExtendSelection(entity);
+                e.Handled = true;
+            }
+        }
+
+        private void HierarchyTree_DragOver(object sender, DragEventArgs e)
+        {
+            e.Effects = DragDropEffects.None;
+            
+            // Erlaube Drop von .ventity Dateien
+            if (e.Data.GetDataPresent(DataFormats.FileDrop))
+            {
+                var files = e.Data.GetData(DataFormats.FileDrop) as string[];
+                if (files != null && files.Length > 0)
+                {
+                    var ext = Path.GetExtension(files[0]).ToLower();
+                    if (ext == ".ventity")
+                    {
+                        e.Effects = DragDropEffects.Copy;
+                    }
+                }
+            }
+            // Erlaube Drop von GameEntities
+            else if (e.Data.GetDataPresent(typeof(GameEntity)))
+            {
+                var draggedEntity = e.Data.GetData(typeof(GameEntity)) as GameEntity;
+                var targetItem = GetTreeViewItemFromPoint(e.GetPosition(HierarchyTree));
+                
+                if (draggedEntity != null && targetItem != null)
+                {
+                    var targetEntity = targetItem.DataContext as GameEntity;
+                    var targetScene = targetItem.DataContext as Scene;
+                    
+                    // Verhindere Drop auf sich selbst oder eigene Kinder
+                    if (targetEntity != null && targetEntity != draggedEntity && !IsDescendantOf(targetEntity, draggedEntity))
+                    {
+                        e.Effects = DragDropEffects.Move;
+                    }
+                    else if (targetScene != null)
+                    {
+                        e.Effects = DragDropEffects.Move;
+                    }
+                }
+            }
+            
+            e.Handled = true;
+        }
+
+        private void HierarchyTree_Drop(object sender, DragEventArgs e)
+        {
+            // Handle .ventity file drops
+            if (e.Data.GetDataPresent(DataFormats.FileDrop))
+            {
+                var files = e.Data.GetData(DataFormats.FileDrop) as string[];
+                if (files != null)
+                {
+                    foreach (var file in files)
+                    {
+                        if (Path.GetExtension(file).ToLower() == ".ventity")
+                        {
+                            try
+                            {
+                                var entity = SceneService.Instance.LoadEntityFromPrefab(file);
+                                if (entity != null && ViewModel?.SelectedScene != null)
+                                {
+                                    entity.Scene = ViewModel.SelectedScene;
+                                    ViewModel.SelectedScene.AddEntity(entity);
+                                }
+                            }
+                            catch
+                            {
+                                MessageBox.Show($"Error loading prefab: {file}", "Error", 
+                                    MessageBoxButton.OK, MessageBoxImage.Error);
+                            }
+                        }
+                    }
+                }
+                e.Handled = true;
+                return;
+            }
+
+            // Handle Entity drops
+            if (e.Data.GetDataPresent(typeof(GameEntity)))
+            {
+                var draggedEntity = e.Data.GetData(typeof(GameEntity)) as GameEntity;
+                var targetItem = GetTreeViewItemFromPoint(e.GetPosition(HierarchyTree));
+
+                if (draggedEntity != null && targetItem != null && ViewModel != null)
+                {
+                    var targetEntity = targetItem.DataContext as GameEntity;
+                    var targetScene = targetItem.DataContext as Scene;
+
+                    if (targetEntity != null && targetEntity != draggedEntity)
+                    {
+                        // Shift gedrückt: Als Geschwister einfügen (Reorder)
+                        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))
+                        {
+                            ViewModel.MoveEntityToPosition(draggedEntity, targetEntity, insertAfter: true);
+                        }
+                        // Alt gedrückt: Vor das Element einfügen
+                        else if (Keyboard.Modifiers.HasFlag(ModifierKeys.Alt))
+                        {
+                            ViewModel.MoveEntityToPosition(draggedEntity, targetEntity, insertAfter: false);
+                        }
+                        // Normal: Als Kind einfügen
+                        else
+                        {
+                            ViewModel.MoveEntityToParent(draggedEntity, targetEntity);
+                        }
+                    }
+                    else if (targetScene != null && targetScene != draggedEntity.Scene)
+                    {
+                        // In andere Scene verschieben
+                        ViewModel.MoveEntityToScene(draggedEntity, targetScene);
+                    }
+                    else if (targetScene != null && targetScene == draggedEntity.Scene)
+                    {
+                        // Auf Root-Ebene der gleichen Scene verschieben
+                        ViewModel.MoveEntityToParent(draggedEntity, null);
+                    }
+                }
+                e.Handled = true;
+            }
+        }
+
+        private bool IsDescendantOf(GameEntity potentialDescendant, GameEntity ancestor)
+        {
+            var current = potentialDescendant;
+            while (current != null)
+            {
+                if (current == ancestor) return true;
+                current = current.Parent;
+            }
+            return false;
+        }
+
+        #endregion
     }
 }

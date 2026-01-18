@@ -3,6 +3,8 @@ using System.Collections.ObjectModel;
 using System.Runtime.Serialization;
 using System.Windows;
 using System.Windows.Media;
+using Editor.Core.UndoRedo;
+using Editor.Core.UndoRedo.Commands;
 
 namespace Editor.Core.Data
 {
@@ -92,6 +94,48 @@ namespace Editor.Core.Data
                 {
                     scene.Project = this;
                 }
+
+                // Setze die erste Szene als aktive Szene
+                if (_scenes.Count > 0)
+                {
+                    _activeScene = _scenes[0];
+                }
+            }
+        }
+
+        /// <summary>
+        /// Fügt eine neue Szene zum Projekt hinzu (mit Undo/Redo Support)
+        /// </summary>
+        /// <param name="scene">Die hinzuzufügende Szene</param>
+        public void AddScene(Scene scene)
+        {
+            if (scene == null)
+                throw new ArgumentNullException(nameof(scene));
+
+            scene.Project = this;
+            var command = new CollectionAddCommand<Scene>(Scenes, scene, "Scenes");
+            UndoRedoManager.Instance.Execute(command);
+        }
+
+        /// <summary>
+        /// Entfernt eine Szene aus dem Projekt (mit Undo/Redo Support)
+        /// </summary>
+        /// <param name="scene">Die zu entfernende Szene</param>
+        public void RemoveScene(Scene scene)
+        {
+            if (scene == null)
+                throw new ArgumentNullException(nameof(scene));
+
+            if (!Scenes.Contains(scene))
+                return;
+
+            var command = new CollectionRemoveCommand<Scene>(Scenes, scene, "Scenes");
+            UndoRedoManager.Instance.Execute(command);
+
+            // Falls die aktive Szene entfernt wurde, setze eine neue aktive Szene
+            if (ActiveScene == scene)
+            {
+                ActiveScene = Scenes.Count > 0 ? Scenes[0] : null;
             }
         }
 

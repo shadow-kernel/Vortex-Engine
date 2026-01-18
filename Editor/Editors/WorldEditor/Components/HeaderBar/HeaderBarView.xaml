@@ -336,24 +336,24 @@ d:DesignHeight="64" d:DesignWidth="1200">
             
             <!-- GameObject Menu -->
             <MenuItem Header="_GameObject">
-                <MenuItem Header="Create _Empty"/>
+                <MenuItem Header="Create _Empty" Click="CreateEmpty_Click"/>
                 <MenuItem Header="Create _3D Object">
-                    <MenuItem Header="_Cube"/>
-                    <MenuItem Header="_Sphere"/>
-                    <MenuItem Header="_Capsule"/>
-                    <MenuItem Header="C_ylinder"/>
-                    <MenuItem Header="_Plane"/>
+                    <MenuItem Header="_Cube" Click="CreateCube_Click"/>
+                    <MenuItem Header="_Sphere" Click="CreateSphere_Click"/>
+                    <MenuItem Header="_Capsule" Click="CreateCapsule_Click"/>
+                    <MenuItem Header="C_ylinder" Click="CreateCylinder_Click"/>
+                    <MenuItem Header="_Plane" Click="CreatePlane_Click"/>
                 </MenuItem>
                 <MenuItem Header="Create _2D Object">
                     <MenuItem Header="_Sprite"/>
                     <MenuItem Header="_Tilemap"/>
                 </MenuItem>
                 <MenuItem Header="Create _Light">
-                    <MenuItem Header="_Directional Light"/>
-                    <MenuItem Header="_Point Light"/>
-                    <MenuItem Header="_Spot Light"/>
+                    <MenuItem Header="_Directional Light" Click="CreateDirectionalLight_Click"/>
+                    <MenuItem Header="_Point Light" Click="CreatePointLight_Click"/>
+                    <MenuItem Header="_Spot Light" Click="CreateSpotLight_Click"/>
                 </MenuItem>
-                <MenuItem Header="Create _Camera"/>
+                <MenuItem Header="Create _Camera" Click="CreateCamera_Click"/>
             </MenuItem>
             
             <!-- Component Menu -->
@@ -361,16 +361,21 @@ d:DesignHeight="64" d:DesignWidth="1200">
                 <MenuItem Header="Add _Component..."/>
                 <Separator/>
                 <MenuItem Header="_Physics">
-                    <MenuItem Header="_Rigidbody"/>
-                    <MenuItem Header="_Collider"/>
+                    <MenuItem Header="_Rigidbody" Click="AddRigidbody_Click"/>
+                    <MenuItem Header="_Box Collider" Click="AddBoxCollider_Click"/>
+                    <MenuItem Header="_Sphere Collider" Click="AddSphereCollider_Click"/>
+                    <MenuItem Header="_Capsule Collider" Click="AddCapsuleCollider_Click"/>
                 </MenuItem>
                 <MenuItem Header="_Rendering">
-                    <MenuItem Header="_Mesh Renderer"/>
+                    <MenuItem Header="_Mesh Renderer" Click="AddMeshRenderer_Click"/>
                     <MenuItem Header="_Sprite Renderer"/>
                 </MenuItem>
                 <MenuItem Header="_Audio">
-                    <MenuItem Header="Audio _Source"/>
+                    <MenuItem Header="Audio _Source" Click="AddAudioSource_Click"/>
                     <MenuItem Header="Audio _Listener"/>
+                </MenuItem>
+                <MenuItem Header="_Script">
+                    <MenuItem Header="New _Script..." Click="AddScript_Click"/>
                 </MenuItem>
             </MenuItem>
             

@@ -1,9 +1,18 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
 using System.Text;
 using System.Xml;
+using Editor.Core.Data;
+using Editor.ECS;
+using Editor.ECS.Components;
+using Editor.ECS.Components.Audio;
+using Editor.ECS.Components.Lighting;
+using Editor.ECS.Components.Physics;
+using Editor.ECS.Components.Rendering;
+using Editor.ECS.Components.Scripting;
 
 namespace Editor.Core.Serialization
 {
@@ -13,6 +22,51 @@ namespace Editor.Core.Serialization
     /// </summary>
     public static class DataSerializer
     {
+        /// <summary>
+        /// Liste aller bekannten Typen für polymorphe Serialisierung
+        /// </summary>
+        private static readonly List<Type> KnownTypes = new List<Type>
+        {
+            // Core Data
+            typeof(Scene),
+            typeof(ProjectManifest),
+            typeof(SceneReference),
+            typeof(ProjectSettings),
+            
+            // ECS
+            typeof(GameEntity),
+            typeof(Component),
+            
+            // Transform
+            typeof(Transform),
+            typeof(Vector3),
+            typeof(Quaternion),
+            
+            // Rendering
+            typeof(MeshRenderer),
+            typeof(SpriteRenderer),
+            typeof(Camera),
+            
+            // Lighting
+            typeof(Light),
+            
+            // Physics
+            typeof(Collider),
+            typeof(BoxCollider),
+            typeof(SphereCollider),
+            typeof(CapsuleCollider),
+            typeof(MeshCollider),
+            typeof(Rigidbody),
+            typeof(PhysicsMaterial),
+            
+            // Audio
+            typeof(AudioSource),
+            typeof(AudioListener),
+            
+            // Scripting
+            typeof(Script)
+        };
+
         /// <summary>
         /// Serialisiert ein Objekt zu JSON
         /// </summary>
@@ -24,7 +78,8 @@ namespace Editor.Core.Serialization
             var serializer = new DataContractJsonSerializer(typeof(T), new DataContractJsonSerializerSettings
             {
                 UseSimpleDictionaryFormat = true,
-                EmitTypeInformation = EmitTypeInformation.Never
+                EmitTypeInformation = EmitTypeInformation.AsNeeded,
+                KnownTypes = KnownTypes
             });
 
             using (var stream = new MemoryStream())
@@ -48,7 +103,8 @@ namespace Editor.Core.Serialization
 
             var serializer = new DataContractJsonSerializer(typeof(T), new DataContractJsonSerializerSettings
             {
-                UseSimpleDictionaryFormat = true
+                UseSimpleDictionaryFormat = true,
+                KnownTypes = KnownTypes
             });
 
             using (var stream = new MemoryStream(Encoding.UTF8.GetBytes(json)))
@@ -65,7 +121,7 @@ namespace Editor.Core.Serialization
             if (obj == null)
                 throw new ArgumentNullException(nameof(obj));
 
-            var serializer = new DataContractSerializer(typeof(T));
+            var serializer = new DataContractSerializer(typeof(T), KnownTypes);
             using (var stream = new MemoryStream())
             {
                 using (var writer = XmlDictionaryWriter.CreateBinaryWriter(stream))
@@ -84,7 +140,7 @@ namespace Editor.Core.Serialization
             if (data == null || data.Length == 0)
                 throw new ArgumentNullException(nameof(data));
 
-            var serializer = new DataContractSerializer(typeof(T));
+            var serializer = new DataContractSerializer(typeof(T), KnownTypes);
             using (var stream = new MemoryStream(data))
             using (var reader = XmlDictionaryReader.CreateBinaryReader(stream, XmlDictionaryReaderQuotas.Max))
             {

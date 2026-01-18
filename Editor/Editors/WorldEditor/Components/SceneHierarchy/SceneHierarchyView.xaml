@@ -3,10 +3,24 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:local="clr-namespace:Editor.Editors.WorldEditor.Components.SceneHierarchy"
+             xmlns:converters="clr-namespace:Editor.Editors.WorldEditor.Converters"
              mc:Ignorable="d" 
-             d:DesignHeight="300" d:DesignWidth="250">
+             d:DesignHeight="400" d:DesignWidth="280">
+
+    <UserControl.DataContext>
+        <local:SceneHierarchyViewModel/>
+    </UserControl.DataContext>
 
     <UserControl.Resources>
+        <!-- Converters -->
+        <converters:InverseBoolToVisibilityConverter x:Key="InverseBoolToVisibilityConverter"/>
+        <converters:EntityToIconConverter x:Key="EntityToIconConverter"/>
+        <converters:EntityToIconColorConverter x:Key="EntityToIconColorConverter"/>
+        <converters:EntityActiveToOpacityConverter x:Key="EntityActiveToOpacityConverter"/>
+        <converters:EntitySelectedToBackgroundConverter x:Key="EntitySelectedToBackgroundConverter"/>
+
+        <!-- Search Box Style -->
         <Style x:Key="SearchBoxStyle" TargetType="TextBox">
             <Setter Property="Background" Value="#1E1E1E"/>
             <Setter Property="Foreground" Value="#C5C5C5"/>
@@ -37,7 +51,8 @@
             </Setter>
         </Style>
 
-        <Style x:Key="AddButtonStyle" TargetType="Button">
+        <!-- Icon Button Style -->
+        <Style x:Key="IconButtonStyle" TargetType="Button">
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Foreground" Value="#808080"/>
             <Setter Property="BorderThickness" Value="0"/>
@@ -63,7 +78,8 @@
             </Setter>
         </Style>
 
-        <Style x:Key="SceneTreeItemStyle" TargetType="TreeViewItem">
+        <!-- Tree Item Style -->
+        <Style x:Key="HierarchyTreeItemStyle" TargetType="TreeViewItem">
             <Setter Property="Foreground" Value="#C5C5C5"/>
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="Background" Value="Transparent"/>
@@ -140,6 +156,208 @@
                 </Setter.Value>
             </Setter>
         </Style>
+
+        <!-- Scene Context Menu (for right-click on scene) -->
+        <ContextMenu x:Key="SceneContextMenu">
+            <!-- Create Empty -->
+            <MenuItem Header="Create Empty" InputGestureText="Ctrl+Shift+N" Click="CreateEmpty_Click">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE734;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#CCCCCC"/>
+                </MenuItem.Icon>
+            </MenuItem>
+            <MenuItem Header="Create Folder" Click="CreateFolder_Click">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE8B7;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#DCDC8B"/>
+                </MenuItem.Icon>
+            </MenuItem>
+            <MenuItem Header="Instantiate Prefab..." Click="InstantiatePrefab_Click">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE8F4;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#569CD6"/>
+                </MenuItem.Icon>
+            </MenuItem>
+            <Separator/>
+            
+            <!-- 3D Objects -->
+            <MenuItem Header="3D Object">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE809;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#4EC9B0"/>
+                </MenuItem.Icon>
+                <MenuItem Header="Cube" Click="CreateCube_Click">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE739;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#4EC9B0"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="Sphere" Click="CreateSphere_Click">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xF158;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#4EC9B0"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="Capsule" Click="CreateCapsule_Click">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE7B7;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#4EC9B0"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="Cylinder" Click="CreateCylinder_Click">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE7B8;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#4EC9B0"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="Plane" Click="CreatePlane_Click">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE80A;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#4EC9B0"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="Quad" Click="CreateQuad_Click">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE73F;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#4EC9B0"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+            </MenuItem>
+            
+            <!-- Light -->
+            <MenuItem Header="Light">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE793;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#FFD700"/>
+                </MenuItem.Icon>
+                <MenuItem Header="Directional Light" Click="CreateDirectionalLight_Click">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE706;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#FFD700"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="Point Light" Click="CreatePointLight_Click">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xEA80;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#FFA500"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="Spot Light" Click="CreateSpotLight_Click">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE781;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#FFFF00"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+            </MenuItem>
+            
+            <!-- Camera -->
+            <MenuItem Header="Camera" Click="CreateCamera_Click">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE722;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#569CD6"/>
+                </MenuItem.Icon>
+            </MenuItem>
+            
+            <!-- Audio -->
+            <MenuItem Header="Audio">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE767;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#CE9178"/>
+                </MenuItem.Icon>
+                <MenuItem Header="Audio Source" Click="CreateAudioSource_Click">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE767;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#CE9178"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+            </MenuItem>
+            
+            <!-- UI -->
+            <MenuItem Header="UI">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE8A1;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#C586C0"/>
+                </MenuItem.Icon>
+                <MenuItem Header="Canvas" Click="CreateUICanvas_Click">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE8A1;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#C586C0"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="Text" Click="CreateUIText_Click">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE8D2;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#C586C0"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="Image" Click="CreateUIImage_Click">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE8B9;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#C586C0"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="Button" Click="CreateUIButton_Click">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE762;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#C586C0"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+            </MenuItem>
+            
+            <Separator/>
+            
+            <!-- Scene Actions -->
+            <MenuItem Header="Save Scene" InputGestureText="Ctrl+S" Click="SaveScene_Click">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#4EC9B0"/>
+                </MenuItem.Icon>
+            </MenuItem>
+            <MenuItem Header="Delete Scene" Click="DeleteScene_Click">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#F14C4C"/>
+                </MenuItem.Icon>
+            </MenuItem>
+        </ContextMenu>
+
+        <!-- Entity Context Menu -->
+        <ContextMenu x:Key="EntityContextMenu">
+            <MenuItem Header="Cut" InputGestureText="Ctrl+X" Click="Cut_Click">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE8C6;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#CCCCCC"/>
+                </MenuItem.Icon>
+            </MenuItem>
+            <MenuItem Header="Copy" InputGestureText="Ctrl+C" Click="Copy_Click">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE8C8;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#CCCCCC"/>
+                </MenuItem.Icon>
+            </MenuItem>
+            <MenuItem Header="Paste" InputGestureText="Ctrl+V" Click="Paste_Click">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE77F;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#CCCCCC"/>
+                </MenuItem.Icon>
+            </MenuItem>
+            <Separator/>
+            <MenuItem Header="Create Child" Click="CreateChildEntity_Click">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#4EC9B0"/>
+                </MenuItem.Icon>
+            </MenuItem>
+            <MenuItem Header="Save as Prefab" Click="SaveAsPrefab_Click">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#569CD6"/>
+                </MenuItem.Icon>
+            </MenuItem>
+            <Separator/>
+            <MenuItem Header="Rename" InputGestureText="F2" Click="RenameEntity_Click">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE70F;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#CCCCCC"/>
+                </MenuItem.Icon>
+            </MenuItem>
+            <MenuItem Header="Duplicate" InputGestureText="Ctrl+D" Click="DuplicateEntity_Click">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE8C8;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#CCCCCC"/>
+                </MenuItem.Icon>
+            </MenuItem>
+            <MenuItem Header="Delete" InputGestureText="Del" Click="DeleteEntity_Click">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#F14C4C"/>
+                </MenuItem.Icon>
+            </MenuItem>
+        </ContextMenu>
+
+
+        <!-- Entity Template with dynamic icon and multi-select support -->
+        <HierarchicalDataTemplate x:Key="EntityTemplate" ItemsSource="{Binding Children}">
+            <Border Background="{Binding IsSelected, Converter={StaticResource EntitySelectedToBackgroundConverter}}"
+                    CornerRadius="3" Padding="2,1" Margin="-2,-1">
+                <StackPanel Orientation="Horizontal" ContextMenu="{StaticResource EntityContextMenu}"
+                            Opacity="{Binding IsActive, Converter={StaticResource EntityActiveToOpacityConverter}}">
+                    <TextBlock Text="{Binding Converter={StaticResource EntityToIconConverter}}" 
+                               FontFamily="Segoe MDL2 Assets" FontSize="12" 
+                               Foreground="{Binding Converter={StaticResource EntityToIconColorConverter}}"
+                               VerticalAlignment="Center" Margin="0,0,6,0"/>
+                    <TextBlock Text="{Binding Name}" Foreground="#C5C5C5" VerticalAlignment="Center"/>
+                </StackPanel>
+            </Border>
+        </HierarchicalDataTemplate>
     </UserControl.Resources>
 
     <Border Background="#252526">
@@ -149,21 +367,52 @@
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
 
-            <!-- Search Bar with Add Button -->
+            <!-- Toolbar -->
             <Border Grid.Row="0" Background="#1E1E1E" Padding="6,4">
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <TextBox Style="{StaticResource SearchBoxStyle}"/>
-                    <Button Grid.Column="1" Content="&#xE710;" Style="{StaticResource AddButtonStyle}" 
-                            ToolTip="Add Entity" Margin="4,0,0,0"/>
+                    
+                    <!-- Search Box -->
+                    <TextBox Grid.Column="0" Style="{StaticResource SearchBoxStyle}" 
+                             Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                             ToolTip="Search entities..."/>
+                    
+                    <!-- Add Scene Button -->
+                    <Button Grid.Column="1" Content="&#xE8F4;" Style="{StaticResource IconButtonStyle}" 
+                            ToolTip="New Scene" Margin="4,0,0,0" Click="AddScene_Click"/>
+                    
+                    <!-- Add Entity Button -->
+                    <Button x:Name="AddEntityButton" Grid.Column="2" Content="&#xE710;" 
+                            Style="{StaticResource IconButtonStyle}" 
+                            ToolTip="Add Entity" Margin="4,0,0,0" Click="AddEntity_Click"/>
                 </Grid>
             </Border>
 
-            <!-- Scene Tree -->
-            <TreeView x:Name="SceneTree" Grid.Row="1" Background="Transparent" BorderThickness="0" Padding="4,0"/>
+            <!-- Hierarchy Tree -->
+            <TreeView x:Name="HierarchyTree" Grid.Row="1" Background="Transparent" BorderThickness="0" 
+                      Padding="4,0" ItemsSource="{Binding Scenes}"
+                      ItemContainerStyle="{StaticResource HierarchyTreeItemStyle}"
+                      SelectedItemChanged="HierarchyTree_SelectedItemChanged"
+                      PreviewMouseLeftButtonDown="HierarchyTree_PreviewMouseLeftButtonDown"
+                      PreviewMouseMove="HierarchyTree_PreviewMouseMove"
+                      MouseRightButtonDown="HierarchyTree_MouseRightButtonDown"
+                      AllowDrop="True" Drop="HierarchyTree_Drop" DragOver="HierarchyTree_DragOver">
+                <TreeView.ItemTemplate>
+                    <HierarchicalDataTemplate ItemsSource="{Binding Entities}" 
+                                              ItemTemplate="{StaticResource EntityTemplate}">
+                        <StackPanel Orientation="Horizontal" ContextMenu="{StaticResource SceneContextMenu}">
+                            <TextBlock Text="&#xE81E;" FontFamily="Segoe MDL2 Assets" FontSize="14" 
+                                       Foreground="#DCDCAA" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBlock Text="{Binding Name}" Foreground="#DCDCAA" FontWeight="SemiBold" 
+                                       FontSize="13" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </HierarchicalDataTemplate>
+                </TreeView.ItemTemplate>
+            </TreeView>
         </Grid>
     </Border>
 </UserControl>

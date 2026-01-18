@@ -2,18 +2,21 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Linq;
 using System.Windows;
 using System.Windows.Media.Imaging;
 using Editor.Core.Data;
 using Editor.Core.Exceptions;
 using Editor.Core.Serialization;
 using Editor.Core.Validation;
+using Editor.ECS;
 
 namespace Editor.Core.Services
 {
     /// <summary>
     /// Zentraler Service für alle Projektoperationen.
     /// Verwaltet das Laden, Speichern und die Registry aller Projekte.
+    /// Szenen werden separat in .vscene Dateien gespeichert.
     /// </summary>
     public sealed class ProjectService
     {
@@ -24,6 +27,15 @@ namespace Editor.Core.Services
         private readonly string _appDataPath;
         private readonly string _registryFilePath;
         private readonly string _defaultProjectsPath;
+
+        /// <summary>
+        /// Konstanten für Projektstruktur
+        /// </summary>
+        public const string ManifestFileName = "project.vortex";
+        public const string LegacyManifestPath = ".ve/project.json";
+        public const string AssetsFolder = "Assets";
+        public const string ScenesFolder = "Scenes";
+        public const string PrefabsFolder = "Prefabs";
 
         private ProjectService()
         {
@@ -47,18 +59,21 @@ namespace Editor.Core.Services
         {
             try
             {
-                string projectFilePath = Path.Combine(projectRef.Path, ".ve", "project.json");
-                var project = DataSerializer.LoadFromJson<ProjectData>(projectFilePath);
-
-                // Stelle sicher dass Scenes initialisiert sind
-                if (project.Scenes == null)
+                // Versuche neues Format zuerst
+                string manifestPath = Path.Combine(projectRef.Path, ManifestFileName);
+                if (File.Exists(manifestPath))
                 {
-                    project.Scenes = new ObservableCollection<Scene>();
+                    return LoadProjectFromManifest(projectRef.Path);
                 }
 
-                // OnDeserialized wird automatisch aufgerufen und setzt Project-Referenzen
+                // Fallback auf Legacy-Format
+                string legacyPath = Path.Combine(projectRef.Path, LegacyManifestPath);
+                if (File.Exists(legacyPath))
+                {
+                    return LoadLegacyProject(projectRef, legacyPath);
+                }
 
-                return project;
+                throw new FileNotFoundException($"Project file not found in {projectRef.Path}");
             }
             catch (ProjectException)
             {
@@ -90,17 +105,87 @@ namespace Editor.Core.Services
         }
 
         /// <summary>
+        /// Lädt ein Projekt aus dem neuen Manifest-Format
+        /// </summary>
+        private ProjectData LoadProjectFromManifest(string projectPath)
+        {
+            var manifestPath = Path.Combine(projectPath, ManifestFileName);
+            var manifest = DataSerializer.LoadFromJson<ProjectManifest>(manifestPath);
+
+            // Erstelle ProjectData aus Manifest
+            var project = new ProjectData(manifest.Id, projectPath, manifest.Name)
+            {
+                LastModified = manifest.LastModified,
+                ImagePath = manifest.ThumbnailPath
+            };
+
+            // Lade Szenen
+            var scenesPath = Path.Combine(projectPath, AssetsFolder, ScenesFolder);
+            foreach (var sceneRef in manifest.Scenes)
+            {
+                var sceneFilePath = Path.Combine(scenesPath, sceneRef.RelativePath);
+
+                if (File.Exists(sceneFilePath))
+                {
+                    var scene = DataSerializer.LoadFromBinary<Scene>(sceneFilePath);
+                    scene.FilePath = sceneFilePath;
+                    scene.Project = project;
+                    scene.Load();
+                    project.Scenes.Add(scene);
+
+                    // Setze aktive Szene
+                    if (manifest.LastOpenSceneId.HasValue && scene.Id == manifest.LastOpenSceneId.Value)
+                    {
+                        project.ActiveScene = scene;
+                    }
+                }
+            }
+
+            // Falls keine aktive Szene, nehme die erste
+            if (project.ActiveScene == null && project.Scenes.Count > 0)
+            {
+                project.ActiveScene = project.Scenes[0];
+            }
+
+            return project;
+        }
+
+        /// <summary>
+        /// Lädt ein Projekt im Legacy-Format und migriert es
+        /// </summary>
+        private ProjectData LoadLegacyProject(ProjectRef projectRef, string legacyPath)
+        {
+            var project = DataSerializer.LoadFromJson<ProjectData>(legacyPath);
+
+            if (project.Scenes == null)
+            {
+                project.Scenes = new ObservableCollection<Scene>();
+            }
+
+            // Migriere zum neuen Format
+            SaveProject(project);
+
+            return project;
+        }
+
+        /// <summary>
         /// Erstellt ein neues Projekt
         /// </summary>
         public ProjectData CreateProject(string projectName, string projectPath)
         {
             var project = new ProjectData(projectPath, projectName);
+
+            // Erstelle Default-Szene
+            var defaultScene = SceneService.Instance.CreateDefaultScene(project, "Main Scene");
+            project.Scenes.Add(defaultScene);
+            project.ActiveScene = defaultScene;
+
             SaveProject(project);
             return project;
         }
 
         /// <summary>
-        /// Speichert ein Projekt
+        /// Speichert ein Projekt (Manifest + separate Szenen-Dateien)
         /// </summary>
         public void SaveProject(ProjectData project)
         {
@@ -114,8 +199,17 @@ namespace Editor.Core.Services
                     ImagePath = project.ImagePath
                 };
 
+                // Aktualisiere LastModified
+                project.LastModified = DateTime.Now;
+
                 // Projektdateien erstellen
                 CreateProjectFiles(project);
+
+                // Speichere Manifest
+                SaveManifest(project);
+
+                // Speichere alle Szenen separat
+                SaveAllScenes(project);
 
                 // Registry speichern
                 SaveProjectRegistry();
@@ -147,6 +241,120 @@ namespace Editor.Core.Services
                     ex
                 );
             }
+        }
+
+        /// <summary>
+        /// Speichert das Projekt-Manifest (ohne Szenen-Inhalte)
+        /// </summary>
+        private void SaveManifest(ProjectData project)
+        {
+            var manifest = new ProjectManifest(project.Name)
+            {
+                Id = project.Id,
+                LastModified = project.LastModified,
+                ThumbnailPath = project.ImagePath,
+                LastOpenSceneId = project.ActiveScene?.Id,
+            };
+
+            // Füge Szenen-Referenzen hinzu
+            foreach (var scene in project.Scenes)
+            {
+                var relativePath = $"{SanitizeFileName(scene.Name)}.vscene";
+                manifest.Scenes.Add(new SceneReference(scene.Id, scene.Name, relativePath));
+
+                if (manifest.StartSceneId == null)
+                {
+                    manifest.StartSceneId = scene.Id;
+                }
+            }
+
+            var manifestPath = Path.Combine(project.Path, ManifestFileName);
+            DataSerializer.SaveAsJson(manifest, manifestPath);
+        }
+
+        /// <summary>
+        /// Speichert alle Szenen des Projekts
+        /// </summary>
+        public void SaveAllScenes(ProjectData project)
+        {
+            var scenesPath = Path.Combine(project.Path, AssetsFolder, ScenesFolder);
+
+            if (!Directory.Exists(scenesPath))
+            {
+                Directory.CreateDirectory(scenesPath);
+            }
+
+            foreach (var scene in project.Scenes)
+            {
+                SaveScene(project, scene);
+            }
+        }
+
+        /// <summary>
+        /// Speichert eine einzelne Szene
+        /// </summary>
+        public void SaveScene(ProjectData project, Scene scene)
+        {
+            var scenesPath = Path.Combine(project.Path, AssetsFolder, ScenesFolder);
+
+            if (!Directory.Exists(scenesPath))
+            {
+                Directory.CreateDirectory(scenesPath);
+            }
+
+            // Setze FilePath falls nicht gesetzt
+            if (string.IsNullOrEmpty(scene.FilePath))
+            {
+                scene.FilePath = Path.Combine(scenesPath, $"{SanitizeFileName(scene.Name)}.vscene");
+            }
+
+            // Speichere Szene als Binär
+            DataSerializer.SaveAsBinary(scene, scene.FilePath);
+            scene.IsDirty = false;
+        }
+
+        /// <summary>
+        /// Speichert eine Entity als Prefab
+        /// </summary>
+        public void SavePrefab(ProjectData project, GameEntity entity, string prefabName = null)
+        {
+            var prefabsPath = Path.Combine(project.Path, AssetsFolder, PrefabsFolder);
+
+            if (!Directory.Exists(prefabsPath))
+            {
+                Directory.CreateDirectory(prefabsPath);
+            }
+
+            var fileName = SanitizeFileName(prefabName ?? entity.Name) + ".ventity";
+            var filePath = Path.Combine(prefabsPath, fileName);
+
+            DataSerializer.SaveAsBinary(entity, filePath);
+        }
+
+        /// <summary>
+        /// Lädt ein Prefab
+        /// </summary>
+        public GameEntity LoadPrefab(string filePath)
+        {
+            if (!File.Exists(filePath))
+            {
+                throw new FileNotFoundException($"Prefab file not found: {filePath}");
+            }
+
+            return DataSerializer.LoadFromBinary<GameEntity>(filePath);
+        }
+
+        /// <summary>
+        /// Entfernt ungültige Zeichen aus Dateinamen
+        /// </summary>
+        private string SanitizeFileName(string fileName)
+        {
+            var invalidChars = Path.GetInvalidFileNameChars();
+            foreach (var c in invalidChars)
+            {
+                fileName = fileName.Replace(c, '_');
+            }
+            return fileName;
         }
 
         /// <summary>

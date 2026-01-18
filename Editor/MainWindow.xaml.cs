@@ -10,7 +10,13 @@ namespace Editor
 {
     public partial class MainWindow : Window
     {
-        public MainWindow()
+        // Routed Commands für Save-Operationen
+        public static readonly RoutedCommand SaveAllCommand = new RoutedCommand("SaveAll", typeof(MainWindow), 
+            new InputGestureCollection { new KeyGesture(Key.S, ModifierKeys.Control | ModifierKeys.Shift) });
+        public static readonly RoutedCommand SaveSceneCommand = new RoutedCommand("SaveScene", typeof(MainWindow),
+            new InputGestureCollection { new KeyGesture(Key.S, ModifierKeys.Control) });
+
+     public MainWindow()
         {
             InitializeComponent();
             SetupGlobalKeyboardShortcuts();
@@ -23,6 +29,39 @@ namespace Editor
             // Globale Undo/Redo Shortcuts (Ctrl+Z, Ctrl+Y)
             CommandBindings.Add(new CommandBinding(ApplicationCommands.Undo, OnGlobalUndo, OnCanGlobalUndo));
             CommandBindings.Add(new CommandBinding(ApplicationCommands.Redo, OnGlobalRedo, OnCanGlobalRedo));
+
+            // Save Shortcuts (Ctrl+S, Ctrl+Shift+S)
+            CommandBindings.Add(new CommandBinding(SaveSceneCommand, OnSaveScene, OnCanSave));
+            CommandBindings.Add(new CommandBinding(SaveAllCommand, OnSaveAll, OnCanSave));
+        }
+
+        private void OnCanSave(object sender, CanExecuteRoutedEventArgs e)
+        {
+            e.CanExecute = ProjectData.Current != null;
+        }
+
+        private void OnSaveScene(object sender, ExecutedRoutedEventArgs e)
+        {
+            var project = ProjectData.Current;
+            if (project?.ActiveScene != null)
+            {
+                SceneService.Instance.SaveScene(project.ActiveScene);
+            }
+            e.Handled = true;
+        }
+
+        private void OnSaveAll(object sender, ExecutedRoutedEventArgs e)
+        {
+            var project = ProjectData.Current;
+            if (project != null)
+            {
+                // Speichere alle Szenen
+                SceneService.Instance.SaveAllScenes(project);
+                
+                // Speichere das Projekt selbst
+                ProjectService.Instance.SaveProject(project);
+            }
+            e.Handled = true;
         }
 
         private void OnCanGlobalUndo(object sender, CanExecuteRoutedEventArgs e)
@@ -52,6 +91,15 @@ namespace Editor
         private void OnWindowClosing(object sender, CancelEventArgs e)
         {
             Closing -= OnWindowClosing;
+            
+            // Speichere alle offenen Szenen vor dem Schließen
+            var project = ProjectData.Current;
+            if (project != null)
+            {
+                SceneService.Instance.SaveAllScenes(project);
+                ProjectService.Instance.SaveProject(project);
+            }
+            
             UndoRedoManager.Instance.Clear();
             ProjectData.Current?.Unload();
         }

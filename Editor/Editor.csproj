@@ -98,6 +98,9 @@
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>
+    <Page Include="Assets\Styles\DarkContextMenuStyle.xaml">
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
     <Page Include="Editors\WorldEditor\Components\FileExplorer\FileExplorerView.xaml">
       <Generator>MSBuild:Compile</Generator>
     </Page>
@@ -108,6 +111,9 @@
       <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="Editors\WorldEditor\Components\HeaderBar\HeaderBarView.xaml">
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Editors\WorldEditor\Components\HistoryLog\HistoryLogView.xaml">
       <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="Editors\WorldEditor\Components\Inspector\InspectorView.xaml">
@@ -132,15 +138,19 @@
       <SubType>Code</SubType>
     </Compile>
     <Compile Include="Core\Data\Project.cs" />
+    <Compile Include="Core\Data\ProjectManifest.cs" />
     <Compile Include="Core\Data\ProjectRef.cs" />
     <Compile Include="Core\Data\Scene.cs" />
     <Compile Include="Core\Exceptions\DuplicateProjectPathException.cs" />
     <Compile Include="Core\Exceptions\ProjectException.cs" />
     <Compile Include="Core\Exceptions\ProjectIOException.cs" />
     <Compile Include="Core\Exceptions\ProjectValidationException.cs" />
+    <Compile Include="Core\FileExtensions.cs" />
     <Compile Include="Core\Serialization\DataSerializer.cs" />
     <Compile Include="Core\Services\EditorStateService.cs" />
+    <Compile Include="Core\Services\EntityClipboardService.cs" />
     <Compile Include="Core\Services\ProjectService.cs" />
+    <Compile Include="Core\Services\SceneService.cs" />
     <Compile Include="Core\UndoableViewModelBase.cs" />
     <Compile Include="Core\UndoRedo\Commands\ActionCommand.cs" />
     <Compile Include="Core\UndoRedo\Commands\CollectionCommands.cs" />
@@ -154,6 +164,17 @@
     <Compile Include="Core\UndoRedo\UndoScope.cs" />
     <Compile Include="Core\Validation\ProjectValidator.cs" />
     <Compile Include="Core\ViewModelBase.cs" />
+    <Compile Include="ECS\Component.cs" />
+    <Compile Include="ECS\Components\Audio\AudioSource.cs" />
+    <Compile Include="ECS\Components\Lighting\Light.cs" />
+    <Compile Include="ECS\Components\Physics\Collider.cs" />
+    <Compile Include="ECS\Components\Physics\Rigidbody.cs" />
+    <Compile Include="ECS\Components\Rendering\Camera.cs" />
+    <Compile Include="ECS\Components\Rendering\MeshRenderer.cs" />
+    <Compile Include="ECS\Components\Scripting\Script.cs" />
+    <Compile Include="ECS\Components\Transform.cs" />
+    <Compile Include="ECS\GameEntity.cs" />
+    <Compile Include="ECS\Math\VectorTypes.cs" />
     <Compile Include="Editors\WorldEditor\Components\FileExplorer\Converters\BoolToVisibilityConverter.cs" />
     <Compile Include="Editors\WorldEditor\Components\FileExplorer\FileExplorerView.xaml.cs">
       <DependentUpon>FileExplorerView.xaml</DependentUpon>
@@ -169,12 +190,19 @@
     <Compile Include="Editors\WorldEditor\Components\HeaderBar\HeaderBarView.xaml.cs">
       <DependentUpon>HeaderBarView.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Editors\WorldEditor\Components\HistoryLog\HistoryLogView.xaml.cs">
+      <DependentUpon>HistoryLogView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Editors\WorldEditor\Components\HistoryLog\HistoryLogViewModel.cs" />
     <Compile Include="Editors\WorldEditor\Components\Inspector\InspectorView.xaml.cs">
       <DependentUpon>InspectorView.xaml</DependentUpon>
     </Compile>
     <Compile Include="Editors\WorldEditor\Components\SceneHierarchy\SceneHierarchyView.xaml.cs">
       <DependentUpon>SceneHierarchyView.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Editors\WorldEditor\Components\SceneHierarchy\SceneHierarchyViewModel.cs" />
+    <Compile Include="Editors\WorldEditor\Converters\EntityConverters.cs" />
+    <Compile Include="Editors\WorldEditor\Converters\VisibilityConverters.cs" />
     <Compile Include="Editors\WorldEditor\Services\WindowService.cs" />
     <Compile Include="Editors\WorldEditor\WorldEditorView.xaml.cs">
       <DependentUpon>WorldEditorView.xaml</DependentUpon>
@@ -243,6 +271,9 @@
   </ItemGroup>
   <ItemGroup>
     <Resource Include="Logo.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="Core\Data\Components\" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <Import Project="..\packages\System.ValueTuple.4.6.1\build\net471\System.ValueTuple.targets" Condition="Exists('..\packages\System.ValueTuple.4.6.1\build\net471\System.ValueTuple.targets')" />
