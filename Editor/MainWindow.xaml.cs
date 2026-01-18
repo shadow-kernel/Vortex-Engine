@@ -1,4 +1,5 @@
 ﻿using Editor.Core.Data;
+using Editor.Core.Services;
 using Editor.Core.UndoRedo;
 using Editor.Project.Projection;
 using System.ComponentModel;
@@ -58,7 +59,52 @@ namespace Editor
         private void OnMainWindowLoaded(object sender, RoutedEventArgs e)
         {
             Loaded -= OnMainWindowLoaded;
-            OpenProjectBrowser();
+            
+            // Prüfe ob ein gültiges letztes Projekt existiert
+            if (EditorStateService.Instance.IsLastProjectValid())
+            {
+                TryLoadLastProject();
+            }
+            else
+            {
+                // Kein gültiges letztes Projekt - zeige Browser
+                EditorStateService.Instance.ClearLastProject();
+                OpenProjectBrowser();
+            }
+        }
+
+        /// <summary>
+        /// Versucht das zuletzt geöffnete Projekt zu laden.
+        /// Bei Fehlern wird der ProjectBrowser geöffnet.
+        /// </summary>
+        private void TryLoadLastProject()
+        {
+            try
+            {
+                var lastProjectId = EditorStateService.Instance.LastProjectId;
+                var lastProjectPath = EditorStateService.Instance.LastProjectPath;
+
+                if (lastProjectId.HasValue)
+                {
+                    var projects = ProjectService.Instance.GetAllProjects();
+                    if (projects.TryGetValue(lastProjectId.Value, out var projectRef))
+                    {
+                        var project = ProjectService.Instance.LoadProject(projectRef);
+                        LoadProject(project);
+                        return;
+                    }
+                }
+
+                // Projekt nicht in Registry gefunden - Browser öffnen
+                EditorStateService.Instance.ClearLastProject();
+                OpenProjectBrowser();
+            }
+            catch
+            {
+                // Bei Fehlern Browser öffnen
+                EditorStateService.Instance.ClearLastProject();
+                OpenProjectBrowser();
+            }
         }
 
         /// <summary>
@@ -96,6 +142,9 @@ namespace Editor
             DataContext = project;
             Title = $"Vortex Engine - {project.Name}";
             WorldEditor.SetEditorVisible(true);
+            
+            // Speichere als letztes geöffnetes Projekt
+            EditorStateService.Instance.SetLastProject(project.Id, project.Path);
         }
 
         /// <summary>
@@ -107,6 +156,9 @@ namespace Editor
             DataContext = null;
             Title = "Vortex Engine";
             WorldEditor.SetEditorVisible(false);
+            
+            // Lösche letztes Projekt - beim nächsten Start wird Browser geöffnet
+            EditorStateService.Instance.ClearLastProject();
         }
     }
 }

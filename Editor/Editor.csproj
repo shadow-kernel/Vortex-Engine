@@ -139,6 +139,7 @@
     <Compile Include="Core\Exceptions\ProjectIOException.cs" />
     <Compile Include="Core\Exceptions\ProjectValidationException.cs" />
     <Compile Include="Core\Serialization\DataSerializer.cs" />
+    <Compile Include="Core\Services\EditorStateService.cs" />
     <Compile Include="Core\Services\ProjectService.cs" />
     <Compile Include="Core\UndoableViewModelBase.cs" />
     <Compile Include="Core\UndoRedo\Commands\ActionCommand.cs" />
