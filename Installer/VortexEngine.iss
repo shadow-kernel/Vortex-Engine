@@ -67,13 +67,13 @@ Name: "quicklaunchicon"; Description: "{cm:CreateQuickLaunchIcon}"; GroupDescrip
 ; Main application files from Release build
 Source: "..\x64\Release\Vortex Engine.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\x64\Release\*.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\x64\Release\*.config"; DestDir: "{app}"; Flags: ignoreversion; Excludes: "*.vshost.*"
-; Engine library
-Source: "..\x64\Release\Engine.lib"; DestDir: "{app}"; Flags: ignoreversion; Check: FileExists(ExpandConstant('..\x64\Release\Engine.lib'))
+Source: "..\x64\Release\*.config"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist; Excludes: "*.vshost.*"
+; Engine library (built in Engine subfolder)
+Source: "..\Engine\x64\Release\Engine.lib"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 ; Additional resources (if any)
-Source: "..\x64\Release\Resources\*"; DestDir: "{app}\Resources"; Flags: ignoreversion recursesubdirs createallsubdirs; Check: DirExists(ExpandConstant('..\x64\Release\Resources'))
+Source: "..\x64\Release\Resources\*"; DestDir: "{app}\Resources"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 ; Templates and assets
-Source: "..\x64\Release\Templates\*"; DestDir: "{app}\Templates"; Flags: ignoreversion recursesubdirs createallsubdirs; Check: DirExists(ExpandConstant('..\x64\Release\Templates'))
+Source: "..\x64\Release\Templates\*"; DestDir: "{app}\Templates"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
