@@ -4,7 +4,9 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
-  <Project Path="Editor/Editor.csproj" Id="fbd41bc8-2108-4479-b909-3081d00767df" />
+  <Project Path="Editor/Editor.csproj" Id="fbd41bc8-2108-4479-b909-3081d00767df">
+    <BuildDependency Project="VortexAPI/VortexAPI.vcxproj" />
+  </Project>
   <Project Path="Engine/Engine.vcxproj" Id="cd0e018b-277f-4863-bb32-e44d7f5a654d" />
   
   <!-- Solution Folders -->
@@ -17,4 +19,10 @@
       <File Path=".github/workflows/build-release.yml" />
     </Folder>
   </Folder>
+  <Project Path="EngineTest/EngineTest.vcxproj" Id="0f3d1d0a-f751-4ba8-ba61-4e7b24739f3c">
+    <BuildDependency Project="Engine/Engine.vcxproj" />
+  </Project>
+  <Project Path="VortexAPI/VortexAPI.vcxproj" Id="3db3f3c2-1673-4f7a-82d8-a8cf51b72af5">
+    <BuildDependency Project="Engine/Engine.vcxproj" />
+  </Project>
 </Solution>

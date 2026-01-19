@@ -208,6 +208,32 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
 
         #endregion
 
+        #region Scene Activation
+
+        private void ActivateScene_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is MenuItem menuItem && 
+                menuItem.Parent is ContextMenu contextMenu &&
+                contextMenu.PlacementTarget is FrameworkElement element &&
+                element.DataContext is Scene scene)
+            {
+				ViewModel?.ActivateScene(scene);
+            }
+        }
+
+		private void DeactivateScene_Click(object sender, RoutedEventArgs e)
+		{
+			if (sender is MenuItem menuItem && 
+				menuItem.Parent is ContextMenu contextMenu &&
+				contextMenu.PlacementTarget is FrameworkElement element &&
+				element.DataContext is Scene scene)
+			{
+				ViewModel?.DeactivateScene(scene);
+			}
+		}
+
+        #endregion
+
         #region Clipboard Operations
 
         private void Cut_Click(object sender, RoutedEventArgs e)

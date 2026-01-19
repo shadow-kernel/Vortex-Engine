@@ -19,6 +19,9 @@
         <converters:EntityToIconColorConverter x:Key="EntityToIconColorConverter"/>
         <converters:EntityActiveToOpacityConverter x:Key="EntityActiveToOpacityConverter"/>
         <converters:EntitySelectedToBackgroundConverter x:Key="EntitySelectedToBackgroundConverter"/>
+        <converters:SceneActiveConverter x:Key="SceneActiveConverter"/>
+        <converters:SceneActiveToIconConverter x:Key="SceneActiveToIconConverter"/>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility"/>
 
         <!-- Search Box Style -->
         <Style x:Key="SearchBoxStyle" TargetType="TextBox">
@@ -159,6 +162,26 @@
 
         <!-- Scene Context Menu (for right-click on scene) -->
         <ContextMenu x:Key="SceneContextMenu">
+            <!-- Activate/Deactivate Scene -->
+            <MenuItem Header="Activate Scene" Click="ActivateScene_Click"
+                      Visibility="{Binding Path=PlacementTarget.DataContext.IsActive, 
+                                   RelativeSource={RelativeSource AncestorType=ContextMenu},
+                                   Converter={StaticResource SceneActiveConverter}, 
+                                   ConverterParameter=Invert}">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE768;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#4EC9B0"/>
+                </MenuItem.Icon>
+            </MenuItem>
+            <MenuItem Header="Deactivate Scene" Click="DeactivateScene_Click"
+                      Visibility="{Binding Path=PlacementTarget.DataContext.IsActive, 
+                                   RelativeSource={RelativeSource AncestorType=ContextMenu},
+                                   Converter={StaticResource SceneActiveConverter}}">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE769;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#F14C4C"/>
+                </MenuItem.Icon>
+            </MenuItem>
+            <Separator/>
+            
             <!-- Create Empty -->
             <MenuItem Header="Create Empty" InputGestureText="Ctrl+Shift+N" Click="CreateEmpty_Click">
                 <MenuItem.Icon>
@@ -350,6 +373,9 @@
                     CornerRadius="3" Padding="2,1" Margin="-2,-1">
                 <StackPanel Orientation="Horizontal" ContextMenu="{StaticResource EntityContextMenu}"
                             Opacity="{Binding IsActive, Converter={StaticResource EntityActiveToOpacityConverter}}">
+                    <TextBlock Text="{Binding EntityId}" Foreground="#F14C4C" FontWeight="Bold"
+                               Visibility="{Binding IsActive, Converter={StaticResource BoolToVisibility}}"
+                               VerticalAlignment="Center" Margin="0,0,6,0"/>
                     <TextBlock Text="{Binding Converter={StaticResource EntityToIconConverter}}" 
                                FontFamily="Segoe MDL2 Assets" FontSize="12" 
                                Foreground="{Binding Converter={StaticResource EntityToIconColorConverter}}"
@@ -405,9 +431,15 @@
                     <HierarchicalDataTemplate ItemsSource="{Binding Entities}" 
                                               ItemTemplate="{StaticResource EntityTemplate}">
                         <StackPanel Orientation="Horizontal" ContextMenu="{StaticResource SceneContextMenu}">
+                            <!-- Activity indicator (green dot for active scene) -->
+                            <Ellipse Width="8" Height="8" Margin="0,0,6,0" VerticalAlignment="Center"
+                                     Fill="{Binding IsActive, Converter={StaticResource SceneActiveToIconConverter}}"/>
                             <TextBlock Text="&#xE81E;" FontFamily="Segoe MDL2 Assets" FontSize="14" 
-                                       Foreground="#DCDCAA" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                            <TextBlock Text="{Binding Name}" Foreground="#DCDCAA" FontWeight="SemiBold" 
+                                       Foreground="{Binding IsActive, Converter={StaticResource SceneActiveToIconConverter}}" 
+                                       VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBlock Text="{Binding Name}" 
+                                       Foreground="{Binding IsActive, Converter={StaticResource SceneActiveToIconConverter}}" 
+                                       FontWeight="SemiBold" 
                                        FontSize="13" VerticalAlignment="Center"/>
                         </StackPanel>
                     </HierarchicalDataTemplate>

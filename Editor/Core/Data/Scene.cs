@@ -27,6 +27,7 @@ namespace Editor.Core.Data
         private bool _isDirty;
         private string _filePath;
         private ObservableCollection<GameEntity> _entities;
+		private bool _isActive;
 
         [DataMember(Name = "id", Order = 0)]
         public Guid Id
@@ -102,6 +103,16 @@ namespace Editor.Core.Data
         /// </summary>
         [IgnoreDataMember]
         public GameEntity SelectedEntity { get; set; }
+
+		/// <summary>
+		/// UI/Runtime Status ob die Szene aktuell aktiv ist (nicht serialisiert)
+		/// </summary>
+		[IgnoreDataMember]
+		public bool IsActive
+		{
+			get => _isActive;
+			internal set => SetProperty(ref _isActive, value, nameof(IsActive));
+		}
 
         public Scene()
         {
@@ -199,6 +210,7 @@ namespace Editor.Core.Data
             entity.Scene = this;
             var command = new CollectionAddCommand<GameEntity>(Entities, entity, "Entities");
             UndoRedoManager.Instance.Execute(command);
+			entity.SyncEngineStateRecursive();
             IsDirty = true;
         }
 
@@ -213,6 +225,7 @@ namespace Editor.Core.Data
             if (!Entities.Contains(entity))
                 return;
 
+			entity.SyncEngineStateRecursive(false);
             var command = new CollectionRemoveCommand<GameEntity>(Entities, entity, "Entities");
             UndoRedoManager.Instance.Execute(command);
 
@@ -278,6 +291,54 @@ namespace Editor.Core.Data
                 SetEntityReferencesRecursive(child);
             }
         }
+
+        /// <summary>
+        /// Aktiviert alle Entities dieser Szene in der Engine.
+        /// Sollte aufgerufen werden, nachdem die Szene vollständig geladen wurde.
+        /// </summary>
+        public void ActivateEntities()
+        {
+			IsActive = true;
+
+			if (_entities != null)
+			{
+				foreach (var entity in _entities)
+				{
+					SetEntityActiveRecursive(entity, true);
+					entity.SyncEngineStateRecursive();
+				}
+			}
+        }
+
+        /// <summary>
+        /// Deaktiviert alle Entities dieser Szene in der Engine.
+        /// Sollte vor dem Entladen der Szene aufgerufen werden.
+        /// </summary>
+        public void DeactivateEntities()
+        {
+			IsActive = false;
+
+			if (_entities != null)
+			{
+				foreach (var entity in _entities)
+				{
+					SetEntityActiveRecursive(entity, false);
+					entity.SyncEngineStateRecursive(false);
+				}
+			}
+        }
+
+		private void SetEntityActiveRecursive(GameEntity entity, bool active)
+		{
+			entity.IsActive = active;
+			if (entity.Children != null)
+			{
+				foreach (var child in entity.Children)
+				{
+					SetEntityActiveRecursive(child, active);
+				}
+			}
+		}
 
         /// <summary>
         /// Wird nach der Deserialisierung aufgerufen um die Parent-Referenz wiederherzustellen

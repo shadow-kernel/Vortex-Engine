@@ -94,6 +94,8 @@
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </ApplicationDefinition>
+    <Compile Include="DllWrapper\VortexAPI.cs" />
+    <Compile Include="Utilities\Utilities.cs" />
     <Page Include="Assets\Images\ImageResources.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>

@@ -42,22 +42,17 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
 
         public ObservableCollection<Scene> Scenes => _currentProject?.Scenes;
 
-        public Scene SelectedScene
-        {
-            get => _selectedScene;
-            set
-            {
-                if (SetProperty(ref _selectedScene, value, nameof(SelectedScene)))
-                {
-                    if (_currentProject != null && value != null)
-                    {
-                        _currentProject.ActiveScene = value;
-                        value.Load();
-                    }
-                    OnPropertyChanged(nameof(Entities));
-                }
-            }
-        }
+		public Scene SelectedScene
+		{
+			get => _selectedScene;
+			set
+			{
+				if (SetProperty(ref _selectedScene, value, nameof(SelectedScene)))
+				{
+					OnPropertyChanged(nameof(Entities));
+				}
+			}
+		}
 
         public ObservableCollection<GameEntity> Entities => _selectedScene?.Entities;
 
@@ -198,16 +193,69 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
         public void SetProject(ProjectData project)
         {
             CurrentProject = project;
-            if (project?.Scenes?.Count > 0)
-            {
-                SelectedScene = project.ActiveScene ?? project.Scenes[0];
-            }
+			if (project?.Scenes?.Count > 0)
+			{
+				var initialScene = project.ActiveScene ?? project.Scenes[0];
+
+				// Mark all scenes inactive first
+				foreach (var scene in project.Scenes)
+				{
+					if (scene != initialScene)
+					{
+						scene.IsActive = false;
+						scene.DeactivateEntities();
+					}
+				}
+
+				// Activate the chosen scene
+				ActivateScene(initialScene);
+			}
         }
 
         public void SetScene(Scene scene)
         {
             SelectedScene = scene;
         }
+
+		public void ActivateScene(Scene scene)
+		{
+			if (scene == null)
+				return;
+
+			var previous = _currentProject?.ActiveScene;
+			if (previous != null && previous != scene)
+			{
+				previous.DeactivateEntities();
+			}
+
+			if (_currentProject != null)
+			{
+				_currentProject.ActiveScene = scene;
+			}
+
+			scene.Load();
+			scene.ActivateEntities();
+			scene.IsActive = true;
+			SelectedScene = scene;
+			OnPropertyChanged(nameof(Entities));
+		}
+
+		public void DeactivateScene(Scene scene)
+		{
+			if (scene == null)
+				return;
+
+			scene.DeactivateEntities();
+			scene.IsActive = false;
+
+			if (_currentProject != null && _currentProject.ActiveScene == scene)
+			{
+				_currentProject.ActiveScene = null;
+			}
+
+			SelectedScene = scene;
+			OnPropertyChanged(nameof(Entities));
+		}
 
         #region Scene Methods
 

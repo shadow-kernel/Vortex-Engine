@@ -11,7 +11,7 @@ namespace Editor.ECS.Components
     public class Transform : Component
     {
         private Vector3 _localPosition;
-        private Quaternion _localRotation = Quaternion.Identity;
+        private Vector3 _localRotation;
         private Vector3 _localScale = Vector3.One;
 
         public override string DisplayName => "Transform";
@@ -34,7 +34,7 @@ namespace Editor.ECS.Components
         /// Lokale Rotation relativ zum Parent (Quaternion)
         /// </summary>
         [DataMember(Name = "localRotation", Order = 11)]
-        public Quaternion LocalRotation
+        public Vector3 LocalRotation
         {
             get => _localRotation;
             set => SetProperty(ref _localRotation, value, nameof(LocalRotation));
@@ -60,8 +60,8 @@ namespace Editor.ECS.Components
         [IgnoreDataMember]
         public Vector3 LocalEulerAngles
         {
-            get => _localRotation.EulerAngles;
-            set => LocalRotation = Quaternion.Euler(value);
+            get => _localRotation;
+            set => SetProperty(ref _localRotation, value, nameof(LocalEulerAngles));
         }
 
         #endregion
@@ -82,7 +82,7 @@ namespace Editor.ECS.Components
         public void Reset()
         {
             LocalPosition = Vector3.Zero;
-            LocalRotation = Quaternion.Identity;
+            LocalRotation = Vector3.Zero;
             LocalScale = Vector3.One;
         }
 

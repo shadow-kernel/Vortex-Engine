@@ -192,6 +192,7 @@ namespace Editor
             WorldEditor.SetEditorVisible(true);
             
             // Speichere als letztes geöffnetes Projekt
+            // Hinweis: Die Engine-Aktivierung erfolgt im SceneHierarchyViewModel.SelectedScene-Setter
             EditorStateService.Instance.SetLastProject(project.Id, project.Path);
         }
 

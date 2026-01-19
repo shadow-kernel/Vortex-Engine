@@ -1,10 +1,13 @@
-using System;
-using System.Collections.ObjectModel;
-using System.Linq;
-using System.Runtime.Serialization;
 using Editor.Core.UndoRedo;
 using Editor.Core.UndoRedo.Commands;
+using Editor.DllWrapper;
 using Editor.ECS.Components;
+using Editor.Utilities;
+using System;
+using System.Collections.ObjectModel;
+using System.Diagnostics;
+using System.Linq;
+using System.Runtime.Serialization;
 
 namespace Editor.ECS
 {
@@ -29,6 +32,7 @@ namespace Editor.ECS
     [KnownType(typeof(Components.Scripting.Script))]
     public class GameEntity : Core.ViewModelBase
     {
+        private long _entityId = ID.INVALID_ID;
         private Guid _id;
         private string _name;
         private bool _isActive = true;
@@ -40,8 +44,16 @@ namespace Editor.ECS
         private ObservableCollection<GameEntity> _children;
         private ObservableCollection<Component> _components;
         private Transform _transform;
+        private bool _isDeserializing;
 
         #region Serialized Properties
+
+        [IgnoreDataMember]
+        public long EntityId
+        {
+            get => _entityId;
+            set => SetProperty(ref _entityId, value, nameof(EntityId));
+        }
 
         [DataMember(Name = "id", Order = 0)]
         public Guid Id
@@ -61,7 +73,16 @@ namespace Editor.ECS
         public bool IsActive
         {
             get => _isActive;
-            set => SetProperty(ref _isActive, value, nameof(IsActive));
+            set
+            {
+                SetProperty(ref _isActive, value, nameof(IsActive));
+
+                // Während der Deserialisierung keine Engine-Registrierung
+                if (_isDeserializing)
+                    return;
+
+                SyncEngineStateRecursive(Parent?.ActiveInHierarchy ?? true);
+            }
         }
 
         [DataMember(Name = "isStatic", Order = 3)]
@@ -186,6 +207,37 @@ namespace Editor.ECS
         #endregion
 
         #region Constructors
+
+		internal void SyncEngineStateRecursive(bool parentActive = true)
+		{
+			if (_isDeserializing)
+				return;
+
+			var shouldBeActive = parentActive && _isActive;
+
+			if (shouldBeActive)
+			{
+				if (!ID.IsValid(_entityId))
+				{
+					EntityId = VortexAPI.CreateGameEntity(this);
+					Debug.Assert(ID.IsValid(_entityId), "Failed to create GameEntity in engine.");
+				}
+			}
+			else if (ID.IsValid(_entityId))
+			{
+				VortexAPI.RemoveGameEntity(this);
+				_entityId = ID.INVALID_ID;
+			}
+
+			if (_children != null)
+			{
+				foreach (var child in _children)
+				{
+					child.SyncEngineStateRecursive(shouldBeActive);
+				}
+			}
+		}
+
 
         public GameEntity()
         {
@@ -376,11 +428,21 @@ namespace Editor.ECS
         #region Serialization
 
         /// <summary>
+        /// Wird vor der Deserialisierung aufgerufen
+        /// </summary>
+        [OnDeserializing]
+        internal void OnDeserializingMethod(StreamingContext context)
+        {
+            _isDeserializing = true;
+        }
+
+        /// <summary>
         /// Wird nach der Deserialisierung aufgerufen
         /// </summary>
         [OnDeserialized]
         internal void OnDeserializedMethod(StreamingContext context)
         {
+            _isDeserializing = false;
             // Setze Parent-Referenzen für Kinder
             if (_children != null)
             {

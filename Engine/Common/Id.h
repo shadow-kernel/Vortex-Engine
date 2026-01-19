@@ -4,11 +4,11 @@
 
 namespace vortex::id {
 
-	using id_type = u32;
+	using id_type = u64;
 
 namespace internal {
-	constexpr u32 generation_bits{ 8 };
-	constexpr u32 index_bits{ sizeof(id_type) * 8 - generation_bits };
+	constexpr u32 generation_bits{ 24 };  // ~16 Mio Recyclings pro Slot
+	constexpr u32 index_bits{ sizeof(id_type) * 8 - generation_bits }; // 40 Bits ? ~1 Billion Slots
 	constexpr id_type index_mask{ (id_type{ 1 } << index_bits) - 1 };
 	constexpr id_type generation_mask{ (id_type{ 1 } << generation_bits) - 1 };
 }

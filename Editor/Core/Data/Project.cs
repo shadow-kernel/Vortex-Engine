@@ -36,12 +36,26 @@ namespace Editor.Core.Data
         /// <summary>
         /// Die aktuell aktive Szene (nicht serialisiert - Runtime State)
         /// </summary>
-        [IgnoreDataMember]
-        public Scene ActiveScene
-        {
-            get => _activeScene;
-            set => SetProperty(ref _activeScene, value, nameof(ActiveScene));
-        }
+		[IgnoreDataMember]
+		public Scene ActiveScene
+		{
+			get => _activeScene;
+			set
+			{
+				if (_activeScene == value)
+					return;
+
+				var previous = _activeScene;
+				if (SetProperty(ref _activeScene, value, nameof(ActiveScene)))
+				{
+					if (previous != null)
+						previous.IsActive = false;
+
+					if (_activeScene != null)
+						_activeScene.IsActive = true;
+				}
+			}
+		}
 
         /// <summary>
         /// Thumbnail für die Projektliste (nicht serialisiert - wird aus ImagePath geladen)
@@ -95,11 +109,12 @@ namespace Editor.Core.Data
                     scene.Project = this;
                 }
 
-                // Setze die erste Szene als aktive Szene
-                if (_scenes.Count > 0)
-                {
-                    _activeScene = _scenes[0];
-                }
+				// Setze die erste Szene als aktive Szene
+				if (_scenes.Count > 0)
+				{
+					_activeScene = _scenes[0];
+					_activeScene.IsActive = true;
+				}
             }
         }
 

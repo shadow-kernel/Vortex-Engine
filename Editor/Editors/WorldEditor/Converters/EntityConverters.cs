@@ -1,8 +1,10 @@
 using System;
 using System.Globalization;
 using System.Linq;
+using System.Windows;
 using System.Windows.Data;
 using System.Windows.Media;
+using Editor.Core.Data;
 using Editor.ECS;
 using Editor.ECS.Components;
 using Editor.ECS.Components.Audio;
@@ -148,4 +150,68 @@ public class EntityToIconConverter : IValueConverter
             throw new NotImplementedException();
         }
     }
+
+    /// <summary>
+    /// Konvertiert eine Szene zu Visibility basierend auf Aktivitätsstatus.
+    /// Gibt Visible zurück wenn die Szene die aktive Szene ist.
+    /// Mit ConverterParameter="Invert" wird das Ergebnis umgekehrt.
+    /// </summary>
+	public class SceneActiveConverter : IValueConverter
+	{
+		public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+		{
+			bool isActive = false;
+
+			if (value is bool activeFlag)
+			{
+				isActive = activeFlag;
+			}
+			else if (value is Core.Data.Scene scene)
+			{
+				isActive = scene.IsActive || scene.Project?.ActiveScene == scene;
+			}
+
+			// Invertieren wenn Parameter gesetzt
+			if (parameter is string param && param == "Invert")
+			{
+				isActive = !isActive;
+			}
+
+			return isActive ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed;
+		}
+
+		public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+		{
+			throw new NotImplementedException();
+		}
+	}
+
+    /// <summary>
+    /// Konvertiert eine Szene zu einer Farbe basierend auf Aktivitätsstatus.
+    /// Aktive Szene: Grün (#4EC9B0), Inaktive Szene: Gelb/Grau (#DCDCAA / #808080)
+    /// </summary>
+	public class SceneActiveToIconConverter : IValueConverter
+	{
+		public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+		{
+			string colorHex = "#808080"; // Default gray for inactive
+
+			if (value is bool isActive)
+			{
+				colorHex = isActive ? "#4EC9B0" : "#DCDCAA"; // Green for active, Yellow for inactive
+			}
+			else if (value is Core.Data.Scene scene)
+			{
+				bool active = scene.IsActive || scene.Project?.ActiveScene == scene;
+				colorHex = active ? "#4EC9B0" : "#DCDCAA";
+			}
+
+			return new SolidColorBrush((Color)ColorConverter.ConvertFromString(colorHex));
+		}
+
+		public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+		{
+			throw new NotImplementedException();
+		}
+	}
 }

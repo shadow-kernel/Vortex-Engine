@@ -47,22 +47,23 @@ namespace vortex::game_entity {
 	{
 		const entity_id id{ entity.get_id() };
 		const id::id_type index{ id::index(id) };
-		assert(is_alive(entity));
-		if (is_alive(entity)) {
-			transform::remove_transform(transforms[index]);
-			transforms[index] = {};
-			free_indices.push_back(id);
-		}
+	if (!is_alive(entity)) return;
+
+	transform::remove_transform(transforms[index]);
+	transforms[index] = {};
+	free_indices.push_back(id);
 	}
 
 	bool is_alive(entity entity)
 	{
-		assert(entity.is_valid());
-		const entity_id id{ entity.get_id() };
-		const id::id_type index{ id::index(id) };
-		assert(index < generations.size());
-		assert(generations[index] == id::generation(id));
-		return (generations[index] == id::generation(id) && transforms[index].is_valid());
+	if (!entity.is_valid()) return false;
+
+	const entity_id id{ entity.get_id() };
+	const id::id_type index{ id::index(id) };
+	if (index >= generations.size()) return false;
+	if (generations[index] != id::generation(id)) return false;
+
+	return transforms[index].is_valid();
 	}
 
 	transform::component entity::transform() const
