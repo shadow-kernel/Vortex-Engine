@@ -16,7 +16,7 @@ namespace Editor
         public static readonly RoutedCommand SaveSceneCommand = new RoutedCommand("SaveScene", typeof(MainWindow),
             new InputGestureCollection { new KeyGesture(Key.S, ModifierKeys.Control) });
 
-     public MainWindow()
+   public MainWindow()
         {
             InitializeComponent();
             SetupGlobalKeyboardShortcuts();
