@@ -1,25 +1,24 @@
-﻿using Editor.ECS;
-using Editor.ECS.Components;
-using Editor.EngineAPIStructs;
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Runtime.InteropServices;
-using System.Text;
-using System.Threading.Tasks;
+using Editor.ECS;
 
 namespace Editor.EngineAPIStructs
 {
+    /// <summary>
+    /// Transform component data for engine communication.
+    /// </summary>
     [StructLayout(LayoutKind.Sequential)]
-    class TransformComponent
+    public class TransformComponent
     {
         public Vector3 Position;
         public Vector3 Rotation;
-        public Vector3 Scale = new Vector3(1,1,1);
+        public Vector3 Scale = new Vector3(1, 1, 1);
     }
 
+    /// <summary>
+    /// Descriptor for creating game entities in the engine.
+    /// </summary>
     [StructLayout(LayoutKind.Sequential)]
-    class GameEntityDescriptor
+    public class GameEntityDescriptor
     {
         public TransformComponent Transform = new TransformComponent();
     }
@@ -27,34 +26,20 @@ namespace Editor.EngineAPIStructs
 
 namespace Editor.DllWrapper
 {
-    static class VortexAPI
+    /// <summary>
+    /// Main entry point for the Vortex Engine API.
+    /// This is a partial class - implementation is split across multiple files:
+    /// - Core/VortexCore.cs - Runtime, Scenes, Entities
+    /// - Rendering/VortexRendering.cs - Viewport, Camera, Rendering
+    /// - Resources/VortexResources.cs - Mesh, Material, Resource loading
+    /// - Gizmos/TransformGizmo.cs - Transform gizmo (Move tool)
+    /// - Gizmos/RotationGizmo.cs - Rotation gizmo (Rotate tool)
+    /// - Gizmos/ScaleGizmo.cs - Scale gizmo (Scale tool)
+    /// - Gizmos/SelectionOutline.cs - Selection outline rendering
+    /// </summary>
+    public static partial class VortexAPI
     {
-        private const string _dllName = "VortexAPI.dll";
-
-        [DllImport(_dllName)]
-        private static extern long CreateGameEntity(GameEntityDescriptor descriptor);
-
-        public static long CreateGameEntity(GameEntity gameEntity)
-        {
-            GameEntityDescriptor descriptor = new GameEntityDescriptor();
-
-            {
-                var c = gameEntity.GetComponent<Transform>();
-                descriptor.Transform.Position = c.LocalPosition;
-                descriptor.Transform.Rotation = c.LocalRotation;
-                descriptor.Transform.Scale = c.LocalScale;
-            }
-
-            return CreateGameEntity(descriptor);
-        }
-
-        [DllImport(_dllName)]
-        private static extern void RemoveGameEntity(long id);
-
-        public static void RemoveGameEntity(GameEntity gameEntity)
-        {
-            RemoveGameEntity(gameEntity.EntityId);
-        }
-
+        // This file serves as the main entry point and documentation.
+        // All implementation is in the partial class files in subfolders.
     }
 }

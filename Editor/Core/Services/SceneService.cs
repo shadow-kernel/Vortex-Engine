@@ -100,13 +100,13 @@ namespace Editor.Core.Services
 
             // Standard-Kamera erstellen
             var camera = new GameEntity(scene, "Main Camera");
-            camera.Transform.LocalPosition = new Vector3(0, 1, -10);
+            camera.Transform.LocalPosition = new ECS.Vector3(0, 1, -10);
             camera.AddComponentDirect(new Camera(camera) { IsMainCamera = true });
             scene.Entities.Add(camera);
 
             // Standard-Licht erstellen
             var light = new GameEntity(scene, "Directional Light");
-            light.Transform.LocalEulerAngles = new Vector3(50, -30, 0);
+            light.Transform.LocalEulerAngles = new ECS.Vector3(50, -30, 0);
             light.AddComponentDirect(new Light(light, LightType.Directional));
             scene.Entities.Add(light);
 
@@ -122,7 +122,8 @@ namespace Editor.Core.Services
             if (entity == null)
                 throw new ArgumentNullException(nameof(entity));
 
-            DataSerializer.SaveAsBinary(entity, filePath);
+            // Prefabs sollen für Nutzer lesbar sein -> JSON speichern
+            DataSerializer.SaveAsJson(entity, filePath);
         }
 
         /// <summary>
@@ -133,7 +134,7 @@ namespace Editor.Core.Services
             if (!File.Exists(filePath))
                 throw new FileNotFoundException("Prefab-Datei nicht gefunden", filePath);
 
-            return DataSerializer.LoadFromBinary<GameEntity>(filePath);
+            return DataSerializer.LoadFromJson<GameEntity>(filePath);
         }
 
         /// <summary>

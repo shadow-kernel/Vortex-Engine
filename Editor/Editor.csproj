@@ -94,13 +94,49 @@
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </ApplicationDefinition>
+    <Compile Include="Core\Services\EditorCameraController.cs" />
+    <Compile Include="Core\Services\EditorViewportService.cs" />
+    <Compile Include="Core\Services\EntitySyncService.cs" />
+    <Compile Include="Core\Services\MaterialService.cs" />
+    <Compile Include="Core\Services\MeshService.cs" />
+    <Compile Include="Core\Services\RaycastService.cs" />
+    <Compile Include="Core\Services\SceneRenderService.cs" />
+    <Compile Include="Core\Services\SelectionService.cs" />
+    <Compile Include="Core\Services\ShaderService.cs" />
+    <Compile Include="Core\Services\TransformGizmoService.cs" />
+    <Compile Include="DllWrapper\Core\VortexCore.cs" />
+    <Compile Include="DllWrapper\Gizmos\RotationGizmo.cs" />
+    <Compile Include="DllWrapper\Gizmos\ScaleGizmo.cs" />
+    <Compile Include="DllWrapper\Gizmos\SelectionOutline.cs" />
+    <Compile Include="DllWrapper\Gizmos\TransformGizmo.cs" />
+    <Compile Include="DllWrapper\Rendering\VortexRendering.cs" />
+    <Compile Include="DllWrapper\Resources\VortexResources.cs" />
     <Compile Include="DllWrapper\VortexAPI.cs" />
+    <Compile Include="Editors\WorldEditor\Components\AssetBrowser\AssetBrowserView.xaml.cs">
+      <DependentUpon>AssetBrowserView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Editors\WorldEditor\Components\GamePreview\ViewportHost.cs" />
+    <Compile Include="Editors\WorldEditor\Components\Inspector\AssetPickerDialog.xaml.cs">
+      <DependentUpon>AssetPickerDialog.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Editors\WorldEditor\Components\Inspector\DynamicInspectorView.xaml.cs">
+      <DependentUpon>DynamicInspectorView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Editors\WorldEditor\Components\Inspector\MeshRendererInspector.xaml.cs">
+      <DependentUpon>MeshRendererInspector.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Editors\WorldEditor\Components\Inspector\TransformInspector.xaml.cs">
+      <DependentUpon>TransformInspector.xaml</DependentUpon>
+    </Compile>
     <Compile Include="Utilities\Utilities.cs" />
     <Page Include="Assets\Images\ImageResources.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="Assets\Styles\DarkContextMenuStyle.xaml">
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Editors\WorldEditor\Components\AssetBrowser\AssetBrowserView.xaml">
       <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="Editors\WorldEditor\Components\FileExplorer\FileExplorerView.xaml">
@@ -118,7 +154,16 @@
     <Page Include="Editors\WorldEditor\Components\HistoryLog\HistoryLogView.xaml">
       <Generator>MSBuild:Compile</Generator>
     </Page>
-    <Page Include="Editors\WorldEditor\Components\Inspector\InspectorView.xaml">
+    <Page Include="Editors\WorldEditor\Components\Inspector\AssetPickerDialog.xaml">
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Editors\WorldEditor\Components\Inspector\DynamicInspectorView.xaml">
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Editors\WorldEditor\Components\Inspector\MeshRendererInspector.xaml">
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Editors\WorldEditor\Components\Inspector\TransformInspector.xaml">
       <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="Editors\WorldEditor\Components\SceneHierarchy\SceneHierarchyView.xaml">
@@ -196,9 +241,6 @@
       <DependentUpon>HistoryLogView.xaml</DependentUpon>
     </Compile>
     <Compile Include="Editors\WorldEditor\Components\HistoryLog\HistoryLogViewModel.cs" />
-    <Compile Include="Editors\WorldEditor\Components\Inspector\InspectorView.xaml.cs">
-      <DependentUpon>InspectorView.xaml</DependentUpon>
-    </Compile>
     <Compile Include="Editors\WorldEditor\Components\SceneHierarchy\SceneHierarchyView.xaml.cs">
       <DependentUpon>SceneHierarchyView.xaml</DependentUpon>
     </Compile>
@@ -275,6 +317,7 @@
     <Resource Include="Logo.ico" />
   </ItemGroup>
   <ItemGroup>
+    <Folder Include="Core\Abstractions\" />
     <Folder Include="Core\Data\Components\" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />

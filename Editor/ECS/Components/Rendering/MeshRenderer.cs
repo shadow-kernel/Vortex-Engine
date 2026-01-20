@@ -1,4 +1,6 @@
 using System.Runtime.Serialization;
+using Editor.DllWrapper;
+using Editor.Utilities;
 
 namespace Editor.ECS.Components.Rendering
 {
@@ -13,6 +15,18 @@ namespace Editor.ECS.Components.Rendering
         private bool _castShadows = true;
         private bool _receiveShadows = true;
         private int _renderLayer;
+        
+        // Material color properties
+        private float _colorR = 0.7f;
+        private float _colorG = 0.7f;
+        private float _colorB = 0.7f;
+        private float _colorA = 1.0f;
+
+        [IgnoreDataMember]
+        private long _meshHandle = ID.INVALID_ID;
+
+        [IgnoreDataMember]
+        private long _materialHandle = ID.INVALID_ID;
 
         public override string DisplayName => "Mesh Renderer";
         public override string IconCode => "\uE809";
@@ -25,7 +39,13 @@ namespace Editor.ECS.Components.Rendering
         public string MeshPath
         {
             get => _meshPath;
-            set => SetProperty(ref _meshPath, value, nameof(MeshPath));
+            set
+            {
+                if (SetProperty(ref _meshPath, value, nameof(MeshPath)))
+                {
+                    ReloadMeshHandle();
+                }
+            }
         }
 
         /// <summary>
@@ -35,7 +55,13 @@ namespace Editor.ECS.Components.Rendering
         public string MaterialPath
         {
             get => _materialPath;
-            set => SetProperty(ref _materialPath, value, nameof(MaterialPath));
+            set
+            {
+                if (SetProperty(ref _materialPath, value, nameof(MaterialPath)))
+                {
+                    ReloadMaterialHandle();
+                }
+            }
         }
 
         /// <summary>
@@ -68,11 +94,93 @@ namespace Editor.ECS.Components.Rendering
             set => SetProperty(ref _renderLayer, value, nameof(RenderLayer));
         }
 
+        /// <summary>
+        /// Material base color - Red component (0-1)
+        /// </summary>
+        [DataMember(Name = "colorR", Order = 15)]
+        public float ColorR
+        {
+            get => _colorR;
+            set => SetProperty(ref _colorR, Clamp01(value), nameof(ColorR));
+        }
+
+        /// <summary>
+        /// Material base color - Green component (0-1)
+        /// </summary>
+        [DataMember(Name = "colorG", Order = 16)]
+        public float ColorG
+        {
+            get => _colorG;
+            set => SetProperty(ref _colorG, Clamp01(value), nameof(ColorG));
+        }
+
+        /// <summary>
+        /// Material base color - Blue component (0-1)
+        /// </summary>
+        [DataMember(Name = "colorB", Order = 17)]
+        public float ColorB
+        {
+            get => _colorB;
+            set => SetProperty(ref _colorB, Clamp01(value), nameof(ColorB));
+        }
+
+        /// <summary>
+        /// Material base color - Alpha component (0-1)
+        /// </summary>
+        [DataMember(Name = "colorA", Order = 18)]
+        public float ColorA
+        {
+            get => _colorA;
+            set => SetProperty(ref _colorA, Clamp01(value), nameof(ColorA));
+        }
+
         public MeshRenderer() : base() { }
         public MeshRenderer(GameEntity entity) : base(entity) { }
         public MeshRenderer(GameEntity entity, string meshPath) : base(entity)
         {
             MeshPath = meshPath;
+        }
+
+        private static float Clamp01(float value)
+        {
+            if (value < 0) return 0;
+            if (value > 1) return 1;
+            return value;
+        }
+
+        [OnDeserialized]
+        internal void OnDeserializedMeshRenderer(StreamingContext context)
+        {
+            ReloadMeshHandle();
+            ReloadMaterialHandle();
+        }
+
+        private void ReloadMeshHandle()
+        {
+            if (_meshHandle != ID.INVALID_ID)
+            {
+                VortexAPI.UnloadResourceHandle(_meshHandle);
+                _meshHandle = ID.INVALID_ID;
+            }
+
+            if (!string.IsNullOrEmpty(_meshPath))
+            {
+                _meshHandle = VortexAPI.LoadMeshResource(_meshPath);
+            }
+        }
+
+        private void ReloadMaterialHandle()
+        {
+            if (_materialHandle != ID.INVALID_ID)
+            {
+                VortexAPI.UnloadResourceHandle(_materialHandle);
+                _materialHandle = ID.INVALID_ID;
+            }
+
+            if (!string.IsNullOrEmpty(_materialPath))
+            {
+                _materialHandle = VortexAPI.LoadMaterialResource(_materialPath);
+            }
         }
     }
 
@@ -91,6 +199,9 @@ namespace Editor.ECS.Components.Rendering
         private bool _flipX;
         private bool _flipY;
 
+        [IgnoreDataMember]
+        private long _spriteHandle = ID.INVALID_ID;
+
         public override string DisplayName => "Sprite Renderer";
         public override string IconCode => "\uE8B9";
         public override string IconColor => "#C586C0";
@@ -99,7 +210,13 @@ namespace Editor.ECS.Components.Rendering
         public string SpritePath
         {
             get => _spritePath;
-            set => SetProperty(ref _spritePath, value, nameof(SpritePath));
+            set
+            {
+                if (SetProperty(ref _spritePath, value, nameof(SpritePath)))
+                {
+                    ReloadSpriteHandle();
+                }
+            }
         }
 
         [DataMember(Name = "colorR", Order = 11)]
@@ -153,5 +270,25 @@ namespace Editor.ECS.Components.Rendering
 
         public SpriteRenderer() : base() { }
         public SpriteRenderer(GameEntity entity) : base(entity) { }
+
+        [OnDeserialized]
+        internal void OnDeserializedSpriteRenderer(StreamingContext context)
+        {
+            ReloadSpriteHandle();
+        }
+
+        private void ReloadSpriteHandle()
+        {
+            if (_spriteHandle != ID.INVALID_ID)
+            {
+                VortexAPI.UnloadResourceHandle(_spriteHandle);
+                _spriteHandle = ID.INVALID_ID;
+            }
+
+            if (!string.IsNullOrEmpty(_spritePath))
+            {
+                _spriteHandle = VortexAPI.LoadTextureResource(_spritePath);
+            }
+        }
     }
 }

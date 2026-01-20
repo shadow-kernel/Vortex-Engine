@@ -313,11 +313,15 @@ d:DesignHeight="64" d:DesignWidth="1200">
                 <MenuItem Header="_Find..." InputGestureText="Ctrl+F"/>
             </MenuItem>
             
+            
             <!-- View Menu -->
             <MenuItem Header="_View">
-                <MenuItem Header="_Toggle Grid" InputGestureText="G"/>
-                <MenuItem Header="_Snap to Grid"/>
-                <MenuItem Header="Toggle _Gizmos"/>
+                <MenuItem x:Name="ToggleGridMenuItem" Header="_Toggle Grid" InputGestureText="G" 
+                          IsCheckable="True" IsChecked="True" Click="ToggleGrid_Click"/>
+                <MenuItem x:Name="SnapToGridMenuItem" Header="_Snap to Grid" 
+                          IsCheckable="True" IsChecked="False" Click="SnapToGrid_Click"/>
+                <MenuItem x:Name="ToggleGizmosMenuItem" Header="Toggle _Gizmos" 
+                          IsCheckable="True" IsChecked="True" Click="ToggleGizmos_Click"/>
                 <Separator/>
                 <MenuItem Header="_Zoom In" InputGestureText="Ctrl++"/>
                 <MenuItem Header="Zoom _Out" InputGestureText="Ctrl+-"/>
@@ -442,17 +446,17 @@ d:DesignHeight="64" d:DesignWidth="1200">
                 <Rectangle Style="{StaticResource ToolbarSeparator}"/>
                     
                 <!-- Transform Tools -->
-                <Button Content="&#xE759;" Style="{StaticResource ToolbarButtonStyle}" ToolTip="Move Tool (W)"/>
-                <Button Content="&#xE7AD;" Style="{StaticResource ToolbarButtonStyle}" ToolTip="Rotate Tool (E)"/>
-                <Button Content="&#xE740;" Style="{StaticResource ToolbarButtonStyle}" ToolTip="Scale Tool (R)"/>
+                <Button x:Name="MoveToolButton" Content="&#xE759;" Style="{StaticResource ToolbarButtonStyle}" ToolTip="Move Tool (W)" Click="MoveTool_Click"/>
+                <Button x:Name="RotateToolButton" Content="&#xE7AD;" Style="{StaticResource ToolbarButtonStyle}" ToolTip="Rotate Tool (E)" Click="RotateTool_Click"/>
+                <Button x:Name="ScaleToolButton" Content="&#xE740;" Style="{StaticResource ToolbarButtonStyle}" ToolTip="Scale Tool (R)" Click="ScaleTool_Click"/>
                 <Button Content="&#xE73F;" Style="{StaticResource ToolbarButtonStyle}" ToolTip="Rect Tool (T)"/>
                     
                 <Rectangle Style="{StaticResource ToolbarSeparator}"/>
                     
                 <!-- View Options -->
-                <Button Content="&#xE8B3;" Style="{StaticResource ToolbarButtonStyle}" ToolTip="Toggle Grid (G)"/>
-                <Button Content="&#xE81E;" Style="{StaticResource ToolbarButtonStyle}" ToolTip="Snap to Grid"/>
-                <Button Content="&#xE7B3;" Style="{StaticResource ToolbarButtonStyle}" ToolTip="Toggle Gizmos"/>
+                <Button x:Name="ToggleGridButton" Content="&#xE8B3;" Style="{StaticResource ToolbarButtonStyle}" ToolTip="Toggle Grid (G)" Click="ToggleGridButton_Click"/>
+                <Button x:Name="SnapToGridButton" Content="&#xE81E;" Style="{StaticResource ToolbarButtonStyle}" ToolTip="Snap to Grid" Click="SnapToGridButton_Click"/>
+                <Button x:Name="ToggleGizmosButton" Content="&#xE7B3;" Style="{StaticResource ToolbarButtonStyle}" ToolTip="Toggle Gizmos" Click="ToggleGizmosButton_Click"/>
             </StackPanel>
 
             <!-- Center Toolbar: Play Controls -->

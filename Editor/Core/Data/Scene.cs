@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
@@ -9,6 +10,8 @@ using Editor.ECS;
 using Editor.ECS.Components;
 using Editor.ECS.Components.Lighting;
 using Editor.ECS.Components.Rendering;
+using Editor.DllWrapper;
+using Editor.Core.Abstractions;
 
 namespace Editor.Core.Data
 {
@@ -17,7 +20,7 @@ namespace Editor.Core.Data
     /// Szenen enthalten GameEntities und werden als .vscene Binärdateien gespeichert.
     /// </summary>
     [DataContract(Name = "Scene", Namespace = "")]
-    public class Scene : ViewModelBase
+    public class Scene : ViewModelBase, IEngineScene
     {
         public const string FileExtension = ".vscene";
 
@@ -28,6 +31,7 @@ namespace Editor.Core.Data
         private string _filePath;
         private ObservableCollection<GameEntity> _entities;
 		private bool _isActive;
+        private SceneHandle _engineHandle;
 
         [DataMember(Name = "id", Order = 0)]
         public Guid Id
@@ -118,6 +122,8 @@ namespace Editor.Core.Data
         {
             _id = Guid.NewGuid();
             _entities = new ObservableCollection<GameEntity>();
+            _engineHandle = SceneHandle.Invalid;
+			_isActive = false;
         }
 
         public Scene(ProjectData project, string name) : this()
@@ -157,6 +163,11 @@ namespace Editor.Core.Data
                 }
             }
 
+			// Runtime-Zustand nach Deserialisierung zurücksetzen
+			_engineHandle = SceneHandle.Invalid;
+			_isActive = false;
+			SelectedEntity = null;
+
             IsLoaded = true;
             IsDirty = false;
         }
@@ -178,6 +189,7 @@ namespace Editor.Core.Data
             _entities?.Clear();
             SelectedEntity = null;
             IsLoaded = false;
+            ReleaseEngineScene();
         }
 
         /// <summary>
@@ -210,7 +222,7 @@ namespace Editor.Core.Data
             entity.Scene = this;
             var command = new CollectionAddCommand<GameEntity>(Entities, entity, "Entities");
             UndoRedoManager.Instance.Execute(command);
-			entity.SyncEngineStateRecursive();
+			entity.SyncEngineStateRecursive(IsActive);
             IsDirty = true;
         }
 
@@ -245,13 +257,55 @@ namespace Editor.Core.Data
             return entity;
         }
 
+        public void Activate()
+        {
+            if (IsActive)
+                return;
+
+            IsActive = true;
+
+            foreach (var entity in Entities)
+            {
+                entity.SyncEngineStateRecursive(IsActive);
+            }
+        }
+
+        public void Deactivate()
+        {
+            if (!IsActive)
+                return;
+
+            IsActive = false;
+
+            foreach (var entity in Entities)
+            {
+                entity.SyncEngineStateRecursive(false);
+            }
+        }
+
+        IEnumerable<IEngineEntity> IEngineScene.Entities => Entities;
+
+        IEngineEntity IEngineScene.CreateEntity(string name)
+        {
+            return CreateEntity(name);
+        }
+
+        void IEngineScene.RemoveEntity(IEngineEntity entity)
+        {
+            if (entity is GameEntity ge)
+            {
+                RemoveEntity(ge);
+            }
+        }
+
+
         /// <summary>
         /// Erstellt eine GameEntity mit Standard-Komponenten für einen bestimmten Typ
         /// </summary>
         public GameEntity CreatePrimitive(PrimitiveType type)
         {
             var entity = new GameEntity(this, type.ToString());
-            entity.AddComponent(new MeshRenderer(entity) { MeshPath = $"Primitives/{type}" });
+            entity.AddComponent(new MeshRenderer(entity) { MeshPath = $"Primitive:{type}" });
             AddEntity(entity);
             return entity;
         }
@@ -300,6 +354,13 @@ namespace Editor.Core.Data
         {
 			IsActive = true;
 
+			if (!_engineHandle.IsValid)
+			{
+				_engineHandle = VortexAPI.CreateEngineScene();
+			}
+
+			VortexAPI.ActivateEngineScene(_engineHandle);
+
 			if (_entities != null)
 			{
 				foreach (var entity in _entities)
@@ -317,6 +378,11 @@ namespace Editor.Core.Data
         public void DeactivateEntities()
         {
 			IsActive = false;
+
+			if (_engineHandle.IsValid)
+			{
+				VortexAPI.DeactivateEngineScene(_engineHandle);
+			}
 
 			if (_entities != null)
 			{
@@ -340,6 +406,17 @@ namespace Editor.Core.Data
 			}
 		}
 
+		internal void ReleaseEngineScene()
+		{
+			if (_engineHandle.IsValid)
+			{
+				VortexAPI.DestroyEngineScene(_engineHandle);
+				_engineHandle = SceneHandle.Invalid;
+			}
+		}
+
+		internal SceneHandle EngineHandle => _engineHandle;
+
         /// <summary>
         /// Wird nach der Deserialisierung aufgerufen um die Parent-Referenz wiederherzustellen
         /// </summary>
@@ -355,6 +432,8 @@ namespace Editor.Core.Data
                 }
             }
             IsLoaded = true;
+			_engineHandle = SceneHandle.Invalid;
+			_isActive = false;
         }
     }
 

@@ -11,6 +11,7 @@ xmlns:fileExplorer="clr-namespace:Editor.Editors.WorldEditor.Components.FileExpl
 xmlns:sceneHierarchy="clr-namespace:Editor.Editors.WorldEditor.Components.SceneHierarchy"
 xmlns:inspector="clr-namespace:Editor.Editors.WorldEditor.Components.Inspector"
 xmlns:historyLog="clr-namespace:Editor.Editors.WorldEditor.Components.HistoryLog"
+xmlns:assetBrowser="clr-namespace:Editor.Editors.WorldEditor.Components.AssetBrowser"
 mc:Ignorable="d" Background="#1E1E1E"
 d:DesignHeight="720" d:DesignWidth="1280">
 
@@ -71,7 +72,7 @@ d:DesignHeight="720" d:DesignWidth="1280">
                             </avalonDock:LayoutDocument>
                         </avalonDock:LayoutDocumentPane>
                         
-                        <!-- Bottom Panel: File Explorer -->
+                        <!-- Bottom Panel: File Explorer & Asset Browser -->
                         <avalonDock:LayoutAnchorablePaneGroup Orientation="Horizontal" DockHeight="200">
                             <avalonDock:LayoutAnchorablePane DockWidth="200">
                                 <avalonDock:LayoutAnchorable Title="Project" CanClose="False" CanFloat="True" 
@@ -84,6 +85,10 @@ d:DesignHeight="720" d:DesignWidth="1280">
                                 <avalonDock:LayoutAnchorable Title="Explorer" CanClose="False" CanFloat="True" 
                                                              CanAutoHide="True">
                                     <fileExplorer:FileExplorerView/>
+                                </avalonDock:LayoutAnchorable>
+                                <avalonDock:LayoutAnchorable Title="Assets" CanClose="False" CanFloat="True" 
+                                                             CanAutoHide="True">
+                                    <assetBrowser:AssetBrowserView x:Name="AssetBrowser"/>
                                 </avalonDock:LayoutAnchorable>
                                 <avalonDock:LayoutAnchorable Title="Console" CanClose="False" CanFloat="True" 
                                                              CanAutoHide="True">
@@ -109,7 +114,7 @@ d:DesignHeight="720" d:DesignWidth="1280">
                         <avalonDock:LayoutAnchorablePane DockHeight="*">
                             <avalonDock:LayoutAnchorable Title="Inspector" CanClose="False" CanFloat="True" 
                                                          CanAutoHide="True" AutoHideWidth="280">
-                                <inspector:InspectorView/>
+                                <inspector:DynamicInspectorView/>
                             </avalonDock:LayoutAnchorable>
                             <avalonDock:LayoutAnchorable Title="History" CanClose="False" CanFloat="True" 
                                                          CanAutoHide="True" AutoHideWidth="280">

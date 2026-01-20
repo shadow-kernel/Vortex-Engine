@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using Editor.Core.Data;
+using Editor.Core.Services;
 using Editor.Core.UndoRedo;
 using Editor.ECS;
 using Editor.ECS.Components;
@@ -414,6 +415,89 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
                 return;
             }
             entity.AddComponent(new Script(entity));
+        }
+
+        #endregion
+
+        #region View Menu
+
+        private void ToggleGrid_Click(object sender, RoutedEventArgs e)
+        {
+            var menuItem = sender as MenuItem;
+            if (menuItem != null)
+            {
+                EditorViewportService.Instance.IsGridVisible = menuItem.IsChecked;
+            }
+        }
+
+        private void ToggleGizmos_Click(object sender, RoutedEventArgs e)
+        {
+            var menuItem = sender as MenuItem;
+            if (menuItem != null)
+            {
+                EditorViewportService.Instance.AreGizmosVisible = menuItem.IsChecked;
+            }
+        }
+
+        private void SnapToGrid_Click(object sender, RoutedEventArgs e)
+        {
+            var menuItem = sender as MenuItem;
+            if (menuItem != null)
+            {
+                EditorViewportService.Instance.SnapToGrid = menuItem.IsChecked;
+            }
+        }
+
+
+        #endregion
+
+        #region Toolbar Buttons - Transform Tools
+
+        private void MoveTool_Click(object sender, RoutedEventArgs e)
+        {
+            TransformGizmoService.Instance.SetTranslateMode();
+            UpdateToolButtonStates();
+        }
+
+        private void RotateTool_Click(object sender, RoutedEventArgs e)
+        {
+            TransformGizmoService.Instance.SetRotateMode();
+            UpdateToolButtonStates();
+        }
+
+        private void ScaleTool_Click(object sender, RoutedEventArgs e)
+        {
+            TransformGizmoService.Instance.SetScaleMode();
+            UpdateToolButtonStates();
+        }
+
+        private void UpdateToolButtonStates()
+        {
+            // Visual feedback for active tool could be added here
+            // For now, just ensure the mode is set
+        }
+
+        #endregion
+
+        #region Toolbar Buttons - View Options
+
+        private void ToggleGridButton_Click(object sender, RoutedEventArgs e)
+        {
+            EditorViewportService.Instance.ToggleGrid();
+            ToggleGridMenuItem.IsChecked = EditorViewportService.Instance.IsGridVisible;
+        }
+
+        private void SnapToGridButton_Click(object sender, RoutedEventArgs e)
+        {
+            EditorViewportService.Instance.SnapToGrid = !EditorViewportService.Instance.SnapToGrid;
+            SnapToGridMenuItem.IsChecked = EditorViewportService.Instance.SnapToGrid;
+            TransformGizmoService.Instance.SnapEnabled = EditorViewportService.Instance.SnapToGrid;
+        }
+
+        private void ToggleGizmosButton_Click(object sender, RoutedEventArgs e)
+        {
+            EditorViewportService.Instance.ToggleGizmos();
+            ToggleGizmosMenuItem.IsChecked = EditorViewportService.Instance.AreGizmosVisible;
         }
 
         #endregion

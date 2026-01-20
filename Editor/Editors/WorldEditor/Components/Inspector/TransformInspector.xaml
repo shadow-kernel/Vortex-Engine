@@ -1,0 +1,108 @@
+<UserControl x:Class="Editor.Editors.WorldEditor.Components.Inspector.TransformInspector"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             mc:Ignorable="d" 
+             d:DesignHeight="150" d:DesignWidth="280"
+             Background="Transparent">
+    
+    <UserControl.Resources>
+        <Style x:Key="PropertyLabel" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#FF808080"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Width" Value="70"/>
+        </Style>
+        
+        <Style x:Key="VectorInput" TargetType="TextBox">
+            <Setter Property="Background" Value="#FF1E1E1E"/>
+            <Setter Property="Foreground" Value="#FFC5C5C5"/>
+            <Setter Property="BorderBrush" Value="#FF3C3C3C"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Width" Value="50"/>
+            <Setter Property="TextAlignment" Value="Center"/>
+            <Setter Property="Padding" Value="4,3"/>
+            <Setter Property="FontSize" Value="11"/>
+        </Style>
+        
+        <Style x:Key="AxisLabel" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Margin" Value="0,0,4,0"/>
+        </Style>
+    </UserControl.Resources>
+    
+    <Border Background="#FF2D2D30" CornerRadius="4" Padding="10" Margin="0,5">
+        <StackPanel>
+            <!-- Header -->
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                <TextBlock Text="&#xE759;" FontFamily="Segoe MDL2 Assets" 
+                           FontSize="16" Foreground="#FF3FA9F5" 
+                           VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBlock Text="Transform" FontSize="14" FontWeight="SemiBold" 
+                           Foreground="#FFC5C5C5" VerticalAlignment="Center"/>
+            </StackPanel>
+            
+            <!-- Position -->
+            <Grid Margin="0,4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="70"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="Position" Style="{StaticResource PropertyLabel}"/>
+                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <TextBlock Text="X" Foreground="#FFE06666" Style="{StaticResource AxisLabel}"/>
+                    <TextBox x:Name="PosX" Style="{StaticResource VectorInput}" 
+                             TextChanged="Position_TextChanged"/>
+                    <TextBlock Text="Y" Foreground="#FF6AA84F" Style="{StaticResource AxisLabel}" Margin="8,0,4,0"/>
+                    <TextBox x:Name="PosY" Style="{StaticResource VectorInput}" 
+                             TextChanged="Position_TextChanged"/>
+                    <TextBlock Text="Z" Foreground="#FF6FA8DC" Style="{StaticResource AxisLabel}" Margin="8,0,4,0"/>
+                    <TextBox x:Name="PosZ" Style="{StaticResource VectorInput}" 
+                             TextChanged="Position_TextChanged"/>
+                </StackPanel>
+            </Grid>
+            
+            <!-- Rotation -->
+            <Grid Margin="0,4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="70"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="Rotation" Style="{StaticResource PropertyLabel}"/>
+                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <TextBlock Text="X" Foreground="#FFE06666" Style="{StaticResource AxisLabel}"/>
+                    <TextBox x:Name="RotX" Style="{StaticResource VectorInput}" 
+                             TextChanged="Rotation_TextChanged"/>
+                    <TextBlock Text="Y" Foreground="#FF6AA84F" Style="{StaticResource AxisLabel}" Margin="8,0,4,0"/>
+                    <TextBox x:Name="RotY" Style="{StaticResource VectorInput}" 
+                             TextChanged="Rotation_TextChanged"/>
+                    <TextBlock Text="Z" Foreground="#FF6FA8DC" Style="{StaticResource AxisLabel}" Margin="8,0,4,0"/>
+                    <TextBox x:Name="RotZ" Style="{StaticResource VectorInput}" 
+                             TextChanged="Rotation_TextChanged"/>
+                </StackPanel>
+            </Grid>
+            
+            <!-- Scale -->
+            <Grid Margin="0,4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="70"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="Scale" Style="{StaticResource PropertyLabel}"/>
+                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <TextBlock Text="X" Foreground="#FFE06666" Style="{StaticResource AxisLabel}"/>
+                    <TextBox x:Name="ScaleX" Style="{StaticResource VectorInput}" 
+                             TextChanged="Scale_TextChanged"/>
+                    <TextBlock Text="Y" Foreground="#FF6AA84F" Style="{StaticResource AxisLabel}" Margin="8,0,4,0"/>
+                    <TextBox x:Name="ScaleY" Style="{StaticResource VectorInput}" 
+                             TextChanged="Scale_TextChanged"/>
+                    <TextBlock Text="Z" Foreground="#FF6FA8DC" Style="{StaticResource AxisLabel}" Margin="8,0,4,0"/>
+                    <TextBox x:Name="ScaleZ" Style="{StaticResource VectorInput}" 
+                             TextChanged="Scale_TextChanged"/>
+                </StackPanel>
+            </Grid>
+        </StackPanel>
+    </Border>
+</UserControl>

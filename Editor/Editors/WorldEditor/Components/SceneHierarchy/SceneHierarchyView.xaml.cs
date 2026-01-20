@@ -526,9 +526,80 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
 
         #region Scene Actions
 
+        private void SceneContextMenu_Opened(object sender, RoutedEventArgs e)
+        {
+            // Context menu is already bound to the scene via PlacementTarget
+            // All items are visible when opened on a scene
+        }
+
         private void SaveScene_Click(object sender, RoutedEventArgs e)
         {
             ViewModel?.SaveSceneCommand.Execute(null);
+        }
+
+        private void UnloadScene_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is MenuItem menuItem && 
+                GetContextMenuDataContext(menuItem) is Scene scene)
+            {
+                if (ViewModel?.Scenes?.Count > 1)
+                {
+                    ViewModel.Scenes.Remove(scene);
+                }
+                else
+                {
+                    MessageBox.Show("Cannot unload the only scene.", "Unload Scene", 
+                        MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+            }
+        }
+
+        private void LoadExistingScene_Click(object sender, RoutedEventArgs e)
+        {
+            var project = ProjectData.Current;
+            if (project == null) return;
+
+            var scenesFolder = System.IO.Path.Combine(project.Path, "Assets", "Scenes");
+            if (!System.IO.Directory.Exists(scenesFolder))
+            {
+                System.IO.Directory.CreateDirectory(scenesFolder);
+            }
+
+            var dialog = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "Load Scene",
+                Filter = "Scene Files (*.vscene)|*.vscene",
+                InitialDirectory = scenesFolder
+            };
+
+            if (dialog.ShowDialog() == true)
+            {
+                try
+                {
+                    var scene = SceneService.Instance.LoadScene(dialog.FileName);
+                    if (scene != null)
+                    {
+                        scene.Project = project;
+                        ViewModel?.Scenes?.Add(scene);
+                        ViewModel?.ActivateScene(scene);
+                    }
+                }
+                catch (System.Exception ex)
+                {
+                    MessageBox.Show($"Error loading scene: {ex.Message}", "Error",
+                        MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+            }
+        }
+
+        private object GetContextMenuDataContext(MenuItem menuItem)
+        {
+            if (menuItem.Parent is ContextMenu contextMenu &&
+                contextMenu.PlacementTarget is FrameworkElement element)
+            {
+                return element.DataContext;
+            }
+            return null;
         }
 
         private void DeleteScene_Click(object sender, RoutedEventArgs e)

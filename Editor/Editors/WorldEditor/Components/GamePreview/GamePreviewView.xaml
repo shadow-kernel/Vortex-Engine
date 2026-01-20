@@ -3,6 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+             xmlns:local="clr-namespace:Editor.Editors.WorldEditor.Components.GamePreview"
              mc:Ignorable="d" 
              d:DesignHeight="400" d:DesignWidth="600">
 
@@ -57,7 +58,153 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Border" Property="Background" Value="#3C3C3C"/>
+                                <Setter TargetName="Border" Property="Background" Value="#4A4A4A"/>
+                                <Setter Property="Foreground" Value="#3FA9F5"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="#3FA9F5"/>
+                                <Setter Property="Foreground" Value="#FFFFFF"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="ToolToggleButtonStyle" TargetType="ToggleButton">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#808080"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Width" Value="24"/>
+            <Setter Property="Height" Value="24"/>
+            <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="Border" 
+                                Background="{TemplateBinding Background}" 
+                                CornerRadius="3">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="#4A4A4A"/>
+                                <Setter Property="Foreground" Value="#3FA9F5"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="#3FA9F5"/>
+                                <Setter Property="Foreground" Value="#FFFFFF"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="DarkComboBoxStyle" TargetType="ComboBox">
+            <Setter Property="Background" Value="#2D2D30"/>
+            <Setter Property="Foreground" Value="#CCCCCC"/>
+            <Setter Property="BorderBrush" Value="#3F3F46"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="6,3"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="MinWidth" Value="70"/>
+            <Setter Property="Height" Value="22"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <ToggleButton x:Name="ToggleButton"
+                                          Background="{TemplateBinding Background}"
+                                          BorderBrush="{TemplateBinding BorderBrush}"
+                                          BorderThickness="{TemplateBinding BorderThickness}"
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
+                                          Focusable="False"
+                                          ClickMode="Press">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border x:Name="Border"
+                                                Background="{TemplateBinding Background}"
+                                                BorderBrush="{TemplateBinding BorderBrush}"
+                                                BorderThickness="{TemplateBinding BorderThickness}"
+                                                CornerRadius="3">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="18"/>
+                                                </Grid.ColumnDefinitions>
+                                                <ContentPresenter Grid.Column="0"/>
+                                                <Path Grid.Column="1" 
+                                                      Data="M0,0 L4,4 L8,0" 
+                                                      Fill="#808080" 
+                                                      HorizontalAlignment="Center" 
+                                                      VerticalAlignment="Center"
+                                                      Margin="0,0,4,0"/>
+                                            </Grid>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="Border" Property="Background" Value="#3E3E42"/>
+                                                <Setter TargetName="Border" Property="BorderBrush" Value="#3FA9F5"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+                            <ContentPresenter x:Name="ContentSite"
+                                              IsHitTestVisible="False"
+                                              Content="{TemplateBinding SelectionBoxItem}"
+                                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                              Margin="6,3,20,3"
+                                              VerticalAlignment="Center"
+                                              HorizontalAlignment="Left"/>
+                            <Popup x:Name="Popup"
+                                   Placement="Bottom"
+                                   IsOpen="{TemplateBinding IsDropDownOpen}"
+                                   AllowsTransparency="True"
+                                   Focusable="False"
+                                   PopupAnimation="Slide">
+                                <Border x:Name="DropDown"
+                                        Background="#2D2D30"
+                                        BorderBrush="#3F3F46"
+                                        BorderThickness="1"
+                                        CornerRadius="3"
+                                        MinWidth="{TemplateBinding ActualWidth}"
+                                        MaxHeight="200">
+                                    <ScrollViewer Margin="2">
+                                        <ItemsPresenter/>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="DarkComboBoxItemStyle" TargetType="ComboBoxItem">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#CCCCCC"/>
+            <Setter Property="Padding" Value="6,4"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBoxItem">
+                        <Border x:Name="Border"
+                                Background="{TemplateBinding Background}"
+                                Padding="{TemplateBinding Padding}"
+                                CornerRadius="2">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="#3E3E42"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="#3FA9F5"/>
                                 <Setter Property="Foreground" Value="#FFFFFF"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
@@ -77,52 +224,54 @@
 
             <!-- Toolbar -->
             <Border Grid.Row="0" Background="#1E1E1E">
-                <StackPanel Orientation="Horizontal" Margin="4,0">
-                    <Button Content="&#xE759;" Style="{StaticResource ToolButtonStyle}" ToolTip="Move Tool (W)"/>
-                    <Button Content="&#xE7AD;" Style="{StaticResource ToolButtonStyle}" ToolTip="Rotate Tool (E)"/>
-                    <Button Content="&#xE740;" Style="{StaticResource ToolButtonStyle}" ToolTip="Scale Tool (R)"/>
-                    <Rectangle Width="1" Fill="#404040" Margin="6,6"/>
-                    <Button Content="&#xE8B3;" Style="{StaticResource ToolButtonStyle}" ToolTip="Grid"/>
-                    <Button Content="&#xE81E;" Style="{StaticResource ToolButtonStyle}" ToolTip="Snap"/>
-                    <Rectangle Width="1" Fill="#404040" Margin="6,6"/>
-                    <Button Content="&#xE71E;" Style="{StaticResource ToolButtonStyle}" ToolTip="2D/3D View"/>
-                    <Button Content="&#xE7B3;" Style="{StaticResource ToolButtonStyle}" ToolTip="Gizmos"/>
-                </StackPanel>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    
+                    <!-- Left side tools -->
+                    <StackPanel Grid.Column="0" Orientation="Horizontal" Margin="4,0">
+                        <Button x:Name="MoveToolBtn" Content="&#xE759;" Style="{StaticResource ToolButtonStyle}" 
+                                ToolTip="Move Tool (W)" Click="OnMoveToolClick"/>
+                        <Button x:Name="RotateToolBtn" Content="&#xE7AD;" Style="{StaticResource ToolButtonStyle}" 
+                                ToolTip="Rotate Tool (E)" Click="OnRotateToolClick"/>
+                        <Button x:Name="ScaleToolBtn" Content="&#xE740;" Style="{StaticResource ToolButtonStyle}" 
+                                ToolTip="Scale Tool (R)" Click="OnScaleToolClick"/>
+                        <Rectangle Width="1" Fill="#404040" Margin="6,6"/>
+                        <ToggleButton x:Name="GridToggleBtn" Content="&#xE8B3;" Style="{StaticResource ToolToggleButtonStyle}" 
+                                      ToolTip="Toggle Grid (G)" IsChecked="True" Checked="OnGridToggle" Unchecked="OnGridToggle"/>
+                        <ToggleButton x:Name="SnapToggleBtn" Content="&#xE81E;" Style="{StaticResource ToolToggleButtonStyle}" 
+                                      ToolTip="Toggle Snap" Checked="OnSnapToggle" Unchecked="OnSnapToggle"/>
+                        <Rectangle Width="1" Fill="#404040" Margin="6,6"/>
+                        <Button x:Name="ViewModeBtn" Content="&#xE71E;" Style="{StaticResource ToolButtonStyle}" 
+                                ToolTip="2D/3D View"/>
+                        <ToggleButton x:Name="GizmosToggleBtn" Content="&#xE7B3;" Style="{StaticResource ToolToggleButtonStyle}" 
+                                      ToolTip="Toggle Gizmos" IsChecked="True" Checked="OnGizmosToggle" Unchecked="OnGizmosToggle"/>
+                    </StackPanel>
+                    
+                    <!-- Right side FPS control -->
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="4,0">
+                        <TextBlock Text="FPS:" Foreground="#808080" FontSize="11" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <ComboBox x:Name="FpsComboBox" Style="{StaticResource DarkComboBoxStyle}"
+                                  ItemContainerStyle="{StaticResource DarkComboBoxItemStyle}"
+                                  SelectionChanged="OnFpsSelectionChanged" SelectedIndex="3">
+                            <ComboBoxItem Content="15"/>
+                            <ComboBoxItem Content="30"/>
+                            <ComboBoxItem Content="60"/>
+                            <ComboBoxItem Content="120"/>
+                            <ComboBoxItem Content="144"/>
+                            <ComboBoxItem Content="240"/>
+                            <ComboBoxItem Content="?"/>
+                        </ComboBox>
+                    </StackPanel>
+                </Grid>
             </Border>
 
             <!-- Preview Area -->
             <Border Grid.Row="1" Background="#1A1A1A">
                 <Grid>
-                    <!-- Placeholder Grid Pattern -->
-                    <Canvas ClipToBounds="True">
-                        <Canvas.Background>
-                            <DrawingBrush TileMode="Tile" Viewport="0,0,40,40" ViewportUnits="Absolute">
-                                <DrawingBrush.Drawing>
-                                    <GeometryDrawing>
-                                        <GeometryDrawing.Geometry>
-                                            <GeometryGroup>
-                                                <LineGeometry StartPoint="0,0" EndPoint="40,0"/>
-                                                <LineGeometry StartPoint="0,0" EndPoint="0,40"/>
-                                            </GeometryGroup>
-                                        </GeometryDrawing.Geometry>
-                                        <GeometryDrawing.Pen>
-                                            <Pen Brush="#2A2A2A" Thickness="1"/>
-                                        </GeometryDrawing.Pen>
-                                    </GeometryDrawing>
-                                </DrawingBrush.Drawing>
-                            </DrawingBrush>
-                        </Canvas.Background>
-                    </Canvas>
-
-                    <!-- Center Info -->
-                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                        <TextBlock Text="&#xE714;" FontFamily="Segoe MDL2 Assets" FontSize="48" 
-                                   Foreground="#404040" HorizontalAlignment="Center"/>
-                        <TextBlock Text="Scene View" Foreground="#505050" FontSize="14" 
-                                   HorizontalAlignment="Center" Margin="0,8,0,0"/>
-                        <TextBlock Text="Game Preview will render here" Foreground="#404040" FontSize="11" 
-                                   HorizontalAlignment="Center" Margin="0,4,0,0"/>
-                    </StackPanel>
+                    <local:ViewportHost x:Name="ViewportHostElement" />
                 </Grid>
             </Border>
 
@@ -134,9 +283,9 @@
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
 
-                    <TextBlock Grid.Column="0" Text="FPS: 60 | Draw Calls: 0 | Vertices: 0" 
+                    <TextBlock x:Name="StatusText" Grid.Column="0" Text="FPS: 60 | Draw Calls: 0 | Vertices: 0" 
                                Foreground="#606060" FontSize="10" VerticalAlignment="Center"/>
-                    <TextBlock Grid.Column="1" Text="1920 x 1080" 
+                    <TextBlock x:Name="ResolutionText" Grid.Column="1" Text="1920 x 1080" 
                                Foreground="#606060" FontSize="10" VerticalAlignment="Center"/>
                 </Grid>
             </Border>

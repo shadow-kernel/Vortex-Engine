@@ -161,9 +161,9 @@
         </Style>
 
         <!-- Scene Context Menu (for right-click on scene) -->
-        <ContextMenu x:Key="SceneContextMenu">
+        <ContextMenu x:Key="SceneContextMenu" Opened="SceneContextMenu_Opened">
             <!-- Activate/Deactivate Scene -->
-            <MenuItem Header="Activate Scene" Click="ActivateScene_Click"
+            <MenuItem x:Name="ActivateSceneItem" Header="Activate Scene" Click="ActivateScene_Click"
                       Visibility="{Binding Path=PlacementTarget.DataContext.IsActive, 
                                    RelativeSource={RelativeSource AncestorType=ContextMenu},
                                    Converter={StaticResource SceneActiveConverter}, 
@@ -172,7 +172,7 @@
                     <TextBlock Text="&#xE768;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#4EC9B0"/>
                 </MenuItem.Icon>
             </MenuItem>
-            <MenuItem Header="Deactivate Scene" Click="DeactivateScene_Click"
+            <MenuItem x:Name="DeactivateSceneItem" Header="Deactivate Scene" Click="DeactivateScene_Click"
                       Visibility="{Binding Path=PlacementTarget.DataContext.IsActive, 
                                    RelativeSource={RelativeSource AncestorType=ContextMenu},
                                    Converter={StaticResource SceneActiveConverter}}">
@@ -308,12 +308,17 @@
             <Separator/>
             
             <!-- Scene Actions -->
-            <MenuItem Header="Save Scene" InputGestureText="Ctrl+S" Click="SaveScene_Click">
+            <MenuItem x:Name="SaveSceneItem" Header="Save Scene" InputGestureText="Ctrl+S" Click="SaveScene_Click">
                 <MenuItem.Icon>
                     <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#4EC9B0"/>
                 </MenuItem.Icon>
             </MenuItem>
-            <MenuItem Header="Delete Scene" Click="DeleteScene_Click">
+            <MenuItem x:Name="UnloadSceneItem" Header="Unload Scene" Click="UnloadScene_Click">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#808080"/>
+                </MenuItem.Icon>
+            </MenuItem>
+            <MenuItem x:Name="DeleteSceneItem" Header="Delete Scene" Click="DeleteScene_Click">
                 <MenuItem.Icon>
                     <TextBlock Text="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#F14C4C"/>
                 </MenuItem.Icon>
@@ -366,6 +371,20 @@
             </MenuItem>
         </ContextMenu>
 
+
+        <!-- Empty Area Context Menu (when no scene/entity is selected) -->
+        <ContextMenu x:Key="EmptyAreaContextMenu">
+            <MenuItem Header="New Scene" Click="AddScene_Click">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE8F4;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#4EC9B0"/>
+                </MenuItem.Icon>
+            </MenuItem>
+            <MenuItem Header="Load Scene..." Click="LoadExistingScene_Click">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE8E5;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#569CD6"/>
+                </MenuItem.Icon>
+            </MenuItem>
+        </ContextMenu>
 
         <!-- Entity Template with dynamic icon and multi-select support -->
         <HierarchicalDataTemplate x:Key="EntityTemplate" ItemsSource="{Binding Children}">

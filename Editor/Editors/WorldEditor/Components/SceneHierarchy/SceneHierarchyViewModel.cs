@@ -65,6 +65,10 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
                 {
                     if (_selectedScene != null)
                         _selectedScene.SelectedEntity = value;
+                    
+                    // Notify SelectionService
+                    if (value != null)
+                        SelectionService.Instance.Select(value);
                 }
             }
         }
@@ -279,6 +283,10 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             // Wähle eine andere Szene
             SelectedScene = index > 0 ? _currentProject.Scenes[index - 1] : _currentProject.Scenes[1];
             
+			// Deaktivieren und Engine-Ressourcen freigeben
+			sceneToDelete.DeactivateEntities();
+			sceneToDelete.ReleaseEngineScene();
+
             _currentProject.RemoveScene(sceneToDelete);
         }
 

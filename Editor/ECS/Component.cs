@@ -1,6 +1,8 @@
 using System;
 using System.Runtime.Serialization;
 
+using Editor.Core.Abstractions;
+
 namespace Editor.ECS
 {
     /// <summary>
@@ -9,7 +11,7 @@ namespace Editor.ECS
     /// Die eigentliche Engine-Logik wird in C++ implementiert.
     /// </summary>
     [DataContract(Name = "Component", Namespace = "")]
-    public abstract class Component : Core.ViewModelBase
+    public abstract class Component : Core.ViewModelBase, IEngineComponent
     {
         private Guid _id;
         private bool _isEnabled = true;

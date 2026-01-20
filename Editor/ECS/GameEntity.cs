@@ -1,9 +1,11 @@
+using Editor.Core.Abstractions;
 using Editor.Core.UndoRedo;
 using Editor.Core.UndoRedo.Commands;
 using Editor.DllWrapper;
 using Editor.ECS.Components;
 using Editor.Utilities;
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Linq;
@@ -30,7 +32,7 @@ namespace Editor.ECS
     [KnownType(typeof(Components.Audio.AudioSource))]
     [KnownType(typeof(Components.Audio.AudioListener))]
     [KnownType(typeof(Components.Scripting.Script))]
-    public class GameEntity : Core.ViewModelBase
+    public class GameEntity : Core.ViewModelBase, IEngineEntity
     {
         private long _entityId = ID.INVALID_ID;
         private Guid _id;
@@ -198,11 +200,18 @@ namespace Editor.ECS
         {
             get
             {
+                if (Scene != null && !Scene.IsActive) return false;
                 if (!IsActive) return false;
                 if (Parent != null) return Parent.ActiveInHierarchy;
                 return true;
             }
         }
+
+        long IEngineEntity.EngineId => EntityId;
+
+        IEnumerable<IEngineEntity> IEngineEntity.Children => _children ?? (_children = new ObservableCollection<GameEntity>());
+
+        IEngineScene IEngineEntity.Scene => Scene;
 
         #endregion
 
@@ -213,19 +222,30 @@ namespace Editor.ECS
 			if (_isDeserializing)
 				return;
 
+			// Ohne Transform keine Engine-Repräsentation (z.B. Folder-Only-Entities)
+			if (Transform == null)
+				return;
+
 			var shouldBeActive = parentActive && _isActive;
+			var sceneHandle = Scene != null ? Scene.EngineHandle : DllWrapper.SceneHandle.Invalid;
+			if (shouldBeActive && Scene != null && !sceneHandle.IsValid)
+			{
+				// Stelle sicher, dass eine Engine-Szene existiert
+				Scene.ActivateEntities();
+				sceneHandle = Scene.EngineHandle;
+			}
 
 			if (shouldBeActive)
 			{
 				if (!ID.IsValid(_entityId))
 				{
-					EntityId = VortexAPI.CreateGameEntity(this);
+					EntityId = VortexAPI.CreateGameEntity(this, sceneHandle);
 					Debug.Assert(ID.IsValid(_entityId), "Failed to create GameEntity in engine.");
 				}
 			}
 			else if (ID.IsValid(_entityId))
 			{
-				VortexAPI.RemoveGameEntity(this);
+				VortexAPI.RemoveGameEntity(this, sceneHandle);
 				_entityId = ID.INVALID_ID;
 			}
 
