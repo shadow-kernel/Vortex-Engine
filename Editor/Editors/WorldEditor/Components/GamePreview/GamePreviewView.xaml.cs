@@ -3,7 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
-using System.Windows.Threading;
+using System.Windows.Media;
 using Editor.Core.Data;
 using Editor.Core.Services;
 using Editor.DllWrapper;
@@ -11,19 +11,18 @@ using Editor.ECS;
 
 namespace Editor.Editors.WorldEditor.Components.GamePreview
 {
+    /// <summary>
+    /// Viewport for rendering the game scene in the Editor.
+    /// Renders at 60 FPS (WPF native rate) for stability.
+    /// For high FPS gameplay, use the Play button to open a separate Game Window.
+    /// </summary>
     public partial class GamePreviewView : UserControl
     {
         private ViewportHost _host;
-        private DispatcherTimer _renderTimer;
         private bool _isRendererInitialized;
         private Scene _currentScene;
-        private int _frameCount;
-        private DateTime _lastFpsUpdate = DateTime.Now;
         private DateTime _lastFrameTime = DateTime.Now;
-        private int _fps;
         private EditorCameraController _cameraController;
-        private int _targetFps = 120;
-        private readonly int[] _fpsOptions = { 15, 30, 60, 120, 144, 240, 0 }; // 0 = unlimited
 
         // Gizmo dragging state
         private bool _isDraggingGizmo;
@@ -35,6 +34,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             InitializeComponent();
             _host = (ViewportHost)FindName("ViewportHostElement");
             _cameraController = EditorCameraController.Instance;
+
 
             if (_host != null)
             {
@@ -52,19 +52,56 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             this.KeyDown += OnViewportKeyDown;
             this.KeyUp += OnViewportKeyUp;
 
-            _renderTimer = new DispatcherTimer(DispatcherPriority.Render)
-            {
-                Interval = TimeSpan.FromMilliseconds(1000.0 / _targetFps)
-            };
-            _renderTimer.Tick += OnRender;
 
-            // Set initial FPS selection (index 3 = 120 fps)
+
+
+
+
+
             Loaded += OnViewLoaded;
+            Unloaded += OnViewUnloaded;
+            
+            // Use WPF CompositionTarget for rendering at 60 FPS (stable, no flicker)
+            CompositionTarget.Rendering += OnCompositionTargetRendering;
+        }
+
+        private DateTime _lastStatusUpdate = DateTime.Now;
+
+        /// <summary>
+        /// Called by WPF at 60 FPS - submits scene data, updates camera, and renders.
+        /// </summary>
+        private void OnCompositionTargetRendering(object sender, EventArgs e)
+        {
+            if (!_isRendererInitialized) return;
+
+            // Update camera
+            var now = DateTime.Now;
+            float deltaTime = (float)(now - _lastFrameTime).TotalSeconds;
+            _lastFrameTime = now;
+            _cameraController.Update(deltaTime);
+
+            // Submit scene data for rendering
+            var sceneToRender = _currentScene ?? ProjectData.Current?.ActiveScene;
+            if (sceneToRender != null)
+            {
+                SceneRenderService.Instance.SubmitScene(sceneToRender);
+            }
+
+            // Render the frame
+            VortexAPI.RenderOnce();
+
+            // Update status bar periodically
+            if ((now - _lastStatusUpdate).TotalMilliseconds >= 500)
+            {
+                _lastStatusUpdate = now;
+                UpdateStatusBar();
+            }
         }
 
         private void OnViewLoaded(object sender, RoutedEventArgs e)
         {
             Loaded -= OnViewLoaded;
+
             
             // Sync toggle buttons with service state - use FindName since WPF generates these from XAML
             var gridToggle = FindName("GridToggleBtn") as ToggleButton;
@@ -392,6 +429,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
 
         #endregion
 
+
         private void OnHostCreated(object sender, EventArgs e)
         {
             if (_host?.IsHandleValid == true)
@@ -410,26 +448,26 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                     // Initialize grid visibility
                     EditorViewportService.Instance.IsGridVisible = true;
                     
-                    // Disable VSync by default for higher frame rates
-                    VortexAPI.SetVSyncEnabled(false);
-                    
                     // Initial status bar update
                     UpdateStatusBar();
-
-                    _renderTimer?.Start();
                 }
             }
         }
 
         private void OnHostDestroying(object sender, EventArgs e)
         {
-            _renderTimer?.Stop();
-            if (_isRendererInitialized)
-            {
-                SceneRenderService.Instance.Shutdown();
-                VortexAPI.ShutdownRender();
-                _isRendererInitialized = false;
-            }
+            _isRendererInitialized = false;
+            
+            CompositionTarget.Rendering -= OnCompositionTargetRendering;
+            
+            // Now safe to shutdown the engine
+            SceneRenderService.Instance.Shutdown();
+            VortexAPI.ShutdownRender();
+        }
+
+        private void OnViewUnloaded(object sender, RoutedEventArgs e)
+        {
+            CompositionTarget.Rendering -= OnCompositionTargetRendering;
         }
 
         private void OnHostSizeChanged(object sender, EventArgs e)
@@ -442,59 +480,20 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             }
         }
 
-        private void OnRender(object sender, EventArgs e)
-        {
-            if (!_isRendererInitialized) return;
-
-            // Get scene from project if not explicitly set
-            var sceneToRender = _currentScene ?? ProjectData.Current?.ActiveScene;
-
-            // Submit scene entities for rendering
-            if (sceneToRender != null)
-            {
-                SceneRenderService.Instance.SubmitScene(sceneToRender);
-            }
-
-            // Update camera movement (for WASD fly-through)
-            var now = DateTime.Now;
-            float deltaTime = (float)(now - _lastFrameTime).TotalSeconds;
-            _lastFrameTime = now;
-            _cameraController.Update(deltaTime);
-
-            // Render the frame
-            VortexAPI.RenderOnce();
-
-            // Update FPS counter (every 0.5 seconds for smoother updates)
-            _frameCount++;
-            double elapsed = (DateTime.Now - _lastFpsUpdate).TotalSeconds;
-            if (elapsed >= 0.5)
-            {
-                _fps = (int)(_frameCount / elapsed);
-                _frameCount = 0;
-                _lastFpsUpdate = DateTime.Now;
-                
-                // Update status bar on UI thread
-                UpdateStatusBar();
-            }
-        }
-
         private void UpdateStatusBar()
         {
             // Access named elements directly - they are auto-generated by XAML parser
             if (StatusText != null)
             {
                 // Get stats from engine
-                int engineFps = VortexAPI.CurrentFPS;
+                int fps = VortexAPI.CurrentFPS;
                 int drawCalls = VortexAPI.DrawCalls;
                 int vertices = VortexAPI.VertexCount;
                 
-                // Use engine FPS if available, otherwise use local count
-                int displayFps = engineFps > 0 ? engineFps : _fps;
-                
-                string fpsLimit = _targetFps <= 0 ? "?" : _targetFps.ToString();
-                string vsyncStatus = VortexAPI.IsVSyncOn ? " [VSync]" : "";
-                StatusText.Text = $"FPS: {displayFps} (Target: {fpsLimit}){vsyncStatus} | Draw Calls: {drawCalls} | Vertices: {vertices}";
+                StatusText.Text = $"FPS: {fps} | Draw Calls: {drawCalls} | Vertices: {vertices}";
             }
+            
+            
             
             if (ResolutionText != null && _host != null)
             {
@@ -513,9 +512,9 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         }
 
         /// <summary>
-        /// Gets the current FPS.
+        /// Gets the current FPS from the Engine.
         /// </summary>
-        public int CurrentFps => _fps;
+        public int CurrentFps => VortexAPI.CurrentFPS;
 
         #region Keyboard Shortcuts
 
@@ -644,32 +643,6 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             if (sender is ToggleButton toggle)
             {
                 EditorViewportService.Instance.AreGizmosVisible = toggle.IsChecked == true;
-            }
-        }
-
-        private void OnFpsSelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            var fpsCombo = FindName("FpsComboBox") as ComboBox;
-            if (fpsCombo?.SelectedIndex >= 0 && fpsCombo.SelectedIndex < _fpsOptions.Length)
-            {
-                _targetFps = _fpsOptions[fpsCombo.SelectedIndex];
-                UpdateRenderInterval();
-            }
-        }
-
-        private void UpdateRenderInterval()
-        {
-            if (_renderTimer != null)
-            {
-                if (_targetFps <= 0)
-                {
-                    // Unlimited - render as fast as possible
-                    _renderTimer.Interval = TimeSpan.FromMilliseconds(1);
-                }
-                else
-                {
-                    _renderTimer.Interval = TimeSpan.FromMilliseconds(1000.0 / _targetFps);
-                }
             }
         }
 

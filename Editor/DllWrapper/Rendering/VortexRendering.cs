@@ -104,7 +104,7 @@ namespace Editor.DllWrapper
         public static void SetVSyncEnabled(bool enabled)
         {
             _vsyncEnabled = enabled;
-            try { SetVSync(enabled); } catch { }
+            try { SetRenderLoopVSync(enabled); } catch { }
         }
 
         #endregion
@@ -142,6 +142,95 @@ namespace Editor.DllWrapper
         public static int VertexCount
         {
             get { try { return GetVertexCount(); } catch { return 0; } }
+        }
+
+        #endregion
+
+        #region Render Loop (Engine-side timing)
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void StartRenderLoop();
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void StopRenderLoop();
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        private static extern bool IsRenderLoopRunning();
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetTargetFPS(int fps);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int GetTargetFPS();
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetRenderLoopVSync([MarshalAs(UnmanagedType.I1)] bool enabled);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        private static extern bool IsRenderLoopVSyncEnabled();
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern float GetDeltaTime();
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern float GetTotalTime();
+
+        /// <summary>
+        /// Start the engine's render loop on a dedicated thread.
+        /// </summary>
+        public static void StartEngineRenderLoop()
+        {
+            try { StartRenderLoop(); } catch { }
+        }
+
+        /// <summary>
+        /// Stop the engine's render loop.
+        /// </summary>
+        public static void StopEngineRenderLoop()
+        {
+            try { StopRenderLoop(); } catch { }
+        }
+
+        /// <summary>
+        /// Check if the engine's render loop is running.
+        /// </summary>
+        public static bool IsEngineRenderLoopRunning
+        {
+            get { try { return IsRenderLoopRunning(); } catch { return false; } }
+        }
+
+        /// <summary>
+        /// Set the target FPS for the engine's render loop (0 = unlimited).
+        /// </summary>
+        public static void SetEngineTargetFPS(int fps)
+        {
+            try { SetTargetFPS(fps); } catch { }
+        }
+
+        /// <summary>
+        /// Get the current target FPS.
+        /// </summary>
+        public static int EngineTargetFPS
+        {
+            get { try { return GetTargetFPS(); } catch { return 0; } }
+        }
+
+        /// <summary>
+        /// Get delta time from the engine.
+        /// </summary>
+        public static float DeltaTime
+        {
+            get { try { return GetDeltaTime(); } catch { return 0.016f; } }
+        }
+
+        /// <summary>
+        /// Get total elapsed time from the engine.
+        /// </summary>
+        public static float TotalTime
+        {
+            get { try { return GetTotalTime(); } catch { return 0f; } }
         }
 
         #endregion

@@ -1,5 +1,6 @@
 #include "DX12Renderer.h"
 #include "../Resources/ResourceRegistry.h"
+#include <algorithm>
 
 namespace vortex::graphics::dx12
 {
@@ -63,7 +64,11 @@ namespace vortex::graphics::dx12
 		if (!m_initialized) return;
 		m_command_queue.flush();
 		ResourceRegistry::instance().shutdown();
-		m_render_queue.clear();
+		{
+			std::lock_guard<std::mutex> lock(m_queue_mutex);
+			m_render_queue.clear();
+			m_submit_queue.clear();
+		}
 
 		if (m_per_frame_cb && m_per_frame_cb_mapped) { m_per_frame_cb->Unmap(0, nullptr); m_per_frame_cb_mapped = nullptr; }
 		m_per_frame_cb.Reset();
@@ -99,6 +104,14 @@ namespace vortex::graphics::dx12
 		if (!m_initialized) return;
 		
 		// Update FPS counter
+		// Swap render queues (thread-safe)
+		{
+		std::lock_guard<std::mutex> lock(m_queue_mutex);
+		m_render_queue.swap(m_submit_queue);
+		m_submit_queue.clear();
+		}
+		
+		// Update FPS counter
 		m_frame_count++;
 		auto now = std::chrono::high_resolution_clock::now();
 		auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_last_fps_time).count();
@@ -113,9 +126,14 @@ namespace vortex::graphics::dx12
 		m_draw_call_count = 0;
 		m_vertex_count = 0;
 		
+		u32 idx = m_swapchain.current_back_buffer_index();
+		
+		// Wait for this frame's previous work to complete (proper double buffering)
+		// Only wait if GPU hasn't finished with this buffer yet
+		m_command_queue.wait_for_fence_value(m_frame_fence_values[idx]);
+		
 		update_per_frame_constants();
 
-		u32 idx = m_swapchain.current_back_buffer_index();
 		m_command_allocators[idx]->Reset();
 
 		auto* pso = m_render_queue.empty() ? m_pipeline.pipeline_state() :
@@ -154,12 +172,16 @@ namespace vortex::graphics::dx12
 		m_command_list->Close();
 
 		m_command_queue.execute_command_list(m_command_list.Get());
+		
+		// Signal after this frame's commands are queued (non-blocking)
+		m_frame_fence_values[idx] = m_command_queue.signal();
+		
 		m_swapchain.present(m_vsync_enabled);
-		m_command_queue.signal_and_wait();
-		m_render_queue.clear();
-	}
+		// Note: m_render_queue is NOT cleared - we keep last frame's data
+		// for re-rendering if no new data is submitted (prevents flickering)
+		}
 
-	void DX12Renderer::render_3d_scene()
+		void DX12Renderer::render_3d_scene()
 	{
 		auto rtv = m_swapchain.current_rtv();
 		auto dsv = m_depth_buffer.dsv();
@@ -171,43 +193,48 @@ namespace vortex::graphics::dx12
 		m_command_list->SetGraphicsRootConstantBufferView(0, m_per_frame_cb->GetGPUVirtualAddress());
 
 		auto& reg = ResourceRegistry::instance();
+		
+		// Limit to MAX_RENDER_OBJECTS to prevent buffer overflow
+		size_t objectCount = (std::min)(m_render_queue.size(), static_cast<size_t>(MAX_RENDER_OBJECTS));
+		if (objectCount == 0) return;
 
-		for (size_t i = 0; i < m_render_queue.size(); ++i)
+		// Render all objects (no sorting - keeps original order stable for re-rendering)
+		for (size_t i = 0; i < objectCount; ++i)
 		{
-			const auto& item = m_render_queue[i];
-			Mesh* mesh = reg.get_mesh(item.mesh_id);
-			if (!mesh || !mesh->is_valid()) continue;
+		const auto& item = m_render_queue[i];
+		Mesh* mesh = reg.get_mesh(item.mesh_id);
+		if (!mesh || !mesh->is_valid()) continue;
 
-			PerObjectConstants obj;
-			obj.world = item.world_matrix;
-			obj.base_color = { 0.95f, 0.95f, 0.95f, 1.0f };
+		PerObjectConstants obj;
+		obj.world = item.world_matrix;
+		obj.base_color = { 0.95f, 0.95f, 0.95f, 1.0f };
 
-			auto* mat = reg.get_material(item.material_id);
-			if (mat) obj.base_color = mat->properties().base_color;
+		auto* mat = reg.get_material(item.material_id);
+		if (mat) obj.base_color = mat->properties().base_color;
 
-			if (m_per_object_cb_mapped)
-				memcpy((u8*)m_per_object_cb_mapped + i * 256, &obj, sizeof(obj));
+		if (m_per_object_cb_mapped)
+		memcpy((u8*)m_per_object_cb_mapped + i * 256, &obj, sizeof(obj));
 
-			m_command_list->SetGraphicsRootConstantBufferView(1, m_per_object_cb->GetGPUVirtualAddress() + i * 256);
-			m_command_list->IASetVertexBuffers(0, 1, &mesh->vertex_buffer_view());
+		m_command_list->SetGraphicsRootConstantBufferView(1, 
+		m_per_object_cb->GetGPUVirtualAddress() + i * 256);
+		m_command_list->IASetVertexBuffers(0, 1, &mesh->vertex_buffer_view());
 
-			if (mesh->has_indices())
-			{
-				m_command_list->IASetIndexBuffer(&mesh->index_buffer_view());
-				m_command_list->DrawIndexedInstanced(mesh->index_count(), 1, 0, 0, 0);
-				m_draw_call_count++;
-				m_vertex_count += mesh->index_count();
-			}
-			else
-			{
-				m_command_list->DrawInstanced(mesh->vertex_count(), 1, 0, 0);
-				m_draw_call_count++;
-				m_vertex_count += mesh->vertex_count();
-			}
+		if (mesh->has_indices())
+		{
+		m_command_list->IASetIndexBuffer(&mesh->index_buffer_view());
+		m_command_list->DrawIndexedInstanced(mesh->index_count(), 1, 0, 0, 0);
+		m_vertex_count += mesh->index_count();
 		}
-	}
+		else
+		{
+		m_command_list->DrawInstanced(mesh->vertex_count(), 1, 0, 0);
+		m_vertex_count += mesh->vertex_count();
+		}
+		m_draw_call_count++;
+		}
+		}
 
-	void DX12Renderer::render_fallback_triangle()
+		void DX12Renderer::render_fallback_triangle()
 	{
 		if (m_grid_visible) return;
 		auto rtv = m_swapchain.current_rtv();
@@ -259,8 +286,17 @@ namespace vortex::graphics::dx12
 		m_grid_spacing = s; m_grid_major_interval = m; m_grid_extent = e;
 	}
 
-	void DX12Renderer::submit_render_item(const RenderItem& item) { m_render_queue.push_back(item); }
-	void DX12Renderer::clear_render_queue() { m_render_queue.clear(); }
+	void DX12Renderer::submit_render_item(const RenderItem& item) 
+	{ 
+		std::lock_guard<std::mutex> lock(m_queue_mutex);
+		m_submit_queue.push_back(item); 
+	}
+	
+	void DX12Renderer::clear_render_queue() 
+	{ 
+		std::lock_guard<std::mutex> lock(m_queue_mutex);
+		m_submit_queue.clear(); 
+	}
 
 	void DX12Renderer::set_camera(const DirectX::XMFLOAT3& pos, const DirectX::XMFLOAT3& target, const DirectX::XMFLOAT3& up)
 	{
@@ -304,7 +340,8 @@ namespace vortex::graphics::dx12
 		D3D12_RANGE r{0,0};
 		if (FAILED(m_per_frame_cb->Map(0, &r, &m_per_frame_cb_mapped))) return false;
 
-		rd.Width = 256 * 256;
+		// Support up to MAX_RENDER_OBJECTS objects (16384 = 4MB buffer)
+		rd.Width = 256 * MAX_RENDER_OBJECTS;
 		if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_per_object_cb))))
 			return false;
 		if (FAILED(m_per_object_cb->Map(0, &r, &m_per_object_cb_mapped))) return false;

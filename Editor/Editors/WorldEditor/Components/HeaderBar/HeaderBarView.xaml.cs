@@ -194,12 +194,68 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
 
         private void Delete_Click(object sender, RoutedEventArgs e)
         {
-            // TODO: Implement delete
+            var entity = GetSelectedEntity();
+            if (entity != null && entity.Scene != null)
+            {
+                entity.Scene.RemoveEntity(entity);
+            }
         }
 
         private void Duplicate_Click(object sender, RoutedEventArgs e)
         {
-            // TODO: Implement duplicate
+            var entity = GetSelectedEntity();
+            if (entity != null && entity.Scene != null)
+            {
+                var duplicate = CloneEntity(entity);
+                if (duplicate != null)
+                {
+                    entity.Scene.AddEntity(duplicate);
+                    SelectionService.Instance.Select(duplicate);
+                }
+            }
+        }
+
+        private GameEntity CloneEntity(GameEntity source)
+        {
+            if (source == null) return null;
+            
+            var clone = new GameEntity(source.Scene, source.Name + " (Copy)");
+            
+            // Copy transform
+            if (source.Transform != null && clone.Transform != null)
+            {
+                clone.Transform.LocalPosition = new Vector3(
+                    source.Transform.LocalPosition.X + 1f,
+                    source.Transform.LocalPosition.Y,
+                    source.Transform.LocalPosition.Z);
+                clone.Transform.LocalRotation = source.Transform.LocalRotation;
+                clone.Transform.LocalScale = source.Transform.LocalScale;
+            }
+            
+            // Copy other components (except Transform which is already added)
+            foreach (var component in source.Components)
+            {
+                if (component is Transform) continue;
+                
+                // Clone MeshRenderer
+                if (component is ECS.Components.Rendering.MeshRenderer srcMr)
+                {
+                    var mr = new ECS.Components.Rendering.MeshRenderer(clone);
+                    mr.MeshPath = srcMr.MeshPath;
+                    mr.MaterialPath = srcMr.MaterialPath;
+                    mr.ColorR = srcMr.ColorR;
+                    mr.ColorG = srcMr.ColorG;
+                    mr.ColorB = srcMr.ColorB;
+                    mr.ColorA = srcMr.ColorA;
+                    clone.AddComponent(mr);
+                }
+            }
+            
+            clone.Tag = source.Tag;
+            clone.IsStatic = source.IsStatic;
+            clone.Layer = source.Layer;
+            
+            return clone;
         }
 
         #endregion

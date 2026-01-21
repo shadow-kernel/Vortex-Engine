@@ -46,15 +46,30 @@ namespace vortex::graphics::dx12
 		signal_and_wait();
 	}
 
-	void DX12CommandQueue::signal_and_wait()
+	UINT64 DX12CommandQueue::signal()
 	{
 		++m_fence_value;
 		m_queue->Signal(m_fence.Get(), m_fence_value);
+		return m_fence_value;
+	}
 
-		if (m_fence->GetCompletedValue() < m_fence_value)
+	bool DX12CommandQueue::is_fence_complete(UINT64 fence_value) const
+	{
+		return m_fence->GetCompletedValue() >= fence_value;
+	}
+
+	void DX12CommandQueue::wait_for_fence_value(UINT64 fence_value)
+	{
+		if (!is_fence_complete(fence_value))
 		{
-			m_fence->SetEventOnCompletion(m_fence_value, m_fence_event);
+			m_fence->SetEventOnCompletion(fence_value, m_fence_event);
 			WaitForSingleObject(m_fence_event, INFINITE);
 		}
+	}
+
+	void DX12CommandQueue::signal_and_wait()
+	{
+		UINT64 fv = signal();
+		wait_for_fence_value(fv);
 	}
 }

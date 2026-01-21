@@ -249,22 +249,6 @@
                         <ToggleButton x:Name="GizmosToggleBtn" Content="&#xE7B3;" Style="{StaticResource ToolToggleButtonStyle}" 
                                       ToolTip="Toggle Gizmos" IsChecked="True" Checked="OnGizmosToggle" Unchecked="OnGizmosToggle"/>
                     </StackPanel>
-                    
-                    <!-- Right side FPS control -->
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="4,0">
-                        <TextBlock Text="FPS:" Foreground="#808080" FontSize="11" VerticalAlignment="Center" Margin="0,0,4,0"/>
-                        <ComboBox x:Name="FpsComboBox" Style="{StaticResource DarkComboBoxStyle}"
-                                  ItemContainerStyle="{StaticResource DarkComboBoxItemStyle}"
-                                  SelectionChanged="OnFpsSelectionChanged" SelectedIndex="3">
-                            <ComboBoxItem Content="15"/>
-                            <ComboBoxItem Content="30"/>
-                            <ComboBoxItem Content="60"/>
-                            <ComboBoxItem Content="120"/>
-                            <ComboBoxItem Content="144"/>
-                            <ComboBoxItem Content="240"/>
-                            <ComboBoxItem Content="?"/>
-                        </ComboBox>
-                    </StackPanel>
                 </Grid>
             </Border>
 

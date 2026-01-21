@@ -15,10 +15,15 @@
 #include <wrl/client.h>
 #include <vector>
 #include <chrono>
+#include <mutex>
+
 
 namespace vortex::graphics::dx12
 {
 	using Microsoft::WRL::ComPtr;
+
+	// Maximum number of objects that can be rendered per frame
+	constexpr u32 MAX_RENDER_OBJECTS = 16384;
 
 	struct RendererDesc
 	{
@@ -154,8 +159,20 @@ namespace vortex::graphics::dx12
 			DirectX::XMFLOAT4 base_color;
 		};
 
-		// Render queue
+		// Render queue - double buffered for thread safety
 		std::vector<RenderItem> m_render_queue;
+		std::vector<RenderItem> m_submit_queue;
+		std::mutex m_queue_mutex;
+		
+		// Batching structures for instanced rendering
+		struct RenderBatch
+		{
+			id::id_type mesh_id;
+			id::id_type material_id;
+			u32 start_index;
+			u32 instance_count;
+		};
+		std::vector<RenderBatch> m_batches;
 
 		// Camera
 		DirectX::XMFLOAT3 m_camera_position{ 0.0f, 3.0f, -8.0f };

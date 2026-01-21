@@ -45,6 +45,7 @@
     <ClInclude Include="Graphics\Resources\ResourceRegistry.h" />
     <ClInclude Include="Graphics\Resources\Texture.h" />
     <ClInclude Include="Runtime\PrefabService.h" />
+    <ClInclude Include="Runtime\RenderLoop.h" />
     <ClInclude Include="Runtime\ResourceManager.h" />
     <ClInclude Include="Runtime\SceneManager.h" />
     <ClInclude Include="Runtime\Systems\AudioSystem.h" />
@@ -82,6 +83,7 @@
     <ClCompile Include="Graphics\Resources\ResourceRegistry.cpp" />
     <ClCompile Include="Graphics\Resources\Texture.cpp" />
     <ClCompile Include="Runtime\PrefabService.cpp" />
+    <ClCompile Include="Runtime\RenderLoop.cpp" />
     <ClCompile Include="Runtime\ResourceManager.cpp" />
     <ClCompile Include="Runtime\SceneManager.cpp" />
     <ClCompile Include="Runtime\Systems\AudioSystem.cpp" />

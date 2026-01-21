@@ -17,6 +17,13 @@ namespace vortex::graphics::dx12
 		void execute_command_list(ID3D12CommandList* list);
 		void flush();
 		void signal_and_wait();
+		
+		// Non-blocking signal - returns fence value to wait on later
+		UINT64 signal();
+		// Wait for a specific fence value if not yet completed
+		void wait_for_fence_value(UINT64 fence_value);
+		// Check if a fence value has been reached
+		bool is_fence_complete(UINT64 fence_value) const;
 
 		ID3D12CommandQueue* queue() const { return m_queue.Get(); }
 		UINT64 current_fence_value() const { return m_fence_value; }
