@@ -3,5 +3,6 @@
   <ItemGroup>
     <ClCompile Include="DllMain.cpp" />
     <ClCompile Include="VortexAPI.cpp" />
+    <ClCompile Include="MultiViewportAPI.cpp" />
   </ItemGroup>
 </Project>

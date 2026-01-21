@@ -101,8 +101,11 @@ namespace Editor.Core.Services
                 SubmitEntityRecursive(entity);
             }
 
-            // Render selection outline and gizmo for selected entity
+            // Render ALL camera icons in the scene (so you can see where they are)
             var selected = SelectionService.Instance.SelectedEntity;
+            RenderAllCameraIcons(scene, selected);
+
+            // Render selection outline and gizmo for selected entity
             if (selected != null)
             {
                 var transform = selected.Transform;
@@ -112,16 +115,72 @@ namespace Editor.Core.Services
                     var rot = transform.LocalRotation;
                     var scale = transform.LocalScale;
                     
-                    // Render orange selection outline with rotation
-                    VortexAPI.RenderSelectionOutline(pos.X, pos.Y, pos.Z, 
-                        scale.X, scale.Y, scale.Z,
-                        rot.X, rot.Y, rot.Z);
+                    // Check if selected entity has a camera - render camera gizmo with FOV frustum
+                    var camera = selected.GetComponent<Camera>();
+                    if (camera != null)
+                    {
+                        // Render full camera gizmo with FOV frustum (selected camera)
+                        VortexAPI.RenderCameraGizmo(
+                            pos.X, pos.Y, pos.Z,
+                            rot.X, rot.Y, rot.Z,
+                            camera.FieldOfView,
+                            16f / 9f, // Default aspect ratio
+                            camera.CameraType == CameraType.MainCamera);
+                    }
+                    else
+                    {
+                        // Render orange selection outline with rotation
+                        VortexAPI.RenderSelectionOutline(pos.X, pos.Y, pos.Z, 
+                            scale.X, scale.Y, scale.Z,
+                            rot.X, rot.Y, rot.Z);
+                    }
                     
                     // Render gizmo at object surface (top), pass object's Y scale
                     if (VortexAPI.AreGizmosVisible)
                     {
                         VortexAPI.RenderGizmo(pos.X, pos.Y, pos.Z, scale.Y, 1.0f);
                     }
+                }
+            }
+        }
+        
+        /// <summary>
+        /// Render camera icons for all cameras in the scene (simplified icon for non-selected).
+        /// </summary>
+        private void RenderAllCameraIcons(Data.Scene scene, GameEntity selected)
+        {
+            if (!VortexAPI.AreGizmosVisible) return;
+            
+            foreach (var entity in scene.Entities)
+            {
+                RenderCameraIconRecursive(entity, selected);
+            }
+        }
+        
+        private void RenderCameraIconRecursive(GameEntity entity, GameEntity selected)
+        {
+            // Skip the selected entity (it gets the full frustum gizmo)
+            if (entity != selected)
+            {
+                var camera = entity.GetComponent<Camera>();
+                if (camera != null)
+                {
+                    var pos = entity.Transform.LocalPosition;
+                    var rot = entity.Transform.LocalRotation;
+                    
+                    // Render simple camera icon (just the body, no frustum)
+                    VortexAPI.RenderCameraIcon(
+                        pos.X, pos.Y, pos.Z,
+                        rot.X, rot.Y, rot.Z,
+                        camera.CameraType == CameraType.MainCamera);
+                }
+            }
+            
+            if (entity.Children != null)
+            {
+                foreach (var child in entity.Children)
+                {
+                    RenderCameraIconRecursive(child, selected);
                 }
             }
         }
@@ -316,6 +375,20 @@ namespace Editor.Core.Services
         }
 
         /// <summary>
+        /// Notify that an entity's camera properties have changed.
+        /// </summary>
+        public void OnCameraChanged(Guid entityId)
+        {
+            // Fire event so viewport can update camera view if previewing this camera
+            CameraPropertiesChanged?.Invoke(this, entityId);
+        }
+
+        /// <summary>
+        /// Event fired when camera properties are modified.
+        /// </summary>
+        public event EventHandler<Guid> CameraPropertiesChanged;
+
+        /// <summary>
         /// Remove an entity from the render system.
         /// </summary>
         public void RemoveEntity(Guid entityId)
@@ -334,6 +407,9 @@ namespace Editor.Core.Services
 
             _entityMeshPaths.Remove(entityId);
             _entityMaterialColors.Remove(entityId);
+            
+            // Also remove camera if exists
+            RemoveEntityCamera(entityId);
         }
 
         /// <summary>
@@ -355,7 +431,183 @@ namespace Editor.Core.Services
 
             _entityMeshPaths.Clear();
             _entityMaterialColors.Clear();
+            
+            // Clear cameras
+            foreach (var handle in _entityCameras.Values)
+            {
+                VortexAPI.DestroyEngineCamera(handle);
+            }
+            _entityCameras.Clear();
         }
+
+        #region Camera Management
+
+        private readonly Dictionary<Guid, CameraHandle> _entityCameras = new Dictionary<Guid, CameraHandle>();
+        private CameraHandle _previewCamera = CameraHandle.Invalid;
+        private bool _isPreviewingCamera;
+
+        /// <summary>
+        /// Create or update an engine camera for an entity.
+        /// </summary>
+        public CameraHandle GetOrCreateEntityCamera(Guid entityId, Camera cameraComponent, Transform transform)
+        {
+            if (_entityCameras.TryGetValue(entityId, out var existingHandle))
+            {
+                // Update existing camera
+                UpdateEngineCamera(existingHandle, cameraComponent, transform);
+                return existingHandle;
+            }
+
+            // Create new engine camera
+            var desc = new CameraDescriptor
+            {
+                Position = new float[] { transform.LocalPosition.X, transform.LocalPosition.Y, transform.LocalPosition.Z },
+                Rotation = EulerToQuaternion(transform.LocalRotation.X, transform.LocalRotation.Y, transform.LocalRotation.Z),
+                Projection = (byte)cameraComponent.Projection,
+                FieldOfView = cameraComponent.FieldOfView,
+                OrthographicSize = cameraComponent.OrthographicSize,
+                NearClip = cameraComponent.NearClip,
+                FarClip = cameraComponent.FarClip,
+                AspectRatio = 16f / 9f,
+                ClearFlags = (byte)cameraComponent.ClearFlags,
+                BackgroundColor = new float[] { cameraComponent.BackgroundR, cameraComponent.BackgroundG, cameraComponent.BackgroundB, 1f },
+                Depth = cameraComponent.Depth,
+                CullingMask = cameraComponent.CullingMask,
+                CameraType = (byte)cameraComponent.CameraType,
+                IsEnabled = true
+            };
+
+            var handle = VortexAPI.CreateEngineCamera(desc);
+            if (handle.IsValid)
+            {
+                _entityCameras[entityId] = handle;
+            }
+            return handle;
+        }
+
+        /// <summary>
+        /// Update an existing engine camera with new properties.
+        /// </summary>
+        private void UpdateEngineCamera(CameraHandle handle, Camera camera, Transform transform)
+        {
+            if (!handle.IsValid) return;
+
+            VortexAPI.SetEngineCameraPosition(handle, 
+                transform.LocalPosition.X, transform.LocalPosition.Y, transform.LocalPosition.Z);
+            
+            var quat = EulerToQuaternion(transform.LocalRotation.X, transform.LocalRotation.Y, transform.LocalRotation.Z);
+            VortexAPI.SetEngineCameraRotation(handle, quat[0], quat[1], quat[2], quat[3]);
+            
+            VortexAPI.SetEngineCameraFOV(handle, camera.FieldOfView);
+            VortexAPI.SetEngineCameraClipPlanes(handle, camera.NearClip, camera.FarClip);
+            VortexAPI.SetEngineCameraProjection(handle, (CameraProjectionType)camera.Projection);
+            VortexAPI.SetEngineCameraType(handle, (CameraTypeEnum)camera.CameraType);
+            VortexAPI.SetEngineCameraBackgroundColor(handle, 
+                camera.BackgroundR, camera.BackgroundG, camera.BackgroundB, 1f);
+            VortexAPI.SetEngineCameraDepth(handle, camera.Depth);
+        }
+
+        /// <summary>
+        /// Remove an entity's camera.
+        /// </summary>
+        public void RemoveEntityCamera(Guid entityId)
+        {
+            if (_entityCameras.TryGetValue(entityId, out var handle))
+            {
+                VortexAPI.DestroyEngineCamera(handle);
+                _entityCameras.Remove(entityId);
+            }
+        }
+
+        /// <summary>
+        /// Get the engine camera handle for an entity.
+        /// </summary>
+        public CameraHandle GetEntityCamera(Guid entityId)
+        {
+            return _entityCameras.TryGetValue(entityId, out var handle) ? handle : CameraHandle.Invalid;
+        }
+
+        /// <summary>
+        /// Render camera gizmo for a selected camera entity.
+        /// </summary>
+        public void RenderCameraGizmo(Guid entityId, bool isMainCamera)
+        {
+            if (!_entityCameras.TryGetValue(entityId, out var handle)) return;
+            
+            // Main camera = purple, other cameras = blue
+            if (isMainCamera)
+            {
+                VortexAPI.RenderEngineCameraGizmo(handle, 0.608f, 0.349f, 0.714f); // Purple #9B59B6
+            }
+            else
+            {
+                VortexAPI.RenderEngineCameraGizmo(handle, 0.337f, 0.612f, 0.839f); // Blue #569CD6
+            }
+        }
+
+        /// <summary>
+        /// Start previewing a camera's view in the viewport.
+        /// </summary>
+        public void StartCameraPreview(CameraHandle camera)
+        {
+            _previewCamera = camera;
+            _isPreviewingCamera = true;
+        }
+
+        /// <summary>
+        /// Stop camera preview and return to editor camera.
+        /// </summary>
+        public void StopCameraPreview()
+        {
+            _previewCamera = CameraHandle.Invalid;
+            _isPreviewingCamera = false;
+        }
+
+        /// <summary>
+        /// Check if currently previewing a camera.
+        /// </summary>
+        public bool IsPreviewingCamera => _isPreviewingCamera;
+
+        /// <summary>
+        /// Get the camera being previewed.
+        /// </summary>
+        public CameraHandle PreviewCamera => _previewCamera;
+
+        /// <summary>
+        /// Apply the preview camera to the renderer (call during render loop).
+        /// </summary>
+        public void ApplyPreviewCameraIfActive()
+        {
+            if (_isPreviewingCamera && _previewCamera.IsValid)
+            {
+                VortexAPI.ApplyEngineCameraToRenderer(_previewCamera);
+            }
+        }
+
+        /// <summary>
+        /// Convert Euler angles (degrees) to quaternion.
+        /// </summary>
+        private float[] EulerToQuaternion(float pitch, float yaw, float roll)
+        {
+            // Convert to radians
+            double p = pitch * Math.PI / 180.0 * 0.5;
+            double y = yaw * Math.PI / 180.0 * 0.5;
+            double r = roll * Math.PI / 180.0 * 0.5;
+
+            double sinP = Math.Sin(p), cosP = Math.Cos(p);
+            double sinY = Math.Sin(y), cosY = Math.Cos(y);
+            double sinR = Math.Sin(r), cosR = Math.Cos(r);
+
+            return new float[]
+            {
+                (float)(cosR * sinP * cosY + sinR * cosP * sinY), // X
+                (float)(cosR * cosP * sinY - sinR * sinP * cosY), // Y
+                (float)(sinR * cosP * cosY - cosR * sinP * sinY), // Z
+                (float)(cosR * cosP * cosY + sinR * sinP * sinY)  // W
+            };
+        }
+
+        #endregion
 
         public void Dispose()
         {

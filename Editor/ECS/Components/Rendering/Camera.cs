@@ -23,6 +23,19 @@ namespace Editor.ECS.Components.Rendering
     }
 
     /// <summary>
+    /// Kamera-Typ: Bestimmt Priorität und Verhalten
+    /// </summary>
+    public enum CameraType
+    {
+        /// <summary>Normale Spielkamera</summary>
+        GameCamera = 0,
+        /// <summary>Hauptkamera des Spielers (lila im Editor)</summary>
+        MainCamera = 1,
+        /// <summary>Editor-only Kamera (nicht im Build enthalten)</summary>
+        EditorCamera = 2
+    }
+
+    /// <summary>
     /// Kamera-Komponente für Rendering-Viewports.
     /// </summary>
     [DataContract(Name = "Camera", Namespace = "")]
@@ -30,6 +43,7 @@ namespace Editor.ECS.Components.Rendering
     {
         private CameraProjection _projection = CameraProjection.Perspective;
         private CameraClearFlags _clearFlags = CameraClearFlags.Skybox;
+        private CameraType _cameraType = CameraType.GameCamera;
         private float _fieldOfView = 60f;
         private float _orthographicSize = 5f;
         private float _nearClip = 0.1f;
@@ -40,10 +54,14 @@ namespace Editor.ECS.Components.Rendering
         private float _backgroundG;
         private float _backgroundB = 0.3f;
         private int _cullingMask = -1; // All layers
+        private long _engineCameraId = -1; // Engine camera handle
 
         public override string DisplayName => "Camera";
         public override string IconCode => "\uE722";
-        public override string IconColor => "#569CD6";
+        /// <summary>
+        /// Lila für MainCamera, Blau für andere
+        /// </summary>
+        public override string IconColor => _cameraType == CameraType.MainCamera ? "#9B59B6" : "#569CD6";
 
         /// <summary>
         /// Projektionsart (Perspektive/Orthografisch)
@@ -135,6 +153,7 @@ namespace Editor.ECS.Components.Rendering
             set => SetProperty(ref _backgroundR, value, nameof(BackgroundR));
         }
 
+
         /// <summary>
         /// Hintergrundfarbe Grün
         /// </summary>
@@ -163,6 +182,38 @@ namespace Editor.ECS.Components.Rendering
         {
             get => _cullingMask;
             set => SetProperty(ref _cullingMask, value, nameof(CullingMask));
+        }
+
+        /// <summary>
+        /// Kamera-Typ: GameCamera, MainCamera oder EditorCamera
+        /// </summary>
+        [DataMember(Name = "cameraType", Order = 22)]
+        public CameraType CameraType
+        {
+            get => _cameraType;
+            set
+            {
+                if (SetProperty(ref _cameraType, value, nameof(CameraType)))
+                {
+                    // Wenn auf MainCamera gewechselt wird, setze IsMainCamera
+                    if (value == CameraType.MainCamera)
+                        _isMainCamera = true;
+                    else if (value == CameraType.GameCamera)
+                        _isMainCamera = false;
+                    
+                    OnPropertyChanged(nameof(IconColor));
+                }
+            }
+        }
+
+        /// <summary>
+        /// Engine-interne Kamera-Handle ID (nicht serialisiert)
+        /// </summary>
+        [IgnoreDataMember]
+        public long EngineCameraId
+        {
+            get => _engineCameraId;
+            set => SetProperty(ref _engineCameraId, value, nameof(EngineCameraId));
         }
 
         public Camera() : base() { }

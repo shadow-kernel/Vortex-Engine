@@ -557,6 +557,124 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
         }
 
         #endregion
+
+        #region Play Mode Controls
+
+        private bool _isPlaying;
+        private bool _isPaused;
+
+        private void PlayButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (!_isPlaying)
+            {
+                StartPlayMode();
+            }
+            else if (_isPaused)
+            {
+                ResumePlayMode();
+            }
+        }
+
+        private void PauseButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_isPlaying && !_isPaused)
+            {
+                PausePlayMode();
+            }
+        }
+
+        private void StopButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_isPlaying)
+            {
+                StopPlayMode();
+            }
+        }
+
+        private void StartPlayMode()
+        {
+            _isPlaying = true;
+            _isPaused = false;
+
+            // Initialize input system
+            InputBindingsService.Instance.Initialize();
+            InputBindingsService.Instance.EnableGameInputForwarding = true;
+
+            // Update button styles
+            UpdatePlayModeButtons();
+
+            // Notify other components
+            PlayModeChanged?.Invoke(this, new PlayModeEventArgs(true, false));
+        }
+
+        private void PausePlayMode()
+        {
+            _isPaused = true;
+            InputBindingsService.Instance.EnableGameInputForwarding = false;
+            UpdatePlayModeButtons();
+            PlayModeChanged?.Invoke(this, new PlayModeEventArgs(true, true));
+        }
+
+        private void ResumePlayMode()
+        {
+            _isPaused = false;
+            InputBindingsService.Instance.EnableGameInputForwarding = true;
+            UpdatePlayModeButtons();
+            PlayModeChanged?.Invoke(this, new PlayModeEventArgs(true, false));
+        }
+
+        private void StopPlayMode()
+        {
+            _isPlaying = false;
+            _isPaused = false;
+            
+            InputBindingsService.Instance.EnableGameInputForwarding = false;
+            InputBindingsService.Instance.Shutdown();
+            
+            UpdatePlayModeButtons();
+            PlayModeChanged?.Invoke(this, new PlayModeEventArgs(false, false));
+        }
+
+        private void UpdatePlayModeButtons()
+        {
+            var playingColor = new System.Windows.Media.SolidColorBrush(
+                System.Windows.Media.Color.FromRgb(78, 201, 176)); // #4EC9B0
+            var stoppedColor = new System.Windows.Media.SolidColorBrush(
+                System.Windows.Media.Color.FromRgb(128, 128, 128)); // #808080
+            var activeColor = new System.Windows.Media.SolidColorBrush(
+                System.Windows.Media.Color.FromRgb(63, 169, 245)); // #3FA9F5
+
+            if (PlayButton != null)
+            {
+                PlayButton.Foreground = _isPlaying && !_isPaused ? activeColor : playingColor;
+            }
+            if (PauseButton != null)
+            {
+                PauseButton.Foreground = _isPaused ? activeColor : stoppedColor;
+            }
+        }
+
+        /// <summary>
+        /// Event fired when play mode state changes.
+        /// </summary>
+        public event EventHandler<PlayModeEventArgs> PlayModeChanged;
+
+        #endregion
+    }
+
+    /// <summary>
+    /// Event args for play mode changes.
+    /// </summary>
+    public class PlayModeEventArgs : EventArgs
+    {
+        public bool IsPlaying { get; }
+        public bool IsPaused { get; }
+
+        public PlayModeEventArgs(bool isPlaying, bool isPaused)
+        {
+            IsPlaying = isPlaying;
+            IsPaused = isPaused;
+        }
     }
 }
 

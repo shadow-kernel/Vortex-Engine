@@ -193,6 +193,7 @@ namespace Editor.DllWrapper
             try { StopRenderLoop(); } catch { }
         }
 
+
         /// <summary>
         /// Check if the engine's render loop is running.
         /// </summary>
@@ -231,6 +232,173 @@ namespace Editor.DllWrapper
         public static float TotalTime
         {
             get { try { return GetTotalTime(); } catch { return 0f; } }
+        }
+
+        #endregion
+
+        #region Multi-Viewport Rendering
+
+        /// <summary>
+        /// Camera parameters for secondary viewport rendering.
+        /// Must match the C++ viewport_camera_desc structure layout exactly.
+        /// </summary>
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct ViewportCameraDesc
+        {
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 3)]
+            public float[] Position;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 3)]
+            public float[] Target;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 3)]
+            public float[] Up;
+            public float FovDegrees;
+            public float NearClip;
+            public float FarClip;
+            [MarshalAs(UnmanagedType.I1)]
+            public bool Orthographic;
+            // Padding to match C++ struct alignment (bool is 1 byte, then 3 bytes padding before float)
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 3)]
+            private byte[] _padding;
+            public float OrthoSize;
+
+            public static ViewportCameraDesc CreateOrthographic(
+                float posX, float posY, float posZ,
+                float targetX, float targetY, float targetZ,
+                float upX, float upY, float upZ,
+                float orthoSize, float nearClip = 0.1f, float farClip = 1000f)
+            {
+                return new ViewportCameraDesc
+                {
+                    Position = new[] { posX, posY, posZ },
+                    Target = new[] { targetX, targetY, targetZ },
+                    Up = new[] { upX, upY, upZ },
+                    FovDegrees = 60f,
+                    NearClip = nearClip,
+                    FarClip = farClip,
+                    Orthographic = true,
+                    _padding = new byte[3],
+                    OrthoSize = orthoSize
+                };
+            }
+
+            public static ViewportCameraDesc CreatePerspective(
+                float posX, float posY, float posZ,
+                float targetX, float targetY, float targetZ,
+                float upX, float upY, float upZ,
+                float fovDegrees, float nearClip = 0.1f, float farClip = 1000f)
+            {
+                return new ViewportCameraDesc
+                {
+                    Position = new[] { posX, posY, posZ },
+                    Target = new[] { targetX, targetY, targetZ },
+                    Up = new[] { upX, upY, upZ },
+                    FovDegrees = fovDegrees,
+                    NearClip = nearClip,
+                    FarClip = farClip,
+                    Orthographic = false,
+                    _padding = new byte[3],
+                    OrthoSize = 10f
+                };
+            }
+        }
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern uint CreateRenderTarget(uint width, uint height);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void DestroyRenderTarget(uint targetId);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        private static extern bool ResizeRenderTarget(uint targetId, uint width, uint height);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        private static extern bool HasRenderTarget(uint targetId);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void RenderToTarget(uint targetId, ref ViewportCameraDesc camera, 
+            [MarshalAs(UnmanagedType.I1)] bool renderGrid);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        private static extern bool PrepareRenderTargetReadback(uint targetId);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern System.IntPtr ReadRenderTargetPixels(uint targetId, 
+            out uint outWidth, out uint outHeight, out uint outRowPitch);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void ReleaseRenderTargetPixels(uint targetId);
+
+        /// <summary>
+        /// Create an offscreen render target for secondary viewport rendering.
+        /// Returns a unique ID (0 on failure).
+        /// </summary>
+        public static uint CreateSecondaryRenderTarget(uint width, uint height)
+        {
+            try { return CreateRenderTarget(width, height); } catch { return 0; }
+        }
+
+        /// <summary>
+        /// Destroy a render target by ID.
+        /// </summary>
+        public static void DestroySecondaryRenderTarget(uint targetId)
+        {
+            try { DestroyRenderTarget(targetId); } catch { }
+        }
+
+        /// <summary>
+        /// Resize a render target.
+        /// </summary>
+        public static bool ResizeSecondaryRenderTarget(uint targetId, uint width, uint height)
+        {
+            try { return ResizeRenderTarget(targetId, width, height); } catch { return false; }
+        }
+
+        /// <summary>
+        /// Check if a render target exists.
+        /// </summary>
+        public static bool HasSecondaryRenderTarget(uint targetId)
+        {
+            try { return HasRenderTarget(targetId); } catch { return false; }
+        }
+
+        /// <summary>
+        /// Render the scene to a secondary render target with a specific camera.
+        /// </summary>
+        public static void RenderToSecondaryTarget(uint targetId, ViewportCameraDesc camera, bool renderGrid = false)
+        {
+            try { RenderToTarget(targetId, ref camera, renderGrid); } catch { }
+        }
+
+        /// <summary>
+        /// Prepare render target data for CPU readback.
+        /// Must be called before ReadRenderTargetPixels.
+        /// </summary>
+        public static bool PrepareSecondaryRenderTargetReadback(uint targetId)
+        {
+            try { return PrepareRenderTargetReadback(targetId); } catch { return false; }
+        }
+
+        /// <summary>
+        /// Read pixel data from a render target.
+        /// Returns pointer to RGBA8 pixel data. Call ReleaseSecondaryRenderTargetPixels when done.
+        /// </summary>
+        public static System.IntPtr ReadSecondaryRenderTargetPixels(uint targetId, 
+            out uint width, out uint height, out uint rowPitch)
+        {
+            width = height = rowPitch = 0;
+            try { return ReadRenderTargetPixels(targetId, out width, out height, out rowPitch); } 
+            catch { return System.IntPtr.Zero; }
+        }
+
+        /// <summary>
+        /// Release the mapped pixel data.
+        /// </summary>
+        public static void ReleaseSecondaryRenderTargetPixels(uint targetId)
+        {
+            try { ReleaseRenderTargetPixels(targetId); } catch { }
         }
 
         #endregion

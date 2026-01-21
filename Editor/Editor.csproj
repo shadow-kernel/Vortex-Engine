@@ -94,30 +94,55 @@
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </ApplicationDefinition>
+    <Compile Include="Core\Services\CameraPreviewService.cs" />
+    <Compile Include="Core\Services\CameraService.cs" />
     <Compile Include="Core\Services\EditorCameraController.cs" />
     <Compile Include="Core\Services\EditorViewportService.cs" />
     <Compile Include="Core\Services\EntitySyncService.cs" />
+    <Compile Include="Core\Services\InputBindingsService.cs" />
     <Compile Include="Core\Services\MaterialService.cs" />
     <Compile Include="Core\Services\MeshService.cs" />
+    <Compile Include="Core\Services\MultiViewportRenderService.cs" />
     <Compile Include="Core\Services\RaycastService.cs" />
+    <Compile Include="Core\Services\Rendering\SecondaryViewportRenderer.cs" />
+    <Compile Include="Core\Services\Rendering\ViewportRenderManager.cs" />
     <Compile Include="Core\Services\SceneRenderService.cs" />
     <Compile Include="Core\Services\SelectionService.cs" />
     <Compile Include="Core\Services\ShaderService.cs" />
     <Compile Include="Core\Services\TransformGizmoService.cs" />
+    <Compile Include="Core\Services\ViewportRenderer.cs" />
+    <Compile Include="DllWrapper\Camera\VortexCamera.cs" />
     <Compile Include="DllWrapper\Core\VortexCore.cs" />
+    <Compile Include="DllWrapper\Gizmos\CameraGizmo.cs" />
     <Compile Include="DllWrapper\Gizmos\RotationGizmo.cs" />
     <Compile Include="DllWrapper\Gizmos\ScaleGizmo.cs" />
     <Compile Include="DllWrapper\Gizmos\SelectionOutline.cs" />
     <Compile Include="DllWrapper\Gizmos\TransformGizmo.cs" />
+    <Compile Include="DllWrapper\Input\VortexInput.cs" />
     <Compile Include="DllWrapper\Rendering\VortexRendering.cs" />
     <Compile Include="DllWrapper\Resources\VortexResources.cs" />
     <Compile Include="DllWrapper\VortexAPI.cs" />
     <Compile Include="Editors\WorldEditor\Components\AssetBrowser\AssetBrowserView.xaml.cs">
       <DependentUpon>AssetBrowserView.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Editors\WorldEditor\Components\CameraPreview\CameraPreviewControl.xaml.cs">
+      <DependentUpon>CameraPreviewControl.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Editors\WorldEditor\Components\CameraPreview\CameraPreviewOverlay.xaml.cs">
+      <DependentUpon>CameraPreviewOverlay.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Editors\WorldEditor\Components\CameraViewport\CameraViewportPanel.xaml.cs">
+      <DependentUpon>CameraViewportPanel.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Editors\WorldEditor\Components\CameraViewport\InputSettingsDialog.xaml.cs">
+      <DependentUpon>InputSettingsDialog.xaml</DependentUpon>
+    </Compile>
     <Compile Include="Editors\WorldEditor\Components\GamePreview\ViewportHost.cs" />
     <Compile Include="Editors\WorldEditor\Components\Inspector\AssetPickerDialog.xaml.cs">
       <DependentUpon>AssetPickerDialog.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Editors\WorldEditor\Components\Inspector\CameraInspector.xaml.cs">
+      <DependentUpon>CameraInspector.xaml</DependentUpon>
     </Compile>
     <Compile Include="Editors\WorldEditor\Components\Inspector\DynamicInspectorView.xaml.cs">
       <DependentUpon>DynamicInspectorView.xaml</DependentUpon>
@@ -139,6 +164,18 @@
     <Page Include="Editors\WorldEditor\Components\AssetBrowser\AssetBrowserView.xaml">
       <Generator>MSBuild:Compile</Generator>
     </Page>
+    <Page Include="Editors\WorldEditor\Components\CameraPreview\CameraPreviewControl.xaml">
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Editors\WorldEditor\Components\CameraPreview\CameraPreviewOverlay.xaml">
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Editors\WorldEditor\Components\CameraViewport\CameraViewportPanel.xaml">
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Editors\WorldEditor\Components\CameraViewport\InputSettingsDialog.xaml">
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
     <Page Include="Editors\WorldEditor\Components\FileExplorer\FileExplorerView.xaml">
       <Generator>MSBuild:Compile</Generator>
     </Page>
@@ -155,6 +192,9 @@
       <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="Editors\WorldEditor\Components\Inspector\AssetPickerDialog.xaml">
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Editors\WorldEditor\Components\Inspector\CameraInspector.xaml">
       <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="Editors\WorldEditor\Components\Inspector\DynamicInspectorView.xaml">

@@ -1,11 +1,11 @@
 <UserControl x:Class="Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView"
-             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
-             xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
-             xmlns:local="clr-namespace:Editor.Editors.WorldEditor.Components.GamePreview"
-             mc:Ignorable="d" 
-             d:DesignHeight="400" d:DesignWidth="600">
+xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+xmlns:local="clr-namespace:Editor.Editors.WorldEditor.Components.GamePreview"
+mc:Ignorable="d" 
+d:DesignHeight="400" d:DesignWidth="600">
 
     <UserControl.Resources>
         <Style x:Key="ViewTabStyle" TargetType="RadioButton">
@@ -214,18 +214,21 @@
         </Style>
     </UserControl.Resources>
 
-    <Border Background="#252526">
-        <Grid>
-            <Grid.RowDefinitions>
-                <RowDefinition Height="28"/>
-                <RowDefinition Height="*"/>
-                <RowDefinition Height="22"/>
-            </Grid.RowDefinitions>
+    <!-- Outer Grid to allow overlay on top of everything -->
+    <Grid>
+        <Border Background="#252526">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="28"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="22"/>
+                </Grid.RowDefinitions>
 
-            <!-- Toolbar -->
-            <Border Grid.Row="0" Background="#1E1E1E">
-                <Grid>
-                    <Grid.ColumnDefinitions>
+                <!-- Toolbar -->
+                <Border Grid.Row="0" Background="#1E1E1E">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
@@ -249,13 +252,235 @@
                         <ToggleButton x:Name="GizmosToggleBtn" Content="&#xE7B3;" Style="{StaticResource ToolToggleButtonStyle}" 
                                       ToolTip="Toggle Gizmos" IsChecked="True" Checked="OnGizmosToggle" Unchecked="OnGizmosToggle"/>
                     </StackPanel>
+                    
+                    <!-- Center: Viewport Layout Buttons -->
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center">
+                        <Rectangle Width="1" Fill="#404040" Margin="6,6"/>
+                        <Button x:Name="SingleViewBtn" Style="{StaticResource ToolButtonStyle}" 
+                                ToolTip="Single View" Click="OnSingleViewClick" Foreground="#3FA9F5">
+                            <TextBlock Text="&#xE737;" FontFamily="Segoe MDL2 Assets" FontSize="12"/>
+                        </Button>
+                        <Button x:Name="SplitVerticalBtn" Style="{StaticResource ToolButtonStyle}" 
+                                ToolTip="Split Vertical (Left/Right)" Click="OnSplitVerticalClick">
+                            <TextBlock Text="&#xE746;" FontFamily="Segoe MDL2 Assets" FontSize="12"/>
+                        </Button>
+                        <Button x:Name="SplitHorizontalBtn" Style="{StaticResource ToolButtonStyle}" 
+                                ToolTip="Split Horizontal (Top/Bottom)" Click="OnSplitHorizontalClick">
+                            <TextBlock Text="&#xE745;" FontFamily="Segoe MDL2 Assets" FontSize="12"/>
+                        </Button>
+                        <Button x:Name="QuadViewBtn" Style="{StaticResource ToolButtonStyle}" 
+                                ToolTip="Quad View (2x2)" Click="OnQuadViewClick">
+                            <TextBlock Text="&#xE8A0;" FontFamily="Segoe MDL2 Assets" FontSize="12"/>
+                        </Button>
+                        <Rectangle Width="1" Fill="#404040" Margin="6,6"/>
+                        
+                        <!-- Camera Selector -->
+                        <TextBlock Text="View:" Foreground="#808080" VerticalAlignment="Center" 
+                                   FontSize="10" Margin="4,0"/>
+                        <ComboBox x:Name="CameraSelector" Style="{StaticResource DarkComboBoxStyle}" 
+                                  Width="120" SelectionChanged="OnCameraSelectionChanged">
+                            <ComboBoxItem Content="Free Camera" IsSelected="True" Style="{StaticResource DarkComboBoxItemStyle}"/>
+                        </ComboBox>
+                        
+                        <!-- PIP Preview Button -->
+                        <Button x:Name="ShowPipButton" Style="{StaticResource ToolButtonStyle}" 
+                                ToolTip="Show Camera Preview (PIP)" Click="OnShowPipClick"
+                                Margin="4,0">
+                            <TextBlock Text="&#xE714;" FontFamily="Segoe MDL2 Assets" FontSize="12"/>
+                        </Button>
+                    </StackPanel>
+                    
+                    <!-- Right: Play Mode Indicator -->
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="4,0">
+                        <Border x:Name="PlayModeBadge" Background="#409B59B6" CornerRadius="3" 
+                                Padding="8,2" Margin="4,0" Visibility="Collapsed">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE768;" FontFamily="Segoe MDL2 Assets" 
+                                           FontSize="10" Foreground="#9B59B6" Margin="0,0,4,0"/>
+                                <TextBlock Text="PLAY MODE" Foreground="#9B59B6" 
+                                           FontSize="9" FontWeight="Bold"/>
+                            </StackPanel>
+                        </Border>
+                        <Border x:Name="FlyModeBadge" Background="#40569CD6" CornerRadius="3" 
+                                Padding="6,2" Visibility="Collapsed">
+                            <TextBlock Text="FLY" Foreground="#569CD6" FontSize="9" FontWeight="Bold"/>
+                        </Border>
+                    </StackPanel>
                 </Grid>
             </Border>
 
-            <!-- Preview Area -->
+            <!-- Preview Area with Split Views -->
             <Border Grid.Row="1" Background="#1A1A1A">
-                <Grid>
-                    <local:ViewportHost x:Name="ViewportHostElement" />
+                <Grid x:Name="ViewportContainer">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition x:Name="MainViewportColumn" Width="*"/>
+                        <ColumnDefinition x:Name="SplitColumn" Width="0"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition x:Name="TopViewportRow" Height="*"/>
+                        <RowDefinition x:Name="BottomViewportRow" Height="0"/>
+                    </Grid.RowDefinitions>
+                    
+                    <!-- Main Viewport (always visible) -->
+                    <Border x:Name="MainViewportPanel" Grid.Column="0" Grid.Row="0" 
+                            Grid.RowSpan="2" Background="#1A1A1A" Margin="1"
+                            BorderBrush="#404040" BorderThickness="1"
+                            MouseDown="OnMainViewportClick">
+                        <Grid>
+                            <local:ViewportHost x:Name="ViewportHostElement"/>
+                            <!-- Main viewport label -->
+                            <Border VerticalAlignment="Top" HorizontalAlignment="Left" 
+                                    Background="#80000000" CornerRadius="0,0,4,0" Padding="8,4" Margin="0">
+                                <TextBlock x:Name="MainViewportLabel" Text="Perspective" 
+                                           Foreground="#AAAAAA" FontSize="10" FontWeight="SemiBold"/>
+                            </Border>
+                        </Grid>
+                    </Border>
+                    
+                    <!-- Split Separator (vertical) -->
+                    <GridSplitter x:Name="VerticalSplitter" Grid.Column="0" Grid.Row="0" Grid.RowSpan="2"
+                                  Width="4" HorizontalAlignment="Right" VerticalAlignment="Stretch"
+                                  Background="#404040" Visibility="Collapsed" Cursor="SizeWE"/>
+                    
+                    <!-- Secondary Viewport Panel (for Split View) -->
+                    <Border x:Name="SecondaryViewportPanel" Grid.Column="1" Grid.Row="0" 
+                            Background="#1A1A1A" BorderBrush="#404040" BorderThickness="1"
+                            Visibility="Collapsed" Margin="1"
+                            MouseDown="OnSecondaryViewportClick">
+                        <Grid>
+                            <!-- Header with camera selector -->
+                            <Border VerticalAlignment="Top" Background="#2D2D30" Height="28">
+                                <Grid Margin="4,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="&#xE714;" FontFamily="Segoe MDL2 Assets" 
+                                               Foreground="#3FA9F5" FontSize="12" VerticalAlignment="Center" Margin="4,0"/>
+                                    <ComboBox x:Name="SecondaryViewCameraSelector" Grid.Column="1" 
+                                              Style="{StaticResource DarkComboBoxStyle}" 
+                                              Margin="4,0" SelectionChanged="OnSecondaryViewCameraChanged">
+                                        <ComboBoxItem Content="Select Camera..." IsSelected="True" Style="{StaticResource DarkComboBoxItemStyle}"/>
+                                    </ComboBox>
+                                    <Button Grid.Column="2" Style="{StaticResource ToolButtonStyle}" 
+                                            ToolTip="Close Split View" Click="OnCloseSecondaryView">
+                                        <TextBlock Text="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="10"/>
+                                    </Button>
+                                </Grid>
+                            </Border>
+                            
+                            <!-- Secondary viewport content - Image for rendered camera view -->
+                            <Border Background="#0A0A0A" Margin="0,28,0,0">
+                                <Grid>
+                                    <!-- Rendered image from camera -->
+                                    <Image x:Name="SecondaryViewportImage" Stretch="Fill"/>
+                                    
+                                    <!-- Overlay info when no camera selected -->
+                                    <StackPanel x:Name="SecondaryViewportOverlayInfo" 
+                                                VerticalAlignment="Center" HorizontalAlignment="Center">
+                                        <TextBlock x:Name="SecondaryViewCameraInfo" 
+                                                   Text="Select a camera" 
+                                                   Foreground="#606060" FontSize="12" FontWeight="SemiBold"
+                                                   HorizontalAlignment="Center" TextAlignment="Center"/>
+                                        <TextBlock x:Name="SecondaryViewDetails" 
+                                                   Text="Use the dropdown above to select a camera" 
+                                                   Foreground="#505050" FontSize="10" Margin="0,8,0,0"
+                                                   HorizontalAlignment="Center" TextAlignment="Center"/>
+                                    </StackPanel>
+                                    
+                                    <!-- View label -->
+                                    <Border VerticalAlignment="Top" HorizontalAlignment="Left" 
+                                            Background="#80000000" CornerRadius="0,0,4,0" Padding="8,4">
+                                        <TextBlock x:Name="SecondaryViewLabel" Text="Top" 
+                                                   Foreground="#AAAAAA" FontSize="10" FontWeight="SemiBold"/>
+                                    </Border>
+                                </Grid>
+                            </Border>
+                        </Grid>
+                    </Border>
+                    
+                    <!-- Third Viewport Panel (for Quad View - Bottom Left) -->
+                    <Border x:Name="ThirdViewportPanel" Grid.Column="0" Grid.Row="1" 
+                            Background="#1A1A1A" BorderBrush="#404040" BorderThickness="1"
+                            Visibility="Collapsed" Margin="1"
+                            MouseDown="OnThirdViewportClick">
+                        <Grid>
+                            <Border VerticalAlignment="Top" Background="#2D2D30" Height="28">
+                                <Grid Margin="4,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="&#xE714;" FontFamily="Segoe MDL2 Assets" 
+                                               Foreground="#27AE60" FontSize="12" VerticalAlignment="Center" Margin="4,0"/>
+                                    <ComboBox x:Name="ThirdViewCameraSelector" Grid.Column="1" 
+                                              Style="{StaticResource DarkComboBoxStyle}" 
+                                              Margin="4,0" SelectionChanged="OnThirdViewCameraChanged">
+                                        <ComboBoxItem Content="Select Camera..." IsSelected="True" Style="{StaticResource DarkComboBoxItemStyle}"/>
+                                    </ComboBox>
+                                </Grid>
+                            </Border>
+                            <Border Background="#0A0A0A" Margin="0,28,0,0">
+                                <Grid>
+                                    <Image x:Name="ThirdViewportImage" Stretch="Fill"/>
+                                    <StackPanel x:Name="ThirdViewportOverlayInfo" 
+                                                VerticalAlignment="Center" HorizontalAlignment="Center">
+                                        <TextBlock x:Name="ThirdViewInfo" Text="Select a camera" 
+                                                   Foreground="#606060" FontSize="12" FontWeight="SemiBold"
+                                                   HorizontalAlignment="Center"/>
+                                    </StackPanel>
+                                    <Border VerticalAlignment="Top" HorizontalAlignment="Left" 
+                                            Background="#80000000" CornerRadius="0,0,4,0" Padding="8,4">
+                                        <TextBlock x:Name="ThirdViewLabel" Text="No Camera" 
+                                                   Foreground="#AAAAAA" FontSize="10" FontWeight="SemiBold"/>
+                                    </Border>
+                                </Grid>
+                            </Border>
+                        </Grid>
+                    </Border>
+                    
+                    <!-- Fourth Viewport Panel (for Quad View - Bottom Right) -->
+                    <Border x:Name="FourthViewportPanel" Grid.Column="1" Grid.Row="1" 
+                            Background="#1A1A1A" BorderBrush="#404040" BorderThickness="1"
+                            Visibility="Collapsed" Margin="1"
+                            MouseDown="OnFourthViewportClick">
+                        <Grid>
+                            <Border VerticalAlignment="Top" Background="#2D2D30" Height="28">
+                                <Grid Margin="4,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="&#xE714;" FontFamily="Segoe MDL2 Assets" 
+                                               Foreground="#E74C3C" FontSize="12" VerticalAlignment="Center" Margin="4,0"/>
+                                    <ComboBox x:Name="FourthViewCameraSelector" Grid.Column="1" 
+                                              Style="{StaticResource DarkComboBoxStyle}" 
+                                              Margin="4,0" SelectionChanged="OnFourthViewCameraChanged">
+                                        <ComboBoxItem Content="Select Camera..." IsSelected="True" Style="{StaticResource DarkComboBoxItemStyle}"/>
+                                    </ComboBox>
+                                </Grid>
+                            </Border>
+                            <Border Background="#0A0A0A" Margin="0,28,0,0">
+                                <Grid>
+                                    <Image x:Name="FourthViewportImage" Stretch="Fill"/>
+                                    <StackPanel x:Name="FourthViewportOverlayInfo" 
+                                                VerticalAlignment="Center" HorizontalAlignment="Center">
+                                        <TextBlock x:Name="FourthViewInfo" Text="Select a camera" 
+                                                   Foreground="#606060" FontSize="12" FontWeight="SemiBold"
+                                                   HorizontalAlignment="Center"/>
+                                    </StackPanel>
+                                    <Border VerticalAlignment="Top" HorizontalAlignment="Left" 
+                                            Background="#80000000" CornerRadius="0,0,4,0" Padding="8,4">
+                                        <TextBlock x:Name="FourthViewLabel" Text="No Camera" 
+                                                   Foreground="#AAAAAA" FontSize="10" FontWeight="SemiBold"/>
+                                    </Border>
+                                </Grid>
+                            </Border>
+                        </Grid>
+                    </Border>
+                    
+                    <!-- PIP is now handled by CameraPreviewOverlay in WorldEditorView -->
                 </Grid>
             </Border>
 
@@ -275,4 +500,7 @@
             </Border>
         </Grid>
     </Border>
+    
+    <!-- NOTE: CameraPreviewOverlay is now in WorldEditorView as a Popup to render over HwndHost -->
+</Grid>
 </UserControl>

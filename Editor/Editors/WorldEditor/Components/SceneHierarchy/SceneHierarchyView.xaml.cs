@@ -826,5 +826,77 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
         }
 
         #endregion
+
+        #region Camera Preview
+
+        /// <summary>
+        /// Handle entity context menu opening - show/hide camera-specific options.
+        /// </summary>
+        private void EntityContextMenu_Opened(object sender, RoutedEventArgs e)
+        {
+            if (sender is ContextMenu contextMenu)
+            {
+                // Find the menu items
+                var showCameraPreviewItem = FindContextMenuItem(contextMenu, "ShowCameraPreviewItem");
+                var cameraSeparator = FindContextMenuItem(contextMenu, "CameraMenuSeparator");
+                
+                // Check if the selected entity is a camera
+                bool isCamera = false;
+                if (ViewModel?.SelectedEntity != null)
+                {
+                    isCamera = ViewModel.SelectedEntity.GetComponent<ECS.Components.Rendering.Camera>() != null;
+                }
+                
+                // Show/hide camera-specific options
+                if (showCameraPreviewItem != null)
+                    showCameraPreviewItem.Visibility = isCamera ? Visibility.Visible : Visibility.Collapsed;
+                if (cameraSeparator != null)
+                    cameraSeparator.Visibility = isCamera ? Visibility.Visible : Visibility.Collapsed;
+            }
+        }
+
+        private FrameworkElement FindContextMenuItem(ContextMenu menu, string name)
+        {
+            foreach (var item in menu.Items)
+            {
+                if (item is FrameworkElement element && element.Name == name)
+                    return element;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Show camera preview for the selected camera entity.
+        /// </summary>
+        private void ShowCameraPreview_Click(object sender, RoutedEventArgs e)
+        {
+            if (ViewModel?.SelectedEntity == null) return;
+            
+            var camera = ViewModel.SelectedEntity.GetComponent<ECS.Components.Rendering.Camera>();
+            if (camera != null)
+            {
+                // Notify the GamePreviewView to show the camera preview PIP
+                CameraPreviewService.Instance.ShowPreview(ViewModel.SelectedEntity);
+            }
+        }
+
+        /// <summary>
+        /// Handle double-click on tree item to show camera preview.
+        /// </summary>
+        private void HierarchyTree_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        {
+            if (ViewModel?.SelectedEntity == null) return;
+            
+            // Check if double-clicked on a camera entity
+            var camera = ViewModel.SelectedEntity.GetComponent<ECS.Components.Rendering.Camera>();
+            if (camera != null)
+            {
+                // Show camera preview
+                CameraPreviewService.Instance.ShowPreview(ViewModel.SelectedEntity);
+                e.Handled = true;
+            }
+        }
+
+        #endregion
     }
 }

@@ -347,6 +347,28 @@ namespace Editor.Core.Data
         }
 
         /// <summary>
+        /// Sucht eine Entity anhand ihrer ID (rekursiv)
+        /// </summary>
+        public GameEntity FindEntityById(Guid id)
+        {
+            return FindEntityByIdRecursive(Entities, id);
+        }
+
+        private GameEntity FindEntityByIdRecursive(IEnumerable<GameEntity> entities, Guid id)
+        {
+            foreach (var entity in entities)
+            {
+                if (entity.Id == id)
+                    return entity;
+                
+                var found = FindEntityByIdRecursive(entity.Children, id);
+                if (found != null)
+                    return found;
+            }
+            return null;
+        }
+
+        /// <summary>
         /// Aktiviert alle Entities dieser Szene in der Engine.
         /// Sollte aufgerufen werden, nachdem die Szene vollständig geladen wurde.
         /// </summary>

@@ -20,6 +20,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="DllMain.cpp" />
+    <ClCompile Include="MultiViewportAPI.cpp" />
     <ClCompile Include="VortexAPI.cpp" />
   </ItemGroup>
   <PropertyGroup Label="Globals">

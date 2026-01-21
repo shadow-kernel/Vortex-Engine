@@ -1,9 +1,11 @@
 using System;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using Editor.Core.Data;
 using Editor.Core.Services;
 using Editor.DllWrapper;
@@ -23,6 +25,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         private Scene _currentScene;
         private DateTime _lastFrameTime = DateTime.Now;
         private EditorCameraController _cameraController;
+        private bool _isInitialized;
 
         // Gizmo dragging state
         private bool _isDraggingGizmo;
@@ -32,9 +35,16 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         public GamePreviewView()
         {
             InitializeComponent();
-            _host = (ViewportHost)FindName("ViewportHostElement");
+            
+            // Initialize camera controller FIRST before any event subscriptions
             _cameraController = EditorCameraController.Instance;
-
+            if (_cameraController == null)
+            {
+                // Fallback - create a new instance if singleton not available
+                System.Diagnostics.Debug.WriteLine("Warning: EditorCameraController.Instance was null, using fallback");
+            }
+            
+            _host = (ViewportHost)FindName("ViewportHostElement");
 
             if (_host != null)
             {
@@ -52,18 +62,21 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             this.KeyDown += OnViewportKeyDown;
             this.KeyUp += OnViewportKeyUp;
 
-
-
-
-
-
-
             Loaded += OnViewLoaded;
             Unloaded += OnViewUnloaded;
+            
+            // PIP preview is now handled by CameraPreviewOverlay in WorldEditorView
+            // No need to subscribe here - the overlay handles its own events
             
             // Use WPF CompositionTarget for rendering at 60 FPS (stable, no flicker)
             CompositionTarget.Rendering += OnCompositionTargetRendering;
         }
+        
+        // Flag to prevent camera jumping when refreshing camera list
+        private bool _isRefreshingCameraList;
+        
+        // Track last camera count to detect changes
+        private int _lastCameraCount = -1;
 
         private DateTime _lastStatusUpdate = DateTime.Now;
 
@@ -72,13 +85,32 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         /// </summary>
         private void OnCompositionTargetRendering(object sender, EventArgs e)
         {
-            if (!_isRendererInitialized) return;
+            if (!_isRendererInitialized || _cameraController == null) return;
 
             // Update camera
             var now = DateTime.Now;
             float deltaTime = (float)(now - _lastFrameTime).TotalSeconds;
             _lastFrameTime = now;
-            _cameraController.Update(deltaTime);
+            
+            // Only use EditorCameraController when NOT previewing a game camera
+            if (!CameraService.Instance.IsGameCameraActive)
+            {
+                _cameraController.Update(deltaTime);
+                // Update fly mode indicator
+                UpdateFlyModeIndicator(_cameraController.IsFlyMode);
+            }
+            else
+            {
+                // Apply the active game camera's view and projection (including FOV) every frame
+                var activeCamera = CameraService.Instance.ActiveCamera;
+                if (activeCamera.IsValid)
+                {
+                    VortexAPI.ApplyEngineCameraToRenderer(activeCamera);
+                }
+                UpdateFlyModeIndicator(false);
+            }
+
+
 
             // Submit scene data for rendering
             var sceneToRender = _currentScene ?? ProjectData.Current?.ActiveScene;
@@ -89,19 +121,72 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
 
             // Render the frame
             VortexAPI.RenderOnce();
+            
+            // Update secondary viewports (throttled internally)
+            UpdateSecondaryViewports();
+            
+            // PIP preview is now handled by CameraPreviewOverlay
 
             // Update status bar periodically
             if ((now - _lastStatusUpdate).TotalMilliseconds >= 500)
             {
                 _lastStatusUpdate = now;
                 UpdateStatusBar();
+                
+                // Also check if camera list needs refresh (every 500ms)
+                CheckAndRefreshCameraList(sceneToRender);
             }
+        }
+        
+        /// <summary>
+        /// Check if cameras have been added/removed and refresh the dropdown if needed.
+        /// </summary>
+        private void CheckAndRefreshCameraList(Scene scene)
+        {
+            if (scene?.Entities == null) return;
+            
+            int currentCameraCount = CountCamerasInScene(scene);
+            if (currentCameraCount != _lastCameraCount)
+            {
+                _lastCameraCount = currentCameraCount;
+                RefreshCameraList();
+            }
+        }
+        
+        private int CountCamerasInScene(Scene scene)
+        {
+            int count = 0;
+            if (scene?.Entities == null) return 0;
+            
+            foreach (var entity in scene.Entities)
+            {
+                count += CountCamerasRecursive(entity);
+            }
+            return count;
+        }
+        
+        private int CountCamerasRecursive(GameEntity entity)
+        {
+            int count = 0;
+            if (entity.GetComponent<ECS.Components.Rendering.Camera>() != null)
+                count++;
+            
+            if (entity.Children != null)
+            {
+                foreach (var child in entity.Children)
+                {
+                    count += CountCamerasRecursive(child);
+                }
+            }
+            return count;
         }
 
         private void OnViewLoaded(object sender, RoutedEventArgs e)
         {
             Loaded -= OnViewLoaded;
 
+            // Initial camera list refresh
+            RefreshCameraList();
             
             // Sync toggle buttons with service state - use FindName since WPF generates these from XAML
             var gridToggle = FindName("GridToggleBtn") as ToggleButton;
@@ -128,6 +213,9 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                 var btn = FindName("SnapToggleBtn") as ToggleButton;
                 if (btn != null) btn.IsChecked = snap;
             };
+            
+            // Subscribe to scene changes to refresh camera list
+            SceneService.Instance.SceneLoaded += (s, scene) => RefreshCameraList();
         }
 
         /// <summary>
@@ -156,13 +244,19 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             // Get position relative to the viewport host, not the entire control
             var pos = _host != null ? e.GetPosition(_host) : e.GetPosition(this);
             
-            _cameraController.OnMouseDown(e, pos);
+            // Only allow camera movement when in Free Camera mode (not viewing through a game camera)
+            if (!_isViewingThroughGameCamera)
+            {
+                _cameraController?.OnMouseDown(e, pos);
+            }
             
             // Left click - check for gizmo first, then entity picking
+            // Block all viewport interaction when viewing through a game camera
             if (e.LeftButton == MouseButtonState.Pressed && 
                 !Keyboard.Modifiers.HasFlag(ModifierKeys.Alt) &&
                 e.RightButton != MouseButtonState.Pressed &&
-                e.MiddleButton != MouseButtonState.Pressed)
+                e.MiddleButton != MouseButtonState.Pressed &&
+                !_isViewingThroughGameCamera)  // Only allow selection in Free Camera mode
             {
                 // Check if clicking on gizmo axis
                 var selected = SelectionService.Instance.SelectedEntity;
@@ -205,7 +299,12 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         private void OnViewportMouseUp(object sender, MouseButtonEventArgs e)
         {
             this.ReleaseMouseCapture();
-            _cameraController.OnMouseUp(e);
+            
+            // Only allow camera control when in Free Camera mode
+            if (!_isViewingThroughGameCamera)
+            {
+                _cameraController?.OnMouseUp(e);
+            }
             
             // End gizmo dragging
             if (_isDraggingGizmo)
@@ -215,6 +314,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                 VortexAPI.IsDraggingGizmo = false;
                 VortexAPI.DraggingAxis = GizmoAxis.None;
             }
+
             
             e.Handled = true;
         }
@@ -315,6 +415,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                     // Notify inspector to update in real-time
                     SelectionService.Instance.NotifyTransformChanged();
                     
+                    
                     _lastDragPos = pos;
                 }
             }
@@ -323,7 +424,11 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                 // Update gizmo hover state
                 UpdateGizmoHover(pos);
                 
-                _cameraController.OnMouseMove(pos);
+                // Only allow camera movement when in Free Camera mode
+                if (!_isViewingThroughGameCamera)
+                {
+                    _cameraController?.OnMouseMove(pos);
+                }
             }
         }
 
@@ -364,14 +469,18 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
 
         private void OnViewportMouseWheel(object sender, MouseWheelEventArgs e)
         {
-            _cameraController.OnMouseWheel(e.Delta);
+            // Only allow camera movement when in Free Camera mode
+            if (!_isViewingThroughGameCamera)
+            {
+                _cameraController?.OnMouseWheel(e.Delta);
+            }
             e.Handled = true;
         }
 
         private void OnViewportKeyDown(object sender, KeyEventArgs e)
         {
-            // Gizmo mode shortcuts (only when not in camera fly mode)
-            if (!_cameraController.IsFlyMode)
+            // Gizmo mode shortcuts (only when not in camera fly mode AND in Free Camera mode)
+            if (_cameraController != null && !_cameraController.IsFlyMode && !_isViewingThroughGameCamera)
             {
                 switch (e.Key)
                 {
@@ -390,13 +499,20 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                 }
             }
             
-            // Forward to camera controller for WASD movement
-            _cameraController.OnKeyDown(e.Key);
+            // Forward to camera controller for WASD movement (only in Free Camera mode)
+            if (!_isViewingThroughGameCamera)
+            {
+                _cameraController?.OnKeyDown(e.Key);
+            }
         }
 
         private void OnViewportKeyUp(object sender, KeyEventArgs e)
         {
-            _cameraController.OnKeyUp(e.Key);
+            // Only forward key up when in Free Camera mode
+            if (!_isViewingThroughGameCamera)
+            {
+                _cameraController?.OnKeyUp(e.Key);
+            }
         }
 
         private void HandleEntityPicking(Point screenPos)
@@ -429,6 +545,29 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
 
         #endregion
 
+        #region Viewport Click Handlers
+        
+        private void OnMainViewportClick(object sender, MouseButtonEventArgs e)
+        {
+            SetActiveViewport(0);
+        }
+        
+        private void OnSecondaryViewportClick(object sender, MouseButtonEventArgs e)
+        {
+            SetActiveViewport(1);
+        }
+        
+        private void OnThirdViewportClick(object sender, MouseButtonEventArgs e)
+        {
+            SetActiveViewport(2);
+        }
+        
+        private void OnFourthViewportClick(object sender, MouseButtonEventArgs e)
+        {
+            SetActiveViewport(3);
+        }
+        
+        #endregion
 
         private void OnHostCreated(object sender, EventArgs e)
         {
@@ -440,10 +579,11 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                 if (VortexAPI.InitRenderViewport(_host.Handle, width, height))
                 {
                     _isRendererInitialized = true;
+                    _isInitialized = true;
                     SceneRenderService.Instance.Initialize();
 
                     // Initialize camera controller and apply to engine
-                    _cameraController.Reset();
+                    _cameraController?.Reset();
 
                     // Initialize grid visibility
                     EditorViewportService.Instance.IsGridVisible = true;
@@ -493,8 +633,6 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                 StatusText.Text = $"FPS: {fps} | Draw Calls: {drawCalls} | Vertices: {vertices}";
             }
             
-            
-            
             if (ResolutionText != null && _host != null)
             {
                 int w = (int)_host.ActualWidth;
@@ -522,14 +660,17 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         {
             base.OnPreviewKeyDown(e);
             
-            // Forward WASD to camera
-            _cameraController.OnKeyDown(e.Key);
+            // Forward WASD to camera (only in Free Camera mode)
+            if (!_isViewingThroughGameCamera)
+            {
+                _cameraController?.OnKeyDown(e.Key);
+            }
 
             switch (e.Key)
             {
-                // Gizmo mode shortcuts
+                // Gizmo mode shortcuts (only in Free Camera mode)
                 case Key.W:
-                    if (!Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+                    if (!_isViewingThroughGameCamera && !Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
                     {
                         TransformGizmoService.Instance.SetTranslateMode();
                         e.Handled = true;
@@ -537,7 +678,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                     break;
 
                 case Key.E:
-                    if (!Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+                    if (!_isViewingThroughGameCamera && !Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
                     {
                         TransformGizmoService.Instance.SetRotateMode();
                         e.Handled = true;
@@ -545,7 +686,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                     break;
 
                 case Key.R:
-                    if (!Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+                    if (!_isViewingThroughGameCamera && !Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
                     {
                         TransformGizmoService.Instance.SetScaleMode();
                         e.Handled = true;
@@ -561,24 +702,27 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                     }
                     break;
 
-                // Focus on selected (F key)
+                // Focus on selected (F key) - only in Free Camera mode
                 case Key.F:
-                    if (!_cameraController.IsFlyMode)
+                    if (!_isViewingThroughGameCamera && (_cameraController == null || !_cameraController.IsFlyMode))
                     {
                         FocusOnSelected();
                         e.Handled = true;
                     }
                     break;
 
-                // Reset camera (Home key)
+                // Reset camera (Home key) - only in Free Camera mode
                 case Key.Home:
-                    _cameraController.Reset();
-                    e.Handled = true;
+                    if (!_isViewingThroughGameCamera)
+                    {
+                        _cameraController?.Reset();
+                        e.Handled = true;
+                    }
                     break;
 
-                // Toggle space (local/world)
+                // Toggle space (local/world) - only in Free Camera mode
                 case Key.X:
-                    if (!Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+                    if (!_isViewingThroughGameCamera && !Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
                     {
                         TransformGizmoService.Instance.ToggleSpace();
                         e.Handled = true;
@@ -590,7 +734,12 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         protected override void OnPreviewKeyUp(KeyEventArgs e)
         {
             base.OnPreviewKeyUp(e);
-            _cameraController.OnKeyUp(e.Key);
+            
+            // Only forward key up when in Free Camera mode
+            if (!_isViewingThroughGameCamera)
+            {
+                _cameraController?.OnKeyUp(e.Key);
+            }
         }
 
         private void FocusOnSelected()
@@ -599,7 +748,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             if (selectedEntity?.Transform != null)
             {
                 var pos = selectedEntity.Transform.LocalPosition;
-                _cameraController.FocusOn(pos.X, pos.Y, pos.Z, 8.0f);
+                _cameraController?.FocusOn(pos.X, pos.Y, pos.Z, 8.0f);
             }
         }
 
@@ -643,6 +792,1378 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             if (sender is ToggleButton toggle)
             {
                 EditorViewportService.Instance.AreGizmosVisible = toggle.IsChecked == true;
+            }
+        }
+
+        #endregion
+
+        #region Viewport Layout
+
+        public enum ViewportLayout { Single, SplitVertical, SplitHorizontal, Quad }
+        private ViewportLayout _currentLayout = ViewportLayout.Single;
+        private bool _isPlayMode;
+
+        private void OnSingleViewClick(object sender, RoutedEventArgs e)
+        {
+            SetViewportLayout(ViewportLayout.Single);
+        }
+
+        private void OnSplitVerticalClick(object sender, RoutedEventArgs e)
+        {
+            SetViewportLayout(ViewportLayout.SplitVertical);
+        }
+        
+        private void OnSplitHorizontalClick(object sender, RoutedEventArgs e)
+        {
+            SetViewportLayout(ViewportLayout.SplitHorizontal);
+        }
+
+        private void OnQuadViewClick(object sender, RoutedEventArgs e)
+        {
+            SetViewportLayout(ViewportLayout.Quad);
+        }
+
+        private void SetViewportLayout(ViewportLayout layout)
+        {
+            _currentLayout = layout;
+            UpdateLayoutButtonStyles();
+            ApplyViewportLayout();
+        }
+        
+        /// <summary>
+        /// Apply the current viewport layout by adjusting the viewport container.
+        /// Note: Full multi-viewport requires multiple render targets in the engine.
+        /// Apply the current viewport layout by adjusting the grid columns and rows.
+        /// </summary>
+        private void ApplyViewportLayout()
+        {
+            // Access the grid column/row definitions
+            var mainColumn = MainViewportColumn;
+            var splitColumn = SplitColumn;
+            var topRow = TopViewportRow;
+            var bottomRow = BottomViewportRow;
+            
+            switch (_currentLayout)
+            {
+                case ViewportLayout.Single:
+                    // Single view - full size main viewport
+                    if (splitColumn != null) splitColumn.Width = new GridLength(0);
+                    if (bottomRow != null) bottomRow.Height = new GridLength(0);
+                    if (MainViewportPanel != null) 
+                    {
+                        Grid.SetRowSpan(MainViewportPanel, 2);
+                        Grid.SetColumnSpan(MainViewportPanel, 2);
+                    }
+                    
+                    // Hide all secondary panels
+                    if (SecondaryViewportPanel != null) SecondaryViewportPanel.Visibility = Visibility.Collapsed;
+                    if (ThirdViewportPanel != null) ThirdViewportPanel.Visibility = Visibility.Collapsed;
+                    if (FourthViewportPanel != null) FourthViewportPanel.Visibility = Visibility.Collapsed;
+                    if (VerticalSplitter != null) VerticalSplitter.Visibility = Visibility.Collapsed;
+                    
+                    // Cleanup render targets when switching back to single view
+                    CleanupSecondaryRenderTargets();
+                    break;
+                    
+                case ViewportLayout.SplitVertical:
+                    // Split vertical - two columns (Left/Right)
+                    if (splitColumn != null) splitColumn.Width = new GridLength(1, GridUnitType.Star);
+                    if (bottomRow != null) bottomRow.Height = new GridLength(0);
+                    if (MainViewportPanel != null) 
+                    {
+                        Grid.SetRowSpan(MainViewportPanel, 2);
+                        Grid.SetColumnSpan(MainViewportPanel, 1);
+                    }
+                    
+                    // Show only secondary panel (right side)
+                    if (SecondaryViewportPanel != null)
+                    {
+                        SecondaryViewportPanel.Visibility = Visibility.Visible;
+                        Grid.SetRow(SecondaryViewportPanel, 0);
+                        Grid.SetColumn(SecondaryViewportPanel, 1);
+                        Grid.SetRowSpan(SecondaryViewportPanel, 2);
+                        Grid.SetColumnSpan(SecondaryViewportPanel, 1);
+                    }
+                    if (ThirdViewportPanel != null) ThirdViewportPanel.Visibility = Visibility.Collapsed;
+                    if (FourthViewportPanel != null) FourthViewportPanel.Visibility = Visibility.Collapsed;
+                    if (VerticalSplitter != null) VerticalSplitter.Visibility = Visibility.Visible;
+                    
+                    // Initialize render targets and populate view selector
+                    InitializeSecondaryRenderTargets();
+                    RefreshSecondaryViewCameraList();
+                    
+                    // Force immediate placeholder render for secondary viewport
+                    if (SecondaryViewportImage != null && _secondaryViewCamera == null)
+                    {
+                        RenderPlaceholderToImage(SecondaryViewportImage, ref _secondaryBitmap, "Select a camera");
+                    }
+                    break;
+                    
+                case ViewportLayout.SplitHorizontal:
+                    // Split horizontal - two rows (Top/Bottom)
+                    if (splitColumn != null) splitColumn.Width = new GridLength(0);
+                    if (bottomRow != null) bottomRow.Height = new GridLength(1, GridUnitType.Star);
+                    if (MainViewportPanel != null) 
+                    {
+                        Grid.SetRowSpan(MainViewportPanel, 1);
+                        Grid.SetColumnSpan(MainViewportPanel, 2);
+                    }
+                    
+                    // Use ThirdViewportPanel for bottom (since it's in Row 1)
+                    if (ThirdViewportPanel != null)
+                    {
+                        ThirdViewportPanel.Visibility = Visibility.Visible;
+                        Grid.SetRow(ThirdViewportPanel, 1);
+                        Grid.SetColumn(ThirdViewportPanel, 0);
+                        Grid.SetRowSpan(ThirdViewportPanel, 1);
+                        Grid.SetColumnSpan(ThirdViewportPanel, 2);
+                    }
+                    if (SecondaryViewportPanel != null) SecondaryViewportPanel.Visibility = Visibility.Collapsed;
+                    if (FourthViewportPanel != null) FourthViewportPanel.Visibility = Visibility.Collapsed;
+                    if (VerticalSplitter != null) VerticalSplitter.Visibility = Visibility.Collapsed;
+                    
+                    // Initialize render targets and populate view selector
+                    InitializeSecondaryRenderTargets();
+                    RefreshThirdViewCameraList();
+                    
+                    // Force immediate placeholder render
+                    if (ThirdViewportImage != null && _thirdViewCamera == null)
+                    {
+                        RenderPlaceholderToImage(ThirdViewportImage, ref _thirdBitmap, "Select a camera");
+                    }
+                    break;
+                    
+                case ViewportLayout.Quad:
+                    // Quad view - 2x2 grid
+                    if (splitColumn != null) splitColumn.Width = new GridLength(1, GridUnitType.Star);
+                    if (bottomRow != null) bottomRow.Height = new GridLength(1, GridUnitType.Star);
+                    if (MainViewportPanel != null) 
+                    {
+                        Grid.SetRowSpan(MainViewportPanel, 1);
+                        Grid.SetColumnSpan(MainViewportPanel, 1);
+                    }
+                    
+                    // Show all secondary panels in correct positions
+                    if (SecondaryViewportPanel != null)
+                    {
+                        SecondaryViewportPanel.Visibility = Visibility.Visible;
+                        Grid.SetRow(SecondaryViewportPanel, 0);
+                        Grid.SetColumn(SecondaryViewportPanel, 1);
+                        Grid.SetRowSpan(SecondaryViewportPanel, 1);
+                        Grid.SetColumnSpan(SecondaryViewportPanel, 1);
+                    }
+                    if (ThirdViewportPanel != null) 
+                    {
+                        ThirdViewportPanel.Visibility = Visibility.Visible;
+                        Grid.SetRow(ThirdViewportPanel, 1);
+                        Grid.SetColumn(ThirdViewportPanel, 0);
+                        Grid.SetRowSpan(ThirdViewportPanel, 1);
+                        Grid.SetColumnSpan(ThirdViewportPanel, 1);
+                    }
+                    if (FourthViewportPanel != null) 
+                    {
+                        FourthViewportPanel.Visibility = Visibility.Visible;
+                        Grid.SetRow(FourthViewportPanel, 1);
+                        Grid.SetColumn(FourthViewportPanel, 1);
+                        Grid.SetRowSpan(FourthViewportPanel, 1);
+                        Grid.SetColumnSpan(FourthViewportPanel, 1);
+                    }
+                    if (VerticalSplitter != null) VerticalSplitter.Visibility = Visibility.Visible;
+                    
+                    // Initialize render targets and populate all view selectors
+                    InitializeSecondaryRenderTargets();
+                    RefreshSecondaryViewCameraList();
+                    RefreshThirdViewCameraList();
+                    RefreshFourthViewCameraList();
+                    
+                    // Force immediate placeholder renders for all viewports
+                    if (SecondaryViewportImage != null && _secondaryViewCamera == null)
+                    {
+                        RenderPlaceholderToImage(SecondaryViewportImage, ref _secondaryBitmap, "Select a camera");
+                    }
+                    if (ThirdViewportImage != null && _thirdViewCamera == null)
+                    {
+                        RenderPlaceholderToImage(ThirdViewportImage, ref _thirdBitmap, "Select a camera");
+                    }
+                    if (FourthViewportImage != null && _fourthViewCamera == null)
+                    {
+                        RenderPlaceholderToImage(FourthViewportImage, ref _fourthBitmap, "Select a camera");
+                    }
+                    break;
+            }
+        }
+
+        private void UpdateLayoutButtonStyles()
+        {
+            // Update button foreground colors based on selection
+            var activeColor = new SolidColorBrush(Color.FromRgb(63, 169, 245)); // #3FA9F5
+            var inactiveColor = new SolidColorBrush(Color.FromRgb(128, 128, 128)); // #808080
+
+            if (SingleViewBtn != null)
+                SingleViewBtn.Foreground = _currentLayout == ViewportLayout.Single ? activeColor : inactiveColor;
+            if (SplitVerticalBtn != null)
+                SplitVerticalBtn.Foreground = _currentLayout == ViewportLayout.SplitVertical ? activeColor : inactiveColor;
+            if (SplitHorizontalBtn != null)
+                SplitHorizontalBtn.Foreground = _currentLayout == ViewportLayout.SplitHorizontal ? activeColor : inactiveColor;
+            if (QuadViewBtn != null)
+                QuadViewBtn.Foreground = _currentLayout == ViewportLayout.Quad ? activeColor : inactiveColor;
+        }
+
+        #endregion
+
+        #region Camera Selection & Preview
+        
+        /// <summary>
+        /// Show/Hide the PIP camera preview.
+        /// </summary>
+        private void OnShowPipClick(object sender, RoutedEventArgs e)
+        {
+            // Find the first camera in the scene
+            var scene = _currentScene ?? ProjectData.Current?.ActiveScene;
+            if (scene?.Entities == null) return;
+            
+            // If a camera is already being previewed, toggle it off
+            if (CameraPreviewService.Instance.CurrentPreviewCamera != null)
+            {
+                CameraPreviewService.Instance.ClosePreview();
+                return;
+            }
+            
+            // Find the first available camera
+            var camera = FindFirstCamera(scene);
+            if (camera != null)
+            {
+                CameraPreviewService.Instance.ShowPreview(camera);
+            }
+        }
+        
+        private ECS.GameEntity FindFirstCamera(Scene scene)
+        {
+            foreach (var entity in scene.Entities)
+            {
+                var result = FindCameraInHierarchy(entity);
+                if (result != null) return result;
+            }
+            return null;
+        }
+        
+        private ECS.GameEntity FindCameraInHierarchy(ECS.GameEntity entity)
+        {
+            if (entity.GetComponent<ECS.Components.Rendering.Camera>() != null)
+                return entity;
+            
+            if (entity.Children != null)
+            {
+                foreach (var child in entity.Children)
+                {
+                    var result = FindCameraInHierarchy(child);
+                    if (result != null) return result;
+                }
+            }
+            return null;
+        }
+        
+        // Saved Free Camera position for when we return from viewing through a game camera
+        private float _savedFreeCamPosX, _savedFreeCamPosY, _savedFreeCamPosZ;
+        private float _savedFreeCamYaw, _savedFreeCamPitch;
+        private bool _hasSavedFreeCamPosition;
+        
+        // Saved grid visibility state
+        private bool _savedGridVisibility;
+        
+        // Flag to indicate we're viewing through a game camera (no movement allowed)
+        private bool _isViewingThroughGameCamera;
+
+        private void OnCameraSelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            // Skip if we're just refreshing the list programmatically
+            if (_isRefreshingCameraList) return;
+            
+            if (CameraSelector.SelectedIndex > 0)
+            {
+                // User selected a game camera - switch viewport to that camera's view
+                if (CameraSelector.SelectedItem is ComboBoxItem item && item.Tag is ECS.GameEntity cameraEntity)
+                {
+                    var camera = cameraEntity.GetComponent<ECS.Components.Rendering.Camera>();
+                    if (camera != null)
+                    {
+                        // Save current Free Camera position before switching (only if not already viewing through a game camera)
+                        if (!_isViewingThroughGameCamera && _cameraController != null)
+                        {
+                            _savedFreeCamPosX = _cameraController.PositionX;
+                            _savedFreeCamPosY = _cameraController.PositionY;
+                            _savedFreeCamPosZ = _cameraController.PositionZ;
+                            _savedFreeCamYaw = _cameraController.Yaw;
+                            _savedFreeCamPitch = _cameraController.Pitch;
+                            _hasSavedFreeCamPosition = true;
+                            
+                            // Save and hide grid
+                            _savedGridVisibility = EditorViewportService.Instance.IsGridVisible;
+                        }
+                        
+                        // Get camera position and rotation
+                        var pos = cameraEntity.Transform.LocalPosition;
+                        var rot = cameraEntity.Transform.LocalRotation;
+                        
+                        // Use the new method that properly handles all 3 rotation axes (pitch, yaw, roll)
+                        // Entity Euler: rot.X = pitch, rot.Y = yaw, rot.Z = roll
+                        _cameraController?.SetFromEntityTransform(
+                            pos.X, pos.Y, pos.Z,
+                            rot.X, rot.Y, rot.Z);
+                        
+                        // Mark that we're viewing through a game camera (disable movement)
+                        _isViewingThroughGameCamera = true;
+                        
+                        // Clear all selections - no gizmos should be visible when viewing through a game camera
+                        SelectionService.Instance.ClearSelection();
+                        
+                        // Hide the grid when viewing through a game camera
+                        EditorViewportService.Instance.IsGridVisible = false;
+                        
+                        // DON'T show PIP automatically - user must double-click or use context menu
+                        // ShowCameraPreview(cameraEntity);
+                        
+                        // DON'T select the camera entity - we don't want the FOV gizmo to appear
+                        // The user is just "looking through" this camera, not editing it
+                    }
+                }
+            }
+            else
+            {
+                // Free Camera selected - restore saved position and enable movement
+                _isViewingThroughGameCamera = false;
+                
+                // Restore saved Free Camera position
+                if (_hasSavedFreeCamPosition && _cameraController != null)
+                {
+                    _cameraController.SetPositionAndRotation(
+                        _savedFreeCamPosX, _savedFreeCamPosY, _savedFreeCamPosZ,
+                        _savedFreeCamYaw, _savedFreeCamPitch);
+                    
+                    // Restore grid visibility
+                    EditorViewportService.Instance.IsGridVisible = _savedGridVisibility;
+                }
+                
+                // PIP is now handled by CameraPreviewOverlay
+                // Just close via the service
+                CameraPreviewService.Instance.ClosePreview();
+            }
+        }
+
+        /// <summary>
+        /// Refresh the camera selector with all cameras in the scene.
+        /// </summary>
+        public void RefreshCameraList()
+        {
+            if (CameraSelector == null) return;
+            
+            // Prevent camera jumping while refreshing
+            _isRefreshingCameraList = true;
+            
+            try
+            {
+                CameraSelector.Items.Clear();
+                
+                // Add free camera option
+                var freeItem = new ComboBoxItem 
+                { 
+                    Content = "Free Camera",
+                    Foreground = new SolidColorBrush(Color.FromRgb(128, 128, 128))
+                };
+                CameraSelector.Items.Add(freeItem);
+                
+                // Find all cameras in scene
+                var scene = _currentScene ?? ProjectData.Current?.ActiveScene;
+                if (scene?.Entities != null)
+                {
+                    foreach (var entity in scene.Entities)
+                    {
+                        AddCamerasFromEntity(entity);
+                    }
+                }
+                
+                CameraSelector.SelectedIndex = 0;
+            }
+            finally
+            {
+                _isRefreshingCameraList = false;
+            }
+        }
+
+        private void AddCamerasFromEntity(ECS.GameEntity entity)
+        {
+            var camera = entity.GetComponent<ECS.Components.Rendering.Camera>();
+            if (camera != null)
+            {
+                var isMain = camera.CameraType == ECS.Components.Rendering.CameraType.MainCamera;
+                var item = new ComboBoxItem
+                {
+                    Content = $"{entity.Name} ({(isMain ? "Main" : "Game")})",
+                    Tag = entity,
+                    Foreground = isMain 
+                        ? new SolidColorBrush(Color.FromRgb(155, 89, 182))  // Purple
+                        : new SolidColorBrush(Color.FromRgb(86, 156, 214))   // Blue
+                };
+                CameraSelector.Items.Add(item);
+            }
+            
+            if (entity.Children != null)
+            {
+                foreach (var child in entity.Children)
+                {
+                    AddCamerasFromEntity(child);
+                }
+            }
+        }
+
+        // PIP preview is now handled by CameraPreviewOverlay in WorldEditorView
+        // These methods are kept for backwards compatibility but do nothing
+
+        #endregion
+
+        #region Play Mode & Input Forwarding
+
+        /// <summary>
+        /// Enter play mode - forward inputs to main camera.
+        /// </summary>
+        public void EnterPlayMode()
+        {
+            _isPlayMode = true;
+            if (PlayModeBadge != null)
+                PlayModeBadge.Visibility = Visibility.Visible;
+            
+            // Initialize input forwarding
+            InputBindingsService.Instance.Initialize();
+            InputBindingsService.Instance.EnableGameInputForwarding = true;
+        }
+
+        /// <summary>
+        /// Exit play mode - return to editor controls.
+        /// </summary>
+        public void ExitPlayMode()
+        {
+            _isPlayMode = false;
+            if (PlayModeBadge != null)
+                PlayModeBadge.Visibility = Visibility.Collapsed;
+            
+            InputBindingsService.Instance.EnableGameInputForwarding = false;
+        }
+
+        /// <summary>
+        /// Toggle play mode.
+        /// </summary>
+        public void TogglePlayMode()
+        {
+            if (_isPlayMode)
+                ExitPlayMode();
+            else
+                EnterPlayMode();
+        }
+
+        /// <summary>
+        /// Update fly mode indicator.
+        /// </summary>
+        public void UpdateFlyModeIndicator(bool isActive)
+        {
+            if (FlyModeBadge != null)
+                FlyModeBadge.Visibility = isActive ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        #endregion
+
+        #region Secondary Viewport / Split View
+        
+        // Render target IDs for secondary viewports
+        private uint _secondaryRenderTargetId;
+        private uint _thirdRenderTargetId;
+        private uint _fourthRenderTargetId;
+        
+        // WriteableBitmaps for displaying rendered content
+        private WriteableBitmap _secondaryBitmap;
+        private WriteableBitmap _thirdBitmap;
+        private WriteableBitmap _fourthBitmap;
+        
+        // Currently selected camera for secondary views
+        private ECS.GameEntity _secondaryViewCamera;
+        private ECS.GameEntity _thirdViewCamera;
+        private ECS.GameEntity _fourthViewCamera;
+        
+        // Active viewport tracking (0 = main, 1 = secondary, 2 = third, 3 = fourth)
+        private int _activeViewportIndex = 0;
+        
+        // Render timing for passive viewports (66ms = ~15 FPS)
+        private DateTime _lastPassiveRenderTime = DateTime.MinValue;
+        private const int PassiveViewportRenderIntervalMs = 66;
+        
+        /// <summary>
+        /// Handle view selection change in secondary viewport.
+        /// </summary>
+        private void OnSecondaryViewCameraChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (SecondaryViewCameraSelector?.SelectedItem is ComboBoxItem item && item.Tag is ECS.GameEntity cameraEntity)
+            {
+                _secondaryViewCamera = cameraEntity;
+                UpdateViewInfo(SecondaryViewCameraInfo, SecondaryViewDetails, SecondaryViewLabel, cameraEntity);
+                // Hide overlay when camera is selected
+                if (SecondaryViewportOverlayInfo != null)
+                    SecondaryViewportOverlayInfo.Visibility = Visibility.Collapsed;
+                
+                // Force immediate GPU render of the camera view (viewport index 1)
+                RenderViewportWithGPU(1, cameraEntity, SecondaryViewportImage);
+            }
+            else
+            {
+                _secondaryViewCamera = null;
+                MultiViewportRenderService.Instance.SetViewportCamera(1, null);
+                
+                if (SecondaryViewCameraInfo != null)
+                    SecondaryViewCameraInfo.Text = "Select a camera";
+                if (SecondaryViewDetails != null)
+                    SecondaryViewDetails.Text = "Use the dropdown above";
+                if (SecondaryViewLabel != null)
+                    SecondaryViewLabel.Text = "No Camera";
+                // Show overlay when no camera
+                if (SecondaryViewportOverlayInfo != null)
+                    SecondaryViewportOverlayInfo.Visibility = Visibility.Visible;
+                
+                // Show placeholder image
+                if (SecondaryViewportImage != null)
+                {
+                    RenderPlaceholderToImage(SecondaryViewportImage, ref _secondaryBitmap, "Select a camera");
+                }
+            }
+        }
+        
+        /// <summary>
+        /// Handle view selection change in third viewport.
+        /// </summary>
+        private void OnThirdViewCameraChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (ThirdViewCameraSelector?.SelectedItem is ComboBoxItem item && item.Tag is ECS.GameEntity cameraEntity)
+            {
+                _thirdViewCamera = cameraEntity;
+                UpdateViewInfo(ThirdViewInfo, null, ThirdViewLabel, cameraEntity);
+                if (ThirdViewportOverlayInfo != null)
+                    ThirdViewportOverlayInfo.Visibility = Visibility.Collapsed;
+                
+                // Force immediate GPU render (viewport index 2)
+                RenderViewportWithGPU(2, cameraEntity, ThirdViewportImage);
+            }
+            else
+            {
+                _thirdViewCamera = null;
+                MultiViewportRenderService.Instance.SetViewportCamera(2, null);
+                
+                if (ThirdViewInfo != null)
+                    ThirdViewInfo.Text = "Select a camera";
+                if (ThirdViewLabel != null)
+                    ThirdViewLabel.Text = "No Camera";
+                if (ThirdViewportOverlayInfo != null)
+                    ThirdViewportOverlayInfo.Visibility = Visibility.Visible;
+                
+                if (ThirdViewportImage != null)
+                {
+                    RenderPlaceholderToImage(ThirdViewportImage, ref _thirdBitmap, "Select a camera");
+                }
+            }
+        }
+        
+        /// <summary>
+        /// Handle view selection change in fourth viewport.
+        /// </summary>
+        private void OnFourthViewCameraChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (FourthViewCameraSelector?.SelectedItem is ComboBoxItem item && item.Tag is ECS.GameEntity cameraEntity)
+            {
+                _fourthViewCamera = cameraEntity;
+                UpdateViewInfo(FourthViewInfo, null, FourthViewLabel, cameraEntity);
+                if (FourthViewportOverlayInfo != null)
+                    FourthViewportOverlayInfo.Visibility = Visibility.Collapsed;
+                
+                // Force immediate GPU render (viewport index 3)
+                RenderViewportWithGPU(3, cameraEntity, FourthViewportImage);
+            }
+            else
+            {
+                _fourthViewCamera = null;
+                MultiViewportRenderService.Instance.SetViewportCamera(3, null);
+                
+                if (FourthViewInfo != null)
+                    FourthViewInfo.Text = "Select a camera";
+                if (FourthViewLabel != null)
+                    FourthViewLabel.Text = "No Camera";
+                if (FourthViewportOverlayInfo != null)
+                    FourthViewportOverlayInfo.Visibility = Visibility.Visible;
+                
+                if (FourthViewportImage != null)
+                {
+                    RenderPlaceholderToImage(FourthViewportImage, ref _fourthBitmap, "Select a camera");
+                }
+            }
+        }
+        
+        /// <summary>
+        /// Update the view info display for a viewport with camera info.
+        /// </summary>
+        private void UpdateViewInfo(TextBlock infoBlock, TextBlock detailsBlock, TextBlock labelBlock, 
+                                    ECS.GameEntity cameraEntity)
+        {
+            if (cameraEntity == null) return;
+            
+            var camera = cameraEntity.GetComponent<ECS.Components.Rendering.Camera>();
+            if (camera != null)
+            {
+                if (labelBlock != null)
+                    labelBlock.Text = cameraEntity.Name;
+                
+                if (infoBlock != null)
+                {
+                    var pos = cameraEntity.Transform?.LocalPosition ?? new ECS.Vector3(0, 0, 0);
+                    infoBlock.Text = cameraEntity.Name;
+                    if (detailsBlock != null)
+                    {
+                        detailsBlock.Text = $"FOV: {camera.FieldOfView:F0}° | Pos: ({pos.X:F1}, {pos.Y:F1}, {pos.Z:F1})";
+                    }
+                }
+            }
+        }
+        
+        /// <summary>
+        /// Close the secondary viewport and return to single view.
+        /// </summary>
+        private void OnCloseSecondaryView(object sender, RoutedEventArgs e)
+        {
+            _currentLayout = ViewportLayout.Single;
+            UpdateLayoutButtonStyles();
+            ApplyViewportLayout();
+            CleanupSecondaryRenderTargets();
+        }
+        
+        /// <summary>
+        /// Populate the secondary view camera selector with scene cameras only.
+        /// </summary>
+        private void RefreshSecondaryViewCameraList()
+        {
+            PopulateCameraSelector(SecondaryViewCameraSelector);
+        }
+        
+        /// <summary>
+        /// Populate the third view camera selector.
+        /// </summary>
+        private void RefreshThirdViewCameraList()
+        {
+            PopulateCameraSelector(ThirdViewCameraSelector);
+        }
+        
+        /// <summary>
+        /// Populate the fourth view camera selector.
+        /// </summary>
+        private void RefreshFourthViewCameraList()
+        {
+            PopulateCameraSelector(FourthViewCameraSelector);
+        }
+        
+        /// <summary>
+        /// Helper to populate a view selector ComboBox with scene cameras only.
+        /// </summary>
+        private void PopulateCameraSelector(ComboBox selector)
+        {
+            if (selector == null) return;
+            
+            selector.Items.Clear();
+            
+            // Add placeholder
+            var placeholderItem = new ComboBoxItem
+            {
+                Content = "Select Camera...",
+                Foreground = new SolidColorBrush(Color.FromRgb(128, 128, 128))
+            };
+            selector.Items.Add(placeholderItem);
+            
+            // Add cameras from scene
+            var scene = _currentScene ?? ProjectData.Current?.ActiveScene;
+            if (scene?.Entities != null)
+            {
+                foreach (var entity in scene.Entities)
+                {
+                    AddCamerasToViewSelector(selector, entity);
+                }
+            }
+            
+            selector.SelectedIndex = 0;
+        }
+        
+        private void AddCamerasToViewSelector(ComboBox selector, ECS.GameEntity entity)
+        {
+            var camera = entity.GetComponent<ECS.Components.Rendering.Camera>();
+            if (camera != null)
+            {
+                var isMain = camera.CameraType == ECS.Components.Rendering.CameraType.MainCamera;
+                var item = new ComboBoxItem
+                {
+                    Content = $"?? {entity.Name} ({(isMain ? "Main" : "Game")})",
+                    Tag = entity,
+                    Foreground = isMain
+                        ? new SolidColorBrush(Color.FromRgb(155, 89, 182))
+                        : new SolidColorBrush(Color.FromRgb(86, 156, 214))
+                };
+                selector.Items.Add(item);
+            }
+            
+            if (entity.Children != null)
+            {
+                foreach (var child in entity.Children)
+                {
+                    AddCamerasToViewSelector(selector, child);
+                }
+            }
+        }
+        
+        /// <summary>
+        /// Create camera parameters from a game camera entity.
+        /// </summary>
+        private VortexAPI.ViewportCameraDesc CreateCameraFromEntity(ECS.GameEntity cameraEntity)
+        {
+            if (cameraEntity == null || cameraEntity.Transform == null)
+            {
+                // Return a default perspective camera
+                return VortexAPI.ViewportCameraDesc.CreatePerspective(0, 5, -10, 0, 0, 0, 0, 1, 0, 60f);
+            }
+            
+            var camera = cameraEntity.GetComponent<ECS.Components.Rendering.Camera>();
+            var pos = cameraEntity.Transform.LocalPosition;
+            var rot = cameraEntity.Transform.LocalRotation;
+            
+            // Calculate forward direction from rotation (Euler angles in degrees)
+            float yaw = rot.Y * (float)Math.PI / 180f;
+            float pitch = rot.X * (float)Math.PI / 180f;
+            
+            float forwardX = (float)(Math.Cos(pitch) * Math.Sin(yaw));
+            float forwardY = (float)(-Math.Sin(pitch));
+            float forwardZ = (float)(Math.Cos(pitch) * Math.Cos(yaw));
+            
+            // Target is position + forward
+            float targetX = pos.X + forwardX;
+            float targetY = pos.Y + forwardY;
+            float targetZ = pos.Z + forwardZ;
+            
+            float fov = camera?.FieldOfView ?? 60f;
+            float nearClip = camera?.NearClip ?? 0.1f;
+            float farClip = camera?.FarClip ?? 1000f;
+            
+            return VortexAPI.ViewportCameraDesc.CreatePerspective(
+                pos.X, pos.Y, pos.Z,
+                targetX, targetY, targetZ,
+                0, 1, 0,
+                fov, nearClip, farClip);
+        }
+        
+        /// <summary>
+        /// Initialize render targets for secondary viewports using MultiViewportRenderService.
+        /// Viewport indices: 0 = PIP, 1 = Secondary, 2 = Third, 3 = Fourth
+        /// QUALITY: Using 960x540 for split viewports (16:9 aspect ratio)
+        /// </summary>
+        private void InitializeSecondaryRenderTargets()
+        {
+            // QUALITY: Higher resolution for sharper previews
+            const int targetWidth = 960;
+            const int targetHeight = 540;
+            
+            var service = MultiViewportRenderService.Instance;
+            
+            // Initialize based on layout
+            switch (_currentLayout)
+            {
+                case ViewportLayout.SplitVertical:
+                    // Only secondary viewport needed
+                    if (!service.IsViewportReady(1))
+                    {
+                        service.InitializeViewport(1, targetWidth, targetHeight);
+                    }
+                    break;
+                    
+                case ViewportLayout.SplitHorizontal:
+                    // Only third viewport needed (bottom)
+                    if (!service.IsViewportReady(2))
+                    {
+                        service.InitializeViewport(2, targetWidth, targetHeight);
+                    }
+                    break;
+                    
+                case ViewportLayout.Quad:
+                    // All three secondary viewports needed
+                    if (!service.IsViewportReady(1))
+                    {
+                        service.InitializeViewport(1, targetWidth, targetHeight);
+                    }
+                    if (!service.IsViewportReady(2))
+                    {
+                        service.InitializeViewport(2, targetWidth, targetHeight);
+                    }
+                    if (!service.IsViewportReady(3))
+                    {
+                        service.InitializeViewport(3, targetWidth, targetHeight);
+                    }
+                    break;
+            }
+        }
+        
+        /// <summary>
+        /// Cleanup render targets when closing split view.
+        /// </summary>
+        private void CleanupSecondaryRenderTargets()
+        {
+            var service = MultiViewportRenderService.Instance;
+            
+            // Shutdown secondary viewports (keep PIP - index 0)
+            service.ShutdownViewport(1);
+            service.ShutdownViewport(2);
+            service.ShutdownViewport(3);
+            
+            // Also cleanup legacy resources if they exist
+            if (_secondaryRenderTargetId > 0)
+            {
+                VortexAPI.DestroySecondaryRenderTarget(_secondaryRenderTargetId);
+                _secondaryRenderTargetId = 0;
+                _secondaryBitmap = null;
+            }
+            if (_thirdRenderTargetId > 0)
+            {
+                VortexAPI.DestroySecondaryRenderTarget(_thirdRenderTargetId);
+                _thirdRenderTargetId = 0;
+                _thirdBitmap = null;
+            }
+            if (_fourthRenderTargetId > 0)
+            {
+                VortexAPI.DestroySecondaryRenderTarget(_fourthRenderTargetId);
+                _fourthRenderTargetId = 0;
+                _fourthBitmap = null;
+            }
+            
+            _secondaryViewCamera = null;
+            _thirdViewCamera = null;
+            _fourthViewCamera = null;
+        }
+        
+        /// <summary>
+        /// Render and update secondary viewports with GPU-accelerated camera views.
+        /// Uses MultiViewportRenderService for proper GPU rendering.
+        /// OPTIMIZED: Only renders when a camera is selected, no continuous placeholder rendering.
+        /// </summary>
+        private void UpdateSecondaryViewports()
+        {
+            if (_currentLayout == ViewportLayout.Single) return;
+            
+            // The MultiViewportRenderService handles its own throttling
+            // Viewport indices: 0 = PIP, 1 = Secondary, 2 = Third, 3 = Fourth
+            
+            // Update secondary viewport (Split Vertical and Quad) - Index 1
+            // ONLY render when camera is selected - placeholder is rendered once on camera change
+            if (_currentLayout == ViewportLayout.SplitVertical || _currentLayout == ViewportLayout.Quad)
+            {
+                if (_secondaryViewCamera != null && SecondaryViewportImage != null)
+                {
+                    RenderViewportWithGPU(1, _secondaryViewCamera, SecondaryViewportImage);
+                    if (SecondaryViewportOverlayInfo != null)
+                        SecondaryViewportOverlayInfo.Visibility = Visibility.Collapsed;
+                }
+                // No else - placeholder is rendered once in OnSecondaryViewCameraChanged
+            }
+            
+            // Update third viewport (Split Horizontal and Quad) - Index 2
+            if (_currentLayout == ViewportLayout.SplitHorizontal || _currentLayout == ViewportLayout.Quad)
+            {
+                if (_thirdViewCamera != null && ThirdViewportImage != null)
+                {
+                    RenderViewportWithGPU(2, _thirdViewCamera, ThirdViewportImage);
+                    if (ThirdViewportOverlayInfo != null)
+                        ThirdViewportOverlayInfo.Visibility = Visibility.Collapsed;
+                }
+                // No else - placeholder is rendered once in OnThirdViewCameraChanged
+            }
+            
+            // Update fourth viewport (Quad only) - Index 3
+            if (_currentLayout == ViewportLayout.Quad)
+            {
+                if (_fourthViewCamera != null && FourthViewportImage != null)
+                {
+                    RenderViewportWithGPU(3, _fourthViewCamera, FourthViewportImage);
+                    if (FourthViewportOverlayInfo != null)
+                        FourthViewportOverlayInfo.Visibility = Visibility.Collapsed;
+                }
+                // No else - placeholder is rendered once in OnFourthViewCameraChanged
+            }
+        }
+        
+        /// <summary>
+        /// Render a viewport using GPU acceleration via MultiViewportRenderService.
+        /// Uses higher resolution for better quality.
+        /// </summary>
+        private void RenderViewportWithGPU(int viewportIndex, ECS.GameEntity cameraEntity, System.Windows.Controls.Image imageControl)
+        {
+            if (cameraEntity == null || imageControl == null) return;
+            
+            var service = MultiViewportRenderService.Instance;
+            
+            // Initialize viewport if not ready - QUALITY: Higher resolution
+            if (!service.IsViewportReady(viewportIndex))
+            {
+                // PIP uses 480x270, split viewports use 960x540 (16:9 aspect ratio)
+                int width = viewportIndex == 0 ? 480 : 960;
+                int height = viewportIndex == 0 ? 270 : 540;
+                service.InitializeViewport(viewportIndex, width, height);
+            }
+            
+            // Set camera and render
+            service.SetViewportCamera(viewportIndex, cameraEntity);
+            service.RenderViewport(viewportIndex);
+            
+            // Update image source
+            var bitmap = service.GetViewportBitmap(viewportIndex);
+            if (bitmap != null && imageControl.Source != bitmap)
+            {
+                imageControl.Source = bitmap;
+            }
+        }
+        
+        /// <summary>
+        /// Legacy method - now uses MultiViewportRenderService internally.
+        /// </summary>
+        private void RenderCameraToImage(ECS.GameEntity cameraEntity, System.Windows.Controls.Image imageControl, ref WriteableBitmap bitmap)
+        {
+            // Determine viewport index based on which image control this is
+            int viewportIndex = 1; // Default to secondary
+            if (imageControl == ThirdViewportImage) viewportIndex = 2;
+            else if (imageControl == FourthViewportImage) viewportIndex = 3;
+            
+            RenderViewportWithGPU(viewportIndex, cameraEntity, imageControl);
+        }
+        
+        /// <summary>
+        /// Copy pixels from GPU render target to WriteableBitmap.
+        /// </summary>
+        private bool CopyRenderTargetToBitmap(uint targetId, WriteableBitmap bitmap)
+        {
+            if (bitmap == null || targetId == 0) return false;
+            
+            int width = bitmap.PixelWidth;
+            int height = bitmap.PixelHeight;
+            int stride = bitmap.BackBufferStride;
+            
+            try
+            {
+                // Read pixels from engine - returns pointer to pixel data
+                uint outWidth, outHeight, outRowPitch;
+                IntPtr pixelData = VortexAPI.ReadSecondaryRenderTargetPixels(targetId, out outWidth, out outHeight, out outRowPitch);
+                
+                if (pixelData == IntPtr.Zero) return false;
+                
+                bitmap.Lock();
+                try
+                {
+                    // Copy pixel data row by row (handle different row pitches)
+                    IntPtr destBuffer = bitmap.BackBuffer;
+                    int copyWidth = Math.Min(width, (int)outWidth) * 4; // BGRA = 4 bytes
+                    int srcStride = (int)outRowPitch;
+                    int dstStride = stride;
+                    
+                    for (int y = 0; y < Math.Min(height, (int)outHeight); y++)
+                    {
+                        IntPtr srcRow = IntPtr.Add(pixelData, y * srcStride);
+                        IntPtr dstRow = IntPtr.Add(destBuffer, y * dstStride);
+                        
+                        // Copy one row
+                        for (int i = 0; i < copyWidth; i++)
+                        {
+                            Marshal.WriteByte(dstRow, i, Marshal.ReadByte(srcRow, i));
+                        }
+                    }
+                    
+                    bitmap.AddDirtyRect(new Int32Rect(0, 0, width, height));
+                }
+                finally
+                {
+                    bitmap.Unlock();
+                }
+                
+                // Release the engine's pixel buffer
+                VortexAPI.ReleaseSecondaryRenderTargetPixels(targetId);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+        
+        /// <summary>
+        /// Render a simulated camera view when GPU rendering is not available.
+        /// Shows a visual representation of what the camera would see.
+        /// </summary>
+        private void RenderSimulatedCameraView(WriteableBitmap bitmap, ECS.GameEntity cameraEntity, ECS.Components.Rendering.Camera camera)
+        {
+            if (bitmap == null) return;
+            
+            int width = bitmap.PixelWidth;
+            int height = bitmap.PixelHeight;
+            
+            bitmap.Lock();
+            try
+            {
+                IntPtr backBuffer = bitmap.BackBuffer;
+                int stride = bitmap.BackBufferStride;
+                
+                // Dark blue-gray background (similar to main viewport)
+                byte bgR = 26, bgG = 26, bgB = 30;
+                
+                for (int y = 0; y < height; y++)
+                {
+                    for (int x = 0; x < width; x++)
+                    {
+                        int offset = y * stride + x * 4;
+                        Marshal.WriteByte(backBuffer, offset + 0, bgB);
+                        Marshal.WriteByte(backBuffer, offset + 1, bgG);
+                        Marshal.WriteByte(backBuffer, offset + 2, bgR);
+                        Marshal.WriteByte(backBuffer, offset + 3, 255);
+                    }
+                }
+                
+                // Draw grid pattern (similar to main viewport)
+                byte gridColor = 40;
+                int gridSpacing = 20;
+                for (int y = 0; y < height; y += gridSpacing)
+                {
+                    for (int x = 0; x < width; x++)
+                    {
+                        int offset = y * stride + x * 4;
+                        Marshal.WriteByte(backBuffer, offset + 0, gridColor);
+                        Marshal.WriteByte(backBuffer, offset + 1, gridColor);
+                        Marshal.WriteByte(backBuffer, offset + 2, gridColor);
+                    }
+                }
+                for (int x = 0; x < width; x += gridSpacing)
+                {
+                    for (int y = 0; y < height; y++)
+                    {
+                        int offset = y * stride + x * 4;
+                        Marshal.WriteByte(backBuffer, offset + 0, gridColor);
+                        Marshal.WriteByte(backBuffer, offset + 1, gridColor);
+                        Marshal.WriteByte(backBuffer, offset + 2, gridColor);
+                    }
+                }
+                
+                // Draw scene objects as simple shapes from this camera's perspective
+                var scene = _currentScene ?? ProjectData.Current?.ActiveScene;
+                if (scene?.Entities != null && cameraEntity?.Transform != null)
+                {
+                    var camPos = cameraEntity.Transform.LocalPosition;
+                    var camRot = cameraEntity.Transform.LocalRotation;
+                    float fov = camera?.FieldOfView ?? 60f;
+                    
+                    foreach (var entity in scene.Entities)
+                    {
+                        DrawEntityInPreview(backBuffer, stride, width, height, entity, camPos, camRot, fov, cameraEntity);
+                    }
+                }
+                
+                // Draw crosshair at center
+                int cx = width / 2;
+                int cy = height / 2;
+                DrawLine(backBuffer, stride, width, height, cx - 15, cy, cx - 5, cy, 180, 180, 180);
+                DrawLine(backBuffer, stride, width, height, cx + 5, cy, cx + 15, cy, 180, 180, 180);
+                DrawLine(backBuffer, stride, width, height, cx, cy - 15, cx, cy - 5, 180, 180, 180);
+                DrawLine(backBuffer, stride, width, height, cx, cy + 5, cx, cy + 15, 180, 180, 180);
+                
+                // Draw camera frustum border
+                DrawRect(backBuffer, stride, width, height, 0, 0, width, 2, 80, 80, 80); // Top
+                DrawRect(backBuffer, stride, width, height, 0, height - 2, width, height, 80, 80, 80); // Bottom
+                DrawRect(backBuffer, stride, width, height, 0, 0, 2, height, 80, 80, 80); // Left
+                DrawRect(backBuffer, stride, width, height, width - 2, 0, width, height, 80, 80, 80); // Right
+                
+                bitmap.AddDirtyRect(new Int32Rect(0, 0, width, height));
+            }
+            finally
+            {
+                bitmap.Unlock();
+            }
+        }
+        
+        /// <summary>
+        /// Draw an entity in the camera preview as a simple projected shape.
+        /// </summary>
+        private void DrawEntityInPreview(IntPtr buffer, int stride, int width, int height, 
+            ECS.GameEntity entity, ECS.Vector3 camPos, ECS.Vector3 camRot, float fov, ECS.GameEntity cameraEntity)
+        {
+            if (entity == null || entity.Transform == null) return;
+            if (entity == cameraEntity) return; // Don't draw the camera itself
+            
+            var pos = entity.Transform.LocalPosition;
+            
+            // Simple projection: transform world position to screen space
+            // Vector from camera to entity
+            float dx = pos.X - camPos.X;
+            float dy = pos.Y - camPos.Y;
+            float dz = pos.Z - camPos.Z;
+            
+            // Apply camera rotation (simplified - just yaw for now)
+            float yawRad = camRot.Y * (float)Math.PI / 180f;
+            float cosYaw = (float)Math.Cos(-yawRad);
+            float sinYaw = (float)Math.Sin(-yawRad);
+            
+            float rx = dx * cosYaw - dz * sinYaw;
+            float rz = dx * sinYaw + dz * cosYaw;
+            float ry = dy;
+            
+            // Only draw if in front of camera
+            if (rz <= 0.1f) return;
+            
+            // Project to screen
+            float fovRad = fov * (float)Math.PI / 180f;
+            float scale = (height / 2f) / (float)Math.Tan(fovRad / 2f);
+            
+            int screenX = width / 2 + (int)(rx * scale / rz);
+            int screenY = height / 2 - (int)(ry * scale / rz);
+            
+            // Determine size based on distance
+            float distance = (float)Math.Sqrt(rx * rx + ry * ry + rz * rz);
+            int size = Math.Max(2, Math.Min(30, (int)(20f / distance * 5f)));
+            
+            // Choose color based on entity type
+            byte r = 200, g = 200, b = 200;
+            
+            if (entity.GetComponent<ECS.Components.Rendering.Camera>() != null)
+            {
+                r = 86; g = 156; b = 214; // Blue for cameras
+            }
+            else if (entity.GetComponent<ECS.Components.Lighting.Light>() != null)
+            {
+                r = 255; g = 215; b = 0; // Gold for lights
+            }
+            else if (entity.GetComponent<ECS.Components.Rendering.MeshRenderer>() != null)
+            {
+                r = 180; g = 180; b = 180; // Gray for meshes
+            }
+            
+            // Draw filled rectangle for the entity
+            DrawRect(buffer, stride, width, height, 
+                screenX - size/2, screenY - size/2, 
+                screenX + size/2, screenY + size/2, 
+                r, g, b);
+            
+            // Draw children recursively
+            if (entity.Children != null)
+            {
+                foreach (var child in entity.Children)
+                {
+                    DrawEntityInPreview(buffer, stride, width, height, child, camPos, camRot, fov, cameraEntity);
+                }
+            }
+        }
+        
+        /// <summary>
+        /// Render a placeholder image when no camera is selected.
+        /// Uses higher resolution for quality.
+        /// </summary>
+        private void RenderPlaceholderToImage(System.Windows.Controls.Image imageControl, ref WriteableBitmap bitmap, string message)
+        {
+            if (imageControl == null) return;
+            
+            // QUALITY: Use same resolution as viewports (960x540)
+            const int targetWidth = 960;
+            const int targetHeight = 540;
+            
+            if (bitmap == null || bitmap.PixelWidth != targetWidth || bitmap.PixelHeight != targetHeight)
+            {
+                bitmap = new WriteableBitmap(targetWidth, targetHeight, 96, 96, PixelFormats.Bgra32, null);
+            }
+            
+            // Always ensure the image source is set
+            if (imageControl.Source != bitmap)
+            {
+                imageControl.Source = bitmap;
+            }
+            
+            bitmap.Lock();
+            try
+            {
+                IntPtr backBuffer = bitmap.BackBuffer;
+                int stride = bitmap.BackBufferStride;
+                
+                // Dark gray background with subtle grid pattern
+                for (int y = 0; y < targetHeight; y++)
+                {
+                    for (int x = 0; x < targetWidth; x++)
+                    {
+                        int offset = y * stride + x * 4;
+                        
+                        // Grid pattern instead of checkerboard
+                        bool isGridLine = (x % 40 == 0) || (y % 40 == 0);
+                        byte gray = isGridLine ? (byte)35 : (byte)26;
+                        
+                        Marshal.WriteByte(backBuffer, offset + 0, gray);
+                        Marshal.WriteByte(backBuffer, offset + 1, gray);
+                        Marshal.WriteByte(backBuffer, offset + 2, gray);
+                        Marshal.WriteByte(backBuffer, offset + 3, 255);
+                    }
+                }
+                
+                // Draw camera icon in center
+                int cx = targetWidth / 2;
+                int cy = targetHeight / 2;
+                
+                // Camera body
+                DrawRect(backBuffer, stride, targetWidth, targetHeight, cx - 35, cy - 25, cx + 25, cy + 25, 60, 60, 60);
+                // Camera lens
+                DrawRect(backBuffer, stride, targetWidth, targetHeight, cx + 25, cy - 15, cx + 45, cy + 15, 80, 80, 80);
+                // Viewfinder
+                DrawRect(backBuffer, stride, targetWidth, targetHeight, cx - 25, cy - 35, cx - 5, cy - 25, 50, 50, 50);
+                
+                // Draw "Select Camera" text area
+                DrawRect(backBuffer, stride, targetWidth, targetHeight, cx - 80, cy + 40, cx + 80, cy + 60, 40, 40, 40);
+                
+                bitmap.AddDirtyRect(new Int32Rect(0, 0, targetWidth, targetHeight));
+            }
+            finally
+            {
+                bitmap.Unlock();
+            }
+        }
+        
+        /// <summary>
+        /// Helper to draw a line on the bitmap.
+        /// </summary>
+        private void DrawLine(IntPtr buffer, int stride, int width, int height, int x1, int y1, int x2, int y2, byte r, byte g, byte b)
+        {
+            int dx = Math.Abs(x2 - x1);
+            int dy = Math.Abs(y2 - y1);
+            int sx = x1 < x2 ? 1 : -1;
+            int sy = y1 < y2 ? 1 : -1;
+            int err = dx - dy;
+            
+            while (true)
+            {
+                if (x1 >= 0 && x1 < width && y1 >= 0 && y1 < height)
+                {
+                    int offset = y1 * stride + x1 * 4;
+                    Marshal.WriteByte(buffer, offset + 0, b);
+                    Marshal.WriteByte(buffer, offset + 1, g);
+                    Marshal.WriteByte(buffer, offset + 2, r);
+                    Marshal.WriteByte(buffer, offset + 3, 255);
+                }
+                
+                if (x1 == x2 && y1 == y2) break;
+                int e2 = 2 * err;
+                if (e2 > -dy) { err -= dy; x1 += sx; }
+                if (e2 < dx) { err += dx; y1 += sy; }
+            }
+        }
+        
+        /// <summary>
+        /// Helper to draw a filled rectangle on the bitmap.
+        /// </summary>
+        private void DrawRect(IntPtr buffer, int stride, int width, int height, int x1, int y1, int x2, int y2, byte r, byte g, byte b)
+        {
+            for (int y = Math.Max(0, y1); y < Math.Min(height, y2); y++)
+            {
+                for (int x = Math.Max(0, x1); x < Math.Min(width, x2); x++)
+                {
+                    int offset = y * stride + x * 4;
+                    Marshal.WriteByte(buffer, offset + 0, b);
+                    Marshal.WriteByte(buffer, offset + 1, g);
+                    Marshal.WriteByte(buffer, offset + 2, r);
+                    Marshal.WriteByte(buffer, offset + 3, 255);
+                }
+            }
+        }
+        
+        /// <summary>
+        /// Copy rendered pixels from GPU render target to WPF Image control.
+        /// </summary>
+        private void CopyRenderTargetToImage(uint targetId, System.Windows.Controls.Image imageControl, ref WriteableBitmap bitmap)
+        {
+            if (imageControl == null || targetId == 0) return;
+            
+            const int testWidth = 512;
+            const int testHeight = 384;
+            
+            // Create bitmap if needed
+            if (bitmap == null || bitmap.PixelWidth != testWidth || bitmap.PixelHeight != testHeight)
+            {
+                bitmap = new WriteableBitmap(testWidth, testHeight, 96, 96, PixelFormats.Bgra32, null);
+                imageControl.Source = bitmap;
+            }
+            
+            // First test: Generate a test pattern to verify WPF pipeline works
+            bitmap.Lock();
+            try
+            {
+                int stride = bitmap.BackBufferStride;
+                IntPtr backBuffer = bitmap.BackBuffer;
+                
+                // Generate a gradient test pattern
+                for (int y = 0; y < testHeight; y++)
+                {
+                    for (int x = 0; x < testWidth; x++)
+                    {
+                        int offset = y * stride + x * 4;
+                        byte b = (byte)(x * 255 / testWidth);  // Blue gradient horizontal
+                        byte g = (byte)(y * 255 / testHeight); // Green gradient vertical
+                        byte r = 128; // Fixed red
+                        byte a = 255;
+                        
+                        Marshal.WriteByte(backBuffer, offset + 0, b);     // B
+                        Marshal.WriteByte(backBuffer, offset + 1, g);     // G
+                        Marshal.WriteByte(backBuffer, offset + 2, r);     // R
+                        Marshal.WriteByte(backBuffer, offset + 3, a);     // A
+                    }
+                }
+                
+                bitmap.AddDirtyRect(new Int32Rect(0, 0, testWidth, testHeight));
+            }
+            finally
+            {
+                bitmap.Unlock();
+            }
+        }
+        
+        /// <summary>
+        /// Set the active viewport when user clicks into it.
+        /// </summary>
+        private void SetActiveViewport(int viewportIndex)
+        {
+            _activeViewportIndex = viewportIndex;
+            
+            // Update visual indicators for active viewport
+            UpdateActiveViewportIndicators();
+        }
+        
+        /// <summary>
+        /// Update visual indicators to show which viewport is active.
+        /// </summary>
+        private void UpdateActiveViewportIndicators()
+        {
+            var activeBorderColor = new SolidColorBrush(Color.FromRgb(63, 169, 245)); // Blue
+            var inactiveBorderColor = new SolidColorBrush(Color.FromRgb(64, 64, 64)); // Gray
+            
+            if (MainViewportPanel != null)
+            {
+                MainViewportPanel.BorderBrush = _activeViewportIndex == 0 ? activeBorderColor : inactiveBorderColor;
+                MainViewportPanel.BorderThickness = _activeViewportIndex == 0 ? new Thickness(2) : new Thickness(1);
+            }
+            if (SecondaryViewportPanel != null)
+            {
+                SecondaryViewportPanel.BorderBrush = _activeViewportIndex == 1 ? activeBorderColor : inactiveBorderColor;
+                SecondaryViewportPanel.BorderThickness = _activeViewportIndex == 1 ? new Thickness(2) : new Thickness(1);
+            }
+            if (ThirdViewportPanel != null)
+            {
+                ThirdViewportPanel.BorderBrush = _activeViewportIndex == 2 ? activeBorderColor : inactiveBorderColor;
+                ThirdViewportPanel.BorderThickness = _activeViewportIndex == 2 ? new Thickness(2) : new Thickness(1);
+            }
+            if (FourthViewportPanel != null)
+            {
+                FourthViewportPanel.BorderBrush = _activeViewportIndex == 3 ? activeBorderColor : inactiveBorderColor;
+                FourthViewportPanel.BorderThickness = _activeViewportIndex == 3 ? new Thickness(2) : new Thickness(1);
             }
         }
 

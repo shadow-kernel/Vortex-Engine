@@ -9,6 +9,7 @@
 #include "DX12Pipeline3D.h"
 #include "DX12GridPipeline.h"
 #include "DX12DepthBuffer.h"
+#include "DX12RenderTarget.h"
 #include "DX12Geometry.h"
 #include "../Resources/Mesh.h"
 #include <d3d12.h>
@@ -16,6 +17,7 @@
 #include <vector>
 #include <chrono>
 #include <mutex>
+#include <unordered_map>
 
 
 namespace vortex::graphics::dx12
@@ -24,6 +26,9 @@ namespace vortex::graphics::dx12
 
 	// Maximum number of objects that can be rendered per frame
 	constexpr u32 MAX_RENDER_OBJECTS = 16384;
+	
+	// Maximum number of secondary render targets
+	constexpr u32 MAX_RENDER_TARGETS = 8;
 
 	struct RendererDesc
 	{
@@ -37,6 +42,21 @@ namespace vortex::graphics::dx12
 		id::id_type mesh_id{ id::invalid_id };
 		id::id_type material_id{ id::invalid_id };
 		DirectX::XMFLOAT4X4 world_matrix;
+	};
+	
+	/// <summary>
+	/// Camera parameters for secondary viewports.
+	/// </summary>
+	struct ViewportCamera
+	{
+		DirectX::XMFLOAT3 position{ 0.0f, 10.0f, 0.0f };
+		DirectX::XMFLOAT3 target{ 0.0f, 0.0f, 0.0f };
+		DirectX::XMFLOAT3 up{ 0.0f, 0.0f, -1.0f };
+		float fov_degrees{ 60.0f };
+		float near_clip{ 0.1f };
+		float far_clip{ 1000.0f };
+		bool orthographic{ true };
+		float ortho_size{ 20.0f };
 	};
 
 	class DX12Renderer
@@ -57,6 +77,7 @@ namespace vortex::graphics::dx12
 
 		// Camera
 		void set_camera(const DirectX::XMFLOAT3& position, const DirectX::XMFLOAT3& target, const DirectX::XMFLOAT3& up);
+
 
 		// Light settings
 		void set_directional_light(const DirectX::XMFLOAT3& direction, const DirectX::XMFLOAT3& color);
@@ -79,10 +100,69 @@ namespace vortex::graphics::dx12
 		void set_gizmos_visible(bool visible) { m_gizmos_visible = visible; }
 		bool are_gizmos_visible() const { return m_gizmos_visible; }
 
+		// Camera projection settings
+		void set_projection(float fov_degrees, float aspect, float near_clip, float far_clip);
+
+		// Camera gizmo rendering
+		void render_camera_gizmo(
+			const DirectX::XMFLOAT3& position,
+			const DirectX::XMFLOAT3& forward,
+			const DirectX::XMFLOAT3& right,
+			const DirectX::XMFLOAT3& up,
+			float near_width, float near_height,
+			float far_width, float far_height,
+			float near_dist, float far_dist,
+			const DirectX::XMFLOAT4& color);
+
 		// Performance statistics
 		int get_current_fps() const { return m_current_fps; }
 		int get_draw_call_count() const { return m_draw_call_count; }
 		int get_vertex_count() const { return m_vertex_count; }
+
+		// ============== Multi-Viewport Rendering ==============
+		
+		/// <summary>
+		/// Create a secondary render target for offscreen rendering.
+		/// Returns a unique ID for the render target.
+		/// </summary>
+		u32 create_render_target(u32 width, u32 height);
+		
+		/// <summary>
+		/// Destroy a render target by ID.
+		/// </summary>
+		void destroy_render_target(u32 target_id);
+		
+		/// <summary>
+		/// Resize a render target.
+		/// </summary>
+		bool resize_render_target(u32 target_id, u32 width, u32 height);
+		
+		/// <summary>
+		/// Render the scene to a secondary render target with a specific camera.
+		/// </summary>
+		void render_to_target(u32 target_id, const ViewportCamera& camera, bool render_grid = false);
+		
+		/// <summary>
+		/// Copy render target to staging buffer for CPU readback.
+		/// Must be called after render_to_target and before read_render_target_pixels.
+		/// </summary>
+		bool prepare_render_target_readback(u32 target_id);
+		
+		/// <summary>
+		/// Read pixel data from a render target (after prepare_render_target_readback).
+		/// Returns pointer to RGBA8 pixel data, or nullptr if not available.
+		/// </summary>
+		const void* read_render_target_pixels(u32 target_id, u32& out_width, u32& out_height, u32& out_row_pitch);
+		
+		/// <summary>
+		/// Release the mapped pixel data from read_render_target_pixels.
+		/// </summary>
+		void release_render_target_pixels(u32 target_id);
+		
+		/// <summary>
+		/// Check if a render target exists.
+		/// </summary>
+		bool has_render_target(u32 target_id) const;
 
 	private:
 		DX12Renderer() = default;
@@ -178,6 +258,12 @@ namespace vortex::graphics::dx12
 		DirectX::XMFLOAT3 m_camera_position{ 0.0f, 3.0f, -8.0f };
 		DirectX::XMFLOAT3 m_camera_target{ 0.0f, 0.0f, 0.0f };
 		DirectX::XMFLOAT3 m_camera_up{ 0.0f, 1.0f, 0.0f };
+		
+		// Projection parameters
+		float m_fov_degrees{ 60.0f };
+		float m_aspect_ratio{ 16.0f / 9.0f };
+		float m_near_clip{ 0.1f };
+		float m_far_clip{ 1000.0f };
 
 		// Lighting - brighter for better visibility
 		DirectX::XMFLOAT3 m_light_direction{ -0.3f, -0.8f, 0.5f };
@@ -201,5 +287,12 @@ namespace vortex::graphics::dx12
 		int m_vertex_count{ 0 };
 		int m_frame_count{ 0 };
 		std::chrono::high_resolution_clock::time_point m_last_fps_time;
+		
+		// Secondary render targets for multi-viewport rendering
+		std::unordered_map<u32, std::unique_ptr<DX12RenderTarget>> m_render_targets;
+		u32 m_next_render_target_id{ 1 };
+		
+		// Helper for rendering to a specific target
+		void render_scene_to_target(DX12RenderTarget* target, const ViewportCamera& camera, bool render_grid);
 	};
 }

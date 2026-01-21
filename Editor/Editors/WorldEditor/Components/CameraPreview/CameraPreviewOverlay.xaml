@@ -1,0 +1,103 @@
+<UserControl x:Class="Editor.Editors.WorldEditor.Components.CameraPreview.CameraPreviewOverlay"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+             mc:Ignorable="d" 
+             d:DesignHeight="200" d:DesignWidth="320"
+             IsHitTestVisible="True">
+    
+    <UserControl.Resources>
+        <!-- Tool Button Style -->
+        <Style x:Key="OverlayButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#AAAAAA"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" 
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#40FFFFFF"/>
+                    <Setter Property="Foreground" Value="White"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        
+        <DropShadowEffect x:Key="PipShadow" ShadowDepth="4" BlurRadius="12" Color="Black" Opacity="0.6"/>
+    </UserControl.Resources>
+    
+    <!-- Floating PIP Container - positioned bottom-right -->
+    <Border x:Name="PipContainer"
+            VerticalAlignment="Bottom" HorizontalAlignment="Right"
+            Width="320" Height="200" Margin="16"
+            Background="#F01E1E1E" BorderBrush="#FF9B59B6" BorderThickness="2"
+            CornerRadius="6" Visibility="Collapsed"
+            Effect="{StaticResource PipShadow}">
+        
+        <Grid>
+            <!-- Preview Image -->
+            <Border Background="#FF0A0A0A" CornerRadius="4" Margin="3">
+                <Grid>
+                    <!-- Rendered camera preview -->
+                    <Image x:Name="PreviewImage" Stretch="Fill"/>
+                    
+                    <!-- Loading indicator -->
+                    <Border x:Name="LoadingIndicator" Background="#80000000" 
+                            Visibility="Collapsed">
+                        <TextBlock Text="Loading..." Foreground="#808080" 
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   FontSize="11"/>
+                    </Border>
+                    
+                    <!-- Camera info overlay at bottom -->
+                    <Border VerticalAlignment="Bottom" Background="#D0000000" 
+                            Padding="10,6" CornerRadius="0,0,3,3">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock x:Name="CameraNameLabel" Text="Camera" 
+                                       Foreground="#DDDDDD" FontSize="11" FontWeight="SemiBold"
+                                       VerticalAlignment="Center"/>
+                            <TextBlock x:Name="CameraDetailsLabel" Grid.Column="1" Text="FOV: 60" 
+                                       Foreground="#909090" FontSize="9"
+                                       VerticalAlignment="Center"/>
+                        </Grid>
+                    </Border>
+                </Grid>
+            </Border>
+            
+            <!-- Header Badge -->
+            <Border VerticalAlignment="Top" HorizontalAlignment="Left" 
+                    Background="#C09B59B6" CornerRadius="0,4,6,0" Padding="10,4">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE714;" FontFamily="Segoe MDL2 Assets" 
+                               Foreground="White" FontSize="11" Margin="0,0,6,0"/>
+                    <TextBlock x:Name="CameraTypeLabel" Text="CAMERA" 
+                               Foreground="White" FontSize="9" FontWeight="Bold"
+                               VerticalAlignment="Center"/>
+                </StackPanel>
+            </Border>
+            
+            <!-- Close Button -->
+            <Button x:Name="CloseButton" 
+                    VerticalAlignment="Top" HorizontalAlignment="Right" 
+                    Style="{StaticResource OverlayButtonStyle}" 
+                    Margin="4" Width="24" Height="24"
+                    ToolTip="Close Preview (Esc)"
+                    Click="OnCloseClick">
+                <TextBlock Text="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="10"/>
+            </Button>
+        </Grid>
+    </Border>
+</UserControl>

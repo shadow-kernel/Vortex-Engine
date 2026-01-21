@@ -1,6 +1,7 @@
 ﻿using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using AvalonDock.Layout;
 using Editor.Core.Data;
 using Editor.Editors.WorldEditor.Components.FileExplorer.Services;
@@ -17,6 +18,28 @@ namespace Editor.Editors.WorldEditor
         {
             InitializeComponent();
             Loaded += OnLoaded;
+            
+            // Set custom placement for camera preview popup
+            CameraPreviewPopup.CustomPopupPlacementCallback = BottomRightPopupPlacement;
+        }
+        
+        /// <summary>
+        /// Custom placement callback for positioning the camera preview popup bottom-right
+        /// within the GamePreviewView bounds.
+        /// </summary>
+        private CustomPopupPlacement[] BottomRightPopupPlacement(Size popupSize, Size targetSize, Point offset)
+        {
+            // Position at bottom-right of the GamePreviewView
+            // Offset by toolbar (28px) at top and status bar (22px) at bottom
+            double x = targetSize.Width - popupSize.Width - 16;
+            double y = targetSize.Height - popupSize.Height - 38; // 22 (status bar) + 16 (margin)
+            
+            // Ensure it stays within bounds
+            x = System.Math.Max(16, x);
+            y = System.Math.Max(28, y); // Don't overlap toolbar
+            
+            var placement = new CustomPopupPlacement(new Point(x, y), PopupPrimaryAxis.None);
+            return new[] { placement };
         }
 
         private void OnLoaded(object sender, RoutedEventArgs e)
@@ -26,6 +49,12 @@ namespace Editor.Editors.WorldEditor
             
             // Find the GamePreviewView
             _gamePreview = FindGamePreviewView();
+            
+            // Set the popup placement target to the GamePreviewView
+            if (_gamePreview != null)
+            {
+                CameraPreviewPopup.PlacementTarget = _gamePreview;
+            }
             
             // Initialize FileExplorerService when project is loaded
             var window = Window.GetWindow(this);

@@ -326,7 +326,7 @@
         </ContextMenu>
 
         <!-- Entity Context Menu -->
-        <ContextMenu x:Key="EntityContextMenu">
+        <ContextMenu x:Key="EntityContextMenu" Opened="EntityContextMenu_Opened">
             <MenuItem Header="Cut" InputGestureText="Ctrl+X" Click="Cut_Click">
                 <MenuItem.Icon>
                     <TextBlock Text="&#xE8C6;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#CCCCCC"/>
@@ -343,6 +343,14 @@
                 </MenuItem.Icon>
             </MenuItem>
             <Separator/>
+            <!-- Camera-specific menu item (only visible for camera entities) -->
+            <MenuItem x:Name="ShowCameraPreviewItem" Header="Show Camera Preview" Click="ShowCameraPreview_Click"
+                      Visibility="Collapsed">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE714;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#9B59B6"/>
+                </MenuItem.Icon>
+            </MenuItem>
+            <Separator x:Name="CameraMenuSeparator" Visibility="Collapsed"/>
             <MenuItem Header="Create Child" Click="CreateChildEntity_Click">
                 <MenuItem.Icon>
                     <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#4EC9B0"/>
@@ -445,6 +453,7 @@
                       PreviewMouseLeftButtonDown="HierarchyTree_PreviewMouseLeftButtonDown"
                       PreviewMouseMove="HierarchyTree_PreviewMouseMove"
                       MouseRightButtonDown="HierarchyTree_MouseRightButtonDown"
+                      MouseDoubleClick="HierarchyTree_MouseDoubleClick"
                       AllowDrop="True" Drop="HierarchyTree_Drop" DragOver="HierarchyTree_DragOver">
                 <TreeView.ItemTemplate>
                     <HierarchicalDataTemplate ItemsSource="{Binding Entities}" 

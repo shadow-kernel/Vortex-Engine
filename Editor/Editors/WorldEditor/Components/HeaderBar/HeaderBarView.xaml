@@ -461,10 +461,14 @@ d:DesignHeight="64" d:DesignWidth="1200">
 
             <!-- Center Toolbar: Play Controls -->
             <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
-                <Button Content="&#xE768;" Style="{StaticResource PlayButtonStyle}" ToolTip="Play (Ctrl+P)" Width="30" Height="28"/>
-                <Button Content="&#xE769;" Style="{StaticResource PauseButtonStyle}" ToolTip="Pause (Ctrl+Shift+P)" Width="30" Height="28" Margin="2,0"/>
-                <Button Content="&#xE71A;" Style="{StaticResource ToolbarButtonStyle}" ToolTip="Step Frame" Width="30" Height="28" Margin="2,0"/>
-                <Button Content="&#xE71E;" Style="{StaticResource StopButtonStyle}" ToolTip="Stop" Width="30" Height="28"/>
+                <Button x:Name="PlayButton" Content="&#xE768;" Style="{StaticResource PlayButtonStyle}" 
+                        ToolTip="Play (Ctrl+P)" Width="30" Height="28" Click="PlayButton_Click"/>
+                <Button x:Name="PauseButton" Content="&#xE769;" Style="{StaticResource PauseButtonStyle}" 
+                        ToolTip="Pause (Ctrl+Shift+P)" Width="30" Height="28" Margin="2,0" Click="PauseButton_Click"/>
+                <Button Content="&#xE71A;" Style="{StaticResource ToolbarButtonStyle}" 
+                        ToolTip="Step Frame" Width="30" Height="28" Margin="2,0"/>
+                <Button x:Name="StopButton" Content="&#xE71E;" Style="{StaticResource StopButtonStyle}" 
+                        ToolTip="Stop" Width="30" Height="28" Click="StopButton_Click"/>
             </StackPanel>
 
             <!-- Right Toolbar: Build & External Tools -->

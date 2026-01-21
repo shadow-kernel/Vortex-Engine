@@ -38,6 +38,12 @@
     <ClInclude Include="Graphics\DX12\DX12DepthBuffer.h" />
     <ClInclude Include="Graphics\DX12\DX12GridPipeline.h" />
     <ClInclude Include="Runtime\RenderLoop.h" />
+    <ClInclude Include="Input\InputTypes.h" />
+    <ClInclude Include="Input\InputSystem.h" />
+    <ClInclude Include="Components\Camera.h" />
+    <ClInclude Include="VortexAPI\CameraComponent.h" />
+    <ClInclude Include="Graphics\DX12\DX12RenderTarget.h" />
+    <ClInclude Include="Graphics\DX12\DX12MultiViewportRenderer.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Common\Id.h" />
@@ -72,5 +78,9 @@
     <ClCompile Include="Graphics\DX12\DX12GridPipeline.cpp" />
     <ClCompile Include="Graphics\DX12\DX12Renderer.cpp" />
     <ClCompile Include="Runtime\RenderLoop.cpp" />
+    <ClCompile Include="Input\InputSystem.cpp" />
+    <ClCompile Include="Components\Camera.cpp" />
+    <ClCompile Include="Graphics\DX12\DX12RenderTarget.cpp" />
+    <ClCompile Include="Graphics\DX12\DX12MultiViewportRenderer.cpp" />
   </ItemGroup>
 </Project>

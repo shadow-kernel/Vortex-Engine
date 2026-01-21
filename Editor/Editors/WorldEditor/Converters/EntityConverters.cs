@@ -85,7 +85,14 @@ public class EntityToIconConverter : IValueConverter
                 if (entity.IsFolder)
                     colorHex = "#DCDC8B"; // Yellow for folders
                 else if (entity.HasComponent<Camera>())
-                    colorHex = "#569CD6"; // Blue
+                {
+                    // Main Camera = Purple, Game Camera = Blue
+                    var cam = entity.GetComponent<Camera>();
+                    if (cam != null && cam.CameraType == CameraType.MainCamera)
+                        colorHex = "#9B59B6"; // Purple for Main Camera
+                    else
+                        colorHex = "#569CD6"; // Blue for Game Camera
+                }
                 else if (entity.HasComponent<Light>())
                     colorHex = "#FFD700"; // Gold
                 else if (entity.HasComponent<MeshRenderer>())

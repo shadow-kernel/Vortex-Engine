@@ -38,6 +38,11 @@ namespace Editor.Core.Services
         private SceneService() { }
 
         /// <summary>
+        /// Die aktuell aktive Szene
+        /// </summary>
+        public Scene CurrentScene { get; set; }
+
+        /// <summary>
         /// Event wird ausgelöst wenn eine Szene gespeichert wurde
         /// </summary>
         public event EventHandler<Scene> SceneSaved;
