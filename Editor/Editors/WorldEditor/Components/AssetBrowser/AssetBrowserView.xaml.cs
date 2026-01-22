@@ -11,6 +11,7 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
         public enum AssetType
         {
             Meshes,
+            Models,
             Textures,
             Materials,
             Shaders
@@ -62,6 +63,10 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                     dialog.Filter = "3D Models|*.obj;*.fbx;*.gltf;*.glb|All Files|*.*";
                     dialog.Title = "Import Mesh";
                     break;
+                case AssetType.Models:
+                    dialog.Filter = "3D Models|*.obj;*.fbx;*.gltf;*.glb;*.vmesh|All Files|*.*";
+                    dialog.Title = "Import Model";
+                    break;
                 case AssetType.Textures:
                     dialog.Filter = "Images|*.png;*.jpg;*.jpeg;*.tga;*.bmp|All Files|*.*";
                     dialog.Title = "Import Texture";
@@ -78,8 +83,81 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
 
             if (dialog.ShowDialog() == true)
             {
-                // TODO: Actually import the asset
-                MessageBox.Show($"Import: {dialog.FileName}", "Import Asset", MessageBoxButton.OK, MessageBoxImage.Information);
+                try
+                {
+                    long assetId = -1;
+                    string assetName = System.IO.Path.GetFileNameWithoutExtension(dialog.FileName);
+                    
+                    switch (_currentType)
+                    {
+                        case AssetType.Models:
+                            if (dialog.FileName.EndsWith(".vmesh", StringComparison.OrdinalIgnoreCase))
+                            {
+                                assetId = VortexAPI.LoadVMeshFromFile(dialog.FileName);
+                            }
+                            else
+                            {
+                                assetId = VortexAPI.ImportModelFromFile(dialog.FileName);
+                            }
+                            
+                            if (assetId >= 0)
+                            {
+                                Assets.Add(new AssetItem
+                                {
+                                    Id = assetId,
+                                    Name = assetName,
+                                    TypeName = "Imported Model",
+                                    IconCode = "\uF158",
+                                    IconColor = "#4EC9B0",
+                                    Type = AssetType.Models,
+                                    Path = dialog.FileName
+                                });
+                                MessageBox.Show($"Successfully imported model: {assetName}", "Import Complete", 
+                                    MessageBoxButton.OK, MessageBoxImage.Information);
+                            }
+                            else
+                            {
+                                MessageBox.Show($"Failed to import model: {dialog.FileName}", "Import Error", 
+                                    MessageBoxButton.OK, MessageBoxImage.Error);
+                            }
+                            break;
+                            
+                        case AssetType.Textures:
+                            assetId = VortexAPI.ImportTextureFromFile(dialog.FileName);
+                            if (assetId >= 0)
+                            {
+                                Assets.Add(new AssetItem
+                                {
+                                    Id = assetId,
+                                    Name = assetName,
+                                    TypeName = "Imported Texture",
+                                    IconCode = "\uEB9F",
+                                    IconColor = "#FFFFFF",
+                                    Type = AssetType.Textures,
+                                    Path = dialog.FileName
+                                });
+                                MessageBox.Show($"Successfully imported texture: {assetName}", "Import Complete", 
+                                    MessageBoxButton.OK, MessageBoxImage.Information);
+                            }
+                            else
+                            {
+                                MessageBox.Show($"Failed to import texture: {dialog.FileName}", "Import Error", 
+                                    MessageBoxButton.OK, MessageBoxImage.Error);
+                            }
+                            break;
+                            
+                        default:
+                            MessageBox.Show($"Import not yet implemented for {_currentType}", "Info", 
+                                MessageBoxButton.OK, MessageBoxImage.Information);
+                            break;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Error importing asset: {ex.Message}", "Import Error", 
+                        MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+                
                 RefreshAssets();
             }
         }
@@ -154,6 +232,8 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
 
             if (radioButton.Name == "MeshesTab" || (MeshesTab?.IsChecked == true))
                 _currentType = AssetType.Meshes;
+            else if (radioButton.Name == "ModelsTab" || (ModelsTab?.IsChecked == true))
+                _currentType = AssetType.Models;
             else if (radioButton.Name == "TexturesTab" || (TexturesTab?.IsChecked == true))
                 _currentType = AssetType.Textures;
             else if (radioButton.Name == "MaterialsTab" || (MaterialsTab?.IsChecked == true))
@@ -188,6 +268,9 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             {
                 case AssetType.Meshes:
                     LoadDefaultMeshes();
+                    break;
+                case AssetType.Models:
+                    LoadImportedModels();
                     break;
                 case AssetType.Textures:
                     LoadDefaultTextures();
@@ -225,6 +308,12 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                     Path = $"Primitive:{primitives[i]}"
                 });
             }
+        }
+
+        private void LoadImportedModels()
+        {
+            // Initially empty - models are added through import
+            // Could be extended to scan a models directory
         }
 
         private void LoadDefaultTextures()

@@ -53,6 +53,10 @@
                            Foreground="#FFC5C5C5" VerticalAlignment="Center"/>
                 
                 <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <Button x:Name="ImportButton" Content="&#xE8B5;" FontFamily="Segoe MDL2 Assets"
+                            Background="Transparent" BorderThickness="0" Foreground="#FF808080"
+                            Padding="6" FontSize="14" ToolTip="Import Asset"
+                            Click="ImportButton_Click" Margin="0,0,4,0"/>
                     <Button x:Name="RefreshButton" Content="&#xE72C;" FontFamily="Segoe MDL2 Assets"
                             Background="Transparent" BorderThickness="0" Foreground="#FF808080"
                             Padding="6" FontSize="14" ToolTip="Refresh"
@@ -66,6 +70,11 @@
             <StackPanel Orientation="Horizontal">
                 <RadioButton x:Name="MeshesTab" Content="Meshes" GroupName="AssetType" 
                              IsChecked="True" Style="{StaticResource {x:Type ToggleButton}}"
+                             Background="#FF3E3E42" Foreground="#FFC5C5C5" 
+                             Padding="12,6" Margin="2" BorderThickness="0"
+                             Checked="AssetTypeTab_Checked"/>
+                <RadioButton x:Name="ModelsTab" Content="Models" GroupName="AssetType"
+                             Style="{StaticResource {x:Type ToggleButton}}"
                              Background="#FF3E3E42" Foreground="#FFC5C5C5" 
                              Padding="12,6" Margin="2" BorderThickness="0"
                              Checked="AssetTypeTab_Checked"/>

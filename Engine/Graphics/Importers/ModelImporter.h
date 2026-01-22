@@ -1,0 +1,64 @@
+#pragma once
+
+#include "../../Common/CommonHeaders.h"
+#include "../Geometry/IMeshGenerator.h"
+#include <string>
+#include <vector>
+#include <memory>
+
+namespace vortex::graphics
+{
+	struct SubMeshData
+	{
+		std::vector<VertexPosNormalUV> vertices;
+		std::vector<u32> indices;
+		u32 material_index{ 0 };
+		std::string name;
+	};
+
+	struct ImportedModelData
+	{
+		std::vector<SubMeshData> submeshes;
+		std::vector<std::string> material_names;
+		std::vector<std::string> texture_paths;
+		DirectX::XMFLOAT3 bounds_min{ 0.0f, 0.0f, 0.0f };
+		DirectX::XMFLOAT3 bounds_max{ 0.0f, 0.0f, 0.0f };
+		std::string name;
+		
+		bool is_valid() const { return !submeshes.empty(); }
+		void clear() 
+		{ 
+			submeshes.clear(); 
+			material_names.clear();
+			texture_paths.clear();
+		}
+	};
+
+	/// <summary>
+	/// Imports 3D models from various formats using Assimp.
+	/// Supports FBX, OBJ, GLTF, and other common formats.
+	/// </summary>
+	class ModelImporter
+	{
+	public:
+		ModelImporter() = default;
+		~ModelImporter() = default;
+
+		/// <summary>
+		/// Import a model from file.
+		/// </summary>
+		/// <param name="filepath">Path to the model file</param>
+		/// <returns>Imported model data or empty if failed</returns>
+		static ImportedModelData import_from_file(const std::string& filepath);
+
+		/// <summary>
+		/// Check if a file format is supported.
+		/// </summary>
+		static bool is_format_supported(const std::string& extension);
+
+	private:
+		static void calculate_bounds(ImportedModelData& data);
+		static void process_node(void* node, void* scene, ImportedModelData& data);
+		static SubMeshData process_mesh(void* mesh, void* scene);
+	};
+}

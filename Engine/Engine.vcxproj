@@ -43,6 +43,10 @@
     <ClInclude Include="Graphics\Geometry\MeshGeneratorFactory.h" />
     <ClInclude Include="Graphics\Geometry\PlaneGenerator.h" />
     <ClInclude Include="Graphics\Geometry\SphereGenerator.h" />
+    <ClInclude Include="Graphics\Importers\MaterialSerializer.h" />
+    <ClInclude Include="Graphics\Importers\MeshSerializer.h" />
+    <ClInclude Include="Graphics\Importers\ModelImporter.h" />
+    <ClInclude Include="Graphics\Importers\TextureImporter.h" />
     <ClInclude Include="Graphics\Resources\Material.h" />
     <ClInclude Include="Graphics\Resources\Mesh.h" />
     <ClInclude Include="Graphics\Resources\ResourceRegistry.h" />
@@ -87,6 +91,10 @@
     <ClCompile Include="Graphics\Geometry\MeshGeneratorFactory.cpp" />
     <ClCompile Include="Graphics\Geometry\PlaneGenerator.cpp" />
     <ClCompile Include="Graphics\Geometry\SphereGenerator.cpp" />
+    <ClCompile Include="Graphics\Importers\MaterialSerializer.cpp" />
+    <ClCompile Include="Graphics\Importers\MeshSerializer.cpp" />
+    <ClCompile Include="Graphics\Importers\ModelImporter.cpp" />
+    <ClCompile Include="Graphics\Importers\TextureImporter.cpp" />
     <ClCompile Include="Graphics\Resources\Material.cpp" />
     <ClCompile Include="Graphics\Resources\Mesh.cpp" />
     <ClCompile Include="Graphics\Resources\ResourceRegistry.cpp" />

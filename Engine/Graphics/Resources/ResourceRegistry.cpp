@@ -1,5 +1,8 @@
 #include "ResourceRegistry.h"
 #include "../Geometry/MeshGeneratorFactory.h"
+#include "../Importers/ModelImporter.h"
+#include "../Importers/TextureImporter.h"
+#include "../Importers/MeshSerializer.h"
 
 namespace vortex::graphics
 {
@@ -215,5 +218,97 @@ namespace vortex::graphics
 			ids.push_back(id);
 		}
 		return ids;
+	}
+
+	id::id_type ResourceRegistry::import_model(const std::string& filepath)
+	{
+		if (!m_device) return id::invalid_id;
+
+		// Import model data
+		ImportedModelData model_data = ModelImporter::import_from_file(filepath);
+		if (!model_data.is_valid())
+		{
+			return id::invalid_id;
+		}
+
+		// For now, import the first submesh
+		// TODO: Support multi-submesh models
+		if (model_data.submeshes.empty())
+		{
+			return id::invalid_id;
+		}
+
+		const SubMeshData& submesh = model_data.submeshes[0];
+		MeshData mesh_data;
+		mesh_data.vertices = submesh.vertices;
+		mesh_data.indices = submesh.indices;
+
+		return create_mesh(mesh_data, model_data.name);
+	}
+
+	id::id_type ResourceRegistry::import_texture(const std::string& filepath, const std::string& name)
+	{
+		if (!m_device) return id::invalid_id;
+
+		// Import image data
+		ImageData image_data = TextureImporter::import_from_file(filepath);
+		if (!image_data.is_valid())
+		{
+			return id::invalid_id;
+		}
+
+		// Create texture descriptor
+		TextureDesc desc;
+		desc.width = image_data.width;
+		desc.height = image_data.height;
+		
+		// Map format
+		switch (image_data.format)
+		{
+		case ImageFormat::R8:
+			desc.format = TextureFormat::R8_UNORM;
+			break;
+		case ImageFormat::RG8:
+			desc.format = TextureFormat::RG8_UNORM;
+			break;
+		case ImageFormat::RGBA8:
+		default:
+			desc.format = TextureFormat::RGBA8_UNORM;
+			break;
+		}
+
+		return create_texture(desc, image_data.pixels.data());
+	}
+
+	bool ResourceRegistry::export_mesh_to_vmesh(id::id_type mesh_id, const std::string& filepath)
+	{
+		// Note: This would require converting Mesh back to ImportedModelData
+		// For now, return false as this is a complex operation
+		return false;
+	}
+
+	id::id_type ResourceRegistry::load_vmesh(const std::string& filepath)
+	{
+		if (!m_device) return id::invalid_id;
+
+		// Load from binary .vmesh file
+		ImportedModelData model_data = MeshSerializer::load_from_file(filepath);
+		if (!model_data.is_valid())
+		{
+			return id::invalid_id;
+		}
+
+		// Import the first submesh
+		if (model_data.submeshes.empty())
+		{
+			return id::invalid_id;
+		}
+
+		const SubMeshData& submesh = model_data.submeshes[0];
+		MeshData mesh_data;
+		mesh_data.vertices = submesh.vertices;
+		mesh_data.indices = submesh.indices;
+
+		return create_mesh(mesh_data, model_data.name);
 	}
 }

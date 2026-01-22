@@ -50,6 +50,12 @@ namespace vortex::graphics
 		void destroy_material(id::id_type id);
 		std::vector<id::id_type> get_all_material_ids() const;
 
+		// Import management
+		id::id_type import_model(const std::string& filepath);
+		id::id_type import_texture(const std::string& filepath, const std::string& name = "");
+		bool export_mesh_to_vmesh(id::id_type mesh_id, const std::string& filepath);
+		id::id_type load_vmesh(const std::string& filepath);
+
 		// Default resources
 		id::id_type default_cube_mesh() const { return m_default_cube; }
 		id::id_type default_sphere_mesh() const { return m_default_sphere; }

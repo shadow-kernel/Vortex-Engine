@@ -878,3 +878,28 @@ EDITOR_INTERFACE void ApplyCameraToRenderer(id::id_type camera_id)
 		cam.get_far_clip()
 	);
 }
+
+// Model Import API
+EDITOR_INTERFACE id::id_type ImportModel(const char* filepath)
+{
+	if (!filepath) return id::invalid_id;
+	return graphics::ResourceRegistry::instance().import_model(filepath);
+}
+
+EDITOR_INTERFACE id::id_type ImportTexture(const char* filepath)
+{
+	if (!filepath) return id::invalid_id;
+	return graphics::ResourceRegistry::instance().import_texture(filepath);
+}
+
+EDITOR_INTERFACE id::id_type LoadVMesh(const char* filepath)
+{
+	if (!filepath) return id::invalid_id;
+	return graphics::ResourceRegistry::instance().load_vmesh(filepath);
+}
+
+EDITOR_INTERFACE bool ExportMeshToVMesh(id::id_type mesh_id, const char* filepath)
+{
+	if (!filepath) return false;
+	return graphics::ResourceRegistry::instance().export_mesh_to_vmesh(mesh_id, filepath);
+}

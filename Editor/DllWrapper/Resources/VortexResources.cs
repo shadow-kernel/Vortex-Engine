@@ -107,5 +107,26 @@ namespace Editor.DllWrapper
         }
 
         #endregion
+
+        #region Model Import
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern long ImportModel([MarshalAs(UnmanagedType.LPStr)] string filepath);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern long ImportTexture([MarshalAs(UnmanagedType.LPStr)] string filepath);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern long LoadVMesh([MarshalAs(UnmanagedType.LPStr)] string filepath);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern bool ExportMeshToVMesh(long meshId, [MarshalAs(UnmanagedType.LPStr)] string filepath);
+
+        public static long ImportModelFromFile(string filepath) => ImportModel(filepath);
+        public static long ImportTextureFromFile(string filepath) => ImportTexture(filepath);
+        public static long LoadVMeshFromFile(string filepath) => LoadVMesh(filepath);
+        public static bool SaveMeshToVMesh(long meshId, string filepath) => ExportMeshToVMesh(meshId, filepath);
+
+        #endregion
     }
 }
