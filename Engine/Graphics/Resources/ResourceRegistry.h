@@ -6,6 +6,7 @@
 #include "Texture.h"
 #include "Material.h"
 #include "../Geometry/IMeshGenerator.h"
+#include "../Importers/ModelImporter.h"
 #include <unordered_map>
 #include <memory>
 #include <string>
@@ -67,6 +68,8 @@ namespace vortex::graphics
 
 	private:
 		ResourceRegistry() = default;
+
+		id::id_type create_mesh_from_submesh(const SubMeshData& submesh, const std::string& name);
 
 		ID3D12Device* m_device{ nullptr };
 

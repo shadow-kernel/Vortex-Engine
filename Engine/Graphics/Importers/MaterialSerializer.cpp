@@ -38,6 +38,12 @@ namespace vortex::graphics
 		VMaterialHeader header;
 		file.read(reinterpret_cast<char*>(&header), sizeof(VMaterialHeader));
 
+		// Check if read was successful
+		if (!file.good())
+		{
+			return result;
+		}
+
 		// Validate magic and version
 		if (header.magic != VMAT_MAGIC || header.version != VMAT_VERSION)
 		{

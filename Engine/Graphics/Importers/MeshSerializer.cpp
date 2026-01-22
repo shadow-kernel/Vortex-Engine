@@ -57,6 +57,12 @@ namespace vortex::graphics
 		// Read header
 		VMeshHeader header;
 		file.read(reinterpret_cast<char*>(&header), sizeof(VMeshHeader));
+		
+		// Check if read was successful
+		if (!file.good())
+		{
+			return result;
+		}
 
 		// Validate magic and version
 		if (header.magic != VMESH_MAGIC || header.version != VMESH_VERSION)

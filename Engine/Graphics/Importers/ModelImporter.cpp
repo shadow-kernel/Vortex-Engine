@@ -36,9 +36,13 @@ namespace vortex::graphics
 		// Extract filename as model name
 		size_t last_slash = filepath.find_last_of("/\\");
 		size_t last_dot = filepath.find_last_of(".");
-		if (last_slash != std::string::npos && last_dot != std::string::npos)
+		
+		// Ensure the dot is after the last slash (not in a directory name)
+		if (last_dot != std::string::npos && 
+			(last_slash == std::string::npos || last_dot > last_slash))
 		{
-			result.name = filepath.substr(last_slash + 1, last_dot - last_slash - 1);
+			size_t start = (last_slash != std::string::npos) ? last_slash + 1 : 0;
+			result.name = filepath.substr(start, last_dot - start);
 		}
 		else
 		{

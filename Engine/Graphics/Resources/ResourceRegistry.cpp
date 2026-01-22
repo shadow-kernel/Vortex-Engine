@@ -232,18 +232,21 @@ namespace vortex::graphics
 		}
 
 		// For now, import the first submesh
-		// TODO: Support multi-submesh models
-		if (model_data.submeshes.empty())
-		{
-			return id::invalid_id;
-		}
+		// TODO: Support multi-submesh models by creating separate mesh resources
+		// or by storing submesh data within a single Mesh object
+		return create_mesh_from_submesh(model_data.submeshes[0], model_data.name);
+	}
 
-		const SubMeshData& submesh = model_data.submeshes[0];
+	id::id_type ResourceRegistry::create_mesh_from_submesh(const SubMeshData& submesh, const std::string& name)
+	{
+		if (submesh.vertices.empty())
+			return id::invalid_id;
+
 		MeshData mesh_data;
 		mesh_data.vertices = submesh.vertices;
 		mesh_data.indices = submesh.indices;
 
-		return create_mesh(mesh_data, model_data.name);
+		return create_mesh(mesh_data, name);
 	}
 
 	id::id_type ResourceRegistry::import_texture(const std::string& filepath, const std::string& name)
@@ -282,8 +285,10 @@ namespace vortex::graphics
 
 	bool ResourceRegistry::export_mesh_to_vmesh(id::id_type mesh_id, const std::string& filepath)
 	{
-		// Note: This would require converting Mesh back to ImportedModelData
-		// For now, return false as this is a complex operation
+		// TODO: Implement mesh to ImportedModelData conversion
+		// This requires storing more metadata with Mesh objects
+		// For now, direct binary mesh export is not supported
+		// Use model source files and save with MeshSerializer directly instead
 		return false;
 	}
 
@@ -299,16 +304,6 @@ namespace vortex::graphics
 		}
 
 		// Import the first submesh
-		if (model_data.submeshes.empty())
-		{
-			return id::invalid_id;
-		}
-
-		const SubMeshData& submesh = model_data.submeshes[0];
-		MeshData mesh_data;
-		mesh_data.vertices = submesh.vertices;
-		mesh_data.indices = submesh.indices;
-
-		return create_mesh(mesh_data, model_data.name);
+		return create_mesh_from_submesh(model_data.submeshes[0], model_data.name);
 	}
 }
