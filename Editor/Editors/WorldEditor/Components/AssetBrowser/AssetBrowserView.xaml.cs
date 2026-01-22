@@ -55,6 +55,26 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
 
         private void ImportButton_Click(object sender, RoutedEventArgs e)
         {
+            // Check Assimp availability for model import
+            if (_currentType == AssetType.Models && !VortexAPI.IsAssimpAvailable())
+            {
+                var result = MessageBox.Show(
+                    "Model import requires Assimp library.\n\n" +
+                    "To enable model import:\n" +
+                    "1. Install Assimp NuGet package in Engine project\n" +
+                    "2. Add VORTEX_USE_ASSIMP to preprocessor definitions\n" +
+                    "3. Rebuild the Engine\n\n" +
+                    "See BUILD_SETUP.md for detailed instructions.\n\n" +
+                    "You can still use .vmesh files and textures.\n\n" +
+                    "Continue to file picker anyway?",
+                    "Assimp Not Available",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Information);
+                    
+                if (result != MessageBoxResult.Yes)
+                    return;
+            }
+            
             var dialog = new Microsoft.Win32.OpenFileDialog();
             
             switch (_currentType)

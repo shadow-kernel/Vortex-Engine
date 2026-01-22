@@ -44,6 +44,11 @@
     <ClInclude Include="VortexAPI\CameraComponent.h" />
     <ClInclude Include="Graphics\DX12\DX12RenderTarget.h" />
     <ClInclude Include="Graphics\DX12\DX12MultiViewportRenderer.h" />
+    <ClInclude Include="Graphics\Importers\ImporterCapabilities.h" />
+    <ClInclude Include="Graphics\Importers\ModelImporter.h" />
+    <ClInclude Include="Graphics\Importers\TextureImporter.h" />
+    <ClInclude Include="Graphics\Importers\MeshSerializer.h" />
+    <ClInclude Include="Graphics\Importers\MaterialSerializer.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Common\Id.h" />
@@ -82,5 +87,9 @@
     <ClCompile Include="Components\Camera.cpp" />
     <ClCompile Include="Graphics\DX12\DX12RenderTarget.cpp" />
     <ClCompile Include="Graphics\DX12\DX12MultiViewportRenderer.cpp" />
+    <ClCompile Include="Graphics\Importers\ModelImporter.cpp" />
+    <ClCompile Include="Graphics\Importers\TextureImporter.cpp" />
+    <ClCompile Include="Graphics\Importers\MeshSerializer.cpp" />
+    <ClCompile Include="Graphics\Importers\MaterialSerializer.cpp" />
   </ItemGroup>
 </Project>

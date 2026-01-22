@@ -43,6 +43,7 @@
     <ClInclude Include="Graphics\Geometry\MeshGeneratorFactory.h" />
     <ClInclude Include="Graphics\Geometry\PlaneGenerator.h" />
     <ClInclude Include="Graphics\Geometry\SphereGenerator.h" />
+    <ClInclude Include="Graphics\Importers\ImporterCapabilities.h" />
     <ClInclude Include="Graphics\Importers\MaterialSerializer.h" />
     <ClInclude Include="Graphics\Importers\MeshSerializer.h" />
     <ClInclude Include="Graphics\Importers\ModelImporter.h" />

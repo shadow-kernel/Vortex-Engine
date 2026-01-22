@@ -903,3 +903,12 @@ EDITOR_INTERFACE bool ExportMeshToVMesh(id::id_type mesh_id, const char* filepat
 	if (!filepath) return false;
 	return graphics::ResourceRegistry::instance().export_mesh_to_vmesh(mesh_id, filepath);
 }
+
+EDITOR_INTERFACE bool HasAssimpSupport()
+{
+#ifdef VORTEX_USE_ASSIMP
+	return true;
+#else
+	return false;
+#endif
+}
