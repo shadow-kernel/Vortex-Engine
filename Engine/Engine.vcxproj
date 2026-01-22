@@ -207,8 +207,7 @@
       <CallingConvention>FastCall</CallingConvention>
       <FloatingPointModel>Fast</FloatingPointModel>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <AdditionalIncludeDirectories>
-      </AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)ThirdParty</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>
@@ -230,8 +229,7 @@
       <CallingConvention>FastCall</CallingConvention>
       <FloatingPointModel>Fast</FloatingPointModel>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <AdditionalIncludeDirectories>
-      </AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)ThirdParty</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>
@@ -241,5 +239,10 @@
   </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
+    <!-- Assimp NuGet Package Import -->
+    <!-- To enable model import, install the Assimp NuGet package: -->
+    <!-- 1. Right-click project → Manage NuGet Packages -->
+    <!-- 2. Install "Assimp" and "Assimp.redist" packages -->
+    <!-- The package will auto-generate .targets files that get imported here -->
   </ImportGroup>
 </Project>

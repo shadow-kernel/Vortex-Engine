@@ -74,17 +74,36 @@ The Vortex Engine model import system supports loading 3D models from various fo
 
 ### Required External Libraries
 
-1. **Assimp (Open Asset Import Library)**
+1. **Assimp (Open Asset Import Library)** - OPTIONAL but RECOMMENDED
    - Version: 5.0 or later recommended
    - License: BSD 3-Clause
    - Website: https://www.assimp.org/
    - NuGet: `Assimp` or `Assimp.redist`
    
    **Installation:**
-   - Install via NuGet Package Manager
-   - Or download from https://github.com/assimp/assimp/releases
-   - Add include directory to project settings
-   - Link assimp.lib in project configuration
+   ```
+   Method 1: NuGet (Recommended)
+   1. Open Vortex.slnx in Visual Studio
+   2. Right-click Engine project → Manage NuGet Packages
+   3. Search and install: "Assimp" and "Assimp.redist"
+   4. The package will automatically configure include paths and libraries
+   5. Add VORTEX_USE_ASSIMP to Preprocessor Definitions in project settings
+   ```
+   
+   ```
+   Method 2: Manual Installation
+   1. Download from https://github.com/assimp/assimp/releases
+   2. Extract to C:\Libraries\assimp (or your preferred location)
+   3. In Engine project properties:
+      - C/C++ → General → Additional Include Directories: Add assimp\include
+      - Linker → General → Additional Library Directories: Add assimp\lib\x64
+      - Linker → Input → Additional Dependencies: Add assimp-vc143-mt.lib
+      - C/C++ → Preprocessor → Preprocessor Definitions: Add VORTEX_USE_ASSIMP
+   4. Copy assimp-vc143-mt.dll to output directory
+   ```
+   
+   **Note:** Without Assimp, model import will return empty results but won't break compilation.
+   The system will still work with procedurally generated meshes and .vmesh files.
 
 2. **stb_image**
    - Single header library (included in `Engine/ThirdParty/stb_image.h`)
@@ -92,6 +111,17 @@ The Vortex Engine model import system supports loading 3D models from various fo
    - No installation required - header-only library
 
 ## Usage
+
+### Enabling Assimp Support
+
+To enable full model import (FBX/OBJ/GLTF), add `VORTEX_USE_ASSIMP` to preprocessor definitions:
+
+**Visual Studio:**
+1. Right-click Engine project → Properties
+2. C/C++ → Preprocessor → Preprocessor Definitions  
+3. Add: `VORTEX_USE_ASSIMP;%(PreprocessorDefinitions)`
+
+Without this flag, model import will compile but return empty results.
 
 ### From Editor (C#)
 ```csharp

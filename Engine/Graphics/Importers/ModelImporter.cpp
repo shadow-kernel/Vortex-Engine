@@ -1,12 +1,18 @@
 #include "ModelImporter.h"
+
+// Only compile if Assimp is available
+#ifdef VORTEX_USE_ASSIMP
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
+#endif
+
 #include <algorithm>
 #include <limits>
 
 namespace vortex::graphics
 {
+#ifdef VORTEX_USE_ASSIMP
 	ImportedModelData ModelImporter::import_from_file(const std::string& filepath)
 	{
 		ImportedModelData result;
@@ -47,6 +53,13 @@ namespace vortex::graphics
 
 		return result;
 	}
+#else
+	// Stub implementation when Assimp is not available
+	ImportedModelData ModelImporter::import_from_file(const std::string& filepath)
+	{
+		return ImportedModelData(); // Return empty
+	}
+#endif
 
 	bool ModelImporter::is_format_supported(const std::string& extension)
 	{
@@ -60,6 +73,7 @@ namespace vortex::graphics
 		return std::find(supported.begin(), supported.end(), ext_lower) != supported.end();
 	}
 
+#ifdef VORTEX_USE_ASSIMP
 	void ModelImporter::calculate_bounds(ImportedModelData& data)
 	{
 		if (data.submeshes.empty())
@@ -166,4 +180,5 @@ namespace vortex::graphics
 
 		return result;
 	}
+#endif // VORTEX_USE_ASSIMP
 }
