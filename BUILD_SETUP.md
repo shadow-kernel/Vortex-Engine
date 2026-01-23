@@ -15,12 +15,12 @@ The Vortex Engine requires the following external libraries:
 
 Assimp is required for importing 3D models (FBX, OBJ, GLTF, etc.).
 
-**Option A: NuGet Package (Recommended)**
+**Option A: NuGet Package (Limited - Version 3.0.0 Only)**
 
 1. Open the solution in Visual Studio
 2. Right-click on the `Engine` project → Manage NuGet Packages
 3. Search for "Assimp" and install both:
-   - `Assimp` (version 5.3.1 or later)
+   - `Assimp` (version 3.0.0 - only native version available on NuGet)
    - `Assimp.redist` (redistributable binaries)
 4. **Important:** Add `VORTEX_USE_ASSIMP` to preprocessor definitions:
    - Right-click Engine project → Properties
@@ -28,9 +28,12 @@ Assimp is required for importing 3D models (FBX, OBJ, GLTF, etc.).
    - Add: `VORTEX_USE_ASSIMP;%(PreprocessorDefinitions)`
 5. Rebuild the Engine project
 
-**Option B: Manual Installation**
+**Note:** NuGet only provides Assimp 3.0.0 for native C++. For newer features, use Option B (Manual Installation) to get version 5.x from GitHub.
+
+**Option B: Manual Installation (Recommended for Latest Features)**
 
 1. Download Assimp from: https://github.com/assimp/assimp/releases
+   - Recommended: Version 5.3.0 or later for best format support
 2. Extract to a convenient location (e.g., `C:\Libraries\assimp`)
 3. Update the Engine project properties:
    - Configuration Properties → C/C++ → General → Additional Include Directories
@@ -123,8 +126,15 @@ https://raw.githubusercontent.com/nothings/stb/master/stb_image.h
 
 ### Issue: Runtime error - "assimp DLL not found"
 **Solution**: Copy the Assimp DLL to the same directory as VortexAPI.dll:
-- From: `packages\Assimp.redist.5.3.1\build\native\bin\x64\`
+- NuGet (v3.0.0): From `packages\Assimp.redist.3.0.0\build\native\bin\x64\`
+- Manual Install: From your Assimp installation's `bin` folder
 - To: Output directory (usually `x64\Debug\` or `x64\Release\`)
+
+### Issue: "Assimp version 5.3.1 not found on NuGet"
+**Solution**: The NuGet repository only provides Assimp 3.0.0 for native C++. Options:
+1. Use Assimp 3.0.0 from NuGet (packages.config already updated)
+2. Manually install Assimp 5.x from GitHub releases (recommended for better format support)
+3. Build Assimp from source: https://github.com/assimp/assimp
 
 ## Platform Support
 

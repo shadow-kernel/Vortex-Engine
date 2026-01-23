@@ -6,7 +6,7 @@ This guide will help you enable and use the 3D model import feature in Vortex En
 
 The model import feature uses Assimp for FBX/OBJ/GLTF support. You can skip this if you only plan to use the native .vmesh format.
 
-### Using NuGet (Easiest)
+### Using NuGet (Easiest - But Limited to v3.0.0)
 
 1. Open `Vortex.slnx` in Visual Studio 2022
 2. In Solution Explorer, right-click the **Engine** project
@@ -14,12 +14,21 @@ The model import feature uses Assimp for FBX/OBJ/GLTF support. You can skip this
 4. Click **Browse** tab
 5. Search for "**Assimp**"
 6. Install both packages:
-   - ✅ **Assimp** (main library)
-   - ✅ **Assimp.redist** (runtime DLLs)
+   - ✅ **Assimp** version 3.0.0 (only native version on NuGet)
+   - ✅ **Assimp.redist** version 3.0.0 (runtime DLLs)
 7. Right-click Engine project → **Properties**
 8. Navigate to: **C/C++** → **Preprocessor** → **Preprocessor Definitions**
 9. Add: **VORTEX_USE_ASSIMP** (important!)
 10. Click **OK** and rebuild the project
+
+**Note:** NuGet only provides Assimp 3.0.0 for native C++. For the latest features and better format support, consider manual installation of version 5.x from GitHub (see BUILD_SETUP.md).
+
+### Manual Installation (Recommended for v5.x)
+
+For better model format support, download Assimp 5.x from:
+https://github.com/assimp/assimp/releases
+
+See detailed instructions in `BUILD_SETUP.md`.
 
 ### Verify Installation
 
@@ -122,8 +131,14 @@ Once imported, models can be used like any other mesh:
 - **Check**: Is the model format supported?
 
 ### "Cannot find assimp DLL"
-- **Solution**: The Assimp.redist package should copy DLLs automatically
-- **Manual Fix**: Copy `assimp-vc143-mt.dll` from NuGet packages to output folder
+- **NuGet (v3.0.0)**: The Assimp.redist package should copy DLLs automatically
+- **Manual Fix (NuGet)**: Copy `assimp.dll` from `packages\Assimp.redist.3.0.0\build\native\bin\x64\` to output folder
+- **Manual Install (v5.x)**: Copy `assimp-vc143-mt.dll` from your Assimp installation to output folder
+
+### "Assimp version 5.3.1 not found"
+- **Issue**: NuGet only provides Assimp 3.0.0 for native C++
+- **Solution 1**: Use version 3.0.0 from NuGet (packages.config updated to 3.0.0)
+- **Solution 2**: Download and manually install Assimp 5.x from https://github.com/assimp/assimp/releases
 
 ### "Model imports but looks wrong"
 - Models use right-handed coordinate system
