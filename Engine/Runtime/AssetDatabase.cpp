@@ -68,11 +68,10 @@ namespace vortex::runtime {
 			if (relative_path)
 			{
 				std::filesystem::path full_path = std::filesystem::path(m_project_path) / *relative_path;
-				std::string full_path_str = full_path.string();
 				
-				// Cache it
-				m_path_cache[guid_str] = full_path_str;
-				return m_path_cache[guid_str].c_str();
+				// Cache it - note: this can invalidate iterators but we're not using any after this point
+				auto [it, inserted] = m_path_cache.emplace(guid_str, full_path.string());
+				return it->second.c_str();
 			}
 		}
 

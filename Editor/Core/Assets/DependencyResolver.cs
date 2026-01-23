@@ -123,10 +123,12 @@ namespace Editor.Core.Assets
             var dependencies = GetDependencies(currentGuid);
             foreach (var dep in dependencies)
             {
-                if (HasCircularDependencyRecursive(dep.Guid, new HashSet<Guid>(visited), originalGuid))
+                if (HasCircularDependencyRecursive(dep.Guid, visited, originalGuid))
                     return true;
             }
 
+            // Remove from visited on backtrack to allow different paths
+            visited.Remove(currentGuid);
             return false;
         }
 

@@ -334,13 +334,29 @@ namespace Editor.Core.Assets
         /// </summary>
         private string GetRelativePath(string fullPath)
         {
-            if (string.IsNullOrEmpty(_projectPath))
+            if (string.IsNullOrEmpty(_projectPath) || string.IsNullOrEmpty(fullPath))
                 return fullPath;
 
-            var uri1 = new Uri(_projectPath + Path.DirectorySeparatorChar);
-            var uri2 = new Uri(fullPath);
-            var relativeUri = uri1.MakeRelativeUri(uri2);
-            return Uri.UnescapeDataString(relativeUri.ToString()).Replace('/', Path.DirectorySeparatorChar);
+            // Ensure both paths end with directory separator for consistent comparison
+            var projectPath = _projectPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            
+            if (fullPath.StartsWith(projectPath, StringComparison.OrdinalIgnoreCase))
+            {
+                return fullPath.Substring(projectPath.Length);
+            }
+
+            // Fallback to Uri-based approach if simple prefix doesn't work
+            try
+            {
+                var uri1 = new Uri(projectPath);
+                var uri2 = new Uri(fullPath);
+                var relativeUri = uri1.MakeRelativeUri(uri2);
+                return Uri.UnescapeDataString(relativeUri.ToString()).Replace('/', Path.DirectorySeparatorChar);
+            }
+            catch
+            {
+                return fullPath;
+            }
         }
 
         /// <summary>
