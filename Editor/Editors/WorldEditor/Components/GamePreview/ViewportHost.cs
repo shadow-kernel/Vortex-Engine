@@ -49,7 +49,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         public event EventHandler OnHostDestroying;
         public event EventHandler OnViewportSizeChanged;
 
-        public IntPtr Handle => _hwnd;
+        public new IntPtr Handle => _hwnd;
         public bool IsHandleValid => _hwnd != IntPtr.Zero;
     }
 }

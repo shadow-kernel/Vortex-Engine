@@ -94,6 +94,12 @@
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </ApplicationDefinition>
+    <Compile Include="Core\Assets\AssetDatabase.cs" />
+    <Compile Include="Core\Assets\AssetDeletionService.cs" />
+    <Compile Include="Core\Assets\AssetMetadata.cs" />
+    <Compile Include="Core\Assets\AssetReference.cs" />
+    <Compile Include="Core\Assets\AssetType.cs" />
+    <Compile Include="Core\Assets\DependencyResolver.cs" />
     <Compile Include="Core\Services\CameraPreviewService.cs" />
     <Compile Include="Core\Services\CameraService.cs" />
     <Compile Include="Core\Services\EditorCameraController.cs" />
@@ -138,6 +144,7 @@
       <DependentUpon>InputSettingsDialog.xaml</DependentUpon>
     </Compile>
     <Compile Include="Editors\WorldEditor\Components\GamePreview\ViewportHost.cs" />
+    <Compile Include="Editors\WorldEditor\DragDrop\ViewportDropHandler.cs" />
     <Compile Include="Editors\WorldEditor\Components\Inspector\AssetPickerDialog.xaml.cs">
       <DependentUpon>AssetPickerDialog.xaml</DependentUpon>
     </Compile>
