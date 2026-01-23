@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Windows.Media.Imaging;
+using Editor.Core.Assets;
 using Editor.Core.Data;
 using Editor.Core.Exceptions;
 using Editor.Core.Serialization;
@@ -14,7 +15,7 @@ using Editor.ECS;
 namespace Editor.Core.Services
 {
     /// <summary>
-    /// Zentraler Service für alle Projektoperationen.
+    /// Zentraler Service fï¿½r alle Projektoperationen.
     /// Verwaltet das Laden, Speichern und die Registry aller Projekte.
     /// Szenen werden separat in .vscene Dateien gespeichert.
     /// </summary>
@@ -29,7 +30,7 @@ namespace Editor.Core.Services
         private readonly string _defaultProjectsPath;
 
         /// <summary>
-        /// Konstanten für Projektstruktur
+        /// Konstanten fï¿½r Projektstruktur
         /// </summary>
         public const string ManifestFileName = "project.vortex";
         public const string LegacyManifestPath = ".ve/project.json";
@@ -48,12 +49,12 @@ namespace Editor.Core.Services
         }
 
         /// <summary>
-        /// Gibt alle registrierten Projekte zurück
+        /// Gibt alle registrierten Projekte zurï¿½ck
         /// </summary>
         public Dictionary<Guid, ProjectRef> GetAllProjects() => _projectRegistry;
 
         /// <summary>
-        /// Lädt ein Projekt anhand seiner Referenz
+        /// Lï¿½dt ein Projekt anhand seiner Referenz
         /// </summary>
         public ProjectData LoadProject(ProjectRef projectRef)
         {
@@ -83,7 +84,7 @@ namespace Editor.Core.Services
             {
                 throw new ProjectIOException(
                     projectRef?.Path ?? "unbekannt",
-                    "Fehler beim Öffnen des Projekts.",
+                    "Fehler beim ï¿½ffnen des Projekts.",
                     ioEx
                 );
             }
@@ -98,14 +99,14 @@ namespace Editor.Core.Services
             catch (Exception ex)
             {
                 throw new ProjectException(
-                    $"Unerwarteter Fehler beim Öffnen des Projekts: {ex.Message}",
+                    $"Unerwarteter Fehler beim ï¿½ffnen des Projekts: {ex.Message}",
                     ex
                 );
             }
         }
 
         /// <summary>
-        /// Lädt ein Projekt aus dem neuen Manifest-Format
+        /// Lï¿½dt ein Projekt aus dem neuen Manifest-Format
         /// </summary>
         private ProjectData LoadProjectFromManifest(string projectPath)
         {
@@ -118,6 +119,9 @@ namespace Editor.Core.Services
                 LastModified = manifest.LastModified,
                 ImagePath = manifest.ThumbnailPath
             };
+
+            // Initialize asset database for this project
+            AssetDatabase.Instance.Initialize(projectPath);
 
             // Lade Szenen
             var scenesPath = Path.Combine(projectPath, AssetsFolder, ScenesFolder);
@@ -151,7 +155,7 @@ namespace Editor.Core.Services
         }
 
         /// <summary>
-        /// Lädt ein Projekt im Legacy-Format und migriert es
+        /// Lï¿½dt ein Projekt im Legacy-Format und migriert es
         /// </summary>
         private ProjectData LoadLegacyProject(ProjectRef projectRef, string legacyPath)
         {
@@ -161,6 +165,9 @@ namespace Editor.Core.Services
             {
                 project.Scenes = new ObservableCollection<Scene>();
             }
+
+            // Initialize asset database
+            AssetDatabase.Instance.Initialize(projectRef.Path);
 
             // Migriere zum neuen Format
             SaveProject(project);
@@ -179,6 +186,9 @@ namespace Editor.Core.Services
             var defaultScene = SceneService.Instance.CreateDefaultScene(project, "Main Scene");
             project.Scenes.Add(defaultScene);
             project.ActiveScene = defaultScene;
+
+            // Initialize asset database
+            AssetDatabase.Instance.Initialize(projectPath);
 
             SaveProject(project);
             return project;
@@ -256,7 +266,7 @@ namespace Editor.Core.Services
                 LastOpenSceneId = project.ActiveScene?.Id,
             };
 
-            // Füge Szenen-Referenzen hinzu
+            // Fï¿½ge Szenen-Referenzen hinzu
             foreach (var scene in project.Scenes)
             {
                 var relativePath = $"{SanitizeFileName(scene.Name)}.vscene";
@@ -308,7 +318,7 @@ namespace Editor.Core.Services
                 scene.FilePath = Path.Combine(scenesPath, $"{SanitizeFileName(scene.Name)}.vscene");
             }
 
-            // Speichere Szene als Binär
+            // Speichere Szene als Binï¿½r
             DataSerializer.SaveAsBinary(scene, scene.FilePath);
             scene.IsDirty = false;
         }
@@ -332,7 +342,7 @@ namespace Editor.Core.Services
         }
 
         /// <summary>
-        /// Lädt ein Prefab
+        /// Lï¿½dt ein Prefab
         /// </summary>
         public GameEntity LoadPrefab(string filePath)
         {
@@ -345,7 +355,7 @@ namespace Editor.Core.Services
         }
 
         /// <summary>
-        /// Entfernt ungültige Zeichen aus Dateinamen
+        /// Entfernt ungï¿½ltige Zeichen aus Dateinamen
         /// </summary>
         private string SanitizeFileName(string fileName)
         {
@@ -358,7 +368,7 @@ namespace Editor.Core.Services
         }
 
         /// <summary>
-        /// Prüft ob ein Projektpfad bereits existiert
+        /// Prï¿½ft ob ein Projektpfad bereits existiert
         /// </summary>
         public bool ProjectPathExists(string path)
         {
@@ -462,7 +472,7 @@ namespace Editor.Core.Services
         }
 
         /// <summary>
-        /// Erstellt die Standard-Ordnerstruktur für ein neues Projekt.
+        /// Erstellt die Standard-Ordnerstruktur fï¿½r ein neues Projekt.
         /// </summary>
         private void CreateDefaultProjectFolders(string projectPath)
         {
