@@ -25,7 +25,15 @@ namespace vortex::runtime::resource_manager {
 	resource_handle load_audio(const char* path);
 	void unload(resource_handle handle);
 
+	// GUID-based loading (requires AssetDatabase)
+	resource_handle load_mesh_by_guid(const char* guid);
+	resource_handle load_texture_by_guid(const char* guid);
+	resource_handle load_material_by_guid(const char* guid);
+
 	// Convenience helper for tests/internal use
 	resource_handle load_resource(const std::string& key);
 	const std::string& resource_path(resource_handle handle);
+
+	// Get reference count (for debugging/diagnostics)
+	u32 get_ref_count(resource_handle handle);
 }

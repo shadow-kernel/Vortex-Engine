@@ -1,4 +1,5 @@
 #include "ResourceManager.h"
+#include "AssetDatabase.h"
 
 #include <unordered_map>
 #include <mutex>
@@ -79,6 +80,27 @@ namespace vortex::runtime::resource_manager {
 	resource_handle load_shader(const char* path) { return load_resource(path ? path : ""); }
 	resource_handle load_audio(const char* path) { return load_resource(path ? path : ""); }
 
+	resource_handle load_mesh_by_guid(const char* guid)
+	{
+		if (!guid) return {};
+		const char* path = AssetDatabase::instance().get_asset_path_by_guid(guid);
+		return path ? load_mesh(path) : resource_handle{};
+	}
+
+	resource_handle load_texture_by_guid(const char* guid)
+	{
+		if (!guid) return {};
+		const char* path = AssetDatabase::instance().get_asset_path_by_guid(guid);
+		return path ? load_texture(path) : resource_handle{};
+	}
+
+	resource_handle load_material_by_guid(const char* guid)
+	{
+		if (!guid) return {};
+		const char* path = AssetDatabase::instance().get_asset_path_by_guid(guid);
+		return path ? load_material(path) : resource_handle{};
+	}
+
 	const std::string& resource_path(resource_handle handle)
 	{
 		static std::string empty;
@@ -86,6 +108,17 @@ namespace vortex::runtime::resource_manager {
 		std::lock_guard<std::mutex> lock(g_mutex);
 		auto it = g_path_by_handle.find(handle.value);
 		return it != g_path_by_handle.end() ? it->second : empty;
+	}
+
+	u32 get_ref_count(resource_handle handle)
+	{
+		if (!handle.is_valid()) return 0;
+		std::lock_guard<std::mutex> lock(g_mutex);
+		auto pathIt = g_path_by_handle.find(handle.value);
+		if (pathIt == g_path_by_handle.end()) return 0;
+
+		auto it = g_cache.find(pathIt->second);
+		return it != g_cache.end() ? it->second.ref_count : 0;
 	}
 
 	void unload(resource_handle handle)
