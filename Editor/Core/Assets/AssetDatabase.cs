@@ -272,6 +272,53 @@ namespace Editor.Core.Assets
         }
 
         /// <summary>
+        /// Adds a dependency between two assets.
+        /// </summary>
+        public void AddDependency(Guid assetGuid, Guid dependencyGuid)
+        {
+            var metadata = GetAsset(assetGuid);
+            if (metadata == null || metadata.Dependencies == null)
+                return;
+
+            if (!metadata.Dependencies.Contains(dependencyGuid))
+            {
+                metadata.Dependencies.Add(dependencyGuid);
+                UpdateMetadata(metadata);
+            }
+        }
+
+        /// <summary>
+        /// Removes a dependency between two assets.
+        /// </summary>
+        public void RemoveDependency(Guid assetGuid, Guid dependencyGuid)
+        {
+            var metadata = GetAsset(assetGuid);
+            if (metadata == null || metadata.Dependencies == null)
+                return;
+
+            if (metadata.Dependencies.Remove(dependencyGuid))
+            {
+                UpdateMetadata(metadata);
+            }
+        }
+
+        /// <summary>
+        /// Deletes an asset from the database.
+        /// Note: This only removes from the in-memory database, not the physical files.
+        /// </summary>
+        public void RemoveAsset(Guid guid)
+        {
+            var metadata = GetAsset(guid);
+            if (metadata == null)
+                return;
+
+            _assetsByGuid.Remove(guid);
+            
+            var normalizedPath = NormalizePath(metadata.RelativePath);
+            _assetsByPath.Remove(normalizedPath);
+        }
+
+        /// <summary>
         /// Refreshes the asset database by rescanning.
         /// </summary>
         public void Refresh()
