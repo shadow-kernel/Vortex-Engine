@@ -189,10 +189,10 @@ namespace Editor.Editors.WorldEditor.DragDrop
 
             // TODO: Convert dropPosition to 3D world position via raycasting
             // For now, place at origin
-            entity.Position = new System.Numerics.Vector3(0, 0, 0);
+            entity.Transform.LocalPosition = new ECS.Vector3(0, 0, 0);
 
             // Add to scene
-            _scene.AddGameEntity(entity);
+            _scene.AddEntity(entity);
         }
 
         /// <summary>

@@ -49,6 +49,9 @@
     <ClInclude Include="Graphics\Importers\TextureImporter.h" />
     <ClInclude Include="Graphics\Importers\MeshSerializer.h" />
     <ClInclude Include="Graphics\Importers\MaterialSerializer.h" />
+    <ClInclude Include="Runtime\AssetDatabase.h" />
+    <ClInclude Include="Runtime\AssetManifest.h" />
+    <ClInclude Include="Common\VortexAssert.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Common\Id.h" />
@@ -91,5 +94,7 @@
     <ClCompile Include="Graphics\Importers\TextureImporter.cpp" />
     <ClCompile Include="Graphics\Importers\MeshSerializer.cpp" />
     <ClCompile Include="Graphics\Importers\MaterialSerializer.cpp" />
+    <ClCompile Include="Runtime\AssetDatabase.cpp" />
+    <ClCompile Include="Runtime\AssetManifest.cpp" />
   </ItemGroup>
 </Project>

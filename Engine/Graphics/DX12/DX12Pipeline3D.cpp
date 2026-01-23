@@ -41,6 +41,8 @@ cbuffer PerFrame : register(b0) {
 cbuffer PerObject : register(b1) {
     row_major float4x4 World;
     float4 BaseColor;
+    uint HasAlbedoTexture;
+    uint3 TexturePadding;
 };
 
 struct VS_IN {
@@ -67,7 +69,7 @@ PS_IN main(VS_IN input) {
 }
 )";
 
-		// Simple 3D Pixel Shader
+		// Simple 3D Pixel Shader with texture support
 		const char* g_pixel_shader_3d = R"(
 cbuffer PerFrame : register(b0) {
     row_major float4x4 ViewProjection;
@@ -82,7 +84,12 @@ cbuffer PerFrame : register(b0) {
 cbuffer PerObject : register(b1) {
     row_major float4x4 World;
     float4 BaseColor;
+    uint HasAlbedoTexture;
+    uint3 TexturePadding;
 };
+
+Texture2D AlbedoTexture : register(t0);
+SamplerState AlbedoSampler : register(s0);
 
 struct PS_IN {
     float4 pos : SV_POSITION;
@@ -97,8 +104,14 @@ float4 main(PS_IN input) : SV_TARGET {
     float NdotL = max(dot(N, L), 0);
     float3 diffuse = NdotL * LightColor;
     float3 ambient = AmbientStrength * LightColor;
-    float3 color = BaseColor.rgb * (ambient + diffuse);
-    return float4(color, BaseColor.a);
+    
+    float4 albedo = BaseColor;
+    if (HasAlbedoTexture != 0) {
+        albedo *= AlbedoTexture.Sample(AlbedoSampler, input.uv);
+    }
+    
+    float3 color = albedo.rgb * (ambient + diffuse);
+    return float4(color, albedo.a);
 }
 )";
 	}
@@ -159,7 +172,7 @@ float4 main(PS_IN input) : SV_TARGET {
 		auto serialize = get_serialize_root_signature();
 		if (!serialize) return false;
 
-		D3D12_ROOT_PARAMETER params[2] = {};
+		D3D12_ROOT_PARAMETER params[3] = {};
 		
 		params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
 		params[0].Descriptor.ShaderRegister = 0;
@@ -169,9 +182,41 @@ float4 main(PS_IN input) : SV_TARGET {
 		params[1].Descriptor.ShaderRegister = 1;
 		params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
+		// Descriptor range for SRV (texture)
+		D3D12_DESCRIPTOR_RANGE srv_range{};
+		srv_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+		srv_range.NumDescriptors = 1;
+		srv_range.BaseShaderRegister = 0;
+		srv_range.RegisterSpace = 0;
+		srv_range.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+		// Texture SRV descriptor table at t0
+		params[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+		params[2].DescriptorTable.NumDescriptorRanges = 1;
+		params[2].DescriptorTable.pDescriptorRanges = &srv_range;
+		params[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+		// Static sampler for texture sampling
+		D3D12_STATIC_SAMPLER_DESC sampler{};
+		sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+		sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+		sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+		sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+		sampler.MipLODBias = 0.0f;
+		sampler.MaxAnisotropy = 8;
+		sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+		sampler.BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE;
+		sampler.MinLOD = 0.0f;
+		sampler.MaxLOD = D3D12_FLOAT32_MAX;
+		sampler.ShaderRegister = 0;
+		sampler.RegisterSpace = 0;
+		sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
 		D3D12_ROOT_SIGNATURE_DESC desc{};
-		desc.NumParameters = 2;
+		desc.NumParameters = 3;
 		desc.pParameters = params;
+		desc.NumStaticSamplers = 1;
+		desc.pStaticSamplers = &sampler;
 		desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
 		ComPtr<ID3DBlob> signature;
