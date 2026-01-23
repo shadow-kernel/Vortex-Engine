@@ -56,20 +56,20 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
         private void ImportButton_Click(object sender, RoutedEventArgs e)
         {
             // Check Assimp availability for model import
-            if (_currentType == AssetType.Models && !VortexAPI.IsAssimpAvailable())
+            if ((_currentType == AssetType.Models || _currentType == AssetType.Meshes) && !VortexAPI.IsAssimpAvailable())
             {
                 var result = MessageBox.Show(
                     "Model import requires Assimp library.\n\n" +
                     "To enable model import:\n" +
-                    "1. Install Assimp NuGet package in Engine project\n" +
+                    "1. Install Assimp NuGet package (version 3.0.0) in Engine project\n" +
                     "2. Add VORTEX_USE_ASSIMP to preprocessor definitions\n" +
                     "3. Rebuild the Engine\n\n" +
-                    "See BUILD_SETUP.md for detailed instructions.\n\n" +
+                    "See BUILD_SETUP.md and NUGET_TROUBLESHOOTING.md for detailed instructions.\n\n" +
                     "You can still use .vmesh files and textures.\n\n" +
                     "Continue to file picker anyway?",
                     "Assimp Not Available",
                     MessageBoxButton.YesNo,
-                    MessageBoxImage.Information);
+                    MessageBoxImage.Warning);
                     
                 if (result != MessageBoxResult.Yes)
                     return;
@@ -118,6 +118,22 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                             }
                             else
                             {
+                                // Check Assimp before attempting import
+                                if (!VortexAPI.IsAssimpAvailable())
+                                {
+                                    MessageBox.Show(
+                                        $"Cannot import {(_currentType == AssetType.Meshes ? "mesh" : "model")} - Assimp library is not available.\n\n" +
+                                        "Please install Assimp and rebuild the engine:\n" +
+                                        "1. Install Assimp NuGet package (version 3.0.0)\n" +
+                                        "2. Add VORTEX_USE_ASSIMP preprocessor definition\n" +
+                                        "3. Rebuild Engine project\n\n" +
+                                        "See NUGET_TROUBLESHOOTING.md for help.",
+                                        "Assimp Required",
+                                        MessageBoxButton.OK,
+                                        MessageBoxImage.Error);
+                                    break;
+                                }
+                                
                                 assetId = VortexAPI.ImportModelFromFile(dialog.FileName);
                             }
                             
@@ -138,8 +154,19 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                             }
                             else
                             {
-                                MessageBox.Show($"Failed to import {(_currentType == AssetType.Meshes ? "mesh" : "model")}: {dialog.FileName}", "Import Error", 
-                                    MessageBoxButton.OK, MessageBoxImage.Error);
+                                MessageBox.Show(
+                                    $"Failed to import {(_currentType == AssetType.Meshes ? "mesh" : "model")}:\n{dialog.FileName}\n\n" +
+                                    "Possible causes:\n" +
+                                    "- File format not supported or corrupted\n" +
+                                    "- Assimp library not properly installed\n" +
+                                    "- Missing dependencies (.mtl file for .obj models)\n\n" +
+                                    "Please check:\n" +
+                                    "1. File is a valid 3D model format\n" +
+                                    "2. Assimp is installed (see NUGET_TROUBLESHOOTING.md)\n" +
+                                    "3. All associated files (.mtl, textures) are present",
+                                    "Import Error",
+                                    MessageBoxButton.OK,
+                                    MessageBoxImage.Error);
                             }
                             break;
                             
