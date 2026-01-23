@@ -31,7 +31,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer
             // Projekt aus DataContext laden
             InitializeFromProject();
 
-            // DataContext Änderungen überwachen
+            // DataContext ï¿½nderungen ï¿½berwachen
             var window = Window.GetWindow(this);
             if (window != null)
             {
@@ -93,7 +93,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer
         }
 
         /// <summary>
-        /// Synchronisiert den Tree wenn ein Ordner in der Detail-Ansicht geöffnet wird.
+        /// Synchronisiert den Tree wenn ein Ordner in der Detail-Ansicht geï¿½ffnet wird.
         /// </summary>
         private void OnCurrentFolderChangedFromExplorer(object sender, FileSystemItem folder)
         {
@@ -146,7 +146,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer
             
             foreach (var part in parts)
             {
-                // Lade Kinder falls nötig
+                // Lade Kinder falls nï¿½tig
                 if (currentItem.Children.Count == 0)
                 {
                     currentItem.LoadDirectoriesOnly();
@@ -177,7 +177,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer
                 }
             }
 
-            // Wähle das gefundene Item aus UND klappe es auf
+            // Wï¿½hle das gefundene Item aus UND klappe es auf
             currentItem.IsExpanded = true;
             currentItem.IsSelected = true;
         }
@@ -195,7 +195,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer
         }
 
         /// <summary>
-        /// Lädt Unterordner wenn ein TreeViewItem aufgeklappt wird.
+        /// Lï¿½dt Unterordner wenn ein TreeViewItem aufgeklappt wird.
         /// </summary>
         private void OnTreeViewItemExpanded(object sender, RoutedEventArgs e)
         {
@@ -204,7 +204,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer
             
             if (item != null && item.IsDirectory)
             {
-                // Lade Unterordner für alle Kinder (für das Anzeigen der Expander)
+                // Lade Unterordner fï¿½r alle Kinder (fï¿½r das Anzeigen der Expander)
                 foreach (var child in item.Children)
                 {
                     if (child.IsDirectory && child.Children.Count == 0 && child.HasSubDirectories)
@@ -385,7 +385,7 @@ namespace Game
                 _draggedItem = null;
                 
                 var data = new DataObject("FileSystemItem", draggedItem);
-                DragDrop.DoDragDrop(this, data, DragDropEffects.Move);
+                System.Windows.DragDrop.DoDragDrop(this, data, DragDropEffects.Move);
                 
                 _isDragging = false;
             }

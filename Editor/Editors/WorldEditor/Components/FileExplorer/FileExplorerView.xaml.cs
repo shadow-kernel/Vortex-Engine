@@ -594,10 +594,10 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer
             var newFolder = _explorerService.CreateFolder();
             if (newFolder != null)
             {
-                // Nach dem Refresh das neue Item auswählen und umbenennen
+                // Nach dem Refresh das neue Item auswï¿½hlen und umbenennen
                 Dispatcher.BeginInvoke(new Action(() =>
                 {
-                    // Item in der Liste finden und auswählen
+                    // Item in der Liste finden und auswï¿½hlen
                     foreach (var item in _explorerService.CurrentFolderContents)
                     {
                         if (item.FullPath == newFolder.FullPath)
@@ -616,10 +616,10 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer
             var newScript = _explorerService.CreateFile("NewScript.cs", GetDefaultScriptContent("NewScript"));
             if (newScript != null)
             {
-                // Nach dem Refresh das neue Item auswählen und umbenennen
+                // Nach dem Refresh das neue Item auswï¿½hlen und umbenennen
                 Dispatcher.BeginInvoke(new Action(() =>
                 {
-                    // Item in der Liste finden und auswählen
+                    // Item in der Liste finden und auswï¿½hlen
                     foreach (var item in _explorerService.CurrentFolderContents)
                     {
                         if (item.FullPath == newScript.FullPath)
@@ -866,21 +866,21 @@ float4 PS_Main(PS_INPUT input) : SV_TARGET
         }
 
         /// <summary>
-        /// Löscht mehrere Items als ein einzelner Undo-fähiger Command.
+        /// Lï¿½scht mehrere Items als ein einzelner Undo-fï¿½higer Command.
         /// </summary>
         private void DeleteSelectedItems(List<FileSystemItem> items)
         {
             if (items == null || items.Count == 0)
                 return;
 
-            // Bestätigungsdialog
+            // Bestï¿½tigungsdialog
             string message = items.Count == 1
-                ? $"Möchten Sie '{items[0].Name}' wirklich löschen?"
-                : $"Möchten Sie {items.Count} Elemente wirklich löschen?";
+                ? $"Mï¿½chten Sie '{items[0].Name}' wirklich lï¿½schen?"
+                : $"Mï¿½chten Sie {items.Count} Elemente wirklich lï¿½schen?";
 
             var result = MessageBox.Show(
-                $"{message}\n\nDiese Aktion kann mit Strg+Z rückgängig gemacht werden.",
-                "Löschen bestätigen",
+                $"{message}\n\nDiese Aktion kann mit Strg+Z rï¿½ckgï¿½ngig gemacht werden.",
+                "Lï¿½schen bestï¿½tigen",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Question);
 
@@ -903,7 +903,7 @@ float4 PS_Main(PS_INPUT input) : SV_TARGET
                     }
                 }
 
-                // Als ein einzelner Command ausführen
+                // Als ein einzelner Command ausfï¿½hren
                 if (commands.Count == 1)
                 {
                     UndoRedoManager.Instance.Execute(commands[0]);
@@ -918,7 +918,7 @@ float4 PS_Main(PS_INPUT input) : SV_TARGET
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Fehler beim Löschen: {ex.Message}",
+                MessageBox.Show($"Fehler beim Lï¿½schen: {ex.Message}",
                     "Fehler", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
@@ -963,7 +963,7 @@ float4 PS_Main(PS_INPUT input) : SV_TARGET
             var textBox = sender as TextBox;
             if (textBox != null && (bool)e.NewValue)
             {
-                // TextBox wurde sichtbar - fokussieren und Text auswählen
+                // TextBox wurde sichtbar - fokussieren und Text auswï¿½hlen
                 textBox.Dispatcher.BeginInvoke(new Action(() =>
                 {
                     textBox.Focus();
@@ -997,7 +997,7 @@ float4 PS_Main(PS_INPUT input) : SV_TARGET
             }
             else if (e.Key == Key.Escape)
             {
-                // Ursprünglichen Namen wiederherstellen
+                // Ursprï¿½nglichen Namen wiederherstellen
                 item.Name = System.IO.Path.GetFileName(item.FullPath);
                 item.IsRenaming = false;
                 e.Handled = true;
@@ -1020,12 +1020,12 @@ float4 PS_Main(PS_INPUT input) : SV_TARGET
             
             if (newName == currentActualName)
             {
-                // Keine Änderung - Name wiederherstellen falls Binding ihn geändert hat
+                // Keine ï¿½nderung - Name wiederherstellen falls Binding ihn geï¿½ndert hat
                 item.Name = currentActualName;
                 return;
             }
 
-            // Umbenennung durchführen
+            // Umbenennung durchfï¿½hren
             bool success = _explorerService.Rename(item, newName);
             
             if (!success)
@@ -1079,7 +1079,7 @@ float4 PS_Main(PS_INPUT input) : SV_TARGET
             {
                 // Use a list for multi-item drag
                 var data = new DataObject("FileSystemItems", _draggedItems);
-                DragDrop.DoDragDrop(this, data, DragDropEffects.Move);
+                System.Windows.DragDrop.DoDragDrop(this, data, DragDropEffects.Move);
                 _draggedItem = null;
                 _draggedItems.Clear();
             }

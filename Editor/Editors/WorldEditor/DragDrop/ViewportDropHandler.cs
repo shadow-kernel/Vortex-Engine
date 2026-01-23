@@ -5,6 +5,7 @@ using System.Windows;
 using Editor.Core.Assets;
 using Editor.Core.Data;
 using Editor.DllWrapper;
+using Editor.DllWrapper.Resources;
 using Editor.ECS;
 using Editor.ECS.Components.Rendering;
 
@@ -178,10 +179,7 @@ namespace Editor.Editors.WorldEditor.DragDrop
         private void CreateEntityWithMesh(string meshPath, string name, Point dropPosition)
         {
             // Create a new entity
-            var entity = new GameEntity(_scene)
-            {
-                Name = name
-            };
+            var entity = new GameEntity(_scene, name);
 
             // Add mesh renderer component
             var meshRenderer = new MeshRenderer(entity)

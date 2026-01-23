@@ -21,7 +21,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             InitializeComponent();
             Loaded += OnLoaded;
             
-            // PreviewKeyDown für Keyboard-Shortcuts (vor TreeView)
+            // PreviewKeyDown fï¿½r Keyboard-Shortcuts (vor TreeView)
             this.PreviewKeyDown += OnPreviewKeyDown;
         }
 
@@ -36,7 +36,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
         }
 
         /// <summary>
-        /// Setzt das aktuelle Projekt für die Hierarchy-Ansicht
+        /// Setzt das aktuelle Projekt fï¿½r die Hierarchy-Ansicht
         /// </summary>
         public void SetProject(ProjectData project)
         {
@@ -44,7 +44,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
         }
 
         /// <summary>
-        /// Setzt die aktuelle Szene für die Hierarchy-Ansicht
+        /// Setzt die aktuelle Szene fï¿½r die Hierarchy-Ansicht
         /// </summary>
         public void SetScene(Scene scene)
         {
@@ -160,13 +160,13 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
         {
             if (ViewModel == null) return;
 
-            // Bei normaler Selektion (ohne Modifier) - wird bereits über PreviewMouseDown behandelt
+            // Bei normaler Selektion (ohne Modifier) - wird bereits ï¿½ber PreviewMouseDown behandelt
             if (e.NewValue is GameEntity entity)
             {
-                // Setze SelectedEntity für Inspector usw.
+                // Setze SelectedEntity fï¿½r Inspector usw.
                 ViewModel.SelectedEntity = entity;
                 
-                // Wenn keine Modifier-Taste gedrückt ist, ersetze die Selektion
+                // Wenn keine Modifier-Taste gedrï¿½ckt ist, ersetze die Selektion
                 if (!Keyboard.Modifiers.HasFlag(ModifierKeys.Control) && 
                     !Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))
                 {
@@ -337,7 +337,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             var project = ProjectData.Current;
             if (project == null) return;
 
-            // Öffne Datei-Dialog zum Auswählen eines Prefabs
+            // ï¿½ffne Datei-Dialog zum Auswï¿½hlen eines Prefabs
             var dialog = new Microsoft.Win32.OpenFileDialog
             {
                 Title = "Select Prefab to Instantiate",
@@ -359,7 +359,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
                     if (entity != null)
                     {
                         entity.Scene = ViewModel.SelectedScene;
-                        entity.RegenerateIds(); // Neue IDs für die Instanz
+                        entity.RegenerateIds(); // Neue IDs fï¿½r die Instanz
                         ViewModel.SelectedScene.AddEntity(entity);
                         ViewModel.SelectedEntity = entity;
                     }
@@ -644,7 +644,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
                 {
                     _isDragging = true;
                     var data = new DataObject(typeof(GameEntity), _draggedEntity);
-                    DragDrop.DoDragDrop(HierarchyTree, data, DragDropEffects.Move);
+                    System.Windows.DragDrop.DoDragDrop(HierarchyTree, data, DragDropEffects.Move);
                     _isDragging = false;
                     _draggedEntity = null;
                 }
@@ -783,17 +783,17 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
 
                     if (targetEntity != null && targetEntity != draggedEntity)
                     {
-                        // Shift gedrückt: Als Geschwister einfügen (Reorder)
+                        // Shift gedrï¿½ckt: Als Geschwister einfï¿½gen (Reorder)
                         if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))
                         {
                             ViewModel.MoveEntityToPosition(draggedEntity, targetEntity, insertAfter: true);
                         }
-                        // Alt gedrückt: Vor das Element einfügen
+                        // Alt gedrï¿½ckt: Vor das Element einfï¿½gen
                         else if (Keyboard.Modifiers.HasFlag(ModifierKeys.Alt))
                         {
                             ViewModel.MoveEntityToPosition(draggedEntity, targetEntity, insertAfter: false);
                         }
-                        // Normal: Als Kind einfügen
+                        // Normal: Als Kind einfï¿½gen
                         else
                         {
                             ViewModel.MoveEntityToParent(draggedEntity, targetEntity);
