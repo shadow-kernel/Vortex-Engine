@@ -182,3 +182,84 @@ For issues or questions:
 ---
 
 **Note:** This is a new feature. Report any issues you encounter!
+
+## Asset Management with GUIDs
+
+### Understanding Asset Metadata
+
+When you import a model, the engine creates a `.vmeta` file:
+
+```
+MyModel.fbx           # Your model
+MyModel.fbx.vmeta     # Metadata with GUID, dependencies, etc.
+```
+
+The `.vmeta` file contains:
+```json
+{
+  "Guid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "Type": "Mesh",
+  "RelativePath": "Assets/Models/MyModel.fbx",
+  "FileName": "MyModel.fbx",
+  "ImportDate": "2025-01-23T12:00:00",
+  "FileSize": 1234567,
+  "Dependencies": [],
+  "ImportSettings": {},
+  "Tags": []
+}
+```
+
+### Benefits of GUID References
+
+**Old Way (path-based):**
+- Move/rename breaks references
+- Hard to track dependencies
+- Fragile
+
+**New Way (GUID-based):**
+- ✅ Move/rename assets safely
+- ✅ Automatic dependency tracking
+- ✅ Never lose references
+- ✅ Safer asset deletion
+
+### Viewing Asset GUIDs
+
+In the Asset Browser:
+1. Right-click an asset (planned)
+2. Select "Properties"
+3. See GUID and other metadata
+
+### Safe Asset Deletion
+
+The engine prevents you from deleting assets that are in use:
+
+**Example:**
+```
+Cannot delete 'Character.fbx'
+
+Referenced by:
+  • CharacterPrefab.ventity (Prefab)
+  • Level1.vscene (Scene)
+```
+
+If no references exist, you can delete with cascading:
+```
+Delete 'Character.fbx'?
+
+This will also delete 2 unused dependencies:
+  • CharacterTexture.png (Texture)
+  • CharacterNormal.png (Texture)
+
+Are you sure?
+```
+
+## For More Information
+
+- [FEATURES.md](FEATURES.md) - Complete feature list
+- [USAGE_GUIDE.md](USAGE_GUIDE.md) - Detailed usage instructions
+- [BUILD_SETUP.md](BUILD_SETUP.md) - Build and dependency setup
+- [IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md) - Technical details
+
+---
+
+**Updated:** January 2025 - Added GUID-based asset management
