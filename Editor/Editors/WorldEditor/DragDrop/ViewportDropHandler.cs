@@ -107,7 +107,6 @@ namespace Editor.Editors.WorldEditor.DragDrop
 
             try
             {
-                string meshPath = filePath;
                 var extension = Path.GetExtension(filePath)?.ToLowerInvariant();
 
                 // For non-vmesh files, check Assimp availability
@@ -121,15 +120,52 @@ namespace Editor.Editors.WorldEditor.DragDrop
                     return;
                 }
 
-                // Import to project as asset
+                // Import to project as asset (copies file and creates metadata)
                 var fileName = Path.GetFileName(filePath);
                 var targetPath = $"Assets/Models/{fileName}";
                 var asset = _assetDatabase.ImportAsset(filePath, targetPath, AssetType.Mesh);
+                
+                var projectFilePath = Path.Combine(_assetDatabase.ProjectPath, asset.RelativePath);
+                string meshPathToUse = projectFilePath;
 
-                // Get the project-relative path
-                meshPath = asset.RelativePath;
+                // If it's not a .vmesh file, import it and convert to .vmesh
+                if (extension != ".vmesh")
+                {
+                    // Import the model using Assimp
+                    long meshId = VortexAPI.ImportModelFromFile(projectFilePath);
+                    
+                    if (meshId < 0)
+                    {
+                        MessageBox.Show(
+                            $"Failed to import model file.\nFile: {fileName}\n\nMake sure the file is a valid 3D model format (FBX, OBJ, GLTF, etc.).",
+                            "Import Error",
+                            MessageBoxButton.OK,
+                            MessageBoxImage.Error);
+                        return;
+                    }
 
-                CreateEntityWithMesh(meshPath, Path.GetFileNameWithoutExtension(filePath), dropPosition);
+                    // Convert to .vmesh format for faster loading
+                    var vmeshFileName = Path.GetFileNameWithoutExtension(fileName) + ".vmesh";
+                    var vmeshPath = Path.Combine(Path.GetDirectoryName(projectFilePath), vmeshFileName);
+                    
+                    if (VortexAPI.SaveMeshToVMesh(meshId, vmeshPath))
+                    {
+                        // Use the .vmesh file
+                        meshPathToUse = vmeshPath;
+                        
+                        // Create metadata for the .vmesh file
+                        var vmeshRelativePath = $"Assets/Models/{vmeshFileName}";
+                        var vmeshAsset = new AssetMetadata(AssetType.Mesh, vmeshRelativePath, vmeshFileName)
+                        {
+                            LastModified = DateTime.Now,
+                            FileSize = new FileInfo(vmeshPath).Length
+                        };
+                        _assetDatabase.SaveMetadata(vmeshAsset, vmeshPath + ".vmeta");
+                    }
+                }
+
+                // Create entity with the mesh
+                CreateEntityWithMesh(meshPathToUse, Path.GetFileNameWithoutExtension(filePath), dropPosition);
             }
             catch (Exception ex)
             {
