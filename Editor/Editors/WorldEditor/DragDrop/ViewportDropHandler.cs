@@ -5,7 +5,6 @@ using System.Windows;
 using Editor.Core.Assets;
 using Editor.Core.Data;
 using Editor.DllWrapper;
-using Editor.DllWrapper.Resources;
 using Editor.ECS;
 using Editor.ECS.Components.Rendering;
 
@@ -112,7 +111,7 @@ namespace Editor.Editors.WorldEditor.DragDrop
                 var extension = Path.GetExtension(filePath)?.ToLowerInvariant();
 
                 // For non-vmesh files, check Assimp availability
-                if (extension != ".vmesh" && !VortexResources.IsAssimpAvailable())
+                if (extension != ".vmesh" && !VortexAPI.IsAssimpAvailable())
                 {
                     MessageBox.Show(
                         "Cannot import model: Assimp library not available.\nPlease install the Assimp NuGet package.",
