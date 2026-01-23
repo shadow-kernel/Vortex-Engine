@@ -110,6 +110,7 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                     
                     switch (_currentType)
                     {
+                        case AssetType.Meshes:
                         case AssetType.Models:
                             if (dialog.FileName.EndsWith(".vmesh", StringComparison.OrdinalIgnoreCase))
                             {
@@ -126,18 +127,18 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                                 {
                                     Id = assetId,
                                     Name = assetName,
-                                    TypeName = "Imported Model",
+                                    TypeName = _currentType == AssetType.Meshes ? "Imported Mesh" : "Imported Model",
                                     IconCode = "\uF158",
                                     IconColor = "#4EC9B0",
-                                    Type = AssetType.Models,
+                                    Type = _currentType,
                                     Path = dialog.FileName
                                 });
-                                MessageBox.Show($"Successfully imported model: {assetName}", "Import Complete", 
+                                MessageBox.Show($"Successfully imported {(_currentType == AssetType.Meshes ? "mesh" : "model")}: {assetName}", "Import Complete", 
                                     MessageBoxButton.OK, MessageBoxImage.Information);
                             }
                             else
                             {
-                                MessageBox.Show($"Failed to import model: {dialog.FileName}", "Import Error", 
+                                MessageBox.Show($"Failed to import {(_currentType == AssetType.Meshes ? "mesh" : "model")}: {dialog.FileName}", "Import Error", 
                                     MessageBoxButton.OK, MessageBoxImage.Error);
                             }
                             break;
