@@ -21,6 +21,11 @@ namespace Editor.Core.Assets
 
         public const string MetaFileExtension = ".vmeta";
 
+        /// <summary>
+        /// Gets the root path of the current project.
+        /// </summary>
+        public string ProjectPath => _projectPath;
+
         private AssetDatabase()
         {
             _assetsByGuid = new Dictionary<Guid, AssetMetadata>();
