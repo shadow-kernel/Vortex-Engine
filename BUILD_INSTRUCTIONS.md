@@ -99,6 +99,49 @@ Expected build order:
 3. Verify Additional Include Directories contains:
    - `$(ProjectDir)ThirdParty;$(SolutionDir)packages\Assimp.3.0.0\build\native\include`
 
+### Error: LNK2019 "Unresolved external symbol Assimp::Importer::..."
+
+**Cause:** Assimp library files (.lib) are not being linked.
+
+**Solution:**
+
+1. **Restore NuGet packages:**
+   ```bash
+   # In Visual Studio: Right-click Solution → Restore NuGet Packages
+   ```
+
+2. **Verify package installation:**
+   - Check that `packages\Assimp.3.0.0\build\native\lib\` folder exists
+   - Should contain `Win32` and `x64` subfolders with `.lib` files
+
+3. **Clean and rebuild:**
+   - Build → Clean Solution
+   - Build → Rebuild Solution
+
+4. **If still failing, manually add library directories:**
+   - Right-click **Engine** project → **Properties**
+   - **Linker** → **General** → **Additional Library Directories**
+   - For x64 Debug/Release: Add `$(SolutionDir)packages\Assimp.3.0.0\build\native\lib\x64`
+   - For Win32 Debug/Release: Add `$(SolutionDir)packages\Assimp.3.0.0\build\native\lib\Win32`
+
+5. **Add library dependency:**
+   - **Linker** → **Input** → **Additional Dependencies**
+   - Add: `assimp-vc142-mt.lib`
+
+6. **Ensure preprocessor is set:**
+   - **C/C++** → **Preprocessor** → **Preprocessor Definitions**
+   - Must include: `VORTEX_USE_ASSIMP`
+
+**Note:** The latest commit should have these linker settings pre-configured. If you pulled the latest changes, try:
+```bash
+# Clear all caches
+dotnet nuget locals all --clear
+# Delete .vs folder in solution directory
+# Restart Visual Studio
+# Restore NuGet Packages
+# Rebuild Solution
+```
+
 ### Error: "Engine.lib cannot be opened"
 
 **Cause:** Engine project failed to build, so dependent projects can't link.
