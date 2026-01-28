@@ -41,6 +41,8 @@ StartupUri="MainWindow.xaml">
             </Style>
             <Style TargetType="{x:Type TreeViewItem}">
                 <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+                <Setter Property="HorizontalContentAlignment" Value="Left"/>
+                <Setter Property="VerticalContentAlignment" Value="Center"/>
             </Style>
             <Style TargetType="{x:Type MenuItem}">
                 <Setter Property="FocusVisualStyle" Value="{x:Null}"/>

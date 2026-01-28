@@ -46,6 +46,7 @@ namespace Editor.Core.Serialization
             typeof(MeshRenderer),
             typeof(SpriteRenderer),
             typeof(Camera),
+            typeof(Skybox),
             
             // Lighting
             typeof(Light),

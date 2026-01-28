@@ -107,6 +107,18 @@ namespace Editor.DllWrapper
             try { SetRenderLoopVSync(enabled); } catch { }
         }
 
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetWireframeMode([MarshalAs(UnmanagedType.I1)] bool enabled);
+
+        private static bool _wireframeMode = false;
+        public static bool IsWireframeMode => _wireframeMode;
+
+        public static void SetWireframe(bool enabled)
+        {
+            _wireframeMode = enabled;
+            try { SetWireframeMode(enabled); } catch { }
+        }
+
         #endregion
 
         #region Performance Statistics
@@ -399,6 +411,306 @@ namespace Editor.DllWrapper
         public static void ReleaseSecondaryRenderTargetPixels(uint targetId)
         {
             try { ReleaseRenderTargetPixels(targetId); } catch { }
+        }
+
+        #endregion
+
+        #region Lighting System
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void ClearLights();
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetDirectionalLight(
+            float dirX, float dirY, float dirZ,
+            float colorR, float colorG, float colorB,
+            float intensity);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void AddPointLight(
+            float posX, float posY, float posZ,
+            float colorR, float colorG, float colorB,
+            float intensity, float range);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void AddSpotLight(
+            float posX, float posY, float posZ,
+            float dirX, float dirY, float dirZ,
+            float colorR, float colorG, float colorB,
+            float intensity, float range,
+            float spotAngle, float innerSpotAngle);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetAmbientStrength(float strength);
+
+        /// <summary>
+        /// Clear all dynamic lights. Call at the beginning of each frame before submitting new lights.
+        /// </summary>
+        public static void ClearAllLights()
+        {
+            try { ClearLights(); } catch { }
+        }
+
+        /// <summary>
+        /// Set the primary directional light (sun light).
+        /// </summary>
+        public static void SetDirectionalLightParams(
+            float dirX, float dirY, float dirZ,
+            float colorR, float colorG, float colorB,
+            float intensity)
+        {
+            try { SetDirectionalLight(dirX, dirY, dirZ, colorR, colorG, colorB, intensity); } catch { }
+        }
+
+        /// <summary>
+        /// Add a point light to the scene. Maximum 16 per frame.
+        /// </summary>
+        public static void SubmitPointLight(
+            float posX, float posY, float posZ,
+            float colorR, float colorG, float colorB,
+            float intensity, float range)
+        {
+            try { AddPointLight(posX, posY, posZ, colorR, colorG, colorB, intensity, range); } catch { }
+        }
+
+        /// <summary>
+        /// Add a spot light to the scene. Maximum 8 per frame.
+        /// </summary>
+        public static void SubmitSpotLight(
+            float posX, float posY, float posZ,
+            float dirX, float dirY, float dirZ,
+            float colorR, float colorG, float colorB,
+            float intensity, float range,
+            float spotAngle, float innerSpotAngle)
+        {
+            try 
+            { 
+                AddSpotLight(posX, posY, posZ, dirX, dirY, dirZ, 
+                    colorR, colorG, colorB, intensity, range, spotAngle, innerSpotAngle); 
+            } 
+            catch { }
+        }
+
+        /// <summary>
+        /// Set ambient light strength (0.0 - 1.0).
+        /// </summary>
+        public static void SetAmbientLightStrength(float strength)
+        {
+            try { SetAmbientStrength(strength); } catch { }
+        }
+
+        #endregion
+
+        #region Skybox
+
+        /// <summary>
+        /// Skybox rendering modes
+        /// </summary>
+        public enum SkyboxMode : uint
+        {
+            SolidColor = 0,
+            Gradient = 1,
+            Texture = 2
+        }
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetSkyboxEnabled([MarshalAs(UnmanagedType.I1)] bool enabled);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        private static extern bool IsSkyboxEnabled();
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetSkyboxMode(uint mode);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern uint GetSkyboxMode();
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetSkyboxColors(
+            float skyR, float skyG, float skyB,
+            float horizonR, float horizonG, float horizonB,
+            float groundR, float groundG, float groundB);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetSkyboxSolidColor(float r, float g, float b);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetSkyboxSun(float dirX, float dirY, float dirZ, 
+            float colorR, float colorG, float colorB, float intensity);
+
+        private static bool _skyboxEnabled = false;
+        public static bool IsSkyboxOn => _skyboxEnabled;
+
+        /// <summary>
+        /// Enable or disable the skybox rendering.
+        /// </summary>
+        public static void EnableSkybox(bool enabled)
+        {
+            _skyboxEnabled = enabled;
+            try { SetSkyboxEnabled(enabled); } catch { }
+        }
+
+        /// <summary>
+        /// Set the skybox rendering mode.
+        /// </summary>
+        public static void SetSkyboxRenderMode(SkyboxMode mode)
+        {
+            try { SetSkyboxMode((uint)mode); } catch { }
+        }
+
+        /// <summary>
+        /// Set skybox gradient colors (linear RGB).
+        /// </summary>
+        public static void SetSkyboxGradient(
+            float skyR, float skyG, float skyB,
+            float horizonR, float horizonG, float horizonB,
+            float groundR, float groundG, float groundB)
+        {
+            try 
+            { 
+                SetSkyboxColors(skyR, skyG, skyB, horizonR, horizonG, horizonB, groundR, groundG, groundB); 
+            } 
+            catch { }
+        }
+
+        /// <summary>
+        /// Set skybox to a single solid color (linear RGB).
+        /// </summary>
+        public static void SetSkyboxColor(float r, float g, float b)
+        {
+            try { SetSkyboxSolidColor(r, g, b); } catch { }
+        }
+
+        /// <summary>
+        /// Configure the sun for skybox rendering.
+        /// </summary>
+        public static void ConfigureSkyboxSun(float dirX, float dirY, float dirZ, 
+            float colorR, float colorG, float colorB, float intensity)
+        {
+            try { SetSkyboxSun(dirX, dirY, dirZ, colorR, colorG, colorB, intensity); } catch { }
+        }
+
+        #endregion
+
+        #region Runtime Skybox Component
+
+        /// <summary>
+        /// Descriptor for creating a runtime skybox component.
+        /// Must match the C++ skybox_descriptor structure layout exactly.
+        /// </summary>
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct SkyboxDescriptor
+        {
+            public byte Mode; // 0 = solid, 1 = gradient, 2 = cubemap
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 3)]
+            public float[] SkyColor;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 3)]
+            public float[] HorizonColor;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 3)]
+            public float[] GroundColor;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 3)]
+            public float[] SunDirection;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 3)]
+            public float[] SunColor;
+            public float SunIntensity;
+            public float AmbientIntensity;
+            public float Exposure;
+            [MarshalAs(UnmanagedType.I1)]
+            public bool IsEnabled;
+
+            public static SkyboxDescriptor CreateGradient(
+                float skyR, float skyG, float skyB,
+                float horizonR, float horizonG, float horizonB,
+                float groundR, float groundG, float groundB,
+                float exposure = 1.0f)
+            {
+                return new SkyboxDescriptor
+                {
+                    Mode = 1, // Gradient
+                    SkyColor = new[] { skyR, skyG, skyB },
+                    HorizonColor = new[] { horizonR, horizonG, horizonB },
+                    GroundColor = new[] { groundR, groundG, groundB },
+                    SunDirection = new[] { -0.5f, -0.7f, 0.5f },
+                    SunColor = new[] { 1.0f, 0.95f, 0.8f },
+                    SunIntensity = 1.0f,
+                    AmbientIntensity = 0.3f,
+                    Exposure = exposure,
+                    IsEnabled = true
+                };
+            }
+
+            public static SkyboxDescriptor CreateSolidColor(float r, float g, float b, float exposure = 1.0f)
+            {
+                return new SkyboxDescriptor
+                {
+                    Mode = 0, // Solid color
+                    SkyColor = new[] { r, g, b },
+                    HorizonColor = new[] { r, g, b },
+                    GroundColor = new[] { r, g, b },
+                    SunDirection = new[] { -0.5f, -0.7f, 0.5f },
+                    SunColor = new[] { 1.0f, 0.95f, 0.8f },
+                    SunIntensity = 0.0f, // No sun for solid color
+                    AmbientIntensity = 0.3f,
+                    Exposure = exposure,
+                    IsEnabled = true
+                };
+            }
+        }
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern long CreateSkyboxComponent(ref SkyboxDescriptor desc);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void RemoveSkyboxComponent(long skyboxId);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void ApplySkyboxToRenderer(long skyboxId);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void ApplyActiveSkybox();
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetActiveSkyboxComponent(long skyboxId);
+
+        /// <summary>
+        /// Create a runtime skybox component (for game builds without editor).
+        /// </summary>
+        public static long CreateRuntimeSkybox(SkyboxDescriptor desc)
+        {
+            try { return CreateSkyboxComponent(ref desc); } catch { return -1; }
+        }
+
+        /// <summary>
+        /// Remove a runtime skybox component.
+        /// </summary>
+        public static void RemoveRuntimeSkybox(long skyboxId)
+        {
+            try { RemoveSkyboxComponent(skyboxId); } catch { }
+        }
+
+        /// <summary>
+        /// Apply a specific skybox to the renderer.
+        /// </summary>
+        public static void ApplyRuntimeSkybox(long skyboxId)
+        {
+            try { ApplySkyboxToRenderer(skyboxId); } catch { }
+        }
+
+        /// <summary>
+        /// Apply the currently active skybox to the renderer.
+        /// </summary>
+        public static void ApplyActiveRuntimeSkybox()
+        {
+            try { ApplyActiveSkybox(); } catch { }
+        }
+
+        /// <summary>
+        /// Set which skybox is the active one.
+        /// </summary>
+        public static void SetActiveRuntimeSkybox(long skyboxId)
+        {
+            try { SetActiveSkyboxComponent(skyboxId); } catch { }
         }
 
         #endregion

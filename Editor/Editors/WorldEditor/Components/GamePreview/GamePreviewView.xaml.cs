@@ -10,6 +10,7 @@ using Editor.Core.Data;
 using Editor.Core.Services;
 using Editor.DllWrapper;
 using Editor.ECS;
+using Editor.Editors.WorldEditor.DragDrop;
 
 namespace Editor.Editors.WorldEditor.Components.GamePreview
 {
@@ -31,6 +32,9 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         private bool _isDraggingGizmo;
         private GizmoAxis _activeGizmoAxis = GizmoAxis.None;
         private Point _lastDragPos;
+
+        // Drag and drop handler
+        private ViewportDropHandler _dropHandler;
 
         public GamePreviewView()
         {
@@ -61,6 +65,12 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             this.Focusable = true;
             this.KeyDown += OnViewportKeyDown;
             this.KeyUp += OnViewportKeyUp;
+
+            // Enable drag and drop
+            this.AllowDrop = true;
+            this.DragEnter += OnDragEnter;
+            this.DragOver += OnDragOver;
+            this.Drop += OnDrop;
 
             Loaded += OnViewLoaded;
             Unloaded += OnViewUnloaded;
@@ -229,6 +239,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                 if (_currentScene != value)
                 {
                     _currentScene = value;
+                    _dropHandler = null; // Reset drop handler for new scene
                     SceneRenderService.Instance.ClearAllRenderables();
                 }
             }
@@ -609,6 +620,57 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         {
             CompositionTarget.Rendering -= OnCompositionTargetRendering;
         }
+
+        #region Drag and Drop
+
+        private void OnDragEnter(object sender, DragEventArgs e)
+        {
+            EnsureDropHandler();
+            if (_dropHandler != null && _dropHandler.CanAcceptDrop(e.Data))
+            {
+                e.Effects = DragDropEffects.Copy;
+            }
+            else
+            {
+                e.Effects = DragDropEffects.None;
+            }
+            e.Handled = true;
+        }
+
+        private void OnDragOver(object sender, DragEventArgs e)
+        {
+            EnsureDropHandler();
+            if (_dropHandler != null && _dropHandler.CanAcceptDrop(e.Data))
+            {
+                e.Effects = DragDropEffects.Copy;
+            }
+            else
+            {
+                e.Effects = DragDropEffects.None;
+            }
+            e.Handled = true;
+        }
+
+        private void OnDrop(object sender, DragEventArgs e)
+        {
+            EnsureDropHandler();
+            if (_dropHandler != null && _dropHandler.CanAcceptDrop(e.Data))
+            {
+                var dropPos = e.GetPosition(this);
+                _dropHandler.HandleDrop(e.Data, dropPos);
+            }
+            e.Handled = true;
+        }
+
+        private void EnsureDropHandler()
+        {
+            if (_dropHandler == null && _currentScene != null)
+            {
+                _dropHandler = new ViewportDropHandler(_currentScene);
+            }
+        }
+
+        #endregion
 
         private void OnHostSizeChanged(object sender, EventArgs e)
         {

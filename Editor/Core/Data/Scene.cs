@@ -264,6 +264,9 @@ namespace Editor.Core.Data
 
             IsActive = true;
 
+            // Preload textures and materials for this scene
+            Services.SceneRenderService.Instance.PreloadSceneAssets(this);
+
             foreach (var entity in Entities)
             {
                 entity.SyncEngineStateRecursive(IsActive);
@@ -328,6 +331,17 @@ namespace Editor.Core.Data
         {
             var entity = new GameEntity(this, name ?? $"{lightType} Light");
             entity.AddComponent(new Light(entity, lightType));
+            AddEntity(entity);
+            return entity;
+        }
+
+        /// <summary>
+        /// Erstellt eine Skybox-Entity für Umgebungsbeleuchtung
+        /// </summary>
+        public GameEntity CreateSkybox(string name = "Skybox")
+        {
+            var entity = new GameEntity(this, name);
+            entity.AddComponent(new Skybox(entity));
             AddEntity(entity);
             return entity;
         }

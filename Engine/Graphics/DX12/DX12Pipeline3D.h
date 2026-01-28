@@ -22,6 +22,9 @@ namespace vortex::graphics::dx12
 
 		// Wireframe mode for debugging
 		ID3D12PipelineState* wireframe_pso() const { return m_wireframe_pso.Get(); }
+		
+		// Double-sided PSO for skybox/unlit materials (no backface culling)
+		ID3D12PipelineState* double_sided_pso() const { return m_double_sided_pso.Get(); }
 
 	private:
 		bool compile_shaders();
@@ -31,6 +34,7 @@ namespace vortex::graphics::dx12
 		ComPtr<ID3D12RootSignature> m_root_signature;
 		ComPtr<ID3D12PipelineState> m_pipeline_state;
 		ComPtr<ID3D12PipelineState> m_wireframe_pso;
+		ComPtr<ID3D12PipelineState> m_double_sided_pso;
 		ComPtr<ID3DBlob> m_vs_blob;
 		ComPtr<ID3DBlob> m_ps_blob;
 	};

@@ -5,9 +5,11 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using Editor.Core.Assets;
 using Editor.Core.Data;
 using Editor.Core.UndoRedo;
 using Editor.Core.UndoRedo.Commands;
+using Editor.Dialogs;
 using Editor.Editors.WorldEditor.Components.FileExplorer.Models;
 using Editor.Editors.WorldEditor.Components.FileExplorer.Services;
 
@@ -841,6 +843,67 @@ float4 PS_Main(PS_INPUT input) : SV_TARGET
     }
 }
 ";
+}
+
+private void OnEditTagsClick(object sender, RoutedEventArgs e)
+{
+    var menuItem = sender as MenuItem;
+    var contextMenu = menuItem?.Parent as ContextMenu;
+    var item = (contextMenu?.PlacementTarget as FrameworkElement)?.DataContext as FileSystemItem;
+
+    if (item == null || item.IsDirectory) return;
+
+    // Load existing tags for this file
+    var metaPath = item.FullPath + ".vmeta";
+    Guid assetGuid = Guid.NewGuid();
+    var existingTags = new List<string>();
+
+    if (System.IO.File.Exists(metaPath))
+    {
+        try
+        {
+            var meta = AssetMetadataService.Instance.LoadMetadata(metaPath);
+            if (meta != null)
+            {
+                assetGuid = meta.Guid;
+                existingTags = meta.Tags ?? new List<string>();
+            }
+        }
+        catch { }
+    }
+
+    // Also get tags from tag service
+    var serviceTags = AssetTagService.Instance.GetTags(assetGuid);
+    foreach (var tag in serviceTags)
+    {
+        if (!existingTags.Contains(tag, StringComparer.OrdinalIgnoreCase))
+            existingTags.Add(tag);
+    }
+
+    // Show tag editor dialog
+    var dialog = new AssetTagEditorDialog(assetGuid, item.Name, existingTags);
+    dialog.Owner = Window.GetWindow(this);
+            
+    if (dialog.ShowDialog() == true)
+    {
+        // Save the updated tags
+                AssetTagService.Instance.SetTags(assetGuid, dialog.ResultTags);
+                
+                // Also update vmeta file if exists
+                if (System.IO.File.Exists(metaPath))
+                {
+                    try
+                    {
+                        var meta = AssetMetadataService.Instance.LoadMetadata(metaPath);
+                        if (meta != null)
+                        {
+                            meta.Tags = dialog.ResultTags.ToList();
+                            AssetMetadataService.Instance.SaveMetadata(metaPath, meta);
+                        }
+                    }
+                    catch { }
+                }
+            }
         }
 
         private void OnRenameClick(object sender, RoutedEventArgs e)
@@ -856,16 +919,16 @@ float4 PS_Main(PS_INPUT input) : SV_TARGET
         }
 
         private void OnDeleteClick(object sender, RoutedEventArgs e)
-        {
-            // Delete all selected items
-            var selectedItems = FileList.SelectedItems.Cast<FileSystemItem>().ToList();
-            if (selectedItems.Count > 0)
-            {
-                DeleteSelectedItems(selectedItems);
-            }
-        }
+{
+    // Delete all selected items
+    var selectedItems = FileList.SelectedItems.Cast<FileSystemItem>().ToList();
+    if (selectedItems.Count > 0)
+    {
+        DeleteSelectedItems(selectedItems);
+    }
+}
 
-        /// <summary>
+/// <summary>
         /// L�scht mehrere Items als ein einzelner Undo-f�higer Command.
         /// </summary>
         private void DeleteSelectedItems(List<FileSystemItem> items)

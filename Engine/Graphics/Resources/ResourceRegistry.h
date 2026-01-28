@@ -7,6 +7,8 @@
 #include "Material.h"
 #include "../Geometry/IMeshGenerator.h"
 #include "../Importers/ModelImporter.h"
+#include <d3d12.h>
+#include <wrl/client.h>
 #include <unordered_map>
 #include <memory>
 #include <string>
@@ -14,6 +16,7 @@
 
 namespace vortex::graphics
 {
+	using Microsoft::WRL::ComPtr;
 	/// <summary>
 	/// Central registry for all GPU resources.
 	/// Manages lifetime and provides access by ID.
@@ -31,6 +34,7 @@ namespace vortex::graphics
 		id::id_type create_mesh_from_generator(const IMeshGenerator& generator);
 		id::id_type create_primitive_cube(float size = 1.0f);
 		id::id_type create_primitive_sphere(float radius = 0.5f, u32 slices = 32, u32 stacks = 16);
+		id::id_type create_inverted_sphere(float radius = 0.5f, u32 slices = 32, u32 stacks = 16);
 		id::id_type create_primitive_plane(float width = 1.0f, float depth = 1.0f);
 		id::id_type create_primitive_cylinder(float radius = 0.5f, float height = 1.0f, u32 slices = 32);
 		id::id_type create_primitive_cone(float radius = 0.5f, float height = 1.0f, u32 slices = 32);
@@ -57,6 +61,26 @@ namespace vortex::graphics
 		bool export_mesh_to_vmesh(id::id_type mesh_id, const std::string& filepath);
 		id::id_type load_vmesh(const std::string& filepath);
 
+		// Multi-material import result structure
+		struct SubmeshImportResult
+		{
+			id::id_type mesh_id{ id::invalid_id };
+			id::id_type material_id{ id::invalid_id };
+			id::id_type texture_id{ id::invalid_id };
+			u32 material_index{ 0 };
+			std::string name;
+		};
+
+		struct MultiMaterialImportResult
+		{
+			std::vector<SubmeshImportResult> submeshes;
+			std::string model_name;
+			bool success{ false };
+		};
+
+		// Import model with separate meshes and materials per submesh
+		MultiMaterialImportResult import_model_with_materials(const std::string& filepath);
+
 		// Default resources
 		id::id_type default_cube_mesh() const { return m_default_cube; }
 		id::id_type default_sphere_mesh() const { return m_default_sphere; }
@@ -65,6 +89,9 @@ namespace vortex::graphics
 		id::id_type default_material() const { return m_default_material; }
 
 		bool is_initialized() const { return m_device != nullptr; }
+
+		// Get SRV descriptor heap for rendering
+		ID3D12DescriptorHeap* srv_heap() const { return m_srv_heap.Get(); }
 
 	private:
 		ResourceRegistry() = default;
@@ -88,5 +115,14 @@ namespace vortex::graphics
 		id::id_type m_default_cone{ id::invalid_id };
 		id::id_type m_default_white_texture{ id::invalid_id };
 		id::id_type m_default_material{ id::invalid_id };
+
+		// SRV Descriptor Heap for texture sampling
+		ComPtr<ID3D12DescriptorHeap> m_srv_heap;
+		UINT m_srv_descriptor_size{ 0 };
+		UINT m_next_srv_index{ 0 };
+		static constexpr UINT MAX_SRV_DESCRIPTORS = 1024;
+
+		bool create_srv_heap();
+		void assign_srv_to_texture(Texture* texture);
 	};
 }

@@ -31,7 +31,7 @@ namespace vortex::graphics
 	public:
 		virtual ~IMeshGenerator() = default;
 
-		/// <summary>
+	/// <summary>
 		/// Generate mesh data. Template method that calls protected virtual methods.
 		/// </summary>
 		MeshData generate() const
@@ -40,6 +40,15 @@ namespace vortex::graphics
 			generate_vertices(data.vertices);
 			generate_indices(data.indices);
 			return data;
+		}
+
+		/// <summary>
+		/// Generate mesh data directly into output vectors.
+		/// </summary>
+		void generate(std::vector<VertexPosNormalUV>& out_vertices, std::vector<u32>& out_indices) const
+		{
+			generate_vertices(out_vertices);
+			generate_indices(out_indices);
 		}
 
 		/// <summary>

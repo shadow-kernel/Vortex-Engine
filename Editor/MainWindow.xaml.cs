@@ -191,6 +191,9 @@ namespace Editor
             Title = $"Vortex Engine - {project.Name}";
             WorldEditor.SetEditorVisible(true);
             
+            // Initialize asset services for this project
+            Core.Assets.AssetTagService.Instance.Initialize(project.Path);
+            
             // Speichere als letztes geöffnetes Projekt
             // Hinweis: Die Engine-Aktivierung erfolgt im SceneHierarchyViewModel.SelectedScene-Setter
             EditorStateService.Instance.SetLastProject(project.Id, project.Path);

@@ -192,6 +192,19 @@ namespace Editor.ECS
             set => SetProperty(ref _isFolder, value, nameof(IsFolder));
         }
 
+        private bool _isLockedToParent;
+        
+        /// <summary>
+        /// Wenn true, kann diese Entity nicht einzeln ausgewählt oder verschoben werden.
+        /// Sie bewegt sich nur mit ihrem Parent zusammen (z.B. Submeshes eines importierten Modells).
+        /// </summary>
+        [DataMember(Name = "isLockedToParent", Order = 9)]
+        public bool IsLockedToParent
+        {
+            get => _isLockedToParent;
+            set => SetProperty(ref _isLockedToParent, value, nameof(IsLockedToParent));
+        }
+
         /// <summary>
         /// Ob die Entity in der Hierarchie aktiv ist (berücksichtigt Parent)
         /// </summary>
@@ -242,9 +255,15 @@ namespace Editor.ECS
 					EntityId = VortexAPI.CreateGameEntity(this, sceneHandle);
 					Debug.Assert(ID.IsValid(_entityId), "Failed to create GameEntity in engine.");
 				}
+				
+				// Synchronisiere alle MeshRenderer-Komponenten zur Engine
+				SyncMeshRenderersToEngine();
 			}
 			else if (ID.IsValid(_entityId))
 			{
+				// Entferne alle MeshRenderer aus der Engine bevor das Entity entfernt wird
+				RemoveMeshRenderersFromEngine();
+				
 				VortexAPI.RemoveGameEntity(this, sceneHandle);
 				_entityId = ID.INVALID_ID;
 			}
@@ -253,7 +272,33 @@ namespace Editor.ECS
 			{
 				foreach (var child in _children)
 				{
-					child.SyncEngineStateRecursive(shouldBeActive);
+				child.SyncEngineStateRecursive(shouldBeActive);
+				}
+			}
+		}
+
+		private void SyncMeshRenderersToEngine()
+		{
+			if (_components == null) return;
+			
+			foreach (var component in _components)
+			{
+				if (component is Components.Rendering.MeshRenderer meshRenderer)
+				{
+					meshRenderer.SyncToEngine();
+				}
+			}
+		}
+
+		private void RemoveMeshRenderersFromEngine()
+		{
+			if (_components == null) return;
+			
+			foreach (var component in _components)
+			{
+				if (component is Components.Rendering.MeshRenderer meshRenderer)
+				{
+					meshRenderer.RemoveFromEngine();
 				}
 			}
 		}

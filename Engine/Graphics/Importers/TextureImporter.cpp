@@ -9,26 +9,28 @@ namespace vortex::graphics
 {
 	ImageData TextureImporter::import_from_file(const std::string& filepath, bool flip_vertically)
 	{
-		ImageData result;
+	ImageData result;
 
-		// Set flip flag
-		stbi_set_flip_vertically_on_load(flip_vertically ? 1 : 0);
+	// Don't flip here - Assimp already handles UV flipping with aiProcess_FlipUVs
+	// Setting flip_vertically=false by default to avoid double-flip issues
+	stbi_set_flip_vertically_on_load(flip_vertically ? 1 : 0);
 
-		int width, height, channels;
-		unsigned char* data = stbi_load(filepath.c_str(), &width, &height, &channels, 0);
+	int width, height, channels;
+	// Request 4 channels (RGBA) to ensure consistent format for GPU upload
+	unsigned char* data = stbi_load(filepath.c_str(), &width, &height, &channels, 4);
 
 		if (!data)
 		{
-			return result; // Return empty on error
+		return result; // Return empty on error
 		}
 
 		result.width = static_cast<u32>(width);
 		result.height = static_cast<u32>(height);
-		result.channels = static_cast<u32>(channels);
-		result.format = determine_format(channels);
+		result.channels = 4; // Always 4 channels since we requested RGBA
+		result.format = ImageFormat::RGBA8;
 
-		// Copy data into vector
-		size_t data_size = width * height * channels;
+		// Copy data into vector - always RGBA now
+		size_t data_size = width * height * 4;
 		result.pixels.resize(data_size);
 		memcpy(result.pixels.data(), data, data_size);
 

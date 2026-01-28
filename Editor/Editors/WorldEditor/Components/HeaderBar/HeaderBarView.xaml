@@ -330,7 +330,7 @@ d:DesignHeight="64" d:DesignWidth="1200">
             
             <!-- Assets Menu -->
             <MenuItem Header="_Assets">
-                <MenuItem Header="_Import Asset..."/>
+                <MenuItem Header="_Import Asset..." Click="ImportAsset_Click"/>
                 <MenuItem Header="_Export Asset..."/>
                 <Separator/>
                 <MenuItem Header="Create _Material"/>

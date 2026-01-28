@@ -1,0 +1,93 @@
+<Window x:Class="Editor.Dialogs.ImportResultDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Import Result" 
+        Height="450" Width="550"
+        WindowStartupLocation="CenterOwner"
+        Background="#FF252526"
+        ResizeMode="CanResizeWithGrip">
+    <Window.Resources>
+        <Style x:Key="HeaderStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#FF4EC9B0"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Margin" Value="0,10,0,5"/>
+        </Style>
+        <Style x:Key="InfoStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#FFCCCCCC"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Margin" Value="10,2,0,2"/>
+        </Style>
+        <Style x:Key="ListItemStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#FF888888"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Margin" Value="20,1,0,1"/>
+        </Style>
+    </Window.Resources>
+    
+    <Grid Margin="15">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        
+        <!-- Header -->
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,10">
+            <TextBlock Text="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="32" 
+                       Foreground="#FF4EC9B0" VerticalAlignment="Center" Margin="0,0,10,0"/>
+            <StackPanel VerticalAlignment="Center">
+                <TextBlock x:Name="TitleText" Text="Import Successful" FontSize="18" FontWeight="Bold" Foreground="White"/>
+                <TextBlock x:Name="SubtitleText" Text="" FontSize="11" Foreground="#FF888888"/>
+            </StackPanel>
+        </StackPanel>
+        
+        <!-- Content -->
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel x:Name="ContentPanel">
+                <!-- Model Info -->
+                <TextBlock Text="Model" Style="{StaticResource HeaderStyle}"/>
+                <TextBlock x:Name="ModelNameText" Style="{StaticResource InfoStyle}"/>
+                <TextBlock x:Name="ModelPathText" Style="{StaticResource InfoStyle}" Foreground="#FF666666" FontSize="10"/>
+                
+                <!-- Mesh Info -->
+                <TextBlock Text="Meshes" Style="{StaticResource HeaderStyle}"/>
+                <TextBlock x:Name="MeshCountText" Style="{StaticResource InfoStyle}"/>
+                <StackPanel x:Name="MeshListPanel"/>
+                
+                <!-- Materials Info -->
+                <TextBlock Text="Materials" Style="{StaticResource HeaderStyle}"/>
+                <TextBlock x:Name="MaterialCountText" Style="{StaticResource InfoStyle}"/>
+                <StackPanel x:Name="MaterialListPanel"/>
+                
+                <!-- Textures Info -->
+                <TextBlock Text="Textures" Style="{StaticResource HeaderStyle}"/>
+                <TextBlock x:Name="TextureCountText" Style="{StaticResource InfoStyle}"/>
+                <StackPanel x:Name="TextureListPanel"/>
+                
+                <!-- File Location -->
+                <TextBlock Text="Asset Location" Style="{StaticResource HeaderStyle}"/>
+                <TextBlock x:Name="AssetLocationText" Style="{StaticResource InfoStyle}" TextWrapping="Wrap"/>
+                
+                <!-- Tags Section -->
+                <TextBlock Text="Tags (optional)" Style="{StaticResource HeaderStyle}"/>
+                <TextBlock Text="Add tags to organize this asset:" Style="{StaticResource InfoStyle}" Foreground="#FF888888"/>
+                <WrapPanel x:Name="TagsPanel" Margin="10,8,0,5">
+                    <!-- Tag toggles will be added here dynamically -->
+                </WrapPanel>
+            </StackPanel>
+        </ScrollViewer>
+        
+        <!-- Buttons -->
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,15,0,0">
+            <Button x:Name="OpenAssetBrowserButton" Content="Open in Asset Browser" 
+                    Click="OpenAssetBrowser_Click" Margin="0,0,10,0"
+                    Padding="15,8" Background="#FF0E639C" Foreground="White" BorderThickness="0"/>
+            <Button x:Name="AddToSceneButton" Content="Add to Scene" 
+                    Click="AddToScene_Click" Margin="0,0,10,0"
+                    Padding="15,8" Background="#FF4EC9B0" Foreground="White" BorderThickness="0"/>
+            <Button Content="Close" Click="Close_Click" 
+                    Padding="15,8" Background="#FF3E3E40" Foreground="White" BorderThickness="0"/>
+        </StackPanel>
+    </Grid>
+</Window>

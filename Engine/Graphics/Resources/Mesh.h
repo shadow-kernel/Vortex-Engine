@@ -57,6 +57,13 @@ namespace vortex::graphics
 		const std::string& name() const { return m_name; }
 		void set_name(const std::string& name) { m_name = name; }
 
+		// Bounding box
+		void set_bounds(float minX, float minY, float minZ, float maxX, float maxY, float maxZ);
+		void get_bounds(float& sizeX, float& sizeY, float& sizeZ) const;
+		void get_bounds_center(float& centerX, float& centerY, float& centerZ) const;
+		void get_min(float& x, float& y, float& z) const { x = m_bounds_min[0]; y = m_bounds_min[1]; z = m_bounds_min[2]; }
+		void get_max(float& x, float& y, float& z) const { x = m_bounds_max[0]; y = m_bounds_max[1]; z = m_bounds_max[2]; }
+
 	private:
 		ComPtr<ID3D12Resource> m_vertex_buffer;
 		ComPtr<ID3D12Resource> m_index_buffer;
@@ -65,5 +72,7 @@ namespace vortex::graphics
 		u32 m_vertex_count{ 0 };
 		u32 m_index_count{ 0 };
 		std::string m_name;
+		float m_bounds_min[3]{ 0, 0, 0 };
+		float m_bounds_max[3]{ 1, 1, 1 };
 	};
 }

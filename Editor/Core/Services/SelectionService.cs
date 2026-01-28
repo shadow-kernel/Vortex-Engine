@@ -62,12 +62,33 @@ namespace Editor.Core.Services
 
         /// <summary>
         /// Select an entity.
+        /// If entity is locked to parent, select the parent instead.
         /// </summary>
         public void Select(GameEntity entity)
         {
-            _selectedEntity = entity;
-            _selectedScene = entity?.Scene;
+            // If entity is locked to parent, select the parent instead
+            var targetEntity = GetSelectableEntity(entity);
+            
+            _selectedEntity = targetEntity;
+            _selectedScene = targetEntity?.Scene;
             OnSelectionChanged();
+        }
+
+        /// <summary>
+        /// Gets the selectable entity (walks up hierarchy if locked to parent).
+        /// </summary>
+        private GameEntity GetSelectableEntity(GameEntity entity)
+        {
+            if (entity == null)
+                return null;
+            
+            // Walk up the hierarchy until we find an entity that's not locked
+            while (entity != null && entity.IsLockedToParent && entity.Parent != null)
+            {
+                entity = entity.Parent;
+            }
+            
+            return entity;
         }
 
         /// <summary>

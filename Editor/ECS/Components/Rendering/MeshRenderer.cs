@@ -1,3 +1,4 @@
+using System;
 using System.Runtime.Serialization;
 using Editor.DllWrapper;
 using Editor.Utilities;
@@ -12,6 +13,8 @@ namespace Editor.ECS.Components.Rendering
     {
         private string _meshPath;
         private string _materialPath;
+        private string _texturePath;
+        private string _shaderPath;
         private bool _castShadows = true;
         private bool _receiveShadows = true;
         private int _renderLayer;
@@ -21,12 +24,26 @@ namespace Editor.ECS.Components.Rendering
         private float _colorG = 0.7f;
         private float _colorB = 0.7f;
         private float _colorA = 1.0f;
+        
+        // PBR properties
+        private float _metallic = 0.0f;
+        private float _roughness = 0.5f;
+        private float _normalStrength = 1.0f;
 
         [IgnoreDataMember]
         private long _meshHandle = ID.INVALID_ID;
 
         [IgnoreDataMember]
         private long _materialHandle = ID.INVALID_ID;
+
+        [IgnoreDataMember]
+        private long _rendererHandle = ID.INVALID_ID;
+
+        [IgnoreDataMember]
+        private long _textureHandle = ID.INVALID_ID;
+
+        [IgnoreDataMember]
+        private long _shaderHandle = ID.INVALID_ID;
 
         public override string DisplayName => "Mesh Renderer";
         public override string IconCode => "\uE809";
@@ -44,6 +61,7 @@ namespace Editor.ECS.Components.Rendering
                 if (SetProperty(ref _meshPath, value, nameof(MeshPath)))
                 {
                     ReloadMeshHandle();
+                    SyncToEngine();
                 }
             }
         }
@@ -60,6 +78,7 @@ namespace Editor.ECS.Components.Rendering
                 if (SetProperty(ref _materialPath, value, nameof(MaterialPath)))
                 {
                     ReloadMaterialHandle();
+                    SyncToEngine();
                 }
             }
         }
@@ -134,6 +153,84 @@ namespace Editor.ECS.Components.Rendering
             set => SetProperty(ref _colorA, Clamp01(value), nameof(ColorA));
         }
 
+        /// <summary>
+        /// Metallic value for PBR rendering (0-1)
+        /// </summary>
+        [DataMember(Name = "metallic", Order = 19)]
+        public float Metallic
+        {
+            get => _metallic;
+            set => SetProperty(ref _metallic, Clamp01(value), nameof(Metallic));
+        }
+
+        /// <summary>
+        /// Roughness value for PBR rendering (0-1)
+        /// </summary>
+        [DataMember(Name = "roughness", Order = 20)]
+        public float Roughness
+        {
+            get => _roughness;
+            set => SetProperty(ref _roughness, Clamp01(value), nameof(Roughness));
+        }
+
+        /// <summary>
+        /// Normal map strength (0-2)
+        /// </summary>
+        [DataMember(Name = "normalStrength", Order = 21)]
+        public float NormalStrength
+        {
+            get => _normalStrength;
+            set => SetProperty(ref _normalStrength, Math.Max(0, Math.Min(2, value)), nameof(NormalStrength));
+        }
+
+        /// <summary>
+        /// Path to the diffuse/albedo texture file (persisted for reload after restart)
+        /// </summary>
+        [DataMember(Name = "texturePath", Order = 22)]
+        public string TexturePath
+        {
+            get => _texturePath;
+            set
+            {
+                if (SetProperty(ref _texturePath, value, nameof(TexturePath)))
+                {
+                    ReloadTextureAndMaterial();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Path to the custom shader file (.hlsl)
+        /// </summary>
+        [DataMember(Name = "shaderPath", Order = 23)]
+        public string ShaderPath
+        {
+            get => _shaderPath;
+            set
+            {
+                if (SetProperty(ref _shaderPath, value, nameof(ShaderPath)))
+                {
+                    ReloadShaderHandle();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets the native material handle (for imported models with textures)
+        /// </summary>
+        [IgnoreDataMember]
+        public long MaterialHandle
+        {
+            get => _materialHandle;
+            set => _materialHandle = value;
+        }
+
+        /// <summary>
+        /// Indicates if this mesh has a pre-loaded material with textures
+        /// </summary>
+        [IgnoreDataMember]
+        public bool HasImportedMaterial => _materialHandle != ID.INVALID_ID && _materialHandle >= 0;
+
         public MeshRenderer() : base() { }
         public MeshRenderer(GameEntity entity) : base(entity) { }
         public MeshRenderer(GameEntity entity, string meshPath) : base(entity)
@@ -151,8 +248,11 @@ namespace Editor.ECS.Components.Rendering
         [OnDeserialized]
         internal void OnDeserializedMeshRenderer(StreamingContext context)
         {
+            System.Diagnostics.Debug.WriteLine($"[MeshRenderer] OnDeserialized - MeshPath={_meshPath}, TexturePath={_texturePath}");
             ReloadMeshHandle();
             ReloadMaterialHandle();
+            ReloadTextureAndMaterial();
+            ReloadShaderHandle();
         }
 
         private void ReloadMeshHandle()
@@ -169,6 +269,21 @@ namespace Editor.ECS.Components.Rendering
             }
         }
 
+        private void ReloadShaderHandle()
+        {
+            if (_shaderHandle != ID.INVALID_ID)
+            {
+                VortexAPI.UnloadResourceHandle(_shaderHandle);
+                _shaderHandle = ID.INVALID_ID;
+            }
+
+            if (!string.IsNullOrEmpty(_shaderPath))
+            {
+                _shaderHandle = VortexAPI.LoadShaderResource(_shaderPath);
+            }
+        }
+
+
         private void ReloadMaterialHandle()
         {
             if (_materialHandle != ID.INVALID_ID)
@@ -180,6 +295,140 @@ namespace Editor.ECS.Components.Rendering
             if (!string.IsNullOrEmpty(_materialPath))
             {
                 _materialHandle = VortexAPI.LoadMaterialResource(_materialPath);
+            }
+        }
+
+        /// <summary>
+        /// Reloads the texture and creates/updates material with texture binding.
+        /// Called on deserialization to restore textures after restart.
+        /// </summary>
+        private void ReloadTextureAndMaterial()
+        {
+            if (string.IsNullOrEmpty(_texturePath))
+                return;
+
+            // Schedule the texture reload for after project is fully loaded
+            System.Windows.Application.Current?.Dispatcher?.BeginInvoke(
+                System.Windows.Threading.DispatcherPriority.Loaded,
+                new Action(() => DoReloadTextureAndMaterial()));
+        }
+
+        private void DoReloadTextureAndMaterial()
+        {
+            System.Diagnostics.Debug.WriteLine($"[MeshRenderer] DoReloadTextureAndMaterial START - TexturePath={_texturePath}");
+            
+            if (string.IsNullOrEmpty(_texturePath))
+            {
+                System.Diagnostics.Debug.WriteLine($"[MeshRenderer] TexturePath is empty, skipping texture reload");
+                return;
+            }
+
+            // Get full path to texture
+            var projectPath = Core.Data.ProjectData.Current?.Path;
+            string fullTexturePath = _texturePath;
+            
+            if (!System.IO.Path.IsPathRooted(_texturePath) && !string.IsNullOrEmpty(projectPath))
+            {
+                fullTexturePath = System.IO.Path.Combine(projectPath, _texturePath);
+            }
+
+            if (!System.IO.File.Exists(fullTexturePath))
+            {
+                System.Diagnostics.Debug.WriteLine($"[MeshRenderer] Texture file not found: {fullTexturePath}");
+                return;
+            }
+
+            try
+            {
+                // Import the texture
+                long textureId = VortexAPI.ImportTextureFromFile(fullTexturePath);
+                if (textureId < 0)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[MeshRenderer] Failed to import texture: {fullTexturePath}");
+                    return;
+                }
+
+                _textureHandle = textureId;
+
+                // Create or use existing material
+                if (_materialHandle == ID.INVALID_ID || _materialHandle < 0)
+                {
+                    _materialHandle = VortexAPI.CreateNewMaterial();
+                    if (_materialHandle < 0)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[MeshRenderer] Failed to create material");
+                        return;
+                    }
+                    VortexAPI.SetMaterialBaseColor(_materialHandle, 0.9f, 0.9f, 0.9f, 1.0f);
+                }
+
+                // Bind texture to material
+                VortexAPI.SetMaterialAlbedoTexture(_materialHandle, textureId);
+                
+                // Register in SceneRenderService cache for consistent rendering
+                if (!string.IsNullOrEmpty(_meshPath))
+                {
+                    Core.Services.SceneRenderService.RegisterMaterialForMeshPath(_meshPath, _materialHandle);
+                }
+
+                System.Diagnostics.Debug.WriteLine($"[MeshRenderer] Restored texture {fullTexturePath} to material {_materialHandle}");
+            }
+            catch (System.Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[MeshRenderer] Error reloading texture: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Synchronisiert die MeshRenderer-Daten zur Engine.
+        /// Wird aufgerufen wenn Entity aktiv wird oder Mesh/Material sich ändert.
+        /// </summary>
+        internal void SyncToEngine()
+        {
+            // Kein Entity oder Entity nicht in Engine registriert
+            if (Entity == null || !ID.IsValid(Entity.EntityId))
+                return;
+
+            // Kein Mesh geladen
+            if (!ID.IsValid(_meshHandle))
+            {
+                // Falls schon ein Renderer existiert, entfernen
+                if (ID.IsValid(_rendererHandle))
+                {
+                    VortexAPI.DestroyMeshRendererComponent(_rendererHandle);
+                    _rendererHandle = ID.INVALID_ID;
+                }
+                return;
+            }
+
+            if (!ID.IsValid(_rendererHandle))
+            {
+                // Erstelle neuen MeshRenderer in der Engine
+                _rendererHandle = VortexAPI.CreateMeshRendererComponent(
+                    Entity.EntityId, 
+                    _meshHandle, 
+                    _materialHandle);
+            }
+            else
+            {
+                // Aktualisiere bestehenden MeshRenderer
+                VortexAPI.UpdateMeshRendererMesh(_rendererHandle, _meshHandle);
+                if (ID.IsValid(_materialHandle))
+                {
+                    VortexAPI.UpdateMeshRendererMaterial(_rendererHandle, _materialHandle);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Entfernt die MeshRenderer-Komponente aus der Engine.
+        /// </summary>
+        internal void RemoveFromEngine()
+        {
+            if (ID.IsValid(_rendererHandle))
+            {
+                VortexAPI.DestroyMeshRendererComponent(_rendererHandle);
+                _rendererHandle = ID.INVALID_ID;
             }
         }
     }

@@ -26,6 +26,11 @@ namespace Editor.Core.Assets
         /// </summary>
         public string ProjectPath => _projectPath;
 
+        /// <summary>
+        /// Event fired when assets are added, removed, or changed.
+        /// </summary>
+        public event EventHandler AssetsChanged;
+
         private AssetDatabase()
         {
             _assetsByGuid = new Dictionary<Guid, AssetMetadata>();
@@ -46,6 +51,21 @@ namespace Editor.Core.Assets
                 return;
 
             ScanProjectAssets();
+            AssetsChanged?.Invoke(this, EventArgs.Empty);
+        }
+
+        /// <summary>
+        /// Rescans the project assets and updates the database.
+        /// </summary>
+        public void Refresh()
+        {
+            if (string.IsNullOrEmpty(_projectPath) || !Directory.Exists(_projectPath))
+                return;
+
+            _assetsByGuid.Clear();
+            _assetsByPath.Clear();
+            ScanProjectAssets();
+            AssetsChanged?.Invoke(this, EventArgs.Empty);
         }
 
         /// <summary>
@@ -247,6 +267,9 @@ namespace Editor.Core.Assets
             // Register
             RegisterAsset(metadata);
 
+            // Notify listeners
+            AssetsChanged?.Invoke(this, EventArgs.Empty);
+
             return metadata;
         }
 
@@ -321,17 +344,6 @@ namespace Editor.Core.Assets
             
             var normalizedPath = NormalizePath(metadata.RelativePath);
             _assetsByPath.Remove(normalizedPath);
-        }
-
-        /// <summary>
-        /// Refreshes the asset database by rescanning.
-        /// </summary>
-        public void Refresh()
-        {
-            if (string.IsNullOrEmpty(_projectPath))
-                return;
-
-            Initialize(_projectPath);
         }
 
         /// <summary>

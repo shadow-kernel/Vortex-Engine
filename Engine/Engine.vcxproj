@@ -25,6 +25,7 @@
     <ClInclude Include="Components\Camera.h" />
     <ClInclude Include="Components\ComponentsCommon.h" />
     <ClInclude Include="Components\MeshRenderer.h" />
+    <ClInclude Include="Components\Skybox.h" />
     <ClInclude Include="Components\Transform.h" />
     <ClInclude Include="Graphics\DX12\DX12CommandQueue.h" />
     <ClInclude Include="Graphics\DX12\DX12Core.h" />
@@ -36,6 +37,7 @@
     <ClInclude Include="Graphics\DX12\DX12Pipeline3D.h" />
     <ClInclude Include="Graphics\DX12\DX12Renderer.h" />
     <ClInclude Include="Graphics\DX12\DX12RenderTarget.h" />
+    <ClInclude Include="Graphics\DX12\DX12SkyboxPipeline.h" />
     <ClInclude Include="Graphics\DX12\DX12Swapchain.h" />
     <ClInclude Include="Graphics\Geometry\ConeGenerator.h" />
     <ClInclude Include="Graphics\Geometry\CubeGenerator.h" />
@@ -77,6 +79,7 @@
     <ClCompile Include="Components\Entity.cpp" />
     <ClCompile Include="Components\Entity.h" />
     <ClCompile Include="Components\MeshRenderer.cpp" />
+    <ClCompile Include="Components\Skybox.cpp" />
     <ClCompile Include="Components\Transform.cpp" />
     <ClCompile Include="Graphics\DX12\DX12CommandQueue.cpp" />
     <ClCompile Include="Graphics\DX12\DX12Core.cpp" />
@@ -88,6 +91,7 @@
     <ClCompile Include="Graphics\DX12\DX12Pipeline3D.cpp" />
     <ClCompile Include="Graphics\DX12\DX12Renderer.cpp" />
     <ClCompile Include="Graphics\DX12\DX12RenderTarget.cpp" />
+    <ClCompile Include="Graphics\DX12\DX12SkyboxPipeline.cpp" />
     <ClCompile Include="Graphics\DX12\DX12Swapchain.cpp" />
     <ClCompile Include="Graphics\Geometry\ConeGenerator.cpp" />
     <ClCompile Include="Graphics\Geometry\CubeGenerator.cpp" />
@@ -183,7 +187,7 @@
       </SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(SolutionDir)packages\Assimp.3.0.0\build\native\lib\Win32;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>assimp-vc142-mt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>assimp.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -204,7 +208,7 @@
       </SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(SolutionDir)packages\Assimp.3.0.0\build\native\lib\Win32;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>assimp-vc142-mt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>assimp.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -226,7 +230,7 @@
       </SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(SolutionDir)packages\Assimp.3.0.0\build\native\lib\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>assimp-vc142-mt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>assimp.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -250,7 +254,7 @@
       </SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(SolutionDir)packages\Assimp.3.0.0\build\native\lib\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>assimp-vc142-mt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>assimp.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

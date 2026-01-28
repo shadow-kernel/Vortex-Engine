@@ -109,6 +109,12 @@
                 </MenuItem.Icon>
             </MenuItem>
             <Separator Style="{StaticResource DarkSeparatorStyle}"/>
+            <MenuItem Header="Edit Tags..." Click="OnEditTagsClick" Style="{StaticResource DarkMenuItemStyle}">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE8EC;" FontFamily="Segoe MDL2 Assets" Foreground="#9B59B6" FontSize="12"/>
+                </MenuItem.Icon>
+            </MenuItem>
+            <Separator Style="{StaticResource DarkSeparatorStyle}"/>
             <MenuItem Header="Cut" Click="OnCutClick" InputGestureText="Ctrl+X" Style="{StaticResource DarkMenuItemStyle}">
                 <MenuItem.Icon>
                     <TextBlock Text="&#xE8C6;" FontFamily="Segoe MDL2 Assets" Foreground="#808080" FontSize="12"/>

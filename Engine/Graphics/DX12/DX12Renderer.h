@@ -8,6 +8,7 @@
 #include "DX12Pipeline.h"
 #include "DX12Pipeline3D.h"
 #include "DX12GridPipeline.h"
+#include "DX12SkyboxPipeline.h"
 #include "DX12DepthBuffer.h"
 #include "DX12RenderTarget.h"
 #include "DX12Geometry.h"
@@ -79,9 +80,38 @@ namespace vortex::graphics::dx12
 		void set_camera(const DirectX::XMFLOAT3& position, const DirectX::XMFLOAT3& target, const DirectX::XMFLOAT3& up);
 
 
-		// Light settings
+	// Light settings
 		void set_directional_light(const DirectX::XMFLOAT3& direction, const DirectX::XMFLOAT3& color);
 		void set_ambient_strength(float strength);
+		
+		// Multi-light system
+		static constexpr u32 MAX_POINT_LIGHTS = 16;
+		static constexpr u32 MAX_SPOT_LIGHTS = 8;
+		
+		struct PointLightData
+		{
+			DirectX::XMFLOAT3 position;
+			float range;
+			DirectX::XMFLOAT3 color;
+			float intensity;
+		};
+		
+		struct SpotLightData
+		{
+			DirectX::XMFLOAT3 position;
+			float range;
+			DirectX::XMFLOAT3 direction;
+			float spot_angle;
+			DirectX::XMFLOAT3 color;
+			float intensity;
+			float inner_spot_angle;
+			float padding[3];
+		};
+		
+		void clear_lights();
+		void set_directional_light_full(const DirectX::XMFLOAT3& direction, const DirectX::XMFLOAT3& color, float intensity);
+		void add_point_light(const PointLightData& light);
+		void add_spot_light(const SpotLightData& light);
 
 		// Rendering mode
 		void set_wireframe_mode(bool enabled) { m_wireframe_mode = enabled; }
@@ -100,8 +130,29 @@ namespace vortex::graphics::dx12
 		void set_gizmos_visible(bool visible) { m_gizmos_visible = visible; }
 		bool are_gizmos_visible() const { return m_gizmos_visible; }
 
+		// Skybox modes
+		enum class SkyboxMode : u32
+		{
+			SolidColor = 0,
+			Gradient = 1,
+			Texture = 2
+		};
+
+		// Skybox
+		void set_skybox_enabled(bool enabled) { m_skybox_enabled = enabled; }
+		bool is_skybox_enabled() const { return m_skybox_enabled; }
+		void set_skybox_mode(SkyboxMode mode);
+		SkyboxMode get_skybox_mode() const { return m_skybox_mode; }
+		void set_skybox_colors(
+			const DirectX::XMFLOAT3& sky_color,
+			const DirectX::XMFLOAT3& horizon_color,
+			const DirectX::XMFLOAT3& ground_color);
+		void set_skybox_solid_color(const DirectX::XMFLOAT3& color);
+		void set_skybox_sun(const DirectX::XMFLOAT3& direction, const DirectX::XMFLOAT3& color, float intensity);
+
 		// Camera projection settings
 		void set_projection(float fov_degrees, float aspect, float near_clip, float far_clip);
+
 
 		// Camera gizmo rendering
 		void render_camera_gizmo(
@@ -174,20 +225,24 @@ namespace vortex::graphics::dx12
 		bool create_command_list();
 		bool create_constant_buffers();
 		bool create_grid_resources();
+		bool create_skybox_resources();
 		void update_per_frame_constants();
 		void wait_for_previous_frame();
 
 		void render_3d_scene();
 		void render_fallback_triangle();
 		void render_grid();
+		void render_skybox();
 
 		DX12CommandQueue m_command_queue;
 		DX12Swapchain m_swapchain;
 		DX12Pipeline m_pipeline;           // Simple 2D pipeline (fallback)
 		DX12Pipeline3D m_pipeline_3d;      // Full 3D pipeline
 		DX12GridPipeline m_grid_pipeline;  // Grid rendering pipeline
+		DX12SkyboxPipeline m_skybox_pipeline; // Skybox rendering pipeline
 		DX12DepthBuffer m_depth_buffer;
 		DX12Geometry m_geometry;           // Fallback triangle
+
 
 		// Grid mesh
 		ComPtr<ID3D12Resource> m_grid_vertex_buffer;
@@ -217,27 +272,67 @@ namespace vortex::graphics::dx12
 		ComPtr<ID3D12Resource> m_per_frame_cb;
 		void* m_per_frame_cb_mapped{ nullptr };
 
-		struct alignas(256) PerFrameConstants
+	struct alignas(256) PerFrameConstants
 		{
 			DirectX::XMFLOAT4X4 view_projection;
 			DirectX::XMFLOAT3 camera_position;
 			float padding0;
 			DirectX::XMFLOAT3 light_direction;
-			float padding1;
+			float directional_intensity;
 			DirectX::XMFLOAT3 light_color;
 			float ambient_strength;
+			// Point lights (16 max)
+			u32 point_light_count;
+			u32 spot_light_count;
+			u32 padding1[2];
+		};
+		
+		// Separate light buffer for GPU
+		struct alignas(16) GPUPointLight
+		{
+			DirectX::XMFLOAT3 position;
+			float range;
+			DirectX::XMFLOAT3 color;
+			float intensity;
+		};
+		
+		struct alignas(16) GPUSpotLight
+		{
+			DirectX::XMFLOAT3 position;
+			float range;
+			DirectX::XMFLOAT3 direction;
+			float spot_angle;
+			DirectX::XMFLOAT3 color;
+			float intensity;
+			float inner_spot_angle;
+			float padding[3];
 		};
 		PerFrameConstants m_frame_constants;
 
-		// Per-object constants
+		// Per-object constants - matches shader cbuffer PerObject
 		ComPtr<ID3D12Resource> m_per_object_cb;
 		void* m_per_object_cb_mapped{ nullptr };
 
 		struct alignas(256) PerObjectConstants
 		{
-			DirectX::XMFLOAT4X4 world;
-			DirectX::XMFLOAT4 base_color;
-		};
+		DirectX::XMFLOAT4X4 world;           // 64 bytes
+		DirectX::XMFLOAT4 base_color;        // 16 bytes
+		float metallic;                       // 4 bytes
+		float roughness;                      // 4 bytes
+		float ao;                             // 4 bytes
+		float normal_strength;                // 4 bytes
+		UINT has_albedo_texture;              // 4 bytes
+		UINT has_normal_texture;              // 4 bytes
+		UINT has_metallic_texture;            // 4 bytes
+		UINT has_roughness_texture;           // 4 bytes
+	UINT has_ao_texture;                  // 4 bytes
+		UINT use_directx_normals;             // 4 bytes
+		UINT padding[2];                      // 8 bytes
+		};  // Total: 128 bytes, aligned to 256
+		
+		// Light constant buffer
+		ComPtr<ID3D12Resource> m_light_cb;
+		void* m_light_cb_mapped{ nullptr };
 
 		// Render queue - double buffered for thread safety
 		std::vector<RenderItem> m_render_queue;
@@ -265,21 +360,32 @@ namespace vortex::graphics::dx12
 		float m_near_clip{ 0.1f };
 		float m_far_clip{ 1000.0f };
 
-		// Lighting - brighter for better visibility
-		DirectX::XMFLOAT3 m_light_direction{ -0.3f, -0.8f, 0.5f };
+	// Lighting - balanced for PBR rendering
+		DirectX::XMFLOAT3 m_light_direction{ -0.5f, -0.7f, 0.5f };
 		DirectX::XMFLOAT3 m_light_color{ 1.0f, 0.98f, 0.95f };
-		float m_ambient_strength{ 0.5f };
+		float m_ambient_strength{ 0.4f };
+		float m_directional_intensity{ 3.0f };
+		
+		// Multi-light storage
+		std::vector<PointLightData> m_point_lights;
+		std::vector<SpotLightData> m_spot_lights;
 
 		// Rendering settings - Unity-style gray-brown background (like screenshot)
-		FLOAT m_clear_color[4]{ 0.345f, 0.345f, 0.369f, 1.0f };
+		FLOAT m_clear_color[4]{ 0.18f, 0.18f, 0.20f, 1.0f };
 		bool m_wireframe_mode{ false };
 		bool m_grid_visible{ true };
 		bool m_gizmos_visible{ true };
+		bool m_skybox_enabled{ false };
+		SkyboxMode m_skybox_mode{ SkyboxMode::Gradient };
 		float m_grid_spacing{ 1.0f };
 		float m_grid_major_interval{ 10.0f };
 		float m_grid_extent{ 200.0f };
 		bool m_vsync_enabled{ false };
 		bool m_initialized{ false };
+
+		// Skybox constant buffer
+		ComPtr<ID3D12Resource> m_skybox_cb;
+		void* m_skybox_cb_mapped{ nullptr };
 
 		// Performance statistics
 		int m_current_fps{ 0 };
@@ -294,5 +400,13 @@ namespace vortex::graphics::dx12
 		
 		// Helper for rendering to a specific target
 		void render_scene_to_target(DX12RenderTarget* target, const ViewportCamera& camera, bool render_grid);
+		
+		// Create SRV descriptor heap for textures
+		bool create_srv_heap();
+		
+		// SRV Descriptor Heap for textures
+		ComPtr<ID3D12DescriptorHeap> m_srv_heap;
+		UINT m_srv_descriptor_size{ 0 };
+		static constexpr UINT MAX_SRV_DESCRIPTORS = 1024;
 	};
 }

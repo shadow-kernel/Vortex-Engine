@@ -5,4 +5,8 @@
     <ClCompile Include="VortexAPI.cpp" />
     <ClCompile Include="MultiViewportAPI.cpp" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="packages.config" />
+    <None Include="VortexAPI_new.vcxproj" />
+  </ItemGroup>
 </Project>

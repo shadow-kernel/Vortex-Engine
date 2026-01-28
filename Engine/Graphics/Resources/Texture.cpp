@@ -1,8 +1,11 @@
 #include "Texture.h"
+#include "../DX12/DX12Core.h"
+#include <wrl/client.h>
 #include <cstring>
 
 namespace vortex::graphics
 {
+	using Microsoft::WRL::ComPtr;
 	DXGI_FORMAT Texture::to_dxgi_format(TextureFormat format)
 	{
 		switch (format)
@@ -93,10 +96,81 @@ namespace vortex::graphics
 			D3D12_RANGE range{ 0, 0 };
 			if (SUCCEEDED(m_upload_buffer->Map(0, &range, &mapped)))
 			{
-				// Simple copy - assumes tightly packed row-major data
-				u32 row_pitch = desc.width * 4; // Assuming 4 bytes per pixel
-				std::memcpy(mapped, data, desc.width * desc.height * 4);
+				// Get the row pitch from the texture layout
+				D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint;
+				UINT num_rows;
+				UINT64 row_size_bytes;
+				device->GetCopyableFootprints(&res_desc, 0, 1, 0, &footprint, &num_rows, &row_size_bytes, nullptr);
+
+				// Copy data row by row (handling pitch differences)
+				u32 src_row_pitch = desc.width * 4; // Source data is tightly packed
+				u8* dst = static_cast<u8*>(mapped);
+				const u8* src = static_cast<const u8*>(data);
+				
+				for (UINT row = 0; row < num_rows; ++row)
+				{
+					std::memcpy(dst + row * footprint.Footprint.RowPitch, 
+					            src + row * src_row_pitch, 
+					            src_row_pitch);
+				}
 				m_upload_buffer->Unmap(0, nullptr);
+
+				// Note: The actual GPU copy is deferred - caller must execute copy commands
+				// For now, we'll do an immediate copy using the DX12Core command queue
+				OutputDebugStringA("Texture data uploaded to staging buffer\n");
+
+				// Create a temporary command list to copy texture data
+				ComPtr<ID3D12CommandAllocator> cmd_alloc;
+				ComPtr<ID3D12GraphicsCommandList> cmd_list;
+				ComPtr<ID3D12CommandQueue> cmd_queue;
+				ComPtr<ID3D12Fence> fence;
+
+				if (SUCCEEDED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&cmd_alloc))) &&
+					SUCCEEDED(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, cmd_alloc.Get(), nullptr, IID_PPV_ARGS(&cmd_list))))
+				{
+					D3D12_COMMAND_QUEUE_DESC queue_desc{};
+					queue_desc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+					
+					if (SUCCEEDED(device->CreateCommandQueue(&queue_desc, IID_PPV_ARGS(&cmd_queue))) &&
+						SUCCEEDED(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence))))
+					{
+						// Copy texture data from upload buffer to GPU texture
+						D3D12_TEXTURE_COPY_LOCATION dst_loc{};
+						dst_loc.pResource = m_resource.Get();
+						dst_loc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+						dst_loc.SubresourceIndex = 0;
+
+						D3D12_TEXTURE_COPY_LOCATION src_loc{};
+						src_loc.pResource = m_upload_buffer.Get();
+						src_loc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+						src_loc.PlacedFootprint = footprint;
+
+						cmd_list->CopyTextureRegion(&dst_loc, 0, 0, 0, &src_loc, nullptr);
+
+						// Transition texture to shader resource state
+						D3D12_RESOURCE_BARRIER barrier{};
+						barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+						barrier.Transition.pResource = m_resource.Get();
+						barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+						barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+						barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+						cmd_list->ResourceBarrier(1, &barrier);
+
+						cmd_list->Close();
+
+						// Execute and wait
+						ID3D12CommandList* lists[] = { cmd_list.Get() };
+						cmd_queue->ExecuteCommandLists(1, lists);
+						cmd_queue->Signal(fence.Get(), 1);
+
+						HANDLE event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+						fence->SetEventOnCompletion(1, event);
+						WaitForSingleObject(event, INFINITE);
+						CloseHandle(event);
+
+						OutputDebugStringA("Texture GPU copy completed\n");
+					}
+				}
 			}
 		}
 

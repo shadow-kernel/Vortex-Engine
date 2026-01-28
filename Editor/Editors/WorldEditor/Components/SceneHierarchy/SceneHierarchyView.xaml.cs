@@ -394,6 +394,11 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             ViewModel?.CreateSpotLightCommand.Execute(null);
         }
 
+        private void CreateSkybox_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel?.CreateSkyboxCommand.Execute(null);
+        }
+
         #endregion
 
         #region Entity Creation - Other

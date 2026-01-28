@@ -30,7 +30,9 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             {
                 // Register component inspectors here
                 { typeof(MeshRenderer), comp => CreateMeshRendererInspector((MeshRenderer)comp) },
-                { typeof(Camera), comp => CreateCameraInspector((Camera)comp) }
+                { typeof(Camera), comp => CreateCameraInspector((Camera)comp) },
+                { typeof(Light), comp => CreateLightInspector((Light)comp) },
+                { typeof(Skybox), comp => CreateSkyboxInspector((Skybox)comp) }
             };
         }
 
@@ -132,6 +134,21 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             return inspector;
         }
 
+
+        private UserControl CreateLightInspector(Light light)
+        {
+            var inspector = new LightInspector();
+            inspector.Light = light;
+            return inspector;
+        }
+
+        private UserControl CreateSkyboxInspector(Skybox skybox)
+        {
+            var inspector = new SkyboxInspector();
+            inspector.Skybox = skybox;
+            return inspector;
+        }
+
         private UserControl CreateGenericComponentInspector(Component component)
         {
             // Create a simple border with the component name
@@ -203,7 +220,18 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             
             AddComponentMenuItem(contextMenu, "Mesh Renderer", () => AddComponent<MeshRenderer>());
             AddComponentMenuItem(contextMenu, "Camera", () => AddComponent<Camera>());
-            AddComponentMenuItem(contextMenu, "Directional Light", () => AddComponent<Light>());
+            contextMenu.Items.Add(new Separator());
+            
+            // Light submenu
+            var lightMenu = new MenuItem { Header = "Light" };
+            AddSubMenuItem(lightMenu, "Directional Light", () => AddLightComponent(LightType.Directional));
+            AddSubMenuItem(lightMenu, "Point Light", () => AddLightComponent(LightType.Point));
+            AddSubMenuItem(lightMenu, "Spot Light", () => AddLightComponent(LightType.Spot));
+            contextMenu.Items.Add(lightMenu);
+            
+            contextMenu.Items.Add(new Separator());
+            AddComponentMenuItem(contextMenu, "Skybox", () => AddComponent<Skybox>());
+            
             contextMenu.Items.Add(new Separator());
             AddComponentMenuItem(contextMenu, "Rigidbody", () => AddComponent<ECS.Components.Physics.Rigidbody>());
             AddComponentMenuItem(contextMenu, "Box Collider", () => AddComponent<ECS.Components.Physics.BoxCollider>());
@@ -219,6 +247,13 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             menu.Items.Add(item);
         }
 
+        private void AddSubMenuItem(MenuItem parent, string header, Action action)
+        {
+            var item = new MenuItem { Header = header };
+            item.Click += (s, e) => action();
+            parent.Items.Add(item);
+        }
+
         private void AddComponent<T>() where T : Component, new()
         {
             if (_selectedEntity == null) return;
@@ -226,6 +261,18 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             if (!_selectedEntity.HasComponent<T>())
             {
                 _selectedEntity.AddComponent<T>();
+                RefreshInspector();
+            }
+        }
+
+        private void AddLightComponent(LightType lightType)
+        {
+            if (_selectedEntity == null) return;
+            
+            if (!_selectedEntity.HasComponent<Light>())
+            {
+                var light = new Light(_selectedEntity, lightType);
+                _selectedEntity.AddComponent(light);
                 RefreshInspector();
             }
         }

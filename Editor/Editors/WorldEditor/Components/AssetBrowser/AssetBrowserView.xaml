@@ -95,7 +95,28 @@
         <ListBox x:Name="AssetList" Grid.Row="2" 
                  Background="Transparent" BorderThickness="0"
                  ItemContainerStyle="{StaticResource AssetItemStyle}"
-                 SelectionChanged="AssetList_SelectionChanged">
+                 SelectionChanged="AssetList_SelectionChanged"
+                 MouseDoubleClick="AssetList_MouseDoubleClick">
+            <ListBox.ContextMenu>
+                <ContextMenu Background="#FF2D2D30" BorderBrush="#FF3E3E42">
+                    <MenuItem Header="Add to Scene" Click="ContextMenu_AddToScene_Click">
+                        <MenuItem.Icon>
+                            <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" Foreground="#FF4EC9B0"/>
+                        </MenuItem.Icon>
+                    </MenuItem>
+                    <MenuItem Header="Open in Asset Browser" Click="ContextMenu_OpenInBrowser_Click">
+                        <MenuItem.Icon>
+                            <TextBlock Text="&#xE8A7;" FontFamily="Segoe MDL2 Assets" Foreground="#FF569CD6"/>
+                        </MenuItem.Icon>
+                    </MenuItem>
+                    <Separator/>
+                    <MenuItem Header="Delete" Click="ContextMenu_Delete_Click">
+                        <MenuItem.Icon>
+                            <TextBlock Text="&#xE74D;" FontFamily="Segoe MDL2 Assets" Foreground="#FFCE9178"/>
+                        </MenuItem.Icon>
+                    </MenuItem>
+                </ContextMenu>
+            </ListBox.ContextMenu>
             <ListBox.ItemTemplate>
                 <DataTemplate>
                     <StackPanel Orientation="Horizontal">

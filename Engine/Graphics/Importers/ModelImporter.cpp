@@ -1,6 +1,5 @@
 #include "ModelImporter.h"
 
-// Only compile if Assimp is available
 #ifdef VORTEX_USE_ASSIMP
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
@@ -9,6 +8,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <Windows.h>
 
 namespace vortex::graphics
 {
@@ -19,7 +19,6 @@ namespace vortex::graphics
 
 		Assimp::Importer importer;
 		
-		// Import with triangulation, normals generation, and UV flipping
 		const aiScene* scene = importer.ReadFile(filepath,
 			aiProcess_Triangulate |
 			aiProcess_GenNormals |
@@ -30,14 +29,14 @@ namespace vortex::graphics
 
 		if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode)
 		{
-			return result; // Return empty on error
+			OutputDebugStringA(("ModelImporter: Failed to load " + filepath + "\n").c_str());
+			return result;
 		}
 
 		// Extract filename as model name
 		size_t last_slash = filepath.find_last_of("/\\");
 		size_t last_dot = filepath.find_last_of(".");
 		
-		// Ensure the dot is after the last slash (not in a directory name)
 		if (last_dot != std::string::npos && 
 			(last_slash == std::string::npos || last_dot > last_slash))
 		{
@@ -49,19 +48,25 @@ namespace vortex::graphics
 			result.name = "ImportedModel";
 		}
 
+		OutputDebugStringA(("ModelImporter: Loading " + result.name + "\n").c_str());
+
 		// Process node hierarchy
 		process_node(scene->mRootNode, (void*)scene, result);
+
+		// Extract materials and assign textures to submeshes
+		extract_materials((void*)scene, result, filepath);
 
 		// Calculate bounding box
 		calculate_bounds(result);
 
+		OutputDebugStringA(("ModelImporter: Loaded " + std::to_string(result.submeshes.size()) + " submeshes\n").c_str());
+
 		return result;
 	}
 #else
-	// Stub implementation when Assimp is not available
 	ImportedModelData ModelImporter::import_from_file(const std::string& filepath)
 	{
-		return ImportedModelData(); // Return empty
+		return ImportedModelData();
 	}
 #endif
 
@@ -109,7 +114,6 @@ namespace vortex::graphics
 		aiNode* node = static_cast<aiNode*>(node_ptr);
 		const aiScene* scene = static_cast<const aiScene*>(scene_ptr);
 
-		// Process all meshes in this node
 		for (u32 i = 0; i < node->mNumMeshes; i++)
 		{
 			aiMesh* mesh = scene->mMeshes[node->mMeshes[i]];
@@ -120,7 +124,6 @@ namespace vortex::graphics
 			}
 		}
 
-		// Recursively process child nodes
 		for (u32 i = 0; i < node->mNumChildren; i++)
 		{
 			process_node(node->mChildren[i], scene_ptr, data);
@@ -135,18 +138,15 @@ namespace vortex::graphics
 		result.name = mesh->mName.C_Str();
 		result.material_index = mesh->mMaterialIndex;
 
-		// Process vertices
 		result.vertices.reserve(mesh->mNumVertices);
 		for (u32 i = 0; i < mesh->mNumVertices; i++)
 		{
 			VertexPosNormalUV vertex;
 
-			// Position
 			vertex.position.x = mesh->mVertices[i].x;
 			vertex.position.y = mesh->mVertices[i].y;
 			vertex.position.z = mesh->mVertices[i].z;
 
-			// Normal
 			if (mesh->HasNormals())
 			{
 				vertex.normal.x = mesh->mNormals[i].x;
@@ -158,7 +158,6 @@ namespace vortex::graphics
 				vertex.normal = { 0.0f, 1.0f, 0.0f };
 			}
 
-			// UV coordinates (use first texture coordinate set)
 			if (mesh->mTextureCoords[0])
 			{
 				vertex.uv.x = mesh->mTextureCoords[0][i].x;
@@ -172,7 +171,6 @@ namespace vortex::graphics
 			result.vertices.push_back(vertex);
 		}
 
-		// Process indices
 		for (u32 i = 0; i < mesh->mNumFaces; i++)
 		{
 			aiFace face = mesh->mFaces[i];
@@ -184,5 +182,177 @@ namespace vortex::graphics
 
 		return result;
 	}
-#endif // VORTEX_USE_ASSIMP
+
+	void ModelImporter::extract_materials(void* scene_ptr, ImportedModelData& data, const std::string& filepath)
+	{
+		const aiScene* scene = static_cast<const aiScene*>(scene_ptr);
+		if (!scene) return;
+
+		std::string model_dir;
+		size_t last_slash = filepath.find_last_of("/\\");
+		if (last_slash != std::string::npos)
+		{
+			model_dir = filepath.substr(0, last_slash + 1);
+		}
+
+		OutputDebugStringA(("ModelImporter: Found " + std::to_string(scene->mNumMaterials) + " materials\n").c_str());
+
+		for (u32 i = 0; i < scene->mNumMaterials; i++)
+		{
+			aiMaterial* material = scene->mMaterials[i];
+			
+			aiString name;
+			material->Get(AI_MATKEY_NAME, name);
+			std::string mat_name = name.C_Str();
+			data.material_names.push_back(mat_name);
+
+			OutputDebugStringA(("  Material " + std::to_string(i) + ": " + mat_name + "\n").c_str());
+
+			// Get diffuse texture path from material
+			std::string diffuse_path;
+			if (material->GetTextureCount(aiTextureType_DIFFUSE) > 0)
+			{
+			aiString tex_path;
+			material->GetTexture(aiTextureType_DIFFUSE, 0, &tex_path);
+			diffuse_path = model_dir + tex_path.C_Str();
+			data.texture_paths.push_back(diffuse_path);
+			OutputDebugStringA(("    Diffuse: " + diffuse_path + "\n").c_str());
+			}
+			// Also check for AMBIENT texture (sometimes used as diffuse in OBJ)
+			else if (material->GetTextureCount(aiTextureType_AMBIENT) > 0)
+			{
+			aiString tex_path;
+			material->GetTexture(aiTextureType_AMBIENT, 0, &tex_path);
+			diffuse_path = model_dir + tex_path.C_Str();
+			data.texture_paths.push_back(diffuse_path);
+			OutputDebugStringA(("    Ambient (as diffuse): " + diffuse_path + "\n").c_str());
+			}
+			
+			// Get normal map path
+			std::string normal_path;
+			if (material->GetTextureCount(aiTextureType_NORMALS) > 0)
+			{
+				aiString tex_path;
+				material->GetTexture(aiTextureType_NORMALS, 0, &tex_path);
+				normal_path = model_dir + tex_path.C_Str();
+			}
+			else if (material->GetTextureCount(aiTextureType_HEIGHT) > 0)
+			{
+				aiString tex_path;
+				material->GetTexture(aiTextureType_HEIGHT, 0, &tex_path);
+				normal_path = model_dir + tex_path.C_Str();
+			}
+			
+			// Assign textures to all submeshes using this material
+			for (auto& submesh : data.submeshes)
+			{
+				if (submesh.material_index == i)
+				{
+					submesh.diffuse_texture = diffuse_path;
+					submesh.normal_texture = normal_path;
+					
+					// Use material name if submesh name is empty
+					if (submesh.name.empty())
+					{
+						submesh.name = mat_name;
+					}
+					
+					OutputDebugStringA(("    Assigned to submesh: " + submesh.name + "\n").c_str());
+				}
+			}
+		}
+		
+		// If no textures found in model, search in directory
+		bool has_valid_texture = false;
+		for (const auto& tex_path : data.texture_paths)
+		{
+		if (!tex_path.empty())
+		{
+		DWORD attribs = GetFileAttributesA(tex_path.c_str());
+		if (attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY))
+		{
+		has_valid_texture = true;
+		break;
+		}
+		}
+		}
+		
+		if (data.texture_paths.empty() || !has_valid_texture)
+		{
+		OutputDebugStringA("ModelImporter: No valid textures found, searching directory...\n");
+		search_textures_in_directory(model_dir, data);
+		}
+	}
+	
+	void ModelImporter::search_textures_in_directory(const std::string& dir, ImportedModelData& data)
+	{
+		if (dir.empty()) return;
+		
+		// Collect all color textures in directory
+		std::vector<std::string> color_textures;
+		
+		WIN32_FIND_DATAA fd;
+		HANDLE h = FindFirstFileA((dir + "*.*").c_str(), &fd);
+		if (h != INVALID_HANDLE_VALUE)
+		{
+			do {
+				std::string fn = fd.cFileName;
+				std::string fnl = fn;
+				std::transform(fnl.begin(), fnl.end(), fnl.begin(), ::tolower);
+				
+				bool is_img = fnl.find(".png") != std::string::npos || 
+				              fnl.find(".jpg") != std::string::npos || 
+				              fnl.find(".tga") != std::string::npos;
+				bool is_col = fnl.find("_col") != std::string::npos || 
+				              fnl.find("col.") != std::string::npos || 
+				              fnl.find("diffuse") != std::string::npos ||
+				              fnl.find("albedo") != std::string::npos;
+				bool is_bad = fnl.find("_nor") != std::string::npos || 
+				              fnl.find("_ao") != std::string::npos || 
+				              fnl.find("_rough") != std::string::npos ||
+				              fnl.find("_metal") != std::string::npos;
+				
+				if (is_img && is_col && !is_bad)
+				{
+					color_textures.push_back(dir + fn);
+					OutputDebugStringA(("  Found texture: " + fn + "\n").c_str());
+				}
+			} while (FindNextFileA(h, &fd));
+			FindClose(h);
+		}
+		
+		// Assign textures to submeshes
+		for (size_t i = 0; i < data.submeshes.size(); i++)
+		{
+			auto& submesh = data.submeshes[i];
+			
+			// Try to match by name first
+			std::string search_name = submesh.name;
+			std::transform(search_name.begin(), search_name.end(), search_name.begin(), ::tolower);
+			std::replace(search_name.begin(), search_name.end(), ' ', '_');
+			
+			bool found = false;
+			for (const auto& tex : color_textures)
+			{
+				std::string tex_lower = tex;
+				std::transform(tex_lower.begin(), tex_lower.end(), tex_lower.begin(), ::tolower);
+				
+				if (tex_lower.find(search_name) != std::string::npos)
+				{
+					submesh.diffuse_texture = tex;
+					found = true;
+					OutputDebugStringA(("  Matched " + submesh.name + " -> " + tex + "\n").c_str());
+					break;
+				}
+			}
+			
+			// Fallback: assign by index
+			if (!found && i < color_textures.size())
+			{
+				submesh.diffuse_texture = color_textures[i];
+				OutputDebugStringA(("  Index match " + submesh.name + " -> " + color_textures[i] + "\n").c_str());
+			}
+		}
+	}
+#endif
 }

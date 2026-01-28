@@ -34,6 +34,47 @@ namespace Editor.Core.Services
         private readonly Dictionary<Guid, (float r, float g, float b, float a)> _entityMaterialColors = 
             new Dictionary<Guid, (float r, float g, float b, float a)>();
 
+        // STATIC cache: Map mesh paths to their imported material IDs
+        // This survives entity serialization/deserialization
+        private static readonly Dictionary<string, long> _meshPathToMaterialId = new Dictionary<string, long>();
+
+
+        /// <summary>
+        /// Register a material for a mesh path (called during import)
+        /// </summary>
+        public static void RegisterMaterialForMeshPath(string meshPath, long materialId)
+        {
+            if (!string.IsNullOrEmpty(meshPath) && materialId >= 0)
+            {
+                _meshPathToMaterialId[meshPath] = materialId;
+                System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Registered material {materialId} for mesh path: {meshPath}");
+            }
+        }
+
+        /// <summary>
+        /// Register a mesh ID for a submesh path (called during import to avoid re-import)
+        /// </summary>
+        public static void RegisterMeshIdForPath(string meshPath, long meshId)
+        {
+            if (!string.IsNullOrEmpty(meshPath) && meshId >= 0)
+            {
+                _submeshMeshCache[meshPath] = meshId;
+                System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Registered mesh {meshId} for path: {meshPath}");
+            }
+        }
+
+        /// <summary>
+        /// Get the material ID for a mesh path (if one was imported)
+        /// </summary>
+        public static long GetMaterialForMeshPath(string meshPath)
+        {
+            if (!string.IsNullOrEmpty(meshPath) && _meshPathToMaterialId.TryGetValue(meshPath, out long materialId))
+            {
+                return materialId;
+            }
+            return -1;
+        }
+
         private bool _isInitialized;
 
         private SceneRenderService() { }
@@ -51,6 +92,95 @@ namespace Editor.Core.Services
         }
 
         /// <summary>
+        /// Preloads all textures and materials for entities in a scene.
+        /// Should be called when a scene is activated.
+        /// </summary>
+        public void PreloadSceneAssets(Data.Scene scene)
+        {
+            if (scene == null) return;
+
+            System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Preloading assets for scene: {scene.Name}");
+            var projectPath = Data.ProjectData.Current?.Path ?? "";
+
+            PreloadEntitiesRecursive(scene.Entities, projectPath);
+        }
+
+        private void PreloadEntitiesRecursive(IEnumerable<GameEntity> entities, string projectPath)
+        {
+            foreach (var entity in entities)
+            {
+                var meshRenderer = entity.GetComponent<MeshRenderer>();
+                if (meshRenderer != null && !string.IsNullOrEmpty(meshRenderer.TexturePath))
+                {
+                    PreloadTextureForEntity(entity.Id, meshRenderer, projectPath);
+                }
+
+                // Recursively preload children
+                if (entity.Children != null && entity.Children.Count > 0)
+                {
+                    PreloadEntitiesRecursive(entity.Children, projectPath);
+                }
+            }
+        }
+
+        private void PreloadTextureForEntity(Guid entityId, MeshRenderer meshRenderer, string projectPath)
+        {
+            string meshPath = meshRenderer.MeshPath;
+            
+            // Check if we already have a material cached for this mesh path
+            if (_meshPathToMaterialId.ContainsKey(meshPath))
+            {
+                return; // Already loaded
+            }
+
+            string texturePath = meshRenderer.TexturePath;
+            if (string.IsNullOrEmpty(texturePath))
+            {
+                return;
+            }
+
+            // Build full path
+            string fullTexturePath = texturePath;
+            if (!System.IO.Path.IsPathRooted(texturePath))
+            {
+                fullTexturePath = System.IO.Path.Combine(projectPath, texturePath);
+            }
+
+            if (!System.IO.File.Exists(fullTexturePath))
+            {
+                System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Texture not found: {fullTexturePath}");
+                return;
+            }
+
+            try
+            {
+                // Import texture
+                long textureId = VortexAPI.ImportTextureFromFile(fullTexturePath);
+                if (textureId >= 0)
+                {
+                    // Create material with texture
+                    long materialId = VortexAPI.CreateNewMaterial();
+                    if (materialId >= 0)
+                    {
+                        VortexAPI.SetMaterialBaseColor(materialId, 
+                            meshRenderer.ColorR, meshRenderer.ColorG, meshRenderer.ColorB, meshRenderer.ColorA);
+                        VortexAPI.SetMaterialAlbedoTexture(materialId, textureId);
+
+                        // Cache the material
+                        RegisterMaterialForMeshPath(meshPath, materialId);
+                        _entityMaterials[entityId] = materialId;
+
+                        System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Preloaded texture for {meshPath}: {fullTexturePath}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Error preloading texture: {ex.Message}");
+            }
+        }
+
+        /// <summary>
         /// Submit an entity for rendering this frame.
         /// </summary>
         public void SubmitEntity(GameEntity entity)
@@ -63,10 +193,9 @@ namespace Editor.Core.Services
             var transform = entity.GetComponent<Transform>();
             if (transform == null) return;
 
-            // Debug: Log if MeshPath is empty
+            // Skip if MeshPath is empty (don't log every frame)
             if (string.IsNullOrEmpty(meshRenderer.MeshPath))
             {
-                System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Entity '{entity.Name}' has empty MeshPath - skipping");
                 return;
             }
 
@@ -74,19 +203,22 @@ namespace Editor.Core.Services
             long meshId = GetOrCreateMesh(entity.Id, meshRenderer);
             if (meshId < 0)
             {
-                System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Failed to create mesh for entity '{entity.Name}' with path '{meshRenderer.MeshPath}'");
                 return;
             }
 
             // Get or create material (with dirty checking)
             long materialId = GetOrCreateMaterial(entity.Id, meshRenderer);
 
-            // Build world matrix from transform
-            float[] worldMatrix = BuildWorldMatrix(transform);
+            // Build world matrix from transform (including parent transforms)
+            float[] worldMatrix = BuildWorldMatrixWithParent(entity);
 
             // Submit to renderer
             VortexAPI.SubmitMeshForRendering(meshId, materialId, worldMatrix);
         }
+
+
+
+
 
 
         /// <summary>
@@ -96,14 +228,18 @@ namespace Editor.Core.Services
         {
             if (scene == null || scene.Entities == null) return;
 
+            // Clear and submit all lights first
+            SubmitSceneLights(scene);
+
             foreach (var entity in scene.Entities)
             {
                 SubmitEntityRecursive(entity);
             }
 
-            // Render ALL camera icons in the scene (so you can see where they are)
+            // Render ALL camera and light icons in the scene
             var selected = SelectionService.Instance.SelectedEntity;
             RenderAllCameraIcons(scene, selected);
+            RenderAllLightIcons(scene, selected);
 
             // Render selection outline and gizmo for selected entity
             if (selected != null)
@@ -129,9 +265,15 @@ namespace Editor.Core.Services
                     }
                     else
                     {
+                        // Calculate combined bounds for parent entities with children
+                        var bounds = CalculateCombinedBounds(selected);
+                        
                         // Render orange selection outline with rotation
-                        VortexAPI.RenderSelectionOutline(pos.X, pos.Y, pos.Z, 
-                            scale.X, scale.Y, scale.Z,
+                        VortexAPI.RenderSelectionOutline(
+                            pos.X + bounds.CenterOffset.X, 
+                            pos.Y + bounds.CenterOffset.Y, 
+                            pos.Z + bounds.CenterOffset.Z, 
+                            bounds.Size.X, bounds.Size.Y, bounds.Size.Z,
                             rot.X, rot.Y, rot.Z);
                     }
                     
@@ -141,6 +283,235 @@ namespace Editor.Core.Services
                         VortexAPI.RenderGizmo(pos.X, pos.Y, pos.Z, scale.Y, 1.0f);
                     }
                 }
+            }
+        }
+
+        /// <summary>
+        /// Represents bounds with size and center offset
+        /// </summary>
+        private struct EntityBounds
+        {
+            public ECS.Vector3 Size;
+            public ECS.Vector3 CenterOffset;
+        }
+
+        /// <summary>
+        /// Calculate combined bounds for an entity, including all children with MeshRenderers.
+        /// </summary>
+        private EntityBounds CalculateCombinedBounds(GameEntity entity)
+        {
+            var bounds = new EntityBounds
+            {
+                Size = entity.Transform?.LocalScale ?? ECS.Vector3.One,
+                CenterOffset = ECS.Vector3.Zero
+            };
+
+            // If entity has no children, just use its own scale
+            if (entity.Children == null || entity.Children.Count == 0)
+            {
+                return bounds;
+            }
+
+            // Check if any children have mesh renderers
+            bool hasChildMeshes = false;
+            float minX = float.MaxValue, minY = float.MaxValue, minZ = float.MaxValue;
+            float maxX = float.MinValue, maxY = float.MinValue, maxZ = float.MinValue;
+
+            foreach (var child in entity.Children)
+            {
+                var meshRenderer = child.GetComponent<MeshRenderer>();
+                if (meshRenderer != null && !string.IsNullOrEmpty(meshRenderer.MeshPath))
+                {
+                    hasChildMeshes = true;
+                    var childPos = child.Transform?.LocalPosition ?? ECS.Vector3.Zero;
+                    var childScale = child.Transform?.LocalScale ?? ECS.Vector3.One;
+
+                    // Get mesh bounds and center from cache
+                    var meshBoundsInfo = GetMeshBoundsAndCenter(meshRenderer.MeshPath);
+                    
+                    // Apply mesh center offset and scale
+                    float centerX = meshBoundsInfo.Center.X * childScale.X;
+                    float centerY = meshBoundsInfo.Center.Y * childScale.Y;
+                    float centerZ = meshBoundsInfo.Center.Z * childScale.Z;
+                    
+                    // Calculate world-space bounds for this child
+                    float halfX = (meshBoundsInfo.Size.X * childScale.X) * 0.5f;
+                    float halfY = (meshBoundsInfo.Size.Y * childScale.Y) * 0.5f;
+                    float halfZ = (meshBoundsInfo.Size.Z * childScale.Z) * 0.5f;
+
+                    // Add child position + mesh center offset
+                    float worldCenterX = childPos.X + centerX;
+                    float worldCenterY = childPos.Y + centerY;
+                    float worldCenterZ = childPos.Z + centerZ;
+
+                    minX = Math.Min(minX, worldCenterX - halfX);
+                    minY = Math.Min(minY, worldCenterY - halfY);
+                    minZ = Math.Min(minZ, worldCenterZ - halfZ);
+                    maxX = Math.Max(maxX, worldCenterX + halfX);
+                    maxY = Math.Max(maxY, worldCenterY + halfY);
+                    maxZ = Math.Max(maxZ, worldCenterZ + halfZ);
+                }
+            }
+
+            if (hasChildMeshes)
+            {
+                bounds.Size = new ECS.Vector3(maxX - minX, maxY - minY, maxZ - minZ);
+                bounds.CenterOffset = new ECS.Vector3(
+                    (minX + maxX) * 0.5f,
+                    (minY + maxY) * 0.5f,
+                    (minZ + maxZ) * 0.5f
+                );
+            }
+
+
+            return bounds;
+        }
+
+        // Cache for mesh bounds (size in local space)
+        private static readonly Dictionary<string, ECS.Vector3> _meshBoundsCache = new Dictionary<string, ECS.Vector3>();
+        private static readonly Dictionary<string, ECS.Vector3> _meshBoundsCenterCache = new Dictionary<string, ECS.Vector3>();
+
+        /// <summary>
+        /// Mesh bounds information (size and center)
+        /// </summary>
+        private struct MeshBoundsInfo
+        {
+            public ECS.Vector3 Size;
+            public ECS.Vector3 Center;
+        }
+
+        /// <summary>
+        /// Get bounds and center for a mesh path
+        /// </summary>
+        private MeshBoundsInfo GetMeshBoundsAndCenter(string meshPath)
+        {
+            var info = new MeshBoundsInfo
+            {
+                Size = ECS.Vector3.One,
+                Center = ECS.Vector3.Zero
+            };
+
+            if (string.IsNullOrEmpty(meshPath))
+                return info;
+
+            // Check caches
+            if (_meshBoundsCache.TryGetValue(meshPath, out var cachedSize))
+            {
+                info.Size = cachedSize;
+                if (_meshBoundsCenterCache.TryGetValue(meshPath, out var cachedCenter))
+                {
+                    info.Center = cachedCenter;
+                }
+                return info;
+            }
+
+            // Try to get from engine
+            float sizeX = 1f, sizeY = 1f, sizeZ = 1f;
+            float centerX = 0f, centerY = 0f, centerZ = 0f;
+            
+            long meshId = -1;
+            if (_submeshMeshCache.TryGetValue(meshPath, out meshId) && meshId >= 0)
+            {
+                // Get size
+                if (VortexAPI.GetMeshBounds(meshId, out sizeX, out sizeY, out sizeZ))
+                {
+                    info.Size = new ECS.Vector3(sizeX, sizeY, sizeZ);
+                    _meshBoundsCache[meshPath] = info.Size;
+                }
+                
+                // Get center
+                if (VortexAPI.GetMeshBoundsCenter(meshId, out centerX, out centerY, out centerZ))
+                {
+                    info.Center = new ECS.Vector3(centerX, centerY, centerZ);
+                    _meshBoundsCenterCache[meshPath] = info.Center;
+                }
+            }
+            else
+            {
+                // Try to find mesh in entity cache
+                meshId = GetOrLoadMeshForBounds(meshPath);
+                if (meshId >= 0)
+                {
+                    if (VortexAPI.GetMeshBounds(meshId, out sizeX, out sizeY, out sizeZ))
+                    {
+                        info.Size = new ECS.Vector3(sizeX, sizeY, sizeZ);
+                        _meshBoundsCache[meshPath] = info.Size;
+                    }
+                    if (VortexAPI.GetMeshBoundsCenter(meshId, out centerX, out centerY, out centerZ))
+                    {
+                        info.Center = new ECS.Vector3(centerX, centerY, centerZ);
+                        _meshBoundsCenterCache[meshPath] = info.Center;
+                    }
+                }
+            }
+
+            return info;
+        }
+
+        /// <summary>
+        /// Get or calculate bounds for a mesh path
+        /// </summary>
+        private ECS.Vector3 GetMeshBounds(string meshPath)
+        {
+            if (string.IsNullOrEmpty(meshPath))
+                return ECS.Vector3.One;
+
+            if (_meshBoundsCache.TryGetValue(meshPath, out var cached))
+                return cached;
+
+            // Try to get bounds from engine
+            float sizeX = 1f, sizeY = 1f, sizeZ = 1f;
+            
+            // Check if mesh is loaded and get its bounds
+            if (_submeshMeshCache.TryGetValue(meshPath, out long meshId) && meshId >= 0)
+            {
+                if (VortexAPI.GetMeshBounds(meshId, out sizeX, out sizeY, out sizeZ))
+                {
+                    var bounds = new ECS.Vector3(sizeX, sizeY, sizeZ);
+                    _meshBoundsCache[meshPath] = bounds;
+                    return bounds;
+                }
+            }
+            
+            // If not found, try to load the mesh to get bounds
+            // This happens during the first frame after scene load
+            long loadedMeshId = GetOrLoadMeshForBounds(meshPath);
+            if (loadedMeshId >= 0)
+            {
+                if (VortexAPI.GetMeshBounds(loadedMeshId, out sizeX, out sizeY, out sizeZ))
+                {
+                    var bounds = new ECS.Vector3(sizeX, sizeY, sizeZ);
+                    _meshBoundsCache[meshPath] = bounds;
+                    return bounds;
+                }
+            }
+
+            // Return default bounds
+            return new ECS.Vector3(1f, 1f, 1f);
+        }
+
+        /// <summary>
+        /// Try to load a mesh just to get its bounds (without caching the mesh itself)
+        /// </summary>
+        private long GetOrLoadMeshForBounds(string meshPath)
+        {
+            try
+            {
+                // Check the entity mesh cache first
+                foreach (var kvp in _entityMeshes)
+                {
+                    if (_entityMeshPaths.TryGetValue(kvp.Key, out var path) && path == meshPath)
+                    {
+                        return kvp.Value;
+                    }
+                }
+                
+                // Return -1, bounds will be calculated later when mesh is loaded
+                return -1;
+            }
+            catch
+            {
+                return -1;
             }
         }
         
@@ -271,12 +642,196 @@ namespace Editor.Core.Services
                 }
             }
 
-            // TODO: Load mesh from file path
-            return -1;
+            // Load mesh from external file
+            return LoadMeshFromFile(meshPath);
+        }
+
+        // Cache for submesh mesh IDs (keyed by submesh path like "path#submesh0")
+        private static readonly Dictionary<string, long> _submeshMeshCache = new Dictionary<string, long>();
+
+        private long LoadMeshFromFile(string meshPath)
+        {
+            if (string.IsNullOrEmpty(meshPath))
+                return -1;
+
+            try
+            {
+                // Check if this is a submesh path (format: "path#submeshN")
+                string actualPath = meshPath;
+                int submeshIndex = -1;
+                
+                int hashIndex = meshPath.LastIndexOf('#');
+                if (hashIndex > 0 && meshPath.Length > hashIndex + 7 && meshPath.Substring(hashIndex + 1, 7) == "submesh")
+                {
+                    actualPath = meshPath.Substring(0, hashIndex);
+                    if (int.TryParse(meshPath.Substring(hashIndex + 8), out int idx))
+                    {
+                        submeshIndex = idx;
+                    }
+                }
+
+                // Check submesh cache first (most common path for already-imported models)
+                if (_submeshMeshCache.TryGetValue(meshPath, out long cachedMeshId))
+                {
+                    System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Using cached mesh {cachedMeshId} for {meshPath}");
+                    return cachedMeshId;
+                }
+
+                // Get full path
+                var projectPath = Data.ProjectData.Current?.Path;
+                string fullPath = actualPath;
+                
+                // If it's a relative path, combine with project path
+                if (!System.IO.Path.IsPathRooted(actualPath) && !string.IsNullOrEmpty(projectPath))
+                {
+                    fullPath = System.IO.Path.Combine(projectPath, actualPath);
+                }
+
+                if (!System.IO.File.Exists(fullPath))
+                {
+                    return -1;
+                }
+
+                var extension = System.IO.Path.GetExtension(fullPath)?.ToLowerInvariant();
+
+                // Check if it's a .vmesh file (binary format - fast load)
+                if (extension == ".vmesh")
+                {
+                    return VortexAPI.LoadVMeshFromFile(fullPath);
+                }
+
+                // For model files (FBX, OBJ, etc.) - use multi-material import
+                if (IsModelFileExtension(extension))
+                {
+                    if (!VortexAPI.IsAssimpAvailable())
+                    {
+                        return -1;
+                    }
+
+                    // Import with materials (this creates all submeshes at once)
+                    System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Importing model with materials: {fullPath}");
+                    var submeshes = VortexAPI.ImportModelWithMaterialsFromFile(fullPath);
+                    if (submeshes != null && submeshes.Length > 0)
+                    {
+                        // Cache all submeshes for future use
+                        for (int i = 0; i < submeshes.Length; i++)
+                        {
+                            string subPath = $"{actualPath}#submesh{i}";
+                            _submeshMeshCache[subPath] = submeshes[i].MeshId;
+                            
+                            // Also register materials
+                            if (submeshes[i].MaterialId >= 0)
+                            {
+                                RegisterMaterialForMeshPath(subPath, submeshes[i].MaterialId);
+                            }
+                        }
+                        
+                        // Also cache the base path with first mesh
+                        _submeshMeshCache[actualPath] = submeshes[0].MeshId;
+                        
+                        // Return requested submesh or first mesh
+                        if (submeshIndex >= 0 && submeshIndex < submeshes.Length)
+                        {
+                            return submeshes[submeshIndex].MeshId;
+                        }
+                        return submeshes[0].MeshId;
+                    }
+                    return -1;
+                }
+
+                return -1;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Error loading mesh: {ex.Message}");
+                return -1;
+            }
+        }
+
+        private static bool IsModelFileExtension(string extension)
+        {
+            return extension switch
+            {
+                ".fbx" or ".obj" or ".gltf" or ".glb" or ".dae" or ".3ds" or ".blend" => true,
+                _ => false
+            };
         }
 
         private long GetOrCreateMaterial(Guid entityId, MeshRenderer renderer)
         {
+            // First, check if we have a cached material for this mesh path
+            string meshPath = renderer.MeshPath;
+            long cachedMaterial = GetMaterialForMeshPath(meshPath);
+            
+            if (cachedMaterial >= 0)
+            {
+                // Use the cached material with textures
+                if (!_entityMaterials.ContainsKey(entityId))
+                {
+                    _entityMaterials[entityId] = cachedMaterial;
+                }
+                return cachedMaterial;
+            }
+
+            // Fallback: Check if the renderer has an imported material directly
+            if (renderer.HasImportedMaterial)
+            {
+                if (!_entityMaterials.ContainsKey(entityId))
+                {
+                    _entityMaterials[entityId] = renderer.MaterialHandle;
+                }
+                // Register in cache for future lookups
+                if (!string.IsNullOrEmpty(meshPath))
+                {
+                    RegisterMaterialForMeshPath(meshPath, renderer.MaterialHandle);
+                }
+                return renderer.MaterialHandle;
+            }
+
+            // Check if renderer has a texture path but no cached material (e.g., after restart)
+            if (!string.IsNullOrEmpty(renderer.TexturePath) && !_entityMaterials.ContainsKey(entityId))
+            {
+                var projectPath = Data.ProjectData.Current?.Path;
+                string fullTexturePath = renderer.TexturePath;
+                
+                if (!System.IO.Path.IsPathRooted(renderer.TexturePath) && !string.IsNullOrEmpty(projectPath))
+                {
+                    fullTexturePath = System.IO.Path.Combine(projectPath, renderer.TexturePath);
+                }
+
+                if (System.IO.File.Exists(fullTexturePath))
+                {
+                    try
+                    {
+                        // Import texture and create material
+                        long textureId = VortexAPI.ImportTextureFromFile(fullTexturePath);
+                        if (textureId >= 0)
+                        {
+                            long newMaterialId = VortexAPI.CreateNewMaterial();
+                            if (newMaterialId >= 0)
+                            {
+                                VortexAPI.SetMaterialBaseColor(newMaterialId, 0.9f, 0.9f, 0.9f, 1.0f);
+                                VortexAPI.SetMaterialAlbedoTexture(newMaterialId, textureId);
+                                _entityMaterials[entityId] = newMaterialId;
+                                
+                                // Register in cache for future lookups
+                                if (!string.IsNullOrEmpty(meshPath))
+                                {
+                                    RegisterMaterialForMeshPath(meshPath, newMaterialId);
+                                }
+                                
+                                System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Created material with texture for {meshPath}: {fullTexturePath}");
+                                return newMaterialId;
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Error loading texture: {ex.Message}");
+                    }
+                }
+            }
+
             var currentColor = (renderer.ColorR, renderer.ColorG, renderer.ColorB, renderer.ColorA);
             
             // Check if material color changed (dirty check)
@@ -359,6 +914,59 @@ namespace Editor.Core.Services
                 scale.Z * r20, scale.Z * r21, scale.Z * r22, 0,
                 pos.X,         pos.Y,         pos.Z,         1
             };
+        }
+
+        /// <summary>
+        /// Build world matrix including parent transformations.
+        /// This allows child entities to inherit transforms from their parent.
+        /// </summary>
+        private float[] BuildWorldMatrixWithParent(GameEntity entity)
+        {
+            if (entity == null || entity.Transform == null)
+                return BuildIdentityMatrix();
+
+            // Get local matrix
+            float[] localMatrix = BuildWorldMatrix(entity.Transform);
+
+            // If no parent, return local matrix
+            if (entity.Parent == null || entity.Parent.Transform == null)
+                return localMatrix;
+
+            // Get parent world matrix (recursive)
+            float[] parentMatrix = BuildWorldMatrixWithParent(entity.Parent);
+
+            // Multiply: local * parent (row-major order)
+            return MultiplyMatrices(localMatrix, parentMatrix);
+        }
+
+        private float[] BuildIdentityMatrix()
+        {
+            return new float[]
+            {
+                1, 0, 0, 0,
+                0, 1, 0, 0,
+                0, 0, 1, 0,
+                0, 0, 0, 1
+            };
+        }
+
+        private float[] MultiplyMatrices(float[] a, float[] b)
+        {
+            float[] result = new float[16];
+            
+            for (int row = 0; row < 4; row++)
+            {
+                for (int col = 0; col < 4; col++)
+                {
+                    result[row * 4 + col] = 
+                        a[row * 4 + 0] * b[0 * 4 + col] +
+                        a[row * 4 + 1] * b[1 * 4 + col] +
+                        a[row * 4 + 2] * b[2 * 4 + col] +
+                        a[row * 4 + 3] * b[3 * 4 + col];
+                }
+            }
+            
+            return result;
         }
 
         /// <summary>
@@ -605,6 +1213,490 @@ namespace Editor.Core.Services
                 (float)(sinR * cosP * cosY - cosR * sinP * sinY), // Z
                 (float)(cosR * cosP * cosY + sinR * sinP * sinY)  // W
             };
+        }
+
+        #endregion
+
+        #region Light Management
+
+        private bool _hasSceneLights = false;
+        private bool _hasSkybox = false;
+
+        /// <summary>
+        /// Submit all lights in the scene to the renderer.
+        /// </summary>
+        private void SubmitSceneLights(Data.Scene scene)
+        {
+            // Clear previous frame's lights
+            VortexAPI.ClearAllLights();
+            
+            _hasSceneLights = false;
+            _hasSkybox = false;
+
+            // Collect and submit all lights and skybox
+            foreach (var entity in scene.Entities)
+            {
+                SubmitEntityLightsRecursive(entity);
+            }
+            
+            // If no lights in scene, use default directional light
+            if (!_hasSceneLights)
+            {
+                // Default sun light (like Unity/Unreal default scene)
+                VortexAPI.SetDirectionalLightParams(
+                    -0.5f, -0.7f, 0.5f,  // Direction
+                    1.0f, 0.98f, 0.95f,   // Warm white color
+                    3.0f);                // Strong intensity for PBR
+            }
+            
+            // If no skybox, disable skybox rendering and set default ambient
+            if (!_hasSkybox)
+            {
+                VortexAPI.EnableSkybox(false);
+                VortexAPI.SetAmbientLightStrength(0.15f);
+            }
+        }
+
+        private void SubmitEntityLightsRecursive(GameEntity entity)
+        {
+            if (entity == null || !entity.IsActive) return;
+
+            // Check for Skybox component
+            var skybox = entity.GetComponent<Skybox>();
+            if (skybox != null && skybox.IsEnabled)
+            {
+                _hasSkybox = true;
+                
+                // Enable skybox rendering
+                VortexAPI.EnableSkybox(true);
+                
+                // Set skybox mode based on type
+                switch (skybox.SkyboxType)
+                {
+                    case SkyboxType.SolidColor:
+                        VortexAPI.SetSkyboxRenderMode(VortexAPI.SkyboxMode.SolidColor);
+                        // Apply exposure to solid color
+                        float exp = skybox.Exposure;
+                        VortexAPI.SetSkyboxColor(
+                            skybox.TopColorR * exp, 
+                            skybox.TopColorG * exp, 
+                            skybox.TopColorB * exp);
+                        break;
+                        
+                    case SkyboxType.Gradient:
+                        VortexAPI.SetSkyboxRenderMode(VortexAPI.SkyboxMode.Gradient);
+                        // Set skybox colors (apply exposure)
+                        float gradExp = skybox.Exposure;
+                        VortexAPI.SetSkyboxGradient(
+                            skybox.TopColorR * gradExp, skybox.TopColorG * gradExp, skybox.TopColorB * gradExp,
+                            skybox.HorizonColorR * gradExp, skybox.HorizonColorG * gradExp, skybox.HorizonColorB * gradExp,
+                            skybox.BottomColorR * gradExp, skybox.BottomColorG * gradExp, skybox.BottomColorB * gradExp);
+                        break;
+                        
+                    case SkyboxType.Cubemap:
+                    case SkyboxType.Texture:
+                        // IMPORTANT: Disable the built-in gradient skybox when using texture
+                        VortexAPI.EnableSkybox(false);
+                        
+                        // Render skybox with texture on built-in sphere or custom mesh
+                        if (!string.IsNullOrEmpty(skybox.TexturePath))
+                        {
+                            SubmitSkyboxWithTexture(skybox);
+                        }
+                        else if (!string.IsNullOrEmpty(skybox.SkyboxMeshPath))
+                        {
+                            SubmitSkyboxMesh(skybox);
+                        }
+                        else
+                        {
+                            // No texture set - fall back to gradient
+                            VortexAPI.EnableSkybox(true);
+                            VortexAPI.SetSkyboxRenderMode(VortexAPI.SkyboxMode.Gradient);
+                        }
+                        break;
+                }
+                
+                // Also set ambient light based on skybox colors
+                var (ambientR, ambientG, ambientB) = skybox.GetAmbientColor();
+                float ambientBrightness = Math.Max(Math.Max(ambientR, ambientG), ambientB);
+                ambientBrightness = Math.Max(ambientBrightness, 0.2f);
+                VortexAPI.SetAmbientLightStrength(ambientBrightness);
+            }
+
+            var light = entity.GetComponent<ECS.Components.Lighting.Light>();
+            if (light != null && light.IsEnabled)
+            {
+                _hasSceneLights = true;
+                
+                var transform = entity.Transform;
+                if (transform != null)
+                {
+                    var pos = transform.LocalPosition;
+                    var rot = transform.LocalRotation;
+
+                    // Calculate forward direction from rotation
+                    float radX = rot.X * (float)(Math.PI / 180.0);
+                    float radY = rot.Y * (float)(Math.PI / 180.0);
+                    
+                    // Forward direction (looking down -Z in local space, transformed by Y then X rotation)
+                    float dirX = (float)(Math.Sin(radY) * Math.Cos(radX));
+                    float dirY = (float)(-Math.Sin(radX));
+                    float dirZ = (float)(Math.Cos(radY) * Math.Cos(radX));
+
+                    switch (light.LightType)
+                    {
+                        case ECS.Components.Lighting.LightType.Directional:
+                            VortexAPI.SetDirectionalLightParams(
+                                dirX, dirY, dirZ,
+                                light.ColorR, light.ColorG, light.ColorB,
+                                light.Intensity);
+                            break;
+
+                        case ECS.Components.Lighting.LightType.Point:
+                            VortexAPI.SubmitPointLight(
+                                pos.X, pos.Y, pos.Z,
+                                light.ColorR, light.ColorG, light.ColorB,
+                                light.Intensity, light.Range);
+                            break;
+
+                        case ECS.Components.Lighting.LightType.Spot:
+                            VortexAPI.SubmitSpotLight(
+                                pos.X, pos.Y, pos.Z,
+                                dirX, dirY, dirZ,
+                                light.ColorR, light.ColorG, light.ColorB,
+                                light.Intensity, light.Range,
+                                light.SpotAngle, light.InnerSpotAngle);
+                            break;
+                    }
+                }
+            }
+
+            // Process children
+            if (entity.Children != null)
+            {
+                foreach (var child in entity.Children)
+                {
+                    SubmitEntityLightsRecursive(child);
+                }
+            }
+        }
+
+        // Cache for built-in skybox sphere
+        private long _skyboxSphereId = -1;
+        private long _skyboxMaterialId = -1;
+        private long _skyboxTextureId = -1;
+        private string _cachedSkyboxTexturePath = null;
+        private float _cachedSkyboxExposure = -1f;
+
+        /// <summary>
+        /// Submit a skybox with texture on a built-in inverted sphere.
+        /// This is the simplest and most reliable way to render a textured skybox.
+        /// </summary>
+        private void SubmitSkyboxWithTexture(Skybox skybox)
+        {
+            var texturePath = skybox.TexturePath;
+            var exposure = skybox.Exposure;
+            var projectPath = Data.ProjectData.Current?.Path ?? "";
+            
+            // Build full texture path
+            var fullTexturePath = System.IO.Path.IsPathRooted(texturePath)
+                ? texturePath
+                : System.IO.Path.Combine(projectPath, texturePath);
+
+            // Check if texture file exists
+            if (!System.IO.File.Exists(fullTexturePath))
+            {
+                System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Skybox texture not found: {fullTexturePath}");
+                return;
+            }
+
+            // Check if we need to reload (texture path or exposure changed)
+            bool needsReload = _cachedSkyboxTexturePath != fullTexturePath || 
+                               Math.Abs(_cachedSkyboxExposure - exposure) > 0.01f;
+                               
+            if (needsReload)
+            {
+                System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Loading skybox texture: {fullTexturePath} (exposure={exposure})");
+                
+                // Create sphere if not exists (only once)
+                if (_skyboxSphereId < 0)
+                {
+                    // Try to create inverted sphere, fall back to normal sphere
+                    try
+                    {
+                        _skyboxSphereId = VortexAPI.CreateInvertedSphereMesh(1.0f);
+                    }
+                    catch
+                    {
+                        _skyboxSphereId = VortexAPI.CreateSphereMesh(1.0f);
+                    }
+                    
+                    if (_skyboxSphereId < 0)
+                    {
+                        _skyboxSphereId = VortexAPI.CreateSphereMesh(1.0f);
+                    }
+                    System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Created skybox sphere: {_skyboxSphereId}");
+                }
+
+                // Load texture
+                long newTextureId = VortexAPI.ImportTextureFromFile(fullTexturePath);
+                if (newTextureId < 0)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Failed to load skybox texture");
+                    return;
+                }
+
+                // Create or update material
+                if (_skyboxMaterialId < 0)
+                {
+                    _skyboxMaterialId = VortexAPI.CreateNewMaterial();
+                }
+
+                if (_skyboxMaterialId >= 0)
+                {
+                    // Set material properties for skybox (UNLIT - no lighting, controlled by exposure)
+                    VortexAPI.SetMaterialBaseColor(_skyboxMaterialId, 1.0f, 1.0f, 1.0f, 1.0f);
+                    VortexAPI.SetMaterialAlbedoTexture(_skyboxMaterialId, newTextureId);
+                    
+                    // CRITICAL: Set material as unlit so it ignores all scene lighting
+                    VortexAPI.SetMaterialAsUnlit(_skyboxMaterialId, true);
+                    // Use exposure from skybox component (typically 0.1-4.0)
+                    VortexAPI.SetMaterialEmissiveBrightness(_skyboxMaterialId, exposure);
+                    
+                    
+                    _skyboxTextureId = newTextureId;
+                    _cachedSkyboxTexturePath = fullTexturePath;
+                    _cachedSkyboxExposure = exposure;
+                    
+                    System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Skybox ready (UNLIT, exposure={exposure}): sphere={_skyboxSphereId}, material={_skyboxMaterialId}, texture={newTextureId}");
+                }
+            }
+            else if (_skyboxMaterialId >= 0 && Math.Abs(_cachedSkyboxExposure - exposure) > 0.01f)
+            {
+                // Just update exposure without reloading texture (for smooth slider operation)
+                VortexAPI.SetMaterialEmissiveBrightness(_skyboxMaterialId, exposure);
+                _cachedSkyboxExposure = exposure;
+            }
+
+            // Render the skybox sphere
+            if (_skyboxSphereId >= 0 && _skyboxMaterialId >= 0)
+            {
+                // Get camera position to center the skybox sphere around the camera
+                // This prevents the "rectangular anomaly" artifacts when flying high
+                var cameraController = EditorCameraController.Instance;
+                float camX = cameraController?.PositionX ?? 0f;
+                float camY = cameraController?.PositionY ?? 0f;
+                float camZ = cameraController?.PositionZ ?? 0f;
+                
+                // Use a smaller scale that fits within the far clip plane (typically 1000)
+                // The sphere should be large enough to encompass all objects but smaller than far plane
+                float scale = 1000.0f;
+                
+                // Create world matrix with translation to camera position
+                // This ensures the skybox always surrounds the camera regardless of position
+                float[] worldMatrix = new float[16]
+                {
+                    scale, 0, 0, 0,
+                    0, scale, 0, 0,
+                    0, 0, scale, 0,
+                    camX, camY, camZ, 1
+                };
+
+                VortexAPI.SubmitMeshForRendering(_skyboxSphereId, _skyboxMaterialId, worldMatrix);
+            }
+        }
+
+        // Cache for skybox mesh
+        private readonly Dictionary<string, (long meshId, long materialId, long textureId)> _skyboxMeshCache = 
+            new Dictionary<string, (long, long, long)>();
+
+
+
+        /// <summary>
+        /// Submit a skybox mesh for rendering.
+        /// </summary>
+        private void SubmitSkyboxMesh(Skybox skybox)
+        {
+            var meshPath = skybox.SkyboxMeshPath;
+            var texturePath = skybox.TexturePath;
+            
+            if (string.IsNullOrEmpty(meshPath))
+            {
+                System.Diagnostics.Debug.WriteLine("[SceneRenderService] Skybox mesh path is empty");
+                return;
+            }
+            
+            // Get full path
+            var projectPath = Data.ProjectData.Current?.Path ?? "";
+            var fullMeshPath = System.IO.Path.IsPathRooted(meshPath) 
+                ? meshPath 
+                : System.IO.Path.Combine(projectPath, meshPath);
+
+            System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Skybox mesh path: {fullMeshPath}");
+            System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Skybox texture path: {texturePath}");
+
+            // Check if file exists
+            if (!System.IO.File.Exists(fullMeshPath))
+            {
+                System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Skybox mesh file not found: {fullMeshPath}");
+                return;
+            }
+
+            // Create cache key that includes both mesh and texture
+            var cacheKey = $"{fullMeshPath}|{texturePath ?? ""}";
+
+            // Check if we have a cached mesh
+            if (!_skyboxMeshCache.TryGetValue(cacheKey, out var cached))
+            {
+                System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Importing skybox mesh...");
+                
+                // Import the mesh
+                var submeshData = VortexAPI.ImportModelWithMaterialsFromFile(fullMeshPath);
+                if (submeshData != null && submeshData.Length > 0)
+                {
+                    long meshId = submeshData[0].MeshId;
+                    long materialId = submeshData[0].MaterialId;
+                    long textureId = -1;
+
+                    System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Skybox mesh imported: meshId={meshId}, materialId={materialId}");
+
+                    // If we have a texture, load it and apply to material
+                    if (!string.IsNullOrEmpty(texturePath))
+                    {
+                        var fullTexturePath = System.IO.Path.IsPathRooted(texturePath)
+                            ? texturePath
+                            : System.IO.Path.Combine(projectPath, texturePath);
+
+                        System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Loading skybox texture: {fullTexturePath}");
+
+                        if (System.IO.File.Exists(fullTexturePath))
+                        {
+                            textureId = VortexAPI.ImportTextureFromFile(fullTexturePath);
+                            if (textureId >= 0)
+                            {
+                                VortexAPI.SetMaterialAlbedoTexture(materialId, textureId);
+                                System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Skybox texture loaded: textureId={textureId}");
+                            }
+                            else
+                            {
+                                System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Failed to load skybox texture");
+                            }
+                        }
+                        else
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Skybox texture file not found: {fullTexturePath}");
+                        }
+                    }
+
+                    cached = (meshId, materialId, textureId);
+                    _skyboxMeshCache[cacheKey] = cached;
+                    
+                    System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Skybox cached: mesh={meshId}, material={materialId}, texture={textureId}");
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Failed to import skybox mesh: {meshPath}");
+                    return;
+                }
+            }
+
+            // Get camera position to center the skybox mesh around the camera
+            var cameraController = EditorCameraController.Instance;
+            float camX = cameraController?.PositionX ?? 0f;
+            float camY = cameraController?.PositionY ?? 0f;
+            float camZ = cameraController?.PositionZ ?? 0f;
+            
+            // Use a scale that fits within the far clip plane
+            float scale = 500.0f;
+            
+            // Create world matrix with translation to camera position
+            float[] worldMatrix = new float[16]
+            {
+                scale, 0, 0, 0,
+                0, scale, 0, 0,
+                0, 0, scale, 0,
+                camX, camY, camZ, 1
+            };
+
+            // Submit skybox mesh - it will be rendered before other objects
+            VortexAPI.SubmitMeshForRendering(cached.meshId, cached.materialId, worldMatrix);
+        }
+
+        /// <summary>
+        /// Clear cached skybox mesh and texture (call when skybox properties change).
+        /// </summary>
+        public void ClearSkyboxMeshCache()
+        {
+            _skyboxMeshCache.Clear();
+            _cachedSkyboxTexturePath = null; // Force reload of texture
+            
+            // Delete the old sphere to force recreation with inverted normals
+            if (_skyboxSphereId >= 0)
+            {
+                VortexAPI.DeleteMesh(_skyboxSphereId);
+                _skyboxSphereId = -1;
+            }
+            
+            System.Diagnostics.Debug.WriteLine("[SceneRenderService] Skybox cache cleared");
+        }
+
+        /// <summary>
+        /// Render light icons for all lights in the scene.
+        /// </summary>
+        private void RenderAllLightIcons(Data.Scene scene, GameEntity selected)
+        {
+            if (!VortexAPI.AreGizmosVisible) return;
+
+            foreach (var entity in scene.Entities)
+            {
+                RenderLightIconRecursive(entity, selected);
+            }
+        }
+
+        private void RenderLightIconRecursive(GameEntity entity, GameEntity selected)
+        {
+            var light = entity.GetComponent<ECS.Components.Lighting.Light>();
+            if (light != null)
+            {
+                var pos = entity.Transform?.LocalPosition ?? ECS.Vector3.Zero;
+                var rot = entity.Transform?.LocalRotation ?? ECS.Vector3.Zero;
+                
+                // Light icon color based on type
+                float iconR, iconG, iconB;
+                switch (light.LightType)
+                {
+                    case ECS.Components.Lighting.LightType.Directional:
+                        iconR = 1.0f; iconG = 0.95f; iconB = 0.5f; // Yellow-gold
+                        break;
+                    case ECS.Components.Lighting.LightType.Point:
+                        iconR = 0.5f; iconG = 0.8f; iconB = 1.0f; // Light blue
+                        break;
+                    case ECS.Components.Lighting.LightType.Spot:
+                        iconR = 0.5f; iconG = 1.0f; iconB = 0.5f; // Light green
+                        break;
+                    default:
+                        iconR = 1.0f; iconG = 1.0f; iconB = 1.0f;
+                        break;
+                }
+
+                // TODO: Render actual light icon using VortexAPI.RenderLightIcon when available
+                // For now, we render a simple selection outline for the selected light
+                if (entity == selected)
+                {
+                    VortexAPI.RenderSelectionOutline(
+                        pos.X, pos.Y, pos.Z,
+                        0.5f, 0.5f, 0.5f,
+                        rot.X, rot.Y, rot.Z);
+                }
+            }
+
+            if (entity.Children != null)
+            {
+                foreach (var child in entity.Children)
+                {
+                    RenderLightIconRecursive(child, selected);
+                }
+            }
         }
 
         #endregion

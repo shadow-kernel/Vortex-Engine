@@ -51,7 +51,9 @@ namespace vortex::graphics
 		m_constant_buffer.Reset();
 		m_albedo_texture = nullptr;
 		m_normal_texture = nullptr;
-		m_metallic_roughness_texture = nullptr;
+		m_metallic_texture = nullptr;
+		m_roughness_texture = nullptr;
+		m_ao_texture = nullptr;
 	}
 
 	void Material::set_base_color(const DirectX::XMFLOAT4& color)
@@ -69,6 +71,71 @@ namespace vortex::graphics
 	void Material::set_roughness(float value)
 	{
 		m_properties.roughness = value;
+		update_gpu_data();
+	}
+
+	void Material::set_ao(float value)
+	{
+		m_properties.ao = value;
+		update_gpu_data();
+	}
+
+	void Material::set_normal_strength(float value)
+	{
+		m_properties.normal_strength = value;
+		update_gpu_data();
+	}
+
+	void Material::set_use_directx_normals(bool use_directx)
+	{
+		m_properties.use_directx_normals = use_directx ? 1 : 0;
+		update_gpu_data();
+	}
+
+	void Material::set_unlit(bool is_unlit)
+	{
+		m_properties.is_unlit = is_unlit ? 1 : 0;
+		update_gpu_data();
+	}
+
+	void Material::set_emissive_strength(float strength)
+	{
+		m_properties.emissive_strength = strength;
+		update_gpu_data();
+	}
+
+	void Material::set_albedo_texture(Texture* texture)
+	{
+		m_albedo_texture = texture;
+		m_properties.has_albedo_texture = (texture && texture->is_valid()) ? 1 : 0;
+		update_gpu_data();
+	}
+
+	void Material::set_normal_texture(Texture* texture)
+	{
+		m_normal_texture = texture;
+		m_properties.has_normal_texture = (texture && texture->is_valid()) ? 1 : 0;
+		update_gpu_data();
+	}
+
+	void Material::set_metallic_texture(Texture* texture)
+	{
+		m_metallic_texture = texture;
+		m_properties.has_metallic_texture = (texture && texture->is_valid()) ? 1 : 0;
+		update_gpu_data();
+	}
+
+	void Material::set_roughness_texture(Texture* texture)
+	{
+		m_roughness_texture = texture;
+		m_properties.has_roughness_texture = (texture && texture->is_valid()) ? 1 : 0;
+		update_gpu_data();
+	}
+
+	void Material::set_ao_texture(Texture* texture)
+	{
+		m_ao_texture = texture;
+		m_properties.has_ao_texture = (texture && texture->is_valid()) ? 1 : 0;
 		update_gpu_data();
 	}
 

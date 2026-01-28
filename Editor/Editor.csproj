@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
   <PropertyGroup>
@@ -98,9 +98,19 @@
     <Compile Include="Core\Assets\AssetDatabase.cs" />
     <Compile Include="Core\Assets\AssetDeletionService.cs" />
     <Compile Include="Core\Assets\AssetMetadata.cs" />
+    <Compile Include="Core\Assets\AssetMetadataService.cs" />
     <Compile Include="Core\Assets\AssetReference.cs" />
+    <Compile Include="Core\Assets\AssetSystem.cs" />
+    <Compile Include="Core\Assets\AssetTagService.cs" />
     <Compile Include="Core\Assets\AssetType.cs" />
     <Compile Include="Core\Assets\DependencyResolver.cs" />
+    <Compile Include="Core\Assets\ModelAssetBuilder.cs" />
+    <Compile Include="Core\Assets\ModelAssetData.cs" />
+    <Compile Include="Core\Assets\TextureNamingConventions.cs" />
+    <Compile Include="Core\Assets\UniversalModelData.cs" />
+    <Compile Include="Core\Assets\UniversalModelParser.cs" />
+    <Compile Include="Core\Assets\VortexMaterial.cs" />
+    <Compile Include="Core\Assets\VortexShader.cs" />
     <Compile Include="Core\Services\CameraPreviewService.cs" />
     <Compile Include="Core\Services\CameraService.cs" />
     <Compile Include="Core\Services\EditorCameraController.cs" />
@@ -109,6 +119,7 @@
     <Compile Include="Core\Services\InputBindingsService.cs" />
     <Compile Include="Core\Services\MaterialService.cs" />
     <Compile Include="Core\Services\MeshService.cs" />
+    <Compile Include="Core\Services\ModelImportService.cs" />
     <Compile Include="Core\Services\MultiViewportRenderService.cs" />
     <Compile Include="Core\Services\RaycastService.cs" />
     <Compile Include="Core\Services\Rendering\SecondaryViewportRenderer.cs" />
@@ -118,6 +129,20 @@
     <Compile Include="Core\Services\ShaderService.cs" />
     <Compile Include="Core\Services\TransformGizmoService.cs" />
     <Compile Include="Core\Services\ViewportRenderer.cs" />
+    <Compile Include="Dialogs\AssetImportDialog.cs" />
+    <Compile Include="Dialogs\AssetPickerDialog.cs" />
+    <Compile Include="Dialogs\AssetTagEditorDialog.cs" />
+    <Compile Include="Dialogs\ColorPickerDialog.xaml.cs">
+      <DependentUpon>ColorPickerDialog.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Dialogs\DialogStyles.cs" />
+    <Compile Include="Dialogs\ImportResultDialog.xaml.cs">
+      <DependentUpon>ImportResultDialog.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Dialogs\MaterialEditorDialog.cs" />
+    <Compile Include="Dialogs\ModelMaterialManagerDialog.cs" />
+    <Compile Include="Dialogs\TextureEditorDialog.cs" />
+    <Compile Include="Dialogs\UniversalModelEditorDialog.cs" />
     <Compile Include="DllWrapper\Camera\VortexCamera.cs" />
     <Compile Include="DllWrapper\Core\VortexCore.cs" />
     <Compile Include="DllWrapper\Gizmos\CameraGizmo.cs" />
@@ -129,6 +154,7 @@
     <Compile Include="DllWrapper\Rendering\VortexRendering.cs" />
     <Compile Include="DllWrapper\Resources\VortexResources.cs" />
     <Compile Include="DllWrapper\VortexAPI.cs" />
+    <Compile Include="ECS\Components\Rendering\Skybox.cs" />
     <Compile Include="Editors\WorldEditor\Components\AssetBrowser\AssetBrowserView.xaml.cs">
       <DependentUpon>AssetBrowserView.xaml</DependentUpon>
     </Compile>
@@ -145,6 +171,12 @@
       <DependentUpon>InputSettingsDialog.xaml</DependentUpon>
     </Compile>
     <Compile Include="Editors\WorldEditor\Components\GamePreview\ViewportHost.cs" />
+    <Compile Include="Editors\WorldEditor\Components\Inspector\LightInspector.xaml.cs">
+      <DependentUpon>LightInspector.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Editors\WorldEditor\Components\Inspector\SkyboxInspector.xaml.cs">
+      <DependentUpon>SkyboxInspector.xaml</DependentUpon>
+    </Compile>
     <Compile Include="Editors\WorldEditor\DragDrop\ViewportDropHandler.cs" />
     <Compile Include="Editors\WorldEditor\Components\Inspector\AssetPickerDialog.xaml.cs">
       <DependentUpon>AssetPickerDialog.xaml</DependentUpon>
@@ -167,6 +199,12 @@
       <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="Assets\Styles\DarkContextMenuStyle.xaml">
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Dialogs\ColorPickerDialog.xaml">
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Dialogs\ImportResultDialog.xaml">
       <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="Editors\WorldEditor\Components\AssetBrowser\AssetBrowserView.xaml">
@@ -208,7 +246,13 @@
     <Page Include="Editors\WorldEditor\Components\Inspector\DynamicInspectorView.xaml">
       <Generator>MSBuild:Compile</Generator>
     </Page>
+    <Page Include="Editors\WorldEditor\Components\Inspector\LightInspector.xaml">
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
     <Page Include="Editors\WorldEditor\Components\Inspector\MeshRendererInspector.xaml">
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Editors\WorldEditor\Components\Inspector\SkyboxInspector.xaml">
       <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="Editors\WorldEditor\Components\Inspector\TransformInspector.xaml">

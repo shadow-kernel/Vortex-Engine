@@ -39,8 +39,9 @@ namespace vortex::graphics
 
 		/// <summary>
 		/// Import an image from file.
+		/// Note: flip_vertically defaults to false because Assimp already flips UVs with aiProcess_FlipUVs
 		/// </summary>
-		static ImageData import_from_file(const std::string& filepath, bool flip_vertically = true);
+		static ImageData import_from_file(const std::string& filepath, bool flip_vertically = false);
 
 		/// <summary>
 		/// Check if a file format is supported.

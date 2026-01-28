@@ -180,18 +180,35 @@ namespace Editor.Core.Services
         /// </summary>
         public ProjectData CreateProject(string projectName, string projectPath)
         {
-            var project = new ProjectData(projectPath, projectName);
+            try
+            {
+                // Erstelle Projektverzeichnis zuerst
+                if (!Directory.Exists(projectPath))
+                {
+                    Directory.CreateDirectory(projectPath);
+                }
+                
+                var project = new ProjectData(projectPath, projectName);
 
-            // Erstelle Default-Szene
-            var defaultScene = SceneService.Instance.CreateDefaultScene(project, "Main Scene");
-            project.Scenes.Add(defaultScene);
-            project.ActiveScene = defaultScene;
+                // Erstelle Default-Szene
+                var defaultScene = SceneService.Instance.CreateDefaultScene(project, "Main Scene");
+                project.Scenes.Clear(); // Remove any default scenes from constructor
+                project.Scenes.Add(defaultScene);
+                project.ActiveScene = defaultScene;
 
-            // Initialize asset database
-            AssetDatabase.Instance.Initialize(projectPath);
+                // Initialize asset database
+                AssetDatabase.Instance.Initialize(projectPath);
 
-            SaveProject(project);
-            return project;
+                SaveProject(project);
+                
+                System.Diagnostics.Debug.WriteLine($"Project created successfully at: {projectPath}");
+                return project;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error creating project: {ex.Message}\n{ex.StackTrace}");
+                throw;
+            }
         }
 
         /// <summary>
@@ -258,28 +275,45 @@ namespace Editor.Core.Services
         /// </summary>
         private void SaveManifest(ProjectData project)
         {
-            var manifest = new ProjectManifest(project.Name)
+            try
             {
-                Id = project.Id,
-                LastModified = project.LastModified,
-                ThumbnailPath = project.ImagePath,
-                LastOpenSceneId = project.ActiveScene?.Id,
-            };
-
-            // F�ge Szenen-Referenzen hinzu
-            foreach (var scene in project.Scenes)
-            {
-                var relativePath = $"{SanitizeFileName(scene.Name)}.vscene";
-                manifest.Scenes.Add(new SceneReference(scene.Id, scene.Name, relativePath));
-
-                if (manifest.StartSceneId == null)
+                var manifest = new ProjectManifest(project.Name)
                 {
-                    manifest.StartSceneId = scene.Id;
-                }
-            }
+                    Id = project.Id,
+                    LastModified = project.LastModified,
+                    ThumbnailPath = project.ImagePath,
+                    LastOpenSceneId = project.ActiveScene?.Id,
+                };
 
-            var manifestPath = Path.Combine(project.Path, ManifestFileName);
-            DataSerializer.SaveAsJson(manifest, manifestPath);
+                // Füge Szenen-Referenzen hinzu
+                foreach (var scene in project.Scenes)
+                {
+                    var relativePath = $"{SanitizeFileName(scene.Name)}.vscene";
+                    manifest.Scenes.Add(new SceneReference(scene.Id, scene.Name, relativePath));
+
+                    if (manifest.StartSceneId == null)
+                    {
+                        manifest.StartSceneId = scene.Id;
+                    }
+                }
+
+                var manifestPath = Path.Combine(project.Path, ManifestFileName);
+                
+                // Ensure directory exists
+                var dir = Path.GetDirectoryName(manifestPath);
+                if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+                {
+                    Directory.CreateDirectory(dir);
+                }
+                
+                DataSerializer.SaveAsJson(manifest, manifestPath);
+                System.Diagnostics.Debug.WriteLine($"Saved manifest to: {manifestPath}");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error saving manifest: {ex.Message}");
+                throw;
+            }
         }
 
         /// <summary>
@@ -287,16 +321,26 @@ namespace Editor.Core.Services
         /// </summary>
         public void SaveAllScenes(ProjectData project)
         {
-            var scenesPath = Path.Combine(project.Path, AssetsFolder, ScenesFolder);
-
-            if (!Directory.Exists(scenesPath))
+            try
             {
-                Directory.CreateDirectory(scenesPath);
+                var scenesPath = Path.Combine(project.Path, AssetsFolder, ScenesFolder);
+
+                if (!Directory.Exists(scenesPath))
+                {
+                    Directory.CreateDirectory(scenesPath);
+                }
+
+                foreach (var scene in project.Scenes)
+                {
+                    SaveScene(project, scene);
+                }
+                
+                System.Diagnostics.Debug.WriteLine($"Saved {project.Scenes.Count} scenes to: {scenesPath}");
             }
-
-            foreach (var scene in project.Scenes)
+            catch (Exception ex)
             {
-                SaveScene(project, scene);
+                System.Diagnostics.Debug.WriteLine($"Error saving scenes: {ex.Message}");
+                throw;
             }
         }
 
@@ -402,19 +446,41 @@ namespace Editor.Core.Services
             if (!Directory.Exists(veDir))
             {
                 var dirInfo = Directory.CreateDirectory(veDir);
-                dirInfo.Attributes = FileAttributes.Hidden;
+                try
+                {
+                    dirInfo.Attributes |= FileAttributes.Hidden;
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Could not set hidden attribute: {ex.Message}");
+                }
             }
 
             // Icon speichern
-            var iconPath = SaveIconFromResources("AppIcon", project.Path);
-            if (!string.IsNullOrEmpty(iconPath))
+            try
             {
-                project.ImagePath = iconPath;
+                var iconPath = SaveIconFromResources("AppIcon", project.Path);
+                if (!string.IsNullOrEmpty(iconPath))
+                {
+                    project.ImagePath = iconPath;
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Could not save icon: {ex.Message}");
             }
 
-            // Projekt als JSON speichern
-            string projectFilePath = Path.Combine(veDir, "project.json");
-            DataSerializer.SaveAsJson(project, projectFilePath);
+            // Projekt als JSON speichern (Legacy-Format für Kompatibilität)
+            try
+            {
+                string projectFilePath = Path.Combine(veDir, "project.json");
+                DataSerializer.SaveAsJson(project, projectFilePath);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Could not save project.json: {ex.Message}");
+                // Don't throw - the main manifest will be saved separately
+            }
         }
 
         private void EnsureDirectoriesExist()

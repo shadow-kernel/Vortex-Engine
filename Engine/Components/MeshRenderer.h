@@ -33,5 +33,8 @@ namespace vortex::components
 		void set_cast_shadows(mesh_renderer_id id, bool value);
 
 		id::id_type get_entity(mesh_renderer_id id);
+		
+		// Query all active renderers for the render system
+		u32 get_all_renderers(id::id_type* out_ids, u32 max_count);
 	}
 }

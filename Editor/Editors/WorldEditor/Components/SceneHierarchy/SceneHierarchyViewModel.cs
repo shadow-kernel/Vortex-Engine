@@ -134,6 +134,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
         public ICommand CreateDirectionalLightCommand { get; }
         public ICommand CreatePointLightCommand { get; }
         public ICommand CreateSpotLightCommand { get; }
+        public ICommand CreateSkyboxCommand { get; }
         #endregion
 
         #region Other Commands
@@ -182,6 +183,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             CreateDirectionalLightCommand = new RelayCommand(_ => CreateLight(LightType.Directional));
             CreatePointLightCommand = new RelayCommand(_ => CreateLight(LightType.Point));
             CreateSpotLightCommand = new RelayCommand(_ => CreateLight(LightType.Spot));
+            CreateSkyboxCommand = new RelayCommand(_ => CreateSkybox());
 
             // Camera & Audio
             CreateCameraCommand = new RelayCommand(_ => CreateCamera());
@@ -343,6 +345,13 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
         {
             if (_selectedScene == null) return;
             var entity = _selectedScene.CreateLight(type);
+            SelectedEntity = entity;
+        }
+
+        private void CreateSkybox()
+        {
+            if (_selectedScene == null) return;
+            var entity = _selectedScene.CreateSkybox();
             SelectedEntity = entity;
         }
 

@@ -55,7 +55,13 @@ public class EntityToIconConverter : IValueConverter
                 
             // Check if it has children (container)
             if (entity.Children.Count > 0)
-                return "\uE8B7"; // Folder icon
+            {
+                // Check if any child has a MeshRenderer (model container)
+                bool hasChildMeshes = entity.Children.Any(c => c.HasComponent<MeshRenderer>());
+                if (hasChildMeshes)
+                    return "\uE809"; // Mesh/3D icon for model containers
+                return "\uE8B7"; // Folder icon for regular containers
+            }
                 
             // Default empty entity
             return "\uE734"; // Cube icon
@@ -106,7 +112,14 @@ public class EntityToIconConverter : IValueConverter
                 else if (entity.HasComponent<Script>())
                     colorHex = "#DCDCAA"; // Yellow
                 else if (entity.Children.Count > 0)
-                    colorHex = "#C5C5C5"; // Light gray for containers
+                {
+                    // Check if any child has a MeshRenderer (model container)
+                    bool hasChildMeshes = entity.Children.Any(c => c.HasComponent<MeshRenderer>());
+                    if (hasChildMeshes)
+                        colorHex = "#4EC9B0"; // Teal for model containers
+                    else
+                        colorHex = "#C5C5C5"; // Light gray for regular containers
+                }
             }
 
             return new SolidColorBrush((Color)ColorConverter.ConvertFromString(colorHex));

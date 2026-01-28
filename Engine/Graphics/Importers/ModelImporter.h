@@ -10,10 +10,15 @@ namespace vortex::graphics
 {
 	struct SubMeshData
 	{
-		std::vector<VertexPosNormalUV> vertices;
-		std::vector<u32> indices;
-		u32 material_index{ 0 };
-		std::string name;
+	std::vector<VertexPosNormalUV> vertices;
+	std::vector<u32> indices;
+	u32 material_index{ 0 };
+	std::string name;
+	std::string diffuse_texture;   // Albedo/Diffuse texture
+	std::string normal_texture;    // Normal map
+	std::string metallic_texture;  // Metallic map
+	std::string roughness_texture; // Roughness map
+	std::string ao_texture;        // Ambient Occlusion map
 	};
 
 	struct ImportedModelData
@@ -57,8 +62,10 @@ namespace vortex::graphics
 		static bool is_format_supported(const std::string& extension);
 
 	private:
-		static void calculate_bounds(ImportedModelData& data);
-		static void process_node(void* node, void* scene, ImportedModelData& data);
-		static SubMeshData process_mesh(void* mesh, void* scene);
+	static void calculate_bounds(ImportedModelData& data);
+	static void process_node(void* node, void* scene, ImportedModelData& data);
+	static SubMeshData process_mesh(void* mesh, void* scene);
+	static void extract_materials(void* scene, ImportedModelData& data, const std::string& filepath);
+	static void search_textures_in_directory(const std::string& dir, ImportedModelData& data);
 	};
 }

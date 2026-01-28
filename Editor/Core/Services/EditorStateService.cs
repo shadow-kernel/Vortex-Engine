@@ -76,8 +76,13 @@ namespace Editor.Core.Services
             if (!Directory.Exists(_currentState.LastProjectPath))
                 return false;
 
-            var projectFile = Path.Combine(_currentState.LastProjectPath, ".ve", "project.json");
-            return File.Exists(projectFile);
+            // Check for new format (project.vortex) or legacy format (.ve/project.json)
+            var projectFile = Path.Combine(_currentState.LastProjectPath, "project.vortex");
+            if (File.Exists(projectFile))
+                return true;
+                
+            var legacyFile = Path.Combine(_currentState.LastProjectPath, ".ve", "project.json");
+            return File.Exists(legacyFile);
         }
 
         private EditorState LoadState()

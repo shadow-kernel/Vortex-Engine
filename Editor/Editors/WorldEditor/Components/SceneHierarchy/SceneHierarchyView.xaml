@@ -88,6 +88,8 @@
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Padding" Value="4,3"/>
             <Setter Property="IsExpanded" Value="True"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="TreeViewItem">
@@ -257,6 +259,12 @@
                         <TextBlock Text="&#xE781;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#FFFF00"/>
                     </MenuItem.Icon>
                 </MenuItem>
+                <Separator/>
+                <MenuItem Header="Skybox" Click="CreateSkybox_Click" ToolTip="Environment/Ambient Light">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE81A;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#87CEEB"/>
+                    </MenuItem.Icon>
+                </MenuItem>
             </MenuItem>
             
             <!-- Camera -->
@@ -400,9 +408,6 @@
                     CornerRadius="3" Padding="2,1" Margin="-2,-1">
                 <StackPanel Orientation="Horizontal" ContextMenu="{StaticResource EntityContextMenu}"
                             Opacity="{Binding IsActive, Converter={StaticResource EntityActiveToOpacityConverter}}">
-                    <TextBlock Text="{Binding EntityId}" Foreground="#F14C4C" FontWeight="Bold"
-                               Visibility="{Binding IsActive, Converter={StaticResource BoolToVisibility}}"
-                               VerticalAlignment="Center" Margin="0,0,6,0"/>
                     <TextBlock Text="{Binding Converter={StaticResource EntityToIconConverter}}" 
                                FontFamily="Segoe MDL2 Assets" FontSize="12" 
                                Foreground="{Binding Converter={StaticResource EntityToIconColorConverter}}"

@@ -6,6 +6,8 @@
 #include "Id.h"
 #include "..\Engine\Components\Entity.h"
 #include "..\Engine\Components\Transform.h"
+#include "..\Engine\Components\MeshRenderer.h"
+#include "..\Engine\Components\Skybox.h"
 #include "..\Engine\Runtime\SceneManager.h"
 #include "..\Engine\Runtime\ResourceManager.h"
 #include "..\Engine\Runtime\AssetDatabase.h"
@@ -16,6 +18,7 @@
 #include "..\Engine\Runtime\Systems\PhysicsSystem.h"
 #include "..\Engine\Runtime\Systems\AudioSystem.h"
 #include "..\Engine\Graphics\Resources\ResourceRegistry.h"
+#include "..\Engine\Graphics\Importers\ModelImporter.h"
 #include "..\Engine\Graphics\DX12\DX12Renderer.h"
 #include "..\Engine\Input\InputSystem.h"
 #include "..\Engine\Components\Camera.h"
@@ -228,6 +231,11 @@ EDITOR_INTERFACE id::id_type CreatePrimitiveSphere(float radius)
 	return graphics::ResourceRegistry::instance().create_primitive_sphere(radius);
 }
 
+EDITOR_INTERFACE id::id_type CreateInvertedSphere(float radius)
+{
+	return graphics::ResourceRegistry::instance().create_inverted_sphere(radius);
+}
+
 EDITOR_INTERFACE id::id_type CreatePrimitivePlane(float width, float height)
 {
 	return graphics::ResourceRegistry::instance().create_primitive_plane(width, height);
@@ -248,6 +256,37 @@ EDITOR_INTERFACE void DestroyMesh(id::id_type mesh_id)
 	graphics::ResourceRegistry::instance().destroy_mesh(mesh_id);
 }
 
+// Mesh bounds query
+EDITOR_INTERFACE bool QueryMeshBounds(id::id_type mesh_id, float* sizeX, float* sizeY, float* sizeZ)
+{
+	auto* mesh = graphics::ResourceRegistry::instance().get_mesh(mesh_id);
+	if (!mesh || !sizeX || !sizeY || !sizeZ)
+	{
+		if (sizeX) *sizeX = 1.0f;
+		if (sizeY) *sizeY = 1.0f;
+		if (sizeZ) *sizeZ = 1.0f;
+		return false;
+	}
+	
+	mesh->get_bounds(*sizeX, *sizeY, *sizeZ);
+	return true;
+}
+
+EDITOR_INTERFACE bool QueryMeshBoundsCenter(id::id_type mesh_id, float* centerX, float* centerY, float* centerZ)
+{
+	auto* mesh = graphics::ResourceRegistry::instance().get_mesh(mesh_id);
+	if (!mesh || !centerX || !centerY || !centerZ)
+	{
+		if (centerX) *centerX = 0.0f;
+		if (centerY) *centerY = 0.0f;
+		if (centerZ) *centerZ = 0.0f;
+		return false;
+	}
+	
+	mesh->get_bounds_center(*centerX, *centerY, *centerZ);
+	return true;
+}
+
 // Material creation
 EDITOR_INTERFACE id::id_type CreateMaterial()
 {
@@ -260,14 +299,121 @@ EDITOR_INTERFACE void SetMaterialColor(id::id_type material_id, float r, float g
 	if (mat) mat->set_base_color({ r, g, b, a });
 }
 
+EDITOR_INTERFACE void SetMaterialTexture(id::id_type material_id, id::id_type texture_id)
+{
+	OutputDebugStringA(("SetMaterialTexture called: material=" + std::to_string(material_id) + ", texture=" + std::to_string(texture_id) + "\n").c_str());
+	auto* mat = graphics::ResourceRegistry::instance().get_material(material_id);
+	auto* tex = graphics::ResourceRegistry::instance().get_texture(texture_id);
+	
+	OutputDebugStringA(("  mat_ptr=" + std::to_string((size_t)mat) + ", tex_ptr=" + std::to_string((size_t)tex) + "\n").c_str());
+	
+	if (mat && tex) 
+	{
+		mat->set_albedo_texture(tex);
+		// Verify it was set
+		auto* verify = mat->albedo_texture();
+		OutputDebugStringA(("  After set: albedo_texture=" + std::to_string((size_t)verify) + 
+			", tex_valid=" + std::string(tex->is_valid() ? "YES" : "NO") +
+			", srv_ptr=" + std::to_string(tex->srv_gpu().ptr) + "\n").c_str());
+	}
+	else
+	{
+		OutputDebugStringA("  ERROR: mat or tex is null!\n");
+	}
+}
+
+EDITOR_INTERFACE bool MaterialHasTexture(id::id_type material_id)
+{
+	auto* mat = graphics::ResourceRegistry::instance().get_material(material_id);
+	return mat && mat->albedo_texture() != nullptr;
+}
+
 EDITOR_INTERFACE void DestroyMaterial(id::id_type material_id)
 {
 	graphics::ResourceRegistry::instance().destroy_material(material_id);
 }
 
+// PBR Material texture setters
+EDITOR_INTERFACE void SetMaterialNormalTexture(id::id_type material_id, id::id_type texture_id)
+{
+	auto* mat = graphics::ResourceRegistry::instance().get_material(material_id);
+	auto* tex = graphics::ResourceRegistry::instance().get_texture(texture_id);
+	if (mat && tex) mat->set_normal_texture(tex);
+}
+
+EDITOR_INTERFACE void SetMaterialMetallicTexture(id::id_type material_id, id::id_type texture_id)
+{
+	auto* mat = graphics::ResourceRegistry::instance().get_material(material_id);
+	auto* tex = graphics::ResourceRegistry::instance().get_texture(texture_id);
+	if (mat && tex) mat->set_metallic_texture(tex);
+}
+
+EDITOR_INTERFACE void SetMaterialRoughnessTexture(id::id_type material_id, id::id_type texture_id)
+{
+	auto* mat = graphics::ResourceRegistry::instance().get_material(material_id);
+	auto* tex = graphics::ResourceRegistry::instance().get_texture(texture_id);
+	if (mat && tex) mat->set_roughness_texture(tex);
+}
+
+EDITOR_INTERFACE void SetMaterialAOTexture(id::id_type material_id, id::id_type texture_id)
+{
+	auto* mat = graphics::ResourceRegistry::instance().get_material(material_id);
+	auto* tex = graphics::ResourceRegistry::instance().get_texture(texture_id);
+	if (mat && tex) mat->set_ao_texture(tex);
+}
+
+EDITOR_INTERFACE void SetMaterialMetallic(id::id_type material_id, float value)
+{
+	auto* mat = graphics::ResourceRegistry::instance().get_material(material_id);
+	if (mat) mat->set_metallic(value);
+}
+
+EDITOR_INTERFACE void SetMaterialRoughness(id::id_type material_id, float value)
+{
+	auto* mat = graphics::ResourceRegistry::instance().get_material(material_id);
+	if (mat) mat->set_roughness(value);
+}
+
+EDITOR_INTERFACE void SetMaterialNormalStrength(id::id_type material_id, float value)
+{
+	auto* mat = graphics::ResourceRegistry::instance().get_material(material_id);
+	if (mat) mat->set_normal_strength(value);
+}
+
+EDITOR_INTERFACE void SetMaterialUseDirectXNormals(id::id_type material_id, bool use_directx)
+{
+	auto* mat = graphics::ResourceRegistry::instance().get_material(material_id);
+	if (mat) mat->set_use_directx_normals(use_directx);
+}
+
+EDITOR_INTERFACE void SetMaterialUnlit(id::id_type material_id, bool is_unlit)
+{
+	auto* mat = graphics::ResourceRegistry::instance().get_material(material_id);
+	if (mat) mat->set_unlit(is_unlit);
+}
+
+EDITOR_INTERFACE void SetMaterialEmissiveStrength(id::id_type material_id, float strength)
+{
+	auto* mat = graphics::ResourceRegistry::instance().get_material(material_id);
+	if (mat) mat->set_emissive_strength(strength);
+}
+
 // Render item submission
 EDITOR_INTERFACE void SubmitRenderItem(id::id_type mesh_id, id::id_type material_id, float* world_matrix)
 {
+	// Debug first submission
+	static bool first_submit = true;
+	if (first_submit)
+	{
+		auto* mat = graphics::ResourceRegistry::instance().get_material(material_id);
+		auto* tex = mat ? mat->albedo_texture() : nullptr;
+		OutputDebugStringA(("SUBMIT_FIRST: mesh=" + std::to_string(mesh_id) + 
+			", material=" + std::to_string(material_id) +
+			", mat_ptr=" + std::to_string((size_t)mat) +
+			", has_texture=" + (tex ? "YES" : "NO") + "\n").c_str());
+		first_submit = false;
+	}
+	
 	graphics::dx12::RenderItem item{};
 	item.mesh_id = mesh_id;
 	item.material_id = material_id;
@@ -880,6 +1026,7 @@ EDITOR_INTERFACE void ApplyCameraToRenderer(id::id_type camera_id)
 	);
 }
 
+
 // Model Import API
 EDITOR_INTERFACE id::id_type ImportModel(const char* filepath)
 {
@@ -891,6 +1038,78 @@ EDITOR_INTERFACE id::id_type ImportTexture(const char* filepath)
 {
 	if (!filepath) return id::invalid_id;
 	return graphics::ResourceRegistry::instance().import_texture(filepath);
+}
+
+// Multi-Material Import API - returns submesh data via output arrays
+// Returns number of submeshes, fills arrays with mesh_ids, material_ids, texture_ids
+EDITOR_INTERFACE int ImportModelWithMaterials(
+	const char* filepath,
+	id::id_type* out_mesh_ids,
+	id::id_type* out_material_ids,
+	id::id_type* out_texture_ids,
+	int max_submeshes)
+{
+	if (!filepath || !out_mesh_ids || !out_material_ids || !out_texture_ids || max_submeshes <= 0)
+		return 0;
+
+	auto result = graphics::ResourceRegistry::instance().import_model_with_materials(filepath);
+	if (!result.success)
+		return 0;
+
+	int count = static_cast<int>((std::min)(result.submeshes.size(), static_cast<size_t>(max_submeshes)));
+	
+	for (int i = 0; i < count; i++)
+	{
+		out_mesh_ids[i] = result.submeshes[i].mesh_id;
+		out_material_ids[i] = result.submeshes[i].material_id;
+		out_texture_ids[i] = result.submeshes[i].texture_id;
+	}
+
+	return count;
+}
+
+// Get submesh count without importing (for pre-allocation)
+EDITOR_INTERFACE int GetModelSubmeshCount(const char* filepath)
+{
+	if (!filepath) return 0;
+	
+	auto model_data = graphics::ModelImporter::import_from_file(filepath);
+	return static_cast<int>(model_data.submeshes.size());
+}
+
+// Get submesh names from model file
+EDITOR_INTERFACE int GetModelSubmeshNames(const char* filepath, char** out_names, int max_submeshes, int max_name_length)
+{
+	if (!filepath || !out_names || max_submeshes <= 0 || max_name_length <= 0) return 0;
+	
+	auto model_data = graphics::ModelImporter::import_from_file(filepath);
+	int count = static_cast<int>((std::min)(model_data.submeshes.size(), static_cast<size_t>(max_submeshes)));
+	
+	for (int i = 0; i < count; i++)
+	{
+	std::string name;
+		
+	// Use mesh name if available, otherwise use material name
+	if (!model_data.submeshes[i].name.empty())
+	{
+	name = model_data.submeshes[i].name;
+	}
+	else if (model_data.submeshes[i].material_index < model_data.material_names.size())
+	{
+	name = model_data.material_names[model_data.submeshes[i].material_index];
+	}
+	else
+	{
+	name = "Submesh_" + std::to_string(i);
+	}
+		
+	if (out_names[i])
+	{
+	strncpy_s(out_names[i], max_name_length, name.c_str(), _TRUNCATE);
+	}
+	}
+	
+	return count;
 }
 
 EDITOR_INTERFACE id::id_type LoadVMesh(const char* filepath)
@@ -964,4 +1183,248 @@ EDITOR_INTERFACE long LoadMaterialByGuid(const char* guid)
 	if (!guid) return 0;
 	auto handle = runtime::resource_manager::load_material_by_guid(guid);
 	return static_cast<long>(handle.value);
+}
+
+// MeshRenderer Component API
+EDITOR_INTERFACE id::id_type CreateMeshRenderer(id::id_type entity_id, id::id_type mesh_id, id::id_type material_id)
+{
+	components::mesh_renderer_init_info info{};
+	info.mesh_id = mesh_id;
+	info.material_id = material_id;
+	info.cast_shadows = true;
+	info.receive_shadows = true;
+	
+	return components::mesh_renderer::create(entity_id, info).value;
+}
+
+EDITOR_INTERFACE void RemoveMeshRenderer(id::id_type renderer_id)
+{
+	components::mesh_renderer::remove(components::mesh_renderer_id{ renderer_id });
+}
+
+EDITOR_INTERFACE void SetMeshRendererMesh(id::id_type renderer_id, id::id_type mesh_id)
+{
+	components::mesh_renderer::set_mesh(components::mesh_renderer_id{ renderer_id }, mesh_id);
+}
+
+EDITOR_INTERFACE void SetMeshRendererMaterial(id::id_type renderer_id, id::id_type material_id)
+{
+	components::mesh_renderer::set_material(components::mesh_renderer_id{ renderer_id }, material_id);
+}
+
+EDITOR_INTERFACE id::id_type GetMeshRendererMesh(id::id_type renderer_id)
+{
+	return components::mesh_renderer::get_mesh(components::mesh_renderer_id{ renderer_id });
+}
+
+EDITOR_INTERFACE id::id_type GetMeshRendererMaterial(id::id_type renderer_id)
+{
+	return components::mesh_renderer::get_material(components::mesh_renderer_id{ renderer_id });
+}
+
+// Submit all active MeshRenderers to the render queue
+EDITOR_INTERFACE void SubmitAllMeshRenderers()
+{
+	constexpr u32 MAX_RENDERERS = 4096;
+	static id::id_type renderer_ids[MAX_RENDERERS];
+	
+	u32 count = components::mesh_renderer::get_all_renderers(renderer_ids, MAX_RENDERERS);
+	
+	auto& renderer = graphics::dx12::DX12Renderer::instance();
+	
+	for (u32 i = 0; i < count; ++i)
+	{
+		components::mesh_renderer_id renderer_id{ renderer_ids[i] };
+		id::id_type mesh_id = components::mesh_renderer::get_mesh(renderer_id);
+		id::id_type material_id = components::mesh_renderer::get_material(renderer_id);
+		id::id_type entity_id = components::mesh_renderer::get_entity(renderer_id);
+		
+		if (!id::is_valid(mesh_id) || !id::is_valid(entity_id))
+			continue;
+		
+		// Get entity transform - for now use identity matrix
+		// TODO: Get actual transform from entity
+		graphics::dx12::RenderItem item{};
+		item.mesh_id = mesh_id;
+		item.material_id = material_id;
+		DirectX::XMStoreFloat4x4(&item.world_matrix, DirectX::XMMatrixIdentity());
+		
+	renderer.submit_render_item(item);
+	}
+}
+
+// ============== LIGHTING SYSTEM API ==============
+
+// Clear all dynamic lights (call before submitting new lights each frame)
+EDITOR_INTERFACE void ClearLights()
+{
+	graphics::dx12::DX12Renderer::instance().clear_lights();
+}
+
+// Set the primary directional light
+EDITOR_INTERFACE void SetDirectionalLight(
+	float dirX, float dirY, float dirZ,
+	float colorR, float colorG, float colorB,
+	float intensity)
+{
+	graphics::dx12::DX12Renderer::instance().set_directional_light_full(
+		{ dirX, dirY, dirZ },
+		{ colorR, colorG, colorB },
+		intensity
+	);
+}
+
+// Add a point light (max 16 per frame)
+EDITOR_INTERFACE void AddPointLight(
+	float posX, float posY, float posZ,
+	float colorR, float colorG, float colorB,
+	float intensity, float range)
+{
+	graphics::dx12::DX12Renderer::PointLightData light{};
+	light.position = { posX, posY, posZ };
+	light.color = { colorR, colorG, colorB };
+	light.intensity = intensity;
+	light.range = range;
+	
+	graphics::dx12::DX12Renderer::instance().add_point_light(light);
+}
+
+// Add a spot light (max 8 per frame)
+EDITOR_INTERFACE void AddSpotLight(
+	float posX, float posY, float posZ,
+	float dirX, float dirY, float dirZ,
+	float colorR, float colorG, float colorB,
+	float intensity, float range,
+	float spotAngle, float innerSpotAngle)
+{
+	graphics::dx12::DX12Renderer::SpotLightData light{};
+	light.position = { posX, posY, posZ };
+	light.direction = { dirX, dirY, dirZ };
+	light.color = { colorR, colorG, colorB };
+	light.intensity = intensity;
+	light.range = range;
+	light.spot_angle = spotAngle;
+	light.inner_spot_angle = innerSpotAngle;
+	
+	
+	graphics::dx12::DX12Renderer::instance().add_spot_light(light);
+}
+
+// Set ambient light strength
+EDITOR_INTERFACE void SetAmbientStrength(float strength)
+{
+	graphics::dx12::DX12Renderer::instance().set_ambient_strength(strength);
+}
+
+
+// ============== SKYBOX API ==============
+
+EDITOR_INTERFACE void SetSkyboxEnabled(bool enabled)
+{
+	graphics::dx12::DX12Renderer::instance().set_skybox_enabled(enabled);
+}
+
+EDITOR_INTERFACE bool IsSkyboxEnabled()
+{
+	return graphics::dx12::DX12Renderer::instance().is_skybox_enabled();
+}
+
+EDITOR_INTERFACE void SetSkyboxMode(unsigned int mode)
+{
+	graphics::dx12::DX12Renderer::instance().set_skybox_mode(
+		static_cast<graphics::dx12::DX12Renderer::SkyboxMode>(mode));
+}
+
+EDITOR_INTERFACE unsigned int GetSkyboxMode()
+{
+	return static_cast<unsigned int>(graphics::dx12::DX12Renderer::instance().get_skybox_mode());
+}
+
+EDITOR_INTERFACE void SetSkyboxColors(
+	float skyR, float skyG, float skyB,
+	float horizonR, float horizonG, float horizonB,
+	float groundR, float groundG, float groundB)
+{
+	graphics::dx12::DX12Renderer::instance().set_skybox_colors(
+		{ skyR, skyG, skyB },
+		{ horizonR, horizonG, horizonB },
+		{ groundR, groundG, groundB }
+	);
+}
+
+EDITOR_INTERFACE void SetSkyboxSolidColor(float r, float g, float b)
+{
+	graphics::dx12::DX12Renderer::instance().set_skybox_solid_color({ r, g, b });
+}
+
+EDITOR_INTERFACE void SetSkyboxSun(float dirX, float dirY, float dirZ, float colorR, float colorG, float colorB, float intensity)
+{
+	graphics::dx12::DX12Renderer::instance().set_skybox_sun(
+		{ dirX, dirY, dirZ },
+		{ colorR, colorG, colorB },
+		intensity);
+}
+
+// ============== SKYBOX COMPONENT API (Runtime) ==============
+
+namespace {
+	struct skybox_descriptor {
+		u8 mode; // 0 = solid, 1 = gradient, 2 = cubemap
+		f32 sky_color[3];
+		f32 horizon_color[3];
+		f32 ground_color[3];
+		f32 sun_direction[3];
+		f32 sun_color[3];
+		f32 sun_intensity;
+		f32 ambient_intensity;
+		f32 exposure;
+		bool is_enabled;
+	};
+}
+
+EDITOR_INTERFACE id::id_type CreateSkyboxComponent(skybox_descriptor* desc)
+{
+	if (!desc) return id::invalid_id;
+	
+	skybox::init_info info{};
+	info.mode = static_cast<skybox::skybox_mode>(desc->mode);
+	memcpy(info.sky_color, desc->sky_color, sizeof(f32) * 3);
+	memcpy(info.horizon_color, desc->horizon_color, sizeof(f32) * 3);
+	memcpy(info.ground_color, desc->ground_color, sizeof(f32) * 3);
+	memcpy(info.sun_direction, desc->sun_direction, sizeof(f32) * 3);
+	memcpy(info.sun_color, desc->sun_color, sizeof(f32) * 3);
+	info.sun_intensity = desc->sun_intensity;
+	info.ambient_intensity = desc->ambient_intensity;
+	info.exposure = desc->exposure;
+	info.is_enabled = desc->is_enabled;
+	
+	return skybox::create(info).get_id();
+}
+
+EDITOR_INTERFACE void RemoveSkyboxComponent(id::id_type skybox_id)
+{
+	skybox::remove(skybox::component{ skybox::skybox_id{skybox_id} });
+}
+
+EDITOR_INTERFACE void ApplySkyboxToRenderer(id::id_type skybox_id)
+{
+	skybox::component skybox{ skybox::skybox_id{skybox_id} };
+	if (skybox.is_valid())
+	{
+		skybox.apply_to_renderer();
+	}
+}
+
+EDITOR_INTERFACE void ApplyActiveSkybox()
+{
+	auto skybox = skybox::get_active_skybox();
+	if (skybox.is_valid())
+	{
+		skybox.apply_to_renderer();
+	}
+}
+
+EDITOR_INTERFACE void SetActiveSkyboxComponent(id::id_type skybox_id)
+{
+	skybox::set_active_skybox(skybox::component{ skybox::skybox_id{skybox_id} });
 }

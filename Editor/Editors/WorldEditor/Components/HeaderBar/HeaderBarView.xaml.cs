@@ -5,6 +5,7 @@ using System.Windows.Input;
 using Editor.Core.Data;
 using Editor.Core.Services;
 using Editor.Core.UndoRedo;
+using Editor.DllWrapper;
 using Editor.ECS;
 using Editor.ECS.Components;
 using Editor.ECS.Components.Audio;
@@ -658,6 +659,75 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
         /// Event fired when play mode state changes.
         /// </summary>
         public event EventHandler<PlayModeEventArgs> PlayModeChanged;
+
+        #endregion
+
+
+        #region Assets Menu
+
+        private void ImportAsset_Click(object sender, RoutedEventArgs e)
+        {
+            var openDialog = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "Import Asset",
+                // Note: GLB/GLTF not supported by Assimp 3.0!
+                Filter = "Supported 3D Models|*.fbx;*.obj;*.dae;*.3ds;*.blend|" +
+                         "FBX Files|*.fbx|" +
+                         "OBJ Files|*.obj|" +
+                         "Collada|*.dae|" +
+                         "All Files|*.*",
+                Multiselect = false
+            };
+
+            if (openDialog.ShowDialog() == true)
+            {
+                // Log the import attempt
+                System.Diagnostics.Debug.WriteLine($"[Import] Starting import of: {openDialog.FileName}");
+                
+                // Check if Assimp is available
+                bool assimpAvailable = VortexAPI.IsAssimpAvailable();
+                System.Diagnostics.Debug.WriteLine($"[Import] Assimp available: {assimpAvailable}");
+                
+                if (!assimpAvailable)
+                {
+                    MessageBox.Show(
+                        "Assimp library is not available.\n\n" +
+                        "Please ensure assimp.dll is in the application directory.\n" +
+                        "The Engine needs Assimp to import 3D models.",
+                        "Import Error - Missing Library",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Error);
+                    return;
+                }
+                
+                var result = ModelImportService.Instance.ImportModel(openDialog.FileName);
+                
+                if (result.Success)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[Import] Success! Submeshes: {result.SubmeshCount}");
+                    var dialog = new Dialogs.ImportResultDialog(result);
+                    dialog.Owner = Window.GetWindow(this);
+                    dialog.ShowDialog();
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine($"[Import] FAILED: {result.ErrorMessage}");
+                    
+                    string detailedMessage = $"Asset Import Failed:\n\n{result.ErrorMessage}\n\n" +
+                        "Common causes:\n" +
+                        "• FBX file was created with a newer version of FBX SDK\n" +
+                        "• File path contains special characters (ä, ö, ü, etc.)\n" +
+                        "• The model uses unsupported features\n\n" +
+                        "Try exporting the model as OBJ or GLTF format.";
+                    
+                    MessageBox.Show(
+                        detailedMessage,
+                        "Import Error",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Error);
+                }
+            }
+        }
 
         #endregion
     }

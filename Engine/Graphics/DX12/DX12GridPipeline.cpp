@@ -60,7 +60,7 @@ VS_OUT main(uint id : SV_VertexID) {
 }
 )";
 
-		// Simple grid pixel shader
+		// Simple grid pixel shader with solid background
 		const char* g_grid_ps = R"(
 cbuffer CB : register(b0) {
     row_major float4x4 ViewProjection;
@@ -108,17 +108,23 @@ PS_OUT main(PS_IN i) {
     float fade = 1.0 - (dist / Extent);
     fade = fade * fade;
     
-    float g1 = Grid(p, Spacing) * 0.3;
-    float g2 = Grid(p, Spacing * Major) * 0.6;
-    float g = g1 + g2;
+    float g1 = Grid(p, Spacing) * 0.4;
+    float g2 = Grid(p, Spacing * Major) * 0.7;
+    float g = saturate(g1 + g2);
     
-    float3 col = float3(0.5, 0.5, 0.5);
+    // Solid dark background for the grid floor
+    float3 bgColor = float3(0.15, 0.15, 0.18);
+    float3 lineColor = float3(0.5, 0.5, 0.5);
     
     float axisW = Spacing * min(fwidth(p.x / Spacing), 1.0);
-    if (abs(p.x) < axisW) col = float3(0.2, 0.4, 1.0);
-    if (abs(p.z) < axisW) col = float3(1.0, 0.3, 0.3);
+    if (abs(p.x) < axisW) lineColor = float3(0.2, 0.4, 1.0);
+    if (abs(p.z) < axisW) lineColor = float3(1.0, 0.3, 0.3);
     
-    float alpha = g * fade;
+    // Blend grid lines over solid background
+    float3 col = lerp(bgColor, lineColor, g);
+    
+    // Use fade for edge transparency only, not for the whole floor
+    float alpha = fade;
     if (alpha < 0.01) discard;
     
     float4 clip = mul(float4(p, 1), ViewProjection);
@@ -197,7 +203,7 @@ PS_OUT main(PS_IN i) {
 		pso.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
 		
 		pso.DepthStencilState.DepthEnable = TRUE;
-		pso.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+		pso.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL; // Write depth to occlude skybox
 		pso.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
 		
 		pso.SampleMask = UINT_MAX;
