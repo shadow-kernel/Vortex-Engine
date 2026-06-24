@@ -89,7 +89,7 @@ d:DesignHeight="64" d:DesignWidth="1200">
         <Setter Property="Margin" Value="6,4"/>
     </Style>
 
-    <!-- Aurora-style segmented mode tabs -->
+    <!-- Vortex segmented mode tabs -->
     <Style x:Key="SegStyle" TargetType="Button">
         <Setter Property="Background" Value="Transparent"/>
         <Setter Property="Foreground" Value="#9A9AA1"/>
@@ -329,7 +329,10 @@ d:DesignHeight="64" d:DesignWidth="1200">
         </Grid.ColumnDefinitions>
 
         <!-- Menu Items -->
-        <Menu Grid.Column="0" Background="#1A1A1C" Foreground="#E9E9ED" VerticalAlignment="Center" IsMainMenu="True">
+        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+            <TextBlock Text="Vortex Engine" Foreground="#E9E9ED" FontSize="14" FontWeight="SemiBold"
+                       VerticalAlignment="Center" Margin="16,0,18,0"/>
+            <Menu Background="Transparent" Foreground="#E9E9ED" VerticalAlignment="Center" IsMainMenu="True">
             
             <!-- File Menu -->
             <MenuItem Header="_File">
@@ -470,9 +473,10 @@ d:DesignHeight="64" d:DesignWidth="1200">
                 <MenuItem Header="_Check for Updates..."/>
                 <MenuItem Header="_About Vortex Engine" Click="About_Click"/>
             </MenuItem>
-        </Menu>
+            </Menu>
+        </StackPanel>
 
-        <!-- Center: Aurora-style segmented mode tabs -->
+        <!-- Center: segmented mode tabs -->
         <Border Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center"
                 Background="#161618" CornerRadius="10" Padding="3" BorderBrush="#2C2C32" BorderThickness="1">
             <StackPanel Orientation="Horizontal">
@@ -511,7 +515,9 @@ d:DesignHeight="64" d:DesignWidth="1200">
             </Grid.ColumnDefinitions>
 
             <!-- Left Toolbar: File & Edit Operations -->
-            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+            <Border Grid.Column="0" Background="#161618" CornerRadius="9" Padding="4,2"
+                    BorderBrush="#2C2C32" BorderThickness="1" VerticalAlignment="Center" Margin="2,3">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                 <!-- File Operations -->
                 <Button Content="&#xE8E5;" Style="{StaticResource ToolbarButtonStyle}" ToolTip="New Scene (Ctrl+N)"/>
                 <Button Content="&#xE8E6;" Style="{StaticResource ToolbarButtonStyle}" ToolTip="Open Scene (Ctrl+O)"/>
@@ -548,6 +554,7 @@ d:DesignHeight="64" d:DesignWidth="1200">
                 <Button x:Name="SnapToGridButton" Content="&#xE81E;" Style="{StaticResource ToolbarButtonStyle}" ToolTip="Snap to Grid" Click="SnapToGridButton_Click"/>
                 <Button x:Name="ToggleGizmosButton" Content="&#xE7B3;" Style="{StaticResource ToolbarButtonStyle}" ToolTip="Toggle Gizmos" Click="ToggleGizmosButton_Click"/>
             </StackPanel>
+            </Border>
 
             <!-- Center Toolbar: Play Controls -->
             <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
