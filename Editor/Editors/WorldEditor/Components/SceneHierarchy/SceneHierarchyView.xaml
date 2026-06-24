@@ -25,28 +25,31 @@
 
         <!-- Search Box Style -->
         <Style x:Key="SearchBoxStyle" TargetType="TextBox">
-            <Setter Property="Background" Value="#1A1A1C"/>
+            <Setter Property="Background" Value="#161618"/>
             <Setter Property="Foreground" Value="#E9E9ED"/>
             <Setter Property="BorderBrush" Value="#33333A"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Padding" Value="24,4,8,4"/>
-            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Padding" Value="26,5,8,5"/>
+            <Setter Property="FontSize" Value="11.5"/>
+            <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="CaretBrush" Value="#E9E9ED"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="TextBox">
-                        <Border Background="{TemplateBinding Background}" 
-                                BorderBrush="{TemplateBinding BorderBrush}" 
-                                BorderThickness="{TemplateBinding BorderThickness}" 
-                                CornerRadius="4">
+                        <Border x:Name="SearchBorder" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="8">
                             <Grid>
-                                <TextBlock Text="&#xE721;" FontFamily="Segoe MDL2 Assets" FontSize="12" 
-                                           Foreground="#73737A" VerticalAlignment="Center" Margin="6,0,0,0"/>
-                                <ScrollViewer x:Name="PART_ContentHost" Margin="0"/>
+                                <TextBlock Text="&#xE721;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                                           Foreground="#73737A" VerticalAlignment="Center" Margin="9,0,0,0"/>
+                                <ScrollViewer x:Name="PART_ContentHost" Margin="0" VerticalAlignment="Center"/>
                             </Grid>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsFocused" Value="True">
-                                <Setter Property="BorderBrush" Value="#3FA9F5"/>
+                                <Setter TargetName="SearchBorder" Property="BorderBrush" Value="#6C5CE7"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -67,13 +70,13 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="Border" Background="{TemplateBinding Background}" CornerRadius="3">
+                        <Border x:Name="Border" Background="{TemplateBinding Background}" CornerRadius="7">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="Border" Property="Background" Value="#33333A"/>
-                                <Setter Property="Foreground" Value="#FFFFFF"/>
+                                <Setter Property="Foreground" Value="#E9E9ED"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -85,8 +88,10 @@
         <Style x:Key="HierarchyTreeItemStyle" TargetType="TreeViewItem">
             <Setter Property="Foreground" Value="#E9E9ED"/>
             <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI"/>
             <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Padding" Value="4,3"/>
+            <Setter Property="Padding" Value="6,5"/>
+            <Setter Property="MinHeight" Value="28"/>
             <Setter Property="IsExpanded" Value="True"/>
             <Setter Property="HorizontalContentAlignment" Value="Left"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
@@ -98,8 +103,9 @@
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition/>
                             </Grid.RowDefinitions>
-                            <Border x:Name="Bd" Background="{TemplateBinding Background}" 
-                                    Padding="{TemplateBinding Padding}" CornerRadius="3">
+                            <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                    Padding="{TemplateBinding Padding}" CornerRadius="7"
+                                    MinHeight="28">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto"/>
@@ -147,14 +153,15 @@
                                 <Setter TargetName="Expander" Property="Visibility" Value="Hidden"/>
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#2C2C32"/>
+                                <Setter TargetName="Bd" Property="Background" Value="#6C5CE7"/>
+                                <Setter Property="Foreground" Value="#FFFFFF"/>
                             </Trigger>
                             <MultiTrigger>
                                 <MultiTrigger.Conditions>
                                     <Condition Property="IsMouseOver" Value="True"/>
                                     <Condition Property="IsSelected" Value="False"/>
                                 </MultiTrigger.Conditions>
-                                <Setter TargetName="Bd" Property="Background" Value="#2A2D2E"/>
+                                <Setter TargetName="Bd" Property="Background" Value="#28282C"/>
                             </MultiTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -405,15 +412,26 @@
         <!-- Entity Template with dynamic icon and multi-select support -->
         <HierarchicalDataTemplate x:Key="EntityTemplate" ItemsSource="{Binding Children}">
             <Border Background="{Binding IsSelected, Converter={StaticResource EntitySelectedToBackgroundConverter}}"
-                    CornerRadius="3" Padding="2,1" Margin="-2,-1">
-                <StackPanel Orientation="Horizontal" ContextMenu="{StaticResource EntityContextMenu}"
-                            Opacity="{Binding IsActive, Converter={StaticResource EntityActiveToOpacityConverter}}">
-                    <TextBlock Text="{Binding Converter={StaticResource EntityToIconConverter}}" 
-                               FontFamily="Segoe MDL2 Assets" FontSize="12" 
+                    CornerRadius="7" Padding="2,1" Margin="-2,-1">
+                <Grid ContextMenu="{StaticResource EntityContextMenu}"
+                      Opacity="{Binding IsActive, Converter={StaticResource EntityActiveToOpacityConverter}}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="{Binding Converter={StaticResource EntityToIconConverter}}"
+                               FontFamily="Segoe MDL2 Assets" FontSize="12"
                                Foreground="{Binding Converter={StaticResource EntityToIconColorConverter}}"
-                               VerticalAlignment="Center" Margin="0,0,6,0"/>
-                    <TextBlock Text="{Binding Name}" Foreground="#E9E9ED" VerticalAlignment="Center"/>
-                </StackPanel>
+                               VerticalAlignment="Center" Margin="2,0,8,0"/>
+                    <TextBlock Grid.Column="1" Text="{Binding Name}" Foreground="#E9E9ED"
+                               FontFamily="Segoe UI Variable Text, Segoe UI"
+                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock Grid.Column="2" Text="&#xE7B3;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                               Foreground="#73737A" VerticalAlignment="Center" Margin="8,0,4,0"
+                               Opacity="{Binding IsActive, Converter={StaticResource EntityActiveToOpacityConverter}}"
+                               ToolTip="Visibility"/>
+                </Grid>
             </Border>
         </HierarchicalDataTemplate>
     </UserControl.Resources>
@@ -421,12 +439,12 @@
     <Border Background="#212124">
         <Grid>
             <Grid.RowDefinitions>
-                <RowDefinition Height="32"/>
+                <RowDefinition Height="40"/>
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
 
             <!-- Toolbar -->
-            <Border Grid.Row="0" Background="#1A1A1C" Padding="6,4">
+            <Border Grid.Row="0" Background="#212124" BorderBrush="#2C2C32" BorderThickness="0,0,0,1" Padding="8,6">
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
@@ -451,8 +469,8 @@
             </Border>
 
             <!-- Hierarchy Tree -->
-            <TreeView x:Name="HierarchyTree" Grid.Row="1" Background="Transparent" BorderThickness="0" 
-                      Padding="4,0" ItemsSource="{Binding Scenes}"
+            <TreeView x:Name="HierarchyTree" Grid.Row="1" Background="Transparent" BorderThickness="0"
+                      Padding="6,8" ItemsSource="{Binding Scenes}"
                       ItemContainerStyle="{StaticResource HierarchyTreeItemStyle}"
                       SelectedItemChanged="HierarchyTree_SelectedItemChanged"
                       PreviewMouseLeftButtonDown="HierarchyTree_PreviewMouseLeftButtonDown"

@@ -44,25 +44,25 @@ d:DesignHeight="400" d:DesignWidth="600">
             <Setter Property="Foreground" Value="#9A9AA1"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Width" Value="24"/>
-            <Setter Property="Height" Value="24"/>
+            <Setter Property="Height" Value="22"/>
             <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="Border" 
-                                Background="{TemplateBinding Background}" 
-                                CornerRadius="3">
+                        <Border x:Name="Border"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="7">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Border" Property="Background" Value="#4A4A4A"/>
-                                <Setter Property="Foreground" Value="#3FA9F5"/>
+                                <Setter TargetName="Border" Property="Background" Value="#33333A"/>
+                                <Setter Property="Foreground" Value="#E9E9ED"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Border" Property="Background" Value="#3FA9F5"/>
+                                <Setter TargetName="Border" Property="Background" Value="#6C5CE7"/>
                                 <Setter Property="Foreground" Value="#FFFFFF"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
@@ -76,25 +76,25 @@ d:DesignHeight="400" d:DesignWidth="600">
             <Setter Property="Foreground" Value="#9A9AA1"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Width" Value="24"/>
-            <Setter Property="Height" Value="24"/>
+            <Setter Property="Height" Value="22"/>
             <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ToggleButton">
-                        <Border x:Name="Border" 
-                                Background="{TemplateBinding Background}" 
-                                CornerRadius="3">
+                        <Border x:Name="Border"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="7">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Border" Property="Background" Value="#4A4A4A"/>
-                                <Setter Property="Foreground" Value="#3FA9F5"/>
+                                <Setter TargetName="Border" Property="Background" Value="#33333A"/>
+                                <Setter Property="Foreground" Value="#E9E9ED"/>
                             </Trigger>
                             <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="Border" Property="Background" Value="#3FA9F5"/>
+                                <Setter TargetName="Border" Property="Background" Value="#6C5CE7"/>
                                 <Setter Property="Foreground" Value="#FFFFFF"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
@@ -104,9 +104,9 @@ d:DesignHeight="400" d:DesignWidth="600">
         </Style>
 
         <Style x:Key="DarkComboBoxStyle" TargetType="ComboBox">
-            <Setter Property="Background" Value="#28282C"/>
+            <Setter Property="Background" Value="#161618"/>
             <Setter Property="Foreground" Value="#E9E9ED"/>
-            <Setter Property="BorderBrush" Value="#35353C"/>
+            <Setter Property="BorderBrush" Value="#2C2C32"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Padding" Value="6,3"/>
             <Setter Property="FontSize" Value="11"/>
@@ -130,25 +130,33 @@ d:DesignHeight="400" d:DesignWidth="600">
                                                 Background="{TemplateBinding Background}"
                                                 BorderBrush="{TemplateBinding BorderBrush}"
                                                 BorderThickness="{TemplateBinding BorderThickness}"
-                                                CornerRadius="3">
+                                                CornerRadius="8">
                                             <Grid>
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="*"/>
                                                     <ColumnDefinition Width="18"/>
                                                 </Grid.ColumnDefinitions>
                                                 <ContentPresenter Grid.Column="0"/>
-                                                <Path Grid.Column="1" 
-                                                      Data="M0,0 L4,4 L8,0" 
-                                                      Fill="#9A9AA1" 
-                                                      HorizontalAlignment="Center" 
+                                                <Path x:Name="Chevron" Grid.Column="1"
+                                                      Data="M0,0 L4,4 L8,0"
+                                                      Stroke="#9A9AA1"
+                                                      StrokeThickness="1.3"
+                                                      StrokeEndLineCap="Round"
+                                                      StrokeStartLineCap="Round"
+                                                      HorizontalAlignment="Center"
                                                       VerticalAlignment="Center"
                                                       Margin="0,0,4,0"/>
                                             </Grid>
                                         </Border>
                                         <ControlTemplate.Triggers>
                                             <Trigger Property="IsMouseOver" Value="True">
-                                                <Setter TargetName="Border" Property="Background" Value="#33333A"/>
-                                                <Setter TargetName="Border" Property="BorderBrush" Value="#3FA9F5"/>
+                                                <Setter TargetName="Border" Property="Background" Value="#1F1F22"/>
+                                                <Setter TargetName="Border" Property="BorderBrush" Value="#33333A"/>
+                                                <Setter TargetName="Chevron" Property="Stroke" Value="#E9E9ED"/>
+                                            </Trigger>
+                                            <Trigger Property="IsChecked" Value="True">
+                                                <Setter TargetName="Border" Property="BorderBrush" Value="#6C5CE7"/>
+                                                <Setter TargetName="Chevron" Property="Stroke" Value="#6C5CE7"/>
                                             </Trigger>
                                         </ControlTemplate.Triggers>
                                     </ControlTemplate>
@@ -168,10 +176,10 @@ d:DesignHeight="400" d:DesignWidth="600">
                                    Focusable="False"
                                    PopupAnimation="Slide">
                                 <Border x:Name="DropDown"
-                                        Background="#28282C"
-                                        BorderBrush="#35353C"
+                                        Background="#232327"
+                                        BorderBrush="#33333A"
                                         BorderThickness="1"
-                                        CornerRadius="3"
+                                        CornerRadius="8"
                                         MinWidth="{TemplateBinding ActualWidth}"
                                         MaxHeight="200">
                                     <ScrollViewer Margin="2">
@@ -196,15 +204,15 @@ d:DesignHeight="400" d:DesignWidth="600">
                         <Border x:Name="Border"
                                 Background="{TemplateBinding Background}"
                                 Padding="{TemplateBinding Padding}"
-                                CornerRadius="2">
+                                CornerRadius="6">
                             <ContentPresenter/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Border" Property="Background" Value="#33333A"/>
+                                <Setter TargetName="Border" Property="Background" Value="#28282C"/>
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="Border" Property="Background" Value="#3FA9F5"/>
+                                <Setter TargetName="Border" Property="Background" Value="#6C5CE7"/>
                                 <Setter Property="Foreground" Value="#FFFFFF"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
@@ -232,78 +240,94 @@ d:DesignHeight="400" d:DesignWidth="600">
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    
+
                     <!-- Left side tools -->
-                    <StackPanel Grid.Column="0" Orientation="Horizontal" Margin="4,0">
-                        <Button x:Name="MoveToolBtn" Content="&#xE759;" Style="{StaticResource ToolButtonStyle}" 
-                                ToolTip="Move Tool (W)" Click="OnMoveToolClick"/>
-                        <Button x:Name="RotateToolBtn" Content="&#xE7AD;" Style="{StaticResource ToolButtonStyle}" 
-                                ToolTip="Rotate Tool (E)" Click="OnRotateToolClick"/>
-                        <Button x:Name="ScaleToolBtn" Content="&#xE740;" Style="{StaticResource ToolButtonStyle}" 
-                                ToolTip="Scale Tool (R)" Click="OnScaleToolClick"/>
-                        <Rectangle Width="1" Fill="#363640" Margin="6,6"/>
-                        <ToggleButton x:Name="GridToggleBtn" Content="&#xE8B3;" Style="{StaticResource ToolToggleButtonStyle}" 
-                                      ToolTip="Toggle Grid (G)" IsChecked="True" Checked="OnGridToggle" Unchecked="OnGridToggle"/>
-                        <ToggleButton x:Name="SnapToggleBtn" Content="&#xE81E;" Style="{StaticResource ToolToggleButtonStyle}" 
-                                      ToolTip="Toggle Snap" Checked="OnSnapToggle" Unchecked="OnSnapToggle"/>
-                        <Rectangle Width="1" Fill="#363640" Margin="6,6"/>
-                        <Button x:Name="ViewModeBtn" Content="&#xE71E;" Style="{StaticResource ToolButtonStyle}" 
-                                ToolTip="2D/3D View"/>
-                        <ToggleButton x:Name="GizmosToggleBtn" Content="&#xE7B3;" Style="{StaticResource ToolToggleButtonStyle}" 
-                                      ToolTip="Toggle Gizmos" IsChecked="True" Checked="OnGizmosToggle" Unchecked="OnGizmosToggle"/>
+                    <StackPanel Grid.Column="0" Orientation="Horizontal" Margin="6,3">
+                        <!-- Transform tools pill -->
+                        <Border Background="#161618" CornerRadius="9" BorderBrush="#2C2C32" BorderThickness="1" Padding="2,1">
+                            <StackPanel Orientation="Horizontal">
+                                <Button x:Name="MoveToolBtn" Content="&#xE759;" Style="{StaticResource ToolButtonStyle}"
+                                        ToolTip="Move Tool (W)" Click="OnMoveToolClick"/>
+                                <Button x:Name="RotateToolBtn" Content="&#xE7AD;" Style="{StaticResource ToolButtonStyle}"
+                                        ToolTip="Rotate Tool (E)" Click="OnRotateToolClick"/>
+                                <Button x:Name="ScaleToolBtn" Content="&#xE740;" Style="{StaticResource ToolButtonStyle}"
+                                        ToolTip="Scale Tool (R)" Click="OnScaleToolClick"/>
+                            </StackPanel>
+                        </Border>
+                        <!-- Snap / grid pill -->
+                        <Border Background="#161618" CornerRadius="9" BorderBrush="#2C2C32" BorderThickness="1" Padding="2,1" Margin="8,0,0,0">
+                            <StackPanel Orientation="Horizontal">
+                                <ToggleButton x:Name="GridToggleBtn" Content="&#xE8B3;" Style="{StaticResource ToolToggleButtonStyle}"
+                                              ToolTip="Toggle Grid (G)" IsChecked="True" Checked="OnGridToggle" Unchecked="OnGridToggle"/>
+                                <ToggleButton x:Name="SnapToggleBtn" Content="&#xE81E;" Style="{StaticResource ToolToggleButtonStyle}"
+                                              ToolTip="Toggle Snap" Checked="OnSnapToggle" Unchecked="OnSnapToggle"/>
+                            </StackPanel>
+                        </Border>
+                        <!-- View options pill -->
+                        <Border Background="#161618" CornerRadius="9" BorderBrush="#2C2C32" BorderThickness="1" Padding="2,1" Margin="8,0,0,0">
+                            <StackPanel Orientation="Horizontal">
+                                <Button x:Name="ViewModeBtn" Content="&#xE71E;" Style="{StaticResource ToolButtonStyle}"
+                                        ToolTip="2D/3D View"/>
+                                <ToggleButton x:Name="GizmosToggleBtn" Content="&#xE7B3;" Style="{StaticResource ToolToggleButtonStyle}"
+                                              ToolTip="Toggle Gizmos" IsChecked="True" Checked="OnGizmosToggle" Unchecked="OnGizmosToggle"/>
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
-                    
+
                     <!-- Center: Viewport Layout Buttons -->
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center">
-                        <Rectangle Width="1" Fill="#363640" Margin="6,6"/>
-                        <Button x:Name="SingleViewBtn" Style="{StaticResource ToolButtonStyle}" 
-                                ToolTip="Single View" Click="OnSingleViewClick" Foreground="#3FA9F5">
-                            <TextBlock Text="&#xE737;" FontFamily="Segoe MDL2 Assets" FontSize="12"/>
-                        </Button>
-                        <Button x:Name="SplitVerticalBtn" Style="{StaticResource ToolButtonStyle}" 
-                                ToolTip="Split Vertical (Left/Right)" Click="OnSplitVerticalClick">
-                            <TextBlock Text="&#xE746;" FontFamily="Segoe MDL2 Assets" FontSize="12"/>
-                        </Button>
-                        <Button x:Name="SplitHorizontalBtn" Style="{StaticResource ToolButtonStyle}" 
-                                ToolTip="Split Horizontal (Top/Bottom)" Click="OnSplitHorizontalClick">
-                            <TextBlock Text="&#xE745;" FontFamily="Segoe MDL2 Assets" FontSize="12"/>
-                        </Button>
-                        <Button x:Name="QuadViewBtn" Style="{StaticResource ToolButtonStyle}" 
-                                ToolTip="Quad View (2x2)" Click="OnQuadViewClick">
-                            <TextBlock Text="&#xE8A0;" FontFamily="Segoe MDL2 Assets" FontSize="12"/>
-                        </Button>
-                        <Rectangle Width="1" Fill="#363640" Margin="6,6"/>
-                        
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <!-- Layout pill -->
+                        <Border Background="#161618" CornerRadius="9" BorderBrush="#2C2C32" BorderThickness="1" Padding="2,1">
+                            <StackPanel Orientation="Horizontal">
+                                <Button x:Name="SingleViewBtn" Style="{StaticResource ToolButtonStyle}"
+                                        ToolTip="Single View" Click="OnSingleViewClick" Foreground="#6C5CE7">
+                                    <TextBlock Text="&#xE737;" FontFamily="Segoe MDL2 Assets" FontSize="12"/>
+                                </Button>
+                                <Button x:Name="SplitVerticalBtn" Style="{StaticResource ToolButtonStyle}"
+                                        ToolTip="Split Vertical (Left/Right)" Click="OnSplitVerticalClick">
+                                    <TextBlock Text="&#xE746;" FontFamily="Segoe MDL2 Assets" FontSize="12"/>
+                                </Button>
+                                <Button x:Name="SplitHorizontalBtn" Style="{StaticResource ToolButtonStyle}"
+                                        ToolTip="Split Horizontal (Top/Bottom)" Click="OnSplitHorizontalClick">
+                                    <TextBlock Text="&#xE745;" FontFamily="Segoe MDL2 Assets" FontSize="12"/>
+                                </Button>
+                                <Button x:Name="QuadViewBtn" Style="{StaticResource ToolButtonStyle}"
+                                        ToolTip="Quad View (2x2)" Click="OnQuadViewClick">
+                                    <TextBlock Text="&#xE8A0;" FontFamily="Segoe MDL2 Assets" FontSize="12"/>
+                                </Button>
+                            </StackPanel>
+                        </Border>
+
                         <!-- Camera Selector -->
-                        <TextBlock Text="View:" Foreground="#9A9AA1" VerticalAlignment="Center" 
-                                   FontSize="10" Margin="4,0"/>
-                        <ComboBox x:Name="CameraSelector" Style="{StaticResource DarkComboBoxStyle}" 
+                        <TextBlock Text="View:" Foreground="#73737A" VerticalAlignment="Center"
+                                   FontSize="10" Margin="10,0,5,0"/>
+                        <ComboBox x:Name="CameraSelector" Style="{StaticResource DarkComboBoxStyle}"
                                   Width="120" SelectionChanged="OnCameraSelectionChanged">
                             <ComboBoxItem Content="Free Camera" IsSelected="True" Style="{StaticResource DarkComboBoxItemStyle}"/>
                         </ComboBox>
-                        
+
                         <!-- PIP Preview Button -->
-                        <Button x:Name="ShowPipButton" Style="{StaticResource ToolButtonStyle}" 
+                        <Button x:Name="ShowPipButton" Style="{StaticResource ToolButtonStyle}"
                                 ToolTip="Show Camera Preview (PIP)" Click="OnShowPipClick"
-                                Margin="4,0">
+                                Margin="6,0,0,0">
                             <TextBlock Text="&#xE714;" FontFamily="Segoe MDL2 Assets" FontSize="12"/>
                         </Button>
                     </StackPanel>
                     
                     <!-- Right: Play Mode Indicator -->
-                    <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="4,0">
-                        <Border x:Name="PlayModeBadge" Background="#409B59B6" CornerRadius="3" 
-                                Padding="8,2" Margin="4,0" Visibility="Collapsed">
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="6,3">
+                        <Border x:Name="PlayModeBadge" Background="#306C5CE7" CornerRadius="8"
+                                Padding="8,3" Margin="4,0" Visibility="Collapsed">
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="&#xE768;" FontFamily="Segoe MDL2 Assets" 
-                                           FontSize="10" Foreground="#9B59B6" Margin="0,0,4,0"/>
-                                <TextBlock Text="PLAY MODE" Foreground="#9B59B6" 
+                                <TextBlock Text="&#xE768;" FontFamily="Segoe MDL2 Assets"
+                                           FontSize="10" Foreground="#6C5CE7" Margin="0,0,4,0"/>
+                                <TextBlock Text="PLAY MODE" Foreground="#6C5CE7"
                                            FontSize="9" FontWeight="Bold"/>
                             </StackPanel>
                         </Border>
-                        <Border x:Name="FlyModeBadge" Background="#40569CD6" CornerRadius="3" 
-                                Padding="6,2" Visibility="Collapsed">
-                            <TextBlock Text="FLY" Foreground="#569CD6" FontSize="9" FontWeight="Bold"/>
+                        <Border x:Name="FlyModeBadge" Background="#306FA8DC" CornerRadius="8"
+                                Padding="6,3" Visibility="Collapsed">
+                            <TextBlock Text="FLY" Foreground="#6FA8DC" FontSize="9" FontWeight="Bold"/>
                         </Border>
                     </StackPanel>
                 </Grid>

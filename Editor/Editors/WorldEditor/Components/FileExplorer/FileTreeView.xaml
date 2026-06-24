@@ -106,7 +106,8 @@
     <Style x:Key="TreeViewItemStyle" TargetType="TreeViewItem">
         <Setter Property="Foreground" Value="#E9E9ED"/>
         <Setter Property="FontSize" Value="12"/>
-        <Setter Property="Padding" Value="4,2"/>
+        <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI"/>
+        <Setter Property="Padding" Value="6,0"/>
         <Setter Property="Background" Value="Transparent"/>
         <Setter Property="BorderThickness" Value="0"/>
         <Setter Property="HorizontalContentAlignment" Value="Left"/>
@@ -124,21 +125,21 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition/>
                         </Grid.RowDefinitions>
-                        <Border x:Name="Bd" Background="{TemplateBinding Background}" 
-                                Padding="{TemplateBinding Padding}" CornerRadius="3">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}" MinHeight="28"
+                                Padding="{TemplateBinding Padding}" CornerRadius="8">
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto"/>
                                     <ColumnDefinition Width="Auto"/>
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
-                                <ToggleButton x:Name="Expander" Grid.Column="0" 
+                                <ToggleButton x:Name="Expander" Grid.Column="0"
                                               IsChecked="{Binding Path=IsExpanded, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}"
                                               ClickMode="Press" Width="16" Height="16" Focusable="False">
                                     <ToggleButton.Template>
                                         <ControlTemplate TargetType="ToggleButton">
                                             <Border Background="Transparent" Padding="4">
-                                                <Path x:Name="Arrow" Data="M0,0 L4,4 L0,8 Z" 
+                                                <Path x:Name="Arrow" Data="M0,0 L4,4 L0,8 Z"
                                                       Fill="#73737A" HorizontalAlignment="Center" VerticalAlignment="Center">
                                                     <Path.RenderTransform>
                                                         <RotateTransform Angle="0" CenterX="2" CenterY="4"/>
@@ -160,17 +161,17 @@
                                         </ControlTemplate>
                                     </ToggleButton.Template>
                                 </ToggleButton>
-                                <TextBlock Grid.Column="1" Text="&#xE8B7;" FontFamily="Segoe MDL2 Assets" 
-                                           FontSize="12" Foreground="#E6B422" VerticalAlignment="Center" Margin="2,0,6,0"/>
-                                <TextBlock x:Name="HeaderText" Grid.Column="2" Text="{Binding Name}" 
+                                <TextBlock x:Name="FolderIcon" Grid.Column="1" Text="&#xE8B7;" FontFamily="Segoe MDL2 Assets"
+                                           FontSize="13" Foreground="#E6B422" VerticalAlignment="Center" Margin="2,0,8,0"/>
+                                <TextBlock x:Name="HeaderText" Grid.Column="2" Text="{Binding Name}"
                                            VerticalAlignment="Center" Visibility="Visible"/>
                                 <TextBox x:Name="RenameBox" Grid.Column="2" Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}"
                                          VerticalAlignment="Center" Visibility="Collapsed"
-                                         Background="#1A1A1C" Foreground="#E9E9ED" BorderBrush="#3FA9F5" 
-                                         BorderThickness="1" Padding="2,0"/>
+                                         Background="#161618" Foreground="#E9E9ED" BorderBrush="#6C5CE7"
+                                         BorderThickness="1" Padding="4,1"/>
                             </Grid>
                         </Border>
-                        <ItemsPresenter x:Name="ItemsHost" Grid.Row="1" Margin="16,0,0,0"/>
+                        <ItemsPresenter x:Name="ItemsHost" Grid.Row="1" Margin="14,0,0,0"/>
                     </Grid>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsExpanded" Value="False">
@@ -180,15 +181,20 @@
                         <DataTrigger Binding="{Binding HasSubDirectories}" Value="False">
                             <Setter TargetName="Expander" Property="Visibility" Value="Hidden"/>
                         </DataTrigger>
+                        <Trigger Property="IsExpanded" Value="True">
+                            <Setter TargetName="FolderIcon" Property="Text" Value="&#xE838;"/>
+                        </Trigger>
                         <Trigger Property="IsSelected" Value="True">
                             <Setter TargetName="Bd" Property="Background" Value="#2C2C32"/>
+                            <Setter TargetName="HeaderText" Property="Foreground" Value="#FFFFFF"/>
+                            <Setter TargetName="FolderIcon" Property="Foreground" Value="#6C5CE7"/>
                         </Trigger>
                         <MultiTrigger>
                             <MultiTrigger.Conditions>
                                 <Condition Property="IsMouseOver" Value="True"/>
                                 <Condition Property="IsSelected" Value="False"/>
                             </MultiTrigger.Conditions>
-                            <Setter TargetName="Bd" Property="Background" Value="#2A2D2E"/>
+                            <Setter TargetName="Bd" Property="Background" Value="#28282C"/>
                         </MultiTrigger>
                         <DataTrigger Binding="{Binding IsRenaming}" Value="True">
                             <Setter TargetName="HeaderText" Property="Visibility" Value="Collapsed"/>
@@ -211,29 +217,42 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
-        
-        <!-- Toolbar -->
-        <Border Grid.Row="0" Background="#1A1A1C" Padding="4">
-            <StackPanel Orientation="Horizontal">
-                <Button x:Name="RefreshButton" Content="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="12"
-                        Background="Transparent" Foreground="#9A9AA1" BorderThickness="0" 
-                        Padding="4" Cursor="Hand" ToolTip="Refresh" Click="OnRefreshClick"/>
-                <Button x:Name="CollapseAllButton" Content="&#xE70E;" FontFamily="Segoe MDL2 Assets" FontSize="12"
-                        Background="Transparent" Foreground="#9A9AA1" BorderThickness="0" 
-                        Padding="4" Cursor="Hand" ToolTip="Collapse All" Click="OnCollapseAllClick"/>
-            </StackPanel>
+
+        <!-- Section Header -->
+        <Border Grid.Row="0" Background="#212124" Padding="14,12,12,8"
+                BorderBrush="#2C2C32" BorderThickness="0,0,0,1">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="&#xEC50;" FontFamily="Segoe MDL2 Assets"
+                           FontSize="13" Foreground="#9A9AA1" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBlock Grid.Column="1" Text="File System"
+                           FontFamily="Segoe UI Variable Text, Segoe UI" FontWeight="SemiBold"
+                           FontSize="12" Foreground="#E9E9ED" VerticalAlignment="Center"/>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button x:Name="RefreshButton" Content="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                            Background="Transparent" Foreground="#9A9AA1" BorderThickness="0"
+                            Padding="6,4" Cursor="Hand" ToolTip="Refresh" Click="OnRefreshClick"/>
+                    <Button x:Name="CollapseAllButton" Content="&#xE70E;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                            Background="Transparent" Foreground="#9A9AA1" BorderThickness="0"
+                            Padding="6,4" Cursor="Hand" ToolTip="Collapse All" Click="OnCollapseAllClick"/>
+                </StackPanel>
+            </Grid>
         </Border>
-        
+
         <!-- Tree View -->
-        <TreeView x:Name="FolderTree" Grid.Row="1" Background="Transparent" BorderThickness="0" Padding="4"
+        <TreeView x:Name="FolderTree" Grid.Row="1" Background="Transparent" BorderThickness="0" Padding="6,8,6,8"
                   ItemsSource="{Binding Children}" ItemContainerStyle="{StaticResource TreeViewItemStyle}"
                   SelectedItemChanged="OnSelectedFolderChanged" AllowDrop="True"
                   VirtualizingStackPanel.IsVirtualizing="False">
         </TreeView>
-        
+
         <!-- Empty State -->
-        <TextBlock x:Name="EmptyText" Grid.Row="1" Text="No project loaded" 
-                   Foreground="#73737A" FontSize="11" 
+        <TextBlock x:Name="EmptyText" Grid.Row="1" Text="No project loaded"
+                   Foreground="#73737A" FontSize="11"
                    HorizontalAlignment="Center" VerticalAlignment="Center"
                    Visibility="Collapsed"/>
     </Grid>

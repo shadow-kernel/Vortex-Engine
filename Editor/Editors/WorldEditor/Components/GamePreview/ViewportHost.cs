@@ -19,6 +19,12 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         [DllImport("user32.dll", SetLastError = true)]
         private static extern bool DestroyWindow(IntPtr hwnd);
 
+        private const int GCLP_HBRBACKGROUND = -10;
+        [DllImport("gdi32.dll")]
+        private static extern IntPtr CreateSolidBrush(uint crColor);
+        [DllImport("user32.dll")]
+        private static extern IntPtr SetClassLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+
         protected override HandleRef BuildWindowCore(HandleRef hwndParent)
         {
             int width = Math.Max(1, (int)ActualWidth);
@@ -27,6 +33,19 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             _hwnd = CreateWindowEx(0, "static", string.Empty, WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
                 0, 0, width, height,
                 hwndParent.Handle, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+
+            // Paint the native child dark (#161618) so no white frame shows behind/around
+            // the DX12 viewport during init/resize.
+            try
+            {
+                if (_hwnd != IntPtr.Zero)
+                {
+                    IntPtr darkBrush = CreateSolidBrush(0x00181616u); // COLORREF 0x00BBGGRR for #161618
+                    if (darkBrush != IntPtr.Zero)
+                        SetClassLongPtr(_hwnd, GCLP_HBRBACKGROUND, darkBrush);
+                }
+            }
+            catch { /* cosmetic only */ }
 
             OnHostCreated?.Invoke(this, EventArgs.Empty);
             return new HandleRef(this, _hwnd);

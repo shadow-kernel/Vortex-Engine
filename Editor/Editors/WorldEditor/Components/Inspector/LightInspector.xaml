@@ -2,40 +2,88 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              Background="Transparent">
-    
-    <Border Background="#28282C" CornerRadius="4" Padding="10" Margin="0,5,0,0">
+
+    <UserControl.Resources>
+        <Style x:Key="PropertyLabel" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#FF9A9AA1"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+
+        <!-- Rounded pill numeric field (Apple-style) -->
+        <Style x:Key="ValueInput" TargetType="TextBox">
+            <Setter Property="Foreground" Value="#FFE9E9ED"/>
+            <Setter Property="CaretBrush" Value="#FF6C5CE7"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="TextAlignment" Value="Center"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border x:Name="bd" CornerRadius="8" Background="#FF161618"
+                                BorderBrush="#FF33333A" BorderThickness="1" SnapsToDevicePixels="True">
+                            <ScrollViewer x:Name="PART_ContentHost" VerticalAlignment="Center" Margin="6,0"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="BorderBrush" Value="#FF4A4A52"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="bd" Property="BorderBrush" Value="#FF6C5CE7"/>
+                                <Setter TargetName="bd" Property="Background" Value="#FF1B1B1E"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="ComboBoxStyle" TargetType="ComboBox">
+            <Setter Property="Background" Value="#FF161618"/>
+            <Setter Property="Foreground" Value="#FFE9E9ED"/>
+            <Setter Property="BorderBrush" Value="#FF33333A"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="Padding" Value="8,3"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+    </UserControl.Resources>
+
+    <Border Background="#FF232327" CornerRadius="12" Padding="14" Margin="0,0,0,10">
         <StackPanel>
             <!-- Header -->
-            <Grid Margin="0,0,0,10">
+            <Grid Margin="0,0,0,12">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                
-                <TextBlock Grid.Column="0" Text="&#xE793;" FontFamily="Segoe MDL2 Assets" 
-                           FontSize="16" Foreground="#FFD700" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                <TextBlock Grid.Column="1" x:Name="HeaderText" Text="Light" 
-                           FontSize="14" FontWeight="SemiBold" Foreground="#E9E9ED" VerticalAlignment="Center"/>
-                <CheckBox Grid.Column="2" x:Name="EnabledCheckBox" IsChecked="True" 
+
+                <TextBlock Grid.Column="0" Text="&#xE793;" FontFamily="Segoe MDL2 Assets"
+                           FontSize="15" Foreground="#FF9A9AA1" VerticalAlignment="Center" Margin="0,0,9,0"/>
+                <TextBlock Grid.Column="1" x:Name="HeaderText" Text="Light"
+                           FontSize="13.5" FontWeight="SemiBold" Foreground="#FFE9E9ED" VerticalAlignment="Center"/>
+                <CheckBox Grid.Column="2" x:Name="EnabledCheckBox" IsChecked="True"
                           VerticalAlignment="Center" Checked="EnabledCheckBox_Changed" Unchecked="EnabledCheckBox_Changed"/>
             </Grid>
-            
+
             <!-- Light Type -->
             <Grid Margin="0,5">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="100"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Text="Type" Foreground="#999" VerticalAlignment="Center"/>
-                <ComboBox x:Name="LightTypeCombo" Grid.Column="1" 
+                <TextBlock Text="Type" Style="{StaticResource PropertyLabel}"/>
+                <ComboBox x:Name="LightTypeCombo" Grid.Column="1" Style="{StaticResource ComboBoxStyle}"
                           SelectionChanged="LightTypeCombo_SelectionChanged">
                     <ComboBoxItem Content="Directional"/>
                     <ComboBoxItem Content="Point"/>
                     <ComboBoxItem Content="Spot"/>
                 </ComboBox>
             </Grid>
-            
+
             <!-- Color -->
             <Grid Margin="0,5">
                 <Grid.ColumnDefinitions>
@@ -43,84 +91,80 @@
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Text="Color" Foreground="#999" VerticalAlignment="Center"/>
-                <Border x:Name="ColorPreview" Grid.Column="1" Height="24" CornerRadius="2" 
-                        Background="#FFFFF4D6" BorderBrush="#555" BorderThickness="1"
+                <TextBlock Text="Color" Style="{StaticResource PropertyLabel}"/>
+                <Border x:Name="ColorPreview" Grid.Column="1" Height="26" CornerRadius="8"
+                        Background="#FFFFF4D6" BorderBrush="#FF33333A" BorderThickness="1"
                         Cursor="Hand" MouseLeftButtonUp="ColorPreview_Click"/>
             </Grid>
-            
+
             <!-- Intensity -->
             <Grid Margin="0,5">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="100"/>
                     <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="50"/>
+                    <ColumnDefinition Width="56"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Text="Intensity" Foreground="#999" VerticalAlignment="Center"/>
+                <TextBlock Text="Intensity" Style="{StaticResource PropertyLabel}"/>
                 <Slider x:Name="IntensitySlider" Grid.Column="1" Minimum="0" Maximum="10" Value="1"
                         VerticalAlignment="Center" ValueChanged="IntensitySlider_ValueChanged"/>
-                <TextBox x:Name="IntensityValue" Grid.Column="2" Text="1.0" 
-                         Background="#1A1A1C" Foreground="#CCC" BorderBrush="#555" 
-                         TextAlignment="Center" VerticalContentAlignment="Center"
+                <TextBox x:Name="IntensityValue" Grid.Column="2" Text="1.0"
+                         Style="{StaticResource ValueInput}" Margin="8,0,0,0"
                          TextChanged="IntensityValue_TextChanged"/>
             </Grid>
-            
+
             <!-- Range (Point/Spot only) -->
             <Grid x:Name="RangeRow" Margin="0,5">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="100"/>
                     <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="50"/>
+                    <ColumnDefinition Width="56"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Text="Range" Foreground="#999" VerticalAlignment="Center"/>
+                <TextBlock Text="Range" Style="{StaticResource PropertyLabel}"/>
                 <Slider x:Name="RangeSlider" Grid.Column="1" Minimum="0.1" Maximum="100" Value="10"
                         VerticalAlignment="Center" ValueChanged="RangeSlider_ValueChanged"/>
-                <TextBox x:Name="RangeValue" Grid.Column="2" Text="10.0" 
-                         Background="#1A1A1C" Foreground="#CCC" BorderBrush="#555" 
-                         TextAlignment="Center" VerticalContentAlignment="Center"
+                <TextBox x:Name="RangeValue" Grid.Column="2" Text="10.0"
+                         Style="{StaticResource ValueInput}" Margin="8,0,0,0"
                          TextChanged="RangeValue_TextChanged"/>
             </Grid>
-            
+
             <!-- Spot Angle (Spot only) -->
             <Grid x:Name="SpotAngleRow" Margin="0,5" Visibility="Collapsed">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="100"/>
                     <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="50"/>
+                    <ColumnDefinition Width="56"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Text="Spot Angle" Foreground="#999" VerticalAlignment="Center"/>
+                <TextBlock Text="Spot Angle" Style="{StaticResource PropertyLabel}"/>
                 <Slider x:Name="SpotAngleSlider" Grid.Column="1" Minimum="1" Maximum="179" Value="45"
                         VerticalAlignment="Center" ValueChanged="SpotAngleSlider_ValueChanged"/>
-                <TextBox x:Name="SpotAngleValue" Grid.Column="2" Text="45" 
-                         Background="#1A1A1C" Foreground="#CCC" BorderBrush="#555" 
-                         TextAlignment="Center" VerticalContentAlignment="Center"/>
+                <TextBox x:Name="SpotAngleValue" Grid.Column="2" Text="45"
+                         Style="{StaticResource ValueInput}" Margin="8,0,0,0"/>
             </Grid>
-            
+
             <!-- Inner Spot Angle (Spot only) -->
             <Grid x:Name="InnerSpotAngleRow" Margin="0,5" Visibility="Collapsed">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="100"/>
                     <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="50"/>
+                    <ColumnDefinition Width="56"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Text="Inner Angle" Foreground="#999" VerticalAlignment="Center"/>
+                <TextBlock Text="Inner Angle" Style="{StaticResource PropertyLabel}"/>
                 <Slider x:Name="InnerSpotAngleSlider" Grid.Column="1" Minimum="0" Maximum="178" Value="35"
                         VerticalAlignment="Center" ValueChanged="InnerSpotAngleSlider_ValueChanged"/>
-                <TextBox x:Name="InnerSpotAngleValue" Grid.Column="2" Text="35" 
-                         Background="#1A1A1C" Foreground="#CCC" BorderBrush="#555" 
-                         TextAlignment="Center" VerticalContentAlignment="Center"/>
+                <TextBox x:Name="InnerSpotAngleValue" Grid.Column="2" Text="35"
+                         Style="{StaticResource ValueInput}" Margin="8,0,0,0"/>
             </Grid>
-            
+
             <!-- Shadows -->
-            <Expander Header="Shadows" Foreground="#999" Margin="0,10,0,0" IsExpanded="False">
+            <Expander Header="Shadows" Foreground="#FF9A9AA1" Margin="0,10,0,0" IsExpanded="False">
                 <StackPanel Margin="10,5,0,0">
                     <Grid Margin="0,5">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="100"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="Shadow Type" Foreground="#999" VerticalAlignment="Center"/>
-                        <ComboBox x:Name="ShadowTypeCombo" Grid.Column="1">
+                        <TextBlock Text="Shadow Type" Style="{StaticResource PropertyLabel}"/>
+                        <ComboBox x:Name="ShadowTypeCombo" Grid.Column="1" Style="{StaticResource ComboBoxStyle}">
                             <ComboBoxItem Content="None"/>
                             <ComboBoxItem Content="Hard"/>
                             <ComboBoxItem Content="Soft" IsSelected="True"/>

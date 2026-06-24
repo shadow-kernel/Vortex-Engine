@@ -15,20 +15,21 @@
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Foreground" Value="#9A9AA1"/>
             <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="Padding" Value="6,2"/>
+            <Setter Property="Padding" Value="7,3"/>
             <Setter Property="FontSize" Value="11"/>
+            <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="Border" Background="{TemplateBinding Background}" 
-                                Padding="{TemplateBinding Padding}" CornerRadius="3">
+                        <Border x:Name="Border" Background="{TemplateBinding Background}"
+                                Padding="{TemplateBinding Padding}" CornerRadius="7">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="Border" Property="Background" Value="#33333A"/>
-                                <Setter Property="Foreground" Value="#FFFFFF"/>
+                                <Setter Property="Foreground" Value="#E9E9ED"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -269,14 +270,15 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ListBoxItem">
-                        <Border x:Name="Border" Background="{TemplateBinding Background}" 
-                                Padding="{TemplateBinding Padding}" CornerRadius="4" Width="80">
+                        <Border x:Name="Border" Background="{TemplateBinding Background}"
+                                BorderBrush="Transparent" BorderThickness="1"
+                                Padding="{TemplateBinding Padding}" CornerRadius="10" Width="84">
                             <ContentPresenter/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsSelected" Value="True">
                                 <Setter TargetName="Border" Property="Background" Value="#2C2C32"/>
-                                <Setter TargetName="Border" Property="BorderBrush" Value="#3FA9F5"/>
+                                <Setter TargetName="Border" Property="BorderBrush" Value="#6C5CE7"/>
                                 <Setter TargetName="Border" Property="BorderThickness" Value="1"/>
                             </Trigger>
                             <MultiTrigger>
@@ -284,7 +286,7 @@
                                     <Condition Property="IsMouseOver" Value="True"/>
                                     <Condition Property="IsSelected" Value="False"/>
                                 </MultiTrigger.Conditions>
-                                <Setter TargetName="Border" Property="Background" Value="#2A2D2E"/>
+                                <Setter TargetName="Border" Property="Background" Value="#28282C"/>
                             </MultiTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -305,7 +307,8 @@
             </Grid.RowDefinitions>
 
             <!-- Breadcrumb Navigation -->
-            <Border Grid.Row="0" Background="#1A1A1C" Padding="4,0">
+            <Border Grid.Row="0" Background="#1A1A1C" Padding="6,0"
+                    BorderBrush="#2C2C32" BorderThickness="0,0,0,1">
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
@@ -319,7 +322,7 @@
                                 Style="{StaticResource BreadcrumbButtonStyle}" ToolTip="Back" Click="OnBackClick"/>
                         <Button x:Name="UpButton" Content="&#xE74A;" FontFamily="Segoe MDL2 Assets" FontSize="10" 
                                 Style="{StaticResource BreadcrumbButtonStyle}" ToolTip="Up" Margin="2,0" Click="OnUpClick"/>
-                        <Rectangle Width="1" Fill="#363640" Margin="4,4"/>
+                        <Rectangle Width="1" Fill="#33333A" Margin="5,6"/>
                     </StackPanel>
                     
                     <!-- Breadcrumb Path -->
@@ -334,7 +337,7 @@
                                 <StackPanel Orientation="Horizontal">
                                     <Button Content="{Binding Name}" Style="{StaticResource BreadcrumbButtonStyle}"
                                             Tag="{Binding}" Click="OnBreadcrumbClick"/>
-                                    <TextBlock Text="/" Foreground="#44444C" VerticalAlignment="Center" Margin="0"/>
+                                    <TextBlock Text="/" Foreground="#73737A" VerticalAlignment="Center" Margin="0"/>
                                 </StackPanel>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
@@ -342,7 +345,7 @@
                     
                     <!-- Action Buttons -->
                     <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                        <Rectangle Width="1" Fill="#363640" Margin="4,4"/>
+                        <Rectangle Width="1" Fill="#33333A" Margin="5,6"/>
                         <Button Content="&#xE8B5;" FontFamily="Segoe MDL2 Assets" FontSize="10" 
                                 Style="{StaticResource BreadcrumbButtonStyle}" ToolTip="Search" Click="OnSearchClick"/>
                         <Button Content="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="10" 
@@ -374,17 +377,18 @@
                         </ListBox.ItemsPanel>
                         <ListBox.ItemTemplate>
                             <DataTemplate>
-                                <StackPanel HorizontalAlignment="Center" Width="64" ToolTip="{Binding Name}"
+                                <StackPanel HorizontalAlignment="Center" Width="68" ToolTip="{Binding Name}"
                                             Opacity="{Binding ItemOpacity}">
-                                    <TextBlock Text="{Binding Icon}" FontFamily="Segoe MDL2 Assets" FontSize="32" 
+                                    <TextBlock Text="{Binding Icon}" FontFamily="Segoe MDL2 Assets" FontSize="34"
                                                Foreground="{Binding IconColor}" HorizontalAlignment="Center"/>
-                                    <TextBlock x:Name="NameText" Text="{Binding Name}" Foreground="#E9E9ED" FontSize="10" 
-                                               HorizontalAlignment="Center" Margin="0,4,0,0" TextTrimming="CharacterEllipsis"
-                                               TextWrapping="Wrap" MaxHeight="32" TextAlignment="Center" LineHeight="12"
+                                    <TextBlock x:Name="NameText" Text="{Binding Name}" Foreground="#C8C8CE" FontSize="11"
+                                               FontFamily="Segoe UI Variable Text, Segoe UI"
+                                               HorizontalAlignment="Center" Margin="0,6,0,0" TextTrimming="CharacterEllipsis"
+                                               TextWrapping="Wrap" MaxHeight="32" TextAlignment="Center" LineHeight="13"
                                                Visibility="{Binding IsRenaming, Converter={StaticResource InverseBoolToVisConverter}}"/>
                                     <TextBox x:Name="RenameBox" Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}"
-                                             Background="#1A1A1C" Foreground="#E9E9ED" BorderBrush="#3FA9F5" 
-                                             BorderThickness="1" FontSize="10" TextAlignment="Center" Padding="2"
+                                             Background="#161618" Foreground="#E9E9ED" BorderBrush="#6C5CE7"
+                                             BorderThickness="1" FontSize="11" TextAlignment="Center" Padding="2"
                                              MaxWidth="76"
                                              Visibility="{Binding IsRenaming, Converter={StaticResource BoolToVisConverter}}"
                                              LostFocus="OnRenameBoxLostFocus" KeyDown="OnRenameBoxKeyDown"
@@ -397,12 +401,12 @@
                 
                 <!-- Selection Rectangle Overlay -->
                 <Canvas x:Name="SelectionCanvas" IsHitTestVisible="False">
-                    <Border x:Name="SelectionRectangle" 
-                            Background="#203FA9F5" 
-                            BorderBrush="#3FA9F5" 
+                    <Border x:Name="SelectionRectangle"
+                            Background="#206C5CE7"
+                            BorderBrush="#6C5CE7"
                             BorderThickness="1"
                             Visibility="Collapsed"
-                            CornerRadius="2"/>
+                            CornerRadius="4"/>
                 </Canvas>
             </Grid>
             
