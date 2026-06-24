@@ -194,6 +194,18 @@ EDITOR_INTERFACE void ShutdownRuntime()
 	runtime::resource_manager::shutdown();
 }
 
+// Advances the whole game simulation by dt seconds (one game tick).
+// Call this once per frame while in play mode / from the standalone player,
+// before submitting render items. The editor's idle viewport does NOT call it,
+// which is exactly why entering play mode "comes alive" and exiting it freezes.
+EDITOR_INTERFACE void StepRuntime(float dt)
+{
+	if (dt < 0.0f) dt = 0.0f;
+	if (dt > 0.25f) dt = 0.25f; // clamp huge spikes (e.g. after a breakpoint)
+	runtime::systems::update_physics(dt);
+	runtime::systems::update_audio(dt);
+}
+
 // DX12 viewport control
 EDITOR_INTERFACE bool InitializeRenderViewport(void* hwnd, unsigned int width, unsigned int height)
 {

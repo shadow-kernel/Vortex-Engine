@@ -23,8 +23,17 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void ShutdownRuntime();
 
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void StepRuntime(float deltaTime);
+
         public static void InitEngineRuntime() => InitializeRuntime();
         public static void ShutdownEngineRuntime() => ShutdownRuntime();
+
+        /// <summary>
+        /// Advances the game simulation by one tick (dt seconds). Call once per
+        /// frame in play mode / from the standalone player, before rendering.
+        /// </summary>
+        public static void StepEngineRuntime(float deltaTime) => StepRuntime(deltaTime);
 
         #endregion
 
