@@ -185,6 +185,7 @@
     </Compile>
     <Compile Include="Utilities\Utilities.cs" />
     <Compile Include="Core\Services\PlayModeService.cs" />
+    <Compile Include="Core\Services\ScriptingService.cs" />
     <Compile Include="PlayMode\GameWindow.xaml.cs">
       <DependentUpon>GameWindow.xaml</DependentUpon>
     </Compile>

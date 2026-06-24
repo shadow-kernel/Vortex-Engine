@@ -463,6 +463,34 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
             entity.AddComponent(new AudioSource(entity));
         }
 
+        private void CreateScript_Click(object sender, RoutedEventArgs e)
+        {
+            if (ProjectData.Current == null)
+            {
+                MessageBox.Show("Open a project first.", "Vortex", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            try
+            {
+                var path = ScriptingService.CreateScript("NewBehaviour");
+                ScriptingService.OpenInVisualStudio(path);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Could not create script: " + ex.Message, "Vortex", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+
+        private void OpenScriptsInVS_Click(object sender, RoutedEventArgs e)
+        {
+            if (ProjectData.Current == null)
+            {
+                MessageBox.Show("Open a project first.", "Vortex", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            ScriptingService.OpenInVisualStudio();
+        }
+
         private void AddScript_Click(object sender, RoutedEventArgs e)
         {
             var entity = GetSelectedEntity();
@@ -471,7 +499,16 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
                 MessageBox.Show("Bitte w�hlen Sie zuerst eine Entity aus.", "Hinweis", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
-            entity.AddComponent(new Script(entity));
+            try
+            {
+                var scriptPath = ScriptingService.CreateScript("NewBehaviour");
+                entity.AddComponent(new Script(entity, scriptPath));
+                ScriptingService.OpenInVisualStudio(scriptPath);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Could not create script: " + ex.Message, "Vortex", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
         }
 
         #endregion
