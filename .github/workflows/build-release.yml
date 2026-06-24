@@ -49,8 +49,11 @@ jobs:
       with:
         arch: x64
     
-    - name: Restore NuGet packages
-      run: nuget restore ${{ env.SOLUTION_FILE }}
+    - name: Restore NuGet packages (packages.config)
+      run: |
+        nuget restore Engine/packages.config -SolutionDirectory .
+        nuget restore VortexAPI/packages.config -SolutionDirectory .
+        nuget restore Editor/packages.config -SolutionDirectory .
     
     - name: Update version in Installer script
       shell: pwsh
@@ -60,11 +63,20 @@ jobs:
         $content = $content -replace '#define MyAppVersion ".*"', "#define MyAppVersion `"${{ steps.version.outputs.VERSION }}`""
         Set-Content $issFile $content
     
-    - name: Build C++ Engine (x64)
-      run: msbuild Engine/Engine.vcxproj /p:Configuration=${{ env.BUILD_CONFIGURATION }} /p:Platform=x64 /p:PlatformToolset=v143 /m
-    
-    - name: Build Editor Application
-      run: msbuild Editor/Editor.csproj /p:Configuration=${{ env.BUILD_CONFIGURATION }} /p:Platform=AnyCPU /m
+    # Builds the whole solution in dependency order (Engine.lib -> VortexAPI.dll -> Vortex Engine.exe).
+    # PlatformToolset is overridden to v143 because the GitHub windows-latest runner ships VS2022.
+    # On a machine with VS2026 (v145) installed, build without the override (the projects pin v145).
+    - name: Build full solution (Engine -> VortexAPI.dll -> Editor)
+      run: msbuild ${{ env.SOLUTION_FILE }} /t:Rebuild /p:Configuration=${{ env.BUILD_CONFIGURATION }} /p:Platform=${{ env.BUILD_PLATFORM }} /p:PlatformToolset=v143 /m
+
+    - name: Verify native engine + editor artifacts are co-located
+      shell: pwsh
+      run: |
+        $out = "x64/${{ env.BUILD_CONFIGURATION }}"
+        $required = @("Vortex Engine.exe", "VortexAPI.dll", "Assimp64.dll")
+        $missing = $required | Where-Object { -not (Test-Path "$out/$_") }
+        if ($missing) { Write-Error "Missing required artifacts in $out : $($missing -join ', ')"; exit 1 }
+        Write-Host "OK: $($required -join ', ') present in $out"
     
     - name: Download Inno Setup
       shell: pwsh
