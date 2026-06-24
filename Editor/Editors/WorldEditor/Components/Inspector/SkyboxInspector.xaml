@@ -3,7 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              Background="Transparent">
     
-    <Border Background="#2D2D30" CornerRadius="4" Padding="10" Margin="0,5,0,0">
+    <Border Background="#28282C" CornerRadius="4" Padding="10" Margin="0,5,0,0">
         <StackPanel>
             <!-- Header -->
             <Grid Margin="0,0,0,10">
@@ -16,7 +16,7 @@
                 <TextBlock Grid.Column="0" Text="&#xE81A;" FontFamily="Segoe MDL2 Assets" 
                            FontSize="16" Foreground="#87CEEB" VerticalAlignment="Center" Margin="0,0,8,0"/>
                 <TextBlock Grid.Column="1" x:Name="HeaderText" Text="Skybox" 
-                           FontSize="14" FontWeight="SemiBold" Foreground="#C5C5C5" VerticalAlignment="Center"/>
+                           FontSize="14" FontWeight="SemiBold" Foreground="#E9E9ED" VerticalAlignment="Center"/>
                 <CheckBox Grid.Column="2" x:Name="EnabledCheckBox" IsChecked="True" 
                           VerticalAlignment="Center" Checked="EnabledCheckBox_Changed" Unchecked="EnabledCheckBox_Changed"/>
             </Grid>
@@ -48,7 +48,7 @@
                 <Slider x:Name="AmbientSlider" Grid.Column="1" Minimum="0" Maximum="2" Value="0.3"
                         VerticalAlignment="Center" ValueChanged="AmbientSlider_ValueChanged"/>
                 <TextBox x:Name="AmbientValue" Grid.Column="2" Text="0.3" 
-                         Background="#1E1E1E" Foreground="#CCC" BorderBrush="#555" 
+                         Background="#1A1A1C" Foreground="#CCC" BorderBrush="#555" 
                          TextAlignment="Center" VerticalContentAlignment="Center"
                          TextChanged="AmbientValue_TextChanged"/>
             </Grid>
@@ -64,12 +64,12 @@
                 <Slider x:Name="ExposureSlider" Grid.Column="1" Minimum="0.1" Maximum="4" Value="1"
                         VerticalAlignment="Center" ValueChanged="ExposureSlider_ValueChanged"/>
                 <TextBox x:Name="ExposureValue" Grid.Column="2" Text="1.0" 
-                         Background="#1E1E1E" Foreground="#CCC" BorderBrush="#555" 
+                         Background="#1A1A1C" Foreground="#CCC" BorderBrush="#555" 
                          TextAlignment="Center" VerticalContentAlignment="Center"
                          TextChanged="ExposureValue_TextChanged"/>
             </Grid>
             
-            <Separator Background="#3C3C3C" Margin="0,10"/>
+            <Separator Background="#33333A" Margin="0,10"/>
             
             <!-- Top/Sky Color -->
             <Grid Margin="0,5">
@@ -116,7 +116,7 @@
                 </Grid.ColumnDefinitions>
                 <TextBlock Text="Cubemap" Foreground="#999" VerticalAlignment="Center"/>
                 <TextBox x:Name="CubemapPathText" Grid.Column="1" 
-                         Background="#1E1E1E" Foreground="#CCC" BorderBrush="#555" 
+                         Background="#1A1A1C" Foreground="#CCC" BorderBrush="#555" 
                          IsReadOnly="True" Text="(Not set)"/>
                 <Button Grid.Column="2" Content="..." Width="30" Margin="5,0,0,0"
                         Click="BrowseCubemap_Click"/>
@@ -132,7 +132,7 @@
                 <TextBlock Text="Texture" Foreground="#999" VerticalAlignment="Center" 
                            ToolTip="HDR or Equirectangular panorama texture (required)"/>
                 <TextBox x:Name="TexturePathText" Grid.Column="1" 
-                         Background="#1E1E1E" Foreground="#CCC" BorderBrush="#555" 
+                         Background="#1A1A1C" Foreground="#CCC" BorderBrush="#555" 
                          IsReadOnly="True" Text="(Not set)"/>
                 <Button Grid.Column="2" Content="..." Width="30" Margin="5,0,0,0"
                         Click="BrowseTexture_Click" ToolTip="Select texture from project"/>
@@ -148,7 +148,7 @@
                 <TextBlock Text="Mesh (opt.)" Foreground="#666" VerticalAlignment="Center"
                            ToolTip="Optional: Custom skybox mesh. If empty, uses built-in sphere."/>
                 <TextBox x:Name="MeshPathText" Grid.Column="1" 
-                         Background="#1E1E1E" Foreground="#666" BorderBrush="#444" 
+                         Background="#1A1A1C" Foreground="#666" BorderBrush="#444" 
                          IsReadOnly="True" Text="(Built-in Sphere)"/>
                 <Button Grid.Column="2" Content="..." Width="30" Margin="5,0,0,0"
                         Click="BrowseMesh_Click" ToolTip="Optional: Use custom mesh instead of built-in sphere"/>

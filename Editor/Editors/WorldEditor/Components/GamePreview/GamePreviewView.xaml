@@ -10,7 +10,7 @@ d:DesignHeight="400" d:DesignWidth="600">
     <UserControl.Resources>
         <Style x:Key="ViewTabStyle" TargetType="RadioButton">
             <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Foreground" Value="#808080"/>
+            <Setter Property="Foreground" Value="#9A9AA1"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Padding" Value="12,6"/>
             <Setter Property="FontSize" Value="11"/>
@@ -31,7 +31,7 @@ d:DesignHeight="400" d:DesignWidth="600">
                                 <Setter Property="Foreground" Value="#FFFFFF"/>
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Foreground" Value="#C5C5C5"/>
+                                <Setter Property="Foreground" Value="#E9E9ED"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -41,7 +41,7 @@ d:DesignHeight="400" d:DesignWidth="600">
 
         <Style x:Key="ToolButtonStyle" TargetType="Button">
             <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Foreground" Value="#808080"/>
+            <Setter Property="Foreground" Value="#9A9AA1"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Width" Value="24"/>
             <Setter Property="Height" Value="24"/>
@@ -73,7 +73,7 @@ d:DesignHeight="400" d:DesignWidth="600">
 
         <Style x:Key="ToolToggleButtonStyle" TargetType="ToggleButton">
             <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Foreground" Value="#808080"/>
+            <Setter Property="Foreground" Value="#9A9AA1"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Width" Value="24"/>
             <Setter Property="Height" Value="24"/>
@@ -104,9 +104,9 @@ d:DesignHeight="400" d:DesignWidth="600">
         </Style>
 
         <Style x:Key="DarkComboBoxStyle" TargetType="ComboBox">
-            <Setter Property="Background" Value="#2D2D30"/>
-            <Setter Property="Foreground" Value="#CCCCCC"/>
-            <Setter Property="BorderBrush" Value="#3F3F46"/>
+            <Setter Property="Background" Value="#28282C"/>
+            <Setter Property="Foreground" Value="#E9E9ED"/>
+            <Setter Property="BorderBrush" Value="#35353C"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Padding" Value="6,3"/>
             <Setter Property="FontSize" Value="11"/>
@@ -139,7 +139,7 @@ d:DesignHeight="400" d:DesignWidth="600">
                                                 <ContentPresenter Grid.Column="0"/>
                                                 <Path Grid.Column="1" 
                                                       Data="M0,0 L4,4 L8,0" 
-                                                      Fill="#808080" 
+                                                      Fill="#9A9AA1" 
                                                       HorizontalAlignment="Center" 
                                                       VerticalAlignment="Center"
                                                       Margin="0,0,4,0"/>
@@ -147,7 +147,7 @@ d:DesignHeight="400" d:DesignWidth="600">
                                         </Border>
                                         <ControlTemplate.Triggers>
                                             <Trigger Property="IsMouseOver" Value="True">
-                                                <Setter TargetName="Border" Property="Background" Value="#3E3E42"/>
+                                                <Setter TargetName="Border" Property="Background" Value="#33333A"/>
                                                 <Setter TargetName="Border" Property="BorderBrush" Value="#3FA9F5"/>
                                             </Trigger>
                                         </ControlTemplate.Triggers>
@@ -168,8 +168,8 @@ d:DesignHeight="400" d:DesignWidth="600">
                                    Focusable="False"
                                    PopupAnimation="Slide">
                                 <Border x:Name="DropDown"
-                                        Background="#2D2D30"
-                                        BorderBrush="#3F3F46"
+                                        Background="#28282C"
+                                        BorderBrush="#35353C"
                                         BorderThickness="1"
                                         CornerRadius="3"
                                         MinWidth="{TemplateBinding ActualWidth}"
@@ -187,7 +187,7 @@ d:DesignHeight="400" d:DesignWidth="600">
 
         <Style x:Key="DarkComboBoxItemStyle" TargetType="ComboBoxItem">
             <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Foreground" Value="#CCCCCC"/>
+            <Setter Property="Foreground" Value="#E9E9ED"/>
             <Setter Property="Padding" Value="6,4"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
@@ -201,7 +201,7 @@ d:DesignHeight="400" d:DesignWidth="600">
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Border" Property="Background" Value="#3E3E42"/>
+                                <Setter TargetName="Border" Property="Background" Value="#33333A"/>
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
                                 <Setter TargetName="Border" Property="Background" Value="#3FA9F5"/>
@@ -216,7 +216,7 @@ d:DesignHeight="400" d:DesignWidth="600">
 
     <!-- Outer Grid to allow overlay on top of everything -->
     <Grid>
-        <Border Background="#252526">
+        <Border Background="#212124">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="28"/>
@@ -225,7 +225,7 @@ d:DesignHeight="400" d:DesignWidth="600">
                 </Grid.RowDefinitions>
 
                 <!-- Toolbar -->
-                <Border Grid.Row="0" Background="#1E1E1E">
+                <Border Grid.Row="0" Background="#1A1A1C">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
@@ -241,12 +241,12 @@ d:DesignHeight="400" d:DesignWidth="600">
                                 ToolTip="Rotate Tool (E)" Click="OnRotateToolClick"/>
                         <Button x:Name="ScaleToolBtn" Content="&#xE740;" Style="{StaticResource ToolButtonStyle}" 
                                 ToolTip="Scale Tool (R)" Click="OnScaleToolClick"/>
-                        <Rectangle Width="1" Fill="#404040" Margin="6,6"/>
+                        <Rectangle Width="1" Fill="#363640" Margin="6,6"/>
                         <ToggleButton x:Name="GridToggleBtn" Content="&#xE8B3;" Style="{StaticResource ToolToggleButtonStyle}" 
                                       ToolTip="Toggle Grid (G)" IsChecked="True" Checked="OnGridToggle" Unchecked="OnGridToggle"/>
                         <ToggleButton x:Name="SnapToggleBtn" Content="&#xE81E;" Style="{StaticResource ToolToggleButtonStyle}" 
                                       ToolTip="Toggle Snap" Checked="OnSnapToggle" Unchecked="OnSnapToggle"/>
-                        <Rectangle Width="1" Fill="#404040" Margin="6,6"/>
+                        <Rectangle Width="1" Fill="#363640" Margin="6,6"/>
                         <Button x:Name="ViewModeBtn" Content="&#xE71E;" Style="{StaticResource ToolButtonStyle}" 
                                 ToolTip="2D/3D View"/>
                         <ToggleButton x:Name="GizmosToggleBtn" Content="&#xE7B3;" Style="{StaticResource ToolToggleButtonStyle}" 
@@ -255,7 +255,7 @@ d:DesignHeight="400" d:DesignWidth="600">
                     
                     <!-- Center: Viewport Layout Buttons -->
                     <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center">
-                        <Rectangle Width="1" Fill="#404040" Margin="6,6"/>
+                        <Rectangle Width="1" Fill="#363640" Margin="6,6"/>
                         <Button x:Name="SingleViewBtn" Style="{StaticResource ToolButtonStyle}" 
                                 ToolTip="Single View" Click="OnSingleViewClick" Foreground="#3FA9F5">
                             <TextBlock Text="&#xE737;" FontFamily="Segoe MDL2 Assets" FontSize="12"/>
@@ -272,10 +272,10 @@ d:DesignHeight="400" d:DesignWidth="600">
                                 ToolTip="Quad View (2x2)" Click="OnQuadViewClick">
                             <TextBlock Text="&#xE8A0;" FontFamily="Segoe MDL2 Assets" FontSize="12"/>
                         </Button>
-                        <Rectangle Width="1" Fill="#404040" Margin="6,6"/>
+                        <Rectangle Width="1" Fill="#363640" Margin="6,6"/>
                         
                         <!-- Camera Selector -->
-                        <TextBlock Text="View:" Foreground="#808080" VerticalAlignment="Center" 
+                        <TextBlock Text="View:" Foreground="#9A9AA1" VerticalAlignment="Center" 
                                    FontSize="10" Margin="4,0"/>
                         <ComboBox x:Name="CameraSelector" Style="{StaticResource DarkComboBoxStyle}" 
                                   Width="120" SelectionChanged="OnCameraSelectionChanged">
@@ -324,7 +324,7 @@ d:DesignHeight="400" d:DesignWidth="600">
                     <!-- Main Viewport (always visible) -->
                     <Border x:Name="MainViewportPanel" Grid.Column="0" Grid.Row="0" 
                             Grid.RowSpan="2" Background="#1A1A1A" Margin="1"
-                            BorderBrush="#404040" BorderThickness="1"
+                            BorderBrush="#363640" BorderThickness="1"
                             MouseDown="OnMainViewportClick">
                         <Grid>
                             <local:ViewportHost x:Name="ViewportHostElement"/>
@@ -340,16 +340,16 @@ d:DesignHeight="400" d:DesignWidth="600">
                     <!-- Split Separator (vertical) -->
                     <GridSplitter x:Name="VerticalSplitter" Grid.Column="0" Grid.Row="0" Grid.RowSpan="2"
                                   Width="4" HorizontalAlignment="Right" VerticalAlignment="Stretch"
-                                  Background="#404040" Visibility="Collapsed" Cursor="SizeWE"/>
+                                  Background="#363640" Visibility="Collapsed" Cursor="SizeWE"/>
                     
                     <!-- Secondary Viewport Panel (for Split View) -->
                     <Border x:Name="SecondaryViewportPanel" Grid.Column="1" Grid.Row="0" 
-                            Background="#1A1A1A" BorderBrush="#404040" BorderThickness="1"
+                            Background="#1A1A1A" BorderBrush="#363640" BorderThickness="1"
                             Visibility="Collapsed" Margin="1"
                             MouseDown="OnSecondaryViewportClick">
                         <Grid>
                             <!-- Header with camera selector -->
-                            <Border VerticalAlignment="Top" Background="#2D2D30" Height="28">
+                            <Border VerticalAlignment="Top" Background="#28282C" Height="28">
                                 <Grid Margin="4,0">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto"/>
@@ -381,11 +381,11 @@ d:DesignHeight="400" d:DesignWidth="600">
                                                 VerticalAlignment="Center" HorizontalAlignment="Center">
                                         <TextBlock x:Name="SecondaryViewCameraInfo" 
                                                    Text="Select a camera" 
-                                                   Foreground="#606060" FontSize="12" FontWeight="SemiBold"
+                                                   Foreground="#73737A" FontSize="12" FontWeight="SemiBold"
                                                    HorizontalAlignment="Center" TextAlignment="Center"/>
                                         <TextBlock x:Name="SecondaryViewDetails" 
                                                    Text="Use the dropdown above to select a camera" 
-                                                   Foreground="#505050" FontSize="10" Margin="0,8,0,0"
+                                                   Foreground="#44444C" FontSize="10" Margin="0,8,0,0"
                                                    HorizontalAlignment="Center" TextAlignment="Center"/>
                                     </StackPanel>
                                     
@@ -402,11 +402,11 @@ d:DesignHeight="400" d:DesignWidth="600">
                     
                     <!-- Third Viewport Panel (for Quad View - Bottom Left) -->
                     <Border x:Name="ThirdViewportPanel" Grid.Column="0" Grid.Row="1" 
-                            Background="#1A1A1A" BorderBrush="#404040" BorderThickness="1"
+                            Background="#1A1A1A" BorderBrush="#363640" BorderThickness="1"
                             Visibility="Collapsed" Margin="1"
                             MouseDown="OnThirdViewportClick">
                         <Grid>
-                            <Border VerticalAlignment="Top" Background="#2D2D30" Height="28">
+                            <Border VerticalAlignment="Top" Background="#28282C" Height="28">
                                 <Grid Margin="4,0">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto"/>
@@ -427,7 +427,7 @@ d:DesignHeight="400" d:DesignWidth="600">
                                     <StackPanel x:Name="ThirdViewportOverlayInfo" 
                                                 VerticalAlignment="Center" HorizontalAlignment="Center">
                                         <TextBlock x:Name="ThirdViewInfo" Text="Select a camera" 
-                                                   Foreground="#606060" FontSize="12" FontWeight="SemiBold"
+                                                   Foreground="#73737A" FontSize="12" FontWeight="SemiBold"
                                                    HorizontalAlignment="Center"/>
                                     </StackPanel>
                                     <Border VerticalAlignment="Top" HorizontalAlignment="Left" 
@@ -442,11 +442,11 @@ d:DesignHeight="400" d:DesignWidth="600">
                     
                     <!-- Fourth Viewport Panel (for Quad View - Bottom Right) -->
                     <Border x:Name="FourthViewportPanel" Grid.Column="1" Grid.Row="1" 
-                            Background="#1A1A1A" BorderBrush="#404040" BorderThickness="1"
+                            Background="#1A1A1A" BorderBrush="#363640" BorderThickness="1"
                             Visibility="Collapsed" Margin="1"
                             MouseDown="OnFourthViewportClick">
                         <Grid>
-                            <Border VerticalAlignment="Top" Background="#2D2D30" Height="28">
+                            <Border VerticalAlignment="Top" Background="#28282C" Height="28">
                                 <Grid Margin="4,0">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto"/>
@@ -467,7 +467,7 @@ d:DesignHeight="400" d:DesignWidth="600">
                                     <StackPanel x:Name="FourthViewportOverlayInfo" 
                                                 VerticalAlignment="Center" HorizontalAlignment="Center">
                                         <TextBlock x:Name="FourthViewInfo" Text="Select a camera" 
-                                                   Foreground="#606060" FontSize="12" FontWeight="SemiBold"
+                                                   Foreground="#73737A" FontSize="12" FontWeight="SemiBold"
                                                    HorizontalAlignment="Center"/>
                                     </StackPanel>
                                     <Border VerticalAlignment="Top" HorizontalAlignment="Left" 
@@ -485,7 +485,7 @@ d:DesignHeight="400" d:DesignWidth="600">
             </Border>
 
             <!-- Status Bar -->
-            <Border Grid.Row="2" Background="#2D2D30">
+            <Border Grid.Row="2" Background="#28282C">
                 <Grid Margin="8,0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
@@ -493,9 +493,9 @@ d:DesignHeight="400" d:DesignWidth="600">
                     </Grid.ColumnDefinitions>
 
                     <TextBlock x:Name="StatusText" Grid.Column="0" Text="FPS: 60 | Draw Calls: 0 | Vertices: 0" 
-                               Foreground="#606060" FontSize="10" VerticalAlignment="Center"/>
+                               Foreground="#73737A" FontSize="10" VerticalAlignment="Center"/>
                     <TextBlock x:Name="ResolutionText" Grid.Column="1" Text="1920 x 1080" 
-                               Foreground="#606060" FontSize="10" VerticalAlignment="Center"/>
+                               Foreground="#73737A" FontSize="10" VerticalAlignment="Center"/>
                 </Grid>
             </Border>
         </Grid>

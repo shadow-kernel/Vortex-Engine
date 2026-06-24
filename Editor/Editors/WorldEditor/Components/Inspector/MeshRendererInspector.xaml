@@ -9,27 +9,27 @@
     
     <UserControl.Resources>
         <Style x:Key="PropertyLabel" TargetType="TextBlock">
-            <Setter Property="Foreground" Value="#FF808080"/>
+            <Setter Property="Foreground" Value="#FF9A9AA1"/>
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
             <Setter Property="Margin" Value="0,0,10,0"/>
         </Style>
         
         <Style x:Key="PropertyComboBox" TargetType="ComboBox">
-            <Setter Property="Background" Value="#FF3E3E42"/>
-            <Setter Property="Foreground" Value="#FFC5C5C5"/>
+            <Setter Property="Background" Value="#FF33333A"/>
+            <Setter Property="Foreground" Value="#FFE9E9ED"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="BorderBrush" Value="#FF555555"/>
             <Setter Property="Padding" Value="8,4"/>
         </Style>
         
         <Style x:Key="PropertyCheckBox" TargetType="CheckBox">
-            <Setter Property="Foreground" Value="#FFC5C5C5"/>
+            <Setter Property="Foreground" Value="#FFE9E9ED"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
         </Style>
     </UserControl.Resources>
     
-    <Border Background="#FF2D2D30" CornerRadius="4" Padding="10" Margin="0,5">
+    <Border Background="#FF28282C" CornerRadius="4" Padding="10" Margin="0,5">
         <StackPanel>
             <!-- Header -->
             <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
@@ -37,7 +37,7 @@
                            FontSize="16" Foreground="#FF4EC9B0" 
                            VerticalAlignment="Center" Margin="0,0,8,0"/>
                 <TextBlock Text="Mesh Renderer" FontSize="14" FontWeight="SemiBold" 
-                           Foreground="#FFC5C5C5" VerticalAlignment="Center"/>
+                           Foreground="#FFE9E9ED" VerticalAlignment="Center"/>
                 <CheckBox x:Name="EnabledCheckBox" IsChecked="{Binding IsEnabled, Mode=TwoWay}"
                           Margin="20,0,0,0" VerticalAlignment="Center"/>
             </StackPanel>
@@ -62,7 +62,7 @@
                     <ComboBoxItem Content="Cone"/>
                 </ComboBox>
                 <Button Grid.Column="2" Content="&#xE8E5;" FontFamily="Segoe MDL2 Assets"
-                        Background="Transparent" BorderThickness="0" Foreground="#FF808080"
+                        Background="Transparent" BorderThickness="0" Foreground="#FF9A9AA1"
                         Padding="6" FontSize="12" ToolTip="Select Mesh"
                         Click="SelectMeshButton_Click"/>
             </Grid>
@@ -82,7 +82,7 @@
                     <ComboBoxItem Content="Default"/>
                 </ComboBox>
                 <Button Grid.Column="2" Content="&#xE8E5;" FontFamily="Segoe MDL2 Assets"
-                        Background="Transparent" BorderThickness="0" Foreground="#FF808080"
+                        Background="Transparent" BorderThickness="0" Foreground="#FF9A9AA1"
                         Padding="6" FontSize="12" ToolTip="Select Material"
                         Click="SelectMaterialButton_Click"/>
             </Grid>

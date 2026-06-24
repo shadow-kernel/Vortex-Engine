@@ -9,7 +9,7 @@ d:DesignHeight="64" d:DesignWidth="1200">
 <UserControl.Resources>
     <Style x:Key="MenuButtonStyle" TargetType="Button">
         <Setter Property="Background" Value="Transparent"/>
-        <Setter Property="Foreground" Value="#C5C5C5"/>
+        <Setter Property="Foreground" Value="#E9E9ED"/>
         <Setter Property="BorderThickness" Value="0"/>
         <Setter Property="Padding" Value="12,6"/>
         <Setter Property="FontSize" Value="12"/>
@@ -24,11 +24,11 @@ d:DesignHeight="64" d:DesignWidth="1200">
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="Border" Property="Background" Value="#3C3C3C"/>
+                            <Setter TargetName="Border" Property="Background" Value="#33333A"/>
                             <Setter Property="Foreground" Value="#FFFFFF"/>
                         </Trigger>
                         <Trigger Property="IsPressed" Value="True">
-                            <Setter TargetName="Border" Property="Background" Value="#505050"/>
+                            <Setter TargetName="Border" Property="Background" Value="#44444C"/>
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
@@ -38,7 +38,7 @@ d:DesignHeight="64" d:DesignWidth="1200">
 
     <Style x:Key="ToolbarButtonStyle" TargetType="Button">
         <Setter Property="Background" Value="Transparent"/>
-        <Setter Property="Foreground" Value="#909090"/>
+        <Setter Property="Foreground" Value="#A6A6AD"/>
         <Setter Property="BorderThickness" Value="0"/>
         <Setter Property="Width" Value="26"/>
         <Setter Property="Height" Value="26"/>
@@ -55,11 +55,11 @@ d:DesignHeight="64" d:DesignWidth="1200">
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="Border" Property="Background" Value="#3C3C3C"/>
+                            <Setter TargetName="Border" Property="Background" Value="#33333A"/>
                             <Setter Property="Foreground" Value="#FFFFFF"/>
                         </Trigger>
                         <Trigger Property="IsPressed" Value="True">
-                            <Setter TargetName="Border" Property="Background" Value="#505050"/>
+                            <Setter TargetName="Border" Property="Background" Value="#44444C"/>
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
@@ -85,20 +85,20 @@ d:DesignHeight="64" d:DesignWidth="1200">
 
     <Style x:Key="ToolbarSeparator" TargetType="Rectangle">
         <Setter Property="Width" Value="1"/>
-        <Setter Property="Fill" Value="#404040"/>
+        <Setter Property="Fill" Value="#363640"/>
         <Setter Property="Margin" Value="6,4"/>
     </Style>
 
     <!-- Dark Theme Menu Styles -->
     <Style x:Key="DarkMenuStyle" TargetType="Menu">
-        <Setter Property="Background" Value="#1E1E1E"/>
-        <Setter Property="Foreground" Value="#C5C5C5"/>
+        <Setter Property="Background" Value="#1A1A1C"/>
+        <Setter Property="Foreground" Value="#E9E9ED"/>
     </Style>
 
     <!-- Dark MenuItem Style for all menu items -->
     <Style TargetType="{x:Type MenuItem}">
         <Setter Property="Background" Value="Transparent"/>
-        <Setter Property="Foreground" Value="#C5C5C5"/>
+        <Setter Property="Foreground" Value="#E9E9ED"/>
         <Setter Property="BorderThickness" Value="0"/>
         <Setter Property="BorderBrush" Value="Transparent"/>
         <Setter Property="Padding" Value="8,4"/>
@@ -126,9 +126,9 @@ d:DesignHeight="64" d:DesignWidth="1200">
                                               RecognizesAccessKey="True" VerticalAlignment="Center"/>
                             <TextBlock x:Name="InputGestureText" Grid.Column="2" 
                                        Text="{TemplateBinding InputGestureText}" 
-                                       Margin="24,0,8,0" Foreground="#808080" VerticalAlignment="Center"/>
+                                       Margin="24,0,8,0" Foreground="#9A9AA1" VerticalAlignment="Center"/>
                             <Path x:Name="SubMenuArrow" Grid.Column="3" 
-                                  Data="M 0 0 L 4 4 L 0 8 Z" Fill="#808080" 
+                                  Data="M 0 0 L 4 4 L 0 8 Z" Fill="#9A9AA1" 
                                   VerticalAlignment="Center" Margin="4,0,0,0"
                                   Visibility="Collapsed"/>
                             <Popup x:Name="PART_Popup" 
@@ -138,7 +138,7 @@ d:DesignHeight="64" d:DesignWidth="1200">
                                    Focusable="False"
                                    PopupAnimation="Fade"
                                    HorizontalOffset="-2">
-                                <Border Background="#2D2D2D" BorderBrush="#3C3C3C" BorderThickness="1" Padding="0,2">
+                                <Border Background="#2D2D2D" BorderBrush="#33333A" BorderThickness="1" Padding="0,2">
                                     <Grid IsSharedSizeScope="True">
                                         <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Cycle"/>
                                     </Grid>
@@ -167,10 +167,10 @@ d:DesignHeight="64" d:DesignWidth="1200">
                             <Setter TargetName="Icon" Property="Visibility" Value="Hidden"/>
                         </Trigger>
                         <Trigger Property="IsHighlighted" Value="True">
-                            <Setter TargetName="Border" Property="Background" Value="#3E3E42"/>
+                            <Setter TargetName="Border" Property="Background" Value="#33333A"/>
                         </Trigger>
                         <Trigger Property="IsEnabled" Value="False">
-                            <Setter Property="Foreground" Value="#656565"/>
+                            <Setter Property="Foreground" Value="#6E6E76"/>
                         </Trigger>
                         <Trigger Property="IsCheckable" Value="True">
                             <Setter TargetName="Icon" Property="Visibility" Value="Visible"/>
@@ -190,7 +190,7 @@ d:DesignHeight="64" d:DesignWidth="1200">
 
     <Style TargetType="{x:Type Separator}">
         <Setter Property="Height" Value="1"/>
-        <Setter Property="Background" Value="#404040"/>
+        <Setter Property="Background" Value="#363640"/>
         <Setter Property="Margin" Value="28,4,8,4"/>
         <Setter Property="OverridesDefaultStyle" Value="True"/>
         <Setter Property="Template">
@@ -204,8 +204,8 @@ d:DesignHeight="64" d:DesignWidth="1200">
 
     <Style TargetType="{x:Type ContextMenu}">
         <Setter Property="Background" Value="#2D2D2D"/>
-        <Setter Property="Foreground" Value="#C5C5C5"/>
-        <Setter Property="BorderBrush" Value="#3C3C3C"/>
+        <Setter Property="Foreground" Value="#E9E9ED"/>
+        <Setter Property="BorderBrush" Value="#33333A"/>
         <Setter Property="BorderThickness" Value="1"/>
         <Setter Property="OverridesDefaultStyle" Value="True"/>
         <Setter Property="SnapsToDevicePixels" Value="True"/>
@@ -227,8 +227,8 @@ d:DesignHeight="64" d:DesignWidth="1200">
 
     <!-- Menu Control Style -->
     <Style TargetType="{x:Type Menu}">
-        <Setter Property="Background" Value="#1E1E1E"/>
-        <Setter Property="Foreground" Value="#C5C5C5"/>
+        <Setter Property="Background" Value="#1A1A1C"/>
+        <Setter Property="Foreground" Value="#E9E9ED"/>
         <Setter Property="BorderThickness" Value="0"/>
         <Setter Property="SnapsToDevicePixels" Value="True"/>
         <Setter Property="OverridesDefaultStyle" Value="True"/>
@@ -249,14 +249,14 @@ d:DesignHeight="64" d:DesignWidth="1200">
     </Style>
 </UserControl.Resources>
 
-<Grid Background="#1E1E1E">
+<Grid Background="#1A1A1C">
     <Grid.RowDefinitions>
         <RowDefinition Height="28"/>
         <RowDefinition Height="32"/>
     </Grid.RowDefinitions>
 
     <!-- Row 0: Menu Bar -->
-    <Grid Grid.Row="0" Background="#1E1E1E">
+    <Grid Grid.Row="0" Background="#1A1A1C">
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="Auto"/>
             <ColumnDefinition Width="*"/>
@@ -264,7 +264,7 @@ d:DesignHeight="64" d:DesignWidth="1200">
         </Grid.ColumnDefinitions>
 
         <!-- Menu Items -->
-        <Menu Grid.Column="0" Background="#1E1E1E" Foreground="#C5C5C5" VerticalAlignment="Center" IsMainMenu="True">
+        <Menu Grid.Column="0" Background="#1A1A1C" Foreground="#E9E9ED" VerticalAlignment="Center" IsMainMenu="True">
             
             <!-- File Menu -->
             <MenuItem Header="_File">
@@ -414,7 +414,7 @@ d:DesignHeight="64" d:DesignWidth="1200">
     </Grid>
 
     <!-- Row 1: Icon Toolbar -->
-    <Border Grid.Row="1" Background="#252526" BorderBrush="#3C3C3C" BorderThickness="0,1,0,0">
+    <Border Grid.Row="1" Background="#212124" BorderBrush="#33333A" BorderThickness="0,1,0,0">
         <Grid Margin="4,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>

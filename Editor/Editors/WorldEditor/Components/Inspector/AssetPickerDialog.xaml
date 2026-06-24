@@ -3,13 +3,13 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Select Asset" Height="450" Width="400"
         WindowStartupLocation="CenterOwner"
-        Background="#1E1E1E" ResizeMode="CanResizeWithGrip"
+        Background="#1A1A1C" ResizeMode="CanResizeWithGrip"
         ShowInTaskbar="False">
     
     <Window.Resources>
         <Style x:Key="AssetListItemStyle" TargetType="ListBoxItem">
             <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Foreground" Value="#C5C5C5"/>
+            <Setter Property="Foreground" Value="#E9E9ED"/>
             <Setter Property="Padding" Value="10,8"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
@@ -17,7 +17,7 @@
                     <ControlTemplate TargetType="ListBoxItem">
                         <Border x:Name="Bd" Background="{TemplateBinding Background}" 
                                 Padding="{TemplateBinding Padding}"
-                                BorderThickness="0,0,0,1" BorderBrush="#2D2D30">
+                                BorderThickness="0,0,0,1" BorderBrush="#28282C">
                             <ContentPresenter/>
                         </Border>
                         <ControlTemplate.Triggers>
@@ -34,8 +34,8 @@
         </Style>
 
         <Style x:Key="DialogButton" TargetType="Button">
-            <Setter Property="Background" Value="#3C3C3C"/>
-            <Setter Property="Foreground" Value="#C5C5C5"/>
+            <Setter Property="Background" Value="#33333A"/>
+            <Setter Property="Foreground" Value="#E9E9ED"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Padding" Value="20,8"/>
             <Setter Property="Cursor" Value="Hand"/>
@@ -48,7 +48,7 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#505050"/>
+                                <Setter TargetName="Bd" Property="Background" Value="#44444C"/>
                             </Trigger>
                             <Trigger Property="IsDefault" Value="True">
                                 <Setter TargetName="Bd" Property="Background" Value="#0078D4"/>
@@ -68,16 +68,16 @@
         </Grid.RowDefinitions>
         
         <!-- Search Bar -->
-        <Border Grid.Row="0" Background="#252526" Padding="12">
+        <Border Grid.Row="0" Background="#212124" Padding="12">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
                 <TextBlock Text="&#xE721;" FontFamily="Segoe MDL2 Assets" FontSize="14" 
-                           Foreground="#808080" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                <TextBox x:Name="SearchBox" Grid.Column="1" Background="#1E1E1E" 
-                         Foreground="#C5C5C5" BorderBrush="#3C3C3C" BorderThickness="1"
+                           Foreground="#9A9AA1" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBox x:Name="SearchBox" Grid.Column="1" Background="#1A1A1C" 
+                         Foreground="#E9E9ED" BorderBrush="#33333A" BorderThickness="1"
                          Padding="8,6" FontSize="12" TextChanged="SearchBox_TextChanged">
                     <TextBox.Style>
                         <Style TargetType="TextBox">
@@ -112,8 +112,8 @@
                                    FontSize="18" Foreground="{Binding IconColor}" 
                                    VerticalAlignment="Center" Margin="0,0,12,0"/>
                         <StackPanel VerticalAlignment="Center">
-                            <TextBlock Text="{Binding Name}" FontSize="13" Foreground="#C5C5C5" FontWeight="Medium"/>
-                            <TextBlock Text="{Binding TypeName}" FontSize="11" Foreground="#808080"/>
+                            <TextBlock Text="{Binding Name}" FontSize="13" Foreground="#E9E9ED" FontWeight="Medium"/>
+                            <TextBlock Text="{Binding TypeName}" FontSize="11" Foreground="#9A9AA1"/>
                         </StackPanel>
                     </StackPanel>
                 </DataTemplate>
@@ -121,7 +121,7 @@
         </ListBox>
         
         <!-- Buttons -->
-        <Border Grid.Row="2" Background="#252526" Padding="12">
+        <Border Grid.Row="2" Background="#212124" Padding="12">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                 <Button x:Name="CancelButton" Content="Cancel" Style="{StaticResource DialogButton}" 
                         Margin="0,0,8,0" Click="CancelButton_Click"/>

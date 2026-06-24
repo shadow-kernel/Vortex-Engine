@@ -15,7 +15,7 @@
         <!-- List Item Style -->
         <Style x:Key="HistoryItemStyle" TargetType="ListBoxItem">
             <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Foreground" Value="#C5C5C5"/>
+            <Setter Property="Foreground" Value="#E9E9ED"/>
             <Setter Property="Padding" Value="8,4"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Template">
@@ -27,7 +27,7 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#37373D"/>
+                                <Setter TargetName="Bd" Property="Background" Value="#2C2C32"/>
                             </Trigger>
                             <MultiTrigger>
                                 <MultiTrigger.Conditions>
@@ -43,7 +43,7 @@
         </Style>
     </UserControl.Resources>
 
-    <Border Background="#252526">
+    <Border Background="#212124">
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="28"/>
@@ -52,7 +52,7 @@
             </Grid.RowDefinitions>
 
             <!-- Header -->
-            <Border Grid.Row="0" Background="#1E1E1E" Padding="8,4">
+            <Border Grid.Row="0" Background="#1A1A1C" Padding="8,4">
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
@@ -60,19 +60,19 @@
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     
-                    <TextBlock Grid.Column="0" Text="History" Foreground="#CCCCCC" 
+                    <TextBlock Grid.Column="0" Text="History" Foreground="#E9E9ED" 
                                FontWeight="SemiBold" VerticalAlignment="Center"/>
                     
                     <!-- Undo Button -->
                     <Button Grid.Column="1" Content="&#xE7A7;" FontFamily="Segoe MDL2 Assets"
                             Width="22" Height="22" Margin="4,0,0,0"
-                            Background="Transparent" Foreground="#808080" BorderThickness="0"
+                            Background="Transparent" Foreground="#9A9AA1" BorderThickness="0"
                             ToolTip="Undo" Click="Undo_Click" Cursor="Hand"/>
                     
                     <!-- Redo Button -->
                     <Button Grid.Column="2" Content="&#xE7A6;" FontFamily="Segoe MDL2 Assets"
                             Width="22" Height="22" Margin="4,0,0,0"
-                            Background="Transparent" Foreground="#808080" BorderThickness="0"
+                            Background="Transparent" Foreground="#9A9AA1" BorderThickness="0"
                             ToolTip="Redo" Click="Redo_Click" Cursor="Hand"/>
                 </Grid>
             </Border>
@@ -116,7 +116,7 @@
                             
                             <!-- Index -->
                             <TextBlock Grid.Column="2" Text="{Binding IndexDisplay}" 
-                                       Foreground="#606060" FontSize="10"
+                                       Foreground="#73737A" FontSize="10"
                                        VerticalAlignment="Center" Margin="8,0,0,0"/>
                         </Grid>
                     </DataTemplate>

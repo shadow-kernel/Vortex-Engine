@@ -4,7 +4,7 @@
         Title="Import Result" 
         Height="450" Width="550"
         WindowStartupLocation="CenterOwner"
-        Background="#FF252526"
+        Background="#FF212124"
         ResizeMode="CanResizeWithGrip">
     <Window.Resources>
         <Style x:Key="HeaderStyle" TargetType="TextBlock">
@@ -14,7 +14,7 @@
             <Setter Property="Margin" Value="0,10,0,5"/>
         </Style>
         <Style x:Key="InfoStyle" TargetType="TextBlock">
-            <Setter Property="Foreground" Value="#FFCCCCCC"/>
+            <Setter Property="Foreground" Value="#FFE9E9ED"/>
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="Margin" Value="10,2,0,2"/>
         </Style>

@@ -9,16 +9,16 @@
     
     <UserControl.Resources>
         <Style x:Key="PropertyLabel" TargetType="TextBlock">
-            <Setter Property="Foreground" Value="#FF808080"/>
+            <Setter Property="Foreground" Value="#FF9A9AA1"/>
             <Setter Property="FontSize" Value="11"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
             <Setter Property="Width" Value="95"/>
         </Style>
         
         <Style x:Key="ValueInput" TargetType="TextBox">
-            <Setter Property="Background" Value="#FF1E1E1E"/>
-            <Setter Property="Foreground" Value="#FFC5C5C5"/>
-            <Setter Property="BorderBrush" Value="#FF3C3C3C"/>
+            <Setter Property="Background" Value="#FF1A1A1C"/>
+            <Setter Property="Foreground" Value="#FFE9E9ED"/>
+            <Setter Property="BorderBrush" Value="#FF33333A"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="MinWidth" Value="60"/>
             <Setter Property="TextAlignment" Value="Right"/>
@@ -27,9 +27,9 @@
         </Style>
         
         <Style x:Key="ComboBoxStyle" TargetType="ComboBox">
-            <Setter Property="Background" Value="#FF1E1E1E"/>
-            <Setter Property="Foreground" Value="#FFC5C5C5"/>
-            <Setter Property="BorderBrush" Value="#FF3C3C3C"/>
+            <Setter Property="Background" Value="#FF1A1A1C"/>
+            <Setter Property="Foreground" Value="#FFE9E9ED"/>
+            <Setter Property="BorderBrush" Value="#FF33333A"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="MinWidth" Value="120"/>
             <Setter Property="Padding" Value="6,4"/>
@@ -37,27 +37,27 @@
         </Style>
         
         <Style x:Key="CheckBoxStyle" TargetType="CheckBox">
-            <Setter Property="Foreground" Value="#FFC5C5C5"/>
+            <Setter Property="Foreground" Value="#FFE9E9ED"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
         </Style>
         
         <Style x:Key="ColorButton" TargetType="Button">
             <Setter Property="Width" Value="24"/>
             <Setter Property="Height" Value="24"/>
-            <Setter Property="BorderBrush" Value="#FF3C3C3C"/>
+            <Setter Property="BorderBrush" Value="#FF33333A"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Cursor" Value="Hand"/>
         </Style>
 
         <Style x:Key="SectionHeader" TargetType="TextBlock">
             <Setter Property="FontSize" Value="10"/>
-            <Setter Property="Foreground" Value="#FF606060"/>
+            <Setter Property="Foreground" Value="#FF73737A"/>
             <Setter Property="Margin" Value="0,8,0,4"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
         </Style>
     </UserControl.Resources>
     
-    <Border Background="#FF2D2D30" CornerRadius="4" Padding="10" Margin="0,5">
+    <Border Background="#FF28282C" CornerRadius="4" Padding="10" Margin="0,5">
         <StackPanel>
             <!-- Header -->
             <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
@@ -65,9 +65,9 @@
                            FontSize="16" Foreground="#9B59B6" 
                            VerticalAlignment="Center" Margin="0,0,8,0"/>
                 <TextBlock Text="Camera" FontSize="14" FontWeight="SemiBold" 
-                           Foreground="#FFC5C5C5" VerticalAlignment="Center"/>
+                           Foreground="#FFE9E9ED" VerticalAlignment="Center"/>
                 <TextBlock x:Name="CameraTypeLabel" Text="" FontSize="10" 
-                           Foreground="#FF808080" VerticalAlignment="Center" Margin="8,0,0,0"/>
+                           Foreground="#FF9A9AA1" VerticalAlignment="Center" Margin="8,0,0,0"/>
             </StackPanel>
             
             <!-- Camera Type -->
@@ -117,7 +117,7 @@
                 <StackPanel Grid.Column="1" Orientation="Horizontal">
                     <TextBox x:Name="FovInput" Style="{StaticResource ValueInput}" Width="60"
                              TextChanged="Fov_TextChanged"/>
-                    <TextBlock Text="deg" Foreground="#FF606060" VerticalAlignment="Center" Margin="4,0,0,0"/>
+                    <TextBlock Text="deg" Foreground="#FF73737A" VerticalAlignment="Center" Margin="4,0,0,0"/>
                 </StackPanel>
             </Grid>
             
@@ -171,12 +171,12 @@
                         <Button.Template>
                             <ControlTemplate TargetType="Button">
                                 <Border x:Name="ColorPreview" Background="#1A1A33" 
-                                        BorderBrush="#FF3C3C3C" BorderThickness="1" CornerRadius="2"/>
+                                        BorderBrush="#FF33333A" BorderThickness="1" CornerRadius="2"/>
                             </ControlTemplate>
                         </Button.Template>
                     </Button>
                     <TextBlock x:Name="ColorValueText" Text="(0.0, 0.0, 0.3)" 
-                               Foreground="#FF606060" VerticalAlignment="Center" Margin="8,0,0,0" FontSize="10"/>
+                               Foreground="#FF73737A" VerticalAlignment="Center" Margin="8,0,0,0" FontSize="10"/>
                 </StackPanel>
             </Grid>
             
@@ -193,7 +193,7 @@
             
             <!-- Preview Button -->
             <Button x:Name="PreviewButton" Content="&#xE722;  Preview Camera View" Margin="0,12,0,0"
-                    Background="#FF3C3C3C" Foreground="#FFC5C5C5" BorderThickness="0"
+                    Background="#FF33333A" Foreground="#FFE9E9ED" BorderThickness="0"
                     Padding="8,6" FontSize="11" Cursor="Hand" FontFamily="Segoe UI"
                     Click="PreviewCamera_Click">
                 <Button.Style>

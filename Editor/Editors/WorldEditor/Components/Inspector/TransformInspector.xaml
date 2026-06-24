@@ -9,16 +9,16 @@
     
     <UserControl.Resources>
         <Style x:Key="PropertyLabel" TargetType="TextBlock">
-            <Setter Property="Foreground" Value="#FF808080"/>
+            <Setter Property="Foreground" Value="#FF9A9AA1"/>
             <Setter Property="FontSize" Value="11"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
             <Setter Property="Width" Value="70"/>
         </Style>
         
         <Style x:Key="VectorInput" TargetType="TextBox">
-            <Setter Property="Background" Value="#FF1E1E1E"/>
-            <Setter Property="Foreground" Value="#FFC5C5C5"/>
-            <Setter Property="BorderBrush" Value="#FF3C3C3C"/>
+            <Setter Property="Background" Value="#FF1A1A1C"/>
+            <Setter Property="Foreground" Value="#FFE9E9ED"/>
+            <Setter Property="BorderBrush" Value="#FF33333A"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Width" Value="50"/>
             <Setter Property="TextAlignment" Value="Center"/>
@@ -33,7 +33,7 @@
         </Style>
     </UserControl.Resources>
     
-    <Border Background="#FF2D2D30" CornerRadius="4" Padding="10" Margin="0,5">
+    <Border Background="#FF28282C" CornerRadius="4" Padding="10" Margin="0,5">
         <StackPanel>
             <!-- Header -->
             <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
@@ -41,7 +41,7 @@
                            FontSize="16" Foreground="#FF3FA9F5" 
                            VerticalAlignment="Center" Margin="0,0,8,0"/>
                 <TextBlock Text="Transform" FontSize="14" FontWeight="SemiBold" 
-                           Foreground="#FFC5C5C5" VerticalAlignment="Center"/>
+                           Foreground="#FFE9E9ED" VerticalAlignment="Center"/>
             </StackPanel>
             
             <!-- Position -->

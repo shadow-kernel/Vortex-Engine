@@ -13,7 +13,7 @@
         
     <Style x:Key="BreadcrumbButtonStyle" TargetType="Button">
             <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Foreground" Value="#808080"/>
+            <Setter Property="Foreground" Value="#9A9AA1"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Padding" Value="6,2"/>
             <Setter Property="FontSize" Value="11"/>
@@ -27,7 +27,7 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Border" Property="Background" Value="#3C3C3C"/>
+                                <Setter TargetName="Border" Property="Background" Value="#33333A"/>
                                 <Setter Property="Foreground" Value="#FFFFFF"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
@@ -40,7 +40,7 @@
         <!-- MenuItem Style for Dark Theme -->
         <Style x:Key="DarkMenuItemStyle" TargetType="MenuItem">
             <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Foreground" Value="#C5C5C5"/>
+            <Setter Property="Foreground" Value="#E9E9ED"/>
             <Setter Property="Padding" Value="8,4"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -58,15 +58,15 @@
                                 <ContentPresenter Grid.Column="1" ContentSource="Header" 
                                                   Margin="4,0,0,0" VerticalAlignment="Center"/>
                                 <TextBlock Grid.Column="2" Text="{TemplateBinding InputGestureText}" 
-                                           Foreground="#606060" FontSize="10" VerticalAlignment="Center" Margin="20,0,0,0"/>
+                                           Foreground="#73737A" FontSize="10" VerticalAlignment="Center" Margin="20,0,0,0"/>
                             </Grid>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsHighlighted" Value="True">
-                                <Setter TargetName="Border" Property="Background" Value="#3C3C3C"/>
+                                <Setter TargetName="Border" Property="Background" Value="#33333A"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
-                                <Setter Property="Foreground" Value="#606060"/>
+                                <Setter Property="Foreground" Value="#73737A"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -76,8 +76,8 @@
 
         <!-- Context Menu Style for Dark Theme -->
         <Style x:Key="DarkContextMenuStyle" TargetType="ContextMenu">
-            <Setter Property="Background" Value="#252526"/>
-            <Setter Property="BorderBrush" Value="#3C3C3C"/>
+            <Setter Property="Background" Value="#212124"/>
+            <Setter Property="BorderBrush" Value="#33333A"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Padding" Value="0,4"/>
             <Setter Property="Template">
@@ -97,7 +97,7 @@
 
         <!-- Separator Style for Dark Theme -->
         <Style x:Key="DarkSeparatorStyle" TargetType="Separator">
-            <Setter Property="Background" Value="#3C3C3C"/>
+            <Setter Property="Background" Value="#33333A"/>
             <Setter Property="Height" Value="1"/>
             <Setter Property="Margin" Value="8,4"/>
         </Style>
@@ -117,18 +117,18 @@
             <Separator Style="{StaticResource DarkSeparatorStyle}"/>
             <MenuItem Header="Cut" Click="OnCutClick" InputGestureText="Ctrl+X" Style="{StaticResource DarkMenuItemStyle}">
                 <MenuItem.Icon>
-                    <TextBlock Text="&#xE8C6;" FontFamily="Segoe MDL2 Assets" Foreground="#808080" FontSize="12"/>
+                    <TextBlock Text="&#xE8C6;" FontFamily="Segoe MDL2 Assets" Foreground="#9A9AA1" FontSize="12"/>
                 </MenuItem.Icon>
             </MenuItem>
             <MenuItem Header="Copy" Click="OnCopyClick" InputGestureText="Ctrl+C" Style="{StaticResource DarkMenuItemStyle}">
                 <MenuItem.Icon>
-                    <TextBlock Text="&#xE8C8;" FontFamily="Segoe MDL2 Assets" Foreground="#808080" FontSize="12"/>
+                    <TextBlock Text="&#xE8C8;" FontFamily="Segoe MDL2 Assets" Foreground="#9A9AA1" FontSize="12"/>
                 </MenuItem.Icon>
             </MenuItem>
             <Separator Style="{StaticResource DarkSeparatorStyle}"/>
             <MenuItem Header="Rename" Click="OnRenameClick" InputGestureText="F2" Style="{StaticResource DarkMenuItemStyle}">
                 <MenuItem.Icon>
-                    <TextBlock Text="&#xE8AC;" FontFamily="Segoe MDL2 Assets" Foreground="#808080" FontSize="12"/>
+                    <TextBlock Text="&#xE8AC;" FontFamily="Segoe MDL2 Assets" Foreground="#9A9AA1" FontSize="12"/>
                 </MenuItem.Icon>
             </MenuItem>
             <MenuItem Header="Delete" Click="OnDeleteClick" InputGestureText="Del" Style="{StaticResource DarkMenuItemStyle}">
@@ -161,11 +161,11 @@
                                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                 <ContentPresenter Grid.Column="1" ContentSource="Header" 
                                                   Margin="4,0,0,0" VerticalAlignment="Center"/>
-                                <TextBlock Grid.Column="2" Text="?" Foreground="#606060" FontSize="8" 
+                                <TextBlock Grid.Column="2" Text="?" Foreground="#73737A" FontSize="8" 
                                            VerticalAlignment="Center" Margin="20,0,4,0"/>
                                 <Popup x:Name="SubMenuPopup" Placement="Right" IsOpen="{Binding IsSubmenuOpen, RelativeSource={RelativeSource TemplatedParent}}"
                                        AllowsTransparency="True" Focusable="False" PopupAnimation="Fade">
-                                    <Border Background="#252526" BorderBrush="#3C3C3C" BorderThickness="1" 
+                                    <Border Background="#212124" BorderBrush="#33333A" BorderThickness="1" 
                                             CornerRadius="4" Padding="0,4">
                                         <StackPanel IsItemsHost="True"/>
                                     </Border>
@@ -174,7 +174,7 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsHighlighted" Value="True">
-                                <Setter TargetName="Border" Property="Background" Value="#3C3C3C"/>
+                                <Setter TargetName="Border" Property="Background" Value="#33333A"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -242,13 +242,13 @@
             <Separator Style="{StaticResource DarkSeparatorStyle}"/>
             <MenuItem Header="Paste" Click="OnPasteClick" InputGestureText="Ctrl+V" Style="{StaticResource DarkMenuItemStyle}">
                 <MenuItem.Icon>
-                    <TextBlock Text="&#xE77F;" FontFamily="Segoe MDL2 Assets" Foreground="#808080" FontSize="12"/>
+                    <TextBlock Text="&#xE77F;" FontFamily="Segoe MDL2 Assets" Foreground="#9A9AA1" FontSize="12"/>
                 </MenuItem.Icon>
             </MenuItem>
             <Separator Style="{StaticResource DarkSeparatorStyle}"/>
             <MenuItem Header="Refresh" Click="OnRefreshClick" InputGestureText="F5" Style="{StaticResource DarkMenuItemStyle}">
                 <MenuItem.Icon>
-                    <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" Foreground="#808080" FontSize="12"/>
+                    <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" Foreground="#9A9AA1" FontSize="12"/>
                 </MenuItem.Icon>
             </MenuItem>
             <Separator Style="{StaticResource DarkSeparatorStyle}"/>
@@ -261,7 +261,7 @@
 
         <Style x:Key="FileItemStyle" TargetType="ListBoxItem">
             <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Foreground" Value="#C5C5C5"/>
+            <Setter Property="Foreground" Value="#E9E9ED"/>
             <Setter Property="Padding" Value="8"/>
             <Setter Property="Margin" Value="2"/>
             <Setter Property="ContextMenu" Value="{StaticResource ItemContextMenu}"/>
@@ -275,7 +275,7 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="Border" Property="Background" Value="#37373D"/>
+                                <Setter TargetName="Border" Property="Background" Value="#2C2C32"/>
                                 <Setter TargetName="Border" Property="BorderBrush" Value="#3FA9F5"/>
                                 <Setter TargetName="Border" Property="BorderThickness" Value="1"/>
                             </Trigger>
@@ -297,7 +297,7 @@
         </Style>
     </UserControl.Resources>
 
-    <Border Background="#252526" ContextMenu="{StaticResource EmptyAreaContextMenu}">
+    <Border Background="#212124" ContextMenu="{StaticResource EmptyAreaContextMenu}">
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="28"/>
@@ -305,7 +305,7 @@
             </Grid.RowDefinitions>
 
             <!-- Breadcrumb Navigation -->
-            <Border Grid.Row="0" Background="#1E1E1E" Padding="4,0">
+            <Border Grid.Row="0" Background="#1A1A1C" Padding="4,0">
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
@@ -319,7 +319,7 @@
                                 Style="{StaticResource BreadcrumbButtonStyle}" ToolTip="Back" Click="OnBackClick"/>
                         <Button x:Name="UpButton" Content="&#xE74A;" FontFamily="Segoe MDL2 Assets" FontSize="10" 
                                 Style="{StaticResource BreadcrumbButtonStyle}" ToolTip="Up" Margin="2,0" Click="OnUpClick"/>
-                        <Rectangle Width="1" Fill="#404040" Margin="4,4"/>
+                        <Rectangle Width="1" Fill="#363640" Margin="4,4"/>
                     </StackPanel>
                     
                     <!-- Breadcrumb Path -->
@@ -334,7 +334,7 @@
                                 <StackPanel Orientation="Horizontal">
                                     <Button Content="{Binding Name}" Style="{StaticResource BreadcrumbButtonStyle}"
                                             Tag="{Binding}" Click="OnBreadcrumbClick"/>
-                                    <TextBlock Text="/" Foreground="#505050" VerticalAlignment="Center" Margin="0"/>
+                                    <TextBlock Text="/" Foreground="#44444C" VerticalAlignment="Center" Margin="0"/>
                                 </StackPanel>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
@@ -342,7 +342,7 @@
                     
                     <!-- Action Buttons -->
                     <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                        <Rectangle Width="1" Fill="#404040" Margin="4,4"/>
+                        <Rectangle Width="1" Fill="#363640" Margin="4,4"/>
                         <Button Content="&#xE8B5;" FontFamily="Segoe MDL2 Assets" FontSize="10" 
                                 Style="{StaticResource BreadcrumbButtonStyle}" ToolTip="Search" Click="OnSearchClick"/>
                         <Button Content="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="10" 
@@ -378,12 +378,12 @@
                                             Opacity="{Binding ItemOpacity}">
                                     <TextBlock Text="{Binding Icon}" FontFamily="Segoe MDL2 Assets" FontSize="32" 
                                                Foreground="{Binding IconColor}" HorizontalAlignment="Center"/>
-                                    <TextBlock x:Name="NameText" Text="{Binding Name}" Foreground="#C5C5C5" FontSize="10" 
+                                    <TextBlock x:Name="NameText" Text="{Binding Name}" Foreground="#E9E9ED" FontSize="10" 
                                                HorizontalAlignment="Center" Margin="0,4,0,0" TextTrimming="CharacterEllipsis"
                                                TextWrapping="Wrap" MaxHeight="32" TextAlignment="Center" LineHeight="12"
                                                Visibility="{Binding IsRenaming, Converter={StaticResource InverseBoolToVisConverter}}"/>
                                     <TextBox x:Name="RenameBox" Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}"
-                                             Background="#1E1E1E" Foreground="#C5C5C5" BorderBrush="#3FA9F5" 
+                                             Background="#1A1A1C" Foreground="#E9E9ED" BorderBrush="#3FA9F5" 
                                              BorderThickness="1" FontSize="10" TextAlignment="Center" Padding="2"
                                              MaxWidth="76"
                                              Visibility="{Binding IsRenaming, Converter={StaticResource BoolToVisConverter}}"
@@ -408,7 +408,7 @@
             
             <!-- Empty State -->
             <TextBlock x:Name="EmptyText" Grid.Row="1" Text="This folder is empty" 
-                       Foreground="#606060" FontSize="11" 
+                       Foreground="#73737A" FontSize="11" 
                        HorizontalAlignment="Center" VerticalAlignment="Center"
                        Visibility="Collapsed"/>
         </Grid>

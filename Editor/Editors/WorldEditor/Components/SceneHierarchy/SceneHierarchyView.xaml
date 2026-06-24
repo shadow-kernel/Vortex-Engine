@@ -25,9 +25,9 @@
 
         <!-- Search Box Style -->
         <Style x:Key="SearchBoxStyle" TargetType="TextBox">
-            <Setter Property="Background" Value="#1E1E1E"/>
-            <Setter Property="Foreground" Value="#C5C5C5"/>
-            <Setter Property="BorderBrush" Value="#3C3C3C"/>
+            <Setter Property="Background" Value="#1A1A1C"/>
+            <Setter Property="Foreground" Value="#E9E9ED"/>
+            <Setter Property="BorderBrush" Value="#33333A"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Padding" Value="24,4,8,4"/>
             <Setter Property="FontSize" Value="11"/>
@@ -40,7 +40,7 @@
                                 CornerRadius="4">
                             <Grid>
                                 <TextBlock Text="&#xE721;" FontFamily="Segoe MDL2 Assets" FontSize="12" 
-                                           Foreground="#606060" VerticalAlignment="Center" Margin="6,0,0,0"/>
+                                           Foreground="#73737A" VerticalAlignment="Center" Margin="6,0,0,0"/>
                                 <ScrollViewer x:Name="PART_ContentHost" Margin="0"/>
                             </Grid>
                         </Border>
@@ -57,7 +57,7 @@
         <!-- Icon Button Style -->
         <Style x:Key="IconButtonStyle" TargetType="Button">
             <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Foreground" Value="#808080"/>
+            <Setter Property="Foreground" Value="#9A9AA1"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Width" Value="22"/>
             <Setter Property="Height" Value="22"/>
@@ -72,7 +72,7 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Border" Property="Background" Value="#3C3C3C"/>
+                                <Setter TargetName="Border" Property="Background" Value="#33333A"/>
                                 <Setter Property="Foreground" Value="#FFFFFF"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
@@ -83,7 +83,7 @@
 
         <!-- Tree Item Style -->
         <Style x:Key="HierarchyTreeItemStyle" TargetType="TreeViewItem">
-            <Setter Property="Foreground" Value="#C5C5C5"/>
+            <Setter Property="Foreground" Value="#E9E9ED"/>
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Padding" Value="4,3"/>
@@ -112,7 +112,7 @@
                                             <ControlTemplate TargetType="ToggleButton">
                                                 <Border Background="Transparent" Padding="4">
                                                     <Path x:Name="Arrow" Data="M0,0 L4,4 L0,8 Z" 
-                                                          Fill="#606060" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                          Fill="#73737A" HorizontalAlignment="Center" VerticalAlignment="Center">
                                                         <Path.RenderTransform>
                                                             <RotateTransform Angle="0" CenterX="2" CenterY="4"/>
                                                         </Path.RenderTransform>
@@ -127,7 +127,7 @@
                                                         </Setter>
                                                     </Trigger>
                                                     <Trigger Property="IsMouseOver" Value="True">
-                                                        <Setter TargetName="Arrow" Property="Fill" Value="#C5C5C5"/>
+                                                        <Setter TargetName="Arrow" Property="Fill" Value="#E9E9ED"/>
                                                     </Trigger>
                                                 </ControlTemplate.Triggers>
                                             </ControlTemplate>
@@ -147,7 +147,7 @@
                                 <Setter TargetName="Expander" Property="Visibility" Value="Hidden"/>
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#37373D"/>
+                                <Setter TargetName="Bd" Property="Background" Value="#2C2C32"/>
                             </Trigger>
                             <MultiTrigger>
                                 <MultiTrigger.Conditions>
@@ -187,7 +187,7 @@
             <!-- Create Empty -->
             <MenuItem Header="Create Empty" InputGestureText="Ctrl+Shift+N" Click="CreateEmpty_Click">
                 <MenuItem.Icon>
-                    <TextBlock Text="&#xE734;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#CCCCCC"/>
+                    <TextBlock Text="&#xE734;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#E9E9ED"/>
                 </MenuItem.Icon>
             </MenuItem>
             <MenuItem Header="Create Folder" Click="CreateFolder_Click">
@@ -323,7 +323,7 @@
             </MenuItem>
             <MenuItem x:Name="UnloadSceneItem" Header="Unload Scene" Click="UnloadScene_Click">
                 <MenuItem.Icon>
-                    <TextBlock Text="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#808080"/>
+                    <TextBlock Text="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#9A9AA1"/>
                 </MenuItem.Icon>
             </MenuItem>
             <MenuItem x:Name="DeleteSceneItem" Header="Delete Scene" Click="DeleteScene_Click">
@@ -337,17 +337,17 @@
         <ContextMenu x:Key="EntityContextMenu" Opened="EntityContextMenu_Opened">
             <MenuItem Header="Cut" InputGestureText="Ctrl+X" Click="Cut_Click">
                 <MenuItem.Icon>
-                    <TextBlock Text="&#xE8C6;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#CCCCCC"/>
+                    <TextBlock Text="&#xE8C6;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#E9E9ED"/>
                 </MenuItem.Icon>
             </MenuItem>
             <MenuItem Header="Copy" InputGestureText="Ctrl+C" Click="Copy_Click">
                 <MenuItem.Icon>
-                    <TextBlock Text="&#xE8C8;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#CCCCCC"/>
+                    <TextBlock Text="&#xE8C8;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#E9E9ED"/>
                 </MenuItem.Icon>
             </MenuItem>
             <MenuItem Header="Paste" InputGestureText="Ctrl+V" Click="Paste_Click">
                 <MenuItem.Icon>
-                    <TextBlock Text="&#xE77F;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#CCCCCC"/>
+                    <TextBlock Text="&#xE77F;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#E9E9ED"/>
                 </MenuItem.Icon>
             </MenuItem>
             <Separator/>
@@ -372,12 +372,12 @@
             <Separator/>
             <MenuItem Header="Rename" InputGestureText="F2" Click="RenameEntity_Click">
                 <MenuItem.Icon>
-                    <TextBlock Text="&#xE70F;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#CCCCCC"/>
+                    <TextBlock Text="&#xE70F;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#E9E9ED"/>
                 </MenuItem.Icon>
             </MenuItem>
             <MenuItem Header="Duplicate" InputGestureText="Ctrl+D" Click="DuplicateEntity_Click">
                 <MenuItem.Icon>
-                    <TextBlock Text="&#xE8C8;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#CCCCCC"/>
+                    <TextBlock Text="&#xE8C8;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#E9E9ED"/>
                 </MenuItem.Icon>
             </MenuItem>
             <MenuItem Header="Delete" InputGestureText="Del" Click="DeleteEntity_Click">
@@ -412,13 +412,13 @@
                                FontFamily="Segoe MDL2 Assets" FontSize="12" 
                                Foreground="{Binding Converter={StaticResource EntityToIconColorConverter}}"
                                VerticalAlignment="Center" Margin="0,0,6,0"/>
-                    <TextBlock Text="{Binding Name}" Foreground="#C5C5C5" VerticalAlignment="Center"/>
+                    <TextBlock Text="{Binding Name}" Foreground="#E9E9ED" VerticalAlignment="Center"/>
                 </StackPanel>
             </Border>
         </HierarchicalDataTemplate>
     </UserControl.Resources>
 
-    <Border Background="#252526">
+    <Border Background="#212124">
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="32"/>
@@ -426,7 +426,7 @@
             </Grid.RowDefinitions>
 
             <!-- Toolbar -->
-            <Border Grid.Row="0" Background="#1E1E1E" Padding="6,4">
+            <Border Grid.Row="0" Background="#1A1A1C" Padding="6,4">
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>

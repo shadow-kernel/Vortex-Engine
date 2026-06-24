@@ -3,14 +3,14 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Color Picker" Height="400" Width="450"
         WindowStartupLocation="CenterOwner"
-        Background="#FF2D2D30" ResizeMode="NoResize">
+        Background="#FF28282C" ResizeMode="NoResize">
     
     <Window.Resources>
         <SolidColorBrush x:Key="TextCol" Color="#FFF1F1F1"/>
         <SolidColorBrush x:Key="TextSecondary" Color="#FF9D9D9D"/>
-        <SolidColorBrush x:Key="BorderCol" Color="#FF3F3F46"/>
+        <SolidColorBrush x:Key="BorderCol" Color="#FF35353C"/>
         <SolidColorBrush x:Key="AccentCol" Color="#FF0078D4"/>
-        <SolidColorBrush x:Key="ButtonBg" Color="#FF3F3F46"/>
+        <SolidColorBrush x:Key="ButtonBg" Color="#FF35353C"/>
         
         <Style x:Key="SimpleButton" TargetType="Button">
             <Setter Property="Background" Value="{StaticResource ButtonBg}"/>
@@ -132,7 +132,7 @@
                 <Slider Grid.Row="0" Grid.Column="1" x:Name="RedSlider" Minimum="0" Maximum="255" 
                         VerticalAlignment="Center" ValueChanged="RgbSlider_ValueChanged"/>
                 <TextBox Grid.Row="0" Grid.Column="2" x:Name="RedValue" Text="255" 
-                         Background="#FF3F3F46" Foreground="{StaticResource TextCol}" 
+                         Background="#FF35353C" Foreground="{StaticResource TextCol}" 
                          BorderThickness="0" TextAlignment="Center" VerticalAlignment="Center"
                          TextChanged="RgbTextBox_TextChanged"/>
                 
@@ -140,7 +140,7 @@
                 <Slider Grid.Row="1" Grid.Column="1" x:Name="GreenSlider" Minimum="0" Maximum="255" 
                         VerticalAlignment="Center" Margin="0,4" ValueChanged="RgbSlider_ValueChanged"/>
                 <TextBox Grid.Row="1" Grid.Column="2" x:Name="GreenValue" Text="255" 
-                         Background="#FF3F3F46" Foreground="{StaticResource TextCol}" 
+                         Background="#FF35353C" Foreground="{StaticResource TextCol}" 
                          BorderThickness="0" TextAlignment="Center" VerticalAlignment="Center" Margin="0,4"
                          TextChanged="RgbTextBox_TextChanged"/>
                 
@@ -148,7 +148,7 @@
                 <Slider Grid.Row="2" Grid.Column="1" x:Name="BlueSlider" Minimum="0" Maximum="255" 
                         VerticalAlignment="Center" ValueChanged="RgbSlider_ValueChanged"/>
                 <TextBox Grid.Row="2" Grid.Column="2" x:Name="BlueValue" Text="255" 
-                         Background="#FF3F3F46" Foreground="{StaticResource TextCol}" 
+                         Background="#FF35353C" Foreground="{StaticResource TextCol}" 
                          BorderThickness="0" TextAlignment="Center" VerticalAlignment="Center"
                          TextChanged="RgbTextBox_TextChanged"/>
             </Grid>
@@ -165,7 +165,7 @@
             
             <TextBlock Text="Hex:" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center"/>
             <TextBox Grid.Column="1" x:Name="HexValue" Text="#FFFFFF" Margin="8,0,16,0"
-                     Background="#FF3F3F46" Foreground="{StaticResource TextCol}" 
+                     Background="#FF35353C" Foreground="{StaticResource TextCol}" 
                      BorderThickness="0" Padding="8,4" VerticalAlignment="Center"
                      TextChanged="HexValue_TextChanged"/>
             

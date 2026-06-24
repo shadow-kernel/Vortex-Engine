@@ -13,7 +13,7 @@ xmlns:inspector="clr-namespace:Editor.Editors.WorldEditor.Components.Inspector"
 xmlns:historyLog="clr-namespace:Editor.Editors.WorldEditor.Components.HistoryLog"
 xmlns:assetBrowser="clr-namespace:Editor.Editors.WorldEditor.Components.AssetBrowser"
 xmlns:cameraPreview="clr-namespace:Editor.Editors.WorldEditor.Components.CameraPreview"
-mc:Ignorable="d" Background="#1E1E1E"
+mc:Ignorable="d" Background="#1A1A1C"
 d:DesignHeight="720" d:DesignWidth="1280">
 
     <UserControl.Resources>
@@ -49,7 +49,7 @@ d:DesignHeight="720" d:DesignWidth="1280">
         <!-- AvalonDock DockingManager -->
         <avalonDock:DockingManager x:Name="DockManager" Grid.Row="1"
                                    AllowMixedOrientation="True"
-                                   Background="#1E1E1E">
+                                   Background="#1A1A1C">
             
             <avalonDock:DockingManager.Resources>
                 <ResourceDictionary>
@@ -93,8 +93,8 @@ d:DesignHeight="720" d:DesignWidth="1280">
                                 </avalonDock:LayoutAnchorable>
                                 <avalonDock:LayoutAnchorable Title="Console" CanClose="False" CanFloat="True" 
                                                              CanAutoHide="True">
-                                    <Border Background="#252526">
-                                        <TextBlock Text="Console Output..." Foreground="#808080" 
+                                    <Border Background="#212124">
+                                        <TextBlock Text="Console Output..." Foreground="#9A9AA1" 
                                                    Margin="8" VerticalAlignment="Top"/>
                                     </Border>
                                 </avalonDock:LayoutAnchorable>

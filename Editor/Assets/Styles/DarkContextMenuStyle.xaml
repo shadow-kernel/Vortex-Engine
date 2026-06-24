@@ -2,12 +2,12 @@
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
     <!-- Dark Theme Colors -->
-    <Color x:Key="MenuBackgroundColor">#1E1E1E</Color>
-    <Color x:Key="MenuBorderColor">#454545</Color>
-    <Color x:Key="MenuForegroundColor">#E0E0E0</Color>
+    <Color x:Key="MenuBackgroundColor">#1A1A1C</Color>
+    <Color x:Key="MenuBorderColor">#3C3C43</Color>
+    <Color x:Key="MenuForegroundColor">#ECECF0</Color>
     <Color x:Key="MenuHighlightColor">#6C5CE7</Color>
-    <Color x:Key="MenuSeparatorColor">#454545</Color>
-    <Color x:Key="MenuDisabledColor">#656565</Color>
+    <Color x:Key="MenuSeparatorColor">#3C3C43</Color>
+    <Color x:Key="MenuDisabledColor">#6E6E76</Color>
 
     <SolidColorBrush x:Key="Menu.Static.Background" Color="{StaticResource MenuBackgroundColor}"/>
     <SolidColorBrush x:Key="Menu.Static.Border" Color="{StaticResource MenuBorderColor}"/>
@@ -104,7 +104,7 @@
                 <!-- Shortcut -->
                 <TextBlock x:Name="InputGestureText" Grid.Column="2"
                            Text="{TemplateBinding InputGestureText}"
-                           Foreground="#707070" FontSize="11"
+                           Foreground="#82828A" FontSize="11"
                            VerticalAlignment="Center" Margin="24,0,0,0"/>
             </Grid>
         </Border>
@@ -153,7 +153,7 @@
 
                 <!-- Arrow -->
                 <TextBlock Grid.Column="3" Text="&#xE76C;" FontFamily="Segoe MDL2 Assets" 
-                           FontSize="10" Foreground="#808080"
+                           FontSize="10" Foreground="#9A9AA1"
                            VerticalAlignment="Center" HorizontalAlignment="Right"/>
 
                 <!-- Submenu Popup -->

@@ -10,7 +10,7 @@
     <!-- MenuItem Style for Dark Theme -->
     <Style x:Key="DarkMenuItemStyle" TargetType="MenuItem">
         <Setter Property="Background" Value="Transparent"/>
-        <Setter Property="Foreground" Value="#C5C5C5"/>
+        <Setter Property="Foreground" Value="#E9E9ED"/>
         <Setter Property="Padding" Value="8,4"/>
         <Setter Property="Template">
             <Setter.Value>
@@ -28,15 +28,15 @@
                             <ContentPresenter Grid.Column="1" ContentSource="Header" 
                                               Margin="4,0,0,0" VerticalAlignment="Center"/>
                             <TextBlock Grid.Column="2" Text="{TemplateBinding InputGestureText}" 
-                                       Foreground="#606060" FontSize="10" VerticalAlignment="Center" Margin="20,0,0,0"/>
+                                       Foreground="#73737A" FontSize="10" VerticalAlignment="Center" Margin="20,0,0,0"/>
                         </Grid>
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsHighlighted" Value="True">
-                            <Setter TargetName="Border" Property="Background" Value="#3C3C3C"/>
+                            <Setter TargetName="Border" Property="Background" Value="#33333A"/>
                         </Trigger>
                         <Trigger Property="IsEnabled" Value="False">
-                            <Setter Property="Foreground" Value="#606060"/>
+                            <Setter Property="Foreground" Value="#73737A"/>
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
@@ -46,8 +46,8 @@
 
     <!-- Context Menu Style for Dark Theme -->
     <Style x:Key="DarkContextMenuStyle" TargetType="ContextMenu">
-        <Setter Property="Background" Value="#252526"/>
-        <Setter Property="BorderBrush" Value="#3C3C3C"/>
+        <Setter Property="Background" Value="#212124"/>
+        <Setter Property="BorderBrush" Value="#33333A"/>
         <Setter Property="BorderThickness" Value="1"/>
         <Setter Property="Padding" Value="0,4"/>
         <Setter Property="Template">
@@ -67,7 +67,7 @@
 
     <!-- Separator Style for Dark Theme -->
     <Style x:Key="DarkSeparatorStyle" TargetType="Separator">
-        <Setter Property="Background" Value="#3C3C3C"/>
+        <Setter Property="Background" Value="#33333A"/>
         <Setter Property="Height" Value="1"/>
         <Setter Property="Margin" Value="8,4"/>
     </Style>
@@ -87,7 +87,7 @@
         <Separator Style="{StaticResource DarkSeparatorStyle}"/>
         <MenuItem Header="Rename" Click="OnRenameClick" InputGestureText="F2" Style="{StaticResource DarkMenuItemStyle}">
             <MenuItem.Icon>
-                <TextBlock Text="&#xE8AC;" FontFamily="Segoe MDL2 Assets" Foreground="#808080" FontSize="12"/>
+                <TextBlock Text="&#xE8AC;" FontFamily="Segoe MDL2 Assets" Foreground="#9A9AA1" FontSize="12"/>
             </MenuItem.Icon>
         </MenuItem>
         <MenuItem Header="Delete" Click="OnDeleteClick" InputGestureText="Del" Style="{StaticResource DarkMenuItemStyle}">
@@ -104,7 +104,7 @@
     </ContextMenu>
 
     <Style x:Key="TreeViewItemStyle" TargetType="TreeViewItem">
-        <Setter Property="Foreground" Value="#C5C5C5"/>
+        <Setter Property="Foreground" Value="#E9E9ED"/>
         <Setter Property="FontSize" Value="12"/>
         <Setter Property="Padding" Value="4,2"/>
         <Setter Property="Background" Value="Transparent"/>
@@ -139,7 +139,7 @@
                                         <ControlTemplate TargetType="ToggleButton">
                                             <Border Background="Transparent" Padding="4">
                                                 <Path x:Name="Arrow" Data="M0,0 L4,4 L0,8 Z" 
-                                                      Fill="#606060" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                      Fill="#73737A" HorizontalAlignment="Center" VerticalAlignment="Center">
                                                     <Path.RenderTransform>
                                                         <RotateTransform Angle="0" CenterX="2" CenterY="4"/>
                                                     </Path.RenderTransform>
@@ -154,7 +154,7 @@
                                                     </Setter>
                                                 </Trigger>
                                                 <Trigger Property="IsMouseOver" Value="True">
-                                                    <Setter TargetName="Arrow" Property="Fill" Value="#C5C5C5"/>
+                                                    <Setter TargetName="Arrow" Property="Fill" Value="#E9E9ED"/>
                                                 </Trigger>
                                             </ControlTemplate.Triggers>
                                         </ControlTemplate>
@@ -166,7 +166,7 @@
                                            VerticalAlignment="Center" Visibility="Visible"/>
                                 <TextBox x:Name="RenameBox" Grid.Column="2" Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}"
                                          VerticalAlignment="Center" Visibility="Collapsed"
-                                         Background="#1E1E1E" Foreground="#C5C5C5" BorderBrush="#3FA9F5" 
+                                         Background="#1A1A1C" Foreground="#E9E9ED" BorderBrush="#3FA9F5" 
                                          BorderThickness="1" Padding="2,0"/>
                             </Grid>
                         </Border>
@@ -181,7 +181,7 @@
                             <Setter TargetName="Expander" Property="Visibility" Value="Hidden"/>
                         </DataTrigger>
                         <Trigger Property="IsSelected" Value="True">
-                            <Setter TargetName="Bd" Property="Background" Value="#37373D"/>
+                            <Setter TargetName="Bd" Property="Background" Value="#2C2C32"/>
                         </Trigger>
                         <MultiTrigger>
                             <MultiTrigger.Conditions>
@@ -205,7 +205,7 @@
     </Style>
 </UserControl.Resources>
 
-<Border Background="#252526">
+<Border Background="#212124">
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -213,13 +213,13 @@
         </Grid.RowDefinitions>
         
         <!-- Toolbar -->
-        <Border Grid.Row="0" Background="#1E1E1E" Padding="4">
+        <Border Grid.Row="0" Background="#1A1A1C" Padding="4">
             <StackPanel Orientation="Horizontal">
                 <Button x:Name="RefreshButton" Content="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="12"
-                        Background="Transparent" Foreground="#808080" BorderThickness="0" 
+                        Background="Transparent" Foreground="#9A9AA1" BorderThickness="0" 
                         Padding="4" Cursor="Hand" ToolTip="Refresh" Click="OnRefreshClick"/>
                 <Button x:Name="CollapseAllButton" Content="&#xE70E;" FontFamily="Segoe MDL2 Assets" FontSize="12"
-                        Background="Transparent" Foreground="#808080" BorderThickness="0" 
+                        Background="Transparent" Foreground="#9A9AA1" BorderThickness="0" 
                         Padding="4" Cursor="Hand" ToolTip="Collapse All" Click="OnCollapseAllClick"/>
             </StackPanel>
         </Border>
@@ -233,7 +233,7 @@
         
         <!-- Empty State -->
         <TextBlock x:Name="EmptyText" Grid.Row="1" Text="No project loaded" 
-                   Foreground="#606060" FontSize="11" 
+                   Foreground="#73737A" FontSize="11" 
                    HorizontalAlignment="Center" VerticalAlignment="Center"
                    Visibility="Collapsed"/>
     </Grid>

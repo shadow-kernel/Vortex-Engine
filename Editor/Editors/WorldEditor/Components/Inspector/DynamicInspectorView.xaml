@@ -9,16 +9,16 @@
 
     <UserControl.Resources>
         <Style x:Key="PropertyLabelStyle" TargetType="TextBlock">
-            <Setter Property="Foreground" Value="#808080"/>
+            <Setter Property="Foreground" Value="#9A9AA1"/>
             <Setter Property="FontSize" Value="11"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
             <Setter Property="Width" Value="70"/>
         </Style>
 
         <Style x:Key="PropertyTextBoxStyle" TargetType="TextBox">
-            <Setter Property="Background" Value="#1E1E1E"/>
-            <Setter Property="Foreground" Value="#C5C5C5"/>
-            <Setter Property="BorderBrush" Value="#3C3C3C"/>
+            <Setter Property="Background" Value="#1A1A1C"/>
+            <Setter Property="Foreground" Value="#E9E9ED"/>
+            <Setter Property="BorderBrush" Value="#33333A"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Padding" Value="6,3"/>
             <Setter Property="FontSize" Value="11"/>
@@ -74,7 +74,7 @@
         </Style>
     </UserControl.Resources>
 
-    <Border Background="#252526">
+    <Border Background="#212124">
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="*"/>
@@ -87,12 +87,12 @@
                     <!-- No Selection Message -->
                     <TextBlock x:Name="NoSelectionText" 
                                Text="Select an entity to view properties" 
-                               Foreground="#606060" 
+                               Foreground="#73737A" 
                                HorizontalAlignment="Center" 
                                Margin="0,20"/>
                     
                     <!-- Entity Header (hidden when no selection) -->
-                    <Border x:Name="EntityHeader" Background="#2D2D30" CornerRadius="4" Padding="8" 
+                    <Border x:Name="EntityHeader" Background="#28282C" CornerRadius="4" Padding="8" 
                             Margin="0,0,0,8" Visibility="Collapsed">
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -121,7 +121,7 @@
             </ScrollViewer>
 
             <!-- Add Component Button -->
-            <Border Grid.Row="1" Background="#1E1E1E" Padding="8">
+            <Border Grid.Row="1" Background="#1A1A1C" Padding="8">
                 <Button x:Name="AddComponentButton" Content="Add Component" 
                         Style="{StaticResource ComponentButtonStyle}" 
                         HorizontalAlignment="Stretch"

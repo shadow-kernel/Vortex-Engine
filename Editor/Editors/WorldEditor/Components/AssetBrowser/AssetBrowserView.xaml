@@ -5,12 +5,12 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              mc:Ignorable="d" 
              d:DesignHeight="300" d:DesignWidth="400"
-             Background="#FF252526">
+             Background="#FF212124">
     
     <UserControl.Resources>
         <Style x:Key="AssetItemStyle" TargetType="ListBoxItem">
             <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Foreground" Value="#FFC5C5C5"/>
+            <Setter Property="Foreground" Value="#FFE9E9ED"/>
             <Setter Property="Padding" Value="8,6"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -22,10 +22,10 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter Property="Background" Value="#FF3E3E42"/>
+                                <Setter Property="Background" Value="#FF33333A"/>
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Background" Value="#FF2D2D30"/>
+                                <Setter Property="Background" Value="#FF28282C"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -42,7 +42,7 @@
         </Grid.RowDefinitions>
         
         <!-- Header -->
-        <Border Grid.Row="0" Background="#FF2D2D30" Padding="10,8">
+        <Border Grid.Row="0" Background="#FF28282C" Padding="10,8">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -50,15 +50,15 @@
                 </Grid.ColumnDefinitions>
                 
                 <TextBlock Text="Asset Browser" FontSize="14" FontWeight="SemiBold" 
-                           Foreground="#FFC5C5C5" VerticalAlignment="Center"/>
+                           Foreground="#FFE9E9ED" VerticalAlignment="Center"/>
                 
                 <StackPanel Grid.Column="1" Orientation="Horizontal">
                     <Button x:Name="ImportButton" Content="&#xE8B5;" FontFamily="Segoe MDL2 Assets"
-                            Background="Transparent" BorderThickness="0" Foreground="#FF808080"
+                            Background="Transparent" BorderThickness="0" Foreground="#FF9A9AA1"
                             Padding="6" FontSize="14" ToolTip="Import Asset"
                             Click="ImportButton_Click" Margin="0,0,4,0"/>
                     <Button x:Name="RefreshButton" Content="&#xE72C;" FontFamily="Segoe MDL2 Assets"
-                            Background="Transparent" BorderThickness="0" Foreground="#FF808080"
+                            Background="Transparent" BorderThickness="0" Foreground="#FF9A9AA1"
                             Padding="6" FontSize="14" ToolTip="Refresh"
                             Click="RefreshButton_Click"/>
                 </StackPanel>
@@ -66,26 +66,26 @@
         </Border>
         
         <!-- Category Tabs -->
-        <Border Grid.Row="1" Background="#FF1E1E1E" Padding="5">
+        <Border Grid.Row="1" Background="#FF1A1A1C" Padding="5">
             <StackPanel Orientation="Horizontal">
                 <RadioButton x:Name="MeshesTab" Content="Meshes" GroupName="AssetType" 
                              IsChecked="True" Style="{StaticResource {x:Type ToggleButton}}"
-                             Background="#FF3E3E42" Foreground="#FFC5C5C5" 
+                             Background="#FF33333A" Foreground="#FFE9E9ED" 
                              Padding="12,6" Margin="2" BorderThickness="0"
                              Checked="AssetTypeTab_Checked"/>
                 <RadioButton x:Name="ModelsTab" Content="Models" GroupName="AssetType"
                              Style="{StaticResource {x:Type ToggleButton}}"
-                             Background="#FF3E3E42" Foreground="#FFC5C5C5" 
+                             Background="#FF33333A" Foreground="#FFE9E9ED" 
                              Padding="12,6" Margin="2" BorderThickness="0"
                              Checked="AssetTypeTab_Checked"/>
                 <RadioButton x:Name="TexturesTab" Content="Textures" GroupName="AssetType"
                              Style="{StaticResource {x:Type ToggleButton}}"
-                             Background="#FF3E3E42" Foreground="#FFC5C5C5" 
+                             Background="#FF33333A" Foreground="#FFE9E9ED" 
                              Padding="12,6" Margin="2" BorderThickness="0"
                              Checked="AssetTypeTab_Checked"/>
                 <RadioButton x:Name="MaterialsTab" Content="Materials" GroupName="AssetType"
                              Style="{StaticResource {x:Type ToggleButton}}"
-                             Background="#FF3E3E42" Foreground="#FFC5C5C5" 
+                             Background="#FF33333A" Foreground="#FFE9E9ED" 
                              Padding="12,6" Margin="2" BorderThickness="0"
                              Checked="AssetTypeTab_Checked"/>
             </StackPanel>
@@ -98,7 +98,7 @@
                  SelectionChanged="AssetList_SelectionChanged"
                  MouseDoubleClick="AssetList_MouseDoubleClick">
             <ListBox.ContextMenu>
-                <ContextMenu Background="#FF2D2D30" BorderBrush="#FF3E3E42">
+                <ContextMenu Background="#FF28282C" BorderBrush="#FF33333A">
                     <MenuItem Header="Add to Scene" Click="ContextMenu_AddToScene_Click">
                         <MenuItem.Icon>
                             <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" Foreground="#FF4EC9B0"/>
@@ -124,8 +124,8 @@
                                    FontSize="16" Foreground="{Binding IconColor}" 
                                    VerticalAlignment="Center" Margin="0,0,10,0"/>
                         <StackPanel>
-                            <TextBlock Text="{Binding Name}" FontSize="13" Foreground="#FFC5C5C5"/>
-                            <TextBlock Text="{Binding TypeName}" FontSize="10" Foreground="#FF808080"/>
+                            <TextBlock Text="{Binding Name}" FontSize="13" Foreground="#FFE9E9ED"/>
+                            <TextBlock Text="{Binding TypeName}" FontSize="10" Foreground="#FF9A9AA1"/>
                         </StackPanel>
                     </StackPanel>
                 </DataTemplate>
