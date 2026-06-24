@@ -115,7 +115,6 @@
     <Compile Include="Core\Services\CameraService.cs" />
     <Compile Include="Core\Services\EditorCameraController.cs" />
     <Compile Include="Core\Services\EditorViewportService.cs" />
-    <Compile Include="Core\Services\EntitySyncService.cs" />
     <Compile Include="Core\Services\InputBindingsService.cs" />
     <Compile Include="Core\Services\MaterialService.cs" />
     <Compile Include="Core\Services\MeshService.cs" />
@@ -158,17 +157,8 @@
     <Compile Include="Editors\WorldEditor\Components\AssetBrowser\AssetBrowserView.xaml.cs">
       <DependentUpon>AssetBrowserView.xaml</DependentUpon>
     </Compile>
-    <Compile Include="Editors\WorldEditor\Components\CameraPreview\CameraPreviewControl.xaml.cs">
-      <DependentUpon>CameraPreviewControl.xaml</DependentUpon>
-    </Compile>
     <Compile Include="Editors\WorldEditor\Components\CameraPreview\CameraPreviewOverlay.xaml.cs">
       <DependentUpon>CameraPreviewOverlay.xaml</DependentUpon>
-    </Compile>
-    <Compile Include="Editors\WorldEditor\Components\CameraViewport\CameraViewportPanel.xaml.cs">
-      <DependentUpon>CameraViewportPanel.xaml</DependentUpon>
-    </Compile>
-    <Compile Include="Editors\WorldEditor\Components\CameraViewport\InputSettingsDialog.xaml.cs">
-      <DependentUpon>InputSettingsDialog.xaml</DependentUpon>
     </Compile>
     <Compile Include="Editors\WorldEditor\Components\GamePreview\ViewportHost.cs" />
     <Compile Include="Editors\WorldEditor\Components\Inspector\LightInspector.xaml.cs">
@@ -210,16 +200,7 @@
     <Page Include="Editors\WorldEditor\Components\AssetBrowser\AssetBrowserView.xaml">
       <Generator>MSBuild:Compile</Generator>
     </Page>
-    <Page Include="Editors\WorldEditor\Components\CameraPreview\CameraPreviewControl.xaml">
-      <Generator>MSBuild:Compile</Generator>
-    </Page>
     <Page Include="Editors\WorldEditor\Components\CameraPreview\CameraPreviewOverlay.xaml">
-      <Generator>MSBuild:Compile</Generator>
-    </Page>
-    <Page Include="Editors\WorldEditor\Components\CameraViewport\CameraViewportPanel.xaml">
-      <Generator>MSBuild:Compile</Generator>
-    </Page>
-    <Page Include="Editors\WorldEditor\Components\CameraViewport\InputSettingsDialog.xaml">
       <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="Editors\WorldEditor\Components\FileExplorer\FileExplorerView.xaml">

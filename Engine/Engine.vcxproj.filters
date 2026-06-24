@@ -41,9 +41,7 @@
     <ClInclude Include="Input\InputTypes.h" />
     <ClInclude Include="Input\InputSystem.h" />
     <ClInclude Include="Components\Camera.h" />
-    <ClInclude Include="VortexAPI\CameraComponent.h" />
     <ClInclude Include="Graphics\DX12\DX12RenderTarget.h" />
-    <ClInclude Include="Graphics\DX12\DX12MultiViewportRenderer.h" />
     <ClInclude Include="Graphics\Importers\ImporterCapabilities.h" />
     <ClInclude Include="Graphics\Importers\ModelImporter.h" />
     <ClInclude Include="Graphics\Importers\TextureImporter.h" />
@@ -88,7 +86,6 @@
     <ClCompile Include="Input\InputSystem.cpp" />
     <ClCompile Include="Components\Camera.cpp" />
     <ClCompile Include="Graphics\DX12\DX12RenderTarget.cpp" />
-    <ClCompile Include="Graphics\DX12\DX12MultiViewportRenderer.cpp" />
     <ClCompile Include="Graphics\Importers\TextureImporter.cpp" />
     <ClCompile Include="Graphics\Importers\MeshSerializer.cpp" />
     <ClCompile Include="Graphics\Importers\MaterialSerializer.cpp" />
