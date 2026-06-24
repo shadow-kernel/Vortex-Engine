@@ -80,6 +80,10 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             
             // Use WPF CompositionTarget for rendering at 60 FPS (stable, no flicker)
             CompositionTarget.Rendering += OnCompositionTargetRendering;
+
+            // While the standalone game window is playing, suspend this viewport so two
+            // DX12 viewports don't fight over the single swapchain; reclaim it on Stop.
+            Editor.Core.Services.PlayModeService.Instance.StateChanged += OnPlayModeStateChanged;
         }
         
         // Flag to prevent camera jumping when refreshing camera list
@@ -96,6 +100,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         private void OnCompositionTargetRendering(object sender, EventArgs e)
         {
             if (!_isRendererInitialized || _cameraController == null) return;
+            if (Editor.Core.Services.PlayModeService.Instance.IsPlaying) return; // game window owns the viewport
 
             // Update camera
             var now = DateTime.Now;
@@ -619,6 +624,32 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         private void OnViewUnloaded(object sender, RoutedEventArgs e)
         {
             CompositionTarget.Rendering -= OnCompositionTargetRendering;
+        }
+
+        /// <summary>
+        /// When play stops, reclaim the DX12 viewport from the (closing) game window and
+        /// resume editor rendering. Deferred to the dispatcher so it runs after the game
+        /// window's ShutdownRender has completed in the same event cycle.
+        /// </summary>
+        private void OnPlayModeStateChanged(object sender, Editor.Core.Services.PlayState state)
+        {
+            // NOTE: the editor only suspends its render tick while playing (see the
+            // IsPlaying guard in OnCompositionTargetRendering). It deliberately does NOT
+            // ShutdownRender here â€” tearing the single global swapchain down/up at runtime
+            // currently destabilizes the game window. Rendering INTO the game window needs
+            // the direct-swapchain present path (roadmap Phase 3); until then the game
+            // window opens (editor freezes) but its viewport is not yet driven.
+            if (state != Editor.Core.Services.PlayState.Editing) return;
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (_host?.IsHandleValid == true)
+                {
+                    var width = (uint)Math.Max(1, _host.ActualWidth);
+                    var height = (uint)Math.Max(1, _host.ActualHeight);
+                    if (VortexAPI.InitRenderViewport(_host.Handle, width, height))
+                        _isRendererInitialized = true;
+                }
+            }), System.Windows.Threading.DispatcherPriority.Background);
         }
 
         #region Drag and Drop
@@ -1484,7 +1515,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                     infoBlock.Text = cameraEntity.Name;
                     if (detailsBlock != null)
                     {
-                        detailsBlock.Text = $"FOV: {camera.FieldOfView:F0}° | Pos: ({pos.X:F1}, {pos.Y:F1}, {pos.Z:F1})";
+                        detailsBlock.Text = $"FOV: {camera.FieldOfView:F0}ï¿½ | Pos: ({pos.X:F1}, {pos.Y:F1}, {pos.Z:F1})";
                     }
                 }
             }

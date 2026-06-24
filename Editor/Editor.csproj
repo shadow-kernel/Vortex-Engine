@@ -184,6 +184,10 @@
       <DependentUpon>TransformInspector.xaml</DependentUpon>
     </Compile>
     <Compile Include="Utilities\Utilities.cs" />
+    <Compile Include="Core\Services\PlayModeService.cs" />
+    <Compile Include="PlayMode\GameWindow.xaml.cs">
+      <DependentUpon>GameWindow.xaml</DependentUpon>
+    </Compile>
     <Page Include="Assets\Images\ImageResources.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
@@ -192,6 +196,9 @@
       <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="Assets\Styles\VortexTheme.xaml">
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="PlayMode\GameWindow.xaml">
       <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="Dialogs\ColorPickerDialog.xaml">

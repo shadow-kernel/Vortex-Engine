@@ -116,8 +116,8 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
         private void CloseProject_Click(object sender, RoutedEventArgs e)
         {
             var result = MessageBox.Show(
-                "Möchten Sie das aktuelle Projekt schließen?\n\nUngespeicherte Änderungen gehen verloren.",
-                "Projekt schließen",
+                "Mï¿½chten Sie das aktuelle Projekt schlieï¿½en?\n\nUngespeicherte ï¿½nderungen gehen verloren.",
+                "Projekt schlieï¿½en",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Question);
 
@@ -147,13 +147,13 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
         private void BuildAndRun_Click(object sender, RoutedEventArgs e)
         {
             // TODO: Implement build and run
-            MessageBox.Show("Projekt bauen und ausführen - Noch nicht implementiert", "Info", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show("Projekt bauen und ausfï¿½hren - Noch nicht implementiert", "Info", MessageBoxButton.OK, MessageBoxImage.Information);
         }
 
         private void Exit_Click(object sender, RoutedEventArgs e)
         {
             var result = MessageBox.Show(
-                "Möchten Sie den Editor wirklich beenden?\n\nUngespeicherte Änderungen gehen verloren.",
+                "Mï¿½chten Sie den Editor wirklich beenden?\n\nUngespeicherte ï¿½nderungen gehen verloren.",
                 "Editor beenden",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Question);
@@ -301,15 +301,15 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Konnte Dokumentation nicht öffnen: {ex.Message}", "Fehler", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show($"Konnte Dokumentation nicht ï¿½ffnen: {ex.Message}", "Fehler", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
         private void About_Click(object sender, RoutedEventArgs e)
         {
             MessageBox.Show(
-                "Vortex Engine\n\nVersion 1.0.0\n\n© 2024 Shadow Kernel",
-                "Über Vortex Engine",
+                "Vortex Engine\n\nVersion 1.0.0\n\nï¿½ 2024 Shadow Kernel",
+                "ï¿½ber Vortex Engine",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
         }
@@ -402,7 +402,7 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
             var entity = GetSelectedEntity();
             if (entity == null)
             {
-                MessageBox.Show("Bitte wählen Sie zuerst eine Entity aus.", "Hinweis", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show("Bitte wï¿½hlen Sie zuerst eine Entity aus.", "Hinweis", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
             entity.AddComponent(new Rigidbody(entity));
@@ -413,7 +413,7 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
             var entity = GetSelectedEntity();
             if (entity == null)
             {
-                MessageBox.Show("Bitte wählen Sie zuerst eine Entity aus.", "Hinweis", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show("Bitte wï¿½hlen Sie zuerst eine Entity aus.", "Hinweis", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
             entity.AddComponent(new BoxCollider(entity));
@@ -424,7 +424,7 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
             var entity = GetSelectedEntity();
             if (entity == null)
             {
-                MessageBox.Show("Bitte wählen Sie zuerst eine Entity aus.", "Hinweis", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show("Bitte wï¿½hlen Sie zuerst eine Entity aus.", "Hinweis", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
             entity.AddComponent(new SphereCollider(entity));
@@ -435,7 +435,7 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
             var entity = GetSelectedEntity();
             if (entity == null)
             {
-                MessageBox.Show("Bitte wählen Sie zuerst eine Entity aus.", "Hinweis", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show("Bitte wï¿½hlen Sie zuerst eine Entity aus.", "Hinweis", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
             entity.AddComponent(new CapsuleCollider(entity));
@@ -446,7 +446,7 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
             var entity = GetSelectedEntity();
             if (entity == null)
             {
-                MessageBox.Show("Bitte wählen Sie zuerst eine Entity aus.", "Hinweis", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show("Bitte wï¿½hlen Sie zuerst eine Entity aus.", "Hinweis", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
             entity.AddComponent(new MeshRenderer(entity));
@@ -457,7 +457,7 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
             var entity = GetSelectedEntity();
             if (entity == null)
             {
-                MessageBox.Show("Bitte wählen Sie zuerst eine Entity aus.", "Hinweis", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show("Bitte wï¿½hlen Sie zuerst eine Entity aus.", "Hinweis", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
             entity.AddComponent(new AudioSource(entity));
@@ -468,7 +468,7 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
             var entity = GetSelectedEntity();
             if (entity == null)
             {
-                MessageBox.Show("Bitte wählen Sie zuerst eine Entity aus.", "Hinweis", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show("Bitte wï¿½hlen Sie zuerst eine Entity aus.", "Hinweis", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
             entity.AddComponent(new Script(entity));
@@ -606,6 +606,10 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
 
             // Notify other components
             PlayModeChanged?.Invoke(this, new PlayModeEventArgs(true, false));
+
+            // Drive the single play-state owner and open the standalone game window.
+            Editor.Core.Services.PlayModeService.Instance.Play();
+            LaunchGameWindow();
         }
 
         private void PausePlayMode()
@@ -614,6 +618,7 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
             InputBindingsService.Instance.EnableGameInputForwarding = false;
             UpdatePlayModeButtons();
             PlayModeChanged?.Invoke(this, new PlayModeEventArgs(true, true));
+            Editor.Core.Services.PlayModeService.Instance.Pause();
         }
 
         private void ResumePlayMode()
@@ -622,6 +627,7 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
             InputBindingsService.Instance.EnableGameInputForwarding = true;
             UpdatePlayModeButtons();
             PlayModeChanged?.Invoke(this, new PlayModeEventArgs(true, false));
+            Editor.Core.Services.PlayModeService.Instance.Resume();
         }
 
         private void StopPlayMode()
@@ -634,6 +640,25 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
             
             UpdatePlayModeButtons();
             PlayModeChanged?.Invoke(this, new PlayModeEventArgs(false, false));
+            Editor.Core.Services.PlayModeService.Instance.Stop();
+        }
+
+        private Editor.PlayMode.GameWindow _gameWindow;
+
+        /// <summary>Opens the standalone game window and freezes the editor while it plays.</summary>
+        private void LaunchGameWindow()
+        {
+            if (_gameWindow != null) { _gameWindow.Activate(); return; }
+            if (Application.Current?.MainWindow != null)
+                Application.Current.MainWindow.IsEnabled = false; // freeze the editor
+            _gameWindow = new Editor.PlayMode.GameWindow();
+            _gameWindow.Closed += (s, e) =>
+            {
+                _gameWindow = null;
+                if (Application.Current?.MainWindow != null)
+                    Application.Current.MainWindow.IsEnabled = true; // unfreeze when the game window closes
+            };
+            _gameWindow.Show();
         }
 
         private void UpdatePlayModeButtons()
@@ -715,9 +740,9 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
                     
                     string detailedMessage = $"Asset Import Failed:\n\n{result.ErrorMessage}\n\n" +
                         "Common causes:\n" +
-                        "• FBX file was created with a newer version of FBX SDK\n" +
-                        "• File path contains special characters (ä, ö, ü, etc.)\n" +
-                        "• The model uses unsupported features\n\n" +
+                        "ï¿½ FBX file was created with a newer version of FBX SDK\n" +
+                        "ï¿½ File path contains special characters (ï¿½, ï¿½, ï¿½, etc.)\n" +
+                        "ï¿½ The model uses unsupported features\n\n" +
                         "Try exporting the model as OBJ or GLTF format.";
                     
                     MessageBox.Show(
