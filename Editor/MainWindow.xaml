@@ -1,16 +1,23 @@
-﻿<Window x:Class="Editor.MainWindow"
+<Window x:Class="Editor.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:Editor"
         xmlns:worldEditor="clr-namespace:Editor.Editors.WorldEditor"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         mc:Ignorable="d"
         Icon="{DynamicResource AppIcon}"
-        Title="World Editor - Vortex Engine" Height="450" Width="800"
-        WindowStartupLocation="CenterScreen" Background="#161618"
+        Title="Vortex Engine" Height="820" Width="1320"
+        MinHeight="540" MinWidth="960"
+        WindowStartupLocation="CenterScreen"
+        WindowStyle="None" Background="#161618"
         TextOptions.TextFormattingMode="Ideal" TextOptions.TextRenderingMode="ClearType"
         UseLayoutRounding="True">
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="48" ResizeBorderThickness="6"
+                            GlassFrameThickness="0" CornerRadius="0" UseAeroCaptionButtons="False"/>
+    </shell:WindowChrome.WindowChrome>
     <Grid>
         <worldEditor:WorldEditorView x:Name="WorldEditor"/>
     </Grid>

@@ -463,6 +463,20 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
             entity.AddComponent(new AudioSource(entity));
         }
 
+        private void WinClose_Click(object sender, RoutedEventArgs e) => Window.GetWindow(this)?.Close();
+
+        private void WinMin_Click(object sender, RoutedEventArgs e)
+        {
+            var w = Window.GetWindow(this);
+            if (w != null) w.WindowState = WindowState.Minimized;
+        }
+
+        private void WinMax_Click(object sender, RoutedEventArgs e)
+        {
+            var w = Window.GetWindow(this);
+            if (w != null) w.WindowState = w.WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+        }
+
         private void CreateScript_Click(object sender, RoutedEventArgs e)
         {
             if (ProjectData.Current == null)
