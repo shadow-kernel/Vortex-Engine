@@ -5,7 +5,7 @@
     <Color x:Key="MenuBackgroundColor">#1E1E1E</Color>
     <Color x:Key="MenuBorderColor">#454545</Color>
     <Color x:Key="MenuForegroundColor">#E0E0E0</Color>
-    <Color x:Key="MenuHighlightColor">#094771</Color>
+    <Color x:Key="MenuHighlightColor">#6C5CE7</Color>
     <Color x:Key="MenuSeparatorColor">#454545</Color>
     <Color x:Key="MenuDisabledColor">#656565</Color>
 

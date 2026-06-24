@@ -191,6 +191,9 @@
     <Page Include="Assets\Styles\DarkContextMenuStyle.xaml">
       <Generator>MSBuild:Compile</Generator>
     </Page>
+    <Page Include="Assets\Styles\VortexTheme.xaml">
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
     <Page Include="Dialogs\ColorPickerDialog.xaml">
       <Generator>MSBuild:Compile</Generator>
     </Page>

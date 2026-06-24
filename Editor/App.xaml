@@ -6,6 +6,7 @@ StartupUri="MainWindow.xaml">
     <Application.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="Assets/Styles/VortexTheme.xaml"/>
                 <ResourceDictionary Source="Assets/Images/ImageResources.xaml"/>
                 <ResourceDictionary Source="Assets/Styles/DarkContextMenuStyle.xaml"/>
             </ResourceDictionary.MergedDictionaries>
