@@ -72,12 +72,12 @@
     <ClInclude Include="VortexAPI\CameraComponent.h" />
     <ClInclude Include="VortexAPI\GameEntity.h" />
     <ClInclude Include="VortexAPI\TransformComponent.h" />
+    <ClInclude Include="Common\Id.h" />
+    <ClInclude Include="Components\Entity.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="Common\Id.h" />
     <ClCompile Include="Components\Camera.cpp" />
     <ClCompile Include="Components\Entity.cpp" />
-    <ClCompile Include="Components\Entity.h" />
     <ClCompile Include="Components\MeshRenderer.cpp" />
     <ClCompile Include="Components\Skybox.cpp" />
     <ClCompile Include="Components\Transform.cpp" />
