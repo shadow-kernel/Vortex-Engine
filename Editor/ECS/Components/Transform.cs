@@ -3,8 +3,8 @@ using System.Runtime.Serialization;
 namespace Editor.ECS.Components
 {
     /// <summary>
-    /// Transform-Komponente für Position, Rotation und Skalierung.
-    /// Dies ist ein reines Daten-Modell für den Editor.
+    /// Transform-Komponente fï¿½r Position, Rotation und Skalierung.
+    /// Dies ist ein reines Daten-Modell fï¿½r den Editor.
     /// Die eigentliche Engine-Logik wird in C++ implementiert.
     /// </summary>
     [DataContract(Name = "Transform", Namespace = "")]
@@ -27,17 +27,17 @@ namespace Editor.ECS.Components
         public Vector3 LocalPosition
         {
             get => _localPosition;
-            set => SetProperty(ref _localPosition, value, nameof(LocalPosition));
+            set { if (SetProperty(ref _localPosition, value, nameof(LocalPosition))) SyncToEngine(); }
         }
 
         /// <summary>
-        /// Lokale Rotation relativ zum Parent (Quaternion)
+        /// Lokale Rotation relativ zum Parent (Euler-Winkel in Grad)
         /// </summary>
         [DataMember(Name = "localRotation", Order = 11)]
         public Vector3 LocalRotation
         {
             get => _localRotation;
-            set => SetProperty(ref _localRotation, value, nameof(LocalRotation));
+            set { if (SetProperty(ref _localRotation, value, nameof(LocalRotation))) SyncToEngine(); }
         }
 
         /// <summary>
@@ -47,7 +47,7 @@ namespace Editor.ECS.Components
         public Vector3 LocalScale
         {
             get => _localScale;
-            set => SetProperty(ref _localScale, value, nameof(LocalScale));
+            set { if (SetProperty(ref _localScale, value, nameof(LocalScale))) SyncToEngine(); }
         }
 
         #endregion
@@ -55,13 +55,44 @@ namespace Editor.ECS.Components
         #region Editor Helper Properties
 
         /// <summary>
-        /// Lokale Rotation als Euler-Winkel (in Grad) - Für Inspector-Anzeige
+        /// Lokale Rotation als Euler-Winkel (in Grad) - Fï¿½r Inspector-Anzeige
         /// </summary>
         [IgnoreDataMember]
         public Vector3 LocalEulerAngles
         {
             get => _localRotation;
-            set => SetProperty(ref _localRotation, value, nameof(LocalEulerAngles));
+            set { if (SetProperty(ref _localRotation, value, nameof(LocalEulerAngles))) SyncToEngine(); }
+        }
+
+        #endregion
+
+        #region Engine Sync
+
+        /// <summary>
+        /// Pushes this transform to the engine-side entity so the engine transform stays
+        /// authoritative/live (single source of truth). No-op until the owning entity has been
+        /// created in the engine â€” the create path already seeds the transform, and every later
+        /// edit flows through here. This is the bridge gameplay/physics/networking will read from.
+        /// </summary>
+        internal void SyncToEngine()
+        {
+            var owner = Entity;
+            if (owner == null) return;
+
+            long engineId = owner.EntityId;
+            if (!Editor.Utilities.ID.IsValid(engineId)) return;
+
+            Editor.DllWrapper.VortexAPI.SetEntityTransform(engineId, _localPosition, _localRotation, _localScale);
+        }
+
+        /// <summary>
+        /// Sets local position for DISPLAY only â€” updates the value + notifies the inspector but does
+        /// NOT push back to the engine. Used during play, when the engine runtime (physics) owns the
+        /// transform and we mirror its result back without creating a write-back feedback loop.
+        /// </summary>
+        public void SetLocalPositionFromEngine(Vector3 position)
+        {
+            SetProperty(ref _localPosition, position, nameof(LocalPosition));
         }
 
         #endregion
@@ -76,8 +107,8 @@ namespace Editor.ECS.Components
         #region Editor Methods
 
         /// <summary>
-        /// Setzt Position, Rotation und Skalierung auf Standardwerte zurück.
-        /// Nur für Editor-Verwendung.
+        /// Setzt Position, Rotation und Skalierung auf Standardwerte zurï¿½ck.
+        /// Nur fï¿½r Editor-Verwendung.
         /// </summary>
         public void Reset()
         {

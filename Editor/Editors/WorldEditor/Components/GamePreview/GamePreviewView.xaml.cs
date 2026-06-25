@@ -84,6 +84,9 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             // While the standalone game window is playing, suspend this viewport so two
             // DX12 viewports don't fight over the single swapchain; reclaim it on Stop.
             Editor.Core.Services.PlayModeService.Instance.StateChanged += OnPlayModeStateChanged;
+
+            // Auto-frame newly created entities (Unity-style focus-on-create).
+            SelectionService.Instance.FocusRequested += OnFocusRequested;
         }
         
         // Flag to prevent camera jumping when refreshing camera list
@@ -100,7 +103,10 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         private void OnCompositionTargetRendering(object sender, EventArgs e)
         {
             if (!_isRendererInitialized || _cameraController == null) return;
-            if (Editor.Core.Services.PlayModeService.Instance.IsPlaying) return; // game window owns the viewport
+
+            // While playing, the game runs IN this viewport (rendered through the main camera). Only a
+            // true Paused state halts the simulation; we still render every frame either way.
+            bool playing = Editor.Core.Services.PlayModeService.Instance.State == Editor.Core.Services.PlayState.Playing;
 
             // Update camera
             var now = DateTime.Now;
@@ -126,6 +132,14 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             }
 
 
+
+            // Advance the running game one tick, then mirror the engine's (physics-updated) transforms
+            // back into the C# transforms so the viewport shows the live simulation.
+            if (playing)
+            {
+                VortexAPI.StepEngineRuntime(deltaTime);
+                ReadbackPhysics();
+            }
 
             // Submit scene data for rendering
             var sceneToRender = _currentScene ?? ProjectData.Current?.ActiveScene;
@@ -624,6 +638,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         private void OnViewUnloaded(object sender, RoutedEventArgs e)
         {
             CompositionTarget.Rendering -= OnCompositionTargetRendering;
+            SelectionService.Instance.FocusRequested -= OnFocusRequested;
         }
 
         /// <summary>
@@ -633,23 +648,79 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         /// </summary>
         private void OnPlayModeStateChanged(object sender, Editor.Core.Services.PlayState state)
         {
-            // NOTE: the editor only suspends its render tick while playing (see the
-            // IsPlaying guard in OnCompositionTargetRendering). It deliberately does NOT
-            // ShutdownRender here — tearing the single global swapchain down/up at runtime
-            // currently destabilizes the game window. Rendering INTO the game window needs
-            // the direct-swapchain present path (roadmap Phase 3); until then the game
-            // window opens (editor freezes) but its viewport is not yet driven.
-            if (state != Editor.Core.Services.PlayState.Editing) return;
-            Dispatcher.BeginInvoke(new Action(() =>
+            // Play now runs IN this viewport (it reuses the editor's own swapchain — no teardown/re-init
+            // and no second window). We only manage the play-simulation lifecycle here.
+            if (state == Editor.Core.Services.PlayState.Playing)
             {
-                if (_host?.IsHandleValid == true)
-                {
-                    var width = (uint)Math.Max(1, _host.ActualWidth);
-                    var height = (uint)Math.Max(1, _host.ActualHeight);
-                    if (VortexAPI.InitRenderViewport(_host.Handle, width, height))
-                        _isRendererInitialized = true;
-                }
-            }), System.Windows.Threading.DispatcherPriority.Background);
+                BeginPlaySimulation();
+                return;
+            }
+            if (state == Editor.Core.Services.PlayState.Paused) return; // keep state, just stop ticking
+
+            // Editing (Stopped): end the sim and restore the pre-play transforms (non-destructive play).
+            EndPlaySimulation();
+        }
+
+        // --- Play-mode physics simulation (engine-driven) ---
+        private bool _simActive;
+        private readonly System.Collections.Generic.List<(GameEntity ent, Vector3 start)> _physicsEntities
+            = new System.Collections.Generic.List<(GameEntity, Vector3)>();
+
+        /// <summary>On Play: register every Dynamic-Rigidbody entity with the engine physics tick and
+        /// snapshot its start position so Stop can restore it.</summary>
+        private void BeginPlaySimulation()
+        {
+            if (_simActive) return; // ignore Resume (Paused->Playing) so we don't re-snapshot mid-fall
+            _simActive = true;
+            _physicsEntities.Clear();
+            VortexAPI.ClearAllRigidbodies();
+            VortexAPI.ResetGameClock(); // start the game timer at 0 for this play session
+
+            var scene = _currentScene ?? ProjectData.Current?.ActiveScene;
+            if (scene?.Entities == null) return;
+            foreach (var e in scene.Entities) RegisterPhysicsRecursive(e);
+        }
+
+        private void RegisterPhysicsRecursive(GameEntity e)
+        {
+            if (e == null) return;
+            var rb = e.GetComponent<Editor.ECS.Components.Physics.Rigidbody>();
+            if (rb != null
+                && rb.BodyType == Editor.ECS.Components.Physics.RigidbodyType.Dynamic
+                && e.Transform != null
+                && Editor.Utilities.ID.IsValid(e.EntityId))
+            {
+                _physicsEntities.Add((e, e.Transform.LocalPosition));
+                VortexAPI.RegisterRigidbody(e.EntityId, rb.UseGravity);
+            }
+            if (e.Children != null)
+                foreach (var c in e.Children) RegisterPhysicsRecursive(c);
+        }
+
+        /// <summary>Each play frame: mirror the engine's physics-updated positions back to the C#
+        /// transforms (display only — no write-back to the engine).</summary>
+        private void ReadbackPhysics()
+        {
+            if (!_simActive) return;
+            for (int i = 0; i < _physicsEntities.Count; i++)
+            {
+                var ent = _physicsEntities[i].ent;
+                if (ent?.Transform == null || !Editor.Utilities.ID.IsValid(ent.EntityId)) continue;
+                ent.Transform.SetLocalPositionFromEngine(VortexAPI.ReadEntityPosition(ent.EntityId));
+            }
+        }
+
+        /// <summary>On Stop: clear the engine bodies and restore each entity's pre-play position.</summary>
+        private void EndPlaySimulation()
+        {
+            if (!_simActive) return;
+            _simActive = false;
+            VortexAPI.ClearAllRigidbodies();
+            foreach (var (ent, start) in _physicsEntities)
+            {
+                if (ent?.Transform != null) ent.Transform.LocalPosition = start; // restores + re-syncs to engine
+            }
+            _physicsEntities.Clear();
         }
 
         #region Drag and Drop
@@ -723,7 +794,13 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                 int drawCalls = VortexAPI.DrawCalls;
                 int vertices = VortexAPI.VertexCount;
                 
-                StatusText.Text = $"FPS: {fps} | Draw Calls: {drawCalls} | Vertices: {vertices}";
+                string status = $"FPS: {fps} | Draw Calls: {drawCalls} | Vertices: {vertices}";
+                if (Editor.Core.Services.PlayModeService.Instance.IsPlaying)
+                {
+                    float t = VortexAPI.GameTime();
+                    status += $"  |  ▶ {((int)t) / 60:00}:{((int)t) % 60:00}";
+                }
+                StatusText.Text = status;
             }
             
             if (ResolutionText != null && _host != null)
@@ -841,6 +918,21 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             if (selectedEntity?.Transform != null)
             {
                 var pos = selectedEntity.Transform.LocalPosition;
+                _cameraController?.FocusOn(pos.X, pos.Y, pos.Z, 8.0f);
+            }
+        }
+
+        /// <summary>
+        /// Frame a just-created entity so it fills the view (Unity-style focus-on-create).
+        /// Only moves the editor fly camera, never the game camera.
+        /// </summary>
+        private void OnFocusRequested(object sender, SelectionEventArgs e)
+        {
+            if (_isViewingThroughGameCamera) return;
+            var t = e.SelectedEntity?.Transform;
+            if (t != null)
+            {
+                var pos = t.LocalPosition;
                 _cameraController?.FocusOn(pos.X, pos.Y, pos.Z, 8.0f);
             }
         }
@@ -2236,12 +2328,18 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         private void UpdateActiveViewportIndicators()
         {
             var activeBorderColor = new SolidColorBrush(Color.FromRgb(63, 169, 245)); // Blue
-            var inactiveBorderColor = new SolidColorBrush(Color.FromRgb(64, 64, 64)); // Gray
-            
+            var inactiveBorderColor = new SolidColorBrush(Color.FromRgb(54, 54, 64)); // subtle #363640
+
+            // In single-viewport mode there is only one view, so a bright active frame is
+            // pointless clutter — keep the subtle dark border for a clean look. The blue
+            // active indicator is only meaningful when multiple viewports are visible.
+            bool multi = _currentLayout != ViewportLayout.Single;
+
             if (MainViewportPanel != null)
             {
-                MainViewportPanel.BorderBrush = _activeViewportIndex == 0 ? activeBorderColor : inactiveBorderColor;
-                MainViewportPanel.BorderThickness = _activeViewportIndex == 0 ? new Thickness(2) : new Thickness(1);
+                bool active = multi && _activeViewportIndex == 0;
+                MainViewportPanel.BorderBrush = active ? activeBorderColor : inactiveBorderColor;
+                MainViewportPanel.BorderThickness = new Thickness(1);
             }
             if (SecondaryViewportPanel != null)
             {

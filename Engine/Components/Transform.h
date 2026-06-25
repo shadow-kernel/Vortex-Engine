@@ -13,5 +13,9 @@ namespace vortex::transform {
 
 	component create_transform(const init_info& transform_init_info, game_entity::entity entity);
 
+	// Update an existing entity's transform in place. Makes the engine-side transform live and
+	// authoritative (the editor previously only mutated its C# copy, leaving this one stale).
+	void set_transform(game_entity::entity entity, const init_info& transform_init_info);
+
 	void remove_transform(component component);
 }

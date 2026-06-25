@@ -13,6 +13,7 @@ xmlns:inspector="clr-namespace:Editor.Editors.WorldEditor.Components.Inspector"
 xmlns:historyLog="clr-namespace:Editor.Editors.WorldEditor.Components.HistoryLog"
 xmlns:assetBrowser="clr-namespace:Editor.Editors.WorldEditor.Components.AssetBrowser"
 xmlns:cameraPreview="clr-namespace:Editor.Editors.WorldEditor.Components.CameraPreview"
+xmlns:themes="clr-namespace:Editor.Editors.WorldEditor.Themes"
 mc:Ignorable="d" Background="#1A1A1C"
 d:DesignHeight="720" d:DesignWidth="1280">
 
@@ -37,8 +38,10 @@ d:DesignHeight="720" d:DesignWidth="1280">
 
     <Grid>
         <Grid.RowDefinitions>
-            <!-- Header Bar (Fixed) -->
-            <RowDefinition Height="60"/>
+            <!-- Header Bar (Fixed) — Auto so the slot always tracks HeaderBarView's real
+                 content height (currently 48 menu + 32 toolbar = 80px). Hard-coding a number
+                 here previously caused the toolbar row to be clipped behind the viewport. -->
+            <RowDefinition Height="Auto"/>
             <!-- Dockable Content -->
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
@@ -51,79 +54,58 @@ d:DesignHeight="720" d:DesignWidth="1280">
                                    AllowMixedOrientation="True"
                                    Background="#1A1A1C">
             
-            <avalonDock:DockingManager.Resources>
-                <ResourceDictionary>
-                    <ResourceDictionary.MergedDictionaries>
-                        <ResourceDictionary Source="Themes/DarkDockTheme.xaml"/>
-                    </ResourceDictionary.MergedDictionaries>
-                </ResourceDictionary>
-            </avalonDock:DockingManager.Resources>
-            
+            <!-- Use our dark dictionary as AvalonDock's BASE theme so un-templated dock
+                 controls (document-pane border, auto-hide flyout, drag overlay) fall back
+                 to dark instead of the white GenericTheme. Replaces the old Resources merge. -->
+            <avalonDock:DockingManager.Theme>
+                <themes:DarkAvalonTheme/>
+            </avalonDock:DockingManager.Theme>
+
             <avalonDock:LayoutRoot>
-                <!-- Main Horizontal Layout -->
+                <!-- 1:1 Aurora layout: [Scene + File System] | [Viewport + Project/Console] | [Inspector] -->
                 <avalonDock:LayoutPanel Orientation="Horizontal">
-                    
-                    <!-- Left/Center Area -->
-                    <avalonDock:LayoutPanel Orientation="Vertical" DockWidth="*">
-                        
-                        <!-- Document Area (Game Preview) -->
-                        <avalonDock:LayoutDocumentPane DockHeight="*">
-                            <avalonDock:LayoutDocument Title="Scene" CanClose="False" CanFloat="True">
-                                <gamePreview:GamePreviewView/>
-                            </avalonDock:LayoutDocument>
-                        </avalonDock:LayoutDocumentPane>
-                        
-                        <!-- Bottom Panel: File Explorer & Asset Browser -->
-                        <avalonDock:LayoutAnchorablePaneGroup Orientation="Horizontal" DockHeight="200">
-                            <avalonDock:LayoutAnchorablePane DockWidth="200">
-                                <avalonDock:LayoutAnchorable Title="Project" CanClose="False" CanFloat="True" 
-                                                             CanAutoHide="True" AutoHideWidth="200">
-                                    <fileExplorer:FileTreeView/>
-                                </avalonDock:LayoutAnchorable>
-                            </avalonDock:LayoutAnchorablePane>
-                            
-                            <avalonDock:LayoutAnchorablePane DockWidth="*">
-                                <avalonDock:LayoutAnchorable Title="Explorer" CanClose="False" CanFloat="True" 
-                                                             CanAutoHide="True">
-                                    <fileExplorer:FileExplorerView/>
-                                </avalonDock:LayoutAnchorable>
-                                <avalonDock:LayoutAnchorable Title="Assets" CanClose="False" CanFloat="True" 
-                                                             CanAutoHide="True">
-                                    <assetBrowser:AssetBrowserView x:Name="AssetBrowser"/>
-                                </avalonDock:LayoutAnchorable>
-                                <avalonDock:LayoutAnchorable Title="Console" CanClose="False" CanFloat="True" 
-                                                             CanAutoHide="True">
-                                    <Border Background="#212124">
-                                        <TextBlock Text="Console Output..." Foreground="#9A9AA1" 
-                                                   Margin="8" VerticalAlignment="Top"/>
-                                    </Border>
-                                </avalonDock:LayoutAnchorable>
-                            </avalonDock:LayoutAnchorablePane>
-                        </avalonDock:LayoutAnchorablePaneGroup>
-                        
-                    </avalonDock:LayoutPanel>
-                    
-                    <!-- Right Panel: Hierarchy + Inspector + History -->
-                    <avalonDock:LayoutAnchorablePaneGroup Orientation="Vertical" DockWidth="280">
-                        <avalonDock:LayoutAnchorablePane DockHeight="*">
-                            <avalonDock:LayoutAnchorable Title="Hierarchy" CanClose="False" CanFloat="True" 
-                                                         CanAutoHide="True" AutoHideWidth="280">
+
+                    <!-- LEFT: Scene (hierarchy) on top, File System below -->
+                    <avalonDock:LayoutAnchorablePaneGroup Orientation="Vertical" DockWidth="230">
+                        <avalonDock:LayoutAnchorablePane DockHeight="3*">
+                            <avalonDock:LayoutAnchorable Title="Scene" CanClose="False" CanFloat="False" CanAutoHide="False">
                                 <sceneHierarchy:SceneHierarchyView/>
                             </avalonDock:LayoutAnchorable>
                         </avalonDock:LayoutAnchorablePane>
-                        
-                        <avalonDock:LayoutAnchorablePane DockHeight="*">
-                            <avalonDock:LayoutAnchorable Title="Inspector" CanClose="False" CanFloat="True" 
-                                                         CanAutoHide="True" AutoHideWidth="280">
-                                <inspector:DynamicInspectorView/>
-                            </avalonDock:LayoutAnchorable>
-                            <avalonDock:LayoutAnchorable Title="History" CanClose="False" CanFloat="True" 
-                                                         CanAutoHide="True" AutoHideWidth="280">
-                                <historyLog:HistoryLogView/>
+                        <avalonDock:LayoutAnchorablePane DockHeight="2*">
+                            <avalonDock:LayoutAnchorable Title="File System" CanClose="False" CanFloat="False" CanAutoHide="False">
+                                <fileExplorer:FileTreeView/>
                             </avalonDock:LayoutAnchorable>
                         </avalonDock:LayoutAnchorablePane>
                     </avalonDock:LayoutAnchorablePaneGroup>
-                    
+
+                    <!-- CENTER: Viewport on top, Project/Console below -->
+                    <avalonDock:LayoutPanel Orientation="Vertical" DockWidth="*">
+                        <avalonDock:LayoutDocumentPane DockHeight="*">
+                            <avalonDock:LayoutDocument Title="Scene" CanClose="False" CanFloat="False">
+                                <gamePreview:GamePreviewView/>
+                            </avalonDock:LayoutDocument>
+                        </avalonDock:LayoutDocumentPane>
+                        <avalonDock:LayoutAnchorablePane DockHeight="360">
+                            <avalonDock:LayoutAnchorable Title="Project" CanClose="False" CanFloat="False" CanAutoHide="False">
+                                <assetBrowser:AssetBrowserView x:Name="AssetBrowser"/>
+                            </avalonDock:LayoutAnchorable>
+                            <avalonDock:LayoutAnchorable Title="Console" CanClose="False" CanFloat="False" CanAutoHide="False">
+                                <Border Background="#212124">
+                                    <TextBlock Text="Console Output..." Foreground="#9A9AA1"
+                                               Margin="14,10" VerticalAlignment="Top"/>
+                                </Border>
+                            </avalonDock:LayoutAnchorable>
+                        </avalonDock:LayoutAnchorablePane>
+                    </avalonDock:LayoutPanel>
+
+                    <!-- RIGHT: Inspector (full height) -->
+                    <avalonDock:LayoutAnchorablePane DockWidth="330">
+                        <avalonDock:LayoutAnchorable Title="Inspector" CanClose="False" CanFloat="False" CanAutoHide="False">
+                            <inspector:DynamicInspectorView/>
+                        </avalonDock:LayoutAnchorable>
+                    </avalonDock:LayoutAnchorablePane>
+
                 </avalonDock:LayoutPanel>
             </avalonDock:LayoutRoot>
         </avalonDock:DockingManager>
@@ -136,5 +118,11 @@ d:DesignHeight="720" d:DesignWidth="1280">
                StaysOpen="True">
             <cameraPreview:CameraPreviewOverlay x:Name="CameraPreviewOverlay"/>
         </Popup>
+
+        <!-- Edge masks: cover the thin light hairline AvalonDock/DWM leaves at the very
+             left/right window border in the dock region (maximized, borderless). Dark-on-dark
+             so invisible; IsHitTestVisible=False so they never block viewport/panel input. -->
+        <Rectangle Grid.Row="1" Width="3" HorizontalAlignment="Left" Fill="#1A1A1C" IsHitTestVisible="False"/>
+        <Rectangle Grid.Row="1" Width="2" HorizontalAlignment="Right" Fill="#1A1A1C" IsHitTestVisible="False"/>
     </Grid>
 </UserControl>

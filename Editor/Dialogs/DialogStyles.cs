@@ -1,26 +1,30 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
 using System.Windows.Media;
 
 namespace Editor.Dialogs
 {
     /// <summary>
     /// Provides dark theme styles for dialog controls.
-    /// Use these methods to create consistently styled controls.
+    /// Colors mirror the Vortex design system (Assets/Styles/VortexTheme.xaml) so dialogs are
+    /// on-brand with the shell: near-black surfaces + indigo accent (NOT the old VS-Code blue).
     /// </summary>
     public static class DialogStyles
     {
-        // Colors
-        public static readonly Color BackgroundColor = Color.FromRgb(30, 30, 30);
-        public static readonly Color PanelColor = Color.FromRgb(37, 37, 38);
-        public static readonly Color BorderColor = Color.FromRgb(60, 60, 60);
-        public static readonly Color TextColor = Color.FromRgb(241, 241, 241);
-        public static readonly Color TextSecondaryColor = Color.FromRgb(157, 157, 157);
-        public static readonly Color AccentColor = Color.FromRgb(0, 120, 212);
-        public static readonly Color ButtonColor = Color.FromRgb(63, 63, 70);
-        public static readonly Color ButtonHoverColor = Color.FromRgb(80, 80, 85);
-        public static readonly Color DropdownBackgroundColor = Color.FromRgb(45, 45, 48);
-        public static readonly Color DropdownItemHoverColor = Color.FromRgb(62, 62, 64);
+        // Colors — Vortex design tokens
+        public static readonly Color BackgroundColor = Color.FromRgb(22, 22, 24);   // Vortex.Bg #161618
+        public static readonly Color PanelColor = Color.FromRgb(32, 32, 35);        // Vortex.Surface #202023
+        public static readonly Color PanelAltColor = Color.FromRgb(42, 42, 46);     // Vortex.SurfaceAlt #2A2A2E
+        public static readonly Color BorderColor = Color.FromRgb(58, 58, 62);       // Vortex.Border #3A3A3E
+        public static readonly Color TextColor = Color.FromRgb(245, 245, 247);      // Vortex.Text #F5F5F7
+        public static readonly Color TextSecondaryColor = Color.FromRgb(152, 152, 159); // Vortex.TextDim #98989F
+        public static readonly Color AccentColor = Color.FromRgb(108, 92, 231);     // Vortex.Accent #6C5CE7
+        public static readonly Color AccentHoverColor = Color.FromRgb(126, 112, 238); // Vortex.AccentHover #7E70EE
+        public static readonly Color ButtonColor = Color.FromRgb(42, 42, 46);       // surface-alt
+        public static readonly Color ButtonHoverColor = Color.FromRgb(50, 50, 55);  // Vortex.SurfaceHover #323237
+        public static readonly Color DropdownBackgroundColor = Color.FromRgb(32, 32, 35);
+        public static readonly Color DropdownItemHoverColor = Color.FromRgb(50, 50, 55);
 
         // Brushes
         public static SolidColorBrush BackgroundBrush => new SolidColorBrush(BackgroundColor);
@@ -29,6 +33,7 @@ namespace Editor.Dialogs
         public static SolidColorBrush TextBrush => new SolidColorBrush(TextColor);
         public static SolidColorBrush TextSecondaryBrush => new SolidColorBrush(TextSecondaryColor);
         public static SolidColorBrush AccentBrush => new SolidColorBrush(AccentColor);
+        public static SolidColorBrush AccentHoverBrush => new SolidColorBrush(AccentHoverColor);
         public static SolidColorBrush ButtonBrush => new SolidColorBrush(ButtonColor);
         public static SolidColorBrush DropdownBackgroundBrush => new SolidColorBrush(DropdownBackgroundColor);
 
@@ -91,7 +96,8 @@ namespace Editor.Dialogs
         }
 
         /// <summary>
-        /// Creates a dark-themed Button.
+        /// Creates a rounded "pill" button on the Vortex palette — indigo accent for primary,
+        /// surface-alt for secondary, with a hover state. Replaces the old flat default-chrome look.
         /// </summary>
         public static Button CreateButton(string text, double width = double.NaN, bool isPrimary = false)
         {
@@ -102,9 +108,40 @@ namespace Editor.Dialogs
                 Background = isPrimary ? AccentBrush : ButtonBrush,
                 Foreground = TextBrush,
                 BorderThickness = new Thickness(0),
-                Padding = new Thickness(12, 6, 12, 6),
-                Cursor = System.Windows.Input.Cursors.Hand
+                Padding = new Thickness(14, 7, 14, 7),
+                FontWeight = isPrimary ? FontWeights.SemiBold : FontWeights.Normal,
+                Cursor = System.Windows.Input.Cursors.Hand,
+                Template = CreateRoundedButtonTemplate(isPrimary)
             };
+        }
+
+        /// <summary>
+        /// Rounded button template (Vortex.Radius = 8) with a mouse-over highlight.
+        /// </summary>
+        private static ControlTemplate CreateRoundedButtonTemplate(bool isPrimary)
+        {
+            var template = new ControlTemplate(typeof(Button));
+
+            var border = new FrameworkElementFactory(typeof(Border), "bd");
+            border.SetValue(Border.CornerRadiusProperty, new CornerRadius(8));
+            border.SetBinding(Border.BackgroundProperty,
+                new Binding("Background") { RelativeSource = RelativeSource.TemplatedParent });
+            border.SetBinding(Border.PaddingProperty,
+                new Binding("Padding") { RelativeSource = RelativeSource.TemplatedParent });
+
+            var content = new FrameworkElementFactory(typeof(ContentPresenter));
+            content.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+            content.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
+            border.AppendChild(content);
+
+            template.VisualTree = border;
+
+            var hover = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
+            hover.Setters.Add(new Setter(Border.BackgroundProperty,
+                isPrimary ? AccentHoverBrush : new SolidColorBrush(ButtonHoverColor), "bd"));
+            template.Triggers.Add(hover);
+
+            return template;
         }
 
         /// <summary>

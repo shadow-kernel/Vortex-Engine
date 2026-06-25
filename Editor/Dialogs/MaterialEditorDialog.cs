@@ -33,6 +33,11 @@ namespace Editor.Dialogs
         private CheckBox _twoSidedCheck, _receiveShadowsCheck, _castShadowsCheck;
         private TextBlock _statusText;
 
+        // Live preview (sphere rendered with the current material)
+        private Image _previewImage;
+        private bool _previewReady;
+        private System.Windows.Threading.DispatcherTimer _previewTimer;
+
         // Texture paths and previews
         private string _albedoPath, _normalPath, _metallicPath, _roughnessPath, _aoPath;
         private Border _albedoPreview, _normalPreview, _metallicPreviewBorder, _roughnessPreview, _aoPreview;
@@ -43,6 +48,7 @@ namespace Editor.Dialogs
             _material = new VortexMaterial();
             InitializeWindow();
             BuildUI();
+            Loaded += (s, e) => { _previewReady = true; RefreshPreview(); };
         }
 
         public MaterialEditorDialog(string materialPath) : this()
@@ -59,7 +65,7 @@ namespace Editor.Dialogs
             Width = 900;
             Height = 700;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
-            Background = new SolidColorBrush(Color.FromRgb(30, 30, 30));
+            Background = new SolidColorBrush(Color.FromRgb(22, 22, 24));
             ResizeMode = ResizeMode.CanResize;
             MinWidth = 700;
             MinHeight = 500;
@@ -95,6 +101,21 @@ namespace Editor.Dialogs
 
             var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
             var stack = new StackPanel { Margin = new Thickness(15) };
+
+            // Live material preview (sphere rendered with the current material)
+            var previewBorder = new Border
+            {
+                Height = 200,
+                CornerRadius = new CornerRadius(8),
+                Background = new SolidColorBrush(Color.FromRgb(16, 16, 18)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(58, 58, 62)),
+                BorderThickness = new Thickness(1),
+                Margin = new Thickness(0, 0, 0, 14),
+                ClipToBounds = true
+            };
+            _previewImage = new Image { Stretch = Stretch.Uniform };
+            previewBorder.Child = _previewImage;
+            stack.Children.Add(previewBorder);
 
             // Header
             stack.Children.Add(new TextBlock
@@ -491,6 +512,51 @@ namespace Editor.Dialogs
         {
             _isDirty = true;
             if (!Title.EndsWith("*")) Title += "*";
+            SchedulePreviewRefresh();
+        }
+
+        /// <summary>
+        /// Debounced live-preview refresh so dragging a slider doesn't trigger an offscreen render
+        /// on every tick.
+        /// </summary>
+        private void SchedulePreviewRefresh()
+        {
+            if (!_previewReady) return;
+            if (_previewTimer == null)
+            {
+                _previewTimer = new System.Windows.Threading.DispatcherTimer
+                {
+                    Interval = TimeSpan.FromMilliseconds(150)
+                };
+                _previewTimer.Tick += (s, e) => { _previewTimer.Stop(); RefreshPreview(); };
+            }
+            _previewTimer.Stop();
+            _previewTimer.Start();
+        }
+
+        /// <summary>
+        /// Builds a throwaway engine material from the current UI state, renders a sphere with it, and
+        /// shows the result. The temp material is deleted immediately (caller-owned, not cached).
+        /// </summary>
+        private void RefreshPreview()
+        {
+            if (!_previewReady || _previewImage == null) return;
+            long mat = -1;
+            try
+            {
+                var vmat = GetMaterialFromUI();
+                if (!string.IsNullOrEmpty(_materialPath))
+                    vmat.ResolvePathsAbsolute(Path.GetDirectoryName(_materialPath));
+
+                mat = Core.Services.MaterialService.Instance.BuildEngineMaterial(vmat);
+                if (mat >= 0)
+                {
+                    var img = Core.Services.Rendering.AssetPreviewRenderer.RenderMaterialSphere(mat, 256);
+                    if (img != null) _previewImage.Source = img;
+                }
+            }
+            catch { }
+            finally { if (mat >= 0) { try { VortexAPI.DeleteMaterial(mat); } catch { } } }
         }
 
         private void LoadMaterial(string path)
@@ -523,6 +589,8 @@ namespace Editor.Dialogs
             _twoSidedCheck.IsChecked = _material.TwoSided;
             _castShadowsCheck.IsChecked = _material.CastShadows;
             _receiveShadowsCheck.IsChecked = _material.ReceiveShadows;
+            SelectComboText(_shaderTypeCombo, _material.ShaderType);
+            SelectComboText(_renderModeCombo, _material.BlendMode);
 
             SetTexturePreview(_material.AlbedoTexture, _albedoPreview, _albedoPathText);
             _albedoPath = _material.AlbedoTexture;
@@ -555,13 +623,38 @@ namespace Editor.Dialogs
                 TwoSided = _twoSidedCheck.IsChecked == true,
                 CastShadows = _castShadowsCheck.IsChecked == true,
                 ReceiveShadows = _receiveShadowsCheck.IsChecked == true,
-                BlendMode = _shaderTypeCombo.SelectedItem?.ToString() ?? "Opaque"
+                // ShaderType drives the engine's lit/unlit decision (MaterialService); RenderMode is the
+                // blend mode. Both combos hold ComboBoxItems, so read .Content, not ToString() (which
+                // would yield "System.Windows.Controls.ComboBoxItem").
+                ShaderType = GetComboText(_shaderTypeCombo, "Standard PBR"),
+                BlendMode = GetComboText(_renderModeCombo, "Opaque")
             };
 
             if (_baseColorPreview.Background is SolidColorBrush brush)
                 mat.SetBaseColor(brush.Color);
 
             return mat;
+        }
+
+        private static string GetComboText(ComboBox combo, string fallback)
+        {
+            if (combo?.SelectedItem is ComboBoxItem item && item.Content != null)
+                return item.Content.ToString();
+            return combo?.SelectedItem?.ToString() ?? fallback;
+        }
+
+        private static void SelectComboText(ComboBox combo, string text)
+        {
+            if (combo == null || string.IsNullOrEmpty(text)) return;
+            foreach (var obj in combo.Items)
+            {
+                if (obj is ComboBoxItem item &&
+                    string.Equals(item.Content?.ToString(), text, StringComparison.OrdinalIgnoreCase))
+                {
+                    combo.SelectedItem = item;
+                    return;
+                }
+            }
         }
 
         private void PickBaseColor_Click(object sender, RoutedEventArgs e)
@@ -588,6 +681,9 @@ namespace Editor.Dialogs
                     var directory = Path.GetDirectoryName(_materialPath);
                     _material.ResolvePathsRelative(directory);
                     _material.Save(_materialPath);
+                    // Drop the cached engine material so the viewport rebuilds it with the new
+                    // values on the next frame (edit -> render round-trip).
+                    Editor.Core.Services.MaterialService.Instance.InvalidateVortexMaterial(_materialPath);
                     _isDirty = false;
                     Title = $"Material Editor - {_material.Name}";
                     _statusText.Text = "Material saved.";
@@ -622,6 +718,7 @@ namespace Editor.Dialogs
                     var directory = Path.GetDirectoryName(_materialPath);
                     _material.ResolvePathsRelative(directory);
                     _material.Save(_materialPath);
+                    Editor.Core.Services.MaterialService.Instance.InvalidateVortexMaterial(_materialPath);
                     _isDirty = false;
                     Title = $"Material Editor - {_material.Name}";
                     _statusText.Text = $"Saved: {Path.GetFileName(_materialPath)}";

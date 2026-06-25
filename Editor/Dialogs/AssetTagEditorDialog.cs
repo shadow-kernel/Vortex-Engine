@@ -43,7 +43,7 @@ namespace Editor.Dialogs
             Width = 450;
             Height = 420;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
-            Background = new SolidColorBrush(Color.FromRgb(30, 30, 30));
+            Background = new SolidColorBrush(Color.FromRgb(22, 22, 24));
             ResizeMode = ResizeMode.NoResize;
             
             BuildUI(assetName);
@@ -127,9 +127,9 @@ namespace Editor.Dialogs
                 Content = "Add",
                 Width = 60,
                 Margin = new Thickness(8, 0, 0, 0),
-                Background = new SolidColorBrush(Color.FromRgb(0, 120, 212)),
+                Background = new SolidColorBrush(Color.FromRgb(108, 92, 231)),
                 Foreground = Brushes.White,
-                BorderBrush = new SolidColorBrush(Color.FromRgb(0, 120, 212)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(108, 92, 231)),
                 Padding = new Thickness(0, 6, 0, 6)
             };
             addButton.Click += (s, e) => AddTagFromTextBox();
@@ -192,9 +192,9 @@ namespace Editor.Dialogs
                 Content = "Save",
                 Width = 80,
                 Padding = new Thickness(0, 8, 0, 8),
-                Background = new SolidColorBrush(Color.FromRgb(0, 120, 212)),
+                Background = new SolidColorBrush(Color.FromRgb(108, 92, 231)),
                 Foreground = Brushes.White,
-                BorderBrush = new SolidColorBrush(Color.FromRgb(0, 120, 212))
+                BorderBrush = new SolidColorBrush(Color.FromRgb(108, 92, 231))
             };
             saveButton.Click += (s, e) => { SaveTags(); DialogResult = true; Close(); };
             buttonPanel.Children.Add(saveButton);
@@ -209,7 +209,7 @@ namespace Editor.Dialogs
             var template = new DataTemplate();
             
             var factory = new FrameworkElementFactory(typeof(Border));
-            factory.SetValue(Border.BackgroundProperty, new SolidColorBrush(Color.FromRgb(0, 120, 212)));
+            factory.SetValue(Border.BackgroundProperty, new SolidColorBrush(Color.FromRgb(108, 92, 231)));
             factory.SetValue(Border.CornerRadiusProperty, new CornerRadius(10));
             factory.SetValue(Border.PaddingProperty, new Thickness(10, 4, 10, 4));
             factory.SetValue(Border.MarginProperty, new Thickness(0, 2, 6, 2));
@@ -225,7 +225,7 @@ namespace Editor.Dialogs
             stackFactory.AppendChild(textFactory);
             
             var removeFactory = new FrameworkElementFactory(typeof(Button));
-            removeFactory.SetValue(Button.ContentProperty, "×");
+            removeFactory.SetValue(Button.ContentProperty, "ï¿½");
             removeFactory.SetValue(Button.BackgroundProperty, Brushes.Transparent);
             removeFactory.SetValue(Button.ForegroundProperty, Brushes.White);
             removeFactory.SetValue(Button.BorderThicknessProperty, new Thickness(0));

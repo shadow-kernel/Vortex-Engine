@@ -6,7 +6,7 @@ using Editor.Core;
 namespace Editor.Editors.WorldEditor.Components.FileExplorer.Models
 {
     /// <summary>
-    /// Repräsentiert ein Element im Dateisystem (Datei oder Ordner).
+    /// Reprï¿½sentiert ein Element im Dateisystem (Datei oder Ordner).
     /// </summary>
     public class FileSystemItem : ViewModelBase
     {
@@ -97,7 +97,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Models
         }
 
         /// <summary>
-        /// Opacity für die Anzeige (reduziert wenn ausgeschnitten).
+        /// Opacity fï¿½r die Anzeige (reduziert wenn ausgeschnitten).
         /// </summary>
         public double ItemOpacity => IsCut ? 0.5 : 1.0;
 
@@ -114,7 +114,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Models
         }
 
         /// <summary>
-        /// Prüft ob dieser Ordner Unterordner hat (für den Expander-Button)
+        /// Prï¿½ft ob dieser Ordner Unterordner hat (fï¿½r den Expander-Button)
         /// </summary>
         public bool HasSubDirectories
         {
@@ -127,13 +127,13 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Models
                 if (_children != null && _children.Count > 0)
                     return true;
 
-                // Prüfe das Dateisystem
+                // Prï¿½fe das Dateisystem
                 try
                 {
                     var dirInfo = new DirectoryInfo(FullPath);
                     foreach (var dir in dirInfo.EnumerateDirectories())
                     {
-                        if ((dir.Attributes & FileAttributes.Hidden) == 0 && !dir.Name.StartsWith("."))
+                        if (!IsIgnoredDir(dir))
                             return true;
                     }
                 }
@@ -146,6 +146,19 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Models
         }
 
         public string Extension => IsDirectory ? "" : Path.GetExtension(FullPath)?.ToLowerInvariant() ?? "";
+
+        /// <summary>
+        /// Build/dev folders that must never appear in the editor's file tree or asset browser.
+        /// </summary>
+        private static readonly System.Collections.Generic.HashSet<string> IgnoredDirs =
+            new System.Collections.Generic.HashSet<string>(System.StringComparer.OrdinalIgnoreCase)
+            { "bin", "obj", "ProjectSettings", "Library", "Temp", "Logs", ".vs", ".git", ".idea", "node_modules" };
+
+        /// <summary>True for hidden, dot- or build/dev directories that should be filtered out.</summary>
+        public static bool IsIgnoredDir(DirectoryInfo dir) =>
+            (dir.Attributes & FileAttributes.Hidden) != 0
+            || dir.Name.StartsWith(".")
+            || IgnoredDirs.Contains(dir.Name);
 
         /// <summary>
         /// Icon basierend auf dem Dateityp (Segoe MDL2 Assets)
@@ -281,7 +294,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Models
         }
 
         /// <summary>
-        /// Lädt die Kinder dieses Ordners
+        /// Lï¿½dt die Kinder dieses Ordners
         /// </summary>
         public void LoadChildren()
         {
@@ -297,9 +310,8 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Models
                 // Ordner zuerst
                 foreach (var dir in dirInfo.GetDirectories())
                 {
-                    // Versteckte Ordner und spezielle Ordner überspringen
-                    if ((dir.Attributes & FileAttributes.Hidden) != 0 ||
-                        dir.Name.StartsWith("."))
+                    // Versteckte Ordner und spezielle Ordner ï¿½berspringen
+                    if (IsIgnoredDir(dir))
                         continue;
 
                     var child = new FileSystemItem(dir) { Parent = this };
@@ -309,7 +321,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Models
                 // Dann Dateien
                 foreach (var file in dirInfo.GetFiles())
                 {
-                    // Versteckte Dateien überspringen
+                    // Versteckte Dateien ï¿½berspringen
                     if ((file.Attributes & FileAttributes.Hidden) != 0)
                         continue;
 
@@ -328,7 +340,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Models
         }
 
         /// <summary>
-        /// Lädt die Ordner (ohne Dateien) für den Baum
+        /// Lï¿½dt die Ordner (ohne Dateien) fï¿½r den Baum
         /// </summary>
         public void LoadDirectoriesOnly()
         {
@@ -343,8 +355,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Models
 
                 foreach (var dir in dirInfo.GetDirectories())
                 {
-                    if ((dir.Attributes & FileAttributes.Hidden) != 0 ||
-                        dir.Name.StartsWith("."))
+                    if (IsIgnoredDir(dir))
                         continue;
 
                     var child = new FileSystemItem(dir) { Parent = this };

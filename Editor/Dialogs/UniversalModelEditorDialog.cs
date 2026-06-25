@@ -33,6 +33,12 @@ namespace Editor.Dialogs
         private TextBlock _statsText;
         private TabControl _rightTabs;
 
+        // Live 3D preview (model rendered with the current material edits)
+        private Image _previewImage;
+        private long[] _previewMeshIds;
+        private bool _previewReady;
+        private System.Windows.Threading.DispatcherTimer _previewTimer;
+
         #region Constructor
 
         public UniversalModelEditorDialog(string modelPath)
@@ -68,7 +74,7 @@ namespace Editor.Dialogs
             Width = 1300;
             Height = 850;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
-            Background = new SolidColorBrush(Color.FromRgb(30, 30, 30));
+            Background = new SolidColorBrush(Color.FromRgb(22, 22, 24));
             ResizeMode = ResizeMode.CanResize;
             MinWidth = 1000;
             MinHeight = 650;
@@ -89,6 +95,9 @@ namespace Editor.Dialogs
             {
                 _submeshList.SelectedIndex = 0;
             }
+
+            _previewReady = true;
+            RefreshPreview();
         }
 
         #endregion
@@ -131,18 +140,35 @@ namespace Editor.Dialogs
             };
 
             var grid = new Grid();
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // Preview
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // Header
             grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // Submeshes
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // Materials header
             grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // Materials
 
+            // Live 3D preview
+            var previewBorder = new Border
+            {
+                Height = 190,
+                Margin = new Thickness(10),
+                CornerRadius = new CornerRadius(8),
+                Background = new SolidColorBrush(Color.FromRgb(16, 16, 18)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(58, 58, 62)),
+                BorderThickness = new Thickness(1),
+                ClipToBounds = true
+            };
+            _previewImage = new Image { Stretch = Stretch.Uniform };
+            previewBorder.Child = _previewImage;
+            grid.Children.Add(previewBorder);
+
             // Header
             var header = CreateHeader();
+            Grid.SetRow(header, 1);
             grid.Children.Add(header);
 
             // Submeshes Section
             var submeshSection = BuildSubmeshSection();
-            Grid.SetRow(submeshSection, 1);
+            Grid.SetRow(submeshSection, 2);
             grid.Children.Add(submeshSection);
 
             // Materials Header
@@ -160,12 +186,12 @@ namespace Editor.Dialogs
                 FontWeight = FontWeights.SemiBold,
                 Foreground = new SolidColorBrush(Color.FromRgb(157, 157, 157))
             };
-            Grid.SetRow(materialsHeader, 2);
+            Grid.SetRow(materialsHeader, 3);
             grid.Children.Add(materialsHeader);
 
             // Materials List
             var materialsSection = BuildMaterialsSection();
-            Grid.SetRow(materialsSection, 3);
+            Grid.SetRow(materialsSection, 4);
             grid.Children.Add(materialsSection);
 
             border.Child = grid;
@@ -196,7 +222,7 @@ namespace Editor.Dialogs
             {
                 Text = _modelData.FormatName,
                 FontSize = 11,
-                Foreground = new SolidColorBrush(Color.FromRgb(0, 120, 212)),
+                Foreground = new SolidColorBrush(Color.FromRgb(108, 92, 231)),
                 Margin = new Thickness(0, 2, 0, 0)
             });
 
@@ -371,7 +397,7 @@ namespace Editor.Dialogs
         {
             var tabs = new TabControl
             {
-                Background = new SolidColorBrush(Color.FromRgb(30, 30, 30)),
+                Background = new SolidColorBrush(Color.FromRgb(22, 22, 24)),
                 BorderThickness = new Thickness(0),
                 Margin = new Thickness(0)
             };
@@ -493,7 +519,7 @@ namespace Editor.Dialogs
                 CornerRadius = new CornerRadius(4),
                 Background = texture.Preview != null
                     ? new ImageBrush(texture.Preview) { Stretch = Stretch.UniformToFill }
-                    : new SolidColorBrush(Color.FromRgb(30, 30, 30))
+                    : new SolidColorBrush(Color.FromRgb(22, 22, 24))
             };
             stack.Children.Add(preview);
 
@@ -512,7 +538,7 @@ namespace Editor.Dialogs
             stack.Children.Add(new TextBlock
             {
                 Text = texture.DetectedType.ToString(),
-                Foreground = new SolidColorBrush(Color.FromRgb(0, 120, 212)),
+                Foreground = new SolidColorBrush(Color.FromRgb(108, 92, 231)),
                 FontSize = 9
             });
 
@@ -576,7 +602,7 @@ namespace Editor.Dialogs
                         CornerRadius = new CornerRadius(4),
                         Background = slot.Preview != null
                             ? new ImageBrush(slot.Preview) { Stretch = Stretch.UniformToFill }
-                            : new SolidColorBrush(Color.FromRgb(30, 30, 30))
+                            : new SolidColorBrush(Color.FromRgb(22, 22, 24))
                     };
                     itemStack.Children.Add(preview);
 
@@ -642,7 +668,7 @@ namespace Editor.Dialogs
             var buttonPanel = new StackPanel { Orientation = Orientation.Horizontal };
 
             var saveBtn = CreateButton("Save Materials", 110);
-            saveBtn.Background = new SolidColorBrush(Color.FromRgb(0, 120, 212));
+            saveBtn.Background = new SolidColorBrush(Color.FromRgb(108, 92, 231));
             saveBtn.Click += SaveMaterials_Click;
             buttonPanel.Children.Add(saveBtn);
 
@@ -665,6 +691,7 @@ namespace Editor.Dialogs
         private void UpdatePropertiesPanel()
         {
             _propertiesPanel.Children.Clear();
+            SchedulePreviewRefresh();
 
             if (_selectedMaterial == null)
             {
@@ -856,7 +883,7 @@ namespace Editor.Dialogs
 
             if (slot.IsAssigned)
             {
-                var clearBtn = CreateButton("×", 30);
+                var clearBtn = CreateButton("ï¿½", 30);
                 clearBtn.FontSize = 14;
                 clearBtn.Margin = new Thickness(4, 0, 0, 0);
                 clearBtn.Click += (s, e) =>
@@ -1029,6 +1056,14 @@ namespace Editor.Dialogs
                 }
 
                 AssetDatabase.Instance.Refresh();
+
+                // Propagate edits to instances of this model already placed in the scene: re-apply
+                // each material's edited PBR values + texture maps onto the SAME engine material the
+                // placed submeshes already render (found via the import-time mesh-path key
+                // "{modelRelPath}#submesh{i}"). Mutating in place avoids any material-ownership /
+                // double-free issues, and is a safe no-op if the model isn't in the scene.
+                PropagateMaterialsToScene();
+
                 _statusText.Text = $"Saved {savedCount} material(s)";
             }
             catch (Exception ex)
@@ -1037,6 +1072,128 @@ namespace Editor.Dialogs
                 MessageBox.Show($"Failed to save materials:\n{ex.Message}", "Error",
                     MessageBoxButton.OK, MessageBoxImage.Error);
             }
+        }
+
+        /// <summary>
+        /// Debounced live-preview refresh so editing sliders/textures doesn't render every tick.
+        /// </summary>
+        private void SchedulePreviewRefresh()
+        {
+            if (!_previewReady) return;
+            if (_previewTimer == null)
+            {
+                _previewTimer = new System.Windows.Threading.DispatcherTimer
+                {
+                    Interval = TimeSpan.FromMilliseconds(180)
+                };
+                _previewTimer.Tick += (s, e) => { _previewTimer.Stop(); RefreshPreview(); };
+            }
+            _previewTimer.Stop();
+            _previewTimer.Start();
+        }
+
+        /// <summary>
+        /// Renders the model's submeshes with engine materials built from the CURRENT UI edits, so the
+        /// preview reflects edits live. The submesh meshes are imported once and cached; the throwaway
+        /// engine materials are deleted after each render (caller-owned, not cached).
+        /// </summary>
+        private void RefreshPreview()
+        {
+            if (!_previewReady || _previewImage == null) return;
+            try
+            {
+                if (_previewMeshIds == null)
+                {
+                    var subs = Editor.DllWrapper.VortexAPI.ImportModelWithMaterialsFromFile(_modelData.FilePath);
+                    if (subs == null || subs.Length == 0) return;
+                    _previewMeshIds = subs.Select(s => s.MeshId).ToArray();
+                }
+
+                var mats = new long[_previewMeshIds.Length];
+                var built = new System.Collections.Generic.List<long>();
+                for (int i = 0; i < _previewMeshIds.Length; i++)
+                {
+                    int matIdx = (i < _modelData.Submeshes.Count) ? _modelData.Submeshes[i].MaterialIndex : 0;
+                    long em = -1;
+                    if (matIdx >= 0 && matIdx < _modelData.Materials.Count)
+                        em = Core.Services.MaterialService.Instance.BuildEngineMaterial(ToVortexMaterial(_modelData.Materials[matIdx]));
+                    mats[i] = em;
+                    if (em >= 0) built.Add(em);
+                }
+
+                var img = Core.Services.Rendering.AssetPreviewRenderer.RenderMeshes(_previewMeshIds, mats, 256);
+                if (img != null) _previewImage.Source = img;
+
+                foreach (var b in built) { try { Editor.DllWrapper.VortexAPI.DeleteMaterial(b); } catch { } }
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Builds a VortexMaterial (absolute texture paths) from a UniversalMaterial for previewing.
+        /// </summary>
+        private VortexMaterial ToVortexMaterial(UniversalMaterial m)
+        {
+            var vmat = new VortexMaterial
+            {
+                Name = m.Name,
+                Metallic = m.Metallic,
+                Roughness = m.Roughness,
+                NormalStrength = m.NormalStrength,
+                AmbientOcclusion = m.AOStrength,
+                AlbedoTexture = m.GetTextureSlot(TextureMapType.Albedo)?.FilePath,
+                NormalTexture = m.GetTextureSlot(TextureMapType.Normal)?.FilePath,
+                MetallicTexture = m.GetTextureSlot(TextureMapType.Metallic)?.FilePath,
+                RoughnessTexture = m.GetTextureSlot(TextureMapType.Roughness)?.FilePath,
+                AOTexture = m.GetTextureSlot(TextureMapType.AmbientOcclusion)?.FilePath,
+                EmissiveStrength = m.EmissiveStrength,
+                TwoSided = m.TwoSided
+            };
+            vmat.SetBaseColor(m.BaseColor);
+            vmat.ResolvePathsAbsolute(_modelData.Directory);
+            return vmat;
+        }
+
+        private void PropagateMaterialsToScene()
+        {
+            var projectPath = Core.Data.ProjectData.Current?.Path ?? "";
+            string relPath = _modelData.FilePath ?? "";
+            if (!string.IsNullOrEmpty(projectPath) && relPath.StartsWith(projectPath, StringComparison.OrdinalIgnoreCase))
+                relPath = relPath.Substring(projectPath.Length).TrimStart('\\', '/');
+
+            for (int i = 0; i < _modelData.Submeshes.Count; i++)
+            {
+                int matIdx = _modelData.Submeshes[i].MaterialIndex;
+                if (matIdx < 0 || matIdx >= _modelData.Materials.Count) continue;
+
+                long liveId = Core.Services.SceneRenderService.GetMaterialForMeshPath($"{relPath}#submesh{i}");
+                if (liveId < 0) continue; // not placed in the scene (or path mismatch) -> safe skip
+
+                var m = _modelData.Materials[matIdx];
+                var c = m.BaseColor;
+                Editor.DllWrapper.VortexAPI.SetMaterialBaseColor(liveId, c.R / 255f, c.G / 255f, c.B / 255f, c.A / 255f);
+                Editor.DllWrapper.VortexAPI.SetMaterialMetallicValue(liveId, m.Metallic);
+                Editor.DllWrapper.VortexAPI.SetMaterialRoughnessValue(liveId, m.Roughness);
+                Editor.DllWrapper.VortexAPI.SetMaterialAOValue(liveId, m.AOStrength);
+                Editor.DllWrapper.VortexAPI.SetMaterialNormalStrengthValue(liveId, m.NormalStrength);
+
+                BindLiveMap(liveId, m.GetTextureSlot(TextureMapType.Albedo)?.FilePath, Editor.DllWrapper.VortexAPI.SetMaterialAlbedoTexture);
+                BindLiveMap(liveId, m.GetTextureSlot(TextureMapType.Normal)?.FilePath, Editor.DllWrapper.VortexAPI.SetMaterialNormalMap);
+                BindLiveMap(liveId, m.GetTextureSlot(TextureMapType.Metallic)?.FilePath, Editor.DllWrapper.VortexAPI.SetMaterialMetallicMap);
+                BindLiveMap(liveId, m.GetTextureSlot(TextureMapType.Roughness)?.FilePath, Editor.DllWrapper.VortexAPI.SetMaterialRoughnessMap);
+                BindLiveMap(liveId, m.GetTextureSlot(TextureMapType.AmbientOcclusion)?.FilePath, Editor.DllWrapper.VortexAPI.SetMaterialAOMap);
+            }
+        }
+
+        private void BindLiveMap(long materialId, string texturePath, Action<long, long> setter)
+        {
+            if (string.IsNullOrEmpty(texturePath)) return;
+            string full = texturePath;
+            if (!Path.IsPathRooted(full))
+                full = Path.Combine(_modelData.Directory, full);
+            if (!File.Exists(full)) return;
+            long tex = Editor.DllWrapper.VortexAPI.ImportTextureFromFile(full);
+            if (tex >= 0) setter(materialId, tex);
         }
 
         private void UpdateStats()

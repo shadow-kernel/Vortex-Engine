@@ -74,6 +74,9 @@ namespace Editor.DllWrapper
         private static extern void SetMaterialNormalStrength(long materialId, float value);
 
         [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetMaterialAO(long materialId, float value);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void SetMaterialUseDirectXNormals(long materialId, bool useDirectX);
 
         [DllImport(_dllName, CallingConvention = _cc)]
@@ -108,6 +111,8 @@ namespace Editor.DllWrapper
             => SetMaterialRoughness(materialId, value);
         public static void SetMaterialNormalStrengthValue(long materialId, float value)
             => SetMaterialNormalStrength(materialId, value);
+        public static void SetMaterialAOValue(long materialId, float value)
+            => SetMaterialAO(materialId, value);
         public static void SetMaterialNormalFormat(long materialId, bool useDirectX)
             => SetMaterialUseDirectXNormals(materialId, useDirectX);
         

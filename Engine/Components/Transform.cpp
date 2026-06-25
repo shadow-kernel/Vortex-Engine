@@ -31,6 +31,21 @@ namespace vortex::transform {
 		return component{ transform_id{ (id::id_type) positions.size() - 1 }};
 	}
 
+	void vortex::transform::set_transform(game_entity::entity entity, const init_info& transform_init_info)
+	{
+		assert(entity.is_valid());
+		const id::id_type entity_index{ id::index(entity.get_id()) };
+
+		// Transform slots are index-aligned with entities and are always created up-front in
+		// create_transform, so a live entity already has a slot. Guard anyway and no-op otherwise.
+		if (positions.size() > entity_index)
+		{
+			positions[entity_index] = math::v3(transform_init_info.position);
+			rotations[entity_index] = math::v4(transform_init_info.rotation);
+			scales[entity_index] = math::v3(transform_init_info.scale);
+		}
+	}
+
 	void vortex::transform::remove_transform(component component)
 	{
 		assert(component.is_valid());

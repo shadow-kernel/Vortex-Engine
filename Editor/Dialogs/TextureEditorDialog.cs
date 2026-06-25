@@ -46,7 +46,7 @@ namespace Editor.Dialogs
             Width = 1000;
             Height = 700;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
-            Background = new SolidColorBrush(Color.FromRgb(30, 30, 30));
+            Background = new SolidColorBrush(Color.FromRgb(22, 22, 24));
             ResizeMode = ResizeMode.CanResize;
             MinWidth = 750;
             MinHeight = 550;
@@ -58,6 +58,7 @@ namespace Editor.Dialogs
                 {
                     LoadTexture(_texturePath);
                     LoadTags();
+                    LoadImportSettings();
                 }
             };
         }
@@ -287,7 +288,7 @@ namespace Editor.Dialogs
         {
             var border = new Border
             {
-                Background = new SolidColorBrush(Color.FromRgb(30, 30, 30)),
+                Background = new SolidColorBrush(Color.FromRgb(22, 22, 24)),
                 CornerRadius = new CornerRadius(4),
                 Padding = new Thickness(10),
                 Margin = new Thickness(0, 0, 0, 15)
@@ -475,7 +476,7 @@ namespace Editor.Dialogs
                 {
                     var tagBorder = new Border
                     {
-                        Background = new SolidColorBrush(Color.FromRgb(0, 120, 212)),
+                        Background = new SolidColorBrush(Color.FromRgb(108, 92, 231)),
                         CornerRadius = new CornerRadius(3),
                         Padding = new Thickness(8, 4, 8, 4),
                         Margin = new Thickness(0, 0, 5, 5)
@@ -551,8 +552,85 @@ namespace Editor.Dialogs
 
         private void Apply_Click(object sender, RoutedEventArgs e)
         {
-            _isDirty = false;
-            _statusText.Text = "Settings applied.";
+            try
+            {
+                var projectPath = ProjectData.Current?.Path ?? "";
+                var metadata = AssetMetadataService.Instance.GetOrCreateMetadata(_texturePath, projectPath);
+                if (metadata == null)
+                {
+                    _statusText.Text = "Could not resolve asset metadata.";
+                    return;
+                }
+
+                if (metadata.ImportSettings == null)
+                    metadata.ImportSettings = new Dictionary<string, string>();
+
+                var s = metadata.ImportSettings;
+                s["textureType"] = _textureTypeCombo.SelectedIndex.ToString();
+                s["sRGB"] = (_sRGBCheck.IsChecked == true).ToString();
+                s["generateMipmaps"] = (_generateMipmapsCheck.IsChecked == true).ToString();
+                s["wrapMode"] = _wrapModeCombo.SelectedIndex.ToString();
+                s["filterMode"] = _filterModeCombo.SelectedIndex.ToString();
+                s["anisoLevel"] = _anisoLevelCombo.SelectedIndex.ToString();
+                s["compression"] = _compressionCombo.SelectedIndex.ToString();
+
+                if (AssetMetadataService.Instance.SaveMetadata(_texturePath + ".vmeta", metadata))
+                {
+                    _isDirty = false;
+                    _statusText.Text = "Import settings saved.";
+                }
+                else
+                {
+                    _statusText.Text = "Failed to save import settings.";
+                }
+            }
+            catch (Exception ex)
+            {
+                _statusText.Text = $"Error: {ex.Message}";
+            }
+        }
+
+        /// <summary>
+        /// Restores previously-saved import settings from the asset's .vmeta. Called after the
+        /// texture loads (and after auto-detect) so saved choices win. The renderer does not yet
+        /// honor wrap/filter/aniso/sRGB/mips (needs per-material samplers + a mip pipeline) — but
+        /// the settings now persist and round-trip, ready for when it does.
+        /// </summary>
+        private void LoadImportSettings()
+        {
+            try
+            {
+                var metadata = AssetMetadataService.Instance.LoadMetadata(_texturePath + ".vmeta");
+                var s = metadata?.ImportSettings;
+                if (s == null || s.Count == 0) return;
+
+                void SetIdx(ComboBox c, string key)
+                {
+                    if (c != null && s.TryGetValue(key, out var v) && int.TryParse(v, out var i)
+                        && i >= 0 && i < c.Items.Count)
+                        c.SelectedIndex = i;
+                }
+                void SetChk(CheckBox c, string key)
+                {
+                    if (c != null && s.TryGetValue(key, out var v) && bool.TryParse(v, out var b))
+                        c.IsChecked = b;
+                }
+
+                // textureType first — its SelectionChanged handler resets sRGB by type, so restore sRGB after.
+                SetIdx(_textureTypeCombo, "textureType");
+                SetChk(_sRGBCheck, "sRGB");
+                SetChk(_generateMipmapsCheck, "generateMipmaps");
+                SetIdx(_wrapModeCombo, "wrapMode");
+                SetIdx(_filterModeCombo, "filterMode");
+                SetIdx(_anisoLevelCombo, "anisoLevel");
+                SetIdx(_compressionCombo, "compression");
+
+                _isDirty = false;
+            }
+            catch
+            {
+                // Missing/corrupt .vmeta — keep auto-detected defaults.
+            }
         }
 
         private void Revert_Click(object sender, RoutedEventArgs e)

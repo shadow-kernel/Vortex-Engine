@@ -12,14 +12,14 @@
             <Setter Property="Foreground" Value="#FF9A9AA1"/>
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
-            <Setter Property="Width" Value="74"/>
+            <Setter Property="Width" Value="64"/>
         </Style>
 
         <!-- Rounded pill numeric field (Apple-style) -->
         <Style x:Key="VectorInput" TargetType="TextBox">
             <Setter Property="Foreground" Value="#FFE9E9ED"/>
             <Setter Property="CaretBrush" Value="#FF6C5CE7"/>
-            <Setter Property="Width" Value="56"/>
+            <Setter Property="Width" Value="50"/>
             <Setter Property="Height" Value="28"/>
             <Setter Property="TextAlignment" Value="Center"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
@@ -71,7 +71,7 @@
             <!-- Position -->
             <Grid Margin="0,5">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="74"/>
+                    <ColumnDefinition Width="64"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
                 <TextBlock Text="Position" Style="{StaticResource PropertyLabel}"/>
@@ -91,7 +91,7 @@
             <!-- Rotation -->
             <Grid Margin="0,5">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="74"/>
+                    <ColumnDefinition Width="64"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
                 <TextBlock Text="Rotation" Style="{StaticResource PropertyLabel}"/>
@@ -111,7 +111,7 @@
             <!-- Scale -->
             <Grid Margin="0,5">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="74"/>
+                    <ColumnDefinition Width="64"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
                 <TextBlock Text="Scale" Style="{StaticResource PropertyLabel}"/>

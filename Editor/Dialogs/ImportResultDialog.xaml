@@ -4,7 +4,7 @@
         Title="Import Result" 
         Height="450" Width="550"
         WindowStartupLocation="CenterOwner"
-        Background="#FF212124"
+        Background="#FF161618"
         ResizeMode="CanResizeWithGrip">
     <Window.Resources>
         <Style x:Key="HeaderStyle" TargetType="TextBlock">
@@ -82,7 +82,7 @@
         <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,15,0,0">
             <Button x:Name="OpenAssetBrowserButton" Content="Open in Asset Browser" 
                     Click="OpenAssetBrowser_Click" Margin="0,0,10,0"
-                    Padding="15,8" Background="#FF0E639C" Foreground="White" BorderThickness="0"/>
+                    Padding="15,8" Background="#FF6C5CE7" Foreground="White" BorderThickness="0"/>
             <Button x:Name="AddToSceneButton" Content="Add to Scene" 
                     Click="AddToScene_Click" Margin="0,0,10,0"
                     Padding="15,8" Background="#FF4EC9B0" Foreground="White" BorderThickness="0"/>

@@ -45,7 +45,7 @@
             </Setter>
         </Style>
 
-        <Style x:Key="ComboBoxStyle" TargetType="ComboBox">
+        <Style x:Key="ComboBoxStyle" TargetType="ComboBox" BasedOn="{StaticResource Vortex.ComboBox}">
             <Setter Property="Background" Value="#FF161618"/>
             <Setter Property="Foreground" Value="#FFE9E9ED"/>
             <Setter Property="BorderBrush" Value="#FF33333A"/>
@@ -57,7 +57,7 @@
             <Setter Property="VerticalContentAlignment" Value="Center"/>
         </Style>
 
-        <Style x:Key="CheckBoxStyle" TargetType="CheckBox">
+        <Style x:Key="CheckBoxStyle" TargetType="CheckBox" BasedOn="{StaticResource Vortex.CheckBox}">
             <Setter Property="Foreground" Value="#FFE9E9ED"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
         </Style>

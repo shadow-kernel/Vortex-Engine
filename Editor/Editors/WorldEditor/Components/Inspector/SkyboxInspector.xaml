@@ -45,7 +45,7 @@
             <Setter Property="Foreground" Value="#FFC8C8CE"/>
         </Style>
 
-        <Style x:Key="ComboBoxStyle" TargetType="ComboBox">
+        <Style x:Key="ComboBoxStyle" TargetType="ComboBox" BasedOn="{StaticResource Vortex.ComboBox}">
             <Setter Property="Background" Value="#FF161618"/>
             <Setter Property="Foreground" Value="#FFE9E9ED"/>
             <Setter Property="BorderBrush" Value="#FF33333A"/>

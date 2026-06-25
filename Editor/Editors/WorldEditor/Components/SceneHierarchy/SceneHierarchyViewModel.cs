@@ -17,7 +17,7 @@ using Editor.ECS.Components.Scripting;
 namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
 {
     /// <summary>
-    /// ViewModel für die Scene Hierarchy View.
+    /// ViewModel fï¿½r die Scene Hierarchy View.
     /// Verwaltet die Anzeige und Manipulation von Szenen und GameEntities.
     /// </summary>
     public class SceneHierarchyViewModel : Core.ViewModelBase
@@ -83,7 +83,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
         }
 
         /// <summary>
-        /// Gibt an, ob mehrere Entities ausgewählt sind
+        /// Gibt an, ob mehrere Entities ausgewï¿½hlt sind
         /// </summary>
         public bool HasMultipleSelection => _selectedEntities.Count > 1;
 
@@ -282,7 +282,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             var sceneToDelete = _selectedScene;
             var index = _currentProject.Scenes.IndexOf(sceneToDelete);
             
-            // Wähle eine andere Szene
+            // Wï¿½hle eine andere Szene
             SelectedScene = index > 0 ? _currentProject.Scenes[index - 1] : _currentProject.Scenes[1];
             
 			// Deaktivieren und Engine-Ressourcen freigeben
@@ -307,6 +307,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             if (_selectedScene == null) return;
             var entity = _selectedScene.CreateEntity("New Entity");
             SelectedEntity = entity;
+            SelectionService.Instance.RequestFocus(entity);
         }
 
         private void CreateFolder()
@@ -325,6 +326,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             _selectedEntity.AddChild(child);
             _selectedEntity.IsExpanded = true;
             SelectedEntity = child;
+            SelectionService.Instance.RequestFocus(child);
         }
 
         private void CreatePrimitive(PrimitiveType type)
@@ -332,6 +334,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             if (_selectedScene == null) return;
             var entity = _selectedScene.CreatePrimitive(type);
             SelectedEntity = entity;
+            SelectionService.Instance.RequestFocus(entity);
         }
 
         private void CreateCamera()
@@ -339,6 +342,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             if (_selectedScene == null) return;
             var entity = _selectedScene.CreateCamera();
             SelectedEntity = entity;
+            SelectionService.Instance.RequestFocus(entity);
         }
 
         private void CreateLight(LightType type)
@@ -346,6 +350,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             if (_selectedScene == null) return;
             var entity = _selectedScene.CreateLight(type);
             SelectedEntity = entity;
+            SelectionService.Instance.RequestFocus(entity);
         }
 
         private void CreateSkybox()
@@ -362,6 +367,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             entity.AddComponent(new AudioSource(entity));
             _selectedScene.AddEntity(entity);
             SelectedEntity = entity;
+            SelectionService.Instance.RequestFocus(entity);
         }
 
         private void CreateUIElement(string type)
@@ -395,7 +401,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             var entitiesToDuplicate = GetEntitiesToOperate();
             if (entitiesToDuplicate.Count == 0) return;
 
-            // Kopiere und füge sofort ein
+            // Kopiere und fï¿½ge sofort ein
             EntityClipboardService.Instance.Copy(entitiesToDuplicate);
             var pasted = EntityClipboardService.Instance.Paste(_selectedScene, null);
             
@@ -436,7 +442,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
         {
             if (_selectedScene == null || !EntityClipboardService.Instance.HasContent) return;
 
-            // Paste als Kinder der ausgewählten Entity oder auf Root-Ebene
+            // Paste als Kinder der ausgewï¿½hlten Entity oder auf Root-Ebene
             var pasted = EntityClipboardService.Instance.Paste(_selectedScene, _selectedEntity);
             
             if (pasted.Count > 0)
@@ -491,7 +497,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
         }
 
         /// <summary>
-        /// Gibt die Entities zurück, auf die eine Operation angewendet werden soll
+        /// Gibt die Entities zurï¿½ck, auf die eine Operation angewendet werden soll
         /// </summary>
         private List<GameEntity> GetEntitiesToOperate()
         {
@@ -508,7 +514,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
 
 
         /// <summary>
-        /// Fügt eine Entity zur Multi-Selektion hinzu (Ctrl+Click)
+        /// Fï¿½gt eine Entity zur Multi-Selektion hinzu (Ctrl+Click)
         /// </summary>
         public void AddToSelection(GameEntity entity)
         {
@@ -571,7 +577,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
         {
             if (toEntity == null || _selectedEntity == null || _selectedScene == null) return;
             
-            // Einfache Implementation: Wähle alle Entities zwischen den beiden aus
+            // Einfache Implementation: Wï¿½hle alle Entities zwischen den beiden aus
             var allEntities = GetAllEntitiesFlat();
             var fromIndex = allEntities.IndexOf(_selectedEntity);
             var toIndex = allEntities.IndexOf(toEntity);
@@ -599,7 +605,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
         }
 
         /// <summary>
-        /// Gibt alle Entities als flache Liste zurück
+        /// Gibt alle Entities als flache Liste zurï¿½ck
         /// </summary>
         private List<GameEntity> GetAllEntitiesFlat()
         {
@@ -648,7 +654,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
         {
             if (entity == null || entity == newParent) return;
             
-            // Verhindere zirkuläre Referenzen
+            // Verhindere zirkulï¿½re Referenzen
             if (newParent != null && IsDescendantOf(newParent, entity)) return;
 
             var command = new MoveEntityCommand(entity, newParent);
@@ -679,7 +685,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
         }
 
         /// <summary>
-        /// Prüft ob eine Entity ein Nachfahre einer anderen ist
+        /// Prï¿½ft ob eine Entity ein Nachfahre einer anderen ist
         /// </summary>
         private bool IsDescendantOf(GameEntity potentialDescendant, GameEntity ancestor)
         {
@@ -731,7 +737,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             else
                 _oldScene?.Entities.Remove(_entity);
 
-            // Füge an neuer Position hinzu
+            // Fï¿½ge an neuer Position hinzu
             _entity.Parent = _newParent;
             if (_newParent != null)
             {
@@ -808,12 +814,12 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             else
                 _sourceScene?.Entities.Remove(_entity);
 
-            // Füge zur neuen Scene hinzu
+            // Fï¿½ge zur neuen Scene hinzu
             _entity.Parent = null;
             _entity.Scene = _targetScene;
             _targetScene.Entities.Add(_entity);
             
-            // Aktualisiere Scene-Referenz für alle Kinder
+            // Aktualisiere Scene-Referenz fï¿½r alle Kinder
             UpdateChildScenes(_entity, _targetScene);
         }
 
@@ -898,7 +904,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             if (sourceCollection == targetCollection && _oldIndex < targetIndex)
                 targetIndex--;
 
-            // Füge an neuer Position ein
+            // Fï¿½ge an neuer Position ein
             _entity.Parent = targetParent;
             if (targetIndex >= 0 && targetIndex <= targetCollection.Count)
                 targetCollection.Insert(targetIndex, _entity);

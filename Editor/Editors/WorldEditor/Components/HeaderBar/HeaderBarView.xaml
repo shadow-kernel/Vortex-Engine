@@ -317,8 +317,9 @@ d:DesignHeight="64" d:DesignWidth="1200">
 
 <Grid Background="#1A1A1C">
     <Grid.RowDefinitions>
+        <!-- Single Aurora-style bar; the icon-toolbar row is collapsed (height 0). -->
         <RowDefinition Height="48"/>
-        <RowDefinition Height="32"/>
+        <RowDefinition Height="0"/>
     </Grid.RowDefinitions>
 
     <!-- Row 0: Menu Bar -->
@@ -347,6 +348,7 @@ d:DesignHeight="64" d:DesignWidth="1200">
             <TextBlock Text="Vortex Engine" Foreground="#E9E9ED" FontSize="14" FontWeight="SemiBold"
                        VerticalAlignment="Center" Margin="2,0,18,0"/>
             <Menu Background="Transparent" Foreground="#E9E9ED" VerticalAlignment="Center" IsMainMenu="True"
+                  Visibility="Collapsed"
                   shell:WindowChrome.IsHitTestVisibleInChrome="True">
             
             <!-- File Menu -->
@@ -499,7 +501,7 @@ d:DesignHeight="64" d:DesignWidth="1200">
                 <Button Content="Scene" Style="{StaticResource SegActiveStyle}" ToolTip="Scene editor"/>
                 <Button Content="Game" Style="{StaticResource SegStyle}" Click="PlayButton_Click" ToolTip="Play the game"/>
                 <Button Content="Script" Style="{StaticResource SegStyle}" Click="OpenScriptsInVS_Click" ToolTip="Open scripts in Visual Studio"/>
-                <Button Content="Asset Store" Style="{StaticResource SegStyle}" ToolTip="Asset Store (coming soon)"/>
+                <Button Content="Asset Store" Style="{StaticResource SegStyle}" ToolTip="Asset Store (coming soon)" Click="AssetStore_Click"/>
             </StackPanel>
         </Border>
 
@@ -509,7 +511,7 @@ d:DesignHeight="64" d:DesignWidth="1200">
             <Button Content="&#xE768;" FontFamily="Segoe MDL2 Assets" FontSize="14"
                     Click="PlayButton_Click" ToolTip="Play" Height="32" Padding="16,0"
                     Style="{StaticResource TopPlayButton}" Margin="0,0,8,0"/>
-            <Button Style="{StaticResource TopPillButton}" Height="32" Padding="13,0" Margin="0,0,8,0" ToolTip="Target platform">
+            <Button Style="{StaticResource TopPillButton}" Height="32" Padding="13,0" Margin="0,0,8,0" ToolTip="Target platform / Build Settings" Click="BuildSettings_Click">
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="&#xE770;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#E9E9ED" VerticalAlignment="Center" Margin="0,0,7,0"/>
                     <TextBlock Text="Windows" Foreground="#E9E9ED" FontSize="12.5" VerticalAlignment="Center"/>
@@ -522,8 +524,9 @@ d:DesignHeight="64" d:DesignWidth="1200">
         </StackPanel>
     </Grid>
 
-    <!-- Row 1: Icon Toolbar -->
-    <Border Grid.Row="1" Background="#212124" BorderBrush="#33333A" BorderThickness="0,1,0,0">
+    <!-- Row 1: Icon Toolbar (removed for the clean Aurora look — collapsed) -->
+    <Border Grid.Row="1" Background="#212124" BorderBrush="#33333A" BorderThickness="0,1,0,0"
+            Visibility="Collapsed">
         <Grid Margin="4,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>

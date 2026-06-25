@@ -759,6 +759,29 @@ namespace Editor.Core.Services
 
         private long GetOrCreateMaterial(Guid entityId, MeshRenderer renderer)
         {
+            // Highest precedence: an explicitly assigned .vmat material. Build it FULLY (all PBR
+            // scalars + every texture map, not just base color) via MaterialService, which owns the
+            // engine material and shares one instance across every entity referencing the same file.
+            // Deliberately NOT stored in _entityMaterials — those get DeleteMaterial'd per entity on
+            // cleanup, which would free a shared material out from under other meshes.
+            if (!string.IsNullOrEmpty(renderer.MaterialPath))
+            {
+                string vmatPath = renderer.MaterialPath;
+                if (!System.IO.Path.IsPathRooted(vmatPath))
+                {
+                    var projectPath = Data.ProjectData.Current?.Path;
+                    if (!string.IsNullOrEmpty(projectPath))
+                        vmatPath = System.IO.Path.Combine(projectPath, vmatPath);
+                }
+
+                if (System.IO.File.Exists(vmatPath))
+                {
+                    long vmatMaterial = MaterialService.Instance.GetOrBuildVortexMaterial(vmatPath);
+                    if (vmatMaterial >= 0)
+                        return vmatMaterial;
+                }
+            }
+
             // First, check if we have a cached material for this mesh path
             string meshPath = renderer.MeshPath;
             long cachedMaterial = GetMaterialForMeshPath(meshPath);
@@ -811,6 +834,8 @@ namespace Editor.Core.Services
                             if (newMaterialId >= 0)
                             {
                                 VortexAPI.SetMaterialBaseColor(newMaterialId, 0.9f, 0.9f, 0.9f, 1.0f);
+                                VortexAPI.SetMaterialMetallicValue(newMaterialId, renderer.Metallic);
+                                VortexAPI.SetMaterialRoughnessValue(newMaterialId, renderer.Roughness);
                                 VortexAPI.SetMaterialAlbedoTexture(newMaterialId, textureId);
                                 _entityMaterials[entityId] = newMaterialId;
                                 
@@ -865,8 +890,12 @@ namespace Editor.Core.Services
             long materialId = VortexAPI.CreateNewMaterial();
             if (materialId >= 0)
             {
-                VortexAPI.SetMaterialBaseColor(materialId, 
+                VortexAPI.SetMaterialBaseColor(materialId,
                     renderer.ColorR, renderer.ColorG, renderer.ColorB, renderer.ColorA);
+                // Push PBR scalars too — otherwise the engine keeps its material defaults and a
+                // freshly created primitive renders far too dark (metallic surface, one weak light).
+                VortexAPI.SetMaterialMetallicValue(materialId, renderer.Metallic);
+                VortexAPI.SetMaterialRoughnessValue(materialId, renderer.Roughness);
                 _entityMaterials[entityId] = materialId;
                 _entityMaterialColors[entityId] = currentColor;
             }
@@ -1253,7 +1282,7 @@ namespace Editor.Core.Services
             if (!_hasSkybox)
             {
                 VortexAPI.EnableSkybox(false);
-                VortexAPI.SetAmbientLightStrength(0.15f);
+                VortexAPI.SetAmbientLightStrength(0.35f);  // was 0.15 — too dark for a fresh scene; matches the engine header default (0.4)
             }
         }
 

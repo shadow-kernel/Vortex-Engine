@@ -218,8 +218,10 @@
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <!-- Section Header -->
+        <!-- Section Header (collapsed: the AvalonDock pane title "File System" already labels
+             this panel — the internal header was a redundant second title). -->
         <Border Grid.Row="0" Background="#212124" Padding="14,12,12,8"
+                Visibility="Collapsed"
                 BorderBrush="#2C2C32" BorderThickness="0,0,0,1">
             <Grid>
                 <Grid.ColumnDefinitions>

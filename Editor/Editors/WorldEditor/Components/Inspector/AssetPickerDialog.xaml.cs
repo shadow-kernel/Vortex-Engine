@@ -95,9 +95,32 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
         {
             _allAssets.Clear();
 
+            // Built-in fallbacks so there is always a sane choice even in an empty project.
             _allAssets.Add(new AssetPickerItem { Name = "Default", TypeName = "Standard Material", IconCode = "\uE91B", IconColor = "#BD63C5", Path = "Material:Default" });
             _allAssets.Add(new AssetPickerItem { Name = "Unlit White", TypeName = "Unlit Material", IconCode = "\uE91B", IconColor = "#FFFFFF", Path = "Material:UnlitWhite" });
-            _allAssets.Add(new AssetPickerItem { Name = "Grid", TypeName = "Standard Material", IconCode = "\uE91B", IconColor = "#4EC9B0", Path = "Material:Grid" });
+
+            // Real .vmat assets from the project. This is what makes an edited material assignable to
+            // a mesh \u2014 the path is the project-relative .vmat that SceneRenderService.GetOrCreateMaterial
+            // resolves and builds via MaterialService.GetOrBuildVortexMaterial, so it renders live.
+            try
+            {
+                foreach (var asset in Editor.Core.Assets.AssetDatabase.Instance.GetAssetsByType(Editor.Core.Assets.AssetType.Material))
+                {
+                    if (asset == null || string.IsNullOrEmpty(asset.RelativePath)) continue;
+                    _allAssets.Add(new AssetPickerItem
+                    {
+                        Name = System.IO.Path.GetFileNameWithoutExtension(asset.FileName ?? asset.RelativePath),
+                        TypeName = "Material (.vmat)",
+                        IconCode = "\uE91B",
+                        IconColor = "#BD63C5",
+                        Path = asset.RelativePath
+                    });
+                }
+            }
+            catch
+            {
+                // No active project / database unavailable \u2014 fall back to the built-ins above.
+            }
 
             RefreshList();
         }

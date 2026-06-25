@@ -3,13 +3,13 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Color Picker" Height="400" Width="450"
         WindowStartupLocation="CenterOwner"
-        Background="#FF28282C" ResizeMode="NoResize">
+        Background="#FF161618" ResizeMode="NoResize">
     
     <Window.Resources>
         <SolidColorBrush x:Key="TextCol" Color="#FFF1F1F1"/>
         <SolidColorBrush x:Key="TextSecondary" Color="#FF9D9D9D"/>
         <SolidColorBrush x:Key="BorderCol" Color="#FF35353C"/>
-        <SolidColorBrush x:Key="AccentCol" Color="#FF0078D4"/>
+        <SolidColorBrush x:Key="AccentCol" Color="#FF6C5CE7"/>
         <SolidColorBrush x:Key="ButtonBg" Color="#FF35353C"/>
         
         <Style x:Key="SimpleButton" TargetType="Button">

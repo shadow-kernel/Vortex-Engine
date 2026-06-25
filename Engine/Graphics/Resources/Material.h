@@ -18,8 +18,8 @@ namespace vortex::graphics
 	struct MaterialProperties
 	{
 		DirectX::XMFLOAT4 base_color{ 1.0f, 1.0f, 1.0f, 1.0f };  // 16 bytes
-		float metallic{ 0.6f };                                   // 4 bytes - semi-metallic default
-		float roughness{ 0.35f };                                  // 4 bytes - moderate roughness
+		float metallic{ 0.0f };                                   // 4 bytes - dielectric default (metal=0 so a material with no PBR params pushed still reads as a normal lit surface, not a near-black metal under one light)
+		float roughness{ 0.5f };                                   // 4 bytes - moderate roughness
 		float ao{ 1.0f };                                         // 4 bytes
 		float normal_strength{ 1.0f };                            // 4 bytes
 		

@@ -52,7 +52,7 @@ namespace Editor.Dialogs
             Width = 650;
             Height = 500;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
-            Background = new SolidColorBrush(Color.FromRgb(30, 30, 30));
+            Background = new SolidColorBrush(Color.FromRgb(22, 22, 24));
             
             BuildUI();
             Loaded += (s, e) => LoadProjectAssets();
@@ -204,9 +204,9 @@ namespace Editor.Dialogs
                 Width = 90,
                 Padding = new Thickness(0, 8, 0, 8),
                 IsEnabled = false,
-                Background = new SolidColorBrush(Color.FromRgb(0, 120, 212)),
+                Background = new SolidColorBrush(Color.FromRgb(108, 92, 231)),
                 Foreground = Brushes.White,
-                BorderBrush = new SolidColorBrush(Color.FromRgb(0, 120, 212))
+                BorderBrush = new SolidColorBrush(Color.FromRgb(108, 92, 231))
             };
             _selectButton.Click += (s, e) => { DialogResult = true; Close(); };
             buttonPanel.Children.Add(_selectButton);

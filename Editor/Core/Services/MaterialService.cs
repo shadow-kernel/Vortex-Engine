@@ -19,6 +19,13 @@ namespace Editor.Core.Services
         private readonly Dictionary<string, MaterialInfo> _materialInfos = new Dictionary<string, MaterialInfo>();
         private readonly Dictionary<long, UniversalMaterial> _universalMaterials = new Dictionary<long, UniversalMaterial>();
 
+        // Fully-applied .vmat materials, cached by absolute path and shared across every entity
+        // that references the same file. MaterialService owns their lifecycle (see UnloadAll) — do
+        // NOT register these in per-entity caches that DeleteMaterial on cleanup, or they get freed
+        // out from under other users.
+        private readonly Dictionary<string, long> _vmatMaterials =
+            new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+
         public class MaterialInfo
         {
             public string Name { get; set; }
@@ -245,6 +252,110 @@ namespace Editor.Core.Services
         }
 
         /// <summary>
+        /// Loads a .vmat and builds a fully-applied engine material — base color, all PBR scalars
+        /// (metallic/roughness/normal-strength/normal-format/unlit/emissive) AND every texture map
+        /// (albedo/normal/metallic/roughness/AO). The result is a real ResourceRegistry material id
+        /// in the same id-space the renderer samples, so an edited .vmat actually shows up in the
+        /// viewport. Cached by absolute path; call <see cref="InvalidateVortexMaterial"/> after the
+        /// .vmat is edited on disk to force a rebuild on the next frame.
+        /// </summary>
+        public long GetOrBuildVortexMaterial(string vmatPath)
+        {
+            if (string.IsNullOrEmpty(vmatPath) || !File.Exists(vmatPath))
+                return GetDefaultMaterial();
+
+            string key = Path.GetFullPath(vmatPath);
+            if (_vmatMaterials.TryGetValue(key, out long existing) && existing >= 0)
+                return existing;
+
+            long handle = BuildVortexMaterial(key);
+            if (handle >= 0)
+            {
+                _vmatMaterials[key] = handle;
+                return handle;
+            }
+            return GetDefaultMaterial();
+        }
+
+        /// <summary>
+        /// Drop the cached engine material for a .vmat path (after it was edited/saved) so the next
+        /// <see cref="GetOrBuildVortexMaterial"/> rebuilds it. Frees the old engine material.
+        /// </summary>
+        public void InvalidateVortexMaterial(string vmatPath)
+        {
+            if (string.IsNullOrEmpty(vmatPath)) return;
+            string key;
+            try { key = Path.GetFullPath(vmatPath); }
+            catch { key = vmatPath; }
+
+            if (_vmatMaterials.TryGetValue(key, out long handle))
+            {
+                if (handle >= 0) VortexAPI.DeleteMaterial(handle);
+                _vmatMaterials.Remove(key);
+            }
+        }
+
+        private long BuildVortexMaterial(string vmatPath)
+        {
+            var vmat = VortexMaterial.Load(vmatPath);
+            if (vmat == null) return -1;
+
+            vmat.ResolvePathsAbsolute(Path.GetDirectoryName(vmatPath));
+            return BuildEngineMaterial(vmat);
+        }
+
+        /// <summary>
+        /// Creates a fresh engine material and applies a VortexMaterial's full state — base color, all
+        /// PBR scalars (metallic/roughness/AO/normal/unlit/emissive) and every texture map. Texture
+        /// paths must already be absolute. The caller OWNS the returned id (not cached here); used by
+        /// GetOrBuildVortexMaterial and by editor live-previews.
+        /// </summary>
+        public long BuildEngineMaterial(VortexMaterial vmat)
+        {
+            if (vmat == null) return -1;
+
+            long mat = VortexAPI.CreateNewMaterial();
+            if (mat < 0) return -1;
+
+            // Base color
+            var c = vmat.BaseColor;
+            float r = (c != null && c.Length > 0) ? c[0] : 1f;
+            float g = (c != null && c.Length > 1) ? c[1] : 1f;
+            float b = (c != null && c.Length > 2) ? c[2] : 1f;
+            float a = (c != null && c.Length > 3) ? c[3] : 1f;
+            VortexAPI.SetMaterialBaseColor(mat, r, g, b, a);
+
+            // PBR scalars
+            VortexAPI.SetMaterialMetallicValue(mat, vmat.Metallic);
+            VortexAPI.SetMaterialRoughnessValue(mat, vmat.Roughness);
+            VortexAPI.SetMaterialAOValue(mat, vmat.AmbientOcclusion);
+            VortexAPI.SetMaterialNormalStrengthValue(mat, vmat.NormalStrength);
+            VortexAPI.SetMaterialNormalFormat(mat, vmat.UseDirectXNormals);
+
+            // Unlit / emissive
+            bool unlit = string.Equals(vmat.ShaderType, "Unlit", StringComparison.OrdinalIgnoreCase);
+            VortexAPI.SetMaterialAsUnlit(mat, unlit);
+            if (vmat.EmissiveStrength > 0f)
+                VortexAPI.SetMaterialEmissiveBrightness(mat, vmat.EmissiveStrength);
+
+            // Texture maps (resolved to absolute paths above)
+            BindMap(mat, vmat.AlbedoTexture, VortexAPI.SetMaterialAlbedoTexture);
+            BindMap(mat, vmat.NormalTexture, VortexAPI.SetMaterialNormalMap);
+            BindMap(mat, vmat.MetallicTexture, VortexAPI.SetMaterialMetallicMap);
+            BindMap(mat, vmat.RoughnessTexture, VortexAPI.SetMaterialRoughnessMap);
+            BindMap(mat, vmat.AOTexture, VortexAPI.SetMaterialAOMap);
+
+            return mat;
+        }
+
+        private static void BindMap(long materialId, string texturePath, Action<long, long> setter)
+        {
+            if (string.IsNullOrEmpty(texturePath) || !File.Exists(texturePath)) return;
+            long tex = VortexAPI.ImportTextureFromFile(texturePath);
+            if (tex >= 0) setter(materialId, tex);
+        }
+
+        /// <summary>
         /// Unload all materials.
         /// </summary>
         public void UnloadAll()
@@ -257,6 +368,15 @@ namespace Editor.Core.Services
                 }
             }
             _loadedMaterials.Clear();
+
+            foreach (var handle in _vmatMaterials.Values)
+            {
+                if (handle >= 0)
+                {
+                    VortexAPI.DeleteMaterial(handle);
+                }
+            }
+            _vmatMaterials.Clear();
 
             // Reset built-in handles
             foreach (var info in _materialInfos.Values)

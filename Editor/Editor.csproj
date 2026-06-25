@@ -121,6 +121,7 @@
     <Compile Include="Core\Services\ModelImportService.cs" />
     <Compile Include="Core\Services\MultiViewportRenderService.cs" />
     <Compile Include="Core\Services\RaycastService.cs" />
+    <Compile Include="Core\Services\Rendering\AssetPreviewRenderer.cs" />
     <Compile Include="Core\Services\Rendering\SecondaryViewportRenderer.cs" />
     <Compile Include="Core\Services\Rendering\ViewportRenderManager.cs" />
     <Compile Include="Core\Services\SceneRenderService.cs" />
@@ -139,7 +140,6 @@
       <DependentUpon>ImportResultDialog.xaml</DependentUpon>
     </Compile>
     <Compile Include="Dialogs\MaterialEditorDialog.cs" />
-    <Compile Include="Dialogs\ModelMaterialManagerDialog.cs" />
     <Compile Include="Dialogs\TextureEditorDialog.cs" />
     <Compile Include="Dialogs\UniversalModelEditorDialog.cs" />
     <Compile Include="DllWrapper\Camera\VortexCamera.cs" />
@@ -332,6 +332,7 @@
     <Compile Include="Editors\WorldEditor\Converters\EntityConverters.cs" />
     <Compile Include="Editors\WorldEditor\Converters\VisibilityConverters.cs" />
     <Compile Include="Editors\WorldEditor\Services\WindowService.cs" />
+    <Compile Include="Editors\WorldEditor\Themes\DarkAvalonTheme.cs" />
     <Compile Include="Editors\WorldEditor\WorldEditorView.xaml.cs">
       <DependentUpon>WorldEditorView.xaml</DependentUpon>
     </Compile>

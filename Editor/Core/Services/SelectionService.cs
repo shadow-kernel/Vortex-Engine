@@ -121,6 +121,26 @@ namespace Editor.Core.Services
         }
 
         /// <summary>
+        /// Fired when a view explicitly asks the editor camera to frame an entity
+        /// (e.g. right after creating it). Deliberately separate from SelectionChanged
+        /// so the camera only moves on explicit focus, not on every click.
+        /// </summary>
+        public event EventHandler<SelectionEventArgs> FocusRequested;
+
+        /// <summary>
+        /// Request that the editor viewport frame the given entity.
+        /// </summary>
+        public void RequestFocus(GameEntity entity)
+        {
+            if (entity == null) return;
+            FocusRequested?.Invoke(this, new SelectionEventArgs
+            {
+                SelectedEntity = entity,
+                SelectedScene = entity.Scene
+            });
+        }
+
+        /// <summary>
         /// Event fired when the selected entity's transform is modified (e.g., during gizmo drag).
         /// </summary>
         public event EventHandler<TransformChangedEventArgs> TransformChanged;

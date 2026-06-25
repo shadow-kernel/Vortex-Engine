@@ -19,6 +19,9 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void RenderFrame();
 
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SwapRenderQueue")]
+        private static extern void SwapRenderQueueNative();
+
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void ShutdownRenderViewport();
 
@@ -26,6 +29,11 @@ namespace Editor.DllWrapper
             => InitializeRenderViewport(hwnd, width, height);
         public static void ResizeRender(uint width, uint height) => ResizeRenderViewport(width, height);
         public static void RenderOnce() => RenderFrame();
+        /// <summary>
+        /// Swap the render queue without presenting to the main swapchain — for offscreen
+        /// thumbnail/preview rendering so it never flashes the editor viewport.
+        /// </summary>
+        public static void SwapRenderQueue() => SwapRenderQueueNative();
         public static void ShutdownRender() => ShutdownRenderViewport();
 
         #endregion

@@ -115,7 +115,9 @@
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <TextBlock Grid.Column="0" Text="{Binding Path=Model.Title, RelativeSource={RelativeSource TemplatedParent}}" Foreground="{StaticResource TextBrush}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                            <!-- Panels are fixed (CanClose/CanAutoHide=False); hide the pin/close
+                                 buttons for the clean Aurora header look. PARTs stay in the tree. -->
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Visibility="Collapsed">
                                 <Button x:Name="PART_AutoHidePin" Style="{StaticResource DockPaneButtonStyle}" Content="&#xE718;" ToolTip="Auto Hide"/>
                                 <Button x:Name="PART_HidePin" Style="{StaticResource DockPaneButtonStyle}" Content="&#xE711;" ToolTip="Close" Margin="4,0,0,0"/>
                             </StackPanel>
@@ -197,9 +199,10 @@
                     </Border>
                     <ControlTemplate.Triggers>
                         <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                            <!-- Active document: blend into the dark pane card; indicate via
+                                 brighter bold text, not a bright accent box (was #3FA9F5). -->
                             <Setter TargetName="Border" Property="Background" Value="{StaticResource PanelBrush}"/>
-                            <Setter TargetName="Border" Property="BorderThickness" Value="0,2,0,0"/>
-                            <Setter TargetName="Border" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                            <Setter TargetName="Border" Property="BorderThickness" Value="0"/>
                             <Setter TargetName="Title" Property="Foreground" Value="{StaticResource TextBrush}"/>
                             <Setter TargetName="Title" Property="FontWeight" Value="SemiBold"/>
                             <Setter TargetName="PART_CloseButton" Property="Visibility" Value="Visible"/>
@@ -214,101 +217,42 @@
         </Setter>
     </Style>
 
-    <!-- Anchorable Pane Control (Container for Explorer/Console) -->
-    <Style TargetType="{x:Type avalonDockControls:LayoutAnchorablePaneControl}">
+    <!-- Anchorable Pane Control — property-only (NO custom Template) so AvalonDock's default
+         template keeps hosting the panel content + tabs correctly, while BorderThickness=0
+         removes the light GenericTheme border that was leaking at every pane edge. -->
+    <Style x:Key="DarkAnchorablePaneStyle" TargetType="{x:Type avalonDockControls:LayoutAnchorablePaneControl}">
         <Setter Property="Background" Value="{StaticResource PanelBrush}"/>
         <Setter Property="BorderBrush" Value="Transparent"/>
         <Setter Property="BorderThickness" Value="0"/>
         <Setter Property="Padding" Value="0"/>
         <Setter Property="TabStripPlacement" Value="Bottom"/>
         <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
-        <Setter Property="Template">
-            <Setter.Value>
-                <ControlTemplate TargetType="{x:Type TabControl}">
-                    <Border Margin="5,0,5,5" CornerRadius="0,0,12,12" Background="{StaticResource PanelBrush}" SnapsToDevicePixels="True" ClipToBounds="True">
-                    <Grid SnapsToDevicePixels="True" ClipToBounds="True">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="*"/>
-                            <RowDefinition Height="Auto"/>
-                        </Grid.RowDefinitions>
-                        <Border Grid.Row="0"
-                                Background="{TemplateBinding Background}"
-                                BorderBrush="Transparent"
-                                BorderThickness="0"
-                                SnapsToDevicePixels="True">
-                            <ContentPresenter x:Name="PART_SelectedContentHost"
-                                              ContentSource="SelectedContent"
-                                              SnapsToDevicePixels="True"/>
-                        </Border>
-                        <Border Grid.Row="1"
-                                Background="{StaticResource PanelBrush}"
-                                BorderBrush="Transparent"
-                                BorderThickness="0"
-                                Padding="6,2"
-                                SnapsToDevicePixels="True">
-                            <StackPanel x:Name="HeaderPanel"
-                                        IsItemsHost="True"
-                                        Orientation="Horizontal"
-                                        Margin="0"
-                                        Background="Transparent"
-                                        FocusVisualStyle="{x:Null}"/>
-                        </Border>
-                    </Grid>
-                    </Border>
-                </ControlTemplate>
-            </Setter.Value>
-        </Setter>
     </Style>
 
-    <!-- Document Pane Control -->
-    <Style TargetType="{x:Type avalonDockControls:LayoutDocumentPaneControl}">
+    <!-- Document Pane Control — property-only (see Anchorable note above). -->
+    <Style x:Key="DarkDocumentPaneStyle" TargetType="{x:Type avalonDockControls:LayoutDocumentPaneControl}">
         <Setter Property="Background" Value="{StaticResource PanelBrush}"/>
         <Setter Property="BorderBrush" Value="Transparent"/>
         <Setter Property="BorderThickness" Value="0"/>
         <Setter Property="Padding" Value="0"/>
         <Setter Property="TabStripPlacement" Value="Top"/>
         <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+    </Style>
+
+    <!-- Grid Resizer (the splitter between panes). The default template draws a light 3D
+         grip (gray/white lines) — re-template to a plain dark bar so panes abut cleanly.
+         Still fully draggable (drag logic is in the control, not the template). -->
+    <Style TargetType="{x:Type avalonDockControls:LayoutGridResizerControl}">
+        <Setter Property="Background" Value="{StaticResource BackgroundBrush}"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Focusable" Value="False"/>
         <Setter Property="Template">
             <Setter.Value>
-                <ControlTemplate TargetType="{x:Type TabControl}">
-                    <Border Margin="5" CornerRadius="12" Background="{StaticResource PanelBrush}" SnapsToDevicePixels="True" ClipToBounds="True">
-                    <Grid SnapsToDevicePixels="True" ClipToBounds="True">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="*"/>
-                        </Grid.RowDefinitions>
-                        <Border Grid.Row="0"
-                                Background="{StaticResource PanelBrush}"
-                                BorderBrush="Transparent"
-                                BorderThickness="0"
-                                Padding="6,2"
-                                SnapsToDevicePixels="True">
-                            <StackPanel x:Name="HeaderPanel"
-                                        IsItemsHost="True"
-                                        Orientation="Horizontal"
-                                        Margin="0"
-                                        Background="Transparent"
-                                        FocusVisualStyle="{x:Null}"/>
-                        </Border>
-                        <Border Grid.Row="1"
-                                Background="{TemplateBinding Background}"
-                                BorderBrush="Transparent"
-                                BorderThickness="0"
-                                SnapsToDevicePixels="True">
-                            <ContentPresenter x:Name="PART_SelectedContentHost"
-                                              ContentSource="SelectedContent"
-                                              SnapsToDevicePixels="True"/>
-                        </Border>
-                    </Grid>
-                    </Border>
+                <ControlTemplate TargetType="{x:Type avalonDockControls:LayoutGridResizerControl}">
+                    <Border Background="{TemplateBinding Background}" SnapsToDevicePixels="True"/>
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
-    </Style>
-
-    <!-- Grid Resizer -->
-    <Style TargetType="{x:Type avalonDockControls:LayoutGridResizerControl}">
-        <Setter Property="Background" Value="{StaticResource BackgroundBrush}"/>
     </Style>
 
     <!-- Auto Hide Anchor -->
@@ -330,19 +274,31 @@
         </Setter>
     </Style>
 
-    <!-- Floating Windows -->
+    <!-- Floating Windows (torn-off panels) — dark border, not the bright accent which
+         read as a light/white frame. -->
     <Style TargetType="{x:Type avalonDockControls:LayoutAnchorableFloatingWindowControl}">
         <Setter Property="Background" Value="{StaticResource BackgroundBrush}"/>
-        <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
         <Setter Property="BorderThickness" Value="1"/>
         <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
     </Style>
 
     <Style TargetType="{x:Type avalonDockControls:LayoutDocumentFloatingWindowControl}">
         <Setter Property="Background" Value="{StaticResource BackgroundBrush}"/>
-        <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
         <Setter Property="BorderThickness" Value="1"/>
         <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+    </Style>
+
+    <!-- Auto-hide flyout host (slides out when a CanAutoHide panel is clicked).
+         Un-templated by default => AvalonDock's light generic theme leaks white here. -->
+    <Style TargetType="{x:Type avalonDockControls:LayoutAutoHideWindowControl}">
+        <Setter Property="Background" Value="{StaticResource PanelBrush}"/>
+    </Style>
+
+    <!-- Drag/drop overlay window shown while docking a panel — keep it dark, not white. -->
+    <Style TargetType="{x:Type avalonDockControls:OverlayWindow}">
+        <Setter Property="Background" Value="{StaticResource BackgroundBrush}"/>
     </Style>
 
     <!-- Dropdown Button for tabs overflow -->
@@ -362,6 +318,51 @@
 
     <!-- Docking Manager -->
     <Style TargetType="{x:Type avalonDock:DockingManager}">
+        <Setter Property="Background" Value="{StaticResource BackgroundBrush}"/>
+    </Style>
+
+    <!-- Resize splitter between panes — plain dark, no light grip/border. AvalonDock applies
+         this via DockingManager.GridSplitterVertical/HorizontalStyle (set in WorldEditorView),
+         which overrides the white GenericTheme splitter that was leaking at every pane edge. -->
+    <Style x:Key="DarkResizeGrip" TargetType="{x:Type avalonDockControls:LayoutGridResizerControl}">
+        <Setter Property="Background" Value="{StaticResource BackgroundBrush}"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Focusable" Value="False"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type avalonDockControls:LayoutGridResizerControl}">
+                    <Border Background="{TemplateBinding Background}" SnapsToDevicePixels="True"/>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Container controls: AvalonDock's GenericTheme gives these a default (white) border,
+         which showed as a thin white hairline down the left edge of the document/viewport
+         pane. Force them dark and border-less so only our styled panes/cards are visible. -->
+    <!-- Re-template the document content host: AvalonDock's generic template wraps the
+         content in a Border with a default (white) BorderBrush, which a plain BorderThickness
+         setter cannot override. A border-less ContentPresenter kills the white hairline while
+         still showing the document content (Model.Content = the viewport). -->
+    <Style TargetType="{x:Type avalonDockControls:LayoutDocumentControl}">
+        <Setter Property="Background" Value="{StaticResource PanelBrush}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type avalonDockControls:LayoutDocumentControl}">
+                    <Border Background="{TemplateBinding Background}" BorderThickness="0" SnapsToDevicePixels="True">
+                        <ContentPresenter Content="{Binding Model.Content, RelativeSource={RelativeSource TemplatedParent}}"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <Style TargetType="{x:Type avalonDockControls:LayoutDocumentPaneGroupControl}">
+        <Setter Property="Background" Value="{StaticResource BackgroundBrush}"/>
+    </Style>
+    <Style TargetType="{x:Type avalonDockControls:LayoutAnchorablePaneGroupControl}">
+        <Setter Property="Background" Value="{StaticResource BackgroundBrush}"/>
+    </Style>
+    <Style TargetType="{x:Type avalonDockControls:LayoutPanelControl}">
         <Setter Property="Background" Value="{StaticResource BackgroundBrush}"/>
     </Style>
 

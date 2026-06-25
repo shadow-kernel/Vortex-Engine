@@ -56,7 +56,7 @@ namespace Editor.Dialogs
             Width = 600;
             Height = 500;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
-            Background = new SolidColorBrush(Color.FromRgb(30, 30, 30));
+            Background = new SolidColorBrush(Color.FromRgb(22, 22, 24));
             ResizeMode = ResizeMode.CanResize;
             MinWidth = 500;
             MinHeight = 400;
@@ -251,7 +251,7 @@ namespace Editor.Dialogs
             cancelBtn.Click += (s, e) => { DialogResult = false; Close(); };
             buttonPanel.Children.Add(cancelBtn);
             var importBtn = CreateButton("Import", 100);
-            importBtn.Background = new SolidColorBrush(Color.FromRgb(0, 120, 212));
+            importBtn.Background = new SolidColorBrush(Color.FromRgb(108, 92, 231));
             importBtn.Margin = new Thickness(10, 0, 0, 0);
             importBtn.Click += Import_Click;
             buttonPanel.Children.Add(importBtn);
@@ -382,7 +382,7 @@ namespace Editor.Dialogs
             {
                 var border = new Border
                 {
-                    Background = new SolidColorBrush(Color.FromRgb(0, 120, 212)),
+                    Background = new SolidColorBrush(Color.FromRgb(108, 92, 231)),
                     CornerRadius = new CornerRadius(3),
                     Padding = new Thickness(8, 4, 4, 4),
                     Margin = new Thickness(0, 0, 5, 5)
@@ -399,7 +399,7 @@ namespace Editor.Dialogs
 
                 var removeBtn = new Button
                 {
-                    Content = "×",
+                    Content = "ï¿½",
                     FontSize = 12,
                     FontWeight = FontWeights.Bold,
                     Foreground = Brushes.White,

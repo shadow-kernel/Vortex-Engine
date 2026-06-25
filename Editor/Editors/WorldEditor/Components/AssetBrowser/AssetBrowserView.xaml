@@ -113,7 +113,9 @@
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <!-- Redundant "Asset Browser" title removed; the AvalonDock pane title "Project"
+                     already labels this panel. Import/Refresh buttons stay. -->
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Visibility="Collapsed">
                     <TextBlock Text="&#xEC50;" FontFamily="Segoe MDL2 Assets" FontSize="14"
                                Foreground="#FF9A9AA1" VerticalAlignment="Center" Margin="0,0,8,0"/>
                     <TextBlock Text="Asset Browser" FontSize="13" FontWeight="SemiBold"
@@ -181,7 +183,13 @@
                 </ItemsPanelTemplate>
             </ListBox.ItemsPanel>
             <ListBox.ContextMenu>
-                <ContextMenu Background="#FF28282C" BorderBrush="#FF33333A">
+                <ContextMenu Background="#FF161618" BorderBrush="#FF3A3A3E">
+                    <MenuItem Header="Open / Edit" Click="ContextMenu_Open_Click">
+                        <MenuItem.Icon>
+                            <TextBlock Text="&#xE70F;" FontFamily="Segoe MDL2 Assets" Foreground="#FF6C5CE7"/>
+                        </MenuItem.Icon>
+                    </MenuItem>
+                    <Separator/>
                     <MenuItem Header="Add to Scene" Click="ContextMenu_AddToScene_Click">
                         <MenuItem.Icon>
                             <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" Foreground="#FF4EC9B0"/>
@@ -203,12 +211,22 @@
             <ListBox.ItemTemplate>
                 <DataTemplate>
                     <StackPanel Width="92">
-                        <!-- Square icon area -->
+                        <!-- Square preview area -->
                         <Border Background="#FF1A1A1C" CornerRadius="10"
                                 Width="84" Height="84" HorizontalAlignment="Center">
-                            <TextBlock Text="{Binding IconCode}" FontFamily="Segoe MDL2 Assets"
-                                       FontSize="34" Foreground="{Binding IconColor}"
-                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            <Grid>
+                                <!-- Glyph fallback (shown when the item has no real Thumbnail) -->
+                                <TextBlock Text="{Binding IconCode}" FontFamily="Segoe MDL2 Assets"
+                                           FontSize="34" Foreground="{Binding IconColor}"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                <!-- Real preview (texture image / color swatch / material sphere).
+                                     ImageBrush with a null source is transparent, so the glyph shows through. -->
+                                <Border CornerRadius="10">
+                                    <Border.Background>
+                                        <ImageBrush ImageSource="{Binding Thumbnail}" Stretch="UniformToFill"/>
+                                    </Border.Background>
+                                </Border>
+                            </Grid>
                         </Border>
                         <!-- Centered label -->
                         <TextBlock Text="{Binding Name}" FontSize="11" Foreground="#FFC8C8CE"

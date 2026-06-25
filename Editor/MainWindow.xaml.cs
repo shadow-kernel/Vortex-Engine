@@ -2,9 +2,12 @@
 using Editor.Core.Services;
 using Editor.Core.UndoRedo;
 using Editor.Project.Projection;
+using System;
 using System.ComponentModel;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Interop;
 
 namespace Editor
 {
@@ -212,5 +215,96 @@ namespace Editor
             // Lösche letztes Projekt - beim nächsten Start wird Browser geöffnet
             EditorStateService.Instance.ClearLastProject();
         }
+
+        #region Borderless maximize fix
+
+        // With WindowStyle=None + WindowChrome, a maximized window overflows the monitor by
+        // the resize border (~7px), clipping the top of the header AND covering the taskbar.
+        // Hooking WM_GETMINMAXINFO constrains the maximized size to the monitor work area.
+        protected override void OnSourceInitialized(EventArgs e)
+        {
+            base.OnSourceInitialized(e);
+            var handle = new WindowInteropHelper(this).Handle;
+            HwndSource.FromHwnd(handle)?.AddHook(WindowProc);
+
+            // Win11 rounded window corners (matches the Aurora reference). No-op on Win10.
+            try
+            {
+                int round = 2; // DWMWCP_ROUND
+                DwmSetWindowAttribute(handle, 33 /*DWMWA_WINDOW_CORNER_PREFERENCE*/, ref round, sizeof(int));
+            }
+            catch { /* DWM not available */ }
+        }
+
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
+
+        private static IntPtr WindowProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            const int WM_GETMINMAXINFO = 0x0024;
+            if (msg == WM_GETMINMAXINFO)
+            {
+                WmGetMinMaxInfo(hwnd, lParam);
+                handled = true;
+            }
+            return IntPtr.Zero;
+        }
+
+        private static void WmGetMinMaxInfo(IntPtr hwnd, IntPtr lParam)
+        {
+            const int MONITOR_DEFAULTTONEAREST = 0x00000002;
+            var mmi = (MINMAXINFO)Marshal.PtrToStructure(lParam, typeof(MINMAXINFO));
+            IntPtr monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            if (monitor != IntPtr.Zero)
+            {
+                var info = new MONITORINFO { cbSize = Marshal.SizeOf(typeof(MONITORINFO)) };
+                if (GetMonitorInfo(monitor, ref info))
+                {
+                    RECT work = info.rcWork;
+                    RECT mon = info.rcMonitor;
+                    mmi.ptMaxPosition.x = Math.Abs(work.left - mon.left);
+                    mmi.ptMaxPosition.y = Math.Abs(work.top - mon.top);
+                    mmi.ptMaxSize.x = Math.Abs(work.right - work.left);
+                    mmi.ptMaxSize.y = Math.Abs(work.bottom - work.top);
+                    // Keep a sane minimum so the window can't be maximized to nothing.
+                    mmi.ptMinTrackSize.x = 960;
+                    mmi.ptMinTrackSize.y = 540;
+                }
+            }
+            Marshal.StructureToPtr(mmi, lParam, true);
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct POINT { public int x; public int y; }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MINMAXINFO
+        {
+            public POINT ptReserved;
+            public POINT ptMaxSize;
+            public POINT ptMaxPosition;
+            public POINT ptMinTrackSize;
+            public POINT ptMaxTrackSize;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct RECT { public int left; public int top; public int right; public int bottom; }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+        private struct MONITORINFO
+        {
+            public int cbSize;
+            public RECT rcMonitor;
+            public RECT rcWork;
+            public uint dwFlags;
+        }
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr MonitorFromWindow(IntPtr handle, int flags);
+
+        [DllImport("user32.dll")]
+        private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
+
+        #endregion
     }
 }

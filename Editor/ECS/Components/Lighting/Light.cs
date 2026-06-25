@@ -24,14 +24,14 @@ namespace Editor.ECS.Components.Lighting
     }
 
     /// <summary>
-    /// Licht-Komponente für Beleuchtung in der Szene.
+    /// Licht-Komponente fï¿½r Beleuchtung in der Szene.
     /// </summary>
     [DataContract(Name = "Light", Namespace = "")]
     public class Light : Component
     {
         private LightType _lightType = LightType.Directional;
         private ShadowType _shadowType = ShadowType.Soft;
-        private float _intensity = 1f;
+        private float _intensity = 2.5f;
         private float _range = 10f;
         private float _spotAngle = 30f;
         private float _innerSpotAngle = 21f;
@@ -74,7 +74,7 @@ namespace Editor.ECS.Components.Lighting
         }
 
         /// <summary>
-        /// Lichtintensität
+        /// Lichtintensitï¿½t
         /// </summary>
         [DataMember(Name = "intensity", Order = 12)]
         public float Intensity
@@ -84,7 +84,7 @@ namespace Editor.ECS.Components.Lighting
         }
 
         /// <summary>
-        /// Reichweite (für Point und Spot)
+        /// Reichweite (fï¿½r Point und Spot)
         /// </summary>
         [DataMember(Name = "range", Order = 13)]
         public float Range
@@ -94,7 +94,7 @@ namespace Editor.ECS.Components.Lighting
         }
 
         /// <summary>
-        /// Spot-Winkel in Grad (für Spot)
+        /// Spot-Winkel in Grad (fï¿½r Spot)
         /// </summary>
         [DataMember(Name = "spotAngle", Order = 14)]
         public float SpotAngle
@@ -104,7 +104,7 @@ namespace Editor.ECS.Components.Lighting
         }
 
         /// <summary>
-        /// Innerer Spot-Winkel in Grad (für Spot)
+        /// Innerer Spot-Winkel in Grad (fï¿½r Spot)
         /// </summary>
         [DataMember(Name = "innerSpotAngle", Order = 15)]
         public float InnerSpotAngle
@@ -124,7 +124,7 @@ namespace Editor.ECS.Components.Lighting
         }
 
         /// <summary>
-        /// Lichtfarbe Grün
+        /// Lichtfarbe Grï¿½n
         /// </summary>
         [DataMember(Name = "colorG", Order = 17)]
         public float ColorG
@@ -144,7 +144,7 @@ namespace Editor.ECS.Components.Lighting
         }
 
         /// <summary>
-        /// Schattenstärke (0-1)
+        /// Schattenstï¿½rke (0-1)
         /// </summary>
         [DataMember(Name = "shadowStrength", Order = 19)]
         public float ShadowStrength
@@ -174,7 +174,7 @@ namespace Editor.ECS.Components.Lighting
         }
 
         /// <summary>
-        /// Schatten-Auflösung
+        /// Schatten-Auflï¿½sung
         /// </summary>
         [DataMember(Name = "shadowResolution", Order = 22)]
         public int ShadowResolution

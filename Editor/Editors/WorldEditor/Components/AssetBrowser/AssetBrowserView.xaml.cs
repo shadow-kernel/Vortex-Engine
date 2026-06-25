@@ -1,10 +1,14 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using System.Runtime.InteropServices;
 using Editor.Core.Assets;
 using Editor.Core.Data;
 using Editor.Core.Services;
@@ -25,7 +29,7 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             Shaders
         }
 
-        public class AssetItem
+        public class AssetItem : INotifyPropertyChanged
         {
             public long Id { get; set; }
             public string Name { get; set; }
@@ -36,6 +40,18 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             public string Path { get; set; }
             public Guid AssetGuid { get; set; }
             public bool IsImported { get; set; }
+
+            /// <summary>Real preview image (texture bitmap / generated color swatch / material sphere).
+            /// Generated progressively AFTER the tile is shown (so the browser never freezes); when
+            /// null the IconCode glyph is shown instead. Notifies so the tile updates when it lands.</summary>
+            private ImageSource _thumbnail;
+            public ImageSource Thumbnail
+            {
+                get => _thumbnail;
+                set { _thumbnail = value; PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Thumbnail))); }
+            }
+
+            public event PropertyChangedEventHandler PropertyChanged;
         }
 
         public ObservableCollection<AssetItem> Assets { get; } = new ObservableCollection<AssetItem>();
@@ -484,76 +500,93 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             if (AssetList.SelectedItem is AssetItem item)
             {
                 AssetDoubleClicked?.Invoke(this, item);
-                
-                var projectPath = ProjectData.Current?.Path ?? "";
-                string fullPath = item.Path;
-                if (!string.IsNullOrEmpty(item.Path) && !System.IO.Path.IsPathRooted(item.Path))
-                {
-                    fullPath = System.IO.Path.Combine(projectPath, item.Path);
-                }
-                
-                var extension = !string.IsNullOrEmpty(item.Path) 
-                    ? System.IO.Path.GetExtension(item.Path)?.ToLowerInvariant() 
-                    : "";
-                
-                // Handle different asset types
-                switch (item.Type)
-                {
-                    case AssetType.Textures:
-                        // Open Texture Editor
-                        if (System.IO.File.Exists(fullPath))
+                OpenOrPlaceAsset(item);
+            }
+        }
+
+        private void ContextMenu_Open_Click(object sender, RoutedEventArgs e)
+        {
+            if (AssetList.SelectedItem is AssetItem item)
+                OpenOrPlaceAsset(item);
+        }
+
+        /// <summary>
+        /// Opens the asset in its dedicated editor; if there is none (built-in/primitive), meshes are
+        /// added to the scene and everything else shows explicit feedback — so an open gesture is
+        /// never a silent no-op. Shared by double-click and the context-menu "Open / Edit" item.
+        /// </summary>
+        private void OpenOrPlaceAsset(AssetItem item)
+        {
+            if (item == null) return;
+
+            if (OpenAssetInEditor(item))
+                return;
+
+            if (item.Type == AssetType.Meshes || item.Type == AssetType.Models)
+            {
+                AddAssetToScene(item);
+            }
+            else
+            {
+                MessageBox.Show($"'{item.Name}' is a built-in {item.Type} asset and has no editable file.",
+                    "Nothing to open", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+        }
+
+        /// <summary>
+        /// Routes an asset to its editor by type. Returns true if an editor was opened, false if the
+        /// asset has no dedicated editor / no backing file (built-in or primitive).
+        /// </summary>
+        private bool OpenAssetInEditor(AssetItem item)
+        {
+            if (item == null) return false;
+
+            var projectPath = ProjectData.Current?.Path ?? "";
+            string fullPath = item.Path;
+            if (!string.IsNullOrEmpty(item.Path) && !System.IO.Path.IsPathRooted(item.Path))
+                fullPath = System.IO.Path.Combine(projectPath, item.Path);
+
+            var extension = !string.IsNullOrEmpty(item.Path)
+                ? System.IO.Path.GetExtension(item.Path)?.ToLowerInvariant()
+                : "";
+
+            switch (item.Type)
+            {
+                case AssetType.Textures:
+                    if (System.IO.File.Exists(fullPath))
+                    {
+                        Dialogs.TextureEditorDialog.OpenTexture(Window.GetWindow(this), fullPath, item.AssetGuid);
+                        return true;
+                    }
+                    return false;
+
+                case AssetType.Materials:
+                    if (System.IO.File.Exists(fullPath))
+                    {
+                        try { Dialogs.MaterialEditorDialog.OpenMaterial(Window.GetWindow(this), fullPath); }
+                        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Error opening Material Editor: {ex.Message}"); }
+                        return true;
+                    }
+                    return false;
+
+                case AssetType.Meshes:
+                case AssetType.Models:
+                    bool isModelFile = extension == ".fbx" || extension == ".obj" || extension == ".gltf" ||
+                                       extension == ".glb" || extension == ".dae" || extension == ".3ds";
+                    if (isModelFile && System.IO.File.Exists(fullPath))
+                    {
+                        try { Dialogs.UniversalModelEditorDialog.OpenForModel(Window.GetWindow(this), fullPath); }
+                        catch (Exception ex)
                         {
-                            Dialogs.TextureEditorDialog.OpenTexture(Window.GetWindow(this), fullPath, item.AssetGuid);
+                            System.Diagnostics.Debug.WriteLine($"Error opening Model Editor: {ex.Message}");
+                            MessageBox.Show($"Could not open model: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
                         }
-                        else
-                        {
-                            MessageBox.Show($"Texture file not found:\n{fullPath}", "File Not Found", MessageBoxButton.OK, MessageBoxImage.Warning);
-                        }
-                        return;
-                        
-                    case AssetType.Materials:
-                        // Open Material Editor
-                        if (System.IO.File.Exists(fullPath))
-                        {
-                            try
-                            {
-                                Dialogs.MaterialEditorDialog.OpenMaterial(Window.GetWindow(this), fullPath);
-                            }
-                            catch (Exception ex)
-                            {
-                                System.Diagnostics.Debug.WriteLine($"Error opening Material Editor: {ex.Message}");
-                            }
-                        }
-                        return;
-                        
-                    case AssetType.Meshes:
-                    case AssetType.Models:
-                        // Check if this is a model file - open Model Material Manager
-                        bool isModelFile = extension == ".fbx" || extension == ".obj" || extension == ".gltf" || 
-                                           extension == ".glb" || extension == ".dae" || extension == ".3ds";
-                        
-                        if (isModelFile && System.IO.File.Exists(fullPath))
-                        {
-                            try
-                            {
-                                Dialogs.UniversalModelEditorDialog.OpenForModel(Window.GetWindow(this), fullPath);
-                            }
-                            catch (Exception ex)
-                            {
-                                System.Diagnostics.Debug.WriteLine($"Error opening Model Editor: {ex.Message}");
-                                MessageBox.Show($"Could not open model: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                            }
-                            return;
-                        }
-                        
-                        // If not a model file, add to scene
-                        AddAssetToScene(item);
-                        return;
-                        
-                    default:
-                        // For other types, just invoke the event
-                        break;
-                }
+                        return true;
+                    }
+                    return false;
+
+                default:
+                    return false;
             }
         }
 
@@ -905,22 +938,39 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             // EmptyState visibility is handled in XAML when available
         }
 
+        /// <summary>
+        /// Generates a thumbnail OFF the synchronous load path \u2014 on a Background-priority dispatcher
+        /// tick \u2014 so populating the browser never blocks the UI thread (mouse stays responsive). Each
+        /// build (engine offscreen render / Assimp import / bitmap decode) runs on its own tick and the
+        /// tile updates via INotifyPropertyChanged when the image lands. This (with SwapRenderQueue
+        /// replacing the per-thumbnail RenderOnce) is what makes opening the Asset Browser smooth.
+        /// </summary>
+        private void QueueThumbnail(AssetItem item, Func<ImageSource> builder)
+        {
+            Application.Current?.Dispatcher?.BeginInvoke(
+                System.Windows.Threading.DispatcherPriority.Background,
+                new Action(() => { try { item.Thumbnail = builder(); } catch { } }));
+        }
+
         private void LoadDefaultMeshes()
         {
             string[] primitives = { "Cube", "Sphere", "Plane", "Cylinder", "Cone", "Capsule", "Torus" };
-            
+
             for (int i = 0; i < primitives.Length; i++)
             {
-                Assets.Add(new AssetItem
+                string prim = primitives[i];
+                var item = new AssetItem
                 {
                     Id = i,
-                    Name = primitives[i],
+                    Name = prim,
                     TypeName = "Primitive",
                     IconCode = "\uF158",
                     IconColor = "#4EC9B0",
                     Type = AssetType.Meshes,
-                    Path = $"Primitive:{primitives[i]}"
-                });
+                    Path = $"Primitive:{prim}"
+                };
+                Assets.Add(item);
+                QueueThumbnail(item, () => GetOrBuildPrimitiveThumb(prim));
             }
         }
 
@@ -963,6 +1013,9 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                     AssetGuid = asset.Guid,
                     IsImported = true
                 });
+                // Defer the heavy Assimp import + offscreen render off the UI thread.
+                QueueThumbnail(Assets[Assets.Count - 1],
+                    () => GetOrBuildModelThumb(System.IO.Path.Combine(assetDb.ProjectPath, asset.RelativePath ?? asset.FileName)));
             }
 
             // Show hint if no models
@@ -986,10 +1039,10 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
         private void LoadDefaultTextures()
         {
             // Add default/built-in textures first
-            Assets.Add(new AssetItem { Id = 0, Name = "White", TypeName = "Solid Color", IconCode = "\uEB9F", IconColor = "#FFFFFF", Type = AssetType.Textures, Path = "Texture:White" });
-            Assets.Add(new AssetItem { Id = 1, Name = "Black", TypeName = "Solid Color", IconCode = "\uEB9F", IconColor = "#333333", Type = AssetType.Textures, Path = "Texture:Black" });
-            Assets.Add(new AssetItem { Id = 2, Name = "Normal", TypeName = "Normal Map", IconCode = "\uEB9F", IconColor = "#8080FF", Type = AssetType.Textures, Path = "Texture:Normal" });
-            Assets.Add(new AssetItem { Id = 3, Name = "Checker", TypeName = "Pattern", IconCode = "\uEB9F", IconColor = "#808080", Type = AssetType.Textures, Path = "Texture:Checker" });
+            Assets.Add(new AssetItem { Id = 0, Name = "White", TypeName = "Solid Color", IconCode = "\uEB9F", IconColor = "#FFFFFF", Type = AssetType.Textures, Path = "Texture:White", Thumbnail = MakeSolidSwatch("#FFFFFF") });
+            Assets.Add(new AssetItem { Id = 1, Name = "Black", TypeName = "Solid Color", IconCode = "\uEB9F", IconColor = "#333333", Type = AssetType.Textures, Path = "Texture:Black", Thumbnail = MakeSolidSwatch("#333333") });
+            Assets.Add(new AssetItem { Id = 2, Name = "Normal", TypeName = "Normal Map", IconCode = "\uEB9F", IconColor = "#8080FF", Type = AssetType.Textures, Path = "Texture:Normal", Thumbnail = MakeSolidSwatch("#8080FF") });
+            Assets.Add(new AssetItem { Id = 3, Name = "Checker", TypeName = "Pattern", IconCode = "\uEB9F", IconColor = "#808080", Type = AssetType.Textures, Path = "Texture:Checker", Thumbnail = MakeChecker() });
 
             // Load imported textures from AssetDatabase
             var assetDb = AssetDatabase.Instance;
@@ -1028,15 +1081,18 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                     AssetGuid = asset.Guid,
                     IsImported = true
                 });
+                // Defer bitmap decode off the UI thread.
+                QueueThumbnail(Assets[Assets.Count - 1],
+                    () => MakeTextureThumb(System.IO.Path.Combine(assetDb.ProjectPath, asset.RelativePath ?? asset.FileName)));
             }
         }
 
         private void LoadDefaultMaterials()
         {
             // Add default/built-in materials first
-            Assets.Add(new AssetItem { Id = 0, Name = "Default", TypeName = "Standard", IconCode = "\uE91B", IconColor = "#BD63C5", Type = AssetType.Materials, Path = "Material:Default" });
-            Assets.Add(new AssetItem { Id = 1, Name = "Unlit White", TypeName = "Unlit", IconCode = "\uE91B", IconColor = "#FFFFFF", Type = AssetType.Materials, Path = "Material:UnlitWhite" });
-            Assets.Add(new AssetItem { Id = 2, Name = "Grid", TypeName = "Standard", IconCode = "\uE91B", IconColor = "#4EC9B0", Type = AssetType.Materials, Path = "Material:Grid" });
+            Assets.Add(new AssetItem { Id = 0, Name = "Default", TypeName = "Standard", IconCode = "\uE91B", IconColor = "#BD63C5", Type = AssetType.Materials, Path = "Material:Default", Thumbnail = MakeSphereSwatch("#BD63C5") });
+            Assets.Add(new AssetItem { Id = 1, Name = "Unlit White", TypeName = "Unlit", IconCode = "\uE91B", IconColor = "#FFFFFF", Type = AssetType.Materials, Path = "Material:UnlitWhite", Thumbnail = MakeSphereSwatch("#FFFFFF") });
+            Assets.Add(new AssetItem { Id = 2, Name = "Grid", TypeName = "Standard", IconCode = "\uE91B", IconColor = "#4EC9B0", Type = AssetType.Materials, Path = "Material:Grid", Thumbnail = MakeSphereSwatch("#4EC9B0") });
 
             // Load imported materials from AssetDatabase
             var assetDb = AssetDatabase.Instance;
@@ -1061,7 +1117,8 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                     Type = AssetType.Materials,
                     Path = asset.RelativePath,
                     AssetGuid = asset.Guid,
-                    IsImported = true
+                    IsImported = true,
+                    Thumbnail = MakeSphereSwatch("#CE9178")
                 });
             }
         }
@@ -1073,6 +1130,235 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             Assets.Add(new AssetItem { Id = 2, Name = "Wireframe", TypeName = "Debug Shader", IconCode = "\uE9F5", IconColor = "#4EC9B0", Type = AssetType.Shaders, Path = "Shader:Wireframe" });
             Assets.Add(new AssetItem { Id = 3, Name = "Grid", TypeName = "Editor Shader", IconCode = "\uE9F5", IconColor = "#DCDCAA", Type = AssetType.Shaders, Path = "Shader:Grid" });
         }
+
+        #region Thumbnail generation
+
+        private static Color ParseColor(string hex)
+        {
+            try { return (Color)ColorConverter.ConvertFromString(hex); }
+            catch { return Color.FromRgb(0x80, 0x80, 0x80); }
+        }
+
+        private static Color Mix(Color a, Color b, double t)
+        {
+            return Color.FromRgb(
+                (byte)(a.R + (b.R - a.R) * t),
+                (byte)(a.G + (b.G - a.G) * t),
+                (byte)(a.B + (b.B - a.B) * t));
+        }
+
+        private static ImageSource Render(int size, Action<DrawingContext> draw)
+        {
+            var dv = new DrawingVisual();
+            using (var dc = dv.RenderOpen()) { draw(dc); }
+            var rtb = new RenderTargetBitmap(size, size, 96, 96, PixelFormats.Pbgra32);
+            rtb.Render(dv);
+            rtb.Freeze();
+            return rtb;
+        }
+
+        /// <summary>Flat color tile (built-in solid-color textures).</summary>
+        private static ImageSource MakeSolidSwatch(string hex) => Render(64, dc =>
+            dc.DrawRectangle(new SolidColorBrush(ParseColor(hex)), null, new Rect(0, 0, 64, 64)));
+
+        /// <summary>Classic checkerboard preview.</summary>
+        private static ImageSource MakeChecker() => Render(64, dc =>
+        {
+            dc.DrawRectangle(new SolidColorBrush(Color.FromRgb(0xCC, 0xCC, 0xCC)), null, new Rect(0, 0, 64, 64));
+            var dark = new SolidColorBrush(Color.FromRgb(0x80, 0x80, 0x80));
+            const int n = 8; double s = 64.0 / n;
+            for (int y = 0; y < n; y++)
+                for (int x = 0; x < n; x++)
+                    if (((x + y) & 1) == 0) dc.DrawRectangle(dark, null, new Rect(x * s, y * s, s, s));
+        });
+
+        /// <summary>Shaded sphere on a dark tile \u2014 the material preview look.</summary>
+        private static ImageSource MakeSphereSwatch(string hex) => Render(64, dc =>
+        {
+            var c = ParseColor(hex);
+            dc.DrawRectangle(new SolidColorBrush(Color.FromRgb(0x17, 0x17, 0x19)), null, new Rect(0, 0, 64, 64));
+            var rg = new RadialGradientBrush
+            {
+                GradientOrigin = new Point(0.36, 0.30),
+                Center = new Point(0.5, 0.5),
+                RadiusX = 0.62, RadiusY = 0.62
+            };
+            rg.GradientStops.Add(new GradientStop(Mix(c, Colors.White, 0.55), 0.0));
+            rg.GradientStops.Add(new GradientStop(c, 0.55));
+            rg.GradientStops.Add(new GradientStop(Mix(c, Colors.Black, 0.6), 1.0));
+            rg.Freeze();
+            dc.DrawEllipse(rg, null, new Point(32, 33), 23, 23);
+        });
+
+        /// <summary>Decode a real image file to a small thumbnail (null if unsupported, e.g. .dds/.tga).</summary>
+        private static ImageSource MakeTextureThumb(string fullPath)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(fullPath) || !System.IO.File.Exists(fullPath)) return null;
+                var bi = new BitmapImage();
+                bi.BeginInit();
+                bi.CacheOption = BitmapCacheOption.OnLoad;
+                bi.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
+                bi.DecodePixelWidth = 96;
+                bi.UriSource = new Uri(fullPath);
+                bi.EndInit();
+                bi.Freeze();
+                return bi;
+            }
+            catch { return null; }
+        }
+
+        // --- Real 3D mesh thumbnails: render the mesh offscreen via the engine ---
+
+        private static readonly Dictionary<string, ImageSource> _thumbCache = new Dictionary<string, ImageSource>();
+        private static long _defaultThumbMat = -1;
+
+        [DllImport("kernel32.dll", EntryPoint = "CopyMemory", SetLastError = false)]
+        private static extern void CopyMemory(IntPtr dest, IntPtr src, int count);
+
+        private static long EnsureDefaultThumbMaterial()
+        {
+            if (_defaultThumbMat >= 0) return _defaultThumbMat;
+            try
+            {
+                long m = VortexAPI.CreateNewMaterial();
+                VortexAPI.SetMaterialBaseColor(m, 0.62f, 0.64f, 0.68f, 1f);
+                VortexAPI.SetMaterialMetallicValue(m, 0.10f);
+                VortexAPI.SetMaterialRoughnessValue(m, 0.55f);
+                _defaultThumbMat = m;
+            }
+            catch { _defaultThumbMat = -1; }
+            return _defaultThumbMat;
+        }
+
+        /// <summary>
+        /// Render one or more submeshes to an offscreen target and return a frozen bitmap.
+        /// Returns null if the engine/viewport isn't ready yet (caller falls back to a glyph).
+        /// </summary>
+        private static ImageSource BuildMeshThumbnail(long[] meshIds, long[] materialIds, int size)
+        {
+            if (meshIds == null || meshIds.Length == 0) return null;
+            uint rt = VortexAPI.CreateSecondaryRenderTarget((uint)size, (uint)size);
+            if (rt == 0) return null; // renderer not initialized -> glyph fallback
+            try
+            {
+                // Combined bounds for camera framing: bounding-sphere radius (handles any size).
+                float radius = 0.4f, cx = 0, cy = 0, cz = 0; bool gotCenter = false;
+                foreach (var m in meshIds)
+                {
+                    if (VortexAPI.GetMeshBounds(m, out float sx, out float sy, out float sz))
+                    {
+                        float rr = 0.5f * (float)System.Math.Sqrt(sx * sx + sy * sy + sz * sz);
+                        if (rr > radius) radius = rr;
+                    }
+                    if (!gotCenter && VortexAPI.GetMeshBoundsCenter(m, out float bx, out float by, out float bz))
+                    { cx = bx; cy = by; cz = bz; gotCenter = true; }
+                }
+
+                // Neutral studio lighting (global state is rebuilt by the scene each frame).
+                // Key light from the upper-front-right (camera side) so the form reads clearly.
+                VortexAPI.ClearAllLights();
+                VortexAPI.SetAmbientLightStrength(0.32f);
+                VortexAPI.SetDirectionalLightParams(-0.45f, -0.6f, -0.65f, 1f, 0.98f, 0.92f, 3.0f);
+
+                // 3/4 perspective camera; distance derived from the bounding radius + a fill ratio
+                // so the mesh occupies ~60% of the frame regardless of its modeled size.
+                const float fov = 35f;
+                float fovHalf = fov * 0.5f * (float)System.Math.PI / 180f;
+                float dist = radius / (0.58f * (float)System.Math.Tan(fovHalf));
+                double dl = System.Math.Sqrt(0.9 * 0.9 + 0.7 * 0.7 + 1.1 * 1.1);
+                float px = cx + (float)(0.9 / dl) * dist;
+                float py = cy + (float)(0.7 / dl) * dist;
+                float pz = cz + (float)(1.1 / dl) * dist;
+                var cam = VortexAPI.ViewportCameraDesc.CreatePerspective(
+                    px, py, pz, cx, cy, cz, 0, 1, 0, fov,
+                    System.Math.Max(0.02f, dist * 0.01f), dist * 4f + 50f);
+
+                float[] idm = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+                for (int i = 0; i < meshIds.Length; i++)
+                {
+                    long mat = (materialIds != null && i < materialIds.Length && materialIds[i] >= 0)
+                        ? materialIds[i] : EnsureDefaultThumbMaterial();
+                    VortexAPI.SubmitMeshForRendering(meshIds[i], mat, idm);
+                }
+
+                // Swap the just-submitted item into the active render queue WITHOUT presenting to the
+                // main swapchain (RenderOnce/render_frame presents — doing that per-thumbnail flashed
+                // the editor viewport white). Then render only into the offscreen target.
+                VortexAPI.SwapRenderQueue();
+                VortexAPI.RenderToSecondaryTarget(rt, cam, false);
+                if (!VortexAPI.PrepareSecondaryRenderTargetReadback(rt)) return null;
+                return ReadTargetToBitmap(rt);
+            }
+            catch { return null; }
+            finally { VortexAPI.DestroySecondaryRenderTarget(rt); }
+        }
+
+        private static ImageSource ReadTargetToBitmap(uint rt)
+        {
+            IntPtr src = VortexAPI.ReadSecondaryRenderTargetPixels(rt, out uint w, out uint h, out uint pitch);
+            if (src == IntPtr.Zero || w == 0 || h == 0) { VortexAPI.ReleaseSecondaryRenderTargetPixels(rt); return null; }
+            try
+            {
+                var wb = new WriteableBitmap((int)w, (int)h, 96, 96, PixelFormats.Bgra32, null);
+                wb.Lock();
+                int copyW = (int)w * 4;
+                for (int y = 0; y < (int)h; y++)
+                {
+                    IntPtr s = IntPtr.Add(src, y * (int)pitch);
+                    IntPtr d = IntPtr.Add(wb.BackBuffer, y * wb.BackBufferStride);
+                    CopyMemory(d, s, copyW);
+                }
+                wb.AddDirtyRect(new Int32Rect(0, 0, (int)w, (int)h));
+                wb.Unlock();
+                wb.Freeze();
+                return wb;
+            }
+            finally { VortexAPI.ReleaseSecondaryRenderTargetPixels(rt); }
+        }
+
+        private static ImageSource GetOrBuildPrimitiveThumb(string name)
+        {
+            string key = "prim:" + name;
+            if (_thumbCache.TryGetValue(key, out var cached)) return cached;
+            long mesh;
+            switch (name)
+            {
+                case "Cube": mesh = VortexAPI.CreateCubeMesh(1f); break;
+                case "Sphere": mesh = VortexAPI.CreateSphereMesh(0.62f); break;
+                case "Plane": mesh = VortexAPI.CreatePlaneMesh(1.5f, 1.5f); break;
+                case "Cylinder": mesh = VortexAPI.CreateCylinderMesh(0.5f, 1.1f); break;
+                case "Cone": mesh = VortexAPI.CreateConeMesh(0.5f, 1.1f); break;
+                default: return null; // Capsule/Torus: no primitive available -> glyph
+            }
+            if (mesh < 0) return null;
+            var img = BuildMeshThumbnail(new[] { mesh }, new[] { EnsureDefaultThumbMaterial() }, 128);
+            try { VortexAPI.DeleteMesh(mesh); } catch { }
+            if (img != null) _thumbCache[key] = img;
+            return img;
+        }
+
+        private static ImageSource GetOrBuildModelThumb(string fullPath)
+        {
+            if (string.IsNullOrEmpty(fullPath) || !System.IO.File.Exists(fullPath)) return null;
+            string key = "model:" + fullPath;
+            if (_thumbCache.TryGetValue(key, out var cached)) return cached;
+            try
+            {
+                var subs = VortexAPI.ImportModelWithMaterialsFromFile(fullPath);
+                if (subs == null || subs.Length == 0) return null;
+                var meshes = new long[subs.Length];
+                var mats = new long[subs.Length];
+                for (int i = 0; i < subs.Length; i++) { meshes[i] = subs[i].MeshId; mats[i] = subs[i].MaterialId; }
+                var img = BuildMeshThumbnail(meshes, mats, 128);
+                if (img != null) _thumbCache[key] = img;
+                return img;
+            }
+            catch { return null; }
+        }
+
+        #endregion
 
         /// <summary>
         /// Get the currently selected asset.

@@ -69,6 +69,10 @@ namespace vortex::graphics::dx12
 		void shutdown();
 		void resize(u32 width, u32 height);
 		void render_frame();
+		// Swap the submit/render queues (thread-safe) WITHOUT presenting. Lets offscreen
+		// thumbnail/preview renders pick up a freshly-submitted item without flashing the main
+		// swapchain (render_frame both swaps AND presents, which caused the asset-browser white-flash).
+		void swap_render_queue();
 
 		bool is_initialized() const { return m_initialized; }
 

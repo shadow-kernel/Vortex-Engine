@@ -658,9 +658,16 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
             // Notify other components
             PlayModeChanged?.Invoke(this, new PlayModeEventArgs(true, false));
 
-            // Drive the single play-state owner and open the standalone game window.
+            // Run the game IN the free-cam viewport — this is stable because it reuses the editor's
+            // own DX12 swapchain. (Launching a separate game window re-inited the single global
+            // swapchain onto a new HWND AND hid/locked the cursor, which whited-out the windows and
+            // stranded the mouse — "alles kaputt". A real external window needs per-window swapchains,
+            // deferred.) Render through the scene's main camera while playing.
+            var mainCam = Editor.Core.Services.CameraService.Instance.GetMainCamera();
+            if (mainCam.IsValid)
+                Editor.Core.Services.CameraService.Instance.SetActiveCamera(mainCam);
+
             Editor.Core.Services.PlayModeService.Instance.Play();
-            LaunchGameWindow();
         }
 
         private void PausePlayMode()
@@ -691,7 +698,17 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
             
             UpdatePlayModeButtons();
             PlayModeChanged?.Invoke(this, new PlayModeEventArgs(false, false));
+
+            // Hand the view back to the editor fly-camera.
+            Editor.Core.Services.CameraService.Instance.SwitchToEditorCamera();
             Editor.Core.Services.PlayModeService.Instance.Stop();
+        }
+
+        private void AssetStore_Click(object sender, RoutedEventArgs e)
+        {
+            MessageBox.Show(
+                "Der Vortex Asset Store ist noch nicht verfügbar — er kommt in einer späteren Version.",
+                "Asset Store", MessageBoxButton.OK, MessageBoxImage.Information);
         }
 
         private Editor.PlayMode.GameWindow _gameWindow;

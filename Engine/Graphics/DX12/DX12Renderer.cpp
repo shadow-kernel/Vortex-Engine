@@ -121,17 +121,19 @@ namespace vortex::graphics::dx12
 		m_depth_buffer.resize(DX12Core::instance().device(), w, h);
 	}
 
+	void DX12Renderer::swap_render_queue()
+	{
+		std::lock_guard<std::mutex> lock(m_queue_mutex);
+		m_render_queue.swap(m_submit_queue);
+		m_submit_queue.clear();
+	}
+
 	void DX12Renderer::render_frame()
 	{
 		if (!m_initialized) return;
-		
-		// Update FPS counter
+
 		// Swap render queues (thread-safe) and clear submit queue for next frame
-		{
-		std::lock_guard<std::mutex> lock(m_queue_mutex);
-		m_render_queue.swap(m_submit_queue);
-		m_submit_queue.clear(); // Clear for next frame's submissions
-		}
+		swap_render_queue();
 		
 		// Update FPS counter
 		m_frame_count++;

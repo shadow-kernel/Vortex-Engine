@@ -1,0 +1,133 @@
+using System;
+using System.Runtime.InteropServices;
+using System.Windows;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using Editor.DllWrapper;
+
+namespace Editor.Core.Services.Rendering
+{
+    /// <summary>
+    /// Shared offscreen preview renderer for the asset editors. Renders a mesh / material-sphere /
+    /// imported model into an engine secondary render target and reads it back as a frozen bitmap,
+    /// so Material/Mesh/Model editors can all show a real 3D preview without duplicating the
+    /// DX12 offscreen-render plumbing. Returns null if the engine/viewport isn't ready yet (the
+    /// caller should fall back to a placeholder). All methods are safe to call off-frame.
+    /// </summary>
+    public static class AssetPreviewRenderer
+    {
+        [DllImport("kernel32.dll", EntryPoint = "CopyMemory", SetLastError = false)]
+        private static extern void CopyMemory(IntPtr dest, IntPtr src, int count);
+
+        /// <summary>
+        /// Renders one or more (sub)meshes with their materials to a square bitmap, framed by the
+        /// combined bounding sphere with neutral studio lighting.
+        /// </summary>
+        public static ImageSource RenderMeshes(long[] meshIds, long[] materialIds, int size)
+        {
+            if (meshIds == null || meshIds.Length == 0) return null;
+            uint rt = VortexAPI.CreateSecondaryRenderTarget((uint)size, (uint)size);
+            if (rt == 0) return null;
+            try
+            {
+                float radius = 0.4f, cx = 0, cy = 0, cz = 0; bool gotCenter = false;
+                foreach (var m in meshIds)
+                {
+                    if (VortexAPI.GetMeshBounds(m, out float sx, out float sy, out float sz))
+                    {
+                        float rr = 0.5f * (float)Math.Sqrt(sx * sx + sy * sy + sz * sz);
+                        if (rr > radius) radius = rr;
+                    }
+                    if (!gotCenter && VortexAPI.GetMeshBoundsCenter(m, out float bx, out float by, out float bz))
+                    { cx = bx; cy = by; cz = bz; gotCenter = true; }
+                }
+
+                // Neutral studio lighting (the scene rebuilds global light state each frame anyway).
+                VortexAPI.ClearAllLights();
+                VortexAPI.SetAmbientLightStrength(0.32f);
+                VortexAPI.SetDirectionalLightParams(-0.45f, -0.6f, -0.65f, 1f, 0.98f, 0.92f, 3.0f);
+
+                const float fov = 35f;
+                float fovHalf = fov * 0.5f * (float)Math.PI / 180f;
+                float dist = radius / (0.58f * (float)Math.Tan(fovHalf));
+                double dl = Math.Sqrt(0.9 * 0.9 + 0.7 * 0.7 + 1.1 * 1.1);
+                float px = cx + (float)(0.9 / dl) * dist;
+                float py = cy + (float)(0.7 / dl) * dist;
+                float pz = cz + (float)(1.1 / dl) * dist;
+                var cam = VortexAPI.ViewportCameraDesc.CreatePerspective(
+                    px, py, pz, cx, cy, cz, 0, 1, 0, fov,
+                    Math.Max(0.02f, dist * 0.01f), dist * 4f + 50f);
+
+                float[] idm = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+                for (int i = 0; i < meshIds.Length; i++)
+                {
+                    long mat = (materialIds != null && i < materialIds.Length && materialIds[i] >= 0)
+                        ? materialIds[i] : -1;
+                    VortexAPI.SubmitMeshForRendering(meshIds[i], mat, idm);
+                }
+
+                // Swap our submitted item into the active queue WITHOUT presenting to the main
+                // swapchain (presenting per-render flashed the editor viewport), then render only
+                // into the offscreen target.
+                VortexAPI.SwapRenderQueue();
+                VortexAPI.RenderToSecondaryTarget(rt, cam, false);
+                if (!VortexAPI.PrepareSecondaryRenderTargetReadback(rt)) return null;
+                return ReadTargetToBitmap(rt);
+            }
+            catch { return null; }
+            finally { VortexAPI.DestroySecondaryRenderTarget(rt); }
+        }
+
+        /// <summary>
+        /// Renders a sphere with the given engine material — the canonical material preview.
+        /// </summary>
+        public static ImageSource RenderMaterialSphere(long materialId, int size)
+        {
+            long sphere = VortexAPI.CreateSphereMesh(0.62f);
+            if (sphere < 0) return null;
+            try { return RenderMeshes(new[] { sphere }, new[] { materialId }, size); }
+            finally { try { VortexAPI.DeleteMesh(sphere); } catch { } }
+        }
+
+        /// <summary>
+        /// Imports a model file and renders all its submeshes with their imported materials.
+        /// </summary>
+        public static ImageSource RenderModel(string fullPath, int size)
+        {
+            if (string.IsNullOrEmpty(fullPath) || !System.IO.File.Exists(fullPath)) return null;
+            try
+            {
+                var subs = VortexAPI.ImportModelWithMaterialsFromFile(fullPath);
+                if (subs == null || subs.Length == 0) return null;
+                var meshes = new long[subs.Length];
+                var mats = new long[subs.Length];
+                for (int i = 0; i < subs.Length; i++) { meshes[i] = subs[i].MeshId; mats[i] = subs[i].MaterialId; }
+                return RenderMeshes(meshes, mats, size);
+            }
+            catch { return null; }
+        }
+
+        private static ImageSource ReadTargetToBitmap(uint rt)
+        {
+            IntPtr src = VortexAPI.ReadSecondaryRenderTargetPixels(rt, out uint w, out uint h, out uint pitch);
+            if (src == IntPtr.Zero || w == 0 || h == 0) { VortexAPI.ReleaseSecondaryRenderTargetPixels(rt); return null; }
+            try
+            {
+                var wb = new WriteableBitmap((int)w, (int)h, 96, 96, PixelFormats.Bgra32, null);
+                wb.Lock();
+                int copyW = (int)w * 4;
+                for (int y = 0; y < (int)h; y++)
+                {
+                    IntPtr s = IntPtr.Add(src, y * (int)pitch);
+                    IntPtr d = IntPtr.Add(wb.BackBuffer, y * wb.BackBufferStride);
+                    CopyMemory(d, s, copyW);
+                }
+                wb.AddDirtyRect(new Int32Rect(0, 0, (int)w, (int)h));
+                wb.Unlock();
+                wb.Freeze();
+                return wb;
+            }
+            finally { VortexAPI.ReleaseSecondaryRenderTargetPixels(rt); }
+        }
+    }
+}

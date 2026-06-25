@@ -92,6 +92,43 @@ EDITOR_INTERFACE void RemoveGameEntity(id::id_type id)
 	game_entity::remove_game_entity(entity_from_id(id));
 }
 
+// Push an updated transform onto an existing engine entity so the engine-side transform stays
+// authoritative/live. Uses the SAME descriptor->to_init_info() conversion as CreateGameEntity, so
+// create and update agree exactly.
+EDITOR_INTERFACE void SetGameEntityTransform(id::id_type entity_id, game_entity_descriptor* descriptor)
+{
+	if (!id::is_valid(entity_id) || !descriptor) return;
+	const game_entity::entity entity{ entity_from_id(entity_id) };
+	if (!game_entity::is_alive(entity)) return;
+
+	transform::init_info transform_info{ descriptor->transform.to_init_info() };
+	transform::set_transform(entity, transform_info);
+}
+
+// Register/unregister an entity as a gravity-affected dynamic body for the play-mode physics tick.
+EDITOR_INTERFACE void SetEntityRigidbody(id::id_type entity_id, bool use_gravity)
+{
+	if (!id::is_valid(entity_id)) return;
+	runtime::systems::set_rigidbody(entity_id, use_gravity);
+}
+
+EDITOR_INTERFACE void ClearRigidbodies()
+{
+	runtime::systems::clear_rigidbodies();
+}
+
+// Read an entity's current world-ish position (the runtime authority during play) so the editor
+// can mirror it into its C# transform for display.
+EDITOR_INTERFACE void GetEntityPosition(id::id_type entity_id, float* out_xyz)
+{
+	if (!out_xyz) return;
+	out_xyz[0] = out_xyz[1] = out_xyz[2] = 0.0f;
+	const game_entity::entity entity{ entity_from_id(entity_id) };
+	if (!game_entity::is_alive(entity)) return;
+	const auto pos = entity.transform().position();
+	out_xyz[0] = pos.x; out_xyz[1] = pos.y; out_xyz[2] = pos.z;
+}
+
 EDITOR_INTERFACE id::id_type CreateScene()
 {
 	return runtime::scene_manager::create_scene();
@@ -198,12 +235,45 @@ EDITOR_INTERFACE void ShutdownRuntime()
 // Call this once per frame while in play mode / from the standalone player,
 // before submitting render items. The editor's idle viewport does NOT call it,
 // which is exactly why entering play mode "comes alive" and exiting it freezes.
+namespace
+{
+	// Fixed-timestep game clock: the simulation always advances in stable 1/60 s steps regardless of
+	// render frame rate (deterministic physics), with an accumulator for leftover time. g_game_time is
+	// the elapsed in-game seconds since the last ResetGameTime (Play start).
+	constexpr float k_fixed_dt = 1.0f / 60.0f;
+	float g_time_accumulator = 0.0f;
+	float g_game_time = 0.0f;
+}
+
 EDITOR_INTERFACE void StepRuntime(float dt)
 {
 	if (dt < 0.0f) dt = 0.0f;
 	if (dt > 0.25f) dt = 0.25f; // clamp huge spikes (e.g. after a breakpoint)
-	runtime::systems::update_physics(dt);
+
+	g_time_accumulator += dt;
+	int steps = 0;
+	while (g_time_accumulator >= k_fixed_dt && steps < 8) // cap steps to avoid a spiral of death
+	{
+		runtime::systems::update_physics(k_fixed_dt);
+		g_game_time += k_fixed_dt;
+		g_time_accumulator -= k_fixed_dt;
+		++steps;
+	}
+
 	runtime::systems::update_audio(dt);
+}
+
+// Elapsed in-game seconds since the last ResetGameTime (i.e. since Play started).
+EDITOR_INTERFACE float GetGameTime()
+{
+	return g_game_time;
+}
+
+// Reset the game clock + fixed-step accumulator (call when Play starts).
+EDITOR_INTERFACE void ResetGameTime()
+{
+	g_game_time = 0.0f;
+	g_time_accumulator = 0.0f;
 }
 
 // DX12 viewport control
@@ -225,6 +295,14 @@ EDITOR_INTERFACE void ResizeRenderViewport(unsigned int width, unsigned int heig
 EDITOR_INTERFACE void RenderFrame()
 {
 	runtime::systems::dx12::render_frame();
+}
+
+// Swap the render queue WITHOUT presenting to the main swapchain. Used by offscreen
+// thumbnail/preview rendering so it can pick up its submitted item without flashing the
+// editor viewport (calling RenderFrame for this caused the asset-browser white-flash).
+EDITOR_INTERFACE void SwapRenderQueue()
+{
+	graphics::dx12::DX12Renderer::instance().swap_render_queue();
 }
 
 EDITOR_INTERFACE void ShutdownRenderViewport()
@@ -390,6 +468,12 @@ EDITOR_INTERFACE void SetMaterialNormalStrength(id::id_type material_id, float v
 {
 	auto* mat = graphics::ResourceRegistry::instance().get_material(material_id);
 	if (mat) mat->set_normal_strength(value);
+}
+
+EDITOR_INTERFACE void SetMaterialAO(id::id_type material_id, float value)
+{
+	auto* mat = graphics::ResourceRegistry::instance().get_material(material_id);
+	if (mat) mat->set_ao(value);
 }
 
 EDITOR_INTERFACE void SetMaterialUseDirectXNormals(id::id_type material_id, bool use_directx)
