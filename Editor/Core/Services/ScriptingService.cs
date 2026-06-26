@@ -194,7 +194,15 @@ public class PlayerController : VortexBehaviour
         if (Input.GetKey(""Right"")) yaw   += TurnSpeed * dt;
         if (Input.GetKey(""Up""))    pitch -= TurnSpeed * dt;
         if (Input.GetKey(""Down""))  pitch += TurnSpeed * dt;
-        if (yaw != 0f || pitch != 0f) Rotate(pitch, yaw, 0f);
+        if (yaw != 0f || pitch != 0f)
+        {
+            Rotate(pitch, yaw, 0f);
+            // Keep the camera upright: pitch within +/-89 deg, no roll (else the view flips/streaks).
+            Vector3 look = Rotation;
+            if (look.X > 89f) look.X = 89f; else if (look.X < -89f) look.X = -89f;
+            look.Z = 0f;
+            Rotation = look;
+        }
 
         // --- Move (WASD), relative to where you're facing ---
         Vector3 f = Forward, r = Right;

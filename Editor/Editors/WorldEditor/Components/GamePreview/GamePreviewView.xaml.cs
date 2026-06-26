@@ -39,6 +39,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         // Game-mode mouse capture: while playing, the cursor is locked to the viewport + hidden and its
         // motion is fed to gameplay scripts (mouse-look). ESC frees it; clicking the viewport re-locks it.
         private bool _mouseCaptured;
+        private bool _mouseJustCaptured;
         private bool IsPlaying => Editor.Core.Services.PlayModeService.Instance.State == Editor.Core.Services.PlayState.Playing;
 
         public GamePreviewView()
@@ -702,8 +703,20 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                 if (Keyboard.IsKeyDown(Key.Escape)) { ReleaseGameMouse(); }
                 else if (TryGetViewportCenter(out double cx, out double cy) && GetCursorPos(out POINTW p))
                 {
-                    dx = (float)(p.X - cx);
-                    dy = (float)(p.Y - cy);
+                    if (_mouseJustCaptured)
+                    {
+                        // Skip the first frame: the cursor hasn't been re-centered yet, so its delta
+                        // would be a huge jump that flings the camera.
+                        _mouseJustCaptured = false;
+                    }
+                    else
+                    {
+                        dx = (float)(p.X - cx);
+                        dy = (float)(p.Y - cy);
+                        // Clamp absurd spikes (alt-tab, focus loss) so the view never whips around.
+                        if (dx > 200f) dx = 200f; else if (dx < -200f) dx = -200f;
+                        if (dy > 200f) dy = 200f; else if (dy < -200f) dy = -200f;
+                    }
                     SetCursorPos((int)cx, (int)cy); // re-center so motion is continuous (FPS-style)
                 }
             }
@@ -716,6 +729,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             if (_mouseCaptured || !IsLoaded) return;
             if (!TryGetViewportCenter(out double cx, out double cy)) return;
             _mouseCaptured = true;
+            _mouseJustCaptured = true;
             Mouse.Capture(this);
             ShowCursor(false);
             SetCursorPos((int)cx, (int)cy);
@@ -749,13 +763,11 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         /// so you can't change cameras or split mid-play (re-enabled on Stop).</summary>
         private void SetGameViewportLock(bool locked)
         {
-            bool en = !locked;
-            if (CameraSelector != null) CameraSelector.IsEnabled = en;
-            if (ShowPipButton != null) ShowPipButton.IsEnabled = en;
-            if (SingleViewBtn != null) SingleViewBtn.IsEnabled = en;
-            if (SplitVerticalBtn != null) SplitVerticalBtn.IsEnabled = en;
-            if (SplitHorizontalBtn != null) SplitHorizontalBtn.IsEnabled = en;
-            if (QuadViewBtn != null) QuadViewBtn.IsEnabled = en;
+            // Game/Play mode: hide the entire editor viewport toolbar (tools, grid, gizmos, layout,
+            // camera selector, PIP) + the corner label, so the player sees a clean game view.
+            if (ViewportToolbar != null) ViewportToolbar.Visibility = locked ? Visibility.Collapsed : Visibility.Visible;
+            if (ToolbarRow != null) ToolbarRow.Height = locked ? new GridLength(0) : new GridLength(28);
+            if (MainViewportLabel != null) MainViewportLabel.Visibility = locked ? Visibility.Collapsed : Visibility.Visible;
         }
 
         [DllImport("user32.dll")] private static extern int ShowCursor(bool show);
@@ -864,7 +876,10 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             if (t == null) return;
             var p = t.LocalPosition;
             var rot = t.LocalRotation; // Euler degrees: X = pitch, Y = yaw
-            float pitch = rot.X * (float)(Math.PI / 180.0);
+            // Clamp pitch so the view never looks fully vertical — a forward parallel to up makes the
+            // look-at matrix degenerate and the whole image collapses to a line ("langer Strich").
+            float pitchDeg = rot.X < -89f ? -89f : (rot.X > 89f ? 89f : rot.X);
+            float pitch = pitchDeg * (float)(Math.PI / 180.0);
             float yaw = rot.Y * (float)(Math.PI / 180.0);
             float fx = (float)(Math.Sin(yaw) * Math.Cos(pitch));
             float fy = (float)(-Math.Sin(pitch));

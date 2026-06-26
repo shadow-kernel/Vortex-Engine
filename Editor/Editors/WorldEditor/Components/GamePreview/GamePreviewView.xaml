@@ -227,13 +227,13 @@ d:DesignHeight="400" d:DesignWidth="600">
         <Border Background="#212124">
             <Grid>
                 <Grid.RowDefinitions>
-                    <RowDefinition Height="28"/>
+                    <RowDefinition x:Name="ToolbarRow" Height="28"/>
                     <RowDefinition Height="*"/>
                     <RowDefinition Height="22"/>
                 </Grid.RowDefinitions>
 
-                <!-- Toolbar -->
-                <Border Grid.Row="0" Background="#1A1A1C">
+                <!-- Toolbar (hidden in Game/Play mode for a clean game view) -->
+                <Border x:Name="ViewportToolbar" Grid.Row="0" Background="#1A1A1C">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
