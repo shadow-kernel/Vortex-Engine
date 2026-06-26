@@ -770,8 +770,23 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
 
             if (TopPlayBtn != null)
             {
-                TopPlayBtn.Foreground = _isPlaying ? playingColor : System.Windows.Media.Brushes.White;
-                TopPlayBtn.ToolTip = _isPlaying ? "Stop (back to build view)" : "Play";
+                if (_isPlaying)
+                {
+                    // Red rounded square = Stop (clear "the game is running, press to stop").
+                    TopPlayBtn.Content = new System.Windows.Shapes.Rectangle
+                    {
+                        Width = 11, Height = 11, RadiusX = 2, RadiusY = 2,
+                        Fill = new System.Windows.Media.SolidColorBrush(
+                            System.Windows.Media.Color.FromRgb(0xE7, 0x4C, 0x3C))
+                    };
+                    TopPlayBtn.ToolTip = "Stop (back to build view)";
+                }
+                else
+                {
+                    TopPlayBtn.Content = ""; // Play glyph (Segoe MDL2)
+                    TopPlayBtn.Foreground = System.Windows.Media.Brushes.White;
+                    TopPlayBtn.ToolTip = "Play";
+                }
             }
         }
 

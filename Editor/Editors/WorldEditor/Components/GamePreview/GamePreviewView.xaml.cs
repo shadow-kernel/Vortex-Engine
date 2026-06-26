@@ -36,6 +36,11 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         // Drag and drop handler
         private ViewportDropHandler _dropHandler;
 
+        // Game-mode mouse capture: while playing, the cursor is locked to the viewport + hidden and its
+        // motion is fed to gameplay scripts (mouse-look). ESC frees it; clicking the viewport re-locks it.
+        private bool _mouseCaptured;
+        private bool IsPlaying => Editor.Core.Services.PlayModeService.Instance.State == Editor.Core.Services.PlayState.Playing;
+
         public GamePreviewView()
         {
             InitializeComponent();
@@ -143,6 +148,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             // back into the C# transforms so the viewport shows the live simulation.
             if (playing)
             {
+                UpdateGameMouseLook();                                     // lock/feed mouse delta to scripts; ESC frees
                 VortexAPI.StepEngineRuntime(deltaTime);
                 ReadbackPhysics();
                 Editor.Scripting.ScriptRuntime.Instance.Update(deltaTime); // run gameplay scripts (movement, etc.)
@@ -276,6 +282,16 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
 
         private void OnViewportMouseDown(object sender, MouseButtonEventArgs e)
         {
+            // While playing, the viewport drives the GAME, not the editor camera/selection. A click
+            // (re)locks the mouse to the game if ESC had freed it.
+            if (IsPlaying)
+            {
+                this.Focus();
+                if (!_mouseCaptured) CaptureGameMouse();
+                e.Handled = true;
+                return;
+            }
+
             this.Focus();
             this.CaptureMouse();
             
@@ -336,6 +352,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
 
         private void OnViewportMouseUp(object sender, MouseButtonEventArgs e)
         {
+            if (IsPlaying) { e.Handled = true; return; } // game owns the mouse while playing
             this.ReleaseMouseCapture();
             
             // Only allow camera control when in Free Camera mode
@@ -359,6 +376,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
 
         private void OnViewportMouseMove(object sender, MouseEventArgs e)
         {
+            if (IsPlaying) return; // mouse-look is handled in UpdateGameMouseLook while playing
             // Get position relative to the viewport host
             var pos = _host != null ? e.GetPosition(_host) : e.GetPosition(this);
             
@@ -661,13 +679,89 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             if (state == Editor.Core.Services.PlayState.Playing)
             {
                 BeginPlaySimulation();
+                SetGameViewportLock(true);   // disable camera-switch / split / PIP while the game runs
+                CaptureGameMouse();          // lock + hide cursor -> mouse-look goes to the player (ESC frees)
                 return;
             }
-            if (state == Editor.Core.Services.PlayState.Paused) return; // keep state, just stop ticking
+            if (state == Editor.Core.Services.PlayState.Paused) { ReleaseGameMouse(); return; } // keep state, free the mouse
 
-            // Editing (Stopped): end the sim and restore the pre-play transforms (non-destructive play).
+            // Editing (Stopped): end the sim, free the mouse, re-enable the viewport controls.
+            ReleaseGameMouse();
+            SetGameViewportLock(false);
             EndPlaySimulation();
         }
+
+        /// <summary>Game mouse-look + cursor lock. While captured the cursor is hidden and re-centered
+        /// every frame; the per-frame motion is fed to gameplay scripts via Vortex.Input.MouseDeltaX/Y.
+        /// ESC frees the cursor (control back to you); clicking the viewport re-locks it.</summary>
+        private void UpdateGameMouseLook()
+        {
+            float dx = 0f, dy = 0f;
+            if (_mouseCaptured)
+            {
+                if (Keyboard.IsKeyDown(Key.Escape)) { ReleaseGameMouse(); }
+                else if (TryGetViewportCenter(out double cx, out double cy) && GetCursorPos(out POINTW p))
+                {
+                    dx = (float)(p.X - cx);
+                    dy = (float)(p.Y - cy);
+                    SetCursorPos((int)cx, (int)cy); // re-center so motion is continuous (FPS-style)
+                }
+            }
+            Vortex.Input.MouseDeltaX = dx;
+            Vortex.Input.MouseDeltaY = dy;
+        }
+
+        private void CaptureGameMouse()
+        {
+            if (_mouseCaptured || !IsLoaded) return;
+            if (!TryGetViewportCenter(out double cx, out double cy)) return;
+            _mouseCaptured = true;
+            Mouse.Capture(this);
+            ShowCursor(false);
+            SetCursorPos((int)cx, (int)cy);
+        }
+
+        private void ReleaseGameMouse()
+        {
+            if (!_mouseCaptured) return;
+            _mouseCaptured = false;
+            ShowCursor(true);
+            if (Mouse.Captured == this) Mouse.Capture(null);
+            Vortex.Input.MouseDeltaX = 0f;
+            Vortex.Input.MouseDeltaY = 0f;
+        }
+
+        /// <summary>Screen-space center of the main viewport panel (physical pixels), for cursor lock.</summary>
+        private bool TryGetViewportCenter(out double x, out double y)
+        {
+            x = y = 0;
+            var el = MainViewportPanel;
+            if (el == null || el.ActualWidth < 2 || el.ActualHeight < 2 || !el.IsVisible) return false;
+            try
+            {
+                var c = el.PointToScreen(new Point(el.ActualWidth / 2.0, el.ActualHeight / 2.0));
+                x = c.X; y = c.Y; return true;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>Disable the viewport's camera-switch / split / PIP controls while the game runs,
+        /// so you can't change cameras or split mid-play (re-enabled on Stop).</summary>
+        private void SetGameViewportLock(bool locked)
+        {
+            bool en = !locked;
+            if (CameraSelector != null) CameraSelector.IsEnabled = en;
+            if (ShowPipButton != null) ShowPipButton.IsEnabled = en;
+            if (SingleViewBtn != null) SingleViewBtn.IsEnabled = en;
+            if (SplitVerticalBtn != null) SplitVerticalBtn.IsEnabled = en;
+            if (SplitHorizontalBtn != null) SplitHorizontalBtn.IsEnabled = en;
+            if (QuadViewBtn != null) QuadViewBtn.IsEnabled = en;
+        }
+
+        [DllImport("user32.dll")] private static extern int ShowCursor(bool show);
+        [DllImport("user32.dll")] private static extern bool SetCursorPos(int x, int y);
+        [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINTW p);
+        [StructLayout(LayoutKind.Sequential)] private struct POINTW { public int X; public int Y; }
 
         // --- Play-mode physics simulation (engine-driven) ---
         private bool _simActive;
@@ -881,6 +975,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                 {
                     float t = VortexAPI.GameTime();
                     status += $"  |  ▶ {((int)t) / 60:00}:{((int)t) % 60:00}";
+                    status += _mouseCaptured ? "  |  ESC: Maus frei" : "  |  Klick: Maus fangen";
                 }
                 StatusText.Text = status;
             }

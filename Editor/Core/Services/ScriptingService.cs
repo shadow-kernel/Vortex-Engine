@@ -181,18 +181,19 @@ public class " + className + @" : VortexBehaviour
 // Attached to the Main Camera via a Script component. Tweak the speeds, swap the keys, or rewrite it.
 public class PlayerController : VortexBehaviour
 {
-    public float MoveSpeed = 6f;    // units per second
-    public float TurnSpeed = 90f;   // degrees per second (yaw, Left/Right)
-    public float LookSpeed = 70f;   // degrees per second (pitch, Up/Down)
+    public float MoveSpeed = 6f;     // units per second
+    public float MouseSens = 0.12f;  // degrees per pixel of mouse movement
+    public float TurnSpeed = 90f;    // degrees per second (arrow-key fallback)
 
     public override void Update(float dt)
     {
-        // --- Look (arrow keys) ---
-        float yaw = 0f, pitch = 0f;
+        // --- Look: mouse (cursor is locked while playing; ESC frees it) + arrow keys as fallback ---
+        float yaw   = Input.MouseDeltaX * MouseSens;
+        float pitch = Input.MouseDeltaY * MouseSens;
         if (Input.GetKey(""Left""))  yaw   -= TurnSpeed * dt;
         if (Input.GetKey(""Right"")) yaw   += TurnSpeed * dt;
-        if (Input.GetKey(""Up""))    pitch -= LookSpeed * dt;
-        if (Input.GetKey(""Down""))  pitch += LookSpeed * dt;
+        if (Input.GetKey(""Up""))    pitch -= TurnSpeed * dt;
+        if (Input.GetKey(""Down""))  pitch += TurnSpeed * dt;
         if (yaw != 0f || pitch != 0f) Rotate(pitch, yaw, 0f);
 
         // --- Move (WASD), relative to where you're facing ---
@@ -253,10 +254,13 @@ namespace Vortex
         public virtual void OnDestroy() { }
     }
 
-    /// <summary>Keyboard input. Key names match WPF keys, e.g. ""W"", ""Space"", ""Left"", ""LeftShift"".</summary>
+    /// <summary>Keyboard + mouse input. Key names match WPF keys, e.g. ""W"", ""Space"", ""Left"".</summary>
     public static class Input
     {
         public static bool GetKey(string key) => false;
+        /// <summary>Mouse movement since the last tick, in pixels (non-zero only while the game has the cursor).</summary>
+        public static float MouseDeltaX { get; }
+        public static float MouseDeltaY { get; }
     }
 
     /// <summary>Frame timing.</summary>

@@ -94,11 +94,16 @@ namespace Vortex
         public virtual void OnDestroy() { }
     }
 
-    /// <summary>Keyboard input. Key names match WPF keys, e.g. "W", "Space", "LeftShift".</summary>
+    /// <summary>Keyboard + mouse input. Key names match WPF keys, e.g. "W", "Space", "LeftShift".</summary>
     public static class Input
     {
         internal static IScriptHost Host;
         public static bool GetKey(string key) => Host != null && Host.GetKey(key);
+
+        /// <summary>Mouse movement since the last tick, in pixels (only non-zero while the game has
+        /// captured the cursor — i.e. in play before ESC). Use it for mouse-look.</summary>
+        public static float MouseDeltaX { get; internal set; }
+        public static float MouseDeltaY { get; internal set; }
     }
 
     /// <summary>Frame timing.</summary>
