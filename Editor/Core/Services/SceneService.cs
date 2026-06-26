@@ -10,7 +10,7 @@ using Editor.ECS.Components.Rendering;
 namespace Editor.Core.Services
 {
     /// <summary>
-    /// Service für das Laden, Speichern und Verwalten von Szenen.
+    /// Service fï¿½r das Laden, Speichern und Verwalten von Szenen.
     /// </summary>
     public class SceneService
     {
@@ -43,12 +43,12 @@ namespace Editor.Core.Services
         public Scene CurrentScene { get; set; }
 
         /// <summary>
-        /// Event wird ausgelöst wenn eine Szene gespeichert wurde
+        /// Event wird ausgelï¿½st wenn eine Szene gespeichert wurde
         /// </summary>
         public event EventHandler<Scene> SceneSaved;
 
         /// <summary>
-        /// Event wird ausgelöst wenn eine Szene geladen wurde
+        /// Event wird ausgelï¿½st wenn eine Szene geladen wurde
         /// </summary>
         public event EventHandler<Scene> SceneLoaded;
 
@@ -82,7 +82,7 @@ namespace Editor.Core.Services
         }
 
         /// <summary>
-        /// Lädt eine Szene aus einer Datei
+        /// Lï¿½dt eine Szene aus einer Datei
         /// </summary>
         public Scene LoadScene(string filePath)
         {
@@ -109,11 +109,18 @@ namespace Editor.Core.Services
             camera.AddComponentDirect(new Camera(camera) { IsMainCamera = true });
             scene.Entities.Add(camera);
 
-            // Standard-Licht erstellen
+            // Standard-Licht erstellen (hell genug, damit die Szene nicht dunkel ist)
             var light = new GameEntity(scene, "Directional Light");
             light.Transform.LocalEulerAngles = new ECS.Vector3(50, -30, 0);
-            light.AddComponentDirect(new Light(light, LightType.Directional));
+            light.AddComponentDirect(new Light(light, LightType.Directional) { Intensity = 3.0f });
             scene.Entities.Add(light);
+
+            // Boden-Ebene erstellen â€” solide (wird im Play als statischer Collider registriert,
+            // man kann darauf stehen) und gibt der Szene eine beleuchtete GrundflÃ¤che.
+            var ground = new GameEntity(scene, "Ground");
+            ground.Transform.LocalScale = new ECS.Vector3(20, 1, 20);
+            ground.AddComponentDirect(new Editor.ECS.Components.Rendering.MeshRenderer(ground) { MeshPath = "Primitive:Plane" });
+            scene.Entities.Add(ground);
 
             scene.IsDirty = true;
             return scene;
@@ -127,12 +134,12 @@ namespace Editor.Core.Services
             if (entity == null)
                 throw new ArgumentNullException(nameof(entity));
 
-            // Prefabs sollen für Nutzer lesbar sein -> JSON speichern
+            // Prefabs sollen fï¿½r Nutzer lesbar sein -> JSON speichern
             DataSerializer.SaveAsJson(entity, filePath);
         }
 
         /// <summary>
-        /// Lädt eine GameEntity aus einer Prefab-Datei (.ventity)
+        /// Lï¿½dt eine GameEntity aus einer Prefab-Datei (.ventity)
         /// </summary>
         public GameEntity LoadEntityFromPrefab(string filePath)
         {
@@ -143,7 +150,7 @@ namespace Editor.Core.Services
         }
 
         /// <summary>
-        /// Gibt den Assets-Ordner für Szenen zurück
+        /// Gibt den Assets-Ordner fï¿½r Szenen zurï¿½ck
         /// </summary>
         public string GetScenesFolder(ProjectData project)
         {
@@ -156,7 +163,7 @@ namespace Editor.Core.Services
         }
 
         /// <summary>
-        /// Gibt den Assets-Ordner für Prefabs zurück
+        /// Gibt den Assets-Ordner fï¿½r Prefabs zurï¿½ck
         /// </summary>
         public string GetPrefabsFolder(ProjectData project)
         {

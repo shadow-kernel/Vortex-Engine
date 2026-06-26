@@ -107,13 +107,32 @@ namespace Editor.DllWrapper
         private static extern void SetGameEntityTransform(long entityId, GameEntityDescriptor descriptor);
 
         [DllImport(_dllName, CallingConvention = _cc)]
-        private static extern void SetEntityRigidbody(long entityId, [MarshalAs(UnmanagedType.I1)] bool useGravity);
+        private static extern void SetEntityRigidbody(long entityId, [MarshalAs(UnmanagedType.I1)] bool useGravity, float hx, float hy, float hz);
 
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void ClearRigidbodies();
 
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void GetEntityPosition(long entityId, [In, Out] float[] outXyz);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void RegisterStaticBox(float cx, float cy, float cz, float hx, float hy, float hz);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void ClearColliders();
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void CharacterInit(float x, float y, float z, float hx, float hy, float hz);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void CharacterMove(float wishX, float wishZ, [MarshalAs(UnmanagedType.I1)] bool jump, float dt);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void CharacterGetPosition([In, Out] float[] outXyz);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        private static extern bool CharacterGrounded();
 
         public static long CreateGameEntity(GameEntity gameEntity)
         {
@@ -154,10 +173,10 @@ namespace Editor.DllWrapper
             SetGameEntityTransform(entityId, descriptor);
         }
 
-        /// <summary>Register an entity as a gravity-affected dynamic body for the play-mode tick.</summary>
-        public static void RegisterRigidbody(long entityId, bool useGravity)
+        /// <summary>Register an entity as a gravity-affected dynamic body (AABB half-extents) for play.</summary>
+        public static void RegisterRigidbody(long entityId, bool useGravity, float hx, float hy, float hz)
         {
-            if (ID.IsValid(entityId)) SetEntityRigidbody(entityId, useGravity);
+            if (ID.IsValid(entityId)) SetEntityRigidbody(entityId, useGravity, hx, hy, hz);
         }
 
         /// <summary>Clear all play-mode rigidbodies (call on Stop).</summary>
@@ -170,6 +189,24 @@ namespace Editor.DllWrapper
             if (ID.IsValid(entityId)) GetEntityPosition(entityId, a);
             return new Vector3(a[0], a[1], a[2]);
         }
+
+        // --- Collision world (play mode) ---
+        public static void AddStaticBox(float cx, float cy, float cz, float hx, float hy, float hz)
+            => RegisterStaticBox(cx, cy, cz, hx, hy, hz);
+        public static void ClearAllColliders() => ClearColliders();
+
+        // --- Player character (the play-mode camera body) ---
+        public static void InitCharacter(float x, float y, float z, float hx, float hy, float hz)
+            => CharacterInit(x, y, z, hx, hy, hz);
+        public static void MoveCharacter(float wishX, float wishZ, bool jump, float dt)
+            => CharacterMove(wishX, wishZ, jump, dt);
+        public static Vector3 GetCharacterPosition()
+        {
+            var a = new float[3];
+            CharacterGetPosition(a);
+            return new Vector3(a[0], a[1], a[2]);
+        }
+        public static bool IsCharacterGrounded() => CharacterGrounded();
 
         public static void RemoveGameEntity(GameEntity gameEntity)
         {

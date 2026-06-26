@@ -105,16 +105,48 @@ EDITOR_INTERFACE void SetGameEntityTransform(id::id_type entity_id, game_entity_
 	transform::set_transform(entity, transform_info);
 }
 
-// Register/unregister an entity as a gravity-affected dynamic body for the play-mode physics tick.
-EDITOR_INTERFACE void SetEntityRigidbody(id::id_type entity_id, bool use_gravity)
+// Register an entity as a gravity-affected dynamic body (with an AABB half-extent) for the play tick.
+EDITOR_INTERFACE void SetEntityRigidbody(id::id_type entity_id, bool use_gravity, float hx, float hy, float hz)
 {
 	if (!id::is_valid(entity_id)) return;
-	runtime::systems::set_rigidbody(entity_id, use_gravity);
+	runtime::systems::set_rigidbody(entity_id, use_gravity, hx, hy, hz);
 }
 
 EDITOR_INTERFACE void ClearRigidbodies()
 {
 	runtime::systems::clear_rigidbodies();
+}
+
+// --- Collision world ---
+EDITOR_INTERFACE void RegisterStaticBox(float cx, float cy, float cz, float hx, float hy, float hz)
+{
+	runtime::systems::register_static_box(cx, cy, cz, hx, hy, hz);
+}
+
+EDITOR_INTERFACE void ClearColliders()
+{
+	runtime::systems::clear_colliders();
+}
+
+// --- Player character (the play-mode camera body) ---
+EDITOR_INTERFACE void CharacterInit(float x, float y, float z, float hx, float hy, float hz)
+{
+	runtime::systems::character_init(x, y, z, hx, hy, hz);
+}
+
+EDITOR_INTERFACE void CharacterMove(float wish_x, float wish_z, bool jump, float dt)
+{
+	runtime::systems::character_move(wish_x, wish_z, jump, dt);
+}
+
+EDITOR_INTERFACE void CharacterGetPosition(float* out_xyz)
+{
+	runtime::systems::character_get_position(out_xyz);
+}
+
+EDITOR_INTERFACE bool CharacterGrounded()
+{
+	return runtime::systems::character_grounded();
 }
 
 // Read an entity's current world-ish position (the runtime authority during play) so the editor

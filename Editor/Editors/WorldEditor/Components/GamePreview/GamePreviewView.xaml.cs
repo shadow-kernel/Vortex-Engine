@@ -113,8 +113,15 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             float deltaTime = (float)(now - _lastFrameTime).TotalSeconds;
             _lastFrameTime = now;
             
+            if (playing)
+            {
+                // Play mode: the play camera IS a physics character (gravity + collision) — it stands on
+                // the floor/boxes. Right-drag looks; WASD walks relative to look; Space jumps.
+                UpdatePlayCharacter(deltaTime);
+                UpdateFlyModeIndicator(_cameraController.IsFlyMode);
+            }
             // Only use EditorCameraController when NOT previewing a game camera
-            if (!CameraService.Instance.IsGameCameraActive)
+            else if (!CameraService.Instance.IsGameCameraActive)
             {
                 _cameraController.Update(deltaTime);
                 // Update fly mode indicator
@@ -139,6 +146,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             {
                 VortexAPI.StepEngineRuntime(deltaTime);
                 ReadbackPhysics();
+                Editor.Scripting.ScriptRuntime.Instance.Update(deltaTime); // run gameplay scripts (Update)
             }
 
             // Submit scene data for rendering
@@ -665,6 +673,8 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         private bool _simActive;
         private readonly System.Collections.Generic.List<(GameEntity ent, Vector3 start)> _physicsEntities
             = new System.Collections.Generic.List<(GameEntity, Vector3)>();
+        private (float x, float y, float z) _savedCamPos;
+        private float _savedCamYaw, _savedCamPitch;
 
         /// <summary>On Play: register every Dynamic-Rigidbody entity with the engine physics tick and
         /// snapshot its start position so Stop can restore it.</summary>
@@ -674,25 +684,66 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             _simActive = true;
             _physicsEntities.Clear();
             VortexAPI.ClearAllRigidbodies();
+            VortexAPI.ClearAllColliders();
             VortexAPI.ResetGameClock(); // start the game timer at 0 for this play session
 
+            // Remember the editor camera, then start the play view at the scene's main-camera pose.
+            _savedCamPos = (_cameraController.PositionX, _cameraController.PositionY, _cameraController.PositionZ);
+            _savedCamYaw = _cameraController.Yaw;
+            _savedCamPitch = _cameraController.Pitch;
+            var mainCamT = FindMainCameraTransform();
+            if (mainCamT != null)
+                _cameraController.SetFromEntityTransform(
+                    mainCamT.LocalPosition.X, mainCamT.LocalPosition.Y, mainCamT.LocalPosition.Z,
+                    mainCamT.LocalRotation.X, mainCamT.LocalRotation.Y, mainCamT.LocalRotation.Z);
+
+            // Register scene geometry as solid static colliders / dynamic bodies.
             var scene = _currentScene ?? ProjectData.Current?.ActiveScene;
-            if (scene?.Entities == null) return;
-            foreach (var e in scene.Entities) RegisterPhysicsRecursive(e);
+            if (scene?.Entities != null)
+                foreach (var e in scene.Entities) RegisterPhysicsRecursive(e);
+
+            // Spawn the player character at the play-camera eye position; the camera follows it, and it
+            // stands on the floor/colliders (you can walk onto boxes, can't pass through them).
+            VortexAPI.InitCharacter(
+                _cameraController.PositionX, _cameraController.PositionY - PlayerEyeHeight, _cameraController.PositionZ,
+                0.4f, 0.9f, 0.4f);
+
+            // Compile + start the gameplay scripts (VortexBehaviour.Start on every Script component).
+            Editor.Scripting.ScriptRuntime.Instance.Begin(scene);
         }
+
+        private const float PlayerEyeHeight = 0.7f;
 
         private void RegisterPhysicsRecursive(GameEntity e)
         {
             if (e == null) return;
-            var rb = e.GetComponent<Editor.ECS.Components.Physics.Rigidbody>();
-            if (rb != null
-                && rb.BodyType == Editor.ECS.Components.Physics.RigidbodyType.Dynamic
-                && e.Transform != null
-                && Editor.Utilities.ID.IsValid(e.EntityId))
+
+            var mr = e.GetComponent<Editor.ECS.Components.Rendering.MeshRenderer>();
+            if (mr != null && e.Transform != null)
             {
-                _physicsEntities.Add((e, e.Transform.LocalPosition));
-                VortexAPI.RegisterRigidbody(e.EntityId, rb.UseGravity);
+                var s = e.Transform.LocalScale;
+                var p = e.Transform.LocalPosition;
+                // Half-extents from scale (primitives are ~unit-sized). Clamp so flat planes still
+                // collide as a thin slab.
+                float hx = Math.Max(0.05f, Math.Abs(s.X) * 0.5f);
+                float hy = Math.Max(0.05f, Math.Abs(s.Y) * 0.5f);
+                float hz = Math.Max(0.05f, Math.Abs(s.Z) * 0.5f);
+
+                var rb = e.GetComponent<Editor.ECS.Components.Physics.Rigidbody>();
+                if (rb != null
+                    && rb.BodyType == Editor.ECS.Components.Physics.RigidbodyType.Dynamic
+                    && Editor.Utilities.ID.IsValid(e.EntityId))
+                {
+                    _physicsEntities.Add((e, p));
+                    VortexAPI.RegisterRigidbody(e.EntityId, rb.UseGravity, hx, hy, hz);
+                }
+                else
+                {
+                    // Static level geometry -> a solid collider you can stand on / can't pass through.
+                    VortexAPI.AddStaticBox(p.X, p.Y, p.Z, hx, hy, hz);
+                }
             }
+
             if (e.Children != null)
                 foreach (var c in e.Children) RegisterPhysicsRecursive(c);
         }
@@ -715,12 +766,69 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         {
             if (!_simActive) return;
             _simActive = false;
+            Editor.Scripting.ScriptRuntime.Instance.End(); // stop gameplay scripts (OnDestroy)
             VortexAPI.ClearAllRigidbodies();
             foreach (var (ent, start) in _physicsEntities)
             {
                 if (ent?.Transform != null) ent.Transform.LocalPosition = start; // restores + re-syncs to engine
             }
             _physicsEntities.Clear();
+
+            // Restore the editor camera to where it was before play.
+            _cameraController.SetPositionAndRotation(_savedCamPos.x, _savedCamPos.y, _savedCamPos.z, _savedCamYaw, _savedCamPitch);
+        }
+
+        /// <summary>
+        /// Drives the play-mode character: WASD walks relative to where you look, Space jumps; the engine
+        /// applies gravity + collision so it stands on the floor/boxes; the camera follows at eye height.
+        /// </summary>
+        private void UpdatePlayCharacter(float dt)
+        {
+            float yawRad = _cameraController.Yaw * (float)(Math.PI / 180.0);
+            float fwdX = (float)Math.Sin(yawRad), fwdZ = (float)Math.Cos(yawRad);
+            float rgtX = (float)Math.Cos(yawRad), rgtZ = (float)(-Math.Sin(yawRad));
+
+            float wx = 0f, wz = 0f;
+            if (Keyboard.IsKeyDown(Key.W)) { wx += fwdX; wz += fwdZ; }
+            if (Keyboard.IsKeyDown(Key.S)) { wx -= fwdX; wz -= fwdZ; }
+            if (Keyboard.IsKeyDown(Key.D)) { wx += rgtX; wz += rgtZ; }
+            if (Keyboard.IsKeyDown(Key.A)) { wx -= rgtX; wz -= rgtZ; }
+            float len = (float)Math.Sqrt(wx * wx + wz * wz);
+            if (len > 0.001f) { wx /= len; wz /= len; }
+
+            const float moveSpeed = 6.0f;
+            bool jump = Keyboard.IsKeyDown(Key.Space);
+
+            VortexAPI.MoveCharacter(wx * moveSpeed, wz * moveSpeed, jump, dt);
+            var cp = VortexAPI.GetCharacterPosition();
+            _cameraController.SetPositionAndRotation(cp.X, cp.Y + PlayerEyeHeight, cp.Z, _cameraController.Yaw, _cameraController.Pitch);
+        }
+
+        private Editor.ECS.Components.Transform FindMainCameraTransform()
+        {
+            var scene = _currentScene ?? ProjectData.Current?.ActiveScene;
+            if (scene?.Entities == null) return null;
+            foreach (var e in scene.Entities)
+            {
+                var t = FindMainCamRecursive(e);
+                if (t != null) return t;
+            }
+            return null;
+        }
+
+        private Editor.ECS.Components.Transform FindMainCamRecursive(GameEntity e)
+        {
+            if (e == null) return null;
+            var cam = e.GetComponent<Editor.ECS.Components.Rendering.Camera>();
+            if (cam != null && cam.IsMainCamera && e.Transform != null)
+                return e.Transform;
+            if (e.Children != null)
+                foreach (var c in e.Children)
+                {
+                    var t = FindMainCamRecursive(c);
+                    if (t != null) return t;
+                }
+            return null;
         }
 
         #region Drag and Drop
