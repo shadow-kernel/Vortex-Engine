@@ -115,12 +115,11 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             
             if (playing)
             {
-                // Play mode: the play camera IS a physics character (gravity + collision) — it stands on
-                // the floor/boxes. Right-drag looks; WASD walks relative to look; Space jumps.
-                UpdatePlayCharacter(deltaTime);
-                UpdateFlyModeIndicator(_cameraController.IsFlyMode);
+                // Play mode: the GAME drives everything. The viewport view is the scene's MAIN CAMERA,
+                // which a gameplay script may move (movement/look are game-side, NOT hardcoded here).
+                // The actual view is applied below, after the scripts have run this frame.
             }
-            // Only use EditorCameraController when NOT previewing a game camera
+            // Edit mode (default): the build/fly camera — right-drag to look, WASD to fly around.
             else if (!CameraService.Instance.IsGameCameraActive)
             {
                 _cameraController.Update(deltaTime);
@@ -146,7 +145,8 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             {
                 VortexAPI.StepEngineRuntime(deltaTime);
                 ReadbackPhysics();
-                Editor.Scripting.ScriptRuntime.Instance.Update(deltaTime); // run gameplay scripts (Update)
+                Editor.Scripting.ScriptRuntime.Instance.Update(deltaTime); // run gameplay scripts (movement, etc.)
+                ApplyMainCameraView();                                     // view = the (script-movable) main camera
             }
 
             // Submit scene data for rendering
@@ -673,8 +673,6 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         private bool _simActive;
         private readonly System.Collections.Generic.List<(GameEntity ent, Vector3 start)> _physicsEntities
             = new System.Collections.Generic.List<(GameEntity, Vector3)>();
-        private (float x, float y, float z) _savedCamPos;
-        private float _savedCamYaw, _savedCamPitch;
 
         /// <summary>On Play: register every Dynamic-Rigidbody entity with the engine physics tick and
         /// snapshot its start position so Stop can restore it.</summary>
@@ -687,32 +685,16 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             VortexAPI.ClearAllColliders();
             VortexAPI.ResetGameClock(); // start the game timer at 0 for this play session
 
-            // Remember the editor camera, then start the play view at the scene's main-camera pose.
-            _savedCamPos = (_cameraController.PositionX, _cameraController.PositionY, _cameraController.PositionZ);
-            _savedCamYaw = _cameraController.Yaw;
-            _savedCamPitch = _cameraController.Pitch;
-            var mainCamT = FindMainCameraTransform();
-            if (mainCamT != null)
-                _cameraController.SetFromEntityTransform(
-                    mainCamT.LocalPosition.X, mainCamT.LocalPosition.Y, mainCamT.LocalPosition.Z,
-                    mainCamT.LocalRotation.X, mainCamT.LocalRotation.Y, mainCamT.LocalRotation.Z);
-
-            // Register scene geometry as solid static colliders / dynamic bodies.
+            // Register scene geometry as solid static colliders / dynamic bodies (generic engine physics —
+            // gravity, collision, "stand on it"). Gameplay itself stays in scripts.
             var scene = _currentScene ?? ProjectData.Current?.ActiveScene;
             if (scene?.Entities != null)
                 foreach (var e in scene.Entities) RegisterPhysicsRecursive(e);
 
-            // Spawn the player character at the play-camera eye position; the camera follows it, and it
-            // stands on the floor/colliders (you can walk onto boxes, can't pass through them).
-            VortexAPI.InitCharacter(
-                _cameraController.PositionX, _cameraController.PositionY - PlayerEyeHeight, _cameraController.PositionZ,
-                0.4f, 0.9f, 0.4f);
-
             // Compile + start the gameplay scripts (VortexBehaviour.Start on every Script component).
+            // Player movement, camera control and all gameplay live in scripts — the editor only runs them.
             Editor.Scripting.ScriptRuntime.Instance.Begin(scene);
         }
-
-        private const float PlayerEyeHeight = 0.7f;
 
         private void RegisterPhysicsRecursive(GameEntity e)
         {
@@ -773,35 +755,27 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                 if (ent?.Transform != null) ent.Transform.LocalPosition = start; // restores + re-syncs to engine
             }
             _physicsEntities.Clear();
-
-            // Restore the editor camera to where it was before play.
-            _cameraController.SetPositionAndRotation(_savedCamPos.x, _savedCamPos.y, _savedCamPos.z, _savedCamYaw, _savedCamPitch);
+            // The edit/fly camera is untouched during play (play renders through the main camera),
+            // so on Stop the viewport simply resumes the build camera — nothing to restore.
         }
 
         /// <summary>
-        /// Drives the play-mode character: WASD walks relative to where you look, Space jumps; the engine
-        /// applies gravity + collision so it stands on the floor/boxes; the camera follows at eye height.
+        /// Play-mode view: render through the scene's MAIN CAMERA using its CURRENT transform, so a
+        /// gameplay script that moves the player/camera drives the viewport. There is no editor-side
+        /// movement — that's the game's job (a script reads input and moves its entity).
         /// </summary>
-        private void UpdatePlayCharacter(float dt)
+        private void ApplyMainCameraView()
         {
-            float yawRad = _cameraController.Yaw * (float)(Math.PI / 180.0);
-            float fwdX = (float)Math.Sin(yawRad), fwdZ = (float)Math.Cos(yawRad);
-            float rgtX = (float)Math.Cos(yawRad), rgtZ = (float)(-Math.Sin(yawRad));
-
-            float wx = 0f, wz = 0f;
-            if (Keyboard.IsKeyDown(Key.W)) { wx += fwdX; wz += fwdZ; }
-            if (Keyboard.IsKeyDown(Key.S)) { wx -= fwdX; wz -= fwdZ; }
-            if (Keyboard.IsKeyDown(Key.D)) { wx += rgtX; wz += rgtZ; }
-            if (Keyboard.IsKeyDown(Key.A)) { wx -= rgtX; wz -= rgtZ; }
-            float len = (float)Math.Sqrt(wx * wx + wz * wz);
-            if (len > 0.001f) { wx /= len; wz /= len; }
-
-            const float moveSpeed = 6.0f;
-            bool jump = Keyboard.IsKeyDown(Key.Space);
-
-            VortexAPI.MoveCharacter(wx * moveSpeed, wz * moveSpeed, jump, dt);
-            var cp = VortexAPI.GetCharacterPosition();
-            _cameraController.SetPositionAndRotation(cp.X, cp.Y + PlayerEyeHeight, cp.Z, _cameraController.Yaw, _cameraController.Pitch);
+            var t = FindMainCameraTransform();
+            if (t == null) return;
+            var p = t.LocalPosition;
+            var rot = t.LocalRotation; // Euler degrees: X = pitch, Y = yaw
+            float pitch = rot.X * (float)(Math.PI / 180.0);
+            float yaw = rot.Y * (float)(Math.PI / 180.0);
+            float fx = (float)(Math.Sin(yaw) * Math.Cos(pitch));
+            float fy = (float)(-Math.Sin(pitch));
+            float fz = (float)(Math.Cos(yaw) * Math.Cos(pitch));
+            VortexAPI.SetViewCamera(p.X, p.Y, p.Z, p.X + fx, p.Y + fy, p.Z + fz, 0f, 1f, 0f);
         }
 
         private Editor.ECS.Components.Transform FindMainCameraTransform()

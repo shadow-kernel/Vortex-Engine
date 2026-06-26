@@ -498,8 +498,8 @@ d:DesignHeight="64" d:DesignWidth="1200">
                 Background="#161618" CornerRadius="10" Padding="3" BorderBrush="#2C2C32" BorderThickness="1"
                 shell:WindowChrome.IsHitTestVisibleInChrome="True">
             <StackPanel Orientation="Horizontal">
-                <Button Content="Scene" Style="{StaticResource SegActiveStyle}" ToolTip="Scene editor"/>
-                <Button Content="Game" Style="{StaticResource SegStyle}" Click="PlayButton_Click" ToolTip="Play the game"/>
+                <Button x:Name="SceneTab" Content="Scene" Style="{StaticResource SegActiveStyle}" Click="SceneTab_Click" ToolTip="Build view (edit / fly camera)"/>
+                <Button x:Name="GameTab" Content="Game" Style="{StaticResource SegStyle}" Click="GameTab_Click" ToolTip="Run the game in the viewport"/>
                 <Button Content="Script" Style="{StaticResource SegStyle}" Click="OpenScriptsInVS_Click" ToolTip="Open scripts in Visual Studio"/>
                 <Button Content="Asset Store" Style="{StaticResource SegStyle}" ToolTip="Asset Store (coming soon)" Click="AssetStore_Click"/>
             </StackPanel>
@@ -508,8 +508,8 @@ d:DesignHeight="64" d:DesignWidth="1200">
         <!-- Right: Play + target platform + account -->
         <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,10,0"
                     shell:WindowChrome.IsHitTestVisibleInChrome="True">
-            <Button Content="&#xE768;" FontFamily="Segoe MDL2 Assets" FontSize="14"
-                    Click="PlayButton_Click" ToolTip="Play" Height="32" Padding="16,0"
+            <Button x:Name="TopPlayBtn" Content="&#xE768;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                    Click="PlayButton_Click" ToolTip="Play / Stop" Height="32" Padding="16,0"
                     Style="{StaticResource TopPlayButton}" Margin="0,0,8,0"/>
             <Button Style="{StaticResource TopPillButton}" Height="32" Padding="13,0" Margin="0,0,8,0" ToolTip="Target platform / Build Settings" Click="BuildSettings_Click">
                 <StackPanel Orientation="Horizontal">

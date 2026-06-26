@@ -617,14 +617,24 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
 
         private void PlayButton_Click(object sender, RoutedEventArgs e)
         {
+            // Toggle: ▶ starts the game, and while playing the same button STOPS it (returns to the
+            // build/edit view). Without this you got stuck in play and the button looked dead.
             if (!_isPlaying)
-            {
                 StartPlayMode();
-            }
-            else if (_isPaused)
-            {
-                ResumePlayMode();
-            }
+            else
+                StopPlayMode();
+        }
+
+        /// <summary>"Scene" tab: the build view (edit / fly-camera). Stops the game if it's running.</summary>
+        private void SceneTab_Click(object sender, RoutedEventArgs e)
+        {
+            if (_isPlaying) StopPlayMode();
+        }
+
+        /// <summary>"Game" tab: run the compiled game in the viewport. Does nothing if already playing.</summary>
+        private void GameTab_Click(object sender, RoutedEventArgs e)
+        {
+            if (!_isPlaying) StartPlayMode();
         }
 
         private void PauseButton_Click(object sender, RoutedEventArgs e)
@@ -745,6 +755,23 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
             if (PauseButton != null)
             {
                 PauseButton.Foreground = _isPaused ? activeColor : stoppedColor;
+            }
+
+            // Top bar: highlight the active tab (Scene = build/edit, Game = playing) and recolor the
+            // ▶ button so it's obvious the game is running and that the same button now stops it.
+            try
+            {
+                var segActive = (System.Windows.Style)FindResource("SegActiveStyle");
+                var segNormal = (System.Windows.Style)FindResource("SegStyle");
+                if (SceneTab != null) SceneTab.Style = _isPlaying ? segNormal : segActive;
+                if (GameTab != null) GameTab.Style = _isPlaying ? segActive : segNormal;
+            }
+            catch { /* styles resolve at runtime; ignore if not yet loaded */ }
+
+            if (TopPlayBtn != null)
+            {
+                TopPlayBtn.Foreground = _isPlaying ? playingColor : System.Windows.Media.Brushes.White;
+                TopPlayBtn.ToolTip = _isPlaying ? "Stop (back to build view)" : "Play";
             }
         }
 
