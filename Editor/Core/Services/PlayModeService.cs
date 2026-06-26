@@ -25,6 +25,23 @@ namespace Editor.Core.Services
 
         public bool IsPlaying => State == PlayState.Playing || State == PlayState.Paused;
 
+        /// <summary>
+        /// True when the "Game" tab is selected (the viewport shows the game view). This is independent
+        /// of <see cref="IsPlaying"/>: the Game tab shows a placeholder + the static main-camera view
+        /// until the user presses Play. The "Scene" tab clears it.
+        /// </summary>
+        public bool IsGameView { get; private set; }
+
+        /// <summary>Raised when the Game/Scene view selection changes (on the UI thread).</summary>
+        public event Action<bool> GameViewChanged;
+
+        public void SetGameView(bool active)
+        {
+            if (IsGameView == active) return;
+            IsGameView = active;
+            GameViewChanged?.Invoke(active);
+        }
+
         /// <summary>Raised whenever the play state changes (on the UI thread).</summary>
         public event EventHandler<PlayState> StateChanged;
 

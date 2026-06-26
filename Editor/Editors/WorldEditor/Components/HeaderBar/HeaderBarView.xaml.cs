@@ -617,24 +617,33 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
 
         private void PlayButton_Click(object sender, RoutedEventArgs e)
         {
-            // Toggle: ▶ starts the game, and while playing the same button STOPS it (returns to the
-            // build/edit view). Without this you got stuck in play and the button looked dead.
+            // ▶ is the real Play/Stop toggle. Starting also switches to the Game view; stopping leaves
+            // you on the Game tab (the "Press Play" placeholder returns).
             if (!_isPlaying)
+            {
+                Editor.Core.Services.PlayModeService.Instance.SetGameView(true);
                 StartPlayMode();
+            }
             else
+            {
                 StopPlayMode();
+            }
         }
 
         /// <summary>"Scene" tab: the build view (edit / fly-camera). Stops the game if it's running.</summary>
         private void SceneTab_Click(object sender, RoutedEventArgs e)
         {
             if (_isPlaying) StopPlayMode();
+            Editor.Core.Services.PlayModeService.Instance.SetGameView(false);
+            UpdatePlayModeButtons();
         }
 
-        /// <summary>"Game" tab: run the compiled game in the viewport. Does nothing if already playing.</summary>
+        /// <summary>"Game" tab: switch to the clean game view (placeholder). Does NOT auto-start —
+        /// the game runs only when you press the ▶ Play button.</summary>
         private void GameTab_Click(object sender, RoutedEventArgs e)
         {
-            if (!_isPlaying) StartPlayMode();
+            Editor.Core.Services.PlayModeService.Instance.SetGameView(true);
+            UpdatePlayModeButtons();
         }
 
         private void PauseButton_Click(object sender, RoutedEventArgs e)
@@ -763,8 +772,10 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
             {
                 var segActive = (System.Windows.Style)FindResource("SegActiveStyle");
                 var segNormal = (System.Windows.Style)FindResource("SegStyle");
-                if (SceneTab != null) SceneTab.Style = _isPlaying ? segNormal : segActive;
-                if (GameTab != null) GameTab.Style = _isPlaying ? segActive : segNormal;
+                // Highlight Scene vs Game by which view is selected (not by play state).
+                bool gameView = Editor.Core.Services.PlayModeService.Instance.IsGameView;
+                if (SceneTab != null) SceneTab.Style = gameView ? segNormal : segActive;
+                if (GameTab != null) GameTab.Style = gameView ? segActive : segNormal;
             }
             catch { /* styles resolve at runtime; ignore if not yet loaded */ }
 

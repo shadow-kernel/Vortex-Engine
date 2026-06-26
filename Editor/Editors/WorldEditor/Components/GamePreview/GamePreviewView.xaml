@@ -525,6 +525,8 @@ d:DesignHeight="400" d:DesignWidth="600">
         </Grid>
     </Border>
     
-    <!-- NOTE: CameraPreviewOverlay is now in WorldEditorView as a Popup to render over HwndHost -->
+    <!-- NOTE: CameraPreviewOverlay is now in WorldEditorView as a Popup to render over HwndHost.
+         The "Game tab, not yet playing" placeholder is shown in the status bar + as a static main-camera
+         preview, because a WPF overlay can't paint over the engine's child HWND (airspace). -->
 </Grid>
 </UserControl>

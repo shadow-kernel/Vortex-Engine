@@ -177,17 +177,33 @@ public class " + className + @" : VortexBehaviour
         private static string PlayerControllerTemplate() =>
 @"using Vortex;
 
-// Player movement lives HERE, in the game — not hardcoded in the engine — so you can fully tune it.
-// Attached to the Main Camera via a Script component. Tweak the speeds, swap the keys, or rewrite it.
+// Battle-Royale player movement — 100% GAME-side (this script), driven entirely through the Vortex API.
+// Attached to the Main Camera. Mouse = look, WASD = move, Space = jump, LeftCtrl/C = crouch.
+// The engine has NO hardcoded movement: every value below is yours to tune (or rewrite the whole thing).
 public class PlayerController : VortexBehaviour
 {
-    public float MoveSpeed = 6f;     // units per second
-    public float MouseSens = 0.12f;  // degrees per pixel of mouse movement
-    public float TurnSpeed = 90f;    // degrees per second (arrow-key fallback)
+    public float MoveSpeed   = 6f;     // walk speed (units/sec)
+    public float CrouchSpeed = 3f;     // speed while crouching
+    public float MouseSens   = 0.12f;  // mouse degrees per pixel
+    public float TurnSpeed   = 90f;    // arrow-key turn speed (deg/sec)
+    public float JumpSpeed   = 7.5f;   // initial jump velocity
+    public float Gravity     = 20f;    // downward acceleration
+    public float CrouchDrop  = 0.7f;   // how far the eye lowers when crouching
+
+    private float _standEyeY;  // standing eye height, captured at spawn
+    private float _vy;         // vertical velocity
+    private bool  _grounded;
+
+    public override void Start()
+    {
+        _standEyeY = Position.Y;
+        _vy = 0f;
+        _grounded = true;
+    }
 
     public override void Update(float dt)
     {
-        // --- Look: mouse (cursor is locked while playing; ESC frees it) + arrow keys as fallback ---
+        // ---- Look: mouse (locked while playing, ESC frees) + arrow keys ----
         float yaw   = Input.MouseDeltaX * MouseSens;
         float pitch = Input.MouseDeltaY * MouseSens;
         if (Input.GetKey(""Left""))  yaw   -= TurnSpeed * dt;
@@ -197,27 +213,42 @@ public class PlayerController : VortexBehaviour
         if (yaw != 0f || pitch != 0f)
         {
             Rotate(pitch, yaw, 0f);
-            // Keep the camera upright: pitch within +/-89 deg, no roll (else the view flips/streaks).
-            Vector3 look = Rotation;
+            Vector3 look = Rotation;            // keep upright: clamp pitch, zero roll (no flip/streak)
             if (look.X > 89f) look.X = 89f; else if (look.X < -89f) look.X = -89f;
             look.Z = 0f;
             Rotation = look;
         }
 
-        // --- Move (WASD), relative to where you're facing ---
-        Vector3 f = Forward, r = Right;
-        float mx = 0f, mz = 0f;
-        if (Input.GetKey(""W"")) { mx += f.X; mz += f.Z; }
-        if (Input.GetKey(""S"")) { mx -= f.X; mz -= f.Z; }
-        if (Input.GetKey(""D"")) { mx += r.X; mz += r.Z; }
-        if (Input.GetKey(""A"")) { mx -= r.X; mz -= r.Z; }
+        // ---- Crouch (LeftCtrl or C): lower the eye + move slower ----
+        bool crouch = Input.GetKey(""LeftCtrl"") || Input.GetKey(""C"");
+        float eyeY  = crouch ? _standEyeY - CrouchDrop : _standEyeY;
+        float speed = crouch ? CrouchSpeed : MoveSpeed;
 
+        // ---- Horizontal move (WASD), relative to where you're facing ----
+        Vector3 fwd = Forward, rgt = Right;
+        float mx = 0f, mz = 0f;
+        if (Input.GetKey(""W"")) { mx += fwd.X; mz += fwd.Z; }
+        if (Input.GetKey(""S"")) { mx -= fwd.X; mz -= fwd.Z; }
+        if (Input.GetKey(""D"")) { mx += rgt.X; mz += rgt.Z; }
+        if (Input.GetKey(""A"")) { mx -= rgt.X; mz -= rgt.Z; }
         float len = (float)System.Math.Sqrt(mx * mx + mz * mz);
-        if (len > 0.001f)
+        Vector3 p = Position;
+        if (len > 0.001f) { mx /= len; mz /= len; p.X += mx * speed * dt; p.Z += mz * speed * dt; }
+
+        // ---- Jump + gravity (kinematic; lands back on the eye-height floor) ----
+        if (_grounded)
         {
-            mx /= len; mz /= len;
-            Translate(mx * MoveSpeed * dt, 0f, mz * MoveSpeed * dt);
+            if (Input.GetKey(""Space"")) { _vy = JumpSpeed; _grounded = false; }
+            else { p.Y = eyeY; }
         }
+        if (!_grounded)
+        {
+            _vy -= Gravity * dt;
+            p.Y += _vy * dt;
+            if (p.Y <= eyeY) { p.Y = eyeY; _vy = 0f; _grounded = true; }
+        }
+
+        Position = p;
     }
 }
 ";

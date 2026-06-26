@@ -40,6 +40,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         // motion is fed to gameplay scripts (mouse-look). ESC frees it; clicking the viewport re-locks it.
         private bool _mouseCaptured;
         private bool _mouseJustCaptured;
+        private bool _gameViewMode; // "Game" tab selected: clean view + placeholder until Play is pressed
         private bool IsPlaying => Editor.Core.Services.PlayModeService.Instance.State == Editor.Core.Services.PlayState.Playing;
 
         public GamePreviewView()
@@ -90,6 +91,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             // While the standalone game window is playing, suspend this viewport so two
             // DX12 viewports don't fight over the single swapchain; reclaim it on Stop.
             Editor.Core.Services.PlayModeService.Instance.StateChanged += OnPlayModeStateChanged;
+            Editor.Core.Services.PlayModeService.Instance.GameViewChanged += OnGameViewChanged;
 
             // Auto-frame newly created entities (Unity-style focus-on-create).
             SelectionService.Instance.FocusRequested += OnFocusRequested;
@@ -124,6 +126,13 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                 // Play mode: the GAME drives everything. The viewport view is the scene's MAIN CAMERA,
                 // which a gameplay script may move (movement/look are game-side, NOT hardcoded here).
                 // The actual view is applied below, after the scripts have run this frame.
+            }
+            // Game tab selected but not started yet: preview the static main-camera framing (the
+            // "Press Play" placeholder sits on top). No fly camera here.
+            else if (_gameViewMode)
+            {
+                ApplyMainCameraView();
+                UpdateFlyModeIndicator(false);
             }
             // Edit mode (default): the build/fly camera — right-drag to look, WASD to fly around.
             else if (!CameraService.Instance.IsGameCameraActive)
@@ -680,16 +689,35 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             if (state == Editor.Core.Services.PlayState.Playing)
             {
                 BeginPlaySimulation();
-                SetGameViewportLock(true);   // disable camera-switch / split / PIP while the game runs
+                SetGameViewportLock(true);   // hide the viewport toolbar while the game runs
                 CaptureGameMouse();          // lock + hide cursor -> mouse-look goes to the player (ESC frees)
+                UpdateGamePlaceholder();     // hide the "Press Play" overlay
                 return;
             }
-            if (state == Editor.Core.Services.PlayState.Paused) { ReleaseGameMouse(); return; } // keep state, free the mouse
+            if (state == Editor.Core.Services.PlayState.Paused) { ReleaseGameMouse(); UpdateGamePlaceholder(); return; }
 
-            // Editing (Stopped): end the sim, free the mouse, re-enable the viewport controls.
+            // Editing (Stopped): end the sim, free the mouse. Stay clean if we're still on the Game tab
+            // (then the placeholder returns); otherwise restore the editor toolbar.
             ReleaseGameMouse();
-            SetGameViewportLock(false);
             EndPlaySimulation();
+            SetGameViewportLock(_gameViewMode);
+            UpdateGamePlaceholder();
+        }
+
+        /// <summary>"Game" tab selected/cleared (independent of playing): hide the toolbar + show the
+        /// "Press Play" placeholder; the viewport previews the static main-camera framing.</summary>
+        private void OnGameViewChanged(bool active)
+        {
+            _gameViewMode = active;
+            SetGameViewportLock(active || IsPlaying);
+            UpdateGamePlaceholder();
+        }
+
+        private void UpdateGamePlaceholder()
+        {
+            // The viewport shows the static main-camera preview; the "Press Play" hint lives in the
+            // status bar (a WPF overlay can't paint over the engine's child HWND — airspace).
+            UpdateStatusBar();
         }
 
         /// <summary>Game mouse-look + cursor lock. While captured the cursor is hidden and re-centered
@@ -797,9 +825,45 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             if (scene?.Entities != null)
                 foreach (var e in scene.Entities) RegisterPhysicsRecursive(e);
 
+            // Make the game playable: if the player (main camera) has no script yet, attach the project's
+            // PlayerController. The movement logic lives 100% in that editable project script (not the
+            // engine) — this just scaffolds it so a freshly-loaded project is controllable on Play.
+            EnsurePlayerControllerOnMainCamera(scene);
+
             // Compile + start the gameplay scripts (VortexBehaviour.Start on every Script component).
             // Player movement, camera control and all gameplay live in scripts — the editor only runs them.
             Editor.Scripting.ScriptRuntime.Instance.Begin(scene);
+        }
+
+        /// <summary>If the main camera has no Script component, write + attach the project's editable
+        /// PlayerController so the game is controllable. Movement stays in the project script.</summary>
+        private void EnsurePlayerControllerOnMainCamera(Scene scene)
+        {
+            var camEnt = FindMainCameraEntity(scene);
+            if (camEnt == null) return;
+            if (camEnt.GetComponent<Editor.ECS.Components.Scripting.Script>() != null) return; // already scripted
+            var root = ProjectData.Current?.Path;
+            if (string.IsNullOrEmpty(root)) return;
+            var rel = Editor.Core.Services.ScriptingService.EnsurePlayerController(root);
+            if (!string.IsNullOrEmpty(rel))
+                camEnt.AddComponentDirect(new Editor.ECS.Components.Scripting.Script(camEnt, rel));
+        }
+
+        private GameEntity FindMainCameraEntity(Scene scene)
+        {
+            if (scene?.Entities == null) return null;
+            foreach (var e in scene.Entities) { var r = FindMainCamEntityRec(e); if (r != null) return r; }
+            return null;
+        }
+
+        private GameEntity FindMainCamEntityRec(GameEntity e)
+        {
+            if (e == null) return null;
+            var cam = e.GetComponent<Editor.ECS.Components.Rendering.Camera>();
+            if (cam != null && cam.IsMainCamera) return e;
+            if (e.Children != null)
+                foreach (var c in e.Children) { var r = FindMainCamEntityRec(c); if (r != null) return r; }
+            return null;
         }
 
         private void RegisterPhysicsRecursive(GameEntity e)
@@ -991,6 +1055,10 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                     float t = VortexAPI.GameTime();
                     status += $"  |  ▶ {((int)t) / 60:00}:{((int)t) % 60:00}";
                     status += _mouseCaptured ? "  |  ESC: Maus frei" : "  |  Klick: Maus fangen";
+                }
+                else if (_gameViewMode)
+                {
+                    status += "  |  ▶ Press Play to start  ·  WASD move · Mouse look · Space jump · Ctrl crouch";
                 }
                 StatusText.Text = status;
             }
