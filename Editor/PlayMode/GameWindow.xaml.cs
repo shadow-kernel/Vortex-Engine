@@ -44,8 +44,7 @@ namespace Editor.PlayMode
                 if (VortexAPI.CreateGameWindow(GameViewportHost.Handle, W(), H()))
                 {
                     _ready = true;
-                    CompositionTarget.Rendering += OnFrame;
-                    CaptureGameMouse();
+                    CompositionTarget.Rendering += OnFrame; // mouse is captured lazily in OnFrame (once laid out)
                 }
                 else Debug.WriteLine("CreateGameWindow returned false");
             }
@@ -57,6 +56,10 @@ namespace Editor.PlayMode
         private void OnFrame(object sender, EventArgs e)
         {
             if (!_ready) return;
+
+            // Lazily lock the mouse once the window is laid out + active (at host-create time the
+            // viewport size is still 0, so capturing there would no-op).
+            if (IsActive && !_mouseCaptured) CaptureGameMouse();
 
             float dx = 0f, dy = 0f;
             if (_mouseCaptured && IsActive)

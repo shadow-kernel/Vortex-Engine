@@ -515,9 +515,17 @@ d:DesignHeight="64" d:DesignWidth="1200">
                     Click="PlayMenuBtn_Click" ToolTip="Play options (viewport / new window)" Height="32" Padding="7,0"
                     Style="{StaticResource TopPlayButton}" Margin="0,0,8,0">
                 <Button.ContextMenu>
-                    <ContextMenu>
-                        <MenuItem Header="Play in Viewport" Click="PlayInViewport_Click"/>
-                        <MenuItem Header="Play in New Window" Click="PlayInWindow_Click"/>
+                    <ContextMenu Background="#202023" BorderBrush="#3A3A3E" Foreground="#F5F5F7">
+                        <MenuItem Click="PlayInViewport_Click" Background="#202023">
+                            <MenuItem.Header>
+                                <TextBlock Text="Play in Viewport" Foreground="#F5F5F7" FontSize="12.5" Padding="2,1"/>
+                            </MenuItem.Header>
+                        </MenuItem>
+                        <MenuItem Click="PlayInWindow_Click" Background="#202023">
+                            <MenuItem.Header>
+                                <TextBlock Text="Play in New Window" Foreground="#F5F5F7" FontSize="12.5" Padding="2,1"/>
+                            </MenuItem.Header>
+                        </MenuItem>
                     </ContextMenu>
                 </Button.ContextMenu>
             </Button>

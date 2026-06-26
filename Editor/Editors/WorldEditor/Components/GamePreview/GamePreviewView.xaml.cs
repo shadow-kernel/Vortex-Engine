@@ -692,6 +692,8 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             {
                 BeginPlaySimulation();
                 SetGameViewportLock(true);   // hide the viewport toolbar while the game runs
+                VortexAPI.ShowGrid(false);   // the editor grid/gizmos are build aids — not the game
+                VortexAPI.ShowGizmos(false);
                 // The external game window owns the mouse when it's the play target.
                 if (!Editor.Core.Services.PlayModeService.Instance.IsExternalWindow)
                     CaptureGameMouse();      // lock + hide cursor -> mouse-look goes to the player (ESC frees)
@@ -704,6 +706,8 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             // (then the placeholder returns); otherwise restore the editor toolbar.
             ReleaseGameMouse();
             EndPlaySimulation();
+            VortexAPI.ShowGrid(true);    // restore editor build aids
+            VortexAPI.ShowGizmos(true);
             SetGameViewportLock(_gameViewMode);
             UpdateGamePlaceholder();
         }

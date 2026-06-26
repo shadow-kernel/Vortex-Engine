@@ -207,10 +207,20 @@ namespace Editor.Scripting
                 e.Transform.LocalRotation = new ECS.Vector3(eulerDegrees.X, eulerDegrees.Y, eulerDegrees.Z);
         }
 
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern short GetAsyncKeyState(int vKey);
+
         bool Vortex.IScriptHost.GetKey(string key)
         {
             if (string.IsNullOrEmpty(key)) return false;
-            return Enum.TryParse(key, true, out Key k) && Keyboard.IsKeyDown(k);
+            if (!Enum.TryParse(key, true, out Key k)) return false;
+            // Use the global physical key state (not WPF Keyboard.IsKeyDown): while playing, focus is on
+            // a native swapchain HWND (editor viewport or the standalone game window), where the WPF
+            // keyboard device reports nothing — so WASD/jump would do nothing. GetAsyncKeyState works
+            // regardless of which window/HWND has focus.
+            int vk = KeyInterop.VirtualKeyFromKey(k);
+            if (vk == 0) return false;
+            return (GetAsyncKeyState(vk) & 0x8000) != 0;
         }
     }
 }
