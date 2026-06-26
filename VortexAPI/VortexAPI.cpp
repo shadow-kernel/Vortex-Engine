@@ -337,6 +337,34 @@ EDITOR_INTERFACE void SwapRenderQueue()
 	graphics::dx12::DX12Renderer::instance().swap_render_queue();
 }
 
+// ---- Standalone game window: a SECOND DX12 swapchain on its own HWND (shares device/queue). The
+// editor keeps its own swapchain; RenderGameWindow renders the current scene through the current
+// camera into the game window. This is the real "exe window" play mode. ----
+EDITOR_INTERFACE bool CreateGameWindow(void* hwnd, unsigned int width, unsigned int height)
+{
+	return graphics::dx12::DX12Renderer::instance().create_game_window((HWND)hwnd, width, height);
+}
+
+EDITOR_INTERFACE void RenderGameWindow()
+{
+	graphics::dx12::DX12Renderer::instance().render_game_window();
+}
+
+EDITOR_INTERFACE void ResizeGameWindow(unsigned int width, unsigned int height)
+{
+	graphics::dx12::DX12Renderer::instance().resize_game_window(width, height);
+}
+
+EDITOR_INTERFACE void DestroyGameWindow()
+{
+	graphics::dx12::DX12Renderer::instance().destroy_game_window();
+}
+
+EDITOR_INTERFACE bool IsGameWindowActive()
+{
+	return graphics::dx12::DX12Renderer::instance().is_game_window_active();
+}
+
 EDITOR_INTERFACE void ShutdownRenderViewport()
 {
 	runtime::systems::dx12::shutdown();

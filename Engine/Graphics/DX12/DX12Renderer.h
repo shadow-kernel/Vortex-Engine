@@ -74,6 +74,16 @@ namespace vortex::graphics::dx12
 		// swapchain (render_frame both swaps AND presents, which caused the asset-browser white-flash).
 		void swap_render_queue();
 
+		// Standalone game window: a SECOND swapchain on its own HWND that shares this renderer's device
+		// and command queue (the editor viewport keeps its own swapchain). render_game_window() renders
+		// the current scene through the current camera into the game window and presents it. This is the
+		// "real exe window" play mode — NOT the offscreen render-target/readback path.
+		bool create_game_window(HWND hwnd, u32 width, u32 height);
+		void render_game_window();
+		void resize_game_window(u32 width, u32 height);
+		void destroy_game_window();
+		bool is_game_window_active() const { return m_game_window_active; }
+
 		bool is_initialized() const { return m_initialized; }
 
 		// Render queue
@@ -240,6 +250,20 @@ namespace vortex::graphics::dx12
 
 		DX12CommandQueue m_command_queue;
 		DX12Swapchain m_swapchain;
+
+		// Active render target for the current pass — set to the main swapchain for the editor frame, or
+		// to the game window's swapchain in render_game_window(). The render_* helpers target these so the
+		// same recording path serves both windows.
+		D3D12_CPU_DESCRIPTOR_HANDLE m_active_rtv{};
+		D3D12_CPU_DESCRIPTOR_HANDLE m_active_dsv{};
+		u32 m_active_width{ 0 };
+		u32 m_active_height{ 0 };
+
+		// Standalone game window (second swapchain + depth + allocator; shares device/queue)
+		DX12Swapchain m_game_swapchain;
+		DX12DepthBuffer m_game_depth;
+		ComPtr<ID3D12CommandAllocator> m_game_cmd_allocator;
+		bool m_game_window_active{ false };
 		DX12Pipeline m_pipeline;           // Simple 2D pipeline (fallback)
 		DX12Pipeline3D m_pipeline_3d;      // Full 3D pipeline
 		DX12GridPipeline m_grid_pipeline;  // Grid rendering pipeline

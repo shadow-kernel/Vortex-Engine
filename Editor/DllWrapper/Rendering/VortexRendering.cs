@@ -38,6 +38,35 @@ namespace Editor.DllWrapper
 
         #endregion
 
+        #region Standalone Game Window (second swapchain)
+
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "CreateGameWindow")]
+        [return: MarshalAs(UnmanagedType.I1)]
+        private static extern bool CreateGameWindowNative(System.IntPtr hwnd, uint width, uint height);
+
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "RenderGameWindow")]
+        private static extern void RenderGameWindowNative();
+
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "ResizeGameWindow")]
+        private static extern void ResizeGameWindowNative(uint width, uint height);
+
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "DestroyGameWindow")]
+        private static extern void DestroyGameWindowNative();
+
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "IsGameWindowActive")]
+        [return: MarshalAs(UnmanagedType.I1)]
+        private static extern bool IsGameWindowActiveNative();
+
+        /// <summary>Create a second DX12 swapchain on the given window handle (the standalone game window).</summary>
+        public static bool CreateGameWindow(System.IntPtr hwnd, uint width, uint height) => CreateGameWindowNative(hwnd, width, height);
+        /// <summary>Render the current scene (through the current camera) into the game window, then present it.</summary>
+        public static void RenderGameWindow() => RenderGameWindowNative();
+        public static void ResizeGameWindow(uint width, uint height) => ResizeGameWindowNative(width, height);
+        public static void DestroyGameWindow() => DestroyGameWindowNative();
+        public static bool IsGameWindowActive() => IsGameWindowActiveNative();
+
+        #endregion
+
         #region Camera
 
         [DllImport(_dllName, CallingConvention = _cc)]

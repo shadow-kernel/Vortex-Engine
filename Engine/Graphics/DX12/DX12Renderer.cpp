@@ -76,7 +76,10 @@ namespace vortex::graphics::dx12
 	{
 		if (!m_initialized) return;
 		m_command_queue.flush();
-		
+
+		// Close the standalone game window (second swapchain) if it's open.
+		destroy_game_window();
+
 		// Destroy all secondary render targets
 		m_render_targets.clear();
 		
@@ -151,11 +154,18 @@ namespace vortex::graphics::dx12
 		m_vertex_count = 0;
 		
 		u32 idx = m_swapchain.current_back_buffer_index();
-		
+
+		// Editor frame renders into the main swapchain. (render_game_window() points these at the
+		// game window's swapchain instead, reusing the same render_* helpers.)
+		m_active_rtv = m_swapchain.current_rtv();
+		m_active_dsv = m_depth_buffer.dsv();
+		m_active_width = m_swapchain.width();
+		m_active_height = m_swapchain.height();
+
 		// Wait for this frame's previous work to complete (proper double buffering)
 		// Only wait if GPU hasn't finished with this buffer yet
 		m_command_queue.wait_for_fence_value(m_frame_fence_values[idx]);
-		
+
 		update_per_frame_constants();
 
 		m_command_allocators[idx]->Reset();
@@ -208,10 +218,110 @@ namespace vortex::graphics::dx12
 		// for re-rendering if no new data is submitted (prevents flickering)
 		}
 
-		void DX12Renderer::render_3d_scene()
+		bool DX12Renderer::create_game_window(HWND hwnd, u32 width, u32 height)
 	{
-		auto rtv = m_swapchain.current_rtv();
-		auto dsv = m_depth_buffer.dsv();
+		if (!m_initialized || !hwnd || width == 0 || height == 0) return false;
+		if (m_game_window_active) destroy_game_window();
+
+		auto& core = DX12Core::instance();
+		SwapchainDesc sc_desc{};
+		sc_desc.hwnd = hwnd;
+		sc_desc.width = width;
+		sc_desc.height = height;
+		sc_desc.buffer_count = 2;
+		if (!m_game_swapchain.initialize(core.factory(), m_command_queue.queue(), core.device(), sc_desc))
+			return false;
+		if (!m_game_depth.initialize(core.device(), width, height, DXGI_FORMAT_D32_FLOAT))
+		{
+			m_game_swapchain.shutdown();
+			return false;
+		}
+		if (FAILED(core.device()->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
+				IID_PPV_ARGS(&m_game_cmd_allocator))))
+		{
+			m_game_depth.shutdown();
+			m_game_swapchain.shutdown();
+			return false;
+		}
+		m_game_window_active = true;
+		return true;
+	}
+
+	void DX12Renderer::render_game_window()
+	{
+		if (!m_initialized || !m_game_window_active) return;
+
+		// The command list + queue are shared with the editor frame; finish all prior GPU work before
+		// reusing them. Simple full sync — perf is not the priority for the play window.
+		m_command_queue.flush();
+
+		// Target the game window's own swapchain + depth at its own size, using the CURRENT camera
+		// (the caller sets the game's main camera before calling this).
+		m_active_rtv = m_game_swapchain.current_rtv();
+		m_active_dsv = m_game_depth.dsv();
+		m_active_width = m_game_swapchain.width();
+		m_active_height = m_game_swapchain.height();
+
+		update_per_frame_constants();
+
+		m_game_cmd_allocator->Reset();
+		auto* pso = m_render_queue.empty() ? m_pipeline.pipeline_state() :
+			(m_wireframe_mode ? m_pipeline_3d.wireframe_pso() : m_pipeline_3d.pipeline_state());
+		m_command_list->Reset(m_game_cmd_allocator.Get(), pso);
+
+		D3D12_RESOURCE_BARRIER barrier{};
+		barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		barrier.Transition.pResource = m_game_swapchain.current_back_buffer();
+		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
+		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+		barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		m_command_list->ResourceBarrier(1, &barrier);
+
+		D3D12_VIEWPORT vp{}; vp.Width = (float)m_active_width; vp.Height = (float)m_active_height; vp.MaxDepth = 1.0f;
+		D3D12_RECT sc{}; sc.right = (LONG)m_active_width; sc.bottom = (LONG)m_active_height;
+		m_command_list->RSSetViewports(1, &vp);
+		m_command_list->RSSetScissorRects(1, &sc);
+		m_command_list->ClearRenderTargetView(m_active_rtv, m_clear_color, 0, nullptr);
+		m_command_list->ClearDepthStencilView(m_active_dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+		m_command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		m_command_list->OMSetRenderTargets(1, &m_active_rtv, FALSE, &m_active_dsv);
+
+		if (m_skybox_enabled) render_skybox();
+		if (m_grid_visible) render_grid();
+		if (!m_render_queue.empty()) render_3d_scene();
+
+		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+		m_command_list->ResourceBarrier(1, &barrier);
+		m_command_list->Close();
+
+		m_command_queue.execute_command_list(m_command_list.Get());
+		m_command_queue.flush(); // wait before present (safe)
+		m_game_swapchain.present(false);
+	}
+
+	void DX12Renderer::resize_game_window(u32 width, u32 height)
+	{
+		if (!m_game_window_active || width == 0 || height == 0) return;
+		m_command_queue.flush();
+		m_game_swapchain.resize(width, height);
+		m_game_depth.resize(DX12Core::instance().device(), width, height);
+	}
+
+	void DX12Renderer::destroy_game_window()
+	{
+		if (!m_game_window_active) return;
+		m_command_queue.flush();
+		m_game_window_active = false;
+		m_game_depth.shutdown();
+		m_game_swapchain.shutdown();
+		m_game_cmd_allocator.Reset();
+	}
+
+	void DX12Renderer::render_3d_scene()
+	{
+		auto rtv = m_active_rtv;
+		auto dsv = m_active_dsv;
 		m_command_list->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
 
 	auto* pso = m_wireframe_mode ? m_pipeline_3d.wireframe_pso() : m_pipeline_3d.pipeline_state();
@@ -348,7 +458,7 @@ namespace vortex::graphics::dx12
 		void DX12Renderer::render_fallback_triangle()
 	{
 		if (m_grid_visible) return;
-		auto rtv = m_swapchain.current_rtv();
+		auto rtv = m_active_rtv;
 		m_command_list->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
 		m_command_list->SetPipelineState(m_pipeline.pipeline_state());
 		m_command_list->SetGraphicsRootSignature(m_pipeline.root_signature());
@@ -360,8 +470,8 @@ namespace vortex::graphics::dx12
 	{
 		if (!m_grid_pipeline.pipeline_state()) return;
 
-		auto rtv = m_swapchain.current_rtv();
-		auto dsv = m_depth_buffer.dsv();
+		auto rtv = m_active_rtv;
+		auto dsv = m_active_dsv;
 		m_command_list->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
 		
 		m_command_list->SetPipelineState(m_grid_pipeline.pipeline_state());
@@ -372,7 +482,7 @@ namespace vortex::graphics::dx12
 		XMVECTOR at = XMLoadFloat3(&m_camera_target);
 		XMVECTOR up = XMLoadFloat3(&m_camera_up);
 		XMMATRIX view = XMMatrixLookAtLH(eye, at, up);
-		float aspect = (float)m_swapchain.width() / (float)m_swapchain.height();
+		float aspect = (float)m_active_width / (float)m_active_height;
 		XMMATRIX proj = XMMatrixPerspectiveFovLH(XM_PIDIV4, aspect, 0.1f, 1000.0f);
 		XMMATRIX vp = view * proj;
 
@@ -559,8 +669,8 @@ namespace vortex::graphics::dx12
 	{
 		if (!m_skybox_pipeline.pipeline_state()) return;
 
-		auto rtv = m_swapchain.current_rtv();
-		auto dsv = m_depth_buffer.dsv();
+		auto rtv = m_active_rtv;
+		auto dsv = m_active_dsv;
 		m_command_list->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
 		
 		m_command_list->SetPipelineState(m_skybox_pipeline.pipeline_state());
@@ -571,7 +681,7 @@ namespace vortex::graphics::dx12
 		XMVECTOR at = XMLoadFloat3(&m_camera_target);
 		XMVECTOR up = XMLoadFloat3(&m_camera_up);
 		XMMATRIX view = XMMatrixLookAtLH(eye, at, up);
-		float aspect = (float)m_swapchain.width() / (float)m_swapchain.height();
+		float aspect = (float)m_active_width / (float)m_active_height;
 		XMMATRIX proj = XMMatrixPerspectiveFovLH(XM_PIDIV4, aspect, 0.1f, 1000.0f);
 		XMMATRIX vp = view * proj;
 
