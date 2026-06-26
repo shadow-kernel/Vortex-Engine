@@ -24,7 +24,11 @@ namespace Editor.Scripting
         private static ScriptRuntime _instance;
         public static ScriptRuntime Instance => _instance ?? (_instance = new ScriptRuntime());
 
+        // Maps a UNIQUE per-behaviour handle -> the entity it's attached to. We assign our own handle
+        // (not the engine EntityId) because engine ids can collide/be invalid for editor entities; a
+        // collision previously made a script move the WRONG entity (e.g. the Ground instead of the camera).
         private readonly Dictionary<long, GameEntity> _entitiesById = new Dictionary<long, GameEntity>();
+        private long _nextHandle;
         private readonly List<Vortex.VortexBehaviour> _behaviours = new List<Vortex.VortexBehaviour>();
         private bool _active;
 
@@ -41,7 +45,7 @@ namespace Editor.Scripting
             Vortex.Input.Host = this;
 
             _entitiesById.Clear();
-            foreach (var e in scene.Entities) MapEntitiesRecursive(e);
+            _nextHandle = 0;
 
             Assembly asm = Compile(out string log);
             LastBuildLog = log ?? "";
@@ -83,19 +87,11 @@ namespace Editor.Scripting
             _active = false;
         }
 
-        private void MapEntitiesRecursive(GameEntity e)
-        {
-            if (e == null) return;
-            if (Utilities.ID.IsValid(e.EntityId)) _entitiesById[e.EntityId] = e;
-            if (e.Children != null)
-                foreach (var c in e.Children) MapEntitiesRecursive(c);
-        }
-
         private void InstantiateRecursive(GameEntity e, Assembly asm)
         {
             if (e == null) return;
             var script = e.GetComponent<Script>();
-            if (script != null && !string.IsNullOrEmpty(script.ScriptClassName) && Utilities.ID.IsValid(e.EntityId))
+            if (script != null && !string.IsNullOrEmpty(script.ScriptClassName))
             {
                 var type = FindBehaviourType(asm, script.ScriptClassName);
                 if (type != null)
@@ -103,7 +99,11 @@ namespace Editor.Scripting
                     try
                     {
                         var behaviour = (Vortex.VortexBehaviour)Activator.CreateInstance(type);
-                        behaviour.EntityId = e.EntityId;
+                        // Assign a UNIQUE handle and map it to THIS entity — guarantees the behaviour can
+                        // only ever read/move its own entity (no engine-EntityId collisions).
+                        long handle = ++_nextHandle;
+                        behaviour.EntityId = handle;
+                        _entitiesById[handle] = e;
                         _behaviours.Add(behaviour);
                     }
                     catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] instantiate '" + script.ScriptClassName + "' failed: " + ex.Message); }

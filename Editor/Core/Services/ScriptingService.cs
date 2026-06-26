@@ -177,65 +177,74 @@ public class " + className + @" : VortexBehaviour
         private static string PlayerControllerTemplate() =>
 @"using Vortex;
 
-// Battle-Royale player movement — 100% GAME-side (this script), driven entirely through the Vortex API.
-// Attached to the Main Camera. Mouse = look, WASD = move, Space = jump, LeftCtrl/C = crouch.
-// The engine has NO hardcoded movement: every value below is yours to tune (or rewrite the whole thing).
+// Smooth first-person player movement — 100% GAME-side (this script), driven via the Vortex API.
+// Attached to the Main Camera. Mouse = look, WASD = move, Shift = sprint, Space = jump, Ctrl/C = crouch.
+// Velocity eases toward the target each frame (accel/decel) for the smooth ""real multiplayer"" feel.
+// The engine has NO hardcoded movement: every field below is yours to tune.
 public class PlayerController : VortexBehaviour
 {
-    public float MoveSpeed   = 6f;     // walk speed (units/sec)
-    public float CrouchSpeed = 3f;     // speed while crouching
-    public float MouseSens   = 0.12f;  // mouse degrees per pixel
-    public float TurnSpeed   = 90f;    // arrow-key turn speed (deg/sec)
-    public float JumpSpeed   = 7.5f;   // initial jump velocity
-    public float Gravity     = 20f;    // downward acceleration
+    public float WalkSpeed   = 6f;     // units/sec
+    public float SprintSpeed = 10f;    // while holding Shift
+    public float CrouchSpeed = 3f;     // while crouching
+    public float Accel       = 14f;    // how fast velocity ramps to the target (higher = snappier)
+    public float MouseSens   = 0.10f;  // degrees per pixel of mouse movement
+    public float JumpSpeed   = 7.5f;
+    public float Gravity     = 20f;
     public float CrouchDrop  = 0.7f;   // how far the eye lowers when crouching
 
     private float _standEyeY;  // standing eye height, captured at spawn
+    private float _vx, _vz;    // smoothed horizontal velocity
     private float _vy;         // vertical velocity
     private bool  _grounded;
+    private float _pitch, _yaw; // look angles (degrees), accumulated for smoothness
 
     public override void Start()
     {
         _standEyeY = Position.Y;
-        _vy = 0f;
+        var r = Rotation; _pitch = r.X; _yaw = r.Y;
+        _vx = _vz = _vy = 0f;
         _grounded = true;
     }
 
     public override void Update(float dt)
     {
-        // ---- Look: mouse (locked while playing, ESC frees) + arrow keys ----
-        float yaw   = Input.MouseDeltaX * MouseSens;
-        float pitch = Input.MouseDeltaY * MouseSens;
-        if (Input.GetKey(""Left""))  yaw   -= TurnSpeed * dt;
-        if (Input.GetKey(""Right"")) yaw   += TurnSpeed * dt;
-        if (Input.GetKey(""Up""))    pitch -= TurnSpeed * dt;
-        if (Input.GetKey(""Down""))  pitch += TurnSpeed * dt;
-        if (yaw != 0f || pitch != 0f)
-        {
-            Rotate(pitch, yaw, 0f);
-            Vector3 look = Rotation;            // keep upright: clamp pitch, zero roll (no flip/streak)
-            if (look.X > 89f) look.X = 89f; else if (look.X < -89f) look.X = -89f;
-            look.Z = 0f;
-            Rotation = look;
-        }
+        if (dt <= 0f) return;
 
-        // ---- Crouch (LeftCtrl or C): lower the eye + move slower ----
+        // ---- Look: mouse (locked while playing, ESC frees) + arrow keys; clamp pitch, no roll ----
+        _yaw   += Input.MouseDeltaX * MouseSens;
+        _pitch += Input.MouseDeltaY * MouseSens;
+        if (Input.GetKey(""Left""))  _yaw   -= 90f * dt;
+        if (Input.GetKey(""Right"")) _yaw   += 90f * dt;
+        if (Input.GetKey(""Up""))    _pitch -= 90f * dt;
+        if (Input.GetKey(""Down""))  _pitch += 90f * dt;
+        if (_pitch > 89f) _pitch = 89f; else if (_pitch < -89f) _pitch = -89f;
+        Rotation = new Vector3(_pitch, _yaw, 0f);
+
+        // ---- Target horizontal velocity (relative to facing); Shift = sprint, Ctrl/C = crouch ----
         bool crouch = Input.GetKey(""LeftCtrl"") || Input.GetKey(""C"");
-        float eyeY  = crouch ? _standEyeY - CrouchDrop : _standEyeY;
-        float speed = crouch ? CrouchSpeed : MoveSpeed;
+        bool sprint = Input.GetKey(""LeftShift"");
+        float speed = crouch ? CrouchSpeed : (sprint ? SprintSpeed : WalkSpeed);
 
-        // ---- Horizontal move (WASD), relative to where you're facing ----
-        Vector3 fwd = Forward, rgt = Right;
-        float mx = 0f, mz = 0f;
-        if (Input.GetKey(""W"")) { mx += fwd.X; mz += fwd.Z; }
-        if (Input.GetKey(""S"")) { mx -= fwd.X; mz -= fwd.Z; }
-        if (Input.GetKey(""D"")) { mx += rgt.X; mz += rgt.Z; }
-        if (Input.GetKey(""A"")) { mx -= rgt.X; mz -= rgt.Z; }
-        float len = (float)System.Math.Sqrt(mx * mx + mz * mz);
+        Vector3 f = Forward, r = Right;
+        float dx = 0f, dz = 0f;
+        if (Input.GetKey(""W"")) { dx += f.X; dz += f.Z; }
+        if (Input.GetKey(""S"")) { dx -= f.X; dz -= f.Z; }
+        if (Input.GetKey(""D"")) { dx += r.X; dz += r.Z; }
+        if (Input.GetKey(""A"")) { dx -= r.X; dz -= r.Z; }
+        float len = (float)System.Math.Sqrt(dx * dx + dz * dz);
+        float tx = 0f, tz = 0f;
+        if (len > 0.001f) { tx = dx / len * speed; tz = dz / len * speed; }
+
+        // ---- Ease velocity toward the target (smooth start/stop) ----
+        float kk = Accel * dt; if (kk > 1f) kk = 1f;
+        _vx += (tx - _vx) * kk;
+        _vz += (tz - _vz) * kk;
+
+        // ---- Apply move + jump/gravity (kinematic; lands on the eye-height floor) ----
+        float eyeY = crouch ? _standEyeY - CrouchDrop : _standEyeY;
         Vector3 p = Position;
-        if (len > 0.001f) { mx /= len; mz /= len; p.X += mx * speed * dt; p.Z += mz * speed * dt; }
-
-        // ---- Jump + gravity (kinematic; lands back on the eye-height floor) ----
+        p.X += _vx * dt;
+        p.Z += _vz * dt;
         if (_grounded)
         {
             if (Input.GetKey(""Space"")) { _vy = JumpSpeed; _grounded = false; }
@@ -247,7 +256,6 @@ public class PlayerController : VortexBehaviour
             p.Y += _vy * dt;
             if (p.Y <= eyeY) { p.Y = eyeY; _vy = 0f; _grounded = true; }
         }
-
         Position = p;
     }
 }
