@@ -191,6 +191,22 @@ namespace Editor.Scripting
                 e.Transform.LocalPosition = new ECS.Vector3(position.X, position.Y, position.Z);
         }
 
+        Vortex.Vector3 Vortex.IScriptHost.GetRotation(long entityId)
+        {
+            if (_entitiesById.TryGetValue(entityId, out var e) && e.Transform != null)
+            {
+                var r = e.Transform.LocalRotation; // Euler degrees
+                return new Vortex.Vector3(r.X, r.Y, r.Z);
+            }
+            return Vortex.Vector3.Zero;
+        }
+
+        void Vortex.IScriptHost.SetRotation(long entityId, Vortex.Vector3 eulerDegrees)
+        {
+            if (_entitiesById.TryGetValue(entityId, out var e) && e.Transform != null)
+                e.Transform.LocalRotation = new ECS.Vector3(eulerDegrees.X, eulerDegrees.Y, eulerDegrees.Z);
+        }
+
         bool Vortex.IScriptHost.GetKey(string key)
         {
             if (string.IsNullOrEmpty(key)) return false;

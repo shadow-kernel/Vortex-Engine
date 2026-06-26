@@ -103,10 +103,15 @@ namespace Editor.Core.Services
         {
             var scene = new Scene(project, name);
 
-            // Standard-Kamera erstellen
+            // Standard-Kamera erstellen — sie ist zugleich der Spieler: ein PlayerController-Script
+            // (im Projekt unter Assets/Scripts/Player) steuert die Bewegung. Bewegung = GAME-Logik im
+            // Script, nicht in der Engine hartkodiert; im Script frei anpassbar.
             var camera = new GameEntity(scene, "Main Camera");
             camera.Transform.LocalPosition = new ECS.Vector3(0, 1, -10);
             camera.AddComponentDirect(new Camera(camera) { IsMainCamera = true });
+            var playerScriptPath = ScriptingService.EnsurePlayerController(project.Path);
+            if (!string.IsNullOrEmpty(playerScriptPath))
+                camera.AddComponentDirect(new Editor.ECS.Components.Scripting.Script(camera, playerScriptPath));
             scene.Entities.Add(camera);
 
             // Standard-Licht erstellen (hell genug, damit die Szene nicht dunkel ist)
