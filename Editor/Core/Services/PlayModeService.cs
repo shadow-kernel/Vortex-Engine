@@ -42,6 +42,10 @@ namespace Editor.Core.Services
             GameViewChanged?.Invoke(active);
         }
 
+        /// <summary>True when play is running in the standalone external window (its own swapchain). The
+        /// editor viewport then skips its own mouse capture — the game window owns input + its render.</summary>
+        public bool IsExternalWindow { get; set; }
+
         /// <summary>Raised whenever the play state changes (on the UI thread).</summary>
         public event EventHandler<PlayState> StateChanged;
 

@@ -510,7 +510,17 @@ d:DesignHeight="64" d:DesignWidth="1200">
                     shell:WindowChrome.IsHitTestVisibleInChrome="True">
             <Button x:Name="TopPlayBtn" Content="&#xE768;" FontFamily="Segoe MDL2 Assets" FontSize="14"
                     Click="PlayButton_Click" ToolTip="Play / Stop" Height="32" Padding="16,0"
-                    Style="{StaticResource TopPlayButton}" Margin="0,0,8,0"/>
+                    Style="{StaticResource TopPlayButton}" Margin="0,0,0,0"/>
+            <Button x:Name="PlayMenuBtn" Content="&#xE70D;" FontFamily="Segoe MDL2 Assets" FontSize="8"
+                    Click="PlayMenuBtn_Click" ToolTip="Play options (viewport / new window)" Height="32" Padding="7,0"
+                    Style="{StaticResource TopPlayButton}" Margin="0,0,8,0">
+                <Button.ContextMenu>
+                    <ContextMenu>
+                        <MenuItem Header="Play in Viewport" Click="PlayInViewport_Click"/>
+                        <MenuItem Header="Play in New Window" Click="PlayInWindow_Click"/>
+                    </ContextMenu>
+                </Button.ContextMenu>
+            </Button>
             <Button Style="{StaticResource TopPillButton}" Height="32" Padding="13,0" Margin="0,0,8,0" ToolTip="Target platform / Build Settings" Click="BuildSettings_Click">
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="&#xE770;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#E9E9ED" VerticalAlignment="Center" Margin="0,0,7,0"/>

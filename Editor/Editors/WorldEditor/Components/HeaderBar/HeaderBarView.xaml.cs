@@ -621,6 +621,7 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
             // you on the Game tab (the "Press Play" placeholder returns).
             if (!_isPlaying)
             {
+                Editor.Core.Services.PlayModeService.Instance.IsExternalWindow = false; // ▶ plays in the viewport
                 Editor.Core.Services.PlayModeService.Instance.SetGameView(true);
                 StartPlayMode();
             }
@@ -720,7 +721,8 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
 
             // Hand the view back to the editor fly-camera.
             Editor.Core.Services.CameraService.Instance.SwitchToEditorCamera();
-            Editor.Core.Services.PlayModeService.Instance.Stop();
+            Editor.Core.Services.PlayModeService.Instance.Stop(); // closes the game window if it's open
+            Editor.Core.Services.PlayModeService.Instance.IsExternalWindow = false;
         }
 
         private void AssetStore_Click(object sender, RoutedEventArgs e)
@@ -732,20 +734,42 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
 
         private Editor.PlayMode.GameWindow _gameWindow;
 
-        /// <summary>Opens the standalone game window and freezes the editor while it plays.</summary>
+        /// <summary>Opens the standalone game window (its own swapchain). The editor is NOT frozen — its
+        /// play tick keeps running the simulation/scripts; the window renders + owns mouse-look.</summary>
         private void LaunchGameWindow()
         {
             if (_gameWindow != null) { _gameWindow.Activate(); return; }
-            if (Application.Current?.MainWindow != null)
-                Application.Current.MainWindow.IsEnabled = false; // freeze the editor
-            _gameWindow = new Editor.PlayMode.GameWindow();
-            _gameWindow.Closed += (s, e) =>
-            {
-                _gameWindow = null;
-                if (Application.Current?.MainWindow != null)
-                    Application.Current.MainWindow.IsEnabled = true; // unfreeze when the game window closes
-            };
+            _gameWindow = new Editor.PlayMode.GameWindow { Owner = Application.Current?.MainWindow };
+            _gameWindow.Closed += (s, e) => { _gameWindow = null; };
             _gameWindow.Show();
+        }
+
+        /// <summary>The ▾ next to ▶ opens the play options (in viewport / in a new window).</summary>
+        private void PlayMenuBtn_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button b && b.ContextMenu != null)
+            {
+                b.ContextMenu.PlacementTarget = b;
+                b.ContextMenu.IsOpen = true;
+            }
+        }
+
+        private void PlayInViewport_Click(object sender, RoutedEventArgs e)
+        {
+            if (_isPlaying) StopPlayMode();
+            Editor.Core.Services.PlayModeService.Instance.IsExternalWindow = false;
+            Editor.Core.Services.PlayModeService.Instance.SetGameView(true);
+            StartPlayMode();
+        }
+
+        private void PlayInWindow_Click(object sender, RoutedEventArgs e)
+        {
+            if (_isPlaying) StopPlayMode();
+            // Mark external BEFORE starting so the editor viewport yields the mouse to the game window.
+            Editor.Core.Services.PlayModeService.Instance.IsExternalWindow = true;
+            Editor.Core.Services.PlayModeService.Instance.SetGameView(true);
+            LaunchGameWindow();
+            StartPlayMode();
         }
 
         private void UpdatePlayModeButtons()

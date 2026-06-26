@@ -158,7 +158,9 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             // back into the C# transforms so the viewport shows the live simulation.
             if (playing)
             {
-                UpdateGameMouseLook();                                     // lock/feed mouse delta to scripts; ESC frees
+                // The external game window feeds mouse-look itself; otherwise the editor viewport does.
+                if (!Editor.Core.Services.PlayModeService.Instance.IsExternalWindow)
+                    UpdateGameMouseLook();                                 // lock/feed mouse delta to scripts; ESC frees
                 VortexAPI.StepEngineRuntime(deltaTime);
                 ReadbackPhysics();
                 Editor.Scripting.ScriptRuntime.Instance.Update(deltaTime); // run gameplay scripts (movement, etc.)
@@ -690,7 +692,9 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             {
                 BeginPlaySimulation();
                 SetGameViewportLock(true);   // hide the viewport toolbar while the game runs
-                CaptureGameMouse();          // lock + hide cursor -> mouse-look goes to the player (ESC frees)
+                // The external game window owns the mouse when it's the play target.
+                if (!Editor.Core.Services.PlayModeService.Instance.IsExternalWindow)
+                    CaptureGameMouse();      // lock + hide cursor -> mouse-look goes to the player (ESC frees)
                 UpdateGamePlaceholder();     // hide the "Press Play" overlay
                 return;
             }
