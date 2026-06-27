@@ -91,7 +91,7 @@
                 </Grid.ColumnDefinitions>
 
                 <!-- LEFT: branch / changes / commit / remote / tags -->
-                <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto" BorderBrush="#2C2C32" BorderThickness="0,0,1,0">
+                <ScrollViewer x:Name="LeftScroll" Grid.Column="0" VerticalScrollBarVisibility="Auto" BorderBrush="#2C2C32" BorderThickness="0,0,1,0">
                     <StackPanel Margin="16,8,16,16">
                         <TextBlock Text="BRANCH" Style="{StaticResource Section}" Margin="0,4,0,7"/>
                         <ComboBox x:Name="BranchCombo" Height="30" Background="#202023" Foreground="#E9E9ED" BorderBrush="#3A3A42"/>
@@ -108,6 +108,7 @@
                         <Border Background="#1B1B1E" BorderBrush="#2C2C32" BorderThickness="1" CornerRadius="6">
                             <ListBox x:Name="ChangesList" Height="190" Background="Transparent" Foreground="#D6D6DB"
                                      BorderThickness="0" FontSize="12" SelectionChanged="ChangesList_SelectionChanged"
+                                     PreviewMouseWheel="InnerList_PreviewMouseWheel"
                                      ScrollViewer.HorizontalScrollBarVisibility="Auto">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate>
@@ -137,13 +138,17 @@
                             <Button Content="New tag" Style="{StaticResource Pill}" Click="NewTag_Click" HorizontalAlignment="Right"/>
                         </Grid>
                         <Border Background="#1B1B1E" BorderBrush="#2C2C32" BorderThickness="1" CornerRadius="6">
-                            <ListBox x:Name="TagsList" Height="80" Background="Transparent" Foreground="#D6D6DB" BorderThickness="0" FontSize="12"/>
+                            <ListBox x:Name="TagsList" Height="80" Background="Transparent" Foreground="#D6D6DB" BorderThickness="0" FontSize="12"
+                                     PreviewMouseWheel="InnerList_PreviewMouseWheel"/>
                         </Border>
 
                         <TextBlock Text="HISTORY" Style="{StaticResource Section}"/>
                         <Border Background="#1B1B1E" BorderBrush="#2C2C32" BorderThickness="1" CornerRadius="6">
                             <ListBox x:Name="HistoryList" Height="170" Background="Transparent" Foreground="#D6D6DB"
-                                     BorderThickness="0" FontSize="12" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                     BorderThickness="0" FontSize="12" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                     SelectionChanged="HistoryList_SelectionChanged"
+                                     PreviewMouseRightButtonDown="HistoryList_RightDown"
+                                     PreviewMouseWheel="InnerList_PreviewMouseWheel">
                                 <ListBox.ContextMenu>
                                     <ContextMenu Background="#202023" BorderBrush="#3A3A42" Foreground="#E9E9ED">
                                         <MenuItem Header="Checkout this commit" Click="HistCheckout_Click"/>
@@ -181,7 +186,8 @@
                             <Button Content="Stash changes" Style="{StaticResource Pill}" Click="StashSave_Click" HorizontalAlignment="Right"/>
                         </Grid>
                         <Border Background="#1B1B1E" BorderBrush="#2C2C32" BorderThickness="1" CornerRadius="6">
-                            <ListBox x:Name="StashList" Height="84" Background="Transparent" Foreground="#D6D6DB" BorderThickness="0" FontSize="12">
+                            <ListBox x:Name="StashList" Height="84" Background="Transparent" Foreground="#D6D6DB" BorderThickness="0" FontSize="12"
+                                     PreviewMouseWheel="InnerList_PreviewMouseWheel">
                                 <ListBox.ContextMenu>
                                     <ContextMenu Background="#202023" BorderBrush="#3A3A42" Foreground="#E9E9ED">
                                         <MenuItem Header="Apply (keep stash)" Click="StashApply_Click"/>

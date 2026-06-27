@@ -289,12 +289,20 @@ namespace Editor.Editors.WorldEditor.Components.Git
                 return;
             }
 
+            RenderDiffText(diff);
+        }
+
+        /// <summary>Parse a unified diff (file diff or `git show`) into colored lines + show it.</summary>
+        private void RenderDiffText(string diff)
+        {
             int adds = 0, dels = 0;
             var lines = new List<DiffLine>();
-            foreach (var raw in diff.Replace("\r", "").Split('\n'))
+            foreach (var raw in (diff ?? "").Replace("\r", "").Split('\n'))
             {
                 var dl = new DiffLine { Text = raw, Back = Transparent, Fore = CtxFore };
                 if (raw.StartsWith("@@")) { dl.Fore = HunkFore; }
+                else if (raw.StartsWith("commit ") || raw.StartsWith("Author:") || raw.StartsWith("Date:") ||
+                         raw.StartsWith("Merge:")) { dl.Fore = HunkFore; }
                 else if (raw.StartsWith("+++") || raw.StartsWith("---") || raw.StartsWith("diff ") ||
                          raw.StartsWith("index ") || raw.StartsWith("new file") || raw.StartsWith("deleted file") ||
                          raw.StartsWith("similarity") || raw.StartsWith("rename ")) { dl.Fore = MetaFore; }
@@ -305,6 +313,35 @@ namespace Editor.Editors.WorldEditor.Components.Git
             DiffList.ItemsSource = lines;
             DiffStat.Text = "+" + adds + "  −" + dels;
             ShowPane(diff: true);
+        }
+
+        // ---- history: clicking a commit shows what it changed ----
+        private async void HistoryList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            var c = HistoryList.SelectedItem as GitGraphCommit;
+            if (c == null) return;
+            DiffTitle.Text = c.Hash + "  " + c.Subject;
+            DiffStat.Text = "";
+            SetBusy(true, "Loading commit…");
+            var diff = await GitService.Instance.ShowCommitAsync(_repo, c.Hash);
+            SetBusy(false, "Ready");
+            if (string.IsNullOrWhiteSpace(diff)) { ClearDiff(); DiffNote.Text = "(no diff)"; ShowPane(note: true); return; }
+            RenderDiffText(diff);
+        }
+
+        private void HistoryList_RightDown(object sender, MouseButtonEventArgs e)
+        {
+            var dep = e.OriginalSource as DependencyObject;
+            while (dep != null && !(dep is ListBoxItem)) dep = System.Windows.Media.VisualTreeHelper.GetParent(dep);
+            if (dep is ListBoxItem lbi) { lbi.IsSelected = true; HistoryList.SelectedItem = lbi.DataContext; }
+        }
+
+        // ---- let the wheel scroll the whole left column even over a list ----
+        private void InnerList_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+        {
+            if (LeftScroll == null) return;
+            e.Handled = true;
+            LeftScroll.ScrollToVerticalOffset(LeftScroll.VerticalOffset - e.Delta);
         }
 
         private void ShowPane(bool diff = false, bool preview = false, bool note = false)

@@ -162,6 +162,15 @@ namespace Editor.Core.Services.Git
             return ni.StdOut ?? "";
         }
 
+        /// <summary>The full diff a single commit introduced (for the history → diff view). Includes the
+        /// commit header + message followed by the unified diff.</summary>
+        public async Task<string> ShowCommitAsync(string repoPath, string hash)
+        {
+            if (string.IsNullOrEmpty(hash)) return "";
+            var r = await RunAsync(repoPath, "show --no-color " + Q(hash));
+            return r.StdOut ?? "";
+        }
+
         /// <summary>True if git considers the path a binary blob (for the diff viewer to switch to a preview).</summary>
         public async Task<bool> IsBinaryAsync(string repoPath, string relativePath)
         {
