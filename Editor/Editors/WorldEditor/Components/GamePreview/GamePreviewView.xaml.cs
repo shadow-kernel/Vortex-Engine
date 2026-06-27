@@ -246,6 +246,15 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         {
             Loaded -= OnViewLoaded;
 
+            // The "Läuft im externen Fenster" overlay is a Popup (a top-level, always-on-top window).
+            // Only show it while the EDITOR window is active, so it never floats over the game window.
+            var ownerWin = Window.GetWindow(this);
+            if (ownerWin != null)
+            {
+                ownerWin.Activated += (s, ev) => UpdateExternalOverlay();
+                ownerWin.Deactivated += (s, ev) => UpdateExternalOverlay();
+            }
+
             // Initial camera list refresh
             RefreshCameraList();
             
@@ -749,7 +758,11 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         {
             if (ExternalPlayPopup == null) return;
             var pms = Editor.Core.Services.PlayModeService.Instance;
-            bool show = pms.IsExternalWindow && pms.IsPlaying;
+            // Only while the EDITOR window is active — otherwise this top-level Popup would float over the
+            // standalone game window (which the user saw). When the game window is focused, hide it.
+            var ownerWin = Window.GetWindow(this);
+            bool editorActive = ownerWin != null && ownerWin.IsActive;
+            bool show = pms.IsExternalWindow && pms.IsPlaying && editorActive;
             if (show && MainViewportPanel != null && MainViewportPanel.ActualWidth > 2 && ExternalPlayDim != null)
             {
                 ExternalPlayDim.Width = MainViewportPanel.ActualWidth;
