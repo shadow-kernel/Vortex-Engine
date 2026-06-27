@@ -107,6 +107,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
 
         #region Entity Commands
         public ICommand CreateEmptyEntityCommand { get; }
+        public ICommand CreatePlayerCommand { get; }
         public ICommand CreateFolderCommand { get; }
         public ICommand CreateChildEntityCommand { get; }
         public ICommand DeleteEntityCommand { get; }
@@ -159,6 +160,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
 
             // Entity Commands
             CreateEmptyEntityCommand = new RelayCommand(_ => CreateEmptyEntity());
+            CreatePlayerCommand = new RelayCommand(_ => CreatePlayer());
             CreateFolderCommand = new RelayCommand(_ => CreateFolder());
             CreateChildEntityCommand = new RelayCommand(_ => CreateChildEntity(), _ => SelectedEntity != null);
             DeleteEntityCommand = new RelayCommand(_ => DeleteSelectedEntities(), _ => SelectedEntity != null || _selectedEntities.Count > 0);
@@ -308,6 +310,40 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             var entity = _selectedScene.CreateEntity("New Entity");
             SelectedEntity = entity;
             SelectionService.Instance.RequestFocus(entity);
+        }
+
+        /// <summary>Creates a real "Player" object: a root entity carrying the PlayerController script
+        /// (movement/look — all game-side), with the Main Camera as a CHILD at eye height so it follows
+        /// the player automatically via the ECS hierarchy. Nothing is hardcoded in the engine.</summary>
+        private void CreatePlayer()
+        {
+            if (_selectedScene == null) return;
+
+            // Ensure the starter controller script exists in the project.
+            string scriptRel = "Assets/Scripts/Player/PlayerController.cs";
+            try
+            {
+                var root = ProjectData.Current?.Path;
+                if (!string.IsNullOrEmpty(root))
+                {
+                    var p = ScriptingService.EnsurePlayerController(root);
+                    if (!string.IsNullOrEmpty(p)) scriptRel = p;
+                }
+            }
+            catch { }
+
+            var player = _selectedScene.CreateEntity("Player");
+            player.AddComponent(new Script(player, scriptRel));
+
+            var cam = new GameEntity(_selectedScene, "Main Camera");
+            cam.AddComponent(new Camera(cam, true)); // main camera
+            var t = cam.GetComponent<Transform>();
+            if (t != null) t.LocalPosition = new Vector3(0f, 1.7f, 0f); // eye height
+            player.AddChild(cam);
+            player.IsExpanded = true;
+
+            SelectedEntity = player;
+            SelectionService.Instance.RequestFocus(player);
         }
 
         private void CreateFolder()

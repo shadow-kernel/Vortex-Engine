@@ -197,6 +197,11 @@
                     <TextBlock Text="&#xE734;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#E9E9ED"/>
                 </MenuItem.Icon>
             </MenuItem>
+            <MenuItem Header="Player" Click="CreatePlayer_Click" ToolTip="Player entity with the PlayerController script + a child Main Camera">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE7EE;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#6C5CE7"/>
+                </MenuItem.Icon>
+            </MenuItem>
             <MenuItem Header="Create Folder" Click="CreateFolder_Click">
                 <MenuItem.Icon>
                     <TextBlock Text="&#xE8B7;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#DCDC8B"/>

@@ -291,6 +291,11 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             ViewModel?.CreateEmptyEntityCommand.Execute(null);
         }
 
+        private void CreatePlayer_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel?.CreatePlayerCommand.Execute(null);
+        }
+
         private void CreateFolder_Click(object sender, RoutedEventArgs e)
         {
             ViewModel?.CreateFolderCommand.Execute(null);
