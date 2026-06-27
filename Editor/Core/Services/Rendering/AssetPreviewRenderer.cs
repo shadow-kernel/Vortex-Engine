@@ -24,6 +24,10 @@ namespace Editor.Core.Services.Rendering
         /// combined bounding sphere with neutral studio lighting.
         /// </summary>
         public static ImageSource RenderMeshes(long[] meshIds, long[] materialIds, int size)
+            => RenderMeshes(meshIds, materialIds, size, 0.74f, 0.62f, 1f);
+
+        /// <summary>Orbit-aware render: yaw/pitch (radians) rotate the camera around the asset, distScale zooms.</summary>
+        public static ImageSource RenderMeshes(long[] meshIds, long[] materialIds, int size, float yaw, float pitch, float distScale)
         {
             if (meshIds == null || meshIds.Length == 0) return null;
             uint rt = VortexAPI.CreateSecondaryRenderTarget((uint)size, (uint)size);
@@ -50,13 +54,15 @@ namespace Editor.Core.Services.Rendering
                 const float fov = 35f;
                 float fovHalf = fov * 0.5f * (float)Math.PI / 180f;
                 float dist = radius / (0.58f * (float)Math.Tan(fovHalf));
-                double dl = Math.Sqrt(0.9 * 0.9 + 0.7 * 0.7 + 1.1 * 1.1);
-                float px = cx + (float)(0.9 / dl) * dist;
-                float py = cy + (float)(0.7 / dl) * dist;
-                float pz = cz + (float)(1.1 / dl) * dist;
+                pitch = Math.Max(-1.5f, Math.Min(1.5f, pitch));
+                distScale = Math.Max(0.2f, Math.Min(5f, distScale));
+                float d = dist * distScale;
+                float px = cx + d * (float)(Math.Cos(pitch) * Math.Sin(yaw));
+                float py = cy + d * (float)Math.Sin(pitch);
+                float pz = cz + d * (float)(Math.Cos(pitch) * Math.Cos(yaw));
                 var cam = VortexAPI.ViewportCameraDesc.CreatePerspective(
                     px, py, pz, cx, cy, cz, 0, 1, 0, fov,
-                    Math.Max(0.02f, dist * 0.01f), dist * 4f + 50f);
+                    Math.Max(0.02f, d * 0.01f), d * 4f + 50f);
 
                 float[] idm = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
                 for (int i = 0; i < meshIds.Length; i++)
@@ -82,10 +88,13 @@ namespace Editor.Core.Services.Rendering
         /// Renders a sphere with the given engine material — the canonical material preview.
         /// </summary>
         public static ImageSource RenderMaterialSphere(long materialId, int size)
+            => RenderMaterialSphere(materialId, size, 0.74f, 0.62f, 1f);
+
+        public static ImageSource RenderMaterialSphere(long materialId, int size, float yaw, float pitch, float distScale)
         {
             long sphere = VortexAPI.CreateSphereMesh(0.62f);
             if (sphere < 0) return null;
-            try { return RenderMeshes(new[] { sphere }, new[] { materialId }, size); }
+            try { return RenderMeshes(new[] { sphere }, new[] { materialId }, size, yaw, pitch, distScale); }
             finally { try { VortexAPI.DeleteMesh(sphere); } catch { } }
         }
 

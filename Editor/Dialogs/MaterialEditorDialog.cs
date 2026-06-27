@@ -37,6 +37,10 @@ namespace Editor.Dialogs
         private Image _previewImage;
         private bool _previewReady;
         private System.Windows.Threading.DispatcherTimer _previewTimer;
+        // 360° orbit preview state
+        private double _orbitYaw = 0.74, _orbitPitch = 0.62, _orbitZoom = 1.0;
+        private System.Windows.Point _orbitLast;
+        private bool _orbiting;
 
         // Texture paths and previews
         private string _albedoPath, _normalPath, _metallicPath, _roughnessPath, _aoPath;
@@ -115,6 +119,7 @@ namespace Editor.Dialogs
             };
             _previewImage = new Image { Stretch = Stretch.Uniform };
             previewBorder.Child = _previewImage;
+            WireOrbit(_previewImage);
             stack.Children.Add(previewBorder);
 
             // Header
@@ -538,6 +543,31 @@ namespace Editor.Dialogs
         /// Builds a throwaway engine material from the current UI state, renders a sphere with it, and
         /// shows the result. The temp material is deleted immediately (caller-owned, not cached).
         /// </summary>
+        /// <summary>Drag to orbit (yaw/pitch), scroll to zoom — re-renders the preview each change.</summary>
+        private void WireOrbit(Image img)
+        {
+            img.Cursor = System.Windows.Input.Cursors.SizeAll;
+            img.ToolTip = "Drag to orbit · scroll to zoom";
+            img.MouseLeftButtonDown += (s, e) => { _orbiting = true; _orbitLast = e.GetPosition(img); img.CaptureMouse(); };
+            img.MouseLeftButtonUp += (s, e) => { _orbiting = false; img.ReleaseMouseCapture(); };
+            img.MouseMove += (s, e) =>
+            {
+                if (!_orbiting) return;
+                var p = e.GetPosition(img);
+                _orbitYaw += (p.X - _orbitLast.X) * 0.01;
+                _orbitPitch += (p.Y - _orbitLast.Y) * 0.01;
+                if (_orbitPitch > 1.5) _orbitPitch = 1.5; else if (_orbitPitch < -1.5) _orbitPitch = -1.5;
+                _orbitLast = p;
+                RefreshPreview();
+            };
+            img.MouseWheel += (s, e) =>
+            {
+                _orbitZoom *= e.Delta > 0 ? 0.9 : 1.1;
+                if (_orbitZoom < 0.2) _orbitZoom = 0.2; else if (_orbitZoom > 5.0) _orbitZoom = 5.0;
+                RefreshPreview();
+            };
+        }
+
         private void RefreshPreview()
         {
             if (!_previewReady || _previewImage == null) return;
@@ -551,7 +581,7 @@ namespace Editor.Dialogs
                 mat = Core.Services.MaterialService.Instance.BuildEngineMaterial(vmat);
                 if (mat >= 0)
                 {
-                    var img = Core.Services.Rendering.AssetPreviewRenderer.RenderMaterialSphere(mat, 256);
+                    var img = Core.Services.Rendering.AssetPreviewRenderer.RenderMaterialSphere(mat, 256, (float)_orbitYaw, (float)_orbitPitch, (float)_orbitZoom);
                     if (img != null) _previewImage.Source = img;
                 }
             }

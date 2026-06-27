@@ -38,6 +38,10 @@ namespace Editor.Dialogs
         private long[] _previewMeshIds;
         private bool _previewReady;
         private System.Windows.Threading.DispatcherTimer _previewTimer;
+        // 360° orbit preview state
+        private double _orbitYaw = 0.74, _orbitPitch = 0.62, _orbitZoom = 1.0;
+        private System.Windows.Point _orbitLast;
+        private bool _orbiting;
 
         #region Constructor
 
@@ -159,6 +163,7 @@ namespace Editor.Dialogs
             };
             _previewImage = new Image { Stretch = Stretch.Uniform };
             previewBorder.Child = _previewImage;
+            WireOrbit(_previewImage);
             grid.Children.Add(previewBorder);
 
             // Header
@@ -1097,6 +1102,31 @@ namespace Editor.Dialogs
         /// preview reflects edits live. The submesh meshes are imported once and cached; the throwaway
         /// engine materials are deleted after each render (caller-owned, not cached).
         /// </summary>
+        /// <summary>Drag to orbit (yaw/pitch), scroll to zoom — re-renders the model preview each change.</summary>
+        private void WireOrbit(Image img)
+        {
+            img.Cursor = System.Windows.Input.Cursors.SizeAll;
+            img.ToolTip = "Drag to orbit · scroll to zoom";
+            img.MouseLeftButtonDown += (s, e) => { _orbiting = true; _orbitLast = e.GetPosition(img); img.CaptureMouse(); };
+            img.MouseLeftButtonUp += (s, e) => { _orbiting = false; img.ReleaseMouseCapture(); };
+            img.MouseMove += (s, e) =>
+            {
+                if (!_orbiting) return;
+                var p = e.GetPosition(img);
+                _orbitYaw += (p.X - _orbitLast.X) * 0.01;
+                _orbitPitch += (p.Y - _orbitLast.Y) * 0.01;
+                if (_orbitPitch > 1.5) _orbitPitch = 1.5; else if (_orbitPitch < -1.5) _orbitPitch = -1.5;
+                _orbitLast = p;
+                RefreshPreview();
+            };
+            img.MouseWheel += (s, e) =>
+            {
+                _orbitZoom *= e.Delta > 0 ? 0.9 : 1.1;
+                if (_orbitZoom < 0.2) _orbitZoom = 0.2; else if (_orbitZoom > 5.0) _orbitZoom = 5.0;
+                RefreshPreview();
+            };
+        }
+
         private void RefreshPreview()
         {
             if (!_previewReady || _previewImage == null) return;
@@ -1121,7 +1151,7 @@ namespace Editor.Dialogs
                     if (em >= 0) built.Add(em);
                 }
 
-                var img = Core.Services.Rendering.AssetPreviewRenderer.RenderMeshes(_previewMeshIds, mats, 256);
+                var img = Core.Services.Rendering.AssetPreviewRenderer.RenderMeshes(_previewMeshIds, mats, 256, (float)_orbitYaw, (float)_orbitPitch, (float)_orbitZoom);
                 if (img != null) _previewImage.Source = img;
 
                 foreach (var b in built) { try { Editor.DllWrapper.VortexAPI.DeleteMaterial(b); } catch { } }
