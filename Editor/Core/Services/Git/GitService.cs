@@ -204,6 +204,33 @@ namespace Editor.Core.Services.Git
         public Task<GitResult> SetRemoteAsync(string repoPath, string url)
             => RunAsync(repoPath, "remote add origin " + Q(url));
 
+        /// <summary>Current origin URL ("" if none).</summary>
+        public async Task<string> GetRemoteUrlAsync(string repoPath)
+        {
+            var r = await RunAsync(repoPath, "remote get-url origin");
+            return r.Success ? r.StdOut.Trim() : "";
+        }
+
+        /// <summary>Set origin's URL — adds origin if missing, updates it otherwise. Empty url removes it.</summary>
+        public async Task<GitResult> SetRemoteUrlAsync(string repoPath, string url)
+        {
+            bool has = await HasRemoteAsync(repoPath);
+            if (string.IsNullOrWhiteSpace(url))
+                return has ? await RunAsync(repoPath, "remote remove origin") : new GitResult { ExitCode = 0 };
+            return has ? await RunAsync(repoPath, "remote set-url origin " + Q(url))
+                       : await RunAsync(repoPath, "remote add origin " + Q(url));
+        }
+
+        // ---- local config (per-repo identity etc.) ----
+        public async Task<string> GetConfigAsync(string repoPath, string key)
+        {
+            var r = await RunAsync(repoPath, "config --get " + Q(key));
+            return r.Success ? r.StdOut.Trim() : "";
+        }
+
+        public Task<GitResult> SetConfigAsync(string repoPath, string key, string value)
+            => RunAsync(repoPath, "config " + Q(key) + " " + Q(value));
+
         // ---- branches ----
         public async Task<string> CurrentBranchAsync(string repoPath)
         {

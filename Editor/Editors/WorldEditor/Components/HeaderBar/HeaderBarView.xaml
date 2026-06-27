@@ -371,6 +371,11 @@ d:DesignHeight="64" d:DesignWidth="1200">
                 </MenuItem>
                 <MenuItem Header="Save A_ll" InputGestureText="Ctrl+Shift+S" Click="SaveAll_Click"/>
                 <Separator/>
+                <MenuItem Header="Project _Settings..." Click="ProjectSettings_Click">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="12"/>
+                    </MenuItem.Icon>
+                </MenuItem>
                 <MenuItem Header="_Close Project" Click="CloseProject_Click">
                     <MenuItem.Icon>
                         <TextBlock Text="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="12"/>

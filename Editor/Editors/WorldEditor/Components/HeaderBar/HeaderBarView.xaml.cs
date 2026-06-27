@@ -133,6 +133,23 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
             GetMainWindow()?.SaveAll();
         }
 
+        private void ProjectSettings_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var win = new Editor.Project.Projection.ProjectSettingsWindow
+                {
+                    Owner = Window.GetWindow(this)
+                };
+                win.ShowDialog();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Projekt-Einstellungen konnten nicht geöffnet werden: " + ex.Message,
+                    "Project Settings", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+
         private void CloseProject_Click(object sender, RoutedEventArgs e)
         {
             var result = MessageBox.Show(
