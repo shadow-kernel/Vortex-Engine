@@ -34,7 +34,11 @@ namespace Editor.Core.Services.Build
                 var projectRoot = project.Path;
                 var name = Sanitize(project.Name);
 
+                // 0) CLEAN: wipe the previous build so nothing stale lingers, then rebuild from scratch.
+                try { if (Directory.Exists(outputDir)) Directory.Delete(outputDir, true); }
+                catch (Exception ex) { sb.AppendLine("• (could not fully clean — a previous game may be running: " + ex.Message + ")"); }
                 Directory.CreateDirectory(outputDir);
+                sb.AppendLine("• Cleaned output folder");
 
                 // 1) Engine runtime = the editor's own Release output (exe + native + managed DLLs).
                 var runtimeDir = Path.GetDirectoryName(typeof(GameExporter).Assembly.Location);
@@ -67,7 +71,11 @@ namespace Editor.Core.Services.Build
                         File.Copy(srcExe, Path.Combine(outputDir, name + ".exe"), true);     // double-click this
                         var cfg = srcExe + ".config";
                         if (File.Exists(cfg)) File.Copy(cfg, Path.Combine(outputDir, name + ".exe.config"), true);
-                        sb.AppendLine("• " + name + ".exe created");
+                        // Ship ONLY the branded game exe — drop the engine exe (.NET resolves the sibling DLLs
+                        // by the app base directory regardless of the exe's name).
+                        try { File.Delete(srcExe); } catch { }
+                        try { if (File.Exists(cfg)) File.Delete(cfg); } catch { }
+                        sb.AppendLine("• " + name + ".exe created (engine exe removed)");
                     }
                 }
                 catch { }

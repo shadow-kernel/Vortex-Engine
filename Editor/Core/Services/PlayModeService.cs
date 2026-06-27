@@ -46,6 +46,10 @@ namespace Editor.Core.Services
         /// editor viewport then skips its own mouse capture — the game window owns input + its render.</summary>
         public bool IsExternalWindow { get; set; }
 
+        /// <summary>Release mode (shipped game): hide the dev play banner in the game window. The standalone
+        /// player sets this true; in-editor play leaves it false (debug) unless the user toggles Release.</summary>
+        public bool IsReleaseMode { get; set; }
+
         /// <summary>Raised whenever the play state changes (on the UI thread).</summary>
         public event EventHandler<PlayState> StateChanged;
 

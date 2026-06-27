@@ -423,8 +423,11 @@ d:DesignHeight="64" d:DesignWidth="1200">
                           IsCheckable="True" IsChecked="True" Click="ToggleGrid_Click"/>
                 <MenuItem x:Name="SnapToGridMenuItem" Header="_Snap to Grid" 
                           IsCheckable="True" IsChecked="False" Click="SnapToGrid_Click"/>
-                <MenuItem x:Name="ToggleGizmosMenuItem" Header="Toggle _Gizmos" 
+                <MenuItem x:Name="ToggleGizmosMenuItem" Header="Toggle _Gizmos"
                           IsCheckable="True" IsChecked="True" Click="ToggleGizmos_Click"/>
+                <Separator/>
+                <MenuItem x:Name="ReleaseModeMenuItem" Header="_Release Mode (hide play banner in game window)"
+                          IsCheckable="True" IsChecked="False" Click="ReleaseMode_Click"/>
                 <Separator/>
                 <MenuItem Header="_Zoom In" InputGestureText="Ctrl++"/>
                 <MenuItem Header="Zoom _Out" InputGestureText="Ctrl+-"/>

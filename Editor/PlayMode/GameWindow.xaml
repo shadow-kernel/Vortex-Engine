@@ -10,12 +10,12 @@
     <Border Background="#161618" BorderThickness="0">
         <Grid>
             <Grid.RowDefinitions>
-                <RowDefinition Height="42"/>
+                <RowDefinition x:Name="TitleRow" Height="42"/>
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
 
-            <!-- Title bar -->
-            <Grid Grid.Row="0" Background="#202023" MouseLeftButtonDown="TitleBar_MouseDown">
+            <!-- Title bar / dev play banner (hidden in Release builds) -->
+            <Grid x:Name="GameTitleBar" Grid.Row="0" Background="#202023" MouseLeftButtonDown="TitleBar_MouseDown">
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0">
                     <Ellipse x:Name="StatusDot" Width="9" Height="9" Fill="#32D74B" VerticalAlignment="Center"/>
                     <TextBlock x:Name="StatusText" Text="PLAYING" Margin="9,0,0,0"

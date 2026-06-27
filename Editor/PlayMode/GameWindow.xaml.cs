@@ -32,6 +32,13 @@ namespace Editor.PlayMode
         public GameWindow()
         {
             InitializeComponent();
+            // Release build = shipped game: hide the dev play banner so it's just the game viewport.
+            if (PlayModeService.Instance.IsReleaseMode)
+            {
+                GameTitleBar.Visibility = System.Windows.Visibility.Collapsed;
+                TitleRow.Height = new System.Windows.GridLength(0);
+                Title = "Game";
+            }
             GameViewportHost.OnHostCreated += (s, e) => OnHostCreated();
             GameViewportHost.OnHostDestroying += (s, e) => OnHostDestroying();
             GameViewportHost.OnViewportSizeChanged += (s, e) => { if (_ready) VortexAPI.ResizeGameWindow(W(), H()); };

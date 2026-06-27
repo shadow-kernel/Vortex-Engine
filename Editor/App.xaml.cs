@@ -65,6 +65,7 @@ namespace Editor
             {
                 splash.SetStatus("Starting engine…");
                 DllWrapper.VortexAPI.InitEngineRuntime();
+                Editor.Core.Services.PlayModeService.Instance.IsReleaseMode = true; // shipped game: no dev banner
 
                 var project = Editor.Core.Services.ProjectService.Instance.LoadProjectFromPath(exeDir);
 

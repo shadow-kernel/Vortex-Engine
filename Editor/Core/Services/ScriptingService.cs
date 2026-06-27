@@ -229,6 +229,7 @@ public class PlayerController : VortexBehaviour
     private float _vx, _vz;    // smoothed horizontal velocity
     private float _vy;         // vertical velocity
     private bool  _grounded;
+    private bool  _jumpHeld;    // edge-trigger jump (holding Space must not re-fire every frame)
     private float _pitch, _yaw; // look angles (degrees), accumulated for smoothness
 
     public override void Start()
@@ -282,13 +283,19 @@ public class PlayerController : VortexBehaviour
         _vz += (tz - _vz) * kk;
 
         // ---- Apply move + jump/gravity (kinematic; lands on the eye-height floor) ----
+        if (float.IsNaN(_vx) || float.IsInfinity(_vx)) _vx = 0f;
+        if (float.IsNaN(_vz) || float.IsInfinity(_vz)) _vz = 0f;
+        if (float.IsNaN(_vy) || float.IsInfinity(_vy)) _vy = 0f;
+
         float eyeY = crouch ? _standEyeY - CrouchDrop : _standEyeY;
         Vector3 p = Position;
         p.X += _vx * dt;
         p.Z += _vz * dt;
+
+        bool jump = Input.GetKey(""Space"");
         if (_grounded)
         {
-            if (Input.GetKey(""Space"")) { _vy = JumpSpeed; _grounded = false; }
+            if (jump && !_jumpHeld) { _vy = JumpSpeed; _grounded = false; } // edge-triggered: tap to jump
             else { p.Y = eyeY; }
         }
         if (!_grounded)
@@ -297,6 +304,12 @@ public class PlayerController : VortexBehaviour
             p.Y += _vy * dt;
             if (p.Y <= eyeY) { p.Y = eyeY; _vy = 0f; _grounded = true; }
         }
+        _jumpHeld = jump;
+
+        // Finite-guard the position before it reaches the native transform (a NaN/Inf there crashes the engine).
+        if (float.IsNaN(p.X) || float.IsInfinity(p.X)) p.X = 0f;
+        if (float.IsNaN(p.Y) || float.IsInfinity(p.Y)) p.Y = eyeY;
+        if (float.IsNaN(p.Z) || float.IsInfinity(p.Z)) p.Z = 0f;
         Position = p;
     }
 }

@@ -640,6 +640,13 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
             }
         }
 
+        private void ReleaseMode_Click(object sender, RoutedEventArgs e)
+        {
+            // Toggle Debug/Release for play: in Release the game window hides its dev banner.
+            var mi = sender as MenuItem;
+            if (mi != null) Editor.Core.Services.PlayModeService.Instance.IsReleaseMode = mi.IsChecked;
+        }
+
         private void SnapToGrid_Click(object sender, RoutedEventArgs e)
         {
             var menuItem = sender as MenuItem;
