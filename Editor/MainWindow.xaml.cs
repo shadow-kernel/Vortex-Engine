@@ -45,26 +45,35 @@ namespace Editor
 
         private void OnSaveScene(object sender, ExecutedRoutedEventArgs e)
         {
-            var project = ProjectData.Current;
-            if (project?.ActiveScene != null)
-            {
-                SceneService.Instance.SaveScene(project.ActiveScene);
-            }
+            SaveCurrentProject();
             e.Handled = true;
         }
 
         private void OnSaveAll(object sender, ExecutedRoutedEventArgs e)
         {
-            var project = ProjectData.Current;
-            if (project != null)
-            {
-                // Speichere alle Szenen
-                SceneService.Instance.SaveAllScenes(project);
-                
-                // Speichere das Projekt selbst
-                ProjectService.Instance.SaveProject(project);
-            }
+            SaveAll();
             e.Handled = true;
+        }
+
+        /// <summary>Ctrl+S — saves the active scene and the project file. Shows a brief confirmation.</summary>
+        public void SaveCurrentProject()
+        {
+            var project = ProjectData.Current;
+            if (project == null) return;
+            if (project.ActiveScene != null)
+                SceneService.Instance.SaveScene(project.ActiveScene);
+            ProjectService.Instance.SaveProject(project);
+            ShowToast("Project saved");
+        }
+
+        /// <summary>Ctrl+Shift+S — saves every open scene and the project file.</summary>
+        public void SaveAll()
+        {
+            var project = ProjectData.Current;
+            if (project == null) return;
+            SceneService.Instance.SaveAllScenes(project);
+            ProjectService.Instance.SaveProject(project);
+            ShowToast("All scenes saved");
         }
 
         private void OnCanGlobalUndo(object sender, CanExecuteRoutedEventArgs e)
@@ -162,12 +171,13 @@ namespace Editor
         /// Öffnet den ProjectBrowser und lädt das ausgewählte Projekt.
         /// Gibt true zurück wenn ein Projekt geladen wurde.
         /// </summary>
-        public bool OpenProjectBrowser()
+        public bool OpenProjectBrowser(bool createTab = false)
         {
             var browserWindow = new ProjectBrowserWindow
             {
                 Owner = this
             };
+            if (createTab) browserWindow.StartOnCreateTab();
 
             var result = browserWindow.ShowDialog();
 
@@ -218,6 +228,61 @@ namespace Editor
             
             // Lösche letztes Projekt - beim nächsten Start wird Browser geöffnet
             EditorStateService.Instance.ClearLastProject();
+        }
+
+        // ---- transient confirmation toast (e.g. after Ctrl+S) ----
+        private System.Windows.Controls.Primitives.Popup _toastPopup;
+        private System.Windows.Controls.TextBlock _toastText;
+        private System.Windows.Threading.DispatcherTimer _toastTimer;
+
+        public void ShowToast(string message)
+        {
+            try
+            {
+                if (_toastPopup == null)
+                {
+                    var conv = new System.Windows.Media.BrushConverter();
+                    _toastText = new System.Windows.Controls.TextBlock
+                    {
+                        Foreground = System.Windows.Media.Brushes.White,
+                        FontSize = 13, VerticalAlignment = VerticalAlignment.Center
+                    };
+                    var icon = new System.Windows.Controls.TextBlock
+                    {
+                        Text = "",
+                        FontFamily = new System.Windows.Media.FontFamily("Segoe MDL2 Assets"),
+                        FontSize = 13, Margin = new Thickness(0, 0, 8, 0),
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Foreground = (System.Windows.Media.Brush)conv.ConvertFromString("#7CE0A3")
+                    };
+                    var sp = new System.Windows.Controls.StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
+                    sp.Children.Add(icon); sp.Children.Add(_toastText);
+                    var border = new System.Windows.Controls.Border
+                    {
+                        Background = (System.Windows.Media.Brush)conv.ConvertFromString("#F0202023"),
+                        BorderBrush = (System.Windows.Media.Brush)conv.ConvertFromString("#3A3A42"),
+                        BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10),
+                        Padding = new Thickness(16, 10, 16, 10), Child = sp
+                    };
+                    _toastPopup = new System.Windows.Controls.Primitives.Popup
+                    {
+                        PlacementTarget = this,
+                        Placement = System.Windows.Controls.Primitives.PlacementMode.Center,
+                        AllowsTransparency = true, StaysOpen = true, Child = border
+                    };
+                    _toastTimer = new System.Windows.Threading.DispatcherTimer
+                    {
+                        Interval = TimeSpan.FromMilliseconds(1400)
+                    };
+                    _toastTimer.Tick += (s, ev) => { _toastTimer.Stop(); if (_toastPopup != null) _toastPopup.IsOpen = false; };
+                }
+                _toastText.Text = message;
+                _toastPopup.VerticalOffset = Math.Max(40, ActualHeight / 2 - 60);
+                _toastPopup.IsOpen = false;
+                _toastPopup.IsOpen = true;
+                _toastTimer.Stop(); _toastTimer.Start();
+            }
+            catch { }
         }
 
         #region Borderless maximize fix

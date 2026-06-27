@@ -107,10 +107,30 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
 
         #region File Menu
 
+        private void NewProject_Click(object sender, RoutedEventArgs e)
+        {
+            var mainWindow = GetMainWindow();
+            if (mainWindow == null) return;
+            mainWindow.SaveCurrentProject();
+            mainWindow.OpenProjectBrowser(createTab: true);
+        }
+
         private void OpenOtherProject_Click(object sender, RoutedEventArgs e)
         {
             var mainWindow = GetMainWindow();
-            mainWindow?.OpenProjectBrowser();
+            if (mainWindow == null) return;
+            mainWindow.SaveCurrentProject();
+            mainWindow.OpenProjectBrowser();
+        }
+
+        private void SaveProject_Click(object sender, RoutedEventArgs e)
+        {
+            GetMainWindow()?.SaveCurrentProject();
+        }
+
+        private void SaveAll_Click(object sender, RoutedEventArgs e)
+        {
+            GetMainWindow()?.SaveAll();
         }
 
         private void CloseProject_Click(object sender, RoutedEventArgs e)

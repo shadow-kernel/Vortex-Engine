@@ -353,11 +353,24 @@ d:DesignHeight="64" d:DesignWidth="1200">
             
             <!-- File Menu -->
             <MenuItem Header="_File">
+                <MenuItem Header="_New Project..." Click="NewProject_Click">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="12"/>
+                    </MenuItem.Icon>
+                </MenuItem>
                 <MenuItem Header="Open _Other Project..." Click="OpenOtherProject_Click">
                     <MenuItem.Icon>
                         <TextBlock Text="&#xE8B7;" FontFamily="Segoe MDL2 Assets" FontSize="12"/>
                     </MenuItem.Icon>
                 </MenuItem>
+                <Separator/>
+                <MenuItem Header="_Save Project" InputGestureText="Ctrl+S" Click="SaveProject_Click">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="12"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="Save A_ll" InputGestureText="Ctrl+Shift+S" Click="SaveAll_Click"/>
+                <Separator/>
                 <MenuItem Header="_Close Project" Click="CloseProject_Click">
                     <MenuItem.Icon>
                         <TextBlock Text="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="12"/>

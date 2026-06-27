@@ -96,5 +96,8 @@ namespace Editor.Project.Projection
             openProjectView.Visibility = Visibility.Collapsed;
             newProjectView.Visibility = Visibility.Visible;
         }
+
+        /// <summary>Open the browser already on the "Create New Project" tab.</summary>
+        public void StartOnCreateTab() => ShowCreateProject();
     }
 }
