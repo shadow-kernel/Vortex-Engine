@@ -52,15 +52,32 @@ namespace Editor.Core.Services.Build
                 bool scriptsOk = CompileScripts(projectRoot, Path.Combine(outputDir, name + "Scripts.dll"), out scriptLog);
                 sb.AppendLine(scriptsOk ? "• Scripts compiled OK" : "• SCRIPTS FAILED TO COMPILE");
 
-                // 4) Launcher + README.
+                // 4) Player marker + a branded <Game>.exe entry point + README.
+                // The marker's presence makes the runtime boot straight into the game (no editor UI).
                 const string exe = "Vortex Engine.exe";
-                File.WriteAllText(Path.Combine(outputDir, "Play " + name + ".cmd"),
-                    "@echo off\r\nstart \"\" \"%~dp0" + exe + "\" --play \"%~dp0\"\r\n");
+                File.WriteAllText(Path.Combine(outputDir, "player.vortex"),
+                    "{\"game\":\"" + (project.Name ?? "Game").Replace("\"", "'") + "\",\"scriptsDll\":\"" + name + "Scripts.dll\"}");
+                sb.AppendLine("• Player marker written (player.vortex)");
+
+                try
+                {
+                    var srcExe = Path.Combine(outputDir, exe);
+                    if (File.Exists(srcExe))
+                    {
+                        File.Copy(srcExe, Path.Combine(outputDir, name + ".exe"), true);     // double-click this
+                        var cfg = srcExe + ".config";
+                        if (File.Exists(cfg)) File.Copy(cfg, Path.Combine(outputDir, name + ".exe.config"), true);
+                        sb.AppendLine("• " + name + ".exe created");
+                    }
+                }
+                catch { }
+
                 File.WriteAllText(Path.Combine(outputDir, "README.txt"),
-                    "Vortex Engine — exported build: " + project.Name + "\r\n" +
+                    "Vortex Engine — exported game: " + project.Name + "\r\n" +
                     "Created " + DateTime.Now + "\r\n\r\n" +
-                    "Run 'Play " + name + ".cmd' to launch the project in the Vortex player.\r\n" +
-                    "(The engine runs in-process; a fully chrome-less standalone player is a planned next step.)\r\n");
+                    "Double-click '" + name + ".exe' to play (boots straight into the game — no editor).\r\n" +
+                    "Assets are loose files + their .vmeta; gameplay scripts are compiled into " + name + "Scripts.dll.\r\n" +
+                    "(A binary asset pak/VFS is a planned optimization.)\r\n");
 
                 if (!scriptsOk)
                     return new ExportResult { Success = false, OutputDir = outputDir, Message = "Export done, but SCRIPTS FAILED TO COMPILE:\n\n" + scriptLog };

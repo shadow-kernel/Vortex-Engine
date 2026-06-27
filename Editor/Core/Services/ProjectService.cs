@@ -56,6 +56,9 @@ namespace Editor.Core.Services
         /// <summary>
         /// L�dt ein Projekt anhand seiner Referenz
         /// </summary>
+        /// <summary>Load a project directly from its folder (used by the standalone player, which ships inside the project).</summary>
+        public ProjectData LoadProjectFromPath(string dir) => LoadProject(new ProjectRef(dir, "Game"));
+
         public ProjectData LoadProject(ProjectRef projectRef)
         {
             try
