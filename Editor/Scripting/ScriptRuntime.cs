@@ -48,6 +48,7 @@ namespace Editor.Scripting
             Vortex.VortexBehaviour.Host = this;
             Vortex.Input.Host = this;
             Vortex.UI.Host = this;
+            Vortex.Scene.Host = this;
 
             _entitiesById.Clear();
             _nextHandle = 0;
@@ -217,6 +218,13 @@ namespace Editor.Scripting
 
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         private static extern short GetAsyncKeyState(int vKey);
+
+        // --- deferred scene-switch request (set by a script via Vortex.Scene.Load; applied by the driver) ---
+        private string _pendingScene;
+        void Vortex.IScriptHost.LoadScene(string name) { _pendingScene = name; }
+        /// <summary>Returns the requested scene name (and clears it), or null. The runtime driver calls this
+        /// AFTER Update() and performs the switch (so it never happens mid-tick).</summary>
+        public string ConsumePendingScene() { var s = _pendingScene; _pendingScene = null; return s; }
 
         // --- UI overlay frame state (fed by the runtime driver each frame: GameWindow / GamePreview) ---
         private float _uiW, _uiH, _mouseX, _mouseY;

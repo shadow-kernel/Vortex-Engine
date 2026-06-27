@@ -133,7 +133,10 @@ namespace Editor.PlayMode
                     {
                         VortexAPI.StepEngineRuntime(dt);
                         Editor.Scripting.ScriptRuntime.Instance.Update(dt);
+                        Editor.Core.Services.GameRuntime.ProcessPendingSceneSwitch(); // a script may have called Scene.Load
                     }
+                    // The active scene may have changed above — re-read it for camera + submit.
+                    scene = Editor.Core.Data.ProjectData.Current != null ? Editor.Core.Data.ProjectData.Current.ActiveScene : null;
                     Editor.Core.Services.PlayCameraHelper.ApplyMainCamera(scene);
                     if (scene != null) Editor.Core.Services.SceneRenderService.Instance.SubmitScene(scene);
                 }

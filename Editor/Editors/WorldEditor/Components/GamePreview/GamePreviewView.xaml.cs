@@ -167,6 +167,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                 VortexAPI.StepEngineRuntime(deltaTime);
                 ReadbackPhysics();
                 Editor.Scripting.ScriptRuntime.Instance.Update(deltaTime); // run gameplay scripts (movement, etc.)
+                Editor.Core.Services.GameRuntime.ProcessPendingSceneSwitch(); // a script may have called Scene.Load
                 if (external)
                     Editor.Core.Services.PlayCameraHelper.ApplyPose(_extSnapPos, _extSnapRot); // editor = frozen placeholder
                 else

@@ -35,6 +35,9 @@ namespace Vortex
         void SetRotation(long entityId, Vector3 eulerDegrees);
         bool GetKey(string key);
 
+        // Request switching the active scene by name (deferred — applied by the runtime after this tick).
+        void LoadScene(string name);
+
         // 2D UI overlay (immediate mode), coordinates in viewport pixels (top-left origin).
         void UIRect(float x, float y, float w, float h, float r, float g, float b, float a, float radius);
         void UIText(float x, float y, float w, float h, string text, float size, float r, float g, float b, float a, int align, int weight);
@@ -132,6 +135,17 @@ namespace Vortex
     {
         /// <summary>Seconds since the last tick (the runtime sets this each frame).</summary>
         public static float DeltaTime { get; internal set; }
+    }
+
+    /// <summary>
+    /// Scene control. Generic engine API — the GAME decides WHEN/WHICH scene (e.g. lobby PLAY -&gt; "Match",
+    /// death -&gt; "Lobby"). The switch is deferred to the end of the current tick so it's safe to call from
+    /// inside a behaviour's Update. Scene names match the scenes authored in the project.
+    /// </summary>
+    public static class Scene
+    {
+        internal static IScriptHost Host;
+        public static void Load(string name) { if (Host != null) Host.LoadScene(name); }
     }
 
     /// <summary>
