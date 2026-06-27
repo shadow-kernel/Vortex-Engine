@@ -1,0 +1,72 @@
+<Window x:Class="Editor.SplashWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        ShowInTaskbar="False" Topmost="True" WindowStartupLocation="CenterScreen"
+        Width="560" Height="360" UseLayoutRounding="True" SnapsToDevicePixels="True"
+        TextOptions.TextRenderingMode="ClearType"
+        FontFamily="Segoe UI Variable Text, Segoe UI">
+
+    <Window.Triggers>
+        <EventTrigger RoutedEvent="FrameworkElement.Loaded">
+            <BeginStoryboard>
+                <Storyboard RepeatBehavior="Forever" AutoReverse="True">
+                    <DoubleAnimation Storyboard.TargetName="RunnerT" Storyboard.TargetProperty="X"
+                                     From="0" To="320" Duration="0:0:1.0">
+                        <DoubleAnimation.EasingFunction>
+                            <QuadraticEase EasingMode="EaseInOut"/>
+                        </DoubleAnimation.EasingFunction>
+                    </DoubleAnimation>
+                </Storyboard>
+            </BeginStoryboard>
+        </EventTrigger>
+    </Window.Triggers>
+
+    <Border Background="#161618" CornerRadius="18" BorderBrush="#2C2C32" BorderThickness="1">
+        <Border.Effect>
+            <DropShadowEffect Color="#000000" Opacity="0.6" BlurRadius="34" ShadowDepth="0"/>
+        </Border.Effect>
+        <Grid ClipToBounds="True">
+            <!-- soft indigo glow behind the mark -->
+            <Ellipse Width="420" Height="420" VerticalAlignment="Top" Margin="0,-160,0,0" Opacity="0.55" IsHitTestVisible="False">
+                <Ellipse.Fill>
+                    <RadialGradientBrush>
+                        <GradientStop Color="#3C3088" Offset="0"/>
+                        <GradientStop Color="#00161618" Offset="1"/>
+                    </RadialGradientBrush>
+                </Ellipse.Fill>
+            </Ellipse>
+
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="0,-12,0,0">
+                <Image Source="{DynamicResource AppIcon}" Width="90" Height="90" HorizontalAlignment="Center"/>
+                <TextBlock Text="Vortex Engine" FontSize="32" FontWeight="Bold" Foreground="#F5F5F7"
+                           HorizontalAlignment="Center" Margin="0,18,0,0"/>
+                <TextBlock Text="Real-time Game Engine" FontSize="13" Foreground="#73737A"
+                           HorizontalAlignment="Center" Margin="0,6,0,0"/>
+            </StackPanel>
+
+            <StackPanel VerticalAlignment="Bottom" Margin="44,0,44,30">
+                <Border Height="4" Background="#26262B" CornerRadius="2" ClipToBounds="True">
+                    <Border x:Name="Runner" Width="150" HorizontalAlignment="Left" CornerRadius="2">
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                <GradientStop Color="#006C5CE7" Offset="0"/>
+                                <GradientStop Color="#6C5CE7" Offset="0.5"/>
+                                <GradientStop Color="#006C5CE7" Offset="1"/>
+                            </LinearGradientBrush>
+                        </Border.Background>
+                        <Border.RenderTransform>
+                            <TranslateTransform x:Name="RunnerT"/>
+                        </Border.RenderTransform>
+                    </Border>
+                </Border>
+                <Grid Margin="0,12,0,0">
+                    <TextBlock x:Name="StatusText" Text="Loading…" Foreground="#9A9AA1" FontSize="12"
+                               HorizontalAlignment="Left" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="VersionText" Text="" Foreground="#5A5A61" FontSize="12"
+                               HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                </Grid>
+            </StackPanel>
+        </Grid>
+    </Border>
+</Window>
