@@ -333,6 +333,21 @@ d:DesignHeight="400" d:DesignWidth="600">
                 </Grid>
             </Border>
 
+            <!-- External-window banner (Row 0): always shown while the game runs in the standalone
+                 window. It's part of the editor window (not a floating Popup), so it never covers the
+                 game window. -->
+            <Border x:Name="ExternalBanner" Grid.Row="0" Background="#241F3A" Visibility="Collapsed">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <TextBlock Text="&#xE7F4;" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                               Foreground="#9C8CFF" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <TextBlock Text="Läuft im externen Fenster" Foreground="#EDEBFF" FontSize="12"
+                               FontWeight="SemiBold" FontFamily="Segoe UI Variable Text, Segoe UI" VerticalAlignment="Center"/>
+                    <TextBlock Text="— das Spiel läuft im separaten Fenster (dort: ESC pausiert, Stop schließt)"
+                               Foreground="#9A95B8" FontSize="11" FontFamily="Segoe UI Variable Text, Segoe UI"
+                               VerticalAlignment="Center" Margin="6,0,0,0"/>
+                </StackPanel>
+            </Border>
+
             <!-- Preview Area with Split Views -->
             <Border Grid.Row="1" Background="#1A1A1A">
                 <Grid x:Name="ViewportContainer">
@@ -525,24 +540,7 @@ d:DesignHeight="400" d:DesignWidth="600">
         </Grid>
     </Border>
     
-    <!-- NOTE: a plain WPF Border can't paint over the engine's child HWND (airspace) — overlays must be
-         a Popup (separate top-level window that floats above the HWND), like below + CameraPreviewOverlay. -->
-
-    <!-- "Läuft im externen Fenster" dim overlay: shown over the viewport while the game runs in the
-         standalone window, so the static preview isn't mistaken for the live game. -->
-    <Popup x:Name="ExternalPlayPopup" PlacementTarget="{Binding ElementName=MainViewportPanel}"
-           Placement="Center" AllowsTransparency="True" StaysOpen="True" IsOpen="False">
-        <Border x:Name="ExternalPlayDim" Background="#F0121214">
-            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="30">
-                <TextBlock Text="&#xE7F4;" FontFamily="Segoe MDL2 Assets" FontSize="42"
-                           Foreground="#6C5CE7" HorizontalAlignment="Center"/>
-                <TextBlock Text="Läuft im externen Fenster" Foreground="#F5F5F7" FontSize="17"
-                           FontWeight="SemiBold" Margin="0,14,0,0" HorizontalAlignment="Center"/>
-                <TextBlock Text="Das Spiel läuft im separaten Fenster — schließe es oder drücke Stop, um zurückzukehren."
-                           Foreground="#9A9AA1" FontSize="11.5" Margin="0,8,0,0" HorizontalAlignment="Center"
-                           TextWrapping="Wrap" MaxWidth="340" TextAlignment="Center"/>
-            </StackPanel>
-        </Border>
-    </Popup>
+    <!-- (The external-window banner is the confined Row-0 Border above — NOT a Popup, so it never
+         floats over the standalone game window.) -->
 </Grid>
 </UserControl>

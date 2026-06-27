@@ -2,12 +2,12 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:gp="clr-namespace:Editor.Editors.WorldEditor.Components.GamePreview"
-        Title="Vortex — Play" Width="1280" Height="760"
-        WindowStyle="None" ResizeMode="NoResize"
+        Title="Vortex Engine — Game" Width="1280" Height="760"
+        WindowStyle="SingleBorderWindow" ResizeMode="CanResize" ShowInTaskbar="True"
         WindowStartupLocation="CenterScreen"
         Background="#161618" UseLayoutRounding="True"
         TextOptions.TextRenderingMode="ClearType">
-    <Border Background="#161618" BorderBrush="#3A3A3E" BorderThickness="1">
+    <Border Background="#161618" BorderThickness="0">
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="42"/>

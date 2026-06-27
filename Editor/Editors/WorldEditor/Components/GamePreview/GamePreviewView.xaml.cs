@@ -246,15 +246,6 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         {
             Loaded -= OnViewLoaded;
 
-            // The "Läuft im externen Fenster" overlay is a Popup (a top-level, always-on-top window).
-            // Only show it while the EDITOR window is active, so it never floats over the game window.
-            var ownerWin = Window.GetWindow(this);
-            if (ownerWin != null)
-            {
-                ownerWin.Activated += (s, ev) => UpdateExternalOverlay();
-                ownerWin.Deactivated += (s, ev) => UpdateExternalOverlay();
-            }
-
             // Initial camera list refresh
             RefreshCameraList();
             
@@ -749,28 +740,24 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             // The viewport shows the static main-camera preview; the "Press Play" hint lives in the
             // status bar (a WPF overlay can't paint over the engine's child HWND — airspace).
             UpdateStatusBar();
-            UpdateExternalOverlay();
+            UpdateExternalBanner();
         }
 
-        /// <summary>While the game runs in the external window, dim the editor viewport with a Popup
-        /// (over the HWND) + "Läuft im externen Fenster" so the frozen preview isn't mistaken for the game.</summary>
-        private void UpdateExternalOverlay()
+        /// <summary>While the game runs in the external window, show the confined Row-0 banner "Läuft im
+        /// externen Fenster" (part of the editor window — NOT a floating Popup, so it never covers the
+        /// game window) and always stays visible while external play is active.</summary>
+        private void UpdateExternalBanner()
         {
-            if (ExternalPlayPopup == null) return;
+            if (ExternalBanner == null || ToolbarRow == null) return;
             var pms = Editor.Core.Services.PlayModeService.Instance;
-            // Only while the EDITOR window is active — otherwise this top-level Popup would float over the
-            // standalone game window (which the user saw). When the game window is focused, hide it.
-            var ownerWin = Window.GetWindow(this);
-            bool editorActive = ownerWin != null && ownerWin.IsActive;
-            bool show = pms.IsExternalWindow && pms.IsPlaying && editorActive;
-            if (show && MainViewportPanel != null && MainViewportPanel.ActualWidth > 2 && ExternalPlayDim != null)
+            bool external = pms.IsExternalWindow && pms.IsPlaying;
+            ExternalBanner.Visibility = external ? Visibility.Visible : Visibility.Collapsed;
+            if (external)
             {
-                ExternalPlayDim.Width = MainViewportPanel.ActualWidth;
-                ExternalPlayDim.Height = MainViewportPanel.ActualHeight;
+                ToolbarRow.Height = new GridLength(34);            // show the banner row
+                if (ViewportToolbar != null) ViewportToolbar.Visibility = Visibility.Collapsed;
             }
-            // Re-open to reposition/resize against the (possibly changed) viewport.
-            ExternalPlayPopup.IsOpen = false;
-            ExternalPlayPopup.IsOpen = show;
+            // Non-external cases (edit toolbar / in-viewport play) are handled by SetGameViewportLock.
         }
 
         /// <summary>Game mouse-look + cursor lock. While captured the cursor is hidden and re-centered
@@ -1080,7 +1067,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                 var height = (uint)Math.Max(1, _host.ActualHeight);
                 VortexAPI.ResizeRender(width, height);
             }
-            UpdateExternalOverlay(); // keep the "external window" dim sized to the viewport
+            UpdateExternalBanner();
         }
 
         private void UpdateStatusBar()
