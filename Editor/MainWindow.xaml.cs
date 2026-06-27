@@ -200,6 +200,10 @@ namespace Editor
             // Speichere als letztes geöffnetes Projekt
             // Hinweis: Die Engine-Aktivierung erfolgt im SceneHierarchyViewModel.SelectedScene-Setter
             EditorStateService.Instance.SetLastProject(project.Id, project.Path);
+
+            // Version the project with Git: init repo + .gitignore/.gitattributes + LFS on first open
+            // (idempotent afterwards). Fire-and-forget, guarded, never throws — no-op without git.
+            _ = Editor.Core.Services.Git.GitService.Instance.EnsureRepoAsync(project.Path);
         }
 
         /// <summary>
