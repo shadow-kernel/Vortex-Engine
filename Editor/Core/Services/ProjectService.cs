@@ -473,16 +473,19 @@ namespace Editor.Core.Services
                 System.Diagnostics.Debug.WriteLine($"Could not save icon: {ex.Message}");
             }
 
-            // Projekt als JSON speichern (Legacy-Format für Kompatibilität)
+            // The legacy .ve/project.json stored the ENTIRE project (every scene + entity + component) inline
+            // as one JSON — a scalability disaster for real games. The project is now stored as project.vortex
+            // (manifest only) + Assets/Scenes/<name>.vscene (per-scene, binary). Delete any stale legacy copy
+            // so scene content never lives in that file again. (LoadProject still READS it once, to migrate
+            // an old project to the new format on first save — by which point it's already in memory.)
             try
             {
-                string projectFilePath = Path.Combine(veDir, "project.json");
-                DataSerializer.SaveAsJson(project, projectFilePath);
+                string legacyFile = Path.Combine(veDir, "project.json");
+                if (File.Exists(legacyFile)) File.Delete(legacyFile);
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Could not save project.json: {ex.Message}");
-                // Don't throw - the main manifest will be saved separately
+                System.Diagnostics.Debug.WriteLine($"Could not remove legacy project.json: {ex.Message}");
             }
         }
 
