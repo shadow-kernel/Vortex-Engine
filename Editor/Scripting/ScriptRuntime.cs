@@ -47,6 +47,7 @@ namespace Editor.Scripting
 
             Vortex.VortexBehaviour.Host = this;
             Vortex.Input.Host = this;
+            Vortex.UI.Host = this;
 
             _entitiesById.Clear();
             _nextHandle = 0;
@@ -216,6 +217,30 @@ namespace Editor.Scripting
 
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         private static extern short GetAsyncKeyState(int vKey);
+
+        // --- UI overlay frame state (fed by the runtime driver each frame: GameWindow / GamePreview) ---
+        private float _uiW, _uiH, _mouseX, _mouseY;
+        private bool _mouseDown, _mousePressed;
+
+        /// <summary>Called once per frame before Update() so scripts can draw UI + hit-test the mouse.</summary>
+        public void SetUIFrame(float width, float height, float mouseX, float mouseY, bool mouseDown, bool mousePressed)
+        {
+            _uiW = width; _uiH = height; _mouseX = mouseX; _mouseY = mouseY;
+            _mouseDown = mouseDown; _mousePressed = mousePressed;
+        }
+
+        void Vortex.IScriptHost.UIRect(float x, float y, float w, float h, float r, float g, float b, float a, float radius)
+            => Editor.DllWrapper.VortexAPI.UIRect(x, y, w, h, r, g, b, a, radius);
+        void Vortex.IScriptHost.UIText(float x, float y, float w, float h, string text, float size, float r, float g, float b, float a, int align, int weight)
+            => Editor.DllWrapper.VortexAPI.UIText(x, y, w, h, text, size, r, g, b, a, align, weight);
+        void Vortex.IScriptHost.UILine(float x1, float y1, float x2, float y2, float r, float g, float b, float a, float thick)
+            => Editor.DllWrapper.VortexAPI.UILine(x1, y1, x2, y2, r, g, b, a, thick);
+        float Vortex.IScriptHost.UIWidth() => _uiW;
+        float Vortex.IScriptHost.UIHeight() => _uiH;
+        float Vortex.IScriptHost.UIMouseX() => _mouseX;
+        float Vortex.IScriptHost.UIMouseY() => _mouseY;
+        bool Vortex.IScriptHost.UIMouseDown() => _mouseDown;
+        bool Vortex.IScriptHost.UIMousePressed() => _mousePressed;
 
         bool Vortex.IScriptHost.GetKey(string key)
         {

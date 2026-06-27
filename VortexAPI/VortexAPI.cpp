@@ -365,6 +365,25 @@ EDITOR_INTERFACE bool IsGameWindowActive()
 	return graphics::dx12::DX12Renderer::instance().is_game_window_active();
 }
 
+// ---- 2D UI overlay (generic; driven by the game's Vortex.UI scripting API) ----
+EDITOR_INTERFACE void UIBegin(float w, float h)
+{
+	graphics::dx12::DX12Renderer::instance().ui_begin(w, h);
+}
+EDITOR_INTERFACE void UIRect(float x, float y, float w, float h, float r, float g, float b, float a, float radius)
+{
+	graphics::dx12::DX12Renderer::instance().ui_rect(x, y, w, h, r, g, b, a, radius);
+}
+EDITOR_INTERFACE void UIText(float x, float y, float w, float h, const wchar_t* text,
+	float size, float r, float g, float b, float a, int align, int weight)
+{
+	graphics::dx12::DX12Renderer::instance().ui_text(x, y, w, h, text, size, r, g, b, a, align, weight);
+}
+EDITOR_INTERFACE void UILine(float x1, float y1, float x2, float y2, float r, float g, float b, float a, float thickness)
+{
+	graphics::dx12::DX12Renderer::instance().ui_line(x1, y1, x2, y2, r, g, b, a, thickness);
+}
+
 EDITOR_INTERFACE void ShutdownRenderViewport()
 {
 	runtime::systems::dx12::shutdown();

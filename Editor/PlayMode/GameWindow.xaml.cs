@@ -122,6 +122,13 @@ namespace Editor.PlayMode
                     float dt = (float)(now - _lastFrameTime).TotalSeconds;
                     _lastFrameTime = now;
                     if (dt < 0f) dt = 0f; else if (dt > 0.1f) dt = 0.1f; // clamp after stalls
+
+                    // Feed the UI frame (viewport size + mouse) and start a fresh UI command list so scripts
+                    // can draw the lobby/HUD this frame.
+                    float uw = (float)W(), uh = (float)H();
+                    FeedUIFrame(uw, uh);
+                    VortexAPI.UIBegin(uw, uh);
+
                     if (playing)
                     {
                         VortexAPI.StepEngineRuntime(dt);
@@ -141,6 +148,31 @@ namespace Editor.PlayMode
                 else VortexAPI.RenderGameWindow();             // secondary swapchain present
             }
             catch (Exception ex) { Debug.WriteLine("RenderGameWindow: " + ex); }
+        }
+
+        private bool _lmbPrev;
+
+        // Feed the script UI host the viewport size + mouse (in render pixels, top-left origin) so scripts
+        // can draw + hit-test. Mouse is best-effort (DPI-scaled from the host).
+        private void FeedUIFrame(float renderW, float renderH)
+        {
+            float mx = 0f, my = 0f;
+            try
+            {
+                if (GameViewportHost != null && GameViewportHost.ActualWidth > 1 && GetCursorPos(out POINTW cp))
+                {
+                    var tl = GameViewportHost.PointToScreen(new Point(0, 0));
+                    float sx = renderW / (float)GameViewportHost.ActualWidth;
+                    float sy = renderH / (float)GameViewportHost.ActualHeight;
+                    mx = (float)(cp.X - tl.X) * sx;
+                    my = (float)(cp.Y - tl.Y) * sy;
+                }
+            }
+            catch { }
+            bool down = (GetAsyncKeyState(0x01) & 0x8000) != 0; // VK_LBUTTON
+            bool pressed = down && !_lmbPrev;
+            _lmbPrev = down;
+            Editor.Scripting.ScriptRuntime.Instance.SetUIFrame(renderW, renderH, mx, my, down, pressed);
         }
 
         private void OnHostDestroying()

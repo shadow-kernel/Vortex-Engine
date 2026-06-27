@@ -67,6 +67,29 @@ namespace Editor.DllWrapper
 
         #endregion
 
+        #region 2D UI Overlay (Direct2D/DirectWrite over the 3D)
+
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "UIBegin")]
+        private static extern void UIBeginNative(float w, float h);
+
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "UIRect")]
+        private static extern void UIRectNative(float x, float y, float w, float h, float r, float g, float b, float a, float radius);
+
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "UIText", CharSet = CharSet.Unicode)]
+        private static extern void UITextNative(float x, float y, float w, float h,
+            [MarshalAs(UnmanagedType.LPWStr)] string text, float size, float r, float g, float b, float a, int align, int weight);
+
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "UILine")]
+        private static extern void UILineNative(float x1, float y1, float x2, float y2, float r, float g, float b, float a, float thick);
+
+        /// <summary>Start a new UI frame (clears last frame's commands + sets the viewport size).</summary>
+        public static void UIBegin(float w, float h) { try { UIBeginNative(w, h); } catch { } }
+        public static void UIRect(float x, float y, float w, float h, float r, float g, float b, float a, float radius) { try { UIRectNative(x, y, w, h, r, g, b, a, radius); } catch { } }
+        public static void UIText(float x, float y, float w, float h, string text, float size, float r, float g, float b, float a, int align, int weight) { try { UITextNative(x, y, w, h, text ?? "", size, r, g, b, a, align, weight); } catch { } }
+        public static void UILine(float x1, float y1, float x2, float y2, float r, float g, float b, float a, float thick) { try { UILineNative(x1, y1, x2, y2, r, g, b, a, thick); } catch { } }
+
+        #endregion
+
         #region Camera
 
         [DllImport(_dllName, CallingConvention = _cc)]

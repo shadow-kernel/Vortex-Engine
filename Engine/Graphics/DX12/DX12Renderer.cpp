@@ -68,6 +68,12 @@ namespace vortex::graphics::dx12
 
 		ResourceRegistry::instance().initialize(core.device());
 
+		// 2D UI overlay (optional — if D2D/DirectWrite init fails the 3D renderer is unaffected).
+		if (m_ui_overlay.initialize(core.device(), m_command_queue.queue(), DX12Swapchain::MaxBufferCount))
+			OutputDebugStringA("UI overlay OK\n");
+		else
+			OutputDebugStringA("UI overlay unavailable (continuing without it)\n");
+
 		m_initialized = true;
 		return true;
 	}
@@ -76,6 +82,9 @@ namespace vortex::graphics::dx12
 	{
 		if (!m_initialized) return;
 		m_command_queue.flush();
+
+		// Release the UI overlay (its wrapped resources alias the back buffers) before any swapchain teardown.
+		m_ui_overlay.shutdown();
 
 		// Close the standalone game window (second swapchain) if it's open.
 		destroy_game_window();
@@ -120,6 +129,7 @@ namespace vortex::graphics::dx12
 	{
 		if (!m_initialized || w == 0 || h == 0) return;
 		m_command_queue.flush();
+		m_ui_overlay.invalidate_targets();   // drop cached bitmaps aliasing the old back buffers
 		m_swapchain.resize(w, h);
 		m_depth_buffer.resize(DX12Core::instance().device(), w, h);
 	}
@@ -212,7 +222,10 @@ namespace vortex::graphics::dx12
 		
 		// Signal after this frame's commands are queued (non-blocking)
 		m_frame_fence_values[idx] = m_command_queue.signal();
-		
+
+		// 2D UI overlay (Direct2D over the same back buffer) — drawn after the 3D, before present.
+		m_ui_overlay.render(m_swapchain.current_back_buffer());
+
 		m_swapchain.present(m_vsync_enabled);
 		// Note: m_render_queue is NOT cleared - we keep last frame's data
 		// for re-rendering if no new data is submitted (prevents flickering)
@@ -297,6 +310,10 @@ namespace vortex::graphics::dx12
 
 		m_command_queue.execute_command_list(m_command_list.Get());
 		m_command_queue.flush(); // wait before present (safe)
+
+		// 2D UI overlay (Direct2D over the same back buffer) — drawn after the 3D, before present.
+		m_ui_overlay.render(m_game_swapchain.current_back_buffer());
+
 		m_game_swapchain.present(false);
 	}
 
@@ -304,6 +321,7 @@ namespace vortex::graphics::dx12
 	{
 		if (!m_game_window_active || width == 0 || height == 0) return;
 		m_command_queue.flush();
+		m_ui_overlay.invalidate_targets();   // drop cached bitmaps aliasing the old game back buffers
 		m_game_swapchain.resize(width, height);
 		m_game_depth.resize(DX12Core::instance().device(), width, height);
 	}
@@ -312,6 +330,7 @@ namespace vortex::graphics::dx12
 	{
 		if (!m_game_window_active) return;
 		m_command_queue.flush();
+		m_ui_overlay.invalidate_targets();   // wrapped game back buffers are about to be freed
 		m_game_window_active = false;
 		m_game_depth.shutdown();
 		m_game_swapchain.shutdown();

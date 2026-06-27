@@ -12,6 +12,7 @@
 #include "DX12DepthBuffer.h"
 #include "DX12RenderTarget.h"
 #include "DX12Geometry.h"
+#include "UIOverlay.h"
 #include "../Resources/Mesh.h"
 #include <d3d12.h>
 #include <wrl/client.h>
@@ -179,6 +180,13 @@ namespace vortex::graphics::dx12
 			float near_dist, float far_dist,
 			const DirectX::XMFLOAT4& color);
 
+		// 2D UI overlay (generic Direct2D/DirectWrite layer drawn over the 3D; driven by the Vortex.UI
+		// script API — the game records panels/text/lines each frame, the engine draws them before present).
+		void ui_begin(float w, float h) { m_ui_overlay.begin(w, h); }
+		void ui_rect(float x, float y, float w, float h, float r, float g, float b, float a, float radius) { m_ui_overlay.add_rect(x, y, w, h, r, g, b, a, radius); }
+		void ui_text(float x, float y, float w, float h, const wchar_t* s, float size, float r, float g, float b, float a, int align, int weight) { m_ui_overlay.add_text(x, y, w, h, s, size, r, g, b, a, align, weight); }
+		void ui_line(float x1, float y1, float x2, float y2, float r, float g, float b, float a, float thick) { m_ui_overlay.add_line(x1, y1, x2, y2, r, g, b, a, thick); }
+
 		// Performance statistics
 		int get_current_fps() const { return m_current_fps; }
 		int get_draw_call_count() const { return m_draw_call_count; }
@@ -270,6 +278,7 @@ namespace vortex::graphics::dx12
 		DX12SkyboxPipeline m_skybox_pipeline; // Skybox rendering pipeline
 		DX12DepthBuffer m_depth_buffer;
 		DX12Geometry m_geometry;           // Fallback triangle
+		UIOverlay m_ui_overlay;            // Direct2D/DirectWrite 2D UI over the 3D
 
 
 		// Grid mesh
