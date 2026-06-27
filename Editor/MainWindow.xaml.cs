@@ -216,6 +216,12 @@ namespace Editor
             _ = Editor.Core.Services.Git.GitService.Instance.EnsureRepoAsync(project.Path);
         }
 
+        /// <summary>Re-show all editor panels in their default docked positions.</summary>
+        public void ResetEditorLayout()
+        {
+            try { WorldEditor.ResetLayout(); } catch { }
+        }
+
         /// <summary>
         /// Schließt das aktuelle Projekt und versteckt den Editor-Inhalt.
         /// </summary>

@@ -342,7 +342,6 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
             MenuProjectWindow.IsChecked = true;
             MenuExplorerWindow.IsChecked = true;
             MenuConsoleWindow.IsChecked = true;
-            MenuHierarchyWindow.IsChecked = true;
             MenuInspectorWindow.IsChecked = true;
         }
 

@@ -430,7 +430,7 @@ d:DesignHeight="64" d:DesignWidth="1200">
                 <MenuItem Header="Zoom _Out" InputGestureText="Ctrl+-"/>
                 <MenuItem Header="_Reset Zoom"/>
             </MenuItem>
-            
+
             <!-- Assets Menu -->
             <MenuItem Header="_Assets">
                 <MenuItem Header="_Import Asset..." Click="ImportAsset_Click"/>
@@ -488,16 +488,19 @@ d:DesignHeight="64" d:DesignWidth="1200">
                 </MenuItem>
             </MenuItem>
             
-            <!-- Window Menu -->
+            <!-- Window Menu (tags MUST match the AvalonDock anchorable Titles) -->
             <MenuItem Header="_Window" x:Name="WindowMenu">
-                <MenuItem x:Name="MenuSceneWindow" Header="_Scene" IsCheckable="True" IsChecked="True" Click="ToggleWindow_Click" Tag="Scene"/>
-                <MenuItem x:Name="MenuProjectWindow" Header="_Project" IsCheckable="True" IsChecked="True" Click="ToggleWindow_Click" Tag="Project"/>
-                <MenuItem x:Name="MenuExplorerWindow" Header="_Explorer" IsCheckable="True" IsChecked="True" Click="ToggleWindow_Click" Tag="Explorer"/>
-                <MenuItem x:Name="MenuConsoleWindow" Header="_Console" IsCheckable="True" IsChecked="True" Click="ToggleWindow_Click" Tag="Console"/>
-                <MenuItem x:Name="MenuHierarchyWindow" Header="_Hierarchy" IsCheckable="True" IsChecked="True" Click="ToggleWindow_Click" Tag="Hierarchy"/>
+                <MenuItem x:Name="MenuSceneWindow" Header="_Scene / Hierarchy" IsCheckable="True" IsChecked="True" Click="ToggleWindow_Click" Tag="Scene"/>
                 <MenuItem x:Name="MenuInspectorWindow" Header="_Inspector" IsCheckable="True" IsChecked="True" Click="ToggleWindow_Click" Tag="Inspector"/>
+                <MenuItem x:Name="MenuProjectWindow" Header="_Project" IsCheckable="True" IsChecked="True" Click="ToggleWindow_Click" Tag="Project"/>
+                <MenuItem x:Name="MenuConsoleWindow" Header="_Console" IsCheckable="True" IsChecked="True" Click="ToggleWindow_Click" Tag="Console"/>
+                <MenuItem x:Name="MenuExplorerWindow" Header="_File System" IsCheckable="True" IsChecked="True" Click="ToggleWindow_Click" Tag="File System"/>
                 <Separator/>
-                <MenuItem Header="_Reset Layout" Click="ResetLayout_Click"/>
+                <MenuItem Header="_Reset Layout (show all panels)" Click="ResetLayout_Click">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE73F;" FontFamily="Segoe MDL2 Assets" FontSize="12"/>
+                    </MenuItem.Icon>
+                </MenuItem>
             </MenuItem>
             
             <!-- Help Menu -->
