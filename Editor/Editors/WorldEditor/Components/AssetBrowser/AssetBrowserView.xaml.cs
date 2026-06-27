@@ -694,33 +694,45 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             if (item != null)
             {
                 if (item.IsFolder)
-                    AddMenu(menu, "Open Folder", () => { if (item.Source != null) FileExplorerService.Instance.NavigateTo(item.Source); });
+                    AddMenu(menu, "Open Folder", () => { if (item.Source != null) FileExplorerService.Instance.NavigateTo(item.Source); }, 0xE8B7, "#FFE6B422");
                 else
-                    AddMenu(menu, "Open / Edit", () => OpenOrPlaceAsset(item));
+                    AddMenu(menu, "Open / Edit", () => OpenOrPlaceAsset(item), 0xE70F, "#FF9C8CFF");
 
                 if (item.Type == AssetType.Meshes || item.Type == AssetType.Models)
-                    AddMenu(menu, "Add to Scene", () => AddAssetToScene(item));
+                    AddMenu(menu, "Add to Scene", () => AddAssetToScene(item), 0xE710, "#FF4EC9B0");
                 if (!string.IsNullOrEmpty(item.Path) && item.Path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
-                    AddMenu(menu, "Assign to selected entity", () => AssignScriptToSelected(item));
+                    AddMenu(menu, "Assign to selected entity", () => AssignScriptToSelected(item), 0xE71B, "#FF569CD6");
 
-                AddMenu(menu, "Rename", () => RenameItem(item));
-                AddMenu(menu, "Delete", () => DeleteItem(item));
-                AddMenu(menu, "Show in Explorer", () => { if (item.Source != null) FileExplorerService.Instance.OpenInExplorer(item.Source); });
+                menu.Items.Add(new Separator());
+                AddMenu(menu, "Rename", () => RenameItem(item), 0xE8AC, "#FF9A9AA1");
+                AddMenu(menu, "Delete", () => DeleteItem(item), 0xE74D, "#FFCE9178");
+                AddMenu(menu, "Show in Explorer", () => { if (item.Source != null) FileExplorerService.Instance.OpenInExplorer(item.Source); }, 0xEC50, "#FF569CD6");
                 menu.Items.Add(new Separator());
             }
 
-            AddMenu(menu, "New Folder", () => FileExplorerService.Instance.CreateFolder());
-            AddMenu(menu, "New Script", () => CreateScriptHere());
-            AddMenu(menu, "New Material", () => CreateNewMaterial("Opaque"));
-            AddMenu(menu, "New Shader", () => CreateNewShader("VertFrag"));
+            AddMenu(menu, "New Folder", () => FileExplorerService.Instance.CreateFolder(), 0xE8F4, "#FFE6B422");
+            AddMenu(menu, "New Script", () => CreateScriptHere(), 0xE943, "#FF9B59B6");
+            AddMenu(menu, "New Material", () => CreateNewMaterial("Opaque"), 0xE91B, "#FFBD63C5");
+            AddMenu(menu, "New Shader", () => CreateNewShader("VertFrag"), 0xE9F5, "#FF569CD6");
             menu.Items.Add(new Separator());
-            AddMenu(menu, "Refresh", () => { FileExplorerService.Instance.RefreshCurrentFolderContents(); RefreshAssets(); });
+            AddMenu(menu, "Refresh", () => { FileExplorerService.Instance.RefreshCurrentFolderContents(); RefreshAssets(); }, 0xE72C, "#FF9A9AA1");
             return menu;
         }
 
-        private void AddMenu(ContextMenu m, string header, Action act)
+        private void AddMenu(ContextMenu m, string header, Action act, int glyph = 0, string glyphColor = "#FFC8C8CE")
         {
             var mi = new MenuItem { Header = header, Foreground = Br("#FFE9E9ED") };
+            if (glyph != 0)
+            {
+                mi.Icon = new TextBlock
+                {
+                    Text = ((char)glyph).ToString(),
+                    FontFamily = new FontFamily("Segoe MDL2 Assets"),
+                    FontSize = 12.5,
+                    Foreground = Br(glyphColor),
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+            }
             mi.Click += (s, e) => { try { act(); } catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[AssetBrowser] " + ex.Message); } };
             m.Items.Add(mi);
         }
@@ -813,18 +825,15 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             if (OpenAssetInEditor(item))
                 return;
 
-            if (item.Type == AssetType.Meshes || item.Type == AssetType.Models)
+            // Open/Edit NEVER auto-places into the scene (that's the explicit "Add to Scene" action).
+            if (item.Source != null && !item.IsFolder && System.IO.File.Exists(item.Source.FullPath))
             {
-                AddAssetToScene(item);
-            }
-            else if (item.Source != null && !item.IsFolder && System.IO.File.Exists(item.Source.FullPath))
-            {
-                // Any other real file: open with the OS default handler.
+                // A real file with no dedicated editor: open with the OS default handler.
                 FileExplorerService.Instance.OpenFile(item.Source);
             }
             else
             {
-                MessageBox.Show($"'{item.Name}' is a built-in {item.Type} asset and has no editable file.",
+                MessageBox.Show($"'{item.Name}' has no editable file. For built-in meshes use right-click → 'Add to Scene'.",
                     "Nothing to open", MessageBoxButton.OK, MessageBoxImage.Information);
             }
         }
@@ -867,9 +876,17 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
 
                 case AssetType.Meshes:
                 case AssetType.Models:
-                    bool isModelFile = extension == ".fbx" || extension == ".obj" || extension == ".gltf" ||
-                                       extension == ".glb" || extension == ".dae" || extension == ".3ds";
-                    if (isModelFile && System.IO.File.Exists(fullPath))
+                    // Built-in primitive ("Primitive:Cube") has no file to edit — on an Open gesture,
+                    // tell the user to use "Add to Scene" instead of silently placing it.
+                    if (!string.IsNullOrEmpty(item.Path) &&
+                        item.Path.StartsWith("Primitive:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        MessageBox.Show($"'{item.Name}' is a built-in primitive. Use right-click → 'Add to Scene' to place it.",
+                            "Built-in primitive", MessageBoxButton.OK, MessageBoxImage.Information);
+                        return true; // handled — never falls through to Add-to-Scene
+                    }
+                    // Any real mesh/model file (.vmesh, .fbx, .obj, .gltf, .glb, .dae, .3ds, …) -> live editor.
+                    if (System.IO.File.Exists(fullPath))
                     {
                         try { Dialogs.UniversalModelEditorDialog.OpenForModel(Window.GetWindow(this), fullPath); }
                         catch (Exception ex)
