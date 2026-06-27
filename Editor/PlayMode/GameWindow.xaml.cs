@@ -22,6 +22,12 @@ namespace Editor.PlayMode
         private bool _justCaptured;
         private bool _userReleased; // ESC freed the mouse + paused — don't auto-recapture until a click
 
+        /// <summary>Standalone player: THIS window drives the whole game loop (step engine + run scripts +
+        /// submit the scene), because there is no editor GamePreview tick behind it. In-editor "Run in new
+        /// window" leaves this false — the editor's viewport tick does the stepping/submitting.</summary>
+        public bool OwnsGameLoop;
+        private DateTime _lastFrameTime = DateTime.Now;
+
         [DllImport("user32.dll")] private static extern int ShowCursor(bool show);
         [DllImport("user32.dll")] private static extern bool SetCursorPos(int x, int y);
         [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINTW p);
@@ -41,7 +47,7 @@ namespace Editor.PlayMode
             }
             GameViewportHost.OnHostCreated += (s, e) => OnHostCreated();
             GameViewportHost.OnHostDestroying += (s, e) => OnHostDestroying();
-            GameViewportHost.OnViewportSizeChanged += (s, e) => { if (_ready) VortexAPI.ResizeGameWindow(W(), H()); };
+            GameViewportHost.OnViewportSizeChanged += (s, e) => { if (_ready) { if (OwnsGameLoop) VortexAPI.ResizeRender(W(), H()); else VortexAPI.ResizeGameWindow(W(), H()); } };
             Loaded += (s, e) => { Activate(); Keyboard.Focus(this); };
             Closing += OnClosing;
             PlayModeService.Instance.StateChanged += OnPlayStateChanged;
@@ -51,12 +57,22 @@ namespace Editor.PlayMode
         {
             try
             {
-                if (VortexAPI.CreateGameWindow(GameViewportHost.Handle, W(), H()))
+                // Standalone player: be the PRIMARY render viewport (creates the D3D device + main swapchain).
+                // In-editor "Run in new window": a SECONDARY swapchain riding on the editor's existing device.
+                bool ok = OwnsGameLoop
+                    ? VortexAPI.InitRenderViewport(GameViewportHost.Handle, W(), H())
+                    : VortexAPI.CreateGameWindow(GameViewportHost.Handle, W(), H());
+                if (ok)
                 {
                     _ready = true;
+                    if (OwnsGameLoop)
+                    {
+                        VortexAPI.ShowGrid(false);    // shipped game: no editor grid/gizmos
+                        VortexAPI.ShowGizmos(false);
+                    }
                     CompositionTarget.Rendering += OnFrame; // mouse is captured lazily in OnFrame (once laid out)
                 }
-                else Debug.WriteLine("CreateGameWindow returned false");
+                else Debug.WriteLine("Game render init returned false");
             }
             catch (Exception ex) { Debug.WriteLine("GameWindow create failed: " + ex); }
         }
@@ -96,10 +112,33 @@ namespace Editor.PlayMode
 
             try
             {
-                // Set THIS window's view to the live main camera, then render it into our own swapchain.
-                // (The editor viewport shows a frozen placeholder; only this window renders the live game.)
-                Editor.Core.Services.PlayCameraHelper.ApplyMainCamera(Editor.Core.Data.ProjectData.Current?.ActiveScene);
-                VortexAPI.RenderGameWindow();
+                var scene = Editor.Core.Data.ProjectData.Current?.ActiveScene;
+
+                if (OwnsGameLoop)
+                {
+                    // No editor tick behind us — run the FULL game loop here: advance the engine + gameplay
+                    // scripts, aim the main camera, then submit the scene so the render queue isn't empty.
+                    var now = DateTime.Now;
+                    float dt = (float)(now - _lastFrameTime).TotalSeconds;
+                    _lastFrameTime = now;
+                    if (dt < 0f) dt = 0f; else if (dt > 0.1f) dt = 0.1f; // clamp after stalls
+                    if (playing)
+                    {
+                        VortexAPI.StepEngineRuntime(dt);
+                        Editor.Scripting.ScriptRuntime.Instance.Update(dt);
+                    }
+                    Editor.Core.Services.PlayCameraHelper.ApplyMainCamera(scene);
+                    if (scene != null) Editor.Core.Services.SceneRenderService.Instance.SubmitScene(scene);
+                }
+                else
+                {
+                    // In-editor "Run in new window": the editor's GamePreview tick steps + submits the scene;
+                    // we only re-aim this window's view at the live main camera each frame.
+                    Editor.Core.Services.PlayCameraHelper.ApplyMainCamera(scene);
+                }
+
+                if (OwnsGameLoop) VortexAPI.RenderOnce();      // primary present
+                else VortexAPI.RenderGameWindow();             // secondary swapchain present
             }
             catch (Exception ex) { Debug.WriteLine("RenderGameWindow: " + ex); }
         }
@@ -108,7 +147,7 @@ namespace Editor.PlayMode
         {
             CompositionTarget.Rendering -= OnFrame;
             _ready = false;
-            try { VortexAPI.DestroyGameWindow(); } catch { }
+            try { if (OwnsGameLoop) VortexAPI.ShutdownRender(); else VortexAPI.DestroyGameWindow(); } catch { }
         }
 
         private void OnClosing(object sender, System.ComponentModel.CancelEventArgs e)
@@ -117,7 +156,7 @@ namespace Editor.PlayMode
             PlayModeService.Instance.StateChanged -= OnPlayStateChanged;
             _ready = false;
             ReleaseGameMouse();
-            try { VortexAPI.DestroyGameWindow(); } catch { }
+            try { if (OwnsGameLoop) VortexAPI.ShutdownRender(); else VortexAPI.DestroyGameWindow(); } catch { }
             PlayModeService.Instance.IsExternalWindow = false;
             if (PlayModeService.Instance.State != PlayState.Editing)
                 PlayModeService.Instance.Stop();

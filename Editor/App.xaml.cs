@@ -55,23 +55,23 @@ namespace Editor
             }));
         }
 
-        private long _playerLastTick;
-
         /// <summary>Boots the bundled game with NO editor UI: load project from the exe folder, activate the
-        /// startup scene, show only the GameWindow in play mode, and drive the gameplay-script tick.</summary>
+        /// startup scene, and show only the GameWindow in play mode. The GameWindow owns the whole game loop
+        /// (step engine + run scripts + submit scene + render) since there's no editor tick behind it.</summary>
         private void BootPlayer(string exeDir, SplashWindow splash)
         {
             try
             {
                 splash.SetStatus("Starting engine…");
                 DllWrapper.VortexAPI.InitEngineRuntime();
-                Editor.Core.Services.PlayModeService.Instance.IsReleaseMode = true; // shipped game: no dev banner
+                Editor.Core.Services.PlayModeService.Instance.IsReleaseMode = true;       // shipped game: no dev banner
+                try { Editor.Core.Services.EditorViewportService.Instance.AreGizmosVisible = false; } catch { } // no editor gizmos/icons in the game
 
                 var project = Editor.Core.Services.ProjectService.Instance.LoadProjectFromPath(exeDir);
 
                 // GameWindow is the app's MainWindow; ProjectData.Current reads MainWindow.DataContext,
                 // so binding the project here makes Current resolve for the play pipeline.
-                var gw = new Editor.PlayMode.GameWindow { DataContext = project };
+                var gw = new Editor.PlayMode.GameWindow { DataContext = project, OwnsGameLoop = true };
                 MainWindow = gw;            // app exits when the game window closes
 
                 var scene = project != null ? project.ActiveScene : null;
@@ -80,6 +80,7 @@ namespace Editor
                     scene.Load();
                     scene.ActivateEntities();
                     scene.IsActive = true;
+                    Editor.Core.Services.SceneRenderService.Instance.PreloadSceneAssets(scene);
                 }
 
                 var cam = Editor.Core.Services.CameraService.Instance.GetMainCamera();
@@ -93,10 +94,7 @@ namespace Editor
 
                 Editor.Core.Services.PlayModeService.Instance.Play();
                 if (scene != null) Editor.Scripting.ScriptRuntime.Instance.Begin(scene);
-
-                // Drive the gameplay scripts each frame (the editor's GamePreview does this; standalone has none).
-                _playerLastTick = 0;
-                System.Windows.Media.CompositionTarget.Rendering += PlayerTick;
+                // From here the GameWindow's per-frame loop (OwnsGameLoop) drives everything.
             }
             catch (Exception ex)
             {
@@ -104,15 +102,6 @@ namespace Editor
                 MessageBox.Show("Player failed to start: " + ex.Message, "Vortex Player", MessageBoxButton.OK, MessageBoxImage.Error);
                 Shutdown();
             }
-        }
-
-        private void PlayerTick(object sender, EventArgs e)
-        {
-            long now = DateTime.Now.Ticks;
-            float dt = _playerLastTick == 0 ? 0.016f : (float)((now - _playerLastTick) / 1e7);
-            _playerLastTick = now;
-            if (dt > 0.1f) dt = 0.1f;       // clamp after stalls
-            try { Editor.Scripting.ScriptRuntime.Instance.Update(dt); } catch { }
         }
 
         protected override void OnExit(ExitEventArgs e)
