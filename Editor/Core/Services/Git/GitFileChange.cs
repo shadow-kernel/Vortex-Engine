@@ -17,8 +17,19 @@ namespace Editor.Core.Services.Git
         public string Author { get; set; } = "";
         public string Date { get; set; } = "";
         public string Subject { get; set; } = "";
+        public string Refs { get; set; } = "";   // e.g. "HEAD -> main, origin/main, tag: v1.0"
         public string Display => Hash + "  " + Subject;
-        public string Meta => Author + " · " + Date;
+        public string Meta => string.IsNullOrEmpty(Refs) ? (Author + " · " + Date)
+                                                         : (Refs + "   ·   " + Author + " · " + Date);
+        public bool HasRefs => !string.IsNullOrEmpty(Refs);
+    }
+
+    /// <summary>One entry from <c>git stash list</c> (a local "shelve").</summary>
+    public sealed class GitStash
+    {
+        public int Index { get; set; }
+        public string Message { get; set; } = "";
+        public string Display => "stash@{" + Index + "}  " + Message;
     }
 
     /// <summary>One changed path reported by <c>git status</c>.</summary>

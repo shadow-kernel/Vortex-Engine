@@ -141,14 +141,47 @@
 
                         <TextBlock Text="HISTORY" Style="{StaticResource Section}"/>
                         <Border Background="#1B1B1E" BorderBrush="#2C2C32" BorderThickness="1" CornerRadius="6">
-                            <ListBox x:Name="HistoryList" Height="150" Background="Transparent" Foreground="#D6D6DB"
+                            <ListBox x:Name="HistoryList" Height="170" Background="Transparent" Foreground="#D6D6DB"
                                      BorderThickness="0" FontSize="12" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                <ListBox.ContextMenu>
+                                    <ContextMenu Background="#202023" BorderBrush="#3A3A42" Foreground="#E9E9ED">
+                                        <MenuItem Header="Checkout this commit" Click="HistCheckout_Click"/>
+                                        <MenuItem Header="Revert this commit" Click="HistRevert_Click"/>
+                                        <Separator/>
+                                        <MenuItem Header="Reset to here — keep changes staged (soft)" Click="HistResetSoft_Click"/>
+                                        <MenuItem Header="Reset to here — keep changes unstaged (mixed)" Click="HistResetMixed_Click"/>
+                                        <MenuItem Header="Reset to here — discard changes (hard)" Click="HistResetHard_Click"/>
+                                        <Separator/>
+                                        <MenuItem Header="Copy commit hash" Click="HistCopyHash_Click"/>
+                                    </ContextMenu>
+                                </ListBox.ContextMenu>
                                 <ListBox.ItemTemplate>
                                     <DataTemplate>
                                         <StackPanel Margin="0,3">
                                             <TextBlock Text="{Binding Display}" Foreground="#E9E9ED" TextTrimming="CharacterEllipsis"/>
-                                            <TextBlock Text="{Binding Meta}" Foreground="#73737A" FontSize="11"/>
+                                            <TextBlock Text="{Binding Meta}" Foreground="#73737A" FontSize="11" TextTrimming="CharacterEllipsis"/>
                                         </StackPanel>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </Border>
+
+                        <Grid Margin="0,16,0,7">
+                            <TextBlock Text="SHELF / STASH" Style="{StaticResource Section}" Margin="0" VerticalAlignment="Center"/>
+                            <Button Content="Stash changes" Style="{StaticResource Pill}" Click="StashSave_Click" HorizontalAlignment="Right"/>
+                        </Grid>
+                        <Border Background="#1B1B1E" BorderBrush="#2C2C32" BorderThickness="1" CornerRadius="6">
+                            <ListBox x:Name="StashList" Height="84" Background="Transparent" Foreground="#D6D6DB" BorderThickness="0" FontSize="12">
+                                <ListBox.ContextMenu>
+                                    <ContextMenu Background="#202023" BorderBrush="#3A3A42" Foreground="#E9E9ED">
+                                        <MenuItem Header="Apply (keep stash)" Click="StashApply_Click"/>
+                                        <MenuItem Header="Pop (apply + remove)" Click="StashPop_Click"/>
+                                        <MenuItem Header="Drop (delete)" Click="StashDrop_Click"/>
+                                    </ContextMenu>
+                                </ListBox.ContextMenu>
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Display}" Foreground="#D6D6DB" TextTrimming="CharacterEllipsis"/>
                                     </DataTemplate>
                                 </ListBox.ItemTemplate>
                             </ListBox>

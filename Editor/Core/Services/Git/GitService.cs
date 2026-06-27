@@ -33,6 +33,10 @@ namespace Editor.Core.Services.Git
                         StandardOutputEncoding = System.Text.Encoding.UTF8,
                         StandardErrorEncoding = System.Text.Encoding.UTF8,
                     };
+                    // Auto-accept a NEW SSH host key (e.g. github.com on first push) so push/pull/fetch don't
+                    // fail with "Host key verification failed". accept-new still rejects CHANGED keys (anti-MITM).
+                    if (!psi.EnvironmentVariables.ContainsKey("GIT_SSH_COMMAND"))
+                        psi.EnvironmentVariables["GIT_SSH_COMMAND"] = "ssh -o StrictHostKeyChecking=accept-new";
                     using (var p = Process.Start(psi))
                     {
                         // Read both streams concurrently so a full pipe buffer can't deadlock.
@@ -193,20 +197,57 @@ namespace Editor.Core.Services.Git
         }
 
         // ---- history ----
-        /// <summary>Recent commits (newest first) for the history view.</summary>
-        public async Task<IReadOnlyList<GitCommit>> LogAsync(string repoPath, int max = 100)
+        /// <summary>Recent commits across ALL refs (local + remote-tracking, newest first) with ref labels —
+        /// the data behind the IntelliJ-style history view.</summary>
+        public async Task<IReadOnlyList<GitCommit>> LogAsync(string repoPath, int max = 200)
         {
             var list = new List<GitCommit>();
-            var r = await RunAsync(repoPath, "log --max-count=" + max + " --pretty=format:%h%x1f%an%x1f%ad%x1f%s --date=short");
+            var r = await RunAsync(repoPath, "log --all --date-order --max-count=" + max +
+                                             " --date=short --pretty=format:%h%x1f%an%x1f%ad%x1f%s%x1f%d");
             if (!r.Success) return list;
             foreach (var line in (r.StdOut ?? "").Replace("\r", "").Split('\n'))
             {
                 if (string.IsNullOrEmpty(line)) continue;
                 var p = line.Split('\x1f');
-                if (p.Length >= 4) list.Add(new GitCommit { Hash = p[0], Author = p[1], Date = p[2], Subject = p[3] });
+                if (p.Length < 4) continue;
+                var c = new GitCommit { Hash = p[0], Author = p[1], Date = p[2], Subject = p[3] };
+                if (p.Length >= 5)
+                    c.Refs = p[4].Trim().TrimStart('(').TrimEnd(')').Trim();
+                list.Add(c);
             }
             return list;
         }
+
+        // ---- history operations ----
+        /// <summary>Safely undo a commit by creating an inverse commit.</summary>
+        public Task<GitResult> RevertAsync(string repoPath, string hash) => RunAsync(repoPath, "revert --no-edit " + Q(hash));
+        /// <summary>Move HEAD to a commit. mode: "soft" (keep changes staged — undo commit), "mixed" (keep
+        /// changes unstaged), "hard" (discard — drop commits + changes).</summary>
+        public Task<GitResult> ResetAsync(string repoPath, string hash, string mode) => RunAsync(repoPath, "reset --" + mode + " " + Q(hash));
+        public Task<GitResult> CheckoutCommitAsync(string repoPath, string hash) => RunAsync(repoPath, "checkout " + Q(hash));
+
+        // ---- stash (local "shelve") ----
+        public Task<GitResult> StashSaveAsync(string repoPath, string message)
+            => RunAsync(repoPath, "stash push -m " + Q(string.IsNullOrWhiteSpace(message) ? "WIP" : message));
+        public async Task<IReadOnlyList<GitStash>> StashListAsync(string repoPath)
+        {
+            var list = new List<GitStash>();
+            var r = await RunAsync(repoPath, "stash list --pretty=format:%gd%x1f%gs");
+            if (!r.Success) return list;
+            foreach (var line in (r.StdOut ?? "").Replace("\r", "").Split('\n'))
+            {
+                if (string.IsNullOrEmpty(line)) continue;
+                var p = line.Split('\x1f');
+                int idx = 0;
+                int a = p[0].IndexOf('{'), b = p[0].IndexOf('}');
+                if (a >= 0 && b > a) int.TryParse(p[0].Substring(a + 1, b - a - 1), out idx);
+                list.Add(new GitStash { Index = idx, Message = p.Length > 1 ? p[1] : p[0] });
+            }
+            return list;
+        }
+        public Task<GitResult> StashApplyAsync(string repoPath, int index) => RunAsync(repoPath, "stash apply " + Q("stash@{" + index + "}"));
+        public Task<GitResult> StashPopAsync(string repoPath, int index) => RunAsync(repoPath, "stash pop " + Q("stash@{" + index + "}"));
+        public Task<GitResult> StashDropAsync(string repoPath, int index) => RunAsync(repoPath, "stash drop " + Q("stash@{" + index + "}"));
 
         // ---- remote ----
         /// <summary>Push — sets the upstream on first push (push -u origin &lt;branch&gt;) and gives a clear

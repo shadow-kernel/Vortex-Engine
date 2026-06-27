@@ -54,6 +54,7 @@ namespace Editor.Editors.WorldEditor.Components.Git
             await RefreshChanges();
             await RefreshTags();
             await RefreshHistory();
+            await RefreshStash();
         }
 
         private async Task RefreshHistory()
@@ -62,6 +63,68 @@ namespace Editor.Editors.WorldEditor.Components.Git
             HistoryList.Items.Clear();
             foreach (var c in commits) HistoryList.Items.Add(c);
         }
+
+        private async Task RefreshStash()
+        {
+            var stashes = await GitService.Instance.StashListAsync(_repo);
+            StashList.Items.Clear();
+            foreach (var s in stashes) StashList.Items.Add(s);
+        }
+
+        // ---- history operations ----
+        private async Task RunHist(Func<GitCommit, Task<GitResult>> op, string okPrefix, bool confirm, string confirmText)
+        {
+            if (_busy) return;
+            var c = HistoryList.SelectedItem as GitCommit;
+            if (c == null) { SetStatus("Select a commit in the history first."); return; }
+            if (confirm && MessageBox.Show(confirmText + "\n\n" + c.Hash + "  " + c.Subject, "Git",
+                    MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+            SetBusy(true, "Working…");
+            var r = await op(c);
+            await RefreshAll();
+            SetBusy(false, r.Success ? okPrefix + c.Hash : "Failed: " + FirstLine(r.Message));
+        }
+
+        private async void HistCheckout_Click(object s, RoutedEventArgs e)
+            => await RunHist(c => GitService.Instance.CheckoutCommitAsync(_repo, c.Hash), "Checked out ", true, "Checkout this commit (detached HEAD)?");
+        private async void HistRevert_Click(object s, RoutedEventArgs e)
+            => await RunHist(c => GitService.Instance.RevertAsync(_repo, c.Hash), "Reverted ", true, "Create a commit that undoes this commit?");
+        private async void HistResetSoft_Click(object s, RoutedEventArgs e)
+            => await RunHist(c => GitService.Instance.ResetAsync(_repo, c.Hash, "soft"), "Reset (soft) to ", true, "Reset branch to here and put later changes back into staged Changes?");
+        private async void HistResetMixed_Click(object s, RoutedEventArgs e)
+            => await RunHist(c => GitService.Instance.ResetAsync(_repo, c.Hash, "mixed"), "Reset (mixed) to ", true, "Reset branch to here and keep later changes unstaged?");
+        private async void HistResetHard_Click(object s, RoutedEventArgs e)
+            => await RunHist(c => GitService.Instance.ResetAsync(_repo, c.Hash, "hard"), "Reset (hard) to ", true, "DISCARD all commits and changes after this one? This cannot be undone.");
+        private void HistCopyHash_Click(object s, RoutedEventArgs e)
+        {
+            var c = HistoryList.SelectedItem as GitCommit;
+            if (c != null) { try { Clipboard.SetText(c.Hash); SetStatus("Copied " + c.Hash); } catch { } }
+        }
+
+        // ---- stash (shelve) ----
+        private async void StashSave_Click(object s, RoutedEventArgs e)
+        {
+            if (_busy) return;
+            var msg = Prompt("Stash (shelve) current changes", "description", "WIP");
+            if (msg == null) return;
+            SetBusy(true, "Stashing…");
+            var r = await GitService.Instance.StashSaveAsync(_repo, msg);
+            await RefreshChanges(); await RefreshStash();
+            SetBusy(false, r.Success ? "Changes stashed." : "Stash failed: " + FirstLine(r.Message));
+        }
+        private async Task RunStash(Func<int, Task<GitResult>> op, string okMsg)
+        {
+            if (_busy) return;
+            var st = StashList.SelectedItem as GitStash;
+            if (st == null) { SetStatus("Select a stash first."); return; }
+            SetBusy(true, "Working…");
+            var r = await op(st.Index);
+            await RefreshChanges(); await RefreshStash();
+            SetBusy(false, r.Success ? okMsg : "Failed: " + FirstLine(r.Message));
+        }
+        private async void StashApply_Click(object s, RoutedEventArgs e) => await RunStash(i => GitService.Instance.StashApplyAsync(_repo, i), "Stash applied.");
+        private async void StashPop_Click(object s, RoutedEventArgs e) => await RunStash(i => GitService.Instance.StashPopAsync(_repo, i), "Stash popped.");
+        private async void StashDrop_Click(object s, RoutedEventArgs e) => await RunStash(i => GitService.Instance.StashDropAsync(_repo, i), "Stash dropped.");
 
         private async Task RefreshBranches()
         {
