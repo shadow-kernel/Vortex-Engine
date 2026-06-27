@@ -63,9 +63,9 @@ namespace Editor.Core.Services
         {
             try
             {
-                // Versuche neues Format zuerst
+                // Versuche neues Format zuerst (the shipped game has project.vortex only inside the RAM pak)
                 string manifestPath = Path.Combine(projectRef.Path, ManifestFileName);
-                if (File.Exists(manifestPath))
+                if (AssetVfs.Exists(manifestPath))
                 {
                     return LoadProjectFromManifest(projectRef.Path);
                 }
@@ -132,7 +132,7 @@ namespace Editor.Core.Services
             {
                 var sceneFilePath = Path.Combine(scenesPath, sceneRef.RelativePath);
 
-                if (File.Exists(sceneFilePath))
+                if (AssetVfs.Exists(sceneFilePath))
                 {
                     var scene = DataSerializer.LoadFromBinary<Scene>(sceneFilePath);
                     scene.FilePath = sceneFilePath;

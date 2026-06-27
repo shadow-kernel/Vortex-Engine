@@ -17,13 +17,13 @@ using Editor.ECS.Components.Scripting;
 namespace Editor.Core.Serialization
 {
     /// <summary>
-    /// Zentrale Serialisierungs-Klasse die sowohl JSON als auch Binär unterstützt.
-    /// Verwendet DataContractSerializer für konsistente Serialisierung.
+    /// Zentrale Serialisierungs-Klasse die sowohl JSON als auch Binï¿½r unterstï¿½tzt.
+    /// Verwendet DataContractSerializer fï¿½r konsistente Serialisierung.
     /// </summary>
     public static class DataSerializer
     {
         /// <summary>
-        /// Liste aller bekannten Typen für polymorphe Serialisierung
+        /// Liste aller bekannten Typen fï¿½r polymorphe Serialisierung
         /// </summary>
         private static readonly List<Type> KnownTypes = new List<Type>
         {
@@ -115,7 +115,7 @@ namespace Editor.Core.Serialization
         }
 
         /// <summary>
-        /// Serialisiert ein Objekt zu Binärdaten
+        /// Serialisiert ein Objekt zu Binï¿½rdaten
         /// </summary>
         public static byte[] ToBinary<T>(T obj) where T : class
         {
@@ -134,7 +134,7 @@ namespace Editor.Core.Serialization
         }
 
         /// <summary>
-        /// Deserialisiert Binärdaten zu einem Objekt
+        /// Deserialisiert Binï¿½rdaten zu einem Objekt
         /// </summary>
         public static T FromBinary<T>(byte[] data) where T : class
         {
@@ -159,16 +159,19 @@ namespace Editor.Core.Serialization
         }
 
         /// <summary>
-        /// Lädt ein Objekt aus einer JSON-Datei
+        /// Lï¿½dt ein Objekt aus einer JSON-Datei
         /// </summary>
         public static T LoadFromJson<T>(string filePath) where T : class
         {
-            var json = File.ReadAllText(filePath, Encoding.UTF8);
+            // Shipped game: read from the in-RAM asset pak; editor: read the loose file.
+            string json = (Editor.Core.Services.AssetVfs.IsMounted && Editor.Core.Services.AssetVfs.Contains(filePath))
+                ? Editor.Core.Services.AssetVfs.GetText(filePath)
+                : File.ReadAllText(filePath, Encoding.UTF8);
             return FromJson<T>(json);
         }
 
         /// <summary>
-        /// Speichert ein Objekt als Binärdatei
+        /// Speichert ein Objekt als Binï¿½rdatei
         /// </summary>
         public static void SaveAsBinary<T>(T obj, string filePath) where T : class
         {
@@ -177,11 +180,15 @@ namespace Editor.Core.Serialization
         }
 
         /// <summary>
-        /// Lädt ein Objekt aus einer Binärdatei
+        /// Lï¿½dt ein Objekt aus einer Binï¿½rdatei
         /// </summary>
         public static T LoadFromBinary<T>(string filePath) where T : class
         {
-            var data = File.ReadAllBytes(filePath);
+            byte[] data;
+            if (Editor.Core.Services.AssetVfs.IsMounted && Editor.Core.Services.AssetVfs.TryGetBytes(filePath, out var packed))
+                data = packed;
+            else
+                data = File.ReadAllBytes(filePath);
             return FromBinary<T>(data);
         }
     }

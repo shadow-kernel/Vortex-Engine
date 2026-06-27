@@ -31,6 +31,9 @@ namespace Editor
 
             if (playerMode)
             {
+                string logDir = exeDir;
+                AppDomain.CurrentDomain.UnhandledException += (s, ev) => LogPlayerError(logDir, "AppDomain", ev.ExceptionObject as Exception);
+                DispatcherUnhandledException += (s, ev) => LogPlayerError(logDir, "Dispatcher", ev.Exception);
                 Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background,
                     new Action(() => BootPlayer(exeDir, splash)));
                 return;
@@ -67,6 +70,23 @@ namespace Editor
                 Editor.Core.Services.PlayModeService.Instance.IsReleaseMode = true;       // shipped game: no dev banner
                 try { Editor.Core.Services.EditorViewportService.Instance.AreGizmosVisible = false; } catch { } // no editor gizmos/icons in the game
 
+                // Mount the binary asset pak INTO RAM (assets + manifest + compiled scripts, decompressed) so
+                // everything loads from memory — nothing readable/editable on disk. The renamed game exe keeps
+                // the editor assembly's identity, so resolve the gameplay DLL's reference back to it.
+                AppDomain.CurrentDomain.AssemblyResolve += PlayerAssemblyResolve;
+                var pak = System.IO.Path.Combine(exeDir, "Assets.vpak");
+                if (System.IO.File.Exists(pak))
+                {
+                    splash.SetStatus("Loading assets…");
+                    Editor.Core.Services.AssetVfs.Mount(pak);
+                    System.Diagnostics.Debug.WriteLine("[Player] mounted pak: " + Editor.Core.Services.AssetVfs.FileCount + " files");
+                    if (Editor.Core.Services.AssetVfs.TryGetBytes("GameScripts.dll", out var dllBytes) && dllBytes.Length > 0)
+                    {
+                        try { Editor.Scripting.ScriptRuntime.Instance.PrecompiledAssembly = System.Reflection.Assembly.Load(dllBytes); }
+                        catch (Exception sx) { System.Diagnostics.Debug.WriteLine("[Player] scripts DLL load failed: " + sx.Message); }
+                    }
+                }
+
                 var project = Editor.Core.Services.ProjectService.Instance.LoadProjectFromPath(exeDir);
 
                 // GameWindow is the app's MainWindow; ProjectData.Current reads MainWindow.DataContext,
@@ -98,10 +118,36 @@ namespace Editor
             }
             catch (Exception ex)
             {
+                LogPlayerError(exeDir, "BootPlayer", ex);
                 try { splash.FadeOutAndClose(); } catch { }
                 MessageBox.Show("Player failed to start: " + ex.Message, "Vortex Player", MessageBoxButton.OK, MessageBoxImage.Error);
                 Shutdown();
             }
+        }
+
+        private static void LogPlayerError(string dir, string src, Exception ex)
+        {
+            try
+            {
+                System.IO.File.AppendAllText(System.IO.Path.Combine(dir, "player_error.log"),
+                    DateTime.Now + " [" + src + "]\r\n" + (ex != null ? ex.ToString() : "(null)") + "\r\n\r\n");
+            }
+            catch { }
+        }
+
+        /// <summary>The exported game exe is a renamed copy of the editor assembly; the packed GameScripts.dll
+        /// was compiled against that assembly by its name, so resolve that reference back to the running exe.</summary>
+        private static System.Reflection.Assembly PlayerAssemblyResolve(object sender, ResolveEventArgs args)
+        {
+            var running = System.Reflection.Assembly.GetExecutingAssembly();
+            try
+            {
+                var requested = new System.Reflection.AssemblyName(args.Name).Name;
+                if (string.Equals(requested, running.GetName().Name, StringComparison.OrdinalIgnoreCase))
+                    return running;
+            }
+            catch { }
+            return null;
         }
 
         protected override void OnExit(ExitEventArgs e)

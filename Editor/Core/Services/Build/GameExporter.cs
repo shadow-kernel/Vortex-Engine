@@ -25,14 +25,20 @@ namespace Editor.Core.Services.Build
     {
         public static ExportResult Export(string outputDir)
         {
+            var project = ProjectData.Current;
+            if (project == null) return Fail("No project is open.");
+            return ExportFromPath(project.Path, project.Name, outputDir);
+        }
+
+        /// <summary>Export a project by path. Used by Export() for the open project, and by build harnesses.</summary>
+        public static ExportResult ExportFromPath(string projectRoot, string projectName, string outputDir)
+        {
             var sb = new StringBuilder();
             try
             {
-                var project = ProjectData.Current;
-                if (project == null) return Fail("No project is open.");
+                if (string.IsNullOrEmpty(projectRoot)) return Fail("No project path.");
                 if (string.IsNullOrEmpty(outputDir)) return Fail("No output folder selected.");
-                var projectRoot = project.Path;
-                var name = Sanitize(project.Name);
+                var name = Sanitize(projectName);
 
                 // 0) CLEAN: wipe the previous build so nothing stale lingers, then rebuild from scratch.
                 try { if (Directory.Exists(outputDir)) Directory.Delete(outputDir, true); }
@@ -45,22 +51,44 @@ namespace Editor.Core.Services.Build
                 int n = CopyRuntime(runtimeDir, outputDir);
                 sb.AppendLine("• Runtime: " + n + " files copied");
 
-                // 2) Project assets + manifest (loose files — the engine imports at runtime).
-                var assetsSrc = Path.Combine(projectRoot, "Assets");
-                if (Directory.Exists(assetsSrc)) { CopyDir(assetsSrc, Path.Combine(outputDir, "Assets")); sb.AppendLine("• Assets copied"); }
-                var manifest = Path.Combine(projectRoot, "project.vortex");
-                if (File.Exists(manifest)) File.Copy(manifest, Path.Combine(outputDir, "project.vortex"), true);
-
-                // 3) Compile gameplay scripts -> <Project>Scripts.dll ("richtig compilen" + validation).
+                // 2) Compile gameplay scripts -> a temp DLL (ships COMPILED, never as source).
+                var tmpDll = Path.Combine(Path.GetTempPath(), "GameScripts_" + Guid.NewGuid().ToString("N") + ".dll");
                 string scriptLog;
-                bool scriptsOk = CompileScripts(projectRoot, Path.Combine(outputDir, name + "Scripts.dll"), out scriptLog);
-                sb.AppendLine(scriptsOk ? "• Scripts compiled OK" : "• SCRIPTS FAILED TO COMPILE");
+                bool scriptsOk = CompileScripts(projectRoot, tmpDll, out scriptLog);
+                sb.AppendLine(scriptsOk ? "• Scripts compiled OK -> GameScripts.dll" : "• SCRIPTS FAILED TO COMPILE");
+
+                // 3) BINARY ASSET PAK: pack the manifest + every asset (NOT .cs source) + the compiled DLL
+                //    into ONE opaque, compressed+obfuscated Assets.vpak. The shipped game has no readable or
+                //    editable asset files — the player decompresses it all into RAM at startup.
+                var entries = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, byte[]>>();
+                var manifest = Path.Combine(projectRoot, "project.vortex");
+                if (File.Exists(manifest))
+                    entries.Add(new System.Collections.Generic.KeyValuePair<string, byte[]>("project.vortex", File.ReadAllBytes(manifest)));
+
+                var assetsSrc = Path.Combine(projectRoot, "Assets");
+                int assetCount = 0;
+                if (Directory.Exists(assetsSrc))
+                {
+                    foreach (var f in Directory.GetFiles(assetsSrc, "*", SearchOption.AllDirectories))
+                    {
+                        if (Path.GetExtension(f).Equals(".cs", StringComparison.OrdinalIgnoreCase)) continue; // source -> compiled DLL
+                        var rel = "Assets/" + f.Substring(assetsSrc.Length).TrimStart('\\', '/').Replace('\\', '/');
+                        entries.Add(new System.Collections.Generic.KeyValuePair<string, byte[]>(rel, File.ReadAllBytes(f)));
+                        assetCount++;
+                    }
+                }
+                if (scriptsOk && File.Exists(tmpDll))
+                    entries.Add(new System.Collections.Generic.KeyValuePair<string, byte[]>("GameScripts.dll", File.ReadAllBytes(tmpDll)));
+                try { if (File.Exists(tmpDll)) File.Delete(tmpDll); } catch { }
+
+                VortexPak.Write(Path.Combine(outputDir, "Assets.vpak"), entries);
+                sb.AppendLine("• Packed " + assetCount + " assets + manifest + scripts -> Assets.vpak (compressed + obfuscated)");
 
                 // 4) Player marker + a branded <Game>.exe entry point + README.
                 // The marker's presence makes the runtime boot straight into the game (no editor UI).
                 const string exe = "Vortex Engine.exe";
                 File.WriteAllText(Path.Combine(outputDir, "player.vortex"),
-                    "{\"game\":\"" + (project.Name ?? "Game").Replace("\"", "'") + "\",\"scriptsDll\":\"" + name + "Scripts.dll\"}");
+                    "{\"game\":\"" + (projectName ?? "Game").Replace("\"", "'") + "\",\"pak\":\"Assets.vpak\",\"scriptsDll\":\"GameScripts.dll\"}");
                 sb.AppendLine("• Player marker written (player.vortex)");
 
                 try
@@ -81,11 +109,11 @@ namespace Editor.Core.Services.Build
                 catch { }
 
                 File.WriteAllText(Path.Combine(outputDir, "README.txt"),
-                    "Vortex Engine — exported game: " + project.Name + "\r\n" +
+                    "Vortex Engine — exported game: " + projectName + "\r\n" +
                     "Created " + DateTime.Now + "\r\n\r\n" +
                     "Double-click '" + name + ".exe' to play (boots straight into the game — no editor).\r\n" +
-                    "Assets are loose files + their .vmeta; gameplay scripts are compiled into " + name + "Scripts.dll.\r\n" +
-                    "(A binary asset pak/VFS is a planned optimization.)\r\n");
+                    "All assets + the compiled gameplay code are packed into Assets.vpak (one opaque binary,\r\n" +
+                    "decompressed into RAM at startup). There are no readable/editable source files in this folder.\r\n");
 
                 if (!scriptsOk)
                     return new ExportResult { Success = false, OutputDir = outputDir, Message = "Export done, but SCRIPTS FAILED TO COMPILE:\n\n" + scriptLog };

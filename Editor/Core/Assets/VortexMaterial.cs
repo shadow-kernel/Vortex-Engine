@@ -91,10 +91,15 @@ namespace Editor.Core.Assets
         {
             try
             {
-                if (!File.Exists(filePath))
+                // Shipped game: read from the in-RAM pak; editor: read the loose .vmat file.
+                string json;
+                if (Editor.Core.Services.AssetVfs.IsMounted && Editor.Core.Services.AssetVfs.Contains(filePath))
+                    json = Editor.Core.Services.AssetVfs.GetText(filePath);
+                else if (File.Exists(filePath))
+                    json = File.ReadAllText(filePath);
+                else
                     return null;
-                    
-                string json = File.ReadAllText(filePath);
+
                 return JsonSerializer.Deserialize<VortexMaterial>(json);
             }
             catch (Exception ex)

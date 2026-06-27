@@ -146,7 +146,7 @@ namespace Editor.Core.Services
                 fullTexturePath = System.IO.Path.Combine(projectPath, texturePath);
             }
 
-            if (!System.IO.File.Exists(fullTexturePath))
+            if (!AssetVfs.Exists(fullTexturePath))
             {
                 System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Texture not found: {fullTexturePath}");
                 return;
@@ -155,7 +155,7 @@ namespace Editor.Core.Services
             try
             {
                 // Import texture
-                long textureId = VortexAPI.ImportTextureFromFile(fullTexturePath);
+                long textureId = ImportTexturePath(fullTexturePath);
                 if (textureId >= 0)
                 {
                     // Create material with texture
@@ -687,30 +687,42 @@ namespace Editor.Core.Services
                     fullPath = System.IO.Path.Combine(projectPath, actualPath);
                 }
 
-                if (!System.IO.File.Exists(fullPath))
+                if (!AssetVfs.Exists(fullPath))
                 {
                     return -1;
                 }
 
                 var extension = System.IO.Path.GetExtension(fullPath)?.ToLowerInvariant();
 
+                // Shipped game: the bytes live in the in-RAM pak, not on disk.
+                byte[] vfsBytes = null;
+                bool fromVfs = AssetVfs.IsMounted && AssetVfs.TryGetBytes(fullPath, out vfsBytes);
+
                 // Check if it's a .vmesh file (binary format - fast load)
                 if (extension == ".vmesh")
                 {
+                    if (fromVfs)
+                    {
+                        System.Diagnostics.Debug.WriteLine("[SceneRenderService] .vmesh from pak not supported; pack source model instead");
+                        return -1;
+                    }
                     return VortexAPI.LoadVMeshFromFile(fullPath);
                 }
 
                 // For model files (FBX, OBJ, etc.) - use multi-material import
                 if (IsModelFileExtension(extension))
                 {
-                    if (!VortexAPI.IsAssimpAvailable())
+                    if (!fromVfs && !VortexAPI.IsAssimpAvailable())
                     {
                         return -1;
                     }
 
-                    // Import with materials (this creates all submeshes at once)
-                    System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Importing model with materials: {fullPath}");
-                    var submeshes = VortexAPI.ImportModelWithMaterialsFromFile(fullPath);
+                    // Import with materials (this creates all submeshes at once) — from RAM if packed, else disk.
+                    System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Importing model with materials: {fullPath} (vfs={fromVfs})");
+                    var virtualDir = (System.IO.Path.GetDirectoryName(actualPath) ?? "").Replace('\\', '/');
+                    var submeshes = fromVfs
+                        ? VortexAPI.ImportModelFromBytes(vfsBytes, extension.TrimStart('.'), virtualDir)
+                        : VortexAPI.ImportModelWithMaterialsFromFile(fullPath);
                     if (submeshes != null && submeshes.Length > 0)
                     {
                         // Cache all submeshes for future use
@@ -757,6 +769,14 @@ namespace Editor.Core.Services
             };
         }
 
+        /// <summary>Load a texture by path — from the in-RAM asset pak (shipped game) or from disk (editor).</summary>
+        private static long ImportTexturePath(string fullPath)
+        {
+            if (AssetVfs.IsMounted && AssetVfs.TryGetBytes(fullPath, out var bytes))
+                return VortexAPI.ImportTextureFromBytes(bytes);
+            return VortexAPI.ImportTextureFromFile(fullPath);
+        }
+
         private long GetOrCreateMaterial(Guid entityId, MeshRenderer renderer)
         {
             // Highest precedence: an explicitly assigned .vmat material. Build it FULLY (all PBR
@@ -774,7 +794,7 @@ namespace Editor.Core.Services
                         vmatPath = System.IO.Path.Combine(projectPath, vmatPath);
                 }
 
-                if (System.IO.File.Exists(vmatPath))
+                if (AssetVfs.Exists(vmatPath))
                 {
                     long vmatMaterial = MaterialService.Instance.GetOrBuildVortexMaterial(vmatPath);
                     if (vmatMaterial >= 0)
@@ -822,12 +842,12 @@ namespace Editor.Core.Services
                     fullTexturePath = System.IO.Path.Combine(projectPath, renderer.TexturePath);
                 }
 
-                if (System.IO.File.Exists(fullTexturePath))
+                if (AssetVfs.Exists(fullTexturePath))
                 {
                     try
                     {
                         // Import texture and create material
-                        long textureId = VortexAPI.ImportTextureFromFile(fullTexturePath);
+                        long textureId = ImportTexturePath(fullTexturePath);
                         if (textureId >= 0)
                         {
                             long newMaterialId = VortexAPI.CreateNewMaterial();
@@ -1433,7 +1453,7 @@ namespace Editor.Core.Services
                 : System.IO.Path.Combine(projectPath, texturePath);
 
             // Check if texture file exists
-            if (!System.IO.File.Exists(fullTexturePath))
+            if (!AssetVfs.Exists(fullTexturePath))
             {
                 System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Skybox texture not found: {fullTexturePath}");
                 return;
@@ -1468,7 +1488,7 @@ namespace Editor.Core.Services
                 }
 
                 // Load texture
-                long newTextureId = VortexAPI.ImportTextureFromFile(fullTexturePath);
+                long newTextureId = ImportTexturePath(fullTexturePath);
                 if (newTextureId < 0)
                 {
                     System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Failed to load skybox texture");
@@ -1565,7 +1585,7 @@ namespace Editor.Core.Services
             System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Skybox texture path: {texturePath}");
 
             // Check if file exists
-            if (!System.IO.File.Exists(fullMeshPath))
+            if (!AssetVfs.Exists(fullMeshPath))
             {
                 System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Skybox mesh file not found: {fullMeshPath}");
                 return;
@@ -1598,9 +1618,9 @@ namespace Editor.Core.Services
 
                         System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Loading skybox texture: {fullTexturePath}");
 
-                        if (System.IO.File.Exists(fullTexturePath))
+                        if (AssetVfs.Exists(fullTexturePath))
                         {
-                            textureId = VortexAPI.ImportTextureFromFile(fullTexturePath);
+                            textureId = ImportTexturePath(fullTexturePath);
                             if (textureId >= 0)
                             {
                                 VortexAPI.SetMaterialAlbedoTexture(materialId, textureId);

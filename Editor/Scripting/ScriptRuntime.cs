@@ -36,6 +36,10 @@ namespace Editor.Scripting
         public string LastBuildLog { get; private set; } = "";
 
         /// <summary>Compile the project's scripts and start every attached behaviour.</summary>
+        /// <summary>When set (by the standalone player), gameplay runs from this PRE-COMPILED assembly
+        /// instead of compiling source at startup — fast boot + no .cs source shipped with the game.</summary>
+        public Assembly PrecompiledAssembly { get; set; }
+
         public void Begin(Scene scene)
         {
             End();
@@ -47,7 +51,10 @@ namespace Editor.Scripting
             _entitiesById.Clear();
             _nextHandle = 0;
 
-            Assembly asm = Compile(out string log);
+            string log;
+            Assembly asm = PrecompiledAssembly;
+            if (asm != null) log = "Using precompiled gameplay assembly: " + asm.GetName().Name;
+            else asm = Compile(out log);
             LastBuildLog = log ?? "";
             if (!string.IsNullOrEmpty(LastBuildLog))
                 System.Diagnostics.Debug.WriteLine("[ScriptRuntime] build:\n" + LastBuildLog);

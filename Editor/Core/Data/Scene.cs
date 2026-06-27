@@ -16,8 +16,8 @@ using Editor.Core.Abstractions;
 namespace Editor.Core.Data
 {
     /// <summary>
-    /// Repräsentiert eine Szene im Projekt.
-    /// Szenen enthalten GameEntities und werden als .vscene Binärdateien gespeichert.
+    /// Reprï¿½sentiert eine Szene im Projekt.
+    /// Szenen enthalten GameEntities und werden als .vscene Binï¿½rdateien gespeichert.
     /// </summary>
     [DataContract(Name = "Scene", Namespace = "")]
     public class Scene : ViewModelBase, IEngineScene
@@ -59,7 +59,7 @@ namespace Editor.Core.Data
         }
 
         /// <summary>
-        /// Referenz zum übergeordneten Projekt (nicht serialisiert)
+        /// Referenz zum ï¿½bergeordneten Projekt (nicht serialisiert)
         /// </summary>
         [IgnoreDataMember]
         public ProjectData Project { get; set; }
@@ -75,7 +75,7 @@ namespace Editor.Core.Data
         }
 
         /// <summary>
-        /// Gibt an ob die Szene ungespeicherte Änderungen hat (nicht serialisiert)
+        /// Gibt an ob die Szene ungespeicherte ï¿½nderungen hat (nicht serialisiert)
         /// </summary>
         [IgnoreDataMember]
         public bool IsDirty
@@ -103,7 +103,7 @@ namespace Editor.Core.Data
         }
 
         /// <summary>
-        /// Aktuell ausgewählte Entity (nicht serialisiert - UI State)
+        /// Aktuell ausgewï¿½hlte Entity (nicht serialisiert - UI State)
         /// </summary>
         [IgnoreDataMember]
         public GameEntity SelectedEntity { get; set; }
@@ -135,14 +135,14 @@ namespace Editor.Core.Data
         }
 
         /// <summary>
-        /// Lädt die Szene aus der Datei
+        /// Lï¿½dt die Szene aus der Datei
         /// </summary>
         public void Load()
         {
             if (IsLoaded)
                 return;
 
-            if (File.Exists(FilePath))
+            if (Editor.Core.Services.AssetVfs.Exists(FilePath))
             {
                 try
                 {
@@ -163,7 +163,7 @@ namespace Editor.Core.Data
                 }
             }
 
-			// Runtime-Zustand nach Deserialisierung zurücksetzen
+			// Runtime-Zustand nach Deserialisierung zurï¿½cksetzen
 			_engineHandle = SceneHandle.Invalid;
 			_isActive = false;
 			SelectedEntity = null;
@@ -173,7 +173,7 @@ namespace Editor.Core.Data
         }
 
         /// <summary>
-        /// Entlädt die Szene (behält nur Metadaten)
+        /// Entlï¿½dt die Szene (behï¿½lt nur Metadaten)
         /// </summary>
         public void Unload()
         {
@@ -193,7 +193,7 @@ namespace Editor.Core.Data
         }
 
         /// <summary>
-        /// Speichert die Szene als Binärdatei
+        /// Speichert die Szene als Binï¿½rdatei
         /// </summary>
         public void Save()
         {
@@ -212,7 +212,7 @@ namespace Editor.Core.Data
         }
 
         /// <summary>
-        /// Fügt eine GameEntity zur Szene hinzu (mit Undo/Redo Support)
+        /// Fï¿½gt eine GameEntity zur Szene hinzu (mit Undo/Redo Support)
         /// </summary>
         public void AddEntity(GameEntity entity)
         {
@@ -303,7 +303,7 @@ namespace Editor.Core.Data
 
 
         /// <summary>
-        /// Erstellt eine GameEntity mit Standard-Komponenten für einen bestimmten Typ
+        /// Erstellt eine GameEntity mit Standard-Komponenten fï¿½r einen bestimmten Typ
         /// </summary>
         public GameEntity CreatePrimitive(PrimitiveType type)
         {
@@ -336,7 +336,7 @@ namespace Editor.Core.Data
         }
 
         /// <summary>
-        /// Erstellt eine Skybox-Entity für Umgebungsbeleuchtung
+        /// Erstellt eine Skybox-Entity fï¿½r Umgebungsbeleuchtung
         /// </summary>
         public GameEntity CreateSkybox(string name = "Skybox")
         {
@@ -384,7 +384,7 @@ namespace Editor.Core.Data
 
         /// <summary>
         /// Aktiviert alle Entities dieser Szene in der Engine.
-        /// Sollte aufgerufen werden, nachdem die Szene vollständig geladen wurde.
+        /// Sollte aufgerufen werden, nachdem die Szene vollstï¿½ndig geladen wurde.
         /// </summary>
         public void ActivateEntities()
         {
