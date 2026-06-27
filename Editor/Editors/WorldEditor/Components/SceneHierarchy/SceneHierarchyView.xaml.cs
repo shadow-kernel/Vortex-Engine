@@ -9,6 +9,7 @@ using Editor.Core.Data;
 using Editor.Core.Services;
 using Editor.Core.UndoRedo;
 using Editor.ECS;
+using Editor.ECS.Components.Scripting;
 
 namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
 {
@@ -699,10 +700,52 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             }
         }
 
+        private static bool TryGetDroppedScript(DragEventArgs e, out string relativePath)
+        {
+            relativePath = null;
+            string abs = null;
+
+            var fsi = e.Data.GetData("FileSystemItem") as Editor.Editors.WorldEditor.Components.FileExplorer.Models.FileSystemItem;
+            if (fsi != null) abs = fsi.FullPath;
+            if (abs == null && e.Data.GetDataPresent("AssetPath")) abs = e.Data.GetData("AssetPath") as string;
+            if (abs == null && e.Data.GetDataPresent(DataFormats.FileDrop))
+            {
+                var arr = e.Data.GetData(DataFormats.FileDrop) as string[];
+                if (arr != null && arr.Length > 0) abs = arr[0];
+            }
+
+            if (string.IsNullOrEmpty(abs)) return false;
+            if (!abs.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)) return false;
+            if (abs.EndsWith("VortexScripting.cs", StringComparison.OrdinalIgnoreCase)) return false;
+
+            relativePath = ScriptingService.MakeRelative(ScriptingService.ProjectRoot, abs);
+            return true;
+        }
+
+        private void AssignScriptToEntity(GameEntity entity, string relativePath)
+        {
+            if (entity == null || string.IsNullOrEmpty(relativePath)) return;
+            var existing = entity.GetComponent<Script>();
+            if (existing == null || !string.Equals(existing.ScriptPath, relativePath, StringComparison.OrdinalIgnoreCase))
+                entity.AddComponent(new Script(entity, relativePath));
+            SelectionService.Instance.Select(entity); // reveal it in the inspector
+        }
+
         private void HierarchyTree_DragOver(object sender, DragEventArgs e)
         {
             e.Effects = DragDropEffects.None;
-            
+
+            // Drop a .cs script onto an entity -> assign a Script component to it
+            string scriptRel;
+            if (TryGetDroppedScript(e, out scriptRel))
+            {
+                var ti = GetTreeViewItemFromPoint(e.GetPosition(HierarchyTree));
+                if (ti != null && ti.DataContext is GameEntity)
+                    e.Effects = DragDropEffects.Copy;
+                e.Handled = true;
+                return;
+            }
+
             // Erlaube Drop von .ventity Dateien
             if (e.Data.GetDataPresent(DataFormats.FileDrop))
             {
@@ -744,6 +787,17 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
 
         private void HierarchyTree_Drop(object sender, DragEventArgs e)
         {
+            // Handle a script dropped onto an entity -> assign a Script component
+            string scriptRel;
+            if (TryGetDroppedScript(e, out scriptRel))
+            {
+                var ti = GetTreeViewItemFromPoint(e.GetPosition(HierarchyTree));
+                var target = ti != null ? ti.DataContext as GameEntity : null;
+                if (target != null) AssignScriptToEntity(target, scriptRel);
+                e.Handled = true;
+                return;
+            }
+
             // Handle .ventity file drops
             if (e.Data.GetDataPresent(DataFormats.FileDrop))
             {

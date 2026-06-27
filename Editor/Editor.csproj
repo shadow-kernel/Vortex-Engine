@@ -172,6 +172,10 @@
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>
+    <Page Include="Editors\WorldEditor\Components\Inspector\ScriptInspector.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
     <Page Include="Editors\WorldEditor\Components\Inspector\TransformInspector.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
@@ -365,6 +369,9 @@
     </Compile>
     <Compile Include="Editors\WorldEditor\Components\Inspector\SkyboxInspector.xaml.cs">
       <DependentUpon>SkyboxInspector.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Editors\WorldEditor\Components\Inspector\ScriptInspector.xaml.cs">
+      <DependentUpon>ScriptInspector.xaml</DependentUpon>
     </Compile>
     <Compile Include="Editors\WorldEditor\Components\Inspector\TransformInspector.xaml.cs">
       <DependentUpon>TransformInspector.xaml</DependentUpon>

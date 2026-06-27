@@ -7,6 +7,7 @@ using Editor.ECS;
 using Editor.ECS.Components;
 using Editor.ECS.Components.Lighting;
 using Editor.ECS.Components.Rendering;
+using Editor.ECS.Components.Scripting;
 
 namespace Editor.Editors.WorldEditor.Components.Inspector
 {
@@ -32,8 +33,14 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
                 { typeof(MeshRenderer), comp => CreateMeshRendererInspector((MeshRenderer)comp) },
                 { typeof(Camera), comp => CreateCameraInspector((Camera)comp) },
                 { typeof(Light), comp => CreateLightInspector((Light)comp) },
-                { typeof(Skybox), comp => CreateSkyboxInspector((Skybox)comp) }
+                { typeof(Skybox), comp => CreateSkyboxInspector((Skybox)comp) },
+                { typeof(Script), comp => CreateScriptInspector((Script)comp) }
             };
+
+            // Accept scripts dropped from the Project Explorer / Asset Browser / Windows Explorer.
+            AllowDrop = true;
+            DragOver += DynamicInspector_DragOver;
+            Drop += DynamicInspector_Drop;
         }
 
         private void OnLoaded(object sender, RoutedEventArgs e)
@@ -149,6 +156,27 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             return inspector;
         }
 
+        private UserControl CreateScriptInspector(Script script)
+        {
+            var inspector = new ScriptInspector();
+            inspector.ScriptComponent = script;
+            inspector.DetachRequested += (s, e) =>
+            {
+                if (_selectedEntity != null)
+                {
+                    _selectedEntity.RemoveComponent(script);
+                    RefreshInspector();
+                }
+            };
+            inspector.ChangeRequested += (s, e) =>
+            {
+                // remove the old, then open the picker to assign a new one
+                if (_selectedEntity != null) _selectedEntity.RemoveComponent(script);
+                ShowScriptPicker();
+            };
+            return inspector;
+        }
+
         private UserControl CreateGenericComponentInspector(Component component)
         {
             // Create a simple border with the component name
@@ -236,8 +264,122 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             AddComponentMenuItem(contextMenu, "Rigidbody", () => AddComponent<ECS.Components.Physics.Rigidbody>());
             AddComponentMenuItem(contextMenu, "Box Collider", () => AddComponent<ECS.Components.Physics.BoxCollider>());
 
+            // Script: list existing scripts to assign, plus "New Script…"
+            contextMenu.Items.Add(new Separator());
+            var scriptMenu = new MenuItem { Header = "Script" };
+            try
+            {
+                foreach (var rel in ScriptingService.EnumerateScripts())
+                {
+                    var r = rel;
+                    AddSubMenuItem(scriptMenu, System.IO.Path.GetFileNameWithoutExtension(r), () => AssignScript(r));
+                }
+            }
+            catch { }
+            if (scriptMenu.Items.Count > 0) scriptMenu.Items.Add(new Separator());
+            AddSubMenuItem(scriptMenu, "New Script…", () => CreateAndAssignScript());
+            contextMenu.Items.Add(scriptMenu);
+
             contextMenu.PlacementTarget = AddComponentButton;
             contextMenu.IsOpen = true;
+        }
+
+        /// <summary>Opens the same script-picker menu standalone (used by the inspector's "Change…").</summary>
+        private void ShowScriptPicker()
+        {
+            if (_selectedEntity == null) { RefreshInspector(); return; }
+            var menu = new ContextMenu();
+            try
+            {
+                foreach (var rel in ScriptingService.EnumerateScripts())
+                {
+                    var r = rel;
+                    AddComponentMenuItem(menu, System.IO.Path.GetFileNameWithoutExtension(r), () => AssignScript(r));
+                }
+            }
+            catch { }
+            if (menu.Items.Count > 0) menu.Items.Add(new Separator());
+            AddComponentMenuItem(menu, "New Script…", () => CreateAndAssignScript());
+            menu.PlacementTarget = AddComponentButton;
+            menu.IsOpen = true;
+            RefreshInspector();
+        }
+
+        /// <summary>Attach (or replace) a Script component pointing at the given project-relative .cs path.</summary>
+        private void AssignScript(string relativePath)
+        {
+            if (_selectedEntity == null || string.IsNullOrEmpty(relativePath)) return;
+
+            // Replace any existing Script with the same path; otherwise just add.
+            var existing = _selectedEntity.GetComponent<Script>();
+            if (existing != null && string.Equals(existing.ScriptPath, relativePath, StringComparison.OrdinalIgnoreCase))
+            {
+                RefreshInspector();
+                return;
+            }
+            _selectedEntity.AddComponent(new Script(_selectedEntity, relativePath));
+            RefreshInspector();
+        }
+
+        private void CreateAndAssignScript()
+        {
+            if (_selectedEntity == null) return;
+            try
+            {
+                var baseName = string.IsNullOrWhiteSpace(_selectedEntity.Name) ? "NewBehaviour" : _selectedEntity.Name + "Behaviour";
+                var abs = ScriptingService.CreateScript(baseName);
+                var rel = ScriptingService.MakeRelative(ScriptingService.ProjectRoot, abs);
+                AssignScript(rel);
+                ScriptingService.OpenInVisualStudio(abs);
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Scripting] CreateAndAssign failed: " + ex.Message); }
+        }
+
+        // ---- drag & drop: drop a .cs onto the inspector to assign it to the selected entity ----
+        private void DynamicInspector_DragOver(object sender, DragEventArgs e)
+        {
+            string rel;
+            e.Effects = (_selectedEntity != null && TryGetDroppedScript(e, out rel))
+                ? DragDropEffects.Copy : DragDropEffects.None;
+            e.Handled = true;
+        }
+
+        private void DynamicInspector_Drop(object sender, DragEventArgs e)
+        {
+            string rel;
+            if (_selectedEntity != null && TryGetDroppedScript(e, out rel))
+            {
+                AssignScript(rel);
+                e.Handled = true;
+            }
+        }
+
+        private static bool TryGetDroppedScript(DragEventArgs e, out string relativePath)
+        {
+            relativePath = null;
+            string abs = null;
+
+            // From the Project Explorer (FileExplorer drags a FileSystemItem)
+            var fsi = e.Data.GetData("FileSystemItem") as Editor.Editors.WorldEditor.Components.FileExplorer.Models.FileSystemItem;
+            if (fsi != null) abs = fsi.FullPath;
+
+            // From the Asset Browser (drags an AssetPath)
+            if (abs == null && e.Data.GetDataPresent("AssetPath"))
+                abs = e.Data.GetData("AssetPath") as string;
+
+            // From Windows Explorer
+            if (abs == null && e.Data.GetDataPresent(DataFormats.FileDrop))
+            {
+                var arr = e.Data.GetData(DataFormats.FileDrop) as string[];
+                if (arr != null && arr.Length > 0) abs = arr[0];
+            }
+
+            if (string.IsNullOrEmpty(abs)) return false;
+            if (!abs.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)) return false;
+            if (abs.EndsWith("VortexScripting.cs", StringComparison.OrdinalIgnoreCase)) return false;
+
+            relativePath = ScriptingService.MakeRelative(ScriptingService.ProjectRoot, abs);
+            return true;
         }
 
         private void AddComponentMenuItem(ContextMenu menu, string header, Action action)

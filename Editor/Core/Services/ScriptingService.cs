@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Text;
 using Editor.Core.Data;
 
@@ -41,6 +43,37 @@ namespace Editor.Core.Services
             File.WriteAllText(path, ScriptTemplate(Path.GetFileNameWithoutExtension(path)));
             EnsureScriptsProject();
             return path;
+        }
+
+        /// <summary>All gameplay scripts under Assets/Scripts (project-relative, '/'-separated), excluding the
+        /// auto-generated API stub. Single source of truth for the script picker + asset browser.</summary>
+        public static List<string> EnumerateScripts()
+        {
+            var list = new List<string>();
+            var dir = ScriptsDir;
+            var root = ProjectRoot;
+            if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(root)) return list;
+            foreach (var f in Directory.EnumerateFiles(dir, "*.cs", SearchOption.AllDirectories))
+            {
+                if (string.Equals(Path.GetFileName(f), "VortexScripting.cs", StringComparison.OrdinalIgnoreCase)) continue;
+                list.Add(MakeRelative(root, f));
+            }
+            return list.OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToList();
+        }
+
+        /// <summary>Convert an absolute path to a project-relative, '/'-separated path (or returns it unchanged).</summary>
+        public static string MakeRelative(string root, string fullPath)
+        {
+            if (string.IsNullOrEmpty(root) || string.IsNullOrEmpty(fullPath)) return fullPath;
+            try
+            {
+                var rootFull = Path.GetFullPath(root).TrimEnd('\\', '/') + Path.DirectorySeparatorChar;
+                var full = Path.GetFullPath(fullPath);
+                if (full.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase))
+                    return full.Substring(rootFull.Length).Replace('\\', '/');
+            }
+            catch { }
+            return fullPath.Replace('\\', '/');
         }
 
         /// <summary>
@@ -217,7 +250,12 @@ public class PlayerController : VortexBehaviour
         if (Input.GetKey(""Right"")) _yaw   += 90f * dt;
         if (Input.GetKey(""Up""))    _pitch -= 90f * dt;
         if (Input.GetKey(""Down""))  _pitch += 90f * dt;
+        // Clamp pitch, wrap yaw, reject NaN/Inf BEFORE writing the transform — a bad Euler value would
+        // reach the native quaternion math and crash the engine on matrix normalize.
         if (_pitch > 89f) _pitch = 89f; else if (_pitch < -89f) _pitch = -89f;
+        _yaw %= 360f;
+        if (float.IsNaN(_yaw)   || float.IsInfinity(_yaw))   _yaw   = 0f;
+        if (float.IsNaN(_pitch) || float.IsInfinity(_pitch)) _pitch = 0f;
         Rotation = new Vector3(_pitch, _yaw, 0f);
 
         // ---- Target horizontal velocity (relative to facing); Shift = sprint, Ctrl/C = crouch ----
@@ -225,7 +263,10 @@ public class PlayerController : VortexBehaviour
         bool sprint = Input.GetKey(""LeftShift"");
         float speed = crouch ? CrouchSpeed : (sprint ? SprintSpeed : WalkSpeed);
 
-        Vector3 f = Forward, r = Right;
+        // Move on the ground plane from YAW ONLY (decoupled from camera pitch).
+        double yawRad = _yaw * System.Math.PI / 180.0;
+        Vector3 f = new Vector3((float)System.Math.Sin(yawRad), 0f, (float)System.Math.Cos(yawRad));
+        Vector3 r = new Vector3((float)System.Math.Cos(yawRad), 0f, (float)-System.Math.Sin(yawRad));
         float dx = 0f, dz = 0f;
         if (Input.GetKey(""W"")) { dx += f.X; dz += f.Z; }
         if (Input.GetKey(""S"")) { dx -= f.X; dz -= f.Z; }
