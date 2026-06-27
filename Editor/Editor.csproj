@@ -140,6 +140,10 @@
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>
+    <Page Include="Editors\WorldEditor\Components\Git\GitWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
     <Page Include="Editors\WorldEditor\Components\HistoryLog\HistoryLogView.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
@@ -332,6 +336,9 @@
     <Compile Include="Editors\WorldEditor\Components\GamePreview\ViewportHost.cs" />
     <Compile Include="Editors\WorldEditor\Components\HeaderBar\HeaderBarView.xaml.cs">
       <DependentUpon>HeaderBarView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Editors\WorldEditor\Components\Git\GitWindow.xaml.cs">
+      <DependentUpon>GitWindow.xaml</DependentUpon>
     </Compile>
     <Compile Include="Editors\WorldEditor\Components\HistoryLog\HistoryLogView.xaml.cs">
       <DependentUpon>HistoryLogView.xaml</DependentUpon>

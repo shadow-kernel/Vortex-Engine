@@ -181,7 +181,9 @@ namespace Editor.Core.Services.Git
         // ---- branches ----
         public async Task<string> CurrentBranchAsync(string repoPath)
         {
-            var r = await RunAsync(repoPath, "rev-parse --abbrev-ref HEAD");
+            // --show-current reports the branch name even on an unborn branch (fresh repo, no commit yet),
+            // where rev-parse HEAD would fail.
+            var r = await RunAsync(repoPath, "branch --show-current");
             return r.Success ? r.StdOut.Trim() : "";
         }
 

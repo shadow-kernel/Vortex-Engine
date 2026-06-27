@@ -1,0 +1,143 @@
+<Window x:Class="Editor.Editors.WorldEditor.Components.Git.GitWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        Title="Source Control" Width="560" Height="720"
+        WindowStyle="None" ResizeMode="CanResize"
+        WindowStartupLocation="CenterOwner"
+        Background="#161618" UseLayoutRounding="True"
+        TextOptions.TextRenderingMode="ClearType"
+        FontFamily="Segoe UI Variable Text, Segoe UI">
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="40" ResizeBorderThickness="6" GlassFrameThickness="0"
+                            CornerRadius="0" UseAeroCaptionButtons="False"/>
+    </shell:WindowChrome.WindowChrome>
+    <Window.Resources>
+        <Style x:Key="Pill" TargetType="Button">
+            <Setter Property="Background" Value="#26262B"/>
+            <Setter Property="Foreground" Value="#E9E9ED"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="Padding" Value="12,0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="shell:WindowChrome.IsHitTestVisibleInChrome" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="b" Background="{TemplateBinding Background}" CornerRadius="7"
+                                Padding="{TemplateBinding Padding}" BorderBrush="#3A3A42" BorderThickness="1">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="b" Property="Background" Value="#33333A"/></Trigger>
+                            <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="Accent" TargetType="Button" BasedOn="{StaticResource Pill}">
+            <Setter Property="Background" Value="#6C5CE7"/>
+            <Setter Property="Foreground" Value="#FFFFFF"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Height" Value="32"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="b" Background="{TemplateBinding Background}" CornerRadius="8" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="b" Property="Background" Value="#7d6ef0"/></Trigger>
+                            <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="Section" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#9A9AA1"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Margin" Value="0,16,0,7"/>
+        </Style>
+    </Window.Resources>
+
+    <Border Background="#161618" BorderBrush="#2C2C32" BorderThickness="1">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="40"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="26"/>
+            </Grid.RowDefinitions>
+
+            <!-- Title bar -->
+            <Grid Grid.Row="0" Background="#1A1A1C">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="14,0">
+                    <TextBlock Text="&#xE753;" FontFamily="Segoe MDL2 Assets" FontSize="13" Foreground="#9C8CFF" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <TextBlock Text="Source Control" Foreground="#F5F5F7" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="RepoLabel" Foreground="#73737A" FontSize="12" VerticalAlignment="Center" Margin="10,0,0,0"/>
+                </StackPanel>
+                <Button Content="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="11" Click="Close_Click"
+                        HorizontalAlignment="Right" Width="40" Height="40" Background="Transparent" Foreground="#C8C8CE"
+                        BorderThickness="0" Cursor="Hand" shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
+            </Grid>
+
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                <StackPanel Margin="16,8,16,16">
+                    <!-- Branch -->
+                    <TextBlock Text="BRANCH" Style="{StaticResource Section}" Margin="0,4,0,7"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <ComboBox x:Name="BranchCombo" Height="30" Background="#202023" Foreground="#E9E9ED" BorderBrush="#3A3A42"/>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="8,0,0,0">
+                            <Button Content="Switch" Style="{StaticResource Pill}" Click="Switch_Click" Margin="0,0,6,0"/>
+                            <Button Content="New" Style="{StaticResource Pill}" Click="NewBranch_Click" Margin="0,0,6,0"/>
+                            <Button Content="Rename" Style="{StaticResource Pill}" Click="RenameBranch_Click"/>
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- Changes -->
+                    <Grid Margin="0,16,0,7">
+                        <TextBlock Text="CHANGES" Style="{StaticResource Section}" Margin="0" VerticalAlignment="Center"/>
+                        <Button Content="Refresh" Style="{StaticResource Pill}" Click="Refresh_Click" HorizontalAlignment="Right"/>
+                    </Grid>
+                    <Border Background="#1B1B1E" BorderBrush="#2C2C32" BorderThickness="1" CornerRadius="6">
+                        <ListBox x:Name="ChangesList" Height="180" Background="Transparent" Foreground="#D6D6DB"
+                                 BorderThickness="0" FontSize="12" ScrollViewer.HorizontalScrollBarVisibility="Auto"/>
+                    </Border>
+                    <TextBox x:Name="CommitBox" Margin="0,10,0,0" Height="64" Background="#202023" Foreground="#F5F5F7"
+                             BorderBrush="#3A3A42" Padding="8,6" AcceptsReturn="True" TextWrapping="Wrap"
+                             VerticalScrollBarVisibility="Auto" FontSize="12.5"
+                             Tag="Commit message…"/>
+                    <Button Content="Commit all changes" Style="{StaticResource Accent}" Click="Commit_Click" Margin="0,8,0,0" HorizontalAlignment="Stretch"/>
+
+                    <!-- Remote -->
+                    <TextBlock Text="REMOTE" Style="{StaticResource Section}"/>
+                    <StackPanel Orientation="Horizontal">
+                        <Button Content="Push" Style="{StaticResource Pill}" Click="Push_Click" Margin="0,0,6,0"/>
+                        <Button Content="Pull" Style="{StaticResource Pill}" Click="Pull_Click" Margin="0,0,6,0"/>
+                        <Button Content="Fetch" Style="{StaticResource Pill}" Click="Fetch_Click" Margin="0,0,6,0"/>
+                        <Button Content="Set remote…" Style="{StaticResource Pill}" Click="SetRemote_Click"/>
+                    </StackPanel>
+
+                    <!-- Tags -->
+                    <Grid Margin="0,16,0,7">
+                        <TextBlock Text="TAGS" Style="{StaticResource Section}" Margin="0" VerticalAlignment="Center"/>
+                        <Button Content="New tag" Style="{StaticResource Pill}" Click="NewTag_Click" HorizontalAlignment="Right"/>
+                    </Grid>
+                    <Border Background="#1B1B1E" BorderBrush="#2C2C32" BorderThickness="1" CornerRadius="6">
+                        <ListBox x:Name="TagsList" Height="90" Background="Transparent" Foreground="#D6D6DB" BorderThickness="0" FontSize="12"/>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+
+            <Border Grid.Row="2" Background="#202023">
+                <TextBlock x:Name="StatusText" Text="Ready" Foreground="#9A9AA1" FontSize="11" VerticalAlignment="Center" Margin="12,0"/>
+            </Border>
+        </Grid>
+    </Border>
+</Window>

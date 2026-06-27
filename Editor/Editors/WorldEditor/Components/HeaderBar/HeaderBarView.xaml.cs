@@ -138,6 +138,26 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
             MessageBox.Show("Build-Einstellungen - Noch nicht implementiert", "Info", MessageBoxButton.OK, MessageBoxImage.Information);
         }
 
+        private static Editor.Editors.WorldEditor.Components.Git.GitWindow _gitWindow;
+        private void GitButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (_gitWindow != null) { _gitWindow.Activate(); return; }
+                _gitWindow = new Editor.Editors.WorldEditor.Components.Git.GitWindow
+                {
+                    Owner = Window.GetWindow(this)
+                };
+                _gitWindow.Closed += (s, ev) => _gitWindow = null;
+                _gitWindow.Show();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Source Control konnte nicht geöffnet werden: " + ex.Message,
+                    "Git", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+
         private void Build_Click(object sender, RoutedEventArgs e)
         {
             // TODO: Implement build
