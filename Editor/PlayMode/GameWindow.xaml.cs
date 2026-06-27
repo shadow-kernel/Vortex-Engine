@@ -24,7 +24,9 @@ namespace Editor.PlayMode
         [DllImport("user32.dll")] private static extern int ShowCursor(bool show);
         [DllImport("user32.dll")] private static extern bool SetCursorPos(int x, int y);
         [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINTW p);
+        [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int vKey);
         [StructLayout(LayoutKind.Sequential)] private struct POINTW { public int X; public int Y; }
+        private static bool EscDown() => (GetAsyncKeyState(0x1B) & 0x8000) != 0; // VK_ESCAPE, focus-independent
 
         public GameWindow()
         {
@@ -64,7 +66,7 @@ namespace Editor.PlayMode
             float dx = 0f, dy = 0f;
             if (_mouseCaptured && IsActive)
             {
-                if (Keyboard.IsKeyDown(Key.Escape)) { ReleaseGameMouse(); }
+                if (EscDown()) { ReleaseGameMouse(); } // global key state — works even with the native HWND focused
                 else if (GetCursorPos(out POINTW p) && Center(out int cx, out int cy))
                 {
                     if (_justCaptured) _justCaptured = false;
@@ -80,7 +82,14 @@ namespace Editor.PlayMode
             Vortex.Input.MouseDeltaX = dx;
             Vortex.Input.MouseDeltaY = dy;
 
-            try { VortexAPI.RenderGameWindow(); } catch (Exception ex) { Debug.WriteLine("RenderGameWindow: " + ex); }
+            try
+            {
+                // Set THIS window's view to the live main camera, then render it into our own swapchain.
+                // (The editor viewport shows a frozen placeholder; only this window renders the live game.)
+                Editor.Core.Services.PlayCameraHelper.ApplyMainCamera(Editor.Core.Data.ProjectData.Current?.ActiveScene);
+                VortexAPI.RenderGameWindow();
+            }
+            catch (Exception ex) { Debug.WriteLine("RenderGameWindow: " + ex); }
         }
 
         private void OnHostDestroying()

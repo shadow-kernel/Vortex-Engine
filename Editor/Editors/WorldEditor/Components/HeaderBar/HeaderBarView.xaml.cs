@@ -739,7 +739,9 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
         private void LaunchGameWindow()
         {
             if (_gameWindow != null) { _gameWindow.Activate(); return; }
-            _gameWindow = new Editor.PlayMode.GameWindow { Owner = Application.Current?.MainWindow };
+            // No Owner: a real INDEPENDENT top-level window (its own taskbar entry), not glued inside the
+            // editor. The editor keeps running its play tick to drive the game.
+            _gameWindow = new Editor.PlayMode.GameWindow();
             _gameWindow.Closed += (s, e) => { _gameWindow = null; };
             _gameWindow.Show();
         }

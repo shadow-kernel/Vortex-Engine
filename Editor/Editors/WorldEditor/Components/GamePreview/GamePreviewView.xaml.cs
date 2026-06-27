@@ -41,6 +41,8 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         private bool _mouseCaptured;
         private bool _mouseJustCaptured;
         private bool _gameViewMode; // "Game" tab selected: clean view + placeholder until Play is pressed
+        private ECS.Vector3 _extSnapPos; // frozen main-camera pose: the editor's placeholder while the game runs externally
+        private ECS.Vector3 _extSnapRot;
         private bool IsPlaying => Editor.Core.Services.PlayModeService.Instance.State == Editor.Core.Services.PlayState.Playing;
 
         public GamePreviewView()
@@ -158,13 +160,17 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             // back into the C# transforms so the viewport shows the live simulation.
             if (playing)
             {
-                // The external game window feeds mouse-look itself; otherwise the editor viewport does.
-                if (!Editor.Core.Services.PlayModeService.Instance.IsExternalWindow)
+                bool external = Editor.Core.Services.PlayModeService.Instance.IsExternalWindow;
+                // The external game window feeds mouse-look + sets its own camera; otherwise the editor does.
+                if (!external)
                     UpdateGameMouseLook();                                 // lock/feed mouse delta to scripts; ESC frees
                 VortexAPI.StepEngineRuntime(deltaTime);
                 ReadbackPhysics();
                 Editor.Scripting.ScriptRuntime.Instance.Update(deltaTime); // run gameplay scripts (movement, etc.)
-                ApplyMainCameraView();                                     // view = the (script-movable) main camera
+                if (external)
+                    Editor.Core.Services.PlayCameraHelper.ApplyPose(_extSnapPos, _extSnapRot); // editor = frozen placeholder
+                else
+                    ApplyMainCameraView();                                 // editor = live game view
             }
 
             // Submit scene data for rendering
@@ -694,9 +700,17 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                 SetGameViewportLock(true);   // hide the viewport toolbar while the game runs
                 VortexAPI.ShowGrid(false);   // the editor grid/gizmos are build aids — not the game
                 VortexAPI.ShowGizmos(false);
-                // The external game window owns the mouse when it's the play target.
-                if (!Editor.Core.Services.PlayModeService.Instance.IsExternalWindow)
-                    CaptureGameMouse();      // lock + hide cursor -> mouse-look goes to the player (ESC frees)
+                if (Editor.Core.Services.PlayModeService.Instance.IsExternalWindow)
+                {
+                    // The game runs in the external window. Freeze the editor viewport on the main
+                    // camera's start pose so it shows a placeholder, NOT a second live render.
+                    var t = Editor.Core.Services.PlayCameraHelper.FindMainCamera(_currentScene ?? ProjectData.Current?.ActiveScene);
+                    if (t != null) { _extSnapPos = t.LocalPosition; _extSnapRot = t.LocalRotation; }
+                }
+                else
+                {
+                    CaptureGameMouse();      // in-viewport play: lock + hide cursor -> mouse-look (ESC frees)
+                }
                 UpdateGamePlaceholder();     // hide the "Press Play" overlay
                 return;
             }
@@ -944,19 +958,9 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         /// </summary>
         private void ApplyMainCameraView()
         {
-            var t = FindMainCameraTransform();
-            if (t == null) return;
-            var p = t.LocalPosition;
-            var rot = t.LocalRotation; // Euler degrees: X = pitch, Y = yaw
-            // Clamp pitch so the view never looks fully vertical — a forward parallel to up makes the
-            // look-at matrix degenerate and the whole image collapses to a line ("langer Strich").
-            float pitchDeg = rot.X < -89f ? -89f : (rot.X > 89f ? 89f : rot.X);
-            float pitch = pitchDeg * (float)(Math.PI / 180.0);
-            float yaw = rot.Y * (float)(Math.PI / 180.0);
-            float fx = (float)(Math.Sin(yaw) * Math.Cos(pitch));
-            float fy = (float)(-Math.Sin(pitch));
-            float fz = (float)(Math.Cos(yaw) * Math.Cos(pitch));
-            VortexAPI.SetViewCamera(p.X, p.Y, p.Z, p.X + fx, p.Y + fy, p.Z + fz, 0f, 1f, 0f);
+            // Shared with the external game window so both render through the scene's main camera the
+            // same way (pitch clamped to avoid a degenerate "langer Strich" look-at).
+            Editor.Core.Services.PlayCameraHelper.ApplyMainCamera(_currentScene ?? ProjectData.Current?.ActiveScene);
         }
 
         private Editor.ECS.Components.Transform FindMainCameraTransform()
@@ -1058,7 +1062,13 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                 int vertices = VortexAPI.VertexCount;
                 
                 string status = $"FPS: {fps} | Draw Calls: {drawCalls} | Vertices: {vertices}";
-                if (Editor.Core.Services.PlayModeService.Instance.IsPlaying)
+                if (Editor.Core.Services.PlayModeService.Instance.IsPlaying
+                    && Editor.Core.Services.PlayModeService.Instance.IsExternalWindow)
+                {
+                    float t = VortexAPI.GameTime();
+                    status += $"  |  ▶ {((int)t) / 60:00}:{((int)t) % 60:00}  ·  Spiel läuft im externen Fenster (ESC dort = Maus frei)";
+                }
+                else if (Editor.Core.Services.PlayModeService.Instance.IsPlaying)
                 {
                     float t = VortexAPI.GameTime();
                     status += $"  |  ▶ {((int)t) / 60:00}:{((int)t) % 60:00}";
