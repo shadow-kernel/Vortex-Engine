@@ -192,8 +192,38 @@ namespace Editor.Core.Services.Git
             return await CommitAsync(repoPath, message);
         }
 
+        // ---- history ----
+        /// <summary>Recent commits (newest first) for the history view.</summary>
+        public async Task<IReadOnlyList<GitCommit>> LogAsync(string repoPath, int max = 100)
+        {
+            var list = new List<GitCommit>();
+            var r = await RunAsync(repoPath, "log --max-count=" + max + " --pretty=format:%h%x1f%an%x1f%ad%x1f%s --date=short");
+            if (!r.Success) return list;
+            foreach (var line in (r.StdOut ?? "").Replace("\r", "").Split('\n'))
+            {
+                if (string.IsNullOrEmpty(line)) continue;
+                var p = line.Split('\x1f');
+                if (p.Length >= 4) list.Add(new GitCommit { Hash = p[0], Author = p[1], Date = p[2], Subject = p[3] });
+            }
+            return list;
+        }
+
         // ---- remote ----
-        public Task<GitResult> PushAsync(string repoPath) => RunAsync(repoPath, "push");
+        /// <summary>Push — sets the upstream on first push (push -u origin &lt;branch&gt;) and gives a clear
+        /// message when there is no remote configured.</summary>
+        public async Task<GitResult> PushAsync(string repoPath)
+        {
+            if (!await HasRemoteAsync(repoPath))
+                return new GitResult { ExitCode = 1, StdErr = "No remote set. Add one in Project Settings → Git or via 'Set remote…'." };
+            var r = await RunAsync(repoPath, "push");
+            if (!r.Success && (r.StdErr ?? "").IndexOf("upstream", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                var branch = await CurrentBranchAsync(repoPath);
+                if (!string.IsNullOrEmpty(branch))
+                    return await RunAsync(repoPath, "push -u origin " + Q(branch));
+            }
+            return r;
+        }
         public Task<GitResult> PullAsync(string repoPath) => RunAsync(repoPath, "pull --rebase");
         public Task<GitResult> FetchAsync(string repoPath) => RunAsync(repoPath, "fetch --all");
         public async Task<bool> HasRemoteAsync(string repoPath)

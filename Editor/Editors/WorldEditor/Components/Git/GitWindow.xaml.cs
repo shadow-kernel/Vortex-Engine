@@ -42,7 +42,9 @@ namespace Editor.Editors.WorldEditor.Components.Git
             SetBusy(true, "Loading…");
             await GitService.Instance.EnsureRepoAsync(_repo);
             await RefreshAll();
-            SetBusy(false, "Ready");
+            SetBusy(false, HistoryList.Items.Count == 0
+                ? "New repo — make your first commit to start the history."
+                : "Ready");
         }
 
         // ---- refresh ----
@@ -51,6 +53,14 @@ namespace Editor.Editors.WorldEditor.Components.Git
             await RefreshBranches();
             await RefreshChanges();
             await RefreshTags();
+            await RefreshHistory();
+        }
+
+        private async Task RefreshHistory()
+        {
+            var commits = await GitService.Instance.LogAsync(_repo);
+            HistoryList.Items.Clear();
+            foreach (var c in commits) HistoryList.Items.Add(c);
         }
 
         private async Task RefreshBranches()
@@ -229,6 +239,7 @@ namespace Editor.Editors.WorldEditor.Components.Git
             var r = await GitService.Instance.StageAllAndCommitAsync(_repo, msg);
             if (r.Success) CommitBox.Clear();
             await RefreshChanges();
+            await RefreshHistory();
             SetBusy(false, r.Success ? "Committed." : "Commit failed: " + FirstLine(r.Message));
         }
 

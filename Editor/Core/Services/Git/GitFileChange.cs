@@ -10,6 +10,17 @@ namespace Editor.Core.Services.Git
         Conflicted,
     }
 
+    /// <summary>One commit from <c>git log</c> (for the history view).</summary>
+    public sealed class GitCommit
+    {
+        public string Hash { get; set; } = "";
+        public string Author { get; set; } = "";
+        public string Date { get; set; } = "";
+        public string Subject { get; set; } = "";
+        public string Display => Hash + "  " + Subject;
+        public string Meta => Author + " · " + Date;
+    }
+
     /// <summary>One changed path reported by <c>git status</c>.</summary>
     public sealed class GitFileChange
     {
