@@ -171,8 +171,35 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
 
         private void BuildSettings_Click(object sender, RoutedEventArgs e)
         {
-            // TODO: Implement build settings
-            MessageBox.Show("Build-Einstellungen - Noch nicht implementiert", "Info", MessageBoxButton.OK, MessageBoxImage.Information);
+            var project = ProjectData.Current;
+            if (project == null) { MessageBox.Show("Open a project first.", "Export", MessageBoxButton.OK, MessageBoxImage.Information); return; }
+            var outDir = System.IO.Path.Combine(project.Path, "Build", project.Name);
+            var msg = "Export Game packages a runnable build into:\n  " + outDir +
+                      "\n\nIt copies the engine runtime + all Assets, compiles your gameplay scripts, and writes a launcher.\n\nExport now?";
+            if (MessageBox.Show(msg, "Export Game", MessageBoxButton.YesNo, MessageBoxImage.Information) == MessageBoxResult.Yes)
+                ExportGame(open: true);
+        }
+
+        /// <summary>Exports the current project to &lt;project&gt;/Build/&lt;name&gt; via GameExporter. Returns the output dir or null.</summary>
+        private string ExportGame(bool open)
+        {
+            var project = ProjectData.Current;
+            if (project == null) { MessageBox.Show("Open a project first.", "Export", MessageBoxButton.OK, MessageBoxImage.Information); return null; }
+            var outDir = System.IO.Path.Combine(project.Path, "Build", project.Name);
+            Mouse.OverrideCursor = System.Windows.Input.Cursors.Wait;
+            Editor.Core.Services.Build.ExportResult r;
+            try { r = Editor.Core.Services.Build.GameExporter.Export(outDir); }
+            finally { Mouse.OverrideCursor = null; }
+
+            if (!r.Success)
+            {
+                MessageBox.Show(r.Message, "Export — problem", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return null;
+            }
+            if (open && MessageBox.Show("Game exported (scripts compiled OK) to:\n" + r.OutputDir + "\n\nOpen the folder?",
+                    "Export complete", MessageBoxButton.YesNo, MessageBoxImage.Information) == MessageBoxResult.Yes)
+                try { System.Diagnostics.Process.Start("explorer.exe", "\"" + r.OutputDir + "\""); } catch { }
+            return r.OutputDir;
         }
 
         private static Editor.Editors.WorldEditor.Components.Git.GitWindow _gitWindow;
@@ -197,14 +224,24 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
 
         private void Build_Click(object sender, RoutedEventArgs e)
         {
-            // TODO: Implement build
-            MessageBox.Show("Projekt bauen - Noch nicht implementiert", "Info", MessageBoxButton.OK, MessageBoxImage.Information);
+            ExportGame(open: true);
         }
 
         private void BuildAndRun_Click(object sender, RoutedEventArgs e)
         {
-            // TODO: Implement build and run
-            MessageBox.Show("Projekt bauen und ausf�hren - Noch nicht implementiert", "Info", MessageBoxButton.OK, MessageBoxImage.Information);
+            var outDir = ExportGame(open: false);
+            if (outDir == null) return;
+            // Launch the produced .cmd launcher. (A chrome-less standalone player is the documented next step;
+            // for now this opens the project in the Vortex player from the exported folder.)
+            try
+            {
+                var cmd = System.IO.Directory.GetFiles(outDir, "Play *.cmd");
+                if (cmd.Length > 0)
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(cmd[0]) { UseShellExecute = true, WorkingDirectory = outDir });
+                else
+                    System.Diagnostics.Process.Start("explorer.exe", "\"" + outDir + "\"");
+            }
+            catch (Exception ex) { MessageBox.Show("Could not launch: " + ex.Message, "Run", MessageBoxButton.OK, MessageBoxImage.Warning); }
         }
 
         private void Exit_Click(object sender, RoutedEventArgs e)

@@ -274,6 +274,7 @@
     <Compile Include="Core\Services\Git\GitResult.cs" />
     <Compile Include="Core\Services\Git\GitFileChange.cs" />
     <Compile Include="Core\Services\Git\GitService.cs" />
+    <Compile Include="Core\Services\Build\GameExporter.cs" />
     <Compile Include="Core\Services\SelectionService.cs" />
     <Compile Include="Core\Services\ShaderService.cs" />
     <Compile Include="Core\Services\TransformGizmoService.cs" />
