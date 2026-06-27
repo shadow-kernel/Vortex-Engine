@@ -348,7 +348,7 @@ d:DesignHeight="64" d:DesignWidth="1200">
             <TextBlock Text="Vortex Engine" Foreground="#E9E9ED" FontSize="14" FontWeight="SemiBold"
                        VerticalAlignment="Center" Margin="2,0,18,0"/>
             <Menu Background="Transparent" Foreground="#E9E9ED" VerticalAlignment="Center" IsMainMenu="True"
-                  Visibility="Collapsed"
+                  Visibility="Visible"
                   shell:WindowChrome.IsHitTestVisibleInChrome="True">
             
             <!-- File Menu -->
