@@ -14,7 +14,7 @@
         <SolidColorBrush x:Key="PanelBackground" Color="#1A1A1C"/>
         <SolidColorBrush x:Key="CardBackground" Color="#212124"/>
         <SolidColorBrush x:Key="BorderBrushDark" Color="#33333A"/>
-        <SolidColorBrush x:Key="AccentBrush" Color="#3FA9F5"/>
+        <SolidColorBrush x:Key="AccentBrush" Color="#6C5CE7"/>
 
         <Style x:Key="LabelText" TargetType="TextBlock">
             <Setter Property="Foreground" Value="#E5FFFFFF"/>
@@ -50,7 +50,7 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="BorderBrush" Value="#3B4A5C"/>
+                                <Setter Property="BorderBrush" Value="#44444C"/>
                             </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
                                 <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
@@ -125,10 +125,10 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Border" Property="Background" Value="#56B7FF"/>
+                                <Setter TargetName="Border" Property="Background" Value="#7D6EF0"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Border" Property="Background" Value="#2E93D6"/>
+                                <Setter TargetName="Border" Property="Background" Value="#5A49D6"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter Property="Opacity" Value="0.6"/>
@@ -208,7 +208,7 @@
                     </Grid>
                 </StackPanel>
 
-                <TextBlock Grid.Row="2" Text="C:/Projekte/projektname" Style="{StaticResource HintText}"/>
+                <TextBlock Grid.Row="2" Text="A new folder with this name will be created at the location above." Style="{StaticResource HintText}"/>
 
                 <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,14,0,0" FlowDirection="LeftToRight">
 

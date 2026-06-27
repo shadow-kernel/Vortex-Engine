@@ -14,7 +14,7 @@ Background="Transparent">
         <SolidColorBrush x:Key="PanelBackground" Color="#1A1A1C"/>
         <SolidColorBrush x:Key="CardBackground" Color="#212124"/>
         <SolidColorBrush x:Key="BorderBrushDark" Color="#33333A"/>
-        <SolidColorBrush x:Key="AccentBrush" Color="#3FA9F5"/>
+        <SolidColorBrush x:Key="AccentBrush" Color="#6C5CE7"/>
 
         <Style x:Key="LabelText" TargetType="TextBlock">
             <Setter Property="Foreground" Value="#E5FFFFFF"/>
@@ -50,7 +50,7 @@ Background="Transparent">
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="BorderBrush" Value="#3B4A5C"/>
+                                <Setter Property="BorderBrush" Value="#44444C"/>
                             </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
                                 <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
@@ -125,10 +125,10 @@ Background="Transparent">
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Border" Property="Background" Value="#56B7FF"/>
+                                <Setter TargetName="Border" Property="Background" Value="#7D6EF0"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Border" Property="Background" Value="#2E93D6"/>
+                                <Setter TargetName="Border" Property="Background" Value="#5A49D6"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter Property="Opacity" Value="0.6"/>
@@ -225,7 +225,7 @@ Background="Transparent">
                 </Grid.RowDefinitions>
 
                 <StackPanel Grid.Row="0" Margin="0,0,0,16">
-                    <TextBlock Text="Suche" Style="{StaticResource LabelText}"/>
+                    <TextBlock Text="Search" Style="{StaticResource LabelText}"/>
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
@@ -236,7 +236,7 @@ Background="Transparent">
                                  TextChanged="SearchTextBox_OnTextChanged"/>
                         <Button Grid.Column="1" Style="{StaticResource IconButton}" Content="" Margin="10,0,0,0"/>
                     </Grid>
-                    <TextBlock Text="Sortiert nach: Letzte Änderung (neueste zuerst)" Style="{StaticResource HintText}"/>
+                    <TextBlock Text="Sorted by: last modified (newest first)" Style="{StaticResource HintText}"/>
                 </StackPanel>
 
                 <Border Grid.Row="1" Background="#28282C" BorderBrush="{StaticResource BorderBrushDark}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,0,0,12" MinHeight="260" VerticalAlignment="Stretch">
@@ -287,14 +287,14 @@ Background="Transparent">
                                         <TextBlock Text="{Binding Name}" FontSize="16" FontWeight="SemiBold" Foreground="#E9E9ED"/>
                                         <TextBlock Text="{Binding Path}" Foreground="#9A9AA1" FontSize="12" Margin="0,4,0,2"/>
                                         <StackPanel Orientation="Horizontal">
-                                            <TextBlock Text="Letzte Änderung:" Foreground="#73737A" FontSize="12"/>
+                                            <TextBlock Text="Last modified:" Foreground="#73737A" FontSize="12"/>
                                             <TextBlock Text="{Binding LastModifiedDisplay}" Foreground="#E9E9ED" FontSize="12" Margin="6,0,0,0"/>
                                         </StackPanel>
                                     </StackPanel>
                                     <Button Grid.Column="2" 
                                             Style="{StaticResource DeleteButton}" 
                                             Content="&#xE74D;" 
-                                            ToolTip="Projekt löschen"
+                                            ToolTip="Delete project"
                                             Tag="{Binding}"
                                             Click="DeleteButton_Click"
                                             VerticalAlignment="Center"
