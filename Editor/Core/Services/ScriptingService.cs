@@ -57,7 +57,7 @@ namespace Editor.Core.Services
             Directory.CreateDirectory(playerDir);
 
             var apiPath = Path.Combine(scriptsDir, "VortexScripting.cs");
-            if (!File.Exists(apiPath)) File.WriteAllText(apiPath, ApiTemplate());
+            File.WriteAllText(apiPath, ApiTemplate()); // always refresh — the stub is auto-generated and must mirror the current engine API
 
             var path = Path.Combine(playerDir, "PlayerController.cs");
             if (!File.Exists(path)) File.WriteAllText(path, PlayerControllerTemplate());
@@ -75,7 +75,7 @@ namespace Editor.Core.Services
 
             var scriptsDir = ScriptsDir;
             var apiPath = Path.Combine(scriptsDir, "VortexScripting.cs");
-            if (!File.Exists(apiPath)) File.WriteAllText(apiPath, ApiTemplate());
+            File.WriteAllText(apiPath, ApiTemplate()); // always refresh — the stub is auto-generated and must mirror the current engine API
             if (!File.Exists(csproj)) File.WriteAllText(csproj, CsprojTemplate(name));
             if (!File.Exists(sln)) File.WriteAllText(sln, SlnTemplate(name));
             return sln;
