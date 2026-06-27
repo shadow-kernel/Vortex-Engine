@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
   <PropertyGroup>
@@ -91,22 +91,313 @@
     <Reference Include="PresentationFramework" />
   </ItemGroup>
 
-  <!-- Source + XAML are auto-included by folder (glob), so adding a file no longer means editing
-       this project. The folder layout (Core/, Editors/, ECS/, Scripting/, Dialogs/, ...) IS the
-       structure. obj/bin are excluded; App.xaml is the WPF entry point (ApplicationDefinition). -->
   <ItemGroup>
     <ApplicationDefinition Include="App.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </ApplicationDefinition>
-
-    <Compile Include="**\*.cs" Exclude="obj\**\*.cs;bin\**\*.cs" />
-
-    <Page Include="**\*.xaml" Exclude="App.xaml;obj\**\*.xaml;bin\**\*.xaml">
+    <Page Include="Assets\Images\ImageResources.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>
-
+    <Page Include="Assets\Styles\DarkContextMenuStyle.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Assets\Styles\VortexTheme.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Dialogs\ColorPickerDialog.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Dialogs\ImportResultDialog.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Editors\WorldEditor\Components\AssetBrowser\AssetBrowserView.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Editors\WorldEditor\Components\CameraPreview\CameraPreviewOverlay.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Editors\WorldEditor\Components\FileExplorer\FileExplorerView.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Editors\WorldEditor\Components\FileExplorer\FileTreeView.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Editors\WorldEditor\Components\GamePreview\GamePreviewView.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Editors\WorldEditor\Components\HeaderBar\HeaderBarView.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Editors\WorldEditor\Components\HistoryLog\HistoryLogView.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Editors\WorldEditor\Components\Inspector\AssetPickerDialog.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Editors\WorldEditor\Components\Inspector\CameraInspector.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Editors\WorldEditor\Components\Inspector\DynamicInspectorView.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Editors\WorldEditor\Components\Inspector\LightInspector.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Editors\WorldEditor\Components\Inspector\MeshRendererInspector.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Editors\WorldEditor\Components\Inspector\SkyboxInspector.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Editors\WorldEditor\Components\Inspector\TransformInspector.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Editors\WorldEditor\Components\SceneHierarchy\SceneHierarchyView.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Editors\WorldEditor\Themes\DarkDockTheme.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Editors\WorldEditor\WorldEditorView.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="MainWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="PlayMode\GameWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Project\Projection\NewProjectView.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Project\Projection\OpenProjectView.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Project\Projection\ProjectBrowserWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Compile Include="App.xaml.cs">
+      <DependentUpon>App.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Common\ViewModelBase.cs" />
+    <Compile Include="Core\Assets\AssetDatabase.cs" />
+    <Compile Include="Core\Assets\AssetDeletionService.cs" />
+    <Compile Include="Core\Assets\AssetMetadata.cs" />
+    <Compile Include="Core\Assets\AssetMetadataService.cs" />
+    <Compile Include="Core\Assets\AssetReference.cs" />
+    <Compile Include="Core\Assets\AssetSystem.cs" />
+    <Compile Include="Core\Assets\AssetTagService.cs" />
+    <Compile Include="Core\Assets\AssetType.cs" />
+    <Compile Include="Core\Assets\DependencyResolver.cs" />
+    <Compile Include="Core\Assets\ModelAssetBuilder.cs" />
+    <Compile Include="Core\Assets\ModelAssetData.cs" />
+    <Compile Include="Core\Assets\TextureNamingConventions.cs" />
+    <Compile Include="Core\Assets\UniversalModelData.cs" />
+    <Compile Include="Core\Assets\UniversalModelParser.cs" />
+    <Compile Include="Core\Assets\VortexMaterial.cs" />
+    <Compile Include="Core\Assets\VortexShader.cs" />
+    <Compile Include="Core\Data\Project.cs" />
+    <Compile Include="Core\Data\ProjectManifest.cs" />
+    <Compile Include="Core\Data\ProjectRef.cs" />
+    <Compile Include="Core\Data\Scene.cs" />
+    <Compile Include="Core\Exceptions\DuplicateProjectPathException.cs" />
+    <Compile Include="Core\Exceptions\ProjectException.cs" />
+    <Compile Include="Core\Exceptions\ProjectIOException.cs" />
+    <Compile Include="Core\Exceptions\ProjectValidationException.cs" />
+    <Compile Include="Core\FileExtensions.cs" />
+    <Compile Include="Core\Serialization\DataSerializer.cs" />
+    <Compile Include="Core\Services\CameraPreviewService.cs" />
+    <Compile Include="Core\Services\CameraService.cs" />
+    <Compile Include="Core\Services\EditorCameraController.cs" />
+    <Compile Include="Core\Services\EditorStateService.cs" />
+    <Compile Include="Core\Services\EditorViewportService.cs" />
+    <Compile Include="Core\Services\EntityClipboardService.cs" />
+    <Compile Include="Core\Services\InputBindingsService.cs" />
+    <Compile Include="Core\Services\MaterialService.cs" />
+    <Compile Include="Core\Services\MeshService.cs" />
+    <Compile Include="Core\Services\ModelImportService.cs" />
+    <Compile Include="Core\Services\MultiViewportRenderService.cs" />
+    <Compile Include="Core\Services\PlayCameraHelper.cs" />
+    <Compile Include="Core\Services\PlayModeService.cs" />
+    <Compile Include="Core\Services\ProjectService.cs" />
+    <Compile Include="Core\Services\RaycastService.cs" />
+    <Compile Include="Core\Services\Rendering\AssetPreviewRenderer.cs" />
+    <Compile Include="Core\Services\Rendering\SecondaryViewportRenderer.cs" />
+    <Compile Include="Core\Services\Rendering\ViewportRenderManager.cs" />
+    <Compile Include="Core\Services\SceneRenderService.cs" />
+    <Compile Include="Core\Services\SceneService.cs" />
+    <Compile Include="Core\Services\ScriptingService.cs" />
+    <Compile Include="Core\Services\SelectionService.cs" />
+    <Compile Include="Core\Services\ShaderService.cs" />
+    <Compile Include="Core\Services\TransformGizmoService.cs" />
+    <Compile Include="Core\Services\ViewportRenderer.cs" />
+    <Compile Include="Core\UndoableViewModelBase.cs" />
+    <Compile Include="Core\UndoRedo\Commands\ActionCommand.cs" />
+    <Compile Include="Core\UndoRedo\Commands\CollectionCommands.cs" />
+    <Compile Include="Core\UndoRedo\Commands\CompositeCommand.cs" />
+    <Compile Include="Core\UndoRedo\Commands\FileSystemCommands.cs" />
+    <Compile Include="Core\UndoRedo\Commands\PropertyChangeCommand.cs" />
+    <Compile Include="Core\UndoRedo\IUndoableCommand.cs" />
+    <Compile Include="Core\UndoRedo\UndoableCommandBase.cs" />
+    <Compile Include="Core\UndoRedo\UndoRedoExtensions.cs" />
+    <Compile Include="Core\UndoRedo\UndoRedoManager.cs" />
+    <Compile Include="Core\UndoRedo\UndoScope.cs" />
+    <Compile Include="Core\Validation\ProjectValidator.cs" />
+    <Compile Include="Core\ViewModelBase.cs" />
+    <Compile Include="Dialogs\AssetImportDialog.cs" />
+    <Compile Include="Dialogs\AssetPickerDialog.cs" />
+    <Compile Include="Dialogs\AssetTagEditorDialog.cs" />
+    <Compile Include="Dialogs\ColorPickerDialog.xaml.cs">
+      <DependentUpon>ColorPickerDialog.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Dialogs\DialogStyles.cs" />
+    <Compile Include="Dialogs\ImportResultDialog.xaml.cs">
+      <DependentUpon>ImportResultDialog.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Dialogs\MaterialEditorDialog.cs" />
+    <Compile Include="Dialogs\TextureEditorDialog.cs" />
+    <Compile Include="Dialogs\UniversalModelEditorDialog.cs" />
+    <Compile Include="DllWrapper\Camera\VortexCamera.cs" />
+    <Compile Include="DllWrapper\Core\VortexCore.cs" />
+    <Compile Include="DllWrapper\Gizmos\CameraGizmo.cs" />
+    <Compile Include="DllWrapper\Gizmos\RotationGizmo.cs" />
+    <Compile Include="DllWrapper\Gizmos\ScaleGizmo.cs" />
+    <Compile Include="DllWrapper\Gizmos\SelectionOutline.cs" />
+    <Compile Include="DllWrapper\Gizmos\TransformGizmo.cs" />
+    <Compile Include="DllWrapper\Input\VortexInput.cs" />
+    <Compile Include="DllWrapper\Rendering\VortexRendering.cs" />
+    <Compile Include="DllWrapper\Resources\VortexResources.cs" />
+    <Compile Include="DllWrapper\VortexAPI.cs" />
+    <Compile Include="ECS\Component.cs" />
+    <Compile Include="ECS\Components\Audio\AudioSource.cs" />
+    <Compile Include="ECS\Components\Lighting\Light.cs" />
+    <Compile Include="ECS\Components\Physics\Collider.cs" />
+    <Compile Include="ECS\Components\Physics\Rigidbody.cs" />
+    <Compile Include="ECS\Components\Rendering\Camera.cs" />
+    <Compile Include="ECS\Components\Rendering\MeshRenderer.cs" />
+    <Compile Include="ECS\Components\Rendering\Skybox.cs" />
+    <Compile Include="ECS\Components\Scripting\Script.cs" />
+    <Compile Include="ECS\Components\Transform.cs" />
+    <Compile Include="ECS\GameEntity.cs" />
+    <Compile Include="ECS\Math\VectorTypes.cs" />
+    <Compile Include="Editors\WorldEditor\Components\AssetBrowser\AssetBrowserView.xaml.cs">
+      <DependentUpon>AssetBrowserView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Editors\WorldEditor\Components\CameraPreview\CameraPreviewOverlay.xaml.cs">
+      <DependentUpon>CameraPreviewOverlay.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Editors\WorldEditor\Components\FileExplorer\Converters\BoolToVisibilityConverter.cs" />
+    <Compile Include="Editors\WorldEditor\Components\FileExplorer\FileExplorerView.xaml.cs">
+      <DependentUpon>FileExplorerView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Editors\WorldEditor\Components\FileExplorer\FileTreeView.xaml.cs">
+      <DependentUpon>FileTreeView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Editors\WorldEditor\Components\FileExplorer\Models\FileSystemItem.cs" />
+    <Compile Include="Editors\WorldEditor\Components\FileExplorer\Services\FileExplorerService.cs" />
+    <Compile Include="Editors\WorldEditor\Components\GamePreview\GamePreviewView.xaml.cs">
+      <DependentUpon>GamePreviewView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Editors\WorldEditor\Components\GamePreview\ViewportHost.cs" />
+    <Compile Include="Editors\WorldEditor\Components\HeaderBar\HeaderBarView.xaml.cs">
+      <DependentUpon>HeaderBarView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Editors\WorldEditor\Components\HistoryLog\HistoryLogView.xaml.cs">
+      <DependentUpon>HistoryLogView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Editors\WorldEditor\Components\HistoryLog\HistoryLogViewModel.cs" />
+    <Compile Include="Editors\WorldEditor\Components\Inspector\AssetPickerDialog.xaml.cs">
+      <DependentUpon>AssetPickerDialog.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Editors\WorldEditor\Components\Inspector\CameraInspector.xaml.cs">
+      <DependentUpon>CameraInspector.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Editors\WorldEditor\Components\Inspector\DynamicInspectorView.xaml.cs">
+      <DependentUpon>DynamicInspectorView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Editors\WorldEditor\Components\Inspector\LightInspector.xaml.cs">
+      <DependentUpon>LightInspector.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Editors\WorldEditor\Components\Inspector\MeshRendererInspector.xaml.cs">
+      <DependentUpon>MeshRendererInspector.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Editors\WorldEditor\Components\Inspector\SkyboxInspector.xaml.cs">
+      <DependentUpon>SkyboxInspector.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Editors\WorldEditor\Components\Inspector\TransformInspector.xaml.cs">
+      <DependentUpon>TransformInspector.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Editors\WorldEditor\Components\SceneHierarchy\SceneHierarchyView.xaml.cs">
+      <DependentUpon>SceneHierarchyView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Editors\WorldEditor\Components\SceneHierarchy\SceneHierarchyViewModel.cs" />
+    <Compile Include="Editors\WorldEditor\Converters\EntityConverters.cs" />
+    <Compile Include="Editors\WorldEditor\Converters\VisibilityConverters.cs" />
+    <Compile Include="Editors\WorldEditor\DragDrop\ViewportDropHandler.cs" />
+    <Compile Include="Editors\WorldEditor\Services\WindowService.cs" />
+    <Compile Include="Editors\WorldEditor\Themes\DarkAvalonTheme.cs" />
+    <Compile Include="Editors\WorldEditor\WorldEditorView.xaml.cs">
+      <DependentUpon>WorldEditorView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="MainWindow.xaml.cs">
+      <DependentUpon>MainWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="PlayMode\GameWindow.xaml.cs">
+      <DependentUpon>GameWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Project\Model\NewProjectModel.cs" />
+    <Compile Include="Project\Model\OpenProjectModel.cs" />
+    <Compile Include="Project\Projection\NewProjectView.xaml.cs">
+      <DependentUpon>NewProjectView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Project\Projection\OpenProjectView.xaml.cs">
+      <DependentUpon>OpenProjectView.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Project\Projection\ProjectBrowserWindow.xaml.cs">
+      <DependentUpon>ProjectBrowserWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="Properties\Resources.Designer.cs">
+      <AutoGen>True</AutoGen>
+      <DesignTime>True</DesignTime>
+      <DependentUpon>Resources.resx</DependentUpon>
+    </Compile>
+    <Compile Include="Properties\Settings.Designer.cs">
+      <AutoGen>True</AutoGen>
+      <DependentUpon>Settings.settings</DependentUpon>
+      <DesignTimeSharedInput>True</DesignTimeSharedInput>
+    </Compile>
+    <Compile Include="Scripting\ScriptRuntime.cs" />
+    <Compile Include="Scripting\VortexScriptApi.cs" />
+    <Compile Include="Utilities\Utilities.cs" />
     <EmbeddedResource Include="Properties\Resources.resx">
       <Generator>ResXFileCodeGenerator</Generator>
       <LastGenOutput>Resources.Designer.cs</LastGenOutput>
@@ -117,7 +408,6 @@
     </None>
     <None Include="packages.config" />
     <None Include="App.config" />
-
     <Resource Include="Assets\Images\Logo.png" />
     <Resource Include="Assets\Images\Logo.ico" />
     <Resource Include="Logo.ico" />
@@ -132,3 +422,4 @@
     <Error Condition="!Exists('..\packages\System.ValueTuple.4.6.1\build\net471\System.ValueTuple.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\System.ValueTuple.4.6.1\build\net471\System.ValueTuple.targets'))" />
   </Target>
 </Project>
+
