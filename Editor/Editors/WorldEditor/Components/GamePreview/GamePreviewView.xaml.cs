@@ -740,6 +740,24 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             // The viewport shows the static main-camera preview; the "Press Play" hint lives in the
             // status bar (a WPF overlay can't paint over the engine's child HWND — airspace).
             UpdateStatusBar();
+            UpdateExternalOverlay();
+        }
+
+        /// <summary>While the game runs in the external window, dim the editor viewport with a Popup
+        /// (over the HWND) + "Läuft im externen Fenster" so the frozen preview isn't mistaken for the game.</summary>
+        private void UpdateExternalOverlay()
+        {
+            if (ExternalPlayPopup == null) return;
+            var pms = Editor.Core.Services.PlayModeService.Instance;
+            bool show = pms.IsExternalWindow && pms.IsPlaying;
+            if (show && MainViewportPanel != null && MainViewportPanel.ActualWidth > 2 && ExternalPlayDim != null)
+            {
+                ExternalPlayDim.Width = MainViewportPanel.ActualWidth;
+                ExternalPlayDim.Height = MainViewportPanel.ActualHeight;
+            }
+            // Re-open to reposition/resize against the (possibly changed) viewport.
+            ExternalPlayPopup.IsOpen = false;
+            ExternalPlayPopup.IsOpen = show;
         }
 
         /// <summary>Game mouse-look + cursor lock. While captured the cursor is hidden and re-centered
@@ -1049,6 +1067,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                 var height = (uint)Math.Max(1, _host.ActualHeight);
                 VortexAPI.ResizeRender(width, height);
             }
+            UpdateExternalOverlay(); // keep the "external window" dim sized to the viewport
         }
 
         private void UpdateStatusBar()

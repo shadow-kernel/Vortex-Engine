@@ -525,8 +525,24 @@ d:DesignHeight="400" d:DesignWidth="600">
         </Grid>
     </Border>
     
-    <!-- NOTE: CameraPreviewOverlay is now in WorldEditorView as a Popup to render over HwndHost.
-         The "Game tab, not yet playing" placeholder is shown in the status bar + as a static main-camera
-         preview, because a WPF overlay can't paint over the engine's child HWND (airspace). -->
+    <!-- NOTE: a plain WPF Border can't paint over the engine's child HWND (airspace) — overlays must be
+         a Popup (separate top-level window that floats above the HWND), like below + CameraPreviewOverlay. -->
+
+    <!-- "Läuft im externen Fenster" dim overlay: shown over the viewport while the game runs in the
+         standalone window, so the static preview isn't mistaken for the live game. -->
+    <Popup x:Name="ExternalPlayPopup" PlacementTarget="{Binding ElementName=MainViewportPanel}"
+           Placement="Center" AllowsTransparency="True" StaysOpen="True" IsOpen="False">
+        <Border x:Name="ExternalPlayDim" Background="#F0121214">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="30">
+                <TextBlock Text="&#xE7F4;" FontFamily="Segoe MDL2 Assets" FontSize="42"
+                           Foreground="#6C5CE7" HorizontalAlignment="Center"/>
+                <TextBlock Text="Läuft im externen Fenster" Foreground="#F5F5F7" FontSize="17"
+                           FontWeight="SemiBold" Margin="0,14,0,0" HorizontalAlignment="Center"/>
+                <TextBlock Text="Das Spiel läuft im separaten Fenster — schließe es oder drücke Stop, um zurückzukehren."
+                           Foreground="#9A9AA1" FontSize="11.5" Margin="0,8,0,0" HorizontalAlignment="Center"
+                           TextWrapping="Wrap" MaxWidth="340" TextAlignment="Center"/>
+            </StackPanel>
+        </Border>
+    </Popup>
 </Grid>
 </UserControl>

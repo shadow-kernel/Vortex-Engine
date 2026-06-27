@@ -20,6 +20,7 @@ namespace Editor.PlayMode
         private bool _ready;
         private bool _mouseCaptured;
         private bool _justCaptured;
+        private bool _userReleased; // ESC freed the mouse + paused — don't auto-recapture until a click
 
         [DllImport("user32.dll")] private static extern int ShowCursor(bool show);
         [DllImport("user32.dll")] private static extern bool SetCursorPos(int x, int y);
@@ -58,16 +59,20 @@ namespace Editor.PlayMode
         private void OnFrame(object sender, EventArgs e)
         {
             if (!_ready) return;
+            var pms = PlayModeService.Instance;
+            bool playing = pms.State == PlayState.Playing;
 
-            // Lazily lock the mouse once the window is laid out + active (at host-create time the
-            // viewport size is still 0, so capturing there would no-op).
-            if (IsActive && !_mouseCaptured) CaptureGameMouse();
+            // ESC PAUSES the game and frees the mouse — no WASD/look while paused. Click to resume.
+            // (Global key state via GetAsyncKeyState — works even with the native HWND focused.)
+            if (EscDown() && playing) { pms.Pause(); ReleaseGameMouse(); _userReleased = true; }
+
+            // Auto-lock the mouse only while actively playing AND the user hasn't freed it with ESC.
+            if (IsActive && playing && !_mouseCaptured && !_userReleased) CaptureGameMouse();
 
             float dx = 0f, dy = 0f;
-            if (_mouseCaptured && IsActive)
+            if (_mouseCaptured && IsActive && playing)
             {
-                if (EscDown()) { ReleaseGameMouse(); } // global key state — works even with the native HWND focused
-                else if (GetCursorPos(out POINTW p) && Center(out int cx, out int cy))
+                if (GetCursorPos(out POINTW p) && Center(out int cx, out int cy))
                 {
                     if (_justCaptured) _justCaptured = false;
                     else
@@ -154,13 +159,10 @@ namespace Editor.PlayMode
         protected override void OnMouseDown(MouseButtonEventArgs e)
         {
             base.OnMouseDown(e);
-            if (!_mouseCaptured) CaptureGameMouse(); // click in the window re-locks the mouse
-        }
-
-        protected override void OnKeyDown(KeyEventArgs e)
-        {
-            base.OnKeyDown(e);
-            if (e.Key == Key.Escape) ReleaseGameMouse(); // ESC frees the mouse (Stop closes the window)
+            // A click resumes from pause and re-locks the mouse (the play continues).
+            if (PlayModeService.Instance.State == PlayState.Paused) PlayModeService.Instance.Resume();
+            _userReleased = false;
+            if (!_mouseCaptured) CaptureGameMouse();
         }
 
         private void TitleBar_MouseDown(object sender, MouseButtonEventArgs e)
