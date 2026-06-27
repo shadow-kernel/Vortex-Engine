@@ -142,6 +142,32 @@ namespace Editor.Core.Services.Git
             return list;
         }
 
+        /// <summary>Unified diff for one file (staged+unstaged vs HEAD; whole-file for new/untracked).
+        /// Returns "" when there is no textual diff (e.g. unchanged, or binary handled by the caller).</summary>
+        public async Task<string> DiffAsync(string repoPath, string relativePath)
+        {
+            if (string.IsNullOrEmpty(relativePath)) return "";
+            var hasHead = (await RunAsync(repoPath, "rev-parse --verify HEAD")).Success;
+            if (hasHead)
+            {
+                var r = await RunAsync(repoPath, "diff --no-color HEAD -- " + Q(relativePath));
+                if (!string.IsNullOrWhiteSpace(r.StdOut)) return r.StdOut;
+            }
+            // New / untracked file: show the whole thing as added (git returns exit 1 here — that's fine).
+            var ni = await RunAsync(repoPath, "diff --no-color --no-index -- \"/dev/null\" " + Q(relativePath));
+            return ni.StdOut ?? "";
+        }
+
+        /// <summary>True if git considers the path a binary blob (for the diff viewer to switch to a preview).</summary>
+        public async Task<bool> IsBinaryAsync(string repoPath, string relativePath)
+        {
+            if (string.IsNullOrEmpty(relativePath)) return false;
+            var r = await RunAsync(repoPath, "diff --no-color --numstat HEAD -- " + Q(relativePath));
+            // numstat prints "-\t-\t<path>" for binary files; "<add>\t<del>\t<path>" for text.
+            var outp = (r.StdOut ?? "").Trim();
+            return outp.StartsWith("-\t-");
+        }
+
         // ---- stage / commit ----
         public Task<GitResult> StageAllAsync(string repoPath) => RunAsync(repoPath, "add -A");
 
