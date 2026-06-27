@@ -88,7 +88,8 @@ namespace Editor.PlayMode
             // The GAME owns the mouse mode (Vortex.Cursor.Locked): locked = captured + hidden for mouse-look
             // (gameplay); unlocked = free cursor so the player can click the UI (lobby / ESC menu / shop).
             // ESC no longer pauses — a game script toggles Cursor.Locked instead. The sim keeps running.
-            bool wantLock = OwnsGameLoop && playing && Editor.Scripting.ScriptRuntime.Instance.CursorLocked;
+            // Capture in BOTH external-play modes: standalone player AND the editor's "Run in new window".
+            bool wantLock = playing && Editor.Scripting.ScriptRuntime.Instance.CursorLocked;
 
             float dx = 0f, dy = 0f;
             if (wantLock && IsActive)
