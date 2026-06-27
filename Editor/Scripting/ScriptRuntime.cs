@@ -49,6 +49,7 @@ namespace Editor.Scripting
             Vortex.Input.Host = this;
             Vortex.UI.Host = this;
             Vortex.Scene.Host = this;
+            Vortex.Cursor.Host = this;
 
             _entitiesById.Clear();
             _nextHandle = 0;
@@ -225,6 +226,12 @@ namespace Editor.Scripting
         /// <summary>Returns the requested scene name (and clears it), or null. The runtime driver calls this
         /// AFTER Update() and performs the switch (so it never happens mid-tick).</summary>
         public string ConsumePendingScene() { var s = _pendingScene; _pendingScene = null; return s; }
+
+        // --- mouse mode (game-controlled via Vortex.Cursor; the GameWindow enforces capture) ---
+        private bool _cursorLocked; // default false: free cursor (menus/lobby) until a script locks it
+        void Vortex.IScriptHost.SetCursorLocked(bool locked) { _cursorLocked = locked; }
+        bool Vortex.IScriptHost.GetCursorLocked() { return _cursorLocked; }
+        public bool CursorLocked { get { return _cursorLocked; } }
 
         // --- UI overlay frame state (fed by the runtime driver each frame: GameWindow / GamePreview) ---
         private float _uiW, _uiH, _mouseX, _mouseY;

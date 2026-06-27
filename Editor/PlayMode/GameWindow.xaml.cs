@@ -85,17 +85,16 @@ namespace Editor.PlayMode
             var pms = PlayModeService.Instance;
             bool playing = pms.State == PlayState.Playing;
 
-            // ESC PAUSES the game and frees the mouse — no WASD/look while paused. Click to resume.
-            // (Global key state via GetAsyncKeyState — works even with the native HWND focused.)
-            if (EscDown() && playing) { pms.Pause(); ReleaseGameMouse(); _userReleased = true; }
-
-            // Auto-lock the mouse only while actively playing AND the user hasn't freed it with ESC.
-            if (IsActive && playing && !_mouseCaptured && !_userReleased) CaptureGameMouse();
+            // The GAME owns the mouse mode (Vortex.Cursor.Locked): locked = captured + hidden for mouse-look
+            // (gameplay); unlocked = free cursor so the player can click the UI (lobby / ESC menu / shop).
+            // ESC no longer pauses — a game script toggles Cursor.Locked instead. The sim keeps running.
+            bool wantLock = OwnsGameLoop && playing && Editor.Scripting.ScriptRuntime.Instance.CursorLocked;
 
             float dx = 0f, dy = 0f;
-            if (_mouseCaptured && IsActive && playing)
+            if (wantLock && IsActive)
             {
-                if (GetCursorPos(out POINTW p) && Center(out int cx, out int cy))
+                if (!_mouseCaptured) CaptureGameMouse();
+                if (_mouseCaptured && GetCursorPos(out POINTW p) && Center(out int cx, out int cy))
                 {
                     if (_justCaptured) _justCaptured = false;
                     else
@@ -106,6 +105,10 @@ namespace Editor.PlayMode
                     }
                     SetCursorPos(cx, cy);
                 }
+            }
+            else if (_mouseCaptured)
+            {
+                ReleaseGameMouse(); // free the cursor for UI
             }
             Vortex.Input.MouseDeltaX = dx;
             Vortex.Input.MouseDeltaY = dy;
@@ -240,10 +243,8 @@ namespace Editor.PlayMode
         protected override void OnMouseDown(MouseButtonEventArgs e)
         {
             base.OnMouseDown(e);
-            // A click resumes from pause and re-locks the mouse (the play continues).
-            if (PlayModeService.Instance.State == PlayState.Paused) PlayModeService.Instance.Resume();
-            _userReleased = false;
-            if (!_mouseCaptured) CaptureGameMouse();
+            // Mouse capture is driven by Vortex.Cursor.Locked (set by the game), NOT by clicks — so clicking
+            // a button in the lobby / ESC menu never grabs the cursor.
         }
 
         private void TitleBar_MouseDown(object sender, MouseButtonEventArgs e)

@@ -38,6 +38,10 @@ namespace Vortex
         // Request switching the active scene by name (deferred — applied by the runtime after this tick).
         void LoadScene(string name);
 
+        // Mouse mode: locked = captured + hidden for mouse-look (gameplay); unlocked = free cursor for UI.
+        bool GetCursorLocked();
+        void SetCursorLocked(bool locked);
+
         // 2D UI overlay (immediate mode), coordinates in viewport pixels (top-left origin).
         void UIRect(float x, float y, float w, float h, float r, float g, float b, float a, float radius);
         void UIText(float x, float y, float w, float h, string text, float size, float r, float g, float b, float a, int align, int weight);
@@ -146,6 +150,18 @@ namespace Vortex
     {
         internal static IScriptHost Host;
         public static void Load(string name) { if (Host != null) Host.LoadScene(name); }
+    }
+
+    /// <summary>Mouse mode. Locked = captured + hidden for mouse-look (gameplay). Unlocked = free cursor so
+    /// the player can click the UI (lobby / ESC menu / shop). The game sets this; the engine enforces it.</summary>
+    public static class Cursor
+    {
+        internal static IScriptHost Host;
+        public static bool Locked
+        {
+            get { return Host != null && Host.GetCursorLocked(); }
+            set { if (Host != null) Host.SetCursorLocked(value); }
+        }
     }
 
     /// <summary>
