@@ -17,6 +17,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Models
         private bool _isSelected;
         private bool _isRenaming;
         private bool _isCut;
+        private bool _isVisible = true;
         private ObservableCollection<FileSystemItem> _children;
         private FileSystemItem _parent;
 
@@ -67,6 +68,13 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Models
                     }
                 }
             }
+        }
+
+        /// <summary>Search filter visibility (true = shown). Bound to the tree item's Visibility.</summary>
+        public bool IsVisible
+        {
+            get => _isVisible;
+            set => SetProperty(ref _isVisible, value, nameof(IsVisible));
         }
 
         public bool IsSelected

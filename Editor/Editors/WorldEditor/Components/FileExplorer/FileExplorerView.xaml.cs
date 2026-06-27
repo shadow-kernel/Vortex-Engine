@@ -1011,10 +1011,14 @@ private void OnEditTagsClick(object sender, RoutedEventArgs e)
             _explorerService.RefreshCurrentFolderContents();
         }
 
-        private void OnSearchClick(object sender, RoutedEventArgs e)
+        private void OnSearchTextChanged(object sender, TextChangedEventArgs e)
         {
-            // TODO: Implement search functionality
-            MessageBox.Show("Search functionality coming soon!", "Search", MessageBoxButton.OK, MessageBoxImage.Information);
+            try { Services.FileExplorerService.Instance.ApplyFilter(TreeSearchBox.Text); } catch { }
+        }
+
+        private void OnClearSearchClick(object sender, RoutedEventArgs e)
+        {
+            if (TreeSearchBox != null) TreeSearchBox.Text = ""; // triggers OnSearchTextChanged -> reset
         }
 
         #endregion

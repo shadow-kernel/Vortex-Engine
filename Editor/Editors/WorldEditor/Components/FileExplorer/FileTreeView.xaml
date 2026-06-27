@@ -7,6 +7,7 @@
          d:DesignHeight="200" d:DesignWidth="200">
 
 <UserControl.Resources>
+    <BooleanToVisibilityConverter x:Key="BoolToVis"/>
     <!-- MenuItem Style for Dark Theme -->
     <Style x:Key="DarkMenuItemStyle" TargetType="MenuItem">
         <Setter Property="Background" Value="Transparent"/>
@@ -114,6 +115,7 @@
         <Setter Property="VerticalContentAlignment" Value="Center"/>
         <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}"/>
         <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}"/>
+        <Setter Property="Visibility" Value="{Binding IsVisible, Converter={StaticResource BoolToVis}}"/>
         <Setter Property="ContextMenu" Value="{StaticResource FolderContextMenu}"/>
         <Setter Property="AllowDrop" Value="True"/>
         <Setter Property="ItemsSource" Value="{Binding Children}"/>

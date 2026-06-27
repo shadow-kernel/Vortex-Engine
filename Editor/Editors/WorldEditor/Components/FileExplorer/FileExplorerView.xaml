@@ -346,9 +346,13 @@
                     <!-- Action Buttons -->
                     <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                         <Rectangle Width="1" Fill="#33333A" Margin="5,6"/>
-                        <Button Content="&#xE8B5;" FontFamily="Segoe MDL2 Assets" FontSize="10" 
-                                Style="{StaticResource BreadcrumbButtonStyle}" ToolTip="Search" Click="OnSearchClick"/>
-                        <Button Content="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="10" 
+                        <TextBox x:Name="TreeSearchBox" Width="130" Height="22" Margin="0,0,4,0"
+                                 VerticalContentAlignment="Center" Background="#161618" Foreground="#E9E9ED"
+                                 BorderBrush="#33333A" BorderThickness="1" FontSize="11" Padding="6,0"
+                                 CaretBrush="#6C5CE7" TextChanged="OnSearchTextChanged" ToolTip="Search folders"/>
+                        <Button Content="&#xE894;" FontFamily="Segoe MDL2 Assets" FontSize="10"
+                                Style="{StaticResource BreadcrumbButtonStyle}" ToolTip="Clear search" Click="OnClearSearchClick"/>
+                        <Button Content="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="10"
                                 Style="{StaticResource BreadcrumbButtonStyle}" ToolTip="New" Click="OnNewFolderClick"/>
                         <Button Content="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="10" 
                                 Style="{StaticResource BreadcrumbButtonStyle}" ToolTip="Refresh" Click="OnRefreshClick"/>

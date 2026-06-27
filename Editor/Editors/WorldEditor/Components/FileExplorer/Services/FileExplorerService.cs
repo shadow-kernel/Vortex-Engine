@@ -13,7 +13,7 @@ using Editor.Editors.WorldEditor.Components.FileExplorer.Models;
 namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
 {
     /// <summary>
-    /// Service für Datei-Explorer Operationen mit FileSystemWatcher für Live-Updates.
+    /// Service fï¿½r Datei-Explorer Operationen mit FileSystemWatcher fï¿½r Live-Updates.
     /// </summary>
     public class FileExplorerService : IDisposable
     {
@@ -29,17 +29,17 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
         private readonly SynchronizationContext _syncContext;
 
         /// <summary>
-        /// Event wenn sich der Inhalt des aktuellen Ordners ändert.
+        /// Event wenn sich der Inhalt des aktuellen Ordners ï¿½ndert.
         /// </summary>
         public event EventHandler FolderContentsChanged;
 
         /// <summary>
-        /// Event wenn sich die Ordnerstruktur ändert.
+        /// Event wenn sich die Ordnerstruktur ï¿½ndert.
         /// </summary>
         public event EventHandler TreeStructureChanged;
 
         /// <summary>
-        /// Event wenn ein neuer Ordner ausgewählt wird.
+        /// Event wenn ein neuer Ordner ausgewï¿½hlt wird.
         /// </summary>
         public event EventHandler<FileSystemItem> CurrentFolderChanged;
 
@@ -53,7 +53,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
         }
 
         /// <summary>
-        /// Der aktuell ausgewählte Ordner.
+        /// Der aktuell ausgewï¿½hlte Ordner.
         /// </summary>
         public FileSystemItem CurrentFolder
         {
@@ -110,7 +110,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
         }
 
         /// <summary>
-        /// Lädt die Ordnerstruktur rekursiv (nur eine Ebene tief).
+        /// Lï¿½dt die Ordnerstruktur rekursiv (nur eine Ebene tief).
         /// </summary>
         private void LoadTreeStructure(FileSystemItem item)
         {
@@ -178,8 +178,74 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
             CurrentFolder = folder;
         }
 
+        /// <summary>Resolve an absolute folder path to its FileSystemItem in the tree (expanding as needed).</summary>
+        public FileSystemItem FindFolder(string absolutePath)
+        {
+            if (RootItem == null || string.IsNullOrEmpty(absolutePath)) return null;
+            string target;
+            try { target = Path.GetFullPath(absolutePath).TrimEnd('\\', '/'); } catch { return null; }
+            if (string.Equals(RootItem.FullPath.TrimEnd('\\', '/'), target, StringComparison.OrdinalIgnoreCase))
+                return RootItem;
+            return FindFolderRecursive(RootItem, target);
+        }
+
+        private FileSystemItem FindFolderRecursive(FileSystemItem node, string target)
+        {
+            try { node.LoadDirectoriesOnly(); } catch { }
+            foreach (var child in node.Children)
+            {
+                if (!child.IsDirectory) continue;
+                var cp = child.FullPath.TrimEnd('\\', '/');
+                if (string.Equals(cp, target, StringComparison.OrdinalIgnoreCase)) return child;
+                if (target.StartsWith(cp + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                {
+                    var found = FindFolderRecursive(child, target);
+                    if (found != null) return found;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>Navigate to a folder by absolute path (resolves it in the tree first). Used for browser-&gt;tree reveal.</summary>
+        public void NavigateToPath(string absolutePath)
+        {
+            var item = FindFolder(absolutePath);
+            if (item != null) NavigateTo(item);
+        }
+
+        /// <summary>Filter the folder tree by name. Matching folders + their ancestors stay visible and
+        /// expand; everything else is hidden. Empty text resets the tree.</summary>
+        public void ApplyFilter(string text)
+        {
+            if (RootItem == null) return;
+            if (string.IsNullOrWhiteSpace(text)) { ResetFilter(RootItem); RootItem.IsVisible = true; return; }
+            FilterNode(RootItem, text.Trim());
+            RootItem.IsVisible = true;
+        }
+
+        private bool FilterNode(FileSystemItem node, string text)
+        {
+            try { node.LoadDirectoriesOnly(); } catch { }
+            bool selfMatch = (node.Name ?? "").IndexOf(text, StringComparison.OrdinalIgnoreCase) >= 0;
+            bool anyChild = false;
+            foreach (var child in node.Children)
+            {
+                if (FilterNode(child, text)) anyChild = true;
+            }
+            bool visible = selfMatch || anyChild;
+            node.IsVisible = visible;
+            if (anyChild) node.IsExpanded = true; // open the path to matches
+            return visible;
+        }
+
+        private void ResetFilter(FileSystemItem node)
+        {
+            node.IsVisible = true;
+            foreach (var child in node.Children) ResetFilter(child);
+        }
+
         /// <summary>
-        /// Navigiert zum übergeordneten Ordner.
+        /// Navigiert zum ï¿½bergeordneten Ordner.
         /// </summary>
         public void NavigateUp()
         {
@@ -191,7 +257,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
 
         /// <summary>
         /// Erstellt einen neuen Ordner im aktuellen Verzeichnis.
-        /// Diese Operation ist Undo-fähig.
+        /// Diese Operation ist Undo-fï¿½hig.
         /// </summary>
         public FileSystemItem CreateFolder(string name = "New Folder")
         {
@@ -210,7 +276,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
                     newPath = Path.Combine(_currentFolder.FullPath, name);
                 }
 
-                // Undo-fähiges Command erstellen
+                // Undo-fï¿½higes Command erstellen
                 var command = new CreateFolderCommand(newPath);
                 UndoRedoManager.Instance.Execute(command);
                 
@@ -227,7 +293,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
 
         /// <summary>
         /// Erstellt eine neue Datei im aktuellen Verzeichnis.
-        /// Diese Operation ist Undo-fähig.
+        /// Diese Operation ist Undo-fï¿½hig.
         /// </summary>
         public FileSystemItem CreateFile(string name, string content = "")
         {
@@ -247,7 +313,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
                     newPath = Path.Combine(_currentFolder.FullPath, name);
                 }
 
-                // Undo-fähiges Command erstellen
+                // Undo-fï¿½higes Command erstellen
                 var command = new CreateFileCommand(newPath, content);
                 UndoRedoManager.Instance.Execute(command);
                 
@@ -264,7 +330,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
 
         /// <summary>
         /// Benennt ein Element um.
-        /// Diese Operation ist Undo-fähig.
+        /// Diese Operation ist Undo-fï¿½hig.
         /// </summary>
         public bool Rename(FileSystemItem item, string newName)
         {
@@ -274,13 +340,13 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
             try
             {
                 // Den echten aktuellen Namen aus dem Dateipfad extrahieren
-                // (item.Name könnte schon durch das UI-Binding geändert worden sein)
+                // (item.Name kï¿½nnte schon durch das UI-Binding geï¿½ndert worden sein)
                 string currentActualName = Path.GetFileName(item.FullPath);
                 
-                // Keine Änderung wenn Name gleich bleibt
+                // Keine ï¿½nderung wenn Name gleich bleibt
                 if (currentActualName == newName)
                 {
-                    // Name zurücksetzen falls Binding ihn geändert hat
+                    // Name zurï¿½cksetzen falls Binding ihn geï¿½ndert hat
                     item.Name = currentActualName;
                     return true;
                 }
@@ -293,7 +359,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
                 {
                     if (Directory.Exists(newPath))
                     {
-                        // Name zurücksetzen
+                        // Name zurï¿½cksetzen
                         item.Name = currentActualName;
                         MessageBox.Show("Ein Ordner mit diesem Namen existiert bereits.", 
                             "Fehler", MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -304,7 +370,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
                 {
                     if (File.Exists(newPath))
                     {
-                        // Name zurücksetzen
+                        // Name zurï¿½cksetzen
                         item.Name = currentActualName;
                         MessageBox.Show("Eine Datei mit diesem Namen existiert bereits.", 
                             "Fehler", MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -312,7 +378,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
                     }
                 }
 
-                // Undo-fähiges Command erstellen und ausführen
+                // Undo-fï¿½higes Command erstellen und ausfï¿½hren
                 var command = new RenameFileCommand(oldPath, newPath, item.IsDirectory);
                 UndoRedoManager.Instance.Execute(command);
 
@@ -323,7 +389,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
             }
             catch (Exception ex)
             {
-                // Bei Fehler den ursprünglichen Namen wiederherstellen
+                // Bei Fehler den ursprï¿½nglichen Namen wiederherstellen
                 item.Name = Path.GetFileName(item.FullPath);
                 MessageBox.Show($"Fehler beim Umbenennen: {ex.Message}", 
                     "Fehler", MessageBoxButton.OK, MessageBoxImage.Error);
@@ -332,8 +398,8 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
         }
 
         /// <summary>
-        /// Löscht ein Element.
-        /// Diese Operation ist Undo-fähig.
+        /// Lï¿½scht ein Element.
+        /// Diese Operation ist Undo-fï¿½hig.
         /// </summary>
         public bool Delete(FileSystemItem item)
         {
@@ -343,15 +409,15 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
             try
             {
                 var result = MessageBox.Show(
-                    $"Möchten Sie '{item.Name}' wirklich löschen?\n\nDiese Aktion kann mit Strg+Z rückgängig gemacht werden.",
-                    "Löschen bestätigen",
+                    $"Mï¿½chten Sie '{item.Name}' wirklich lï¿½schen?\n\nDiese Aktion kann mit Strg+Z rï¿½ckgï¿½ngig gemacht werden.",
+                    "Lï¿½schen bestï¿½tigen",
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Question);
 
                 if (result != MessageBoxResult.Yes)
                     return false;
 
-                // Undo-fähiges Command erstellen
+                // Undo-fï¿½higes Command erstellen
                 if (item.IsDirectory)
                 {
                     var command = new DeleteFolderCommand(item.FullPath);
@@ -367,7 +433,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Fehler beim Löschen: {ex.Message}", 
+                MessageBox.Show($"Fehler beim Lï¿½schen: {ex.Message}", 
                     "Fehler", MessageBoxButton.OK, MessageBoxImage.Error);
                 return false;
             }
@@ -375,7 +441,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
 
         /// <summary>
         /// Verschiebt ein Element in einen Zielordner.
-        /// Diese Operation ist Undo-fähig.
+        /// Diese Operation ist Undo-fï¿½hig.
         /// </summary>
         public bool MoveItem(FileSystemItem item, FileSystemItem targetFolder)
         {
@@ -414,7 +480,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
                     }
                 }
 
-                // Undo-fähiges Command erstellen und ausführen
+                // Undo-fï¿½higes Command erstellen und ausfï¿½hren
                 var command = new MoveItemCommand(oldPath, newPath, item.IsDirectory);
                 UndoRedoManager.Instance.Execute(command);
 
@@ -429,7 +495,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
         }
 
         /// <summary>
-        /// Öffnet einen Ordner im Windows Explorer.
+        /// ï¿½ffnet einen Ordner im Windows Explorer.
         /// </summary>
         public void OpenInExplorer(FileSystemItem item)
         {
@@ -449,12 +515,12 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"Fehler beim Öffnen im Explorer: {ex.Message}");
+                Debug.WriteLine($"Fehler beim ï¿½ffnen im Explorer: {ex.Message}");
             }
         }
 
         /// <summary>
-        /// Öffnet eine Datei mit dem Standard-Programm.
+        /// ï¿½ffnet eine Datei mit dem Standard-Programm.
         /// </summary>
         public void OpenFile(FileSystemItem item)
         {
@@ -471,7 +537,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Fehler beim Öffnen der Datei: {ex.Message}", 
+                MessageBox.Show($"Fehler beim ï¿½ffnen der Datei: {ex.Message}", 
                     "Fehler", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
@@ -541,7 +607,7 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer.Services
         #region Default Project Folders
 
         /// <summary>
-        /// Erstellt die Standard-Ordnerstruktur für ein neues Projekt.
+        /// Erstellt die Standard-Ordnerstruktur fï¿½r ein neues Projekt.
         /// </summary>
         public static void CreateDefaultProjectFolders(string projectPath)
         {

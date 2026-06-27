@@ -5,11 +5,14 @@ using System.ComponentModel;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Runtime.InteropServices;
 using Editor.Core.Assets;
+using Editor.Editors.WorldEditor.Components.FileExplorer.Models;
+using Editor.Editors.WorldEditor.Components.FileExplorer.Services;
 using Editor.Core.Data;
 using Editor.Core.Services;
 using Editor.Dialogs;
@@ -61,20 +64,164 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
 
         private AssetType _currentType = AssetType.Meshes;
 
+        // ---- search + folder sync (with the file tree, via FileExplorerService) ----
+        private ICollectionView _assetsView;
+        private string _searchText = "";
+        private string _currentFolderRel = "Assets";   // project-relative folder currently shown
+        private bool _syncingFromBrowser;               // echo guard for browser->tree
+
         public AssetBrowserView()
         {
             InitializeComponent();
             AssetList.ItemsSource = Assets;
+
+            // A filtered view over the assets — drives both the search box and folder-scoping.
+            _assetsView = CollectionViewSource.GetDefaultView(Assets);
+            _assetsView.Filter = AssetFilterPredicate;
+
             // Note: MouseDoubleClick is already bound in XAML, don't add it again here
             AssetList.PreviewMouseLeftButtonDown += AssetList_PreviewMouseLeftButtonDown;
             AssetList.PreviewMouseMove += AssetList_PreviewMouseMove;
             Loaded += OnLoaded;
-            
+            Unloaded += OnUnloadedCleanup;
+
             // Subscribe to model import events
             ModelImportService.Instance.ModelImported += OnModelImported;
-            
+
             // Subscribe to asset database changes
             AssetDatabase.Instance.AssetsChanged += OnAssetsChanged;
+
+            // Stay in sync with the file tree's current folder.
+            FileExplorerService.Instance.CurrentFolderChanged += OnExplorerFolderChanged;
+        }
+
+        private void OnUnloadedCleanup(object sender, RoutedEventArgs e)
+        {
+            // FileExplorerService outlives this control — don't let it keep us alive.
+            try { FileExplorerService.Instance.CurrentFolderChanged -= OnExplorerFolderChanged; } catch { }
+        }
+
+        // ---- search ----
+        private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            _searchText = SearchBox.Text != null ? SearchBox.Text.Trim() : "";
+            try { _assetsView?.Refresh(); } catch { }
+        }
+
+        private bool AssetFilterPredicate(object o)
+        {
+            var a = o as AssetItem;
+            if (a == null) return false;
+            if (!string.IsNullOrEmpty(_searchText) &&
+                (a.Name ?? "").IndexOf(_searchText, StringComparison.OrdinalIgnoreCase) < 0)
+                return false;
+            // Folder scope: imported (on-disk) assets must live under the current folder;
+            // built-in primitives/materials have no path and are always shown.
+            if (a.IsImported && !IsUnderCurrentFolder(a.Path)) return false;
+            return true;
+        }
+
+        private bool IsUnderCurrentFolder(string assetRelPath)
+        {
+            if (string.IsNullOrEmpty(_currentFolderRel) || string.IsNullOrEmpty(assetRelPath)) return true;
+            var dir = (System.IO.Path.GetDirectoryName(assetRelPath) ?? "").Replace('\\', '/');
+            var cur = _currentFolderRel.Replace('\\', '/').TrimEnd('/');
+            if (cur.Equals("Assets", StringComparison.OrdinalIgnoreCase)) return true; // root shows everything
+            return dir.Equals(cur, StringComparison.OrdinalIgnoreCase)
+                || dir.StartsWith(cur + "/", StringComparison.OrdinalIgnoreCase);
+        }
+
+        // ---- folder sync (tree -> browser) ----
+        private void OnExplorerFolderChanged(object sender, FileSystemItem folder)
+        {
+            if (_syncingFromBrowser || folder == null) return;
+            Application.Current?.Dispatcher?.Invoke(() => SetCurrentFolder(folder));
+        }
+
+        private void SetCurrentFolder(FileSystemItem folder)
+        {
+            var root = ProjectData.Current?.Path;
+            string rel = "Assets";
+            try
+            {
+                if (!string.IsNullOrEmpty(root) && folder != null)
+                {
+                    var rootFull = System.IO.Path.GetFullPath(root).TrimEnd('\\', '/');
+                    var full = System.IO.Path.GetFullPath(folder.FullPath).TrimEnd('\\', '/');
+                    rel = full.Length > rootFull.Length && full.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase)
+                        ? full.Substring(rootFull.Length).TrimStart('\\', '/').Replace('\\', '/')
+                        : (folder.Name ?? "Assets");
+                    if (string.IsNullOrEmpty(rel)) rel = "Assets";
+                }
+            }
+            catch { rel = folder?.Name ?? "Assets"; }
+
+            _currentFolderRel = rel;
+            UpdateBreadcrumb(rel);
+            try { _assetsView?.Refresh(); } catch { }
+        }
+
+        private void UpdateBreadcrumb(string rel)
+        {
+            if (BreadcrumbPanel == null) return;
+            BreadcrumbPanel.Children.Clear();
+            BreadcrumbPanel.Children.Add(new TextBlock
+            {
+                Text = "",
+                FontFamily = new FontFamily("Segoe MDL2 Assets"),
+                FontSize = 12,
+                Foreground = (Brush)new BrushConverter().ConvertFromString("#FF73737A"),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 8, 0)
+            });
+
+            var segments = (rel ?? "Assets").Replace('\\', '/').Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+            if (segments.Length == 0) segments = new[] { "Assets" };
+            var root = ProjectData.Current?.Path;
+            string accum = root;
+
+            for (int i = 0; i < segments.Length; i++)
+            {
+                if (i > 0)
+                {
+                    BreadcrumbPanel.Children.Add(new TextBlock
+                    {
+                        Text = "",
+                        FontFamily = new FontFamily("Segoe MDL2 Assets"),
+                        FontSize = 10,
+                        Foreground = (Brush)new BrushConverter().ConvertFromString("#FF73737A"),
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Margin = new Thickness(7, 1, 7, 0)
+                    });
+                }
+                bool last = i == segments.Length - 1;
+                accum = accum != null ? System.IO.Path.Combine(accum, segments[i]) : null;
+                var seg = new TextBlock
+                {
+                    Text = segments[i],
+                    FontSize = 12,
+                    FontFamily = new FontFamily("Segoe UI Variable Text, Segoe UI"),
+                    Foreground = (Brush)new BrushConverter().ConvertFromString(last ? "#FFE9E9ED" : "#FF9A9AA1"),
+                    FontWeight = last ? FontWeights.SemiBold : FontWeights.Normal,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Cursor = Cursors.Hand
+                };
+                var targetPath = accum;
+                seg.MouseLeftButtonUp += (s, e) => RevealFolderInTree(targetPath);
+                BreadcrumbPanel.Children.Add(seg);
+            }
+        }
+
+        // ---- browser -> tree reveal ----
+        private void RevealFolderInTree(string absoluteFolderPath)
+        {
+            if (string.IsNullOrEmpty(absoluteFolderPath)) return;
+            _syncingFromBrowser = true;
+            try { FileExplorerService.Instance.NavigateToPath(absoluteFolderPath); }
+            finally { _syncingFromBrowser = false; }
+            // we navigated ourselves; reflect it locally too
+            var folder = FileExplorerService.Instance.CurrentFolder;
+            if (folder != null) SetCurrentFolder(folder);
         }
 
         private void OnModelImported(object sender, Dialogs.ModelImportResult result)
@@ -134,6 +281,9 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
         private void OnLoaded(object sender, RoutedEventArgs e)
         {
             RefreshAssets();
+            // initial breadcrumb / folder scope from the shared navigation state
+            var cur = FileExplorerService.Instance.CurrentFolder;
+            if (cur != null) SetCurrentFolder(cur);
         }
 
         private void RefreshButton_Click(object sender, RoutedEventArgs e)
@@ -500,6 +650,14 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             if (AssetList.SelectedItem is AssetItem item)
             {
                 AssetDoubleClicked?.Invoke(this, item);
+                // reveal the asset's folder in the file tree (browser -> tree sync)
+                if (item.IsImported && !string.IsNullOrEmpty(item.Path))
+                {
+                    var root = ProjectData.Current?.Path;
+                    var dir = System.IO.Path.GetDirectoryName(item.Path);
+                    if (!string.IsNullOrEmpty(root) && !string.IsNullOrEmpty(dir))
+                        RevealFolderInTree(System.IO.Path.Combine(root, dir));
+                }
                 OpenOrPlaceAsset(item);
             }
         }

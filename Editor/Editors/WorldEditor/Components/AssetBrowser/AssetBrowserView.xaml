@@ -113,15 +113,28 @@
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
-                <!-- Redundant "Asset Browser" title removed; the AvalonDock pane title "Project"
-                     already labels this panel. Import/Refresh buttons stay. -->
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Visibility="Collapsed">
-                    <TextBlock Text="&#xEC50;" FontFamily="Segoe MDL2 Assets" FontSize="14"
-                               Foreground="#FF9A9AA1" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                    <TextBlock Text="Asset Browser" FontSize="13" FontWeight="SemiBold"
-                               FontFamily="Segoe UI Variable Text, Segoe UI"
-                               Foreground="#FFE9E9ED" VerticalAlignment="Center"/>
-                </StackPanel>
+                <!-- Search box (filters the current asset tiles by name) -->
+                <Grid VerticalAlignment="Center" Margin="0,0,10,0" MaxWidth="320" HorizontalAlignment="Stretch">
+                    <TextBox x:Name="SearchBox" TextChanged="SearchBox_TextChanged" Height="28"
+                             Background="#FF161618" Foreground="#FFE9E9ED" BorderBrush="#FF33333A"
+                             BorderThickness="1" VerticalContentAlignment="Center" Padding="28,0,8,0" FontSize="12"
+                             CaretBrush="#FF6C5CE7"/>
+                    <TextBlock Text="&#xE721;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#FF73737A"
+                               VerticalAlignment="Center" Margin="9,0,0,0" IsHitTestVisible="False"/>
+                    <TextBlock Text="Search assets…" Foreground="#FF5A5A61" FontSize="12" Margin="29,0,0,0"
+                               VerticalAlignment="Center" IsHitTestVisible="False">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Text, ElementName=SearchBox}" Value="">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Grid>
 
                 <StackPanel Grid.Column="1" Orientation="Horizontal">
                     <Button x:Name="ImportButton" Content="&#xE8B5;"
@@ -136,16 +149,12 @@
             </Grid>
         </Border>
 
-        <!-- Breadcrumb path row -->
+        <!-- Breadcrumb path row (synced with the file tree; rebuilt in code) -->
         <Border Grid.Row="1" Background="#FF212124" Padding="14,0,12,10">
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+            <StackPanel x:Name="BreadcrumbPanel" Orientation="Horizontal" VerticalAlignment="Center">
                 <TextBlock Text="&#xE8B7;" FontFamily="Segoe MDL2 Assets" FontSize="12"
                            Foreground="#FF73737A" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                <TextBlock Text="Assets" FontSize="12" Foreground="#FF9A9AA1"
-                           FontFamily="Segoe UI Variable Text, Segoe UI" VerticalAlignment="Center"/>
-                <TextBlock Text="&#xE76C;" FontFamily="Segoe MDL2 Assets" FontSize="10"
-                           Foreground="#FF73737A" VerticalAlignment="Center" Margin="7,1,7,0"/>
-                <TextBlock Text="Models" FontSize="12" Foreground="#FFE9E9ED"
+                <TextBlock Text="Assets" FontSize="12" Foreground="#FFE9E9ED"
                            FontFamily="Segoe UI Variable Text, Segoe UI" FontWeight="SemiBold"
                            VerticalAlignment="Center"/>
             </StackPanel>
