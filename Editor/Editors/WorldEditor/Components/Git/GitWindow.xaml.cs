@@ -57,11 +57,88 @@ namespace Editor.Editors.WorldEditor.Components.Git
             await RefreshStash();
         }
 
+        private const int HistPageSize = 200;
+        private int _histLoaded = 0;
+        private readonly List<GitGraphCommit> _histAll = new List<GitGraphCommit>();
+
         private async Task RefreshHistory()
         {
-            var commits = await GitService.Instance.LogAsync(_repo);
-            HistoryList.Items.Clear();
-            foreach (var c in commits) HistoryList.Items.Add(c);
+            _histAll.Clear();
+            var commits = await GitService.Instance.LogGraphAsync(_repo, HistPageSize, 0);
+            _histAll.AddRange(commits);
+            _histLoaded = _histAll.Count;
+            BindHistory(commits.Count);
+        }
+
+        private void BindHistory(int lastBatch)
+        {
+            BuildLanes(_histAll);
+            HistoryList.ItemsSource = null;
+            HistoryList.ItemsSource = _histAll;
+            LoadMoreHistoryBtn.Visibility = lastBatch >= HistPageSize ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private async void LoadMoreHistory_Click(object sender, RoutedEventArgs e)
+        {
+            if (_busy) return;
+            SetBusy(true, "Loading more history…");
+            var more = await GitService.Instance.LogGraphAsync(_repo, HistPageSize, _histLoaded);
+            _histAll.AddRange(more);
+            _histLoaded += more.Count;
+            BindHistory(more.Count);
+            SetBusy(false, "Ready");
+        }
+
+        // IntelliJ-style lane assignment: one top-to-bottom pass over the (date-ordered) commits.
+        private static readonly int LanePalette = 5;
+        private void BuildLanes(List<GitGraphCommit> commits)
+        {
+            var active = new List<string>(); // each lane holds the hash it's waiting to draw, or null
+            int maxLane = 0;
+            foreach (var c in commits)
+            {
+                int dot = active.IndexOf(c.Hash);
+                if (dot < 0) { dot = active.IndexOf(null); if (dot < 0) { dot = active.Count; active.Add(null); } }
+                c.Lane = dot;
+
+                var incoming = new List<string>(active);
+
+                for (int i = 0; i < active.Count; i++) if (active[i] == c.Hash) active[i] = null;
+                var mergeLanes = new List<int>();
+                if (c.Parents.Length >= 1)
+                {
+                    active[dot] = c.Parents[0];
+                    for (int k = 1; k < c.Parents.Length; k++)
+                    {
+                        int pl = active.IndexOf(c.Parents[k]);
+                        if (pl < 0) { pl = active.IndexOf(null); if (pl < 0) { pl = active.Count; active.Add(null); } active[pl] = c.Parents[k]; }
+                        mergeLanes.Add(pl);
+                    }
+                }
+                else active[dot] = null;
+
+                c.TopLines.Clear(); c.BottomLines.Clear();
+                for (int i = 0; i < incoming.Count; i++)
+                {
+                    if (incoming[i] == null) continue;
+                    if (incoming[i] == c.Hash) c.TopLines.Add(new GLine(i, dot, i));   // merge up into the dot
+                    else c.TopLines.Add(new GLine(i, i, i));                            // passing (top half)
+                }
+                for (int i = 0; i < incoming.Count; i++)
+                {
+                    if (incoming[i] == null || incoming[i] == c.Hash) continue;
+                    c.BottomLines.Add(new GLine(i, i, i));                              // passing (bottom half)
+                }
+                if (c.Parents.Length >= 1) c.BottomLines.Add(new GLine(dot, dot, dot)); // first parent continues
+                foreach (var ml in mergeLanes) c.BottomLines.Add(new GLine(dot, ml, ml)); // merge diagonal
+
+                int rowMax = dot;
+                foreach (var l in c.TopLines) rowMax = Math.Max(rowMax, Math.Max(l.From, l.To));
+                foreach (var l in c.BottomLines) rowMax = Math.Max(rowMax, Math.Max(l.From, l.To));
+                maxLane = Math.Max(maxLane, rowMax);
+            }
+            int width = Math.Min(maxLane, 9) + 1; // cap the graph column width
+            foreach (var c in commits) c.Width = width;
         }
 
         private async Task RefreshStash()
@@ -72,10 +149,10 @@ namespace Editor.Editors.WorldEditor.Components.Git
         }
 
         // ---- history operations ----
-        private async Task RunHist(Func<GitCommit, Task<GitResult>> op, string okPrefix, bool confirm, string confirmText)
+        private async Task RunHist(Func<GitGraphCommit, Task<GitResult>> op, string okPrefix, bool confirm, string confirmText)
         {
             if (_busy) return;
-            var c = HistoryList.SelectedItem as GitCommit;
+            var c = HistoryList.SelectedItem as GitGraphCommit;
             if (c == null) { SetStatus("Select a commit in the history first."); return; }
             if (confirm && MessageBox.Show(confirmText + "\n\n" + c.Hash + "  " + c.Subject, "Git",
                     MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
@@ -97,7 +174,7 @@ namespace Editor.Editors.WorldEditor.Components.Git
             => await RunHist(c => GitService.Instance.ResetAsync(_repo, c.Hash, "hard"), "Reset (hard) to ", true, "DISCARD all commits and changes after this one? This cannot be undone.");
         private void HistCopyHash_Click(object s, RoutedEventArgs e)
         {
-            var c = HistoryList.SelectedItem as GitCommit;
+            var c = HistoryList.SelectedItem as GitGraphCommit;
             if (c != null) { try { Clipboard.SetText(c.Hash); SetStatus("Copied " + c.Hash); } catch { } }
         }
 
@@ -433,5 +510,55 @@ namespace Editor.Editors.WorldEditor.Components.Git
         }
 
         private static Brush Br(string hex) => (Brush)new BrushConverter().ConvertFromString(hex);
+    }
+
+    /// <summary>Draws one commit row of the branch graph: lane dots + the lines passing through / branching.</summary>
+    public sealed class CommitGraphCell : FrameworkElement
+    {
+        private static readonly Pen[] _pens;
+        private static readonly Brush[] _brushes;
+        private static readonly Pen _dotPen;
+        private const double LANE_W = 16, R = 4.5;
+
+        static CommitGraphCell()
+        {
+            string[] hex = { "#6C5CE7", "#7CE0A3", "#E58A8A", "#E0C57C", "#6CB8E7" };
+            _pens = new Pen[hex.Length];
+            _brushes = new Brush[hex.Length];
+            for (int i = 0; i < hex.Length; i++)
+            {
+                var b = (Brush)new BrushConverter().ConvertFromString(hex[i]); b.Freeze();
+                _brushes[i] = b;
+                var p = new Pen(b, 2.0); p.Freeze(); _pens[i] = p;
+            }
+            _dotPen = new Pen((Brush)new BrushConverter().ConvertFromString("#161618"), 2.0); _dotPen.Freeze();
+        }
+
+        public CommitGraphCell()
+        {
+            DataContextChanged += (s, e) => { InvalidateMeasure(); InvalidateVisual(); };
+        }
+
+        private static double X(int lane) { return 8 + lane * LANE_W + LANE_W / 2; }
+
+        protected override Size MeasureOverride(Size availableSize)
+        {
+            var c = DataContext as GitGraphCommit;
+            int w = c != null ? c.Width : 1;
+            return new Size(8 + w * LANE_W + 6, 0); // height comes from the row
+        }
+
+        protected override void OnRender(DrawingContext dc)
+        {
+            var c = DataContext as GitGraphCommit;
+            if (c == null) return;
+            double h = ActualHeight > 0 ? ActualHeight : 38;
+            double yTop = 0, yMid = h / 2, yBot = h;
+            foreach (var l in c.TopLines)
+                dc.DrawLine(_pens[Math.Abs(l.Color) % _pens.Length], new Point(X(l.From), yTop), new Point(X(l.To), yMid));
+            foreach (var l in c.BottomLines)
+                dc.DrawLine(_pens[Math.Abs(l.Color) % _pens.Length], new Point(X(l.From), yMid), new Point(X(l.To), yBot));
+            dc.DrawEllipse(_brushes[Math.Abs(c.Lane) % _brushes.Length], _dotPen, new Point(X(c.Lane), yMid), R, R);
+        }
     }
 }

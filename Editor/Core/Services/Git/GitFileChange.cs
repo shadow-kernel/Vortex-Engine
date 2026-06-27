@@ -24,6 +24,34 @@ namespace Editor.Core.Services.Git
         public bool HasRefs => !string.IsNullOrEmpty(Refs);
     }
 
+    /// <summary>A commit plus the data needed to draw an IntelliJ-style branch graph.</summary>
+    public sealed class GitGraphCommit
+    {
+        public string Hash { get; set; } = "";
+        public string Author { get; set; } = "";
+        public string Date { get; set; } = "";
+        public string Subject { get; set; } = "";
+        public string Refs { get; set; } = "";
+        public string[] Parents { get; set; } = new string[0];
+
+        // Filled by the lane-assignment pass (UI layer):
+        public int Lane { get; set; }
+        public int Width { get; set; } = 1;
+        public System.Collections.Generic.List<GLine> TopLines { get; set; } = new System.Collections.Generic.List<GLine>();
+        public System.Collections.Generic.List<GLine> BottomLines { get; set; } = new System.Collections.Generic.List<GLine>();
+
+        public string Display => Hash + "  " + Subject;
+        public string Meta => string.IsNullOrEmpty(Refs) ? (Author + " · " + Date) : (Refs + "   ·   " + Author + " · " + Date);
+        public bool HasRefs => !string.IsNullOrEmpty(Refs);
+    }
+
+    /// <summary>One graph line segment within a commit row: from lane <c>From</c> to lane <c>To</c>.</summary>
+    public struct GLine
+    {
+        public int From, To, Color;
+        public GLine(int from, int to, int color) { From = from; To = to; Color = color; }
+    }
+
     /// <summary>One entry from <c>git stash list</c> (a local "shelve").</summary>
     public sealed class GitStash
     {

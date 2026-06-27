@@ -218,6 +218,32 @@ namespace Editor.Core.Services.Git
             return list;
         }
 
+        /// <summary>Graph-aware log across all refs (paginated). Each row carries its parent hashes so the
+        /// UI can assign lanes + draw branch lines. skip/max enable "load more".</summary>
+        public async Task<IReadOnlyList<GitGraphCommit>> LogGraphAsync(string repoPath, int max, int skip)
+        {
+            var list = new List<GitGraphCommit>();
+            var r = await RunAsync(repoPath, "log --all --date-order --skip=" + skip + " --max-count=" + max +
+                                             " --date=short --pretty=format:%h%x1f%p%x1f%an%x1f%ad%x1f%s%x1f%d");
+            if (!r.Success) return list;
+            foreach (var line in (r.StdOut ?? "").Replace("\r", "").Split('\n'))
+            {
+                if (string.IsNullOrEmpty(line)) continue;
+                var p = line.Split('\x1f');
+                if (p.Length < 5) continue;
+                list.Add(new GitGraphCommit
+                {
+                    Hash = p[0],
+                    Parents = string.IsNullOrWhiteSpace(p[1]) ? new string[0] : p[1].Trim().Split(' '),
+                    Author = p[2],
+                    Date = p[3],
+                    Subject = p[4],
+                    Refs = p.Length >= 6 ? p[5].Trim().TrimStart('(').TrimEnd(')').Trim() : ""
+                });
+            }
+            return list;
+        }
+
         // ---- history operations ----
         /// <summary>Safely undo a commit by creating an inverse commit.</summary>
         public Task<GitResult> RevertAsync(string repoPath, string hash) => RunAsync(repoPath, "revert --no-edit " + Q(hash));
