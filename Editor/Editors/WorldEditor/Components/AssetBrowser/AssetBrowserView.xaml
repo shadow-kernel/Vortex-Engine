@@ -163,8 +163,11 @@
         <!-- Category Tabs -->
         <Border Grid.Row="2" Background="#FF212124" Padding="14,2,12,12">
             <StackPanel Orientation="Horizontal">
-                <RadioButton x:Name="MeshesTab" Content="Meshes" GroupName="AssetType"
+                <RadioButton x:Name="ExplorerTab" Content="Explorer" GroupName="AssetType"
                              IsChecked="True" Style="{StaticResource CategoryPill}"
+                             Checked="AssetTypeTab_Checked" ToolTip="Browse the current folder (subfolders + all files)"/>
+                <RadioButton x:Name="MeshesTab" Content="Meshes" GroupName="AssetType"
+                             Style="{StaticResource CategoryPill}"
                              Checked="AssetTypeTab_Checked"/>
                 <RadioButton x:Name="ModelsTab" Content="Models" GroupName="AssetType"
                              Style="{StaticResource CategoryPill}"
@@ -173,6 +176,9 @@
                              Style="{StaticResource CategoryPill}"
                              Checked="AssetTypeTab_Checked"/>
                 <RadioButton x:Name="MaterialsTab" Content="Materials" GroupName="AssetType"
+                             Style="{StaticResource CategoryPill}"
+                             Checked="AssetTypeTab_Checked"/>
+                <RadioButton x:Name="ScriptsTab" Content="Scripts" GroupName="AssetType"
                              Style="{StaticResource CategoryPill}"
                              Checked="AssetTypeTab_Checked"/>
             </StackPanel>
@@ -185,38 +191,13 @@
                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                  ItemContainerStyle="{StaticResource AssetItemStyle}"
                  SelectionChanged="AssetList_SelectionChanged"
+                 PreviewMouseRightButtonDown="AssetList_RightDown"
                  MouseDoubleClick="AssetList_MouseDoubleClick">
             <ListBox.ItemsPanel>
                 <ItemsPanelTemplate>
                     <WrapPanel Orientation="Horizontal"/>
                 </ItemsPanelTemplate>
             </ListBox.ItemsPanel>
-            <ListBox.ContextMenu>
-                <ContextMenu Background="#FF161618" BorderBrush="#FF3A3A3E">
-                    <MenuItem Header="Open / Edit" Click="ContextMenu_Open_Click">
-                        <MenuItem.Icon>
-                            <TextBlock Text="&#xE70F;" FontFamily="Segoe MDL2 Assets" Foreground="#FF6C5CE7"/>
-                        </MenuItem.Icon>
-                    </MenuItem>
-                    <Separator/>
-                    <MenuItem Header="Add to Scene" Click="ContextMenu_AddToScene_Click">
-                        <MenuItem.Icon>
-                            <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" Foreground="#FF4EC9B0"/>
-                        </MenuItem.Icon>
-                    </MenuItem>
-                    <MenuItem Header="Open in Asset Browser" Click="ContextMenu_OpenInBrowser_Click">
-                        <MenuItem.Icon>
-                            <TextBlock Text="&#xE8A7;" FontFamily="Segoe MDL2 Assets" Foreground="#FF569CD6"/>
-                        </MenuItem.Icon>
-                    </MenuItem>
-                    <Separator/>
-                    <MenuItem Header="Delete" Click="ContextMenu_Delete_Click">
-                        <MenuItem.Icon>
-                            <TextBlock Text="&#xE74D;" FontFamily="Segoe MDL2 Assets" Foreground="#FFCE9178"/>
-                        </MenuItem.Icon>
-                    </MenuItem>
-                </ContextMenu>
-            </ListBox.ContextMenu>
             <ListBox.ItemTemplate>
                 <DataTemplate>
                     <StackPanel Width="92">

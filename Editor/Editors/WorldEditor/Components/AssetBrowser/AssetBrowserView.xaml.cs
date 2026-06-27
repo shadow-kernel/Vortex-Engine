@@ -25,11 +25,13 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
     {
         public enum AssetType
         {
+            Explorer,   // folder browser: the current folder's subfolders + all files
             Meshes,
             Models,
             Textures,
             Materials,
-            Shaders
+            Shaders,
+            Scripts
         }
 
         public class AssetItem : INotifyPropertyChanged
@@ -43,6 +45,8 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             public string Path { get; set; }
             public Guid AssetGuid { get; set; }
             public bool IsImported { get; set; }
+            public bool IsFolder { get; set; }
+            public FileSystemItem Source { get; set; }   // backing file/folder for explorer items
 
             /// <summary>Real preview image (texture bitmap / generated color swatch / material sphere).
             /// Generated progressively AFTER the tile is shown (so the browser never freezes); when
@@ -62,7 +66,7 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
         public event EventHandler<AssetItem> AssetSelected;
         public event EventHandler<AssetItem> AssetDoubleClicked;
 
-        private AssetType _currentType = AssetType.Meshes;
+        private AssetType _currentType = AssetType.Explorer;
 
         // ---- search + folder sync (with the file tree, via FileExplorerService) ----
         private ICollectionView _assetsView;
@@ -91,14 +95,22 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             // Subscribe to asset database changes
             AssetDatabase.Instance.AssetsChanged += OnAssetsChanged;
 
-            // Stay in sync with the file tree's current folder.
+            // Stay in sync with the file tree's current folder + its contents.
             FileExplorerService.Instance.CurrentFolderChanged += OnExplorerFolderChanged;
+            FileExplorerService.Instance.FolderContentsChanged += OnFolderContentsChanged;
         }
 
         private void OnUnloadedCleanup(object sender, RoutedEventArgs e)
         {
             // FileExplorerService outlives this control — don't let it keep us alive.
             try { FileExplorerService.Instance.CurrentFolderChanged -= OnExplorerFolderChanged; } catch { }
+            try { FileExplorerService.Instance.FolderContentsChanged -= OnFolderContentsChanged; } catch { }
+        }
+
+        private void OnFolderContentsChanged(object sender, EventArgs e)
+        {
+            if (_currentType == AssetType.Explorer)
+                Application.Current?.Dispatcher?.Invoke(() => RefreshAssets());
         }
 
         // ---- search ----
@@ -115,9 +127,6 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             if (!string.IsNullOrEmpty(_searchText) &&
                 (a.Name ?? "").IndexOf(_searchText, StringComparison.OrdinalIgnoreCase) < 0)
                 return false;
-            // Folder scope: imported (on-disk) assets must live under the current folder;
-            // built-in primitives/materials have no path and are always shown.
-            if (a.IsImported && !IsUnderCurrentFolder(a.Path)) return false;
             return true;
         }
 
@@ -158,7 +167,8 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
 
             _currentFolderRel = rel;
             UpdateBreadcrumb(rel);
-            try { _assetsView?.Refresh(); } catch { }
+            if (_currentType == AssetType.Explorer) RefreshAssets();   // reload the folder's contents
+            else { try { _assetsView?.Refresh(); } catch { } }
         }
 
         private void UpdateBreadcrumb(string rel)
@@ -623,16 +633,16 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             var radioButton = sender as RadioButton;
             if (radioButton == null) return;
 
-            if (radioButton.Name == "MeshesTab" || (MeshesTab?.IsChecked == true))
-                _currentType = AssetType.Meshes;
-            else if (radioButton.Name == "ModelsTab" || (ModelsTab?.IsChecked == true))
-                _currentType = AssetType.Models;
-            else if (radioButton.Name == "TexturesTab" || (TexturesTab?.IsChecked == true))
-                _currentType = AssetType.Textures;
-            else if (radioButton.Name == "MaterialsTab" || (MaterialsTab?.IsChecked == true))
-                _currentType = AssetType.Materials;
-            else if (radioButton.Name == "ShadersTab")
-                _currentType = AssetType.Shaders;
+            switch (radioButton.Name)
+            {
+                case "ExplorerTab": _currentType = AssetType.Explorer; break;
+                case "MeshesTab": _currentType = AssetType.Meshes; break;
+                case "ModelsTab": _currentType = AssetType.Models; break;
+                case "TexturesTab": _currentType = AssetType.Textures; break;
+                case "MaterialsTab": _currentType = AssetType.Materials; break;
+                case "ShadersTab": _currentType = AssetType.Shaders; break;
+                case "ScriptsTab": _currentType = AssetType.Scripts; break;
+            }
 
             RefreshAssets();
         }
@@ -649,6 +659,12 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
         {
             if (AssetList.SelectedItem is AssetItem item)
             {
+                // Folder tile -> navigate into it (syncs the tree via CurrentFolderChanged).
+                if (item.IsFolder && item.Source != null)
+                {
+                    FileExplorerService.Instance.NavigateTo(item.Source);
+                    return;
+                }
                 AssetDoubleClicked?.Invoke(this, item);
                 // reveal the asset's folder in the file tree (browser -> tree sync)
                 if (item.IsImported && !string.IsNullOrEmpty(item.Path))
@@ -661,6 +677,123 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 OpenOrPlaceAsset(item);
             }
         }
+
+        // ---- right-click context menu (built dynamically per selection) ----
+        private void AssetList_RightDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            var dep = e.OriginalSource as System.Windows.DependencyObject;
+            while (dep != null && !(dep is ListBoxItem)) dep = System.Windows.Media.VisualTreeHelper.GetParent(dep);
+            if (dep is ListBoxItem lbi) { lbi.IsSelected = true; AssetList.SelectedItem = lbi.DataContext; }
+            else AssetList.SelectedItem = null;
+            AssetList.ContextMenu = BuildAssetContextMenu(AssetList.SelectedItem as AssetItem);
+        }
+
+        private ContextMenu BuildAssetContextMenu(AssetItem item)
+        {
+            var menu = new ContextMenu { Background = Br("#FF161618"), BorderBrush = Br("#FF3A3A3E") };
+            if (item != null)
+            {
+                if (item.IsFolder)
+                    AddMenu(menu, "Open Folder", () => { if (item.Source != null) FileExplorerService.Instance.NavigateTo(item.Source); });
+                else
+                    AddMenu(menu, "Open / Edit", () => OpenOrPlaceAsset(item));
+
+                if (item.Type == AssetType.Meshes || item.Type == AssetType.Models)
+                    AddMenu(menu, "Add to Scene", () => AddAssetToScene(item));
+                if (!string.IsNullOrEmpty(item.Path) && item.Path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+                    AddMenu(menu, "Assign to selected entity", () => AssignScriptToSelected(item));
+
+                AddMenu(menu, "Rename", () => RenameItem(item));
+                AddMenu(menu, "Delete", () => DeleteItem(item));
+                AddMenu(menu, "Show in Explorer", () => { if (item.Source != null) FileExplorerService.Instance.OpenInExplorer(item.Source); });
+                menu.Items.Add(new Separator());
+            }
+
+            AddMenu(menu, "New Folder", () => FileExplorerService.Instance.CreateFolder());
+            AddMenu(menu, "New Script", () => CreateScriptHere());
+            AddMenu(menu, "New Material", () => CreateNewMaterial("Opaque"));
+            AddMenu(menu, "New Shader", () => CreateNewShader("VertFrag"));
+            menu.Items.Add(new Separator());
+            AddMenu(menu, "Refresh", () => { FileExplorerService.Instance.RefreshCurrentFolderContents(); RefreshAssets(); });
+            return menu;
+        }
+
+        private void AddMenu(ContextMenu m, string header, Action act)
+        {
+            var mi = new MenuItem { Header = header, Foreground = Br("#FFE9E9ED") };
+            mi.Click += (s, e) => { try { act(); } catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[AssetBrowser] " + ex.Message); } };
+            m.Items.Add(mi);
+        }
+
+        private void CreateScriptHere()
+        {
+            try
+            {
+                var path = Editor.Core.Services.ScriptingService.CreateScript("NewBehaviour");
+                Editor.Core.Services.ScriptingService.OpenInVisualStudio(path);
+                // reveal the Scripts folder + refresh
+                var dir = System.IO.Path.GetDirectoryName(path);
+                if (!string.IsNullOrEmpty(dir)) FileExplorerService.Instance.NavigateToPath(dir);
+                AssetDatabase.Instance.Refresh();
+                RefreshAssets();
+            }
+            catch (Exception ex) { MessageBox.Show("Could not create script: " + ex.Message, "Script", MessageBoxButton.OK, MessageBoxImage.Warning); }
+        }
+
+        private void AssignScriptToSelected(AssetItem item)
+        {
+            var ent = SelectionService.Instance.SelectedEntity;
+            if (ent == null) { MessageBox.Show("Select an entity in the scene first, then assign the script.", "Assign Script", MessageBoxButton.OK, MessageBoxImage.Information); return; }
+            var rel = Editor.Core.Services.ScriptingService.MakeRelative(ProjectData.Current?.Path, item.Path);
+            ent.AddComponent(new Editor.ECS.Components.Scripting.Script(ent, rel));
+            SelectionService.Instance.Select(ent); // refresh the inspector
+        }
+
+        private void RenameItem(AssetItem item)
+        {
+            if (item.Source == null) return;
+            var name = PromptName("Rename", item.Name);
+            if (string.IsNullOrWhiteSpace(name) || name == item.Name) return;
+            FileExplorerService.Instance.Rename(item.Source, name.Trim());
+            RefreshAssets();
+        }
+
+        private void DeleteItem(AssetItem item)
+        {
+            if (item.Source == null) return;
+            if (MessageBox.Show("Delete '" + item.Name + "'?", "Delete", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+            FileExplorerService.Instance.Delete(item.Source);
+            RefreshAssets();
+        }
+
+        private string PromptName(string title, string initial)
+        {
+            string result = null;
+            var dlg = new Window
+            {
+                Width = 360, Height = 150, WindowStyle = WindowStyle.None, ResizeMode = ResizeMode.NoResize,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner, Owner = Window.GetWindow(this),
+                ShowInTaskbar = false, Background = Br("#FF1A1A1C")
+            };
+            var outer = new Border { BorderBrush = Br("#FF3A3A42"), BorderThickness = new Thickness(1), Padding = new Thickness(16) };
+            var sp = new StackPanel();
+            sp.Children.Add(new TextBlock { Text = title, Foreground = Br("#FFF5F5F7"), FontSize = 13, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 10) });
+            var tb = new TextBox { Text = initial ?? "", Background = Br("#FF202023"), Foreground = Br("#FFF5F5F7"), BorderBrush = Br("#FF3A3A42"), Padding = new Thickness(8, 6, 8, 6), Height = 30, CaretBrush = Br("#FF6C5CE7") };
+            sp.Children.Add(tb);
+            var row = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 14, 0, 0) };
+            var ok = new Button { Content = "OK", Width = 76, Height = 28, Background = Br("#FF6C5CE7"), Foreground = System.Windows.Media.Brushes.White, BorderThickness = new Thickness(0), Cursor = System.Windows.Input.Cursors.Hand, Margin = new Thickness(8, 0, 0, 0) };
+            var cancel = new Button { Content = "Cancel", Width = 76, Height = 28, Background = Br("#FF26262B"), Foreground = Br("#FFE9E9ED"), BorderThickness = new Thickness(0), Cursor = System.Windows.Input.Cursors.Hand };
+            cancel.Click += (s, e) => dlg.DialogResult = false;
+            ok.Click += (s, e) => { result = tb.Text; dlg.DialogResult = true; };
+            row.Children.Add(cancel); row.Children.Add(ok);
+            sp.Children.Add(row); outer.Child = sp; dlg.Content = outer;
+            tb.Loaded += (s, e) => { tb.Focus(); tb.SelectAll(); };
+            tb.KeyDown += (s, e) => { if (e.Key == System.Windows.Input.Key.Enter) { result = tb.Text; dlg.DialogResult = true; } else if (e.Key == System.Windows.Input.Key.Escape) dlg.DialogResult = false; };
+            return dlg.ShowDialog() == true ? result : null;
+        }
+
+        private static System.Windows.Media.Brush Br(string hex)
+            => (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFromString(hex);
 
         private void ContextMenu_Open_Click(object sender, RoutedEventArgs e)
         {
@@ -683,6 +816,11 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             if (item.Type == AssetType.Meshes || item.Type == AssetType.Models)
             {
                 AddAssetToScene(item);
+            }
+            else if (item.Source != null && !item.IsFolder && System.IO.File.Exists(item.Source.FullPath))
+            {
+                // Any other real file: open with the OS default handler.
+                FileExplorerService.Instance.OpenFile(item.Source);
             }
             else
             {
@@ -739,6 +877,14 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                             System.Diagnostics.Debug.WriteLine($"Error opening Model Editor: {ex.Message}");
                             MessageBox.Show($"Could not open model: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
                         }
+                        return true;
+                    }
+                    return false;
+
+                case AssetType.Scripts:
+                    if (System.IO.File.Exists(fullPath))
+                    {
+                        Editor.Core.Services.ScriptingService.OpenInVisualStudio(fullPath);
                         return true;
                     }
                     return false;
@@ -1071,6 +1217,9 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
 
             switch (_currentType)
             {
+                case AssetType.Explorer:
+                    LoadCurrentFolder();
+                    break;
                 case AssetType.Meshes:
                     LoadDefaultMeshes();
                     break;
@@ -1085,6 +1234,9 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                     break;
                 case AssetType.Shaders:
                     LoadDefaultShaders();
+                    break;
+                case AssetType.Scripts:
+                    LoadScripts();
                     break;
             }
 
@@ -1108,6 +1260,96 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             Application.Current?.Dispatcher?.BeginInvoke(
                 System.Windows.Threading.DispatcherPriority.Background,
                 new Action(() => { try { item.Thumbnail = builder(); } catch { } }));
+        }
+
+        /// <summary>Explorer tab: the current folder's subfolders + ALL files (a real file browser).</summary>
+        private void LoadCurrentFolder()
+        {
+            var folder = FileExplorerService.Instance.CurrentFolder;
+            if (folder == null) return;
+            var contents = FileExplorerService.Instance.CurrentFolderContents;
+
+            // folders first
+            foreach (var fsi in contents)
+            {
+                if (fsi == null || !fsi.IsDirectory) continue;
+                Assets.Add(new AssetItem
+                {
+                    Name = fsi.Name, Path = fsi.FullPath, Source = fsi, IsFolder = true, IsImported = true,
+                    TypeName = "Folder", IconCode = "", IconColor = "#FFE6B422"
+                });
+            }
+            // then files
+            foreach (var fsi in contents)
+            {
+                if (fsi == null || fsi.IsDirectory) continue;
+                Assets.Add(BuildFileItem(fsi));
+            }
+        }
+
+        private AssetItem BuildFileItem(FileSystemItem fsi)
+        {
+            var ext = (System.IO.Path.GetExtension(fsi.FullPath) ?? "").ToLowerInvariant();
+            var item = new AssetItem
+            {
+                Name = System.IO.Path.GetFileName(fsi.FullPath), Path = fsi.FullPath, Source = fsi, IsImported = true
+            };
+            switch (ext)
+            {
+                case ".cs":
+                    item.Type = AssetType.Scripts; item.TypeName = "Script"; item.IconCode = ""; item.IconColor = "#FF9B59B6"; break;
+                case ".vmat": case ".mat":
+                    item.Type = AssetType.Materials; item.TypeName = "Material"; item.IconCode = ""; item.IconColor = "#FFBD63C5"; break;
+                case ".vshader": case ".hlsl": case ".glsl":
+                    item.Type = AssetType.Shaders; item.TypeName = "Shader"; item.IconCode = ""; item.IconColor = "#FF569CD6"; break;
+                case ".vmesh": case ".fbx": case ".obj": case ".gltf": case ".glb": case ".dae": case ".3ds":
+                    item.Type = AssetType.Models; item.TypeName = "Model"; item.IconCode = ""; item.IconColor = "#FFCE9178";
+                    QueueThumbnail(item, () => GetOrBuildModelThumb(fsi.FullPath)); break;
+                case ".png": case ".jpg": case ".jpeg": case ".bmp": case ".gif":
+                    item.Type = AssetType.Textures; item.TypeName = "Texture"; item.IconCode = ""; item.IconColor = "#FF4EC9B0";
+                    QueueThumbnail(item, () => BuildImageThumb(fsi.FullPath)); break;
+                case ".tga": case ".dds": case ".hdr":
+                    item.Type = AssetType.Textures; item.TypeName = "Texture"; item.IconCode = ""; item.IconColor = "#FF4EC9B0"; break;
+                case ".vscene":
+                    item.Type = AssetType.Explorer; item.TypeName = "Scene"; item.IconCode = ""; item.IconColor = "#FF6C5CE7"; break;
+                default:
+                    item.Type = AssetType.Explorer;
+                    item.TypeName = string.IsNullOrEmpty(ext) ? "File" : (ext.TrimStart('.').ToUpperInvariant() + " File");
+                    item.IconCode = ""; item.IconColor = "#FF9A9AA1"; break;
+            }
+            return item;
+        }
+
+        private static ImageSource BuildImageThumb(string path)
+        {
+            var bmp = new BitmapImage();
+            bmp.BeginInit();
+            bmp.CacheOption = BitmapCacheOption.OnLoad;
+            bmp.DecodePixelWidth = 96;
+            bmp.UriSource = new Uri(path);
+            bmp.EndInit();
+            bmp.Freeze();
+            return bmp;
+        }
+
+        /// <summary>Scripts tab: every .cs in the project (project-wide), regardless of folder.</summary>
+        private void LoadScripts()
+        {
+            try
+            {
+                var root = ProjectData.Current?.Path;
+                foreach (var rel in Editor.Core.Services.ScriptingService.EnumerateScripts())
+                {
+                    var abs = !string.IsNullOrEmpty(root)
+                        ? System.IO.Path.Combine(root, rel.Replace('/', System.IO.Path.DirectorySeparatorChar)) : rel;
+                    Assets.Add(new AssetItem
+                    {
+                        Name = System.IO.Path.GetFileNameWithoutExtension(rel), Path = abs, IsImported = true,
+                        Type = AssetType.Scripts, TypeName = "Script", IconCode = "", IconColor = "#FF9B59B6"
+                    });
+                }
+            }
+            catch { }
         }
 
         private void LoadDefaultMeshes()
