@@ -1224,6 +1224,44 @@ EDITOR_INTERFACE int ImportModelWithMaterials(
 	return count;
 }
 
+// In-memory texture import (packed/encrypted asset pak loaded into RAM — no file on disk).
+EDITOR_INTERFACE id::id_type ImportTextureFromMemory(const unsigned char* data, int length)
+{
+	if (!data || length <= 0) return id::invalid_id;
+	return graphics::ResourceRegistry::instance().import_texture_from_memory(
+		reinterpret_cast<const u8*>(data), static_cast<u64>(length));
+}
+
+// In-memory multi-material model import (packed asset pak loaded into RAM). ext_hint = "obj","fbx",...
+EDITOR_INTERFACE int ImportModelFromMemoryWithMaterials(
+	const unsigned char* data,
+	int length,
+	const char* ext_hint,
+	const char* virtual_dir,
+	id::id_type* out_mesh_ids,
+	id::id_type* out_material_ids,
+	id::id_type* out_texture_ids,
+	int max_submeshes)
+{
+	if (!data || length <= 0 || !out_mesh_ids || !out_material_ids || !out_texture_ids || max_submeshes <= 0)
+		return 0;
+
+	auto result = graphics::ResourceRegistry::instance().import_model_with_materials_from_memory(
+		reinterpret_cast<const u8*>(data), static_cast<u64>(length),
+		ext_hint ? ext_hint : "", virtual_dir ? virtual_dir : "");
+	if (!result.success)
+		return 0;
+
+	int count = static_cast<int>((std::min)(result.submeshes.size(), static_cast<size_t>(max_submeshes)));
+	for (int i = 0; i < count; i++)
+	{
+		out_mesh_ids[i] = result.submeshes[i].mesh_id;
+		out_material_ids[i] = result.submeshes[i].material_id;
+		out_texture_ids[i] = result.submeshes[i].texture_id;
+	}
+	return count;
+}
+
 // Get submesh count without importing (for pre-allocation)
 EDITOR_INTERFACE int GetModelSubmeshCount(const char* filepath)
 {

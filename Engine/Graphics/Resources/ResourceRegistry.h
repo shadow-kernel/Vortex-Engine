@@ -7,6 +7,7 @@
 #include "Material.h"
 #include "../Geometry/IMeshGenerator.h"
 #include "../Importers/ModelImporter.h"
+#include "../Importers/TextureImporter.h"
 #include <d3d12.h>
 #include <wrl/client.h>
 #include <unordered_map>
@@ -58,6 +59,8 @@ namespace vortex::graphics
 		// Import management
 		id::id_type import_model(const std::string& filepath);
 		id::id_type import_texture(const std::string& filepath, const std::string& name = "");
+		/// <summary>Import a texture from an in-memory buffer (packed asset pak loaded into RAM).</summary>
+		id::id_type import_texture_from_memory(const u8* data, u64 length, const std::string& name = "");
 		bool export_mesh_to_vmesh(id::id_type mesh_id, const std::string& filepath);
 		id::id_type load_vmesh(const std::string& filepath);
 
@@ -80,6 +83,9 @@ namespace vortex::graphics
 
 		// Import model with separate meshes and materials per submesh
 		MultiMaterialImportResult import_model_with_materials(const std::string& filepath);
+		/// <summary>Import a multi-material model from an in-memory buffer (packed asset pak loaded into RAM).</summary>
+		MultiMaterialImportResult import_model_with_materials_from_memory(const u8* data, u64 length,
+			const std::string& ext_hint, const std::string& virtual_dir);
 
 		// Default resources
 		id::id_type default_cube_mesh() const { return m_default_cube; }
@@ -97,6 +103,9 @@ namespace vortex::graphics
 		ResourceRegistry() = default;
 
 		id::id_type create_mesh_from_submesh(const SubMeshData& submesh, const std::string& name);
+		// Shared cores so the file-based and in-memory import paths build resources identically.
+		id::id_type create_texture_from_image(ImageData& image_data, const std::string& label);
+		MultiMaterialImportResult build_model_result(ImportedModelData& model_data);
 
 		ID3D12Device* m_device{ nullptr };
 

@@ -40,6 +40,31 @@ namespace vortex::graphics
 		return result;
 	}
 
+	ImageData TextureImporter::import_from_memory(const u8* data, u64 length, bool flip_vertically)
+	{
+		ImageData result;
+		if (!data || length == 0) return result;
+
+		stbi_set_flip_vertically_on_load(flip_vertically ? 1 : 0);
+
+		int width, height, channels;
+		unsigned char* pixels = stbi_load_from_memory(data, static_cast<int>(length), &width, &height, &channels, 4);
+		if (!pixels)
+			return result;
+
+		result.width = static_cast<u32>(width);
+		result.height = static_cast<u32>(height);
+		result.channels = 4;
+		result.format = ImageFormat::RGBA8;
+
+		size_t data_size = static_cast<size_t>(width) * height * 4;
+		result.pixels.resize(data_size);
+		memcpy(result.pixels.data(), pixels, data_size);
+
+		stbi_image_free(pixels);
+		return result;
+	}
+
 	bool TextureImporter::is_format_supported(const std::string& extension)
 	{
 		static const std::vector<std::string> supported = {

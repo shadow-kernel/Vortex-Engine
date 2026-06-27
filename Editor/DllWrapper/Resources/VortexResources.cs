@@ -218,8 +218,26 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern int GetModelSubmeshCount([MarshalAs(UnmanagedType.LPStr)] string filepath);
 
+        // In-memory variants (packed/encrypted asset pak loaded into RAM — no file on disk).
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern long ImportTextureFromMemory(byte[] data, int length);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int ImportModelFromMemoryWithMaterials(
+            byte[] data, int length,
+            [MarshalAs(UnmanagedType.LPStr)] string extHint,
+            [MarshalAs(UnmanagedType.LPStr)] string virtualDir,
+            [In, Out] long[] meshIds,
+            [In, Out] long[] materialIds,
+            [In, Out] long[] textureIds,
+            int maxSubmeshes);
+
         public static long ImportModelFromFile(string filepath) => ImportModel(filepath);
         public static long ImportTextureFromFile(string filepath) => ImportTexture(filepath);
+
+        /// <summary>Import a texture from an in-memory buffer (asset pak). -1 on failure.</summary>
+        public static long ImportTextureFromBytes(byte[] data)
+            => (data == null || data.Length == 0) ? -1 : ImportTextureFromMemory(data, data.Length);
         public static long LoadVMeshFromFile(string filepath) => LoadVMesh(filepath);
         public static bool SaveMeshToVMesh(long meshId, string filepath) => ExportMeshToVMesh(meshId, filepath);
         public static bool IsAssimpAvailable() => HasAssimpSupport();
@@ -245,7 +263,35 @@ namespace Editor.DllWrapper
             var textureIds = new long[maxSubmeshes];
 
             int count = ImportModelWithMaterials(filepath, meshIds, materialIds, textureIds, maxSubmeshes);
-            
+
+            var result = new SubmeshImportData[count];
+            for (int i = 0; i < count; i++)
+            {
+                result[i] = new SubmeshImportData
+                {
+                    MeshId = meshIds[i],
+                    MaterialId = materialIds[i],
+                    TextureId = textureIds[i]
+                };
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Import a multi-material model from an in-memory buffer (asset pak loaded into RAM).
+        /// extHint is the bare extension ("obj","fbx",...); virtualDir is the model's pak folder (for textures).
+        /// </summary>
+        public static SubmeshImportData[] ImportModelFromBytes(byte[] data, string extHint, string virtualDir)
+        {
+            if (data == null || data.Length == 0) return new SubmeshImportData[0];
+            const int maxSubmeshes = 64;
+            var meshIds = new long[maxSubmeshes];
+            var materialIds = new long[maxSubmeshes];
+            var textureIds = new long[maxSubmeshes];
+
+            int count = ImportModelFromMemoryWithMaterials(data, data.Length, extHint ?? "", virtualDir ?? "",
+                meshIds, materialIds, textureIds, maxSubmeshes);
+
             var result = new SubmeshImportData[count];
             for (int i = 0; i < count; i++)
             {

@@ -57,6 +57,14 @@ namespace vortex::graphics
 		static ImportedModelData import_from_file(const std::string& filepath);
 
 		/// <summary>
+		/// Import a model from an in-memory buffer (for packed/encrypted asset paks loaded into RAM).
+		/// ext_hint is the bare extension ("obj","fbx",...) so Assimp can pick the right importer;
+		/// virtual_dir is the model's virtual folder, used only to build relative texture paths.
+		/// </summary>
+		static ImportedModelData import_from_memory(const u8* data, u64 length,
+			const std::string& ext_hint, const std::string& virtual_dir);
+
+		/// <summary>
 		/// Check if a file format is supported.
 		/// </summary>
 		static bool is_format_supported(const std::string& extension);
@@ -65,7 +73,7 @@ namespace vortex::graphics
 	static void calculate_bounds(ImportedModelData& data);
 	static void process_node(void* node, void* scene, ImportedModelData& data);
 	static SubMeshData process_mesh(void* mesh, void* scene);
-	static void extract_materials(void* scene, ImportedModelData& data, const std::string& filepath);
+	static void extract_materials(void* scene, ImportedModelData& data, const std::string& filepath, bool allow_disk_search = true);
 	static void search_textures_in_directory(const std::string& dir, ImportedModelData& data);
 	};
 }

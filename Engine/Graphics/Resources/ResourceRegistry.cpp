@@ -313,8 +313,25 @@ namespace vortex::graphics
 			OutputDebugStringA(("Failed to load texture: " + filepath + "\n").c_str());
 			return id::invalid_id;
 		}
+		return create_texture_from_image(image_data, filepath);
+	}
 
-		OutputDebugStringA(("Loaded texture: " + filepath + " (" + 
+	id::id_type ResourceRegistry::import_texture_from_memory(const u8* data, u64 length, const std::string& name)
+	{
+		if (!m_device) return id::invalid_id;
+
+		ImageData image_data = TextureImporter::import_from_memory(data, length);
+		if (!image_data.is_valid())
+		{
+			OutputDebugStringA("Failed to load texture from memory\n");
+			return id::invalid_id;
+		}
+		return create_texture_from_image(image_data, name.empty() ? std::string("memtex") : name);
+	}
+
+	id::id_type ResourceRegistry::create_texture_from_image(ImageData& image_data, const std::string& label)
+	{
+		OutputDebugStringA(("Loaded texture: " + label + " (" +
 			std::to_string(image_data.width) + "x" + std::to_string(image_data.height) + ")\n").c_str());
 
 		std::vector<u8> rgba_pixels;
@@ -377,9 +394,37 @@ namespace vortex::graphics
 			OutputDebugStringA("Import failed - no valid data\n");
 			return result;
 		}
+		return build_model_result(model_data);
+	}
+
+	ResourceRegistry::MultiMaterialImportResult ResourceRegistry::import_model_with_materials_from_memory(
+		const u8* data, u64 length, const std::string& ext_hint, const std::string& virtual_dir)
+	{
+		MultiMaterialImportResult result;
+		result.success = false;
+		if (!m_device)
+		{
+			OutputDebugStringA("ResourceRegistry not initialized\n");
+			return result;
+		}
+
+		OutputDebugStringA(("=== Multi-Material Import (memory): ." + ext_hint + " ===\n").c_str());
+		ImportedModelData model_data = ModelImporter::import_from_memory(data, length, ext_hint, virtual_dir);
+		if (!model_data.is_valid())
+		{
+			OutputDebugStringA("Import from memory failed - no valid data\n");
+			return result;
+		}
+		return build_model_result(model_data);
+	}
+
+	ResourceRegistry::MultiMaterialImportResult ResourceRegistry::build_model_result(ImportedModelData& model_data)
+	{
+		MultiMaterialImportResult result;
+		result.success = false;
 
 		result.model_name = model_data.name;
-		OutputDebugStringA(("Model: " + model_data.name + ", " + 
+		OutputDebugStringA(("Model: " + model_data.name + ", " +
 			std::to_string(model_data.submeshes.size()) + " submeshes\n").c_str());
 
 		for (size_t i = 0; i < model_data.submeshes.size(); i++)

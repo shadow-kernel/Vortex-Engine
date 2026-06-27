@@ -63,8 +63,45 @@ namespace vortex::graphics
 
 		return result;
 	}
+	ImportedModelData ModelImporter::import_from_memory(const u8* data, u64 length,
+		const std::string& ext_hint, const std::string& virtual_dir)
+	{
+		ImportedModelData result;
+		if (!data || length == 0) return result;
+
+		Assimp::Importer importer;
+		const aiScene* scene = importer.ReadFileFromMemory(data, (size_t)length,
+			aiProcess_Triangulate |
+			aiProcess_GenNormals |
+			aiProcess_CalcTangentSpace |
+			aiProcess_FlipUVs |
+			aiProcess_JoinIdenticalVertices |
+			aiProcess_SortByPType,
+			ext_hint.c_str());
+
+		if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode)
+		{
+			OutputDebugStringA("ModelImporter: Failed to load model from memory\n");
+			return result;
+		}
+
+		result.name = "MemoryModel";
+		process_node(scene->mRootNode, (void*)scene, result);
+
+		// Build relative texture paths off the virtual folder; never touch the disk (assets are in the pak).
+		std::string base = virtual_dir;
+		if (!base.empty() && base.back() != '/' && base.back() != '\\') base += "/";
+		extract_materials((void*)scene, result, base + "model", /*allow_disk_search*/ false);
+
+		calculate_bounds(result);
+		return result;
+	}
 #else
 	ImportedModelData ModelImporter::import_from_file(const std::string& filepath)
+	{
+		return ImportedModelData();
+	}
+	ImportedModelData ModelImporter::import_from_memory(const u8*, u64, const std::string&, const std::string&)
 	{
 		return ImportedModelData();
 	}
@@ -183,7 +220,7 @@ namespace vortex::graphics
 		return result;
 	}
 
-	void ModelImporter::extract_materials(void* scene_ptr, ImportedModelData& data, const std::string& filepath)
+	void ModelImporter::extract_materials(void* scene_ptr, ImportedModelData& data, const std::string& filepath, bool allow_disk_search)
 	{
 		const aiScene* scene = static_cast<const aiScene*>(scene_ptr);
 		if (!scene) return;
@@ -262,25 +299,28 @@ namespace vortex::graphics
 			}
 		}
 		
-		// If no textures found in model, search in directory
-		bool has_valid_texture = false;
-		for (const auto& tex_path : data.texture_paths)
+		// If no textures found in model, search in directory (disk only — skipped for in-memory/pak loads).
+		if (allow_disk_search)
 		{
-		if (!tex_path.empty())
-		{
-		DWORD attribs = GetFileAttributesA(tex_path.c_str());
-		if (attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY))
-		{
-		has_valid_texture = true;
-		break;
-		}
-		}
-		}
-		
-		if (data.texture_paths.empty() || !has_valid_texture)
-		{
-		OutputDebugStringA("ModelImporter: No valid textures found, searching directory...\n");
-		search_textures_in_directory(model_dir, data);
+			bool has_valid_texture = false;
+			for (const auto& tex_path : data.texture_paths)
+			{
+			if (!tex_path.empty())
+			{
+			DWORD attribs = GetFileAttributesA(tex_path.c_str());
+			if (attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY))
+			{
+			has_valid_texture = true;
+			break;
+			}
+			}
+			}
+
+			if (data.texture_paths.empty() || !has_valid_texture)
+			{
+			OutputDebugStringA("ModelImporter: No valid textures found, searching directory...\n");
+			search_textures_in_directory(model_dir, data);
+			}
 		}
 	}
 	

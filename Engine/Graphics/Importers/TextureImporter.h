@@ -44,6 +44,11 @@ namespace vortex::graphics
 		static ImageData import_from_file(const std::string& filepath, bool flip_vertically = false);
 
 		/// <summary>
+		/// Import an image from an in-memory buffer (for packed/encrypted asset paks loaded into RAM).
+		/// </summary>
+		static ImageData import_from_memory(const u8* data, u64 length, bool flip_vertically = false);
+
+		/// <summary>
 		/// Check if a file format is supported.
 		/// </summary>
 		static bool is_format_supported(const std::string& extension);
