@@ -352,6 +352,8 @@ namespace vortex::graphics::dx12
 		// Per-object constants - matches shader cbuffer PerObject
 		ComPtr<ID3D12Resource> m_per_object_cb;
 		void* m_per_object_cb_mapped{ nullptr };
+		ComPtr<ID3D12Resource> m_instance_vb;          // per-instance world matrices (GPU instancing)
+		void* m_instance_vb_mapped{ nullptr };
 
 		struct alignas(256) PerObjectConstants
 		{
