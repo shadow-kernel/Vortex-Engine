@@ -165,6 +165,22 @@ namespace Editor.Core.Data
         /// <summary>
         /// Gibt das aktuell geladene Projekt zur�ck
         /// </summary>
-        public static ProjectData Current => Application.Current?.MainWindow?.DataContext as ProjectData;
+        private static ProjectData _currentCache;
+        // Thread-safe: reads MainWindow.DataContext on the UI thread and caches it, so a dedicated render
+        // thread (the standalone game loop) can read the active project without a Dispatcher.VerifyAccess throw.
+        public static ProjectData Current
+        {
+            get
+            {
+                try
+                {
+                    var c = (Application.Current != null && Application.Current.MainWindow != null)
+                        ? Application.Current.MainWindow.DataContext as ProjectData : null;
+                    if (c != null) _currentCache = c;
+                    return c ?? _currentCache;
+                }
+                catch { return _currentCache; } // off the UI thread → last cached project
+            }
+        }
     }
 }
