@@ -51,6 +51,7 @@ namespace Editor.Scripting
             Vortex.Scene.Host = this;
             Vortex.Cursor.Host = this;
             Vortex.Application.Host = this;
+            Vortex.Camera.Host = this;
 
             _entitiesById.Clear();
             _nextHandle = 0;
@@ -268,6 +269,12 @@ namespace Editor.Scripting
                 else
                     Editor.Core.Services.PlayModeService.Instance.Stop();
             }
+            catch { }
+        }
+
+        void Vortex.IScriptHost.SetCameraFov(float fovDegrees)
+        {
+            try { Editor.DllWrapper.VortexAPI.SetViewFOV(fovDegrees); }
             catch { }
         }
 

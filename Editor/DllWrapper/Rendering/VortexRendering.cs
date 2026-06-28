@@ -104,6 +104,15 @@ namespace Editor.DllWrapper
             SetCamera(posX, posY, posZ, targetX, targetY, targetZ, upX, upY, upZ);
         }
 
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetViewFieldOfView(float fovDegrees);
+
+        // Vertical FOV (degrees) of the live view camera — set from the game's FOV setting.
+        public static void SetViewFOV(float fovDegrees)
+        {
+            SetViewFieldOfView(fovDegrees);
+        }
+
         #endregion
 
         #region Render Item Submission

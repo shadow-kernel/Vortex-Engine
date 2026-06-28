@@ -45,6 +45,9 @@ namespace Vortex
         // Quit the whole game (closes the player / stops play).
         void QuitGame();
 
+        // Set the player camera's vertical field of view (degrees).
+        void SetCameraFov(float fovDegrees);
+
         // 2D UI overlay (immediate mode), coordinates in viewport pixels (top-left origin).
         void UIRect(float x, float y, float w, float h, float r, float g, float b, float a, float radius);
         void UIText(float x, float y, float w, float h, string text, float size, float r, float g, float b, float a, int align, int weight);
@@ -173,6 +176,14 @@ namespace Vortex
         internal static IScriptHost Host;
         /// <summary>Quit the game (closes the standalone player / stops play).</summary>
         public static void Quit() { if (Host != null) Host.QuitGame(); }
+    }
+
+    /// <summary>Player view camera control (the live game/play view).</summary>
+    public static class Camera
+    {
+        internal static IScriptHost Host;
+        /// <summary>Vertical field of view in degrees (clamped 30–120 by the engine).</summary>
+        public static void SetFieldOfView(float fovDegrees) { if (Host != null) Host.SetCameraFov(fovDegrees); }
     }
 
     /// <summary>

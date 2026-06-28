@@ -167,6 +167,9 @@ namespace vortex::graphics::dx12
 
 		// Camera projection settings
 		void set_projection(float fov_degrees, float aspect, float near_clip, float far_clip);
+		// Vertical FOV (degrees) used by the live view camera (editor play + standalone). Settable from the game.
+		void set_field_of_view(float fov_degrees) { if (fov_degrees >= 30.0f && fov_degrees <= 120.0f) m_fov_degrees = fov_degrees; }
+		float field_of_view() const { return m_fov_degrees; }
 
 
 		// Camera gizmo rendering

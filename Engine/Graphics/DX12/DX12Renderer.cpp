@@ -779,7 +779,7 @@ namespace vortex::graphics::dx12
 
 	XMMATRIX view = XMMatrixLookAtLH(eye, at, up);
 	float aspect = (float)m_swapchain.width() / (float)m_swapchain.height();
-	XMMATRIX proj = XMMatrixPerspectiveFovLH(XM_PIDIV4, aspect, 0.1f, 1000.0f);
+	XMMATRIX proj = XMMatrixPerspectiveFovLH(XMConvertToRadians(m_fov_degrees), aspect, 0.1f, 1000.0f); // settable FOV (game camera)
 	XMMATRIX vp = view * proj;
 
 	XMStoreFloat4x4(&m_frame_constants.view_projection, vp);

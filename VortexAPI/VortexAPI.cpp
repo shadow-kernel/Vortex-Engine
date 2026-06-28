@@ -625,6 +625,17 @@ EDITOR_INTERFACE void SetCamera(float pos_x, float pos_y, float pos_z,
 		{ up_x, up_y, up_z });
 }
 
+// Vertical FOV (degrees) of the live view camera — driven by the game's FOV setting.
+EDITOR_INTERFACE void SetViewFieldOfView(float fov_degrees)
+{
+	graphics::dx12::DX12Renderer::instance().set_field_of_view(fov_degrees);
+}
+
+EDITOR_INTERFACE float GetViewFieldOfView()
+{
+	return graphics::dx12::DX12Renderer::instance().field_of_view();
+}
+
 // Grid and Gizmo control
 EDITOR_INTERFACE void SetGridVisible(bool visible)
 {
