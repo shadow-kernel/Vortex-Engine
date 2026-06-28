@@ -103,6 +103,8 @@ namespace vortex::graphics::dx12
 		m_per_frame_cb.Reset();
 		if (m_per_object_cb && m_per_object_cb_mapped) { m_per_object_cb->Unmap(0, nullptr); m_per_object_cb_mapped = nullptr; }
 		m_per_object_cb.Reset();
+		if (m_instance_vb && m_instance_vb_mapped) { m_instance_vb->Unmap(0, nullptr); m_instance_vb_mapped = nullptr; }
+		m_instance_vb.Reset();
 		if (m_light_cb && m_light_cb_mapped) { m_light_cb->Unmap(0, nullptr); m_light_cb_mapped = nullptr; }
 		m_light_cb.Reset();
 		if (m_grid_cb && m_grid_cb_mapped) { m_grid_cb->Unmap(0, nullptr); m_grid_cb_mapped = nullptr; }
@@ -405,14 +407,16 @@ namespace vortex::graphics::dx12
 		size_t objectCount = (std::min)(m_render_queue.size(), static_cast<size_t>(MAX_RENDER_OBJECTS));
 		if (objectCount == 0) return;
 
-		// Early-Z: draw opaque objects FRONT-TO-BACK so the depth test rejects occluded pixels before the
-		// expensive PBR pixel shader runs (big overdraw win in dense scenes). Sorting in place keeps the
-		// per-object CB slot (index i) valid. ~O(n log n), negligible vs the draw cost.
+		// Sort by (material, mesh, distance): identical (mesh+material) objects become ADJACENT so each run
+		// draws as ONE instanced call (fewer draw calls); distance is the tiebreaker for partial early-Z
+		// within a run. ~O(n log n), negligible vs the draw cost.
 		{
 			const DirectX::XMFLOAT3 eye = m_camera_position;
 			std::sort(m_render_queue.begin(), m_render_queue.end(),
 				[&eye](const RenderItem& a, const RenderItem& b)
 				{
+					if (a.material_id != b.material_id) return a.material_id < b.material_id;
+					if (a.mesh_id != b.mesh_id) return a.mesh_id < b.mesh_id;
 					float ax = a.world_matrix._41 - eye.x, ay = a.world_matrix._42 - eye.y, az = a.world_matrix._43 - eye.z;
 					float bx = b.world_matrix._41 - eye.x, by = b.world_matrix._42 - eye.y, bz = b.world_matrix._43 - eye.z;
 					return (ax * ax + ay * ay + az * az) < (bx * bx + by * by + bz * bz);
@@ -423,137 +427,101 @@ namespace vortex::graphics::dx12
 		// vertex work). The biggest 2026-standard CPU win — don't render what the camera can't see.
 		FrustumPlanes frustum = extract_frustum(m_frame_constants.view_projection);
 
-		// Render all objects (no sorting - keeps original order stable for re-rendering)
-		for (size_t i = 0; i < objectCount; ++i)
+		// Instanced draw: the queue is sorted by (material, mesh), so consecutive items with the same
+		// mesh+material are issued as ONE DrawIndexedInstanced. Per-instance world matrices feed slot 1.
+		using namespace DirectX;
+		u32 cbSlot = 0;     // material constant-buffer slot (one per run)
+		u32 instBase = 0;   // running offset (in matrices) into the instance vertex buffer
+		size_t i = 0;
+		while (i < objectCount)
 		{
-	const auto& item = m_render_queue[i];
-		Mesh* mesh = reg.get_mesh(item.mesh_id);
-		if (!mesh || !mesh->is_valid()) continue;
+			const auto idMesh = m_render_queue[i].mesh_id;
+			const auto idMat = m_render_queue[i].material_id;
+			Mesh* mesh = reg.get_mesh(idMesh);
 
-		// --- Cull this object if its world-space bounding sphere is outside the frustum ---
-		{
-			float minx, miny, minz, maxx, maxy, maxz;
-			mesh->get_min(minx, miny, minz);
-			mesh->get_max(maxx, maxy, maxz);
-			// Skip culling meshes with default/unset bounds (0..1) — e.g. ground/sea primitives — so we
-			// never wrongly cull something huge that should always be on screen.
+			// Mesh bounds for frustum culling (computed once for the whole run).
+			float minx = 0, miny = 0, minz = 0, maxx = 1, maxy = 1, maxz = 1;
+			if (mesh && mesh->is_valid()) { mesh->get_min(minx, miny, minz); mesh->get_max(maxx, maxy, maxz); }
 			bool defaultBounds = (minx == 0.f && miny == 0.f && minz == 0.f && maxx == 1.f && maxy == 1.f && maxz == 1.f);
-			if (!defaultBounds)
-			{
-				using namespace DirectX;
-				float lcx = (minx + maxx) * 0.5f, lcy = (miny + maxy) * 0.5f, lcz = (minz + maxz) * 0.5f;
-				float dx = maxx - minx, dy = maxy - miny, dz = maxz - minz;
-				float localR = 0.5f * sqrtf(dx * dx + dy * dy + dz * dz);
-				const XMFLOAT4X4& W = item.world_matrix;
-				XMVECTOR wc = XMVector3TransformCoord(XMVectorSet(lcx, lcy, lcz, 1.f), XMLoadFloat4x4(&W));
-				float sx = sqrtf(W._11 * W._11 + W._12 * W._12 + W._13 * W._13);
-				float sy = sqrtf(W._21 * W._21 + W._22 * W._22 + W._23 * W._23);
-				float sz = sqrtf(W._31 * W._31 + W._32 * W._32 + W._33 * W._33);
-				float maxScale = sx > sy ? (sx > sz ? sx : sz) : (sy > sz ? sy : sz);
-				float worldR = localR * maxScale + 0.05f; // small epsilon, stay conservative
-				if (!sphere_in_frustum(frustum, XMVectorGetX(wc), XMVectorGetY(wc), XMVectorGetZ(wc), worldR))
-					continue; // not visible — skip the draw
-			}
-		}
+			float lcx = (minx + maxx) * 0.5f, lcy = (miny + maxy) * 0.5f, lcz = (minz + maxz) * 0.5f;
+			float bdx = maxx - minx, bdy = maxy - miny, bdz = maxz - minz;
+			float localR = 0.5f * sqrtf(bdx * bdx + bdy * bdy + bdz * bdz);
 
-		PerObjectConstants obj{};  // Zero-initialize
-		obj.world = item.world_matrix;
-		obj.base_color = { 0.85f, 0.85f, 0.88f, 1.0f };  // Slightly blue-ish gray for metal look
-		obj.metallic = 0.7f;   // Default to metallic for better PBR look
-		obj.roughness = 0.35f; // Moderate roughness for some reflection
-		obj.ao = 1.0f;
-		obj.normal_strength = 1.0f;
-		obj.has_albedo_texture = 0;
-		obj.has_normal_texture = 0;
-		obj.has_metallic_texture = 0;
-		obj.has_roughness_texture = 0;
-		obj.has_ao_texture = 0;
-		obj.use_directx_normals = 1;
-		obj.padding[0] = 0;
-		obj.padding[1] = 0;
+			// Gather every VISIBLE (frustum-passing) instance of this run into the instance buffer.
+			u32 runStart = instBase, runCount = 0;
+			size_t j = i;
+			while (j < objectCount && m_render_queue[j].mesh_id == idMesh && m_render_queue[j].material_id == idMat)
+			{
+				const auto& item = m_render_queue[j];
+				bool visible = true;
+				if (!defaultBounds)
+				{
+					const XMFLOAT4X4& W = item.world_matrix;
+					XMVECTOR wc = XMVector3TransformCoord(XMVectorSet(lcx, lcy, lcz, 1.f), XMLoadFloat4x4(&W));
+					float sx = sqrtf(W._11 * W._11 + W._12 * W._12 + W._13 * W._13);
+					float sy = sqrtf(W._21 * W._21 + W._22 * W._22 + W._23 * W._23);
+					float sz = sqrtf(W._31 * W._31 + W._32 * W._32 + W._33 * W._33);
+					float maxScale = sx > sy ? (sx > sz ? sx : sz) : (sy > sz ? sy : sz);
+					visible = sphere_in_frustum(frustum, XMVectorGetX(wc), XMVectorGetY(wc), XMVectorGetZ(wc), localR * maxScale + 0.05f);
+				}
+				if (visible && m_instance_vb_mapped && (runStart + runCount) < MAX_RENDER_OBJECTS)
+				{
+					memcpy((u8*)m_instance_vb_mapped + (size_t)(runStart + runCount) * 64, &item.world_matrix, 64);
+					++runCount;
+				}
+				++j;
+			}
+			i = j;
+			instBase = runStart + runCount;
+			if (!mesh || !mesh->is_valid() || runCount == 0) continue;
 
-		auto* mat = reg.get_material(item.material_id);
-		
-		// Texture debug disabled
-		// static int debug_frame_count = 0;
-		// if (debug_frame_count < 5 && mat) { ... }
-		
-		if (mat && mat->properties().is_unlit)
-		{
-			m_command_list->SetPipelineState(double_sided_pso);
-		}
-		else
-		{
-			m_command_list->SetPipelineState(pso);
-		}
-		
-		if (mat)
-		{
-		const auto& props = mat->properties();
-		obj.base_color = props.base_color;
-			obj.metallic = props.metallic;
-			obj.roughness = props.roughness;
-			obj.ao = props.ao;
-			obj.normal_strength = props.normal_strength;
-			obj.use_directx_normals = props.use_directx_normals;
-			
-			// Bind all PBR textures (root params 2-6)
-			auto* tex = mat->albedo_texture();
-			if (tex && tex->is_valid() && tex->srv_gpu().ptr != 0)
+			// Material + PSO + textures: set ONCE for the whole run (shared by all its instances).
+			PerObjectConstants obj{};
+			obj.base_color = { 0.85f, 0.85f, 0.88f, 1.0f };
+			obj.metallic = 0.7f; obj.roughness = 0.35f; obj.ao = 1.0f; obj.normal_strength = 1.0f;
+			obj.use_directx_normals = 1;
+			auto* mat = reg.get_material(idMat);
+			if (mat && mat->properties().is_unlit) m_command_list->SetPipelineState(double_sided_pso);
+			else m_command_list->SetPipelineState(pso);
+			if (mat)
 			{
-			obj.has_albedo_texture = 1;
-			m_command_list->SetGraphicsRootDescriptorTable(3, tex->srv_gpu());
+				const auto& props = mat->properties();
+				obj.base_color = props.base_color; obj.metallic = props.metallic; obj.roughness = props.roughness;
+				obj.ao = props.ao; obj.normal_strength = props.normal_strength; obj.use_directx_normals = props.use_directx_normals;
+				auto* tex = mat->albedo_texture();
+				if (tex && tex->is_valid() && tex->srv_gpu().ptr != 0) { obj.has_albedo_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(3, tex->srv_gpu()); }
+				auto* normal = mat->normal_texture();
+				if (normal && normal->is_valid() && normal->srv_gpu().ptr != 0) { obj.has_normal_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(4, normal->srv_gpu()); }
+				auto* metallic_tex = mat->metallic_texture();
+				if (metallic_tex && metallic_tex->is_valid() && metallic_tex->srv_gpu().ptr != 0) { obj.has_metallic_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(5, metallic_tex->srv_gpu()); }
+				auto* roughness_tex = mat->roughness_texture();
+				if (roughness_tex && roughness_tex->is_valid() && roughness_tex->srv_gpu().ptr != 0) { obj.has_roughness_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(6, roughness_tex->srv_gpu()); }
+				auto* ao_tex = mat->ao_texture();
+				if (ao_tex && ao_tex->is_valid() && ao_tex->srv_gpu().ptr != 0) { obj.has_ao_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(7, ao_tex->srv_gpu()); }
 			}
-			
-			auto* normal = mat->normal_texture();
-			if (normal && normal->is_valid() && normal->srv_gpu().ptr != 0)
-			{
-			obj.has_normal_texture = 1;
-			m_command_list->SetGraphicsRootDescriptorTable(4, normal->srv_gpu());
-			}
-			
-			auto* metallic_tex = mat->metallic_texture();
-			if (metallic_tex && metallic_tex->is_valid() && metallic_tex->srv_gpu().ptr != 0)
-			{
-			obj.has_metallic_texture = 1;
-			m_command_list->SetGraphicsRootDescriptorTable(5, metallic_tex->srv_gpu());
-			}
-			
-			auto* roughness_tex = mat->roughness_texture();
-			if (roughness_tex && roughness_tex->is_valid() && roughness_tex->srv_gpu().ptr != 0)
-			{
-			obj.has_roughness_texture = 1;
-			m_command_list->SetGraphicsRootDescriptorTable(6, roughness_tex->srv_gpu());
-			}
-			
-			auto* ao_tex = mat->ao_texture();
-			if (ao_tex && ao_tex->is_valid() && ao_tex->srv_gpu().ptr != 0)
-			{
-			obj.has_ao_texture = 1;
-			m_command_list->SetGraphicsRootDescriptorTable(7, ao_tex->srv_gpu());
-			}
-			}
+			if (m_per_object_cb_mapped) memcpy((u8*)m_per_object_cb_mapped + (size_t)cbSlot * 256, &obj, sizeof(obj));
+			m_command_list->SetGraphicsRootConstantBufferView(1, m_per_object_cb->GetGPUVirtualAddress() + (size_t)cbSlot * 256);
+			++cbSlot;
 
-		if (m_per_object_cb_mapped)
-		memcpy((u8*)m_per_object_cb_mapped + i * 256, &obj, sizeof(obj));
-
-		m_command_list->SetGraphicsRootConstantBufferView(1, 
-		m_per_object_cb->GetGPUVirtualAddress() + i * 256);
-		m_command_list->IASetVertexBuffers(0, 1, &mesh->vertex_buffer_view());
-
-		if (mesh->has_indices())
-		{
-		m_command_list->IASetIndexBuffer(&mesh->index_buffer_view());
-		m_command_list->DrawIndexedInstanced(mesh->index_count(), 1, 0, 0, 0);
-		m_vertex_count += mesh->index_count();
-		}
-		else
-		{
-		// Mesh has no indices - draw as non-indexed
-		m_command_list->DrawInstanced(mesh->vertex_count(), 1, 0, 0);
-		m_vertex_count += mesh->vertex_count();
-		}
-		m_draw_call_count++;
+			// Bind mesh vertices (slot 0) + this run's per-instance world matrices (slot 1); draw all at once.
+			D3D12_VERTEX_BUFFER_VIEW vbs[2];
+			vbs[0] = mesh->vertex_buffer_view();
+			vbs[1].BufferLocation = m_instance_vb->GetGPUVirtualAddress() + (UINT64)runStart * 64;
+			vbs[1].SizeInBytes = runCount * 64;
+			vbs[1].StrideInBytes = 64;
+			m_command_list->IASetVertexBuffers(0, 2, vbs);
+			if (mesh->has_indices())
+			{
+				m_command_list->IASetIndexBuffer(&mesh->index_buffer_view());
+				m_command_list->DrawIndexedInstanced(mesh->index_count(), runCount, 0, 0, 0);
+				m_vertex_count += mesh->index_count() * runCount;
+			}
+			else
+			{
+				m_command_list->DrawInstanced(mesh->vertex_count(), runCount, 0, 0);
+				m_vertex_count += mesh->vertex_count() * runCount;
+			}
+			++m_draw_call_count;
 		}
 		}
 
@@ -721,6 +689,12 @@ namespace vortex::graphics::dx12
 	if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_per_object_cb))))
 	return false;
 	if (FAILED(m_per_object_cb->Map(0, &r, &m_per_object_cb_mapped))) return false;
+
+	// Per-instance world matrices for GPU instancing: 64 bytes (4x float4 rows) per object.
+	rd.Width = 64 * MAX_RENDER_OBJECTS;
+	if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_instance_vb))))
+	return false;
+	if (FAILED(m_instance_vb->Map(0, &r, &m_instance_vb_mapped))) return false;
 
 	// Light buffer: Point lights (16 * 32 bytes) + Spot lights (8 * 64 bytes) = 1024 bytes, aligned to 256
 	rd.Width = 1280; // 256-byte aligned
