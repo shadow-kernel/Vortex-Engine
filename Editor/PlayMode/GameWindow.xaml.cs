@@ -81,7 +81,13 @@ namespace Editor.PlayMode
                 if (OwnsGameLoop) _pendingResize = true;      // render thread applies it (never resize the swapchain cross-thread)
                 else if (_ready) VortexAPI.ResizeGameWindow(W(), H());
             };
-            Loaded += (s, e) => { Activate(); Keyboard.Focus(this); };
+            Loaded += (s, e) => { Activate(); Keyboard.Focus(this); UpdateCachedLayout(); };
+            // Keep the cached viewport screen-position fresh so the render thread maps the mouse correctly for
+            // UI hit-testing (the window starts 1x1 then CenterScreen moves it — a stale offset made the
+            // SPIELEN button unclickable).
+            LocationChanged += (s, e) => UpdateCachedLayout();
+            SizeChanged += (s, e) => UpdateCachedLayout();
+            Activated += (s, e) => UpdateCachedLayout();
             Closing += OnClosing;
             PlayModeService.Instance.StateChanged += OnPlayStateChanged;
         }
