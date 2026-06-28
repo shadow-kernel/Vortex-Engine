@@ -9,8 +9,8 @@ using Editor.Core.UndoRedo.Commands;
 namespace Editor.Core.Data
 {
     /// <summary>
-    /// Repräsentiert ein vollständiges Projekt mit allen Szenen und Metadaten.
-    /// Erbt von ProjectRef für die grundlegenden Projektinformationen.
+    /// Reprï¿½sentiert ein vollstï¿½ndiges Projekt mit allen Szenen und Metadaten.
+    /// Erbt von ProjectRef fï¿½r die grundlegenden Projektinformationen.
     /// </summary>
     [DataContract(Name = "Project", Namespace = "")]
     public class ProjectData : ProjectRef
@@ -58,13 +58,21 @@ namespace Editor.Core.Data
 		}
 
         /// <summary>
-        /// Thumbnail für die Projektliste (nicht serialisiert - wird aus ImagePath geladen)
+        /// Die Startszene des fertigen Spiels (z.B. die Lobby) â€” der gepackte Player bootet IMMER hier hinein,
+        /// unabhÃ¤ngig davon, welche Szene im Editor zuletzt offen war. Persistiert im Manifest (StartSceneId),
+        /// nicht in ProjectData selbst. Null â‡’ erste Szene.
+        /// </summary>
+        [IgnoreDataMember]
+        public Guid? StartSceneId { get; set; }
+
+        /// <summary>
+        /// Thumbnail fï¿½r die Projektliste (nicht serialisiert - wird aus ImagePath geladen)
         /// </summary>
         [IgnoreDataMember]
         public ImageSource Thumbnail { get; set; }
 
         /// <summary>
-        /// Formatierte Anzeige des letzten Änderungsdatums
+        /// Formatierte Anzeige des letzten ï¿½nderungsdatums
         /// </summary>
         [IgnoreDataMember]
         public string LastModifiedDisplay => LastModified.ToString("dd.MM.yyyy HH:mm");
@@ -101,7 +109,7 @@ namespace Editor.Core.Data
         [OnDeserialized]
         internal void OnDeserializedMethod(StreamingContext context)
         {
-            // Setze Project-Referenz für alle Szenen
+            // Setze Project-Referenz fï¿½r alle Szenen
             if (_scenes != null)
             {
                 foreach (var scene in _scenes)
@@ -119,9 +127,9 @@ namespace Editor.Core.Data
         }
 
         /// <summary>
-        /// Fügt eine neue Szene zum Projekt hinzu (mit Undo/Redo Support)
+        /// Fï¿½gt eine neue Szene zum Projekt hinzu (mit Undo/Redo Support)
         /// </summary>
-        /// <param name="scene">Die hinzuzufügende Szene</param>
+        /// <param name="scene">Die hinzuzufï¿½gende Szene</param>
         public void AddScene(Scene scene)
         {
             if (scene == null)
@@ -155,7 +163,7 @@ namespace Editor.Core.Data
         }
 
         /// <summary>
-        /// Gibt das aktuell geladene Projekt zurück
+        /// Gibt das aktuell geladene Projekt zurï¿½ck
         /// </summary>
         public static ProjectData Current => Application.Current?.MainWindow?.DataContext as ProjectData;
     }

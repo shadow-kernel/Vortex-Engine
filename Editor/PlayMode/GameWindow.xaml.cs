@@ -28,6 +28,16 @@ namespace Editor.PlayMode
         public bool OwnsGameLoop;
         private DateTime _lastFrameTime = DateTime.Now;
 
+        // F11 borderless-fullscreen toggle state (saved window chrome so we can restore on exit).
+        private bool _fullscreen;
+        private bool _f11Prev;
+        private WindowStyle _savedStyle;
+        private WindowState _savedState;
+        private ResizeMode _savedResize;
+        private Rect _savedBounds = Rect.Empty;
+        private Visibility _savedTitleVis;
+        private GridLength _savedTitleRow;
+
         [DllImport("user32.dll")] private static extern int ShowCursor(bool show);
         [DllImport("user32.dll")] private static extern bool SetCursorPos(int x, int y);
         [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINTW p);
@@ -82,6 +92,12 @@ namespace Editor.PlayMode
         private void OnFrame(object sender, EventArgs e)
         {
             if (!_ready) return;
+
+            // F11 toggles borderless fullscreen (focus-independent, edge-triggered like ESC).
+            bool f11 = (GetAsyncKeyState(0x7A) & 0x8000) != 0; // VK_F11
+            if (f11 && !_f11Prev) ToggleFullscreen();
+            _f11Prev = f11;
+
             var pms = PlayModeService.Instance;
             bool playing = pms.State == PlayState.Playing;
 
@@ -155,6 +171,45 @@ namespace Editor.PlayMode
                 else VortexAPI.RenderGameWindow();             // secondary swapchain present
             }
             catch (Exception ex) { Debug.WriteLine("RenderGameWindow: " + ex); }
+        }
+
+        // Borderless fullscreen: drop the window chrome + dev banner and maximize; F11 again restores.
+        // The DX12 swapchain auto-resizes via GameViewportHost.OnViewportSizeChanged, so the render
+        // follows the new size with no manual resize call.
+        private void ToggleFullscreen()
+        {
+            try
+            {
+                if (!_fullscreen)
+                {
+                    _savedStyle = WindowStyle; _savedState = WindowState; _savedResize = ResizeMode;
+                    _savedBounds = new Rect(Left, Top, ActualWidth, ActualHeight);
+                    _savedTitleVis = GameTitleBar.Visibility; _savedTitleRow = TitleRow.Height;
+
+                    GameTitleBar.Visibility = System.Windows.Visibility.Collapsed;
+                    TitleRow.Height = new GridLength(0);
+                    WindowStyle = WindowStyle.None;
+                    ResizeMode = ResizeMode.NoResize;
+                    if (WindowState == WindowState.Maximized) WindowState = WindowState.Normal; // force a re-layout
+                    WindowState = WindowState.Maximized;
+                    _fullscreen = true;
+                }
+                else
+                {
+                    GameTitleBar.Visibility = _savedTitleVis;
+                    TitleRow.Height = _savedTitleRow;
+                    WindowStyle = _savedStyle;
+                    ResizeMode = _savedResize;
+                    WindowState = _savedState;
+                    if (!_savedBounds.IsEmpty && _savedState != WindowState.Maximized)
+                    {
+                        Left = _savedBounds.Left; Top = _savedBounds.Top;
+                        Width = _savedBounds.Width; Height = _savedBounds.Height;
+                    }
+                    _fullscreen = false;
+                }
+            }
+            catch (Exception ex) { Debug.WriteLine("ToggleFullscreen: " + ex); }
         }
 
         private bool _lmbPrev;

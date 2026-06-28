@@ -120,11 +120,20 @@ namespace Editor.Core.Services
             var project = new ProjectData(manifest.Id, projectPath, manifest.Name)
             {
                 LastModified = manifest.LastModified,
-                ImagePath = manifest.ThumbnailPath
+                ImagePath = manifest.ThumbnailPath,
+                StartSceneId = manifest.StartSceneId // round-trip the boot scene so editor saves preserve it
             };
 
             // Initialize asset database for this project
             AssetDatabase.Instance.Initialize(projectPath);
+
+            // Which scene boots first? The SHIPPED GAME (asset pak mounted) starts in the designated
+            // StartScene (e.g. the lobby) regardless of what the developer had open. The EDITOR resumes the
+            // last-open scene. Each falls back to the other id, then to the first scene below.
+            bool playerBoot = AssetVfs.IsMounted;
+            Guid? bootSceneId = playerBoot
+                ? (manifest.StartSceneId ?? manifest.LastOpenSceneId)
+                : (manifest.LastOpenSceneId ?? manifest.StartSceneId);
 
             // Lade Szenen
             var scenesPath = Path.Combine(projectPath, AssetsFolder, ScenesFolder);
@@ -140,8 +149,8 @@ namespace Editor.Core.Services
                     scene.Load();
                     project.Scenes.Add(scene);
 
-                    // Setze aktive Szene
-                    if (manifest.LastOpenSceneId.HasValue && scene.Id == manifest.LastOpenSceneId.Value)
+                    // Setze aktive Szene (StartScene im Spiel, LastOpenScene im Editor)
+                    if (bootSceneId.HasValue && scene.Id == bootSceneId.Value)
                     {
                         project.ActiveScene = scene;
                     }
@@ -286,6 +295,7 @@ namespace Editor.Core.Services
                     LastModified = project.LastModified,
                     ThumbnailPath = project.ImagePath,
                     LastOpenSceneId = project.ActiveScene?.Id,
+                    StartSceneId = project.StartSceneId, // the game's boot scene (persisted choice; null ⇒ first)
                 };
 
                 // Füge Szenen-Referenzen hinzu
@@ -294,6 +304,7 @@ namespace Editor.Core.Services
                     var relativePath = $"{SanitizeFileName(scene.Name)}.vscene";
                     manifest.Scenes.Add(new SceneReference(scene.Id, scene.Name, relativePath));
 
+                    // Fallback only: if no start scene was ever chosen, default to the first scene.
                     if (manifest.StartSceneId == null)
                     {
                         manifest.StartSceneId = scene.Id;
