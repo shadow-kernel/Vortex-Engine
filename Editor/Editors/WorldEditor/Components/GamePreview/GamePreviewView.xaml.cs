@@ -164,6 +164,18 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                 // The external game window feeds mouse-look + sets its own camera; otherwise the editor does.
                 if (!external)
                     UpdateGameMouseLook();                                 // lock/feed mouse delta to scripts; ESC frees
+
+                // Feed the UI frame so scripts can draw the HUD/ESC menu in EDITOR play too — without this
+                // UI.Width is 0 and the script skips all UI (that's why the ESC menu never appeared in-editor).
+                float uw = (float)(_host != null ? _host.ActualWidth : 0), uh = (float)(_host != null ? _host.ActualHeight : 0);
+                if (uw > 1 && uh > 1)
+                {
+                    // Hide the editor grid during play (z-fighting vs the ground flickered when looking down).
+                    if (!_playGridHidden) { _savedGrid = VortexAPI.IsGridVisible; VortexAPI.ShowGrid(false); _playGridHidden = true; }
+                    FeedEditorUI(uw, uh);
+                    VortexAPI.UIBegin(uw, uh);
+                }
+
                 VortexAPI.StepEngineRuntime(deltaTime);
                 ReadbackPhysics();
                 Editor.Scripting.ScriptRuntime.Instance.Update(deltaTime); // run gameplay scripts (movement, etc.)
@@ -172,6 +184,11 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                     Editor.Core.Services.PlayCameraHelper.ApplyPose(_extSnapPos, _extSnapRot); // editor = frozen placeholder
                 else
                     ApplyMainCameraView();                                 // editor = live game view
+            }
+            else if (_playGridHidden)
+            {
+                VortexAPI.ShowGrid(_savedGrid); // restore the editor grid when play stops
+                _playGridHidden = false;
             }
 
             // Follow the editor's ACTIVE scene: activating a different scene must re-render immediately
@@ -848,7 +865,31 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         [DllImport("user32.dll")] private static extern int ShowCursor(bool show);
         [DllImport("user32.dll")] private static extern bool SetCursorPos(int x, int y);
         [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINTW p);
+        [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int vKey);
         [StructLayout(LayoutKind.Sequential)] private struct POINTW { public int X; public int Y; }
+
+        // Editor-play UI frame: feed viewport size + mouse so scripts draw the HUD/ESC menu in-editor.
+        private bool _playGridHidden;
+        private bool _savedGrid = true;
+        private bool _lmbPrevEd;
+        private void FeedEditorUI(float renderW, float renderH)
+        {
+            float mx = 0f, my = 0f;
+            try
+            {
+                if (_host != null && _host.ActualWidth > 1 && GetCursorPos(out POINTW cp))
+                {
+                    var tl = _host.PointToScreen(new System.Windows.Point(0, 0));
+                    mx = (float)((cp.X - tl.X) * (renderW / _host.ActualWidth));
+                    my = (float)((cp.Y - tl.Y) * (renderH / _host.ActualHeight));
+                }
+            }
+            catch { }
+            bool down = (GetAsyncKeyState(0x01) & 0x8000) != 0; // VK_LBUTTON
+            bool pressed = down && !_lmbPrevEd;
+            _lmbPrevEd = down;
+            Editor.Scripting.ScriptRuntime.Instance.SetUIFrame(renderW, renderH, mx, my, down, pressed);
+        }
 
         // --- Play-mode physics simulation (engine-driven) ---
         private bool _simActive;
