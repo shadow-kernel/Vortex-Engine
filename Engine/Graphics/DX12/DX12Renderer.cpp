@@ -337,6 +337,45 @@ namespace vortex::graphics::dx12
 		m_game_cmd_allocator.Reset();
 	}
 
+	// --- Frustum culling helpers (don't render what the camera can't see) ---
+	namespace {
+		struct FrustumPlanes { float p[6][4]; };
+
+		// Extract the 6 normalized frustum planes from a row-major view-projection matrix (Gribb-Hartmann).
+		// Plane form (a,b,c,d): a point is inside that plane when a*x+b*y+c*z+d >= 0.
+		FrustumPlanes extract_frustum(const DirectX::XMFLOAT4X4& m)
+		{
+			FrustumPlanes f = {
+				{
+					{ m._14 + m._11, m._24 + m._21, m._34 + m._31, m._44 + m._41 }, // left
+					{ m._14 - m._11, m._24 - m._21, m._34 - m._31, m._44 - m._41 }, // right
+					{ m._14 + m._12, m._24 + m._22, m._34 + m._32, m._44 + m._42 }, // bottom
+					{ m._14 - m._12, m._24 - m._22, m._34 - m._32, m._44 - m._42 }, // top
+					{ m._13,         m._23,         m._33,         m._43         }, // near
+					{ m._14 - m._13, m._24 - m._23, m._34 - m._33, m._44 - m._43 }, // far
+				}
+			};
+			for (int i = 0; i < 6; ++i)
+			{
+				float a = f.p[i][0], b = f.p[i][1], c = f.p[i][2];
+				float len = sqrtf(a * a + b * b + c * c);
+				if (len > 1e-6f) { f.p[i][0] /= len; f.p[i][1] /= len; f.p[i][2] /= len; f.p[i][3] /= len; }
+			}
+			return f;
+		}
+
+		// True if a world-space bounding sphere is at least partially inside the frustum.
+		bool sphere_in_frustum(const FrustumPlanes& f, float cx, float cy, float cz, float r)
+		{
+			for (int i = 0; i < 6; ++i)
+			{
+				float dist = f.p[i][0] * cx + f.p[i][1] * cy + f.p[i][2] * cz + f.p[i][3];
+				if (dist < -r) return false; // fully outside this plane -> not visible
+			}
+			return true;
+		}
+	}
+
 	void DX12Renderer::render_3d_scene()
 	{
 		auto rtv = m_active_rtv;
@@ -366,12 +405,42 @@ namespace vortex::graphics::dx12
 		size_t objectCount = (std::min)(m_render_queue.size(), static_cast<size_t>(MAX_RENDER_OBJECTS));
 		if (objectCount == 0) return;
 
+		// Frustum culling: build the 6 view planes once; objects fully outside are skipped (no draw, no
+		// vertex work). The biggest 2026-standard CPU win — don't render what the camera can't see.
+		FrustumPlanes frustum = extract_frustum(m_frame_constants.view_projection);
+
 		// Render all objects (no sorting - keeps original order stable for re-rendering)
 		for (size_t i = 0; i < objectCount; ++i)
 		{
 	const auto& item = m_render_queue[i];
 		Mesh* mesh = reg.get_mesh(item.mesh_id);
 		if (!mesh || !mesh->is_valid()) continue;
+
+		// --- Cull this object if its world-space bounding sphere is outside the frustum ---
+		{
+			float minx, miny, minz, maxx, maxy, maxz;
+			mesh->get_min(minx, miny, minz);
+			mesh->get_max(maxx, maxy, maxz);
+			// Skip culling meshes with default/unset bounds (0..1) — e.g. ground/sea primitives — so we
+			// never wrongly cull something huge that should always be on screen.
+			bool defaultBounds = (minx == 0.f && miny == 0.f && minz == 0.f && maxx == 1.f && maxy == 1.f && maxz == 1.f);
+			if (!defaultBounds)
+			{
+				using namespace DirectX;
+				float lcx = (minx + maxx) * 0.5f, lcy = (miny + maxy) * 0.5f, lcz = (minz + maxz) * 0.5f;
+				float dx = maxx - minx, dy = maxy - miny, dz = maxz - minz;
+				float localR = 0.5f * sqrtf(dx * dx + dy * dy + dz * dz);
+				const XMFLOAT4X4& W = item.world_matrix;
+				XMVECTOR wc = XMVector3TransformCoord(XMVectorSet(lcx, lcy, lcz, 1.f), XMLoadFloat4x4(&W));
+				float sx = sqrtf(W._11 * W._11 + W._12 * W._12 + W._13 * W._13);
+				float sy = sqrtf(W._21 * W._21 + W._22 * W._22 + W._23 * W._23);
+				float sz = sqrtf(W._31 * W._31 + W._32 * W._32 + W._33 * W._33);
+				float maxScale = sx > sy ? (sx > sz ? sx : sz) : (sy > sz ? sy : sz);
+				float worldR = localR * maxScale + 0.05f; // small epsilon, stay conservative
+				if (!sphere_in_frustum(frustum, XMVectorGetX(wc), XMVectorGetY(wc), XMVectorGetZ(wc), worldR))
+					continue; // not visible — skip the draw
+			}
+		}
 
 		PerObjectConstants obj{};  // Zero-initialize
 		obj.world = item.world_matrix;
