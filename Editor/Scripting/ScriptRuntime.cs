@@ -50,6 +50,7 @@ namespace Editor.Scripting
             Vortex.UI.Host = this;
             Vortex.Scene.Host = this;
             Vortex.Cursor.Host = this;
+            Vortex.Application.Host = this;
 
             _entitiesById.Clear();
             _nextHandle = 0;
@@ -256,6 +257,19 @@ namespace Editor.Scripting
         float Vortex.IScriptHost.UIMouseY() => _mouseY;
         bool Vortex.IScriptHost.UIMouseDown() => _mouseDown;
         bool Vortex.IScriptHost.UIMousePressed() => _mousePressed;
+
+        void Vortex.IScriptHost.QuitGame()
+        {
+            try
+            {
+                // Standalone player: close the app. In-editor play: just stop play (don't kill the editor).
+                if (Editor.Core.Services.PlayModeService.Instance.IsReleaseMode)
+                    System.Windows.Application.Current?.Shutdown();
+                else
+                    Editor.Core.Services.PlayModeService.Instance.Stop();
+            }
+            catch { }
+        }
 
         bool Vortex.IScriptHost.GetKey(string key)
         {

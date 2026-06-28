@@ -38,13 +38,24 @@ namespace {
 			using namespace DirectX;
 			transform::init_info info{};
 
-			memcpy(&info.position[0], &position[0], sizeof(f32) * _countof(position));
-			memcpy(&info.scale[0], &scale[0], sizeof(f32) * _countof(scale));
+			// Finite-guard at the engine boundary: a NaN/Inf from ANY script (movement, etc.) must never
+			// reach the quaternion/matrix math — that is what crashed the engine on bad key combos.
+			// (v==v is false for NaN; the magnitude check rejects +/-Inf — no <cmath> needed.)
+			auto fin = [](f32 v, f32 fallback) -> f32 { return (v == v && v <= 3.4e38f && v >= -3.4e38f) ? v : fallback; };
+			f32 pos[3] = { fin(position[0], 0.0f), fin(position[1], 0.0f), fin(position[2], 0.0f) };
+			f32 rot[3] = { fin(rotation[0], 0.0f), fin(rotation[1], 0.0f), fin(rotation[2], 0.0f) };
+			f32 scl[3] = { fin(scale[0], 1.0f), fin(scale[1], 1.0f), fin(scale[2], 1.0f) };
 
-			XMFLOAT3A rot{ &rotation[0] };
-			XMVECTOR quat{ XMQuaternionRotationRollPitchYawFromVector(XMLoadFloat3A(&rot)) };
+			memcpy(&info.position[0], &pos[0], sizeof(f32) * _countof(info.position));
+			memcpy(&info.scale[0], &scl[0], sizeof(f32) * _countof(info.scale));
+
+			XMFLOAT3A rotf{ &rot[0] };
+			XMVECTOR quat{ XMQuaternionRotationRollPitchYawFromVector(XMLoadFloat3A(&rotf)) };
 			XMFLOAT4A rotation_quat{};
 			XMStoreFloat4A(&rotation_quat, quat);
+			if (!(rotation_quat.x == rotation_quat.x) || !(rotation_quat.y == rotation_quat.y) ||
+				!(rotation_quat.z == rotation_quat.z) || !(rotation_quat.w == rotation_quat.w))
+			{ rotation_quat.x = rotation_quat.y = rotation_quat.z = 0.0f; rotation_quat.w = 1.0f; } // identity fallback
 
 			memcpy(&info.rotation[0], &rotation_quat.x, sizeof(f32) * _countof(info.rotation));
 

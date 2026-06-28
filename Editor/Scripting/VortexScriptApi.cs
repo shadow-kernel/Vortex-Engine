@@ -42,6 +42,9 @@ namespace Vortex
         bool GetCursorLocked();
         void SetCursorLocked(bool locked);
 
+        // Quit the whole game (closes the player / stops play).
+        void QuitGame();
+
         // 2D UI overlay (immediate mode), coordinates in viewport pixels (top-left origin).
         void UIRect(float x, float y, float w, float h, float r, float g, float b, float a, float radius);
         void UIText(float x, float y, float w, float h, string text, float size, float r, float g, float b, float a, int align, int weight);
@@ -162,6 +165,14 @@ namespace Vortex
             get { return Host != null && Host.GetCursorLocked(); }
             set { if (Host != null) Host.SetCursorLocked(value); }
         }
+    }
+
+    /// <summary>Application-level control for the game.</summary>
+    public static class Application
+    {
+        internal static IScriptHost Host;
+        /// <summary>Quit the game (closes the standalone player / stops play).</summary>
+        public static void Quit() { if (Host != null) Host.QuitGame(); }
     }
 
     /// <summary>
