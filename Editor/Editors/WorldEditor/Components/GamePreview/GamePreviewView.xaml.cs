@@ -185,10 +185,14 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                 else
                     ApplyMainCameraView();                                 // editor = live game view
             }
-            else if (_playGridHidden)
+            else
             {
-                VortexAPI.ShowGrid(_savedGrid); // restore the editor grid when play stops
-                _playGridHidden = false;
+                // Edit mode: the editor owns the view FOV. Re-assert it every frame — the game sets the
+                // renderer-global FOV to its own value (player FOV / the in-game slider, up to 120), which
+                // would otherwise LEAK into the editor freecam and distort/clip the view (ground + skybox
+                // vanished at wide angles when looking around). 60 = the editor camera's configured FOV.
+                VortexAPI.SetViewFOV(60f);
+                if (_playGridHidden) { VortexAPI.ShowGrid(_savedGrid); _playGridHidden = false; } // restore grid once
             }
 
             // Follow the editor's ACTIVE scene: activating a different scene must re-render immediately
