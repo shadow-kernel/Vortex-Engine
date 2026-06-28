@@ -38,24 +38,6 @@ namespace Editor.PlayMode
         private Visibility _savedTitleVis;
         private GridLength _savedTitleRow;
 
-        // Dedicated render thread for the shipped standalone (OwnsGameLoop) so FPS isn't capped by WPF's
-        // ~60Hz CompositionTarget. Init + render + shutdown all happen on this one thread (DX12 present must
-        // not cross threads). WPF-bound values are cached on the UI thread. Instrumented with file logging.
-        private System.Threading.Thread _renderThread;
-        private volatile bool _runThread;
-        private IntPtr _hwnd;
-        private volatile bool _pendingResize;
-        private volatile int _cw = 1, _ch = 1;
-        private volatile int _ctlx, _ctly, _ccx, _ccy;
-        private volatile bool _cActive = true;
-        private Editor.Core.Data.ProjectData _proj; // cached on the UI thread; ProjectData.Current verifies the dispatcher
-        private object _submittedScene;             // submit the scene once per scene (static world, persistent queue)
-        private static readonly string _rlogPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "vortex_render.log");
-        private static void RLog(string m)
-        {
-            try { System.IO.File.AppendAllText(_rlogPath, DateTime.Now.ToString("HH:mm:ss.fff") + "  " + m + "\r\n"); } catch { }
-        }
-
         [DllImport("user32.dll")] private static extern int ShowCursor(bool show);
         [DllImport("user32.dll")] private static extern bool SetCursorPos(int x, int y);
         [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINTW p);
@@ -75,19 +57,8 @@ namespace Editor.PlayMode
             }
             GameViewportHost.OnHostCreated += (s, e) => OnHostCreated();
             GameViewportHost.OnHostDestroying += (s, e) => OnHostDestroying();
-            GameViewportHost.OnViewportSizeChanged += (s, e) =>
-            {
-                UpdateCachedLayout();                         // keep cached size + mouse-center fresh for the render thread
-                if (OwnsGameLoop) _pendingResize = true;      // render thread applies it (never resize the swapchain cross-thread)
-                else if (_ready) VortexAPI.ResizeGameWindow(W(), H());
-            };
-            Loaded += (s, e) => { Activate(); Keyboard.Focus(this); UpdateCachedLayout(); };
-            // Keep the cached viewport screen-position fresh so the render thread maps the mouse correctly for
-            // UI hit-testing (the window starts 1x1 then CenterScreen moves it — a stale offset made the
-            // SPIELEN button unclickable).
-            LocationChanged += (s, e) => UpdateCachedLayout();
-            SizeChanged += (s, e) => UpdateCachedLayout();
-            Activated += (s, e) => UpdateCachedLayout();
+            GameViewportHost.OnViewportSizeChanged += (s, e) => { if (_ready) { if (OwnsGameLoop) VortexAPI.ResizeRender(W(), H()); else VortexAPI.ResizeGameWindow(W(), H()); } };
+            Loaded += (s, e) => { Activate(); Keyboard.Focus(this); };
             Closing += OnClosing;
             PlayModeService.Instance.StateChanged += OnPlayStateChanged;
         }
@@ -98,130 +69,22 @@ namespace Editor.PlayMode
             {
                 // Standalone player: be the PRIMARY render viewport (creates the D3D device + main swapchain).
                 // In-editor "Run in new window": a SECONDARY swapchain riding on the editor's existing device.
-                if (OwnsGameLoop)
-                {
-                    // Shipped standalone: drive the game from a DEDICATED render thread (uncapped FPS).
-                    try { System.IO.File.WriteAllText(_rlogPath, ""); } catch { } // fresh log
-                    _hwnd = GameViewportHost.Handle;
-                    _proj = Editor.Core.Data.ProjectData.Current; // capture on the UI thread for the render thread
-                    RLog("OnHostCreated: OwnsGameLoop, hwnd=" + _hwnd + " size=" + W() + "x" + H() + " proj=" + (_proj != null));
-                    UpdateCachedLayout();
-                    _runThread = true;
-                    _renderThread = new System.Threading.Thread(RenderThreadLoop) { IsBackground = true, Name = "VortexRender" };
-                    _renderThread.Start();
-                }
-                else if (VortexAPI.CreateGameWindow(GameViewportHost.Handle, W(), H()))
+                bool ok = OwnsGameLoop
+                    ? VortexAPI.InitRenderViewport(GameViewportHost.Handle, W(), H())
+                    : VortexAPI.CreateGameWindow(GameViewportHost.Handle, W(), H());
+                if (ok)
                 {
                     _ready = true;
-                    CompositionTarget.Rendering += OnFrame; // editor "Run in new window": UI-thread tick
+                    if (OwnsGameLoop)
+                    {
+                        VortexAPI.ShowGrid(false);    // shipped game: no editor grid/gizmos
+                        VortexAPI.ShowGizmos(false);
+                    }
+                    CompositionTarget.Rendering += OnFrame; // mouse is captured lazily in OnFrame (once laid out)
                 }
                 else Debug.WriteLine("Game render init returned false");
             }
             catch (Exception ex) { Debug.WriteLine("GameWindow create failed: " + ex); }
-        }
-
-        private void UpdateCachedLayout()
-        {
-            try
-            {
-                if (GameViewportHost == null) return;
-                double w = GameViewportHost.ActualWidth, h = GameViewportHost.ActualHeight;
-                if (w < 1 || h < 1) return;
-                _cw = (int)w; _ch = (int)h;
-                var tl = GameViewportHost.PointToScreen(new Point(0, 0));
-                var c = GameViewportHost.PointToScreen(new Point(w / 2.0, h / 2.0));
-                _ctlx = (int)tl.X; _ctly = (int)tl.Y; _ccx = (int)c.X; _ccy = (int)c.Y;
-            }
-            catch { }
-        }
-
-        // Dedicated standalone render/game loop — creates the viewport, runs uncapped, shuts down (all one thread).
-        private void RenderThreadLoop()
-        {
-            RLog("thread: started");
-            try
-            {
-                bool ok = VortexAPI.InitRenderViewport(_hwnd, (uint)Math.Max(1, _cw), (uint)Math.Max(1, _ch));
-                RLog("thread: InitRenderViewport returned " + ok);
-                if (!ok) return;
-                VortexAPI.ShowGrid(false);
-                VortexAPI.ShowGizmos(false);
-                _ready = true;
-            }
-            catch (Exception ex) { RLog("thread: init EXCEPTION " + ex); return; }
-
-            int frame = 0;
-            var sw = System.Diagnostics.Stopwatch.StartNew();
-            double last = sw.Elapsed.TotalSeconds;
-            while (_runThread)
-            {
-                double now = sw.Elapsed.TotalSeconds;
-                float dt = (float)(now - last); last = now;
-                if (dt < 0f) dt = 0f; else if (dt > 0.1f) dt = 0.1f;
-                try { OwnedFrame(dt); }
-                catch (Exception ex) { if (frame < 3) RLog("thread: frame EXCEPTION " + ex); }
-                frame++;
-            }
-            RLog("thread: exiting after " + frame + " frames");
-            try { VortexAPI.ShutdownRender(); } catch { }
-        }
-
-        private void OwnedFrame(float dt)
-        {
-            if (!_ready) return;
-            if (_pendingResize) { _pendingResize = false; try { VortexAPI.ResizeRender((uint)Math.Max(1, _cw), (uint)Math.Max(1, _ch)); } catch { } }
-            bool playing = PlayModeService.Instance.State == PlayState.Playing;
-
-            // F11 fullscreen is NOT handled here (render thread): toggling the window + resizing the swapchain
-            // from this thread raced the WPF transition and crashed the standalone. (Deferred — needs a
-            // render-thread-safe resize.)
-
-            bool wantLock = playing && Editor.Scripting.ScriptRuntime.Instance.CursorLocked;
-            float dx = 0f, dy = 0f;
-            if (wantLock && _cActive)
-            {
-                if (!_mouseCaptured) { _mouseCaptured = true; _justCaptured = true; ShowCursor(false); SetCursorPos(_ccx, _ccy); }
-                if (GetCursorPos(out POINTW p))
-                {
-                    if (_justCaptured) _justCaptured = false;
-                    else { dx = p.X - _ccx; dy = p.Y - _ccy; if (dx > 200f) dx = 200f; else if (dx < -200f) dx = -200f; if (dy > 200f) dy = 200f; else if (dy < -200f) dy = -200f; }
-                    SetCursorPos(_ccx, _ccy);
-                }
-            }
-            else if (_mouseCaptured) { _mouseCaptured = false; ShowCursor(true); }
-            Vortex.Input.MouseDeltaX = dx; Vortex.Input.MouseDeltaY = dy;
-
-            float uw = _cw, uh = _ch, mx = 0f, my = 0f;
-            if (GetCursorPos(out POINTW cp)) { mx = cp.X - _ctlx; my = cp.Y - _ctly; }
-            bool down = (GetAsyncKeyState(0x01) & 0x8000) != 0; bool pressed = down && !_lmbPrev; _lmbPrev = down;
-            Editor.Scripting.ScriptRuntime.Instance.SetUIFrame(uw, uh, mx, my, down, pressed);
-            VortexAPI.UIBegin(uw, uh);
-
-            if (playing)
-            {
-                VortexAPI.StepEngineRuntime(dt);
-                Editor.Scripting.ScriptRuntime.Instance.Update(dt);
-                Editor.Core.Services.GameRuntime.ProcessPendingSceneSwitch();
-            }
-            var scene = _proj != null ? _proj.ActiveScene : null; // cached project — no dispatcher check
-            Editor.Core.Services.PlayCameraHelper.ApplyMainCamera(scene);
-            // Submit the scene ONCE (and again on scene switch). The world is static — only the camera moves —
-            // and the native render queue now persists, so skipping the per-frame scene walk + interop is the
-            // main FPS lever. (Dynamic/moving meshes would need a dirty flag; none today.)
-            if (scene != null && !ReferenceEquals(scene, _submittedScene))
-            {
-                Editor.Core.Services.SceneRenderService.Instance.SubmitScene(scene);
-                _submittedScene = scene;
-            }
-            VortexAPI.RenderOnce();
-        }
-
-        private void StopRenderThread()
-        {
-            _runThread = false;
-            var t = _renderThread; _renderThread = null;
-            if (t != null && t.IsAlive) { try { t.Join(900); } catch { } }
-            _ready = false;
         }
 
         // Each frame: feed mouse-look to the gameplay scripts (the editor tick runs the sim + sets the
@@ -378,8 +241,7 @@ namespace Editor.PlayMode
         {
             CompositionTarget.Rendering -= OnFrame;
             _ready = false;
-            if (OwnsGameLoop) StopRenderThread();   // the render thread shuts down the renderer itself
-            else { try { VortexAPI.DestroyGameWindow(); } catch { } }
+            try { if (OwnsGameLoop) VortexAPI.ShutdownRender(); else VortexAPI.DestroyGameWindow(); } catch { }
         }
 
         private void OnClosing(object sender, System.ComponentModel.CancelEventArgs e)
@@ -387,9 +249,8 @@ namespace Editor.PlayMode
             CompositionTarget.Rendering -= OnFrame;
             PlayModeService.Instance.StateChanged -= OnPlayStateChanged;
             _ready = false;
-            if (OwnsGameLoop) StopRenderThread();
             ReleaseGameMouse();
-            if (!OwnsGameLoop) { try { VortexAPI.DestroyGameWindow(); } catch { } }
+            try { if (OwnsGameLoop) VortexAPI.ShutdownRender(); else VortexAPI.DestroyGameWindow(); } catch { }
             PlayModeService.Instance.IsExternalWindow = false;
             if (PlayModeService.Instance.State != PlayState.Editing)
                 PlayModeService.Instance.Stop();
