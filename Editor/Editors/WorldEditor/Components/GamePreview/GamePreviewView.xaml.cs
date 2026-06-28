@@ -174,6 +174,12 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                     ApplyMainCameraView();                                 // editor = live game view
             }
 
+            // Follow the editor's ACTIVE scene: activating a different scene must re-render immediately
+            // (no engine restart). The CurrentScene setter clears stale renderables for the new scene.
+            var activeScene = ProjectData.Current?.ActiveScene;
+            if (activeScene != null && !ReferenceEquals(activeScene, _currentScene))
+                CurrentScene = activeScene;
+
             // Submit scene data for rendering
             var sceneToRender = _currentScene ?? ProjectData.Current?.ActiveScene;
             if (sceneToRender != null)
