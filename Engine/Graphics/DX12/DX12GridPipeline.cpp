@@ -203,7 +203,11 @@ PS_OUT main(PS_IN i) {
 		pso.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
 		
 		pso.DepthStencilState.DepthEnable = TRUE;
-		pso.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL; // Write depth to occlude skybox
+		// Grid is the LOWEST-priority layer: it still depth-TESTS (so closer geometry hides it) but never
+		// WRITES depth. The scene (incl. a ground plane at y=0) is drawn AFTER the grid, so it always paints
+		// over it — no z-fighting/flicker when a floor sits exactly on the grid plane. It still draws over the
+		// skybox because it passes the test against the far-plane background.
+		pso.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
 		pso.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
 		
 		pso.SampleMask = UINT_MAX;
