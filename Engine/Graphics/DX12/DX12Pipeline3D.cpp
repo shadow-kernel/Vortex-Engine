@@ -60,6 +60,11 @@ struct VS_IN {
 	float3 pos : POSITION;
 	float3 norm : NORMAL;
 	float2 uv : TEXCOORD0;
+	// Per-instance world matrix (4 rows) streamed from vertex slot 1 — enables GPU instancing.
+	float4 iw0 : INSTANCEWORLD0;
+	float4 iw1 : INSTANCEWORLD1;
+	float4 iw2 : INSTANCEWORLD2;
+	float4 iw3 : INSTANCEWORLD3;
 };
 
 struct PS_IN {
@@ -73,6 +78,8 @@ struct PS_IN {
 
 PS_IN main(VS_IN input) {
 	PS_IN output;
+	// World comes per-instance from the vertex stream (row-major), not the constant buffer.
+	float4x4 World = float4x4(input.iw0, input.iw1, input.iw2, input.iw3);
 	float4 worldPos = mul(float4(input.pos, 1), World);
 	output.worldPos = worldPos.xyz;
 	output.pos = mul(worldPos, ViewProjection);
@@ -492,7 +499,12 @@ float4 main(PS_IN input) : SV_TARGET {
 		D3D12_INPUT_ELEMENT_DESC input_layout[] = {
 			{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 			{ "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-			{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
+			{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+			// Per-instance world matrix (slot 1, advances once per instance) — GPU instancing.
+			{ "INSTANCEWORLD", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0,  D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
+			{ "INSTANCEWORLD", 1, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 16, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
+			{ "INSTANCEWORLD", 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 32, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
+			{ "INSTANCEWORLD", 3, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 48, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 }
 		};
 
 		D3D12_RASTERIZER_DESC rasterizer{};
