@@ -30,6 +30,12 @@ namespace Editor.Scripting
         private readonly Dictionary<long, GameEntity> _entitiesById = new Dictionary<long, GameEntity>();
         private long _nextHandle;
         private readonly List<Vortex.VortexBehaviour> _behaviours = new List<Vortex.VortexBehaviour>();
+        public string DebugBehaviourNames()
+        {
+            var sb = new System.Text.StringBuilder();
+            for (int i = 0; i < _behaviours.Count; i++) { if (i > 0) sb.Append(","); sb.Append(_behaviours[i].GetType().Name); }
+            return _behaviours.Count + "[" + sb + "]";
+        }
         private bool _active;
 
         /// <summary>Last compile diagnostics (empty on success) — surfaced to the user.</summary>

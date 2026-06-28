@@ -45,6 +45,7 @@ namespace Editor.PlayMode
         private volatile bool _runThread;
         private IntPtr _hwnd;
         private volatile bool _pendingResize;
+        private bool _loggedScene; // one-time active-scene diagnostic
         private volatile bool _pauseRender;   // UI thread asks the render thread to idle so it can resize the swapchain with no DXGI race
         private volatile bool _renderPaused;   // render thread acks it is idling (not presenting)
         private volatile int _cw = 1, _ch = 1;
@@ -62,7 +63,28 @@ namespace Editor.PlayMode
         [DllImport("user32.dll")] private static extern bool SetCursorPos(int x, int y);
         [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINTW p);
         [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int vKey);
+        [DllImport("user32.dll")] private static extern bool GetClientRect(IntPtr h, out RECTW r);
+        [DllImport("user32.dll")] private static extern bool ClientToScreen(IntPtr h, ref POINTW p);
         [StructLayout(LayoutKind.Sequential)] private struct POINTW { public int X; public int Y; }
+        [StructLayout(LayoutKind.Sequential)] private struct RECTW { public int Left, Top, Right, Bottom; }
+
+        // The actual on-screen rect of the render surface, read straight from the native child HWND. Unlike the
+        // WPF ActualWidth/PointToScreen cache (only refreshed on WPF events, which don't fire for every move and
+        // never on the render thread), this is ALWAYS current and in physical pixels — so the swapchain matches
+        // the window (sharp on resize) and the mouse maps correctly no matter which monitor the window is on.
+        private bool RefreshLayoutNative()
+        {
+            IntPtr h = _hwnd;
+            if (h == IntPtr.Zero) return false;
+            if (!GetClientRect(h, out RECTW rc)) return false;
+            int w = rc.Right - rc.Left, ht = rc.Bottom - rc.Top;
+            if (w < 1 || ht < 1) return false;
+            POINTW tl = new POINTW { X = 0, Y = 0 };
+            POINTW ce = new POINTW { X = w / 2, Y = ht / 2 };
+            ClientToScreen(h, ref tl); ClientToScreen(h, ref ce);
+            _cw = w; _ch = ht; _ctlx = tl.X; _ctly = tl.Y; _ccx = ce.X; _ccy = ce.Y;
+            return true;
+        }
         private static bool EscDown() => (GetAsyncKeyState(0x1B) & 0x8000) != 0; // VK_ESCAPE, focus-independent
 
         public GameWindow()
@@ -177,6 +199,7 @@ namespace Editor.PlayMode
         private void OwnedFrame(float dt)
         {
             if (!_ready) return;
+            RefreshLayoutNative(); // keep size + mouse-mapping current from the native HWND (never stale, any monitor)
             // First/startup resize only (before the UI thread's PausedResize path is live). Maximize/F11
             // resizes go through PausedResize on the UI thread; F11 is handled by the window's KeyDown.
             if (_pendingResize) { _pendingResize = false; try { VortexAPI.ResizeRender((uint)Math.Max(1, _cw), (uint)Math.Max(1, _ch)); } catch { } }
@@ -210,6 +233,7 @@ namespace Editor.PlayMode
                 Editor.Core.Services.GameRuntime.ProcessPendingSceneSwitch();
             }
             var scene = _proj != null ? _proj.ActiveScene : null; // cached project — no dispatcher check
+            if (!_loggedScene && scene != null) { _loggedScene = true; RLog("ACTIVE SCENE=" + scene.Name + " behaviours=" + Editor.Scripting.ScriptRuntime.Instance.DebugBehaviourNames() + " CursorLocked=" + Editor.Scripting.ScriptRuntime.Instance.CursorLocked); }
             Editor.Core.Services.PlayCameraHelper.ApplyMainCamera(scene);
             // Submit the scene ONCE (and again on scene switch). The world is static — only the camera moves —
             // and the native render queue now persists, so skipping the per-frame scene walk + interop is the
@@ -229,8 +253,10 @@ namespace Editor.PlayMode
         {
             if (!OwnsGameLoop) return;
             if (!_ready || !_runThread) { _pendingResize = true; return; } // not up yet — render thread does the first resize itself
+            RefreshLayoutNative(); // resize the swapchain to the ACTUAL client pixels (physical), not WPF DIP
             _pauseRender = true;
             int spin = 0; while (!_renderPaused && spin++ < 300) System.Threading.Thread.Sleep(1);
+            RLog("PausedResize -> " + _cw + "x" + _ch + " (paused after " + spin + "ms)");
             try { VortexAPI.ResizeRender((uint)Math.Max(1, _cw), (uint)Math.Max(1, _ch)); }
             catch (Exception ex) { RLog("PausedResize EXCEPTION " + ex); }
             _pauseRender = false;
