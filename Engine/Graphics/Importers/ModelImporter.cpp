@@ -243,6 +243,12 @@ namespace vortex::graphics
 			std::string mat_name = name.C_Str();
 			data.material_names.push_back(mat_name);
 
+			// Read the material's flat base/diffuse color — Kenney + most glTF/OBJ assets are colored, not textured.
+			float cr = 0.8f, cg = 0.8f, cb = 0.8f, ca = 1.0f;
+			aiColor4D mcol;
+			if (material->Get(AI_MATKEY_COLOR_DIFFUSE, mcol) == AI_SUCCESS) { cr = mcol.r; cg = mcol.g; cb = mcol.b; ca = mcol.a; }
+			if (material->Get(AI_MATKEY_BASE_COLOR, mcol) == AI_SUCCESS) { cr = mcol.r; cg = mcol.g; cb = mcol.b; ca = mcol.a; } // glTF PBR wins
+
 			OutputDebugStringA(("  Material " + std::to_string(i) + ": " + mat_name + "\n").c_str());
 
 			// Get diffuse texture path from material
@@ -285,6 +291,7 @@ namespace vortex::graphics
 			{
 				if (submesh.material_index == i)
 				{
+					submesh.base_color[0] = cr; submesh.base_color[1] = cg; submesh.base_color[2] = cb; submesh.base_color[3] = ca;
 					submesh.diffuse_texture = diffuse_path;
 					submesh.normal_texture = normal_path;
 					

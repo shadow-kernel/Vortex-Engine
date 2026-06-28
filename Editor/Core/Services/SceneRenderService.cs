@@ -206,13 +206,30 @@ namespace Editor.Core.Services
                 return;
             }
 
-            // Get or create material (with dirty checking)
-            long materialId = GetOrCreateMaterial(entity.Id, meshRenderer);
-
             // Build world matrix from transform (including parent transforms)
             float[] worldMatrix = BuildWorldMatrixWithParent(entity);
 
-            // Submit to renderer
+            // Imported models (no explicit .vmat) are multi-submesh with per-submesh colored materials —
+            // submit EVERY submesh, not just the first, so e.g. a Kenney tree shows trunk + leaves.
+            var ext = System.IO.Path.GetExtension(meshRenderer.MeshPath)?.ToLowerInvariant();
+            if (string.IsNullOrEmpty(meshRenderer.MaterialPath) && IsModelFileExtension(ext))
+            {
+                bool any = false;
+                for (int n = 0; n < 64; n++)
+                {
+                    string sub = meshRenderer.MeshPath + "#submesh" + n;
+                    if (_submeshMeshCache.TryGetValue(sub, out long subMesh) && subMesh >= 0)
+                    {
+                        VortexAPI.SubmitMeshForRendering(subMesh, GetMaterialForMeshPath(sub), worldMatrix);
+                        any = true;
+                    }
+                    else if (n > 0) break;
+                }
+                if (any) return;
+            }
+
+            // Primitive / single mesh / explicitly-assigned .vmat:
+            long materialId = GetOrCreateMaterial(entity.Id, meshRenderer);
             VortexAPI.SubmitMeshForRendering(meshId, materialId, worldMatrix);
         }
 

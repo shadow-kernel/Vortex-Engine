@@ -453,7 +453,7 @@ namespace vortex::graphics
 			auto* mat = get_material(sub_result.material_id);
 			if (mat)
 			{
-				mat->set_base_color({ 0.9f, 0.9f, 0.9f, 1.0f });
+				mat->set_base_color({ submesh.base_color[0], submesh.base_color[1], submesh.base_color[2], submesh.base_color[3] });
 			}
 
 			// Load texture - ModelImporter already assigned the correct path
