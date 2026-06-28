@@ -332,14 +332,13 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             }
             catch { }
 
+            // The Player IS the camera (single entity): the play camera renders from its own transform, so a
+            // separate child camera would not follow the moving player. Controller + Camera live together.
             var player = _selectedScene.CreateEntity("Player");
+            player.AddComponent(new Camera(player, true)); // main camera
             player.AddComponent(new Script(player, scriptRel));
-
-            var cam = new GameEntity(_selectedScene, "Main Camera");
-            cam.AddComponent(new Camera(cam, true)); // main camera
-            var t = cam.GetComponent<Transform>();
+            var t = player.GetComponent<Transform>();
             if (t != null) t.LocalPosition = new Vector3(0f, 1.7f, 0f); // eye height
-            player.AddChild(cam);
             player.IsExpanded = true;
 
             SelectedEntity = player;
