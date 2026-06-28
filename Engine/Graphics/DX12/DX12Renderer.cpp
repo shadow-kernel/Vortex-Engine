@@ -405,6 +405,20 @@ namespace vortex::graphics::dx12
 		size_t objectCount = (std::min)(m_render_queue.size(), static_cast<size_t>(MAX_RENDER_OBJECTS));
 		if (objectCount == 0) return;
 
+		// Early-Z: draw opaque objects FRONT-TO-BACK so the depth test rejects occluded pixels before the
+		// expensive PBR pixel shader runs (big overdraw win in dense scenes). Sorting in place keeps the
+		// per-object CB slot (index i) valid. ~O(n log n), negligible vs the draw cost.
+		{
+			const DirectX::XMFLOAT3 eye = m_camera_position;
+			std::sort(m_render_queue.begin(), m_render_queue.end(),
+				[&eye](const RenderItem& a, const RenderItem& b)
+				{
+					float ax = a.world_matrix._41 - eye.x, ay = a.world_matrix._42 - eye.y, az = a.world_matrix._43 - eye.z;
+					float bx = b.world_matrix._41 - eye.x, by = b.world_matrix._42 - eye.y, bz = b.world_matrix._43 - eye.z;
+					return (ax * ax + ay * ay + az * az) < (bx * bx + by * by + bz * bz);
+				});
+		}
+
 		// Frustum culling: build the 6 view planes once; objects fully outside are skipped (no draw, no
 		// vertex work). The biggest 2026-standard CPU win — don't render what the camera can't see.
 		FrustumPlanes frustum = extract_frustum(m_frame_constants.view_projection);
