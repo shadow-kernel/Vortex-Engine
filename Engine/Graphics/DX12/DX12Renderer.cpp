@@ -502,7 +502,7 @@ namespace vortex::graphics::dx12
 		XMVECTOR up = XMLoadFloat3(&m_camera_up);
 		XMMATRIX view = XMMatrixLookAtLH(eye, at, up);
 		float aspect = (float)m_active_width / (float)m_active_height;
-		XMMATRIX proj = XMMatrixPerspectiveFovLH(XM_PIDIV4, aspect, 0.1f, 1000.0f);
+		XMMATRIX proj = XMMatrixPerspectiveFovLH(XMConvertToRadians(m_fov_degrees), aspect, 0.1f, 1000.0f); // MUST match the scene FOV (update_per_frame_constants) or grid/sky misalign vs objects
 		XMMATRIX vp = view * proj;
 
 		GridConstants gc{};
@@ -701,7 +701,7 @@ namespace vortex::graphics::dx12
 		XMVECTOR up = XMLoadFloat3(&m_camera_up);
 		XMMATRIX view = XMMatrixLookAtLH(eye, at, up);
 		float aspect = (float)m_active_width / (float)m_active_height;
-		XMMATRIX proj = XMMatrixPerspectiveFovLH(XM_PIDIV4, aspect, 0.1f, 1000.0f);
+		XMMATRIX proj = XMMatrixPerspectiveFovLH(XMConvertToRadians(m_fov_degrees), aspect, 0.1f, 1000.0f); // MUST match the scene FOV (update_per_frame_constants) or grid/sky misalign vs objects
 		XMMATRIX vp = view * proj;
 
 		// Update skybox constants with inverse VP matrix
