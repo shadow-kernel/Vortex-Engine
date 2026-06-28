@@ -1143,7 +1143,16 @@ namespace vortex::graphics::dx12
 				D3D12_GPU_VIRTUAL_ADDRESS obj_cb_addr = m_per_object_cb->GetGPUVirtualAddress() + i * 256;
 				m_command_list->SetGraphicsRootConstantBufferView(1, obj_cb_addr);
 				
-				m_command_list->IASetVertexBuffers(0, 1, &mesh->vertex_buffer_view());
+				// The shared 3D PSO now REQUIRES per-instance world data on slot 1 (instancing). The editor
+				// preview draws one instance per object, so stage this world matrix + bind the instance VB.
+				if (m_instance_vb_mapped)
+					memcpy(static_cast<u8*>(m_instance_vb_mapped) + (size_t)i * 64, &item.world_matrix, 64);
+				D3D12_VERTEX_BUFFER_VIEW vbs2[2];
+				vbs2[0] = mesh->vertex_buffer_view();
+				vbs2[1].BufferLocation = m_instance_vb->GetGPUVirtualAddress() + (UINT64)i * 64;
+				vbs2[1].SizeInBytes = 64;
+				vbs2[1].StrideInBytes = 64;
+				m_command_list->IASetVertexBuffers(0, 2, vbs2);
 				m_command_list->IASetIndexBuffer(&mesh->index_buffer_view());
 				m_command_list->DrawIndexedInstanced(mesh->index_count(), 1, 0, 0, 0);
 			}
