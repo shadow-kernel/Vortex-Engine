@@ -49,6 +49,7 @@ namespace Editor.PlayMode
         private volatile int _ctlx, _ctly, _ccx, _ccy;
         private volatile bool _cActive = true;
         private Editor.Core.Data.ProjectData _proj; // cached on the UI thread; ProjectData.Current verifies the dispatcher
+        private object _submittedScene;             // submit the scene once per scene (static world, persistent queue)
         private static readonly string _rlogPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "vortex_render.log");
         private static void RLog(string m)
         {
@@ -199,7 +200,14 @@ namespace Editor.PlayMode
             }
             var scene = _proj != null ? _proj.ActiveScene : null; // cached project — no dispatcher check
             Editor.Core.Services.PlayCameraHelper.ApplyMainCamera(scene);
-            if (scene != null) Editor.Core.Services.SceneRenderService.Instance.SubmitScene(scene);
+            // Submit the scene ONCE (and again on scene switch). The world is static — only the camera moves —
+            // and the native render queue now persists, so skipping the per-frame scene walk + interop is the
+            // main FPS lever. (Dynamic/moving meshes would need a dirty flag; none today.)
+            if (scene != null && !ReferenceEquals(scene, _submittedScene))
+            {
+                Editor.Core.Services.SceneRenderService.Instance.SubmitScene(scene);
+                _submittedScene = scene;
+            }
             VortexAPI.RenderOnce();
         }
 

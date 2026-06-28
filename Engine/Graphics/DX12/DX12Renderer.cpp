@@ -139,6 +139,10 @@ namespace vortex::graphics::dx12
 	void DX12Renderer::swap_render_queue()
 	{
 		std::lock_guard<std::mutex> lock(m_queue_mutex);
+		// Nothing new submitted this frame -> KEEP last frame's render queue (reuse it). This lets the game
+		// submit a static scene ONCE and re-render it every frame with only the camera changing — a big CPU
+		// win (no per-frame scene walk + interop). Also prevents flicker on idle frames.
+		if (m_submit_queue.empty()) return;
 		m_render_queue.swap(m_submit_queue);
 		m_submit_queue.clear();
 	}
