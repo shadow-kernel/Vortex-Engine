@@ -556,12 +556,21 @@ d:DesignHeight="64" d:DesignWidth="1200">
                     <TextBlock Text="Git" Foreground="#E9E9ED" FontSize="12.5" VerticalAlignment="Center"/>
                 </StackPanel>
             </Button>
-            <Button Style="{StaticResource TopPillButton}" Height="32" Padding="13,0" Margin="0,0,8,0" ToolTip="Target platform / Build Settings" Click="BuildSettings_Click">
+            <!-- Build & Run: export the standalone game and launch it. Right-click for Build Settings / target. -->
+            <Button x:Name="BuildBtn" Style="{StaticResource TopPillButton}" Height="32" Padding="14,0" Margin="0,0,8,0"
+                    ToolTip="Build &amp; Run — export the standalone game and launch it (right-click for Build Settings)"
+                    Click="BuildAndRun_Click">
                 <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="&#xE770;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#E9E9ED" VerticalAlignment="Center" Margin="0,0,7,0"/>
-                    <TextBlock Text="Windows" Foreground="#E9E9ED" FontSize="12.5" VerticalAlignment="Center"/>
-                    <TextBlock Text="&#xE70D;" FontFamily="Segoe MDL2 Assets" FontSize="9" Foreground="#9A9AA1" VerticalAlignment="Center" Margin="9,0,0,0"/>
+                    <TextBlock Text="&#xE74C;" FontFamily="Segoe MDL2 Assets" FontSize="13" Foreground="#C7B6FF" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <TextBlock Text="Build" Foreground="#F0EEFA" FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
                 </StackPanel>
+                <Button.ContextMenu>
+                    <ContextMenu Background="#202023" BorderBrush="#3A3A3E" Foreground="#F5F5F7" FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="12.5">
+                        <MenuItem Header="Build (export only)" Click="Build_Click" Foreground="#F5F5F7"/>
+                        <MenuItem Header="Build &amp; Run" Click="BuildAndRun_Click" Foreground="#F5F5F7"/>
+                        <MenuItem Header="Build Settings / Target..." Click="BuildSettings_Click" Foreground="#F5F5F7"/>
+                    </ContextMenu>
+                </Button.ContextMenu>
             </Button>
             <Border Width="32" Height="32" CornerRadius="16" Background="#2A2A30" BorderBrush="#3A3A42" BorderThickness="1">
                 <TextBlock Text="&#xE77B;" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="#C8C8CE" HorizontalAlignment="Center" VerticalAlignment="Center"/>

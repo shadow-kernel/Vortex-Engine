@@ -109,14 +109,11 @@ namespace Editor
                 Editor.Core.Services.PlayModeService.Instance.IsExternalWindow = true;
                 Editor.Core.Services.PlayModeService.Instance.SetGameView(true);
 
-                // Start play + the scripts BEFORE showing the window. The GameWindow starts its render thread
-                // in OnHostCreated (during Show); beginning scripts first means their Start() (camera, cursor
-                // lock, etc.) has run before the thread's first Update — no UI-thread/render-thread race.
-                Editor.Core.Services.PlayModeService.Instance.Play();
-                if (scene != null) Editor.Scripting.ScriptRuntime.Instance.Begin(scene);
-
                 splash.FadeOutAndClose();
                 gw.Show();
+
+                Editor.Core.Services.PlayModeService.Instance.Play();
+                if (scene != null) Editor.Scripting.ScriptRuntime.Instance.Begin(scene);
                 // From here the GameWindow's per-frame loop (OwnsGameLoop) drives everything.
             }
             catch (Exception ex)
