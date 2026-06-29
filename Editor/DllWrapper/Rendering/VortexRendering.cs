@@ -291,6 +291,9 @@ namespace Editor.DllWrapper
         private static extern void SetLOD([MarshalAs(UnmanagedType.I1)] bool enabled, float mid, float far);
 
         [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetGeometricLOD([MarshalAs(UnmanagedType.I1)] bool enabled, float mid, float far);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void SetMultithreading([MarshalAs(UnmanagedType.I1)] bool enabled);
 
         [DllImport(_dllName, CallingConvention = _cc)]
@@ -316,6 +319,8 @@ namespace Editor.DllWrapper
         public static void RenderDistance(float distance) { try { SetRenderDistance(distance); } catch { } }
         /// <summary>Density LOD: thin distant instances (1/2 beyond mid, 1/4 beyond far world units).</summary>
         public static void Lod(bool enabled, float mid, float far) { try { SetLOD(enabled, mid, far); } catch { } }
+        /// <summary>Geometric LOD: distant instances draw a decimated low-poly mesh (whole crowd visible, intact).</summary>
+        public static void GeometricLod(bool enabled, float mid, float far) { try { SetGeometricLOD(enabled, mid, far); } catch { } }
         /// <summary>Enable/disable multithreaded per-instance cull+pack (auto-gates on instance count).</summary>
         public static void Multithreading(bool enabled) { try { SetMultithreading(enabled); } catch { } }
         /// <summary>Force multithreading on regardless of the instance-count threshold (testing).</summary>

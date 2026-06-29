@@ -202,6 +202,15 @@ namespace vortex::graphics::dx12
 			m_lod_far = farD > m_lod_mid ? farD : m_lod_mid;
 		}
 
+		// GEOMETRIC LOD: distant instances draw a decimated low-poly mesh (the whole crowd stays visible, no
+		// thinning/holes). Shares the mid/far distance thresholds. Use INSTEAD of density LOD.
+		void set_geometric_lod(bool enabled, float mid, float farD)
+		{
+			m_geo_lod_enabled = enabled;
+			m_lod_mid = mid > 0.0f ? mid : 0.0f;
+			m_lod_far = farD > m_lod_mid ? farD : m_lod_mid;
+		}
+
 		// Multithreaded culling+packing: parallelize the per-instance frustum/distance test + instance-buffer
 		// pack across worker threads (the CPU bottleneck when one mesh is rendered thousands of times). The
 		// draw recording stays single-threaded. Auto-gates on instance count; force ignores the threshold.
@@ -446,6 +455,11 @@ namespace vortex::graphics::dx12
 			float lcx, lcy, lcz, localR;
 			u32 vbBase;
 			u32 visible;
+			// Geometric LOD (filled at run-build from the mesh's LodChain; lodLevels==1 = no geo-LOD).
+			u32 lodLevels{ 1 };
+			id::id_type lodMesh[4]{ id::invalid_id, id::invalid_id, id::invalid_id, id::invalid_id };
+			float lodT1sq{ 0 }, lodT2sq{ 0 }, lodT3sq{ 0 }; // squared distance thresholds -> LOD1/2/3
+			u32 lodCount[4]{ 0, 0, 0, 0 };                  // visible instances per LOD (single-threaded pack)
 		};
 		std::vector<DrawRun> m_draw_runs;     // per-frame scratch (reused)
 		std::vector<u32> m_item_run;          // run index per render-queue item (for flat parallel cull)
@@ -467,8 +481,9 @@ namespace vortex::graphics::dx12
 		float m_far_clip{ 1000.0f };
 		float m_render_distance{ 0.0f };   // generic distance cull (0 = disabled)
 		bool  m_lod_enabled{ false };      // density LOD: thin distant instances
-		float m_lod_mid{ 0.0f };           // beyond this: keep 1/2 of instances
-		float m_lod_far{ 0.0f };           // beyond this: keep 1/4 of instances
+		bool  m_geo_lod_enabled{ false };  // geometric LOD: distant instances use a decimated mesh
+		float m_lod_mid{ 0.0f };           // density: keep 1/2 beyond this | geometric: -> LOD1 beyond this
+		float m_lod_far{ 0.0f };           // density: keep 1/4 beyond this | geometric: -> LOD2 beyond this
 
 	// Lighting - balanced for PBR rendering
 		DirectX::XMFLOAT3 m_light_direction{ -0.5f, -0.7f, 0.5f };

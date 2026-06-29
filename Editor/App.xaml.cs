@@ -205,10 +205,10 @@ namespace Editor
                     // Force the multithreaded cull+pack ON — at hundreds of thousands of instances the per-instance
                     // frustum test + instance-VB pack is real CPU work; parallelizing it lifts the frame rate.
                     try { DllWrapper.VortexAPI.Multithreading(true); DllWrapper.VortexAPI.MultithreadingForce(true); } catch { }
-                    // Render bubble (FULL density out to the radius, hard cutoff beyond) — looks intact, no holes.
-                    // Density thinning made the far field look broken; the proper fix is GEOMETRIC LOD (low-poly
-                    // distant meshes, whole crowd visible) which is being built. Until then, the bubble looks good.
-                    try { DllWrapper.VortexAPI.Lod(false, 0f, 0f); DllWrapper.VortexAPI.RenderDistance(170f); } catch { }
+                    // GEOMETRIC LOD: the WHOLE crowd stays visible + intact (no holes); distant copies draw a
+                    // decimated low-poly mesh (full detail < 60u, LOD1 60-130u, LOD2/3 beyond). Far fewer verts at
+                    // full visibility — the proper fix for the "broken far field".
+                    try { DllWrapper.VortexAPI.Lod(false, 0f, 0f); DllWrapper.VortexAPI.RenderDistance(0f); DllWrapper.VortexAPI.GeometricLod(true, 45f, 110f); } catch { }
                     // Bright lighting (the GameHost main path uploads these correctly).
                     DllWrapper.VortexAPI.ClearAllLights();
                     DllWrapper.VortexAPI.SetAmbientLightStrength(0.55f);

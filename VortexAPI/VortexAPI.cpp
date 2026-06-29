@@ -764,6 +764,13 @@ EDITOR_INTERFACE void SetLOD(bool enabled, float mid, float farD)
 	graphics::dx12::DX12Renderer::instance().set_lod(enabled, mid, farD);
 }
 
+// Geometric LOD: distant instances draw a decimated low-poly mesh (whole crowd visible, no holes). mid/far = the
+// distances at which LOD1/LOD2 kick in.
+EDITOR_INTERFACE void SetGeometricLOD(bool enabled, float mid, float farD)
+{
+	graphics::dx12::DX12Renderer::instance().set_geometric_lod(enabled, mid, farD);
+}
+
 // Multithreaded per-instance cull+pack (auto-gates on instance count; the draw recording stays single-threaded).
 EDITOR_INTERFACE void SetMultithreading(bool enabled)
 {

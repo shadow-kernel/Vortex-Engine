@@ -639,6 +639,18 @@ namespace vortex::graphics::dx12
 				float bdx = maxx - minx, bdy = maxy - miny, bdz = maxz - minz;
 				run.localR = 0.5f * sqrtf(bdx * bdx + bdy * bdy + bdz * bdz);
 				run.vbBase = vbBase; run.visible = 0;
+				if (m_geo_lod_enabled)
+				{
+					const auto* chain = reg.get_lod_chain(idMesh);
+					if (chain && chain->lod_count > 1)
+					{
+						run.lodLevels = chain->lod_count;
+						for (u32 L = 0; L < chain->lod_count && L < 4; ++L) run.lodMesh[L] = chain->lods[L];
+						run.lodT1sq = m_lod_mid * m_lod_mid;
+						run.lodT2sq = m_lod_far * m_lod_far;
+						float t3 = m_lod_far * 1.8f; run.lodT3sq = t3 * t3;
+					}
+				}
 				u32 ri = (u32)m_draw_runs.size();
 				m_draw_runs.push_back(run);
 				for (size_t k = i; k < j; ++k) m_item_run[k] = ri;
@@ -667,6 +679,7 @@ namespace vortex::graphics::dx12
 				const DrawRun& run = m_draw_runs[ri];
 				const auto& item = m_render_queue[k];
 				bool visible = true;
+					int instLod = 0;   // geometric-LOD level for this instance (0 = full)
 				if (!run.defaultBounds)
 				{
 					const XMFLOAT4X4& W = item.world_matrix;
@@ -682,7 +695,7 @@ namespace vortex::graphics::dx12
 						float ddx = cx - eye.x, ddy = cy - eye.y, ddz = cz - eye.z;
 						float d2 = ddx * ddx + ddy * ddy + ddz * ddz;
 						if (useDist && d2 > rd2) visible = false;
-						else if (useLod)
+						else if (useLod && !m_geo_lod_enabled)
 						{
 							// Density LOD: keep every instance up close, 1/2 beyond mid, 1/4 beyond far. Selection
 							// by the stable item index k -> deterministic, no per-frame flicker.
@@ -696,12 +709,25 @@ namespace vortex::graphics::dx12
 					u32 slot = counters[ri].fetch_add(1, std::memory_order_relaxed);
 					if (run.vbBase + slot < MAX_RENDER_OBJECTS)
 						memcpy((u8*)m_instance_vb_mapped + (size_t)(run.vbBase + slot) * 64, &item.world_matrix, 64);
+					// Geometric LOD: bucket this instance by distance. Single-threaded when geo-LOD is on (see
+					// m_mt_active), so the slab is distance-ordered and lodCount segments are contiguous.
+					if (run.lodLevels > 1)
+					{
+						const XMFLOAT4X4& Wl = item.world_matrix;
+						float lx = Wl._41 - eye.x, ly = Wl._42 - eye.y, lz = Wl._43 - eye.z;
+						float ld2 = lx * lx + ly * ly + lz * lz;
+						instLod = (ld2 > run.lodT3sq) ? 3 : (ld2 > run.lodT2sq) ? 2 : (ld2 > run.lodT1sq) ? 1 : 0;
+						if (instLod >= (int)run.lodLevels) instLod = (int)run.lodLevels - 1;
+						m_draw_runs[ri].lodCount[instLod]++;
+					}
 				}
 			}
 		};
 
 		// Parallelize only when there's enough per-instance work to amortize the threads (force ignores it).
-		m_mt_active = m_mt_enabled && runN > 0 && m_worker_count > 1 && (m_mt_force || objectCount >= (size_t)m_mt_threshold);
+		// Geometric LOD needs the per-run slab in distance order (so LOD segments are contiguous) — that requires
+		// the single-threaded ordered pack. MT gives no FPS here anyway (GPU-bound), so just disable it for LOD.
+		m_mt_active = m_mt_enabled && runN > 0 && m_worker_count > 1 && !m_geo_lod_enabled && (m_mt_force || objectCount >= (size_t)m_mt_threshold);
 		if (m_mt_active)
 		{
 			u32 n = m_worker_count;
@@ -763,6 +789,41 @@ namespace vortex::graphics::dx12
 			if (cbSlot < MAX_DRAW_RUNS) ++cbSlot;
 
 			// Bind mesh vertices (slot 0) + this run's per-instance world matrices (slot 1); draw all at once.
+			if (run.lodLevels > 1)
+			{
+				// Geometric LOD: the slab is distance-ordered, so each LOD's instances are a contiguous segment.
+				// Draw each LOD's segment with its own (decimated) mesh — whole crowd visible, far ones low-poly.
+				u32 segStart = 0;
+				for (u32 L = 0; L < run.lodLevels; ++L)
+				{
+					u32 c = run.lodCount[L];
+					if (c == 0) continue;
+					Mesh* lm = (L == 0) ? mesh : reg.get_mesh(run.lodMesh[L]);
+					if (!lm || !lm->is_valid()) lm = mesh;
+					D3D12_VERTEX_BUFFER_VIEW lv[2];
+					lv[0] = lm->vertex_buffer_view();
+					lv[1].BufferLocation = m_instance_vb->GetGPUVirtualAddress() + (UINT64)(run.vbBase + segStart) * 64;
+					lv[1].SizeInBytes = c * 64;
+					lv[1].StrideInBytes = 64;
+					m_command_list->IASetVertexBuffers(0, 2, lv);
+					if (lm->has_indices())
+					{
+						m_command_list->IASetIndexBuffer(&lm->index_buffer_view());
+						m_command_list->DrawIndexedInstanced(lm->index_count(), c, 0, 0, 0);
+						m_vertex_count += lm->index_count() * c;
+					}
+					else
+					{
+						m_command_list->DrawInstanced(lm->vertex_count(), c, 0, 0);
+						m_vertex_count += lm->vertex_count() * c;
+					}
+					++m_draw_call_count;
+					segStart += c;
+				}
+			}
+			else
+			{
+			// Bind mesh vertices (slot 0) + this run's per-instance world matrices (slot 1); draw all at once.
 			D3D12_VERTEX_BUFFER_VIEW vbs[2];
 			vbs[0] = mesh->vertex_buffer_view();
 			vbs[1].BufferLocation = m_instance_vb->GetGPUVirtualAddress() + (UINT64)run.vbBase * 64;
@@ -781,6 +842,7 @@ namespace vortex::graphics::dx12
 				m_vertex_count += mesh->vertex_count() * run.visible;
 			}
 			++m_draw_call_count;
+			}
 		}
 		}
 

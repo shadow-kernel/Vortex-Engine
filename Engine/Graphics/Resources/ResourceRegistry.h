@@ -43,6 +43,16 @@ namespace vortex::graphics
 		void destroy_mesh(id::id_type id);
 		std::vector<id::id_type> get_all_mesh_ids() const;
 
+		// Geometric LOD: each imported base mesh gets a chain of decimated lower-poly meshes for distant
+		// rendering. lods[0] = the full-res base (unchanged id, so existing scenes keep working).
+		struct LodChain
+		{
+			id::id_type lods[4]{ id::invalid_id, id::invalid_id, id::invalid_id, id::invalid_id };
+			u32 lod_count{ 1 };
+			float radius{ 1.0f };   // base mesh radius (local units) — for distance thresholds
+		};
+		const LodChain* get_lod_chain(id::id_type base_mesh_id) const;
+
 		// Texture management
 		id::id_type create_texture(const TextureDesc& desc, const void* data = nullptr);
 		id::id_type create_solid_color_texture(u32 color, const std::string& name = "");
@@ -103,6 +113,8 @@ namespace vortex::graphics
 		ResourceRegistry() = default;
 
 		id::id_type create_mesh_from_submesh(const SubMeshData& submesh, const std::string& name);
+		void register_lod_chain(id::id_type base_mesh_id, const SubMeshData& submesh, const std::string& name);
+		std::unordered_map<id::id_type, LodChain> m_lod_chains;
 		// Shared cores so the file-based and in-memory import paths build resources identically.
 		id::id_type create_texture_from_image(ImageData& image_data, const std::string& label);
 		MultiMaterialImportResult build_model_result(ImportedModelData& model_data);
