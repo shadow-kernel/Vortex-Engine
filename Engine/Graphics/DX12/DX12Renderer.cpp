@@ -293,6 +293,8 @@ namespace vortex::graphics::dx12
 		// Reset per-frame stats
 		m_draw_call_count = 0;
 		m_vertex_count = 0;
+		m_instances_tested = 0;
+		m_instances_drawn = 0;
 		
 		u32 idx = m_swapchain.current_back_buffer_index();
 
@@ -559,6 +561,11 @@ namespace vortex::graphics::dx12
 		// vertex work). The biggest 2026-standard CPU win — don't render what the camera can't see.
 		FrustumPlanes frustum = extract_frustum(m_frame_constants.view_projection);
 
+		// Distance cull: skip instances whose world center is beyond the render-distance setting (0 = off).
+		const DirectX::XMFLOAT3 eye = m_camera_position;
+		const bool useDist = m_render_distance > 0.0f;
+		const float rd2 = m_render_distance * m_render_distance;
+
 		// Instanced draw: the queue is sorted by (material, mesh), so consecutive items with the same
 		// mesh+material are issued as ONE DrawIndexedInstanced. Per-instance world matrices feed slot 1.
 		using namespace DirectX;
@@ -585,16 +592,23 @@ namespace vortex::graphics::dx12
 			while (j < objectCount && m_render_queue[j].mesh_id == idMesh && m_render_queue[j].material_id == idMat)
 			{
 				const auto& item = m_render_queue[j];
+				++m_instances_tested;
 				bool visible = true;
 				if (!defaultBounds)
 				{
 					const XMFLOAT4X4& W = item.world_matrix;
 					XMVECTOR wc = XMVector3TransformCoord(XMVectorSet(lcx, lcy, lcz, 1.f), XMLoadFloat4x4(&W));
+					float cx = XMVectorGetX(wc), cy = XMVectorGetY(wc), cz = XMVectorGetZ(wc);
 					float sx = sqrtf(W._11 * W._11 + W._12 * W._12 + W._13 * W._13);
 					float sy = sqrtf(W._21 * W._21 + W._22 * W._22 + W._23 * W._23);
 					float sz = sqrtf(W._31 * W._31 + W._32 * W._32 + W._33 * W._33);
 					float maxScale = sx > sy ? (sx > sz ? sx : sz) : (sy > sz ? sy : sz);
-					visible = sphere_in_frustum(frustum, XMVectorGetX(wc), XMVectorGetY(wc), XMVectorGetZ(wc), localR * maxScale + 0.05f);
+					visible = sphere_in_frustum(frustum, cx, cy, cz, localR * maxScale + 0.05f);
+					if (visible && useDist)
+					{
+						float ddx = cx - eye.x, ddy = cy - eye.y, ddz = cz - eye.z;
+						if (ddx * ddx + ddy * ddy + ddz * ddz > rd2) visible = false;
+					}
 				}
 				if (visible && m_instance_vb_mapped && (runStart + runCount) < MAX_RENDER_OBJECTS)
 				{
@@ -605,6 +619,7 @@ namespace vortex::graphics::dx12
 			}
 			i = j;
 			instBase = runStart + runCount;
+			m_instances_drawn += runCount;
 			if (!mesh || !mesh->is_valid() || runCount == 0) continue;
 
 			// Material + PSO + textures: set ONCE for the whole run (shared by all its instances).
@@ -789,7 +804,7 @@ namespace vortex::graphics::dx12
 	bool DX12Renderer::create_command_allocators()
 	{
 		auto dev = DX12Core::instance().device();
-		for (u32 i = 0; i < 2; ++i)
+		for (u32 i = 0; i < DX12Swapchain::MaxBufferCount; ++i)
 			if (FAILED(dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_command_allocators[i]))))
 				return false;
 		return true;

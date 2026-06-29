@@ -252,6 +252,15 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern int GetVertexCount();
 
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int GetInstancesTested();
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int GetInstancesDrawn();
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetRenderDistance(float distance);
+
         /// <summary>
         /// Get current FPS from the engine.
         /// </summary>
@@ -259,6 +268,13 @@ namespace Editor.DllWrapper
         {
             get { try { return GetCurrentFPS(); } catch { return 0; } }
         }
+
+        /// <summary>Instances examined by culling this frame.</summary>
+        public static int InstancesTested { get { try { return GetInstancesTested(); } catch { return 0; } } }
+        /// <summary>Instances that survived culling and were drawn this frame.</summary>
+        public static int InstancesDrawn { get { try { return GetInstancesDrawn(); } catch { return 0; } } }
+        /// <summary>Generic render-distance cull in world units (0 = disabled). From the game's graphics settings.</summary>
+        public static void RenderDistance(float distance) { try { SetRenderDistance(distance); } catch { } }
 
         /// <summary>
         /// Get draw call count from the engine.

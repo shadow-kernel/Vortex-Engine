@@ -181,6 +181,9 @@ namespace vortex::graphics::dx12
 		// Vertical FOV (degrees) used by the live view camera (editor play + standalone). Settable from the game.
 		void set_field_of_view(float fov_degrees) { if (fov_degrees >= 30.0f && fov_degrees <= 120.0f) m_fov_degrees = fov_degrees; }
 		float field_of_view() const { return m_fov_degrees; }
+		// Generic render-distance cull (world units; 0 = disabled). Set from the game's graphics settings.
+		void set_render_distance(float d) { m_render_distance = d >= 0.0f ? d : 0.0f; }
+		float render_distance() const { return m_render_distance; }
 
 
 		// Camera gizmo rendering
@@ -205,6 +208,9 @@ namespace vortex::graphics::dx12
 		int get_current_fps() const { return m_current_fps; }
 		int get_draw_call_count() const { return m_draw_call_count; }
 		int get_vertex_count() const { return m_vertex_count; }
+		// Cull stats (per frame): instances examined vs actually drawn — proves cull effectiveness on big maps.
+		int get_instances_tested() const { return m_instances_tested; }
+		int get_instances_drawn() const { return m_instances_drawn; }
 
 		// ============== Multi-Viewport Rendering ==============
 		
@@ -413,6 +419,7 @@ namespace vortex::graphics::dx12
 		float m_aspect_ratio{ 16.0f / 9.0f };
 		float m_near_clip{ 0.1f };
 		float m_far_clip{ 1000.0f };
+		float m_render_distance{ 0.0f };   // generic distance cull (0 = disabled)
 
 	// Lighting - balanced for PBR rendering
 		DirectX::XMFLOAT3 m_light_direction{ -0.5f, -0.7f, 0.5f };
@@ -449,6 +456,8 @@ namespace vortex::graphics::dx12
 		int m_current_fps{ 0 };
 		int m_draw_call_count{ 0 };
 		int m_vertex_count{ 0 };
+		int m_instances_tested{ 0 };
+		int m_instances_drawn{ 0 };
 		int m_frame_count{ 0 };
 		std::chrono::high_resolution_clock::time_point m_last_fps_time;
 		

@@ -733,6 +733,22 @@ EDITOR_INTERFACE int GetVertexCount()
 	return graphics::dx12::DX12Renderer::instance().get_vertex_count();
 }
 
+EDITOR_INTERFACE int GetInstancesTested()
+{
+	return graphics::dx12::DX12Renderer::instance().get_instances_tested();
+}
+
+EDITOR_INTERFACE int GetInstancesDrawn()
+{
+	return graphics::dx12::DX12Renderer::instance().get_instances_drawn();
+}
+
+// Generic render-distance cull (world units; 0 = disabled). Driven by the game's graphics settings.
+EDITOR_INTERFACE void SetRenderDistance(float distance)
+{
+	graphics::dx12::DX12Renderer::instance().set_render_distance(distance);
+}
+
 // ============== RENDER LOOP API ==============
 
 // ---- Native GameHost: the standalone game runs in its OWN native Win32 window + DX12 swapchain + loop,
