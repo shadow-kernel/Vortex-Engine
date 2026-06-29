@@ -1461,6 +1461,21 @@ EDITOR_INTERFACE int GetModelMaterialProps(const char* filepath,
 	return count;
 }
 
+// Extract textures EMBEDDED in the model (e.g. a .glb that packs its PNG/JPG inside) into out_dir as real files,
+// filling out_names[i] with the written filename per embedded-texture index ("" if it couldn't be written).
+// Returns the number of embedded textures. Lets the importer give a self-contained .glb a real textures/ folder.
+EDITOR_INTERFACE int ExtractEmbeddedTextures(const char* filepath, const char* out_dir,
+	char** out_names, int max_textures, int max_len)
+{
+	if (!filepath || !out_dir) return 0;
+	auto names = graphics::ModelImporter::extract_embedded_textures(filepath, out_dir);
+	int count = static_cast<int>(names.size());
+	if (count > max_textures) count = max_textures;
+	for (int i = 0; i < count; i++)
+		if (out_names && out_names[i]) strncpy_s(out_names[i], max_len, names[i].c_str(), _TRUNCATE);
+	return count;
+}
+
 EDITOR_INTERFACE id::id_type LoadVMesh(const char* filepath)
 {
 	if (!filepath) return id::invalid_id;

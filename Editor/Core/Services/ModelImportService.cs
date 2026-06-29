@@ -255,6 +255,23 @@ namespace Editor.Core.Services
                         {
                             var matDir = Path.Combine(modelSubDir, "materials");
                             Directory.CreateDirectory(matDir);
+
+                            // Unpack textures EMBEDDED in the model (e.g. a .glb that packs its PNG/JPG inside) into
+                            // a textures/ subfolder, so a self-contained model becomes a real folder of files.
+                            var texturesDir = Path.Combine(modelSubDir, "textures");
+                            Directory.CreateDirectory(texturesDir);
+                            string[] embedded = null;
+                            try { embedded = VortexAPI.ExtractEmbeddedTextures(targetModelPath, texturesDir); } catch { }
+                            // assimp references an embedded texture as "*N"; resolve that to the extracted file.
+                            Func<string, string> resolveTex = p =>
+                            {
+                                if (string.IsNullOrEmpty(p)) return p;
+                                if (p.StartsWith("*") && embedded != null && int.TryParse(p.Substring(1), out int idx)
+                                    && idx >= 0 && idx < embedded.Length && !string.IsNullOrEmpty(embedded[idx]))
+                                    return Path.Combine(texturesDir, embedded[idx]);
+                                return p;
+                            };
+
                             VortexAPI.SubmeshTextureSet[] texSets = null;
                             try { texSets = VortexAPI.GetSubmeshTexturePaths(targetModelPath, submeshData.Length); } catch { }
                             VortexAPI.SubmeshMaterialProps[] matProps = null;
@@ -276,12 +293,12 @@ namespace Editor.Core.Services
                                 if (texSets != null && i < texSets.Length)
                                 {
                                     var t = texSets[i];
-                                    if (!string.IsNullOrEmpty(t.Albedo))    vmat.AlbedoTexture = t.Albedo;
-                                    if (!string.IsNullOrEmpty(t.Normal))    vmat.NormalTexture = t.Normal;
-                                    if (!string.IsNullOrEmpty(t.Metallic))  vmat.MetallicTexture = t.Metallic;
-                                    if (!string.IsNullOrEmpty(t.Roughness)) vmat.RoughnessTexture = t.Roughness;
-                                    if (!string.IsNullOrEmpty(t.AO))        vmat.AOTexture = t.AO;
-                                    if (!string.IsNullOrEmpty(t.Emissive))  vmat.EmissiveTexture = t.Emissive;
+                                    if (!string.IsNullOrEmpty(t.Albedo))    vmat.AlbedoTexture = resolveTex(t.Albedo);
+                                    if (!string.IsNullOrEmpty(t.Normal))    vmat.NormalTexture = resolveTex(t.Normal);
+                                    if (!string.IsNullOrEmpty(t.Metallic))  vmat.MetallicTexture = resolveTex(t.Metallic);
+                                    if (!string.IsNullOrEmpty(t.Roughness)) vmat.RoughnessTexture = resolveTex(t.Roughness);
+                                    if (!string.IsNullOrEmpty(t.AO))        vmat.AOTexture = resolveTex(t.AO);
+                                    if (!string.IsNullOrEmpty(t.Emissive))  vmat.EmissiveTexture = resolveTex(t.Emissive);
                                 }
                                 vmat.MakePathsRelative(matDir);
                                 vmat.Save(Path.Combine(matDir, $"submesh_{i}.vmat"));

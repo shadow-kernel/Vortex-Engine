@@ -73,6 +73,14 @@ namespace vortex::graphics
 		/// </summary>
 		static bool is_format_supported(const std::string& extension);
 
+		/// <summary>
+		/// Extract textures EMBEDDED in the model (e.g. a .glb that packs its PNG/JPG textures inside the file)
+		/// into out_dir as files named "embedded_&lt;i&gt;.&lt;ext&gt;". Returns the written filename per embedded
+		/// texture index (empty string if that one couldn't be written / is raw-uncompressed). Lets the importer
+		/// turn a self-contained .glb into a model folder with a real textures/ subfolder.
+		/// </summary>
+		static std::vector<std::string> extract_embedded_textures(const std::string& filepath, const std::string& out_dir);
+
 	private:
 	static void calculate_bounds(ImportedModelData& data);
 	static void process_node(void* node, void* scene, ImportedModelData& data);

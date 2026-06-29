@@ -444,6 +444,36 @@ namespace Editor.DllWrapper
             catch { return new SubmeshMaterialProps[0]; }
         }
 
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int ExtractEmbeddedTextures(
+            [MarshalAs(UnmanagedType.LPStr)] string filepath,
+            [MarshalAs(UnmanagedType.LPStr)] string outDir,
+            IntPtr[] outNames, int maxTextures, int maxLen);
+
+        /// <summary>Extracts textures EMBEDDED in a model (e.g. a .glb) into outDir as real files; returns the
+        /// written filename per embedded-texture index ("" if that one couldn't be written / is raw).</summary>
+        public static string[] ExtractEmbeddedTextures(string filepath, string outDir, int maxTextures = 64, int maxLen = 260)
+        {
+            var buffers = new IntPtr[maxTextures];
+            try
+            {
+                for (int i = 0; i < maxTextures; i++) buffers[i] = System.Runtime.InteropServices.Marshal.AllocHGlobal(maxLen);
+                int count = ExtractEmbeddedTextures(filepath, outDir, buffers, maxTextures, maxLen);
+                if (count < 0) count = 0;
+                if (count > maxTextures) count = maxTextures;
+                var result = new string[count];
+                for (int i = 0; i < count; i++)
+                    result[i] = System.Runtime.InteropServices.Marshal.PtrToStringAnsi(buffers[i]) ?? "";
+                return result;
+            }
+            catch { return new string[0]; }
+            finally
+            {
+                for (int i = 0; i < maxTextures; i++)
+                    if (buffers[i] != IntPtr.Zero) System.Runtime.InteropServices.Marshal.FreeHGlobal(buffers[i]);
+            }
+        }
+
         #endregion
 
         #region MeshRenderer Component

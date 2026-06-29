@@ -8,6 +8,8 @@
 
 #include <algorithm>
 #include <limits>
+#include <cstdio>
+#include <cctype>
 #include <Windows.h>
 
 namespace vortex::graphics
@@ -117,6 +119,47 @@ namespace vortex::graphics
 		std::transform(ext_lower.begin(), ext_lower.end(), ext_lower.begin(), ::tolower);
 
 		return std::find(supported.begin(), supported.end(), ext_lower) != supported.end();
+	}
+
+	std::vector<std::string> ModelImporter::extract_embedded_textures(const std::string& filepath, const std::string& out_dir)
+	{
+		std::vector<std::string> names;
+#ifdef VORTEX_USE_ASSIMP
+		Assimp::Importer importer;
+		// No post-processing: we only need the embedded texture blobs, not geometry.
+		const aiScene* scene = importer.ReadFile(filepath, 0);
+		if (!scene || scene->mNumTextures == 0) return names;
+
+		names.resize(scene->mNumTextures);
+		for (unsigned i = 0; i < scene->mNumTextures; ++i)
+		{
+			const aiTexture* tex = scene->mTextures[i];
+			if (!tex) continue;
+
+			// mHeight == 0 => the texture is stored compressed (PNG/JPG/...). mWidth is the byte count and
+			// achFormatHint is the format ("png", "jpg", ...). Just write the bytes to a real file. Raw
+			// uncompressed textures (mHeight > 0) are rare for glTF and are skipped (name left empty).
+			if (tex->mHeight == 0 && tex->mWidth > 0 && tex->pcData)
+			{
+				std::string ext;
+				for (int c = 0; c < 8 && tex->achFormatHint[c]; ++c)
+					if (isalnum((unsigned char)tex->achFormatHint[c])) ext += (char)tolower((unsigned char)tex->achFormatHint[c]);
+				if (ext.empty()) ext = "bin";
+
+				std::string fname = "embedded_" + std::to_string(i) + "." + ext;
+				std::string full = out_dir + "\\" + fname;
+
+				FILE* f = nullptr;
+				if (fopen_s(&f, full.c_str(), "wb") == 0 && f)
+				{
+					fwrite(tex->pcData, 1, tex->mWidth, f);
+					fclose(f);
+					names[i] = fname;
+				}
+			}
+		}
+#endif
+		return names;
 	}
 
 #ifdef VORTEX_USE_ASSIMP
