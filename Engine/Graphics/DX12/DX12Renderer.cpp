@@ -132,10 +132,18 @@ namespace vortex::graphics::dx12
 	void DX12Renderer::resize(u32 w, u32 h)
 	{
 		if (!m_initialized || w == 0 || h == 0) return;
+		// FULLY TEAR DOWN the D3D11On12 UI overlay before ResizeBuffers. The overlay's 11on12 device aliases the
+		// swapchain back buffers (its Flush only QUEUES work, it does not idle the device), so if it still holds
+		// those buffers when ResizeBuffers runs, the flip chain never rebinds and the display FREEZES on the last
+		// pre-resize frame (render keeps running, FPS even rises). shutdown() ClearState+Flush+Resets the 11on12
+		// device; the queue flush then waits for that work so the buffers are fully released; we re-init a fresh
+		// overlay over the new buffers afterwards. This is the robust cure for the F11/maximize freeze.
+		auto* dev = DX12Core::instance().device();
+		m_ui_overlay.shutdown();
 		m_command_queue.flush();
-		m_ui_overlay.invalidate_targets();   // drop cached bitmaps aliasing the old back buffers
-		if (!m_swapchain.resize(w, h)) return;   // ResizeBuffers failed -> keep prior state (no half-broken swapchain -> crash)
-		m_depth_buffer.resize(DX12Core::instance().device(), w, h);
+		if (!m_swapchain.resize(w, h)) { m_ui_overlay.initialize(dev, m_command_queue.queue(), DX12Swapchain::MaxBufferCount); return; }
+		m_depth_buffer.resize(dev, w, h);
+		m_ui_overlay.initialize(dev, m_command_queue.queue(), DX12Swapchain::MaxBufferCount);   // fresh 11on12 over the new buffers
 		// GPU is idle after the flush; collapse per-buffer fence tracking so the next frame's wait is correct.
 		UINT64 fv = m_command_queue.current_fence_value();
 		for (auto& v : m_frame_fence_values) v = fv;
