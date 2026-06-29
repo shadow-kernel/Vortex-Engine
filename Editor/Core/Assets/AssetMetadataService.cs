@@ -141,6 +141,9 @@ namespace Editor.Core.Assets
                 case ".vprefab":
                     return AssetType.Prefab;
 
+                case ".vui":
+                    return AssetType.UI;
+
                 default:
                     return AssetType.Unknown;
             }

@@ -31,7 +31,8 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             Textures,
             Materials,
             Shaders,
-            Scripts
+            Scripts,
+            UI
         }
 
         public class AssetItem : INotifyPropertyChanged
@@ -1006,6 +1007,15 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                     }
                     return false;
 
+                case AssetType.UI:
+                    if (System.IO.File.Exists(fullPath))
+                    {
+                        try { Editor.Editors.UIEditor.UIEditorWindow.Open(Window.GetWindow(this), fullPath); }
+                        catch (Exception ex) { MessageBox.Show("Could not open the UI Editor:\n" + ex.Message, "UI Editor", MessageBoxButton.OK, MessageBoxImage.Error); }
+                        return true;
+                    }
+                    return false;
+
                 default:
                     return false;
             }
@@ -1483,6 +1493,8 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                     QueueThumbnail(item, () => BuildImageThumb(fsi.FullPath)); break;
                 case ".tga": case ".dds": case ".hdr":
                     item.Type = AssetType.Textures; item.TypeName = "Texture"; item.IconCode = ""; item.IconColor = "#FF4EC9B0"; break;
+                case ".vui":
+                    item.Type = AssetType.UI; item.TypeName = "UI Screen"; item.IconCode = ""; item.IconColor = "#FF4DB6E2"; break;
                 case ".vscene":
                     item.Type = AssetType.Explorer; item.TypeName = "Scene"; item.IconCode = ""; item.IconColor = "#FF6C5CE7"; break;
                 default:
