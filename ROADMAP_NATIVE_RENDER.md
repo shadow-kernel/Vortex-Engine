@@ -109,10 +109,20 @@ Native code surveyed; the exact build plan:
       (pump → tick callback → render+present) + wndproc input). Exports added to VortexAPI
       (`RunGameHost`, `SetGameTickCallback`, `RequestGameHostExit`, `SetGameHostVSync`, `GameHostMouseX/Y/Down`,
       `GameHostClientWidth/Height`, `GameHostKeyDown`). Registered in Engine.vcxproj. Whole solution compiles.
-- [ ] Phase 1b — C# launch wiring: P/Invokes + a managed tick delegate (= today's OwnedFrame body: step
-      engine + run scripts + aim camera + submit scene), feed GameHost input into the UI host, and make
-      `App.BootPlayer` call `RunGameHost` for the shipped game. THEN verify (capture + click + scene-switch +
-      resize + FPS) and merge to main.
+- [x] Phase 1b — C# launch wiring DONE + the core VERIFIED: P/Invokes (VortexRendering.cs) + managed
+      `GameHostTick` (input/UI + step + scripts + camera + submit) + `BootPlayer` now launches `RunGameHost`
+      (hidden WPF window only holds the project DataContext). RESULT (measured): native window renders the
+      lobby; **uncapped FPS = 165 in lobby (was hard-capped 60)**; SPIELEN click registers reliably (native
+      client-space mouse, `PRESS IN=True`); `Scene.Load` fires (`pending=Match`); `ActiveScene` switches
+      (`scene=Match`); the loop **keeps rendering with NO FREEZE** (54–97 FPS in Match). The whole reason for
+      this rewrite — the Present-freeze on scene-switch/resize — is GONE. ✓
+- [ ] Phase 1c — scene-switch visual load: after the switch, `ActiveScene=Match` but the lobby content still
+      renders. ROOT CAUSE identified: `RunGameHost` BLOCKS the WPF dispatcher, and the scene-load path
+      (`scene.Load` / `PreloadSceneAssets`) appears to depend on it, so the Match scene doesn't fully load.
+      FIX (next): either pump the WPF dispatcher inside the GameHost loop (`Dispatcher.Invoke` drain), or make
+      scene-load dispatcher-independent. Then re-verify Match renders + resize/F11 + merge to main.
+- [ ] Phase 1d — full uncap beyond monitor refresh (flip-model swapchain + DXGI_PRESENT_ALLOW_TEARING) and
+      remove the per-frame submit (dirty-flag batching) — folds into Phase 2.
 - [ ] Phases 2–5.
 
 Each phase is built + verified + committed before the next. Merges to `main` only when a phase is green.

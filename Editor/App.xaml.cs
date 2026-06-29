@@ -89,10 +89,13 @@ namespace Editor
 
                 var project = Editor.Core.Services.ProjectService.Instance.LoadProjectFromPath(exeDir);
 
-                // GameWindow is the app's MainWindow; ProjectData.Current reads MainWindow.DataContext,
-                // so binding the project here makes Current resolve for the play pipeline.
-                var gw = new Editor.PlayMode.GameWindow { DataContext = project, OwnsGameLoop = true };
-                MainWindow = gw;            // app exits when the game window closes
+                // A hidden window holds the project as DataContext so ProjectData.Current resolves
+                // (Current reads Application.MainWindow.DataContext). The VISIBLE game is the native GameHost
+                // window below — not a WPF window — which is what kills the render-thread Present-freeze.
+                var holder = new System.Windows.Window { DataContext = project, Width = 0, Height = 0,
+                    WindowStyle = System.Windows.WindowStyle.None, ShowInTaskbar = false,
+                    ShowActivated = false, Visibility = System.Windows.Visibility.Hidden };
+                MainWindow = holder;
 
                 var scene = project != null ? project.ActiveScene : null;
                 if (scene != null)
@@ -108,13 +111,17 @@ namespace Editor
 
                 Editor.Core.Services.PlayModeService.Instance.IsExternalWindow = true;
                 Editor.Core.Services.PlayModeService.Instance.SetGameView(true);
-
-                splash.FadeOutAndClose();
-                gw.Show();
-
                 Editor.Core.Services.PlayModeService.Instance.Play();
                 if (scene != null) Editor.Scripting.ScriptRuntime.Instance.Begin(scene);
-                // From here the GameWindow's per-frame loop (OwnsGameLoop) drives everything.
+
+                splash.FadeOutAndClose();
+
+                // Native GameHost: its own native window + DX12 swapchain + uncapped one-thread loop. Each frame
+                // it calls GameHostTick (scripts + camera + submit) then renders + presents. Blocks until close.
+                _ghTick = GameHostTick;                                   // keep the delegate alive (GC)
+                DllWrapper.VortexAPI.SetGameTickCallback(_ghTick);
+                DllWrapper.VortexAPI.RunGameHost(1280, 720, "Vortex");    // BLOCKS — runs the game
+                Shutdown();                                                // window closed -> exit
             }
             catch (Exception ex)
             {
@@ -123,6 +130,72 @@ namespace Editor
                 MessageBox.Show("Player failed to start: " + ex.Message, "Vortex Player", MessageBoxButton.OK, MessageBoxImage.Error);
                 Shutdown();
             }
+        }
+
+        // Kept alive for the lifetime of the native callback (else the GC collects the thunk).
+        private static DllWrapper.VortexAPI.GameTickDelegate _ghTick;
+        private static object _ghSubmitted;
+        private static bool _ghLmbPrev;
+        private static float _ghPrevMx, _ghPrevMy;
+
+        /// <summary>Called by the native GameHost loop each frame (on this thread): advance the game one frame
+        /// — feed input/UI, step engine + scripts, apply the camera, submit the scene. The host renders +
+        /// presents right after.</summary>
+        private static readonly string _ghLog = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "vortex_gamehost.log");
+        private static void GHLog(string m) { try { System.IO.File.AppendAllText(_ghLog, DateTime.Now.ToString("HH:mm:ss.fff") + "  " + m + "\r\n"); } catch { } }
+        private static int _ghFrames; private static DateTime _ghT0 = DateTime.MinValue;
+        private static bool _ghInit;
+
+        private void GameHostTick(float dt)
+        {
+            try
+            {
+                if (!_ghInit) { _ghInit = true; try { DllWrapper.VortexAPI.ShowGrid(false); DllWrapper.VortexAPI.ShowGizmos(false); } catch { } } // shipped game: no editor grid/gizmos
+                var sr = Editor.Scripting.ScriptRuntime.Instance;
+                bool playing = Editor.Core.Services.PlayModeService.Instance.State == Editor.Core.Services.PlayState.Playing;
+
+                int cw = DllWrapper.VortexAPI.GameHostClientWidth();
+                int ch = DllWrapper.VortexAPI.GameHostClientHeight();
+                if (cw < 1) cw = 1;
+                if (ch < 1) ch = 1;
+                float mx = DllWrapper.VortexAPI.GameHostMouseX();
+                float my = DllWrapper.VortexAPI.GameHostMouseY();
+                bool down = DllWrapper.VortexAPI.GameHostMouseDown();
+                bool pressed = down && !_ghLmbPrev; _ghLmbPrev = down;
+
+                // Mouse-look: when the game has the cursor locked, feed relative motion (delta since last frame).
+                if (playing && sr.CursorLocked)
+                {
+                    float dxl = mx - _ghPrevMx, dyl = my - _ghPrevMy;
+                    if (dxl > 200f) dxl = 200f; else if (dxl < -200f) dxl = -200f;
+                    if (dyl > 200f) dyl = 200f; else if (dyl < -200f) dyl = -200f;
+                    Vortex.Input.MouseDeltaX = dxl; Vortex.Input.MouseDeltaY = dyl;
+                }
+                else { Vortex.Input.MouseDeltaX = 0f; Vortex.Input.MouseDeltaY = 0f; }
+                _ghPrevMx = mx; _ghPrevMy = my;
+
+                sr.SetUIFrame(cw, ch, mx, my, down, pressed);
+                DllWrapper.VortexAPI.UIBegin(cw, ch);
+                if (_ghT0 == DateTime.MinValue) _ghT0 = DateTime.Now;
+                _ghFrames++;
+                if (pressed) GHLog("PRESS mx=" + mx + " my=" + my + " cw=" + cw + " ch=" + ch + " btnX=[" + (cw - 306) + ".." + (cw - 56) + "] IN=" + (mx >= cw - 306 && mx <= cw - 56 && my >= ch - 100 && my <= ch - 40));
+                var nowT = DateTime.Now; if ((nowT - _ghT0).TotalMilliseconds >= 1000) { var s0 = Editor.Core.Data.ProjectData.Current; GHLog("FPS=" + _ghFrames + " scene=" + (s0 != null && s0.ActiveScene != null ? s0.ActiveScene.Name : "?")); _ghFrames = 0; _ghT0 = nowT; }
+
+                if (playing)
+                {
+                    DllWrapper.VortexAPI.StepEngineRuntime(dt);
+                    sr.Update(dt);
+                    if (pressed) GHLog("after Update pending=" + (sr.PendingScene ?? "(null)"));
+                    Editor.Core.Services.GameRuntime.ProcessPendingSceneSwitch();
+                }
+
+                var scene = Editor.Core.Data.ProjectData.Current != null ? Editor.Core.Data.ProjectData.Current.ActiveScene : null;
+                Editor.Core.Services.PlayCameraHelper.ApplyMainCamera(scene);
+                // Submit every frame (matches the proven CompositionTarget path). Submit-once didn't survive a
+                // scene switch's ClearAllRenderables. Phase 2 adds dirty-flag batching to make this cheap again.
+                if (scene != null) Editor.Core.Services.SceneRenderService.Instance.SubmitScene(scene);
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[GameHostTick] " + ex); }
         }
 
         private static void LogPlayerError(string dir, string src, Exception ex)
