@@ -86,13 +86,13 @@ namespace Editor.Dialogs
         private void InitializeWindow()
         {
             Title = $"Model Editor - {_modelData.FileName}";
-            Width = 1300;
-            Height = 850;
+            Width = 1500;
+            Height = 920;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             Background = new SolidColorBrush(Color.FromRgb(22, 22, 24));
             ResizeMode = ResizeMode.CanResize;
-            MinWidth = 1000;
-            MinHeight = 650;
+            MinWidth = 1100;
+            MinHeight = 680;
         }
 
         private void OnLoaded(object sender, RoutedEventArgs e)
@@ -121,31 +121,74 @@ namespace Editor.Dialogs
 
         private void BuildUI()
         {
+            // 3-column layout with the live PREVIEW in the CENTER (the focal point):
+            //   [ structure: submeshes + materials ] [ BIG PREVIEW ] [ properties + textures ]
             var mainGrid = new Grid();
-            mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(500) }); // Left panel (wide so the 3D preview is large)
-            mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); // Right panel
+            mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(300) });            // structure
+            mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); // CENTER preview
+            mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(400) });            // properties
             mainGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
             mainGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // Status bar
 
-            // Left Panel - Submesh and Material Lists
-            var leftPanel = BuildLeftPanel();
-            mainGrid.Children.Add(leftPanel);
+            var structure = BuildStructurePanel();
+            Grid.SetColumn(structure, 0);
+            mainGrid.Children.Add(structure);
 
-            // Right Panel - Tabs
+            var preview = BuildPreviewPanel();
+            Grid.SetColumn(preview, 1);
+            mainGrid.Children.Add(preview);
+
             _rightTabs = BuildRightPanel();
-            Grid.SetColumn(_rightTabs, 1);
+            Grid.SetColumn(_rightTabs, 2);
             mainGrid.Children.Add(_rightTabs);
 
-            // Status Bar
             var statusBar = BuildStatusBar();
             Grid.SetRow(statusBar, 1);
-            Grid.SetColumnSpan(statusBar, 2);
+            Grid.SetColumnSpan(statusBar, 3);
             mainGrid.Children.Add(statusBar);
 
             Content = mainGrid;
         }
 
-        private Border BuildLeftPanel()
+        /// <summary>The large, centered live 3D preview — fills its column and scales with the window.</summary>
+        private Border BuildPreviewPanel()
+        {
+            var border = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(15, 15, 17)),
+                ClipToBounds = true
+            };
+            _previewImage = new Image
+            {
+                Stretch = Stretch.Uniform,
+                Margin = new Thickness(16),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            RenderOptions.SetBitmapScalingMode(_previewImage, BitmapScalingMode.HighQuality);
+            border.Child = _previewImage;
+            WireOrbit(_previewImage);
+
+            // Subtle hint at the bottom so the controls are discoverable.
+            var grid = new Grid();
+            grid.Children.Add(border);
+            var hint = new TextBlock
+            {
+                Text = "Drag: orbit   ·   Wheel: zoom",
+                Foreground = new SolidColorBrush(Color.FromRgb(120, 120, 126)),
+                FontSize = 11,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Bottom,
+                Margin = new Thickness(0, 0, 0, 10),
+                IsHitTestVisible = false
+            };
+            grid.Children.Add(hint);
+            var outer = new Border { Child = grid };
+            return outer;
+        }
+
+        /// <summary>Left column: model header + the submesh list + the material list.</summary>
+        private Border BuildStructurePanel()
         {
             var border = new Border
             {
@@ -155,39 +198,18 @@ namespace Editor.Dialogs
             };
 
             var grid = new Grid();
-            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // Preview
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // Header
             grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // Submeshes
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // Materials header
             grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // Materials
 
-            // Live 3D preview
-            var previewBorder = new Border
-            {
-                Height = 500,   // large 3D preview so the model is clearly visible while editing
-                Margin = new Thickness(10),
-                CornerRadius = new CornerRadius(8),
-                Background = new SolidColorBrush(Color.FromRgb(16, 16, 18)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(58, 58, 62)),
-                BorderThickness = new Thickness(1),
-                ClipToBounds = true
-            };
-            _previewImage = new Image { Stretch = Stretch.Uniform };
-            previewBorder.Child = _previewImage;
-            WireOrbit(_previewImage);
-            grid.Children.Add(previewBorder);
-
-            // Header
             var header = CreateHeader();
-            Grid.SetRow(header, 1);
             grid.Children.Add(header);
 
-            // Submeshes Section
             var submeshSection = BuildSubmeshSection();
-            Grid.SetRow(submeshSection, 2);
+            Grid.SetRow(submeshSection, 1);
             grid.Children.Add(submeshSection);
 
-            // Materials Header
             var materialsHeader = new Border
             {
                 Background = new SolidColorBrush(Color.FromRgb(45, 45, 48)),
@@ -202,12 +224,11 @@ namespace Editor.Dialogs
                 FontWeight = FontWeights.SemiBold,
                 Foreground = new SolidColorBrush(Color.FromRgb(157, 157, 157))
             };
-            Grid.SetRow(materialsHeader, 3);
+            Grid.SetRow(materialsHeader, 2);
             grid.Children.Add(materialsHeader);
 
-            // Materials List
             var materialsSection = BuildMaterialsSection();
-            Grid.SetRow(materialsSection, 4);
+            Grid.SetRow(materialsSection, 3);
             grid.Children.Add(materialsSection);
 
             border.Child = grid;
@@ -285,6 +306,17 @@ namespace Editor.Dialogs
                 ItemsSource = _modelData.Submeshes
             };
             _submeshList.SelectionChanged += SubmeshList_SelectionChanged;
+            // Double-click a submesh -> open the model in the dedicated Mesh Viewer tab (inspect the geometry).
+            _submeshList.MouseDoubleClick += (s, e) =>
+            {
+                try
+                {
+                    var editor = Editor.Editors.WorldEditor.WorldEditorView.Current;
+                    if (editor != null && _modelData != null && !string.IsNullOrEmpty(_modelData.FilePath) && System.IO.File.Exists(_modelData.FilePath))
+                        editor.OpenModelViewerTab(_modelData.FilePath, _modelData.FileName);
+                }
+                catch { }
+            };
             
             // Item template
             _submeshList.ItemTemplate = CreateSubmeshItemTemplate();
@@ -704,6 +736,48 @@ namespace Editor.Dialogs
 
         #region Material Properties Panel
 
+        /// <summary>The per-submesh .vmat file (materials/submesh_&lt;i&gt;.vmat) for a material — the same file
+        /// scene-add binds. Returns the first submesh's .vmat that uses this material.</summary>
+        private string ResolveMaterialVmatPath(UniversalMaterial mat)
+        {
+            if (mat == null || _modelData == null || string.IsNullOrEmpty(_modelData.Directory)) return null;
+            int matIdx = _modelData.Materials.IndexOf(mat);
+            if (matIdx < 0) return null;
+            for (int i = 0; i < _modelData.Submeshes.Count; i++)
+                if (_modelData.Submeshes[i].MaterialIndex == matIdx)
+                    return System.IO.Path.Combine(_modelData.Directory, "materials", $"submesh_{i}.vmat");
+            return null;
+        }
+
+        /// <summary>Jump to the full Material Editor for the selected material (saving first if its .vmat is missing).</summary>
+        private void OpenSelectedMaterialInEditor()
+        {
+            if (_selectedMaterial == null) return;
+            string vmat = ResolveMaterialVmatPath(_selectedMaterial);
+            if (string.IsNullOrEmpty(vmat) || !System.IO.File.Exists(vmat))
+            {
+                try { SaveMaterials_Click(null, null); } catch { }
+                vmat = ResolveMaterialVmatPath(_selectedMaterial);
+            }
+            if (!string.IsNullOrEmpty(vmat) && System.IO.File.Exists(vmat))
+                MaterialEditorDialog.OpenMaterial(Window.GetWindow(this), vmat);
+            else
+                MessageBox.Show("Save the model's materials first (Save Materials).", "Material Editor",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        /// <summary>Jump to the Texture Editor for an assigned texture slot.</summary>
+        private void OpenTextureInEditor(string texturePath)
+        {
+            if (string.IsNullOrEmpty(texturePath)) return;
+            string full = texturePath;
+            if (!System.IO.Path.IsPathRooted(full) && !string.IsNullOrEmpty(_modelData?.Directory))
+                full = System.IO.Path.Combine(_modelData.Directory, texturePath);
+            if (!System.IO.File.Exists(full)) { MessageBox.Show("Texture file not found:\n" + full, "Texture Editor", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+            try { new TextureEditorDialog(full) { Owner = Window.GetWindow(this) }.ShowDialog(); }
+            catch (Exception ex) { MessageBox.Show("Could not open texture editor:\n" + ex.Message, "Texture Editor", MessageBoxButton.OK, MessageBoxImage.Error); }
+        }
+
         private void UpdatePropertiesPanel()
         {
             _propertiesPanel.Children.Clear();
@@ -721,15 +795,25 @@ namespace Editor.Dialogs
                 return;
             }
 
-            // Header
-            _propertiesPanel.Children.Add(new TextBlock
+            // Header: material name + a jump to the full Material Editor (edits the SAME .vmat scene-add binds).
+            var headerRow = new Grid { Margin = new Thickness(0, 0, 0, 18) };
+            headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            headerRow.Children.Add(new TextBlock
             {
                 Text = _selectedMaterial.Name,
                 FontSize = 20,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = Brushes.White,
-                Margin = new Thickness(0, 0, 0, 20)
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis
             });
+            var openMatBtn = CreateButton("⧉ Material Editor", 150);
+            openMatBtn.VerticalAlignment = VerticalAlignment.Center;
+            openMatBtn.Click += (s, e) => OpenSelectedMaterialInEditor();
+            Grid.SetColumn(openMatBtn, 1);
+            headerRow.Children.Add(openMatBtn);
+            _propertiesPanel.Children.Add(headerRow);
 
             // Base Color Section
             _propertiesPanel.Children.Add(CreateSectionHeader("BASE COLOR"));
@@ -927,9 +1011,18 @@ namespace Editor.Dialogs
 
             if (slot.IsAssigned)
             {
-                var clearBtn = CreateButton("�", 30);
-                clearBtn.FontSize = 14;
+                var editBtn = CreateButton("Edit", 44);
+                editBtn.FontSize = 11;
+                editBtn.Margin = new Thickness(4, 0, 0, 0);
+                editBtn.ToolTip = "Open in Texture Editor";
+                var slotPath = slot.FilePath;
+                editBtn.Click += (s, e) => OpenTextureInEditor(slotPath);
+                buttonPanel.Children.Add(editBtn);
+
+                var clearBtn = CreateButton("✕", 30);
+                clearBtn.FontSize = 12;
                 clearBtn.Margin = new Thickness(4, 0, 0, 0);
+                clearBtn.ToolTip = "Clear";
                 clearBtn.Click += (s, e) =>
                 {
                     slot.Clear();
@@ -1178,7 +1271,7 @@ namespace Editor.Dialogs
                     if (em >= 0) built.Add(em);
                 }
 
-                var img = Core.Services.Rendering.AssetPreviewRenderer.RenderMeshes(_previewMeshIds, mats, 512, (float)_orbitYaw, (float)_orbitPitch, (float)_orbitZoom);
+                var img = Core.Services.Rendering.AssetPreviewRenderer.RenderMeshes(_previewMeshIds, mats, 896, (float)_orbitYaw, (float)_orbitPitch, (float)_orbitZoom);
                 if (img != null) _previewImage.Source = img;
 
                 foreach (var b in built) { try { Editor.DllWrapper.VortexAPI.DeleteMaterial(b); } catch { } }
