@@ -1403,7 +1403,8 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 case ".cs":
                     item.Type = AssetType.Scripts; item.TypeName = "Script"; item.IconCode = ""; item.IconColor = "#FF9B59B6"; break;
                 case ".vmat": case ".mat":
-                    item.Type = AssetType.Materials; item.TypeName = "Material"; item.IconCode = ""; item.IconColor = "#FFBD63C5"; break;
+                    item.Type = AssetType.Materials; item.TypeName = "Material"; item.IconCode = ""; item.IconColor = "#FFBD63C5";
+                    QueueThumbnail(item, () => GetOrBuildMaterialThumb(fsi.FullPath)); break;
                 case ".vshader": case ".hlsl": case ".glsl":
                     item.Type = AssetType.Shaders; item.TypeName = "Shader"; item.IconCode = ""; item.IconColor = "#FF569CD6"; break;
                 case ".vmesh": case ".fbx": case ".obj": case ".gltf": case ".glb": case ".dae": case ".3ds":
@@ -1622,8 +1623,13 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                     Path = asset.RelativePath,
                     AssetGuid = asset.Guid,
                     IsImported = true,
-                    Thumbnail = MakeSphereSwatch("#CE9178")
+                    Thumbnail = MakeSphereSwatch("#CE9178")  // instant placeholder; replaced by the live sphere below
                 });
+                // Render the REAL material on a sphere (live from the .vmat), not a flat swatch.
+                var matAbs = System.IO.Path.IsPathRooted(asset.RelativePath)
+                    ? asset.RelativePath
+                    : System.IO.Path.Combine(assetDb.ProjectPath, asset.RelativePath ?? asset.FileName);
+                QueueThumbnail(Assets[Assets.Count - 1], () => GetOrBuildMaterialThumb(matAbs));
             }
         }
 
@@ -1796,7 +1802,14 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 return ReadTargetToBitmap(rt);
             }
             catch { return null; }
-            finally { VortexAPI.DestroySecondaryRenderTarget(rt); }
+            finally
+            {
+                VortexAPI.DestroySecondaryRenderTarget(rt);
+                // This thumbnail submitted a mesh + SwapRenderQueue'd the SHARED render queue. Tell the main
+                // viewport to re-submit its scene so the previewed model never lingers in the freecam — THE
+                // "open a folder -> a model is rendered huge in the viewport" bug.
+                try { Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.RequestResubmit(); } catch { }
+            }
         }
 
         private static ImageSource ReadTargetToBitmap(uint rt)
@@ -1860,6 +1873,30 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 return img;
             }
             catch { return null; }
+        }
+
+        /// <summary>Renders the REAL material from a .vmat onto a sphere (live — re-rendered when the .vmat
+        /// changes), so material tiles show their actual look instead of a flat purple swatch.</summary>
+        private static ImageSource GetOrBuildMaterialThumb(string vmatPath)
+        {
+            if (string.IsNullOrEmpty(vmatPath) || !System.IO.File.Exists(vmatPath)) return null;
+            // Key includes the last-write time so editing the material re-renders the sphere (not a stale icon).
+            string key;
+            try { key = "mat:" + vmatPath + ":" + System.IO.File.GetLastWriteTimeUtc(vmatPath).Ticks; }
+            catch { key = "mat:" + vmatPath; }
+            if (_thumbCache.TryGetValue(key, out var cached)) return cached;
+            try
+            {
+                long mat = Editor.Core.Services.MaterialService.Instance.GetOrBuildVortexMaterial(vmatPath);
+                if (mat >= 0)
+                {
+                    var img = Core.Services.Rendering.AssetPreviewRenderer.RenderMaterialSphere(mat, 128);
+                    if (img != null) _thumbCache[key] = img;
+                    return img;
+                }
+            }
+            catch { }
+            return null;
         }
 
         #endregion
