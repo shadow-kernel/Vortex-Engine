@@ -4,6 +4,7 @@
 #include <memory>
 #include <thread>
 #include <atomic>
+#include <unordered_map>
 
 namespace vortex::graphics::dx12
 {
@@ -584,6 +585,60 @@ namespace vortex::graphics::dx12
 		size_t objectCount = (std::min)(m_render_queue.size(), static_cast<size_t>(MAX_RENDER_OBJECTS));
 		if (objectCount == 0) return;
 
+		// PRE-CULL for huge instanced scenes: when far more instances are SUBMITTED than can render, the O(n log n)
+		// sort below over ALL of them was the bottleneck (millions of items). Drop frustum-invisible instances FIRST
+		// (parallel), so the sort + run-build only touch what's actually on screen. Only kicks in over the cap, so
+		// normal scenes are untouched.
+		if (m_render_queue.size() > static_cast<size_t>(MAX_RENDER_OBJECTS))
+		{
+			using namespace DirectX;
+			FrustumPlanes preFr = extract_frustum(m_frame_constants.view_projection);
+			const size_t N = m_render_queue.size();
+			std::vector<unsigned char> vis(N, 0);
+			auto cullRange = [&](size_t a, size_t b)
+			{
+				std::unordered_map<id::id_type, XMFLOAT4> cache;   // mesh_id -> (local center xyz, radius in w)
+				cache.reserve(64);
+				for (size_t k = a; k < b; ++k)
+				{
+					const auto& it = m_render_queue[k];
+					XMFLOAT4 bd;
+					auto cit = cache.find(it.mesh_id);
+					if (cit == cache.end())
+					{
+						Mesh* mp = reg.get_mesh(it.mesh_id);
+						float mnx = 0, mny = 0, mnz = 0, mxx = 1, mxy = 1, mxz = 1;
+						if (mp && mp->is_valid()) { mp->get_min(mnx, mny, mnz); mp->get_max(mxx, mxy, mxz); }
+						float dx = mxx - mnx, dy = mxy - mny, dz = mxz - mnz;
+						bd = XMFLOAT4((mnx + mxx) * 0.5f, (mny + mxy) * 0.5f, (mnz + mxz) * 0.5f, 0.5f * sqrtf(dx * dx + dy * dy + dz * dz));
+						cache.emplace(it.mesh_id, bd);
+					}
+					else bd = cit->second;
+					const XMFLOAT4X4& W = it.world_matrix;
+					XMVECTOR wc = XMVector3TransformCoord(XMVectorSet(bd.x, bd.y, bd.z, 1.f), XMLoadFloat4x4(&W));
+					float sx = sqrtf(W._11 * W._11 + W._12 * W._12 + W._13 * W._13);
+					float sy = sqrtf(W._21 * W._21 + W._22 * W._22 + W._23 * W._23);
+					float sz = sqrtf(W._31 * W._31 + W._32 * W._32 + W._33 * W._33);
+					float ms = sx > sy ? (sx > sz ? sx : sz) : (sy > sz ? sy : sz);
+					if (sphere_in_frustum(preFr, XMVectorGetX(wc), XMVectorGetY(wc), XMVectorGetZ(wc), bd.w * ms + 0.05f))
+						vis[k] = 1;
+				}
+			};
+			if (m_mt_enabled && m_worker_count > 1)
+			{
+				u32 n = m_worker_count; size_t per = (N + n - 1) / n;
+				std::vector<std::thread> th; th.reserve(n - 1);
+				for (u32 t = 1; t < n; ++t) { size_t a = (size_t)t * per, b = (std::min)(a + per, N); if (a < b) th.emplace_back([&, a, b] { cullRange(a, b); }); }
+				cullRange(0, (std::min)(per, N)); for (auto& t : th) t.join();
+			}
+			else cullRange(0, N);
+			size_t w = 0;
+			for (size_t k = 0; k < N; ++k) if (vis[k]) { if (w != k) m_render_queue[w] = m_render_queue[k]; ++w; }
+			m_render_queue.resize(w);
+			objectCount = (std::min)(m_render_queue.size(), static_cast<size_t>(MAX_RENDER_OBJECTS));
+			if (objectCount == 0) return;
+		}
+
 		// Sort by (material, mesh, distance): identical (mesh+material) objects become ADJACENT so each run
 		// draws as ONE instanced call (fewer draw calls); distance is the tiebreaker for partial early-Z
 		// within a run. ~O(n log n), negligible vs the draw cost.
@@ -727,8 +782,104 @@ namespace vortex::graphics::dx12
 		// Parallelize only when there's enough per-instance work to amortize the threads (force ignores it).
 		// Geometric LOD needs the per-run slab in distance order (so LOD segments are contiguous) — that requires
 		// the single-threaded ordered pack. MT gives no FPS here anyway (GPU-bound), so just disable it for LOD.
-		m_mt_active = m_mt_enabled && runN > 0 && m_worker_count > 1 && !m_geo_lod_enabled && (m_mt_force || objectCount >= (size_t)m_mt_threshold);
-		if (m_mt_active)
+		m_mt_active = m_mt_enabled && runN > 0 && m_worker_count > 1 && (m_mt_force || objectCount >= (size_t)m_mt_threshold);
+		if (m_geo_lod_enabled)
+		{
+			// 2-PASS MULTITHREADED cull for geometric LOD: parallel count -> compact prefix-sum offsets ->
+			// parallel pack. Uses ALL worker threads (the single-threaded ordered pack was the FPS bottleneck at
+			// high instance counts) and packs ONLY visible instances compactly (no reserved gaps for culled
+			// copies), so the instance VB holds far more on screen.
+			if (m_item_lod.size() < objectCount) m_item_lod.resize(objectCount);
+			const size_t c4n = (runN ? runN : 1) * 4;
+			std::unique_ptr<std::atomic<u32>[]> c4(new std::atomic<u32>[c4n]);
+			for (size_t z = 0; z < c4n; ++z) c4[z].store(0, std::memory_order_relaxed);
+
+			auto passA = [&](size_t a, size_t b)
+			{
+				for (size_t k = a; k < b; ++k)
+				{
+					const u32 ri = m_item_run[k];
+					const DrawRun& run = m_draw_runs[ri];
+					const auto& item = m_render_queue[k];
+					bool visible = true; int lod = 0;
+					if (!run.defaultBounds)
+					{
+						const XMFLOAT4X4& W = item.world_matrix;
+						XMVECTOR wc = XMVector3TransformCoord(XMVectorSet(run.lcx, run.lcy, run.lcz, 1.f), XMLoadFloat4x4(&W));
+						float cx = XMVectorGetX(wc), cy = XMVectorGetY(wc), cz = XMVectorGetZ(wc);
+						float sx = sqrtf(W._11 * W._11 + W._12 * W._12 + W._13 * W._13);
+						float sy = sqrtf(W._21 * W._21 + W._22 * W._22 + W._23 * W._23);
+						float sz = sqrtf(W._31 * W._31 + W._32 * W._32 + W._33 * W._33);
+						float maxScale = sx > sy ? (sx > sz ? sx : sz) : (sy > sz ? sy : sz);
+						visible = sphere_in_frustum(frustum, cx, cy, cz, run.localR * maxScale + 0.05f);
+						if (visible)
+						{
+							float dx = cx - eye.x, dy = cy - eye.y, dz = cz - eye.z;
+							float d2 = dx * dx + dy * dy + dz * dz;
+							if (useDist && d2 > rd2) visible = false;
+							else if (run.lodLevels > 1)
+							{
+								lod = (d2 > run.lodT3sq) ? 3 : (d2 > run.lodT2sq) ? 2 : (d2 > run.lodT1sq) ? 1 : 0;
+								if (lod >= (int)run.lodLevels) lod = (int)run.lodLevels - 1;
+							}
+						}
+					}
+					if (visible) { m_item_lod[k] = (unsigned char)lod; c4[ri * 4 + lod].fetch_add(1, std::memory_order_relaxed); }
+					else m_item_lod[k] = 0xFF;
+				}
+			};
+			if (m_mt_active)
+			{
+				u32 n = m_worker_count; size_t per = (objectCount + n - 1) / n;
+				std::vector<std::thread> th; th.reserve(n - 1);
+				for (u32 t = 1; t < n; ++t) { size_t a = (size_t)t * per, b = (std::min)(a + per, objectCount); if (a < b) th.emplace_back([&, a, b] { passA(a, b); }); }
+				passA(0, (std::min)(per, objectCount)); for (auto& t : th) t.join();
+			}
+			else passA(0, objectCount);
+
+			// Compact prefix sums: each run's base = the running VISIBLE total (not the submitted count); c4[run,LOD]
+			// becomes the absolute pack pointer. Clamp to the VB cap so a huge view can't overrun the buffer.
+			u32 globalBase = 0;
+			for (size_t r = 0; r < runN; ++r)
+			{
+				m_draw_runs[r].vbBase = globalBase;
+				u32 localBase = 0;
+				for (int L = 0; L < 4; ++L)
+				{
+					u32 cnt = c4[r * 4 + L].load(std::memory_order_relaxed);
+					u32 segStart = globalBase + localBase;
+					if (segStart >= MAX_RENDER_OBJECTS) cnt = 0;
+					else if (segStart + cnt > MAX_RENDER_OBJECTS) cnt = MAX_RENDER_OBJECTS - segStart;
+					m_draw_runs[r].lodCount[L] = cnt;
+					c4[r * 4 + L].store(segStart, std::memory_order_relaxed);
+					localBase += cnt;
+				}
+				m_draw_runs[r].visible = localBase;
+				globalBase += localBase;
+			}
+
+			auto passB = [&](size_t a, size_t b)
+			{
+				for (size_t k = a; k < b; ++k)
+				{
+					unsigned char lod = m_item_lod[k];
+					if (lod == 0xFF) continue;
+					const u32 ri = m_item_run[k];
+					u32 dst = c4[ri * 4 + lod].fetch_add(1, std::memory_order_relaxed);
+					if (dst < MAX_RENDER_OBJECTS && m_instance_vb_mapped)
+						memcpy((u8*)m_instance_vb_mapped + (size_t)dst * 64, &m_render_queue[k].world_matrix, 64);
+				}
+			};
+			if (m_mt_active)
+			{
+				u32 n = m_worker_count; size_t per = (objectCount + n - 1) / n;
+				std::vector<std::thread> th; th.reserve(n - 1);
+				for (u32 t = 1; t < n; ++t) { size_t a = (size_t)t * per, b = (std::min)(a + per, objectCount); if (a < b) th.emplace_back([&, a, b] { passB(a, b); }); }
+				passB(0, (std::min)(per, objectCount)); for (auto& t : th) t.join();
+			}
+			else passB(0, objectCount);
+		}
+		else if (m_mt_active)
 		{
 			u32 n = m_worker_count;
 			size_t per = (objectCount + n - 1) / n;
@@ -746,7 +897,8 @@ namespace vortex::graphics::dx12
 			cullPack(0, objectCount);
 		}
 
-		for (size_t r = 0; r < runN; ++r) m_draw_runs[r].visible = counters[r].load(std::memory_order_relaxed);
+		if (!m_geo_lod_enabled)
+			for (size_t r = 0; r < runN; ++r) m_draw_runs[r].visible = counters[r].load(std::memory_order_relaxed);
 
 		// Record the draws single-threaded: one DrawIndexedInstanced per run with visible instances.
 		u32 cbSlot = 0;
