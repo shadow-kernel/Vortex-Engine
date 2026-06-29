@@ -319,6 +319,7 @@ namespace Editor.Dialogs
             
             // Item template
             _submeshList.ItemTemplate = CreateSubmeshItemTemplate();
+            _submeshList.ItemContainerStyle = BuildCardItemStyle(Color.FromRgb(108, 92, 231));
             Grid.SetRow(_submeshList, 1);
             grid.Children.Add(_submeshList);
 
@@ -328,28 +329,52 @@ namespace Editor.Dialogs
         private DataTemplate CreateSubmeshItemTemplate()
         {
             var template = new DataTemplate();
-            var factory = new FrameworkElementFactory(typeof(Border));
-            factory.SetValue(Border.PaddingProperty, new Thickness(8, 6, 8, 6));
-            factory.SetValue(Border.MarginProperty, new Thickness(0, 1, 0, 1));
-            factory.SetValue(Border.CornerRadiusProperty, new CornerRadius(4));
-            factory.SetValue(Border.BackgroundProperty, new SolidColorBrush(Color.FromRgb(45, 45, 48)));
+            var grid = new FrameworkElementFactory(typeof(Grid));
+            var c1 = new FrameworkElementFactory(typeof(ColumnDefinition));
+            c1.SetValue(ColumnDefinition.WidthProperty, GridLength.Auto);
+            var c2 = new FrameworkElementFactory(typeof(ColumnDefinition));
+            c2.SetValue(ColumnDefinition.WidthProperty, new GridLength(1, GridUnitType.Star));
+            grid.AppendChild(c1);
+            grid.AppendChild(c2);
 
-            var stackFactory = new FrameworkElementFactory(typeof(StackPanel));
+            // Accent chip (a little rounded square) so each submesh reads as a card with a leading visual.
+            var chip = new FrameworkElementFactory(typeof(Border));
+            chip.SetValue(Border.WidthProperty, 30.0);
+            chip.SetValue(Border.HeightProperty, 30.0);
+            chip.SetValue(Border.CornerRadiusProperty, new CornerRadius(7));
+            chip.SetValue(Border.BackgroundProperty, new SolidColorBrush(Color.FromRgb(60, 56, 86)));
+            chip.SetValue(Border.VerticalAlignmentProperty, VerticalAlignment.Center);
+            var glyph = new FrameworkElementFactory(typeof(TextBlock));
+            glyph.SetValue(TextBlock.TextProperty, "◈");
+            glyph.SetValue(TextBlock.ForegroundProperty, new SolidColorBrush(Color.FromRgb(150, 135, 255)));
+            glyph.SetValue(TextBlock.FontSizeProperty, 14.0);
+            glyph.SetValue(TextBlock.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+            glyph.SetValue(TextBlock.VerticalAlignmentProperty, VerticalAlignment.Center);
+            chip.AppendChild(glyph);
 
-            var nameFactory = new FrameworkElementFactory(typeof(TextBlock));
-            nameFactory.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding("DisplayName"));
-            nameFactory.SetValue(TextBlock.ForegroundProperty, Brushes.White);
-            nameFactory.SetValue(TextBlock.FontSizeProperty, 12.0);
-            stackFactory.AppendChild(nameFactory);
+            var stack = new FrameworkElementFactory(typeof(StackPanel));
+            stack.SetValue(StackPanel.MarginProperty, new Thickness(12, 0, 0, 0));
+            stack.SetValue(StackPanel.VerticalAlignmentProperty, VerticalAlignment.Center);
+            stack.SetValue(Grid.ColumnProperty, 1);
 
-            var infoFactory = new FrameworkElementFactory(typeof(TextBlock));
-            infoFactory.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding("GeometryInfo"));
-            infoFactory.SetValue(TextBlock.ForegroundProperty, new SolidColorBrush(Color.FromRgb(157, 157, 157)));
-            infoFactory.SetValue(TextBlock.FontSizeProperty, 10.0);
-            stackFactory.AppendChild(infoFactory);
+            var name = new FrameworkElementFactory(typeof(TextBlock));
+            name.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding("DisplayName"));
+            name.SetValue(TextBlock.ForegroundProperty, Brushes.White);
+            name.SetValue(TextBlock.FontSizeProperty, 13.0);
+            name.SetValue(TextBlock.FontWeightProperty, FontWeights.Medium);
+            name.SetValue(TextBlock.TextTrimmingProperty, TextTrimming.CharacterEllipsis);
+            stack.AppendChild(name);
 
-            factory.AppendChild(stackFactory);
-            template.VisualTree = factory;
+            var info = new FrameworkElementFactory(typeof(TextBlock));
+            info.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding("GeometryInfo"));
+            info.SetValue(TextBlock.ForegroundProperty, new SolidColorBrush(Color.FromRgb(150, 150, 158)));
+            info.SetValue(TextBlock.FontSizeProperty, 11.0);
+            info.SetValue(TextBlock.MarginProperty, new Thickness(0, 2, 0, 0));
+            stack.AppendChild(info);
+
+            grid.AppendChild(chip);
+            grid.AppendChild(stack);
+            template.VisualTree = grid;
             return template;
         }
 
@@ -369,6 +394,7 @@ namespace Editor.Dialogs
             };
             _materialList.SelectionChanged += MaterialList_SelectionChanged;
             _materialList.ItemTemplate = CreateMaterialItemTemplate();
+            _materialList.ItemContainerStyle = BuildCardItemStyle(Color.FromRgb(108, 92, 231));
             grid.Children.Add(_materialList);
 
             // Buttons
@@ -396,48 +422,84 @@ namespace Editor.Dialogs
         private DataTemplate CreateMaterialItemTemplate()
         {
             var template = new DataTemplate();
-            var factory = new FrameworkElementFactory(typeof(Border));
-            factory.SetValue(Border.PaddingProperty, new Thickness(8, 6, 8, 6));
-            factory.SetValue(Border.MarginProperty, new Thickness(0, 1, 0, 1));
-            factory.SetValue(Border.CornerRadiusProperty, new CornerRadius(4));
-            factory.SetValue(Border.BackgroundProperty, new SolidColorBrush(Color.FromRgb(45, 45, 48)));
+            var grid = new FrameworkElementFactory(typeof(Grid));
+            var c1 = new FrameworkElementFactory(typeof(ColumnDefinition));
+            c1.SetValue(ColumnDefinition.WidthProperty, GridLength.Auto);
+            var c2 = new FrameworkElementFactory(typeof(ColumnDefinition));
+            c2.SetValue(ColumnDefinition.WidthProperty, new GridLength(1, GridUnitType.Star));
+            grid.AppendChild(c1);
+            grid.AppendChild(c2);
 
-            var gridFactory = new FrameworkElementFactory(typeof(Grid));
+            // Round color swatch (the material's base color)
+            var swatch = new FrameworkElementFactory(typeof(Border));
+            swatch.SetValue(Border.WidthProperty, 32.0);
+            swatch.SetValue(Border.HeightProperty, 32.0);
+            swatch.SetValue(Border.CornerRadiusProperty, new CornerRadius(16));
+            swatch.SetValue(Border.BorderThicknessProperty, new Thickness(1));
+            swatch.SetValue(Border.BorderBrushProperty, new SolidColorBrush(Color.FromArgb(70, 255, 255, 255)));
+            swatch.SetValue(Border.VerticalAlignmentProperty, VerticalAlignment.Center);
+            swatch.SetBinding(Border.BackgroundProperty, new System.Windows.Data.Binding("BaseColorBrush"));
 
-            // Color preview column
-            var col1 = new FrameworkElementFactory(typeof(ColumnDefinition));
-            col1.SetValue(ColumnDefinition.WidthProperty, new GridLength(24));
-            var col2 = new FrameworkElementFactory(typeof(ColumnDefinition));
-            col2.SetValue(ColumnDefinition.WidthProperty, new GridLength(1, GridUnitType.Star));
+            var stack = new FrameworkElementFactory(typeof(StackPanel));
+            stack.SetValue(StackPanel.MarginProperty, new Thickness(12, 0, 0, 0));
+            stack.SetValue(StackPanel.VerticalAlignmentProperty, VerticalAlignment.Center);
+            stack.SetValue(Grid.ColumnProperty, 1);
 
-            // Color preview
-            var colorPreview = new FrameworkElementFactory(typeof(Border));
-            colorPreview.SetValue(Border.WidthProperty, 18.0);
-            colorPreview.SetValue(Border.HeightProperty, 18.0);
-            colorPreview.SetValue(Border.CornerRadiusProperty, new CornerRadius(3));
-            colorPreview.SetBinding(Border.BackgroundProperty, new System.Windows.Data.Binding("BaseColorBrush"));
+            var name = new FrameworkElementFactory(typeof(TextBlock));
+            name.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding("Name"));
+            name.SetValue(TextBlock.ForegroundProperty, Brushes.White);
+            name.SetValue(TextBlock.FontSizeProperty, 13.0);
+            name.SetValue(TextBlock.FontWeightProperty, FontWeights.Medium);
+            name.SetValue(TextBlock.TextTrimmingProperty, TextTrimming.CharacterEllipsis);
+            stack.AppendChild(name);
 
-            var stackFactory = new FrameworkElementFactory(typeof(StackPanel));
-            stackFactory.SetValue(StackPanel.MarginProperty, new Thickness(8, 0, 0, 0));
-            stackFactory.SetValue(Grid.ColumnProperty, 1);
+            var info = new FrameworkElementFactory(typeof(TextBlock));
+            info.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding("TextureSummary"));
+            info.SetValue(TextBlock.ForegroundProperty, new SolidColorBrush(Color.FromRgb(150, 150, 158)));
+            info.SetValue(TextBlock.FontSizeProperty, 11.0);
+            info.SetValue(TextBlock.MarginProperty, new Thickness(0, 2, 0, 0));
+            stack.AppendChild(info);
 
-            var nameFactory = new FrameworkElementFactory(typeof(TextBlock));
-            nameFactory.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding("Name"));
-            nameFactory.SetValue(TextBlock.ForegroundProperty, Brushes.White);
-            nameFactory.SetValue(TextBlock.FontSizeProperty, 12.0);
-            stackFactory.AppendChild(nameFactory);
-
-            var infoFactory = new FrameworkElementFactory(typeof(TextBlock));
-            infoFactory.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding("TextureSummary"));
-            infoFactory.SetValue(TextBlock.ForegroundProperty, new SolidColorBrush(Color.FromRgb(157, 157, 157)));
-            infoFactory.SetValue(TextBlock.FontSizeProperty, 10.0);
-            stackFactory.AppendChild(infoFactory);
-
-            gridFactory.AppendChild(colorPreview);
-            gridFactory.AppendChild(stackFactory);
-            factory.AppendChild(gridFactory);
-            template.VisualTree = factory;
+            grid.AppendChild(swatch);
+            grid.AppendChild(stack);
+            template.VisualTree = grid;
             return template;
+        }
+
+        /// <summary>A modern card style for the submesh/material lists: rounded, with hover + accent-on-select.</summary>
+        private static Style BuildCardItemStyle(Color accent)
+        {
+            var style = new Style(typeof(ListBoxItem));
+            style.Setters.Add(new Setter(FrameworkElement.MarginProperty, new Thickness(6, 3, 6, 3)));
+            style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(0)));
+            style.Setters.Add(new Setter(Control.HorizontalContentAlignmentProperty, HorizontalAlignment.Stretch));
+            style.Setters.Add(new Setter(Control.SnapsToDevicePixelsProperty, true));
+
+            var tpl = new ControlTemplate(typeof(ListBoxItem));
+            var card = new FrameworkElementFactory(typeof(Border));
+            card.Name = "Card";
+            card.SetValue(Border.CornerRadiusProperty, new CornerRadius(9));
+            card.SetValue(Border.PaddingProperty, new Thickness(12, 10, 12, 10));
+            card.SetValue(Border.BackgroundProperty, new SolidColorBrush(Color.FromRgb(43, 43, 49)));
+            card.SetValue(Border.BorderThicknessProperty, new Thickness(1));
+            card.SetValue(Border.BorderBrushProperty, new SolidColorBrush(Color.FromRgb(55, 55, 63)));
+            var cp = new FrameworkElementFactory(typeof(ContentPresenter));
+            card.AppendChild(cp);
+            tpl.VisualTree = card;
+
+            var hover = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
+            hover.Setters.Add(new Setter(Border.BackgroundProperty, new SolidColorBrush(Color.FromRgb(54, 54, 62)), "Card"));
+            hover.Setters.Add(new Setter(Border.BorderBrushProperty, new SolidColorBrush(Color.FromRgb(80, 80, 92)), "Card"));
+            tpl.Triggers.Add(hover);
+
+            var sel = new Trigger { Property = ListBoxItem.IsSelectedProperty, Value = true };
+            sel.Setters.Add(new Setter(Border.BackgroundProperty, new SolidColorBrush(Color.FromRgb(50, 47, 66)), "Card"));
+            sel.Setters.Add(new Setter(Border.BorderBrushProperty, new SolidColorBrush(accent), "Card"));
+            sel.Setters.Add(new Setter(Border.BorderThicknessProperty, new Thickness(2), "Card"));
+            tpl.Triggers.Add(sel);
+
+            style.Setters.Add(new Setter(Control.TemplateProperty, tpl));
+            return style;
         }
 
         private TabControl BuildRightPanel()
