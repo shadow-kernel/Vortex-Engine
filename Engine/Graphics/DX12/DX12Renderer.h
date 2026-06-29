@@ -27,9 +27,14 @@ namespace vortex::graphics::dx12
 {
 	using Microsoft::WRL::ComPtr;
 
-	// Maximum number of objects that can be rendered per frame
-	constexpr u32 MAX_RENDER_OBJECTS = 16384;
-	
+	// Maximum number of object INSTANCES that can be rendered per frame (render-queue + instance-buffer cap).
+	// High so GPU instancing can draw large crowds — e.g. thousands of copies of a multi-submesh model.
+	constexpr u32 MAX_RENDER_OBJECTS = 262144;
+
+	// Maximum distinct (mesh, material) DRAW RUNS per frame. This sizes the per-object constant buffer, which
+	// holds ONE slot per run (not per instance), so it stays tiny even with a huge instance cap.
+	constexpr u32 MAX_DRAW_RUNS = 8192;
+
 	// Maximum number of secondary render targets
 	constexpr u32 MAX_RENDER_TARGETS = 8;
 
@@ -100,6 +105,9 @@ namespace vortex::graphics::dx12
 
 		// Render queue
 		void submit_render_item(const RenderItem& item);
+		// Submit `count` instances of the SAME mesh+material in ONE call (world_matrices = count * 16 floats,
+		// row-major 4x4 each). Avoids one P/Invoke per instance — the path for spawning large crowds.
+		void submit_mesh_instances(id::id_type mesh, id::id_type material, const float* world_matrices, u32 count);
 		void clear_render_queue();
 
 		// Camera

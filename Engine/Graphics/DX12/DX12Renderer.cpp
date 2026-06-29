@@ -744,9 +744,12 @@ namespace vortex::graphics::dx12
 				auto* ao_tex = mat->ao_texture();
 				if (ao_tex && ao_tex->is_valid() && ao_tex->srv_gpu().ptr != 0) { obj.has_ao_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(7, ao_tex->srv_gpu()); }
 			}
-			if (m_per_object_cb_mapped) memcpy((u8*)m_per_object_cb_mapped + (size_t)cbSlot * 256, &obj, sizeof(obj));
-			m_command_list->SetGraphicsRootConstantBufferView(1, m_per_object_cb->GetGPUVirtualAddress() + (size_t)cbSlot * 256);
-			++cbSlot;
+			// One CB slot per run; clamp to the CB capacity (runs beyond reuse the last slot — only matters
+			// with thousands of DISTINCT materials, which instancing makes rare).
+			u32 slot = (cbSlot < MAX_DRAW_RUNS) ? cbSlot : (MAX_DRAW_RUNS - 1);
+			if (m_per_object_cb_mapped) memcpy((u8*)m_per_object_cb_mapped + (size_t)slot * 256, &obj, sizeof(obj));
+			m_command_list->SetGraphicsRootConstantBufferView(1, m_per_object_cb->GetGPUVirtualAddress() + (size_t)slot * 256);
+			if (cbSlot < MAX_DRAW_RUNS) ++cbSlot;
 
 			// Bind mesh vertices (slot 0) + this run's per-instance world matrices (slot 1); draw all at once.
 			D3D12_VERTEX_BUFFER_VIEW vbs[2];
@@ -822,10 +825,25 @@ namespace vortex::graphics::dx12
 		m_grid_spacing = s; m_grid_major_interval = m; m_grid_extent = e;
 	}
 
-	void DX12Renderer::submit_render_item(const RenderItem& item) 
-	{ 
+	void DX12Renderer::submit_render_item(const RenderItem& item)
+	{
 		std::lock_guard<std::mutex> lock(m_queue_mutex);
-		m_submit_queue.push_back(item); 
+		m_submit_queue.push_back(item);
+	}
+
+	void DX12Renderer::submit_mesh_instances(id::id_type mesh, id::id_type material, const float* world_matrices, u32 count)
+	{
+		if (!world_matrices || count == 0) return;
+		std::lock_guard<std::mutex> lock(m_queue_mutex);
+		m_submit_queue.reserve(m_submit_queue.size() + count);
+		for (u32 i = 0; i < count; ++i)
+		{
+			RenderItem item;
+			item.mesh_id = mesh;
+			item.material_id = material;
+			memcpy(&item.world_matrix, world_matrices + (size_t)i * 16, sizeof(DirectX::XMFLOAT4X4));
+			m_submit_queue.push_back(item);
+		}
 	}
 	
 	void DX12Renderer::clear_render_queue() 
@@ -929,14 +947,14 @@ namespace vortex::graphics::dx12
 	D3D12_RANGE r{0,0};
 	if (FAILED(m_per_frame_cb->Map(0, &r, &m_per_frame_cb_mapped))) return false;
 
-	// Support up to MAX_RENDER_OBJECTS objects (16384 = 4MB buffer)
-	rd.Width = 256 * MAX_RENDER_OBJECTS;
+	// Per-object constant buffer: ONE 256-byte slot per DRAW RUN (mesh+material), not per instance.
+	rd.Width = (UINT64)256 * MAX_DRAW_RUNS;
 	if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_per_object_cb))))
 	return false;
 	if (FAILED(m_per_object_cb->Map(0, &r, &m_per_object_cb_mapped))) return false;
 
-	// Per-instance world matrices for GPU instancing: 64 bytes (4x float4 rows) per object.
-	rd.Width = 64 * MAX_RENDER_OBJECTS;
+	// Per-instance world matrices for GPU instancing: 64 bytes (4x float4 rows) per instance.
+	rd.Width = (UINT64)64 * MAX_RENDER_OBJECTS;
 	if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_instance_vb))))
 	return false;
 	if (FAILED(m_instance_vb->Map(0, &r, &m_instance_vb_mapped))) return false;

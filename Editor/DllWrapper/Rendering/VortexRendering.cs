@@ -190,6 +190,18 @@ namespace Editor.DllWrapper
             SubmitRenderItem(meshId, materialId, worldMatrix);
         }
 
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SubmitMeshInstances(long meshId, long materialId, float[] worldMatrices, int count);
+
+        /// <summary>Submit <paramref name="count"/> instances of the SAME mesh+material in ONE call
+        /// (worldMatrices = count*16 floats, row-major 4x4 each). The renderer draws them as a single
+        /// DrawIndexedInstanced — the efficient path for spawning large crowds.</summary>
+        public static void SubmitMeshInstanced(long meshId, long materialId, float[] worldMatrices, int count)
+        {
+            if (worldMatrices == null || count <= 0) return;
+            SubmitMeshInstances(meshId, materialId, worldMatrices, count);
+        }
+
         #endregion
 
         #region Grid & Gizmos Visibility

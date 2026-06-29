@@ -629,6 +629,15 @@ EDITOR_INTERFACE void SubmitRenderItem(id::id_type mesh_id, id::id_type material
 	graphics::dx12::DX12Renderer::instance().submit_render_item(item);
 }
 
+// Submit `count` instances of the SAME mesh+material in ONE call (world_matrices = count*16 floats, row-major
+// 4x4 each). The renderer groups them into a single DrawIndexedInstanced — the path for spawning large crowds
+// without one P/Invoke per instance.
+EDITOR_INTERFACE void SubmitMeshInstances(id::id_type mesh_id, id::id_type material_id, const float* world_matrices, int count)
+{
+	if (!world_matrices || count <= 0) return;
+	graphics::dx12::DX12Renderer::instance().submit_mesh_instances(mesh_id, material_id, world_matrices, static_cast<u32>(count));
+}
+
 // Camera control
 EDITOR_INTERFACE void SetCamera(float pos_x, float pos_y, float pos_z,
 								float target_x, float target_y, float target_z,
