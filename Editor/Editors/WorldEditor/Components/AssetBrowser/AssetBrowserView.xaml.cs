@@ -854,11 +854,33 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
         /// added to the scene and everything else shows explicit feedback — so an open gesture is
         /// never a silent no-op. Shared by double-click and the context-menu "Open / Edit" item.
         /// </summary>
-        /// <summary>Ctrl+double-click: inspect a model on its own (large, isolated). For now opens the Model
-        /// Editor (big orbit preview); the dedicated freecam viewer TAB in the viewport is the next step.</summary>
+        /// <summary>Ctrl+double-click: open a dedicated Model-Viewer TAB in the viewport (next to Scene) that
+        /// renders ONLY this model, isolated and large, with an orbit/zoom/keyboard camera to inspect it.</summary>
         private void OpenModelViewer(AssetItem item)
         {
-            OpenAssetInEditor(item);
+            try
+            {
+                var projectPath = ProjectData.Current?.Path ?? "";
+                string fullPath = item.Path;
+                if (!string.IsNullOrEmpty(fullPath) && !System.IO.Path.IsPathRooted(fullPath))
+                    fullPath = System.IO.Path.Combine(projectPath, item.Path);
+
+                if (string.IsNullOrEmpty(fullPath) || !System.IO.File.Exists(fullPath))
+                {
+                    OpenAssetInEditor(item); // fall back to the editor if the file can't be resolved
+                    return;
+                }
+
+                var editor = Editor.Editors.WorldEditor.WorldEditorView.Current;
+                if (editor != null)
+                    editor.OpenModelViewerTab(fullPath, item.Name);
+                else
+                    OpenAssetInEditor(item);
+            }
+            catch
+            {
+                OpenAssetInEditor(item);
+            }
         }
 
         private void OpenOrPlaceAsset(AssetItem item)

@@ -14,9 +14,13 @@ namespace Editor.Editors.WorldEditor
     {
         private GamePreviewView _gamePreview;
 
+        /// <summary>The live editor view, so components (e.g. the asset browser) can open viewport document tabs.</summary>
+        public static WorldEditorView Current { get; private set; }
+
         public WorldEditorView()
         {
             InitializeComponent();
+            Current = this;
             Loaded += OnLoaded;
             
             // Set custom placement for camera preview popup
@@ -83,6 +87,36 @@ namespace Editor.Editors.WorldEditor
                     project.ActiveScene.ActivateEntities();
                 }
             }
+        }
+
+        /// <summary>
+        /// Opens (or re-activates) a dedicated Model-Viewer document TAB next to the Scene tab — a free-camera
+        /// viewport that renders ONLY this model so the user can inspect it isolated and large. Triggered by
+        /// Ctrl+double-click in the asset browser.
+        /// </summary>
+        public void OpenModelViewerTab(string fullModelPath, string modelName)
+        {
+            var pane = DockManager.Layout.Descendents().OfType<LayoutDocumentPane>().FirstOrDefault();
+            if (pane == null) return;
+
+            string title = "Model: " + modelName;
+
+            // Reuse an already-open viewer for the same model instead of stacking duplicates.
+            var existing = DockManager.Layout.Descendents().OfType<LayoutDocument>()
+                .FirstOrDefault(d => string.Equals(d.Title, title, System.StringComparison.OrdinalIgnoreCase));
+            if (existing != null) { existing.IsActive = true; return; }
+
+            var viewer = new Components.ModelViewer.ModelViewerControl(fullModelPath, modelName);
+            var doc = new LayoutDocument
+            {
+                Title = title,
+                CanClose = true,
+                CanFloat = true,
+                Content = viewer
+            };
+            doc.Closed += (s, e) => { try { viewer.Dispose(); } catch { } };
+            pane.Children.Add(doc);
+            doc.IsActive = true;
         }
 
         private GamePreviewView FindGamePreviewView()

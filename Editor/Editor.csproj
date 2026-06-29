@@ -350,6 +350,7 @@
       <DependentUpon>GamePreviewView.xaml</DependentUpon>
     </Compile>
     <Compile Include="Editors\WorldEditor\Components\GamePreview\ViewportHost.cs" />
+    <Compile Include="Editors\WorldEditor\Components\ModelViewer\ModelViewerControl.cs" />
     <Compile Include="Editors\WorldEditor\Components\HeaderBar\HeaderBarView.xaml.cs">
       <DependentUpon>HeaderBarView.xaml</DependentUpon>
     </Compile>
