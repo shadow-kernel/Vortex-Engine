@@ -19,9 +19,12 @@ namespace vortex::runtime
         bool g_mdown = false;
         int  g_cw = 0, g_ch = 0;
 
-        // FPS mouse-look capture
+        // FPS mouse-look capture. Raw Input accumulates relative deltas (no per-frame cursor repositioning,
+        // which was throttling FPS); ClipCursor confines the hidden cursor to the window; focus gating frees
+        // it on Alt-Tab. g_mouse_dx/dy are accumulated in WM_INPUT and consumed (reset) once per frame.
         bool g_captured = false;
-        int  g_mouse_dx = 0, g_mouse_dy = 0;
+        bool g_has_focus = true;
+        long g_mouse_dx = 0, g_mouse_dy = 0;
 
         // Deferred resize: WM_SIZE only records the new size; the actual swapchain resize runs in the main loop
         // AFTER the message pump, so it never fires re-entrantly mid-SetWindowPos (the F11/maximize transition
@@ -60,6 +63,16 @@ namespace vortex::runtime
             // WM_SIZE from the style/size change drives systems::dx12::resize on this thread.
         }
 
+        void clip_cursor_to_window()
+        {
+            if (!g_hwnd) return;
+            RECT rc; GetClientRect(g_hwnd, &rc);
+            POINT tl{ rc.left, rc.top }, br{ rc.right, rc.bottom };
+            ClientToScreen(g_hwnd, &tl); ClientToScreen(g_hwnd, &br);
+            RECT screen{ tl.x, tl.y, br.x, br.y };
+            ClipCursor(&screen);
+        }
+
         LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         {
             switch (msg)
@@ -78,11 +91,35 @@ namespace vortex::runtime
                 if (wp == VK_F11 && !(lp & (1 << 30))) do_toggle_fullscreen();
                 return 0;
             case WM_MOUSEMOVE: g_mx = GET_X_LPARAM(lp); g_my = GET_Y_LPARAM(lp); return 0;
+            case WM_INPUT:
+            {
+                // Relative mouse motion for FPS look — no cursor repositioning (that was killing FPS).
+                UINT sz = 0;
+                GetRawInputData((HRAWINPUT)lp, RID_INPUT, nullptr, &sz, sizeof(RAWINPUTHEADER));
+                if (sz > 0 && sz <= sizeof(RAWINPUT))
+                {
+                    RAWINPUT ri{};
+                    if (GetRawInputData((HRAWINPUT)lp, RID_INPUT, &ri, &sz, sizeof(RAWINPUTHEADER)) == sz
+                        && ri.header.dwType == RIM_TYPEMOUSE
+                        && (ri.data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE) == 0)
+                    {
+                        g_mouse_dx += ri.data.mouse.lLastX;
+                        g_mouse_dy += ri.data.mouse.lLastY;
+                    }
+                }
+                return DefWindowProcW(hwnd, msg, wp, lp);   // WM_INPUT must reach DefWindowProc for cleanup
+            }
             case WM_LBUTTONDOWN: g_mdown = true;  SetCapture(hwnd); return 0;
             case WM_LBUTTONUP:   g_mdown = false; ReleaseCapture();  return 0;
+            case WM_SETFOCUS:
+                g_has_focus = true;
+                return 0;
             case WM_KILLFOCUS:
-                // Losing focus while captured (Alt+Tab) — free the cursor so it isn't stuck/hidden off-window.
+                // Lost focus (Alt+Tab): release + show the cursor and un-clip it so it's never stuck. The game
+                // tick won't re-capture while unfocused (set_mouse_captured gates on g_has_focus).
+                g_has_focus = false;
                 if (g_captured) { g_captured = false; ShowCursor(TRUE); }
+                ClipCursor(nullptr);
                 return 0;
             case WM_CLOSE:   g_running = false; return 0;
             case WM_DESTROY: PostQuitMessage(0); return 0;
@@ -104,15 +141,12 @@ namespace vortex::runtime
 
     void GameHost::set_mouse_captured(bool captured)
     {
+        if (captured && !g_has_focus) captured = false;   // never capture while unfocused (Alt-Tab) -> no stuck cursor
         if (captured == g_captured) return;
         g_captured = captured;
         ShowCursor(captured ? FALSE : TRUE);   // counter-balanced: only toggled on state change
-        if (captured && g_hwnd)                // re-center immediately so the first delta isn't a jump
-        {
-            POINT c{ g_cw / 2, g_ch / 2 };
-            ClientToScreen(g_hwnd, &c);
-            SetCursorPos(c.x, c.y);
-        }
+        if (captured) clip_cursor_to_window(); else ClipCursor(nullptr);
+        g_mouse_dx = 0; g_mouse_dy = 0;        // drop any stale delta across the transition
     }
     bool GameHost::mouse_captured() { return g_captured; }
     int  GameHost::mouse_dx() { return g_mouse_dx; }
@@ -144,6 +178,16 @@ namespace vortex::runtime
 
         ShowWindow(g_hwnd, SW_SHOW);
         UpdateWindow(g_hwnd);
+
+        // Register for raw mouse input (relative deltas for FPS look — delivered to the focused window via WM_INPUT).
+        {
+            RAWINPUTDEVICE rid{};
+            rid.usUsagePage = 0x01;   // generic desktop
+            rid.usUsage = 0x02;       // mouse
+            rid.dwFlags = 0;
+            rid.hwndTarget = g_hwnd;
+            RegisterRawInputDevices(&rid, 1, sizeof(rid));
+        }
 
         RECT cr{}; GetClientRect(g_hwnd, &cr);
         g_cw = cr.right - cr.left; g_ch = cr.bottom - cr.top;
@@ -181,22 +225,10 @@ namespace vortex::runtime
             last = now;
             if (dt < 0.f) dt = 0.f; else if (dt > 0.1f) dt = 0.1f;
 
-            // 2b) FPS mouse-look: when captured, read the cursor's offset from the window center as this
-            // frame's delta, then snap it back to center — unbounded look, cursor never leaves the window.
-            if (g_captured && g_hwnd && g_cw > 1 && g_ch > 1)
-            {
-                POINT pt; GetCursorPos(&pt); ScreenToClient(g_hwnd, &pt);
-                int cx = g_cw / 2, cy = g_ch / 2;
-                g_mouse_dx = pt.x - cx; g_mouse_dy = pt.y - cy;
-                if (g_mouse_dx != 0 || g_mouse_dy != 0)
-                {
-                    POINT c{ cx, cy }; ClientToScreen(g_hwnd, &c); SetCursorPos(c.x, c.y);
-                }
-            }
-            else { g_mouse_dx = 0; g_mouse_dy = 0; }
-
-            // 3) advance the game in managed code (scripts + camera + submit the scene)
+            // 3) advance the game in managed code (scripts + camera + submit the scene). Raw mouse deltas were
+            // accumulated in WM_INPUT during the pump above; the tick reads them via mouse_dx/dy, then we consume.
             if (g_tick) g_tick(dt);
+            g_mouse_dx = 0; g_mouse_dy = 0;
 
             // 4) render the submitted scene + present — same thread as the pump/resize, so never freezes
             systems::dx12::render_frame();
