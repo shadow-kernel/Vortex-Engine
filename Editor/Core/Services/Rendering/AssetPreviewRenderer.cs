@@ -100,6 +100,14 @@ namespace Editor.Core.Services.Rendering
                 return ReadTargetToBitmap(rt);
             }
             catch { return null; }
+            finally
+            {
+                // This offscreen preview submitted its mesh + SwapRenderQueue'd the SHARED render queue, which
+                // would otherwise leave the main editor viewport (submit-once) showing THIS model instead of the
+                // scene (the "double-click/select renders the obj in the freecam" bug). Tell the viewport to
+                // re-submit its scene next frame so the preview never hijacks it.
+                try { Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.RequestResubmit(); } catch { }
+            }
             // NOTE: the render target is cached + reused (see AcquireTarget) — NOT destroyed per render.
         }
 

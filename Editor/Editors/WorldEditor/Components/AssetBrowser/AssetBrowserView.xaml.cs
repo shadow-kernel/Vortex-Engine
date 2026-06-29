@@ -352,33 +352,39 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
 
             if (dialog.ShowDialog() == true)
             {
+                bool isModelType = _currentType == AssetType.Models || _currentType == AssetType.Meshes;
+                // Models/meshes ALWAYS go through ModelImportService (folder + materials/.vmat) and land in the
+                // CURRENT explorer folder, not a fixed "Models" — so importing while inside a subfolder keeps the
+                // model there.
+                if (isModelType)
+                {
+                    string targetFolder = CurrentImportFolder();
+                    foreach (var file in dialog.FileNames)
+                    {
+                        try
+                        {
+                            var ext = System.IO.Path.GetExtension(file).ToLowerInvariant();
+                            if (ext == ".obj" || ext == ".fbx" || ext == ".gltf" || ext == ".glb" || ext == ".dae" || ext == ".3ds" || ext == ".blend" || ext == ".vmesh")
+                                ModelImportService.Instance.ImportModel(file, targetFolder);
+                        }
+                        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[Import] {ex.Message}"); }
+                    }
+                    RefreshAssets();
+                    return;
+                }
+
                 // Use the new AssetImportDialog for single file with tag support
                 if (dialog.FileNames.Length == 1)
                 {
                     var importType = GetImportAssetType(_currentType);
                     var importResult = Dialogs.AssetImportDialog.ShowImportDialog(
-                        Window.GetWindow(this), 
-                        dialog.FileName, 
+                        Window.GetWindow(this),
+                        dialog.FileName,
                         importType);
-                    
+
                     if (importResult.Success)
                     {
                         RefreshAssets();
-                        
-                        // For models, optionally show the model editor
-                        if (importType == Dialogs.AssetImportDialog.ImportAssetType.Model)
-                        {
-                            var openEditor = MessageBox.Show(
-                                "Model imported successfully. Open in Model Editor?",
-                                "Import Complete",
-                                MessageBoxButton.YesNo,
-                                MessageBoxImage.Question);
-                                
-                            if (openEditor == MessageBoxResult.Yes)
-                            {
-                                Dialogs.UniversalModelEditorDialog.OpenForModel(Window.GetWindow(this), importResult.TargetPath);
-                            }
-                        }
                     }
                 }
                 else
@@ -387,6 +393,18 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                     ImportMultipleFiles(dialog.FileNames);
                 }
             }
+        }
+
+        /// <summary>The folder (relative to Assets) where an import should land — the CURRENT explorer folder,
+        /// or "Models" when sitting at the Assets root.</summary>
+        private string CurrentImportFolder()
+        {
+            var rel = (_currentFolderRel ?? "Assets").Replace('\\', '/').Trim('/');
+            if (rel.Equals("Assets", StringComparison.OrdinalIgnoreCase) || string.IsNullOrEmpty(rel))
+                return "Models";
+            if (rel.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase))
+                rel = rel.Substring("Assets/".Length);
+            return rel;
         }
         
         private Dialogs.AssetImportDialog.ImportAssetType GetImportAssetType(AssetType type)
