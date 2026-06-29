@@ -261,6 +261,16 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void SetRenderDistance(float distance);
 
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetMultithreading([MarshalAs(UnmanagedType.I1)] bool enabled);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetMultithreadingForce([MarshalAs(UnmanagedType.I1)] bool force);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        private static extern bool IsMultithreadingActive();
+
         /// <summary>
         /// Get current FPS from the engine.
         /// </summary>
@@ -275,6 +285,12 @@ namespace Editor.DllWrapper
         public static int InstancesDrawn { get { try { return GetInstancesDrawn(); } catch { return 0; } } }
         /// <summary>Generic render-distance cull in world units (0 = disabled). From the game's graphics settings.</summary>
         public static void RenderDistance(float distance) { try { SetRenderDistance(distance); } catch { } }
+        /// <summary>Enable/disable multithreaded per-instance cull+pack (auto-gates on instance count).</summary>
+        public static void Multithreading(bool enabled) { try { SetMultithreading(enabled); } catch { } }
+        /// <summary>Force multithreading on regardless of the instance-count threshold (testing).</summary>
+        public static void MultithreadingForce(bool force) { try { SetMultithreadingForce(force); } catch { } }
+        /// <summary>Whether multithreaded cull+pack was used on the last frame.</summary>
+        public static bool MultithreadingActive { get { try { return IsMultithreadingActive(); } catch { return false; } } }
 
         /// <summary>
         /// Get draw call count from the engine.

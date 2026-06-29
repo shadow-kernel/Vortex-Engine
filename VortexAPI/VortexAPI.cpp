@@ -749,6 +749,20 @@ EDITOR_INTERFACE void SetRenderDistance(float distance)
 	graphics::dx12::DX12Renderer::instance().set_render_distance(distance);
 }
 
+// Multithreaded per-instance cull+pack (auto-gates on instance count; the draw recording stays single-threaded).
+EDITOR_INTERFACE void SetMultithreading(bool enabled)
+{
+	graphics::dx12::DX12Renderer::instance().set_multithreading(enabled);
+}
+EDITOR_INTERFACE void SetMultithreadingForce(bool force)
+{
+	graphics::dx12::DX12Renderer::instance().set_multithreading_force(force);
+}
+EDITOR_INTERFACE bool IsMultithreadingActive()
+{
+	return graphics::dx12::DX12Renderer::instance().mt_active();
+}
+
 // ============== RENDER LOOP API ==============
 
 // ---- Native GameHost: the standalone game runs in its OWN native Win32 window + DX12 swapchain + loop,

@@ -185,6 +185,14 @@ namespace vortex::graphics::dx12
 		void set_render_distance(float d) { m_render_distance = d >= 0.0f ? d : 0.0f; }
 		float render_distance() const { return m_render_distance; }
 
+		// Multithreaded culling+packing: parallelize the per-instance frustum/distance test + instance-buffer
+		// pack across worker threads (the CPU bottleneck when one mesh is rendered thousands of times). The
+		// draw recording stays single-threaded. Auto-gates on instance count; force ignores the threshold.
+		void set_multithreading(bool enabled) { m_mt_enabled = enabled; }
+		bool is_multithreading() const { return m_mt_enabled; }
+		void set_multithreading_force(bool f) { m_mt_force = f; }
+		bool mt_active() const { return m_mt_active; }
+
 
 		// Camera gizmo rendering
 		void render_camera_gizmo(
@@ -408,6 +416,27 @@ namespace vortex::graphics::dx12
 			u32 instance_count;
 		};
 		std::vector<RenderBatch> m_batches;
+
+		// One contiguous (mesh,material) run in the sorted render queue. Bounds are precomputed once
+		// (single-threaded) so the per-instance cull+pack can run on any worker thread. vbBase reserves a
+		// worst-case slab (= item count) in the instance VB so visible instances pack into a disjoint region.
+		struct DrawRun
+		{
+			size_t start; u32 count;
+			id::id_type mesh; id::id_type mat;
+			Mesh* meshp;
+			bool defaultBounds;
+			float lcx, lcy, lcz, localR;
+			u32 vbBase;
+			u32 visible;
+		};
+		std::vector<DrawRun> m_draw_runs;     // per-frame scratch (reused)
+		std::vector<u32> m_item_run;          // run index per render-queue item (for flat parallel cull)
+		bool m_mt_enabled{ true };            // master enable for multithreaded cull+pack
+		bool m_mt_force{ false };             // ignore the instance-count threshold (testing/forced)
+		bool m_mt_active{ false };            // whether MT was used on the last frame (telemetry)
+		int  m_mt_threshold{ 2048 };          // min instances before parallelizing
+		u32  m_worker_count{ 0 };             // lazily computed = clamp(hw_concurrency-1, 1, 8)
 
 		// Camera
 		DirectX::XMFLOAT3 m_camera_position{ 0.0f, 3.0f, -8.0f };

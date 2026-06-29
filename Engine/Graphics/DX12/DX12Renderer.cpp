@@ -2,6 +2,8 @@
 #include "../Resources/ResourceRegistry.h"
 #include <algorithm>
 #include <memory>
+#include <thread>
+#include <atomic>
 
 namespace vortex::graphics::dx12
 {
@@ -566,68 +568,123 @@ namespace vortex::graphics::dx12
 		const bool useDist = m_render_distance > 0.0f;
 		const float rd2 = m_render_distance * m_render_distance;
 
-		// Instanced draw: the queue is sorted by (material, mesh), so consecutive items with the same
-		// mesh+material are issued as ONE DrawIndexedInstanced. Per-instance world matrices feed slot 1.
+		// Build (mesh,material) runs over the sorted queue, precomputing each run's mesh bounds + a worst-case
+		// instance-VB slab (vbBase = item count). Then CULL+PACK visible instances in PARALLEL across the flat
+		// item list (atomic append into each run's slab — lock-free, and order-independent because instancing
+		// ignores instance order), and finally record the draws single-threaded. This parallelizes the
+		// per-instance frustum/distance test + memcpy — the CPU cost when a mesh is rendered thousands of times.
 		using namespace DirectX;
-		u32 cbSlot = 0;     // material constant-buffer slot (one per run)
-		u32 instBase = 0;   // running offset (in matrices) into the instance vertex buffer
-		size_t i = 0;
-		while (i < objectCount)
+		m_draw_runs.clear();
+		m_item_run.resize(objectCount);
 		{
-			const auto idMesh = m_render_queue[i].mesh_id;
-			const auto idMat = m_render_queue[i].material_id;
-			Mesh* mesh = reg.get_mesh(idMesh);
-
-			// Mesh bounds for frustum culling (computed once for the whole run).
-			float minx = 0, miny = 0, minz = 0, maxx = 1, maxy = 1, maxz = 1;
-			if (mesh && mesh->is_valid()) { mesh->get_min(minx, miny, minz); mesh->get_max(maxx, maxy, maxz); }
-			bool defaultBounds = (minx == 0.f && miny == 0.f && minz == 0.f && maxx == 1.f && maxy == 1.f && maxz == 1.f);
-			float lcx = (minx + maxx) * 0.5f, lcy = (miny + maxy) * 0.5f, lcz = (minz + maxz) * 0.5f;
-			float bdx = maxx - minx, bdy = maxy - miny, bdz = maxz - minz;
-			float localR = 0.5f * sqrtf(bdx * bdx + bdy * bdy + bdz * bdz);
-
-			// Gather every VISIBLE (frustum-passing) instance of this run into the instance buffer.
-			u32 runStart = instBase, runCount = 0;
-			size_t j = i;
-			while (j < objectCount && m_render_queue[j].mesh_id == idMesh && m_render_queue[j].material_id == idMat)
+			u32 vbBase = 0; size_t i = 0;
+			while (i < objectCount)
 			{
-				const auto& item = m_render_queue[j];
-				++m_instances_tested;
+				const auto idMesh = m_render_queue[i].mesh_id;
+				const auto idMat = m_render_queue[i].material_id;
+				size_t j = i;
+				while (j < objectCount && m_render_queue[j].mesh_id == idMesh && m_render_queue[j].material_id == idMat) ++j;
+				u32 cnt = (u32)(j - i);
+				Mesh* meshp = reg.get_mesh(idMesh);
+				float minx = 0, miny = 0, minz = 0, maxx = 1, maxy = 1, maxz = 1;
+				if (meshp && meshp->is_valid()) { meshp->get_min(minx, miny, minz); meshp->get_max(maxx, maxy, maxz); }
+				DrawRun run{};
+				run.start = i; run.count = cnt; run.mesh = idMesh; run.mat = idMat; run.meshp = meshp;
+				run.defaultBounds = (minx == 0.f && miny == 0.f && minz == 0.f && maxx == 1.f && maxy == 1.f && maxz == 1.f);
+				run.lcx = (minx + maxx) * 0.5f; run.lcy = (miny + maxy) * 0.5f; run.lcz = (minz + maxz) * 0.5f;
+				float bdx = maxx - minx, bdy = maxy - miny, bdz = maxz - minz;
+				run.localR = 0.5f * sqrtf(bdx * bdx + bdy * bdy + bdz * bdz);
+				run.vbBase = vbBase; run.visible = 0;
+				u32 ri = (u32)m_draw_runs.size();
+				m_draw_runs.push_back(run);
+				for (size_t k = i; k < j; ++k) m_item_run[k] = ri;
+				vbBase += cnt;
+				i = j;
+			}
+		}
+		const size_t runN = m_draw_runs.size();
+		m_instances_tested += (int)objectCount;
+
+		if (m_worker_count == 0)
+		{
+			unsigned hc = std::thread::hardware_concurrency(); if (hc == 0) hc = 4;
+			m_worker_count = (hc > 9) ? 8u : (hc - 1u); if (m_worker_count < 1) m_worker_count = 1;
+		}
+
+		// Per-run atomic pack counters (visible instances appended into each run's reserved slab).
+		std::unique_ptr<std::atomic<u32>[]> counters(new std::atomic<u32>[runN ? runN : 1]);
+		for (size_t r = 0; r < runN; ++r) counters[r].store(0, std::memory_order_relaxed);
+
+		auto cullPack = [&](size_t a, size_t b)
+		{
+			for (size_t k = a; k < b; ++k)
+			{
+				const u32 ri = m_item_run[k];
+				const DrawRun& run = m_draw_runs[ri];
+				const auto& item = m_render_queue[k];
 				bool visible = true;
-				if (!defaultBounds)
+				if (!run.defaultBounds)
 				{
 					const XMFLOAT4X4& W = item.world_matrix;
-					XMVECTOR wc = XMVector3TransformCoord(XMVectorSet(lcx, lcy, lcz, 1.f), XMLoadFloat4x4(&W));
+					XMVECTOR wc = XMVector3TransformCoord(XMVectorSet(run.lcx, run.lcy, run.lcz, 1.f), XMLoadFloat4x4(&W));
 					float cx = XMVectorGetX(wc), cy = XMVectorGetY(wc), cz = XMVectorGetZ(wc);
 					float sx = sqrtf(W._11 * W._11 + W._12 * W._12 + W._13 * W._13);
 					float sy = sqrtf(W._21 * W._21 + W._22 * W._22 + W._23 * W._23);
 					float sz = sqrtf(W._31 * W._31 + W._32 * W._32 + W._33 * W._33);
 					float maxScale = sx > sy ? (sx > sz ? sx : sz) : (sy > sz ? sy : sz);
-					visible = sphere_in_frustum(frustum, cx, cy, cz, localR * maxScale + 0.05f);
+					visible = sphere_in_frustum(frustum, cx, cy, cz, run.localR * maxScale + 0.05f);
 					if (visible && useDist)
 					{
 						float ddx = cx - eye.x, ddy = cy - eye.y, ddz = cz - eye.z;
 						if (ddx * ddx + ddy * ddy + ddz * ddz > rd2) visible = false;
 					}
 				}
-				if (visible && m_instance_vb_mapped && (runStart + runCount) < MAX_RENDER_OBJECTS)
+				if (visible && m_instance_vb_mapped)
 				{
-					memcpy((u8*)m_instance_vb_mapped + (size_t)(runStart + runCount) * 64, &item.world_matrix, 64);
-					++runCount;
+					u32 slot = counters[ri].fetch_add(1, std::memory_order_relaxed);
+					if (run.vbBase + slot < MAX_RENDER_OBJECTS)
+						memcpy((u8*)m_instance_vb_mapped + (size_t)(run.vbBase + slot) * 64, &item.world_matrix, 64);
 				}
-				++j;
 			}
-			i = j;
-			instBase = runStart + runCount;
-			m_instances_drawn += runCount;
-			if (!mesh || !mesh->is_valid() || runCount == 0) continue;
+		};
+
+		// Parallelize only when there's enough per-instance work to amortize the threads (force ignores it).
+		m_mt_active = m_mt_enabled && runN > 0 && m_worker_count > 1 && (m_mt_force || objectCount >= (size_t)m_mt_threshold);
+		if (m_mt_active)
+		{
+			u32 n = m_worker_count;
+			size_t per = (objectCount + n - 1) / n;
+			std::vector<std::thread> threads; threads.reserve(n - 1);
+			for (u32 t = 1; t < n; ++t)
+			{
+				size_t a = (size_t)t * per, b = (std::min)(a + per, objectCount);
+				if (a < b) threads.emplace_back([&, a, b] { cullPack(a, b); });
+			}
+			cullPack(0, (std::min)(per, objectCount));
+			for (auto& th : threads) th.join();
+		}
+		else
+		{
+			cullPack(0, objectCount);
+		}
+
+		for (size_t r = 0; r < runN; ++r) m_draw_runs[r].visible = counters[r].load(std::memory_order_relaxed);
+
+		// Record the draws single-threaded: one DrawIndexedInstanced per run with visible instances.
+		u32 cbSlot = 0;
+		for (size_t r = 0; r < runN; ++r)
+		{
+			const DrawRun& run = m_draw_runs[r];
+			m_instances_drawn += run.visible;
+			Mesh* mesh = run.meshp;
+			if (!mesh || !mesh->is_valid() || run.visible == 0) continue;
 
 			// Material + PSO + textures: set ONCE for the whole run (shared by all its instances).
 			PerObjectConstants obj{};
 			obj.base_color = { 0.85f, 0.85f, 0.88f, 1.0f };
 			obj.metallic = 0.7f; obj.roughness = 0.35f; obj.ao = 1.0f; obj.normal_strength = 1.0f;
 			obj.use_directx_normals = 1;
-			auto* mat = reg.get_material(idMat);
+			auto* mat = reg.get_material(run.mat);
 			if (mat && mat->properties().is_unlit) m_command_list->SetPipelineState(double_sided_pso);
 			else m_command_list->SetPipelineState(pso);
 			if (mat)
@@ -653,20 +710,20 @@ namespace vortex::graphics::dx12
 			// Bind mesh vertices (slot 0) + this run's per-instance world matrices (slot 1); draw all at once.
 			D3D12_VERTEX_BUFFER_VIEW vbs[2];
 			vbs[0] = mesh->vertex_buffer_view();
-			vbs[1].BufferLocation = m_instance_vb->GetGPUVirtualAddress() + (UINT64)runStart * 64;
-			vbs[1].SizeInBytes = runCount * 64;
+			vbs[1].BufferLocation = m_instance_vb->GetGPUVirtualAddress() + (UINT64)run.vbBase * 64;
+			vbs[1].SizeInBytes = run.visible * 64;
 			vbs[1].StrideInBytes = 64;
 			m_command_list->IASetVertexBuffers(0, 2, vbs);
 			if (mesh->has_indices())
 			{
 				m_command_list->IASetIndexBuffer(&mesh->index_buffer_view());
-				m_command_list->DrawIndexedInstanced(mesh->index_count(), runCount, 0, 0, 0);
-				m_vertex_count += mesh->index_count() * runCount;
+				m_command_list->DrawIndexedInstanced(mesh->index_count(), run.visible, 0, 0, 0);
+				m_vertex_count += mesh->index_count() * run.visible;
 			}
 			else
 			{
-				m_command_list->DrawInstanced(mesh->vertex_count(), runCount, 0, 0);
-				m_vertex_count += mesh->vertex_count() * runCount;
+				m_command_list->DrawInstanced(mesh->vertex_count(), run.visible, 0, 0);
+				m_vertex_count += mesh->vertex_count() * run.visible;
 			}
 			++m_draw_call_count;
 		}
