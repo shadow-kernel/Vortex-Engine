@@ -411,6 +411,7 @@ namespace vortex::graphics::dx12
 		// Limit to MAX_RENDER_OBJECTS to prevent buffer overflow
 		size_t objectCount = (std::min)(m_render_queue.size(), static_cast<size_t>(MAX_RENDER_OBJECTS));
 		if (objectCount == 0) return;
+		{ static int s_cdbg = 0; if (m_render_queue.size() > 50 && s_cdbg < 6) { s_cdbg++; FILE* fc = nullptr; fopen_s(&fc, "C:\\Users\\Administrator\\AppData\\Local\\Temp\\vortex_cam.log", "a"); if (fc) { fprintf(fc, "cam pos=(%.2f,%.2f,%.2f) target=(%.2f,%.2f,%.2f) queue=%zu\n", m_camera_position.x, m_camera_position.y, m_camera_position.z, m_camera_target.x, m_camera_target.y, m_camera_target.z, m_render_queue.size()); fclose(fc); } } }
 
 		// Sort by (material, mesh, distance): identical (mesh+material) objects become ADJACENT so each run
 		// draws as ONE instanced call (fewer draw calls); distance is the tiebreaker for partial early-Z
@@ -478,6 +479,7 @@ namespace vortex::graphics::dx12
 			}
 			i = j;
 			instBase = runStart + runCount;
+			{ static int s_ddbg = 0; if (m_render_queue.size() > 50 && s_ddbg < 40) { s_ddbg++; FILE* fp = nullptr; fopen_s(&fp, "C:\\Users\\Administrator\\AppData\\Local\\Temp\\vortex_draw.log", "a"); if (fp) { fprintf(fp, "run queue=%zu mesh=%llu valid=%d visible=%u\n", m_render_queue.size(), (unsigned long long)idMesh, (mesh && mesh->is_valid()) ? 1 : 0, runCount); fclose(fp); } } }
 			if (!mesh || !mesh->is_valid() || runCount == 0) continue;
 
 			// Material + PSO + textures: set ONCE for the whole run (shared by all its instances).
