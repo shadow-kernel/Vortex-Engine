@@ -19,6 +19,24 @@ namespace Editor.Core.Services.Rendering
         [DllImport("kernel32.dll", EntryPoint = "CopyMemory", SetLastError = false)]
         private static extern void CopyMemory(IntPtr dest, IntPtr src, int count);
 
+        // Reused offscreen render target — creating + destroying a DX12 render target on EVERY preview render
+        // (especially during orbit) was a major cost. Cache it by size; recreate only when the size changes.
+        private static uint _cachedRt;
+        private static int _cachedSize;
+        private static uint AcquireTarget(int size)
+        {
+            if (_cachedRt != 0 && _cachedSize == size) return _cachedRt;
+            if (_cachedRt != 0) { try { VortexAPI.DestroySecondaryRenderTarget(_cachedRt); } catch { } _cachedRt = 0; }
+            _cachedRt = VortexAPI.CreateSecondaryRenderTarget((uint)size, (uint)size);
+            _cachedSize = size;
+            return _cachedRt;
+        }
+        /// <summary>Release the cached preview render target (call when the editor/dialogs close).</summary>
+        public static void DestroyPreviewTarget()
+        {
+            if (_cachedRt != 0) { try { VortexAPI.DestroySecondaryRenderTarget(_cachedRt); } catch { } _cachedRt = 0; _cachedSize = 0; }
+        }
+
         /// <summary>
         /// Renders one or more (sub)meshes with their materials to a square bitmap, framed by the
         /// combined bounding sphere with neutral studio lighting.
@@ -30,7 +48,7 @@ namespace Editor.Core.Services.Rendering
         public static ImageSource RenderMeshes(long[] meshIds, long[] materialIds, int size, float yaw, float pitch, float distScale)
         {
             if (meshIds == null || meshIds.Length == 0) return null;
-            uint rt = VortexAPI.CreateSecondaryRenderTarget((uint)size, (uint)size);
+            uint rt = AcquireTarget(size);   // cached + reused (not created/destroyed per render)
             if (rt == 0) return null;
             try
             {
@@ -53,7 +71,8 @@ namespace Editor.Core.Services.Rendering
 
                 const float fov = 35f;
                 float fovHalf = fov * 0.5f * (float)Math.PI / 180f;
-                float dist = radius / (0.58f * (float)Math.Tan(fovHalf));
+                // 0.75 = model fills ~75% of the frame (was 0.58 -> too small). Higher factor -> smaller dist -> bigger.
+                float dist = radius / (0.75f * (float)Math.Tan(fovHalf));
                 pitch = Math.Max(-1.5f, Math.Min(1.5f, pitch));
                 distScale = Math.Max(0.2f, Math.Min(5f, distScale));
                 float d = dist * distScale;
@@ -81,7 +100,7 @@ namespace Editor.Core.Services.Rendering
                 return ReadTargetToBitmap(rt);
             }
             catch { return null; }
-            finally { VortexAPI.DestroySecondaryRenderTarget(rt); }
+            // NOTE: the render target is cached + reused (see AcquireTarget) — NOT destroyed per render.
         }
 
         /// <summary>

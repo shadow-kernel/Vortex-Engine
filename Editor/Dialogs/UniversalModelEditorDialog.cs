@@ -42,6 +42,7 @@ namespace Editor.Dialogs
         private double _orbitYaw = 0.74, _orbitPitch = 0.62, _orbitZoom = 1.0;
         private System.Windows.Point _orbitLast;
         private bool _orbiting;
+        private DateTime _lastOrbitRender = DateTime.MinValue;
 
         #region Constructor
 
@@ -1108,7 +1109,7 @@ namespace Editor.Dialogs
             img.Cursor = System.Windows.Input.Cursors.SizeAll;
             img.ToolTip = "Drag to orbit · scroll to zoom";
             img.MouseLeftButtonDown += (s, e) => { _orbiting = true; _orbitLast = e.GetPosition(img); img.CaptureMouse(); };
-            img.MouseLeftButtonUp += (s, e) => { _orbiting = false; img.ReleaseMouseCapture(); };
+            img.MouseLeftButtonUp += (s, e) => { _orbiting = false; img.ReleaseMouseCapture(); RefreshPreview(); /* settle at the final angle */ };
             img.MouseMove += (s, e) =>
             {
                 if (!_orbiting) return;
@@ -1117,7 +1118,10 @@ namespace Editor.Dialogs
                 _orbitPitch += (p.Y - _orbitLast.Y) * 0.01;
                 if (_orbitPitch > 1.5) _orbitPitch = 1.5; else if (_orbitPitch < -1.5) _orbitPitch = -1.5;
                 _orbitLast = p;
-                RefreshPreview();
+                // Throttle to ~25 FPS — the MouseMove event fires far faster than a full model re-render can
+                // keep up, which is what dragged the preview down to ~0.01 FPS. The final angle settles on mouse-up.
+                var now = DateTime.UtcNow;
+                if ((now - _lastOrbitRender).TotalMilliseconds >= 40) { _lastOrbitRender = now; RefreshPreview(); }
             };
             img.MouseWheel += (s, e) =>
             {
