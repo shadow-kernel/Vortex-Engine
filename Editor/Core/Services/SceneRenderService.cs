@@ -1098,8 +1098,19 @@ namespace Editor.Core.Services
         /// </summary>
         public void ClearAllRenderables()
         {
+            // CRITICAL: imported MODEL meshes are SHARED + owned by _submeshMeshCache (loaded ONCE from a file,
+            // reused by every entity that references the same path — incl. all Ctrl+D duplicates — and kept
+            // resident across scene reloads so re-loading never re-imports). _entityMeshes maps MANY entities to
+            // the SAME shared mesh id, so deleting per-entry called DeleteMesh up to 50x ON ONE id (double-free
+            // -> native registry corruption + leaks that made repeated loads exponentially slower, and a 4-min
+            // startup with 50 copies). Here: delete ONLY non-shared (e.g. primitive) meshes, each id at most once,
+            // and NEVER delete a shared cached model mesh — it stays loaded for reuse.
+            var sharedMeshIds = new HashSet<long>(_submeshMeshCache.Values);
+            var alreadyDeleted = new HashSet<long>();
             foreach (var meshId in _entityMeshes.Values)
             {
+                if (meshId < 0 || sharedMeshIds.Contains(meshId)) continue;  // shared model mesh -> keep resident
+                if (!alreadyDeleted.Add(meshId)) continue;                   // delete each unique id only once
                 VortexAPI.DeleteMesh(meshId);
             }
             _entityMeshes.Clear();
