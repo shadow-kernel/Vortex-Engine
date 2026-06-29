@@ -97,7 +97,22 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
 
             // Auto-frame newly created entities (Unity-style focus-on-create).
             SelectionService.Instance.FocusRequested += OnFocusRequested;
+
+            // Submit-once: re-submit the scene to the renderer ONLY when it actually changes (selection,
+            // transform edit, scene switch) or while playing — not every frame. This kills the editor freeze
+            // with a big imported model (the per-frame scene walk + hundreds of P/Invokes was the bottleneck;
+            // the native render queue reuses the last submission, same as the GameHost's _ghSubmittedScene).
+            _active = this;
+            SelectionService.Instance.SelectionChanged += (s, e) => _sceneDirty = true;
+            SelectionService.Instance.TransformChanged += (s, e) => _sceneDirty = true;
         }
+
+        private static GamePreviewView _active;
+        private object _submittedScene;
+        private volatile bool _sceneDirty = true;
+        /// <summary>Force the editor viewport to re-submit the scene next frame — call after an external edit
+        /// (imported-model material/texture assignment, entity add/remove, mesh change) so it shows immediately.</summary>
+        public static void RequestResubmit() { if (_active != null) _active._sceneDirty = true; }
         
         // Flag to prevent camera jumping when refreshing camera list
         private bool _isRefreshingCameraList;
@@ -201,11 +216,20 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             if (activeScene != null && !ReferenceEquals(activeScene, _currentScene))
                 CurrentScene = activeScene;
 
-            // Submit scene data for rendering
+            // Submit scene data for rendering — ONLY when needed. While playing the scene changes every frame
+            // (physics moves transforms), so submit each frame; in edit mode submit only on a real change
+            // (scene switch / selection / transform edit / external RequestResubmit). The native render queue
+            // reuses the last submission otherwise, so the camera still moves freely with no per-frame cost.
             var sceneToRender = _currentScene ?? ProjectData.Current?.ActiveScene;
             if (sceneToRender != null)
             {
-                SceneRenderService.Instance.SubmitScene(sceneToRender);
+                bool needSubmit = IsPlaying || _sceneDirty || !ReferenceEquals(sceneToRender, _submittedScene);
+                if (needSubmit)
+                {
+                    SceneRenderService.Instance.SubmitScene(sceneToRender);
+                    _submittedScene = sceneToRender;
+                    _sceneDirty = false;
+                }
             }
 
             // Render the frame
@@ -320,6 +344,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                     _currentScene = value;
                     _dropHandler = null; // Reset drop handler for new scene
                     SceneRenderService.Instance.ClearAllRenderables();
+                    _sceneDirty = true;  // force a re-submit for the new scene
                 }
             }
         }
