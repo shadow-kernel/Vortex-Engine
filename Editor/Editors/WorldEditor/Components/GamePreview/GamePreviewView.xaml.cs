@@ -117,7 +117,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         public static int ActivePreviewDialogs = 0;
         /// <summary>Force the editor viewport to re-submit the scene next frame — call after an external edit
         /// (imported-model material/texture assignment, entity add/remove, mesh change) so it shows immediately.</summary>
-        public static void RequestResubmit() { if (_active != null) { _active._sceneDirty = true; _active._resubmitHoldFrames = 8; } }
+        public static void RequestResubmit() { if (_active != null) { _active._sceneDirty = true; _active._resubmitHoldFrames = 30; } }
         
         // Flag to prevent camera jumping when refreshing camera list
         private bool _isRefreshingCameraList;

@@ -1225,12 +1225,19 @@ private void OnEditTagsClick(object sender, RoutedEventArgs e)
                     {
                         try
                         {
-                            string destPath = System.IO.Path.Combine(_explorerService.CurrentFolder.FullPath, 
+                            string destPath = System.IO.Path.Combine(_explorerService.CurrentFolder.FullPath,
                                 System.IO.Path.GetFileName(file));
-                            
+
                             if (System.IO.Directory.Exists(file))
                             {
                                 CopyDirectoryRecursive(file, destPath);
+                            }
+                            else if (IsModelDropFile(file))
+                            {
+                                // Models NEVER get a flat copy: route through ModelImportService so a clean folder
+                                // structure (<name>/ + materials/.vmat + extracted textures) is created in the
+                                // CURRENT explorer folder.
+                                Editor.Core.Services.ModelImportService.Instance.ImportModel(file, ModelTargetFolderForCurrent());
                             }
                             else if (System.IO.File.Exists(file))
                             {
@@ -1239,7 +1246,7 @@ private void OnEditTagsClick(object sender, RoutedEventArgs e)
                         }
                         catch (Exception ex)
                         {
-                            MessageBox.Show($"Error copying {file}: {ex.Message}", "Error", 
+                            MessageBox.Show($"Error copying {file}: {ex.Message}", "Error",
                                 MessageBoxButton.OK, MessageBoxImage.Error);
                         }
                     }
@@ -1247,6 +1254,36 @@ private void OnEditTagsClick(object sender, RoutedEventArgs e)
             }
                         e.Handled = true;
                     }
+
+        /// <summary>True for 3D-model files that must be imported via ModelImportService, not flat-copied.</summary>
+        private static bool IsModelDropFile(string file)
+        {
+            if (!System.IO.File.Exists(file)) return false;
+            var ext = System.IO.Path.GetExtension(file).ToLowerInvariant();
+            return ext == ".fbx" || ext == ".obj" || ext == ".gltf" || ext == ".glb" ||
+                   ext == ".dae" || ext == ".3ds" || ext == ".blend" || ext == ".vmesh";
+        }
+
+        /// <summary>The current explorer folder expressed relative to Assets (e.g. "Models/fnaf"), for ModelImportService.</summary>
+        private string ModelTargetFolderForCurrent()
+        {
+            try
+            {
+                var projectPath = Editor.Core.Data.ProjectData.Current?.Path;
+                var cur = _explorerService?.CurrentFolder?.FullPath;
+                if (!string.IsNullOrEmpty(projectPath) && !string.IsNullOrEmpty(cur))
+                {
+                    var assetsRoot = System.IO.Path.Combine(projectPath, "Assets");
+                    if (cur.StartsWith(assetsRoot, StringComparison.OrdinalIgnoreCase))
+                    {
+                        var rel = cur.Substring(assetsRoot.Length).Trim('\\', '/').Replace('\\', '/');
+                        if (!string.IsNullOrEmpty(rel)) return rel;
+                    }
+                }
+            }
+            catch { }
+            return "Models";
+        }
 
                     #endregion
 

@@ -783,16 +783,44 @@ namespace Editor.Dialogs
                 _propertiesPanel.Children.Add(CreateTextureSlotUI(slot));
             }
 
-            // Add Custom Slot Button
-            var addSlotBtn = CreateButton("+ Add Custom Texture Slot", 200);
+            // "+ Add Map" — slots are dynamic (only the maps the import found are shown). This lets the user add
+            // a slot for a standard map the model didn't ship with, or a custom map.
+            var addSlotBtn = CreateButton("+ Add Map", 200);
             addSlotBtn.HorizontalAlignment = HorizontalAlignment.Left;
             addSlotBtn.Margin = new Thickness(0, 15, 0, 0);
             addSlotBtn.Click += (s, e) =>
             {
-                _selectedMaterial.AddCustomSlot($"Custom_{_selectedMaterial.TextureMaps.Count}");
-                UpdatePropertiesPanel();
+                var menu = new System.Windows.Controls.ContextMenu();
+                foreach (var t in UniversalMaterial.StandardMapTypes)
+                {
+                    if (_selectedMaterial.GetTextureSlot(t) != null) continue; // already present
+                    var mi = new System.Windows.Controls.MenuItem { Header = t.ToString() };
+                    var captured = t;
+                    mi.Click += (s2, e2) => { _selectedMaterial.AddStandardSlot(captured); UpdatePropertiesPanel(); UpdateStats(); };
+                    menu.Items.Add(mi);
+                }
+                if (menu.Items.Count > 0) menu.Items.Add(new System.Windows.Controls.Separator());
+                var custom = new System.Windows.Controls.MenuItem { Header = "Custom…" };
+                custom.Click += (s2, e2) => { _selectedMaterial.AddCustomSlot($"Custom_{_selectedMaterial.TextureMaps.Count}"); UpdatePropertiesPanel(); UpdateStats(); };
+                menu.Items.Add(custom);
+                menu.PlacementTarget = addSlotBtn;
+                menu.IsOpen = true;
             };
             _propertiesPanel.Children.Add(addSlotBtn);
+
+            // When the material has no maps at all (base-color/PBR-only model), make that explicit instead of an
+            // empty area — the slots being absent is correct, not a bug.
+            if (_selectedMaterial.TextureMaps.Count == 0)
+            {
+                _propertiesPanel.Children.Insert(_propertiesPanel.Children.Count - 1, new TextBlock
+                {
+                    Text = "This material has no texture maps from the import (base color / PBR only). Use “+ Add Map” to assign one.",
+                    Foreground = new SolidColorBrush(Color.FromRgb(136, 136, 136)),
+                    FontStyle = FontStyles.Italic,
+                    TextWrapping = TextWrapping.Wrap,
+                    Margin = new Thickness(0, 4, 0, 0)
+                });
+            }
         }
 
         private UIElement CreateTextureSlotUI(TextureMapData slot)
@@ -1035,40 +1063,25 @@ namespace Editor.Dialogs
             try
             {
                 int savedCount = 0;
-                foreach (var material in _modelData.Materials)
+                // Write ONE .vmat per submesh into the model's materials/ folder, named submesh_<i>.vmat — the
+                // EXACT files the scene-add binds (MeshRenderer.MaterialPath). So editing here updates what the
+                // placed model renders, and the .vmat stays the single source of truth (FromUniversalMaterial
+                // carries every map the material actually has, not a fixed subset). Submeshes that share a
+                // material all get that material's data.
+                var matDir = Path.Combine(_modelData.Directory, "materials");
+                Directory.CreateDirectory(matDir);
+                for (int i = 0; i < _modelData.Submeshes.Count; i++)
                 {
-                    var vmat = new VortexMaterial
-                    {
-                        Name = material.Name,
-                        Metallic = material.Metallic,
-                        Roughness = material.Roughness,
-                        NormalStrength = material.NormalStrength,
-                        AmbientOcclusion = material.AOStrength,
-                        AlbedoTexture = material.GetTextureSlot(TextureMapType.Albedo)?.FilePath,
-                        NormalTexture = material.GetTextureSlot(TextureMapType.Normal)?.FilePath,
-                        MetallicTexture = material.GetTextureSlot(TextureMapType.Metallic)?.FilePath,
-                        RoughnessTexture = material.GetTextureSlot(TextureMapType.Roughness)?.FilePath,
-                        AOTexture = material.GetTextureSlot(TextureMapType.AmbientOcclusion)?.FilePath,
-                        EmissiveStrength = material.EmissiveStrength,
-                        TwoSided = material.TwoSided
-                    };
-                    vmat.SetBaseColor(material.BaseColor);
-                    vmat.EmissiveColor = new float[]
-                    {
-                        material.EmissiveColor.ScR,
-                        material.EmissiveColor.ScG,
-                        material.EmissiveColor.ScB
-                    };
+                    var sub = _modelData.Submeshes[i];
+                    UniversalMaterial material = (sub.MaterialIndex >= 0 && sub.MaterialIndex < _modelData.Materials.Count)
+                        ? _modelData.Materials[sub.MaterialIndex]
+                        : (_modelData.Materials.Count > 0 ? _modelData.Materials[0] : null);
+                    if (material == null) continue;
 
-                    // Clean material name for filename
-                    var safeName = string.Join("_", material.Name.Split(Path.GetInvalidFileNameChars()));
-                    var matPath = Path.Combine(_modelData.Directory, $"{safeName}.vmat");
-                    
-                    vmat.MakePathsRelative(_modelData.Directory);
-                    if (vmat.Save(matPath))
-                    {
+                    var vmat = VortexMaterial.FromUniversalMaterial(material);
+                    vmat.MakePathsRelative(matDir);
+                    if (vmat.Save(Path.Combine(matDir, $"submesh_{i}.vmat")))
                         savedCount++;
-                    }
                 }
 
                 AssetDatabase.Instance.Refresh();

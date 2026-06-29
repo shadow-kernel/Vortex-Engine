@@ -201,8 +201,7 @@ namespace Editor.Core.Assets
                 material.EmissiveColor = Color.FromScRgb(1f, EmissiveColor[0], EmissiveColor[1], EmissiveColor[2]);
             }
             
-            material.InitializeStandardSlots();
-            
+            // Dynamic slots: create a slot ONLY for each texture the .vmat actually carries — no placeholders.
             if (!string.IsNullOrEmpty(AlbedoTexture))
                 material.SetTexture(TextureMapType.Albedo, AlbedoTexture);
             if (!string.IsNullOrEmpty(NormalTexture))
@@ -215,7 +214,15 @@ namespace Editor.Core.Assets
                 material.SetTexture(TextureMapType.AmbientOcclusion, AOTexture);
             if (!string.IsNullOrEmpty(EmissiveTexture))
                 material.SetTexture(TextureMapType.Emissive, EmissiveTexture);
-                
+            if (!string.IsNullOrEmpty(HeightTexture))
+                material.SetTexture(TextureMapType.Height, HeightTexture);
+            if (!string.IsNullOrEmpty(OpacityTexture))
+                material.SetTexture(TextureMapType.Opacity, OpacityTexture);
+            if (!string.IsNullOrEmpty(MetallicRoughnessTexture))
+                material.SetTexture(TextureMapType.MetallicRoughness, MetallicRoughnessTexture);
+            if (!string.IsNullOrEmpty(OcclusionRoughnessMetallicTexture))
+                material.SetTexture(TextureMapType.OcclusionRoughnessMetallic, OcclusionRoughnessMetallicTexture);
+
             return material;
         }
         
@@ -238,13 +245,18 @@ namespace Editor.Core.Assets
             vmat.SetBaseColor(source.BaseColor);
             vmat.EmissiveColor = new[] { source.EmissiveColor.ScR, source.EmissiveColor.ScG, source.EmissiveColor.ScB };
             
+            // Persist every map the material actually has (not just the old fixed 6).
             vmat.AlbedoTexture = source.GetTextureSlot(TextureMapType.Albedo)?.FilePath;
             vmat.NormalTexture = source.GetTextureSlot(TextureMapType.Normal)?.FilePath;
             vmat.MetallicTexture = source.GetTextureSlot(TextureMapType.Metallic)?.FilePath;
             vmat.RoughnessTexture = source.GetTextureSlot(TextureMapType.Roughness)?.FilePath;
             vmat.AOTexture = source.GetTextureSlot(TextureMapType.AmbientOcclusion)?.FilePath;
             vmat.EmissiveTexture = source.GetTextureSlot(TextureMapType.Emissive)?.FilePath;
-            
+            vmat.HeightTexture = source.GetTextureSlot(TextureMapType.Height)?.FilePath;
+            vmat.OpacityTexture = source.GetTextureSlot(TextureMapType.Opacity)?.FilePath;
+            vmat.MetallicRoughnessTexture = source.GetTextureSlot(TextureMapType.MetallicRoughness)?.FilePath;
+            vmat.OcclusionRoughnessMetallicTexture = source.GetTextureSlot(TextureMapType.OcclusionRoughnessMetallic)?.FilePath;
+
             return vmat;
         }
         

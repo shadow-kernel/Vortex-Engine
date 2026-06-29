@@ -362,17 +362,30 @@ namespace Editor.Core.Assets
         public ObservableCollection<TextureMapData> TextureMaps { get; } = new ObservableCollection<TextureMapData>();
 
         /// <summary>
-        /// Initialize with standard PBR texture slots.
+        /// Texture slots are now built DYNAMICALLY from the import — a material shows only the maps it actually
+        /// has, never a fixed Albedo/Normal/Metallic/Roughness/AO/Emissive placeholder set. This is intentionally
+        /// a NO-OP (kept so existing callers compile); the import calls SetTexture per found map, and the user
+        /// adds extra slots via AddStandardSlot from the "Add Map" UI.
         /// </summary>
-        public void InitializeStandardSlots()
+        public void InitializeStandardSlots() { /* dynamic slots — no static placeholders */ }
+
+        /// <summary>The standard PBR map types, for the "Add Map" picker.</summary>
+        public static readonly TextureMapType[] StandardMapTypes =
         {
-            TextureMaps.Clear();
-            TextureMaps.Add(new TextureMapData { MapType = TextureMapType.Albedo });
-            TextureMaps.Add(new TextureMapData { MapType = TextureMapType.Normal });
-            TextureMaps.Add(new TextureMapData { MapType = TextureMapType.Metallic });
-            TextureMaps.Add(new TextureMapData { MapType = TextureMapType.Roughness });
-            TextureMaps.Add(new TextureMapData { MapType = TextureMapType.AmbientOcclusion });
-            TextureMaps.Add(new TextureMapData { MapType = TextureMapType.Emissive });
+            TextureMapType.Albedo, TextureMapType.Normal, TextureMapType.Metallic, TextureMapType.Roughness,
+            TextureMapType.AmbientOcclusion, TextureMapType.Emissive, TextureMapType.Height, TextureMapType.Opacity,
+            TextureMapType.MetallicRoughness, TextureMapType.OcclusionRoughnessMetallic
+        };
+
+        /// <summary>Adds an empty slot of the given type if the material doesn't already have one (for "Add Map").</summary>
+        public TextureMapData AddStandardSlot(TextureMapType type)
+        {
+            var existing = GetTextureSlot(type);
+            if (existing != null) return existing;
+            var slot = new TextureMapData { MapType = type };
+            TextureMaps.Add(slot);
+            RefreshStats();
+            return slot;
         }
 
         public TextureMapData GetTextureSlot(TextureMapType type)
