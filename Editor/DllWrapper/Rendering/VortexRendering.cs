@@ -288,6 +288,9 @@ namespace Editor.DllWrapper
         private static extern void SetRenderDistance(float distance);
 
         [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetLOD([MarshalAs(UnmanagedType.I1)] bool enabled, float mid, float far);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void SetMultithreading([MarshalAs(UnmanagedType.I1)] bool enabled);
 
         [DllImport(_dllName, CallingConvention = _cc)]
@@ -311,6 +314,8 @@ namespace Editor.DllWrapper
         public static int InstancesDrawn { get { try { return GetInstancesDrawn(); } catch { return 0; } } }
         /// <summary>Generic render-distance cull in world units (0 = disabled). From the game's graphics settings.</summary>
         public static void RenderDistance(float distance) { try { SetRenderDistance(distance); } catch { } }
+        /// <summary>Density LOD: thin distant instances (1/2 beyond mid, 1/4 beyond far world units).</summary>
+        public static void Lod(bool enabled, float mid, float far) { try { SetLOD(enabled, mid, far); } catch { } }
         /// <summary>Enable/disable multithreaded per-instance cull+pack (auto-gates on instance count).</summary>
         public static void Multithreading(bool enabled) { try { SetMultithreading(enabled); } catch { } }
         /// <summary>Force multithreading on regardless of the instance-count threshold (testing).</summary>

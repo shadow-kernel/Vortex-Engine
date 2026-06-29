@@ -193,6 +193,15 @@ namespace vortex::graphics::dx12
 		void set_render_distance(float d) { m_render_distance = d >= 0.0f ? d : 0.0f; }
 		float render_distance() const { return m_render_distance; }
 
+		// Density LOD: thin out DISTANT instances (keep 1/2 beyond mid, 1/4 beyond far) — the standard crowd/
+		// foliage LOD. Deterministic per instance index so there is no per-frame flicker. mid/far are distances.
+		void set_lod(bool enabled, float mid, float farD)
+		{
+			m_lod_enabled = enabled;
+			m_lod_mid = mid > 0.0f ? mid : 0.0f;
+			m_lod_far = farD > m_lod_mid ? farD : m_lod_mid;
+		}
+
 		// Multithreaded culling+packing: parallelize the per-instance frustum/distance test + instance-buffer
 		// pack across worker threads (the CPU bottleneck when one mesh is rendered thousands of times). The
 		// draw recording stays single-threaded. Auto-gates on instance count; force ignores the threshold.
@@ -457,6 +466,9 @@ namespace vortex::graphics::dx12
 		float m_near_clip{ 0.1f };
 		float m_far_clip{ 1000.0f };
 		float m_render_distance{ 0.0f };   // generic distance cull (0 = disabled)
+		bool  m_lod_enabled{ false };      // density LOD: thin distant instances
+		float m_lod_mid{ 0.0f };           // beyond this: keep 1/2 of instances
+		float m_lod_far{ 0.0f };           // beyond this: keep 1/4 of instances
 
 	// Lighting - balanced for PBR rendering
 		DirectX::XMFLOAT3 m_light_direction{ -0.5f, -0.7f, 0.5f };

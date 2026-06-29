@@ -608,6 +608,9 @@ namespace vortex::graphics::dx12
 		const DirectX::XMFLOAT3 eye = m_camera_position;
 		const bool useDist = m_render_distance > 0.0f;
 		const float rd2 = m_render_distance * m_render_distance;
+		const bool useLod = m_lod_enabled && m_lod_mid > 0.0f;
+		const float lodMid2 = m_lod_mid * m_lod_mid;
+		const float lodFar2 = m_lod_far * m_lod_far;
 
 		// Build (mesh,material) runs over the sorted queue, precomputing each run's mesh bounds + a worst-case
 		// instance-VB slab (vbBase = item count). Then CULL+PACK visible instances in PARALLEL across the flat
@@ -674,10 +677,18 @@ namespace vortex::graphics::dx12
 					float sz = sqrtf(W._31 * W._31 + W._32 * W._32 + W._33 * W._33);
 					float maxScale = sx > sy ? (sx > sz ? sx : sz) : (sy > sz ? sy : sz);
 					visible = sphere_in_frustum(frustum, cx, cy, cz, run.localR * maxScale + 0.05f);
-					if (visible && useDist)
+					if (visible && (useDist || useLod))
 					{
 						float ddx = cx - eye.x, ddy = cy - eye.y, ddz = cz - eye.z;
-						if (ddx * ddx + ddy * ddy + ddz * ddz > rd2) visible = false;
+						float d2 = ddx * ddx + ddy * ddy + ddz * ddz;
+						if (useDist && d2 > rd2) visible = false;
+						else if (useLod)
+						{
+							// Density LOD: keep every instance up close, 1/2 beyond mid, 1/4 beyond far. Selection
+							// by the stable item index k -> deterministic, no per-frame flicker.
+							if (d2 > lodFar2) { if ((k & 3) != 0) visible = false; }
+							else if (d2 > lodMid2) { if ((k & 1) != 0) visible = false; }
+						}
 					}
 				}
 				if (visible && m_instance_vb_mapped)

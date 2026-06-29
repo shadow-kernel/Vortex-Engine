@@ -758,6 +758,12 @@ EDITOR_INTERFACE void SetRenderDistance(float distance)
 	graphics::dx12::DX12Renderer::instance().set_render_distance(distance);
 }
 
+// Density LOD: thin distant instances (1/2 beyond mid, 1/4 beyond far world units). enabled=false disables.
+EDITOR_INTERFACE void SetLOD(bool enabled, float mid, float farD)
+{
+	graphics::dx12::DX12Renderer::instance().set_lod(enabled, mid, farD);
+}
+
 // Multithreaded per-instance cull+pack (auto-gates on instance count; the draw recording stays single-threaded).
 EDITOR_INTERFACE void SetMultithreading(bool enabled)
 {
