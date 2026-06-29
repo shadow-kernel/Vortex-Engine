@@ -19,6 +19,47 @@ namespace vortex::runtime
         bool g_mdown = false;
         int  g_cw = 0, g_ch = 0;
 
+        // FPS mouse-look capture
+        bool g_captured = false;
+        int  g_mouse_dx = 0, g_mouse_dy = 0;
+
+        // Deferred resize: WM_SIZE only records the new size; the actual swapchain resize runs in the main loop
+        // AFTER the message pump, so it never fires re-entrantly mid-SetWindowPos (the F11/maximize transition
+        // must be SETTLED before we ResizeBuffers + re-present, or the flip-model display stays frozen).
+        int  g_pending_w = 0, g_pending_h = 0;
+        bool g_resize_pending = false;
+
+        // Borderless-fullscreen state (to restore the windowed placement/style)
+        bool g_fullscreen = false;
+        WINDOWPLACEMENT g_prev_placement{ sizeof(WINDOWPLACEMENT) };
+        LONG g_prev_style = 0;
+
+        void do_toggle_fullscreen()
+        {
+            if (!g_hwnd) return;
+            if (!g_fullscreen)
+            {
+                g_prev_style = GetWindowLongW(g_hwnd, GWL_STYLE);
+                GetWindowPlacement(g_hwnd, &g_prev_placement);
+                MONITORINFO mi{ sizeof(mi) };
+                GetMonitorInfoW(MonitorFromWindow(g_hwnd, MONITOR_DEFAULTTONEAREST), &mi);
+                SetWindowLongW(g_hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
+                SetWindowPos(g_hwnd, HWND_TOP, mi.rcMonitor.left, mi.rcMonitor.top,
+                    mi.rcMonitor.right - mi.rcMonitor.left, mi.rcMonitor.bottom - mi.rcMonitor.top,
+                    SWP_FRAMECHANGED | SWP_SHOWWINDOW);   // borderless (NOT exclusive) -> ALLOW_TEARING stays valid
+                g_fullscreen = true;
+            }
+            else
+            {
+                SetWindowLongW(g_hwnd, GWL_STYLE, g_prev_style ? g_prev_style : (WS_OVERLAPPEDWINDOW | WS_VISIBLE));
+                SetWindowPlacement(g_hwnd, &g_prev_placement);
+                SetWindowPos(g_hwnd, nullptr, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+                g_fullscreen = false;
+            }
+            // WM_SIZE from the style/size change drives systems::dx12::resize on this thread.
+        }
+
         LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         {
             switch (msg)
@@ -27,14 +68,22 @@ namespace vortex::runtime
                 if (wp != SIZE_MINIMIZED)
                 {
                     g_cw = LOWORD(lp); g_ch = HIWORD(lp);
-                    // Resize on THIS thread (the one that also presents) — the whole point: no DXGI freeze.
-                    if (g_running && g_cw > 0 && g_ch > 0)
-                        systems::dx12::resize((u32)g_cw, (u32)g_ch);
+                    // Defer the resize to the main loop (after the pump) so it runs once the window has SETTLED,
+                    // not re-entrantly inside SetWindowPos — required for the flip-model present to rebind DWM.
+                    if (g_running && g_cw > 0 && g_ch > 0) { g_pending_w = g_cw; g_pending_h = g_ch; g_resize_pending = true; }
                 }
+                return 0;
+            case WM_KEYDOWN:
+                // F11 toggles borderless fullscreen (ignore auto-repeat: bit 30 = previous key state).
+                if (wp == VK_F11 && !(lp & (1 << 30))) do_toggle_fullscreen();
                 return 0;
             case WM_MOUSEMOVE: g_mx = GET_X_LPARAM(lp); g_my = GET_Y_LPARAM(lp); return 0;
             case WM_LBUTTONDOWN: g_mdown = true;  SetCapture(hwnd); return 0;
             case WM_LBUTTONUP:   g_mdown = false; ReleaseCapture();  return 0;
+            case WM_KILLFOCUS:
+                // Losing focus while captured (Alt+Tab) — free the cursor so it isn't stuck/hidden off-window.
+                if (g_captured) { g_captured = false; ShowCursor(TRUE); }
+                return 0;
             case WM_CLOSE:   g_running = false; return 0;
             case WM_DESTROY: PostQuitMessage(0); return 0;
             }
@@ -52,6 +101,24 @@ namespace vortex::runtime
     int  GameHost::client_width() { return g_cw; }
     int  GameHost::client_height() { return g_ch; }
     bool GameHost::key_down(int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; }
+
+    void GameHost::set_mouse_captured(bool captured)
+    {
+        if (captured == g_captured) return;
+        g_captured = captured;
+        ShowCursor(captured ? FALSE : TRUE);   // counter-balanced: only toggled on state change
+        if (captured && g_hwnd)                // re-center immediately so the first delta isn't a jump
+        {
+            POINT c{ g_cw / 2, g_ch / 2 };
+            ClientToScreen(g_hwnd, &c);
+            SetCursorPos(c.x, c.y);
+        }
+    }
+    bool GameHost::mouse_captured() { return g_captured; }
+    int  GameHost::mouse_dx() { return g_mouse_dx; }
+    int  GameHost::mouse_dy() { return g_mouse_dy; }
+    void GameHost::toggle_fullscreen() { do_toggle_fullscreen(); }
+    bool GameHost::is_fullscreen() { return g_fullscreen; }
 
     bool GameHost::run(uint32_t width, uint32_t height, const wchar_t* title)
     {
@@ -100,11 +167,33 @@ namespace vortex::runtime
             }
             if (!g_running) break;
 
+            // 1b) deferred resize — runs here (window settled, not re-entrant in SetWindowPos), same thread as present.
+            if (g_resize_pending)
+            {
+                g_resize_pending = false;
+                if (g_pending_w > 0 && g_pending_h > 0)
+                    systems::dx12::resize((u32)g_pending_w, (u32)g_pending_h);
+            }
+
             // 2) delta time
             auto now = std::chrono::high_resolution_clock::now();
             float dt = std::chrono::duration<float>(now - last).count();
             last = now;
             if (dt < 0.f) dt = 0.f; else if (dt > 0.1f) dt = 0.1f;
+
+            // 2b) FPS mouse-look: when captured, read the cursor's offset from the window center as this
+            // frame's delta, then snap it back to center — unbounded look, cursor never leaves the window.
+            if (g_captured && g_hwnd && g_cw > 1 && g_ch > 1)
+            {
+                POINT pt; GetCursorPos(&pt); ScreenToClient(g_hwnd, &pt);
+                int cx = g_cw / 2, cy = g_ch / 2;
+                g_mouse_dx = pt.x - cx; g_mouse_dy = pt.y - cy;
+                if (g_mouse_dx != 0 || g_mouse_dy != 0)
+                {
+                    POINT c{ cx, cy }; ClientToScreen(g_hwnd, &c); SetCursorPos(c.x, c.y);
+                }
+            }
+            else { g_mouse_dx = 0; g_mouse_dy = 0; }
 
             // 3) advance the game in managed code (scripts + camera + submit the scene)
             if (g_tick) g_tick(dt);

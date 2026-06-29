@@ -102,6 +102,12 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostClientWidth")] private static extern int GameHostClientWidthNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostClientHeight")] private static extern int GameHostClientHeightNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostKeyDown")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool GameHostKeyDownNative(int vk);
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SetGameHostMouseCaptured")] private static extern void SetGameHostMouseCapturedNative([MarshalAs(UnmanagedType.I1)] bool captured);
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostMouseCaptured")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool GameHostMouseCapturedNative();
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostMouseDX")] private static extern int GameHostMouseDXNative();
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostMouseDY")] private static extern int GameHostMouseDYNative();
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostToggleFullscreen")] private static extern void GameHostToggleFullscreenNative();
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostIsFullscreen")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool GameHostIsFullscreenNative();
 
         /// <summary>Create the native game window + swapchain and run the loop until it closes. BLOCKS the caller.</summary>
         public static bool RunGameHost(uint width, uint height, string title) => RunGameHostNative(width, height, title);
@@ -115,6 +121,14 @@ namespace Editor.DllWrapper
         public static int GameHostClientWidth() => GameHostClientWidthNative();
         public static int GameHostClientHeight() => GameHostClientHeightNative();
         public static bool GameHostKeyDown(int vk) => GameHostKeyDownNative(vk);
+        /// <summary>FPS mouse-look: capture hides + re-centers the cursor (delta via GameHostMouseDX/DY); release frees it for menus.</summary>
+        public static void SetGameHostMouseCaptured(bool captured) => SetGameHostMouseCapturedNative(captured);
+        public static bool GameHostMouseCaptured() => GameHostMouseCapturedNative();
+        public static int GameHostMouseDX() => GameHostMouseDXNative();
+        public static int GameHostMouseDY() => GameHostMouseDYNative();
+        /// <summary>Toggle borderless fullscreen (also bound to F11 natively).</summary>
+        public static void GameHostToggleFullscreen() => GameHostToggleFullscreenNative();
+        public static bool GameHostIsFullscreen() => GameHostIsFullscreenNative();
 
         #endregion
 

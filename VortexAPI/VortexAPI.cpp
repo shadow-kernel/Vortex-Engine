@@ -783,6 +783,14 @@ EDITOR_INTERFACE bool GameHostMouseDown() { return runtime::GameHost::mouse_down
 EDITOR_INTERFACE int  GameHostClientWidth() { return runtime::GameHost::client_width(); }
 EDITOR_INTERFACE int  GameHostClientHeight() { return runtime::GameHost::client_height(); }
 EDITOR_INTERFACE bool GameHostKeyDown(int vk) { return runtime::GameHost::key_down(vk); }
+// FPS mouse-look capture (hide + re-center the cursor; report per-frame delta). Driven by the game.
+EDITOR_INTERFACE void SetGameHostMouseCaptured(bool captured) { runtime::GameHost::set_mouse_captured(captured); }
+EDITOR_INTERFACE bool GameHostMouseCaptured() { return runtime::GameHost::mouse_captured(); }
+EDITOR_INTERFACE int  GameHostMouseDX() { return runtime::GameHost::mouse_dx(); }
+EDITOR_INTERFACE int  GameHostMouseDY() { return runtime::GameHost::mouse_dy(); }
+// Borderless-fullscreen toggle (also F11 natively) for the settings menu.
+EDITOR_INTERFACE void GameHostToggleFullscreen() { runtime::GameHost::toggle_fullscreen(); }
+EDITOR_INTERFACE bool GameHostIsFullscreen() { return runtime::GameHost::is_fullscreen(); }
 
 EDITOR_INTERFACE void StartRenderLoop()
 {

@@ -30,5 +30,17 @@ namespace vortex::runtime
         static int  client_width();
         static int  client_height();
         static bool key_down(int vk);  // virtual-key currently held
+
+        // FPS mouse-look capture: while captured, the host hides the cursor and re-centers it every frame,
+        // reporting the per-frame delta via mouse_dx/dy — so the cursor never leaves the window and look is
+        // unbounded. Released (menu open) shows + frees the cursor so UI is clickable. Driven by the game.
+        static void set_mouse_captured(bool captured);
+        static bool mouse_captured();
+        static int  mouse_dx();        // captured: cursor delta from center this frame (else 0)
+        static int  mouse_dy();
+
+        // Borderless-fullscreen toggle (also bound to F11 natively). Safe (no exclusive mode) -> ALLOW_TEARING ok.
+        static void toggle_fullscreen();
+        static bool is_fullscreen();
     };
 }

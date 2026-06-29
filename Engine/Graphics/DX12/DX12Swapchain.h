@@ -33,6 +33,7 @@ namespace vortex::graphics::dx12
 		ID3D12Resource* current_back_buffer() const;
 		D3D12_CPU_DESCRIPTOR_HANDLE current_rtv() const;
 		u32 current_back_buffer_index() const { return m_current_index; }
+		u32 buffer_count() const { return m_buffer_count; }
 		u32 width() const { return m_width; }
 		u32 height() const { return m_height; }
 

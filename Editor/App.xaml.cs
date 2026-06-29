@@ -181,10 +181,15 @@ namespace Editor
                 }
                 _ghF12Prev = f12;
 
-                // Mouse-look: when the game has the cursor locked, feed relative motion (delta since last frame).
-                if (playing && sr.CursorLocked)
+                // Mouse-look: when the game locks the cursor, the native host CAPTURES it (hides + re-centers
+                // every frame) so it never leaves the window and look is unbounded; we read the per-frame delta
+                // straight from the host. When unlocked (menu/ESC), the cursor is freed + visible for the UI.
+                bool wantCapture = playing && sr.CursorLocked;
+                DllWrapper.VortexAPI.SetGameHostMouseCaptured(wantCapture);
+                if (wantCapture)
                 {
-                    float dxl = mx - _ghPrevMx, dyl = my - _ghPrevMy;
+                    float dxl = DllWrapper.VortexAPI.GameHostMouseDX();
+                    float dyl = DllWrapper.VortexAPI.GameHostMouseDY();
                     if (dxl > 200f) dxl = 200f; else if (dxl < -200f) dxl = -200f;
                     if (dyl > 200f) dyl = 200f; else if (dyl < -200f) dyl = -200f;
                     Vortex.Input.MouseDeltaX = dxl; Vortex.Input.MouseDeltaY = dyl;

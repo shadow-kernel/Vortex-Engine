@@ -134,8 +134,41 @@ namespace vortex::graphics::dx12
 		if (!m_initialized || w == 0 || h == 0) return;
 		m_command_queue.flush();
 		m_ui_overlay.invalidate_targets();   // drop cached bitmaps aliasing the old back buffers
-		m_swapchain.resize(w, h);
+		if (!m_swapchain.resize(w, h)) return;   // ResizeBuffers failed -> keep prior state (no half-broken swapchain -> crash)
 		m_depth_buffer.resize(DX12Core::instance().device(), w, h);
+		// GPU is idle after the flush; collapse per-buffer fence tracking so the next frame's wait is correct.
+		UINT64 fv = m_command_queue.current_fence_value();
+		for (auto& v : m_frame_fence_values) v = fv;
+
+		// FLIP-MODEL FREEZE FIX (F11 / maximize): after ResizeBuffers, a borderless/maximized window's DWM
+		// composition binding is stale until a frame is PRESENTED at the new size — otherwise the display stays
+		// frozen on the last pre-resize image even though render_frame keeps running (FPS even rises). Cycle
+		// every back buffer through a bare clear+present (no 3D, no UI overlay, which was just invalidated) so
+		// DWM re-acquires the resized buffers. Resize is already a flush-heavy slow path, so the cost is moot.
+		for (u32 i = 0; i < m_swapchain.buffer_count(); ++i)
+		{
+			u32 idx = m_swapchain.current_back_buffer_index();
+			m_command_allocators[idx]->Reset();
+			m_command_list->Reset(m_command_allocators[idx].Get(), nullptr);
+
+			D3D12_RESOURCE_BARRIER b{};
+			b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+			b.Transition.pResource = m_swapchain.current_back_buffer();
+			b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+			b.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
+			b.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+			m_command_list->ResourceBarrier(1, &b);
+			m_command_list->ClearRenderTargetView(m_swapchain.current_rtv(), m_clear_color, 0, nullptr);
+			b.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+			b.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+			m_command_list->ResourceBarrier(1, &b);
+			m_command_list->Close();
+			m_command_queue.execute_command_list(m_command_list.Get());
+			m_command_queue.signal_and_wait();
+			m_swapchain.present(false);   // windowed ALLOW_TEARING flag intact (vsync off)
+		}
+		fv = m_command_queue.current_fence_value();
+		for (auto& v : m_frame_fence_values) v = fv;
 	}
 
 	void DX12Renderer::swap_render_queue()
