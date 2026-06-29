@@ -1314,7 +1314,29 @@ namespace vortex::graphics::dx12
 		PerFrameConstants frame_constants = m_frame_constants;
 		XMStoreFloat4x4(&frame_constants.view_projection, vp_matrix);
 		frame_constants.camera_position = camera.position;
-		
+
+		// Pull in the CURRENT lighting state. Offscreen previews (AssetPreviewRenderer) set ambient + directional
+		// + point lights via the API right before this call, but m_frame_constants is only refreshed by the main
+		// loop — so without this the preview rendered with stale (dark) lighting and NO point lights. Copy them
+		// here AND upload the point lights to the light CB so they actually illuminate the preview.
+		frame_constants.light_direction = m_light_direction;
+		frame_constants.directional_intensity = m_directional_intensity;
+		frame_constants.light_color = m_light_color;
+		frame_constants.ambient_strength = m_ambient_strength;
+		frame_constants.point_light_count = static_cast<u32>((std::min)(m_point_lights.size(), static_cast<size_t>(MAX_POINT_LIGHTS)));
+		frame_constants.spot_light_count = static_cast<u32>((std::min)(m_spot_lights.size(), static_cast<size_t>(MAX_SPOT_LIGHTS)));
+		if (m_light_cb_mapped)
+		{
+			u8* lptr = static_cast<u8*>(m_light_cb_mapped);
+			for (size_t i = 0; i < m_point_lights.size() && i < MAX_POINT_LIGHTS; ++i)
+			{
+				GPUPointLight gl{};
+				gl.position = m_point_lights[i].position; gl.range = m_point_lights[i].range;
+				gl.color = m_point_lights[i].color; gl.intensity = m_point_lights[i].intensity;
+				memcpy(lptr + i * sizeof(GPUPointLight), &gl, sizeof(GPUPointLight));
+			}
+		}
+
 		if (m_per_frame_cb_mapped)
 			memcpy(m_per_frame_cb_mapped, &frame_constants, sizeof(frame_constants));
 		
@@ -1376,6 +1398,7 @@ namespace vortex::graphics::dx12
 			m_command_list->SetPipelineState(m_wireframe_mode ? m_pipeline_3d.wireframe_pso() : m_pipeline_3d.pipeline_state());
 			m_command_list->SetGraphicsRootSignature(m_pipeline_3d.root_signature());
 			m_command_list->SetGraphicsRootConstantBufferView(0, m_per_frame_cb->GetGPUVirtualAddress());
+			m_command_list->SetGraphicsRootConstantBufferView(2, m_light_cb->GetGPUVirtualAddress()); // point/spot lights
 			m_command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 			
 			auto& reg = ResourceRegistry::instance();
@@ -1389,15 +1412,29 @@ namespace vortex::graphics::dx12
 				
 				PerObjectConstants obj_cb{};
 				obj_cb.world = item.world_matrix;
-				
+				obj_cb.base_color = { 0.8f, 0.8f, 0.8f, 1.0f };
+				obj_cb.metallic = 0.0f; obj_cb.roughness = 0.5f; obj_cb.ao = 1.0f; obj_cb.normal_strength = 1.0f;
+
+				// Full PBR material + textures (matches render_3d_scene) so previews show the REAL material, not a
+				// flat base color.
 				auto* mat = reg.get_material(item.material_id);
 				if (mat)
 				{
-				obj_cb.base_color = mat->properties().base_color;
-				}
-				else
-				{
-					obj_cb.base_color = { 0.8f, 0.8f, 0.8f, 1.0f };
+					const auto& props = mat->properties();
+					obj_cb.base_color = props.base_color;
+					obj_cb.metallic = props.metallic; obj_cb.roughness = props.roughness;
+					obj_cb.ao = props.ao; obj_cb.normal_strength = props.normal_strength;
+					obj_cb.use_directx_normals = props.use_directx_normals;
+					auto* tex = mat->albedo_texture();
+					if (tex && tex->is_valid() && tex->srv_gpu().ptr != 0) { obj_cb.has_albedo_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(3, tex->srv_gpu()); }
+					auto* normal = mat->normal_texture();
+					if (normal && normal->is_valid() && normal->srv_gpu().ptr != 0) { obj_cb.has_normal_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(4, normal->srv_gpu()); }
+					auto* metallic_tex = mat->metallic_texture();
+					if (metallic_tex && metallic_tex->is_valid() && metallic_tex->srv_gpu().ptr != 0) { obj_cb.has_metallic_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(5, metallic_tex->srv_gpu()); }
+					auto* roughness_tex = mat->roughness_texture();
+					if (roughness_tex && roughness_tex->is_valid() && roughness_tex->srv_gpu().ptr != 0) { obj_cb.has_roughness_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(6, roughness_tex->srv_gpu()); }
+					auto* ao_tex = mat->ao_texture();
+					if (ao_tex && ao_tex->is_valid() && ao_tex->srv_gpu().ptr != 0) { obj_cb.has_ao_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(7, ao_tex->srv_gpu()); }
 				}
 				
 				void* dest = static_cast<u8*>(m_per_object_cb_mapped) + i * 256;
