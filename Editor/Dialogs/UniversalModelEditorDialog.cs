@@ -112,7 +112,7 @@ namespace Editor.Dialogs
         private void BuildUI()
         {
             var mainGrid = new Grid();
-            mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(300) }); // Left panel
+            mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(500) }); // Left panel (wide so the 3D preview is large)
             mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); // Right panel
             mainGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
             mainGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // Status bar
@@ -154,7 +154,7 @@ namespace Editor.Dialogs
             // Live 3D preview
             var previewBorder = new Border
             {
-                Height = 190,
+                Height = 500,   // large 3D preview so the model is clearly visible while editing
                 Margin = new Thickness(10),
                 CornerRadius = new CornerRadius(8),
                 Background = new SolidColorBrush(Color.FromRgb(16, 16, 18)),
@@ -1155,7 +1155,7 @@ namespace Editor.Dialogs
                     if (em >= 0) built.Add(em);
                 }
 
-                var img = Core.Services.Rendering.AssetPreviewRenderer.RenderMeshes(_previewMeshIds, mats, 256, (float)_orbitYaw, (float)_orbitPitch, (float)_orbitZoom);
+                var img = Core.Services.Rendering.AssetPreviewRenderer.RenderMeshes(_previewMeshIds, mats, 512, (float)_orbitYaw, (float)_orbitPitch, (float)_orbitZoom);
                 if (img != null) _previewImage.Source = img;
 
                 foreach (var b in built) { try { Editor.DllWrapper.VortexAPI.DeleteMaterial(b); } catch { } }

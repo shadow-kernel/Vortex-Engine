@@ -71,8 +71,8 @@ namespace Editor.Core.Services.Rendering
 
                 const float fov = 35f;
                 float fovHalf = fov * 0.5f * (float)Math.PI / 180f;
-                // 0.75 = model fills ~75% of the frame (was 0.58 -> too small). Higher factor -> smaller dist -> bigger.
-                float dist = radius / (0.75f * (float)Math.Tan(fovHalf));
+                // 0.92 = model fills ~92% of the frame (very large, minimal margin). Higher factor -> smaller dist -> bigger.
+                float dist = radius / (0.92f * (float)Math.Tan(fovHalf));
                 pitch = Math.Max(-1.5f, Math.Min(1.5f, pitch));
                 distScale = Math.Max(0.2f, Math.Min(5f, distScale));
                 float d = dist * distScale;
