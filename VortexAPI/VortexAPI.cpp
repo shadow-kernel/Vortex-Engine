@@ -1443,6 +1443,24 @@ EDITOR_INTERFACE int GetModelTexturePaths(const char* filepath,
 	return count;
 }
 
+// Per-submesh PBR material PROPERTIES (base color RGBA + metallic + roughness factors) the model actually has,
+// so the editor shows the real material (not flat defaults). out_base_colors is max_submeshes*4 floats.
+EDITOR_INTERFACE int GetModelMaterialProps(const char* filepath,
+	float* out_base_colors, float* out_metallic, float* out_roughness, int max_submeshes)
+{
+	if (!filepath || max_submeshes <= 0) return 0;
+	auto model_data = graphics::ModelImporter::import_from_file(filepath);
+	int count = static_cast<int>((std::min)(model_data.submeshes.size(), static_cast<size_t>(max_submeshes)));
+	for (int i = 0; i < count; i++)
+	{
+		const auto& s = model_data.submeshes[i];
+		if (out_base_colors) { out_base_colors[i * 4 + 0] = s.base_color[0]; out_base_colors[i * 4 + 1] = s.base_color[1]; out_base_colors[i * 4 + 2] = s.base_color[2]; out_base_colors[i * 4 + 3] = s.base_color[3]; }
+		if (out_metallic)  out_metallic[i] = s.metallic;
+		if (out_roughness) out_roughness[i] = s.roughness;
+	}
+	return count;
+}
+
 EDITOR_INTERFACE id::id_type LoadVMesh(const char* filepath)
 {
 	if (!filepath) return id::invalid_id;

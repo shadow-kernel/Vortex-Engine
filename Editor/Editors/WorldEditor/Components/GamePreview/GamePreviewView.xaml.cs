@@ -110,6 +110,10 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         private static GamePreviewView _active;
         private object _submittedScene;
         private volatile bool _sceneDirty = true;
+        /// <summary>Number of open preview dialogs (Model/Material editor) whose live preview swaps the SHARED
+        /// render queue. While &gt; 0, the viewport re-submits its scene EVERY frame so the preview never hijacks
+        /// the freecam (the "obj shows in the background" bug). Editors ++ on open, -- on close.</summary>
+        public static int ActivePreviewDialogs = 0;
         /// <summary>Force the editor viewport to re-submit the scene next frame — call after an external edit
         /// (imported-model material/texture assignment, entity add/remove, mesh change) so it shows immediately.</summary>
         public static void RequestResubmit() { if (_active != null) _active._sceneDirty = true; }
@@ -223,7 +227,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             var sceneToRender = _currentScene ?? ProjectData.Current?.ActiveScene;
             if (sceneToRender != null)
             {
-                bool needSubmit = IsPlaying || _sceneDirty || !ReferenceEquals(sceneToRender, _submittedScene);
+                bool needSubmit = IsPlaying || _sceneDirty || ActivePreviewDialogs > 0 || !ReferenceEquals(sceneToRender, _submittedScene);
                 if (needSubmit)
                 {
                     SceneRenderService.Instance.SubmitScene(sceneToRender);

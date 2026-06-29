@@ -249,6 +249,11 @@ namespace vortex::graphics
 			if (material->Get(AI_MATKEY_COLOR_DIFFUSE, mcol) == AI_SUCCESS) { cr = mcol.r; cg = mcol.g; cb = mcol.b; ca = mcol.a; }
 			if (material->Get(AI_MATKEY_BASE_COLOR, mcol) == AI_SUCCESS) { cr = mcol.r; cg = mcol.g; cb = mcol.b; ca = mcol.a; } // glTF PBR wins
 
+			// PBR metallic/roughness factors (glTF / FBX-PBR); defaults if the material has none.
+			float mat_metallic = 0.0f, mat_roughness = 0.5f;
+			material->Get(AI_MATKEY_METALLIC_FACTOR, mat_metallic);
+			material->Get(AI_MATKEY_ROUGHNESS_FACTOR, mat_roughness);
+
 			OutputDebugStringA(("  Material " + std::to_string(i) + ": " + mat_name + "\n").c_str());
 
 			// Get diffuse texture path from material
@@ -310,6 +315,8 @@ namespace vortex::graphics
 				if (submesh.material_index == i)
 				{
 					submesh.base_color[0] = cr; submesh.base_color[1] = cg; submesh.base_color[2] = cb; submesh.base_color[3] = ca;
+					submesh.metallic = mat_metallic;
+					submesh.roughness = mat_roughness;
 					submesh.diffuse_texture = diffuse_path;
 					submesh.normal_texture = normal_path;
 					submesh.metallic_texture = metallic_path;

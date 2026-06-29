@@ -413,6 +413,37 @@ namespace Editor.DllWrapper
             }
         }
 
+        /// <summary>Per-submesh PBR material properties (base color + metallic + roughness) from the native import.</summary>
+        public class SubmeshMaterialProps { public float[] BaseColor = { 0.8f, 0.8f, 0.8f, 1f }; public float Metallic = 0f; public float Roughness = 0.5f; }
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int GetModelMaterialProps(
+            [MarshalAs(UnmanagedType.LPStr)] string filepath,
+            [In, Out] float[] outBaseColors, [In, Out] float[] outMetallic, [In, Out] float[] outRoughness, int maxSubmeshes);
+
+        /// <summary>Interpret each submesh's real material (base color + metallic + roughness) so the editor shows it.</summary>
+        public static SubmeshMaterialProps[] GetSubmeshMaterialProps(string filepath, int maxSubmeshes = 64)
+        {
+            try
+            {
+                var bc = new float[maxSubmeshes * 4];
+                var met = new float[maxSubmeshes];
+                var rough = new float[maxSubmeshes];
+                int count = GetModelMaterialProps(filepath, bc, met, rough, maxSubmeshes);
+                if (count < 0) count = 0;
+                var result = new SubmeshMaterialProps[count];
+                for (int i = 0; i < count; i++)
+                    result[i] = new SubmeshMaterialProps
+                    {
+                        BaseColor = new[] { bc[i * 4], bc[i * 4 + 1], bc[i * 4 + 2], bc[i * 4 + 3] },
+                        Metallic = met[i],
+                        Roughness = rough[i]
+                    };
+                return result;
+            }
+            catch { return new SubmeshMaterialProps[0]; }
+        }
+
         #endregion
 
         #region MeshRenderer Component

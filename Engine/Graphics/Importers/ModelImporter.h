@@ -14,6 +14,8 @@ namespace vortex::graphics
 	std::vector<u32> indices;
 	u32 material_index{ 0 };
 	float base_color[4]{ 0.8f, 0.8f, 0.8f, 1.0f }; // diffuse/base color from the model's material (e.g. Kenney flat colors)
+	float metallic{ 0.0f };                         // PBR metallic factor from the material
+	float roughness{ 0.5f };                        // PBR roughness factor from the material
 	std::string name;
 	std::string diffuse_texture;   // Albedo/Diffuse texture
 	std::string normal_texture;    // Normal map

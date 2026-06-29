@@ -63,9 +63,11 @@ namespace Editor.Dialogs
             InitializeWindow();
             BuildUI();
             Loaded += OnLoaded;
-            // The live preview swaps the SHARED render queue; when this editor closes, make the main editor
-            // viewport re-submit its scene so the model doesn't linger in the freecam.
-            Closed += (s, e) => { try { Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.RequestResubmit(); } catch { } };
+            // The live preview swaps the SHARED render queue, which would otherwise make the main editor viewport
+            // show THIS model instead of the scene. Hold the viewport in re-submit-every-frame mode while this
+            // dialog is open, and force one more re-submit on close so the scene is restored.
+            Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.ActivePreviewDialogs++;
+            Closed += (s, e) => { try { Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.ActivePreviewDialogs--; Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.RequestResubmit(); } catch { } };
         }
 
         public UniversalModelEditorDialog(UniversalModelData modelData)
@@ -74,9 +76,11 @@ namespace Editor.Dialogs
             InitializeWindow();
             BuildUI();
             Loaded += OnLoaded;
-            // The live preview swaps the SHARED render queue; when this editor closes, make the main editor
-            // viewport re-submit its scene so the model doesn't linger in the freecam.
-            Closed += (s, e) => { try { Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.RequestResubmit(); } catch { } };
+            // The live preview swaps the SHARED render queue, which would otherwise make the main editor viewport
+            // show THIS model instead of the scene. Hold the viewport in re-submit-every-frame mode while this
+            // dialog is open, and force one more re-submit on close so the scene is restored.
+            Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.ActivePreviewDialogs++;
+            Closed += (s, e) => { try { Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.ActivePreviewDialogs--; Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.RequestResubmit(); } catch { } };
         }
 
         private void InitializeWindow()

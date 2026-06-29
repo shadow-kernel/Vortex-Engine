@@ -793,6 +793,15 @@ namespace Editor.Core.Assets
                 }
                 catch { }
 
+                // Real per-material PBR properties (base color + metallic + roughness) so the editor + preview show
+                // the actual material, not flat defaults.
+                VortexAPI.SubmeshMaterialProps[] matProps = null;
+                try
+                {
+                    matProps = VortexAPI.GetSubmeshMaterialProps(modelData.FilePath, submeshData.Length);
+                }
+                catch { }
+
                 // Create materials and submeshes
                 var materialCache = new Dictionary<long, int>(); // MaterialId -> Index
 
@@ -818,6 +827,14 @@ namespace Editor.Core.Assets
                             EngineMaterialId = data.MaterialId
                         };
                         material.InitializeStandardSlots();
+                        // Real material properties from the native import (so the dialog/preview show them, not defaults).
+                        if (matProps != null && i < matProps.Length)
+                        {
+                            var p = matProps[i];
+                            try { material.BaseColor = System.Windows.Media.Color.FromScRgb(p.BaseColor.Length > 3 ? p.BaseColor[3] : 1f, p.BaseColor[0], p.BaseColor[1], p.BaseColor[2]); } catch { }
+                            material.Metallic = p.Metallic;
+                            material.Roughness = p.Roughness;
+                        }
                         // Assign the slots this material ACTUALLY has, from the native interpretation (any subset).
                         if (texSets != null && i < texSets.Length)
                         {
