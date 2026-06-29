@@ -724,8 +724,8 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             AssetList.ContextMenu = BuildAssetContextMenu(AssetList.SelectedItem as AssetItem);
         }
 
-        /// <summary>Spawn `count` copies of a model into the viewport via the instanced stress-test harness.</summary>
-        private void StartStress(AssetItem item, int count)
+        /// <summary>Open the stress-test panel for a model (enter any copy count + live FPS/draw-call stats).</summary>
+        private void StartStress(AssetItem item)
         {
             try
             {
@@ -733,11 +733,10 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 string fullPath = item.Path;
                 if (!string.IsNullOrEmpty(fullPath) && !System.IO.Path.IsPathRooted(fullPath))
                     fullPath = System.IO.Path.Combine(projectPath, item.Path);
-                if (System.IO.File.Exists(fullPath))
-                {
-                    Core.Services.StressTestService.Start(fullPath, count);
-                    Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.RequestResubmit();
-                }
+                if (!System.IO.File.Exists(fullPath)) { MessageBox.Show("Model file not found.", "Stress Test", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+
+                var win = new Dialogs.StressTestDialog(fullPath, item.Name) { Owner = Window.GetWindow(this) };
+                win.Show(); // non-modal: the viewport keeps rendering the crowd while this stays open
             }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[StressTest] {ex.Message}"); }
         }
@@ -755,9 +754,7 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 if (item.Type == AssetType.Meshes || item.Type == AssetType.Models)
                 {
                     AddMenu(menu, "Add to Scene", () => AddAssetToScene(item), 0xE710, "#FF4EC9B0");
-                    AddMenu(menu, "Stress Test  ×1,000", () => StartStress(item, 1000), 0xE9D9, "#FFE6B422");
-                    AddMenu(menu, "Stress Test  ×10,000", () => StartStress(item, 10000), 0xE9D9, "#FFE67E22");
-                    AddMenu(menu, "Stop Stress Test", () => Core.Services.StressTestService.Stop(), 0xE71A, "#FF9A9AA1");
+                    AddMenu(menu, "Stress Test…", () => StartStress(item), 0xE9D9, "#FFE6B422");
                 }
                 if (!string.IsNullOrEmpty(item.Path) && item.Path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
                     AddMenu(menu, "Assign to selected entity", () => AssignScriptToSelected(item), 0xE71B, "#FF569CD6");
@@ -877,8 +874,9 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
         /// added to the scene and everything else shows explicit feedback — so an open gesture is
         /// never a silent no-op. Shared by double-click and the context-menu "Open / Edit" item.
         /// </summary>
-        /// <summary>Ctrl+double-click: open a dedicated Model-Viewer TAB in the viewport (next to Scene) that
-        /// renders ONLY this model, isolated and large, with an orbit/zoom/keyboard camera to inspect it.</summary>
+        /// <summary>Ctrl+double-click: open a dedicated Model-Viewer WINDOW that renders ONLY this model, isolated
+        /// and large, with an orbit/zoom/keyboard camera. A floating window (not an AvalonDock tab) so it has a
+        /// normal close button and never disturbs the Scene viewport's native render surface.</summary>
         private void OpenModelViewer(AssetItem item)
         {
             try
@@ -894,11 +892,17 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                     return;
                 }
 
-                var editor = Editor.Editors.WorldEditor.WorldEditorView.Current;
-                if (editor != null)
-                    editor.OpenModelViewerTab(fullPath, item.Name);
-                else
-                    OpenAssetInEditor(item);
+                var win = new Window
+                {
+                    Title = "Model Viewer - " + item.Name,
+                    Width = 1100,
+                    Height = 760,
+                    Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(22, 22, 24)),
+                    Content = new Editor.Editors.WorldEditor.Components.ModelViewer.ModelViewerControl(fullPath, item.Name),
+                    Owner = Window.GetWindow(this),
+                    WindowStartupLocation = WindowStartupLocation.CenterOwner
+                };
+                win.Show(); // non-modal: inspect while keeping the editor usable
             }
             catch
             {

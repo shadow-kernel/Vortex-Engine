@@ -40,6 +40,15 @@ namespace Editor.Core.Services
                 BuildGrid(count);
                 Active = true;
                 _dirty = true;
+
+                // Frame the whole grid so the crowd is actually visible in the viewport.
+                try
+                {
+                    int side = (int)Math.Ceiling(Math.Sqrt(count));
+                    float extent = side * 3.5f;
+                    EditorCameraController.Instance.FocusOn(0f, extent * 0.25f, 0f, Math.Max(10f, extent * 0.9f));
+                }
+                catch { }
                 System.Diagnostics.Debug.WriteLine($"[StressTest] {ModelName} x{count} ({subs.Length} submeshes -> {subs.Length} instanced draws of {count})");
             }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[StressTest] {ex.Message}"); }

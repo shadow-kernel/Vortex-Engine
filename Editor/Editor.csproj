@@ -308,6 +308,7 @@
     </Compile>
     <Compile Include="Dialogs\MaterialEditorDialog.cs" />
     <Compile Include="Dialogs\MeshEditorDialog.cs" />
+    <Compile Include="Dialogs\StressTestDialog.cs" />
     <Compile Include="Dialogs\TextureEditorDialog.cs" />
     <Compile Include="Dialogs\UniversalModelEditorDialog.cs" />
     <Compile Include="DllWrapper\Camera\VortexCamera.cs" />
