@@ -147,6 +147,131 @@ namespace vortex::graphics::dx12
 		m_submit_queue.clear();
 	}
 
+	void DX12Renderer::on_scene_switch()
+	{
+		if (!m_initialized) return;
+		// GPU idle BEFORE the managed layer frees the old scene's meshes (DeleteMesh has no flush).
+		m_command_queue.flush();
+		// Drop the overlay's cached wrapped back-buffer bitmaps (they alias the live back buffers).
+		m_ui_overlay.invalidate_targets();
+		// Clear the stale render queue so the one frame before the new scene re-submits doesn't draw freed geometry.
+		{
+			std::lock_guard<std::mutex> lock(m_queue_mutex);
+			m_render_queue.clear();
+			m_submit_queue.clear();
+		}
+		// The GPU is idle; collapse per-buffer fence tracking to the completed value.
+		UINT64 fv = m_command_queue.current_fence_value();
+		for (auto& v : m_frame_fence_values) v = fv;
+	}
+
+	void DX12Renderer::request_capture(const char* path)
+	{
+		if (!path) return;
+		m_capture_path = path;
+		m_capture_requested = true;
+	}
+
+	// Copy the current back buffer (already rendered, in PRESENT state) into a READBACK buffer and write a
+	// 32-bit top-down BMP. Self-contained: flushes, records a copy on the frame command list, waits, maps.
+	bool DX12Renderer::capture_backbuffer_to_bmp(const char* path)
+	{
+		if (!m_initialized) return false;
+		auto* device = DX12Core::instance().device();
+		ID3D12Resource* bb = m_swapchain.current_back_buffer();
+		if (!device || !bb) return false;
+
+		D3D12_RESOURCE_DESC rd = bb->GetDesc();
+		UINT width = (UINT)rd.Width;
+		UINT height = rd.Height;
+
+		D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{};
+		UINT numRows = 0; UINT64 rowSizeBytes = 0, totalBytes = 0;
+		device->GetCopyableFootprints(&rd, 0, 1, 0, &fp, &numRows, &rowSizeBytes, &totalBytes);
+
+		D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_READBACK;
+		D3D12_RESOURCE_DESC bd{};
+		bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+		bd.Width = totalBytes; bd.Height = 1; bd.DepthOrArraySize = 1; bd.MipLevels = 1;
+		bd.Format = DXGI_FORMAT_UNKNOWN; bd.SampleDesc.Count = 1;
+		bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+		ComPtr<ID3D12Resource> readback;
+		if (FAILED(device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &bd,
+			D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&readback)))) return false;
+
+		m_command_queue.flush();
+		u32 idx = m_swapchain.current_back_buffer_index();
+		m_command_allocators[idx]->Reset();
+		m_command_list->Reset(m_command_allocators[idx].Get(), nullptr);
+
+		D3D12_RESOURCE_BARRIER b{};
+		b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		b.Transition.pResource = bb;
+		b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		b.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
+		b.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
+		m_command_list->ResourceBarrier(1, &b);
+
+		D3D12_TEXTURE_COPY_LOCATION dst{}; dst.pResource = readback.Get();
+		dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT; dst.PlacedFootprint = fp;
+		D3D12_TEXTURE_COPY_LOCATION src{}; src.pResource = bb;
+		src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; src.SubresourceIndex = 0;
+		m_command_list->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+
+		b.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
+		b.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+		m_command_list->ResourceBarrier(1, &b);
+
+		m_command_list->Close();
+		m_command_queue.execute_command_list(m_command_list.Get());
+		m_command_queue.signal_and_wait();
+
+		void* mapped = nullptr;
+		D3D12_RANGE readRange{ 0, (SIZE_T)totalBytes };
+		if (FAILED(readback->Map(0, &readRange, &mapped))) return false;
+
+		bool ok = false;
+		FILE* f = nullptr; fopen_s(&f, path, "wb");
+		if (f)
+		{
+			UINT rowPitch = fp.Footprint.RowPitch;
+			UINT imgSize = width * height * 4;
+			UINT fileSize = 54 + imgSize;
+			unsigned char fh[14] = { 0 };
+			fh[0] = 'B'; fh[1] = 'M';
+			*(UINT*)&fh[2] = fileSize;
+			*(UINT*)&fh[10] = 54;
+			fwrite(fh, 1, 14, f);
+			unsigned char ih[40] = { 0 };
+			*(UINT*)&ih[0] = 40;
+			*(int*)&ih[4] = (int)width;
+			*(int*)&ih[8] = -(int)height; // negative => top-down
+			*(unsigned short*)&ih[12] = 1;
+			*(unsigned short*)&ih[14] = 32;
+			*(UINT*)&ih[20] = imgSize;
+			fwrite(ih, 1, 40, f);
+			std::vector<unsigned char> row(width * 4);
+			const unsigned char* base = (const unsigned char*)mapped;
+			bool bgra = (rd.Format == DXGI_FORMAT_B8G8R8A8_UNORM);
+			for (UINT y = 0; y < height; ++y)
+			{
+				const unsigned char* s = base + (size_t)y * rowPitch;
+				for (UINT x = 0; x < width; ++x)
+				{
+					if (bgra) { row[x * 4 + 0] = s[x * 4 + 0]; row[x * 4 + 1] = s[x * 4 + 1]; row[x * 4 + 2] = s[x * 4 + 2]; }
+					else { row[x * 4 + 0] = s[x * 4 + 2]; row[x * 4 + 1] = s[x * 4 + 1]; row[x * 4 + 2] = s[x * 4 + 0]; } // RGBA->BGR
+					row[x * 4 + 3] = s[x * 4 + 3];
+				}
+				fwrite(row.data(), 1, width * 4, f);
+			}
+			fclose(f);
+			ok = true;
+		}
+		D3D12_RANGE noWrite{ 0, 0 };
+		readback->Unmap(0, &noWrite);
+		return ok;
+	}
+
 	void DX12Renderer::render_frame()
 	{
 		if (!m_initialized) return;
@@ -231,6 +356,9 @@ namespace vortex::graphics::dx12
 
 		// 2D UI overlay (Direct2D over the same back buffer) — drawn after the 3D, before present.
 		m_ui_overlay.render(m_swapchain.current_back_buffer());
+
+		// Reliable verification: capture the fully-rendered back buffer (3D + UI) BEFORE present.
+		if (m_capture_requested) { m_capture_requested = false; capture_backbuffer_to_bmp(m_capture_path.c_str()); }
 
 		m_swapchain.present(m_vsync_enabled);
 		// Note: m_render_queue is NOT cleared - we keep last frame's data

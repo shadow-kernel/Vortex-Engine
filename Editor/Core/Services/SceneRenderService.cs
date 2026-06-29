@@ -25,6 +25,8 @@ namespace Editor.Core.Services
         }
 
         private readonly Dictionary<Guid, long> _entityMeshes = new Dictionary<Guid, long>();
+        private static int _meshDbg; // diagnostic: log first few mesh creations
+        private static int _submitN, _ssDbg; // diagnostic: count submits per SubmitScene
         private readonly Dictionary<Guid, long> _entityMaterials = new Dictionary<Guid, long>();
         
         // Track mesh paths to detect changes
@@ -221,6 +223,7 @@ namespace Editor.Core.Services
                     if (_submeshMeshCache.TryGetValue(sub, out long subMesh) && subMesh >= 0)
                     {
                         VortexAPI.SubmitMeshForRendering(subMesh, GetMaterialForMeshPath(sub), worldMatrix);
+                        _submitN++;
                         any = true;
                     }
                     else if (n > 0) break;
@@ -231,6 +234,7 @@ namespace Editor.Core.Services
             // Primitive / single mesh / explicitly-assigned .vmat:
             long materialId = GetOrCreateMaterial(entity.Id, meshRenderer);
             VortexAPI.SubmitMeshForRendering(meshId, materialId, worldMatrix);
+            _submitN++;
         }
 
 
@@ -248,10 +252,12 @@ namespace Editor.Core.Services
             // Clear and submit all lights first
             SubmitSceneLights(scene);
 
+            _submitN = 0;
             foreach (var entity in scene.Entities)
             {
                 SubmitEntityRecursive(entity);
             }
+            if (scene.Name != "Lobby" && _ssDbg < 12) { _ssDbg++; try { System.IO.File.AppendAllText(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "vortex_submit.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " SubmitScene '" + scene.Name + "' topEnts=" + System.Linq.Enumerable.Count(scene.Entities) + " submitted=" + _submitN + "\r\n"); } catch { } }
 
             // Render ALL camera and light icons in the scene
             var selected = SelectionService.Instance.SelectedEntity;
@@ -624,6 +630,7 @@ namespace Editor.Core.Services
                 _entityMeshes[entityId] = meshId;
                 _entityMeshPaths[entityId] = renderer.MeshPath;
             }
+            if (_meshDbg < 16) { _meshDbg++; try { System.IO.File.AppendAllText(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "vortex_mesh.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " path='" + renderer.MeshPath + "' id=" + meshId + " projPath='" + (Data.ProjectData.Current != null ? Data.ProjectData.Current.Path : "?") + "'\r\n"); } catch { } }
 
             return meshId;
         }

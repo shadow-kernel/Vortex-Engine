@@ -23,6 +23,17 @@ namespace vortex::graphics::dx12
 		scDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 		scDesc.SampleDesc.Count = 1;
 
+		// Uncap past monitor refresh: a windowed flip-model swapchain stays pinned to the compositor
+		// refresh unless created (and presented) with ALLOW_TEARING. Query support once.
+		{
+			BOOL tearing = FALSE;
+			ComPtr<IDXGIFactory5> factory5;
+			if (SUCCEEDED(factory->QueryInterface(IID_PPV_ARGS(&factory5))))
+				factory5->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &tearing, sizeof(tearing));
+			m_allow_tearing = (tearing == TRUE);
+			if (m_allow_tearing) scDesc.Flags |= DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
+		}
+
 		ComPtr<IDXGISwapChain1> swapchain1;
 		if (FAILED(factory->CreateSwapChainForHwnd(queue, desc.hwnd, &scDesc, nullptr, nullptr, &swapchain1)))
 			return false;
@@ -54,7 +65,10 @@ namespace vortex::graphics::dx12
 
 		release_back_buffers();
 
-		if (FAILED(m_swapchain->ResizeBuffers(m_buffer_count, width, height, m_format, 0)))
+		// ResizeBuffers MUST carry the same ALLOW_TEARING flag the swapchain was created with,
+		// otherwise it returns DXGI_ERROR_INVALID_CALL.
+		UINT rb_flags = m_allow_tearing ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0;
+		if (FAILED(m_swapchain->ResizeBuffers(m_buffer_count, width, height, m_format, rb_flags)))
 			return false;
 
 		m_width = width;
@@ -68,7 +82,11 @@ namespace vortex::graphics::dx12
 
 	void DX12Swapchain::present(bool vsync)
 	{
-		m_swapchain->Present(vsync ? 1 : 0, 0);
+		// ALLOW_TEARING present flag is illegal with a non-zero sync interval (returns
+		// DXGI_ERROR_INVALID_CALL), so gate it strictly on !vsync.
+		UINT sync = vsync ? 1 : 0;
+		UINT flags = (!vsync && m_allow_tearing) ? DXGI_PRESENT_ALLOW_TEARING : 0;
+		m_swapchain->Present(sync, flags);
 		m_current_index = m_swapchain->GetCurrentBackBufferIndex();
 	}
 

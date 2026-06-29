@@ -234,6 +234,7 @@ namespace Editor.Scripting
         /// <summary>Returns the requested scene name (and clears it), or null. The runtime driver calls this
         /// AFTER Update() and performs the switch (so it never happens mid-tick).</summary>
         public string ConsumePendingScene() { var s = _pendingScene; _pendingScene = null; return s; }
+        public string PendingScene { get { return _pendingScene; } } // diagnostic peek
 
         // --- mouse mode (game-controlled via Vortex.Cursor; the GameWindow enforces capture) ---
         private bool _cursorLocked; // default false: free cursor (menus/lobby) until a script locks it

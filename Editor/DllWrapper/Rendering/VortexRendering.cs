@@ -22,6 +22,12 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SwapRenderQueue")]
         private static extern void SwapRenderQueueNative();
 
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "OnSceneSwitch")]
+        private static extern void OnSceneSwitchNative();
+
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "CaptureFrame")]
+        private static extern void CaptureFrameNative([MarshalAs(UnmanagedType.LPStr)] string path);
+
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void ShutdownRenderViewport();
 
@@ -34,6 +40,10 @@ namespace Editor.DllWrapper
         /// thumbnail/preview rendering so it never flashes the editor viewport.
         /// </summary>
         public static void SwapRenderQueue() => SwapRenderQueueNative();
+        /// <summary>GPU-idle + drop overlay/queue caches at a scene transition (call BEFORE freeing the old scene's meshes).</summary>
+        public static void OnSceneSwitch() => OnSceneSwitchNative();
+        /// <summary>Write the next presented back buffer to a 32-bit BMP — reliable verification of the flip-model swapchain.</summary>
+        public static void CaptureFrame(string path) => CaptureFrameNative(path);
         public static void ShutdownRender() => ShutdownRenderViewport();
 
         #endregion
@@ -64,6 +74,47 @@ namespace Editor.DllWrapper
         public static void ResizeGameWindow(uint width, uint height) => ResizeGameWindowNative(width, height);
         public static void DestroyGameWindow() => DestroyGameWindowNative();
         public static bool IsGameWindowActive() => IsGameWindowActiveNative();
+
+        #endregion
+
+        #region Native GameHost (own native window + swapchain + one-thread loop; no WPF HwndHost)
+
+        // Must match the native tick_fn (void(float)); Cdecl to match the engine exports.
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public delegate void GameTickDelegate(float dt);
+
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "RunGameHost", CharSet = CharSet.Unicode)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        private static extern bool RunGameHostNative(uint width, uint height, string title);
+
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SetGameTickCallback")]
+        private static extern void SetGameTickCallbackNative(GameTickDelegate fn);
+
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "RequestGameHostExit")]
+        private static extern void RequestGameHostExitNative();
+
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SetGameHostVSync")]
+        private static extern void SetGameHostVSyncNative([MarshalAs(UnmanagedType.I1)] bool enabled);
+
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostMouseX")] private static extern int GameHostMouseXNative();
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostMouseY")] private static extern int GameHostMouseYNative();
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostMouseDown")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool GameHostMouseDownNative();
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostClientWidth")] private static extern int GameHostClientWidthNative();
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostClientHeight")] private static extern int GameHostClientHeightNative();
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostKeyDown")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool GameHostKeyDownNative(int vk);
+
+        /// <summary>Create the native game window + swapchain and run the loop until it closes. BLOCKS the caller.</summary>
+        public static bool RunGameHost(uint width, uint height, string title) => RunGameHostNative(width, height, title);
+        /// <summary>Set the per-frame managed tick (scripts + camera + submit). Keep the delegate referenced (GC).</summary>
+        public static void SetGameTickCallback(GameTickDelegate fn) => SetGameTickCallbackNative(fn);
+        public static void RequestGameHostExit() => RequestGameHostExitNative();
+        public static void SetGameHostVSync(bool enabled) => SetGameHostVSyncNative(enabled);
+        public static int GameHostMouseX() => GameHostMouseXNative();
+        public static int GameHostMouseY() => GameHostMouseYNative();
+        public static bool GameHostMouseDown() => GameHostMouseDownNative();
+        public static int GameHostClientWidth() => GameHostClientWidthNative();
+        public static int GameHostClientHeight() => GameHostClientHeightNative();
+        public static bool GameHostKeyDown(int vk) => GameHostKeyDownNative(vk);
 
         #endregion
 

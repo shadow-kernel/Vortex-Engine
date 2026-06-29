@@ -43,7 +43,11 @@ namespace Editor.Core.Services
             target.ActivateEntities();
             target.IsActive = true;
 
-            // 3) drop the old scene's cached engine meshes/materials/cameras, preload the new scene's assets
+            // 3) drop the old scene's cached engine meshes/materials/cameras, preload the new scene's assets.
+            // Make the GPU idle + drop the renderer's overlay/queue caches BEFORE freeing meshes, so an
+            // in-flight frame never references a just-released buffer (use-after-free) and the UI overlay
+            // doesn't carry the old scene's wrapped back buffers across the transition.
+            try { Editor.DllWrapper.VortexAPI.OnSceneSwitch(); } catch { }
             try { SceneRenderService.Instance.ClearAllRenderables(); } catch { }
             try { SceneRenderService.Instance.PreloadSceneAssets(target); } catch { }
 
