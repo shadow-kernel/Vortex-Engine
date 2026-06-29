@@ -90,7 +90,7 @@ namespace Editor.Dialogs
         private void BuildUI()
         {
             var mainGrid = new Grid();
-            mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(280) });
+            mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(380) });
             mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
             // Left Panel - Properties
@@ -121,7 +121,7 @@ namespace Editor.Dialogs
             // Live material preview (sphere rendered with the current material)
             var previewBorder = new Border
             {
-                Height = 200,
+                Height = 340,
                 CornerRadius = new CornerRadius(8),
                 Background = new SolidColorBrush(Color.FromRgb(16, 16, 18)),
                 BorderBrush = new SolidColorBrush(Color.FromRgb(58, 58, 62)),
@@ -196,17 +196,18 @@ namespace Editor.Dialogs
                 Margin = new Thickness(0, 0, 0, 10)
             });
 
-            (_metallicSlider, _metallicValue) = CreateSliderRow("Metallic", 0, 1, _material.Metallic);
-            stack.Children.Add(_metallicSlider.Parent as UIElement);
+            FrameworkElement row;
+            (_metallicSlider, _metallicValue, row) = CreateSliderRow("Metallic", 0, 1, _material.Metallic);
+            stack.Children.Add(row);
 
-            (_roughnessSlider, _roughnessValue) = CreateSliderRow("Roughness", 0, 1, _material.Roughness);
-            stack.Children.Add(_roughnessSlider.Parent as UIElement);
+            (_roughnessSlider, _roughnessValue, row) = CreateSliderRow("Roughness", 0, 1, _material.Roughness);
+            stack.Children.Add(row);
 
-            (_normalStrengthSlider, _normalStrengthValue) = CreateSliderRow("Normal Strength", 0, 2, _material.NormalStrength);
-            stack.Children.Add(_normalStrengthSlider.Parent as UIElement);
+            (_normalStrengthSlider, _normalStrengthValue, row) = CreateSliderRow("Normal Strength", 0, 2, _material.NormalStrength);
+            stack.Children.Add(row);
 
-            (_aoSlider, _aoValue) = CreateSliderRow("Ambient Occlusion", 0, 1, _material.AmbientOcclusion);
-            stack.Children.Add(_aoSlider.Parent as UIElement);
+            (_aoSlider, _aoValue, row) = CreateSliderRow("Ambient Occlusion", 0, 1, _material.AmbientOcclusion);
+            stack.Children.Add(row);
 
             // Separator
             stack.Children.Add(new Separator { Background = new SolidColorBrush(Color.FromRgb(60, 60, 60)), Margin = new Thickness(0, 15, 0, 15) });
@@ -450,7 +451,7 @@ namespace Editor.Dialogs
             return dialog.ShowDialog() == true ? dialog.FileName : null;
         }
 
-        private (Slider slider, TextBlock valueText) CreateSliderRow(string label, double min, double max, double value)
+        private (Slider slider, TextBlock valueText, FrameworkElement row) CreateSliderRow(string label, double min, double max, double value)
         {
             var grid = new Grid { Margin = new Thickness(0, 0, 0, 10) };
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -483,7 +484,7 @@ namespace Editor.Dialogs
                 MarkDirty();
             };
 
-            return (slider, valueText);
+            return (slider, valueText, grid);
         }
 
         private TextBlock CreateLabel(string text, double topMargin = 0)
@@ -593,7 +594,7 @@ namespace Editor.Dialogs
                 mat = Core.Services.MaterialService.Instance.BuildEngineMaterial(vmat);
                 if (mat >= 0)
                 {
-                    var img = Core.Services.Rendering.AssetPreviewRenderer.RenderMaterialSphere(mat, 256, (float)_orbitYaw, (float)_orbitPitch, (float)_orbitZoom);
+                    var img = Core.Services.Rendering.AssetPreviewRenderer.RenderMaterialSphere(mat, 384, (float)_orbitYaw, (float)_orbitPitch, (float)_orbitZoom);
                     if (img != null) _previewImage.Source = img;
                 }
             }

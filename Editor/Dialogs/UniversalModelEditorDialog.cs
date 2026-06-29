@@ -393,6 +393,8 @@ namespace Editor.Dialogs
                 ItemsSource = _modelData.Materials
             };
             _materialList.SelectionChanged += MaterialList_SelectionChanged;
+            // Double-click a material -> open it in the full Material Editor.
+            _materialList.MouseDoubleClick += (s, e) => { if (_selectedMaterial != null) OpenSelectedMaterialInEditor(); };
             _materialList.ItemTemplate = CreateMaterialItemTemplate();
             _materialList.ItemContainerStyle = BuildCardItemStyle(Color.FromRgb(108, 92, 231));
             grid.Children.Add(_materialList);

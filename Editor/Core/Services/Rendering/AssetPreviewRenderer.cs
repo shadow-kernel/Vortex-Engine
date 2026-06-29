@@ -64,12 +64,28 @@ namespace Editor.Core.Services.Rendering
                     { cx = bx; cy = by; cz = bz; gotCenter = true; }
                 }
 
-                // BRIGHT studio lighting so previews aren't dark: high ambient (nothing goes black) + a strong key
-                // directional. A fill light at the camera is added below (after the camera position is known) so
-                // the surface facing the viewer is always well lit.
+                // BRIGHT, all-around studio lighting so previews are never dark: very high ambient (nothing goes
+                // black) + a key directional for shape + a point light on EVERY side of the model (a light box), so
+                // it reads clearly from any orbit angle. A camera fill is added below once the camera is known.
                 VortexAPI.ClearAllLights();
-                VortexAPI.SetAmbientLightStrength(0.62f);
-                VortexAPI.SetDirectionalLightParams(-0.45f, -0.6f, -0.65f, 1f, 0.99f, 0.96f, 4.5f);
+                VortexAPI.SetAmbientLightStrength(0.85f);
+                VortexAPI.SetDirectionalLightParams(-0.4f, -0.55f, -0.6f, 1f, 1f, 0.98f, 3.5f);
+                {
+                    float lr = (radius > 0.001f) ? radius : 1f;
+                    float ld = lr * 3.0f;        // light distance from the model center
+                    float lrange = lr * 60f;     // generous range so attenuation stays gentle across the model
+                    float li = 4.5f;             // per-light intensity
+                    try
+                    {
+                        VortexAPI.SubmitPointLight(cx + ld, cy, cz, 1f, 1f, 1f, li, lrange);
+                        VortexAPI.SubmitPointLight(cx - ld, cy, cz, 1f, 1f, 1f, li, lrange);
+                        VortexAPI.SubmitPointLight(cx, cy + ld, cz, 1f, 1f, 1f, li, lrange);
+                        VortexAPI.SubmitPointLight(cx, cy - ld, cz, 1f, 1f, 1f, li, lrange);
+                        VortexAPI.SubmitPointLight(cx, cy, cz + ld, 1f, 1f, 1f, li, lrange);
+                        VortexAPI.SubmitPointLight(cx, cy, cz - ld, 1f, 1f, 1f, li, lrange);
+                    }
+                    catch { }
+                }
 
                 const float fov = 35f;
                 float fovHalf = fov * 0.5f * (float)Math.PI / 180f;
