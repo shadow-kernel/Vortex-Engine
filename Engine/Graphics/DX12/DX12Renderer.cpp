@@ -1399,7 +1399,11 @@ namespace vortex::graphics::dx12
 			m_command_list->SetGraphicsRootSignature(m_pipeline_3d.root_signature());
 			m_command_list->SetGraphicsRootConstantBufferView(0, m_per_frame_cb->GetGPUVirtualAddress());
 			m_command_list->SetGraphicsRootConstantBufferView(2, m_light_cb->GetGPUVirtualAddress()); // point/spot lights
-			m_command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+				// MUST set the SRV heap before any texture descriptor table is bound in the loop below — without
+				// it, SetGraphicsRootDescriptorTable removes the device (the crash when a textured model's
+				// thumbnail rendered, e.g. opening the Models folder).
+				{ auto* _sh = ResourceRegistry::instance().srv_heap(); if (_sh) { ID3D12DescriptorHeap* _hh[] = { _sh }; m_command_list->SetDescriptorHeaps(1, _hh); } }
+				m_command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 			
 			auto& reg = ResourceRegistry::instance();
 			size_t objectCount = (std::min)(m_render_queue.size(), static_cast<size_t>(MAX_RENDER_OBJECTS));

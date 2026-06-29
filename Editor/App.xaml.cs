@@ -165,6 +165,7 @@ namespace Editor
         private static bool _stressInit;
         private static float _scx, _scy, _scz, _syaw, _spitch;   // free-fly camera state
         private static int _stressFrames; private static DateTime _stressT0 = DateTime.MinValue;
+        private static bool _stressFree, _stressEscPrev;          // ESC frees the mouse so the window can be closed
 
         /// <summary>Boots ONLY the native GameHost rendering a stress crowd of the given model — no project, no
         /// vpak. The crowd + free-fly camera + stats overlay are driven by StressTick (via GameHostTick).</summary>
@@ -201,36 +202,52 @@ namespace Editor
                 {
                     _stressInit = true;
                     try { DllWrapper.VortexAPI.ShowGrid(false); DllWrapper.VortexAPI.ShowGizmos(false); } catch { }
+                    // Force the multithreaded cull+pack ON — at hundreds of thousands of instances the per-instance
+                    // frustum test + instance-VB pack is real CPU work; parallelizing it lifts the frame rate.
+                    try { DllWrapper.VortexAPI.Multithreading(true); DllWrapper.VortexAPI.MultithreadingForce(true); } catch { }
+                    // Distance culling: render a bubble around the camera (standard open-world technique). At these
+                    // vert counts the GPU is vertex-bound, so this is the real lever for a smooth 60+ FPS — far
+                    // copies (which you can't resolve anyway) are skipped. Fly through; the bubble follows you.
+                    try { DllWrapper.VortexAPI.RenderDistance(110f); } catch { }
                     // Bright lighting (the GameHost main path uploads these correctly).
                     DllWrapper.VortexAPI.ClearAllLights();
                     DllWrapper.VortexAPI.SetAmbientLightStrength(0.55f);
                     DllWrapper.VortexAPI.SetDirectionalLightParams(-0.4f, -0.6f, -0.6f, 1f, 1f, 0.97f, 3.5f);
                     // Build the crowd (imports the model from disk + lays out the grid).
                     Editor.Core.Services.StressTestService.Start(_stressModelArg, _stressCountArg);
-                    // Initial camera framing the whole grid.
-                    int side = (int)Math.Ceiling(Math.Sqrt(Math.Max(1, _stressCountArg)));
-                    float extent = side * 3.5f;
-                    _scx = 0f; _scy = Math.Max(8f, extent * 0.35f); _scz = -Math.Max(14f, extent * 0.6f);
-                    _syaw = 0f; _spitch = 0.32f;
+                    // Start INSIDE the crowd (slightly elevated) so the render-distance bubble is full — fly with
+                    // WASD and the dense field of copies surrounds you.
+                    _scx = 0f; _scy = 15f; _scz = 0f;
+                    _syaw = 0f; _spitch = 0.15f;
                 }
 
-                // Free-fly camera (WASD + QE + mouse-look; Shift = faster).
-                DllWrapper.VortexAPI.SetGameHostMouseCaptured(true);
-                float ddx = DllWrapper.VortexAPI.GameHostMouseDX(), ddy = DllWrapper.VortexAPI.GameHostMouseDY();
-                if (ddx > 200f) ddx = 200f; else if (ddx < -200f) ddx = -200f;
-                if (ddy > 200f) ddy = 200f; else if (ddy < -200f) ddy = -200f;
-                _syaw += ddx * 0.0035f; _spitch += ddy * 0.0035f;
-                if (_spitch > 1.5f) _spitch = 1.5f; else if (_spitch < -1.5f) _spitch = -1.5f;
+                // ESC toggles the mouse free so you can close/Alt-Tab the window (mouse-look hides+clips the cursor).
+                bool esc = DllWrapper.VortexAPI.GameHostKeyDown(0x1B);
+                if (esc && !_stressEscPrev) _stressFree = !_stressFree;
+                _stressEscPrev = esc;
+
+                // Free-fly camera (WASD + QE + mouse-look; Shift = faster) — only while the mouse is captured.
+                DllWrapper.VortexAPI.SetGameHostMouseCaptured(!_stressFree);
                 double cyp = Math.Cos(_spitch), syp = Math.Sin(_spitch), cya = Math.Cos(_syaw), sya = Math.Sin(_syaw);
                 float fx = (float)(sya * cyp), fy = (float)(-syp), fz = (float)(cya * cyp);
-                float rx = (float)cya, rz = (float)(-sya);
-                float speed = (DllWrapper.VortexAPI.GameHostKeyDown(0x10) ? 90f : 28f) * dt;
-                if (DllWrapper.VortexAPI.GameHostKeyDown(0x57)) { _scx += fx * speed; _scy += fy * speed; _scz += fz * speed; } // W
-                if (DllWrapper.VortexAPI.GameHostKeyDown(0x53)) { _scx -= fx * speed; _scy -= fy * speed; _scz -= fz * speed; } // S
-                if (DllWrapper.VortexAPI.GameHostKeyDown(0x44)) { _scx += rx * speed; _scz += rz * speed; }                     // D
-                if (DllWrapper.VortexAPI.GameHostKeyDown(0x41)) { _scx -= rx * speed; _scz -= rz * speed; }                     // A
-                if (DllWrapper.VortexAPI.GameHostKeyDown(0x45)) _scy += speed;                                                  // E up
-                if (DllWrapper.VortexAPI.GameHostKeyDown(0x51)) _scy -= speed;                                                  // Q down
+                if (!_stressFree)
+                {
+                    float ddx = DllWrapper.VortexAPI.GameHostMouseDX(), ddy = DllWrapper.VortexAPI.GameHostMouseDY();
+                    if (ddx > 200f) ddx = 200f; else if (ddx < -200f) ddx = -200f;
+                    if (ddy > 200f) ddy = 200f; else if (ddy < -200f) ddy = -200f;
+                    _syaw += ddx * 0.0035f; _spitch += ddy * 0.0035f;
+                    if (_spitch > 1.5f) _spitch = 1.5f; else if (_spitch < -1.5f) _spitch = -1.5f;
+                    cyp = Math.Cos(_spitch); syp = Math.Sin(_spitch); cya = Math.Cos(_syaw); sya = Math.Sin(_syaw);
+                    fx = (float)(sya * cyp); fy = (float)(-syp); fz = (float)(cya * cyp);
+                    float rx = (float)cya, rz = (float)(-sya);
+                    float speed = (DllWrapper.VortexAPI.GameHostKeyDown(0x10) ? 90f : 28f) * dt;
+                    if (DllWrapper.VortexAPI.GameHostKeyDown(0x57)) { _scx += fx * speed; _scy += fy * speed; _scz += fz * speed; } // W
+                    if (DllWrapper.VortexAPI.GameHostKeyDown(0x53)) { _scx -= fx * speed; _scy -= fy * speed; _scz -= fz * speed; } // S
+                    if (DllWrapper.VortexAPI.GameHostKeyDown(0x44)) { _scx += rx * speed; _scz += rz * speed; }                     // D
+                    if (DllWrapper.VortexAPI.GameHostKeyDown(0x41)) { _scx -= rx * speed; _scz -= rz * speed; }                     // A
+                    if (DllWrapper.VortexAPI.GameHostKeyDown(0x45)) _scy += speed;                                                  // E up
+                    if (DllWrapper.VortexAPI.GameHostKeyDown(0x51)) _scy -= speed;                                                  // Q down
+                }
                 DllWrapper.VortexAPI.SetViewCamera(_scx, _scy, _scz, _scx + fx, _scy + fy, _scz + fz, 0f, 1f, 0f);
 
                 // Submit the instanced crowd once (and whenever it changes).
@@ -254,7 +271,8 @@ namespace Editor
                 {
                     GHLog("STRESS " + Editor.Core.Services.StressTestService.ModelName + " x" + Editor.Core.Services.StressTestService.Count
                         + " FPS=" + DllWrapper.VortexAPI.CurrentFPS + " draws=" + DllWrapper.VortexAPI.DrawCalls
-                        + " inst=" + DllWrapper.VortexAPI.InstancesDrawn + "/" + DllWrapper.VortexAPI.InstancesTested);
+                        + " inst=" + DllWrapper.VortexAPI.InstancesDrawn + "/" + DllWrapper.VortexAPI.InstancesTested
+                        + " mt=" + (DllWrapper.VortexAPI.MultithreadingActive ? 1 : 0));
                     _stressFrames = 0; _stressT0 = n;
                 }
             }
