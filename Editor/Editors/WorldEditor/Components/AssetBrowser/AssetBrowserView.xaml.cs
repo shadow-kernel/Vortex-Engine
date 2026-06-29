@@ -144,7 +144,10 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
         private void OnExplorerFolderChanged(object sender, FileSystemItem folder)
         {
             if (_syncingFromBrowser || folder == null) return;
-            Application.Current?.Dispatcher?.Invoke(() => SetCurrentFolder(folder));
+            // BeginInvoke (async), NOT Invoke: a synchronous Invoke pumps the dispatcher, so a fast burst of
+            // folder-change events re-enters this handler mid-navigation -> the explorer "spins out" and navigates
+            // by itself (the bug that forced an engine restart). Queuing decouples it.
+            Application.Current?.Dispatcher?.BeginInvoke(new Action(() => SetCurrentFolder(folder)));
         }
 
         private void SetCurrentFolder(FileSystemItem folder)
@@ -1377,6 +1380,39 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             }
 
             UpdateEmptyState();
+            StartBackgroundThumbnailPreload();
+        }
+
+        private static bool _preloadKicked;
+        /// <summary>Once per session: enumerate every model on a worker thread, then pre-build + cache each
+        /// thumbnail on the UI dispatcher at Background priority (the DX12 render must run on the UI thread). The
+        /// browser fills in progressively while staying responsive, and later navigation hits the cache instantly
+        /// instead of importing models live (the "navigating is ultra slow" complaint).</summary>
+        private void StartBackgroundThumbnailPreload()
+        {
+            if (_preloadKicked) return;
+            var projectPath = ProjectData.Current?.Path;
+            if (string.IsNullOrEmpty(projectPath)) return;
+            var assetsDir = System.IO.Path.Combine(projectPath, "Assets");
+            if (!System.IO.Directory.Exists(assetsDir)) return;
+            _preloadKicked = true;
+
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                string[] files;
+                try { files = System.IO.Directory.GetFiles(assetsDir, "*.*", System.IO.SearchOption.AllDirectories); }
+                catch { return; }
+                var exts = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                    { ".glb", ".gltf", ".fbx", ".obj", ".dae", ".3ds", ".blend", ".vmesh" };
+                foreach (var f in files)
+                {
+                    if (!exts.Contains(System.IO.Path.GetExtension(f).ToLowerInvariant())) continue;
+                    var path = f;
+                    Application.Current?.Dispatcher?.BeginInvoke(
+                        System.Windows.Threading.DispatcherPriority.Background,
+                        new Action(() => { try { GetOrBuildModelThumb(path); } catch { } }));
+                }
+            });
         }
 
         private void UpdateEmptyState()

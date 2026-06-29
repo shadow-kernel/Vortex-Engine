@@ -99,18 +99,21 @@ namespace Editor.Editors.WorldEditor.Components.FileExplorer
         {
             if (folder == null) return;
 
-            _isUpdatingFromExplorer = true;
-            
+            // Set the re-entrancy guard TIGHTLY around the expand+select work (which is what fires SelectedItem
+            // change synchronously). Setting it now and resetting it in a separate later tick left a window where
+            // ExpandPathToItem's IsSelected=true fired OnSelectedFolderChanged with the guard already cleared ->
+            // self-navigation. Wrapping it here keeps the guard true exactly when the selection changes.
             Dispatcher.BeginInvoke(new Action(() =>
             {
+                bool prev = _isUpdatingFromExplorer;
+                _isUpdatingFromExplorer = true;
                 try
                 {
-                    // Pfad zum Ordner aufklappen
                     ExpandPathToItem(folder);
                 }
                 finally
                 {
-                    _isUpdatingFromExplorer = false;
+                    _isUpdatingFromExplorer = prev;
                 }
             }), System.Windows.Threading.DispatcherPriority.Background);
         }
