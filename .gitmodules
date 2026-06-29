@@ -1,0 +1,4 @@
+[submodule "ThirdParty/Streamline"]
+	path = ThirdParty/Streamline
+	url = https://github.com/NVIDIA-RTX/Streamline.git
+	shallow = true

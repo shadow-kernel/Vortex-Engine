@@ -1,3 +1,0 @@
-# Streamline SDK binaries are stored via Git LFS (scoped to this folder only).
-*.dll filter=lfs diff=lfs merge=lfs -text
-*.lib filter=lfs diff=lfs merge=lfs -text
