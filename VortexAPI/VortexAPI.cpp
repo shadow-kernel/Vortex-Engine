@@ -409,6 +409,19 @@ EDITOR_INTERFACE void UILine(float x1, float y1, float x2, float y2, float r, fl
 {
 	graphics::dx12::DX12Renderer::instance().ui_line(x1, y1, x2, y2, r, g, b, a, thickness);
 }
+// 5th UI primitive: a textured quad (PNG/JPG via WIC), tinted by (r,g,b,a). path = absolute or project file.
+EDITOR_INTERFACE void UIImage(float x, float y, float w, float h, const wchar_t* path, float r, float g, float b, float a)
+{
+	graphics::dx12::DX12Renderer::instance().ui_image(x, y, w, h, path, r, g, b, a);
+}
+EDITOR_INTERFACE void UIPushClip(float x, float y, float w, float h)
+{
+	graphics::dx12::DX12Renderer::instance().ui_push_clip(x, y, w, h);
+}
+EDITOR_INTERFACE void UIPopClip()
+{
+	graphics::dx12::DX12Renderer::instance().ui_pop_clip();
+}
 
 EDITOR_INTERFACE void ShutdownRenderViewport()
 {

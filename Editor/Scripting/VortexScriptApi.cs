@@ -52,6 +52,7 @@ namespace Vortex
         void UIRect(float x, float y, float w, float h, float r, float g, float b, float a, float radius);
         void UIText(float x, float y, float w, float h, string text, float size, float r, float g, float b, float a, int align, int weight);
         void UILine(float x1, float y1, float x2, float y2, float r, float g, float b, float a, float thick);
+        void UIImage(float x, float y, float w, float h, string path, float r, float g, float b, float a);
         float UIWidth();
         float UIHeight();
         float UIMouseX();
@@ -221,6 +222,13 @@ namespace Vortex
         {
             if (Host != null) Host.UILine(x1, y1, x2, y2, c.R, c.G, c.B, c.A, thick);
         }
+
+        /// <summary>Textured quad (PNG/JPG). path = absolute or project-relative. tint multiplies; tint.A = opacity.</summary>
+        public static void Image(string path, float x, float y, float w, float h, Color tint)
+        {
+            if (Host != null) Host.UIImage(x, y, w, h, path, tint.R, tint.G, tint.B, tint.A);
+        }
+        public static void Image(string path, float x, float y, float w, float h) { Image(path, x, y, w, h, new Color(1f, 1f, 1f, 1f)); }
 
         /// <summary>True while the cursor is inside the box.</summary>
         public static bool Hover(float x, float y, float w, float h)

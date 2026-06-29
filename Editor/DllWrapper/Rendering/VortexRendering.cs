@@ -147,11 +147,25 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "UILine")]
         private static extern void UILineNative(float x1, float y1, float x2, float y2, float r, float g, float b, float a, float thick);
 
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "UIImage", CharSet = CharSet.Unicode)]
+        private static extern void UIImageNative(float x, float y, float w, float h,
+            [MarshalAs(UnmanagedType.LPWStr)] string path, float r, float g, float b, float a);
+
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "UIPushClip")]
+        private static extern void UIPushClipNative(float x, float y, float w, float h);
+
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "UIPopClip")]
+        private static extern void UIPopClipNative();
+
         /// <summary>Start a new UI frame (clears last frame's commands + sets the viewport size).</summary>
         public static void UIBegin(float w, float h) { try { UIBeginNative(w, h); } catch { } }
         public static void UIRect(float x, float y, float w, float h, float r, float g, float b, float a, float radius) { try { UIRectNative(x, y, w, h, r, g, b, a, radius); } catch { } }
         public static void UIText(float x, float y, float w, float h, string text, float size, float r, float g, float b, float a, int align, int weight) { try { UITextNative(x, y, w, h, text ?? "", size, r, g, b, a, align, weight); } catch { } }
         public static void UILine(float x1, float y1, float x2, float y2, float r, float g, float b, float a, float thick) { try { UILineNative(x1, y1, x2, y2, r, g, b, a, thick); } catch { } }
+        /// <summary>5th primitive: a textured quad (PNG/JPG via WIC), tinted by (r,g,b,a). path = absolute or project file.</summary>
+        public static void UIImage(float x, float y, float w, float h, string path, float r, float g, float b, float a) { try { UIImageNative(x, y, w, h, path ?? "", r, g, b, a); } catch { } }
+        public static void UIPushClip(float x, float y, float w, float h) { try { UIPushClipNative(x, y, w, h); } catch { } }
+        public static void UIPopClip() { try { UIPopClipNative(); } catch { } }
 
         #endregion
 

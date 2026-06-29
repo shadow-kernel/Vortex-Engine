@@ -237,6 +237,9 @@ namespace vortex::graphics::dx12
 		void ui_rect(float x, float y, float w, float h, float r, float g, float b, float a, float radius) { m_ui_overlay.add_rect(x, y, w, h, r, g, b, a, radius); }
 		void ui_text(float x, float y, float w, float h, const wchar_t* s, float size, float r, float g, float b, float a, int align, int weight) { m_ui_overlay.add_text(x, y, w, h, s, size, r, g, b, a, align, weight); }
 		void ui_line(float x1, float y1, float x2, float y2, float r, float g, float b, float a, float thick) { m_ui_overlay.add_line(x1, y1, x2, y2, r, g, b, a, thick); }
+		void ui_image(float x, float y, float w, float h, const wchar_t* path, float r, float g, float b, float a) { m_ui_overlay.add_image(x, y, w, h, path, r, g, b, a); }
+		void ui_push_clip(float x, float y, float w, float h) { m_ui_overlay.push_clip(x, y, w, h); }
+		void ui_pop_clip() { m_ui_overlay.pop_clip(); }
 
 		// Performance statistics
 		int get_current_fps() const { return m_current_fps; }
