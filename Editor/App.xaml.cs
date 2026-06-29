@@ -179,7 +179,7 @@ namespace Editor
                 if (_ghT0 == DateTime.MinValue) _ghT0 = DateTime.Now;
                 _ghFrames++;
                 if (pressed) GHLog("PRESS mx=" + mx + " my=" + my + " cw=" + cw + " ch=" + ch + " btnX=[" + (cw - 306) + ".." + (cw - 56) + "] IN=" + (mx >= cw - 306 && mx <= cw - 56 && my >= ch - 100 && my <= ch - 40));
-                var nowT = DateTime.Now; if ((nowT - _ghT0).TotalMilliseconds >= 1000) { var s0 = Editor.Core.Data.ProjectData.Current; GHLog("FPS=" + _ghFrames + " scene=" + (s0 != null && s0.ActiveScene != null ? s0.ActiveScene.Name : "?")); _ghFrames = 0; _ghT0 = nowT; }
+                var nowT = DateTime.Now; if ((nowT - _ghT0).TotalMilliseconds >= 1000) { var s0 = Editor.Core.Data.ProjectData.Current; GHLog("FPS=" + _ghFrames + " scene=" + (s0 != null && s0.ActiveScene != null ? s0.ActiveScene.Name : "?") + " beh=" + sr.DebugBehaviourNames() + " ents=" + (s0 != null && s0.ActiveScene != null && s0.ActiveScene.Entities != null ? s0.ActiveScene.Entities.Count : -1)); _ghFrames = 0; _ghT0 = nowT; }
 
                 if (playing)
                 {
