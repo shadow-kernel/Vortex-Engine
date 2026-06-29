@@ -76,6 +76,7 @@ namespace Editor.UI.Vui
             e.Text = d.Text; e.ImageAsset = d.Asset;
             e.Value = d.Value; e.Min = d.Min; e.Max = d.Max != 0 || d.Min != 0 ? d.Max : 1f;
             e.On = d.On; e.Options = d.Options; e.OptionIndex = d.OptionIndex; e.TargetSetting = d.TargetSetting;
+            e.CapturesKey = d.CapturesKey; e.MaxChars = d.MaxChars > 0 ? d.MaxChars : 64;
             e.Visible = d.Visible; e.Opacity = d.Opacity <= 0 ? 1f : d.Opacity;
             e.BlocksInput = d.BlocksInput; e.CursorLocked = d.CursorLocked; e.ClipChildren = d.Clip;
             if (!string.IsNullOrEmpty(d.Layout)) Enum.TryParse(d.Layout, true, out e.LayoutMode);
@@ -121,6 +122,8 @@ namespace Editor.UI.Vui
             if (e.Kind == VuiKind.Bar || e.Kind == VuiKind.Slider) { d.Value = e.Value; d.Min = e.Min; d.Max = e.Max; }
             if (e.On) d.On = true;
             if (e.Options != null) { d.Options = e.Options; d.OptionIndex = e.OptionIndex; }
+            if (e.CapturesKey) d.CapturesKey = true;
+            if (e.MaxChars != 64) d.MaxChars = e.MaxChars;
             if (!e.Visible) d.Visible = false;
             if (e.Opacity != 1f) d.Opacity = e.Opacity;
             if (e.BlocksInput) d.BlocksInput = true;
@@ -170,6 +173,8 @@ namespace Editor.UI.Vui
         public string[] Options { get; set; }
         public int OptionIndex { get; set; }
         public string TargetSetting { get; set; }
+        public bool CapturesKey { get; set; }
+        public int MaxChars { get; set; } = 64;
         public bool Visible { get; set; } = true;
         public float Opacity { get; set; } = 1f;
         public bool BlocksInput { get; set; }

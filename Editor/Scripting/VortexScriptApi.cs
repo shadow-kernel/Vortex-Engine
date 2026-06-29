@@ -282,4 +282,13 @@ namespace Vortex
         public static void Pop() { Editor.UI.Vui.VuiStack.Instance.Pop(); }
         public static bool HasScreens { get { return Editor.UI.Vui.VuiStack.Instance.HasActiveScreens; } }
     }
+
+    /// <summary>Generic engine settings a script's options menu applies (the UI only surfaces values; the script
+    /// reads the widgets + calls these). Resolution / render-scale / volume land with feature #3 (ESC menu).</summary>
+    public static class Settings
+    {
+        public static void SetVSync(bool on) { Editor.DllWrapper.VortexAPI.SetGameHostVSync(on); }
+        public static void ToggleFullscreen() { Editor.DllWrapper.VortexAPI.GameHostToggleFullscreen(); }
+        public static bool IsFullscreen { get { return Editor.DllWrapper.VortexAPI.GameHostIsFullscreen(); } }
+    }
 }

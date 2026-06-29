@@ -167,7 +167,7 @@ namespace Editor
         private static string _stressModelArg;
         private static string _benchmarkDirArg;   // --benchmark="<assets dir>": generated multi-model scene
         private static string _vuiTestArg;         // --vuitest="<.vui>": dev hook to render a retained-UI screen
-        private static Vortex.VuiHandle _vuiTestHandle; private static float _vuiPulse;
+        private static Vortex.VuiHandle _vuiTestHandle; private static bool _vuiPrevDown;
         private static int _stressCountArg = 1000;
         private static bool _stressInit;
         private static float _scx, _scy, _scz, _syaw, _spitch;   // free-fly camera state
@@ -297,20 +297,17 @@ namespace Editor
                 DllWrapper.VortexAPI.UIText(16, 50, 800, 26, "FPS " + DllWrapper.VortexAPI.CurrentFPS + "    Draw calls " + DllWrapper.VortexAPI.DrawCalls.ToString("N0") + "    Instances " + DllWrapper.VortexAPI.InstancesDrawn.ToString("N0") + "    Verts " + DllWrapper.VortexAPI.VertexCount.ToString("N0"), 15, 0.8f, 0.86f, 0.92f, 1f, 0, 600);
                 DllWrapper.VortexAPI.UIText(16, ch - 30, 800, 24, "WASD/QE fly  ·  Shift = faster  ·  mouse look  ·  F12 screenshot", 13, 0.6f, 0.6f, 0.66f, 1f, 0, 500);
 
-                // Dev hook (--vuitest): load a hand-written .vui, drive a few slots, and tick the retained UI into
-                // this same frame — proves the VUI runtime renders over the real GameHost.
+                // Dev hook (--vuitest="<.vui>"): load a hand-written screen and tick the retained UI into this same
+                // frame, so a .vui can be previewed in the real GameHost without the editor.
                 if (_vuiTestArg != null)
                 {
                     if (_vuiTestHandle == null) { _vuiTestHandle = Vortex.Gui.Load(_vuiTestArg); if (_vuiTestHandle != null && _vuiTestHandle.IsValid) _vuiTestHandle.Show(); }
                     if (_vuiTestHandle != null && _vuiTestHandle.IsValid)
                     {
-                        _vuiPulse += dt;
-                        float hp = 0.5f + 0.5f * (float)Math.Sin(_vuiPulse);
-                        _vuiTestHandle.SetValue("healthBar", hp);
-                        _vuiTestHandle.SetText("hpText", ((int)(hp * 100)).ToString());
-                        _vuiTestHandle.SetText("ammoText", "30 / 90");
                         float vmx = DllWrapper.VortexAPI.GameHostMouseX(), vmy = DllWrapper.VortexAPI.GameHostMouseY();
-                        Editor.UI.Vui.VuiStack.Instance.TickAll(cw, ch, BuildVuiInput(vmx, vmy, DllWrapper.VortexAPI.GameHostMouseDown(), false));
+                        bool vdn = DllWrapper.VortexAPI.GameHostMouseDown();
+                        bool vpr = vdn && !_vuiPrevDown; _vuiPrevDown = vdn;
+                        Editor.UI.Vui.VuiStack.Instance.TickAll(cw, ch, BuildVuiInput(vmx, vmy, vdn, vpr));
                     }
                 }
 

@@ -46,6 +46,9 @@ namespace Editor.UI.Vui
         }
         private VuiElement Find(string id) { if (id != null && _byId.TryGetValue(id, out var e)) return e; return null; }
 
+        /// <summary>The resolved pixel rect of an element by id (valid after Layout). Used by tests + the builder.</summary>
+        public bool TryGetRect(string id, out RectF r) { var e = Find(id); if (e != null) { r = e.Resolved; return true; } r = default(RectF); return false; }
+
         private List<VuiElement> ActiveChildren(VuiElement e)
             => (e.Kind == VuiKind.List && e.RowPool != null) ? e.RowPool : e.Children;
 
@@ -186,23 +189,81 @@ namespace Editor.UI.Vui
             var hit = HitTest(Root, input.Mx, input.My);
             if (hit != null) { hit.Hot = true; _hot = hit; }
 
-            if (input.Pressed && hit != null)
+            // Press: dispatch by kind + set the capture/focus targets (all tracked by element IDENTITY).
+            if (input.Pressed)
             {
-                switch (hit.Kind)
+                if (hit == null || hit.Kind != VuiKind.TextField) _focus = null;   // click outside a field blurs it
+                if (hit != null)
                 {
-                    case VuiKind.Button: if (!string.IsNullOrEmpty(hit.Id)) _clicked.Add(hit.Id); break;
-                    case VuiKind.Toggle: hit.On = !hit.On; break;
-                    case VuiKind.Stepper:
-                        if (hit.Options != null && hit.Options.Length > 0)
-                        {
-                            bool right = input.Mx > hit.Resolved.X + hit.Resolved.W * 0.5f;
-                            hit.OptionIndex = (hit.OptionIndex + (right ? 1 : hit.Options.Length - 1)) % hit.Options.Length;
-                        }
-                        break;
-                        // Slider drag / TextField focus are handled in Phase 4.
+                    switch (hit.Kind)
+                    {
+                        case VuiKind.Button:
+                            if (!string.IsNullOrEmpty(hit.Id)) _clicked.Add(hit.Id);
+                            if (hit.CapturesKey) _capturedKeyTarget = hit;          // enter keybind-capture mode
+                            break;
+                        case VuiKind.Toggle: hit.On = !hit.On; break;
+                        case VuiKind.Stepper:
+                            if (hit.Options != null && hit.Options.Length > 0)
+                            {
+                                bool right = input.Mx > hit.Resolved.CenterX;
+                                hit.OptionIndex = (hit.OptionIndex + (right ? 1 : hit.Options.Length - 1)) % hit.Options.Length;
+                            }
+                            break;
+                        case VuiKind.Slider: _dragTarget = hit; _dragKind = 1; ApplySliderDrag(hit, input.Mx); break;
+                        case VuiKind.TextField: _focus = hit; break;
+                    }
                 }
             }
-            return BlocksInput || hit != null;
+
+            // Slider drag: the captured slider tracks the cursor every frame until release.
+            if (input.Down && _dragTarget != null && _dragKind == 1) ApplySliderDrag(_dragTarget, input.Mx);
+            if (!input.Down) { _dragTarget = null; _dragKind = 0; }
+
+            // Wheel scroll: route to the clipped container under the cursor.
+            if (input.Wheel != 0)
+            {
+                var sc = FindScrollable(Root, input.Mx, input.My);
+                if (sc != null) { sc.ScrollY -= input.Wheel * 30f * _scale; if (sc.ScrollY < 0) sc.ScrollY = 0; }
+            }
+
+            // Typed text into the focused TextField (printable append / backspace / enter blurs).
+            if (_focus != null && _focus.Kind == VuiKind.TextField && input.Chars != null)
+            {
+                string t = _focus.Text ?? "";
+                for (int i = 0; i < input.CharCount; i++)
+                {
+                    char c = input.Chars[i];
+                    if (c == '\b') { if (t.Length > 0) t = t.Substring(0, t.Length - 1); }
+                    else if (c == '\r' || c == '\n') { _focus.Text = t; _focus = null; break; }
+                    else if (c >= ' ' && t.Length < _focus.MaxChars) t += c;
+                }
+                if (_focus != null) _focus.Text = t;
+            }
+
+            // Keybind capture: the first key after clicking a CapturesKey button is stored on it.
+            if (_capturedKeyTarget != null && input.KeyCount > 0)
+            {
+                _capturedKeyTarget.CapturedKey = input.KeyEvents[0];
+                _capturedKeyTarget = null;
+            }
+
+            return BlocksInput || hit != null || _dragTarget != null || _focus != null;
+        }
+
+        private void ApplySliderDrag(VuiElement s, float mx)
+        {
+            float t = s.Resolved.W > 0 ? (mx - s.Resolved.X) / s.Resolved.W : 0f;
+            if (t < 0) t = 0; else if (t > 1) t = 1;
+            s.Value = s.Min + t * (s.Max - s.Min);
+        }
+
+        private VuiElement FindScrollable(VuiElement e, float mx, float my)
+        {
+            if (!e.RuntimeVisibleEffective) return null;
+            var kids = ActiveChildren(e);
+            for (int i = kids.Count - 1; i >= 0; i--) { var r = FindScrollable(kids[i], mx, my); if (r != null) return r; }
+            if (e.ClipChildren && e.Resolved.Contains(mx, my)) return e;
+            return null;
         }
 
         private VuiElement HitTest(VuiElement e, float mx, float my)
@@ -301,7 +362,8 @@ namespace Editor.UI.Vui
                 {
                     Api.UIRect(r.X, r.Y, r.W, r.H, e.Bg[0], e.Bg[1], e.Bg[2], e.Bg[3] * a, e.Radius * _scale);
                     string shown = e.Text ?? "";
-                    Api.UIText(r.X + 8 * _scale, r.Y, r.W - 16 * _scale, r.H, shown, e.FontSize * _scale, e.Fg[0], e.Fg[1], e.Fg[2], e.Fg[3] * a, 0, e.Weight);
+                    bool focused = ReferenceEquals(e, _focus);
+                    Api.UIText(r.X + 8 * _scale, r.Y, r.W - 16 * _scale, r.H, focused ? shown + "|" : shown, e.FontSize * _scale, e.Fg[0], e.Fg[1], e.Fg[2], e.Fg[3] * a, 0, e.Weight);
                     break;
                 }
                 case VuiKind.Crosshair:
@@ -372,6 +434,7 @@ namespace Editor.UI.Vui
                 Radius = t.Radius, Align = t.Align, Weight = t.Weight, FontSize = t.FontSize,
                 Text = t.Text, ImageAsset = t.ImageAsset, Value = t.Value, Min = t.Min, Max = t.Max, On = t.On,
                 Options = t.Options, OptionIndex = t.OptionIndex, TargetSetting = t.TargetSetting,
+                CapturesKey = t.CapturesKey, MaxChars = t.MaxChars,
                 Visible = t.Visible, Opacity = t.Opacity, BlocksInput = t.BlocksInput,
                 ClipChildren = t.ClipChildren, LayoutMode = t.LayoutMode, Spacing = t.Spacing, Padding = t.Padding, GridCols = t.GridCols,
                 Parent = parent
@@ -385,6 +448,6 @@ namespace Editor.UI.Vui
         public bool GetToggle(string id) { var e = Find(id); return e != null && e.On; }
         public string GetText(string id) { var e = Find(id); return e != null ? (e.Text ?? "") : ""; }
         public int GetStep(string id) { var e = Find(id); return e != null ? e.OptionIndex : 0; }
-        public int GetCapturedKey(string id) { return 0; }   // Phase 4 (keybind capture)
+        public int GetCapturedKey(string id) { var e = Find(id); return e != null ? e.CapturedKey : 0; }
     }
 }
