@@ -38,7 +38,10 @@ namespace Editor.Core.Assets
                 switch (format)
                 {
                     case ModelFormat.OBJ:
-                        ParseObjModel(modelData);
+                        // Prefer the native assimp6 import (gives real material slots + textures, same as the
+                        // game); fall back to the hand-rolled OBJ/MTL parser only if the native import fails.
+                        try { ParseAssimpModel(modelData); }
+                        catch { modelData.Materials.Clear(); modelData.Submeshes.Clear(); ParseObjModel(modelData); }
                         break;
                     
                     case ModelFormat.FBX:
@@ -50,9 +53,11 @@ namespace Editor.Core.Assets
                     
                     case ModelFormat.GLTF:
                     case ModelFormat.GLB:
-                        // GLTF not supported by Assimp 3.0, provide helpful error
-                        throw new NotSupportedException(
-                            "GLTF/GLB format requires Assimp 4.0+. Please convert to OBJ or FBX.");
+                        // The native assimp6 import (ImportModelWithMaterialsFromFile, used by ParseAssimpModel)
+                        // handles GLB/GLTF — only the old managed AssimpNet 3.0 didn't, which is why this used to
+                        // throw. Route GLB/GLTF through the native path so the model editor works for them too.
+                        ParseAssimpModel(modelData);
+                        break;
                     
                     case ModelFormat.VMesh:
                         ParseVMeshModel(modelData);
@@ -779,6 +784,15 @@ namespace Editor.Core.Assets
                 }
                 catch { }
 
+                // INTERPRET each material's actual texture slots from the native import — every model is
+                // individual, so the dialog's slots are built from whatever each material really references.
+                VortexAPI.SubmeshTextureSet[] texSets = null;
+                try
+                {
+                    texSets = VortexAPI.GetSubmeshTexturePaths(modelData.FilePath, submeshData.Length);
+                }
+                catch { }
+
                 // Create materials and submeshes
                 var materialCache = new Dictionary<long, int>(); // MaterialId -> Index
 
@@ -804,6 +818,17 @@ namespace Editor.Core.Assets
                             EngineMaterialId = data.MaterialId
                         };
                         material.InitializeStandardSlots();
+                        // Assign the slots this material ACTUALLY has, from the native interpretation (any subset).
+                        if (texSets != null && i < texSets.Length)
+                        {
+                            var t = texSets[i];
+                            if (!string.IsNullOrEmpty(t.Albedo))    { material.SetTexture(TextureMapType.Albedo, t.Albedo);          RegisterDiscoveredTexture(modelData, t.Albedo, TextureMapType.Albedo); }
+                            if (!string.IsNullOrEmpty(t.Normal))    { material.SetTexture(TextureMapType.Normal, t.Normal);          RegisterDiscoveredTexture(modelData, t.Normal, TextureMapType.Normal); }
+                            if (!string.IsNullOrEmpty(t.Metallic))  { material.SetTexture(TextureMapType.Metallic, t.Metallic);      RegisterDiscoveredTexture(modelData, t.Metallic, TextureMapType.Metallic); }
+                            if (!string.IsNullOrEmpty(t.Roughness)) { material.SetTexture(TextureMapType.Roughness, t.Roughness);    RegisterDiscoveredTexture(modelData, t.Roughness, TextureMapType.Roughness); }
+                            if (!string.IsNullOrEmpty(t.AO))        { material.SetTexture(TextureMapType.AmbientOcclusion, t.AO);     RegisterDiscoveredTexture(modelData, t.AO, TextureMapType.AmbientOcclusion); }
+                            if (!string.IsNullOrEmpty(t.Emissive))  { material.SetTexture(TextureMapType.Emissive, t.Emissive);      RegisterDiscoveredTexture(modelData, t.Emissive, TextureMapType.Emissive); }
+                        }
                         materialIndex = modelData.Materials.Count;
                         materialCache[data.MaterialId] = materialIndex;
                         modelData.Materials.Add(material);

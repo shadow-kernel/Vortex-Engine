@@ -285,7 +285,25 @@ namespace vortex::graphics
 				material->GetTexture(aiTextureType_HEIGHT, 0, &tex_path);
 				normal_path = model_dir + tex_path.C_Str();
 			}
-			
+
+			// PBR slots — each model is individual, so read whichever the material actually has (empty if none).
+			// The editor builds its slot UI dynamically from these per-material results.
+			auto read_tex = [&](aiTextureType t) -> std::string {
+				if (material->GetTextureCount(t) > 0) { aiString p; material->GetTexture(t, 0, &p); return model_dir + p.C_Str(); }
+				return std::string();
+			};
+			std::string metallic_path = read_tex(aiTextureType_METALNESS);
+			std::string roughness_path = read_tex(aiTextureType_DIFFUSE_ROUGHNESS);
+			std::string ao_path = read_tex(aiTextureType_AMBIENT_OCCLUSION);
+			if (ao_path.empty()) ao_path = read_tex(aiTextureType_LIGHTMAP);
+			std::string emissive_path = read_tex(aiTextureType_EMISSIVE);
+			// glTF packs metallic+roughness in one texture under UNKNOWN; use it for both if the dedicated ones are empty.
+			if (metallic_path.empty() && roughness_path.empty())
+			{
+				std::string mr = read_tex(aiTextureType_UNKNOWN);
+				if (!mr.empty()) { metallic_path = mr; roughness_path = mr; }
+			}
+
 			// Assign textures to all submeshes using this material
 			for (auto& submesh : data.submeshes)
 			{
@@ -294,7 +312,11 @@ namespace vortex::graphics
 					submesh.base_color[0] = cr; submesh.base_color[1] = cg; submesh.base_color[2] = cb; submesh.base_color[3] = ca;
 					submesh.diffuse_texture = diffuse_path;
 					submesh.normal_texture = normal_path;
-					
+					submesh.metallic_texture = metallic_path;
+					submesh.roughness_texture = roughness_path;
+					submesh.ao_texture = ao_path;
+					submesh.emissive_texture = emissive_path;
+
 					// Use material name if submesh name is empty
 					if (submesh.name.empty())
 					{

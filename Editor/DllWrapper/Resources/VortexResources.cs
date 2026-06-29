@@ -360,6 +360,59 @@ namespace Editor.DllWrapper
             }
         }
 
+        /// <summary>Per-submesh PBR texture paths the model's materials actually reference (empty when absent).</summary>
+        public class SubmeshTextureSet { public string Albedo = "", Normal = "", Metallic = "", Roughness = "", AO = "", Emissive = ""; }
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int GetModelTexturePaths(
+            [MarshalAs(UnmanagedType.LPStr)] string filepath,
+            IntPtr outAlbedo, IntPtr outNormal, IntPtr outMetallic,
+            IntPtr outRoughness, IntPtr outAo, IntPtr outEmissive,
+            int maxSubmeshes, int maxLen);
+
+        /// <summary>Interpret a model's per-submesh texture slots from the native assimp import (all formats incl. GLB).</summary>
+        public static SubmeshTextureSet[] GetSubmeshTexturePaths(string filepath, int maxSubmeshes = 64)
+        {
+            const int maxLen = 512;
+            var blocks = new IntPtr[6];
+            var bufs = new IntPtr[6][];
+            try
+            {
+                for (int s = 0; s < 6; s++)
+                {
+                    bufs[s] = new IntPtr[maxSubmeshes];
+                    for (int i = 0; i < maxSubmeshes; i++) bufs[s][i] = System.Runtime.InteropServices.Marshal.AllocHGlobal(maxLen);
+                    blocks[s] = System.Runtime.InteropServices.Marshal.AllocHGlobal(IntPtr.Size * maxSubmeshes);
+                    System.Runtime.InteropServices.Marshal.Copy(bufs[s], 0, blocks[s], maxSubmeshes);
+                }
+                int count = GetModelTexturePaths(filepath, blocks[0], blocks[1], blocks[2], blocks[3], blocks[4], blocks[5], maxSubmeshes, maxLen);
+                if (count < 0) count = 0;
+                var result = new SubmeshTextureSet[count];
+                for (int i = 0; i < count; i++)
+                {
+                    result[i] = new SubmeshTextureSet
+                    {
+                        Albedo = System.Runtime.InteropServices.Marshal.PtrToStringAnsi(bufs[0][i]) ?? "",
+                        Normal = System.Runtime.InteropServices.Marshal.PtrToStringAnsi(bufs[1][i]) ?? "",
+                        Metallic = System.Runtime.InteropServices.Marshal.PtrToStringAnsi(bufs[2][i]) ?? "",
+                        Roughness = System.Runtime.InteropServices.Marshal.PtrToStringAnsi(bufs[3][i]) ?? "",
+                        AO = System.Runtime.InteropServices.Marshal.PtrToStringAnsi(bufs[4][i]) ?? "",
+                        Emissive = System.Runtime.InteropServices.Marshal.PtrToStringAnsi(bufs[5][i]) ?? "",
+                    };
+                }
+                return result;
+            }
+            catch { return new SubmeshTextureSet[0]; }
+            finally
+            {
+                for (int s = 0; s < 6; s++)
+                {
+                    if (bufs[s] != null) for (int i = 0; i < maxSubmeshes; i++) if (bufs[s][i] != IntPtr.Zero) System.Runtime.InteropServices.Marshal.FreeHGlobal(bufs[s][i]);
+                    if (blocks[s] != IntPtr.Zero) System.Runtime.InteropServices.Marshal.FreeHGlobal(blocks[s]);
+                }
+            }
+        }
+
         #endregion
 
         #region MeshRenderer Component

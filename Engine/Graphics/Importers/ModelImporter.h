@@ -20,6 +20,7 @@ namespace vortex::graphics
 	std::string metallic_texture;  // Metallic map
 	std::string roughness_texture; // Roughness map
 	std::string ao_texture;        // Ambient Occlusion map
+	std::string emissive_texture;  // Emissive map
 	};
 
 	struct ImportedModelData

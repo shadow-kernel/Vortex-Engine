@@ -1415,7 +1415,31 @@ EDITOR_INTERFACE int GetModelSubmeshNames(const char* filepath, char** out_names
 	strncpy_s(out_names[i], max_name_length, name.c_str(), _TRUNCATE);
 	}
 	}
-	
+
+	return count;
+}
+
+// Per-submesh PBR texture paths the model's materials actually reference (empty string when a slot has none).
+// The editor INTERPRETS each model from this — every model is individual, so the dialog builds its slots from
+// whatever each material has. Paths are absolute (model_dir + assimp name). Returns the submesh count.
+EDITOR_INTERFACE int GetModelTexturePaths(const char* filepath,
+	char** out_albedo, char** out_normal, char** out_metallic,
+	char** out_roughness, char** out_ao, char** out_emissive,
+	int max_submeshes, int max_len)
+{
+	if (!filepath || max_submeshes <= 0 || max_len <= 0) return 0;
+	auto model_data = graphics::ModelImporter::import_from_file(filepath);
+	int count = static_cast<int>((std::min)(model_data.submeshes.size(), static_cast<size_t>(max_submeshes)));
+	for (int i = 0; i < count; i++)
+	{
+		const auto& s = model_data.submeshes[i];
+		if (out_albedo && out_albedo[i])       strncpy_s(out_albedo[i], max_len, s.diffuse_texture.c_str(), _TRUNCATE);
+		if (out_normal && out_normal[i])       strncpy_s(out_normal[i], max_len, s.normal_texture.c_str(), _TRUNCATE);
+		if (out_metallic && out_metallic[i])   strncpy_s(out_metallic[i], max_len, s.metallic_texture.c_str(), _TRUNCATE);
+		if (out_roughness && out_roughness[i]) strncpy_s(out_roughness[i], max_len, s.roughness_texture.c_str(), _TRUNCATE);
+		if (out_ao && out_ao[i])               strncpy_s(out_ao[i], max_len, s.ao_texture.c_str(), _TRUNCATE);
+		if (out_emissive && out_emissive[i])   strncpy_s(out_emissive[i], max_len, s.emissive_texture.c_str(), _TRUNCATE);
+	}
 	return count;
 }
 
