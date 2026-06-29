@@ -78,32 +78,66 @@ namespace Editor.Dialogs
         private void InitializeWindow()
         {
             Title = "Material Editor";
-            Width = 900;
-            Height = 700;
+            Width = 1440;
+            Height = 900;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             Background = new SolidColorBrush(Color.FromRgb(22, 22, 24));
             ResizeMode = ResizeMode.CanResize;
-            MinWidth = 700;
-            MinHeight = 500;
+            MinWidth = 1080;
+            MinHeight = 640;
         }
 
         private void BuildUI()
         {
+            // 3-column layout like the model editor: properties left, BIG live sphere in the CENTER, textures right.
             var mainGrid = new Grid();
-            mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(380) });
-            mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(330) });            // properties
+            mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); // CENTER preview
+            mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(360) });            // textures
 
-            // Left Panel - Properties
-            var leftPanel = BuildPropertiesPanel();
-            Grid.SetColumn(leftPanel, 0);
-            mainGrid.Children.Add(leftPanel);
+            var props = BuildPropertiesPanel();
+            Grid.SetColumn(props, 0);
+            mainGrid.Children.Add(props);
 
-            // Right Panel - Textures
-            var rightPanel = BuildTexturesPanel();
-            Grid.SetColumn(rightPanel, 1);
-            mainGrid.Children.Add(rightPanel);
+            var preview = BuildPreviewPanel();
+            Grid.SetColumn(preview, 1);
+            mainGrid.Children.Add(preview);
+
+            var textures = BuildTexturesPanel();
+            Grid.SetColumn(textures, 2);
+            mainGrid.Children.Add(textures);
 
             Content = mainGrid;
+        }
+
+        /// <summary>The large, centered live material sphere (orbit + zoom) — the focal point.</summary>
+        private Border BuildPreviewPanel()
+        {
+            var outer = new Border { Background = new SolidColorBrush(Color.FromRgb(15, 15, 17)), ClipToBounds = true };
+            _previewImage = new Image
+            {
+                Stretch = Stretch.Uniform,
+                Margin = new Thickness(20),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            RenderOptions.SetBitmapScalingMode(_previewImage, BitmapScalingMode.HighQuality);
+            WireOrbit(_previewImage);
+
+            var grid = new Grid();
+            grid.Children.Add(_previewImage);
+            grid.Children.Add(new TextBlock
+            {
+                Text = "Drag: orbit   ·   Wheel: zoom",
+                Foreground = new SolidColorBrush(Color.FromRgb(120, 120, 126)),
+                FontSize = 11,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Bottom,
+                Margin = new Thickness(0, 0, 0, 12),
+                IsHitTestVisible = false
+            });
+            outer.Child = grid;
+            return outer;
         }
 
         private Border BuildPropertiesPanel()
@@ -117,22 +151,7 @@ namespace Editor.Dialogs
 
             var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
             var stack = new StackPanel { Margin = new Thickness(15) };
-
-            // Live material preview (sphere rendered with the current material)
-            var previewBorder = new Border
-            {
-                Height = 340,
-                CornerRadius = new CornerRadius(8),
-                Background = new SolidColorBrush(Color.FromRgb(16, 16, 18)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(58, 58, 62)),
-                BorderThickness = new Thickness(1),
-                Margin = new Thickness(0, 0, 0, 14),
-                ClipToBounds = true
-            };
-            _previewImage = new Image { Stretch = Stretch.Uniform };
-            previewBorder.Child = _previewImage;
-            WireOrbit(_previewImage);
-            stack.Children.Add(previewBorder);
+            // (The live preview sphere now lives in the CENTER panel — see BuildPreviewPanel.)
 
             // Header
             stack.Children.Add(new TextBlock
@@ -594,7 +613,7 @@ namespace Editor.Dialogs
                 mat = Core.Services.MaterialService.Instance.BuildEngineMaterial(vmat);
                 if (mat >= 0)
                 {
-                    var img = Core.Services.Rendering.AssetPreviewRenderer.RenderMaterialSphere(mat, 384, (float)_orbitYaw, (float)_orbitPitch, (float)_orbitZoom);
+                    var img = Core.Services.Rendering.AssetPreviewRenderer.RenderMaterialSphere(mat, 768, (float)_orbitYaw, (float)_orbitPitch, (float)_orbitZoom);
                     if (img != null) _previewImage.Source = img;
                 }
             }

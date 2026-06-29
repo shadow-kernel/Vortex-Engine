@@ -1509,6 +1509,51 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 Assets.Add(item);
                 QueueThumbnail(item, () => GetOrBuildPrimitiveThumb(prim));
             }
+
+            // ALSO list every model file actually on disk so imported models show up under Meshes (the user's
+            // "no meshes found although there are many models" — they were only registered, if at all, under Models).
+            AddModelFilesFromDisk();
+        }
+
+        /// <summary>Scans the project's Assets folder (recursively) for model files and adds them as Models tiles.
+        /// Filesystem-based so it works even if a model was never registered in the AssetDatabase.</summary>
+        private void AddModelFilesFromDisk()
+        {
+            var projectPath = ProjectData.Current?.Path;
+            if (string.IsNullOrEmpty(projectPath)) return;
+            var assetsDir = System.IO.Path.Combine(projectPath, "Assets");
+            if (!System.IO.Directory.Exists(assetsDir)) return;
+
+            var exts = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                { ".glb", ".gltf", ".fbx", ".obj", ".dae", ".3ds", ".blend", ".vmesh" };
+            string[] files;
+            try { files = System.IO.Directory.GetFiles(assetsDir, "*.*", System.IO.SearchOption.AllDirectories); }
+            catch { return; }
+
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var a in Assets) if (!string.IsNullOrEmpty(a.Path)) seen.Add(a.Path.Replace('\\', '/'));
+
+            foreach (var f in files)
+            {
+                var ext = System.IO.Path.GetExtension(f).ToLowerInvariant();
+                if (!exts.Contains(ext)) continue;
+                var rel = f.Substring(projectPath.Length).TrimStart('\\', '/').Replace('\\', '/');
+                if (!seen.Add(rel)) continue;
+                var typeName = (ext == ".glb" || ext == ".gltf") ? "GLTF Model" : ext.TrimStart('.').ToUpperInvariant() + " Model";
+                var item = new AssetItem
+                {
+                    Id = Assets.Count,
+                    Name = System.IO.Path.GetFileNameWithoutExtension(f),
+                    TypeName = typeName,
+                    IconCode = "",
+                    IconColor = "#CE9178",
+                    Type = AssetType.Models,
+                    Path = rel,
+                    IsImported = true
+                };
+                Assets.Add(item);
+                QueueThumbnail(item, () => GetOrBuildModelThumb(f));
+            }
         }
 
         private void LoadImportedModels()
@@ -1554,6 +1599,9 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 QueueThumbnail(Assets[Assets.Count - 1],
                     () => GetOrBuildModelThumb(System.IO.Path.Combine(assetDb.ProjectPath, asset.RelativePath ?? asset.FileName)));
             }
+
+            // The AssetDatabase may not have every model registered — also list whatever is actually on disk.
+            AddModelFilesFromDisk();
 
             // Show hint if no models
             if (Assets.Count == 0)
