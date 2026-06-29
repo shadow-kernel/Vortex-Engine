@@ -134,6 +134,14 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         {
             if (!_isRendererInitialized || _cameraController == null) return;
 
+            // A live-preview dialog (model/material editor) is open and owns the engine's single render path.
+            // PAUSE this viewport entirely while it's up — it's hidden behind the modal anyway — so the two never
+            // contend for the shared render queue / target (which crashed the app on nested editor dialogs). The
+            // dialog calls RequestResubmit on close and rendering resumes.
+            if (ActivePreviewDialogs > 0 &&
+                Editor.Core.Services.PlayModeService.Instance.State != Editor.Core.Services.PlayState.Playing)
+                return;
+
             // While playing, the game runs IN this viewport (rendered through the main camera). Only a
             // true Paused state halts the simulation; we still render every frame either way.
             bool playing = Editor.Core.Services.PlayModeService.Instance.State == Editor.Core.Services.PlayState.Playing;

@@ -53,6 +53,18 @@ namespace Editor.Dialogs
             InitializeWindow();
             BuildUI();
             Loaded += (s, e) => { _previewReady = true; RefreshPreview(); };
+            // This dialog's live sphere preview swaps the SHARED render queue; pause the main viewport while it's
+            // open so they never contend for the engine's single render path (which crashed on nested dialogs).
+            Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.ActivePreviewDialogs++;
+            Closed += (s, e) =>
+            {
+                try
+                {
+                    Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.ActivePreviewDialogs--;
+                    Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.RequestResubmit();
+                }
+                catch { }
+            };
         }
 
         public MaterialEditorDialog(string materialPath) : this()

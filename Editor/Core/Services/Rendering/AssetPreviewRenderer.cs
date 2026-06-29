@@ -64,10 +64,12 @@ namespace Editor.Core.Services.Rendering
                     { cx = bx; cy = by; cz = bz; gotCenter = true; }
                 }
 
-                // Neutral studio lighting (the scene rebuilds global light state each frame anyway).
+                // BRIGHT studio lighting so previews aren't dark: high ambient (nothing goes black) + a strong key
+                // directional. A fill light at the camera is added below (after the camera position is known) so
+                // the surface facing the viewer is always well lit.
                 VortexAPI.ClearAllLights();
-                VortexAPI.SetAmbientLightStrength(0.32f);
-                VortexAPI.SetDirectionalLightParams(-0.45f, -0.6f, -0.65f, 1f, 0.98f, 0.92f, 3.0f);
+                VortexAPI.SetAmbientLightStrength(0.62f);
+                VortexAPI.SetDirectionalLightParams(-0.45f, -0.6f, -0.65f, 1f, 0.99f, 0.96f, 4.5f);
 
                 const float fov = 35f;
                 float fovHalf = fov * 0.5f * (float)Math.PI / 180f;
@@ -79,6 +81,8 @@ namespace Editor.Core.Services.Rendering
                 float px = cx + d * (float)(Math.Cos(pitch) * Math.Sin(yaw));
                 float py = cy + d * (float)Math.Sin(pitch);
                 float pz = cz + d * (float)(Math.Cos(pitch) * Math.Cos(yaw));
+                // Fill light at the camera so whatever the viewer sees is lit (kills the "everything is dark" look).
+                try { VortexAPI.SubmitPointLight(px, py, pz, 1f, 0.98f, 0.95f, 5.0f, Math.Max(radius, 0.001f) * 22f); } catch { }
                 var cam = VortexAPI.ViewportCameraDesc.CreatePerspective(
                     px, py, pz, cx, cy, cz, 0, 1, 0, fov,
                     Math.Max(0.02f, d * 0.01f), d * 4f + 50f);

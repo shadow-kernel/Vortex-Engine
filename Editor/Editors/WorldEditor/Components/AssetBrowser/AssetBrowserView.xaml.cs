@@ -934,7 +934,12 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                     if (System.IO.File.Exists(fullPath))
                     {
                         try { Dialogs.MaterialEditorDialog.OpenMaterial(Window.GetWindow(this), fullPath); }
-                        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Error opening Material Editor: {ex.Message}"); }
+                        catch (Exception ex)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"Error opening Material Editor: {ex.Message}");
+                            MessageBox.Show("Could not open the Material Editor:\n" + ex.Message, "Material Editor",
+                                MessageBoxButton.OK, MessageBoxImage.Error);
+                        }
                         return true;
                     }
                     return false;
@@ -1850,7 +1855,7 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 default: return null; // Capsule/Torus: no primitive available -> glyph
             }
             if (mesh < 0) return null;
-            var img = BuildMeshThumbnail(new[] { mesh }, new[] { EnsureDefaultThumbMaterial() }, 128);
+            var img = BuildMeshThumbnail(new[] { mesh }, new[] { EnsureDefaultThumbMaterial() }, 256);
             try { VortexAPI.DeleteMesh(mesh); } catch { }
             if (img != null) _thumbCache[key] = img;
             return img;
@@ -1868,7 +1873,7 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 var meshes = new long[subs.Length];
                 var mats = new long[subs.Length];
                 for (int i = 0; i < subs.Length; i++) { meshes[i] = subs[i].MeshId; mats[i] = subs[i].MaterialId; }
-                var img = BuildMeshThumbnail(meshes, mats, 128);
+                var img = BuildMeshThumbnail(meshes, mats, 256);
                 if (img != null) _thumbCache[key] = img;
                 return img;
             }
@@ -1890,7 +1895,7 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 long mat = Editor.Core.Services.MaterialService.Instance.GetOrBuildVortexMaterial(vmatPath);
                 if (mat >= 0)
                 {
-                    var img = Core.Services.Rendering.AssetPreviewRenderer.RenderMaterialSphere(mat, 128);
+                    var img = Core.Services.Rendering.AssetPreviewRenderer.RenderMaterialSphere(mat, 256);
                     if (img != null) _thumbCache[key] = img;
                     return img;
                 }

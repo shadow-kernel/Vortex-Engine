@@ -306,14 +306,13 @@ namespace Editor.Dialogs
                 ItemsSource = _modelData.Submeshes
             };
             _submeshList.SelectionChanged += SubmeshList_SelectionChanged;
-            // Double-click a submesh -> open the model in the dedicated Mesh Viewer tab (inspect the geometry).
+            // Double-click a submesh -> open the dedicated Mesh Editor window (live preview + geometry breakdown).
             _submeshList.MouseDoubleClick += (s, e) =>
             {
                 try
                 {
-                    var editor = Editor.Editors.WorldEditor.WorldEditorView.Current;
-                    if (editor != null && _modelData != null && !string.IsNullOrEmpty(_modelData.FilePath) && System.IO.File.Exists(_modelData.FilePath))
-                        editor.OpenModelViewerTab(_modelData.FilePath, _modelData.FileName);
+                    if (_modelData != null && !string.IsNullOrEmpty(_modelData.FilePath) && System.IO.File.Exists(_modelData.FilePath))
+                        MeshEditorDialog.OpenMesh(Window.GetWindow(this), _modelData.FilePath);
                 }
                 catch { }
             };
@@ -760,7 +759,14 @@ namespace Editor.Dialogs
                 vmat = ResolveMaterialVmatPath(_selectedMaterial);
             }
             if (!string.IsNullOrEmpty(vmat) && System.IO.File.Exists(vmat))
-                MaterialEditorDialog.OpenMaterial(Window.GetWindow(this), vmat);
+            {
+                try { MaterialEditorDialog.OpenMaterial(Window.GetWindow(this), vmat); }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("Could not open the Material Editor:\n" + ex.Message, "Material Editor",
+                        MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+            }
             else
                 MessageBox.Show("Save the model's materials first (Save Materials).", "Material Editor",
                     MessageBoxButton.OK, MessageBoxImage.Information);
