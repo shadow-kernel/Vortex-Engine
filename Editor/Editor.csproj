@@ -269,6 +269,7 @@
     <Compile Include="Core\Services\Rendering\SecondaryViewportRenderer.cs" />
     <Compile Include="Core\Services\Rendering\ViewportRenderManager.cs" />
     <Compile Include="Core\Services\SceneRenderService.cs" />
+    <Compile Include="Core\Services\StressTestService.cs" />
     <Compile Include="Core\Services\SceneService.cs" />
     <Compile Include="Core\Services\ScriptingService.cs" />
     <Compile Include="Core\Services\Git\GitResult.cs" />

@@ -724,6 +724,24 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             AssetList.ContextMenu = BuildAssetContextMenu(AssetList.SelectedItem as AssetItem);
         }
 
+        /// <summary>Spawn `count` copies of a model into the viewport via the instanced stress-test harness.</summary>
+        private void StartStress(AssetItem item, int count)
+        {
+            try
+            {
+                var projectPath = ProjectData.Current?.Path ?? "";
+                string fullPath = item.Path;
+                if (!string.IsNullOrEmpty(fullPath) && !System.IO.Path.IsPathRooted(fullPath))
+                    fullPath = System.IO.Path.Combine(projectPath, item.Path);
+                if (System.IO.File.Exists(fullPath))
+                {
+                    Core.Services.StressTestService.Start(fullPath, count);
+                    Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.RequestResubmit();
+                }
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[StressTest] {ex.Message}"); }
+        }
+
         private ContextMenu BuildAssetContextMenu(AssetItem item)
         {
             var menu = new ContextMenu { Background = Br("#FF161618"), BorderBrush = Br("#FF3A3A3E") };
@@ -735,7 +753,12 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                     AddMenu(menu, "Open / Edit", () => OpenOrPlaceAsset(item), 0xE70F, "#FF9C8CFF");
 
                 if (item.Type == AssetType.Meshes || item.Type == AssetType.Models)
+                {
                     AddMenu(menu, "Add to Scene", () => AddAssetToScene(item), 0xE710, "#FF4EC9B0");
+                    AddMenu(menu, "Stress Test  ×1,000", () => StartStress(item, 1000), 0xE9D9, "#FFE6B422");
+                    AddMenu(menu, "Stress Test  ×10,000", () => StartStress(item, 10000), 0xE9D9, "#FFE67E22");
+                    AddMenu(menu, "Stop Stress Test", () => Core.Services.StressTestService.Stop(), 0xE71A, "#FF9A9AA1");
+                }
                 if (!string.IsNullOrEmpty(item.Path) && item.Path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
                     AddMenu(menu, "Assign to selected entity", () => AssignScriptToSelected(item), 0xE71B, "#FF569CD6");
 

@@ -237,10 +237,18 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             if (sceneToRender != null)
             {
                 if (_resubmitHoldFrames > 0) _resubmitHoldFrames--;
-                bool needSubmit = IsPlaying || _sceneDirty || ActivePreviewDialogs > 0 || _resubmitHoldFrames > 0 || !ReferenceEquals(sceneToRender, _submittedScene);
+                bool stressDirty = Core.Services.StressTestService.Dirty;
+                bool needSubmit = IsPlaying || _sceneDirty || ActivePreviewDialogs > 0 || _resubmitHoldFrames > 0 || stressDirty || !ReferenceEquals(sceneToRender, _submittedScene);
                 if (needSubmit)
                 {
                     SceneRenderService.Instance.SubmitScene(sceneToRender);
+                    // Append the stress-test crowd (if running) into the SAME submission so it renders via GPU
+                    // instancing — one DrawIndexedInstanced per submesh over all copies.
+                    if (Core.Services.StressTestService.Active)
+                    {
+                        Core.Services.StressTestService.Submit();
+                        Core.Services.StressTestService.ClearDirty();
+                    }
                     _submittedScene = sceneToRender;
                     _sceneDirty = false;
                 }
