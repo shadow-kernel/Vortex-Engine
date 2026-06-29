@@ -249,4 +249,37 @@ namespace Vortex
 
         private static float Clamp01(float v) { return v < 0f ? 0f : (v > 1f ? 1f : v); }
     }
+
+    /// <summary>A loaded retained-UI screen (.vui). Drive named slots + read events by stable id; gameplay logic
+    /// stays in the script — the canvas is just a renderer/router.</summary>
+    public sealed class VuiHandle
+    {
+        internal Editor.UI.Vui.VuiCanvas C;
+        internal VuiHandle(Editor.UI.Vui.VuiCanvas c) { C = c; }
+        public bool IsValid { get { return C != null; } }
+        public void Show() { if (C != null) Editor.UI.Vui.VuiStack.Instance.Show(C); }
+        public void Hide() { if (C != null) Editor.UI.Vui.VuiStack.Instance.Hide(C); }
+        public void SetValue(string id, float v) { if (C != null) C.SetValue(id, v); }
+        public void SetText(string id, string t) { if (C != null) C.SetText(id, t); }
+        public void SetVisible(string id, bool v) { if (C != null) C.SetVisible(id, v); }
+        public void SetColor(string id, Color c) { if (C != null) C.SetColor(id, c.R, c.G, c.B, c.A); }
+        public void SetImage(string id, string asset) { if (C != null) C.SetImage(id, asset); }
+        public void SetList(string id, System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyDictionary<string, string>> rows) { if (C != null) C.SetList(id, rows); }
+        public bool WasClicked(string id) { return C != null && C.WasClicked(id); }
+        public float GetSlider(string id) { return C != null ? C.GetSlider(id) : 0f; }
+        public bool GetToggle(string id) { return C != null && C.GetToggle(id); }
+        public string GetText(string id) { return C != null ? C.GetText(id) : ""; }
+        public int GetStep(string id) { return C != null ? C.GetStep(id) : 0; }
+        public int GetCapturedKey(string id) { return C != null ? C.GetCapturedKey(id) : 0; }
+    }
+
+    /// <summary>Retained-mode 2D UI: load .vui screens, stack them, drive them by id. Sits beside the immediate-mode
+    /// <see cref="UI"/> facade (both draw into the same frame). Gameplay stays in scripts.</summary>
+    public static class Gui
+    {
+        public static VuiHandle Load(string name) { return new VuiHandle(Editor.UI.Vui.VuiStack.Instance.Load(name)); }
+        public static VuiHandle Push(string name) { return new VuiHandle(Editor.UI.Vui.VuiStack.Instance.Push(name)); }
+        public static void Pop() { Editor.UI.Vui.VuiStack.Instance.Pop(); }
+        public static bool HasScreens { get { return Editor.UI.Vui.VuiStack.Instance.HasActiveScreens; } }
+    }
 }

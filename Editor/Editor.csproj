@@ -309,6 +309,12 @@
     <Compile Include="Dialogs\MaterialEditorDialog.cs" />
     <Compile Include="Dialogs\MeshEditorDialog.cs" />
     <Compile Include="Dialogs\StressTestDialog.cs" />
+    <Compile Include="UI\Vui\VuiKind.cs" />
+    <Compile Include="UI\Vui\VuiInput.cs" />
+    <Compile Include="UI\Vui\VuiElement.cs" />
+    <Compile Include="UI\Vui\VuiDocument.cs" />
+    <Compile Include="UI\Vui\VuiCanvas.cs" />
+    <Compile Include="UI\Vui\VuiStack.cs" />
     <Compile Include="Dialogs\TextureEditorDialog.cs" />
     <Compile Include="Dialogs\UniversalModelEditorDialog.cs" />
     <Compile Include="DllWrapper\Camera\VortexCamera.cs" />
