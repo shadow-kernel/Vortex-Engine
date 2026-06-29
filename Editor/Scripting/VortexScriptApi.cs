@@ -291,4 +291,16 @@ namespace Vortex
         public static void ToggleFullscreen() { Editor.DllWrapper.VortexAPI.GameHostToggleFullscreen(); }
         public static bool IsFullscreen { get { return Editor.DllWrapper.VortexAPI.GameHostIsFullscreen(); } }
     }
+
+    /// <summary>Lighting/atmosphere control for game scripts — flicker, lightning, mood. With submit-once a static
+    /// scene keeps whatever the script last set, so per-frame changes here drive a living, flickering environment.</summary>
+    public static class Lighting
+    {
+        /// <summary>Global ambient strength (0 = pitch black, 1 = flat-lit). Dip it for darkness/flicker.</summary>
+        public static void SetAmbient(float strength) { Editor.DllWrapper.VortexAPI.SetAmbientLightStrength(strength); }
+        /// <summary>The sun/key directional light: direction (dx,dy,dz), color (r,g,b 0..1), and intensity.</summary>
+        public static void SetDirectional(float dx, float dy, float dz, float r, float g, float b, float intensity)
+            { Editor.DllWrapper.VortexAPI.SetDirectionalLightParams(dx, dy, dz, r, g, b, intensity); }
+        public static void ClearLights() { Editor.DllWrapper.VortexAPI.ClearAllLights(); }
+    }
 }

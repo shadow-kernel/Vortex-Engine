@@ -44,6 +44,17 @@ namespace Editor.UI.Vui
                 var p1 = Path.Combine(AssetRoot, name); if (File.Exists(p1)) return p1;
                 var p2 = Path.Combine(AssetRoot, "UI", name); if (File.Exists(p2)) return p2;
             }
+            // Fall back to the current project's Assets so scripts can just say Gui.Load("HorrorLobby.vui").
+            try
+            {
+                var proj = Editor.Core.Data.ProjectData.Current != null ? Editor.Core.Data.ProjectData.Current.Path : null;
+                if (!string.IsNullOrEmpty(proj))
+                {
+                    var p3 = Path.Combine(proj, "Assets", "UI", name); if (File.Exists(p3)) return p3;
+                    var p4 = Path.Combine(proj, "Assets", name); if (File.Exists(p4)) return p4;
+                }
+            }
+            catch { }
             return name;
         }
 
