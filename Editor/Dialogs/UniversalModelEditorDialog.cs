@@ -63,6 +63,9 @@ namespace Editor.Dialogs
             InitializeWindow();
             BuildUI();
             Loaded += OnLoaded;
+            // The live preview swaps the SHARED render queue; when this editor closes, make the main editor
+            // viewport re-submit its scene so the model doesn't linger in the freecam.
+            Closed += (s, e) => { try { Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.RequestResubmit(); } catch { } };
         }
 
         public UniversalModelEditorDialog(UniversalModelData modelData)
@@ -71,6 +74,9 @@ namespace Editor.Dialogs
             InitializeWindow();
             BuildUI();
             Loaded += OnLoaded;
+            // The live preview swaps the SHARED render queue; when this editor closes, make the main editor
+            // viewport re-submit its scene so the model doesn't linger in the freecam.
+            Closed += (s, e) => { try { Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.RequestResubmit(); } catch { } };
         }
 
         private void InitializeWindow()

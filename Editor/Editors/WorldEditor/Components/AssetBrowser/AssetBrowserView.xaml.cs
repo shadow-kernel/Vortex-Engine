@@ -674,7 +674,25 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                     if (!string.IsNullOrEmpty(root) && !string.IsNullOrEmpty(dir))
                         RevealFolderInTree(System.IO.Path.Combine(root, dir));
                 }
-                OpenOrPlaceAsset(item);
+
+                // Double-click behaviour for MODELS/MESHES (Unity/Unreal-style):
+                //   plain  -> add the model to the scene
+                //   Shift  -> open the Model Editor (materials/textures)
+                //   Ctrl   -> open a standalone Model Viewer to inspect + fly around it
+                // (this also fixes the old bug where double-click opened the editor whose preview hijacked the
+                //  shared render queue, so the main viewport showed the model instead of the scene.)
+                bool isModel = item.Type == AssetType.Meshes || item.Type == AssetType.Models;
+                var mods = System.Windows.Input.Keyboard.Modifiers;
+                if (isModel && !string.IsNullOrEmpty(item.Path) && !item.Path.StartsWith("Primitive:", StringComparison.OrdinalIgnoreCase))
+                {
+                    if ((mods & System.Windows.Input.ModifierKeys.Shift) != 0) OpenAssetInEditor(item);
+                    else if ((mods & System.Windows.Input.ModifierKeys.Control) != 0) OpenModelViewer(item);
+                    else AddAssetToScene(item);
+                }
+                else
+                {
+                    OpenOrPlaceAsset(item); // primitives, textures, materials, scripts -> their normal open/edit
+                }
             }
         }
 
@@ -818,6 +836,13 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
         /// added to the scene and everything else shows explicit feedback — so an open gesture is
         /// never a silent no-op. Shared by double-click and the context-menu "Open / Edit" item.
         /// </summary>
+        /// <summary>Ctrl+double-click: inspect a model on its own (large, isolated). For now opens the Model
+        /// Editor (big orbit preview); the dedicated freecam viewer TAB in the viewport is the next step.</summary>
+        private void OpenModelViewer(AssetItem item)
+        {
+            OpenAssetInEditor(item);
+        }
+
         private void OpenOrPlaceAsset(AssetItem item)
         {
             if (item == null) return;
