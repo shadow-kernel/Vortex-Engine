@@ -76,9 +76,43 @@ the hot path). Present and window ownership live in the same native context → 
 
 ---
 
+## Phase 1 — implementation findings (investigated, scoped)
+Native code surveyed; the exact build plan:
+- A native `RenderLoop` already exists (`Engine/Runtime/RenderLoop.{h,cpp}`) — it runs `render_frame()` on a
+  `std::thread`. BUT it renders into the swapchain created on the **WPF `HwndHost` child window** → same
+  Present-freeze. So the loop is fine; the **window** is the problem.
+- The renderer's `initialize_render_viewport(HWND, w, h)` (VortexAPI `InitializeRenderViewport`) creates the
+  device + swapchain from **any** HWND. → GameHost REUSES it on a NEW native window — no renderer rewrite.
+- New `Engine/Runtime/GameHost.{h,cpp}` (single thread owns everything):
+  1. `RegisterClassEx` + `CreateWindowEx` → a real native Win32 window (resizable, maximizable).
+  2. `DX12Renderer::initialize_render_viewport(hwnd, w, h)` on that window.
+  3. Loop on THIS thread: `PeekMessage`/`Translate`/`Dispatch` → `tick_cb(dt)` (managed) → `render_frame()`
+     → present. Present + wndproc + resize all on one thread → **no cross-thread DXGI / no freeze**.
+  4. wndproc: `WM_SIZE` → `resize(w,h)` (same thread); `WM_MOUSEMOVE/LBUTTON*` → cache mouse/buttons;
+     `WM_KEYDOWN/UP` → key state; `WM_CLOSE` → exit. Fed to C# via getters or pushed into the tick.
+- New exports (VortexAPI): `RunGameHost(w,h,title)` (blocks, runs the loop), `SetGameTickCallback(void(*)(float))`
+  (managed delegate marshalled to a fnptr — runs scripts + camera + submit each frame), `RequestGameHostExit()`,
+  `SetGameHostVSync(bool)`, plus host-input getters (`GameHostMouseX/Y/Down`, key state).
+- C# side: `App.BootPlayer` for the shipped game launches the GameHost (mount pak → set tick callback →
+  `RunGameHost`) instead of the WPF `GameWindow`. The tick callback = today's OwnedFrame body minus the WPF
+  mouse mapping (input now comes from the native wndproc). Editor "Play in new window" keeps the WPF path.
+- Build: add GameHost.{h,cpp} to `Engine.vcxproj`; exports to `VortexAPI.cpp`; tick-callback delegate +
+  P/Invokes to the C# DllWrapper.
+- VERIFY (gate before merge): lobby renders; SPIELEN→Match renders (no freeze); maximize/F11/drag sharp;
+  FPS >> 60; ESC menu clickable — capture + simulated click, multiple runs.
+
 ## Status
 - [x] Branch + roadmap.
-- [ ] Phase 1 — native GameHost (in progress).
+- [x] Phase 1 architecture investigation + precise implementation plan (above).
+- [x] Phase 1a — native GameHost module written + **builds green** (`Engine/Runtime/GameHost.{h,cpp}`:
+      native Win32 window + reuses `systems::dx12::initialize/resize/render_frame` on it + one-thread loop
+      (pump → tick callback → render+present) + wndproc input). Exports added to VortexAPI
+      (`RunGameHost`, `SetGameTickCallback`, `RequestGameHostExit`, `SetGameHostVSync`, `GameHostMouseX/Y/Down`,
+      `GameHostClientWidth/Height`, `GameHostKeyDown`). Registered in Engine.vcxproj. Whole solution compiles.
+- [ ] Phase 1b — C# launch wiring: P/Invokes + a managed tick delegate (= today's OwnedFrame body: step
+      engine + run scripts + aim camera + submit scene), feed GameHost input into the UI host, and make
+      `App.BootPlayer` call `RunGameHost` for the shipped game. THEN verify (capture + click + scene-switch +
+      resize + FPS) and merge to main.
 - [ ] Phases 2–5.
 
 Each phase is built + verified + committed before the next. Merges to `main` only when a phase is green.

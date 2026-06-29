@@ -13,6 +13,7 @@
 #include "..\Engine\Runtime\AssetDatabase.h"
 #include "..\Engine\Runtime\PrefabService.h"
 #include "..\Engine\Runtime\RenderLoop.h"
+#include "..\Engine\Runtime\GameHost.h"
 #include "..\Engine\Runtime\Systems\RenderSystem.h"
 #include "..\Engine\Runtime\Systems\RenderSystemDX12.h"
 #include "..\Engine\Runtime\Systems\PhysicsSystem.h"
@@ -719,6 +720,25 @@ EDITOR_INTERFACE int GetVertexCount()
 }
 
 // ============== RENDER LOOP API ==============
+
+// ---- Native GameHost: the standalone game runs in its OWN native Win32 window + DX12 swapchain + loop,
+// all on one thread (no WPF HwndHost). Fixes the cross-thread Present-freeze and uncaps FPS. ----
+EDITOR_INTERFACE bool RunGameHost(unsigned int width, unsigned int height, const wchar_t* title)
+{
+	return runtime::GameHost::run(width, height, title);
+}
+EDITOR_INTERFACE void SetGameTickCallback(void(*fn)(float))
+{
+	runtime::GameHost::set_tick_callback(reinterpret_cast<runtime::GameHost::tick_fn>(fn));
+}
+EDITOR_INTERFACE void RequestGameHostExit() { runtime::GameHost::request_exit(); }
+EDITOR_INTERFACE void SetGameHostVSync(bool enabled) { runtime::GameHost::set_vsync(enabled); }
+EDITOR_INTERFACE int  GameHostMouseX() { return runtime::GameHost::mouse_x(); }
+EDITOR_INTERFACE int  GameHostMouseY() { return runtime::GameHost::mouse_y(); }
+EDITOR_INTERFACE bool GameHostMouseDown() { return runtime::GameHost::mouse_down(); }
+EDITOR_INTERFACE int  GameHostClientWidth() { return runtime::GameHost::client_width(); }
+EDITOR_INTERFACE int  GameHostClientHeight() { return runtime::GameHost::client_height(); }
+EDITOR_INTERFACE bool GameHostKeyDown(int vk) { return runtime::GameHost::key_down(vk); }
 
 EDITOR_INTERFACE void StartRenderLoop()
 {

@@ -59,6 +59,7 @@
     <ClInclude Include="Input\InputTypes.h" />
     <ClInclude Include="Runtime\AssetDatabase.h" />
     <ClInclude Include="Runtime\AssetManifest.h" />
+    <ClInclude Include="Runtime\GameHost.h" />
     <ClInclude Include="Runtime\PrefabService.h" />
     <ClInclude Include="Runtime\RenderLoop.h" />
     <ClInclude Include="Runtime\ResourceManager.h" />
@@ -109,6 +110,7 @@
     <ClCompile Include="Input\InputSystem.cpp" />
     <ClCompile Include="Runtime\AssetDatabase.cpp" />
     <ClCompile Include="Runtime\AssetManifest.cpp" />
+    <ClCompile Include="Runtime\GameHost.cpp" />
     <ClCompile Include="Runtime\PrefabService.cpp" />
     <ClCompile Include="Runtime\RenderLoop.cpp" />
     <ClCompile Include="Runtime\ResourceManager.cpp" />
