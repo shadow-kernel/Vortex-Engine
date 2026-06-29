@@ -106,6 +106,9 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostMouseCaptured")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool GameHostMouseCapturedNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostMouseDX")] private static extern int GameHostMouseDXNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostMouseDY")] private static extern int GameHostMouseDYNative();
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostMouseWheel")] private static extern int GameHostMouseWheelNative();
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostNextChar")] private static extern int GameHostNextCharNative();
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostNextKeyPressed")] private static extern int GameHostNextKeyPressedNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostToggleFullscreen")] private static extern void GameHostToggleFullscreenNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostIsFullscreen")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool GameHostIsFullscreenNative();
 
@@ -126,6 +129,12 @@ namespace Editor.DllWrapper
         public static bool GameHostMouseCaptured() => GameHostMouseCapturedNative();
         public static int GameHostMouseDX() => GameHostMouseDXNative();
         public static int GameHostMouseDY() => GameHostMouseDYNative();
+        /// <summary>Accumulated mouse-wheel notches since last call (+up/-down), then cleared.</summary>
+        public static int GameHostMouseWheel() { try { return GameHostMouseWheelNative(); } catch { return 0; } }
+        /// <summary>Next typed character for text fields, or -1 if the queue is empty.</summary>
+        public static int GameHostNextChar() { try { return GameHostNextCharNative(); } catch { return -1; } }
+        /// <summary>Next edge-pressed virtual-key for keybind capture, or 0 if the queue is empty.</summary>
+        public static int GameHostNextKeyPressed() { try { return GameHostNextKeyPressedNative(); } catch { return 0; } }
         /// <summary>Toggle borderless fullscreen (also bound to F11 natively).</summary>
         public static void GameHostToggleFullscreen() => GameHostToggleFullscreenNative();
         public static bool GameHostIsFullscreen() => GameHostIsFullscreenNative();

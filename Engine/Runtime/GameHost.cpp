@@ -5,6 +5,7 @@
 #include <Windows.h>
 #include <windowsx.h> // GET_X_LPARAM / GET_Y_LPARAM
 #include <chrono>
+#include <deque>
 
 namespace vortex::runtime
 {
@@ -25,6 +26,13 @@ namespace vortex::runtime
         bool g_captured = false;
         bool g_has_focus = true;
         long g_mouse_dx = 0, g_mouse_dy = 0;
+
+        // Retained-UI input event queues (same thread as the tick that drains them → no locking). Bounded so a
+        // burst of input while the game is paused can't grow unboundedly; overflow drops the oldest event.
+        int               g_wheel_accum = 0;       // accumulated wheel notches (+up / -down)
+        std::deque<int>   g_char_queue;             // typed characters (WM_CHAR) for text fields
+        std::deque<int>   g_key_queue;              // edge-pressed VKs (WM_KEYDOWN, non-repeat) for keybind capture
+        constexpr size_t  k_queue_cap = 64;
 
         // Deferred resize: WM_SIZE only records the new size; the actual swapchain resize runs in the main loop
         // AFTER the message pump, so it never fires re-entrantly mid-SetWindowPos (the F11/maximize transition
@@ -87,8 +95,21 @@ namespace vortex::runtime
                 }
                 return 0;
             case WM_KEYDOWN:
-                // F11 toggles borderless fullscreen (ignore auto-repeat: bit 30 = previous key state).
-                if (wp == VK_F11 && !(lp & (1 << 30))) do_toggle_fullscreen();
+                // Ignore auto-repeat (bit 30 = previous key state): F11 toggles fullscreen; every fresh press is
+                // also queued for keybind capture.
+                if (!(lp & (1 << 30)))
+                {
+                    if (wp == VK_F11) do_toggle_fullscreen();
+                    if (g_key_queue.size() >= k_queue_cap) g_key_queue.pop_front();
+                    g_key_queue.push_back((int)wp);
+                }
+                return 0;
+            case WM_MOUSEWHEEL:
+                g_wheel_accum += GET_WHEEL_DELTA_WPARAM(wp) / WHEEL_DELTA;   // +1 per notch up, -1 down
+                return 0;
+            case WM_CHAR:
+                if (g_char_queue.size() >= k_queue_cap) g_char_queue.pop_front();
+                g_char_queue.push_back((int)wp);     // typed character for focused text fields
                 return 0;
             case WM_MOUSEMOVE: g_mx = GET_X_LPARAM(lp); g_my = GET_Y_LPARAM(lp); return 0;
             case WM_INPUT:
@@ -138,6 +159,10 @@ namespace vortex::runtime
     int  GameHost::client_width() { return g_cw; }
     int  GameHost::client_height() { return g_ch; }
     bool GameHost::key_down(int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; }
+
+    int  GameHost::mouse_wheel() { int w = g_wheel_accum; g_wheel_accum = 0; return w; }
+    int  GameHost::next_char() { if (g_char_queue.empty()) return -1; int c = g_char_queue.front(); g_char_queue.pop_front(); return c; }
+    int  GameHost::next_key_pressed() { if (g_key_queue.empty()) return 0; int k = g_key_queue.front(); g_key_queue.pop_front(); return k; }
 
     void GameHost::set_mouse_captured(bool captured)
     {

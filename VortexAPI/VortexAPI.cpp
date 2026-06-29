@@ -823,6 +823,10 @@ EDITOR_INTERFACE void SetGameHostMouseCaptured(bool captured) { runtime::GameHos
 EDITOR_INTERFACE bool GameHostMouseCaptured() { return runtime::GameHost::mouse_captured(); }
 EDITOR_INTERFACE int  GameHostMouseDX() { return runtime::GameHost::mouse_dx(); }
 EDITOR_INTERFACE int  GameHostMouseDY() { return runtime::GameHost::mouse_dy(); }
+// Retained-UI input: wheel notches this frame; next typed char (-1 if none); next edge-pressed VK (0 if none).
+EDITOR_INTERFACE int  GameHostMouseWheel() { return runtime::GameHost::mouse_wheel(); }
+EDITOR_INTERFACE int  GameHostNextChar() { return runtime::GameHost::next_char(); }
+EDITOR_INTERFACE int  GameHostNextKeyPressed() { return runtime::GameHost::next_key_pressed(); }
 // Borderless-fullscreen toggle (also F11 natively) for the settings menu.
 EDITOR_INTERFACE void GameHostToggleFullscreen() { runtime::GameHost::toggle_fullscreen(); }
 EDITOR_INTERFACE bool GameHostIsFullscreen() { return runtime::GameHost::is_fullscreen(); }

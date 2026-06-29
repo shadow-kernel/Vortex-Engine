@@ -31,6 +31,14 @@ namespace vortex::runtime
         static int  client_height();
         static bool key_down(int vk);  // virtual-key currently held
 
+        // Event queues for the retained UI (drained once per frame on the tick thread — same thread as the
+        // wndproc, so no locking). mouse_wheel returns + clears the accumulated notch delta; next_char pops the
+        // next typed character (-1 if none) for text fields; next_key_pressed pops the next edge-pressed VK
+        // (0 if none) for keybind capture.
+        static int  mouse_wheel();
+        static int  next_char();
+        static int  next_key_pressed();
+
         // FPS mouse-look capture: while captured, the host hides the cursor and re-centers it every frame,
         // reporting the per-frame delta via mouse_dx/dy — so the cursor never leaves the window and look is
         // unbounded. Released (menu open) shows + frees the cursor so UI is clickable. Driven by the game.
