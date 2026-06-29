@@ -76,11 +76,16 @@ namespace Editor.Dialogs
             root.Children.Add(_countBox);
 
             var btnRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 14, 0, 0) };
-            var run = MakeButton("Run", Color.FromRgb(108, 92, 231), 120);
+            var runGame = MakeButton("▶ Run in Game", Color.FromRgb(108, 92, 231), 150);
+            runGame.ToolTip = "Launch the real GameHost (uncapped FPS) in its own window — fly around with WASD";
+            runGame.Click += (s, e) => RunInGame();
+            btnRow.Children.Add(runGame);
+            var run = MakeButton("In Editor", Color.FromRgb(70, 70, 78), 90);
+            run.Margin = new Thickness(8, 0, 0, 0);
             run.Click += (s, e) => Run();
             btnRow.Children.Add(run);
-            var stop = MakeButton("Stop", Color.FromRgb(70, 70, 78), 100);
-            stop.Margin = new Thickness(10, 0, 0, 0);
+            var stop = MakeButton("Stop", Color.FromRgb(70, 70, 78), 80);
+            stop.Margin = new Thickness(8, 0, 0, 0);
             stop.Click += (s, e) => { StressTestService.Stop(); UpdateStats(); };
             btnRow.Children.Add(stop);
             root.Children.Add(btnRow);
@@ -127,6 +132,27 @@ namespace Editor.Dialogs
             StressTestService.Start(_modelPath, count);
             try { Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.RequestResubmit(); } catch { }
             UpdateStats();
+        }
+
+        /// <summary>Launch the real GameHost (uncapped FPS) in a SEPARATE process rendering the crowd — the export
+        /// render path, with a free-fly camera and on-screen stats, instead of the 60fps editor viewport.</summary>
+        private void RunInGame()
+        {
+            if (!int.TryParse(_countBox.Text.Trim().Replace(",", "").Replace(".", ""), out int count) || count <= 0)
+            {
+                MessageBox.Show("Enter a positive whole number of copies.", "Stress Test", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            try
+            {
+                string exe = System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName;
+                var psi = new System.Diagnostics.ProcessStartInfo(exe, "--stress=\"" + _modelPath + "\" --count=" + count) { UseShellExecute = false };
+                System.Diagnostics.Process.Start(psi);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Could not launch the stress player:\n" + ex.Message, "Stress Test", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
         }
 
         private void UpdateStats()

@@ -24,10 +24,36 @@ namespace Editor
             bool playerMode = (e.Args != null && System.Array.IndexOf(e.Args, "--play") >= 0)
                               || System.IO.File.Exists(System.IO.Path.Combine(exeDir, "player.vortex"));
 
+            // Rendering STRESS-TEST mode: launched as a separate process by the editor with
+            //   --stress="<abs model path>" --count=<N>
+            // Boots straight into the native GameHost (uncapped FPS) rendering N instanced copies of the model
+            // with a free-fly camera + on-screen stats — the real render path, NOT the 60fps editor viewport.
+            if (e.Args != null)
+            {
+                foreach (var a in e.Args)
+                {
+                    if (a.StartsWith("--stress=", StringComparison.OrdinalIgnoreCase))
+                        _stressModelArg = a.Substring("--stress=".Length).Trim('"');
+                    else if (a.StartsWith("--count=", StringComparison.OrdinalIgnoreCase))
+                        int.TryParse(a.Substring("--count=".Length), out _stressCountArg);
+                }
+            }
+            _stressMode = !string.IsNullOrEmpty(_stressModelArg);
+
             // Show the branded splash immediately. It's topmost, so it covers the (blocking) engine init,
             // the empty editor shell, and the project browser opening underneath — then fades to reveal them.
             var splash = new SplashWindow();
             splash.Show();
+
+            if (_stressMode)
+            {
+                string logDir = exeDir;
+                AppDomain.CurrentDomain.UnhandledException += (s, ev) => LogPlayerError(logDir, "AppDomain", ev.ExceptionObject as Exception);
+                DispatcherUnhandledException += (s, ev) => LogPlayerError(logDir, "Dispatcher", ev.Exception);
+                Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background,
+                    new Action(() => BootStressPlayer(exeDir, splash)));
+                return;
+            }
 
             if (playerMode)
             {
@@ -132,6 +158,109 @@ namespace Editor
             }
         }
 
+        // ===== Rendering stress-test player (separate process, native GameHost, uncapped) =====
+        private static bool _stressMode;
+        private static string _stressModelArg;
+        private static int _stressCountArg = 1000;
+        private static bool _stressInit;
+        private static float _scx, _scy, _scz, _syaw, _spitch;   // free-fly camera state
+        private static int _stressFrames; private static DateTime _stressT0 = DateTime.MinValue;
+
+        /// <summary>Boots ONLY the native GameHost rendering a stress crowd of the given model — no project, no
+        /// vpak. The crowd + free-fly camera + stats overlay are driven by StressTick (via GameHostTick).</summary>
+        private void BootStressPlayer(string exeDir, SplashWindow splash)
+        {
+            try
+            {
+                splash.SetStatus("Starting stress test…");
+                DllWrapper.VortexAPI.InitEngineRuntime();
+                try { Editor.Core.Services.EditorViewportService.Instance.AreGizmosVisible = false; } catch { }
+                splash.FadeOutAndClose();
+                _ghTick = GameHostTick;
+                DllWrapper.VortexAPI.SetGameTickCallback(_ghTick);
+                DllWrapper.VortexAPI.RunGameHost(1280, 720, "Vortex Stress Test"); // BLOCKS
+                Shutdown();
+            }
+            catch (Exception ex)
+            {
+                LogPlayerError(exeDir, "BootStressPlayer", ex);
+                try { splash.FadeOutAndClose(); } catch { }
+                Shutdown();
+            }
+        }
+
+        /// <summary>One GameHost frame in stress mode: free-fly camera + submit the instanced crowd + stats HUD.</summary>
+        private void StressTick(float dt)
+        {
+            try
+            {
+                int cw = DllWrapper.VortexAPI.GameHostClientWidth(); if (cw < 1) cw = 1;
+                int ch = DllWrapper.VortexAPI.GameHostClientHeight(); if (ch < 1) ch = 1;
+
+                if (!_stressInit)
+                {
+                    _stressInit = true;
+                    try { DllWrapper.VortexAPI.ShowGrid(false); DllWrapper.VortexAPI.ShowGizmos(false); } catch { }
+                    // Bright lighting (the GameHost main path uploads these correctly).
+                    DllWrapper.VortexAPI.ClearAllLights();
+                    DllWrapper.VortexAPI.SetAmbientLightStrength(0.55f);
+                    DllWrapper.VortexAPI.SetDirectionalLightParams(-0.4f, -0.6f, -0.6f, 1f, 1f, 0.97f, 3.5f);
+                    // Build the crowd (imports the model from disk + lays out the grid).
+                    Editor.Core.Services.StressTestService.Start(_stressModelArg, _stressCountArg);
+                    // Initial camera framing the whole grid.
+                    int side = (int)Math.Ceiling(Math.Sqrt(Math.Max(1, _stressCountArg)));
+                    float extent = side * 3.5f;
+                    _scx = 0f; _scy = Math.Max(8f, extent * 0.35f); _scz = -Math.Max(14f, extent * 0.6f);
+                    _syaw = 0f; _spitch = 0.32f;
+                }
+
+                // Free-fly camera (WASD + QE + mouse-look; Shift = faster).
+                DllWrapper.VortexAPI.SetGameHostMouseCaptured(true);
+                float ddx = DllWrapper.VortexAPI.GameHostMouseDX(), ddy = DllWrapper.VortexAPI.GameHostMouseDY();
+                if (ddx > 200f) ddx = 200f; else if (ddx < -200f) ddx = -200f;
+                if (ddy > 200f) ddy = 200f; else if (ddy < -200f) ddy = -200f;
+                _syaw += ddx * 0.0035f; _spitch += ddy * 0.0035f;
+                if (_spitch > 1.5f) _spitch = 1.5f; else if (_spitch < -1.5f) _spitch = -1.5f;
+                double cyp = Math.Cos(_spitch), syp = Math.Sin(_spitch), cya = Math.Cos(_syaw), sya = Math.Sin(_syaw);
+                float fx = (float)(sya * cyp), fy = (float)(-syp), fz = (float)(cya * cyp);
+                float rx = (float)cya, rz = (float)(-sya);
+                float speed = (DllWrapper.VortexAPI.GameHostKeyDown(0x10) ? 90f : 28f) * dt;
+                if (DllWrapper.VortexAPI.GameHostKeyDown(0x57)) { _scx += fx * speed; _scy += fy * speed; _scz += fz * speed; } // W
+                if (DllWrapper.VortexAPI.GameHostKeyDown(0x53)) { _scx -= fx * speed; _scy -= fy * speed; _scz -= fz * speed; } // S
+                if (DllWrapper.VortexAPI.GameHostKeyDown(0x44)) { _scx += rx * speed; _scz += rz * speed; }                     // D
+                if (DllWrapper.VortexAPI.GameHostKeyDown(0x41)) { _scx -= rx * speed; _scz -= rz * speed; }                     // A
+                if (DllWrapper.VortexAPI.GameHostKeyDown(0x45)) _scy += speed;                                                  // E up
+                if (DllWrapper.VortexAPI.GameHostKeyDown(0x51)) _scy -= speed;                                                  // Q down
+                DllWrapper.VortexAPI.SetViewCamera(_scx, _scy, _scz, _scx + fx, _scy + fy, _scz + fz, 0f, 1f, 0f);
+
+                // Submit the instanced crowd once (and whenever it changes).
+                if (Editor.Core.Services.StressTestService.Dirty)
+                {
+                    Editor.Core.Services.StressTestService.Submit();
+                    Editor.Core.Services.StressTestService.ClearDirty();
+                }
+
+                // Stats HUD.
+                DllWrapper.VortexAPI.UIBegin(cw, ch);
+                DllWrapper.VortexAPI.UIText(16, 14, 700, 32, "STRESS TEST  ·  " + Editor.Core.Services.StressTestService.ModelName + "  x" + Editor.Core.Services.StressTestService.Count.ToString("N0"), 20, 1f, 1f, 1f, 1f, 0, 700);
+                DllWrapper.VortexAPI.UIText(16, 50, 800, 26, "FPS " + DllWrapper.VortexAPI.CurrentFPS + "    Draw calls " + DllWrapper.VortexAPI.DrawCalls.ToString("N0") + "    Instances " + DllWrapper.VortexAPI.InstancesDrawn.ToString("N0") + "    Verts " + DllWrapper.VortexAPI.VertexCount.ToString("N0"), 15, 0.8f, 0.86f, 0.92f, 1f, 0, 600);
+                DllWrapper.VortexAPI.UIText(16, ch - 30, 800, 24, "WASD/QE fly  ·  Shift = faster  ·  mouse look  ·  F12 screenshot", 13, 0.6f, 0.6f, 0.66f, 1f, 0, 500);
+
+                // Per-second telemetry so the instancing scaling is verifiable from the log.
+                _stressFrames++;
+                if (_stressT0 == DateTime.MinValue) _stressT0 = DateTime.Now;
+                var n = DateTime.Now;
+                if ((n - _stressT0).TotalMilliseconds >= 1000)
+                {
+                    GHLog("STRESS " + Editor.Core.Services.StressTestService.ModelName + " x" + Editor.Core.Services.StressTestService.Count
+                        + " FPS=" + DllWrapper.VortexAPI.CurrentFPS + " draws=" + DllWrapper.VortexAPI.DrawCalls
+                        + " inst=" + DllWrapper.VortexAPI.InstancesDrawn + "/" + DllWrapper.VortexAPI.InstancesTested);
+                    _stressFrames = 0; _stressT0 = n;
+                }
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[StressTick] " + ex); }
+        }
+
         // Kept alive for the lifetime of the native callback (else the GC collects the thunk).
         private static DllWrapper.VortexAPI.GameTickDelegate _ghTick;
         private static object _ghSubmitted;
@@ -150,6 +279,7 @@ namespace Editor
 
         private void GameHostTick(float dt)
         {
+            if (_stressMode) { StressTick(dt); return; }
             try
             {
                 if (!_ghInit) { _ghInit = true; try { DllWrapper.VortexAPI.ShowGrid(false); DllWrapper.VortexAPI.ShowGizmos(false); } catch { } } // shipped game: no editor grid/gizmos
