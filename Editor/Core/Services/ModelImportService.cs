@@ -54,7 +54,7 @@ namespace Editor.Core.Services
                 {
                     result.Success = false;
                     result.ErrorMessage = $"File path contains special characters that Assimp cannot handle.\n" +
-                        $"Please move the file to a path without special characters (ä, ö, ü, etc.).\n\n" +
+                        $"Please move the file to a path without special characters (ï¿½, ï¿½, ï¿½, etc.).\n\n" +
                         $"Path: {sourceFilePath}";
                     return result;
                 }
@@ -85,18 +85,7 @@ namespace Editor.Core.Services
 
                 System.Diagnostics.Debug.WriteLine($"[ModelImportService] Assimp available: {VortexAPI.IsAssimpAvailable()}");
 
-                // Check for formats not supported by Assimp 3.0
-                if (extension == ".glb" || extension == ".gltf")
-                {
-                    result.Success = false;
-                    result.ErrorMessage = $"GLB/GLTF format is not supported by Assimp 3.0.\n\n" +
-                        "The current version of Assimp (3.0.0 from 2014) does not support GLTF/GLB files.\n" +
-                        "GLTF was introduced in 2015 and requires Assimp 4.0+.\n\n" +
-                        "Solutions:\n" +
-                        "• Export your model as OBJ or FBX format\n" +
-                        "• Use Blender to convert: File ? Export ? Wavefront (.obj)";
-                    return result;
-                }
+                // (GLB/GLTF are handled by the vendored assimp6 native import â€” no version block needed.)
 
                 // Create target directory structure
                 var modelsDir = Path.Combine(projectPath, "Assets", targetFolder);
@@ -258,6 +247,38 @@ namespace Editor.Core.Services
 
                         // Also register for base path
                         SceneRenderService.RegisterMaterialForMeshPath(relativePath, result.MaterialId);
+
+                        // ORGANIZE the model's materials as FILES: write one .vmat per unique material into a
+                        // materials/ subfolder of the model's folder, with the slots the native import actually
+                        // found. The model's whole folder is self-contained -> deleting it removes everything.
+                        try
+                        {
+                            var matDir = Path.Combine(modelSubDir, "materials");
+                            Directory.CreateDirectory(matDir);
+                            VortexAPI.SubmeshTextureSet[] texSets = null;
+                            try { texSets = VortexAPI.GetSubmeshTexturePaths(targetModelPath, submeshData.Length); } catch { }
+                            var writtenMats = new HashSet<long>();
+                            for (int i = 0; i < submeshData.Length; i++)
+                            {
+                                if (!writtenMats.Add(submeshData[i].MaterialId)) continue; // one .vmat per unique material
+                                string matName = (i < submeshNames.Length && !string.IsNullOrEmpty(submeshNames[i])) ? submeshNames[i] : $"Material_{i}";
+                                var vmat = new VortexMaterial { Name = matName };
+                                if (texSets != null && i < texSets.Length)
+                                {
+                                    var t = texSets[i];
+                                    if (!string.IsNullOrEmpty(t.Albedo))    vmat.AlbedoTexture = t.Albedo;
+                                    if (!string.IsNullOrEmpty(t.Normal))    vmat.NormalTexture = t.Normal;
+                                    if (!string.IsNullOrEmpty(t.Metallic))  vmat.MetallicTexture = t.Metallic;
+                                    if (!string.IsNullOrEmpty(t.Roughness)) vmat.RoughnessTexture = t.Roughness;
+                                    if (!string.IsNullOrEmpty(t.AO))        vmat.AOTexture = t.AO;
+                                    if (!string.IsNullOrEmpty(t.Emissive))  vmat.EmissiveTexture = t.Emissive;
+                                }
+                                vmat.MakePathsRelative(matDir);
+                                string safeName = string.Join("_", matName.Split(Path.GetInvalidFileNameChars()));
+                                vmat.Save(Path.Combine(matDir, safeName + ".vmat"));
+                            }
+                        }
+                        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[ModelImportService] .vmat write failed: {ex.Message}"); }
 
                         // Build structured asset graph for editor/engine sync
                         try
