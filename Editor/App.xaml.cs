@@ -36,9 +36,11 @@ namespace Editor
                         _stressModelArg = a.Substring("--stress=".Length).Trim('"');
                     else if (a.StartsWith("--count=", StringComparison.OrdinalIgnoreCase))
                         int.TryParse(a.Substring("--count=".Length), out _stressCountArg);
+                    else if (a.StartsWith("--benchmark=", StringComparison.OrdinalIgnoreCase))
+                        _benchmarkDirArg = a.Substring("--benchmark=".Length).Trim('"');
                 }
             }
-            _stressMode = !string.IsNullOrEmpty(_stressModelArg);
+            _stressMode = !string.IsNullOrEmpty(_stressModelArg) || !string.IsNullOrEmpty(_benchmarkDirArg);
 
             // Show the branded splash immediately. It's topmost, so it covers the (blocking) engine init,
             // the empty editor shell, and the project browser opening underneath — then fades to reveal them.
@@ -161,6 +163,7 @@ namespace Editor
         // ===== Rendering stress-test player (separate process, native GameHost, uncapped) =====
         private static bool _stressMode;
         private static string _stressModelArg;
+        private static string _benchmarkDirArg;   // --benchmark="<assets dir>": generated multi-model scene
         private static int _stressCountArg = 1000;
         private static bool _stressInit;
         private static float _scx, _scy, _scz, _syaw, _spitch;   // free-fly camera state
@@ -213,12 +216,39 @@ namespace Editor
                     DllWrapper.VortexAPI.ClearAllLights();
                     DllWrapper.VortexAPI.SetAmbientLightStrength(0.55f);
                     DllWrapper.VortexAPI.SetDirectionalLightParams(-0.4f, -0.6f, -0.6f, 1f, 1f, 0.97f, 3.5f);
-                    // Build the crowd (imports the model from disk + lays out the grid).
-                    Editor.Core.Services.StressTestService.Start(_stressModelArg, _stressCountArg);
-                    // Start INSIDE the crowd (slightly elevated) so the render-distance bubble is full — fly with
-                    // WASD and the dense field of copies surrounds you.
-                    _scx = 0f; _scy = 15f; _scz = 0f;
-                    _syaw = 0f; _spitch = 0.15f;
+                    if (!string.IsNullOrEmpty(_benchmarkDirArg))
+                    {
+                        // BENCHMARK SCENE: many DIFFERENT models, each spawned <count> times, spread near→far with
+                        // varied scale/rotation. Exercises instancing (per model), geometric LOD (all distances)
+                        // and frustum culling together. Enumerate distinct model files under the assets dir.
+                        var paths = new System.Collections.Generic.List<string>();
+                        try
+                        {
+                            var seen = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            string[] exts = { "*.glb", "*.gltf", "*.obj", "*.fbx" };
+                            foreach (var ext in exts)
+                                foreach (var f in System.IO.Directory.EnumerateFiles(_benchmarkDirArg, ext, System.IO.SearchOption.AllDirectories))
+                                {
+                                    string key = System.IO.Path.GetFileNameWithoutExtension(f);
+                                    if (seen.Add(key)) paths.Add(f);
+                                    if (paths.Count >= 8) break;
+                                }
+                        }
+                        catch { }
+                        int perModel = _stressCountArg > 0 ? _stressCountArg : 1500;
+                        Editor.Core.Services.StressTestService.StartBenchmark(paths, perModel);
+                        // Sit back + elevated so both the near cluster and the far field are in view.
+                        _scx = 0f; _scy = 25f; _scz = -45f;
+                        _syaw = 0f; _spitch = 0.22f;
+                    }
+                    else
+                    {
+                        // Single-model crowd (imports the model from disk + lays out the grid).
+                        Editor.Core.Services.StressTestService.Start(_stressModelArg, _stressCountArg);
+                        // Start INSIDE the crowd (slightly elevated) so the field of copies surrounds you.
+                        _scx = 0f; _scy = 15f; _scz = 0f;
+                        _syaw = 0f; _spitch = 0.15f;
+                    }
                 }
 
                 // ESC toggles the mouse free so you can close/Alt-Tab the window (mouse-look hides+clips the cursor).

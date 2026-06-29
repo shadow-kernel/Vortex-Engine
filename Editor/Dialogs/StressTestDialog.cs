@@ -27,7 +27,7 @@ namespace Editor.Dialogs
             _modelName = modelName;
 
             Title = "Stress Test - " + modelName;
-            Width = 440; Height = 340;
+            Width = 440; Height = 400;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             Background = new SolidColorBrush(Color.FromRgb(24, 24, 26));
             ResizeMode = ResizeMode.NoResize;
@@ -89,6 +89,15 @@ namespace Editor.Dialogs
             stop.Click += (s, e) => { StressTestService.Stop(); UpdateStats(); };
             btnRow.Children.Add(stop);
             root.Children.Add(btnRow);
+
+            // A full generated benchmark scene: MANY different models spread near→far — tests instancing + geometric
+            // LOD + culling all at once, in the real GameHost. The count box is the per-model copy count.
+            var benchRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
+            var bench = MakeButton("🌍 Benchmark Scene (all models)", Color.FromRgb(60, 140, 110), 248);
+            bench.ToolTip = "Launch a generated scene with every model in the project spread from very near to very far\n(per-model copies = the count above). The full performance/LOD/culling test.";
+            bench.Click += (s, e) => RunBenchmark();
+            benchRow.Children.Add(bench);
+            root.Children.Add(benchRow);
 
             var statsBorder = new Border
             {
@@ -152,6 +161,38 @@ namespace Editor.Dialogs
             catch (Exception ex)
             {
                 MessageBox.Show("Could not launch the stress player:\n" + ex.Message, "Stress Test", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        /// <summary>Launch the GameHost with a generated multi-model benchmark scene (--benchmark=&lt;assets dir&gt;).
+        /// The count box is reused as the per-model copy count.</summary>
+        private void RunBenchmark()
+        {
+            if (!int.TryParse(_countBox.Text.Trim().Replace(",", "").Replace(".", ""), out int perModel) || perModel <= 0)
+                perModel = 1500;
+            // Find the project's Assets dir by walking up from the chosen model; fall back to its own folder.
+            string dir = null;
+            try
+            {
+                var d = new System.IO.DirectoryInfo(System.IO.Path.GetDirectoryName(_modelPath));
+                while (d != null) { if (string.Equals(d.Name, "Assets", StringComparison.OrdinalIgnoreCase)) { dir = d.FullName; break; } d = d.Parent; }
+                if (dir == null) dir = System.IO.Path.GetDirectoryName(_modelPath);
+            }
+            catch { }
+            if (string.IsNullOrEmpty(dir) || !System.IO.Directory.Exists(dir))
+            {
+                MessageBox.Show("Could not locate the project's Assets folder.", "Benchmark", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            try
+            {
+                string exe = System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName;
+                var psi = new System.Diagnostics.ProcessStartInfo(exe, "--benchmark=\"" + dir + "\" --count=" + perModel) { UseShellExecute = false };
+                System.Diagnostics.Process.Start(psi);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Could not launch the benchmark:\n" + ex.Message, "Benchmark", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
