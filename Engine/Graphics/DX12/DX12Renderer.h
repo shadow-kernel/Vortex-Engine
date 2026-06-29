@@ -19,6 +19,7 @@
 #include <vector>
 #include <chrono>
 #include <mutex>
+#include <string>
 #include <unordered_map>
 
 
@@ -74,6 +75,16 @@ namespace vortex::graphics::dx12
 		// thumbnail/preview renders pick up a freshly-submitted item without flashing the main
 		// swapchain (render_frame both swaps AND presents, which caused the asset-browser white-flash).
 		void swap_render_queue();
+
+		// Scene-transition hook: make the GPU idle BEFORE the managed layer frees the old scene's meshes
+		// (DeleteMesh has no flush -> in-flight use-after-free) and drop the UI overlay's cached wrapped
+		// back-buffer bitmaps + the stale render queue so nothing re-renders freed lobby geometry.
+		void on_scene_switch();
+
+		// Capture the NEXT presented frame to a 32-bit BMP at 'path'. Reliable verification: GDI window
+		// capture (BitBlt/PrintWindow) reads a FLIP_DISCARD swapchain's stale redirection surface and
+		// cannot be trusted — this copies the actual back buffer the GPU produced.
+		void request_capture(const char* path);
 
 		// Standalone game window: a SECOND swapchain on its own HWND that shares this renderer's device
 		// and command queue (the editor viewport keeps its own swapchain). render_game_window() renders
@@ -255,6 +266,7 @@ namespace vortex::graphics::dx12
 		void wait_for_previous_frame();
 
 		void render_3d_scene();
+		bool capture_backbuffer_to_bmp(const char* path);
 		void render_fallback_triangle();
 		void render_grid();
 		void render_skybox();
@@ -424,6 +436,10 @@ namespace vortex::graphics::dx12
 		float m_grid_extent{ 200.0f };
 		bool m_vsync_enabled{ false };
 		bool m_initialized{ false };
+
+		// Deferred back-buffer capture (set by request_capture, serviced in render_frame before present)
+		bool m_capture_requested{ false };
+		std::string m_capture_path;
 
 		// Skybox constant buffer
 		ComPtr<ID3D12Resource> m_skybox_cb;

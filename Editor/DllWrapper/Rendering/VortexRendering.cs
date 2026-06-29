@@ -22,6 +22,12 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SwapRenderQueue")]
         private static extern void SwapRenderQueueNative();
 
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "OnSceneSwitch")]
+        private static extern void OnSceneSwitchNative();
+
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "CaptureFrame")]
+        private static extern void CaptureFrameNative([MarshalAs(UnmanagedType.LPStr)] string path);
+
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void ShutdownRenderViewport();
 
@@ -34,6 +40,10 @@ namespace Editor.DllWrapper
         /// thumbnail/preview rendering so it never flashes the editor viewport.
         /// </summary>
         public static void SwapRenderQueue() => SwapRenderQueueNative();
+        /// <summary>GPU-idle + drop overlay/queue caches at a scene transition (call BEFORE freeing the old scene's meshes).</summary>
+        public static void OnSceneSwitch() => OnSceneSwitchNative();
+        /// <summary>Write the next presented back buffer to a 32-bit BMP — reliable verification of the flip-model swapchain.</summary>
+        public static void CaptureFrame(string path) => CaptureFrameNative(path);
         public static void ShutdownRender() => ShutdownRenderViewport();
 
         #endregion

@@ -145,6 +145,8 @@ namespace Editor
         private static void GHLog(string m) { try { System.IO.File.AppendAllText(_ghLog, DateTime.Now.ToString("HH:mm:ss.fff") + "  " + m + "\r\n"); } catch { } }
         private static int _ghFrames; private static DateTime _ghT0 = DateTime.MinValue;
         private static bool _ghInit;
+        private static bool _ghF12Prev;
+        private static object _ghSubmittedScene;   // submit-once guard: re-submit only when the active scene changes
 
         private void GameHostTick(float dt)
         {
@@ -162,6 +164,22 @@ namespace Editor
                 float my = DllWrapper.VortexAPI.GameHostMouseY();
                 bool down = DllWrapper.VortexAPI.GameHostMouseDown();
                 bool pressed = down && !_ghLmbPrev; _ghLmbPrev = down;
+
+                // F12 = screenshot: write the actual rendered back buffer to a BMP (reliable on the
+                // flip-model swapchain, unlike GDI window capture). Edge-triggered.
+                bool f12 = DllWrapper.VortexAPI.GameHostKeyDown(0x7B);
+                if (f12 && !_ghF12Prev)
+                {
+                    try
+                    {
+                        string dir = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
+                        string path = System.IO.Path.Combine(dir, "vortex_screenshot.bmp");
+                        DllWrapper.VortexAPI.CaptureFrame(path);
+                        GHLog("SCREENSHOT -> " + path);
+                    }
+                    catch { }
+                }
+                _ghF12Prev = f12;
 
                 // Mouse-look: when the game has the cursor locked, feed relative motion (delta since last frame).
                 if (playing && sr.CursorLocked)
@@ -191,9 +209,16 @@ namespace Editor
 
                 var scene = Editor.Core.Data.ProjectData.Current != null ? Editor.Core.Data.ProjectData.Current.ActiveScene : null;
                 Editor.Core.Services.PlayCameraHelper.ApplyMainCamera(scene);
-                // Submit every frame (matches the proven CompositionTarget path). Submit-once didn't survive a
-                // scene switch's ClearAllRenderables. Phase 2 adds dirty-flag batching to make this cheap again.
-                if (scene != null) Editor.Core.Services.SceneRenderService.Instance.SubmitScene(scene);
+                // Submit ONCE per scene: the native swap_render_queue reuses last frame's render queue when
+                // nothing new is submitted, so a static scene re-renders every frame with only the camera
+                // changing (camera is set separately, not via instance data). This removes the per-frame
+                // 300-entity walk + ~470 P/Invokes — the CPU bottleneck. on_scene_switch clears the queue on a
+                // transition, and the scene-reference change below re-submits the new scene exactly once.
+                if (scene != null && !ReferenceEquals(scene, _ghSubmittedScene))
+                {
+                    Editor.Core.Services.SceneRenderService.Instance.SubmitScene(scene);
+                    _ghSubmittedScene = scene;
+                }
             }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[GameHostTick] " + ex); }
         }

@@ -349,6 +349,20 @@ EDITOR_INTERFACE void SwapRenderQueue()
 	graphics::dx12::DX12Renderer::instance().swap_render_queue();
 }
 
+// Scene-transition hook: GPU idle + drop overlay cache + clear stale queue BEFORE the managed layer
+// frees the old scene's meshes (prevents in-flight use-after-free + stale-overlay carryover).
+EDITOR_INTERFACE void OnSceneSwitch()
+{
+	graphics::dx12::DX12Renderer::instance().on_scene_switch();
+}
+
+// Reliable frame verification: write the NEXT presented back buffer to a 32-bit BMP (GDI window capture
+// reads a stale FLIP_DISCARD redirection surface and cannot be trusted).
+EDITOR_INTERFACE void CaptureFrame(const char* path)
+{
+	graphics::dx12::DX12Renderer::instance().request_capture(path);
+}
+
 // ---- Standalone game window: a SECOND DX12 swapchain on its own HWND (shares device/queue). The
 // editor keeps its own swapchain; RenderGameWindow renders the current scene through the current
 // camera into the game window. This is the real "exe window" play mode. ----

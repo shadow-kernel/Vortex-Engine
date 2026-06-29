@@ -49,6 +49,7 @@ namespace vortex::graphics::dx12
 		u32 m_buffer_count{ 2 };
 		u32 m_current_index{ 0 };
 		u32 m_rtv_descriptor_size{ 0 };
+		bool m_allow_tearing{ false };   // flip-model uncap: DXGI_PRESENT_ALLOW_TEARING when supported + !vsync
 		u32 m_width{ 0 };
 		u32 m_height{ 0 };
 		DXGI_FORMAT m_format{ DXGI_FORMAT_R8G8B8A8_UNORM };

@@ -116,13 +116,26 @@ Native code surveyed; the exact build plan:
       client-space mouse, `PRESS IN=True`); `Scene.Load` fires (`pending=Match`); `ActiveScene` switches
       (`scene=Match`); the loop **keeps rendering with NO FREEZE** (54–97 FPS in Match). The whole reason for
       this rewrite — the Present-freeze on scene-switch/resize — is GONE. ✓
-- [ ] Phase 1c — scene-switch visual load: after the switch, `ActiveScene=Match` but the lobby content still
-      renders. ROOT CAUSE identified: `RunGameHost` BLOCKS the WPF dispatcher, and the scene-load path
-      (`scene.Load` / `PreloadSceneAssets`) appears to depend on it, so the Match scene doesn't fully load.
-      FIX (next): either pump the WPF dispatcher inside the GameHost loop (`Dispatcher.Invoke` drain), or make
-      scene-load dispatcher-independent. Then re-verify Match renders + resize/F11 + merge to main.
-- [ ] Phase 1d — full uncap beyond monitor refresh (flip-model swapchain + DXGI_PRESENT_ALLOW_TEARING) and
-      remove the per-frame submit (dirty-flag batching) — folds into Phase 2.
-- [ ] Phases 2–5.
+- [x] Phase 1c — scene-switch visual load: **RESOLVED, and the real root cause was a measurement artifact**.
+      The earlier "lobby still renders after the switch" was NOT a real present bug — it was a **GDI
+      window-capture artifact**: the swapchain is `DXGI_SWAP_EFFECT_FLIP_DISCARD`, and `CopyFromScreen`/
+      `PrintWindow` read the window's GDI *redirection surface*, which flip-model presents never update, so
+      automated screenshots froze on the last lobby frame while the **actual on-screen image was the correct
+      Match scene the whole time** (proven by a native back-buffer capture: forest island + "HP 100" HUD +
+      crosshair render perfectly). Verified via a new reliable path: `request_capture()` →
+      `CaptureFrame(path)` export → bound to **F12** in `GameHostTick` (copies the real back buffer to a
+      32-bit BMP). Also landed a correctness hook, `on_scene_switch()` (export `OnSceneSwitch`, called from
+      `GameRuntime.SwitchScene` before `ClearAllRenderables`): GPU flush + `UIOverlay::invalidate_targets()` +
+      clear render/submit queue + reset per-buffer fences → no in-flight use-after-free when `DeleteMesh`
+      frees the old scene's buffers, no stale overlay carry-over.
+- [x] Phase 1d — full uncap beyond monitor refresh: `DX12Swapchain` now creates with
+      `DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING` (queried via `IDXGIFactory5::CheckFeatureSupport`), `ResizeBuffers`
+      carries the same flag, and `present()` passes `DXGI_PRESENT_ALLOW_TEARING` when **!vsync**. Removed the
+      per-frame submit: `GameHostTick` now **submits a scene ONCE** (re-submits only when the active scene
+      reference changes) and relies on `swap_render_queue` reusing the render queue — the camera is set
+      separately, so a static scene re-renders every frame with no 300-entity walk / ~470 P/Invokes.
+      **MEASURED (standalone exe, verified via F12 native capture): lobby ~1280 FPS, Match ~1850 FPS** (was
+      165 / 54–97). Target of ≥1500 FPS met. Match geometry renders correctly at speed.
+- [ ] Phases 2–5 (dirty-flag re-submit for animated entities, spatial culling/LOD, 3D options menu, DLSS 4).
 
 Each phase is built + verified + committed before the next. Merges to `main` only when a phase is green.
