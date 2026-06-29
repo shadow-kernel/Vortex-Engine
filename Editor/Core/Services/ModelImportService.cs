@@ -257,12 +257,22 @@ namespace Editor.Core.Services
                             Directory.CreateDirectory(matDir);
                             VortexAPI.SubmeshTextureSet[] texSets = null;
                             try { texSets = VortexAPI.GetSubmeshTexturePaths(targetModelPath, submeshData.Length); } catch { }
-                            var writtenMats = new HashSet<long>();
+                            VortexAPI.SubmeshMaterialProps[] matProps = null;
+                            try { matProps = VortexAPI.GetSubmeshMaterialProps(targetModelPath, submeshData.Length); } catch { }
+                            // ONE .vmat PER SUBMESH, deterministically named submesh_<i>.vmat, so scene-add can bind
+                            // MeshRenderer.MaterialPath -> this exact file and the engine renders FROM the .vmat
+                            // (the single source of truth that survives a restart). Includes base color + metallic/
+                            // roughness so flat-colored models (no texture files) still render their real color.
                             for (int i = 0; i < submeshData.Length; i++)
                             {
-                                if (!writtenMats.Add(submeshData[i].MaterialId)) continue; // one .vmat per unique material
                                 string matName = (i < submeshNames.Length && !string.IsNullOrEmpty(submeshNames[i])) ? submeshNames[i] : $"Material_{i}";
                                 var vmat = new VortexMaterial { Name = matName };
+                                if (matProps != null && i < matProps.Length)
+                                {
+                                    vmat.BaseColor = matProps[i].BaseColor;
+                                    vmat.Metallic = matProps[i].Metallic;
+                                    vmat.Roughness = matProps[i].Roughness;
+                                }
                                 if (texSets != null && i < texSets.Length)
                                 {
                                     var t = texSets[i];
@@ -274,8 +284,7 @@ namespace Editor.Core.Services
                                     if (!string.IsNullOrEmpty(t.Emissive))  vmat.EmissiveTexture = t.Emissive;
                                 }
                                 vmat.MakePathsRelative(matDir);
-                                string safeName = string.Join("_", matName.Split(Path.GetInvalidFileNameChars()));
-                                vmat.Save(Path.Combine(matDir, safeName + ".vmat"));
+                                vmat.Save(Path.Combine(matDir, $"submesh_{i}.vmat"));
                             }
                         }
                         catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[ModelImportService] .vmat write failed: {ex.Message}"); }

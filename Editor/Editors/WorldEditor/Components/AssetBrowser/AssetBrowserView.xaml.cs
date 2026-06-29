@@ -1021,8 +1021,19 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                                             MeshPath = item.Path,
                                             MaterialHandle = result[0].MaterialId
                                         };
-                                
-                                        if (texturePaths.Count > 0)
+
+                                        // Bind the per-submesh .vmat (single source of truth) so the engine renders
+                                        // FROM it (base color + textures) and it survives a restart.
+                                        try
+                                        {
+                                            string modelDir = System.IO.Path.GetDirectoryName(item.Path) ?? "";
+                                            string vmatRel = System.IO.Path.Combine(modelDir, "materials", "submesh_0.vmat").Replace('\\', '/');
+                                            if (System.IO.File.Exists(System.IO.Path.Combine(projectPath, vmatRel)))
+                                                meshRenderer.MaterialPath = vmatRel;
+                                        }
+                                        catch { }
+
+                                        if (string.IsNullOrEmpty(meshRenderer.MaterialPath) && texturePaths.Count > 0)
                                         {
                                             string texPath = texturePaths[0];
                                     
@@ -1127,8 +1138,19 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                     MaterialHandle = submesh.MaterialId
                 };
 
-                // Find the best matching texture for this submesh
-                if (texturePaths.Count > 0)
+                // Bind the per-submesh .vmat (the single source of truth): the engine renders FROM it (base color
+                // + textures) and it survives a restart, instead of the volatile texture-guess fallback below.
+                try
+                {
+                    string modelDir = System.IO.Path.GetDirectoryName(relativePath) ?? "";
+                    string vmatRel = System.IO.Path.Combine(modelDir, "materials", $"submesh_{i}.vmat").Replace('\\', '/');
+                    if (System.IO.File.Exists(System.IO.Path.Combine(projectPath, vmatRel)))
+                        meshRenderer.MaterialPath = vmatRel;
+                }
+                catch { }
+
+                // Fallback only when there is no .vmat (older imports): guess a texture from the model folder.
+                if (string.IsNullOrEmpty(meshRenderer.MaterialPath) && texturePaths.Count > 0)
                 {
                     string texPath = FindTextureForSubmesh(childName, texturePaths);
                     if (!string.IsNullOrEmpty(texPath))
