@@ -988,6 +988,28 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 ? System.IO.Path.GetExtension(item.Path)?.ToLowerInvariant()
                 : "";
 
+            // Double-click a scene -> LOAD + ACTIVATE it (switch the editor's active scene). Without this you were
+            // stuck on whatever scene was active (e.g. the old Match map) with no obvious way to open the Lobby.
+            if (extension == ".vscene" && System.IO.File.Exists(fullPath))
+            {
+                try
+                {
+                    var proj = ProjectData.Current;
+                    Editor.Core.Data.Scene target = null;
+                    if (proj != null && proj.Scenes != null)
+                        foreach (var s in proj.Scenes)
+                            if (s != null && string.Equals(s.FilePath, fullPath, StringComparison.OrdinalIgnoreCase)) { target = s; break; }
+                    if (target == null)
+                    {
+                        target = Editor.Core.Services.SceneService.Instance.LoadScene(fullPath);
+                        if (proj != null && target != null && !proj.Scenes.Contains(target)) proj.Scenes.Add(target);
+                    }
+                    if (proj != null && target != null) proj.ActiveScene = target;
+                }
+                catch (Exception ex) { MessageBox.Show("Could not open the scene:\n" + ex.Message, "Scene", MessageBoxButton.OK, MessageBoxImage.Error); }
+                return true;
+            }
+
             switch (item.Type)
             {
                 case AssetType.Textures:
