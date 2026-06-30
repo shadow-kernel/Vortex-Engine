@@ -68,6 +68,18 @@ namespace vortex::graphics::dx12
 		// upscale) — so a DLSS hiccup degrades gracefully and never black-screens.
 		bool evaluate_dlss(const DlssEvalDesc& desc);
 
+		// ---- Frame Generation (DLSS-G) + Reflex ----
+		// DLSS-G inserts AI frames at Present; it REQUIRES Reflex active + PCL markers threaded through the frame
+		// loop. fg_ready() is true once the DLSS-G/Reflex/PCL feature functions resolved (after set_device).
+		bool fg_ready() const { return m_fg_ready; }
+		void set_reflex(bool enabled);                         // slReflexSetOptions (low-latency on/off; on = FG-ready)
+		void* new_frame_token(unsigned frame_index);           // slGetNewFrameToken -> opaque token (cast internally)
+		void reflex_sleep(void* frame_token);                  // slReflexSleep (call once near the top of the frame)
+		void pcl_marker(int marker, void* frame_token);        // slPCLSetMarker (sl::PCLMarker value: 0..5)
+		// numFramesToGenerate: 0 = OFF, 1 = x2, 2 = x3, 3 = x4. outW/outH = display (back-buffer) size.
+		void set_frame_gen(int num_frames_to_generate, unsigned out_w, unsigned out_h);
+		int  fg_presented_frames();                            // slDLSSGGetState.numFramesActuallyPresented (readout)
+
 		void shutdown();
 
 	private:
@@ -79,6 +91,7 @@ namespace vortex::graphics::dx12
 		void* m_module{ nullptr };   // HMODULE of sl.interposer.dll (void* to keep windows.h out of this header)
 		bool  m_available{ false };
 		bool  m_dlss_ready{ false }; // DLSS feature functions resolved
+		bool  m_fg_ready{ false };   // DLSS-G + Reflex + PCL feature functions resolved
 		u32   m_frame_index{ 0 };    // incrementing index for slGetNewFrameToken
 	};
 }

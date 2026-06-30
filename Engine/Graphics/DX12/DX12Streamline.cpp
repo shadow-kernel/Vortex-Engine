@@ -9,6 +9,9 @@
 #include "sl.h"
 #include "sl_consts.h"
 #include "sl_dlss.h"
+#include "sl_dlss_g.h"           // Frame Generation
+#include "sl_reflex.h"           // Reflex (required by DLSS-G)
+#include "sl_pcl.h"              // PCL latency markers
 #include "sl_matrix_helpers.h"   // recalculateCameraMatrices (computes clipToPrevClip etc.)
 
 namespace vortex::graphics::dx12
@@ -28,6 +31,12 @@ namespace vortex::graphics::dx12
 		// DLSS feature functions (resolved via slGetFeatureFunction after the device is set).
 		PFun_slDLSSSetOptions*        g_slDLSSSetOptions{};
 		PFun_slDLSSGetOptimalSettings* g_slDLSSGetOptimalSettings{};
+		// Frame Generation + Reflex + PCL feature functions (also via slGetFeatureFunction).
+		PFun_slReflexSetOptions*  g_slReflexSetOptions{};
+		PFun_slReflexSleep*       g_slReflexSleep{};
+		PFun_slPCLSetMarker*      g_slPCLSetMarker{};
+		PFun_slDLSSGSetOptions*   g_slDLSSGSetOptions{};
+		PFun_slDLSSGGetState*     g_slDLSSGGetState{};
 
 		// XMFLOAT4X4 (row-major) -> sl::float4x4 (row-major).
 		sl::float4x4 toSL(const DirectX::XMFLOAT4X4& m)
@@ -114,10 +123,10 @@ namespace vortex::graphics::dx12
 		pref.engine = sl::EngineType::eCustom;
 		pref.projectId = kProjectId;
 		pref.renderAPI = sl::RenderAPI::eD3D12;
-		// Only load what we use; deterministic + offline (no OTA plugin download).
-		static const sl::Feature s_features[] = { sl::kFeatureDLSS };
+		// Only load what we use; deterministic + offline (no OTA plugin download). DLSS-G needs Reflex + PCL too.
+		static const sl::Feature s_features[] = { sl::kFeatureDLSS, sl::kFeatureReflex, sl::kFeaturePCL, sl::kFeatureDLSS_G };
 		pref.featuresToLoad = s_features;
-		pref.numFeaturesToLoad = 1;
+		pref.numFeaturesToLoad = (uint32_t)(sizeof(s_features) / sizeof(s_features[0]));
 		pref.flags = sl::PreferenceFlags::eDisableCLStateTracking;
 
 		sl::Result res = g_slInit(pref, sl::kSDKVersion);
@@ -168,7 +177,76 @@ namespace vortex::graphics::dx12
 			m_dlss_ready = (g_slDLSSSetOptions != nullptr && g_slDLSSGetOptimalSettings != nullptr);
 			_snprintf_s(buf, _TRUNCATE, "[streamline] DLSS functions resolved -> dlss_ready=%d", m_dlss_ready ? 1 : 0);
 			sl_log(buf);
+
+			// Frame-Generation stack: Reflex + PCL markers + DLSS-G.
+			g_slGetFeatureFunction(sl::kFeatureReflex, "slReflexSetOptions", (void*&)g_slReflexSetOptions);
+			g_slGetFeatureFunction(sl::kFeatureReflex, "slReflexSleep", (void*&)g_slReflexSleep);
+			g_slGetFeatureFunction(sl::kFeaturePCL, "slPCLSetMarker", (void*&)g_slPCLSetMarker);
+			g_slGetFeatureFunction(sl::kFeatureDLSS_G, "slDLSSGSetOptions", (void*&)g_slDLSSGSetOptions);
+			g_slGetFeatureFunction(sl::kFeatureDLSS_G, "slDLSSGGetState", (void*&)g_slDLSSGGetState);
+			m_fg_ready = (g_slReflexSetOptions && g_slReflexSleep && g_slPCLSetMarker && g_slDLSSGSetOptions && g_slDLSSGGetState);
+			_snprintf_s(buf, _TRUNCATE, "[streamline] FrameGen functions resolved -> fg_ready=%d", m_fg_ready ? 1 : 0);
+			sl_log(buf);
 		}
+	}
+
+	void DX12Streamline::set_reflex(bool enabled)
+	{
+		if (!m_fg_ready || !g_slReflexSetOptions) return;
+		sl::ReflexOptions opts{};
+		opts.mode = enabled ? sl::ReflexMode::eLowLatency : sl::ReflexMode::eOff;
+		g_slReflexSetOptions(opts);
+	}
+
+	void* DX12Streamline::new_frame_token(unsigned frame_index)
+	{
+		if (!m_available || !g_slGetNewFrameToken) return nullptr;
+		sl::FrameToken* token = nullptr;
+		uint32_t fi = frame_index;
+		if (g_slGetNewFrameToken(token, &fi) != sl::Result::eOk) return nullptr;
+		return token;
+	}
+
+	void DX12Streamline::reflex_sleep(void* frame_token)
+	{
+		if (!m_fg_ready || !g_slReflexSleep || !frame_token) return;
+		g_slReflexSleep(*reinterpret_cast<sl::FrameToken*>(frame_token));
+	}
+
+	void DX12Streamline::pcl_marker(int marker, void* frame_token)
+	{
+		if (!m_fg_ready || !g_slPCLSetMarker || !frame_token) return;
+		g_slPCLSetMarker((sl::PCLMarker)marker, *reinterpret_cast<sl::FrameToken*>(frame_token));
+	}
+
+	void DX12Streamline::set_frame_gen(int num_frames_to_generate, unsigned out_w, unsigned out_h)
+	{
+		if (!m_fg_ready || !g_slDLSSGSetOptions) return;
+		sl::ViewportHandle viewport(0);
+		sl::DLSSGOptions opts{};
+		if (num_frames_to_generate <= 0)
+		{
+			opts.mode = sl::DLSSGMode::eOff;
+		}
+		else
+		{
+			opts.mode = sl::DLSSGMode::eOn;
+			opts.numFramesToGenerate = (uint32_t)num_frames_to_generate; // 1=x2, 2=x3, 3=x4
+			opts.colorWidth = out_w; opts.colorHeight = out_h;
+		}
+		sl::Result res = g_slDLSSGSetOptions(viewport, opts);
+		char b[160]; _snprintf_s(b, _TRUNCATE, "[streamline] slDLSSGSetOptions mode=%d numGen=%d result=%d",
+			(int)opts.mode, num_frames_to_generate, (int)res);
+		sl_log(b);
+	}
+
+	int DX12Streamline::fg_presented_frames()
+	{
+		if (!m_fg_ready || !g_slDLSSGGetState) return 0;
+		sl::ViewportHandle viewport(0);
+		sl::DLSSGState state{};
+		if (g_slDLSSGGetState(viewport, state, nullptr) != sl::Result::eOk) return 0;
+		return (int)state.numFramesActuallyPresented;
 	}
 
 	bool DX12Streamline::evaluate_dlss(const DlssEvalDesc& d)
