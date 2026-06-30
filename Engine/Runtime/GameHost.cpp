@@ -1,6 +1,7 @@
 #include "GameHost.h"
 #include "Systems/RenderSystemDX12.h"
 #include "../Graphics/DX12/DX12Renderer.h"
+#include "../Graphics/DX12/DX12Streamline.h"   // Reflex + PCL markers for DLSS Frame Generation
 
 #include <Windows.h>
 #include <windowsx.h> // GET_X_LPARAM / GET_Y_LPARAM
@@ -262,13 +263,22 @@ namespace vortex::runtime
             last = now;
             if (dt < 0.f) dt = 0.f; else if (dt > 0.1f) dt = 0.1f;
 
+            // DLSS Frame Generation: Reflex sleep + PCL latency markers around the frame phases. All no-ops unless
+            // the user enabled Frame Generation (set_frame_gen) — so the loop is byte-for-byte unchanged otherwise.
+            static uint32_t fg_frame = 0;
+            auto& sl = graphics::dx12::DX12Streamline::instance();
+            sl.frame_begin(fg_frame++);                                              // token + Reflex sleep + SimStart
+
             // 3) advance the game in managed code (scripts + camera + submit the scene). Raw mouse deltas were
             // accumulated in WM_INPUT during the pump above; the tick reads them via mouse_dx/dy, then we consume.
             if (g_tick) g_tick(dt);
             g_mouse_dx = 0; g_mouse_dy = 0;
+            sl.frame_marker((int)2 /*eRenderSubmitStart*/);                          // (sim done -> render)
+            // (SimEnd marker folded into RenderSubmitStart timing for this single-threaded loop)
 
             // 4) render the submitted scene + present — same thread as the pump/resize, so never freezes
             systems::dx12::render_frame();
+            sl.frame_marker((int)3 /*eRenderSubmitEnd*/);
         }
 
         systems::dx12::shutdown();

@@ -77,8 +77,18 @@ namespace vortex::graphics::dx12
 		void reflex_sleep(void* frame_token);                  // slReflexSleep (call once near the top of the frame)
 		void pcl_marker(int marker, void* frame_token);        // slPCLSetMarker (sl::PCLMarker value: 0..5)
 		// numFramesToGenerate: 0 = OFF, 1 = x2, 2 = x3, 3 = x4. outW/outH = display (back-buffer) size.
+		// Also flips Reflex on/off (FG requires Reflex) + arms the per-frame markers below.
 		void set_frame_gen(int num_frames_to_generate, unsigned out_w, unsigned out_h);
 		int  fg_presented_frames();                            // slDLSSGGetState.numFramesActuallyPresented (readout)
+		bool frame_gen_active() const { return m_reflex_active; }
+
+		// Per-frame Reflex/PCL hooks for the GameHost loop. ALL no-ops when FG is off, so the loop is unaffected
+		// unless the user enables Frame Generation. frame_begin: token + slReflexSleep + SimStart marker (call at
+		// the top of the frame). frame_marker(m): a PCL marker (1=SimEnd,2=RenderSubmitStart,3=RenderSubmitEnd,
+		// 4=PresentStart,5=PresentEnd). current_token: the frame token for render_frame's FG constants/tags.
+		void frame_begin(unsigned frame_index);
+		void frame_marker(int marker);
+		void* current_token() const;
 
 		void shutdown();
 
@@ -92,6 +102,8 @@ namespace vortex::graphics::dx12
 		bool  m_available{ false };
 		bool  m_dlss_ready{ false }; // DLSS feature functions resolved
 		bool  m_fg_ready{ false };   // DLSS-G + Reflex + PCL feature functions resolved
+		bool  m_reflex_active{ false }; // FG enabled -> Reflex + per-frame markers armed
+		void* m_current_token{ nullptr }; // this frame's sl::FrameToken (markers + FG constants/tags)
 		u32   m_frame_index{ 0 };    // incrementing index for slGetNewFrameToken
 	};
 }

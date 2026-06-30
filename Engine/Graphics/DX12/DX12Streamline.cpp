@@ -238,6 +238,32 @@ namespace vortex::graphics::dx12
 		char b[160]; _snprintf_s(b, _TRUNCATE, "[streamline] slDLSSGSetOptions mode=%d numGen=%d result=%d",
 			(int)opts.mode, num_frames_to_generate, (int)res);
 		sl_log(b);
+
+		// FG requires Reflex; arm/disarm Reflex + the per-frame markers together.
+		bool on = (num_frames_to_generate > 0) && (res == sl::Result::eOk);
+		set_reflex(on);
+		m_reflex_active = on;
+		if (!on) m_current_token = nullptr;
+	}
+
+	void DX12Streamline::frame_begin(unsigned frame_index)
+	{
+		if (!m_reflex_active) { m_current_token = nullptr; return; }
+		m_current_token = new_frame_token(frame_index);   // slGetNewFrameToken
+		if (!m_current_token) return;
+		reflex_sleep(m_current_token);                    // pace the frame (Reflex)
+		pcl_marker((int)sl::PCLMarker::eSimulationStart, m_current_token);
+	}
+
+	void DX12Streamline::frame_marker(int marker)
+	{
+		if (!m_reflex_active || !m_current_token) return;
+		pcl_marker(marker, m_current_token);
+	}
+
+	void* DX12Streamline::current_token() const
+	{
+		return m_reflex_active ? m_current_token : nullptr;
 	}
 
 	int DX12Streamline::fg_presented_frames()
