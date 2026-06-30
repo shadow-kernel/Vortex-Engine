@@ -37,6 +37,7 @@
     <ClInclude Include="Graphics\DX12\DX12Renderer.h" />
     <ClInclude Include="Graphics\DX12\DX12RenderTarget.h" />
     <ClInclude Include="Graphics\DX12\DX12SkyboxPipeline.h" />
+    <ClInclude Include="Graphics\DX12\DX12Streamline.h" />
     <ClInclude Include="Graphics\DX12\DX12UpscalePipeline.h" />
     <ClInclude Include="Graphics\DX12\UIOverlay.h" />
     <ClInclude Include="Graphics\DX12\DX12Swapchain.h" />
@@ -94,6 +95,7 @@
     <ClCompile Include="Graphics\DX12\UIOverlay.cpp" />
     <ClCompile Include="Graphics\DX12\DX12RenderTarget.cpp" />
     <ClCompile Include="Graphics\DX12\DX12SkyboxPipeline.cpp" />
+    <ClCompile Include="Graphics\DX12\DX12Streamline.cpp" />
     <ClCompile Include="Graphics\DX12\DX12UpscalePipeline.cpp" />
     <ClCompile Include="Graphics\DX12\DX12Swapchain.cpp" />
     <ClCompile Include="Graphics\Geometry\ConeGenerator.cpp" />
@@ -185,7 +187,7 @@
       <LanguageStandard>stdcpp20</LanguageStandard>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
-      <AdditionalIncludeDirectories>$(ProjectDir)ThirdParty;$(SolutionDir)ThirdParty\assimp6\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)ThirdParty;$(SolutionDir)ThirdParty\assimp6\include;$(SolutionDir)ThirdParty\Streamline\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>
@@ -206,7 +208,7 @@
       <LanguageStandard>stdcpp20</LanguageStandard>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
-      <AdditionalIncludeDirectories>$(ProjectDir)ThirdParty;$(SolutionDir)ThirdParty\assimp6\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)ThirdParty;$(SolutionDir)ThirdParty\assimp6\include;$(SolutionDir)ThirdParty\Streamline\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>
@@ -228,7 +230,7 @@
       <CallingConvention>FastCall</CallingConvention>
       <FloatingPointModel>Fast</FloatingPointModel>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <AdditionalIncludeDirectories>$(ProjectDir)ThirdParty;$(SolutionDir)ThirdParty\assimp6\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)ThirdParty;$(SolutionDir)ThirdParty\assimp6\include;$(SolutionDir)ThirdParty\Streamline\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>
@@ -252,7 +254,7 @@
       <CallingConvention>FastCall</CallingConvention>
       <FloatingPointModel>Fast</FloatingPointModel>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <AdditionalIncludeDirectories>$(ProjectDir)ThirdParty;$(SolutionDir)ThirdParty\assimp6\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)ThirdParty;$(SolutionDir)ThirdParty\assimp6\include;$(SolutionDir)ThirdParty\Streamline\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>

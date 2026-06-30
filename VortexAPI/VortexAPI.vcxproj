@@ -162,4 +162,18 @@
   <Target Name="CopyAssimp6Dll" AfterTargets="Build">
     <Copy SourceFiles="$(SolutionDir)ThirdParty\assimp6\bin\assimp-vc143-mt.dll" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
   </Target>
+  <!-- PRE-BUILD: produce the Streamline/DLSS DLLs into Redist\Streamline\x64 (NONE are committed to the repo).
+       Idempotent + never fails the build (DLSS is optional; absent DLLs => render-scale fallback). -->
+  <Target Name="PrebuildStreamline" BeforeTargets="ClCompile">
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(SolutionDir)Redist\Streamline\prebuild.ps1&quot;" ContinueOnError="true" />
+  </Target>
+  <!-- Ship the NVIDIA Streamline (DLSS) runtime next to the exe so DX12Streamline can LoadLibrary it. The
+       sl.*.dll + nvngx_*.dll were staged by the pre-build step above. GameExporter copies OutDir *.dll into the
+       .vpak/export, so the shipped game gets them too. -->
+  <Target Name="CopyStreamlineDlls" AfterTargets="Build" Condition="Exists('$(SolutionDir)Redist\Streamline\x64')">
+    <ItemGroup>
+      <StreamlineDlls Include="$(SolutionDir)Redist\Streamline\x64\*.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(StreamlineDlls)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+  </Target>
 </Project>

@@ -1,0 +1,6 @@
+# NO Streamline/DLSS binaries are committed to this repo. Everything in x64\ is produced by
+# Redist\Streamline\prebuild.ps1 (run automatically as a VortexAPI pre-build step). Reasons:
+#   * the NGX models (nvngx_*.dll) are large + proprietary, and the dev variant must not ship;
+#   * the sl.*.dll are redistributables we either copy from the NVIDIA SDK or build from the submodule.
+# Ignore the whole staging folder; keep this .gitignore + the README + prebuild.ps1.
+x64/
