@@ -55,6 +55,12 @@ namespace Editor.Core.Services.Build
                 int n = CopyRuntime(runtimeDir, outputDir);
                 sb.AppendLine("• Runtime: " + n + " files copied");
 
+                // Engine shaders ship as loose files next to the exe (the native engine is a static lib in the exe and
+                // can't read the C#-only .vpak). The runtime resolves <exe>/Shaders first; without this a shipped game
+                // would have NO shaders. Copies .hlsl (compiled at runtime) + any precompiled bin/*.cso.
+                int shaderCount = CopyShaders(outputDir);
+                sb.AppendLine("• Shaders: " + shaderCount + " files copied -> Shaders/");
+
                 // 2) Compile gameplay scripts -> a temp DLL (ships COMPILED, never as source).
                 P(0.22, "Compiling gameplay scripts…");
                 var tmpDll = Path.Combine(Path.GetTempPath(), "GameScripts_" + Guid.NewGuid().ToString("N") + ".dll");
@@ -171,6 +177,36 @@ namespace Editor.Core.Services.Build
                 }
             }
             catch (Exception ex) { log = ex.Message; return false; }
+        }
+
+        // Copy Engine/Shaders/** (the .hlsl source + any precompiled bin/*.cso) to <output>/Shaders/. The shipped
+        // game's native renderer resolves shaders from <exe>/Shaders. Source is found by walking up from the editor
+        // runtime dir to the repo's Engine/Shaders (mirrors the native DX12ShaderCompiler::shaders_dir resolution).
+        private static int CopyShaders(string outDir)
+        {
+            var src = FindEngineShaders();
+            if (src == null || !Directory.Exists(src)) return 0;
+            var dst = Path.Combine(outDir, "Shaders");
+            int n = 0;
+            foreach (var f in Directory.GetFiles(src, "*", SearchOption.AllDirectories))
+            {
+                var rel = f.Substring(src.Length).TrimStart('\\', '/');
+                var target = Path.Combine(dst, rel);
+                try { Directory.CreateDirectory(Path.GetDirectoryName(target)); File.Copy(f, target, true); n++; } catch { }
+            }
+            return n;
+        }
+
+        private static string FindEngineShaders()
+        {
+            var p = Path.GetDirectoryName(typeof(GameExporter).Assembly.Location);
+            for (int i = 0; i < 7 && !string.IsNullOrEmpty(p); i++)
+            {
+                var c = Path.Combine(p, "Engine", "Shaders");
+                if (Directory.Exists(c)) return c;
+                p = Path.GetDirectoryName(p);
+            }
+            return null;
         }
 
         private static int CopyRuntime(string runtimeDir, string outDir)
