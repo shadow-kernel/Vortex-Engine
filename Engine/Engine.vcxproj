@@ -55,6 +55,7 @@
     <ClInclude Include="Graphics\Importers\MaterialSerializer.h" />
     <ClInclude Include="Graphics\Importers\MeshSerializer.h" />
     <ClInclude Include="Graphics\Importers\ModelImporter.h" />
+    <ClInclude Include="Graphics\Importers\ModelImporter_Internal.h" />
     <ClInclude Include="Graphics\Importers\TextureImporter.h" />
     <ClInclude Include="Graphics\Resources\Material.h" />
     <ClInclude Include="Graphics\Resources\Mesh.h" />
@@ -119,6 +120,7 @@
     <ClCompile Include="Graphics\Importers\MaterialSerializer.cpp" />
     <ClCompile Include="Graphics\Importers\MeshSerializer.cpp" />
     <ClCompile Include="Graphics\Importers\ModelImporter.cpp" />
+    <ClCompile Include="Graphics\Importers\ModelImporter_Process.cpp" />
     <ClCompile Include="Graphics\Importers\TextureImporter.cpp" />
     <ClCompile Include="Graphics\Resources\Material.cpp" />
     <ClCompile Include="Graphics\Resources\Mesh.cpp" />
