@@ -369,6 +369,98 @@ namespace Vortex
     {
         public static float DeltaTime => 0f;
     }
+
+    /// <summary>RGBA color, channels 0..1.</summary>
+    public struct Color
+    {
+        public float R, G, B, A;
+        public Color(float r, float g, float b, float a) { R = r; G = g; B = b; A = a; }
+        public static Color Rgb(int r, int g, int b) => new Color(r / 255f, g / 255f, b / 255f, 1f);
+        public static Color Rgba(int r, int g, int b, int a) => new Color(r / 255f, g / 255f, b / 255f, a / 255f);
+    }
+
+    /// <summary>Scene control — the GAME decides when/which scene to load (e.g. lobby PLAY -> ""Match"").</summary>
+    public static class Scene { public static void Load(string name) { } }
+
+    /// <summary>Mouse mode. Locked = captured + hidden for mouse-look; unlocked = free cursor for UI.</summary>
+    public static class Cursor { public static bool Locked { get; set; } }
+
+    /// <summary>Application-level control.</summary>
+    public static class Application { public static void Quit() { } }
+
+    /// <summary>Player camera control.</summary>
+    public static class Camera { public static void SetFieldOfView(float fovDegrees) { } }
+
+    /// <summary>Generic engine settings (the GAME's options menu applies these).</summary>
+    public static class Settings
+    {
+        public static void SetVSync(bool on) { }
+        public static void ToggleFullscreen() { }
+        public static bool IsFullscreen => false;
+    }
+
+    /// <summary>Lighting / atmosphere — flicker, lightning, mood. A static scene keeps what you last set.</summary>
+    public static class Lighting
+    {
+        public static void SetAmbient(float strength) { }
+        public static void SetDirectional(float dx, float dy, float dz, float r, float g, float b, float intensity) { }
+        public static void ClearLights() { }
+    }
+
+    /// <summary>Script-built world geometry — assemble a level/backdrop from meshes (render-only).</summary>
+    public static class World
+    {
+        public static void Add(string meshPath, float x, float y, float z, float yawDegrees, float scale) { }
+        public static void Clear() { }
+    }
+
+    /// <summary>Immediate-mode 2D overlay (drawn each frame over the 3D). align: 0/1/2 = left/center/right.</summary>
+    public static class UI
+    {
+        public static float Width => 0f;
+        public static float Height => 0f;
+        public static float MouseX => 0f;
+        public static float MouseY => 0f;
+        public static bool MouseDown => false;
+        public static void Rect(float x, float y, float w, float h, Color c, float radius) { }
+        public static void Rect(float x, float y, float w, float h, Color c) { }
+        public static void Text(string text, float x, float y, float w, float h, float size, Color c, int align, int weight) { }
+        public static void Text(string text, float x, float y, float w, float h, float size, Color c) { }
+        public static void Line(float x1, float y1, float x2, float y2, Color c, float thick) { }
+        public static void Image(string path, float x, float y, float w, float h, Color tint) { }
+        public static void Image(string path, float x, float y, float w, float h) { }
+        public static bool Hover(float x, float y, float w, float h) => false;
+        public static bool Button(float x, float y, float w, float h, string label, Color bg, Color fg, float size, float radius) => false;
+    }
+
+    /// <summary>A loaded retained-UI screen (.vui). Drive named slots + read events by stable id.</summary>
+    public sealed class VuiHandle
+    {
+        public bool IsValid => false;
+        public void Show() { }
+        public void Hide() { }
+        public void SetValue(string id, float v) { }
+        public void SetText(string id, string t) { }
+        public void SetVisible(string id, bool v) { }
+        public void SetColor(string id, Color c) { }
+        public void SetImage(string id, string asset) { }
+        public void SetList(string id, System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyDictionary<string, string>> rows) { }
+        public bool WasClicked(string id) => false;
+        public float GetSlider(string id) => 0f;
+        public bool GetToggle(string id) => false;
+        public string GetText(string id) => """";
+        public int GetStep(string id) => 0;
+        public int GetCapturedKey(string id) => 0;
+    }
+
+    /// <summary>Retained-mode 2D UI: load .vui screens, stack them, drive them by id.</summary>
+    public static class Gui
+    {
+        public static VuiHandle Load(string name) => new VuiHandle();
+        public static VuiHandle Push(string name) => new VuiHandle();
+        public static void Pop() { }
+        public static bool HasScreens => false;
+    }
 }
 ";
 
