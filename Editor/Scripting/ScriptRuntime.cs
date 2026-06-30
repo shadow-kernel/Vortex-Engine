@@ -313,10 +313,10 @@ namespace Editor.Scripting
         bool Vortex.IScriptHost.GetKey(string key)
         {
             if (string.IsNullOrEmpty(key)) return false;
-            // Freeze gameplay input while a UI menu is up: the mouse is freed to operate the UI, so movement
-            // keys (and look — the mouse delta is already zeroed when the cursor isn't captured) must not fire.
-            // A HUD (CursorLocked) does NOT block — only a free-cursor menu/lobby does. Mirrors the cursor authority.
-            if (Editor.UI.Vui.VuiStack.Instance.MenuActive) return false;
+            // Freeze gameplay movement keys while a screen that OPTED IN (BlocksGameplay checkbox in the UI editor)
+            // is up — e.g. a chest/inventory. A hotbar/HUD leaves it off, so the player keeps moving. (Mouse-look is
+            // gated the same way in Vortex.Input.MouseDeltaX/Y.)
+            if (Editor.UI.Vui.VuiStack.Instance.GameplayInputBlocked) return false;
             if (!Enum.TryParse(key, true, out Key k)) return false;
             // Use the global physical key state (not WPF Keyboard.IsKeyDown): while playing, focus is on
             // a native swapchain HWND (editor viewport or the standalone game window), where the WPF

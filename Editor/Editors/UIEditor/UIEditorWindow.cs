@@ -310,6 +310,7 @@ namespace Editor.Editors.UIEditor
             }
             AddCheckRow("Blocks input (screen)", e.BlocksInput, v => { e.BlocksInput = v; Touch(); });
             AddCheckRow("Cursor locked (HUD)", e.CursorLocked, v => { e.CursorLocked = v; Touch(); });
+            AddCheckRow("Freeze gameplay (chest/menu)", e.BlocksGameplay, v => { e.BlocksGameplay = v; Touch(); });
         }
 
         // ---- button -> C# action codegen (the transparent button↔code link) ----

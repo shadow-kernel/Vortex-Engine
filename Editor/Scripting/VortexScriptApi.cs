@@ -136,9 +136,11 @@ namespace Vortex
         public static bool GetKey(string key) => Host != null && Host.GetKey(key);
 
         /// <summary>Mouse movement since the last tick, in pixels (only non-zero while the game has
-        /// captured the cursor — i.e. in play before ESC). Use it for mouse-look.</summary>
-        public static float MouseDeltaX { get; internal set; }
-        public static float MouseDeltaY { get; internal set; }
+        /// captured the cursor — i.e. in play before ESC). Use it for mouse-look. Forced to 0 while a screen that
+        /// opted into freezing gameplay (BlocksGameplay) is up, so mouse-look stops with movement.</summary>
+        public static float MouseDeltaX { get { return Editor.UI.Vui.VuiStack.Instance.GameplayInputBlocked ? 0f : _mouseDeltaX; } internal set { _mouseDeltaX = value; } }
+        public static float MouseDeltaY { get { return Editor.UI.Vui.VuiStack.Instance.GameplayInputBlocked ? 0f : _mouseDeltaY; } internal set { _mouseDeltaY = value; } }
+        private static float _mouseDeltaX, _mouseDeltaY;
     }
 
     /// <summary>Frame timing.</summary>

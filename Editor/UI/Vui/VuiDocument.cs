@@ -82,7 +82,7 @@ namespace Editor.UI.Vui
             e.ClickAction = d.ClickAction;
             e.CapturesKey = d.CapturesKey; e.MaxChars = d.MaxChars > 0 ? d.MaxChars : 64;
             e.Visible = d.Visible; e.Opacity = d.Opacity <= 0 ? 1f : d.Opacity;
-            e.BlocksInput = d.BlocksInput; e.CursorLocked = d.CursorLocked; e.ClipChildren = d.Clip;
+            e.BlocksInput = d.BlocksInput; e.CursorLocked = d.CursorLocked; e.BlocksGameplay = d.BlocksGameplay; e.ClipChildren = d.Clip;
             if (!string.IsNullOrEmpty(d.Layout)) Enum.TryParse(d.Layout, true, out e.LayoutMode);
             e.Spacing = d.Spacing; e.Padding = d.Padding; e.GridCols = d.GridCols > 0 ? d.GridCols : 1;
             if (d.Bind != null)
@@ -133,6 +133,7 @@ namespace Editor.UI.Vui
             if (e.Opacity != 1f) d.Opacity = e.Opacity;
             if (e.BlocksInput) d.BlocksInput = true;
             if (e.CursorLocked) d.CursorLocked = true;
+            if (e.BlocksGameplay) d.BlocksGameplay = true;
             if (e.ClipChildren) d.Clip = true;
             if (e.Spacing != 0) d.Spacing = e.Spacing;
             if (e.Padding != 0) d.Padding = e.Padding;
@@ -185,6 +186,7 @@ namespace Editor.UI.Vui
         public float Opacity { get; set; } = 1f;
         public bool BlocksInput { get; set; }
         public bool CursorLocked { get; set; }
+        public bool BlocksGameplay { get; set; }
         public bool Clip { get; set; }
         public string Layout { get; set; }
         public float Spacing { get; set; }

@@ -47,6 +47,8 @@ namespace Editor.UI.Vui
         public float Opacity = 1f;
         public bool BlocksInput;                // a screen/modal that consumes clicks + owns the cursor
         public bool CursorLocked;               // canvas-level pref hoisted from the root (HUD = locked mouse-look)
+        public bool BlocksGameplay;             // canvas-level OPT-IN: while this screen is up, freeze gameplay input
+                                                // (movement keys + mouse-look). Set for a chest/menu, NOT for a hotbar.
         public bool ClipChildren;               // push a scissor around the children (lists / scroll)
 
         // --- containers ---

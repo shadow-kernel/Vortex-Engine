@@ -31,6 +31,9 @@ namespace Editor.UI.Vui
 
         public bool CursorLockedPref => Root != null && Root.CursorLocked;
         public bool BlocksInput => Root != null && Root.BlocksInput;
+        /// <summary>Opt-in (UI-editor checkbox): while this screen is shown, freeze gameplay input (movement +
+        /// mouse-look). A chest/inventory sets it; a hotbar/HUD leaves it off so the player keeps moving.</summary>
+        public bool BlocksGameplayPref => Root != null && Root.BlocksGameplay;
         public float Scale => _scale;
 
         public static VuiCanvas Load(string path) => VuiDocument.Load(path);
@@ -439,7 +442,7 @@ namespace Editor.UI.Vui
                 Text = t.Text, ImageAsset = t.ImageAsset, Value = t.Value, Min = t.Min, Max = t.Max, On = t.On,
                 Options = t.Options, OptionIndex = t.OptionIndex, TargetSetting = t.TargetSetting,
                 CapturesKey = t.CapturesKey, MaxChars = t.MaxChars, ClickAction = t.ClickAction,
-                Visible = t.Visible, Opacity = t.Opacity, BlocksInput = t.BlocksInput,
+                Visible = t.Visible, Opacity = t.Opacity, BlocksInput = t.BlocksInput, BlocksGameplay = t.BlocksGameplay,
                 ClipChildren = t.ClipChildren, LayoutMode = t.LayoutMode, Spacing = t.Spacing, Padding = t.Padding, GridCols = t.GridCols,
                 Parent = parent
             };
