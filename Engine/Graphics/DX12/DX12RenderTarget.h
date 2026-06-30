@@ -25,7 +25,8 @@ namespace vortex::graphics::dx12
 		/// </summary>
 		bool initialize(ID3D12Device* device, u32 width, u32 height,
 						DXGI_FORMAT format = DXGI_FORMAT_B8G8R8A8_UNORM,
-						bool sampleable_depth = false);
+						bool sampleable_depth = false,
+						bool allow_uav = false);
 		
 		/// <summary>
 		/// Shutdown and release all resources.
@@ -94,6 +95,11 @@ namespace vortex::graphics::dx12
 		/// </summary>
 		void transition_to_copy_source(ID3D12GraphicsCommandList* cmd);
 
+		/// <summary>Depth transitions (only meaningful with sampleable_depth) — flip the depth between DEPTH_WRITE
+		/// (3D pass) and PIXEL_SHADER_RESOURCE (mvec / DLSS sampling). Tracked separately from the color state.</summary>
+		void transition_depth_to_shader_resource(ID3D12GraphicsCommandList* cmd);
+		void transition_depth_to_depth_write(ID3D12GraphicsCommandList* cmd);
+
 		/// <summary>
 		/// Copy render target data to a staging buffer for CPU readback.
 		/// </summary>
@@ -140,7 +146,9 @@ namespace vortex::graphics::dx12
 		u32 m_srv_increment{ 0 };           // CBV_SRV_UAV descriptor size (for the depth SRV at slot 1)
 		DXGI_FORMAT m_format{ DXGI_FORMAT_R8G8B8A8_UNORM };
 		D3D12_RESOURCE_STATES m_current_state{ D3D12_RESOURCE_STATE_COMMON };
+		D3D12_RESOURCE_STATES m_depth_state{ D3D12_RESOURCE_STATE_DEPTH_WRITE };
 		bool m_sampleable_depth{ false };   // depth created as R32_TYPELESS with an SRV (DLSS input)
+		bool m_allow_uav{ false };          // color RT also allows UAV (DLSS writes the upscaled output via UAV)
 		bool m_initialized{ false };
 		bool m_staging_mapped{ false };
 	};

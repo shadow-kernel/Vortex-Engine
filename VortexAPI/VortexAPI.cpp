@@ -835,6 +835,11 @@ EDITOR_INTERFACE void GameHostSetResolution(int w, int h) { runtime::GameHost::s
 EDITOR_INTERFACE void SetRenderScale(float s) { graphics::dx12::DX12Renderer::instance().set_render_scale(s); }
 EDITOR_INTERFACE float GetRenderScale() { return graphics::dx12::DX12Renderer::instance().render_scale(); }
 
+// DLSS mode: 0=off, 1=Quality, 2=Balanced, 3=Performance, 4=UltraPerformance. Drives the render-scale + the
+// slEvaluateFeature upscale slot. Only visible on DLSS-capable GPUs (else the bilinear render-scale upscale).
+EDITOR_INTERFACE void SetDlssMode(int mode) { graphics::dx12::DX12Renderer::instance().set_dlss_mode(mode); }
+EDITOR_INTERFACE int GetDlssMode() { return graphics::dx12::DX12Renderer::instance().dlss_mode(); }
+
 // GPU capability — the DLSS hardware gate. The options UI shows DLSS only when GpuSupportsDlss() is true; on
 // every other machine the render-scale slider is the universal fallback.
 EDITOR_INTERFACE int GpuVendorId() { return (int)graphics::dx12::DX12Core::instance().adapter_vendor_id(); }

@@ -8,7 +8,7 @@ namespace vortex::graphics::dx12
 		shutdown();
 	}
 
-	bool DX12RenderTarget::initialize(ID3D12Device* device, u32 width, u32 height, DXGI_FORMAT format, bool sampleable_depth)
+	bool DX12RenderTarget::initialize(ID3D12Device* device, u32 width, u32 height, DXGI_FORMAT format, bool sampleable_depth, bool allow_uav)
 	{
 		if (!device || width == 0 || height == 0) return false;
 		if (m_initialized) shutdown();
@@ -17,6 +17,7 @@ namespace vortex::graphics::dx12
 		m_height = height;
 		m_format = format;
 		m_sampleable_depth = sampleable_depth;
+		m_allow_uav = allow_uav;
 
 		if (!create_descriptor_heaps(device)) return false;
 		if (!create_render_target(device)) return false;
@@ -110,6 +111,7 @@ namespace vortex::graphics::dx12
 		desc.Format = m_format;
 		desc.SampleDesc.Count = 1;
 		desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+		if (m_allow_uav) desc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS; // DLSS writes the output via UAV
 
 		D3D12_CLEAR_VALUE clear_value{};
 		clear_value.Format = m_format;
@@ -175,6 +177,7 @@ namespace vortex::graphics::dx12
 		{
 			return false;
 		}
+		m_depth_state = D3D12_RESOURCE_STATE_DEPTH_WRITE;
 
 		// Create DSV (explicit D32_FLOAT — required when the resource is typeless)
 		D3D12_DEPTH_STENCIL_VIEW_DESC dsv_desc{};
@@ -304,6 +307,32 @@ namespace vortex::graphics::dx12
 		cmd->ResourceBarrier(1, &barrier);
 
 		m_current_state = D3D12_RESOURCE_STATE_COPY_SOURCE;
+	}
+
+	void DX12RenderTarget::transition_depth_to_shader_resource(ID3D12GraphicsCommandList* cmd)
+	{
+		if (!cmd || !m_depth_buffer || m_depth_state == D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) return;
+		D3D12_RESOURCE_BARRIER barrier{};
+		barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		barrier.Transition.pResource = m_depth_buffer.Get();
+		barrier.Transition.StateBefore = m_depth_state;
+		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		cmd->ResourceBarrier(1, &barrier);
+		m_depth_state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+	}
+
+	void DX12RenderTarget::transition_depth_to_depth_write(ID3D12GraphicsCommandList* cmd)
+	{
+		if (!cmd || !m_depth_buffer || m_depth_state == D3D12_RESOURCE_STATE_DEPTH_WRITE) return;
+		D3D12_RESOURCE_BARRIER barrier{};
+		barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		barrier.Transition.pResource = m_depth_buffer.Get();
+		barrier.Transition.StateBefore = m_depth_state;
+		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+		barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		cmd->ResourceBarrier(1, &barrier);
+		m_depth_state = D3D12_RESOURCE_STATE_DEPTH_WRITE;
 	}
 
 	bool DX12RenderTarget::copy_to_staging(ID3D12GraphicsCommandList* cmd)

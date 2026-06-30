@@ -46,6 +46,8 @@ namespace Editor
                         _sceneArg = a.Substring("--scene=".Length).Trim('"');       // dev: force which scene to play
                     else if (a.StartsWith("--renderscale=", StringComparison.OrdinalIgnoreCase))
                         float.TryParse(a.Substring("--renderscale=".Length), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _renderScaleArg); // dev: force render-scale
+                    else if (a.StartsWith("--dlss=", StringComparison.OrdinalIgnoreCase))
+                        int.TryParse(a.Substring("--dlss=".Length), out _dlssArg); // dev: force DLSS mode (0..4)
                 }
             }
             if (!string.IsNullOrEmpty(_projectArg)) playerMode = true;
@@ -169,6 +171,8 @@ namespace Editor
                 DllWrapper.VortexAPI.SetGameTickCallback(_ghTick);
                 if (_renderScaleArg > 0f && _renderScaleArg < 0.999f)     // dev: --renderscale=<f> (the scaled path)
                     try { DllWrapper.VortexAPI.SetRenderScale(_renderScaleArg); } catch { }
+                if (_dlssArg > 0)                                          // dev: --dlss=<0..4> (force a DLSS mode)
+                    try { DllWrapper.VortexAPI.SetDlssMode(_dlssArg); } catch { }
                 Editor.Core.Services.PlayModeService.Instance.NativeGameHostRunning = true; // this thread is now in the native loop
                 DllWrapper.VortexAPI.RunGameHost(1280, 720, "Vortex");    // BLOCKS — runs the game
                 Editor.Core.Services.PlayModeService.Instance.NativeGameHostRunning = false;
@@ -191,6 +195,7 @@ namespace Editor
         private static string _projectArg;         // --project="<dir>": dev hook to play a project's active scene from disk
         private static string _sceneArg;           // --scene="<name>": dev hook to force which scene plays
         private static float  _renderScaleArg = 1f; // --renderscale=<f>: dev hook to force render-scale (verify the scaled path)
+        private static int    _dlssArg = 0;         // --dlss=<0..4>: dev hook to force a DLSS mode (verify the eval path)
         private static Vortex.VuiHandle _vuiTestHandle; private static bool _vuiPrevDown;
         private static int _stressCountArg = 1000;
         private static bool _stressInit;

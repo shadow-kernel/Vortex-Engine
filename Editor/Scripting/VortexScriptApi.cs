@@ -307,6 +307,12 @@ namespace Vortex
         public static void SetRenderScale(float scale) { Editor.DllWrapper.VortexAPI.SetRenderScale(scale); }
         public static float RenderScale { get { return Editor.DllWrapper.VortexAPI.GetRenderScale(); } }
 
+        /// <summary>DLSS quality: 0=Off, 1=Quality, 2=Balanced, 3=Performance, 4=Ultra Performance. A non-off mode
+        /// renders the 3D at a lower resolution and AI-upscales it to native (big perf win on RTX). Only takes
+        /// visible effect when <see cref="DlssSupported"/> is true; otherwise it falls back to a bilinear upscale.</summary>
+        public static void SetDlssMode(int mode) { Editor.DllWrapper.VortexAPI.SetDlssMode(mode); }
+        public static int DlssMode { get { return Editor.DllWrapper.VortexAPI.GetDlssMode(); } }
+
         /// <summary>Master volume 0..1. Stored here until the (XAudio2) sound engine reads it — audio is still a stub.</summary>
         public static float MasterVolume { get; private set; } = 1f;
         public static void SetMasterVolume(float v) { MasterVolume = v < 0f ? 0f : (v > 1f ? 1f : v); }

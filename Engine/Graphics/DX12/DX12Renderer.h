@@ -10,6 +10,7 @@
 #include "DX12GridPipeline.h"
 #include "DX12SkyboxPipeline.h"
 #include "DX12UpscalePipeline.h"
+#include "DX12MotionVectorPipeline.h"
 #include "DX12DepthBuffer.h"
 #include "DX12RenderTarget.h"
 #include "DX12Geometry.h"
@@ -160,6 +161,23 @@ namespace vortex::graphics::dx12
 		// Stored here now (settings UI wires to it); the scaled-RT + upscale pass reads m_render_scale.
 		void set_render_scale(float s) { m_render_scale = s < 0.25f ? 0.25f : (s > 2.0f ? 2.0f : s); }
 		float render_scale() const { return m_render_scale; }
+
+		// DLSS mode: 0=off, 1=Quality, 2=Balanced, 3=Performance, 4=UltraPerformance. A non-off mode drives the
+		// render-scale (the 3D renders at the mode's fraction; DLSS upscales to native in the upscale slot). Off
+		// resets render-scale to native. Only has visible effect on DLSS-capable GPUs (else bilinear upscale).
+		void set_dlss_mode(int mode)
+		{
+			m_dlss_mode = (mode < 0 || mode > 4) ? 0 : mode;
+			switch (m_dlss_mode)
+			{
+				case 1: m_render_scale = 0.667f; break; // Quality
+				case 2: m_render_scale = 0.580f; break; // Balanced
+				case 3: m_render_scale = 0.500f; break; // Performance
+				case 4: m_render_scale = 0.333f; break; // Ultra Performance
+				default: m_render_scale = 1.0f;  break; // Off -> native
+			}
+		}
+		int dlss_mode() const { return m_dlss_mode; }
 
 		// Grid rendering
 		void set_grid_visible(bool visible) { m_grid_visible = visible; }
@@ -342,6 +360,11 @@ namespace vortex::graphics::dx12
 		DX12SkyboxPipeline m_skybox_pipeline; // Skybox rendering pipeline
 		DX12UpscalePipeline m_upscale;        // Fullscreen upscale (render-scale composite + the DLSS slot)
 		DX12RenderTarget m_scaled_rt;         // Offscreen color+depth the 3D renders into when render-scale < 1
+		DX12MotionVectorPipeline m_mvec_pipeline; // RG16F velocity pass (DLSS input)
+		DX12RenderTarget m_mvec_rt;           // RG16F motion vectors (render res) — DLSS input
+		DX12RenderTarget m_dlss_output;       // Full-res DLSS upscaled output (UAV); blitted to the back buffer
+		DirectX::XMFLOAT4X4 m_prev_view_projection{}; // previous frame VP (motion vectors + DLSS clipToPrevClip)
+		int m_dlss_mode{ 0 };                 // 0=off, 1..4 quality modes
 		DX12DepthBuffer m_depth_buffer;
 		DX12Geometry m_geometry;           // Fallback triangle
 		UIOverlay m_ui_overlay;            // Direct2D/DirectWrite 2D UI over the 3D
@@ -549,7 +572,11 @@ namespace vortex::graphics::dx12
 		// Render-scale: (re)create m_scaled_rt at w x h (R8G8B8A8) when the scale/window size changes; idles the
 		// GPU first since the RT may be in flight. Returns false if creation failed (caller falls back to direct).
 		bool ensure_scaled_rt(u32 width, u32 height);
-		
+
+		// DLSS targets (lazily (re)created): m_mvec_rt at render res (RG16F), m_dlss_output at display res (R8G8B8A8 + UAV).
+		bool ensure_mvec_rt(u32 width, u32 height);
+		bool ensure_dlss_output(u32 width, u32 height);
+
 		// Create SRV descriptor heap for textures
 		bool create_srv_heap();
 		

@@ -3,9 +3,28 @@
 #include "../../Common/CommonHeaders.h"
 #include <d3d12.h>
 #include <dxgi1_6.h>
+#include <DirectXMath.h>
 
 namespace vortex::graphics::dx12
 {
+	// Everything slEvaluateFeature(DLSS) needs for one frame. States are the CURRENT D3D12 state of each resource
+	// (SL manages transitions from there + restores them). Matrices are row-major, NO jitter (engine convention).
+	struct DlssEvalDesc
+	{
+		ID3D12GraphicsCommandList* cmd{};
+		int mode{};                       // 1=Quality 2=Balanced 3=Performance 4=UltraPerformance
+		u32 outW{}, outH{};               // output (display) resolution
+		u32 renderW{}, renderH{};         // render (scaled) resolution
+		ID3D12Resource* colorIn{};        // scaled scene color (render res)
+		ID3D12Resource* colorOut{};       // DLSS output (display res, UAV)
+		ID3D12Resource* depth{};          // scaled depth (render res)
+		ID3D12Resource* mvec{};           // RG16F motion vectors (render res)
+		u32 colorInState{}, colorOutState{}, depthState{}, mvecState{};
+		DirectX::XMFLOAT4X4 proj{};       // cameraViewToClip (view->clip)
+		DirectX::XMFLOAT3 camPos{}, camRight{}, camFwd{};
+		float fovY{}, nearZ{}, farZ{};
+	};
+
 	// Thin, OPTIONAL, dynamically-loaded NVIDIA Streamline (DLSS) wrapper.
 	//
 	// It LoadLibrary's sl.interposer.dll at runtime (expected next to the exe, alongside sl.common/sl.dlss/... )
@@ -41,6 +60,14 @@ namespace vortex::graphics::dx12
 		// Register the main D3D12 device with Streamline (call right after the device is created). No-op if !available().
 		void set_device(ID3D12Device* device);
 
+		// True once the DLSS feature functions resolved (after set_device + the plugin started). If false,
+		// evaluate_dlss can't run and callers must use the bilinear upscale fallback.
+		bool dlss_ready() const { return m_dlss_ready; }
+
+		// Run DLSS for this frame on desc.cmd. Returns false on ANY failure (caller falls back to the bilinear
+		// upscale) — so a DLSS hiccup degrades gracefully and never black-screens.
+		bool evaluate_dlss(const DlssEvalDesc& desc);
+
 		void shutdown();
 
 	private:
@@ -51,5 +78,7 @@ namespace vortex::graphics::dx12
 
 		void* m_module{ nullptr };   // HMODULE of sl.interposer.dll (void* to keep windows.h out of this header)
 		bool  m_available{ false };
+		bool  m_dlss_ready{ false }; // DLSS feature functions resolved
+		u32   m_frame_index{ 0 };    // incrementing index for slGetNewFrameToken
 	};
 }

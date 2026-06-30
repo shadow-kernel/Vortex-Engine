@@ -1,4 +1,5 @@
 #include "DX12Renderer.h"
+#include "DX12Streamline.h"
 #include "../Resources/ResourceRegistry.h"
 #include <algorithm>
 #include <memory>
@@ -69,6 +70,12 @@ namespace vortex::graphics::dx12
 			OutputDebugStringA("Upscale pipeline OK\n");
 		else
 			OutputDebugStringA("Upscale pipeline FAILED (render-scale will fall back to native)\n");
+
+		// Motion-vector pipeline (DLSS input). RG16F. Optional — if it fails, DLSS just can't run (bilinear upscale).
+		if (m_mvec_pipeline.initialize(core.device(), DXGI_FORMAT_R16G16_FLOAT))
+			OutputDebugStringA("Motion-vector pipeline OK\n");
+		else
+			OutputDebugStringA("Motion-vector pipeline FAILED (DLSS will fall back to bilinear)\n");
 
 		if (!m_geometry.initialize(core.device())) return false;
 		if (!create_constant_buffers()) return false;
@@ -345,6 +352,31 @@ namespace vortex::graphics::dx12
 		return m_scaled_rt.resize(dev, width, height);
 	}
 
+	bool DX12Renderer::ensure_mvec_rt(u32 width, u32 height)
+	{
+		if (width < 1) width = 1; if (height < 1) height = 1;
+		if (m_mvec_rt.is_initialized() && m_mvec_rt.width() == width && m_mvec_rt.height() == height) return true;
+		m_command_queue.flush();
+		auto* dev = DX12Core::instance().device();
+		if (!dev) return false;
+		if (!m_mvec_rt.is_initialized())
+			return m_mvec_rt.initialize(dev, width, height, DXGI_FORMAT_R16G16_FLOAT, false, false);
+		return m_mvec_rt.resize(dev, width, height);
+	}
+
+	bool DX12Renderer::ensure_dlss_output(u32 width, u32 height)
+	{
+		if (width < 1) width = 1; if (height < 1) height = 1;
+		if (m_dlss_output.is_initialized() && m_dlss_output.width() == width && m_dlss_output.height() == height) return true;
+		m_command_queue.flush();
+		auto* dev = DX12Core::instance().device();
+		if (!dev) return false;
+		// R8G8B8A8 + UAV (DLSS writes the upscaled output via UAV); SRV used to blit it to the back buffer.
+		if (!m_dlss_output.is_initialized())
+			return m_dlss_output.initialize(dev, width, height, DXGI_FORMAT_R8G8B8A8_UNORM, false, true);
+		return m_dlss_output.resize(dev, width, height);
+	}
+
 	void DX12Renderer::render_frame()
 	{
 		if (!m_initialized) return;
@@ -425,12 +457,67 @@ namespace vortex::graphics::dx12
 			if (m_grid_visible) render_grid();
 			if (!m_render_queue.empty()) render_3d_scene();
 
-			// ---- upscale composite onto the full-res back buffer ----
+			// ---- DLSS (optional): scaled color + depth + motion vectors -> full-res m_dlss_output ----
+			bool dlss_active = (m_dlss_mode > 0) && DX12Streamline::instance().dlss_ready()
+				&& m_mvec_pipeline.is_initialized() && m_scaled_rt.depth_srv_gpu().ptr != 0;
+			bool dlss_done = false;
+			if (dlss_active && ensure_mvec_rt(m_scaled_rt.width(), m_scaled_rt.height()) && ensure_dlss_output(out_w, out_h))
+			{
+				using namespace DirectX;
+				// Motion-vector pass: sample the scaled depth, write pixel-space velocity to m_mvec_rt.
+				m_scaled_rt.transition_depth_to_shader_resource(m_command_list.Get());
+				m_mvec_rt.transition_to_render_target(m_command_list.Get());
+				D3D12_VIEWPORT mvp{}; mvp.Width = (float)m_scaled_rt.width(); mvp.Height = (float)m_scaled_rt.height(); mvp.MaxDepth = 1.0f;
+				D3D12_RECT msc{}; msc.right = (LONG)m_scaled_rt.width(); msc.bottom = (LONG)m_scaled_rt.height();
+				m_command_list->RSSetViewports(1, &mvp);
+				m_command_list->RSSetScissorRects(1, &msc);
+				auto mrtv = m_mvec_rt.rtv();
+				m_command_list->OMSetRenderTargets(1, &mrtv, FALSE, nullptr);
+				m_command_list->SetPipelineState(m_mvec_pipeline.pipeline_state());
+				m_command_list->SetGraphicsRootSignature(m_mvec_pipeline.root_signature());
+				ID3D12DescriptorHeap* mh[] = { m_scaled_rt.srv_heap() };
+				m_command_list->SetDescriptorHeaps(1, mh);
+				m_command_list->SetGraphicsRootDescriptorTable(0, m_scaled_rt.depth_srv_gpu());
+				DX12MotionVectorPipeline::Constants mc{};
+				XMMATRIX curVP = XMLoadFloat4x4(&m_frame_constants.view_projection);
+				XMStoreFloat4x4(&mc.inv_view_proj, XMMatrixInverse(nullptr, curVP));
+				mc.prev_view_proj = m_prev_view_projection;
+				mc.dims[0] = (float)m_scaled_rt.width(); mc.dims[1] = (float)m_scaled_rt.height();
+				m_command_list->SetGraphicsRoot32BitConstants(1, sizeof(mc) / 4, &mc, 0);
+				m_command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+				m_command_list->DrawInstanced(3, 1, 0, 0);
+
+				// DLSS evaluate. SL manages tagged-resource states (restores them to the states we pass in).
+				DlssEvalDesc ed{};
+				ed.cmd = m_command_list.Get();
+				ed.mode = m_dlss_mode;
+				ed.outW = out_w; ed.outH = out_h;
+				ed.renderW = m_scaled_rt.width(); ed.renderH = m_scaled_rt.height();
+				ed.colorIn  = m_scaled_rt.resource();      ed.colorInState  = D3D12_RESOURCE_STATE_RENDER_TARGET;
+				ed.colorOut = m_dlss_output.resource();    ed.colorOutState = D3D12_RESOURCE_STATE_RENDER_TARGET;
+				ed.depth    = m_scaled_rt.depth_resource();ed.depthState    = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+				ed.mvec     = m_mvec_rt.resource();        ed.mvecState     = D3D12_RESOURCE_STATE_RENDER_TARGET;
+				XMStoreFloat4x4(&ed.proj, XMMatrixPerspectiveFovLH(XMConvertToRadians(m_fov_degrees),
+					(float)m_scaled_rt.width() / (float)m_scaled_rt.height(), 0.1f, 1000.0f));
+				ed.camPos = m_camera_position;
+				XMVECTOR cp = XMLoadFloat3(&m_camera_position), ct = XMLoadFloat3(&m_camera_target), cu = XMLoadFloat3(&m_camera_up);
+				XMVECTOR fwd = XMVector3Normalize(XMVectorSubtract(ct, cp));
+				XMVECTOR rgt = XMVector3Normalize(XMVector3Cross(cu, fwd));
+				XMStoreFloat3(&ed.camFwd, fwd); XMStoreFloat3(&ed.camRight, rgt);
+				ed.fovY = XMConvertToRadians(m_fov_degrees); ed.nearZ = 0.1f; ed.farZ = 1000.0f;
+
+				dlss_done = DX12Streamline::instance().evaluate_dlss(ed);
+
+				m_scaled_rt.transition_depth_to_depth_write(m_command_list.Get()); // ready for next frame's 3D pass
+			}
+
+			// ---- composite onto the full-res back buffer (DLSS output if it ran, else the scaled color) ----
 			barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
 			barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
 			m_command_list->ResourceBarrier(1, &barrier);
 
-			m_scaled_rt.transition_to_shader_resource(m_command_list.Get());
+			DX12RenderTarget* blit_src = dlss_done ? &m_dlss_output : &m_scaled_rt;
+			blit_src->transition_to_shader_resource(m_command_list.Get());
 
 			auto bbrtv = m_swapchain.current_rtv();
 			D3D12_VIEWPORT fvp{}; fvp.Width = (float)out_w; fvp.Height = (float)out_h; fvp.MaxDepth = 1.0f;
@@ -441,13 +528,13 @@ namespace vortex::graphics::dx12
 
 			m_command_list->SetPipelineState(m_upscale.pipeline_state());
 			m_command_list->SetGraphicsRootSignature(m_upscale.root_signature());
-			ID3D12DescriptorHeap* heaps[] = { m_scaled_rt.srv_heap() };
+			ID3D12DescriptorHeap* heaps[] = { blit_src->srv_heap() };
 			m_command_list->SetDescriptorHeaps(1, heaps);
-			m_command_list->SetGraphicsRootDescriptorTable(0, m_scaled_rt.srv_gpu());
+			m_command_list->SetGraphicsRootDescriptorTable(0, blit_src->srv_gpu());
 			m_command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 			m_command_list->DrawInstanced(3, 1, 0, 0);   // fullscreen triangle
 
-			m_scaled_rt.transition_to_render_target(m_command_list.Get());   // leave RT ready for next frame
+			blit_src->transition_to_render_target(m_command_list.Get());   // leave RT ready for next frame
 
 			barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
 			barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
@@ -1431,6 +1518,8 @@ namespace vortex::graphics::dx12
 	XMMATRIX proj = XMMatrixPerspectiveFovLH(XMConvertToRadians(m_fov_degrees), aspect, 0.1f, 1000.0f); // settable FOV (game camera)
 	XMMATRIX vp = view * proj;
 
+	// Track last frame's VP (motion vectors + DLSS clipToPrevClip) before overwriting it.
+	m_prev_view_projection = m_frame_constants.view_projection;
 	XMStoreFloat4x4(&m_frame_constants.view_projection, vp);
 	m_frame_constants.camera_position = m_camera_position;
 	m_frame_constants.light_direction = m_light_direction;

@@ -114,6 +114,8 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostSetResolution")] private static extern void GameHostSetResolutionNative(int w, int h);
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SetRenderScale")] private static extern void SetRenderScaleNative(float s);
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GetRenderScale")] private static extern float GetRenderScaleNative();
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SetDlssMode")] private static extern void SetDlssModeNative(int mode);
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GetDlssMode")] private static extern int GetDlssModeNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GpuVendorId")] private static extern int GpuVendorIdNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GpuSupportsDlss")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool GpuSupportsDlssNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GpuName")] private static extern int GpuNameNative(byte[] buf, int cap);
@@ -148,6 +150,8 @@ namespace Editor.DllWrapper
         public static void GameHostSetResolution(int w, int h) { try { GameHostSetResolutionNative(w, h); } catch { } }
         /// <summary>Render-scale 0.25..2.0 (stored now; the scaled-RT upscale pass applies it). 1.0 = native.</summary>
         public static void SetRenderScale(float s) { try { SetRenderScaleNative(s); } catch { } }
+        public static void SetDlssMode(int mode) { try { SetDlssModeNative(mode); } catch { } }
+        public static int GetDlssMode() { try { return GetDlssModeNative(); } catch { return 0; } }
         public static float GetRenderScale() { try { return GetRenderScaleNative(); } catch { return 1f; } }
         /// <summary>GPU vendor id (0x10DE NVIDIA, 0x1002 AMD, 0x8086 Intel) of the selected adapter.</summary>
         public static int GpuVendorId() { try { return GpuVendorIdNative(); } catch { return 0; } }

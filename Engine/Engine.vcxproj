@@ -32,6 +32,7 @@
     <ClInclude Include="Graphics\DX12\DX12DepthBuffer.h" />
     <ClInclude Include="Graphics\DX12\DX12Geometry.h" />
     <ClInclude Include="Graphics\DX12\DX12GridPipeline.h" />
+    <ClInclude Include="Graphics\DX12\DX12MotionVectorPipeline.h" />
     <ClInclude Include="Graphics\DX12\DX12Pipeline.h" />
     <ClInclude Include="Graphics\DX12\DX12Pipeline3D.h" />
     <ClInclude Include="Graphics\DX12\DX12Renderer.h" />
@@ -89,6 +90,7 @@
     <ClCompile Include="Graphics\DX12\DX12DepthBuffer.cpp" />
     <ClCompile Include="Graphics\DX12\DX12Geometry.cpp" />
     <ClCompile Include="Graphics\DX12\DX12GridPipeline.cpp" />
+    <ClCompile Include="Graphics\DX12\DX12MotionVectorPipeline.cpp" />
     <ClCompile Include="Graphics\DX12\DX12Pipeline.cpp" />
     <ClCompile Include="Graphics\DX12\DX12Pipeline3D.cpp" />
     <ClCompile Include="Graphics\DX12\DX12Renderer.cpp" />
