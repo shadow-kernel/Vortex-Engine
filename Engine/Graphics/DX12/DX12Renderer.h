@@ -9,6 +9,7 @@
 #include "DX12Pipeline3D.h"
 #include "DX12GridPipeline.h"
 #include "DX12SkyboxPipeline.h"
+#include "DX12UpscalePipeline.h"
 #include "DX12DepthBuffer.h"
 #include "DX12RenderTarget.h"
 #include "DX12Geometry.h"
@@ -339,6 +340,8 @@ namespace vortex::graphics::dx12
 		DX12Pipeline3D m_pipeline_3d;      // Full 3D pipeline
 		DX12GridPipeline m_grid_pipeline;  // Grid rendering pipeline
 		DX12SkyboxPipeline m_skybox_pipeline; // Skybox rendering pipeline
+		DX12UpscalePipeline m_upscale;        // Fullscreen upscale (render-scale composite + the DLSS slot)
+		DX12RenderTarget m_scaled_rt;         // Offscreen color+depth the 3D renders into when render-scale < 1
 		DX12DepthBuffer m_depth_buffer;
 		DX12Geometry m_geometry;           // Fallback triangle
 		UIOverlay m_ui_overlay;            // Direct2D/DirectWrite 2D UI over the 3D
@@ -542,6 +545,10 @@ namespace vortex::graphics::dx12
 		
 		// Helper for rendering to a specific target
 		void render_scene_to_target(DX12RenderTarget* target, const ViewportCamera& camera, bool render_grid);
+
+		// Render-scale: (re)create m_scaled_rt at w x h (R8G8B8A8) when the scale/window size changes; idles the
+		// GPU first since the RT may be in flight. Returns false if creation failed (caller falls back to direct).
+		bool ensure_scaled_rt(u32 width, u32 height);
 		
 		// Create SRV descriptor heap for textures
 		bool create_srv_heap();

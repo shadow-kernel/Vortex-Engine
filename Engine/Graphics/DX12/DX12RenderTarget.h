@@ -67,6 +67,11 @@ namespace vortex::graphics::dx12
 		D3D12_GPU_DESCRIPTOR_HANDLE srv_gpu() const;
 
 		/// <summary>
+		/// The (shader-visible) SRV heap holding this target's SRV — bind via SetDescriptorHeaps to sample it.
+		/// </summary>
+		ID3D12DescriptorHeap* srv_heap() const { return m_srv_heap.Get(); }
+
+		/// <summary>
 		/// Transition to render target state.
 		/// </summary>
 		void transition_to_render_target(ID3D12GraphicsCommandList* cmd);

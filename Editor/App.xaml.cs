@@ -44,6 +44,8 @@ namespace Editor
                         _projectArg = a.Substring("--project=".Length).Trim('"');   // dev: play a project's active scene from disk
                     else if (a.StartsWith("--scene=", StringComparison.OrdinalIgnoreCase))
                         _sceneArg = a.Substring("--scene=".Length).Trim('"');       // dev: force which scene to play
+                    else if (a.StartsWith("--renderscale=", StringComparison.OrdinalIgnoreCase))
+                        float.TryParse(a.Substring("--renderscale=".Length), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _renderScaleArg); // dev: force render-scale
                 }
             }
             if (!string.IsNullOrEmpty(_projectArg)) playerMode = true;
@@ -165,6 +167,8 @@ namespace Editor
                 // it calls GameHostTick (scripts + camera + submit) then renders + presents. Blocks until close.
                 _ghTick = GameHostTick;                                   // keep the delegate alive (GC)
                 DllWrapper.VortexAPI.SetGameTickCallback(_ghTick);
+                if (_renderScaleArg > 0f && _renderScaleArg < 0.999f)     // dev: --renderscale=<f> (the scaled path)
+                    try { DllWrapper.VortexAPI.SetRenderScale(_renderScaleArg); } catch { }
                 DllWrapper.VortexAPI.RunGameHost(1280, 720, "Vortex");    // BLOCKS — runs the game
                 Shutdown();                                                // window closed -> exit
             }
@@ -184,6 +188,7 @@ namespace Editor
         private static string _vuiTestArg;         // --vuitest="<.vui>": dev hook to render a retained-UI screen
         private static string _projectArg;         // --project="<dir>": dev hook to play a project's active scene from disk
         private static string _sceneArg;           // --scene="<name>": dev hook to force which scene plays
+        private static float  _renderScaleArg = 1f; // --renderscale=<f>: dev hook to force render-scale (verify the scaled path)
         private static Vortex.VuiHandle _vuiTestHandle; private static bool _vuiPrevDown;
         private static int _stressCountArg = 1000;
         private static bool _stressInit;

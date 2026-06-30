@@ -63,6 +63,13 @@ namespace vortex::graphics::dx12
 			m_skybox_enabled = false;
 		}
 
+		// Upscale pipeline (render-scale composite). Writes the swapchain format. If it fails, render-scale just
+		// stays disabled (m_render_scale<1 falls back to direct rendering); the rest of the renderer is unaffected.
+		if (m_upscale.initialize(core.device(), DXGI_FORMAT_R8G8B8A8_UNORM))
+			OutputDebugStringA("Upscale pipeline OK\n");
+		else
+			OutputDebugStringA("Upscale pipeline FAILED (render-scale will fall back to native)\n");
+
 		if (!m_geometry.initialize(core.device())) return false;
 		if (!create_constant_buffers()) return false;
 		if (!create_srv_heap()) return false;
@@ -117,9 +124,11 @@ namespace vortex::graphics::dx12
 		m_grid_vertex_buffer.Reset();
 
 		m_depth_buffer.shutdown();
+		m_scaled_rt.shutdown();
 		m_geometry.shutdown();
 		m_grid_pipeline.shutdown();
 		m_skybox_pipeline.shutdown();
+		m_upscale.shutdown();
 		m_pipeline_3d.shutdown();
 		m_pipeline.shutdown();
 		m_command_list.Reset();
@@ -317,6 +326,23 @@ namespace vortex::graphics::dx12
 		return ok;
 	}
 
+	bool DX12Renderer::ensure_scaled_rt(u32 width, u32 height)
+	{
+		if (width < 1) width = 1;
+		if (height < 1) height = 1;
+		if (m_scaled_rt.is_initialized() && m_scaled_rt.width() == width && m_scaled_rt.height() == height)
+			return true;
+		// The RT may be referenced by an in-flight frame — idle the GPU before destroying/recreating it. This only
+		// runs on a scale/window-size change (rare), not per frame, so the stall is a one-off.
+		m_command_queue.flush();
+		auto* dev = DX12Core::instance().device();
+		if (!dev) return false;
+		// MUST be R8G8B8A8_UNORM to match the 3D/grid/skybox PSOs (DX12RenderTarget defaults to BGRA — would mismatch).
+		if (!m_scaled_rt.is_initialized())
+			return m_scaled_rt.initialize(dev, width, height, DXGI_FORMAT_R8G8B8A8_UNORM);
+		return m_scaled_rt.resize(dev, width, height);
+	}
+
 	void DX12Renderer::render_frame()
 	{
 		if (!m_initialized) return;
@@ -343,18 +369,11 @@ namespace vortex::graphics::dx12
 		
 		u32 idx = m_swapchain.current_back_buffer_index();
 
-		// Editor frame renders into the main swapchain. (render_game_window() points these at the
-		// game window's swapchain instead, reusing the same render_* helpers.)
-		m_active_rtv = m_swapchain.current_rtv();
-		m_active_dsv = m_depth_buffer.dsv();
-		m_active_width = m_swapchain.width();
-		m_active_height = m_swapchain.height();
-
 		// Wait for this frame's previous work to complete (proper double buffering)
 		// Only wait if GPU hasn't finished with this buffer yet
 		m_command_queue.wait_for_fence_value(m_frame_fence_values[idx]);
 
-		update_per_frame_constants();
+		update_per_frame_constants();   // aspect from swapchain dims — a UNIFORM render-scale keeps it matching
 
 		m_command_allocators[idx]->Reset();
 
@@ -362,38 +381,109 @@ namespace vortex::graphics::dx12
 			(m_wireframe_mode ? m_pipeline_3d.wireframe_pso() : m_pipeline_3d.pipeline_state());
 		m_command_list->Reset(m_command_allocators[idx].Get(), pso);
 
+		// Render-scale: when < 1.0 (and the upscale pipeline is ready) render the 3D into a smaller offscreen RT,
+		// then upscale it onto the full-res back buffer (this is also the slot DLSS plugs into). Scale 1.0 takes the
+		// direct path below = byte-for-byte the old behaviour, zero overhead. This is the safe default.
+		bool use_scale = (m_render_scale < 0.999f) && m_upscale.is_initialized();
+		u32 out_w = m_swapchain.width(), out_h = m_swapchain.height();
+		if (use_scale)
+		{
+			u32 rw = (u32)((float)out_w * m_render_scale + 0.5f); if (rw < 1) rw = 1;
+			u32 rh = (u32)((float)out_h * m_render_scale + 0.5f); if (rh < 1) rh = 1;
+			if (!ensure_scaled_rt(rw, rh)) use_scale = false;   // creation failed -> fall back to direct
+		}
+
 		D3D12_RESOURCE_BARRIER barrier{};
 		barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 		barrier.Transition.pResource = m_swapchain.current_back_buffer();
-		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
-		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
 		barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-		m_command_list->ResourceBarrier(1, &barrier);
 
-		auto rtv = m_swapchain.current_rtv();
-		auto dsv = m_depth_buffer.dsv();
+		if (use_scale)
+		{
+			// ---- 3D into the scaled offscreen RT (skybox + grid + scene read m_active_*) ----
+			m_active_rtv = m_scaled_rt.rtv();
+			m_active_dsv = m_scaled_rt.dsv();
+			m_active_width = m_scaled_rt.width();
+			m_active_height = m_scaled_rt.height();
 
-		D3D12_VIEWPORT vp{}; vp.Width = (float)m_swapchain.width(); vp.Height = (float)m_swapchain.height(); vp.MaxDepth = 1.0f;
-		D3D12_RECT sc{}; sc.right = m_swapchain.width(); sc.bottom = m_swapchain.height();
-		m_command_list->RSSetViewports(1, &vp);
-		m_command_list->RSSetScissorRects(1, &sc);
-		m_command_list->ClearRenderTargetView(rtv, m_clear_color, 0, nullptr);
-		m_command_list->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
-		m_command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-		m_command_list->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+			m_scaled_rt.transition_to_render_target(m_command_list.Get());
 
-		// Render skybox first (background - draws at far plane)
-		if (m_skybox_enabled) render_skybox();
+			D3D12_VIEWPORT svp{}; svp.Width = (float)m_scaled_rt.width(); svp.Height = (float)m_scaled_rt.height(); svp.MaxDepth = 1.0f;
+			D3D12_RECT ssc{}; ssc.right = (LONG)m_scaled_rt.width(); ssc.bottom = (LONG)m_scaled_rt.height();
+			m_command_list->RSSetViewports(1, &svp);
+			m_command_list->RSSetScissorRects(1, &ssc);
+			auto srtv = m_scaled_rt.rtv();
+			auto sdsv = m_scaled_rt.dsv();
+			m_command_list->ClearRenderTargetView(srtv, m_clear_color, 0, nullptr);
+			m_command_list->ClearDepthStencilView(sdsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+			m_command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+			m_command_list->OMSetRenderTargets(1, &srtv, FALSE, &sdsv);
 
-		// Render grid (opaque floor with solid background)
-		if (m_grid_visible) render_grid();
+			if (m_skybox_enabled) render_skybox();
+			if (m_grid_visible) render_grid();
+			if (!m_render_queue.empty()) render_3d_scene();
 
-		// Render 3D objects
-		if (!m_render_queue.empty()) render_3d_scene();
+			// ---- upscale composite onto the full-res back buffer ----
+			barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
+			barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+			m_command_list->ResourceBarrier(1, &barrier);
 
-		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
-		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
-		m_command_list->ResourceBarrier(1, &barrier);
+			m_scaled_rt.transition_to_shader_resource(m_command_list.Get());
+
+			auto bbrtv = m_swapchain.current_rtv();
+			D3D12_VIEWPORT fvp{}; fvp.Width = (float)out_w; fvp.Height = (float)out_h; fvp.MaxDepth = 1.0f;
+			D3D12_RECT fsc{}; fsc.right = (LONG)out_w; fsc.bottom = (LONG)out_h;
+			m_command_list->RSSetViewports(1, &fvp);
+			m_command_list->RSSetScissorRects(1, &fsc);
+			m_command_list->OMSetRenderTargets(1, &bbrtv, FALSE, nullptr);   // no depth on the composite
+
+			m_command_list->SetPipelineState(m_upscale.pipeline_state());
+			m_command_list->SetGraphicsRootSignature(m_upscale.root_signature());
+			ID3D12DescriptorHeap* heaps[] = { m_scaled_rt.srv_heap() };
+			m_command_list->SetDescriptorHeaps(1, heaps);
+			m_command_list->SetGraphicsRootDescriptorTable(0, m_scaled_rt.srv_gpu());
+			m_command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+			m_command_list->DrawInstanced(3, 1, 0, 0);   // fullscreen triangle
+
+			m_scaled_rt.transition_to_render_target(m_command_list.Get());   // leave RT ready for next frame
+
+			barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+			barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+			m_command_list->ResourceBarrier(1, &barrier);
+		}
+		else
+		{
+			// ---- direct path: render straight to the back buffer at native res (unchanged) ----
+			m_active_rtv = m_swapchain.current_rtv();
+			m_active_dsv = m_depth_buffer.dsv();
+			m_active_width = m_swapchain.width();
+			m_active_height = m_swapchain.height();
+
+			barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
+			barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+			m_command_list->ResourceBarrier(1, &barrier);
+
+			auto rtv = m_swapchain.current_rtv();
+			auto dsv = m_depth_buffer.dsv();
+
+			D3D12_VIEWPORT vp{}; vp.Width = (float)m_swapchain.width(); vp.Height = (float)m_swapchain.height(); vp.MaxDepth = 1.0f;
+			D3D12_RECT sc{}; sc.right = m_swapchain.width(); sc.bottom = m_swapchain.height();
+			m_command_list->RSSetViewports(1, &vp);
+			m_command_list->RSSetScissorRects(1, &sc);
+			m_command_list->ClearRenderTargetView(rtv, m_clear_color, 0, nullptr);
+			m_command_list->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+			m_command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+			m_command_list->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+
+			if (m_skybox_enabled) render_skybox();
+			if (m_grid_visible) render_grid();
+			if (!m_render_queue.empty()) render_3d_scene();
+
+			barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+			barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+			m_command_list->ResourceBarrier(1, &barrier);
+		}
+
 		m_command_list->Close();
 
 		m_command_queue.execute_command_list(m_command_list.Get());
