@@ -214,8 +214,9 @@ namespace vortex::runtime
             rc.right - rc.left, rc.bottom - rc.top, nullptr, nullptr, inst, nullptr);
         if (!g_hwnd) return false;
 
-        ShowWindow(g_hwnd, SW_SHOW);
-        UpdateWindow(g_hwnd);
+        // Deliberately DO NOT show the window yet. DX12 + DLSS/NGX init below takes ~seconds; if the window were
+        // visible now the user would stare at a black rectangle the whole time. We keep it hidden, render the first
+        // real frame into the (hidden) swapchain, then reveal it already-rendered — no black flash. (See the loop.)
 
         // Register for raw mouse input (relative deltas for FPS look — delivered to the focused window via WM_INPUT).
         {
@@ -235,6 +236,7 @@ namespace vortex::runtime
         if (!systems::dx12::initialize(desc)) { DestroyWindow(g_hwnd); g_hwnd = nullptr; return false; }
 
         g_running = true;
+        bool g_window_shown = false;   // reveal the window only once, after the first frame is rendered
         auto last = std::chrono::high_resolution_clock::now();
 
         MSG msg{};
@@ -278,6 +280,16 @@ namespace vortex::runtime
 
             // 4) render the submitted scene + present — same thread as the pump/resize, so never freezes
             systems::dx12::render_frame();
+
+            // Reveal the window the instant the FIRST real frame is on the swap-chain — so it appears already
+            // rendered (no black flash). The managed splash stays up until now and closes from the next tick.
+            if (!g_window_shown)
+            {
+                g_window_shown = true;
+                ShowWindow(g_hwnd, SW_SHOW);
+                SetForegroundWindow(g_hwnd);
+                UpdateWindow(g_hwnd);
+            }
         }
 
         systems::dx12::shutdown();

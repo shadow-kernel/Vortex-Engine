@@ -7,27 +7,24 @@
         TextOptions.TextRenderingMode="ClearType"
         FontFamily="Segoe UI Variable Text, Segoe UI">
 
-    <Window.Triggers>
-        <EventTrigger RoutedEvent="FrameworkElement.Loaded">
-            <BeginStoryboard>
-                <Storyboard RepeatBehavior="Forever" AutoReverse="True">
-                    <DoubleAnimation Storyboard.TargetName="RunnerT" Storyboard.TargetProperty="X"
-                                     From="0" To="320" Duration="0:0:1.0">
-                        <DoubleAnimation.EasingFunction>
-                            <QuadraticEase EasingMode="EaseInOut"/>
-                        </DoubleAnimation.EasingFunction>
-                    </DoubleAnimation>
-                </Storyboard>
-            </BeginStoryboard>
-        </EventTrigger>
-    </Window.Triggers>
+    <Window.Resources>
+        <LinearGradientBrush x:Key="VortexBrush" StartPoint="0,0" EndPoint="1,1">
+            <GradientStop Color="#8E7CFF" Offset="0"/>
+            <GradientStop Color="#6C5CE7" Offset="0.55"/>
+            <GradientStop Color="#34D3E6" Offset="1"/>
+        </LinearGradientBrush>
+        <RadialGradientBrush x:Key="VortexCore">
+            <GradientStop Color="#F2EFFF" Offset="0"/>
+            <GradientStop Color="#9D8BFF" Offset="0.6"/>
+            <GradientStop Color="#6C5CE7" Offset="1"/>
+        </RadialGradientBrush>
+    </Window.Resources>
 
     <Border Background="#161618" CornerRadius="18" BorderBrush="#2C2C32" BorderThickness="1">
         <Border.Effect>
             <DropShadowEffect Color="#000000" Opacity="0.6" BlurRadius="34" ShadowDepth="0"/>
         </Border.Effect>
         <Grid ClipToBounds="True">
-            <!-- soft indigo glow behind the mark -->
             <Ellipse Width="420" Height="420" VerticalAlignment="Top" Margin="0,-160,0,0" Opacity="0.55" IsHitTestVisible="False">
                 <Ellipse.Fill>
                     <RadialGradientBrush>
@@ -38,32 +35,31 @@
             </Ellipse>
 
             <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="0,-12,0,0">
-                <Image Source="{DynamicResource AppIcon}" Width="90" Height="90" HorizontalAlignment="Center"/>
+                <Viewbox Width="92" Height="92" HorizontalAlignment="Center">
+                    <Canvas Width="160" Height="160">
+                        <Path Fill="{StaticResource VortexBrush}" Data="M80,80 C74,48 96,22 130,24 C113,44 113,65 80,80 Z"/>
+                        <Path Fill="{StaticResource VortexBrush}" Data="M80,80 C74,48 96,22 130,24 C113,44 113,65 80,80 Z">
+                            <Path.RenderTransform><RotateTransform Angle="120" CenterX="80" CenterY="80"/></Path.RenderTransform>
+                        </Path>
+                        <Path Fill="{StaticResource VortexBrush}" Data="M80,80 C74,48 96,22 130,24 C113,44 113,65 80,80 Z">
+                            <Path.RenderTransform><RotateTransform Angle="240" CenterX="80" CenterY="80"/></Path.RenderTransform>
+                        </Path>
+                        <Ellipse Canvas.Left="69" Canvas.Top="69" Width="22" Height="22" Fill="{StaticResource VortexCore}"/>
+                    </Canvas>
+                </Viewbox>
                 <TextBlock Text="Vortex Engine" FontSize="32" FontWeight="Bold" Foreground="#F5F5F7"
-                           HorizontalAlignment="Center" Margin="0,18,0,0"/>
+                           HorizontalAlignment="Center" Margin="0,16,0,0"/>
                 <TextBlock Text="Real-time Game Engine" FontSize="13" Foreground="#73737A"
                            HorizontalAlignment="Center" Margin="0,6,0,0"/>
             </StackPanel>
 
             <StackPanel VerticalAlignment="Bottom" Margin="44,0,44,30">
-                <Border Height="4" Background="#26262B" CornerRadius="2" ClipToBounds="True">
-                    <Border x:Name="Runner" Width="150" HorizontalAlignment="Left" CornerRadius="2">
-                        <Border.Background>
-                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
-                                <GradientStop Color="#006C5CE7" Offset="0"/>
-                                <GradientStop Color="#6C5CE7" Offset="0.5"/>
-                                <GradientStop Color="#006C5CE7" Offset="1"/>
-                            </LinearGradientBrush>
-                        </Border.Background>
-                        <Border.RenderTransform>
-                            <TranslateTransform x:Name="RunnerT"/>
-                        </Border.RenderTransform>
-                    </Border>
-                </Border>
+                <ProgressBar x:Name="Bar" Minimum="0" Maximum="100" Value="0" Height="5"
+                             Background="#26262B" BorderThickness="0" Foreground="{StaticResource VortexBrush}"/>
                 <Grid Margin="0,12,0,0">
-                    <TextBlock x:Name="StatusText" Text="Loading…" Foreground="#9A9AA1" FontSize="12"
+                    <TextBlock x:Name="StatusText" Text="Starting…" Foreground="#9A9AA1" FontSize="12"
                                HorizontalAlignment="Left" VerticalAlignment="Center"/>
-                    <TextBlock x:Name="VersionText" Text="" Foreground="#5A5A61" FontSize="12"
+                    <TextBlock x:Name="PercentText" Text="" Foreground="#8E7CFF" FontSize="12" FontWeight="SemiBold"
                                HorizontalAlignment="Right" VerticalAlignment="Center"/>
                 </Grid>
             </StackPanel>

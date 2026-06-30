@@ -106,7 +106,7 @@ namespace Editor
         {
             try
             {
-                splash.SetStatus("Starting engine…");
+                splash.SetProgress(0.10, "Starting engine…");
                 DllWrapper.VortexAPI.InitEngineRuntime();
                 Editor.Core.Services.PlayModeService.Instance.IsReleaseMode = true;       // shipped game: no dev banner
                 try { Editor.Core.Services.EditorViewportService.Instance.AreGizmosVisible = false; } catch { } // no editor gizmos/icons in the game
@@ -118,7 +118,7 @@ namespace Editor
                 var pak = System.IO.Path.Combine(exeDir, "Assets.vpak");
                 if (System.IO.File.Exists(pak))
                 {
-                    splash.SetStatus("Loading assets…");
+                    splash.SetProgress(0.30, "Loading assets…");
                     Editor.Core.Services.AssetVfs.Mount(pak);
                     System.Diagnostics.Debug.WriteLine("[Player] mounted pak: " + Editor.Core.Services.AssetVfs.FileCount + " files");
                     if (Editor.Core.Services.AssetVfs.TryGetBytes("GameScripts.dll", out var dllBytes) && dllBytes.Length > 0)
@@ -131,6 +131,7 @@ namespace Editor
                 // --project: play a project straight from disk (dev/testing) instead of the exe-dir export layout.
                 string projDir = !string.IsNullOrEmpty(_projectArg) ? _projectArg : exeDir;
                 if (!string.IsNullOrEmpty(_projectArg)) Editor.Core.Services.PlayModeService.Instance.IsReleaseMode = false;
+                splash.SetProgress(0.45, "Loading project…");
                 var project = Editor.Core.Services.ProjectService.Instance.LoadProjectFromPath(projDir);
 
                 // --scene: force a specific scene (e.g. the Lobby) instead of the project's saved active scene.
@@ -151,9 +152,11 @@ namespace Editor
                 var scene = project != null ? project.ActiveScene : null;
                 if (scene != null)
                 {
+                    splash.SetProgress(0.62, "Loading scene…");
                     scene.Load();
                     scene.ActivateEntities();
                     scene.IsActive = true;
+                    splash.SetProgress(0.80, "Preloading assets…");
                     Editor.Core.Services.SceneRenderService.Instance.PreloadSceneAssets(scene);
                 }
 
@@ -165,7 +168,10 @@ namespace Editor
                 Editor.Core.Services.PlayModeService.Instance.Play();
                 if (scene != null) Editor.Scripting.ScriptRuntime.Instance.Begin(scene);
 
-                splash.FadeOutAndClose();
+                // Keep the splash up — DON'T fade here. The native window is created hidden and revealed only once
+                // its first frame is rendered; GameHostTick closes this splash right after, so there's no black flash.
+                splash.SetProgress(0.95, "Starting renderer…");
+                _bootSplash = splash;
 
                 // Native GameHost: its own native window + DX12 swapchain + uncapped one-thread loop. Each frame
                 // it calls GameHostTick (scripts + camera + submit) then renders + presents. Blocks until close.
@@ -199,6 +205,8 @@ namespace Editor
         private static float  _renderScaleArg = 1f; // --renderscale=<f>: dev hook to force render-scale (verify the scaled path)
         private static int    _dlssArg = 0;         // --dlss=<0..4>: dev hook to force a DLSS mode (verify the eval path)
         private static int    _fgArg = 0;           // --fg=<0..3>: dev hook to force DLSS Frame-Gen (verify the present hook)
+        private SplashWindow  _bootSplash;          // kept up until the game's first frame is on screen, then closed (no black flash)
+        private int           _bootFrames;          // GameHostTick counter, used to time the splash close
         private static Vortex.VuiHandle _vuiTestHandle; private static bool _vuiPrevDown;
         private static int _stressCountArg = 1000;
         private static bool _stressInit;
@@ -382,6 +390,11 @@ namespace Editor
             if (_stressMode) { StressTick(dt); return; }
             try
             {
+                // Close the boot splash once the native window has revealed its first rendered frame (it shows after
+                // render_frame of the very first tick), so the splash hands off to an already-rendered game — no black.
+                _bootFrames++;
+                if (_bootFrames >= 2 && _bootSplash != null) { try { _bootSplash.Close(); } catch { } _bootSplash = null; }
+
                 if (!_ghInit) { _ghInit = true; try { DllWrapper.VortexAPI.ShowGrid(false); DllWrapper.VortexAPI.ShowGizmos(false); } catch { }
                     try { GHLog("GPU=" + DllWrapper.VortexAPI.GpuName() + " vendor=0x" + DllWrapper.VortexAPI.GpuVendorId().ToString("X4") + " dlssCapable=" + DllWrapper.VortexAPI.GpuSupportsDlss() + " renderScale=" + DllWrapper.VortexAPI.GetRenderScale()); } catch { }
                     if (_fgArg > 0) { try { DllWrapper.VortexAPI.SetFrameGenMode(_fgArg); GHLog("FrameGen forced x" + (_fgArg + 1)); } catch { } } } // dev: --fg=<0..3> (swapchain now exists)
