@@ -303,4 +303,26 @@ namespace Vortex
             { Editor.DllWrapper.VortexAPI.SetDirectionalLightParams(dx, dy, dz, r, g, b, intensity); }
         public static void ClearLights() { Editor.DllWrapper.VortexAPI.ClearAllLights(); }
     }
+
+    /// <summary>Script-driven world geometry — assemble a level/backdrop from meshes without authoring a scene
+    /// file. Add(meshPath, x,y,z, yawDeg, scale) places a model; placements persist until Clear(). Render-only
+    /// (no collision yet) — perfect for greybox levels + the lobby's creepy motel backdrop.</summary>
+    public static class World
+    {
+        public static void Add(string meshPath, float x, float y, float z, float yawDegrees, float scale)
+            { Editor.Core.Services.WorldService.Add(Resolve(meshPath), x, y, z, yawDegrees, scale); }
+        public static void Clear() { Editor.Core.Services.WorldService.Clear(); }
+
+        private static string Resolve(string p)
+        {
+            try
+            {
+                if (System.IO.File.Exists(p)) return p;
+                var proj = Editor.Core.Data.ProjectData.Current != null ? Editor.Core.Data.ProjectData.Current.Path : null;
+                if (!string.IsNullOrEmpty(proj)) { var f = System.IO.Path.Combine(proj, p); if (System.IO.File.Exists(f)) return f; }
+            }
+            catch { }
+            return p;
+        }
+    }
 }

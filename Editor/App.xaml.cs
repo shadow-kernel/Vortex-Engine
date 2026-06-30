@@ -40,8 +40,13 @@ namespace Editor
                         _benchmarkDirArg = a.Substring("--benchmark=".Length).Trim('"');
                     else if (a.StartsWith("--vuitest=", StringComparison.OrdinalIgnoreCase))
                         _vuiTestArg = a.Substring("--vuitest=".Length).Trim('"');   // dev hook: load + drive a .vui in the player
+                    else if (a.StartsWith("--project=", StringComparison.OrdinalIgnoreCase))
+                        _projectArg = a.Substring("--project=".Length).Trim('"');   // dev: play a project's active scene from disk
+                    else if (a.StartsWith("--scene=", StringComparison.OrdinalIgnoreCase))
+                        _sceneArg = a.Substring("--scene=".Length).Trim('"');       // dev: force which scene to play
                 }
             }
+            if (!string.IsNullOrEmpty(_projectArg)) playerMode = true;
             _stressMode = !string.IsNullOrEmpty(_stressModelArg) || !string.IsNullOrEmpty(_benchmarkDirArg);
 
             // Show the branded splash immediately. It's topmost, so it covers the (blocking) engine init,
@@ -117,7 +122,17 @@ namespace Editor
                     }
                 }
 
-                var project = Editor.Core.Services.ProjectService.Instance.LoadProjectFromPath(exeDir);
+                // --project: play a project straight from disk (dev/testing) instead of the exe-dir export layout.
+                string projDir = !string.IsNullOrEmpty(_projectArg) ? _projectArg : exeDir;
+                if (!string.IsNullOrEmpty(_projectArg)) Editor.Core.Services.PlayModeService.Instance.IsReleaseMode = false;
+                var project = Editor.Core.Services.ProjectService.Instance.LoadProjectFromPath(projDir);
+
+                // --scene: force a specific scene (e.g. the Lobby) instead of the project's saved active scene.
+                if (project != null && !string.IsNullOrEmpty(_sceneArg) && project.Scenes != null)
+                {
+                    foreach (var s in project.Scenes)
+                        if (s != null && string.Equals(s.Name, _sceneArg, StringComparison.OrdinalIgnoreCase)) { project.ActiveScene = s; break; }
+                }
 
                 // A hidden window holds the project as DataContext so ProjectData.Current resolves
                 // (Current reads Application.MainWindow.DataContext). The VISIBLE game is the native GameHost
@@ -167,6 +182,8 @@ namespace Editor
         private static string _stressModelArg;
         private static string _benchmarkDirArg;   // --benchmark="<assets dir>": generated multi-model scene
         private static string _vuiTestArg;         // --vuitest="<.vui>": dev hook to render a retained-UI screen
+        private static string _projectArg;         // --project="<dir>": dev hook to play a project's active scene from disk
+        private static string _sceneArg;           // --scene="<name>": dev hook to force which scene plays
         private static Vortex.VuiHandle _vuiTestHandle; private static bool _vuiPrevDown;
         private static int _stressCountArg = 1000;
         private static bool _stressInit;
@@ -424,9 +441,13 @@ namespace Editor
                 // changing (camera is set separately, not via instance data). This removes the per-frame
                 // 300-entity walk + ~470 P/Invokes — the CPU bottleneck. on_scene_switch clears the queue on a
                 // transition, and the scene-reference change below re-submits the new scene exactly once.
-                if (scene != null && !ReferenceEquals(scene, _ghSubmittedScene))
+                // Re-submit when the scene changes OR a script added/changed world geometry (Vortex.World). The
+                // scene + the script-built world are submitted together so submit-once keeps both.
+                if (scene != null && (!ReferenceEquals(scene, _ghSubmittedScene) || Editor.Core.Services.WorldService.Dirty))
                 {
                     Editor.Core.Services.SceneRenderService.Instance.SubmitScene(scene);
+                    Editor.Core.Services.WorldService.Submit();
+                    Editor.Core.Services.WorldService.ClearDirty();
                     _ghSubmittedScene = scene;
                 }
             }
