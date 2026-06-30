@@ -1,21 +1,11 @@
 #include "DX12SkyboxPipeline.h"
-#include <d3dcompiler.h>
+#include "DX12ShaderCompiler.h"   // shaders now live in Engine/Shaders/skybox.hlsl
 
 namespace vortex::graphics::dx12
 {
 	namespace
 	{
-		using PFN_D3DCompile = HRESULT(WINAPI*)(LPCVOID, SIZE_T, LPCSTR, const D3D_SHADER_MACRO*, ID3DInclude*, LPCSTR, LPCSTR, UINT, UINT, ID3DBlob**, ID3DBlob**);
 		using PFN_D3D12SerializeRootSignature = HRESULT(WINAPI*)(const D3D12_ROOT_SIGNATURE_DESC*, D3D_ROOT_SIGNATURE_VERSION, ID3DBlob**, ID3DBlob**);
-
-		PFN_D3DCompile get_d3d_compile()
-		{
-			static HMODULE compiler = LoadLibraryW(L"d3dcompiler_47.dll");
-			if (!compiler) compiler = LoadLibraryW(L"d3dcompiler_43.dll");
-			if (!compiler) return nullptr;
-			static auto fn = reinterpret_cast<PFN_D3DCompile>(GetProcAddress(compiler, "D3DCompile"));
-			return fn;
-		}
 
 		PFN_D3D12SerializeRootSignature get_serialize_root_signature()
 		{
@@ -24,115 +14,6 @@ namespace vortex::graphics::dx12
 			return fn;
 		}
 
-		// Skybox vertex shader - generates full-screen triangle
-		const char* g_skybox_vs = R"(
-cbuffer SkyboxConstants : register(b0) {
-	row_major float4x4 InverseViewProjection;
-	float3 CameraPosition;
-	float Padding0;
-	float3 SkyColor;
-	float Padding1;
-	float3 HorizonColor;
-	float Padding2;
-	float3 GroundColor;
-	float Padding3;
-	float3 SunDirection;
-	float SunIntensity;
-	float3 SunColor;
-	float Padding4;
-};
-
-struct VS_OUT {
-	float4 pos : SV_POSITION;
-	float3 worldDir : TEXCOORD0;
-};
-
-VS_OUT main(uint vertexID : SV_VertexID) {
-	VS_OUT output;
-	
-	// Generate full-screen triangle
-	float2 uv = float2((vertexID << 1) & 2, vertexID & 2);
-	output.pos = float4(uv * 2.0 - 1.0, 1.0, 1.0);
-	output.pos.y = -output.pos.y;
-	
-	// Transform to world direction
-	float4 clipPos = float4(uv * 2.0 - 1.0, 1.0, 1.0);
-	clipPos.y = -clipPos.y;
-	float4 worldPos = mul(clipPos, InverseViewProjection);
-	output.worldDir = worldPos.xyz / worldPos.w - CameraPosition;
-	
-	return output;
-}
-)";
-
-		// Skybox pixel shader - procedural gradient sky with sun
-		const char* g_skybox_ps = R"(
-#define PI 3.14159265359
-
-cbuffer SkyboxConstants : register(b0) {
-	row_major float4x4 InverseViewProjection;
-	float3 CameraPosition;
-	float Padding0;
-	float3 SkyColor;
-	float Padding1;
-	float3 HorizonColor;
-	float Padding2;
-	float3 GroundColor;
-	float Padding3;
-	float3 SunDirection;
-	float SunIntensity;
-	float3 SunColor;
-	float Padding4;
-};
-
-struct PS_IN {
-	float4 pos : SV_POSITION;
-	float3 worldDir : TEXCOORD0;
-};
-
-float4 main(PS_IN input) : SV_TARGET {
-	float3 dir = normalize(input.worldDir);
-	
-	// Vertical gradient
-	float y = dir.y;
-	
-	// Sky to horizon to ground gradient
-	float3 color;
-	if (y > 0) {
-		// Above horizon: sky to horizon
-		float t = pow(y, 0.4); // Smooth falloff
-		color = lerp(HorizonColor, SkyColor, t);
-	} else {
-		// Below horizon: horizon to ground
-		float t = pow(-y, 0.7);
-		color = lerp(HorizonColor, GroundColor, t);
-	}
-	
-	// Add sun disc
-	if (SunIntensity > 0.001) {
-		float3 sunDir = normalize(-SunDirection);
-		float sunDot = dot(dir, sunDir);
-		
-		// Sun disc
-		float sunDisc = smoothstep(0.9995, 0.9999, sunDot);
-		color += SunColor * sunDisc * SunIntensity * 10.0;
-		
-		// Sun glow
-		float sunGlow = pow(max(sunDot, 0.0), 256.0);
-		color += SunColor * sunGlow * SunIntensity * 0.5;
-		
-		// Atmospheric scattering near horizon when sun is visible
-		float horizonGlow = pow(1.0 - abs(y), 4.0) * pow(max(sunDot, 0.0), 2.0);
-		color += SunColor * horizonGlow * SunIntensity * 0.3;
-	}
-	
-	// Subtle noise for texture
-	float noise = frac(sin(dot(dir.xz, float2(12.9898, 78.233))) * 43758.5453);
-	color += (noise - 0.5) * 0.01;
-	
-	return float4(color, 1.0);
-}
-)";
 	}
 
 	bool DX12SkyboxPipeline::initialize(ID3D12Device* device, DXGI_FORMAT rtv_format, DXGI_FORMAT dsv_format)
@@ -180,28 +61,10 @@ float4 main(PS_IN input) : SV_TARGET {
 
 	bool DX12SkyboxPipeline::compile_shaders()
 	{
-		auto d3dCompile = get_d3d_compile();
-		if (!d3dCompile) return false;
-
-		ComPtr<ID3DBlob> error;
-
-		// Compile vertex shader
-		if (FAILED(d3dCompile(g_skybox_vs, strlen(g_skybox_vs), nullptr, nullptr, nullptr,
-			"main", "vs_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &m_vs_blob, &error)))
-		{
-			if (error) OutputDebugStringA(static_cast<const char*>(error->GetBufferPointer()));
-			return false;
-		}
-
-		// Compile pixel shader
-		if (FAILED(d3dCompile(g_skybox_ps, strlen(g_skybox_ps), nullptr, nullptr, nullptr,
-			"main", "ps_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &m_ps_blob, &error)))
-		{
-			if (error) OutputDebugStringA(static_cast<const char*>(error->GetBufferPointer()));
-			return false;
-		}
-
-		return true;
+		// Engine/Shaders/skybox.hlsl (SkyVS/SkyPS), via the shared compiler.
+		m_vs_blob = DX12ShaderCompiler::load_shader("skybox", "vs", "SkyVS", "vs_5_0");
+		m_ps_blob = DX12ShaderCompiler::load_shader("skybox", "ps", "SkyPS", "ps_5_0");
+		return m_vs_blob != nullptr && m_ps_blob != nullptr;
 	}
 
 	bool DX12SkyboxPipeline::create_root_signature(ID3D12Device* device)

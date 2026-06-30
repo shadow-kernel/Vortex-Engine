@@ -1,168 +1,32 @@
 #include "DX12GridPipeline.h"
-#include <d3dcompiler.h>
-#include <cstring>
+#include "DX12ShaderCompiler.h"   // shaders now live in Engine/Shaders/grid.hlsl
 
 namespace vortex::graphics::dx12
 {
 	namespace
 	{
-		using PFN_D3DCompile = HRESULT(WINAPI*)(LPCVOID, SIZE_T, LPCSTR, const D3D_SHADER_MACRO*, ID3DInclude*, LPCSTR, LPCSTR, UINT, UINT, ID3DBlob**, ID3DBlob**);
 		using PFN_D3D12SerializeRootSignature = HRESULT(WINAPI*)(const D3D12_ROOT_SIGNATURE_DESC*, D3D_ROOT_SIGNATURE_VERSION, ID3DBlob**, ID3DBlob**);
-
-		PFN_D3DCompile get_d3d_compile()
-		{
-			static HMODULE compiler = LoadLibraryW(L"d3dcompiler_47.dll");
-			if (!compiler) compiler = LoadLibraryW(L"d3dcompiler_43.dll");
-			if (!compiler) return nullptr;
-			return reinterpret_cast<PFN_D3DCompile>(GetProcAddress(compiler, "D3DCompile"));
-		}
 
 		PFN_D3D12SerializeRootSignature get_serialize_root_signature()
 		{
 			return reinterpret_cast<PFN_D3D12SerializeRootSignature>(
 				GetProcAddress(LoadLibraryW(L"d3d12.dll"), "D3D12SerializeRootSignature"));
 		}
-
-		// Simple line grid vertex shader
-		const char* g_grid_vs = R"(
-cbuffer CB : register(b0) {
-    row_major float4x4 ViewProjection;
-    row_major float4x4 InvViewProjection;
-    float3 CamPos;
-    float Spacing;
-    float Extent;
-    float Major;
-    float2 Pad;
-};
-
-struct VS_OUT {
-    float4 pos : SV_POSITION;
-    float3 worldPos : TEXCOORD0;
-    float3 near : TEXCOORD1;
-    float3 far : TEXCOORD2;
-};
-
-VS_OUT main(uint id : SV_VertexID) {
-    VS_OUT o;
-    float2 uv = float2((id << 1) & 2, id & 2);
-    float2 ndc = uv * 2.0 - 1.0;
-    
-    o.pos = float4(ndc.x, -ndc.y, 0, 1);
-    
-    float4 nearPt = mul(float4(ndc.x, -ndc.y, 0, 1), InvViewProjection);
-    float4 farPt = mul(float4(ndc.x, -ndc.y, 1, 1), InvViewProjection);
-    
-    o.near = nearPt.xyz / nearPt.w;
-    o.far = farPt.xyz / farPt.w;
-    o.worldPos = o.near;
-    
-    return o;
-}
-)";
-
-		// Simple grid pixel shader with solid background
-		const char* g_grid_ps = R"(
-cbuffer CB : register(b0) {
-    row_major float4x4 ViewProjection;
-    row_major float4x4 InvViewProjection;
-    float3 CamPos;
-    float Spacing;
-    float Extent;
-    float Major;
-    float2 Pad;
-};
-
-struct PS_IN {
-    float4 pos : SV_POSITION;
-    float3 worldPos : TEXCOORD0;
-    float3 near : TEXCOORD1;
-    float3 far : TEXCOORD2;
-};
-
-struct PS_OUT {
-    float4 color : SV_TARGET;
-    float depth : SV_DEPTH;
-};
-
-float Grid(float3 p, float s) {
-    float2 c = p.xz / s;
-    float2 d = fwidth(c);
-    float2 g = abs(frac(c - 0.5) - 0.5) / d;
-    return 1.0 - min(min(g.x, g.y), 1.0);
-}
-
-PS_OUT main(PS_IN i) {
-    PS_OUT o;
-    
-    float3 dir = i.far - i.near;
-    if (abs(dir.y) < 0.0001) discard;
-    
-    float t = -i.near.y / dir.y;
-    if (t < 0) discard;
-    
-    float3 p = i.near + t * dir;
-    float dist = length(p.xz - CamPos.xz);
-    
-    if (dist > Extent) discard;
-    
-    float fade = 1.0 - (dist / Extent);
-    fade = fade * fade;
-    
-    float g1 = Grid(p, Spacing) * 0.4;
-    float g2 = Grid(p, Spacing * Major) * 0.7;
-    float g = saturate(g1 + g2);
-    
-    // Solid dark background for the grid floor
-    float3 bgColor = float3(0.15, 0.15, 0.18);
-    float3 lineColor = float3(0.5, 0.5, 0.5);
-    
-    float axisW = Spacing * min(fwidth(p.x / Spacing), 1.0);
-    if (abs(p.x) < axisW) lineColor = float3(0.2, 0.4, 1.0);
-    if (abs(p.z) < axisW) lineColor = float3(1.0, 0.3, 0.3);
-    
-    // Blend grid lines over solid background
-    float3 col = lerp(bgColor, lineColor, g);
-    
-    // Use fade for edge transparency only, not for the whole floor
-    float alpha = fade;
-    if (alpha < 0.01) discard;
-    
-    float4 clip = mul(float4(p, 1), ViewProjection);
-    o.depth = clip.z / clip.w;
-    o.color = float4(col, alpha);
-    
-    return o;
-}
-)";
 	}
 
 	bool DX12GridPipeline::initialize(ID3D12Device* device, DXGI_FORMAT rtv_format, DXGI_FORMAT dsv_format)
 	{
 		if (!device) return false;
-		
-		auto compile = get_d3d_compile();
-		if (!compile) {
-			OutputDebugStringA("DX12GridPipeline: No D3DCompile\n");
+
+		// Engine/Shaders/grid.hlsl (GridVS/GridPS), via the shared compiler.
+		m_vs_blob = DX12ShaderCompiler::load_shader("grid", "vs", "GridVS", "vs_5_0");
+		m_ps_blob = DX12ShaderCompiler::load_shader("grid", "ps", "GridPS", "ps_5_0");
+		if (!m_vs_blob || !m_ps_blob) {
+			OutputDebugStringA("DX12GridPipeline: shader load failed\n");
 			return false;
 		}
-
-		UINT flags = 0;
-#ifdef _DEBUG
-		flags = D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
-#endif
 
 		ComPtr<ID3DBlob> err;
-		
-		if (FAILED(compile(g_grid_vs, strlen(g_grid_vs), "grid_vs", nullptr, nullptr, "main", "vs_5_0", flags, 0, &m_vs_blob, &err))) {
-			if (err) OutputDebugStringA((char*)err->GetBufferPointer());
-			return false;
-		}
-		
-		if (FAILED(compile(g_grid_ps, strlen(g_grid_ps), "grid_ps", nullptr, nullptr, "main", "ps_5_0", flags, 0, &m_ps_blob, &err))) {
-			if (err) OutputDebugStringA((char*)err->GetBufferPointer());
-			return false;
-		}
-
 		auto serialize = get_serialize_root_signature();
 		if (!serialize) return false;
 

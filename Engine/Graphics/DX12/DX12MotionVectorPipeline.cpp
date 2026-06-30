@@ -1,66 +1,17 @@
 #include "DX12MotionVectorPipeline.h"
-#include <d3dcompiler.h>
+#include "DX12ShaderCompiler.h"   // shaders now live in Engine/Shaders/motionvector.hlsl
 
 namespace vortex::graphics::dx12
 {
 	namespace
 	{
-		using PFN_D3DCompile = HRESULT(WINAPI*)(LPCVOID, SIZE_T, LPCSTR, const D3D_SHADER_MACRO*, ID3DInclude*, LPCSTR, LPCSTR, UINT, UINT, ID3DBlob**, ID3DBlob**);
 		using PFN_D3D12SerializeRootSignature = HRESULT(WINAPI*)(const D3D12_ROOT_SIGNATURE_DESC*, D3D_ROOT_SIGNATURE_VERSION, ID3DBlob**, ID3DBlob**);
-
-		PFN_D3DCompile get_d3d_compile()
-		{
-			static HMODULE compiler = LoadLibraryW(L"d3dcompiler_47.dll");
-			if (!compiler) compiler = LoadLibraryW(L"d3dcompiler_43.dll");
-			if (!compiler) return nullptr;
-			static auto fn = reinterpret_cast<PFN_D3DCompile>(GetProcAddress(compiler, "D3DCompile"));
-			return fn;
-		}
 		PFN_D3D12SerializeRootSignature get_serialize_root_signature()
 		{
 			static auto fn = reinterpret_cast<PFN_D3D12SerializeRootSignature>(
 				GetProcAddress(LoadLibraryW(L"d3d12.dll"), "D3D12SerializeRootSignature"));
 			return fn;
 		}
-
-		// Fullscreen triangle from SV_VertexID (same as the upscale pass).
-		const char* g_mvec_vs = R"(
-struct VS_OUT { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; };
-VS_OUT main(uint vertexID : SV_VertexID) {
-	VS_OUT o;
-	float2 uv = float2((vertexID << 1) & 2, vertexID & 2);
-	o.pos = float4(uv * 2.0 - 1.0, 0.0, 1.0);
-	o.pos.y = -o.pos.y;
-	o.uv = uv;
-	return o;
-}
-)";
-
-		// Reproject the current pixel through inverse(curVP) -> world -> prevVP to its previous screen UV, and
-		// output the pixel-space velocity (prev - cur). Engine convention: row-major matrices, mul(vec,mat),
-		// clip.y = -ndc.y. DLSS gets this with mvecScale = {1/renderW, 1/renderH} (pixel-space -> NDC).
-		const char* g_mvec_ps = R"(
-Texture2D<float> Depth : register(t0);
-SamplerState Smp : register(s0);
-cbuffer C : register(b0) {
-	row_major float4x4 InvViewProj;
-	row_major float4x4 PrevViewProj;
-	float2 Dims;
-	float2 Pad;
-};
-struct PS_IN { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; };
-float2 main(PS_IN i) : SV_TARGET {
-	float d = Depth.SampleLevel(Smp, i.uv, 0);
-	float2 ndc = i.uv * 2.0 - 1.0;
-	float4 clip = float4(ndc.x, -ndc.y, d, 1.0);
-	float4 world = mul(clip, InvViewProj);
-	world /= world.w;
-	float4 pc = mul(world, PrevViewProj);
-	pc /= pc.w;
-	float2 prevUV = float2(pc.x * 0.5 + 0.5, 0.5 - pc.y * 0.5);
-	return (prevUV - i.uv) * Dims;   // pixel-space motion vector (current -> previous)
-}
-)";
 	}
 
 	bool DX12MotionVectorPipeline::initialize(ID3D12Device* device, DXGI_FORMAT rtv_format)
@@ -82,22 +33,10 @@ float2 main(PS_IN i) : SV_TARGET {
 
 	bool DX12MotionVectorPipeline::compile_shaders()
 	{
-		auto d3dCompile = get_d3d_compile();
-		if (!d3dCompile) return false;
-		ComPtr<ID3DBlob> error;
-		if (FAILED(d3dCompile(g_mvec_vs, strlen(g_mvec_vs), nullptr, nullptr, nullptr,
-			"main", "vs_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &m_vs_blob, &error)))
-		{
-			if (error) OutputDebugStringA(static_cast<const char*>(error->GetBufferPointer()));
-			return false;
-		}
-		if (FAILED(d3dCompile(g_mvec_ps, strlen(g_mvec_ps), nullptr, nullptr, nullptr,
-			"main", "ps_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &m_ps_blob, &error)))
-		{
-			if (error) OutputDebugStringA(static_cast<const char*>(error->GetBufferPointer()));
-			return false;
-		}
-		return true;
+		// Engine/Shaders/motionvector.hlsl (MvecVS/MvecPS), via the shared compiler.
+		m_vs_blob = DX12ShaderCompiler::load_shader("motionvector", "vs", "MvecVS", "vs_5_0");
+		m_ps_blob = DX12ShaderCompiler::load_shader("motionvector", "ps", "MvecPS", "ps_5_0");
+		return m_vs_blob != nullptr && m_ps_blob != nullptr;
 	}
 
 	bool DX12MotionVectorPipeline::create_root_signature(ID3D12Device* device)
