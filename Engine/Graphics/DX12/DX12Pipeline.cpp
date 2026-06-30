@@ -1,22 +1,11 @@
 #include "DX12Pipeline.h"
-#include <d3dcompiler.h>
-#include <cstring>
+#include "DX12ShaderCompiler.h"   // shaders now live in Engine/Shaders/basic.hlsl
 
 namespace vortex::graphics::dx12
 {
 	namespace
 	{
-		using PFN_D3DCompile = HRESULT(WINAPI*)(LPCVOID, SIZE_T, LPCSTR, const D3D_SHADER_MACRO*, ID3DInclude*, LPCSTR, LPCSTR, UINT, UINT, ID3DBlob**, ID3DBlob**);
 		using PFN_D3D12SerializeRootSignature = HRESULT(WINAPI*)(const D3D12_ROOT_SIGNATURE_DESC*, D3D_ROOT_SIGNATURE_VERSION, ID3DBlob**, ID3DBlob**);
-
-		PFN_D3DCompile get_d3d_compile()
-		{
-			static HMODULE compiler = LoadLibraryW(L"d3dcompiler_47.dll");
-			if (!compiler) compiler = LoadLibraryW(L"d3dcompiler_43.dll");
-			if (!compiler) return nullptr;
-			static auto fn = reinterpret_cast<PFN_D3DCompile>(GetProcAddress(compiler, "D3DCompile"));
-			return fn;
-		}
 
 		PFN_D3D12SerializeRootSignature get_serialize_root_signature()
 		{
@@ -24,31 +13,6 @@ namespace vortex::graphics::dx12
 				GetProcAddress(LoadLibraryW(L"d3d12.dll"), "D3D12SerializeRootSignature"));
 			return fn;
 		}
-
-		const char* g_vertex_shader = R"(
-struct VSInput {
-	float3 position : POSITION;
-	float3 color : COLOR;
-};
-struct PSInput {
-	float4 position : SV_POSITION;
-	float3 color : COLOR;
-};
-PSInput main(VSInput input) {
-	PSInput output;
-	output.position = float4(input.position, 1.0f);
-	output.color = input.color;
-	return output;
-})";
-
-		const char* g_pixel_shader = R"(
-struct PSInput {
-	float4 position : SV_POSITION;
-	float3 color : COLOR;
-};
-float4 main(PSInput input) : SV_TARGET {
-	return float4(input.color, 1.0f);
-})";
 	}
 
 	bool DX12Pipeline::initialize(ID3D12Device* device)
@@ -70,28 +34,10 @@ float4 main(PSInput input) : SV_TARGET {
 
 	bool DX12Pipeline::compile_shaders()
 	{
-		auto compile = get_d3d_compile();
-		if (!compile) return false;
-
-		UINT flags = D3DCOMPILE_OPTIMIZATION_LEVEL3;
-#ifdef _DEBUG
-		flags = D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
-#endif
-
-		ComPtr<ID3DBlob> error;
-		if (FAILED(compile(g_vertex_shader, std::strlen(g_vertex_shader), nullptr, nullptr, nullptr,
-						   "main", "vs_5_0", flags, 0, m_vs_blob.GetAddressOf(), error.GetAddressOf())))
-		{
-			return false;
-		}
-
-		if (FAILED(compile(g_pixel_shader, std::strlen(g_pixel_shader), nullptr, nullptr, nullptr,
-						   "main", "ps_5_0", flags, 0, m_ps_blob.GetAddressOf(), error.GetAddressOf())))
-		{
-			return false;
-		}
-
-		return true;
+		// Engine/Shaders/basic.hlsl (BasicVS/BasicPS), via the shared compiler.
+		m_vs_blob = DX12ShaderCompiler::load_shader("basic", "vs", "BasicVS", "vs_5_0");
+		m_ps_blob = DX12ShaderCompiler::load_shader("basic", "ps", "BasicPS", "ps_5_0");
+		return m_vs_blob != nullptr && m_ps_blob != nullptr;
 	}
 
 	bool DX12Pipeline::create_root_signature(ID3D12Device* device)
