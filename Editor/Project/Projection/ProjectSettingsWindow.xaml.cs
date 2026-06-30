@@ -29,6 +29,15 @@ namespace Editor.Project.Projection
             {
                 NameBox.Text = _project.Name ?? "";
                 PathBox.Text = _project.Path ?? "";
+
+                // Build: default (boot) scene. The exported game boots this; the editor's Play uses the open scene.
+                DefaultSceneBox.ItemsSource = _project.Scenes;
+                Scene boot = null;
+                if (_project.StartSceneId.HasValue)
+                    foreach (var s in _project.Scenes)
+                        if (s != null && s.Id == _project.StartSceneId.Value) { boot = s; break; }
+                if (boot == null && _project.Scenes.Count > 0) boot = _project.Scenes[0]; // mirrors the load-time fallback
+                DefaultSceneBox.SelectedItem = boot;
             }
             if (string.IsNullOrEmpty(_repo)) { StatusText.Text = "No project open."; return; }
 
@@ -54,6 +63,11 @@ namespace Editor.Project.Projection
                     var newName = (NameBox.Text ?? "").Trim();
                     if (!string.IsNullOrEmpty(newName) && newName != _project.Name)
                         _project.Name = newName;
+
+                    // Build: persist the chosen default/boot scene (the exported game starts here).
+                    var boot = DefaultSceneBox.SelectedItem as Scene;
+                    if (boot != null) _project.StartSceneId = boot.Id;
+
                     ProjectService.Instance.SaveProject(_project);
                 }
 

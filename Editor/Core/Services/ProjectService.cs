@@ -137,24 +137,59 @@ namespace Editor.Core.Services
 
             // Lade Szenen
             var scenesPath = Path.Combine(projectPath, AssetsFolder, ScenesFolder);
+            var loadedSceneIds = new HashSet<Guid>();
             foreach (var sceneRef in manifest.Scenes)
             {
                 var sceneFilePath = Path.Combine(scenesPath, sceneRef.RelativePath);
 
                 if (AssetVfs.Exists(sceneFilePath))
                 {
-                    var scene = DataSerializer.LoadFromBinary<Scene>(sceneFilePath);
-                    scene.FilePath = sceneFilePath;
-                    scene.Project = project;
-                    scene.Load();
-                    project.Scenes.Add(scene);
-
-                    // Setze aktive Szene (StartScene im Spiel, LastOpenScene im Editor)
-                    if (bootSceneId.HasValue && scene.Id == bootSceneId.Value)
+                    try
                     {
-                        project.ActiveScene = scene;
+                        var scene = DataSerializer.LoadFromBinary<Scene>(sceneFilePath);
+                        scene.FilePath = sceneFilePath;
+                        scene.Project = project;
+                        scene.Load();
+                        project.Scenes.Add(scene);
+                        loadedSceneIds.Add(scene.Id);
                     }
+                    catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[LoadProject] scene '" + sceneRef.RelativePath + "' failed to load: " + ex.Message); }
                 }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine("[LoadProject] manifest scene file missing (disk recovery will try): " + sceneFilePath);
+                }
+            }
+
+            // SELF-HEAL: an editor save that ran while a .vscene was renamed/missing DROPS that scene's manifest
+            // entry, so the file silently vanishes from the project forever (this is the recurring "scene
+            // disappeared" bug). In the EDITOR (disk, not the shipped pak) pull in any .vscene in Assets/Scenes the
+            // manifest didn't reference — deduped by scene id — so a scene file present on disk is never lost; the
+            // next save re-records it in the manifest. The exported game's packed manifest is authoritative (skip).
+            if (!AssetVfs.IsMounted && Directory.Exists(scenesPath))
+            {
+                foreach (var file in Directory.GetFiles(scenesPath, "*.vscene"))
+                {
+                    try
+                    {
+                        var scene = DataSerializer.LoadFromBinary<Scene>(file);
+                        if (scene == null || loadedSceneIds.Contains(scene.Id)) continue;   // already loaded via the manifest
+                        scene.FilePath = file;
+                        scene.Project = project;
+                        scene.Load();
+                        project.Scenes.Add(scene);
+                        loadedSceneIds.Add(scene.Id);
+                        System.Diagnostics.Debug.WriteLine("[LoadProject] recovered orphan scene '" + scene.Name + "' from " + Path.GetFileName(file));
+                    }
+                    catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[LoadProject] orphan scene '" + file + "' failed to load: " + ex.Message); }
+                }
+            }
+
+            // Setze aktive Szene (StartScene im Spiel, LastOpenScene im Editor) — across manifest + recovered scenes.
+            if (bootSceneId.HasValue)
+            {
+                foreach (var sc in project.Scenes)
+                    if (sc.Id == bootSceneId.Value) { project.ActiveScene = sc; break; }
             }
 
             // Falls keine aktive Szene, nehme die erste
@@ -301,7 +336,14 @@ namespace Editor.Core.Services
                 // Füge Szenen-Referenzen hinzu
                 foreach (var scene in project.Scenes)
                 {
-                    var relativePath = $"{SanitizeFileName(scene.Name)}.vscene";
+                    // Reference the ACTUAL on-disk file (its real name), NOT a name-derived guess. SaveScene writes
+                    // to scene.FilePath; if the file was renamed so its name no longer matches scene.Name, a
+                    // name-derived path here would point at a missing .vscene and the scene would silently vanish
+                    // on the next load (LoadProjectFromManifest skips refs whose file doesn't exist). Fall back to
+                    // the name only for a brand-new scene that hasn't been saved yet (FilePath still null).
+                    var relativePath = !string.IsNullOrEmpty(scene.FilePath)
+                        ? Path.GetFileName(scene.FilePath)
+                        : $"{SanitizeFileName(scene.Name)}.vscene";
                     manifest.Scenes.Add(new SceneReference(scene.Id, scene.Name, relativePath));
 
                     // Fallback only: if no start scene was ever chosen, default to the first scene.

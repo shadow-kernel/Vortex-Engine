@@ -144,8 +144,14 @@
                     <Border Style="{StaticResource Card}">
                         <StackPanel>
                             <TextBlock Text="BUILD" Style="{StaticResource Section}"/>
-                            <TextBlock Text="Target platform: Windows (x64). More build settings coming soon."
-                                       Foreground="#73737A" FontSize="12"/>
+                            <TextBlock Text="Default scene" Style="{StaticResource Lbl}"/>
+                            <ComboBox x:Name="DefaultSceneBox" Height="32" Margin="0,0,0,6"
+                                      Background="#202023" Foreground="#F5F5F7" BorderBrush="#3A3A42"
+                                      FontSize="12.5" VerticalContentAlignment="Center"
+                                      DisplayMemberPath="Name"/>
+                            <TextBlock Text="The exported game always boots this scene. In the editor, Play runs the scene you currently have open."
+                                       Foreground="#73737A" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                            <TextBlock Text="Target platform: Windows (x64)." Foreground="#73737A" FontSize="12"/>
                         </StackPanel>
                     </Border>
                 </StackPanel>

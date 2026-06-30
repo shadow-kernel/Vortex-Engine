@@ -102,6 +102,12 @@ namespace Editor.UI.Vui
         public bool WantsCursorCapture(bool scriptCursorLocked)
             => HasActiveScreens ? CursorLockedForTop() : scriptCursorLocked;
 
+        /// <summary>True while a free-cursor UI screen (a menu/lobby — CursorLocked=false) is on top: the player is
+        /// operating the UI, so gameplay input (movement keys + mouse-look) must be frozen. A HUD (CursorLocked=true)
+        /// does NOT count — gameplay keeps running under it. Mouse-look is already gated by the cursor not being
+        /// captured; this is what the keyboard read (Input.GetKey) consults to also block movement.</summary>
+        public bool MenuActive => HasActiveScreens && !CursorLockedForTop();
+
         /// <summary>Drive every screen for this frame. Returns true if the UI consumed the click (suppress gameplay).</summary>
         public bool TickAll(float vw, float vh, in VuiInput input)
         {
