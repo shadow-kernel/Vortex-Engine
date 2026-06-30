@@ -122,6 +122,9 @@ namespace Editor.Editors.UIEditor
 
             // CENTER: preview (a Viewbox scales the design-resolution canvas to fit)
             _preview = new Canvas { Background = new SolidColorBrush(Color.FromRgb(12, 12, 14)) };
+            _preview.MouseLeftButtonDown += OnPreviewDown;
+            _preview.MouseMove += OnPreviewMove;
+            _preview.MouseLeftButtonUp += OnPreviewUp;
             var vb = new Viewbox { Stretch = Stretch.Uniform, Child = _preview, Margin = new Thickness(6) };
             var center = new Border { Background = new SolidColorBrush(Color.FromRgb(14, 14, 16)), BorderBrush = new SolidColorBrush(C_Border), BorderThickness = new Thickness(1), Child = vb, Margin = new Thickness(8, 0, 8, 0) };
             Grid.SetRow(center, 1); Grid.SetColumn(center, 1); grid.Children.Add(center);
@@ -151,7 +154,9 @@ namespace Editor.Editors.UIEditor
         }
         private TreeViewItem BuildTreeItem(VuiElement e)
         {
-            var tvi = new TreeViewItem { Header = e.Kind + (string.IsNullOrEmpty(e.Id) ? "" : "  #" + e.Id), Tag = e, IsExpanded = true, Foreground = new SolidColorBrush(C_Text) };
+            string label = e.Kind + (string.IsNullOrEmpty(e.Id) ? "" : "  #" + e.Id);
+            if (e.Kind == VuiKind.Button && !string.IsNullOrEmpty(e.ClickAction)) label += "  → " + e.ClickAction + "()";
+            var tvi = new TreeViewItem { Header = label, Tag = e, IsExpanded = true, Foreground = new SolidColorBrush(C_Text) };
             if (ReferenceEquals(e, _selected)) tvi.IsSelected = true;
             if (e.RowTemplate != null) { var rt = BuildTreeItem(e.RowTemplate); rt.Header = "[rowTemplate] " + rt.Header; tvi.Items.Add(rt); }
             foreach (var c in e.Children) tvi.Items.Add(BuildTreeItem(c));
@@ -163,6 +168,43 @@ namespace Editor.Editors.UIEditor
         {
             _preview.Width = _prevW; _preview.Height = _prevH;
             VuiPreviewRenderer.Render(_canvas, _preview, _prevW, _prevH, _selected);
+        }
+
+        // ---- click-to-select + drag-to-move directly on the preview canvas ----
+        private VuiElement _dragEl; private System.Windows.Point _dragLast; private bool _dragging;
+        private void OnPreviewDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            var p = e.GetPosition(_preview);
+            var hit = HitTestCanvas(_canvas != null ? _canvas.Root : null, (float)p.X, (float)p.Y);
+            if (hit != null)
+            {
+                _selected = hit; _dragEl = hit; _dragLast = p; _dragging = true;
+                _preview.CaptureMouse();
+                RefreshHierarchy(); RefreshInspector(); RefreshPreview();
+            }
+        }
+        private void OnPreviewMove(object sender, System.Windows.Input.MouseEventArgs e)
+        {
+            if (!_dragging || _dragEl == null || e.LeftButton != System.Windows.Input.MouseButtonState.Pressed) return;
+            var p = e.GetPosition(_preview);
+            float s = _canvas != null && _canvas.Scale > 0 ? _canvas.Scale : 1f;
+            _dragEl.OffX += (float)(p.X - _dragLast.X) / s;
+            _dragEl.OffY += (float)(p.Y - _dragLast.Y) / s;
+            _dragLast = p; _dirty = true;
+            RefreshPreview();
+        }
+        private void OnPreviewUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (_dragging) { _dragging = false; _dragEl = null; _preview.ReleaseMouseCapture(); RefreshInspector(); }
+        }
+        // topmost non-root element under the cursor (reverse DFS = drawn-on-top first)
+        private VuiElement HitTestCanvas(VuiElement e, float x, float y)
+        {
+            if (e == null || !e.Visible) return null;
+            var kids = (e.Kind == VuiKind.List && e.RowPool != null && e.RowPool.Count > 0) ? e.RowPool : e.Children;
+            for (int i = kids.Count - 1; i >= 0; i--) { var h = HitTestCanvas(kids[i], x, y); if (h != null) return h; }
+            if (e.Parent != null && e.Resolved.Contains(x, y)) return e;
+            return null;
         }
 
         // ===================== add / delete =====================
@@ -243,6 +285,22 @@ namespace Editor.Editors.UIEditor
             }
             if (e.Kind == VuiKind.Toggle) AddCheckRow("On", e.On, v => { e.On = v; Touch(); });
             if (e.Kind == VuiKind.Stepper) AddTextRow("Options (csv)", e.Options != null ? string.Join(",", e.Options) : "", v => { e.Options = (v ?? "").Split(','); Touch(); });
+            if (e.Kind == VuiKind.Button)
+            {
+                _inspector.Children.Add(Lbl("On Click → C# method"));
+                var actBox = new TextBox { Text = e.ClickAction ?? "", Background = new SolidColorBrush(C_PanelAlt), Foreground = new SolidColorBrush(C_Text), BorderBrush = new SolidColorBrush(C_Border), CaretBrush = new SolidColorBrush(C_Text), Padding = new Thickness(4, 3, 4, 3) };
+                actBox.LostFocus += (s, ev) => BindClickAction(e, actBox.Text);
+                actBox.KeyDown += (s, ev) => { if (ev.Key == System.Windows.Input.Key.Enter) { BindClickAction(e, actBox.Text); RefreshInspector(); } };
+                _inspector.Children.Add(actBox);
+                var arow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 0) };
+                arow.Children.Add(MakeButton("✚ Create / Bind", C_Accent, 130, (s, ev) => { BindClickAction(e, actBox.Text); RefreshInspector(); }));
+                arow.Children.Add(MakeButton("⟶ Open code", C_PanelAlt, 110, (s, ev) => OpenActionsScript()));
+                _inspector.Children.Add(arow);
+                if (!string.IsNullOrEmpty(e.ClickAction))
+                    _inspector.Children.Add(new TextBlock { Text = "runs  UIActions." + e.ClickAction + "()", Foreground = new SolidColorBrush(Color.FromRgb(120, 200, 120)), FontSize = 11, Margin = new Thickness(0, 4, 0, 0), FontFamily = new FontFamily("Consolas") });
+                else
+                    _inspector.Children.Add(new TextBlock { Text = "(no action — type a name + Create/Bind)", Foreground = new SolidColorBrush(C_TextSec), FontSize = 10, Margin = new Thickness(0, 4, 0, 0) });
+            }
             if (e.Kind == VuiKind.Panel || e.Kind == VuiKind.List)
             {
                 AddComboRow("Layout", new[] { "None", "Vertical", "Horizontal", "Grid" }, (int)e.LayoutMode, i => { e.LayoutMode = (StackDir)i; Touch(); });
@@ -252,6 +310,50 @@ namespace Editor.Editors.UIEditor
             }
             AddCheckRow("Blocks input (screen)", e.BlocksInput, v => { e.BlocksInput = v; Touch(); });
             AddCheckRow("Cursor locked (HUD)", e.CursorLocked, v => { e.CursorLocked = v; Touch(); });
+        }
+
+        // ---- button -> C# action codegen (the transparent button↔code link) ----
+        private string ActionsScriptPath()
+        {
+            var proj = Editor.Core.Data.ProjectData.Current != null ? Editor.Core.Data.ProjectData.Current.Path : null;
+            return string.IsNullOrEmpty(proj) ? null : System.IO.Path.Combine(proj, "Assets", "Scripts", "UIActions.cs");
+        }
+        private void BindClickAction(VuiElement e, string raw)
+        {
+            var sb = new System.Text.StringBuilder();
+            foreach (char c in raw ?? "") if (char.IsLetterOrDigit(c) || c == '_') sb.Append(c);
+            if (sb.Length == 0) { e.ClickAction = null; Touch(); return; }
+            if (char.IsDigit(sb[0])) sb.Insert(0, '_');
+            string method = sb.ToString();
+            e.ClickAction = method;
+            EnsureActionStub(method);
+            Touch();
+        }
+        private void EnsureActionStub(string method)
+        {
+            try
+            {
+                var path = ActionsScriptPath(); if (path == null) return;
+                var dir = System.IO.Path.GetDirectoryName(path);
+                if (!System.IO.Directory.Exists(dir)) System.IO.Directory.CreateDirectory(dir);
+                if (!System.IO.File.Exists(path))
+                    System.IO.File.WriteAllText(path,
+                        "using Vortex;\n\n// UI button actions. A .vui Button's \"On Click\" method is invoked here when clicked.\n" +
+                        "// Attach this script to an entity in your active scene so it runs in play mode.\n" +
+                        "public class UIActions : VortexBehaviour\n{\n}\n");
+                var text = System.IO.File.ReadAllText(path);
+                if (System.Text.RegularExpressions.Regex.IsMatch(text, @"\b" + System.Text.RegularExpressions.Regex.Escape(method) + @"\s*\(")) return; // already there
+                int idx = text.LastIndexOf('}');
+                if (idx < 0) return;
+                string stub = "\n    public void " + method + "()\n    {\n        // TODO: handle the '" + method + "' button click\n    }\n";
+                System.IO.File.WriteAllText(path, text.Substring(0, idx) + stub + text.Substring(idx));
+            }
+            catch { }
+        }
+        private void OpenActionsScript()
+        {
+            var path = ActionsScriptPath();
+            if (path != null) { EnsureActionStub("OnClick"); try { Editor.Core.Services.ScriptingService.OpenInVisualStudio(path); } catch { } }
         }
 
         // ---- inspector field helpers ----

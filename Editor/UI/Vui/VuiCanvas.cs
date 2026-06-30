@@ -19,6 +19,8 @@ namespace Editor.UI.Vui
 
         private readonly Dictionary<string, VuiElement> _byId = new Dictionary<string, VuiElement>();
         private readonly HashSet<string> _clicked = new HashSet<string>();
+        private readonly List<string> _fired = new List<string>();   // C# action names fired by clicked buttons this frame
+        public List<string> FiredActions => _fired;
         private float _w, _h, _scale = 1f;
         private VuiElement _hot;                 // hovered interactive element this frame
 
@@ -184,6 +186,7 @@ namespace Editor.UI.Vui
         {
             if (Root == null || !Root.RuntimeVisibleEffective) return false;
             _clicked.Clear();
+            _fired.Clear();
             if (_hot != null) { _hot.Hot = false; _hot = null; }
 
             var hit = HitTest(Root, input.Mx, input.My);
@@ -199,6 +202,7 @@ namespace Editor.UI.Vui
                     {
                         case VuiKind.Button:
                             if (!string.IsNullOrEmpty(hit.Id)) _clicked.Add(hit.Id);
+                            if (!string.IsNullOrEmpty(hit.ClickAction)) _fired.Add(hit.ClickAction);   // -> invoke the C# method
                             if (hit.CapturesKey) _capturedKeyTarget = hit;          // enter keybind-capture mode
                             break;
                         case VuiKind.Toggle: hit.On = !hit.On; break;
@@ -434,7 +438,7 @@ namespace Editor.UI.Vui
                 Radius = t.Radius, Align = t.Align, Weight = t.Weight, FontSize = t.FontSize,
                 Text = t.Text, ImageAsset = t.ImageAsset, Value = t.Value, Min = t.Min, Max = t.Max, On = t.On,
                 Options = t.Options, OptionIndex = t.OptionIndex, TargetSetting = t.TargetSetting,
-                CapturesKey = t.CapturesKey, MaxChars = t.MaxChars,
+                CapturesKey = t.CapturesKey, MaxChars = t.MaxChars, ClickAction = t.ClickAction,
                 Visible = t.Visible, Opacity = t.Opacity, BlocksInput = t.BlocksInput,
                 ClipChildren = t.ClipChildren, LayoutMode = t.LayoutMode, Spacing = t.Spacing, Padding = t.Padding, GridCols = t.GridCols,
                 Parent = parent

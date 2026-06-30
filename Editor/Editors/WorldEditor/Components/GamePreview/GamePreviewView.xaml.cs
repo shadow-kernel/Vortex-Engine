@@ -219,6 +219,8 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                 {
                     var vin = new Editor.UI.Vui.VuiInput { Mx = _uiMx, My = _uiMy, Down = _uiDown, Pressed = _uiPressed, Wheel = 0, Chars = _vuiCharsEmpty, CharCount = 0, KeyEvents = _vuiKeysEmpty, KeyCount = 0 };
                     Editor.UI.Vui.VuiStack.Instance.TickAll(uw, uh, vin);
+                    var acts = Editor.UI.Vui.VuiStack.Instance.ConsumeFiredActions();
+                    if (acts != null) Editor.Scripting.ScriptRuntime.Instance.InvokeUiActions(acts);
                 }
             }
             else

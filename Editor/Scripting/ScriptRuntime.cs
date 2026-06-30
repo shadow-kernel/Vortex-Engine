@@ -93,6 +93,29 @@ namespace Editor.Scripting
             }
         }
 
+        /// <summary>Invoke the C# method bound to each fired UI button action (the button↔code link). Finds the
+        /// first running behaviour with a matching public parameterless method and calls it.</summary>
+        public void InvokeUiActions(System.Collections.Generic.List<string> actions)
+        {
+            if (actions == null || !_active) return;
+            foreach (var name in actions)
+            {
+                if (string.IsNullOrEmpty(name)) continue;
+                for (int i = 0; i < _behaviours.Count; i++)
+                {
+                    var m = _behaviours[i].GetType().GetMethod(name,
+                        System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance,
+                        null, System.Type.EmptyTypes, null);
+                    if (m != null)
+                    {
+                        try { m.Invoke(_behaviours[i], null); }
+                        catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[UIAction] " + name + ": " + ex.Message); }
+                        break;
+                    }
+                }
+            }
+        }
+
         /// <summary>Stop all behaviours.</summary>
         public void End()
         {

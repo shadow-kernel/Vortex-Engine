@@ -37,6 +37,7 @@ namespace Editor.UI.Vui
         public bool On;                         // Toggle
         public string[] Options; public int OptionIndex;  // Stepper
         public string TargetSetting;            // advisory (e.g. "Camera.Fov") — the script reads + applies
+        public string ClickAction;              // Button: the C# method name invoked on click (button↔code link)
         public bool CapturesKey;                // Button: clicking it enters keybind-capture mode
         public int CapturedKey;                 // the last virtual-key captured (0 = none) — read via GetCapturedKey
         public int MaxChars = 64;               // TextField input cap

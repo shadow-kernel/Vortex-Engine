@@ -501,7 +501,9 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
         private void CreateButton_Click(object sender, RoutedEventArgs e)
         {
             var contextMenu = new ContextMenu();
-            
+
+            // Always offer a UI Screen (the retained-mode .vui editor) regardless of the current tab.
+            AddMenuItem(contextMenu, "UI Screen (.vui)", () => CreateNewUiScreen());
             switch (_currentType)
             {
                 case AssetType.Materials:
@@ -514,11 +516,8 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                     AddMenuItem(contextMenu, "Unlit Shader", () => CreateNewShader("Unlit"));
                     AddMenuItem(contextMenu, "Transparent Shader", () => CreateNewShader("Transparent"));
                     break;
-                default:
-                    MessageBox.Show("Create new assets from the Materials or Shaders tab.", "Info", MessageBoxButton.OK, MessageBoxImage.Information);
-                    return;
             }
-            
+
             contextMenu.PlacementTarget = sender as Button;
             contextMenu.IsOpen = true;
         }
@@ -584,6 +583,43 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                     AssetDatabase.Instance.Refresh();
                 }
             }
+        }
+
+        private void CreateNewUiScreen()
+        {
+            var projectPath = ProjectData.Current?.Path;
+            if (string.IsNullOrEmpty(projectPath))
+            {
+                MessageBox.Show("Please open a project first.", "No Project", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            var uiDir = System.IO.Path.Combine(projectPath, "Assets", "UI");
+            if (!System.IO.Directory.Exists(uiDir)) System.IO.Directory.CreateDirectory(uiDir);
+
+            var saveDialog = new Microsoft.Win32.SaveFileDialog
+            {
+                Title = "New UI Screen", Filter = "Vortex UI|*.vui", DefaultExt = ".vui",
+                InitialDirectory = uiDir, FileName = "NewScreen.vui"
+            };
+            if (saveDialog.ShowDialog() != true) return;
+
+            // A blank full-screen root the user can drop elements into.
+            const string template = "{\n" +
+                "  \"vui\": 1, \"designW\": 1920, \"designH\": 1080,\n" +
+                "  \"root\": {\n" +
+                "    \"kind\": \"Panel\", \"id\": \"root\", \"anchor\": \"TopLeft\",\n" +
+                "    \"stretchX\": true, \"stretchY\": true, \"off\": [0,0], \"size\": [0,0],\n" +
+                "    \"bg\": [0.06,0.06,0.08,1], \"blocksInput\": true,\n" +
+                "    \"children\": []\n" +
+                "  }\n}\n";
+            try
+            {
+                System.IO.File.WriteAllText(saveDialog.FileName, template);
+                AssetDatabase.Instance.Refresh();
+            }
+            catch (Exception ex) { MessageBox.Show("Could not create the UI screen:\n" + ex.Message, "UI", MessageBoxButton.OK, MessageBoxImage.Error); return; }
+
+            try { Editor.Editors.UIEditor.UIEditorWindow.Open(Window.GetWindow(this), saveDialog.FileName); } catch { }
         }
 
         private void CreateNewShader(string type)
@@ -774,6 +810,7 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             AddMenu(menu, "New Script", () => CreateScriptHere(), 0xE943, "#FF9B59B6");
             AddMenu(menu, "New Material", () => CreateNewMaterial("Opaque"), 0xE91B, "#FFBD63C5");
             AddMenu(menu, "New Shader", () => CreateNewShader("VertFrag"), 0xE9F5, "#FF569CD6");
+            AddMenu(menu, "New UI Screen", () => CreateNewUiScreen(), 0xE7F4, "#FF4DB6E2");
             menu.Items.Add(new Separator());
             AddMenu(menu, "Refresh", () => { FileExplorerService.Instance.RefreshCurrentFolderContents(); RefreshAssets(); }, 0xE72C, "#FF9A9AA1");
             return menu;

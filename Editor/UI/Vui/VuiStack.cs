@@ -25,6 +25,17 @@ namespace Editor.UI.Vui
 
         public bool LastConsumedInput { get; private set; }
 
+        private readonly List<string> _firedActions = new List<string>();
+        /// <summary>C# action names fired by clicked buttons since the last call (then cleared). The script host
+        /// invokes the matching methods on running behaviours — the button↔code link.</summary>
+        public List<string> ConsumeFiredActions()
+        {
+            if (_firedActions.Count == 0) return null;
+            var copy = new List<string>(_firedActions);
+            _firedActions.Clear();
+            return copy;
+        }
+
         /// <summary>Load (and cache by name) a .vui — NOT shown until Show/Push. Returns null on failure.</summary>
         public VuiCanvas Load(string name)
         {
@@ -95,6 +106,7 @@ namespace Editor.UI.Vui
                 var c = _stack[i];
                 if (!c.Visible) continue;
                 bool didConsume = c.Update(input);
+                if (c.FiredActions.Count > 0) _firedActions.AddRange(c.FiredActions);
                 if (c.BlocksInput) { consumed = true; break; }
                 consumed |= didConsume;
             }

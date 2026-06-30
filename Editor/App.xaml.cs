@@ -432,7 +432,11 @@ namespace Editor
                 // Retained UI: AFTER scripts mutated slots/screens, BEFORE the 3D submit. Emits into the same single
                 // UIBegin frame; the native overlay replays it after the 3D pass, before Present.
                 if (Editor.UI.Vui.VuiStack.Instance.HasActiveScreens)
+                {
                     Editor.UI.Vui.VuiStack.Instance.TickAll(cw, ch, BuildVuiInput(mx, my, down, pressed));
+                    var acts = Editor.UI.Vui.VuiStack.Instance.ConsumeFiredActions();
+                    if (acts != null) sr.InvokeUiActions(acts);   // button -> bound C# method
+                }
 
                 var scene = Editor.Core.Data.ProjectData.Current != null ? Editor.Core.Data.ProjectData.Current.ActiveScene : null;
                 Editor.Core.Services.PlayCameraHelper.ApplyMainCamera(scene);
