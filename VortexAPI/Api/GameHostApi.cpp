@@ -38,6 +38,13 @@ EDITOR_INTERFACE float GetRenderScale() { return graphics::dx12::DX12Renderer::i
 EDITOR_INTERFACE void SetDlssMode(int mode) { graphics::dx12::DX12Renderer::instance().set_dlss_mode(mode); }
 EDITOR_INTERFACE int GetDlssMode() { return graphics::dx12::DX12Renderer::instance().dlss_mode(); }
 
+// DLSS Frame Generation (separate from SR): 0=off, 1=x2, 2=x3, 3=x4 AI frames inserted at Present. Needs Reflex
+// (enabled internally). FrameGenPresentedFps reports DLSSGState.numFramesActuallyPresented for the HUD readout —
+// the engine's own FPS counts only REAL frames, so this is how the generated frames become visible.
+EDITOR_INTERFACE void SetFrameGenMode(int mode) { graphics::dx12::DX12Renderer::instance().set_fg_mode(mode); }
+EDITOR_INTERFACE int GetFrameGenMode() { return graphics::dx12::DX12Renderer::instance().fg_mode(); }
+EDITOR_INTERFACE int FrameGenPresentedFps() { return graphics::dx12::DX12Renderer::instance().fg_presented_fps(); }
+
 // GPU capability — the DLSS hardware gate. The options UI shows DLSS only when GpuSupportsDlss() is true; on
 // every other machine the render-scale slider is the universal fallback.
 EDITOR_INTERFACE int GpuVendorId() { return (int)graphics::dx12::DX12Core::instance().adapter_vendor_id(); }

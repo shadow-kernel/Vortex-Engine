@@ -68,6 +68,34 @@ namespace vortex::graphics::dx12
 		// upscale) — so a DLSS hiccup degrades gracefully and never black-screens.
 		bool evaluate_dlss(const DlssEvalDesc& desc);
 
+		// Frame-Generation per-frame inputs: set the common (camera) constants + tag depth + motion vectors with the
+		// CURRENT frame token (the one frame_begin made — markers + FG must share it). NO slEvaluateFeature: DLSS-G
+		// consumes these in its Present hook to interpolate the back buffer. Only desc.cmd/depth/mvec/renderW/H +
+		// the camera fields are used (color in/out are ignored — FG uses the swap-chain back buffer as its color).
+		bool tag_fg_frame(const DlssEvalDesc& desc);
+
+		// ---- Frame Generation (DLSS-G) + Reflex ----
+		// DLSS-G inserts AI frames at Present; it REQUIRES Reflex active + PCL markers threaded through the frame
+		// loop. fg_ready() is true once the DLSS-G/Reflex/PCL feature functions resolved (after set_device).
+		bool fg_ready() const { return m_fg_ready; }
+		void set_reflex(bool enabled);                         // slReflexSetOptions (low-latency on/off; on = FG-ready)
+		void* new_frame_token(unsigned frame_index);           // slGetNewFrameToken -> opaque token (cast internally)
+		void reflex_sleep(void* frame_token);                  // slReflexSleep (call once near the top of the frame)
+		void pcl_marker(int marker, void* frame_token);        // slPCLSetMarker (sl::PCLMarker value: 0..5)
+		// numFramesToGenerate: 0 = OFF, 1 = x2, 2 = x3, 3 = x4. outW/outH = display (back-buffer) size.
+		// Also flips Reflex on/off (FG requires Reflex) + arms the per-frame markers below.
+		void set_frame_gen(int num_frames_to_generate, unsigned out_w, unsigned out_h);
+		int  fg_presented_frames();                            // slDLSSGGetState.numFramesActuallyPresented (readout)
+		bool frame_gen_active() const { return m_reflex_active; }
+
+		// Per-frame Reflex/PCL hooks for the GameHost loop. ALL no-ops when FG is off, so the loop is unaffected
+		// unless the user enables Frame Generation. frame_begin: token + slReflexSleep + SimStart marker (call at
+		// the top of the frame). frame_marker(m): a PCL marker (1=SimEnd,2=RenderSubmitStart,3=RenderSubmitEnd,
+		// 4=PresentStart,5=PresentEnd). current_token: the frame token for render_frame's FG constants/tags.
+		void frame_begin(unsigned frame_index);
+		void frame_marker(int marker);
+		void* current_token() const;
+
 		void shutdown();
 
 	private:
@@ -79,6 +107,9 @@ namespace vortex::graphics::dx12
 		void* m_module{ nullptr };   // HMODULE of sl.interposer.dll (void* to keep windows.h out of this header)
 		bool  m_available{ false };
 		bool  m_dlss_ready{ false }; // DLSS feature functions resolved
+		bool  m_fg_ready{ false };   // DLSS-G + Reflex + PCL feature functions resolved
+		bool  m_reflex_active{ false }; // FG enabled -> Reflex + per-frame markers armed
+		void* m_current_token{ nullptr }; // this frame's sl::FrameToken (markers + FG constants/tags)
 		u32   m_frame_index{ 0 };    // incrementing index for slGetNewFrameToken
 	};
 }

@@ -385,6 +385,8 @@ namespace vortex::graphics::dx12
 	{
 		if (!m_initialized) return;
 
+		DX12Streamline::instance().frame_marker(2 /*eRenderSubmitStart*/); // FG/Reflex latency marker (no-op if FG off)
+
 		// Swap render queues (thread-safe) and clear submit queue for next frame
 		swap_render_queue();
 		
@@ -422,7 +424,10 @@ namespace vortex::graphics::dx12
 		// Render-scale: when < 1.0 (and the upscale pipeline is ready) render the 3D into a smaller offscreen RT,
 		// then upscale it onto the full-res back buffer (this is also the slot DLSS plugs into). Scale 1.0 takes the
 		// direct path below = byte-for-byte the old behaviour, zero overhead. This is the safe default.
-		bool use_scale = (m_render_scale < 0.999f) && m_upscale.is_initialized();
+		// DLSS Frame Generation forces the scaled-RT path on (even at scale 1.0) so the sampleable depth + the
+		// motion-vector pass exist for DLSS-G to interpolate. fg_on also gates the present-time depth/mvec tagging.
+		bool fg_on = (m_fg_mode > 0) && DX12Streamline::instance().fg_ready() && m_mvec_pipeline.is_initialized();
+		bool use_scale = (m_render_scale < 0.999f || fg_on) && m_upscale.is_initialized();
 		u32 out_w = m_swapchain.width(), out_h = m_swapchain.height();
 		if (use_scale)
 		{
@@ -445,6 +450,7 @@ namespace vortex::graphics::dx12
 			m_active_height = m_scaled_rt.height();
 
 			m_scaled_rt.transition_to_render_target(m_command_list.Get());
+			m_scaled_rt.transition_depth_to_depth_write(m_command_list.Get()); // FG leaves depth in PSR -> restore (no-op otherwise)
 
 			D3D12_VIEWPORT svp{}; svp.Width = (float)m_scaled_rt.width(); svp.Height = (float)m_scaled_rt.height(); svp.MaxDepth = 1.0f;
 			D3D12_RECT ssc{}; ssc.right = (LONG)m_scaled_rt.width(); ssc.bottom = (LONG)m_scaled_rt.height();
@@ -461,11 +467,13 @@ namespace vortex::graphics::dx12
 			if (m_grid_visible) render_grid();
 			if (!m_render_queue.empty()) render_3d_scene();
 
-			// ---- DLSS (optional): scaled color + depth + motion vectors -> full-res m_dlss_output ----
+			// ---- DLSS SR (optional) + Frame Generation (optional): both need the motion-vector pass ----
 			bool dlss_active = (m_dlss_mode > 0) && DX12Streamline::instance().dlss_ready()
 				&& m_mvec_pipeline.is_initialized() && m_scaled_rt.depth_srv_gpu().ptr != 0;
+			bool fg_inputs = fg_on && m_scaled_rt.depth_srv_gpu().ptr != 0;
+			bool need_mvec = dlss_active || fg_inputs;
 			bool dlss_done = false;
-			if (dlss_active && ensure_mvec_rt(m_scaled_rt.width(), m_scaled_rt.height()) && ensure_dlss_output(out_w, out_h))
+			if (need_mvec && ensure_mvec_rt(m_scaled_rt.width(), m_scaled_rt.height()))
 			{
 				using namespace DirectX;
 				// Motion-vector pass: sample the scaled depth, write pixel-space velocity to m_mvec_rt.
@@ -491,16 +499,13 @@ namespace vortex::graphics::dx12
 				m_command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 				m_command_list->DrawInstanced(3, 1, 0, 0);
 
-				// DLSS evaluate. SL manages tagged-resource states (restores them to the states we pass in).
+				// Shared camera + depth + mvec description (SL manages tagged-resource states).
 				DlssEvalDesc ed{};
 				ed.cmd = m_command_list.Get();
-				ed.mode = m_dlss_mode;
 				ed.outW = out_w; ed.outH = out_h;
 				ed.renderW = m_scaled_rt.width(); ed.renderH = m_scaled_rt.height();
-				ed.colorIn  = m_scaled_rt.resource();      ed.colorInState  = D3D12_RESOURCE_STATE_RENDER_TARGET;
-				ed.colorOut = m_dlss_output.resource();    ed.colorOutState = D3D12_RESOURCE_STATE_RENDER_TARGET;
-				ed.depth    = m_scaled_rt.depth_resource();ed.depthState    = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-				ed.mvec     = m_mvec_rt.resource();        ed.mvecState     = D3D12_RESOURCE_STATE_RENDER_TARGET;
+				ed.depth    = m_scaled_rt.depth_resource(); ed.depthState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+				ed.mvec     = m_mvec_rt.resource();         ed.mvecState  = D3D12_RESOURCE_STATE_RENDER_TARGET;
 				XMStoreFloat4x4(&ed.proj, XMMatrixPerspectiveFovLH(XMConvertToRadians(m_fov_degrees),
 					(float)m_scaled_rt.width() / (float)m_scaled_rt.height(), 0.1f, 1000.0f));
 				ed.camPos = m_camera_position;
@@ -510,9 +515,21 @@ namespace vortex::graphics::dx12
 				XMStoreFloat3(&ed.camFwd, fwd); XMStoreFloat3(&ed.camRight, rgt);
 				ed.fovY = XMConvertToRadians(m_fov_degrees); ed.nearZ = 0.1f; ed.farZ = 1000.0f;
 
-				dlss_done = DX12Streamline::instance().evaluate_dlss(ed);
+				// DLSS Super Resolution: also needs color in/out, then evaluate -> m_dlss_output.
+				if (dlss_active && ensure_dlss_output(out_w, out_h))
+				{
+					ed.mode = m_dlss_mode;
+					ed.colorIn  = m_scaled_rt.resource();   ed.colorInState  = D3D12_RESOURCE_STATE_RENDER_TARGET;
+					ed.colorOut = m_dlss_output.resource(); ed.colorOutState = D3D12_RESOURCE_STATE_RENDER_TARGET;
+					dlss_done = DX12Streamline::instance().evaluate_dlss(ed);
+				}
 
-				m_scaled_rt.transition_depth_to_depth_write(m_command_list.Get()); // ready for next frame's 3D pass
+				// Frame Generation: tag depth + mvec for the Present hook (uses the markers' frame token, no evaluate).
+				if (fg_inputs) DX12Streamline::instance().tag_fg_frame(ed);
+
+				// Depth for next frame: FG leaves it in PSR (consumed at Present; restored lazily at frame start);
+				// SR-only restores depth_write now so the next 3D pass can clear/write it.
+				if (!fg_inputs) m_scaled_rt.transition_depth_to_depth_write(m_command_list.Get());
 			}
 
 			// ---- composite onto the full-res back buffer (DLSS output if it ran, else the scaled color) ----
@@ -580,7 +597,8 @@ namespace vortex::graphics::dx12
 		m_command_list->Close();
 
 		m_command_queue.execute_command_list(m_command_list.Get());
-		
+		DX12Streamline::instance().frame_marker(3 /*eRenderSubmitEnd*/);
+
 		// Signal after this frame's commands are queued (non-blocking)
 		m_frame_fence_values[idx] = m_command_queue.signal();
 
@@ -590,7 +608,9 @@ namespace vortex::graphics::dx12
 		// Reliable verification: capture the fully-rendered back buffer (3D + UI) BEFORE present.
 		if (m_capture_requested) { m_capture_requested = false; capture_backbuffer_to_bmp(m_capture_path.c_str()); }
 
-		m_swapchain.present(m_vsync_enabled);
+		DX12Streamline::instance().frame_marker(4 /*ePresentStart*/);
+		m_swapchain.present(m_vsync_enabled);   // SL-proxied -> DLSS-G inserts its generated frames here
+		DX12Streamline::instance().frame_marker(5 /*ePresentEnd*/);
 		// Note: m_render_queue is NOT cleared - we keep last frame's data
 		// for re-rendering if no new data is submitted (prevents flickering)
 		}
