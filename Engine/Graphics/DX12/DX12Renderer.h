@@ -467,6 +467,7 @@ namespace vortex::graphics::dx12
 		std::vector<DrawRun> m_draw_runs;     // per-frame scratch (reused)
 		std::vector<u32> m_item_run;          // run index per render-queue item (for flat parallel cull)
 		std::vector<unsigned char> m_item_lod; // geometric-LOD level per item (0xFF = culled), for the 2-pass MT cull
+		bool m_queue_dirty{ true };           // submit queue changed -> re-sort + rebuild runs; else reuse the cached layout
 		bool m_mt_enabled{ true };            // master enable for multithreaded cull+pack
 		bool m_mt_force{ false };             // ignore the instance-count threshold (testing/forced)
 		bool m_mt_active{ false };            // whether MT was used on the last frame (telemetry)

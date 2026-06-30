@@ -189,6 +189,7 @@ namespace vortex::graphics::dx12
 		if (m_submit_queue.empty()) return;
 		m_render_queue.swap(m_submit_queue);
 		m_submit_queue.clear();
+		m_queue_dirty = true;   // new geometry -> re-sort + rebuild runs this frame
 	}
 
 	void DX12Renderer::on_scene_switch()
@@ -585,6 +586,7 @@ namespace vortex::graphics::dx12
 		size_t objectCount = (std::min)(m_render_queue.size(), static_cast<size_t>(MAX_RENDER_OBJECTS));
 		if (objectCount == 0) return;
 
+		bool preCullRan = false;   // the pre-cull mutates the queue -> forces a layout rebuild this frame
 		// PRE-CULL for huge instanced scenes: when far more instances are SUBMITTED than can render, the O(n log n)
 		// sort below over ALL of them was the bottleneck (millions of items). Drop frustum-invisible instances FIRST
 		// (parallel), so the sort + run-build only touch what's actually on screen. Only kicks in over the cap, so
@@ -592,6 +594,7 @@ namespace vortex::graphics::dx12
 		if (m_render_queue.size() > static_cast<size_t>(MAX_RENDER_OBJECTS))
 		{
 			using namespace DirectX;
+			preCullRan = true;
 			FrustumPlanes preFr = extract_frustum(m_frame_constants.view_projection);
 			const size_t N = m_render_queue.size();
 			std::vector<unsigned char> vis(N, 0);
@@ -639,9 +642,14 @@ namespace vortex::graphics::dx12
 			if (objectCount == 0) return;
 		}
 
+		// Rebuild the sorted (material,mesh) layout + run table ONLY when the submit queue changed (or the pre-cull
+		// mutated it). A static map with a moving camera reuses the cached layout — the per-frame cull+pack still
+		// runs (frustum-dependent), but the O(n log n) sort + O(n) run-build are skipped.
+		bool needRebuild = m_queue_dirty || preCullRan || m_draw_runs.empty();
+
 		// Sort by (material, mesh, distance): identical (mesh+material) objects become ADJACENT so each run
-		// draws as ONE instanced call (fewer draw calls); distance is the tiebreaker for partial early-Z
-		// within a run. ~O(n log n), negligible vs the draw cost.
+		// draws as ONE instanced call (fewer draw calls); distance is the tiebreaker for partial early-Z within a run.
+		if (needRebuild)
 		{
 			const DirectX::XMFLOAT3 eye = m_camera_position;
 			std::sort(m_render_queue.begin(), m_render_queue.end(),
@@ -673,6 +681,8 @@ namespace vortex::graphics::dx12
 		// ignores instance order), and finally record the draws single-threaded. This parallelizes the
 		// per-instance frustum/distance test + memcpy — the CPU cost when a mesh is rendered thousands of times.
 		using namespace DirectX;
+		if (needRebuild)
+		{
 		m_draw_runs.clear();
 		m_item_run.resize(objectCount);
 		{
@@ -712,6 +722,8 @@ namespace vortex::graphics::dx12
 				vbBase += cnt;
 				i = j;
 			}
+		}
+		m_queue_dirty = false;
 		}
 		const size_t runN = m_draw_runs.size();
 		m_instances_tested += (int)objectCount;
