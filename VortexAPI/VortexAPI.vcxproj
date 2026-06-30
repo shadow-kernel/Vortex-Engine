@@ -19,9 +19,25 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="ApiCommon.h" />
+  </ItemGroup>
+  <ItemGroup>
     <ClCompile Include="DllMain.cpp" />
     <ClCompile Include="MultiViewportAPI.cpp" />
-    <ClCompile Include="VortexAPI.cpp" />
+    <ClCompile Include="Api\EntityApi.cpp" />
+    <ClCompile Include="Api\SceneApi.cpp" />
+    <ClCompile Include="Api\ResourceApi.cpp" />
+    <ClCompile Include="Api\RuntimeApi.cpp" />
+    <ClCompile Include="Api\RenderApi.cpp" />
+    <ClCompile Include="Api\GameHostApi.cpp" />
+    <ClCompile Include="Api\RenderLoopApi.cpp" />
+    <ClCompile Include="Api\InputApi.cpp" />
+    <ClCompile Include="Api\CameraApi.cpp" />
+    <ClCompile Include="Api\ImporterApi.cpp" />
+    <ClCompile Include="Api\AssetDatabaseApi.cpp" />
+    <ClCompile Include="Api\MeshRendererApi.cpp" />
+    <ClCompile Include="Api\LightingApi.cpp" />
+    <ClCompile Include="Api\SkyboxApi.cpp" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>18.0</VCProjectVersion>
