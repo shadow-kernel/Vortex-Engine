@@ -111,6 +111,9 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostNextKeyPressed")] private static extern int GameHostNextKeyPressedNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostToggleFullscreen")] private static extern void GameHostToggleFullscreenNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostIsFullscreen")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool GameHostIsFullscreenNative();
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostSetResolution")] private static extern void GameHostSetResolutionNative(int w, int h);
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SetRenderScale")] private static extern void SetRenderScaleNative(float s);
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GetRenderScale")] private static extern float GetRenderScaleNative();
 
         /// <summary>Create the native game window + swapchain and run the loop until it closes. BLOCKS the caller.</summary>
         public static bool RunGameHost(uint width, uint height, string title) => RunGameHostNative(width, height, title);
@@ -138,6 +141,11 @@ namespace Editor.DllWrapper
         /// <summary>Toggle borderless fullscreen (also bound to F11 natively).</summary>
         public static void GameHostToggleFullscreen() => GameHostToggleFullscreenNative();
         public static bool GameHostIsFullscreen() => GameHostIsFullscreenNative();
+        /// <summary>Resize the windowed client area to w x h (settings "Resolution"; no-op in fullscreen).</summary>
+        public static void GameHostSetResolution(int w, int h) { try { GameHostSetResolutionNative(w, h); } catch { } }
+        /// <summary>Render-scale 0.25..2.0 (stored now; the scaled-RT upscale pass applies it). 1.0 = native.</summary>
+        public static void SetRenderScale(float s) { try { SetRenderScaleNative(s); } catch { } }
+        public static float GetRenderScale() { try { return GetRenderScaleNative(); } catch { return 1f; } }
 
         #endregion
 

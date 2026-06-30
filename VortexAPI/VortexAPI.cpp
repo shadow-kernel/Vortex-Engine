@@ -830,6 +830,10 @@ EDITOR_INTERFACE int  GameHostNextKeyPressed() { return runtime::GameHost::next_
 // Borderless-fullscreen toggle (also F11 natively) for the settings menu.
 EDITOR_INTERFACE void GameHostToggleFullscreen() { runtime::GameHost::toggle_fullscreen(); }
 EDITOR_INTERFACE bool GameHostIsFullscreen() { return runtime::GameHost::is_fullscreen(); }
+// Settings menu: window resolution (windowed only) + render-scale (stored; applied by the scaled-RT upscale pass).
+EDITOR_INTERFACE void GameHostSetResolution(int w, int h) { runtime::GameHost::set_resolution((uint32_t)w, (uint32_t)h); }
+EDITOR_INTERFACE void SetRenderScale(float s) { graphics::dx12::DX12Renderer::instance().set_render_scale(s); }
+EDITOR_INTERFACE float GetRenderScale() { return graphics::dx12::DX12Renderer::instance().render_scale(); }
 
 EDITOR_INTERFACE void StartRenderLoop()
 {

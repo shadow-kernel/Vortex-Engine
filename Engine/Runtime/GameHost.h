@@ -50,5 +50,9 @@ namespace vortex::runtime
         // Borderless-fullscreen toggle (also bound to F11 natively). Safe (no exclusive mode) -> ALLOW_TEARING ok.
         static void toggle_fullscreen();
         static bool is_fullscreen();
+
+        // Resize the window so its CLIENT area is exactly w x h (a settings-menu "Resolution" change). No-op while
+        // borderless-fullscreen. The WM_SIZE it triggers drives the existing deferred swapchain resize.
+        static void set_resolution(uint32_t w, uint32_t h);
     };
 }

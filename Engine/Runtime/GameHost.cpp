@@ -179,6 +179,18 @@ namespace vortex::runtime
     void GameHost::toggle_fullscreen() { do_toggle_fullscreen(); }
     bool GameHost::is_fullscreen() { return g_fullscreen; }
 
+    void GameHost::set_resolution(uint32_t w, uint32_t h)
+    {
+        if (!g_hwnd || g_fullscreen || w == 0 || h == 0) return;  // windowed only; ignore in borderless-fullscreen
+        RECT rc{ 0, 0, (LONG)w, (LONG)h };
+        DWORD style = (DWORD)GetWindowLongW(g_hwnd, GWL_STYLE);
+        AdjustWindowRect(&rc, style, FALSE);                       // outer size whose CLIENT area is w x h
+        // Resize in place; the WM_SIZE this posts is handled by the deferred resize in the main loop (settled,
+        // same thread as present) -> swapchain ResizeBuffers. Keep position/z; don't steal focus.
+        SetWindowPos(g_hwnd, nullptr, 0, 0, rc.right - rc.left, rc.bottom - rc.top,
+            SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+
     bool GameHost::run(uint32_t width, uint32_t height, const wchar_t* title)
     {
         HINSTANCE inst = GetModuleHandleW(nullptr);

@@ -155,6 +155,11 @@ namespace vortex::graphics::dx12
 		void set_vsync(bool enabled) { m_vsync_enabled = enabled; }
 		bool is_vsync_enabled() const { return m_vsync_enabled; }
 
+		// Render-scale (3D rendered into a scaled offscreen RT, then upscaled to the back buffer). 1.0 = native.
+		// Stored here now (settings UI wires to it); the scaled-RT + upscale pass reads m_render_scale.
+		void set_render_scale(float s) { m_render_scale = s < 0.25f ? 0.25f : (s > 2.0f ? 2.0f : s); }
+		float render_scale() const { return m_render_scale; }
+
 		// Grid rendering
 		void set_grid_visible(bool visible) { m_grid_visible = visible; }
 		bool is_grid_visible() const { return m_grid_visible; }
@@ -511,6 +516,7 @@ namespace vortex::graphics::dx12
 		float m_grid_major_interval{ 10.0f };
 		float m_grid_extent{ 200.0f };
 		bool m_vsync_enabled{ false };
+		float m_render_scale{ 1.0f };   // 1.0 = render at native res; <1 = scaled offscreen RT + upscale (perf)
 		bool m_initialized{ false };
 
 		// Deferred back-buffer capture (set by request_capture, serviced in render_frame before present)

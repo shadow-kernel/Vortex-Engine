@@ -292,6 +292,24 @@ namespace Vortex
         public static void SetVSync(bool on) { Editor.DllWrapper.VortexAPI.SetGameHostVSync(on); }
         public static void ToggleFullscreen() { Editor.DllWrapper.VortexAPI.GameHostToggleFullscreen(); }
         public static bool IsFullscreen { get { return Editor.DllWrapper.VortexAPI.GameHostIsFullscreen(); } }
+
+        /// <summary>Set fullscreen to a specific state (idempotent — toggles only if it differs).</summary>
+        public static void SetFullscreen(bool on) { if (on != IsFullscreen) ToggleFullscreen(); }
+
+        /// <summary>Field of view in degrees (the renderer-global projection FOV).</summary>
+        public static void SetFieldOfView(float degrees) { Camera.SetFieldOfView(degrees); }
+
+        /// <summary>Window resolution (windowed only); resizes the client area + swapchain.</summary>
+        public static void SetResolution(int width, int height) { Editor.DllWrapper.VortexAPI.GameHostSetResolution(width, height); }
+
+        /// <summary>Render scale 0.25..2.0 — the 3D scene renders into a scaled offscreen RT then upscales (perf).
+        /// 1.0 = native. Stored in the renderer now; the scaled-RT upscale pass applies it.</summary>
+        public static void SetRenderScale(float scale) { Editor.DllWrapper.VortexAPI.SetRenderScale(scale); }
+        public static float RenderScale { get { return Editor.DllWrapper.VortexAPI.GetRenderScale(); } }
+
+        /// <summary>Master volume 0..1. Stored here until the (XAudio2) sound engine reads it — audio is still a stub.</summary>
+        public static float MasterVolume { get; private set; } = 1f;
+        public static void SetMasterVolume(float v) { MasterVolume = v < 0f ? 0f : (v > 1f ? 1f : v); }
     }
 
     /// <summary>Lighting/atmosphere control for game scripts — flicker, lightning, mood. With submit-once a static
