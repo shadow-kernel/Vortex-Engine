@@ -36,6 +36,7 @@
     <ClInclude Include="Graphics\DX12\DX12Pipeline.h" />
     <ClInclude Include="Graphics\DX12\DX12Pipeline3D.h" />
     <ClInclude Include="Graphics\DX12\DX12Renderer.h" />
+    <ClInclude Include="Graphics\DX12\DX12Renderer_Internal.h" />
     <ClInclude Include="Graphics\DX12\DX12RenderTarget.h" />
     <ClInclude Include="Graphics\DX12\DX12SkyboxPipeline.h" />
     <ClInclude Include="Graphics\DX12\DX12Streamline.h" />
@@ -94,6 +95,13 @@
     <ClCompile Include="Graphics\DX12\DX12Pipeline.cpp" />
     <ClCompile Include="Graphics\DX12\DX12Pipeline3D.cpp" />
     <ClCompile Include="Graphics\DX12\DX12Renderer.cpp" />
+    <ClCompile Include="Graphics\DX12\DX12Renderer_Queue.cpp" />
+    <ClCompile Include="Graphics\DX12\DX12Renderer_3DScene.cpp" />
+    <ClCompile Include="Graphics\DX12\DX12Renderer_Grid.cpp" />
+    <ClCompile Include="Graphics\DX12\DX12Renderer_Init.cpp" />
+    <ClCompile Include="Graphics\DX12\DX12Renderer_Skybox.cpp" />
+    <ClCompile Include="Graphics\DX12\DX12Renderer_Lights.cpp" />
+    <ClCompile Include="Graphics\DX12\DX12Renderer_RenderTargets.cpp" />
     <ClCompile Include="Graphics\DX12\UIOverlay.cpp" />
     <ClCompile Include="Graphics\DX12\DX12RenderTarget.cpp" />
     <ClCompile Include="Graphics\DX12\DX12SkyboxPipeline.cpp" />
