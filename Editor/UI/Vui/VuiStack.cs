@@ -3,6 +3,15 @@ using System.IO;
 
 namespace Editor.UI.Vui
 {
+    /// <summary>A button click that fired a C# action, tagged with the screen it came from. The screen lets the
+    /// script host route the call to that screen's own actions class (e.g. PauseMenu.vui -> PauseMenuActions),
+    /// so each UI gets its own class and method names can't collide across screens.</summary>
+    public struct UiAction
+    {
+        public string Screen;   // the .vui source name/path the button lives on (VuiCanvas.Name)
+        public string Action;   // the C# method name to invoke
+    }
+
     /// <summary>
     /// Global screen stack + per-frame driver. Bottom = HUD, top = modal. Owns the cursor-lock authority (a menu
     /// on top unlocks the cursor; HUD-only keeps mouse-look locked). One TickAll per frame: Layout every visible
@@ -25,13 +34,13 @@ namespace Editor.UI.Vui
 
         public bool LastConsumedInput { get; private set; }
 
-        private readonly List<string> _firedActions = new List<string>();
-        /// <summary>C# action names fired by clicked buttons since the last call (then cleared). The script host
-        /// invokes the matching methods on running behaviours — the button↔code link.</summary>
-        public List<string> ConsumeFiredActions()
+        private readonly List<UiAction> _firedActions = new List<UiAction>();
+        /// <summary>Screen-tagged C# actions fired by clicked buttons since the last call (then cleared). The
+        /// script host invokes the matching method on that screen's actions class — the button↔code link.</summary>
+        public List<UiAction> ConsumeFiredActions()
         {
             if (_firedActions.Count == 0) return null;
-            var copy = new List<string>(_firedActions);
+            var copy = new List<UiAction>(_firedActions);
             _firedActions.Clear();
             return copy;
         }
@@ -124,7 +133,8 @@ namespace Editor.UI.Vui
                 var c = _stack[i];
                 if (!c.Visible) continue;
                 bool didConsume = c.Update(input);
-                if (c.FiredActions.Count > 0) _firedActions.AddRange(c.FiredActions);
+                if (c.FiredActions.Count > 0)
+                    foreach (var act in c.FiredActions) _firedActions.Add(new UiAction { Screen = c.Name, Action = act });
                 if (c.BlocksInput) { consumed = true; break; }
                 consumed |= didConsume;
             }

@@ -50,6 +50,13 @@ namespace Editor.Core.Services
         /// player sets this true; in-editor play leaves it false (debug) unless the user toggles Release.</summary>
         public bool IsReleaseMode { get; set; }
 
+        /// <summary>True while the BLOCKING native GameHost loop (RunGameHost) owns this thread — i.e. the
+        /// standalone player and --project dev play. While it's true the WPF Dispatcher is NOT pumping (the thread
+        /// is stuck inside native code), so a quit must break the native loop via RequestGameHostExit() —
+        /// Application.Shutdown() would only be queued and never run, leaving the window open ("Quit does nothing").
+        /// In-editor play (viewport or play-in-window) leaves this false: the Dispatcher is live, so quit = Stop().</summary>
+        public bool NativeGameHostRunning { get; set; }
+
         /// <summary>Raised whenever the play state changes (on the UI thread).</summary>
         public event EventHandler<PlayState> StateChanged;
 

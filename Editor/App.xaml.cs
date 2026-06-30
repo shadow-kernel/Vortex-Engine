@@ -169,8 +169,10 @@ namespace Editor
                 DllWrapper.VortexAPI.SetGameTickCallback(_ghTick);
                 if (_renderScaleArg > 0f && _renderScaleArg < 0.999f)     // dev: --renderscale=<f> (the scaled path)
                     try { DllWrapper.VortexAPI.SetRenderScale(_renderScaleArg); } catch { }
+                Editor.Core.Services.PlayModeService.Instance.NativeGameHostRunning = true; // this thread is now in the native loop
                 DllWrapper.VortexAPI.RunGameHost(1280, 720, "Vortex");    // BLOCKS — runs the game
-                Shutdown();                                                // window closed -> exit
+                Editor.Core.Services.PlayModeService.Instance.NativeGameHostRunning = false;
+                Shutdown();                                                // window closed (or QuitGame->RequestGameHostExit) -> exit
             }
             catch (Exception ex)
             {
@@ -208,7 +210,9 @@ namespace Editor
                 splash.FadeOutAndClose();
                 _ghTick = GameHostTick;
                 DllWrapper.VortexAPI.SetGameTickCallback(_ghTick);
+                Editor.Core.Services.PlayModeService.Instance.NativeGameHostRunning = true;
                 DllWrapper.VortexAPI.RunGameHost(1280, 720, "Vortex Stress Test"); // BLOCKS
+                Editor.Core.Services.PlayModeService.Instance.NativeGameHostRunning = false;
                 Shutdown();
             }
             catch (Exception ex)

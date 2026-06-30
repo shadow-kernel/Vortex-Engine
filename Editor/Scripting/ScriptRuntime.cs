@@ -30,6 +30,15 @@ namespace Editor.Scripting
         private readonly Dictionary<long, GameEntity> _entitiesById = new Dictionary<long, GameEntity>();
         private long _nextHandle;
         private readonly List<Vortex.VortexBehaviour> _behaviours = new List<Vortex.VortexBehaviour>();
+
+        // The loaded gameplay assembly (precompiled .dll for the shipped game, or the runtime-compiled scripts).
+        // Kept so a UI button can spin up its screen's "<Screen>Actions" class on demand even if the user never
+        // attached it to a scene entity — the "one class per UI, no wiring" model.
+        private Assembly _scriptAsm;
+        // On-demand-instantiated UI action controllers, keyed by class name (a cached null means "looked up, none").
+        // These have NO scene entity (EntityId 0); they exist purely to receive .vui button clicks + tick.
+        private readonly Dictionary<string, Vortex.VortexBehaviour> _uiActions = new Dictionary<string, Vortex.VortexBehaviour>();
+
         public string DebugBehaviourNames()
         {
             var sb = new System.Text.StringBuilder();
@@ -69,6 +78,7 @@ namespace Editor.Scripting
             LastBuildLog = log ?? "";
             if (!string.IsNullOrEmpty(LastBuildLog))
                 System.Diagnostics.Debug.WriteLine("[ScriptRuntime] build:\n" + LastBuildLog);
+            _scriptAsm = asm;
             if (asm == null) { _active = true; return; } // no scripts / compile failed -> nothing to run
 
             foreach (var e in scene.Entities) InstantiateRecursive(e, asm);
@@ -91,29 +101,112 @@ namespace Editor.Scripting
                 try { _behaviours[i].Update(dt); }
                 catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] Update error: " + ex.Message); }
             }
+            // Auto-instantiated UI action controllers tick too, so a screen's class can drive its own widgets.
+            foreach (var b in _uiActions.Values)
+            {
+                if (b == null) continue;
+                try { b.Update(dt); }
+                catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] UI Update error: " + ex.Message); }
+            }
         }
 
-        /// <summary>Invoke the C# method bound to each fired UI button action (the button↔code link). Finds the
-        /// first running behaviour with a matching public parameterless method and calls it.</summary>
-        public void InvokeUiActions(System.Collections.Generic.List<string> actions)
+        /// <summary>Invoke the C# method bound to each fired UI button action (the button↔code link). Routing
+        /// (the "one class per UI" model): a button on <c>Foo.vui</c> prefers a <c>FooActions</c> class — found
+        /// among attached behaviours, the auto-instantiated cache, or freshly spun up from the gameplay assembly
+        /// (no scene wiring needed). If no such class exists it falls back to ANY running behaviour with the method,
+        /// so hand-written controllers (LobbyController / PlayerController) keep working unchanged.</summary>
+        public void InvokeUiActions(System.Collections.Generic.List<Editor.UI.Vui.UiAction> actions)
         {
             if (actions == null || !_active) return;
-            foreach (var name in actions)
+            foreach (var a in actions)
             {
-                if (string.IsNullOrEmpty(name)) continue;
-                for (int i = 0; i < _behaviours.Count; i++)
+                if (string.IsNullOrEmpty(a.Action)) continue;
+                var target = ResolveActionTarget(a.Screen, a.Action);
+                if (target == null)
                 {
-                    var m = _behaviours[i].GetType().GetMethod(name,
-                        System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance,
-                        null, System.Type.EmptyTypes, null);
-                    if (m != null)
+                    System.Diagnostics.Debug.WriteLine("[UIAction] no handler for '" + a.Action + "' (screen '" + a.Screen + "')");
+                    continue;
+                }
+                var m = GetParamlessMethod(target.GetType(), a.Action);
+                try { m.Invoke(target, null); }
+                catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[UIAction] " + a.Action + ": " + ex.Message); }
+            }
+        }
+
+        /// <summary>Find the behaviour that should handle <paramref name="action"/> fired from screen
+        /// <paramref name="screen"/> — see <see cref="InvokeUiActions"/> for the routing order.</summary>
+        private Vortex.VortexBehaviour ResolveActionTarget(string screen, string action)
+        {
+            string cls = ScreenActionClass(screen);   // e.g. "PauseMenu.vui" -> "PauseMenuActions" (or null)
+            if (cls != null)
+            {
+                // 1) the screen's own actions class, attached to a scene entity
+                foreach (var b in _behaviours)
+                    if (string.Equals(b.GetType().Name, cls, StringComparison.Ordinal) && GetParamlessMethod(b.GetType(), action) != null)
+                        return b;
+                // 2) already auto-instantiated this screen's class
+                if (_uiActions.TryGetValue(cls, out var cached) && cached != null && GetParamlessMethod(cached.GetType(), action) != null)
+                    return cached;
+                // 3) spin it up from the gameplay assembly on first use (no scene wiring needed)
+                var inst = TryCreateUiAction(cls);
+                if (inst != null && GetParamlessMethod(inst.GetType(), action) != null)
+                    return inst;
+            }
+            // 4) fallback (back-compat): any attached behaviour with the method
+            foreach (var b in _behaviours)
+                if (GetParamlessMethod(b.GetType(), action) != null) return b;
+            // 5) fallback: any already-instantiated UI action with the method
+            foreach (var b in _uiActions.Values)
+                if (b != null && GetParamlessMethod(b.GetType(), action) != null) return b;
+            return null;
+        }
+
+        /// <summary>Create + cache the screen's actions class if it exists in the gameplay assembly and isn't
+        /// already attached to a scene entity (which would double-tick it). A cached null means "none found".</summary>
+        private Vortex.VortexBehaviour TryCreateUiAction(string cls)
+        {
+            if (_uiActions.TryGetValue(cls, out var existing)) return existing; // hit OR remembered miss
+            Vortex.VortexBehaviour inst = null;
+            try
+            {
+                bool attached = false;
+                foreach (var b in _behaviours)
+                    if (string.Equals(b.GetType().Name, cls, StringComparison.Ordinal)) { attached = true; break; }
+                if (!attached && _scriptAsm != null)
+                {
+                    var type = FindBehaviourType(_scriptAsm, cls);
+                    if (type != null)
                     {
-                        try { m.Invoke(_behaviours[i], null); }
-                        catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[UIAction] " + name + ": " + ex.Message); }
-                        break;
+                        inst = (Vortex.VortexBehaviour)Activator.CreateInstance(type);
+                        inst.EntityId = 0; // no scene entity -> Position/Rotation read as zero; UI action classes don't use them
+                        try { inst.Start(); }
+                        catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[UIAction] Start " + cls + ": " + ex.Message); }
                     }
                 }
             }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[UIAction] create " + cls + ": " + ex.Message); }
+            _uiActions[cls] = inst; // cache the result (incl. null) so we don't rescan the assembly every click
+            return inst;
+        }
+
+        private static System.Reflection.MethodInfo GetParamlessMethod(Type t, string name)
+            => t.GetMethod(name, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance,
+                           null, System.Type.EmptyTypes, null);
+
+        /// <summary>".../PauseMenu.vui" -> "PauseMenuActions" (a valid C# identifier), or null if empty.</summary>
+        private static string ScreenActionClass(string screen)
+        {
+            if (string.IsNullOrEmpty(screen)) return null;
+            string name = screen;
+            int slash = name.LastIndexOfAny(new[] { '/', '\\' });
+            if (slash >= 0) name = name.Substring(slash + 1);
+            if (name.EndsWith(".vui", StringComparison.OrdinalIgnoreCase)) name = name.Substring(0, name.Length - 4);
+            var sb = new System.Text.StringBuilder();
+            foreach (char c in name) if (char.IsLetterOrDigit(c) || c == '_') sb.Append(c);
+            if (sb.Length == 0) return null;
+            if (char.IsDigit(sb[0])) sb.Insert(0, '_');
+            sb.Append("Actions");
+            return sb.ToString();
         }
 
         /// <summary>Stop all behaviours.</summary>
@@ -123,8 +216,11 @@ namespace Editor.Scripting
             {
                 try { _behaviours[i].OnDestroy(); } catch { }
             }
+            foreach (var b in _uiActions.Values) { if (b != null) try { b.OnDestroy(); } catch { } }
+            _uiActions.Clear();
             _behaviours.Clear();
             _entitiesById.Clear();
+            _scriptAsm = null;
             _active = false;
         }
 
@@ -295,11 +391,15 @@ namespace Editor.Scripting
         {
             try
             {
-                // Standalone player: close the app. In-editor play: just stop play (don't kill the editor).
-                if (Editor.Core.Services.PlayModeService.Instance.IsReleaseMode)
-                    System.Windows.Application.Current?.Shutdown();
+                // The standalone player and --project dev play run INSIDE the blocking native GameHost loop
+                // (App.BootPlayer -> RunGameHost), which owns this thread and pumps its own Win32 messages — the
+                // WPF Dispatcher is NOT pumping. So Application.Shutdown() here would only be queued and never run,
+                // and the window would stay open (the old "Leave / Quit Game does nothing" bug). Instead break the
+                // native loop (g_running=false); RunGameHost then returns and BootPlayer calls Shutdown() to exit.
+                if (Editor.Core.Services.PlayModeService.Instance.NativeGameHostRunning)
+                    Editor.DllWrapper.VortexAPI.RequestGameHostExit();
                 else
-                    Editor.Core.Services.PlayModeService.Instance.Stop();
+                    Editor.Core.Services.PlayModeService.Instance.Stop(); // in-editor play: just stop, don't kill the editor
             }
             catch { }
         }

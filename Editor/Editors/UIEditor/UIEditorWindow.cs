@@ -297,7 +297,7 @@ namespace Editor.Editors.UIEditor
                 arow.Children.Add(MakeButton("⟶ Open code", C_PanelAlt, 110, (s, ev) => OpenActionsScript()));
                 _inspector.Children.Add(arow);
                 if (!string.IsNullOrEmpty(e.ClickAction))
-                    _inspector.Children.Add(new TextBlock { Text = "runs  UIActions." + e.ClickAction + "()", Foreground = new SolidColorBrush(Color.FromRgb(120, 200, 120)), FontSize = 11, Margin = new Thickness(0, 4, 0, 0), FontFamily = new FontFamily("Consolas") });
+                    _inspector.Children.Add(new TextBlock { Text = "runs  " + ActionsClassName() + "." + e.ClickAction + "()", Foreground = new SolidColorBrush(Color.FromRgb(120, 200, 120)), FontSize = 11, Margin = new Thickness(0, 4, 0, 0), FontFamily = new FontFamily("Consolas") });
                 else
                     _inspector.Children.Add(new TextBlock { Text = "(no action — type a name + Create/Bind)", Foreground = new SolidColorBrush(C_TextSec), FontSize = 10, Margin = new Thickness(0, 4, 0, 0) });
             }
@@ -314,10 +314,23 @@ namespace Editor.Editors.UIEditor
         }
 
         // ---- button -> C# action codegen (the transparent button↔code link) ----
+        // ONE actions class per UI: PauseMenu.vui -> Assets/Scripts/UI/PauseMenuActions.cs (class PauseMenuActions).
+        // The runtime routes a button on this screen to this class (ScriptRuntime.InvokeUiActions), so screens never
+        // share a single dumping-ground file and method names can't collide across UIs.
+        private string ActionsClassName()
+        {
+            var name = System.IO.Path.GetFileNameWithoutExtension(_path) ?? "Screen";
+            var sb = new System.Text.StringBuilder();
+            foreach (char c in name) if (char.IsLetterOrDigit(c) || c == '_') sb.Append(c);
+            if (sb.Length == 0) sb.Append("Screen");
+            if (char.IsDigit(sb[0])) sb.Insert(0, '_');
+            sb.Append("Actions");
+            return sb.ToString();
+        }
         private string ActionsScriptPath()
         {
             var proj = Editor.Core.Data.ProjectData.Current != null ? Editor.Core.Data.ProjectData.Current.Path : null;
-            return string.IsNullOrEmpty(proj) ? null : System.IO.Path.Combine(proj, "Assets", "Scripts", "UIActions.cs");
+            return string.IsNullOrEmpty(proj) ? null : System.IO.Path.Combine(proj, "Assets", "Scripts", "UI", ActionsClassName() + ".cs");
         }
         private void BindClickAction(VuiElement e, string raw)
         {
@@ -330,18 +343,34 @@ namespace Editor.Editors.UIEditor
             EnsureActionStub(method);
             Touch();
         }
-        private void EnsureActionStub(string method)
+        // Create this screen's actions file (empty class) if it doesn't exist yet. Returns the path (or null).
+        private string EnsureActionsFile()
         {
             try
             {
-                var path = ActionsScriptPath(); if (path == null) return;
+                var path = ActionsScriptPath(); if (path == null) return null;
+                var cls = ActionsClassName();
+                var screen = System.IO.Path.GetFileName(_path);
                 var dir = System.IO.Path.GetDirectoryName(path);
                 if (!System.IO.Directory.Exists(dir)) System.IO.Directory.CreateDirectory(dir);
                 if (!System.IO.File.Exists(path))
                     System.IO.File.WriteAllText(path,
-                        "using Vortex;\n\n// UI button actions. A .vui Button's \"On Click\" method is invoked here when clicked.\n" +
-                        "// Attach this script to an entity in your active scene so it runs in play mode.\n" +
-                        "public class UIActions : VortexBehaviour\n{\n}\n");
+                        "using Vortex;\n\n" +
+                        "// Button actions for " + screen + " — ONE class per UI screen.\n" +
+                        "// Each Button's \"On Click\" method lands here and is called when that button is clicked.\n" +
+                        "// The engine wires this up automatically (no scene attachment needed): a click on " + screen + "\n" +
+                        "// is routed to " + cls + ". UI actions use the static facades (Scene.Load, Application.Quit,\n" +
+                        "// Settings.*, Gui.*) — they have no scene entity, so don't use Position/Rotation here.\n" +
+                        "public class " + cls + " : VortexBehaviour\n{\n}\n");
+                return path;
+            }
+            catch { return null; }
+        }
+        private void EnsureActionStub(string method)
+        {
+            try
+            {
+                var path = EnsureActionsFile(); if (path == null) return;
                 var text = System.IO.File.ReadAllText(path);
                 if (System.Text.RegularExpressions.Regex.IsMatch(text, @"\b" + System.Text.RegularExpressions.Regex.Escape(method) + @"\s*\(")) return; // already there
                 int idx = text.LastIndexOf('}');
@@ -353,8 +382,8 @@ namespace Editor.Editors.UIEditor
         }
         private void OpenActionsScript()
         {
-            var path = ActionsScriptPath();
-            if (path != null) { EnsureActionStub("OnClick"); try { Editor.Core.Services.ScriptingService.OpenInVisualStudio(path); } catch { } }
+            var path = EnsureActionsFile();
+            if (path != null) { try { Editor.Core.Services.ScriptingService.OpenInVisualStudio(path); } catch { } }
         }
 
         // ---- inspector field helpers ----
