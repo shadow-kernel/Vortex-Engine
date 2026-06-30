@@ -23,19 +23,22 @@ namespace Editor.Core.Services.Build
     /// </summary>
     public static class GameExporter
     {
-        public static ExportResult Export(string outputDir)
+        public static ExportResult Export(string outputDir, Action<double, string> progress = null)
         {
             var project = ProjectData.Current;
             if (project == null) return Fail("No project is open.");
-            return ExportFromPath(project.Path, project.Name, outputDir);
+            return ExportFromPath(project.Path, project.Name, outputDir, progress);
         }
 
-        /// <summary>Export a project by path. Used by Export() for the open project, and by build harnesses.</summary>
-        public static ExportResult ExportFromPath(string projectRoot, string projectName, string outputDir)
+        /// <summary>Export a project by path. Used by Export() for the open project, and by build harnesses.
+        /// <paramref name="progress"/> (optional) reports (fraction 0..1, status text) for a build dialog.</summary>
+        public static ExportResult ExportFromPath(string projectRoot, string projectName, string outputDir, Action<double, string> progress = null)
         {
+            Action<double, string> P = (f, s) => { try { progress?.Invoke(f, s); } catch { } };
             var sb = new StringBuilder();
             try
             {
+                P(0.02, "Preparing…");
                 if (string.IsNullOrEmpty(projectRoot)) return Fail("No project path.");
                 if (string.IsNullOrEmpty(outputDir)) return Fail("No output folder selected.");
                 var name = Sanitize(projectName);
@@ -45,6 +48,7 @@ namespace Editor.Core.Services.Build
                 catch (Exception ex) { sb.AppendLine("• (could not fully clean — a previous game may be running: " + ex.Message + ")"); }
                 Directory.CreateDirectory(outputDir);
                 sb.AppendLine("• Cleaned output folder");
+                P(0.10, "Copying engine runtime…");
 
                 // 1) Engine runtime = the editor's own Release output (exe + native + managed DLLs).
                 var runtimeDir = Path.GetDirectoryName(typeof(GameExporter).Assembly.Location);
@@ -52,6 +56,7 @@ namespace Editor.Core.Services.Build
                 sb.AppendLine("• Runtime: " + n + " files copied");
 
                 // 2) Compile gameplay scripts -> a temp DLL (ships COMPILED, never as source).
+                P(0.22, "Compiling gameplay scripts…");
                 var tmpDll = Path.Combine(Path.GetTempPath(), "GameScripts_" + Guid.NewGuid().ToString("N") + ".dll");
                 string scriptLog;
                 bool scriptsOk = CompileScripts(projectRoot, tmpDll, out scriptLog);
@@ -65,24 +70,31 @@ namespace Editor.Core.Services.Build
                 if (File.Exists(manifest))
                     entries.Add(new System.Collections.Generic.KeyValuePair<string, byte[]>("project.vortex", File.ReadAllBytes(manifest)));
 
+                P(0.38, "Packing assets…");
                 var assetsSrc = Path.Combine(projectRoot, "Assets");
                 int assetCount = 0;
                 if (Directory.Exists(assetsSrc))
                 {
-                    foreach (var f in Directory.GetFiles(assetsSrc, "*", SearchOption.AllDirectories))
+                    var files = Directory.GetFiles(assetsSrc, "*", SearchOption.AllDirectories);
+                    for (int i = 0; i < files.Length; i++)
                     {
+                        var f = files[i];
                         if (Path.GetExtension(f).Equals(".cs", StringComparison.OrdinalIgnoreCase)) continue; // source -> compiled DLL
                         var rel = "Assets/" + f.Substring(assetsSrc.Length).TrimStart('\\', '/').Replace('\\', '/');
                         entries.Add(new System.Collections.Generic.KeyValuePair<string, byte[]>(rel, File.ReadAllBytes(f)));
                         assetCount++;
+                        if ((i & 7) == 0 && files.Length > 0)
+                            P(0.38 + 0.45 * ((double)i / files.Length), "Packing assets… (" + assetCount + " files)");
                     }
                 }
                 if (scriptsOk && File.Exists(tmpDll))
                     entries.Add(new System.Collections.Generic.KeyValuePair<string, byte[]>("GameScripts.dll", File.ReadAllBytes(tmpDll)));
                 try { if (File.Exists(tmpDll)) File.Delete(tmpDll); } catch { }
 
+                P(0.86, "Writing Assets.vpak…");
                 VortexPak.Write(Path.Combine(outputDir, "Assets.vpak"), entries);
                 sb.AppendLine("• Packed " + assetCount + " assets + manifest + scripts -> Assets.vpak (compressed + obfuscated)");
+                P(0.93, "Finalizing…");
 
                 // 4) Player marker + a branded <Game>.exe entry point + README.
                 // The marker's presence makes the runtime boot straight into the game (no editor UI).
@@ -115,6 +127,7 @@ namespace Editor.Core.Services.Build
                     "All assets + the compiled gameplay code are packed into Assets.vpak (one opaque binary,\r\n" +
                     "decompressed into RAM at startup). There are no readable/editable source files in this folder.\r\n");
 
+                P(1.0, "Done");
                 if (!scriptsOk)
                     return new ExportResult { Success = false, OutputDir = outputDir, Message = "Export done, but SCRIPTS FAILED TO COMPILE:\n\n" + scriptLog };
                 return new ExportResult { Success = true, OutputDir = outputDir, Message = sb.ToString() };

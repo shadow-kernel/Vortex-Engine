@@ -87,15 +87,11 @@ namespace Editor
 
                 var main = new MainWindow();
                 MainWindow = main;
+                // Close the splash when the editor window has actually rendered its first frame. ContentRendered is a
+                // reliable one-shot — unlike the old 850ms Background DispatcherTimer, which a heavy project-load
+                // (it runs at the same/low priority) could starve, leaving the splash stuck on screen for many seconds.
+                main.ContentRendered += (s, ev) => { try { splash.FadeOutAndClose(); } catch { try { splash.Close(); } catch { } } };
                 main.Show(); // -> MainWindow.Loaded loads the last project or opens the project browser
-
-                // Keep the brand visible briefly after the workspace is up, then fade the splash out.
-                var hold = new System.Windows.Threading.DispatcherTimer
-                {
-                    Interval = TimeSpan.FromMilliseconds(850)
-                };
-                hold.Tick += (s, ev) => { hold.Stop(); splash.FadeOutAndClose(); };
-                hold.Start();
             }));
         }
 

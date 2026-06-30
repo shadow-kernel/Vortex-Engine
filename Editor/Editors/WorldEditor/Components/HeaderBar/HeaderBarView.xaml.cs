@@ -186,14 +186,26 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
             var project = ProjectData.Current;
             if (project == null) { MessageBox.Show("Open a project first.", "Export", MessageBoxButton.OK, MessageBoxImage.Information); return null; }
             var outDir = System.IO.Path.Combine(project.Path, "Build", project.Name);
-            Mouse.OverrideCursor = System.Windows.Input.Cursors.Wait;
-            Editor.Core.Services.Build.ExportResult r;
-            try { r = Editor.Core.Services.Build.GameExporter.Export(outDir); }
-            finally { Mouse.OverrideCursor = null; }
+            string projPath = project.Path, projName = project.Name;
 
-            if (!r.Success)
+            // Run the export on a BACKGROUND thread behind a modal progress dialog. ShowDialog() pumps messages, so
+            // the bar animates live (the export only touches files + the compiler — no UI state — so it's thread-safe).
+            var dlg = new BuildProgressDialog("Building " + (projName ?? "game"));
+            var owner = Window.GetWindow(this);
+            if (owner != null && owner.IsVisible) dlg.Owner = owner;
+
+            Editor.Core.Services.Build.ExportResult r = null;
+            var task = System.Threading.Tasks.Task.Run(() =>
             {
-                MessageBox.Show(r.Message, "Export — problem", MessageBoxButton.OK, MessageBoxImage.Warning);
+                r = Editor.Core.Services.Build.GameExporter.ExportFromPath(projPath, projName, outDir,
+                    (frac, status) => { try { dlg.Dispatcher.BeginInvoke(new Action(() => dlg.Report(frac, status))); } catch { } });
+            });
+            task.ContinueWith(_ => { try { dlg.Dispatcher.BeginInvoke(new Action(() => dlg.Done())); } catch { } });
+            dlg.ShowDialog();   // blocks until the export completes and Done() closes the dialog
+
+            if (r == null || !r.Success)
+            {
+                MessageBox.Show(r != null ? r.Message : "Export failed.", "Export — problem", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return null;
             }
             if (open && MessageBox.Show("Game exported (scripts compiled OK) to:\n" + r.OutputDir + "\n\nOpen the folder?",
@@ -1016,6 +1028,88 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
         {
             IsPlaying = isPlaying;
             IsPaused = isPaused;
+        }
+    }
+
+    /// <summary>Branded modal build/export progress dialog (vortex mark + a real progress bar + status + %). Shown
+    /// while GameExporter runs on a BACKGROUND thread; Report(fraction,status) advances it, Done() closes it. Built
+    /// in code (no XAML) so the non-globbing Editor.csproj needs no new entry. Can't be closed by the user mid-build.</summary>
+    public sealed class BuildProgressDialog : Window
+    {
+        private readonly System.Windows.Controls.ProgressBar _bar;
+        private readonly TextBlock _status;
+        private readonly TextBlock _pct;
+        private bool _allowClose;
+
+        public BuildProgressDialog(string title)
+        {
+            WindowStyle = WindowStyle.None;
+            AllowsTransparency = true;
+            Background = System.Windows.Media.Brushes.Transparent;
+            ResizeMode = ResizeMode.NoResize;
+            ShowInTaskbar = false;
+            Width = 460; Height = 188;
+            WindowStartupLocation = WindowStartupLocation.CenterOwner;
+
+            var grad = new System.Windows.Media.LinearGradientBrush
+            { StartPoint = new Point(0, 0), EndPoint = new Point(1, 1) };
+            grad.GradientStops.Add(new System.Windows.Media.GradientStop(Col("#8E7CFF"), 0));
+            grad.GradientStops.Add(new System.Windows.Media.GradientStop(Col("#6C5CE7"), 0.55));
+            grad.GradientStops.Add(new System.Windows.Media.GradientStop(Col("#34D3E6"), 1));
+
+            var canvas = new System.Windows.Controls.Canvas { Width = 160, Height = 160 };
+            var blade = System.Windows.Media.Geometry.Parse("M80,80 C74,48 96,22 130,24 C113,44 113,65 80,80 Z");
+            for (int i = 0; i < 3; i++)
+            {
+                var p = new System.Windows.Shapes.Path { Data = blade, Fill = grad };
+                if (i > 0) p.RenderTransform = new System.Windows.Media.RotateTransform(120 * i, 80, 80);
+                canvas.Children.Add(p);
+            }
+            var core = new System.Windows.Shapes.Ellipse { Width = 22, Height = 22, Fill = grad };
+            System.Windows.Controls.Canvas.SetLeft(core, 69); System.Windows.Controls.Canvas.SetTop(core, 69);
+            canvas.Children.Add(core);
+
+            var header = new System.Windows.Controls.StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
+            header.Children.Add(new System.Windows.Controls.Viewbox { Width = 34, Height = 34, Child = canvas });
+            header.Children.Add(new TextBlock { Text = title, FontSize = 18, FontWeight = FontWeights.Bold,
+                Foreground = Brush("#F5F5F7"), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 0, 0) });
+
+            _bar = new System.Windows.Controls.ProgressBar { Minimum = 0, Maximum = 100, Value = 0, Height = 6,
+                Margin = new Thickness(0, 20, 0, 0), Background = Brush("#26262B"), Foreground = grad, BorderThickness = new Thickness(0) };
+
+            _status = new TextBlock { Text = "Preparing…", Foreground = Brush("#9A9AA1"), FontSize = 12, HorizontalAlignment = HorizontalAlignment.Left };
+            _pct = new TextBlock { Text = "0%", Foreground = Brush("#8E7CFF"), FontSize = 12, FontWeight = FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Right };
+            var row = new System.Windows.Controls.Grid { Margin = new Thickness(0, 12, 0, 0) };
+            row.Children.Add(_status); row.Children.Add(_pct);
+
+            var stack = new System.Windows.Controls.StackPanel();
+            stack.Children.Add(header); stack.Children.Add(_bar); stack.Children.Add(row);
+
+            Content = new System.Windows.Controls.Border
+            {
+                Background = Brush("#161618"), CornerRadius = new CornerRadius(14),
+                BorderBrush = Brush("#2C2C32"), BorderThickness = new Thickness(1),
+                Child = new System.Windows.Controls.Grid { Margin = new Thickness(26), Children = { stack } }
+            };
+        }
+
+        private static System.Windows.Media.Color Col(string h) => (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(h);
+        private static System.Windows.Media.SolidColorBrush Brush(string h) => new System.Windows.Media.SolidColorBrush(Col(h));
+
+        public void Report(double fraction, string status)
+        {
+            if (fraction < 0) fraction = 0; else if (fraction > 1) fraction = 1;
+            _bar.Value = fraction * 100.0;
+            _pct.Text = ((int)System.Math.Round(fraction * 100.0)) + "%";
+            if (!string.IsNullOrEmpty(status)) _status.Text = status;
+        }
+
+        public void Done() { _allowClose = true; try { Close(); } catch { } }
+
+        protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+        {
+            if (!_allowClose) e.Cancel = true;   // no closing mid-build
+            base.OnClosing(e);
         }
     }
 }
