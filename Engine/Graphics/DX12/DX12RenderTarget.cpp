@@ -8,7 +8,7 @@ namespace vortex::graphics::dx12
 		shutdown();
 	}
 
-	bool DX12RenderTarget::initialize(ID3D12Device* device, u32 width, u32 height, DXGI_FORMAT format)
+	bool DX12RenderTarget::initialize(ID3D12Device* device, u32 width, u32 height, DXGI_FORMAT format, bool sampleable_depth)
 	{
 		if (!device || width == 0 || height == 0) return false;
 		if (m_initialized) shutdown();
@@ -16,6 +16,7 @@ namespace vortex::graphics::dx12
 		m_width = width;
 		m_height = height;
 		m_format = format;
+		m_sampleable_depth = sampleable_depth;
 
 		if (!create_descriptor_heaps(device)) return false;
 		if (!create_render_target(device)) return false;
@@ -83,13 +84,14 @@ namespace vortex::graphics::dx12
 		if (FAILED(device->CreateDescriptorHeap(&dsv_desc, IID_PPV_ARGS(&m_dsv_heap))))
 			return false;
 
-		// SRV heap (shader visible for texture sampling)
+		// SRV heap (shader visible for texture sampling). Slot 0 = color; slot 1 = depth (when sampleable).
 		D3D12_DESCRIPTOR_HEAP_DESC srv_desc{};
-		srv_desc.NumDescriptors = 1;
+		srv_desc.NumDescriptors = m_sampleable_depth ? 2 : 1;
 		srv_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 		srv_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 		if (FAILED(device->CreateDescriptorHeap(&srv_desc, IID_PPV_ARGS(&m_srv_heap))))
 			return false;
+		m_srv_increment = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
 		return true;
 	}
@@ -150,18 +152,20 @@ namespace vortex::graphics::dx12
 		D3D12_HEAP_PROPERTIES heap_props{};
 		heap_props.Type = D3D12_HEAP_TYPE_DEFAULT;
 
+		// Sampleable depth (DLSS input): the resource must be TYPELESS so it can carry both a D32_FLOAT DSV and
+		// an R32_FLOAT SRV. Functionally identical for depth render/test — the DSV still views it as D32_FLOAT.
 		D3D12_RESOURCE_DESC desc{};
 		desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
 		desc.Width = m_width;
 		desc.Height = m_height;
 		desc.DepthOrArraySize = 1;
 		desc.MipLevels = 1;
-		desc.Format = DXGI_FORMAT_D32_FLOAT;
+		desc.Format = m_sampleable_depth ? DXGI_FORMAT_R32_TYPELESS : DXGI_FORMAT_D32_FLOAT;
 		desc.SampleDesc.Count = 1;
 		desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
 
 		D3D12_CLEAR_VALUE clear_value{};
-		clear_value.Format = DXGI_FORMAT_D32_FLOAT;
+		clear_value.Format = DXGI_FORMAT_D32_FLOAT;   // clear value uses the DSV (typed) format
 		clear_value.DepthStencil.Depth = 1.0f;
 
 		if (FAILED(device->CreateCommittedResource(
@@ -172,12 +176,25 @@ namespace vortex::graphics::dx12
 			return false;
 		}
 
-		// Create DSV
+		// Create DSV (explicit D32_FLOAT — required when the resource is typeless)
 		D3D12_DEPTH_STENCIL_VIEW_DESC dsv_desc{};
 		dsv_desc.Format = DXGI_FORMAT_D32_FLOAT;
 		dsv_desc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
 		device->CreateDepthStencilView(m_depth_buffer.Get(), &dsv_desc,
 			m_dsv_heap->GetCPUDescriptorHandleForHeapStart());
+
+		// Depth SRV at SRV-heap slot 1 (R32_FLOAT view of the typeless depth) — DLSS samples this.
+		if (m_sampleable_depth)
+		{
+			D3D12_SHADER_RESOURCE_VIEW_DESC sd{};
+			sd.Format = DXGI_FORMAT_R32_FLOAT;
+			sd.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+			sd.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+			sd.Texture2D.MipLevels = 1;
+			D3D12_CPU_DESCRIPTOR_HANDLE h = m_srv_heap->GetCPUDescriptorHandleForHeapStart();
+			h.ptr += (SIZE_T)m_srv_increment; // slot 1
+			device->CreateShaderResourceView(m_depth_buffer.Get(), &sd, h);
+		}
 
 		return true;
 	}
@@ -234,6 +251,14 @@ namespace vortex::graphics::dx12
 	{
 		return m_srv_heap ? m_srv_heap->GetGPUDescriptorHandleForHeapStart()
 						  : D3D12_GPU_DESCRIPTOR_HANDLE{};
+	}
+
+	D3D12_GPU_DESCRIPTOR_HANDLE DX12RenderTarget::depth_srv_gpu() const
+	{
+		if (!m_srv_heap || !m_sampleable_depth) return D3D12_GPU_DESCRIPTOR_HANDLE{};
+		D3D12_GPU_DESCRIPTOR_HANDLE h = m_srv_heap->GetGPUDescriptorHandleForHeapStart();
+		h.ptr += (UINT64)m_srv_increment; // slot 1 = depth SRV
+		return h;
 	}
 
 	void DX12RenderTarget::transition_to_render_target(ID3D12GraphicsCommandList* cmd)

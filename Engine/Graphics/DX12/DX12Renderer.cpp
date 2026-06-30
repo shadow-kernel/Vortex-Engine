@@ -338,8 +338,10 @@ namespace vortex::graphics::dx12
 		auto* dev = DX12Core::instance().device();
 		if (!dev) return false;
 		// MUST be R8G8B8A8_UNORM to match the 3D/grid/skybox PSOs (DX12RenderTarget defaults to BGRA — would mismatch).
+		// sampleable_depth=true: the scaled RT's depth is the DLSS depth input (R32_TYPELESS + SRV); harmless for
+		// the plain bilinear upscale path (the SRV just goes unused).
 		if (!m_scaled_rt.is_initialized())
-			return m_scaled_rt.initialize(dev, width, height, DXGI_FORMAT_R8G8B8A8_UNORM);
+			return m_scaled_rt.initialize(dev, width, height, DXGI_FORMAT_R8G8B8A8_UNORM, true);
 		return m_scaled_rt.resize(dev, width, height);
 	}
 

@@ -23,8 +23,9 @@ namespace vortex::graphics::dx12
 		/// Initialize the render target with specified dimensions.
 		/// Uses BGRA format for WPF compatibility.
 		/// </summary>
-		bool initialize(ID3D12Device* device, u32 width, u32 height, 
-						DXGI_FORMAT format = DXGI_FORMAT_B8G8R8A8_UNORM);
+		bool initialize(ID3D12Device* device, u32 width, u32 height,
+						DXGI_FORMAT format = DXGI_FORMAT_B8G8R8A8_UNORM,
+						bool sampleable_depth = false);
 		
 		/// <summary>
 		/// Shutdown and release all resources.
@@ -65,6 +66,13 @@ namespace vortex::graphics::dx12
 		/// Get GPU descriptor handle for shader access.
 		/// </summary>
 		D3D12_GPU_DESCRIPTOR_HANDLE srv_gpu() const;
+
+		/// <summary>
+		/// GPU descriptor for sampling the DEPTH buffer (only valid when created with sampleable_depth=true;
+		/// the depth resource is then R32_TYPELESS with a D32_FLOAT DSV + an R32_FLOAT SRV at heap slot 1).
+		/// Used as the DLSS depth input. Returns {} if sampleable depth wasn't requested.
+		/// </summary>
+		D3D12_GPU_DESCRIPTOR_HANDLE depth_srv_gpu() const;
 
 		/// <summary>
 		/// The (shader-visible) SRV heap holding this target's SRV — bind via SetDescriptorHeaps to sample it.
@@ -129,8 +137,10 @@ namespace vortex::graphics::dx12
 		u32 m_width{ 0 };
 		u32 m_height{ 0 };
 		u32 m_staging_row_pitch{ 0 };
+		u32 m_srv_increment{ 0 };           // CBV_SRV_UAV descriptor size (for the depth SRV at slot 1)
 		DXGI_FORMAT m_format{ DXGI_FORMAT_R8G8B8A8_UNORM };
 		D3D12_RESOURCE_STATES m_current_state{ D3D12_RESOURCE_STATE_COMMON };
+		bool m_sampleable_depth{ false };   // depth created as R32_TYPELESS with an SRV (DLSS input)
 		bool m_initialized{ false };
 		bool m_staging_mapped{ false };
 	};
