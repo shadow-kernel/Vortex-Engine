@@ -318,9 +318,13 @@ namespace Vortex
         /// Reflex internally. Needs <see cref="DlssSupported"/>; best at LOW real framerates with VSync on.</summary>
         public static void SetFrameGenMode(int mode) { Editor.DllWrapper.VortexAPI.SetFrameGenMode(mode); }
         public static int FrameGenMode { get { return Editor.DllWrapper.VortexAPI.GetFrameGenMode(); } }
-        /// <summary>Frames actually presented by DLSS-G since the last call — the "Presented FPS" readout. The normal
-        /// FPS counter counts only REAL engine frames, so this is how the generated frames become visible. 0 when off.</summary>
+        /// <summary>Smoothed PRESENTED-FPS rate (real + AI-generated frames/sec) — the "Shown FPS" with Frame Gen on.
+        /// Accumulated once per frame in the engine, so reading it from multiple places is safe. 0 when FG is off.</summary>
         public static int FrameGenPresentedFps { get { return Editor.DllWrapper.VortexAPI.FrameGenPresentedFps(); } }
+
+        /// <summary>Current REAL (rendered) frames per second — the engine frame counter. With Frame Gen on this stays
+        /// at the rendered rate (the generated frames show up in <see cref="FrameGenPresentedFps"/>, not here).</summary>
+        public static int CurrentFps { get { return Editor.DllWrapper.VortexAPI.CurrentFPS; } }
 
         /// <summary>Master volume 0..1. Stored here until the (XAudio2) sound engine reads it — audio is still a stub.</summary>
         public static float MasterVolume { get; private set; } = 1f;

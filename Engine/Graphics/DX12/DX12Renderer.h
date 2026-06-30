@@ -189,7 +189,9 @@ namespace vortex::graphics::dx12
 			DX12Streamline::instance().set_frame_gen(m_fg_mode, m_swapchain.width(), m_swapchain.height());
 		}
 		int fg_mode() const { return m_fg_mode; }
-		int fg_presented_fps() const { return DX12Streamline::instance().fg_presented_frames(); }
+		// Smoothed presented-FPS RATE (real + AI-generated frames/sec), accumulated once per frame in render_frame.
+		// 0 when FG is off. This is the "Shown FPS" — the engine's own get_current_fps counts only REAL frames.
+		int fg_presented_fps() const { return m_presented_fps; }
 
 		// Grid rendering
 		void set_grid_visible(bool visible) { m_grid_visible = visible; }
@@ -573,6 +575,8 @@ namespace vortex::graphics::dx12
 		int m_instances_tested{ 0 };
 		int m_instances_drawn{ 0 };
 		int m_frame_count{ 0 };
+		int m_presented_accum{ 0 };  // DLSS-G presented frames accumulated since the last rate update
+		int m_presented_fps{ 0 };    // smoothed presented-FPS rate (real + AI frames); 0 when FG off
 		std::chrono::high_resolution_clock::time_point m_last_fps_time;
 		
 		// Secondary render targets for multi-viewport rendering

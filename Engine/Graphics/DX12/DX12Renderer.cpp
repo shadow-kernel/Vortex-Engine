@@ -390,14 +390,20 @@ namespace vortex::graphics::dx12
 		// Swap render queues (thread-safe) and clear submit queue for next frame
 		swap_render_queue();
 		
-		// Update FPS counter
+		// Update FPS counter (REAL rendered frames). Also accumulate DLSS-G's presented frames (real + AI-generated)
+		// here, ONCE per frame, into a smoothed rate — slDLSSGGetState returns a delta-since-last-call, so reading it
+		// from a single place avoids the double-read footgun (HUD + Options would otherwise zero each other).
 		m_frame_count++;
+		if (DX12Streamline::instance().frame_gen_active())
+			m_presented_accum += DX12Streamline::instance().fg_presented_frames();
 		auto now = std::chrono::high_resolution_clock::now();
 		auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_last_fps_time).count();
 		if (elapsed >= 500) // Update every 0.5 seconds
 		{
 			m_current_fps = static_cast<int>((m_frame_count * 1000) / elapsed);
+			m_presented_fps = static_cast<int>(((long long)m_presented_accum * 1000) / elapsed);
 			m_frame_count = 0;
+			m_presented_accum = 0;
 			m_last_fps_time = now;
 		}
 		
