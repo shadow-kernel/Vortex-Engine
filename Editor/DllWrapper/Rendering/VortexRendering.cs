@@ -116,6 +116,9 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GetRenderScale")] private static extern float GetRenderScaleNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SetDlssMode")] private static extern void SetDlssModeNative(int mode);
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GetDlssMode")] private static extern int GetDlssModeNative();
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SetFrameGenMode")] private static extern void SetFrameGenModeNative(int mode);
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GetFrameGenMode")] private static extern int GetFrameGenModeNative();
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "FrameGenPresentedFps")] private static extern int FrameGenPresentedFpsNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GpuVendorId")] private static extern int GpuVendorIdNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GpuSupportsDlss")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool GpuSupportsDlssNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GpuName")] private static extern int GpuNameNative(byte[] buf, int cap);
@@ -152,6 +155,11 @@ namespace Editor.DllWrapper
         public static void SetRenderScale(float s) { try { SetRenderScaleNative(s); } catch { } }
         public static void SetDlssMode(int mode) { try { SetDlssModeNative(mode); } catch { } }
         public static int GetDlssMode() { try { return GetDlssModeNative(); } catch { return 0; } }
+        /// <summary>DLSS Frame Generation: 0=off, 1=x2, 2=x3, 3=x4 (AI frames inserted at Present). Enables Reflex internally.</summary>
+        public static void SetFrameGenMode(int mode) { try { SetFrameGenModeNative(mode); } catch { } }
+        public static int GetFrameGenMode() { try { return GetFrameGenModeNative(); } catch { return 0; } }
+        /// <summary>Frames actually presented by DLSS-G since the last call (the "Presented FPS" readout; 0 when FG is off).</summary>
+        public static int FrameGenPresentedFps() { try { return FrameGenPresentedFpsNative(); } catch { return 0; } }
         public static float GetRenderScale() { try { return GetRenderScaleNative(); } catch { return 1f; } }
         /// <summary>GPU vendor id (0x10DE NVIDIA, 0x1002 AMD, 0x8086 Intel) of the selected adapter.</summary>
         public static int GpuVendorId() { try { return GpuVendorIdNative(); } catch { return 0; } }

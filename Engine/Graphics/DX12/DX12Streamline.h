@@ -68,6 +68,12 @@ namespace vortex::graphics::dx12
 		// upscale) — so a DLSS hiccup degrades gracefully and never black-screens.
 		bool evaluate_dlss(const DlssEvalDesc& desc);
 
+		// Frame-Generation per-frame inputs: set the common (camera) constants + tag depth + motion vectors with the
+		// CURRENT frame token (the one frame_begin made — markers + FG must share it). NO slEvaluateFeature: DLSS-G
+		// consumes these in its Present hook to interpolate the back buffer. Only desc.cmd/depth/mvec/renderW/H +
+		// the camera fields are used (color in/out are ignored — FG uses the swap-chain back buffer as its color).
+		bool tag_fg_frame(const DlssEvalDesc& desc);
+
 		// ---- Frame Generation (DLSS-G) + Reflex ----
 		// DLSS-G inserts AI frames at Present; it REQUIRES Reflex active + PCL markers threaded through the frame
 		// loop. fg_ready() is true once the DLSS-G/Reflex/PCL feature functions resolved (after set_device).

@@ -354,6 +354,53 @@ namespace vortex::graphics::dx12
 		return true;
 	}
 
+	bool DX12Streamline::tag_fg_frame(const DlssEvalDesc& d)
+	{
+		// FG must use the SAME frame token as the Reflex/PCL markers; frame_begin set it.
+		if (!m_reflex_active || !m_current_token || !d.cmd || d.renderW == 0 || d.renderH == 0) return false;
+		if (!g_slSetConstants || !g_slSetTag) return false;
+
+		sl::ViewportHandle viewport(0);
+		sl::FrameToken* token = reinterpret_cast<sl::FrameToken*>(m_current_token);
+
+		// Same camera constants as the SR path (DLSS-G needs them to warp the interpolated frame).
+		sl::Constants c{};
+		c.cameraViewToClip = toSL(d.proj);
+		c.cameraPos   = sl::float3(d.camPos.x,   d.camPos.y,   d.camPos.z);
+		c.cameraRight = sl::float3(d.camRight.x, d.camRight.y, d.camRight.z);
+		c.cameraFwd   = sl::float3(d.camFwd.x,   d.camFwd.y,   d.camFwd.z);
+		c.cameraUp    = sl::float3(0.0f, 1.0f, 0.0f);
+		c.jitterOffset = sl::float2(0.0f, 0.0f);
+		c.mvecScale    = sl::float2(1.0f / (float)d.renderW, 1.0f / (float)d.renderH);
+		c.cameraPinholeOffset = sl::float2(0.0f, 0.0f);
+		c.cameraNear = d.nearZ;
+		c.cameraFar  = d.farZ;
+		c.cameraFOV  = d.fovY;
+		c.cameraAspectRatio = (float)d.renderW / (float)d.renderH;
+		c.depthInverted = sl::Boolean::eFalse;
+		c.cameraMotionIncluded = sl::Boolean::eTrue;
+		c.motionVectors3D = sl::Boolean::eFalse;
+		c.reset = sl::Boolean::eFalse;
+		c.orthographicProjection = sl::Boolean::eFalse;
+		c.motionVectorsDilated = sl::Boolean::eFalse;
+		c.motionVectorsJittered = sl::Boolean::eFalse;
+		sl::recalculateCameraMatrices(c);
+		if (g_slSetConstants(c, *token, viewport) != sl::Result::eOk) return false;
+
+		// DLSS-G only needs depth + motion vectors tagged; it uses the swap-chain back buffer as its color.
+		sl::Resource rDepth(sl::ResourceType::eTex2d, d.depth, d.depthState);
+		rDepth.width = d.renderW; rDepth.height = d.renderH; rDepth.nativeFormat = DXGI_FORMAT_R32_FLOAT;
+		sl::Resource rMvec(sl::ResourceType::eTex2d, d.mvec, d.mvecState);
+		rMvec.width = d.renderW; rMvec.height = d.renderH; rMvec.nativeFormat = DXGI_FORMAT_R16G16_FLOAT;
+
+		sl::Extent eRender{ 0, 0, d.renderW, d.renderH };
+		sl::ResourceTag tags[2] = {
+			sl::ResourceTag(&rDepth, sl::kBufferTypeDepth,         sl::ResourceLifecycle::eValidUntilPresent, &eRender),
+			sl::ResourceTag(&rMvec,  sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilPresent, &eRender),
+		};
+		return g_slSetTag(viewport, tags, 2, (sl::CommandBuffer*)d.cmd) == sl::Result::eOk;
+	}
+
 	void DX12Streamline::shutdown()
 	{
 		if (m_available && g_slShutdown) g_slShutdown();

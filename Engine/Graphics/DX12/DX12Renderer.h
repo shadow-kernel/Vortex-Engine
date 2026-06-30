@@ -13,6 +13,7 @@
 #include "DX12MotionVectorPipeline.h"
 #include "DX12DepthBuffer.h"
 #include "DX12RenderTarget.h"
+#include "DX12Streamline.h"   // DLSS SR + Frame Generation (inline set_fg_mode/fg_presented_fps below)
 #include "DX12Geometry.h"
 #include "UIOverlay.h"
 #include "../Resources/Mesh.h"
@@ -178,6 +179,17 @@ namespace vortex::graphics::dx12
 			}
 		}
 		int dlss_mode() const { return m_dlss_mode; }
+
+		// DLSS Frame Generation (separate from SR above). mode: 0=off, 1=x2, 2=x3, 3=x4 (= N AI frames inserted at
+		// Present per real frame). Forces the scaled-RT path on (even at scale 1.0) so depth + motion vectors exist
+		// for DLSS-G. Reflex is enabled/disabled with it inside set_frame_gen. Only effective on FG-capable GPUs.
+		void set_fg_mode(int mode)
+		{
+			m_fg_mode = (mode < 0 || mode > 3) ? 0 : mode;
+			DX12Streamline::instance().set_frame_gen(m_fg_mode, m_swapchain.width(), m_swapchain.height());
+		}
+		int fg_mode() const { return m_fg_mode; }
+		int fg_presented_fps() const { return DX12Streamline::instance().fg_presented_frames(); }
 
 		// Grid rendering
 		void set_grid_visible(bool visible) { m_grid_visible = visible; }
@@ -365,6 +377,7 @@ namespace vortex::graphics::dx12
 		DX12RenderTarget m_dlss_output;       // Full-res DLSS upscaled output (UAV); blitted to the back buffer
 		DirectX::XMFLOAT4X4 m_prev_view_projection{}; // previous frame VP (motion vectors + DLSS clipToPrevClip)
 		int m_dlss_mode{ 0 };                 // 0=off, 1..4 quality modes
+		int m_fg_mode{ 0 };                   // DLSS Frame Generation: 0=off, 1=x2, 2=x3, 3=x4
 		DX12DepthBuffer m_depth_buffer;
 		DX12Geometry m_geometry;           // Fallback triangle
 		UIOverlay m_ui_overlay;            // Direct2D/DirectWrite 2D UI over the 3D

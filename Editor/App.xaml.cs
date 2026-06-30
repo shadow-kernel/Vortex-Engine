@@ -48,6 +48,8 @@ namespace Editor
                         float.TryParse(a.Substring("--renderscale=".Length), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _renderScaleArg); // dev: force render-scale
                     else if (a.StartsWith("--dlss=", StringComparison.OrdinalIgnoreCase))
                         int.TryParse(a.Substring("--dlss=".Length), out _dlssArg); // dev: force DLSS mode (0..4)
+                    else if (a.StartsWith("--fg=", StringComparison.OrdinalIgnoreCase))
+                        int.TryParse(a.Substring("--fg=".Length), out _fgArg); // dev: force Frame-Gen mode (0..3 = off/x2/x3/x4)
                 }
             }
             if (!string.IsNullOrEmpty(_projectArg)) playerMode = true;
@@ -196,6 +198,7 @@ namespace Editor
         private static string _sceneArg;           // --scene="<name>": dev hook to force which scene plays
         private static float  _renderScaleArg = 1f; // --renderscale=<f>: dev hook to force render-scale (verify the scaled path)
         private static int    _dlssArg = 0;         // --dlss=<0..4>: dev hook to force a DLSS mode (verify the eval path)
+        private static int    _fgArg = 0;           // --fg=<0..3>: dev hook to force DLSS Frame-Gen (verify the present hook)
         private static Vortex.VuiHandle _vuiTestHandle; private static bool _vuiPrevDown;
         private static int _stressCountArg = 1000;
         private static bool _stressInit;
@@ -380,7 +383,8 @@ namespace Editor
             try
             {
                 if (!_ghInit) { _ghInit = true; try { DllWrapper.VortexAPI.ShowGrid(false); DllWrapper.VortexAPI.ShowGizmos(false); } catch { }
-                    try { GHLog("GPU=" + DllWrapper.VortexAPI.GpuName() + " vendor=0x" + DllWrapper.VortexAPI.GpuVendorId().ToString("X4") + " dlssCapable=" + DllWrapper.VortexAPI.GpuSupportsDlss() + " renderScale=" + DllWrapper.VortexAPI.GetRenderScale()); } catch { } } // shipped game: no editor grid/gizmos
+                    try { GHLog("GPU=" + DllWrapper.VortexAPI.GpuName() + " vendor=0x" + DllWrapper.VortexAPI.GpuVendorId().ToString("X4") + " dlssCapable=" + DllWrapper.VortexAPI.GpuSupportsDlss() + " renderScale=" + DllWrapper.VortexAPI.GetRenderScale()); } catch { }
+                    if (_fgArg > 0) { try { DllWrapper.VortexAPI.SetFrameGenMode(_fgArg); GHLog("FrameGen forced x" + (_fgArg + 1)); } catch { } } } // dev: --fg=<0..3> (swapchain now exists)
                 var sr = Editor.Scripting.ScriptRuntime.Instance;
                 bool playing = Editor.Core.Services.PlayModeService.Instance.State == Editor.Core.Services.PlayState.Playing;
 
