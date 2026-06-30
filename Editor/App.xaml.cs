@@ -370,7 +370,8 @@ namespace Editor
             if (_stressMode) { StressTick(dt); return; }
             try
             {
-                if (!_ghInit) { _ghInit = true; try { DllWrapper.VortexAPI.ShowGrid(false); DllWrapper.VortexAPI.ShowGizmos(false); } catch { } } // shipped game: no editor grid/gizmos
+                if (!_ghInit) { _ghInit = true; try { DllWrapper.VortexAPI.ShowGrid(false); DllWrapper.VortexAPI.ShowGizmos(false); } catch { }
+                    try { GHLog("GPU=" + DllWrapper.VortexAPI.GpuName() + " vendor=0x" + DllWrapper.VortexAPI.GpuVendorId().ToString("X4") + " dlssCapable=" + DllWrapper.VortexAPI.GpuSupportsDlss() + " renderScale=" + DllWrapper.VortexAPI.GetRenderScale()); } catch { } } // shipped game: no editor grid/gizmos
                 var sr = Editor.Scripting.ScriptRuntime.Instance;
                 bool playing = Editor.Core.Services.PlayModeService.Instance.State == Editor.Core.Services.PlayState.Playing;
 

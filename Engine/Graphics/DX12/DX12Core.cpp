@@ -78,6 +78,18 @@ namespace vortex::graphics::dx12
 		}
 
 		if (!adapter) return false;
+
+		// Capture adapter identity for the DLSS hardware gate (NVIDIA RTX -> DLSS; else render-scale fallback).
+		{
+			DXGI_ADAPTER_DESC1 chosen{};
+			adapter->GetDesc1(&chosen);
+			m_adapter_vendor_id = chosen.VendorId;
+			m_adapter_name = chosen.Description;
+			bool isNvidia = (chosen.VendorId == 0x10DE);
+			bool hasRtx = (m_adapter_name.find(L"RTX") != std::wstring::npos);
+			m_dlss_capable = isNvidia && hasRtx;   // heuristic until Streamline's isFeatureSupported is wired
+		}
+
 		return SUCCEEDED(fn(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&m_device)));
 	}
 }

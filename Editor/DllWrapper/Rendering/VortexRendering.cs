@@ -114,6 +114,9 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostSetResolution")] private static extern void GameHostSetResolutionNative(int w, int h);
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SetRenderScale")] private static extern void SetRenderScaleNative(float s);
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GetRenderScale")] private static extern float GetRenderScaleNative();
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GpuVendorId")] private static extern int GpuVendorIdNative();
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GpuSupportsDlss")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool GpuSupportsDlssNative();
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GpuName")] private static extern int GpuNameNative(byte[] buf, int cap);
 
         /// <summary>Create the native game window + swapchain and run the loop until it closes. BLOCKS the caller.</summary>
         public static bool RunGameHost(uint width, uint height, string title) => RunGameHostNative(width, height, title);
@@ -146,6 +149,11 @@ namespace Editor.DllWrapper
         /// <summary>Render-scale 0.25..2.0 (stored now; the scaled-RT upscale pass applies it). 1.0 = native.</summary>
         public static void SetRenderScale(float s) { try { SetRenderScaleNative(s); } catch { } }
         public static float GetRenderScale() { try { return GetRenderScaleNative(); } catch { return 1f; } }
+        /// <summary>GPU vendor id (0x10DE NVIDIA, 0x1002 AMD, 0x8086 Intel) of the selected adapter.</summary>
+        public static int GpuVendorId() { try { return GpuVendorIdNative(); } catch { return 0; } }
+        /// <summary>True only on an NVIDIA RTX GPU — the DLSS hardware gate (else render-scale is the fallback).</summary>
+        public static bool GpuSupportsDlss() { try { return GpuSupportsDlssNative(); } catch { return false; } }
+        public static string GpuName() { try { var b = new byte[256]; int n = GpuNameNative(b, b.Length); return n > 0 ? System.Text.Encoding.UTF8.GetString(b, 0, n) : ""; } catch { return ""; } }
 
         #endregion
 

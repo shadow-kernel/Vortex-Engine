@@ -310,6 +310,11 @@ namespace Vortex
         /// <summary>Master volume 0..1. Stored here until the (XAudio2) sound engine reads it — audio is still a stub.</summary>
         public static float MasterVolume { get; private set; } = 1f;
         public static void SetMasterVolume(float v) { MasterVolume = v < 0f ? 0f : (v > 1f ? 1f : v); }
+
+        /// <summary>The selected GPU's name (e.g. "NVIDIA GeForce RTX 5070").</summary>
+        public static string GpuName { get { return Editor.DllWrapper.VortexAPI.GpuName(); } }
+        /// <summary>True only on an NVIDIA RTX GPU — gate DLSS options on this (render-scale is the universal fallback).</summary>
+        public static bool DlssSupported { get { return Editor.DllWrapper.VortexAPI.GpuSupportsDlss(); } }
     }
 
     /// <summary>Lighting/atmosphere control for game scripts — flicker, lightning, mood. With submit-once a static

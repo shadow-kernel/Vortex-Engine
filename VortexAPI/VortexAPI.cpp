@@ -835,6 +835,20 @@ EDITOR_INTERFACE void GameHostSetResolution(int w, int h) { runtime::GameHost::s
 EDITOR_INTERFACE void SetRenderScale(float s) { graphics::dx12::DX12Renderer::instance().set_render_scale(s); }
 EDITOR_INTERFACE float GetRenderScale() { return graphics::dx12::DX12Renderer::instance().render_scale(); }
 
+// GPU capability — the DLSS hardware gate. The options UI shows DLSS only when GpuSupportsDlss() is true; on
+// every other machine the render-scale slider is the universal fallback.
+EDITOR_INTERFACE int GpuVendorId() { return (int)graphics::dx12::DX12Core::instance().adapter_vendor_id(); }
+EDITOR_INTERFACE bool GpuSupportsDlss() { return graphics::dx12::DX12Core::instance().dlss_capable(); }
+EDITOR_INTERFACE int GpuName(char* buf, int cap)
+{
+	if (!buf || cap <= 0) return 0;
+	const std::wstring& w = graphics::dx12::DX12Core::instance().adapter_name();
+	int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), buf, cap - 1, nullptr, nullptr);
+	if (n < 0) n = 0; if (n > cap - 1) n = cap - 1;
+	buf[n] = '\0';
+	return n;
+}
+
 EDITOR_INTERFACE void StartRenderLoop()
 {
 	runtime::RenderLoop::instance().start([]() {
