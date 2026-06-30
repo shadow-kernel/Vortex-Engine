@@ -313,6 +313,15 @@ namespace Vortex
         public static void SetDlssMode(int mode) { Editor.DllWrapper.VortexAPI.SetDlssMode(mode); }
         public static int DlssMode { get { return Editor.DllWrapper.VortexAPI.GetDlssMode(); } }
 
+        /// <summary>DLSS Frame Generation: 0=Off, 1=x2, 2=x3, 3=x4 — the GPU inserts N AI-generated frames at Present
+        /// per real frame (smoother motion). SEPARATE from <see cref="SetDlssMode"/> (super-resolution). Enables
+        /// Reflex internally. Needs <see cref="DlssSupported"/>; best at LOW real framerates with VSync on.</summary>
+        public static void SetFrameGenMode(int mode) { Editor.DllWrapper.VortexAPI.SetFrameGenMode(mode); }
+        public static int FrameGenMode { get { return Editor.DllWrapper.VortexAPI.GetFrameGenMode(); } }
+        /// <summary>Frames actually presented by DLSS-G since the last call — the "Presented FPS" readout. The normal
+        /// FPS counter counts only REAL engine frames, so this is how the generated frames become visible. 0 when off.</summary>
+        public static int FrameGenPresentedFps { get { return Editor.DllWrapper.VortexAPI.FrameGenPresentedFps(); } }
+
         /// <summary>Master volume 0..1. Stored here until the (XAudio2) sound engine reads it — audio is still a stub.</summary>
         public static float MasterVolume { get; private set; } = 1f;
         public static void SetMasterVolume(float v) { MasterVolume = v < 0f ? 0f : (v > 1f ? 1f : v); }
