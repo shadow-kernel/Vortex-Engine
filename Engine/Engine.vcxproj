@@ -59,6 +59,7 @@
     <ClInclude Include="Graphics\Resources\Material.h" />
     <ClInclude Include="Graphics\Resources\Mesh.h" />
     <ClInclude Include="Graphics\Resources\ResourceRegistry.h" />
+    <ClInclude Include="Graphics\Resources\ResourceRegistry_Internal.h" />
     <ClInclude Include="Graphics\Resources\Texture.h" />
     <ClInclude Include="Input\InputSystem.h" />
     <ClInclude Include="Input\InputTypes.h" />
@@ -122,6 +123,10 @@
     <ClCompile Include="Graphics\Resources\Material.cpp" />
     <ClCompile Include="Graphics\Resources\Mesh.cpp" />
     <ClCompile Include="Graphics\Resources\ResourceRegistry.cpp" />
+    <ClCompile Include="Graphics\Resources\ResourceRegistry_Textures.cpp" />
+    <ClCompile Include="Graphics\Resources\ResourceRegistry_Materials.cpp" />
+    <ClCompile Include="Graphics\Resources\ResourceRegistry_Import.cpp" />
+    <ClCompile Include="Graphics\Resources\ResourceRegistry_Lod.cpp" />
     <ClCompile Include="Graphics\Resources\Texture.cpp" />
     <ClCompile Include="Input\InputSystem.cpp" />
     <ClCompile Include="Runtime\AssetDatabase.cpp" />

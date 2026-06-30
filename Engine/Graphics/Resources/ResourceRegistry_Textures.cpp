@@ -1,0 +1,159 @@
+#include "ResourceRegistry_Internal.h"
+
+namespace vortex::graphics
+{
+	id::id_type ResourceRegistry::create_texture(const TextureDesc& desc, const void* data)
+	{
+		if (!m_device) return id::invalid_id;
+
+		auto texture = std::make_unique<Texture>();
+		if (!texture->create(m_device, desc, data))
+		{
+			return id::invalid_id;
+		}
+
+		id::id_type id = m_next_texture_id++;
+		
+		assign_srv_to_texture(texture.get());
+		
+		m_textures[id] = std::move(texture);
+		return id;
+	}
+
+
+	id::id_type ResourceRegistry::create_solid_color_texture(u32 color, const std::string& name)
+	{
+		TextureDesc desc;
+		desc.width = 1;
+		desc.height = 1;
+		desc.format = TextureFormat::RGBA8_UNORM;
+		return create_texture(desc, &color);
+	}
+
+
+	Texture* ResourceRegistry::get_texture(id::id_type id)
+	{
+		auto it = m_textures.find(id);
+		return it != m_textures.end() ? it->second.get() : nullptr;
+	}
+
+
+	void ResourceRegistry::destroy_texture(id::id_type id)
+	{
+		auto it = m_textures.find(id);
+		if (it != m_textures.end())
+		{
+			m_textures.erase(it);
+		}
+	}
+
+
+	std::vector<id::id_type> ResourceRegistry::get_all_texture_ids() const
+	{
+		std::vector<id::id_type> ids;
+		ids.reserve(m_textures.size());
+		for (const auto& [id, _] : m_textures)
+		{
+			ids.push_back(id);
+		}
+		return ids;
+	}
+
+
+	id::id_type ResourceRegistry::create_texture_from_image(ImageData& image_data, const std::string& label)
+	{
+		OutputDebugStringA(("Loaded texture: " + label + " (" +
+			std::to_string(image_data.width) + "x" + std::to_string(image_data.height) + ")\n").c_str());
+
+		std::vector<u8> rgba_pixels;
+		const u8* pixel_data = image_data.pixels.data();
+		
+		if (image_data.format == ImageFormat::RGB8 || image_data.channels == 3)
+		{
+			rgba_pixels.resize(image_data.width * image_data.height * 4);
+			const u8* src = image_data.pixels.data();
+			for (size_t i = 0; i < image_data.width * image_data.height; i++)
+			{
+				rgba_pixels[i * 4 + 0] = src[i * 3 + 0];
+				rgba_pixels[i * 4 + 1] = src[i * 3 + 1];
+				rgba_pixels[i * 4 + 2] = src[i * 3 + 2];
+				rgba_pixels[i * 4 + 3] = 255;
+			}
+			pixel_data = rgba_pixels.data();
+			image_data.format = ImageFormat::RGBA8;
+			image_data.channels = 4;
+		}
+
+		TextureDesc desc;
+		desc.width = image_data.width;
+		desc.height = image_data.height;
+		
+		switch (image_data.format)
+		{
+		case ImageFormat::R8:
+			desc.format = TextureFormat::R8_UNORM;
+			break;
+		case ImageFormat::RG8:
+			desc.format = TextureFormat::RG8_UNORM;
+			break;
+		case ImageFormat::RGBA8:
+		default:
+			desc.format = TextureFormat::RGBA8_UNORM;
+			break;
+		}
+
+		return create_texture(desc, pixel_data);
+	}
+
+
+	bool ResourceRegistry::create_srv_heap()
+	{
+		if (!m_device) return false;
+
+		D3D12_DESCRIPTOR_HEAP_DESC heap_desc{};
+		heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+		heap_desc.NumDescriptors = MAX_SRV_DESCRIPTORS;
+		heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+
+		if (FAILED(m_device->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&m_srv_heap))))
+		{
+			OutputDebugStringA("Failed to create SRV heap\n");
+			return false;
+		}
+
+		m_srv_descriptor_size = m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+		m_next_srv_index = 0;
+
+		OutputDebugStringA("SRV heap created\n");
+		return true;
+	}
+
+
+	void ResourceRegistry::assign_srv_to_texture(Texture* texture)
+	{
+		if (!texture || !m_srv_heap || !m_device) return;
+		if (m_next_srv_index >= MAX_SRV_DESCRIPTORS)
+		{
+			OutputDebugStringA("SRV heap full\n");
+			return;
+		}
+
+		D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle = m_srv_heap->GetCPUDescriptorHandleForHeapStart();
+		cpu_handle.ptr += m_next_srv_index * m_srv_descriptor_size;
+
+		D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle = m_srv_heap->GetGPUDescriptorHandleForHeapStart();
+		gpu_handle.ptr += m_next_srv_index * m_srv_descriptor_size;
+
+		D3D12_SHADER_RESOURCE_VIEW_DESC srv_desc{};
+		srv_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+		srv_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		srv_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+		srv_desc.Texture2D.MipLevels = 1;
+		srv_desc.Texture2D.MostDetailedMip = 0;
+
+		m_device->CreateShaderResourceView(texture->resource(), &srv_desc, cpu_handle);
+		texture->set_srv_handles(cpu_handle, gpu_handle);
+
+		m_next_srv_index++;
+	}
+}
