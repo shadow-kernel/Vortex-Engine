@@ -1,21 +1,11 @@
 #include "DX12UpscalePipeline.h"
-#include <d3dcompiler.h>
+#include "DX12ShaderCompiler.h"   // shaders now live in Engine/Shaders/upscale.hlsl, loaded via this
 
 namespace vortex::graphics::dx12
 {
 	namespace
 	{
-		using PFN_D3DCompile = HRESULT(WINAPI*)(LPCVOID, SIZE_T, LPCSTR, const D3D_SHADER_MACRO*, ID3DInclude*, LPCSTR, LPCSTR, UINT, UINT, ID3DBlob**, ID3DBlob**);
 		using PFN_D3D12SerializeRootSignature = HRESULT(WINAPI*)(const D3D12_ROOT_SIGNATURE_DESC*, D3D_ROOT_SIGNATURE_VERSION, ID3DBlob**, ID3DBlob**);
-
-		PFN_D3DCompile get_d3d_compile()
-		{
-			static HMODULE compiler = LoadLibraryW(L"d3dcompiler_47.dll");
-			if (!compiler) compiler = LoadLibraryW(L"d3dcompiler_43.dll");
-			if (!compiler) return nullptr;
-			static auto fn = reinterpret_cast<PFN_D3DCompile>(GetProcAddress(compiler, "D3DCompile"));
-			return fn;
-		}
 
 		PFN_D3D12SerializeRootSignature get_serialize_root_signature()
 		{
@@ -23,28 +13,6 @@ namespace vortex::graphics::dx12
 				GetProcAddress(LoadLibraryW(L"d3d12.dll"), "D3D12SerializeRootSignature"));
 			return fn;
 		}
-
-		// Fullscreen triangle from SV_VertexID — no vertex buffer, no input layout. Emits a UV; the .y flip keeps
-		// the sampled image upright (same convention as the skybox/grid passes).
-		const char* g_upscale_vs = R"(
-struct VS_OUT { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; };
-VS_OUT main(uint vertexID : SV_VertexID) {
-	VS_OUT o;
-	float2 uv = float2((vertexID << 1) & 2, vertexID & 2);
-	o.pos = float4(uv * 2.0 - 1.0, 0.0, 1.0);
-	o.pos.y = -o.pos.y;
-	o.uv = uv;
-	return o;
-}
-)";
-
-		// Sample the scaled source RT. Bilinear (the static sampler) gives a clean upscale; CLAMP avoids edge bleed.
-		const char* g_upscale_ps = R"(
-Texture2D Src : register(t0);
-SamplerState Smp : register(s0);
-struct PS_IN { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; };
-float4 main(PS_IN i) : SV_TARGET { return Src.Sample(Smp, i.uv); }
-)";
 	}
 
 	bool DX12UpscalePipeline::initialize(ID3D12Device* device, DXGI_FORMAT rtv_format)
@@ -66,23 +34,11 @@ float4 main(PS_IN i) : SV_TARGET { return Src.Sample(Smp, i.uv); }
 
 	bool DX12UpscalePipeline::compile_shaders()
 	{
-		auto d3dCompile = get_d3d_compile();
-		if (!d3dCompile) return false;
-
-		ComPtr<ID3DBlob> error;
-		if (FAILED(d3dCompile(g_upscale_vs, strlen(g_upscale_vs), nullptr, nullptr, nullptr,
-			"main", "vs_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &m_vs_blob, &error)))
-		{
-			if (error) OutputDebugStringA(static_cast<const char*>(error->GetBufferPointer()));
-			return false;
-		}
-		if (FAILED(d3dCompile(g_upscale_ps, strlen(g_upscale_ps), nullptr, nullptr, nullptr,
-			"main", "ps_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &m_ps_blob, &error)))
-		{
-			if (error) OutputDebugStringA(static_cast<const char*>(error->GetBufferPointer()));
-			return false;
-		}
-		return true;
+		// Engine/Shaders/upscale.hlsl (VSMain/PSMain), via the shared compiler: precompiled .cso if present, else
+		// compiled from disk. This pass is optional/non-fatal, so a missing-shader failure degrades gracefully.
+		m_vs_blob = DX12ShaderCompiler::load_shader("upscale", "vs", "VSMain", "vs_5_0");
+		m_ps_blob = DX12ShaderCompiler::load_shader("upscale", "ps", "PSMain", "ps_5_0");
+		return m_vs_blob != nullptr && m_ps_blob != nullptr;
 	}
 
 	bool DX12UpscalePipeline::create_root_signature(ID3D12Device* device)

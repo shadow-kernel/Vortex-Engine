@@ -38,6 +38,7 @@
     <ClInclude Include="Graphics\DX12\DX12Renderer.h" />
     <ClInclude Include="Graphics\DX12\DX12Renderer_Internal.h" />
     <ClInclude Include="Graphics\DX12\DX12RenderTarget.h" />
+    <ClInclude Include="Graphics\DX12\DX12ShaderCompiler.h" />
     <ClInclude Include="Graphics\DX12\DX12SkyboxPipeline.h" />
     <ClInclude Include="Graphics\DX12\DX12Streamline.h" />
     <ClInclude Include="Graphics\DX12\DX12UpscalePipeline.h" />
@@ -106,6 +107,7 @@
     <ClCompile Include="Graphics\DX12\DX12Renderer_RenderTargets.cpp" />
     <ClCompile Include="Graphics\DX12\UIOverlay.cpp" />
     <ClCompile Include="Graphics\DX12\DX12RenderTarget.cpp" />
+    <ClCompile Include="Graphics\DX12\DX12ShaderCompiler.cpp" />
     <ClCompile Include="Graphics\DX12\DX12SkyboxPipeline.cpp" />
     <ClCompile Include="Graphics\DX12\DX12Streamline.cpp" />
     <ClCompile Include="Graphics\DX12\DX12UpscalePipeline.cpp" />
