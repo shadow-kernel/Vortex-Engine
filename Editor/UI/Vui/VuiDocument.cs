@@ -30,8 +30,11 @@ namespace Editor.UI.Vui
         {
             try
             {
-                if (string.IsNullOrEmpty(path) || !File.Exists(path)) return null;
-                var doc = JsonSerializer.Deserialize<VuiDocument>(File.ReadAllText(path), s_opts);
+                if (string.IsNullOrEmpty(path)) return null;
+                // Disk first (editor / dev); fall back to the mounted .vpak (shipped game — assets live in RAM).
+                string json = File.Exists(path) ? File.ReadAllText(path) : Editor.Core.Services.AssetVfs.GetText(path);
+                if (string.IsNullOrEmpty(json)) return null;
+                var doc = JsonSerializer.Deserialize<VuiDocument>(json, s_opts);
                 if (doc == null || doc.Root == null) return null;
                 var canvas = new VuiCanvas
                 {

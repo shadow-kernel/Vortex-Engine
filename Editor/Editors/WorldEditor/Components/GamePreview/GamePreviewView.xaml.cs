@@ -212,6 +212,14 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                     Editor.Core.Services.PlayCameraHelper.ApplyPose(_extSnapPos, _extSnapRot); // editor = frozen placeholder
                 else
                     ApplyMainCameraView();                                 // editor = live game view
+
+                // Retained UI (HUD / lobby menu / ESC) in EDITOR play too — same single UIBegin frame, after the
+                // scripts mutated slots/screens. Without this the .vui never drew in-editor (only in the GameHost).
+                if (uw > 1 && uh > 1 && Editor.UI.Vui.VuiStack.Instance.HasActiveScreens)
+                {
+                    var vin = new Editor.UI.Vui.VuiInput { Mx = _uiMx, My = _uiMy, Down = _uiDown, Pressed = _uiPressed, Wheel = 0, Chars = _vuiCharsEmpty, CharCount = 0, KeyEvents = _vuiKeysEmpty, KeyCount = 0 };
+                    Editor.UI.Vui.VuiStack.Instance.TickAll(uw, uh, vin);
+                }
             }
             else
             {
@@ -248,6 +256,12 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                     {
                         Core.Services.StressTestService.Submit();
                         Core.Services.StressTestService.ClearDirty();
+                    }
+                    // Script-built world geometry (Vortex.World) — render it in editor play too.
+                    if (Core.Services.WorldService.HasItems)
+                    {
+                        Core.Services.WorldService.Submit();
+                        Core.Services.WorldService.ClearDirty();
                     }
                     _submittedScene = sceneToRender;
                     _sceneDirty = false;
@@ -939,8 +953,12 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             bool down = (GetAsyncKeyState(0x01) & 0x8000) != 0; // VK_LBUTTON
             bool pressed = down && !_lmbPrevEd;
             _lmbPrevEd = down;
+            _uiMx = mx; _uiMy = my; _uiDown = down; _uiPressed = pressed;   // stashed for the retained-UI tick
             Editor.Scripting.ScriptRuntime.Instance.SetUIFrame(renderW, renderH, mx, my, down, pressed);
         }
+        private float _uiMx, _uiMy; private bool _uiDown, _uiPressed;
+        private static readonly char[] _vuiCharsEmpty = new char[0];
+        private static readonly int[] _vuiKeysEmpty = new int[0];
 
         // --- Play-mode physics simulation (engine-driven) ---
         private bool _simActive;

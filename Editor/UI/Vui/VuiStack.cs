@@ -55,6 +55,16 @@ namespace Editor.UI.Vui
                 }
             }
             catch { }
+            // Shipped game: assets live in the mounted .vpak (RAM), not on disk — return the packed key.
+            try
+            {
+                if (Editor.Core.Services.AssetVfs.IsMounted)
+                {
+                    foreach (var k in new[] { "Assets/UI/" + name, "Assets/" + name, name })
+                        if (Editor.Core.Services.AssetVfs.Contains(k)) return k;
+                }
+            }
+            catch { }
             return name;
         }
 

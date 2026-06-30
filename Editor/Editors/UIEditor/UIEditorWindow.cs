@@ -90,20 +90,34 @@ namespace Editor.Editors.UIEditor
             bar.Children.Add(MakeButton("Delete element", C_PanelAlt, 130, (s, e) => DeleteSelected()));
 
             // LEFT: palette + hierarchy
-            var left = new Grid(); Grid.SetRow(left, 1); Grid.SetColumn(left, 0);
+            var left = new Grid { Margin = new Thickness(0, 0, 6, 0) }; Grid.SetRow(left, 1); Grid.SetColumn(left, 0);
             left.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             left.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-            var palette = new WrapPanel { Margin = new Thickness(0, 0, 0, 8) };
-            Grid.SetRow(palette, 0); left.Children.Add(palette);
-            palette.Children.Add(new TextBlock { Text = "Add child:", Foreground = new SolidColorBrush(C_TextSec), Width = 260, Margin = new Thickness(2, 0, 0, 4) });
+
+            // palette — a clearly-labelled box of "+ Kind" buttons that ADD INTO the selected element
+            var palStack = new StackPanel();
+            palStack.Children.Add(new TextBlock { Text = "➕  ADD ELEMENT", Foreground = new SolidColorBrush(C_Accent), FontWeight = FontWeights.Bold, FontSize = 13, Margin = new Thickness(2, 0, 0, 2) });
+            palStack.Children.Add(new TextBlock { Text = "click to add into the selected element", Foreground = new SolidColorBrush(C_TextSec), FontSize = 10, Margin = new Thickness(2, 0, 0, 6) });
+            var palette = new WrapPanel();
+            palStack.Children.Add(palette);
             foreach (VuiKind k in Enum.GetValues(typeof(VuiKind)))
             {
                 var kk = k;
-                palette.Children.Add(MakeButton(k.ToString(), C_PanelAlt, 84, (s, e) => AddChild(kk)));
+                palette.Children.Add(MakeButton("＋ " + k.ToString(), C_PanelAlt, 86, (s, e) => AddChild(kk)));
             }
-            _tree = new TreeView { Background = new SolidColorBrush(C_Panel), BorderBrush = new SolidColorBrush(C_Border), Foreground = new SolidColorBrush(C_Text) };
+            var palBox = InPanel(palStack); palBox.Margin = new Thickness(0, 0, 0, 8);
+            Grid.SetRow(palBox, 0); left.Children.Add(palBox);
+
+            // hierarchy
+            var treeBox = new Grid();
+            treeBox.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            treeBox.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            var hdr = new TextBlock { Text = "HIERARCHY", Foreground = new SolidColorBrush(C_TextSec), FontWeight = FontWeights.Bold, FontSize = 11, Margin = new Thickness(2, 0, 0, 4) };
+            Grid.SetRow(hdr, 0); treeBox.Children.Add(hdr);
+            _tree = new TreeView { Background = new SolidColorBrush(C_Panel), BorderThickness = new Thickness(0), Foreground = new SolidColorBrush(C_Text) };
             _tree.SelectedItemChanged += (s, e) => { if (_tree.SelectedItem is TreeViewItem tvi && tvi.Tag is VuiElement el) { _selected = el; RefreshInspector(); RefreshPreview(); } };
-            Grid.SetRow(_tree, 1); left.Children.Add(InPanel(_tree));
+            var treeHost = InPanel(_tree); Grid.SetRow(treeHost, 1); treeBox.Children.Add(treeHost);
+            Grid.SetRow(treeBox, 1); left.Children.Add(treeBox);
             grid.Children.Add(left);
 
             // CENTER: preview (a Viewbox scales the design-resolution canvas to fit)
