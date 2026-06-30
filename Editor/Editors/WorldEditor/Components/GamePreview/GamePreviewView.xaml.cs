@@ -391,12 +391,14 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
 
         private void OnViewportMouseDown(object sender, MouseButtonEventArgs e)
         {
-            // While playing, the viewport drives the GAME, not the editor camera/selection. A click
-            // (re)locks the mouse to the game if ESC had freed it.
+            // While playing, the viewport drives the GAME, not the editor camera/selection. A click hands control
+            // back to the game: clear the ESC override so UpdateGameMouseLook re-locks IF the game wants capture.
+            // It must NOT force-capture here — in a free-cursor lobby/menu the click belongs to the UI button
+            // (read via GetAsyncKeyState in FeedEditorUI), and grabbing the cursor would hide it mid-click.
             if (IsPlaying)
             {
                 this.Focus();
-                if (!_mouseCaptured) CaptureGameMouse();
+                _userUnlockedCursor = false;
                 e.Handled = true;
                 return;
             }
@@ -800,7 +802,9 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                 }
                 else
                 {
-                    CaptureGameMouse();      // in-viewport play: lock + hide cursor -> mouse-look (ESC frees)
+                    // Don't force-capture: UpdateGameMouseLook applies the cursor-lock authority on the first tick,
+                    // so a lobby/menu (CursorLocked=false) keeps the mouse free + clickable, a HUD locks mouse-look.
+                    _userUnlockedCursor = false;
                 }
                 UpdateGamePlaceholder();     // hide the "Press Play" overlay
                 return;
@@ -851,33 +855,48 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             // Non-external cases (edit toolbar / in-viewport play) are handled by SetGameViewportLock.
         }
 
-        /// <summary>Game mouse-look + cursor lock. While captured the cursor is hidden and re-centered
-        /// every frame; the per-frame motion is fed to gameplay scripts via Vortex.Input.MouseDeltaX/Y.
+        // ESC freed the cursor by hand; a viewport click re-locks it. Only matters while the game WANTS capture
+        // (a HUD/match) — a free-cursor screen (lobby/menu) resets it so the mouse always stays usable on the UI.
+        private bool _userUnlockedCursor;
+
+        /// <summary>Game mouse-look + cursor lock, driven by the SAME authority as the native GameHost path
+        /// (VuiStack.WantsCursorCapture): a retained menu/lobby (CursorLocked=false) frees the cursor so its
+        /// buttons are clickable; the HUD keeps mouse-look locked. While captured the cursor is hidden and
+        /// re-centered every frame, feeding per-frame motion to scripts via Vortex.Input.MouseDeltaX/Y.
         /// ESC frees the cursor (control back to you); clicking the viewport re-locks it.</summary>
         private void UpdateGameMouseLook()
         {
+            // Who decides capture this frame? The retained-UI stack if any screen is up, else the script flag.
+            // THIS is the lobby fix: a free-cursor screen (HorrorLobby cursorLocked:false) -> mouse stays free +
+            // visible so ENTER/OPTIONS/LEAVE are clickable, instead of being locked to mouse-look like before.
+            bool authorityWantsCapture = Editor.UI.Vui.VuiStack.Instance.WantsCursorCapture(
+                Editor.Scripting.ScriptRuntime.Instance.CursorLocked);
+
+            if (!authorityWantsCapture) _userUnlockedCursor = false;            // free-cursor screen clears the ESC override
+            else if (Keyboard.IsKeyDown(Key.Escape)) _userUnlockedCursor = true; // ESC = manual free-hatch (re-click to re-lock)
+
+            bool wantCapture = authorityWantsCapture && !_userUnlockedCursor;
+            if (wantCapture && !_mouseCaptured) CaptureGameMouse();
+            else if (!wantCapture && _mouseCaptured) ReleaseGameMouse();
+
             float dx = 0f, dy = 0f;
-            if (_mouseCaptured)
+            if (_mouseCaptured && TryGetViewportCenter(out double cx, out double cy) && GetCursorPos(out POINTW p))
             {
-                if (Keyboard.IsKeyDown(Key.Escape)) { ReleaseGameMouse(); }
-                else if (TryGetViewportCenter(out double cx, out double cy) && GetCursorPos(out POINTW p))
+                if (_mouseJustCaptured)
                 {
-                    if (_mouseJustCaptured)
-                    {
-                        // Skip the first frame: the cursor hasn't been re-centered yet, so its delta
-                        // would be a huge jump that flings the camera.
-                        _mouseJustCaptured = false;
-                    }
-                    else
-                    {
-                        dx = (float)(p.X - cx);
-                        dy = (float)(p.Y - cy);
-                        // Clamp absurd spikes (alt-tab, focus loss) so the view never whips around.
-                        if (dx > 200f) dx = 200f; else if (dx < -200f) dx = -200f;
-                        if (dy > 200f) dy = 200f; else if (dy < -200f) dy = -200f;
-                    }
-                    SetCursorPos((int)cx, (int)cy); // re-center so motion is continuous (FPS-style)
+                    // Skip the first frame: the cursor hasn't been re-centered yet, so its delta
+                    // would be a huge jump that flings the camera.
+                    _mouseJustCaptured = false;
                 }
+                else
+                {
+                    dx = (float)(p.X - cx);
+                    dy = (float)(p.Y - cy);
+                    // Clamp absurd spikes (alt-tab, focus loss) so the view never whips around.
+                    if (dx > 200f) dx = 200f; else if (dx < -200f) dx = -200f;
+                    if (dy > 200f) dy = 200f; else if (dy < -200f) dy = -200f;
+                }
+                SetCursorPos((int)cx, (int)cy); // re-center so motion is continuous (FPS-style)
             }
             Vortex.Input.MouseDeltaX = dx;
             Vortex.Input.MouseDeltaY = dy;

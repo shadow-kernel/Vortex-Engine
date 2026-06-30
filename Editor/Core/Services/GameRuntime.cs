@@ -29,8 +29,10 @@ namespace Editor.Core.Services
                 return false;
             }
 
-            // 1) stop the current scene's gameplay scripts
+            // 1) stop the current scene's gameplay scripts + drop its retained-UI screens (UI is scene-specific —
+            // else e.g. the lobby's free-cursor menu would leak into Match and keep the cursor unlocked there).
             try { Editor.Scripting.ScriptRuntime.Instance.End(); } catch { }
+            try { Editor.UI.Vui.VuiStack.Instance.Clear(); } catch { }
 
             // 2) deactivate the old scene, activate the target (mirrors the editor's ActivateScene)
             var previous = project.ActiveScene;

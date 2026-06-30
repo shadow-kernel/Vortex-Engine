@@ -84,7 +84,9 @@ namespace Editor.UI.Vui
 
         public VuiCanvas Push(string name) { var c = Load(name); if (c != null) Show(c); return c; }
         public void Pop() { if (_stack.Count > 0) { var c = _stack[_stack.Count - 1]; _stack.RemoveAt(_stack.Count - 1); c.Visible = false; } }
-        public void Clear() { _stack.Clear(); }
+        /// <summary>Drop every screen off the stack (e.g. on a scene switch — UI is scene-specific; the new scene's
+        /// scripts re-Push their own HUD/menu in Start). Hides each so a later cached Load()+Show re-adds cleanly.</summary>
+        public void Clear() { foreach (var c in _stack) if (c != null) c.Visible = false; _stack.Clear(); }
 
         /// <summary>Topmost visible canvas's cursor-lock preference (HUD = locked mouse-look; menu = free cursor).</summary>
         public bool CursorLockedForTop()
@@ -92,6 +94,13 @@ namespace Editor.UI.Vui
             for (int i = _stack.Count - 1; i >= 0; i--) if (_stack[i].Visible) return _stack[i].CursorLockedPref;
             return true;
         }
+
+        /// <summary>The single cursor-capture decision shared by BOTH run paths (native GameHost + editor in-viewport
+        /// play): when a retained screen is up the TOPMOST one decides — a menu/lobby (CursorLocked=false) frees the
+        /// cursor so its buttons are clickable, the HUD (CursorLocked=true) keeps mouse-look locked; otherwise fall
+        /// back to the script's flag. Keeping this here (not duplicated per host) means the two paths can't drift.</summary>
+        public bool WantsCursorCapture(bool scriptCursorLocked)
+            => HasActiveScreens ? CursorLockedForTop() : scriptCursorLocked;
 
         /// <summary>Drive every screen for this frame. Returns true if the UI consumed the click (suppress gameplay).</summary>
         public bool TickAll(float vw, float vh, in VuiInput input)

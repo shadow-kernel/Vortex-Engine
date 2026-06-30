@@ -399,9 +399,7 @@ namespace Editor
                 // straight from the host. When unlocked (menu/ESC), the cursor is freed + visible for the UI.
                 // Cursor-lock authority: when retained-UI screens are up, the topmost screen decides (a menu unlocks
                 // the cursor, the HUD keeps mouse-look locked); otherwise fall back to the legacy script flag.
-                bool wantCapture = Editor.UI.Vui.VuiStack.Instance.HasActiveScreens
-                    ? (playing && Editor.UI.Vui.VuiStack.Instance.CursorLockedForTop())
-                    : (playing && sr.CursorLocked);
+                bool wantCapture = playing && Editor.UI.Vui.VuiStack.Instance.WantsCursorCapture(sr.CursorLocked);
                 DllWrapper.VortexAPI.SetGameHostMouseCaptured(wantCapture);
                 if (wantCapture)
                 {
@@ -418,7 +416,7 @@ namespace Editor
                 DllWrapper.VortexAPI.UIBegin(cw, ch);
                 if (_ghT0 == DateTime.MinValue) _ghT0 = DateTime.Now;
                 _ghFrames++;
-                if (pressed) GHLog("PRESS mx=" + mx + " my=" + my + " cw=" + cw + " ch=" + ch + " btnX=[" + (cw - 306) + ".." + (cw - 56) + "] IN=" + (mx >= cw - 306 && mx <= cw - 56 && my >= ch - 100 && my <= ch - 40));
+                if (pressed) GHLog("PRESS mx=" + mx + " my=" + my + " cw=" + cw + " ch=" + ch + " vuiActive=" + Editor.UI.Vui.VuiStack.Instance.HasActiveScreens + " captured=" + DllWrapper.VortexAPI.GameHostMouseCaptured());
                 var nowT = DateTime.Now; if ((nowT - _ghT0).TotalMilliseconds >= 1000) { var s0 = Editor.Core.Data.ProjectData.Current; GHLog("FPS=" + _ghFrames + " scene=" + (s0 != null && s0.ActiveScene != null ? s0.ActiveScene.Name : "?") + " beh=" + sr.DebugBehaviourNames() + " ents=" + (s0 != null && s0.ActiveScene != null && s0.ActiveScene.Entities != null ? s0.ActiveScene.Entities.Count : -1) + " draws=" + DllWrapper.VortexAPI.DrawCalls + " drawn=" + DllWrapper.VortexAPI.InstancesDrawn + "/" + DllWrapper.VortexAPI.InstancesTested + " mt=" + (DllWrapper.VortexAPI.MultithreadingActive ? 1 : 0)); _ghFrames = 0; _ghT0 = nowT; }
 
                 if (playing)
