@@ -142,17 +142,35 @@ namespace Vortex
         /// <summary>Mouse movement since the last tick, in pixels (only non-zero while the game has
         /// captured the cursor — i.e. in play before ESC). Use it for mouse-look. Forced to 0 while a screen that
         /// opted into freezing gameplay (BlocksGameplay) is up, so mouse-look stops with movement.</summary>
-        public static float MouseDeltaX { get { return Editor.UI.Vui.VuiStack.Instance.GameplayInputBlocked ? 0f : _mouseDeltaX; } internal set { _mouseDeltaX = value; } }
-        public static float MouseDeltaY { get { return Editor.UI.Vui.VuiStack.Instance.GameplayInputBlocked ? 0f : _mouseDeltaY; } internal set { _mouseDeltaY = value; } }
+        public static float MouseDeltaX { get { return (Editor.UI.Vui.VuiStack.Instance.GameplayInputBlocked || !WindowFocused) ? 0f : _mouseDeltaX; } internal set { _mouseDeltaX = value; } }
+        public static float MouseDeltaY { get { return (Editor.UI.Vui.VuiStack.Instance.GameplayInputBlocked || !WindowFocused) ? 0f : _mouseDeltaY; } internal set { _mouseDeltaY = value; } }
         private static float _mouseDeltaX, _mouseDeltaY;
 
-        // ---- Gamepad / controller (XInput, first connected pad). Polled once per tick by the runtime, read here.
+        // ---- Window focus: ALL input (keyboard, mouse, controller) is dead unless OUR window is the foreground
+        // window. Works everywhere — in-editor play, the external game window, and an exported debug/release build
+        // (they're all in this process) — so an unfocused/alt-tabbed game can't be driven by stray global input. ----
+        [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+        [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+        [System.Runtime.InteropServices.DllImport("kernel32.dll")] private static extern uint GetCurrentProcessId();
+        private static bool _focusApiMissing;
+        /// <summary>True only while this app's window is the foreground window. Input is ignored otherwise.</summary>
+        public static bool WindowFocused
+        {
+            get
+            {
+                if (_focusApiMissing) return true;
+                try { uint pid; GetWindowThreadProcessId(GetForegroundWindow(), out pid); return pid == GetCurrentProcessId(); }
+                catch { _focusApiMissing = true; return true; }
+            }
+        }
+
+        // ---- Gamepad / controller (Windows.Gaming.Input incl. PlayStation, XInput fallback). Polled once per tick.
         // Sticks/triggers are normalized to -1..1 / 0..1 with dead zones; frozen to neutral while a gameplay-blocking
-        // UI screen is up (same gate as mouse-look), so the pad can't drive the player through a menu. ----
+        // UI screen is up OR the window isn't focused, so the pad can't drive the player through a menu / in the bg. ----
         private static bool _padOn;
         private static float _lx, _ly, _rx, _ry, _lt, _rt;
         private static ushort _buttons, _prevButtons;
-        private static bool Gated { get { return Editor.UI.Vui.VuiStack.Instance.GameplayInputBlocked; } }
+        private static bool Gated { get { return Editor.UI.Vui.VuiStack.Instance.GameplayInputBlocked || !WindowFocused; } }
 
         /// <summary>True while a controller is connected.</summary>
         public static bool GamepadConnected { get { return _padOn; } }
@@ -197,34 +215,57 @@ namespace Vortex
         {
             _prevButtons = _buttons;
 
+            // No controller input while our window isn't focused.
+            if (!WindowFocused) { _padOn = false; _buttons = 0; _lx = _ly = _rx = _ry = _lt = _rt = 0f; return; }
+
             if (!_wgiMissing)
             {
-                try
-                {
-                    var pads = Windows.Gaming.Input.Gamepad.Gamepads;
-                    if (pads != null && pads.Count > 0)
-                    {
-                        var r = pads[0].GetCurrentReading();
-                        _padOn = true;
-                        _lx = Dead((float)r.LeftThumbstickX);
-                        _ly = Dead((float)r.LeftThumbstickY);
-                        _rx = Dead((float)r.RightThumbstickX);
-                        _ry = Dead((float)r.RightThumbstickY);
-                        _lt = Clamp01((float)r.LeftTrigger);
-                        _rt = Clamp01((float)r.RightTrigger);
-                        _buttons = MapWgiButtons(r.Buttons);
-                        return;
-                    }
-                    if (PollRawSony()) return;
-                    _padOn = false; _buttons = 0; _lx = _ly = _rx = _ry = _lt = _rt = 0f;
-                    return;
-                }
+                try { if (PollWgi()) return; }               // Xbox or (Win11) DualSense via Windows.Gaming.Input
                 catch (System.IO.FileNotFoundException) { _wgiMissing = true; }
                 catch (TypeLoadException) { _wgiMissing = true; }
-                catch { _padOn = false; return; }
+                catch (MissingMethodException) { _wgiMissing = true; }
+                catch { /* transient WinRT error — fall through this frame instead of going dead */ }
             }
 
-            PollXInput(); // WinRT unavailable (very old Windows) -> Xbox pads via XInput
+            // Direct DualSense/DualShock HID — deterministic, works even when Windows.Gaming.Input doesn't surface a
+            // PS5 pad over USB (the reported "controller not accepted"). Isolated + guarded; a failure just falls on.
+            try
+            {
+                if (Editor.Scripting.DualSenseHid.Poll())
+                {
+                    _padOn = true;
+                    _lx = Editor.Scripting.DualSenseHid.LX; _ly = Editor.Scripting.DualSenseHid.LY;
+                    _rx = Editor.Scripting.DualSenseHid.RX; _ry = Editor.Scripting.DualSenseHid.RY;
+                    _lt = Editor.Scripting.DualSenseHid.L2; _rt = Editor.Scripting.DualSenseHid.R2;
+                    _buttons = Editor.Scripting.DualSenseHid.Buttons;
+                    return;
+                }
+            }
+            catch { }
+
+            // Last resort -> XInput (Xbox, or a DualSense mapped via Steam Input / DS4Windows).
+            PollXInput();
+        }
+
+        // Windows.Gaming.Input: Gamepad first (normalized), else RawGameController (a PlayStation pad Windows didn't
+        // surface as a Gamepad). Returns true only if a controller was actually found + read.
+        private static bool PollWgi()
+        {
+            var pads = Windows.Gaming.Input.Gamepad.Gamepads;
+            if (pads != null && pads.Count > 0)
+            {
+                var r = pads[0].GetCurrentReading();
+                _padOn = true;
+                _lx = Dead((float)r.LeftThumbstickX);
+                _ly = Dead((float)r.LeftThumbstickY);
+                _rx = Dead((float)r.RightThumbstickX);
+                _ry = Dead((float)r.RightThumbstickY);
+                _lt = Clamp01((float)r.LeftTrigger);
+                _rt = Clamp01((float)r.RightTrigger);
+                _buttons = MapWgiButtons(r.Buttons);
+                return true;
+            }
+            return PollRawSony();
         }
 
         private static float Clamp01(float v) { return v < 0f ? 0f : (v > 1f ? 1f : v); }
@@ -251,26 +292,30 @@ namespace Vortex
             return m;
         }
 
-        // A Sony pad (DualSense/DualShock) that Windows didn't surface as a Gamepad — read it raw and map the
-        // common HID layout to the Xbox-style bitmask so scripts stay controller-agnostic.
+        // A PlayStation pad (DualSense/DualShock) that Windows didn't surface as a Gamepad — read it raw and map the
+        // standard HID layout to the Xbox-style bitmask so scripts stay controller-agnostic. Prefer a Sony device;
+        // otherwise take the first controller with sticks (covers other HID pads too).
         private static bool PollRawSony()
         {
             var raws = Windows.Gaming.Input.RawGameController.RawGameControllers;
-            if (raws == null) return false;
-            foreach (var rc in raws)
+            if (raws == null || raws.Count == 0) return false;
+            Windows.Gaming.Input.RawGameController rc = null;
+            foreach (var c in raws) { if (c.HardwareVendorId == 0x054C) { rc = c; break; } } // Sony
+            if (rc == null) foreach (var c in raws) { if (c.AxisCount >= 4) { rc = c; break; } }
+            if (rc == null) return false;
             {
-                if (rc.HardwareVendorId != 0x054C) continue; // Sony
                 var btns = new bool[rc.ButtonCount];
                 var sws = new Windows.Gaming.Input.GameControllerSwitchPosition[rc.SwitchCount];
                 var ax = new double[rc.AxisCount];
                 rc.GetCurrentReading(btns, sws, ax);
                 _padOn = true;
+                // DualSense/standard HID gamepad axis order: [0]=LX [1]=LY [2]=RX [3]=RY [4]=L2 [5]=R2 (0..1; sticks 0.5=center).
                 _lx = ax.Length > 0 ? Dead((float)(ax[0] * 2 - 1)) : 0f;
                 _ly = ax.Length > 1 ? Dead((float)-(ax[1] * 2 - 1)) : 0f; // HID Y is down-positive -> invert
                 _rx = ax.Length > 2 ? Dead((float)(ax[2] * 2 - 1)) : 0f;
-                _ry = ax.Length > 5 ? Dead((float)-(ax[5] * 2 - 1)) : (ax.Length > 3 ? Dead((float)-(ax[3] * 2 - 1)) : 0f);
-                _lt = ax.Length > 3 ? Clamp01((float)ax[3]) : 0f;
-                _rt = ax.Length > 4 ? Clamp01((float)ax[4]) : 0f;
+                _ry = ax.Length > 3 ? Dead((float)-(ax[3] * 2 - 1)) : 0f;
+                _lt = ax.Length > 4 ? Clamp01((float)ax[4]) : 0f;
+                _rt = ax.Length > 5 ? Clamp01((float)ax[5]) : 0f;
                 ushort m = 0;
                 if (Btn(btns, 1)) m |= 0x1000; // Cross  -> A
                 if (Btn(btns, 2)) m |= 0x2000; // Circle -> B

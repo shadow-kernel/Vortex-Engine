@@ -554,6 +554,9 @@ namespace Editor.Scripting
             // is up — e.g. a chest/inventory. A hotbar/HUD leaves it off, so the player keeps moving. (Mouse-look is
             // gated the same way in Vortex.Input.MouseDeltaX/Y.)
             if (Editor.UI.Vui.VuiStack.Instance.GameplayInputBlocked) return false;
+            // GetAsyncKeyState reads the GLOBAL key state (needed because focus is on a native swapchain HWND), so it
+            // would fire even when our game is in the background — gate it on our window actually being focused.
+            if (!Vortex.Input.WindowFocused) return false;
             if (!Enum.TryParse(key, true, out Key k)) return false;
             // Use the global physical key state (not WPF Keyboard.IsKeyDown): while playing, focus is on
             // a native swapchain HWND (editor viewport or the standalone game window), where the WPF
