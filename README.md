@@ -240,7 +240,7 @@ asset packs** for the community · build/CI hosting so releases stay fast and re
 **🎯 First goal — €1,000:** a year of build & CI hosting **plus** a free community
 asset pack. Every contribution, big or small, gets us there. 🙏
 
-> 💳 **[Donate via PayPal »](https://www.paypal.me/REPLACE_ME)** &nbsp;·&nbsp; <sub>(PayPal link coming — will be dropped in here)</sub>
+> 💜 **[Sponsor on GitHub »](https://github.com/sponsors/shadow-kernel)**
 
 ---
 
