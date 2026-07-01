@@ -13,6 +13,7 @@ namespace Editor.Core.Services
 
         private bool _isGridVisible = true;
         private bool _areGizmosVisible = true;
+        private bool _areCollidersVisible = true;
         private bool _snapToGrid = false;
         private float _gridSpacing = 1.0f;
         private float _gridExtent = 100.0f;
@@ -38,6 +39,20 @@ namespace Editor.Core.Services
                 _areGizmosVisible = value;
                 VortexAPI.ShowGizmos(value);
                 GizmosVisibilityChanged?.Invoke(this, value);
+            }
+        }
+
+        /// <summary>
+        /// Whether the green collider wireframe (ColliderGizmo) is drawn for the selected entity in the viewport.
+        /// Purely managed-side — read each frame by SceneRenderService.SubmitOverlays; no native call needed.
+        /// </summary>
+        public bool AreCollidersVisible
+        {
+            get => _areCollidersVisible;
+            set
+            {
+                _areCollidersVisible = value;
+                CollisionVisibilityChanged?.Invoke(this, value);
             }
         }
 
@@ -86,6 +101,11 @@ namespace Editor.Core.Services
             AreGizmosVisible = !AreGizmosVisible;
         }
 
+        public void ToggleColliders()
+        {
+            AreCollidersVisible = !AreCollidersVisible;
+        }
+
         public void ToggleSnapToGrid()
         {
             SnapToGrid = !SnapToGrid;
@@ -102,6 +122,7 @@ namespace Editor.Core.Services
 
         public event EventHandler<bool> GridVisibilityChanged;
         public event EventHandler<bool> GizmosVisibilityChanged;
+        public event EventHandler<bool> CollisionVisibilityChanged;
         public event EventHandler<bool> SnapToGridChanged;
 
         public void Dispose()

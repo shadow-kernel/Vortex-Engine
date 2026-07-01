@@ -71,6 +71,25 @@ d:DesignHeight="400" d:DesignWidth="600">
             </Setter>
         </Style>
 
+        <!-- Active transform tool: stays highlighted (accent pill) so you always see the current tool. -->
+        <Style x:Key="ToolButtonActiveStyle" TargetType="Button" BasedOn="{StaticResource ToolButtonStyle}">
+            <Setter Property="Foreground" Value="#FFFFFF"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Border" Background="#6C5CE7" CornerRadius="7">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="#7D6EF0"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="ToolToggleButtonStyle" TargetType="ToggleButton">
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Foreground" Value="#9A9AA1"/>
@@ -261,6 +280,8 @@ d:DesignHeight="400" d:DesignWidth="600">
                                               ToolTip="Toggle Grid (G)" IsChecked="True" Checked="OnGridToggle" Unchecked="OnGridToggle"/>
                                 <ToggleButton x:Name="SnapToggleBtn" Content="&#xE81E;" Style="{StaticResource ToolToggleButtonStyle}"
                                               ToolTip="Toggle Snap" Checked="OnSnapToggle" Unchecked="OnSnapToggle"/>
+                                <ToggleButton x:Name="CollisionToggleBtn" Content="&#xE809;" Style="{StaticResource ToolToggleButtonStyle}"
+                                              ToolTip="Show Collision (green collider frame)" IsChecked="True" Checked="OnCollisionToggle" Unchecked="OnCollisionToggle"/>
                             </StackPanel>
                         </Border>
                         <!-- View options pill -->

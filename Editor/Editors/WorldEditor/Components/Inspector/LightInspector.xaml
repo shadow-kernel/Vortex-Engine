@@ -59,6 +59,7 @@
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
                 <TextBlock Grid.Column="0" Text="&#xE793;" FontFamily="Segoe MDL2 Assets"
@@ -67,6 +68,9 @@
                            FontSize="13.5" FontWeight="SemiBold" Foreground="#FFE9E9ED" VerticalAlignment="Center"/>
                 <CheckBox Grid.Column="2" x:Name="EnabledCheckBox" IsChecked="True"
                           VerticalAlignment="Center" Checked="EnabledCheckBox_Changed" Unchecked="EnabledCheckBox_Changed"/>
+                <Button Grid.Column="3" x:Name="RemoveBtn" Content="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                        Foreground="#FFB76B7E" Background="Transparent" BorderThickness="0" Cursor="Hand"
+                        VerticalAlignment="Center" Margin="12,0,0,0" ToolTip="Remove component" Click="Remove_Click"/>
             </Grid>
 
             <!-- Light Type -->

@@ -41,6 +41,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         private bool _mouseCaptured;
         private bool _mouseJustCaptured;
         private bool _gameViewMode; // "Game" tab selected: clean view + placeholder until Play is pressed
+        private EventHandler<TransformGizmoService.GizmoMode> _onToolModeChanged; // kept so it can be unsubscribed on unload (TransformGizmoService is a long-lived singleton)
         private ECS.Vector3 _extSnapPos; // frozen main-camera pose: the editor's placeholder while the game runs externally
         private ECS.Vector3 _extSnapRot;
         private bool IsPlaying => Editor.Core.Services.PlayModeService.Instance.State == Editor.Core.Services.PlayState.Playing;
@@ -351,28 +352,41 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             var gridToggle = FindName("GridToggleBtn") as ToggleButton;
             var gizmosToggle = FindName("GizmosToggleBtn") as ToggleButton;
             var snapToggle = FindName("SnapToggleBtn") as ToggleButton;
-            
+            var collisionToggle = FindName("CollisionToggleBtn") as ToggleButton;
+
             if (gridToggle != null) gridToggle.IsChecked = EditorViewportService.Instance.IsGridVisible;
             if (gizmosToggle != null) gizmosToggle.IsChecked = EditorViewportService.Instance.AreGizmosVisible;
             if (snapToggle != null) snapToggle.IsChecked = EditorViewportService.Instance.SnapToGrid;
-            
+            if (collisionToggle != null) collisionToggle.IsChecked = EditorViewportService.Instance.AreCollidersVisible;
+
             // Subscribe to service changes
-            EditorViewportService.Instance.GridVisibilityChanged += (s, visible) => 
+            EditorViewportService.Instance.GridVisibilityChanged += (s, visible) =>
             {
                 var btn = FindName("GridToggleBtn") as ToggleButton;
                 if (btn != null) btn.IsChecked = visible;
             };
-            EditorViewportService.Instance.GizmosVisibilityChanged += (s, visible) => 
+            EditorViewportService.Instance.GizmosVisibilityChanged += (s, visible) =>
             {
                 var btn = FindName("GizmosToggleBtn") as ToggleButton;
                 if (btn != null) btn.IsChecked = visible;
             };
-            EditorViewportService.Instance.SnapToGridChanged += (s, snap) => 
+            EditorViewportService.Instance.SnapToGridChanged += (s, snap) =>
             {
                 var btn = FindName("SnapToggleBtn") as ToggleButton;
                 if (btn != null) btn.IsChecked = snap;
             };
-            
+            EditorViewportService.Instance.CollisionVisibilityChanged += (s, visible) =>
+            {
+                var btn = FindName("CollisionToggleBtn") as ToggleButton;
+                if (btn != null) btn.IsChecked = visible;
+            };
+
+            // Transform-tool buttons: highlight the active tool now, and keep it in sync when the tool is
+            // switched from the W/E/R shortcuts (which bypass these buttons) via ModeChanged.
+            UpdateToolButtons();
+            _onToolModeChanged = (s, mode) => Dispatcher.Invoke(UpdateToolButtons);
+            TransformGizmoService.Instance.ModeChanged += _onToolModeChanged;
+
             // Subscribe to scene changes to refresh camera list
             SceneService.Instance.SceneLoaded += (s, scene) => RefreshCameraList();
         }
@@ -801,6 +815,8 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         {
             CompositionTarget.Rendering -= OnCompositionTargetRendering;
             SelectionService.Instance.FocusRequested -= OnFocusRequested;
+            if (_onToolModeChanged != null)
+                TransformGizmoService.Instance.ModeChanged -= _onToolModeChanged;
         }
 
         /// <summary>
@@ -1449,6 +1465,35 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             {
                 EditorViewportService.Instance.AreGizmosVisible = toggle.IsChecked == true;
             }
+        }
+
+        /// <summary>"Show Collision" toggle — shows/hides the green collider wireframe (same pattern as Show Grid).</summary>
+        private void OnCollisionToggle(object sender, RoutedEventArgs e)
+        {
+            if (sender is ToggleButton toggle)
+            {
+                EditorViewportService.Instance.AreCollidersVisible = toggle.IsChecked == true;
+            }
+        }
+
+        /// <summary>Highlight the active transform tool (Move/Rotate/Scale) and clear the others. Driven off
+        /// TransformGizmoService.ModeChanged so it stays correct whether the tool is switched from these buttons
+        /// or the W/E/R shortcuts.</summary>
+        private void UpdateToolButtons()
+        {
+            try
+            {
+                var active = (Style)FindResource("ToolButtonActiveStyle");
+                var normal = (Style)FindResource("ToolButtonStyle");
+                var mode = TransformGizmoService.Instance.CurrentMode;
+                var move = FindName("MoveToolBtn") as Button;
+                var rotate = FindName("RotateToolBtn") as Button;
+                var scale = FindName("ScaleToolBtn") as Button;
+                if (move != null) move.Style = mode == TransformGizmoService.GizmoMode.Translate ? active : normal;
+                if (rotate != null) rotate.Style = mode == TransformGizmoService.GizmoMode.Rotate ? active : normal;
+                if (scale != null) scale.Style = mode == TransformGizmoService.GizmoMode.Scale ? active : normal;
+            }
+            catch { /* resources resolve at runtime */ }
         }
 
         #endregion

@@ -303,8 +303,9 @@ namespace Editor.Core.Services
             }
 
             // Green collider wireframe for the selected entity, so you SEE its collision shape where it sits.
+            // Gated by the "Show Collision" viewport toggle (EditorViewportService.AreCollidersVisible).
             var col = selected.GetComponent<Editor.ECS.Components.Physics.Collider>();
-            if (col != null && col.IsEnabled)
+            if (col != null && col.IsEnabled && EditorViewportService.Instance.AreCollidersVisible)
             {
                 float sx = transform.LocalScale.X, sy = transform.LocalScale.Y, sz = transform.LocalScale.Z;
                 float ccx = pos.X + col.Center.X * sx, ccy = pos.Y + col.Center.Y * sy, ccz = pos.Z + col.Center.Z * sz;
