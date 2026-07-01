@@ -302,6 +302,29 @@ namespace Editor.Core.Services
                     rot.X, rot.Y, rot.Z);
             }
 
+            // Green collider wireframe for the selected entity, so you SEE its collision shape where it sits.
+            // Gated by the "Show Collision" viewport toggle (EditorViewportService.AreCollidersVisible).
+            var col = selected.GetComponent<Editor.ECS.Components.Physics.Collider>();
+            if (col != null && col.IsEnabled && EditorViewportService.Instance.AreCollidersVisible)
+            {
+                float sx = transform.LocalScale.X, sy = transform.LocalScale.Y, sz = transform.LocalScale.Z;
+                float ccx = pos.X + col.Center.X * sx, ccy = pos.Y + col.Center.Y * sy, ccz = pos.Z + col.Center.Z * sz;
+                if (col is Editor.ECS.Components.Physics.BoxCollider bc)
+                    VortexAPI.RenderColliderBox(ccx, ccy, ccz, Math.Abs(bc.Size.X * 0.5f * sx), Math.Abs(bc.Size.Y * 0.5f * sy), Math.Abs(bc.Size.Z * 0.5f * sz), rot.Y);
+                else if (col is Editor.ECS.Components.Physics.SphereCollider spc)
+                    VortexAPI.RenderColliderSphere(ccx, ccy, ccz, spc.Radius * Math.Max(Math.Abs(sx), Math.Max(Math.Abs(sy), Math.Abs(sz))));
+                else if (col is Editor.ECS.Components.Physics.CapsuleCollider cpc)
+                {
+                    float cr = cpc.Radius * Math.Max(Math.Abs(sx), Math.Abs(sz));
+                    VortexAPI.RenderColliderCapsule(ccx, ccy, ccz, cr, Math.Max(0f, cpc.Height * 0.5f * Math.Abs(sy) - cr));
+                }
+                else // Mesh / base collider: outline the entity's bounds
+                {
+                    var b = CalculateCombinedBounds(selected);
+                    VortexAPI.RenderColliderBox(pos.X + b.CenterOffset.X, pos.Y + b.CenterOffset.Y, pos.Z + b.CenterOffset.Z, b.Size.X * 0.5f, b.Size.Y * 0.5f, b.Size.Z * 0.5f, rot.Y);
+                }
+            }
+
             if (VortexAPI.AreGizmosVisible)
                 VortexAPI.RenderGizmo(pos.X, pos.Y, pos.Z, transform.LocalScale.Y, 1.0f);
         }
@@ -1037,6 +1060,39 @@ namespace Editor.Core.Services
             }
             
             return result;
+        }
+
+        /// <summary>
+        /// Set an entity's base color at runtime (used by scripts — e.g. change color when a trigger is touched).
+        /// Updates the C# MeshRenderer color and pushes it to the engine material immediately so it shows this
+        /// frame, even under submit-once (the material is referenced by id, so changing its color is live).
+        /// </summary>
+        public void SetEntityColor(GameEntity entity, float r, float g, float b, float a = 1f)
+        {
+            if (entity == null) return;
+            var mr = entity.GetComponent<MeshRenderer>();
+            if (mr != null) { mr.ColorR = r; mr.ColorG = g; mr.ColorB = b; mr.ColorA = a; }
+
+            // Per-entity material (primitives / single mesh / texture fallback).
+            if (_entityMaterials.TryGetValue(entity.Id, out long matId) && matId >= 0)
+            {
+                VortexAPI.SetMaterialBaseColor(matId, r, g, b, a);
+                _entityMaterialColors[entity.Id] = (r, g, b, a);
+            }
+
+            // Imported multi-submesh models have no per-entity material — tint the shared per-mesh-path materials
+            // instead (note: this tints every instance that shares the same mesh path).
+            if (mr != null && !string.IsNullOrEmpty(mr.MeshPath))
+            {
+                long baseMat = GetMaterialForMeshPath(mr.MeshPath);
+                if (baseMat >= 0) VortexAPI.SetMaterialBaseColor(baseMat, r, g, b, a);
+                for (int n = 0; n < 64; n++)
+                {
+                    long sm = GetMaterialForMeshPath(mr.MeshPath + "#submesh" + n);
+                    if (sm >= 0) VortexAPI.SetMaterialBaseColor(sm, r, g, b, a);
+                    else if (n > 0) break;
+                }
+            }
         }
 
         /// <summary>

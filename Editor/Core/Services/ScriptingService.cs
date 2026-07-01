@@ -349,11 +349,25 @@ namespace Vortex
         public void Translate(float dx, float dy, float dz) { }
         /// <summary>Rotate this entity by a delta (degrees).</summary>
         public void Rotate(float dPitch, float dYaw, float dRoll) { }
+        /// <summary>Set this entity's base color at runtime (e.g. flash a color when a trigger is touched).</summary>
+        public void SetColor(float r, float g, float b) { }
 
         public virtual void Start() { }
         public virtual void Update(float dt) { }
         public virtual void OnDestroy() { }
+
+        /// <summary>Called once when another character enters this entity's TRIGGER collider.</summary>
+        public virtual void OnTriggerEnter(TriggerHit other) { }
+        /// <summary>Called every tick while another character stays in this entity's TRIGGER collider.</summary>
+        public virtual void OnTriggerStay(TriggerHit other) { }
+        /// <summary>Called once when another character leaves this entity's TRIGGER collider.</summary>
+        public virtual void OnTriggerExit(TriggerHit other) { }
+        /// <summary>Called once when a character touches this entity's SOLID collider.</summary>
+        public virtual void OnCollisionEnter(TriggerHit other) { }
     }
+
+    /// <summary>A collision/trigger contact — identifies the OTHER entity (who touched your trigger / what you hit).</summary>
+    public struct TriggerHit { public long EntityId; public string Name; public string Tag; }
 
     /// <summary>Keyboard + mouse input. Key names match WPF keys, e.g. ""W"", ""Space"", ""Left"".</summary>
     public static class Input

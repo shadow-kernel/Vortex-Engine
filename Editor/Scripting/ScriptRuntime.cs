@@ -30,6 +30,14 @@ namespace Editor.Scripting
         private readonly Dictionary<long, GameEntity> _entitiesById = new Dictionary<long, GameEntity>();
         private long _nextHandle;
         private readonly List<Vortex.VortexBehaviour> _behaviours = new List<Vortex.VortexBehaviour>();
+        // Reverse maps so collision/trigger events can be dispatched to the right behaviour.
+        private readonly Dictionary<long, Vortex.VortexBehaviour> _behavioursByHandle = new Dictionary<long, Vortex.VortexBehaviour>();
+        private readonly Dictionary<GameEntity, Vortex.VortexBehaviour> _behavioursByEntity = new Dictionary<GameEntity, Vortex.VortexBehaviour>();
+        // Reusable buffers drained each tick from CollisionService (avoid per-frame allocation).
+        private readonly List<Editor.Core.Services.Physics.CollisionService.Contact> _evEnter = new List<Editor.Core.Services.Physics.CollisionService.Contact>();
+        private readonly List<Editor.Core.Services.Physics.CollisionService.Contact> _evStay = new List<Editor.Core.Services.Physics.CollisionService.Contact>();
+        private readonly List<Editor.Core.Services.Physics.CollisionService.Contact> _evExit = new List<Editor.Core.Services.Physics.CollisionService.Contact>();
+        private readonly List<Editor.Core.Services.Physics.CollisionService.Contact> _evCollide = new List<Editor.Core.Services.Physics.CollisionService.Contact>();
 
         // The loaded gameplay assembly (precompiled .dll for the shipped game, or the runtime-compiled scripts).
         // Kept so a UI button can spin up its screen's "<Screen>Actions" class on demand even if the user never
@@ -72,8 +80,14 @@ namespace Editor.Scripting
             Vortex.Cursor.Host = this;
             Vortex.Application.Host = this;
             Vortex.Camera.Host = this;
+            Vortex.Physics.Host = this;
+            if (Editor.Core.Services.Physics.CollisionService.MeshTriangleProvider == null)
+                Editor.Core.Services.Physics.CollisionService.MeshTriangleProvider = ResolveMeshTriangles;
+            try { Editor.Core.Services.Physics.CollisionService.Build(scene); } catch { } // build the collision world for this scene
 
             _entitiesById.Clear();
+            _behavioursByHandle.Clear();
+            _behavioursByEntity.Clear();
             _nextHandle = 0;
 
             string log = null;
@@ -115,6 +129,70 @@ namespace Editor.Scripting
                 try { b.Update(dt); }
                 catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] UI Update error: " + ex.Message); }
             }
+
+            // Collision/trigger events fire AFTER everyone moved this tick, so overlaps are tested at final positions.
+            DispatchCollisionEvents();
+        }
+
+        private enum EvKind { Enter, Stay, Exit, Collision }
+
+        /// <summary>Drain this tick's trigger/collision overlaps from CollisionService and deliver them as
+        /// OnTriggerEnter/Stay/Exit / OnCollisionEnter to the relevant behaviours (both the collider owner and the
+        /// touching character), so a collider can act as a no-fly zone / "react when touched".</summary>
+        private void DispatchCollisionEvents()
+        {
+            try { Editor.Core.Services.Physics.CollisionService.StepEvents(_evEnter, _evStay, _evExit, _evCollide); }
+            catch { return; }
+            for (int i = 0; i < _evEnter.Count; i++) DispatchContact(_evEnter[i], EvKind.Enter);
+            for (int i = 0; i < _evStay.Count; i++) DispatchContact(_evStay[i], EvKind.Stay);
+            for (int i = 0; i < _evExit.Count; i++) DispatchContact(_evExit[i], EvKind.Exit);
+            for (int i = 0; i < _evCollide.Count; i++) DispatchContact(_evCollide[i], EvKind.Collision);
+        }
+
+        private void DispatchContact(Editor.Core.Services.Physics.CollisionService.Contact c, EvKind kind)
+        {
+            var owner = c.Other;
+            if (owner == null) return;
+            _entitiesById.TryGetValue(c.CharacterId, out var charEnt);
+            if (charEnt == null) return;                                    // stale/unknown character — don't fire a phantom contact
+            if (ReferenceEquals(charEnt, owner)) return;                    // never fire on self
+
+            _behavioursByHandle.TryGetValue(c.CharacterId, out var charBeh);
+            _behavioursByEntity.TryGetValue(owner, out var ownerBeh);
+
+            // Fire on the collider OWNER's behaviour (other = the character that touched it).
+            if (ownerBeh != null)
+            {
+                var hit = new Vortex.TriggerHit(c.CharacterId, charEnt?.Name, EntityTag(charEnt));
+                Invoke(ownerBeh, kind, hit);
+            }
+            // And on the touching CHARACTER's behaviour (other = the collider owner) so either side can react.
+            if (charBeh != null)
+            {
+                var hit = new Vortex.TriggerHit(ownerBeh?.EntityId ?? 0, owner.Name, EntityTag(owner));
+                Invoke(charBeh, kind, hit);
+            }
+        }
+
+        private static string EntityTag(GameEntity e)
+        {
+            if (e == null) return "";
+            try { var p = e.GetType().GetProperty("Tag"); var v = p?.GetValue(e) as string; return v ?? ""; } catch { return ""; }
+        }
+
+        private static void Invoke(Vortex.VortexBehaviour b, EvKind kind, Vortex.TriggerHit hit)
+        {
+            try
+            {
+                switch (kind)
+                {
+                    case EvKind.Enter: b.OnTriggerEnter(hit); break;
+                    case EvKind.Stay: b.OnTriggerStay(hit); break;
+                    case EvKind.Exit: b.OnTriggerExit(hit); break;
+                    case EvKind.Collision: b.OnCollisionEnter(hit); break;
+                }
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] " + kind + " error: " + ex.Message); }
         }
 
         /// <summary>Invoke the C# method bound to each fired UI button action (the button↔code link). Routing
@@ -227,6 +305,9 @@ namespace Editor.Scripting
             _uiActions.Clear();
             _behaviours.Clear();
             _entitiesById.Clear();
+            _behavioursByHandle.Clear();
+            _behavioursByEntity.Clear();
+            try { Editor.Core.Services.Physics.CollisionService.ResetEvents(); Editor.Core.Services.Physics.CollisionService.ClearCharacters(); } catch { }
             _scriptAsm = null;
             _active = false;
         }
@@ -342,6 +423,8 @@ namespace Editor.Scripting
                         behaviour.EntityId = handle;
                         _entitiesById[handle] = e;
                         _behaviours.Add(behaviour);
+                        _behavioursByHandle[handle] = behaviour;
+                        _behavioursByEntity[e] = behaviour;
                     }
                     catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] instantiate '" + script.ScriptClassName + "' failed: " + ex.Message); }
                 }
@@ -444,6 +527,12 @@ namespace Editor.Scripting
                 e.Transform.LocalRotation = new ECS.Vector3(eulerDegrees.X, eulerDegrees.Y, eulerDegrees.Z);
         }
 
+        void Vortex.IScriptHost.SetEntityColor(long entityId, float r, float g, float b)
+        {
+            if (_entitiesById.TryGetValue(entityId, out var e))
+                Editor.Core.Services.SceneRenderService.Instance.SetEntityColor(e, r, g, b, 1f);
+        }
+
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         private static extern short GetAsyncKeyState(int vKey);
 
@@ -510,6 +599,39 @@ namespace Editor.Scripting
             catch { }
         }
 
+        // Edge-accurate mesh colliders: resolve an imported model's real triangles (native export), VFS-aware + cached.
+        private static readonly System.Collections.Generic.Dictionary<string, float[]> _triCache =
+            new System.Collections.Generic.Dictionary<string, float[]>(System.StringComparer.OrdinalIgnoreCase);
+        private static float[] ResolveMeshTriangles(string meshPath)
+        {
+            if (string.IsNullOrEmpty(meshPath) || meshPath.StartsWith("Primitive:", System.StringComparison.OrdinalIgnoreCase)) return null;
+            float[] cached; if (_triCache.TryGetValue(meshPath, out cached)) return cached;
+            float[] tris = null;
+            try
+            {
+                var actual = meshPath; int h = actual.LastIndexOf('#'); if (h > 0) actual = actual.Substring(0, h);
+                var proj = Editor.Core.Data.ProjectData.Current != null ? Editor.Core.Data.ProjectData.Current.Path : null;
+                var abs = System.IO.Path.IsPathRooted(actual) ? actual : (proj != null ? System.IO.Path.Combine(proj, actual) : actual);
+                var ext = System.IO.Path.GetExtension(actual); if (ext != null) ext = ext.TrimStart('.');
+                byte[] bytes;
+                if (Editor.Core.Services.AssetVfs.IsMounted && Editor.Core.Services.AssetVfs.TryGetBytes(abs, out bytes) && bytes != null)
+                    tris = Editor.DllWrapper.VortexAPI.GetModelTrianglesFromMemory(bytes, ext);
+                else if (System.IO.File.Exists(abs))
+                    tris = Editor.DllWrapper.VortexAPI.GetModelTriangles(abs);
+            }
+            catch { }
+            _triCache[meshPath] = tris;
+            return tris;
+        }
+
+        Vortex.Vector3 Vortex.IScriptHost.MoveCharacter(Vortex.Vector3 feet, float radius, float height, Vortex.Vector3 move, out bool grounded, long selfId)
+        {
+            var f = new Editor.ECS.Vector3(feet.X, feet.Y, feet.Z);
+            var m = new Editor.ECS.Vector3(move.X, move.Y, move.Z);
+            var r = Editor.Core.Services.Physics.CollisionService.MoveCharacter(f, radius, height, m, out grounded, selfId);
+            return new Vortex.Vector3(r.X, r.Y, r.Z);
+        }
+
         bool Vortex.IScriptHost.GetKey(string key)
         {
             if (string.IsNullOrEmpty(key)) return false;
@@ -517,6 +639,9 @@ namespace Editor.Scripting
             // is up — e.g. a chest/inventory. A hotbar/HUD leaves it off, so the player keeps moving. (Mouse-look is
             // gated the same way in Vortex.Input.MouseDeltaX/Y.)
             if (Editor.UI.Vui.VuiStack.Instance.GameplayInputBlocked) return false;
+            // GetAsyncKeyState reads the GLOBAL key state (needed because focus is on a native swapchain HWND), so it
+            // would fire even when our game is in the background — gate it on our window actually being focused.
+            if (!Vortex.Input.WindowFocused) return false;
             if (!Enum.TryParse(key, true, out Key k)) return false;
             // Use the global physical key state (not WPF Keyboard.IsKeyDown): while playing, focus is on
             // a native swapchain HWND (editor viewport or the standalone game window), where the WPF

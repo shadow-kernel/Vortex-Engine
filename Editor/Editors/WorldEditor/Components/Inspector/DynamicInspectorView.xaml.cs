@@ -34,7 +34,11 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
                 { typeof(Camera), comp => CreateCameraInspector((Camera)comp) },
                 { typeof(Light), comp => CreateLightInspector((Light)comp) },
                 { typeof(Skybox), comp => CreateSkyboxInspector((Skybox)comp) },
-                { typeof(Script), comp => CreateScriptInspector((Script)comp) }
+                { typeof(Script), comp => CreateScriptInspector((Script)comp) },
+                { typeof(ECS.Components.Physics.BoxCollider), comp => CreateColliderInspector((ECS.Components.Physics.Collider)comp) },
+                { typeof(ECS.Components.Physics.SphereCollider), comp => CreateColliderInspector((ECS.Components.Physics.Collider)comp) },
+                { typeof(ECS.Components.Physics.CapsuleCollider), comp => CreateColliderInspector((ECS.Components.Physics.Collider)comp) },
+                { typeof(ECS.Components.Physics.MeshCollider), comp => CreateColliderInspector((ECS.Components.Physics.Collider)comp) },
             };
 
             // Accept scripts dropped from the Project Explorer / Asset Browser / Windows Explorer.
@@ -129,6 +133,7 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             var inspector = new MeshRendererInspector();
             inspector.MeshRenderer = meshRenderer;
             inspector.MeshChanged += OnMeshChanged;
+            inspector.RemoveRequested += (s, e) => RemoveComponentAndRefresh(meshRenderer);
             return inspector;
         }
 
@@ -138,6 +143,7 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             inspector.Camera = camera;
             inspector.CameraChanged += OnCameraChanged;
             inspector.PreviewCameraRequested += OnPreviewCameraRequested;
+            inspector.RemoveRequested += (s, e) => RemoveComponentAndRefresh(camera);
             return inspector;
         }
 
@@ -146,6 +152,7 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
         {
             var inspector = new LightInspector();
             inspector.Light = light;
+            inspector.RemoveRequested += (s, e) => RemoveComponentAndRefresh(light);
             return inspector;
         }
 
@@ -153,7 +160,29 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
         {
             var inspector = new SkyboxInspector();
             inspector.Skybox = skybox;
+            inspector.RemoveRequested += (s, e) => RemoveComponentAndRefresh(skybox);
             return inspector;
+        }
+
+        /// <summary>
+        /// Remove a component from the selected entity and re-render the inspector — the single path every
+        /// component's remove button routes through (mirrors the existing Script "detach"). Also cleans up any
+        /// engine resource the component owned and forces the viewport to re-submit so the change shows at once.
+        /// </summary>
+        private void RemoveComponentAndRefresh(Component component)
+        {
+            if (_selectedEntity == null || component == null) return;
+
+            // Engine-side cleanup for components that own a native resource.
+            if (component is Camera)
+                SceneRenderService.Instance.RemoveEntityCamera(_selectedEntity.Id);
+
+            _selectedEntity.RemoveComponent(component);
+            RefreshInspector();
+
+            // The editor viewport uses submit-once (it reuses the last scene submission), so nudge it to
+            // rebuild the queue — otherwise the removed renderer / light / skybox / collider would linger.
+            Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.RequestResubmit();
         }
 
         private UserControl CreateScriptInspector(Script script)
@@ -189,17 +218,39 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
                 Margin = new Thickness(0, 5, 0, 0)
             };
 
+            var row = new Grid();
             var textBlock = new TextBlock
             {
                 Text = component.GetType().Name,
                 Foreground = new System.Windows.Media.SolidColorBrush(
                     (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#C5C5C5")),
                 FontSize = 14,
-                FontWeight = FontWeights.SemiBold
+                FontWeight = FontWeights.SemiBold,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Center
             };
+            row.Children.Add(textBlock);
 
-            border.Child = textBlock;
-            
+            // Every component gets a remove button — including ones with no dedicated inspector (e.g. Rigidbody).
+            var rm = new Button
+            {
+                Content = "",
+                FontFamily = new System.Windows.Media.FontFamily("Segoe MDL2 Assets"),
+                FontSize = 12,
+                Foreground = new System.Windows.Media.SolidColorBrush(
+                    (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#FFB76B7E")),
+                Background = System.Windows.Media.Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                Cursor = System.Windows.Input.Cursors.Hand,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Center,
+                ToolTip = "Remove component"
+            };
+            rm.Click += (s, e) => RemoveComponentAndRefresh(component);
+            row.Children.Add(rm);
+
+            border.Child = row;
+
             // Wrap in a UserControl
             var wrapper = new UserControl { Content = border };
             return wrapper;
@@ -263,6 +314,11 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             contextMenu.Items.Add(new Separator());
             AddComponentMenuItem(contextMenu, "Rigidbody", () => AddComponent<ECS.Components.Physics.Rigidbody>());
             AddComponentMenuItem(contextMenu, "Box Collider", () => AddComponent<ECS.Components.Physics.BoxCollider>());
+            AddComponentMenuItem(contextMenu, "Sphere Collider", () => AddComponent<ECS.Components.Physics.SphereCollider>());
+            AddComponentMenuItem(contextMenu, "Capsule Collider", () => AddComponent<ECS.Components.Physics.CapsuleCollider>());
+            AddComponentMenuItem(contextMenu, "Mesh Collider (edge-accurate)", () => AddComponent<ECS.Components.Physics.MeshCollider>());
+            contextMenu.Items.Add(new Separator());
+            AddComponentMenuItem(contextMenu, "Open Collision Editor…", () => Editor.Editors.PhysicsEditor.CollisionEditorWindow.Open(Window.GetWindow(this)));
 
             // Script: list existing scripts to assign, plus "New Script…"
             contextMenu.Items.Add(new Separator());
@@ -380,6 +436,27 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
 
             relativePath = ScriptingService.MakeRelative(ScriptingService.ProjectRoot, abs);
             return true;
+        }
+
+        private UserControl CreateColliderInspector(ECS.Components.Physics.Collider col)
+        {
+            Func<string, System.Windows.Media.Brush> brush = hex => (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFromString(hex);
+            var panel = new StackPanel { Margin = new Thickness(10, 6, 10, 10) };
+            var header = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+            header.Children.Add(new TextBlock { Text = col.DisplayName, Foreground = brush("#FFE9E9ED"), FontSize = 12.5, FontWeight = FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center });
+            var rmCol = new Button { Content = "", FontFamily = new System.Windows.Media.FontFamily("Segoe MDL2 Assets"), FontSize = 12, Foreground = brush("#FFB76B7E"), Background = System.Windows.Media.Brushes.Transparent, BorderThickness = new Thickness(0), Cursor = System.Windows.Input.Cursors.Hand, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center, ToolTip = "Remove component" };
+            rmCol.Click += (s, e) => RemoveComponentAndRefresh(col);
+            header.Children.Add(rmCol);
+            panel.Children.Add(header);
+            var trig = new CheckBox { Content = "Is Trigger", Foreground = brush("#FFC8C8CE"), IsChecked = col.IsTrigger, Margin = new Thickness(0, 0, 0, 8) };
+            trig.Checked += (s, e) => col.IsTrigger = true;
+            trig.Unchecked += (s, e) => col.IsTrigger = false;
+            panel.Children.Add(trig);
+            panel.Children.Add(new TextBlock { Text = "Solid collision shape. Edit size / center and switch shapes in the Collision Editor.", Foreground = brush("#FF8A8A92"), FontSize = 10.5, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 8) });
+            var btn = new Button { Content = "Open Collision Editor…", Padding = new Thickness(12, 6, 12, 6), Cursor = System.Windows.Input.Cursors.Hand, HorizontalAlignment = HorizontalAlignment.Left, Foreground = System.Windows.Media.Brushes.White, Background = brush("#FF6C5CE7"), BorderThickness = new Thickness(0) };
+            btn.Click += (s, e) => { try { Editor.Editors.PhysicsEditor.CollisionEditorWindow.Open(Window.GetWindow(this)); } catch { } };
+            panel.Children.Add(btn);
+            return new UserControl { Content = panel };
         }
 
         private void AddComponentMenuItem(ContextMenu menu, string header, Action action)

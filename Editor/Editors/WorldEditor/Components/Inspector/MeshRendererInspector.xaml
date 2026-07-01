@@ -37,7 +37,11 @@
         <StackPanel>
             <!-- Header -->
             <Grid Margin="0,0,0,12">
-                <StackPanel Orientation="Horizontal">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Orientation="Horizontal">
                     <TextBlock Text="&#xE809;" FontFamily="Segoe MDL2 Assets"
                                FontSize="15" Foreground="#FF9A9AA1"
                                VerticalAlignment="Center" Margin="0,0,9,0"/>
@@ -46,8 +50,9 @@
                     <CheckBox x:Name="EnabledCheckBox" IsChecked="{Binding IsEnabled, Mode=TwoWay}"
                               Margin="14,0,0,0" VerticalAlignment="Center"/>
                 </StackPanel>
-                <TextBlock Text="&#xE712;" FontFamily="Segoe MDL2 Assets" FontSize="13"
-                           Foreground="#FF73737A" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                <Button Grid.Column="1" x:Name="RemoveBtn" Content="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                        Foreground="#FFB76B7E" Background="Transparent" BorderThickness="0" Cursor="Hand"
+                        HorizontalAlignment="Right" VerticalAlignment="Center" Margin="8,0,0,0" ToolTip="Remove component" Click="Remove_Click"/>
             </Grid>
 
             <!-- Mesh Selection -->

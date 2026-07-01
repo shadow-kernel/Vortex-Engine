@@ -41,6 +41,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         private bool _mouseCaptured;
         private bool _mouseJustCaptured;
         private bool _gameViewMode; // "Game" tab selected: clean view + placeholder until Play is pressed
+        private EventHandler<TransformGizmoService.GizmoMode> _onToolModeChanged; // kept so it can be unsubscribed on unload (TransformGizmoService is a long-lived singleton)
         private ECS.Vector3 _extSnapPos; // frozen main-camera pose: the editor's placeholder while the game runs externally
         private ECS.Vector3 _extSnapRot;
         private bool IsPlaying => Editor.Core.Services.PlayModeService.Instance.State == Editor.Core.Services.PlayState.Playing;
@@ -74,6 +75,8 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             this.Focusable = true;
             this.KeyDown += OnViewportKeyDown;
             this.KeyUp += OnViewportKeyUp;
+            // Safety: if mouse capture is lost while the right-drag cursor is hidden (e.g. Alt-Tab), bring it back.
+            this.LostMouseCapture += (s, ev) => { if (!IsPlaying) System.Windows.Input.Mouse.OverrideCursor = null; };
 
             // Enable drag and drop
             this.AllowDrop = true;
@@ -349,28 +352,41 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             var gridToggle = FindName("GridToggleBtn") as ToggleButton;
             var gizmosToggle = FindName("GizmosToggleBtn") as ToggleButton;
             var snapToggle = FindName("SnapToggleBtn") as ToggleButton;
-            
+            var collisionToggle = FindName("CollisionToggleBtn") as ToggleButton;
+
             if (gridToggle != null) gridToggle.IsChecked = EditorViewportService.Instance.IsGridVisible;
             if (gizmosToggle != null) gizmosToggle.IsChecked = EditorViewportService.Instance.AreGizmosVisible;
             if (snapToggle != null) snapToggle.IsChecked = EditorViewportService.Instance.SnapToGrid;
-            
+            if (collisionToggle != null) collisionToggle.IsChecked = EditorViewportService.Instance.AreCollidersVisible;
+
             // Subscribe to service changes
-            EditorViewportService.Instance.GridVisibilityChanged += (s, visible) => 
+            EditorViewportService.Instance.GridVisibilityChanged += (s, visible) =>
             {
                 var btn = FindName("GridToggleBtn") as ToggleButton;
                 if (btn != null) btn.IsChecked = visible;
             };
-            EditorViewportService.Instance.GizmosVisibilityChanged += (s, visible) => 
+            EditorViewportService.Instance.GizmosVisibilityChanged += (s, visible) =>
             {
                 var btn = FindName("GizmosToggleBtn") as ToggleButton;
                 if (btn != null) btn.IsChecked = visible;
             };
-            EditorViewportService.Instance.SnapToGridChanged += (s, snap) => 
+            EditorViewportService.Instance.SnapToGridChanged += (s, snap) =>
             {
                 var btn = FindName("SnapToggleBtn") as ToggleButton;
                 if (btn != null) btn.IsChecked = snap;
             };
-            
+            EditorViewportService.Instance.CollisionVisibilityChanged += (s, visible) =>
+            {
+                var btn = FindName("CollisionToggleBtn") as ToggleButton;
+                if (btn != null) btn.IsChecked = visible;
+            };
+
+            // Transform-tool buttons: highlight the active tool now, and keep it in sync when the tool is
+            // switched from the W/E/R shortcuts (which bypass these buttons) via ModeChanged.
+            UpdateToolButtons();
+            _onToolModeChanged = (s, mode) => Dispatcher.Invoke(UpdateToolButtons);
+            TransformGizmoService.Instance.ModeChanged += _onToolModeChanged;
+
             // Subscribe to scene changes to refresh camera list
             SceneService.Instance.SceneLoaded += (s, scene) => RefreshCameraList();
         }
@@ -411,10 +427,14 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
 
             this.Focus();
             this.CaptureMouse();
-            
+
             // Get position relative to the viewport host, not the entire control
             var pos = _host != null ? e.GetPosition(_host) : e.GetPosition(this);
-            
+
+            // Right-mouse look/fly: hide the cursor while it's held (restored on release), like an FPS freecam.
+            if (e.RightButton == MouseButtonState.Pressed && !_isViewingThroughGameCamera)
+                System.Windows.Input.Mouse.OverrideCursor = System.Windows.Input.Cursors.None;
+
             // Only allow camera movement when in Free Camera mode (not viewing through a game camera)
             if (!_isViewingThroughGameCamera)
             {
@@ -470,7 +490,11 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         {
             if (IsPlaying) { e.Handled = true; return; } // game owns the mouse while playing
             this.ReleaseMouseCapture();
-            
+
+            // Right button released -> bring the cursor back (it was hidden for the look/fly drag).
+            if (e.RightButton != MouseButtonState.Pressed)
+                System.Windows.Input.Mouse.OverrideCursor = null;
+
             // Only allow camera control when in Free Camera mode
             if (!_isViewingThroughGameCamera)
             {
@@ -650,6 +674,17 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
 
         private void OnViewportKeyDown(object sender, KeyEventArgs e)
         {
+            // ESC de-focuses: drop the current selection + keyboard focus (and un-hide the cursor). Not while playing
+            // (there ESC drives the in-game menu).
+            if (e.Key == Key.Escape && !IsPlaying)
+            {
+                SelectionService.Instance.ClearSelection();
+                Keyboard.ClearFocus();
+                System.Windows.Input.Mouse.OverrideCursor = null;
+                e.Handled = true;
+                return;
+            }
+
             // Gizmo mode shortcuts (only when not in camera fly mode AND in Free Camera mode)
             if (_cameraController != null && !_cameraController.IsFlyMode && !_isViewingThroughGameCamera)
             {
@@ -780,6 +815,8 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         {
             CompositionTarget.Rendering -= OnCompositionTargetRendering;
             SelectionService.Instance.FocusRequested -= OnFocusRequested;
+            if (_onToolModeChanged != null)
+                TransformGizmoService.Instance.ModeChanged -= _onToolModeChanged;
         }
 
         /// <summary>
@@ -990,6 +1027,16 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         private readonly System.Collections.Generic.List<(GameEntity ent, Vector3 start)> _physicsEntities
             = new System.Collections.Generic.List<(GameEntity, Vector3)>();
 
+        // Non-destructive Play: full snapshot of every entity's local transform + the editor free-camera pose,
+        // captured on Play and restored on Stop so nothing scripts/physics touched stays changed. (Vector3 is a
+        // value-type struct, so storing it is a deep copy.)
+        private readonly System.Collections.Generic.List<(GameEntity ent, Vector3 pos, Vector3 rot, Vector3 scale)> _transformSnapshot
+            = new System.Collections.Generic.List<(GameEntity, Vector3, Vector3, Vector3)>();
+        private readonly System.Collections.Generic.List<(GameEntity ent, float r, float g, float b, float a)> _colorSnapshot
+            = new System.Collections.Generic.List<(GameEntity, float, float, float, float)>();
+        private float _snapCamX, _snapCamY, _snapCamZ, _snapCamYaw, _snapCamPitch, _snapCamRoll;
+        private bool _hasCamSnap;
+
         /// <summary>On Play: register every Dynamic-Rigidbody entity with the engine physics tick and
         /// snapshot its start position so Stop can restore it.</summary>
         private void BeginPlaySimulation()
@@ -997,6 +1044,11 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             if (_simActive) return; // ignore Resume (Paused->Playing) so we don't re-snapshot mid-fall
             _simActive = true;
             _physicsEntities.Clear();
+
+            // Snapshot BEFORE any registration or ScriptRuntime.Begin (Start() can move things on frame 0),
+            // so Stop restores the exact pre-play state.
+            SnapshotSceneForPlay();
+
             VortexAPI.ClearAllRigidbodies();
             VortexAPI.ClearAllColliders();
             VortexAPI.ResetGameClock(); // start the game timer at 0 for this play session
@@ -1095,20 +1147,72 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             }
         }
 
-        /// <summary>On Stop: clear the engine bodies and restore each entity's pre-play position.</summary>
+        /// <summary>Capture the editor free-camera pose + every entity's local transform before Play so Stop
+        /// can put everything back exactly as it was (fully non-destructive play).</summary>
+        private void SnapshotSceneForPlay()
+        {
+            if (_cameraController != null)
+            {
+                _snapCamX = _cameraController.PositionX; _snapCamY = _cameraController.PositionY; _snapCamZ = _cameraController.PositionZ;
+                _snapCamYaw = _cameraController.Yaw; _snapCamPitch = _cameraController.Pitch; _snapCamRoll = _cameraController.Roll;
+                _hasCamSnap = true;
+            }
+            _transformSnapshot.Clear();
+            _colorSnapshot.Clear();
+            var scene = _currentScene ?? ProjectData.Current?.ActiveScene;
+            if (scene?.Entities != null)
+                foreach (var e in scene.Entities) SnapshotTransformRecursive(e);
+        }
+
+        private void SnapshotTransformRecursive(GameEntity e)
+        {
+            if (e == null) return;
+            if (e.Transform != null)
+                _transformSnapshot.Add((e, e.Transform.LocalPosition, e.Transform.LocalRotation, e.Transform.LocalScale));
+            // Also snapshot the base color so a script that recolors an entity (e.g. on trigger touch) is reverted.
+            var mr = e.GetComponent<Editor.ECS.Components.Rendering.MeshRenderer>();
+            if (mr != null)
+                _colorSnapshot.Add((e, mr.ColorR, mr.ColorG, mr.ColorB, mr.ColorA));
+            if (e.Children != null)
+                foreach (var c in e.Children) SnapshotTransformRecursive(c);
+        }
+
+        /// <summary>On Stop: clear the engine bodies and restore the FULL pre-play snapshot — every entity's
+        /// position/rotation/scale AND the editor free-camera pose — so nothing a script or physics touched
+        /// stays changed. Play is purely temporary.</summary>
         private void EndPlaySimulation()
         {
             if (!_simActive) return;
             _simActive = false;
-            Editor.Scripting.ScriptRuntime.Instance.End(); // stop gameplay scripts (OnDestroy)
+            Editor.Scripting.ScriptRuntime.Instance.End(); // stop gameplay scripts (OnDestroy) BEFORE restoring
             VortexAPI.ClearAllRigidbodies();
-            foreach (var (ent, start) in _physicsEntities)
+
+            // Restore every entity's local transform (pos/rot/scale). The setters re-sync the engine, so this
+            // reverts anything a script or the physics tick moved — supersedes the old position-only restore.
+            foreach (var s in _transformSnapshot)
             {
-                if (ent?.Transform != null) ent.Transform.LocalPosition = start; // restores + re-syncs to engine
+                if (s.ent?.Transform == null) continue;
+                s.ent.Transform.LocalPosition = s.pos;
+                s.ent.Transform.LocalRotation = s.rot;
+                s.ent.Transform.LocalScale = s.scale;
             }
+            _transformSnapshot.Clear();
             _physicsEntities.Clear();
-            // The edit/fly camera is untouched during play (play renders through the main camera),
-            // so on Stop the viewport simply resumes the build camera — nothing to restore.
+
+            // Restore any script-driven color changes (e.g. a trigger that recolors an object) to pre-play.
+            foreach (var cs in _colorSnapshot)
+                SceneRenderService.Instance.SetEntityColor(cs.ent, cs.r, cs.g, cs.b, cs.a);
+            _colorSnapshot.Clear();
+
+            // Park the editor free-camera back exactly where it was before Play. Play renders through the game
+            // main camera, which otherwise leaves the viewport frozen at the game's last pose until a right-drag.
+            if (_hasCamSnap && _cameraController != null)
+            {
+                _cameraController.SetFromEntityTransform(_snapCamX, _snapCamY, _snapCamZ, _snapCamPitch, _snapCamYaw, _snapCamRoll);
+                _hasCamSnap = false;
+            }
+
+            _sceneDirty = true; // re-submit the reverted scene so the viewport shows the restored state at once
         }
 
         /// <summary>
@@ -1268,7 +1372,18 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         protected override void OnPreviewKeyDown(KeyEventArgs e)
         {
             base.OnPreviewKeyDown(e);
-            
+
+            // ESC de-focuses (deselect + drop keyboard focus). Preview handler so it works wherever the viewport is
+            // in the focus chain. Not while playing (ESC is the in-game menu there).
+            if (e.Key == Key.Escape && !IsPlaying)
+            {
+                SelectionService.Instance.ClearSelection();
+                Keyboard.ClearFocus();
+                System.Windows.Input.Mouse.OverrideCursor = null;
+                e.Handled = true;
+                return;
+            }
+
             // Forward WASD to camera (only in Free Camera mode)
             if (!_isViewingThroughGameCamera)
             {
@@ -1417,6 +1532,35 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             {
                 EditorViewportService.Instance.AreGizmosVisible = toggle.IsChecked == true;
             }
+        }
+
+        /// <summary>"Show Collision" toggle — shows/hides the green collider wireframe (same pattern as Show Grid).</summary>
+        private void OnCollisionToggle(object sender, RoutedEventArgs e)
+        {
+            if (sender is ToggleButton toggle)
+            {
+                EditorViewportService.Instance.AreCollidersVisible = toggle.IsChecked == true;
+            }
+        }
+
+        /// <summary>Highlight the active transform tool (Move/Rotate/Scale) and clear the others. Driven off
+        /// TransformGizmoService.ModeChanged so it stays correct whether the tool is switched from these buttons
+        /// or the W/E/R shortcuts.</summary>
+        private void UpdateToolButtons()
+        {
+            try
+            {
+                var active = (Style)FindResource("ToolButtonActiveStyle");
+                var normal = (Style)FindResource("ToolButtonStyle");
+                var mode = TransformGizmoService.Instance.CurrentMode;
+                var move = FindName("MoveToolBtn") as Button;
+                var rotate = FindName("RotateToolBtn") as Button;
+                var scale = FindName("ScaleToolBtn") as Button;
+                if (move != null) move.Style = mode == TransformGizmoService.GizmoMode.Translate ? active : normal;
+                if (rotate != null) rotate.Style = mode == TransformGizmoService.GizmoMode.Rotate ? active : normal;
+                if (scale != null) scale.Style = mode == TransformGizmoService.GizmoMode.Scale ? active : normal;
+            }
+            catch { /* resources resolve at runtime */ }
         }
 
         #endregion

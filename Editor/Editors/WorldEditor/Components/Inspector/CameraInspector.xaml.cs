@@ -24,6 +24,10 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             InitializeComponent();
         }
 
+        /// <summary>Raised when the user clicks the header remove button; the host detaches the component.</summary>
+        public event EventHandler RemoveRequested;
+        private void Remove_Click(object sender, RoutedEventArgs e) => RemoveRequested?.Invoke(this, EventArgs.Empty);
+
         /// <summary>
         /// The camera component being inspected.
         /// </summary>
