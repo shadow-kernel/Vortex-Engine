@@ -733,8 +733,10 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 //   Ctrl   -> open a standalone Model Viewer to inspect + fly around it
                 // (this also fixes the old bug where double-click opened the editor whose preview hijacked the
                 //  shared render queue, so the main viewport showed the model instead of the scene.)
-                // Prefab double-click:  plain = add a linked instance to the scene · Shift = add + select for editing
-                // (edit it, then right-click → Apply to Prefab) · Ctrl = big preview (open its mesh in the Model Viewer).
+                // Prefab double-click — consistent with every other asset ("double-click opens its editor"):
+                //   plain  -> open the Prefab Editor (preview + what Save/Add/Apply/Revert mean + one-click actions)
+                //   Ctrl   -> Edit in Scene: add a linked instance, select it, hint how to Apply changes back
+                //   Shift  -> Add to Scene: just drop a linked instance
                 bool isPrefab = item.Type == AssetType.Prefab || (item.Path?.EndsWith(".ventity", StringComparison.OrdinalIgnoreCase) ?? false);
                 if (isPrefab && !string.IsNullOrEmpty(item.Path))
                 {
@@ -742,26 +744,9 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                     var proj = ProjectData.Current?.Path ?? "";
                     var full = System.IO.Path.IsPathRooted(item.Path) ? item.Path : System.IO.Path.Combine(proj, item.Path);
 
-                    if ((pmods & System.Windows.Input.ModifierKeys.Control) != 0)
-                    {
-                        // Ctrl -> big preview: fly around the prefab's mesh in the standalone Model Viewer.
-                        var modelPath = PrefabFirstModelPath(full);
-                        if (!string.IsNullOrEmpty(modelPath))
-                            OpenModelViewer(new AssetItem { Path = modelPath, Name = item.Name, Type = AssetType.Models });
-                        else
-                            MessageBox.Show("This prefab has no renderable mesh to preview.", "Prefab", MessageBoxButton.OK, MessageBoxImage.Information);
-                        return;
-                    }
-
-                    var scene = ProjectData.Current?.ActiveScene;
-                    var inst = Editor.Core.Services.PrefabService.Instance.InstantiatePrefab(full, scene);
-                    if (inst != null)
-                    {
-                        Editor.Core.Services.SelectionService.Instance.Select(inst);
-                        if ((pmods & System.Windows.Input.ModifierKeys.Shift) != 0)
-                            (Application.Current?.MainWindow as MainWindow)?.ShowToast("Editing '" + inst.Name + "' — change it, then right-click → Apply to Prefab");
-                    }
-                    else MessageBox.Show("Could not instantiate the prefab (empty or unreadable).", "Prefab", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    if ((pmods & System.Windows.Input.ModifierKeys.Control) != 0) { PlacePrefabInstance(full, item.Name, editHint: true); return; }
+                    if ((pmods & System.Windows.Input.ModifierKeys.Shift)   != 0) { PlacePrefabInstance(full, item.Name, editHint: false); return; }
+                    OpenPrefabEditor(item, full);
                     return;
                 }
 
@@ -812,8 +797,17 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             var menu = new ContextMenu { Background = Br("#FF161618"), BorderBrush = Br("#FF3A3A3E") };
             if (item != null)
             {
+                bool isPrefabItem = item.Type == AssetType.Prefab || (item.Path?.EndsWith(".ventity", StringComparison.OrdinalIgnoreCase) ?? false);
                 if (item.IsFolder)
                     AddMenu(menu, "Open Folder", () => { if (item.Source != null) FileExplorerService.Instance.NavigateTo(item.Source); }, 0xE8B7, "#FFE6B422");
+                else if (isPrefabItem)
+                {
+                    var proj = ProjectData.Current?.Path ?? "";
+                    var full = System.IO.Path.IsPathRooted(item.Path) ? item.Path : System.IO.Path.Combine(proj, item.Path ?? "");
+                    AddMenu(menu, "Open Prefab (Edit)", () => OpenPrefabEditor(item, full), 0xE70F, "#FF9C8CFF");
+                    AddMenu(menu, "Edit in Scene", () => PlacePrefabInstance(full, item.Name, editHint: true), 0xE70F, "#FF7CE0A3");
+                    AddMenu(menu, "Add to Scene (Instance)", () => PlacePrefabInstance(full, item.Name, editHint: false), 0xE710, "#FF4EC9B0");
+                }
                 else
                     AddMenu(menu, "Open / Edit", () => OpenOrPlaceAsset(item), 0xE70F, "#FF9C8CFF");
 
@@ -975,6 +969,131 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             {
                 OpenAssetInEditor(item);
             }
+        }
+
+        // ---- prefab actions ----
+
+        /// <summary>Drop a fresh linked instance of the prefab into the active scene, select it, and (optionally)
+        /// hint how to push edits back. Shared by the Ctrl/Shift double-click paths and the Prefab Editor.</summary>
+        private void PlacePrefabInstance(string full, string name, bool editHint)
+        {
+            var scene = ProjectData.Current?.ActiveScene;
+            if (scene == null) { MessageBox.Show("No active scene. Open or create a scene first.", "Prefab", MessageBoxButton.OK, MessageBoxImage.Information); return; }
+            var inst = Editor.Core.Services.PrefabService.Instance.InstantiatePrefab(full, scene);
+            if (inst == null) { MessageBox.Show("Could not instantiate the prefab (empty or unreadable).", "Prefab", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+            Editor.Core.Services.SelectionService.Instance.Select(inst);
+            var mw = Application.Current?.MainWindow as MainWindow;
+            if (editHint) mw?.ShowToast("Editing '" + inst.Name + "' — change it in the Inspector, then right-click → Apply to Prefab");
+            else mw?.ShowToast("Added '" + inst.Name + "' to the scene");
+        }
+
+        /// <summary>A floating, self-contained editor/preview hub for a .ventity prefab: a live 3D preview of the
+        /// object it spawns, a plain-language explanation of the Save/Add/Apply/Revert workflow, and one-click
+        /// actions (Edit in Scene / Add to Scene / Edit Materials / Show in Explorer). Opened by double-clicking a
+        /// prefab. Built programmatically so no new XAML page has to be registered in the non-SDK Editor.csproj.</summary>
+        private void OpenPrefabEditor(AssetItem item, string full)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(full) || !System.IO.File.Exists(full))
+                { MessageBox.Show("This prefab file could not be found.", "Prefab", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+
+                string modelPath = PrefabFirstModelPath(full);
+                int entityCount = 0, meshParts = 0;
+                try { var root = Editor.Core.Services.SceneService.Instance.LoadEntityFromPrefab(full); CountPrefab(root, ref entityCount, ref meshParts); } catch { }
+
+                var win = new Window
+                {
+                    Title = "Prefab — " + item.Name,
+                    Width = 1000, Height = 660, MinWidth = 720, MinHeight = 480,
+                    Background = Br("#FF161618"), Owner = Window.GetWindow(this),
+                    WindowStartupLocation = WindowStartupLocation.CenterOwner
+                };
+
+                var root2 = new Grid();
+                root2.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                root2.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(360) });
+
+                // Left: live 3D preview (reuse the proven Model Viewer control), or a placeholder for primitive prefabs.
+                var leftHost = new Border { Background = Br("#FF1B1B1E"), Margin = new Thickness(0) };
+                if (!string.IsNullOrEmpty(modelPath))
+                {
+                    try { leftHost.Child = new Editor.Editors.WorldEditor.Components.ModelViewer.ModelViewerControl(modelPath, item.Name); }
+                    catch { leftHost.Child = PrefabPlaceholder(item.Name); }
+                }
+                else leftHost.Child = PrefabPlaceholder(item.Name);
+                Grid.SetColumn(leftHost, 0);
+                root2.Children.Add(leftHost);
+
+                // Right: identity + what the workflow means + actions.
+                var panel = new StackPanel { Margin = new Thickness(20, 18, 20, 18) };
+                panel.Children.Add(new TextBlock { Text = item.Name, Foreground = Br("#FFF5F5F7"), FontSize = 20, FontWeight = FontWeights.Bold, TextTrimming = TextTrimming.CharacterEllipsis });
+                panel.Children.Add(new TextBlock { Text = "Prefab  ·  " + entityCount + (entityCount == 1 ? " entity" : " entities") + "  ·  " + meshParts + (meshParts == 1 ? " mesh part" : " mesh parts"), Foreground = Br("#FF73737A"), FontSize = 12, Margin = new Thickness(0, 4, 0, 16) });
+
+                var help = new TextBlock { Text = Editor.Core.Services.PrefabService.WorkflowHelp, Foreground = Br("#FFB4B4BC"), FontSize = 11.5, TextWrapping = TextWrapping.Wrap, LineHeight = 17, Margin = new Thickness(0, 0, 0, 18) };
+                panel.Children.Add(new Border { Background = Br("#FF1E1E22"), BorderBrush = Br("#FF2C2C32"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Padding = new Thickness(12, 10, 12, 12), Margin = new Thickness(0, 0, 0, 18), Child = help });
+
+                panel.Children.Add(PrefabActionButton("", "Edit in Scene", "Add an instance & select it to edit, then Apply", true,
+                    () => { PlacePrefabInstance(full, item.Name, editHint: true); win.Close(); }));
+                panel.Children.Add(PrefabActionButton("", "Add to Scene", "Drop a linked instance into the scene", false,
+                    () => PlacePrefabInstance(full, item.Name, editHint: false)));
+                if (!string.IsNullOrEmpty(modelPath))
+                    panel.Children.Add(PrefabActionButton("", "Edit Materials…", "Open the object's mesh in the Model Editor", false,
+                        () => { try { Dialogs.UniversalModelEditorDialog.OpenForModel(win, modelPath); } catch (Exception ex) { MessageBox.Show("Could not open the Model Editor:\n" + ex.Message, "Model Editor", MessageBoxButton.OK, MessageBoxImage.Error); } }));
+                panel.Children.Add(PrefabActionButton("", "Show in Explorer", "Reveal the .ventity file on disk", false,
+                    () => { try { System.Diagnostics.Process.Start("explorer.exe", "/select,\"" + full + "\""); } catch { } }));
+
+                var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Content = panel, Background = Br("#FF161618") };
+                Grid.SetColumn(scroll, 1);
+                root2.Children.Add(scroll);
+
+                win.Content = root2;
+                win.Show(); // non-modal, like the Model Viewer — keep the editor usable
+            }
+            catch (Exception ex) { MessageBox.Show("Could not open the prefab: " + ex.Message, "Prefab", MessageBoxButton.OK, MessageBoxImage.Error); }
+        }
+
+        private static void CountPrefab(Editor.ECS.GameEntity e, ref int entities, ref int meshParts)
+        {
+            if (e == null) return;
+            entities++;
+            var mr = e.GetComponent<Editor.ECS.Components.Rendering.MeshRenderer>();
+            if (mr != null && !string.IsNullOrEmpty(mr.MeshPath)) meshParts++;
+            if (e.Children != null) foreach (var c in e.Children) CountPrefab(c, ref entities, ref meshParts);
+        }
+
+        private UIElement PrefabPlaceholder(string name)
+        {
+            var sp = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            sp.Children.Add(new TextBlock { Text = "", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 56, Foreground = Br("#FF4DB6E2"), HorizontalAlignment = HorizontalAlignment.Center });
+            sp.Children.Add(new TextBlock { Text = "Primitive prefab", Foreground = Br("#FF9A9AA1"), FontSize = 13, Margin = new Thickness(0, 12, 0, 2), HorizontalAlignment = HorizontalAlignment.Center });
+            sp.Children.Add(new TextBlock { Text = "No imported mesh to preview — use the actions on the right.", Foreground = Br("#FF6A6A72"), FontSize = 11, HorizontalAlignment = HorizontalAlignment.Center });
+            return sp;
+        }
+
+        private Button PrefabActionButton(string glyph, string title, string subtitle, bool primary, Action onClick)
+        {
+            var content = new StackPanel { Orientation = Orientation.Horizontal };
+            content.Children.Add(new TextBlock { Text = glyph, FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 15, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0), Foreground = primary ? System.Windows.Media.Brushes.White : Br("#FF9C8CFF") });
+            var texts = new StackPanel();
+            texts.Children.Add(new TextBlock { Text = title, FontSize = 13.5, FontWeight = FontWeights.SemiBold, Foreground = primary ? System.Windows.Media.Brushes.White : Br("#FFE9E9ED") });
+            texts.Children.Add(new TextBlock { Text = subtitle, FontSize = 10.5, Foreground = primary ? Br("#FFE7E2FF") : Br("#FF73737A"), Margin = new Thickness(0, 1, 0, 0) });
+            content.Children.Add(texts);
+
+            var border = new Border { CornerRadius = new CornerRadius(8), Padding = new Thickness(14, 9, 14, 9), Child = content, Margin = new Thickness(0, 0, 0, 8), Background = primary ? Br("#FF6C5CE7") : Br("#FF212127"), BorderBrush = primary ? Br("#FF6C5CE7") : Br("#FF2C2C32"), BorderThickness = new Thickness(1) };
+            var btn = new Button { Content = border, Cursor = Cursors.Hand, HorizontalContentAlignment = HorizontalAlignment.Stretch, Background = System.Windows.Media.Brushes.Transparent, BorderThickness = new Thickness(0), Padding = new Thickness(0) };
+            btn.Template = TransparentButtonTemplate();
+            btn.Click += (s, e) => { try { onClick(); } catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[PrefabEditor] " + ex.Message); } };
+            return btn;
+        }
+
+        private static ControlTemplate TransparentButtonTemplate()
+        {
+            var t = new ControlTemplate(typeof(Button));
+            var cp = new FrameworkElementFactory(typeof(ContentPresenter));
+            cp.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Stretch);
+            t.VisualTree = cp;
+            return t;
         }
 
         private void OpenOrPlaceAsset(AssetItem item)

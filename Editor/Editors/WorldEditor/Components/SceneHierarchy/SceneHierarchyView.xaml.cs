@@ -354,6 +354,8 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
 
         #region Prefab Operations
 
+        private static bool _prefabHelpShown;
+
         private void SaveAsPrefab_Click(object sender, RoutedEventArgs e)
         {
             var entity = ViewModel?.SelectedEntity;
@@ -363,7 +365,16 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
                 // One cohesive path (JSON) — links the entity to the new .ventity so it becomes an instance.
                 var path = PrefabService.Instance.SaveAsPrefab(entity);
                 if (path == null) { MessageBox.Show("Could not save prefab.", "Save Prefab", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
-                (Application.Current?.MainWindow as MainWindow)?.ShowToast("Prefab saved — " + System.IO.Path.GetFileName(path));
+                (Application.Current?.MainWindow as MainWindow)?.ShowToast("Prefab saved — '" + entity.Name + "' is now a linked instance");
+
+                // Teach the whole workflow once so Save / Apply / Revert are never a mystery.
+                if (!_prefabHelpShown)
+                {
+                    _prefabHelpShown = true;
+                    MessageBox.Show(
+                        PrefabService.WorkflowHelp + "\n\nSaved to:  " + System.IO.Path.GetFileName(path),
+                        "Prefab saved — how prefabs work", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
             }
             catch (System.Exception ex)
             {

@@ -29,6 +29,15 @@ namespace Editor.Core.Services
 
         public const string PrefabExtension = ".ventity";
 
+        /// <summary>Plain-language description of the whole prefab workflow — surfaced in the Prefab Editor and
+        /// tooltips so "what does Save / Apply / Revert do?" is answered right where it's used.</summary>
+        public const string WorkflowHelp =
+            "A prefab is a reusable template of an object (with its children + components).\n\n" +
+            "• Save as Prefab — turn the selected entity into a .ventity asset. The entity becomes a linked INSTANCE of it.\n" +
+            "• Add to Scene — drop a new linked instance into the scene. Edit each instance freely.\n" +
+            "• Apply to Prefab — push THIS instance's current changes back into the asset, updating every instance.\n" +
+            "• Revert to Prefab — throw away this instance's local edits and reload it from the asset (keeps its position).";
+
         /// <summary>Save an entity subtree as a reusable prefab (JSON) and link the source entity to it (becomes an
         /// instance). Returns the absolute .ventity path, or null on failure.</summary>
         public string SaveAsPrefab(GameEntity entity, string prefabName = null)
@@ -60,6 +69,7 @@ namespace Editor.Core.Services
             entity.RegenerateIds();
             entity.Scene = scene;
             entity.PrefabPath = ToProjectRelative(full, project?.Path);
+            SetActiveRecursive(entity, true);   // a freshly-loaded subtree must be active or SubmitEntity skips it
 
             if (parent != null)
             {
@@ -71,7 +81,29 @@ namespace Editor.Core.Services
             {
                 scene.AddEntity(entity);   // AddEntity syncs to the engine -> the instance renders
             }
+
+            // Force the editor's render service to resolve meshes/materials for the WHOLE new subtree so even a
+            // LARGE, multi-submesh prefab shows up the same frame instead of staying invisible (the "saved a big
+            // prefab, it doesn't render" bug). SubmitScene imports meshes on demand; PreloadSceneAssets primes
+            // textures/materials so nothing renders untextured/white on the first frame.
+            EnsureRendered(scene);
             return entity;
+        }
+
+        /// <summary>Prime the render service so a just-added subtree resolves its meshes/materials immediately.</summary>
+        private static void EnsureRendered(Scene scene)
+        {
+            if (scene == null) return;
+            try { scene.IsDirty = true; } catch { }
+            try { Editor.Core.Services.SceneRenderService.Instance.PreloadSceneAssets(scene); } catch { }
+        }
+
+        private static void SetActiveRecursive(GameEntity e, bool active)
+        {
+            if (e == null) return;
+            try { e.IsActive = active; } catch { }
+            if (e.Children != null)
+                foreach (var c in e.Children) SetActiveRecursive(c, active);
         }
 
         /// <summary>Write the instance's current state back to its prefab asset, then update every OTHER instance of

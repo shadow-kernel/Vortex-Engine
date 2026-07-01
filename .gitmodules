@@ -2,3 +2,6 @@
 	path = ThirdParty/Streamline
 	url = https://github.com/NVIDIA-RTX/Streamline.git
 	shallow = true
+[submodule "Templates/Default3D"]
+	path = Templates/Default3D
+	url = https://github.com/shadow-kernel/Vortex-Engine-3D-Template.git

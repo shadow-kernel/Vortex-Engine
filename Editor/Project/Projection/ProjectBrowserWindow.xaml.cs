@@ -14,7 +14,11 @@ namespace Editor.Project.Projection
         {
             InitializeComponent();
 
-            ShowOpenProject();
+            // First impression: greet returning users with their recent projects, but land brand-new users straight
+            // on the template chooser (the Open tab would otherwise be empty).
+            bool hasRecent = false;
+            try { hasRecent = Editor.Core.Services.ProjectService.Instance.GetAllProjects().Count > 0; } catch { }
+            if (hasRecent) ShowOpenProject(); else ShowCreateProject();
         }
 
         private void RootGrid_OnMouseDown(object sender, MouseButtonEventArgs e)

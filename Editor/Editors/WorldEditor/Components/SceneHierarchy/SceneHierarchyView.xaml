@@ -376,17 +376,17 @@
                     <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#4EC9B0"/>
                 </MenuItem.Icon>
             </MenuItem>
-            <MenuItem Header="Save as Prefab" Click="SaveAsPrefab_Click">
+            <MenuItem Header="Save as Prefab…" Click="SaveAsPrefab_Click" ToolTip="Turn this entity (with its children) into a reusable .ventity asset in Assets/Prefabs. This entity becomes a linked INSTANCE of it — double-click the prefab in the Project panel to place or edit more copies.">
                 <MenuItem.Icon>
                     <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#569CD6"/>
                 </MenuItem.Icon>
             </MenuItem>
-            <MenuItem Header="Apply to Prefab" Click="ApplyToPrefab_Click" ToolTip="Write this instance's changes back to its prefab (updates all instances)">
+            <MenuItem Header="Apply Instance → Prefab" Click="ApplyToPrefab_Click" ToolTip="Push THIS instance's current changes back into the prefab asset, updating every instance of it.">
                 <MenuItem.Icon>
                     <TextBlock Text="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#7CE0A3"/>
                 </MenuItem.Icon>
             </MenuItem>
-            <MenuItem Header="Revert to Prefab" Click="RevertToPrefab_Click" ToolTip="Discard this instance's edits and reload it from its prefab">
+            <MenuItem Header="Revert Instance ← Prefab" Click="RevertToPrefab_Click" ToolTip="Discard this instance's local edits and reload it from the prefab asset (keeps its position).">
                 <MenuItem.Icon>
                     <TextBlock Text="&#xE7A7;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#E6B422"/>
                 </MenuItem.Icon>

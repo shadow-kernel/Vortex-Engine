@@ -259,6 +259,52 @@ namespace Editor.Core.Services
         }
 
         /// <summary>
+        /// Create a new project by copying a shipped template's project folder, then re-stamping identity (fresh Id +
+        /// the chosen name) so the result is an independent project. Falls back to an empty scaffold when the template
+        /// is missing/unreadable, so "Create" never dead-ends.
+        /// </summary>
+        public ProjectData CreateProjectFromTemplate(string projectName, string projectPath, string templateProjectDir)
+        {
+            if (string.IsNullOrEmpty(templateProjectDir) || !Directory.Exists(templateProjectDir)
+                || !File.Exists(Path.Combine(templateProjectDir, ManifestFileName)))
+                return CreateProject(projectName, projectPath);   // no usable template -> empty project
+
+            if (Directory.Exists(projectPath) && Directory.GetFileSystemEntries(projectPath).Length > 0)
+                throw new DuplicateProjectPathException(projectPath, projectName);
+
+            Directory.CreateDirectory(projectPath);
+
+            // Copy the template's project files, skipping machine/build-local dirs so the new project is clean.
+            var skip = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { ".git", ".vs", "bin", "obj", "Library", "Build", "Temp", "Logs" };
+            CopyDirectoryFiltered(templateProjectDir, projectPath, skip);
+
+            // Load the copy, give it a fresh identity + the chosen name, then re-save (writes manifest + registers it).
+            var project = LoadProjectFromPath(projectPath);
+            project.Id = Guid.NewGuid();
+            project.Name = projectName;
+            AssetDatabase.Instance.Initialize(projectPath);
+            SaveProject(project);
+            System.Diagnostics.Debug.WriteLine($"Project created from template '{templateProjectDir}' at: {projectPath}");
+            return project;
+        }
+
+        private static void CopyDirectoryFiltered(string sourceDir, string destDir, HashSet<string> skipDirNames)
+        {
+            Directory.CreateDirectory(destDir);
+            foreach (var file in Directory.GetFiles(sourceDir))
+            {
+                try { File.Copy(file, Path.Combine(destDir, Path.GetFileName(file)), true); } catch { }
+            }
+            foreach (var sub in Directory.GetDirectories(sourceDir))
+            {
+                var name = Path.GetFileName(sub);
+                if (skipDirNames.Contains(name)) continue;
+                CopyDirectoryFiltered(sub, Path.Combine(destDir, name), skipDirNames);
+            }
+        }
+
+        /// <summary>
         /// Speichert ein Projekt (Manifest + separate Szenen-Dateien)
         /// </summary>
         public void SaveProject(ProjectData project)
