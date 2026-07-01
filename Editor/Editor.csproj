@@ -15,11 +15,20 @@
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
     <Deterministic>true</Deterministic>
     <LangVersion>9.0</LangVersion>
-    <!-- Enables consuming WinRT (Windows.Gaming.Input) from this classic .NET FW WPF app so PlayStation
-         (DualSense/DualShock) + Xbox controllers work natively over USB/Bluetooth without extra software. -->
-    <TargetPlatformVersion>10.0.26100.0</TargetPlatformVersion>
     <NuGetPackageImportStamp>
     </NuGetPackageImportStamp>
+  </PropertyGroup>
+  <!-- Enables consuming WinRT (Windows.Gaming.Input) from this classic .NET FW WPF app so PlayStation
+       (DualSense/DualShock) + Xbox controllers work natively over USB/Bluetooth without extra software.
+       Pick whichever Windows SDK UnionMetadata is installed so the build is portable (dev box vs CI runner). -->
+  <PropertyGroup>
+    <VortexUM>$(MSBuildProgramFiles32)\Windows Kits\10\UnionMetadata</VortexUM>
+    <TargetPlatformVersion Condition="Exists('$(VortexUM)\10.0.26100.0\Windows.winmd')">10.0.26100.0</TargetPlatformVersion>
+    <TargetPlatformVersion Condition="'$(TargetPlatformVersion)'=='' And Exists('$(VortexUM)\10.0.22621.0\Windows.winmd')">10.0.22621.0</TargetPlatformVersion>
+    <TargetPlatformVersion Condition="'$(TargetPlatformVersion)'=='' And Exists('$(VortexUM)\10.0.22000.0\Windows.winmd')">10.0.22000.0</TargetPlatformVersion>
+    <TargetPlatformVersion Condition="'$(TargetPlatformVersion)'=='' And Exists('$(VortexUM)\10.0.20348.0\Windows.winmd')">10.0.20348.0</TargetPlatformVersion>
+    <TargetPlatformVersion Condition="'$(TargetPlatformVersion)'=='' And Exists('$(VortexUM)\10.0.19041.0\Windows.winmd')">10.0.19041.0</TargetPlatformVersion>
+    <VortexWinMd>$(VortexUM)\$(TargetPlatformVersion)\Windows.winmd</VortexWinMd>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <PlatformTarget>AnyCPU</PlatformTarget>
@@ -50,7 +59,7 @@
     <Reference Include="System.Runtime.WindowsRuntime" />
     <Reference Include="System.Runtime.InteropServices.WindowsRuntime" />
     <Reference Include="Windows">
-      <HintPath>C:\Program Files (x86)\Windows Kits\10\UnionMetadata\10.0.26100.0\Windows.winmd</HintPath>
+      <HintPath>$(VortexWinMd)</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="AvalonDock, Version=4.72.1.0, Culture=neutral, PublicKeyToken=3e4669d2f30244f4, processorArchitecture=MSIL">
