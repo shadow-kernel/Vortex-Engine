@@ -345,7 +345,37 @@ namespace Editor.Core.Services
             BindMap(mat, vmat.RoughnessTexture, VortexAPI.SetMaterialRoughnessMap);
             BindMap(mat, vmat.AOTexture, VortexAPI.SetMaterialAOMap);
 
+            // Custom shader: compile the assigned .hlsl into a per-material PSO (the 3D pass + material preview bind
+            // it instead of the built-in PBR). A compile failure is a no-op engine-side (falls back to built-in).
+            if (!string.IsNullOrEmpty(vmat.ShaderAsset))
+            {
+                var hlsl = ResolveShaderHlsl(vmat.ShaderAsset);
+                if (!string.IsNullOrEmpty(hlsl)) VortexAPI.SetMaterialShader((int)mat, hlsl);
+            }
+
             return mat;
+        }
+
+        /// <summary>Resolve a material's ShaderAsset (.vshader/.hlsl, project-relative) to the absolute .hlsl to compile.</summary>
+        private static string ResolveShaderHlsl(string shaderAsset)
+        {
+            if (string.IsNullOrEmpty(shaderAsset)) return null;
+            var proj = Editor.Core.Data.ProjectData.Current?.Path ?? "";
+            string full = System.IO.Path.IsPathRooted(shaderAsset) ? shaderAsset : System.IO.Path.Combine(proj, shaderAsset);
+            if (full.EndsWith(".hlsl", StringComparison.OrdinalIgnoreCase)) return System.IO.File.Exists(full) ? full : null;
+            try
+            {
+                var vs = Editor.Core.Assets.VortexShader.Load(full);
+                if (vs != null && !string.IsNullOrEmpty(vs.PixelShaderPath))
+                {
+                    var p = vs.PixelShaderPath;
+                    var h = System.IO.Path.IsPathRooted(p) ? p : System.IO.Path.Combine(proj, p);
+                    if (System.IO.File.Exists(h)) return h;
+                }
+            }
+            catch { }
+            var sib = System.IO.Path.ChangeExtension(full, ".hlsl");
+            return System.IO.File.Exists(sib) ? sib : null;
         }
 
         private static void BindMap(long materialId, string texturePath, Action<long, long> setter)

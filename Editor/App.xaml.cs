@@ -401,6 +401,7 @@ namespace Editor
                 // re-run them live (save in VS -> focus the game -> your changes are in). No-op if nothing changed.
                 if (DllWrapper.VortexAPI.GameHostConsumeFocusGained())
                 {
+                    try { DllWrapper.VortexAPI.ReloadMaterialShaders(); } catch { }   // recompile changed material shaders in the scene
                     try { if (sr.ReloadScripts()) { _hotReloadAt = DateTime.UtcNow; GHLog("scripts hot-reloaded on focus"); } }
                     catch (Exception hx) { GHLog("hot-reload error: " + hx.Message); }
                 }

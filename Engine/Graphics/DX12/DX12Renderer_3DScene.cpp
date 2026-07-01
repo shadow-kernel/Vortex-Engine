@@ -411,7 +411,11 @@ namespace vortex::graphics::dx12
 			obj.metallic = 0.7f; obj.roughness = 0.35f; obj.ao = 1.0f; obj.normal_strength = 1.0f;
 			obj.use_directx_normals = 1;
 			auto* mat = reg.get_material(run.mat);
-			if (mat && mat->properties().is_unlit) m_command_list->SetPipelineState(double_sided_pso);
+			// A compiled custom per-material shader overrides the built-in PSO; else unlit -> double-sided, else PBR.
+			auto csit = m_custom_shaders.find((u32)run.mat);
+			if (csit != m_custom_shaders.end() && csit->second.pso)
+				m_command_list->SetPipelineState(csit->second.pso.Get());
+			else if (mat && mat->properties().is_unlit) m_command_list->SetPipelineState(double_sided_pso);
 			else m_command_list->SetPipelineState(pso);
 			if (mat)
 			{

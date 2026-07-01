@@ -76,6 +76,7 @@
     <ClInclude Include="Runtime\Systems\PhysicsSystem.h" />
     <ClInclude Include="Runtime\Systems\RenderSystem.h" />
     <ClInclude Include="Runtime\Systems\RenderSystemDX12.h" />
+    <ClInclude Include="ThirdParty\stb_image.h" />
     <ClInclude Include="Utilities\MathTypes.h" />
     <ClInclude Include="Utilities\Utilities.h" />
     <ClInclude Include="VortexAPI\GameEntity.h" />
@@ -144,6 +145,19 @@
     <ClCompile Include="Runtime\Systems\PhysicsSystem.cpp" />
     <ClCompile Include="Runtime\Systems\RenderSystem.cpp" />
     <ClCompile Include="Runtime\Systems\RenderSystemDX12.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Shaders are loaded + compiled at RUNTIME by DX12ShaderCompiler (VSMain/PSMain etc.), NOT build-time FXC
+         (which would default to a 'main' entry point and fail). Kept as None so they appear in the project. -->
+    <None Include="Shaders\basic.hlsl" />
+    <None Include="Shaders\grid.hlsl" />
+    <None Include="Shaders\motionvector.hlsl" />
+    <None Include="Shaders\skybox.hlsl" />
+    <None Include="Shaders\standard.hlsl" />
+    <None Include="Shaders\upscale.hlsl" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="packages.config" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>18.0</VCProjectVersion>

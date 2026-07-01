@@ -46,6 +46,21 @@ EDITOR_INTERFACE void SetFrameGenMode(int mode) { graphics::dx12::DX12Renderer::
 EDITOR_INTERFACE int GetFrameGenMode() { return graphics::dx12::DX12Renderer::instance().fg_mode(); }
 EDITOR_INTERFACE int FrameGenPresentedFps() { return graphics::dx12::DX12Renderer::instance().fg_presented_fps(); }
 
+// Per-material custom shaders: bind a .hlsl (absolute path) to a material so the 3D pass uses a per-material PSO;
+// empty path clears it (revert to built-in). ReloadMaterialShaders recompiles any whose .hlsl changed on disk
+// (hot-reload; call on window focus or before a material-preview render).
+EDITOR_INTERFACE void SetMaterialShader(int material_id, const char* hlsl_path)
+{
+	std::wstring w;
+	if (hlsl_path && *hlsl_path)
+	{
+		int n = MultiByteToWideChar(CP_UTF8, 0, hlsl_path, -1, nullptr, 0);
+		if (n > 1) { w.resize(n - 1); MultiByteToWideChar(CP_UTF8, 0, hlsl_path, -1, &w[0], n); }
+	}
+	graphics::dx12::DX12Renderer::instance().set_material_shader((uint32_t)material_id, w);
+}
+EDITOR_INTERFACE void ReloadMaterialShaders() { graphics::dx12::DX12Renderer::instance().reload_dirty_shaders(); }
+
 // GPU capability — the DLSS hardware gate. The options UI shows DLSS only when GpuSupportsDlss() is true; on
 // every other machine the render-scale slider is the universal fallback.
 EDITOR_INTERFACE int GpuVendorId() { return (int)graphics::dx12::DX12Core::instance().adapter_vendor_id(); }

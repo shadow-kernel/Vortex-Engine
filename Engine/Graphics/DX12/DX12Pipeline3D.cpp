@@ -19,10 +19,64 @@ namespace vortex::graphics::dx12
 	bool DX12Pipeline3D::initialize(ID3D12Device* device, DXGI_FORMAT rtv_format, DXGI_FORMAT dsv_format)
 	{
 		if (!device) return false;
+		m_rtv_format = rtv_format; m_dsv_format = dsv_format;   // remembered for custom material PSOs
 		if (!compile_shaders()) return false;
 		if (!create_root_signature(device)) return false;
 		if (!create_pso(device, rtv_format, dsv_format)) return false;
 		return true;
+	}
+
+	ComPtr<ID3D12PipelineState> DX12Pipeline3D::create_custom_pso(ID3D12Device* device, const std::wstring& hlsl_path)
+	{
+		if (!device || !m_root_signature || hlsl_path.empty()) return nullptr;
+
+		// Compile VSMain/PSMain from the project's .hlsl. nullptr on failure -> caller keeps the built-in PSO.
+		ComPtr<ID3DBlob> vs = DX12ShaderCompiler::compile_from_file(hlsl_path, "VSMain", "vs_5_0");
+		ComPtr<ID3DBlob> ps = DX12ShaderCompiler::compile_from_file(hlsl_path, "PSMain", "ps_5_0");
+		if (!vs || !ps) return nullptr;
+
+		// Same input layout + render state as the built-in PBR PSO — only the shader stages differ (binding-compatible).
+		D3D12_INPUT_ELEMENT_DESC input_layout[] = {
+			{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+			{ "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+			{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+			{ "INSTANCEWORLD", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0,  D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
+			{ "INSTANCEWORLD", 1, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 16, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
+			{ "INSTANCEWORLD", 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 32, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
+			{ "INSTANCEWORLD", 3, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 48, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 }
+		};
+
+		D3D12_RASTERIZER_DESC rasterizer{};
+		rasterizer.FillMode = D3D12_FILL_MODE_SOLID;
+		rasterizer.CullMode = D3D12_CULL_MODE_BACK;
+		rasterizer.DepthClipEnable = TRUE;
+
+		D3D12_BLEND_DESC blend{};
+		blend.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+
+		D3D12_DEPTH_STENCIL_DESC depth_stencil{};
+		depth_stencil.DepthEnable = TRUE;
+		depth_stencil.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+		depth_stencil.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC pso_desc{};
+		pso_desc.pRootSignature = m_root_signature.Get();
+		pso_desc.VS = { vs->GetBufferPointer(), vs->GetBufferSize() };
+		pso_desc.PS = { ps->GetBufferPointer(), ps->GetBufferSize() };
+		pso_desc.BlendState = blend;
+		pso_desc.SampleMask = UINT_MAX;
+		pso_desc.RasterizerState = rasterizer;
+		pso_desc.DepthStencilState = depth_stencil;
+		pso_desc.InputLayout = { input_layout, _countof(input_layout) };
+		pso_desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+		pso_desc.NumRenderTargets = 1;
+		pso_desc.RTVFormats[0] = m_rtv_format;
+		pso_desc.DSVFormat = m_dsv_format;
+		pso_desc.SampleDesc.Count = 1;
+
+		ComPtr<ID3D12PipelineState> pso;
+		if (FAILED(device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&pso)))) return nullptr;
+		return pso;
 	}
 
 	void DX12Pipeline3D::shutdown()

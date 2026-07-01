@@ -381,6 +381,40 @@ namespace vortex::graphics::dx12
 	}
 
 
+	static unsigned long long shader_file_mtime(const std::wstring& p)
+	{
+		WIN32_FILE_ATTRIBUTE_DATA d{};
+		if (!GetFileAttributesExW(p.c_str(), GetFileExInfoStandard, &d)) return 0ull;
+		return ((unsigned long long)d.ftLastWriteTime.dwHighDateTime << 32) | d.ftLastWriteTime.dwLowDateTime;
+	}
+
+	void DX12Renderer::set_material_shader(u32 material_id, const std::wstring& hlsl_path)
+	{
+		if (hlsl_path.empty()) { m_custom_shaders.erase(material_id); return; }   // revert to built-in
+		auto pso = m_pipeline_3d.create_custom_pso(DX12Core::instance().device(), hlsl_path);
+		auto& e = m_custom_shaders[material_id];
+		e.path = hlsl_path;
+		e.mtime = shader_file_mtime(hlsl_path);
+		if (pso) e.pso = pso;   // compile fail -> keep whatever we had (nullptr -> the 3D pass uses the built-in PSO)
+	}
+
+	void DX12Renderer::reload_dirty_shaders()
+	{
+		if (m_custom_shaders.empty()) return;
+		bool idled = false;
+		for (auto& kv : m_custom_shaders)
+		{
+			auto& e = kv.second;
+			if (e.path.empty()) continue;
+			unsigned long long mt = shader_file_mtime(e.path);
+			if (mt == 0ull || mt == e.mtime) continue;             // unchanged since last build
+			e.mtime = mt;
+			if (!idled) { m_command_queue.flush(); idled = true; } // GPU-idle before swapping in-use PSOs
+			auto pso = m_pipeline_3d.create_custom_pso(DX12Core::instance().device(), e.path);
+			if (pso) e.pso = pso;                                  // keep the old PSO on compile failure -> never black
+		}
+	}
+
 	void DX12Renderer::render_frame()
 	{
 		if (!m_initialized) return;

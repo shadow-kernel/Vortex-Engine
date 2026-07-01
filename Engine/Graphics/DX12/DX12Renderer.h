@@ -193,6 +193,14 @@ namespace vortex::graphics::dx12
 		// 0 when FG is off. This is the "Shown FPS" — the engine's own get_current_fps counts only REAL frames.
 		int fg_presented_fps() const { return m_presented_fps; }
 
+		// Per-material custom shaders: bind a .hlsl (VSMain/PSMain) to a material -> the 3D pass uses a per-material
+		// PSO instead of the built-in PBR one. hlsl_path empty = clear (revert to built-in). A compile failure keeps
+		// the material on the built-in PSO, so a bad custom shader never black-screens.
+		void set_material_shader(u32 material_id, const std::wstring& hlsl_path);
+		// Hot-reload: recompile any custom material shader whose .hlsl changed on disk (GPU-idle first; keep the last
+		// good PSO on failure). Cheap when nothing changed. Call on window focus / before a material-preview render.
+		void reload_dirty_shaders();
+
 		// Grid rendering
 		void set_grid_visible(bool visible) { m_grid_visible = visible; }
 		bool is_grid_visible() const { return m_grid_visible; }
@@ -370,6 +378,9 @@ namespace vortex::graphics::dx12
 		bool m_game_window_active{ false };
 		DX12Pipeline m_pipeline;           // Simple 2D pipeline (fallback)
 		DX12Pipeline3D m_pipeline_3d;      // Full 3D pipeline
+		// Custom per-material shaders: material_id -> its compiled PSO + source .hlsl + last-seen mtime (hot-reload).
+		struct CustomShader { ComPtr<ID3D12PipelineState> pso; std::wstring path; unsigned long long mtime{ 0 }; };
+		std::unordered_map<u32, CustomShader> m_custom_shaders;
 		DX12GridPipeline m_grid_pipeline;  // Grid rendering pipeline
 		DX12SkyboxPipeline m_skybox_pipeline; // Skybox rendering pipeline
 		DX12UpscalePipeline m_upscale;        // Fullscreen upscale (render-scale composite + the DLSS slot)

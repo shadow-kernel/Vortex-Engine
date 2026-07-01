@@ -53,6 +53,14 @@ namespace Editor.Dialogs
             InitializeWindow();
             BuildUI();
             Loaded += (s, e) => { _previewReady = true; RefreshPreview(); };
+            // Shader hot-reload in the PREVIEW: when you Alt-Tab back from VS (this window regains focus), recompile
+            // any changed material shader + re-render the sphere — so saving the .hlsl updates the preview live.
+            Activated += (s, e) =>
+            {
+                if (!_previewReady) return;
+                try { Editor.DllWrapper.VortexAPI.ReloadMaterialShaders(); } catch { }
+                SchedulePreviewRefresh();
+            };
             // This dialog's live sphere preview swaps the SHARED render queue; pause the main viewport while it's
             // open so they never contend for the engine's single render path (which crashed on nested dialogs).
             Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.ActivePreviewDialogs++;

@@ -120,6 +120,8 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SetFrameGenMode")] private static extern void SetFrameGenModeNative(int mode);
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GetFrameGenMode")] private static extern int GetFrameGenModeNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "FrameGenPresentedFps")] private static extern int FrameGenPresentedFpsNative();
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SetMaterialShader", CharSet = CharSet.Ansi)] private static extern void SetMaterialShaderNative(int materialId, string hlslPath);
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "ReloadMaterialShaders")] private static extern void ReloadMaterialShadersNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GpuVendorId")] private static extern int GpuVendorIdNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GpuSupportsDlss")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool GpuSupportsDlssNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GpuName")] private static extern int GpuNameNative(byte[] buf, int cap);
@@ -163,6 +165,10 @@ namespace Editor.DllWrapper
         public static int GetFrameGenMode() { try { return GetFrameGenModeNative(); } catch { return 0; } }
         /// <summary>Frames actually presented by DLSS-G since the last call (the "Presented FPS" readout; 0 when FG is off).</summary>
         public static int FrameGenPresentedFps() { try { return FrameGenPresentedFpsNative(); } catch { return 0; } }
+        /// <summary>Bind a custom .hlsl (absolute path; VSMain/PSMain) to a material -> per-material PSO. Empty path = revert to built-in.</summary>
+        public static void SetMaterialShader(int materialId, string hlslPath) { try { SetMaterialShaderNative(materialId, hlslPath ?? ""); } catch { } }
+        /// <summary>Recompile any custom material shader whose .hlsl changed on disk (hot-reload). Cheap when nothing changed.</summary>
+        public static void ReloadMaterialShaders() { try { ReloadMaterialShadersNative(); } catch { } }
         public static float GetRenderScale() { try { return GetRenderScaleNative(); } catch { return 1f; } }
         /// <summary>GPU vendor id (0x10DE NVIDIA, 0x1002 AMD, 0x8086 Intel) of the selected adapter.</summary>
         public static int GpuVendorId() { try { return GpuVendorIdNative(); } catch { return 0; } }
