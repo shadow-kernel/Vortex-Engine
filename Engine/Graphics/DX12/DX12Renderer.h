@@ -199,7 +199,8 @@ namespace vortex::graphics::dx12
 		void set_material_shader(u32 material_id, const std::wstring& hlsl_path);
 		// Hot-reload: recompile any custom material shader whose .hlsl changed on disk (GPU-idle first; keep the last
 		// good PSO on failure). Cheap when nothing changed. Call on window focus / before a material-preview render.
-		void reload_dirty_shaders();
+		// Returns how many shaders were recompiled this call (0 = nothing changed).
+		int reload_dirty_shaders();
 
 		// Grid rendering
 		void set_grid_visible(bool visible) { m_grid_visible = visible; }

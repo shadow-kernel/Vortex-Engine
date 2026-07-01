@@ -398,10 +398,11 @@ namespace vortex::graphics::dx12
 		if (pso) e.pso = pso;   // compile fail -> keep whatever we had (nullptr -> the 3D pass uses the built-in PSO)
 	}
 
-	void DX12Renderer::reload_dirty_shaders()
+	int DX12Renderer::reload_dirty_shaders()
 	{
-		if (m_custom_shaders.empty()) return;
+		if (m_custom_shaders.empty()) return 0;
 		bool idled = false;
+		int reloaded = 0;
 		for (auto& kv : m_custom_shaders)
 		{
 			auto& e = kv.second;
@@ -411,8 +412,9 @@ namespace vortex::graphics::dx12
 			e.mtime = mt;
 			if (!idled) { m_command_queue.flush(); idled = true; } // GPU-idle before swapping in-use PSOs
 			auto pso = m_pipeline_3d.create_custom_pso(DX12Core::instance().device(), e.path);
-			if (pso) e.pso = pso;                                  // keep the old PSO on compile failure -> never black
+			if (pso) { e.pso = pso; ++reloaded; }                  // keep the old PSO on compile failure -> never black
 		}
+		return reloaded;
 	}
 
 	void DX12Renderer::render_frame()

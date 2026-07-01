@@ -237,8 +237,15 @@ namespace Editor.Scripting
         /// the scripts on the current scene with fresh state. A compile error keeps the running scripts + logs it, so
         /// a typo never kills the game. No-op for a shipped game (scripts ship precompiled, not on disk) or if nothing
         /// changed. Returns true when a reload actually happened. Wired to game-window re-focus (alt-tab back).</summary>
+        public enum ReloadOutcome { Unchanged, Reloaded, CompileError }
+        /// <summary>Result of the last ReloadScripts() call (for the on-screen hot-reload overlay).</summary>
+        public ReloadOutcome LastReloadOutcome { get; private set; } = ReloadOutcome.Unchanged;
+        /// <summary>First compiler error line when LastReloadOutcome == CompileError (shown in the overlay).</summary>
+        public string LastReloadError { get; private set; }
+
         public bool ReloadScripts()
         {
+            LastReloadOutcome = ReloadOutcome.Unchanged;
             if (PrecompiledAssembly != null || _currentScene == null) return false;
             DateTime now = LatestScriptWrite();
             if (now <= _lastScriptWrite) return false;      // nothing changed since the last build -> no hitch
@@ -247,13 +254,28 @@ namespace Editor.Scripting
             if (asm == null)
             {
                 _lastScriptWrite = now; // don't retry the same broken source every focus; wait for the next save
+                LastReloadOutcome = ReloadOutcome.CompileError;
+                LastReloadError = FirstErrorLine(log);
                 System.Diagnostics.Debug.WriteLine("[hot-reload] compile FAILED — keeping running scripts:\n" + log);
                 return false;
             }
             LastReloadSummary = NewestScriptName();
+            LastReloadOutcome = ReloadOutcome.Reloaded;
             Begin(_currentScene, asm);   // tear down + re-instantiate + Start with the new code (also resets _lastScriptWrite)
             System.Diagnostics.Debug.WriteLine("[hot-reload] scripts reloaded from disk");
             return true;
+        }
+
+        private static string FirstErrorLine(string log)
+        {
+            if (string.IsNullOrEmpty(log)) return "compile error";
+            foreach (var line in log.Split('\n'))
+            {
+                var t = line.Trim();
+                if (t.Length > 0 && !t.StartsWith("Script compile", StringComparison.Ordinal))
+                    return t.Length > 90 ? t.Substring(0, 90) + "…" : t;
+            }
+            return "compile error";
         }
 
         /// <summary>Short description of the last successful hot-reload (the freshly-saved script) for the on-screen overlay.</summary>

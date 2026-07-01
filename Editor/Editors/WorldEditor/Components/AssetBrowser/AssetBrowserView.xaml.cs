@@ -624,7 +624,6 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
 
         private void CreateNewShader(string type)
         {
-            // Show save dialog for shader file location
             var projectPath = ProjectData.Current?.Path;
             if (string.IsNullOrEmpty(projectPath))
             {
@@ -632,71 +631,42 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 return;
             }
 
-            var saveDialog = new Microsoft.Win32.SaveFileDialog
-            {
-                Title = "Save Shader",
-                Filter = "Vortex Shader|*.vshader",
-                DefaultExt = ".vshader",
-                InitialDirectory = System.IO.Path.Combine(projectPath, "Assets", "Shaders"),
-                FileName = $"New{type}Shader.vshader"
-            };
-
-            // Ensure Assets/Shaders folder exists (same place ProjectService/ScriptingService use for scripts/shaders)
             var shadersDir = System.IO.Path.Combine(projectPath, "Assets", "Shaders");
             if (!System.IO.Directory.Exists(shadersDir))
                 System.IO.Directory.CreateDirectory(shadersDir);
 
-            if (saveDialog.ShowDialog() == true)
+            // A shader is ONE .hlsl file (entry points VSMain/PSMain) \u2014 no separate .vshader metadata file. Name it here.
+            var saveDialog = new Microsoft.Win32.SaveFileDialog
             {
-                VortexShader shader;
-                switch (type)
-                {
-                    case "Unlit":
-                        shader = VortexShader.CreateUnlit();
-                        break;
-                    case "Transparent":
-                        shader = VortexShader.CreateTransparent();
-                        break;
-                    case "VertFrag":
-                    default:
-                        shader = VortexShader.CreateStandardPBR();
-                        break;
-                }
-                
-                shader.Name = System.IO.Path.GetFileNameWithoutExtension(saveDialog.FileName);
+                Title = "New Shader \u2014 name it",
+                Filter = "HLSL Shader|*.hlsl",
+                DefaultExt = ".hlsl",
+                InitialDirectory = shadersDir,
+                FileName = (type == "Unlit" ? "NewUnlitShader" : "NewShader") + ".hlsl"
+            };
+            if (saveDialog.ShowDialog() != true) return;
 
-                // Write a real .hlsl next to the .vshader (a starter the user edits) and link it from the shader asset,
-                // stored PROJECT-RELATIVE (survives moves, like material texture paths).
-                var hlslPath = System.IO.Path.ChangeExtension(saveDialog.FileName, ".hlsl");
-                try { System.IO.File.WriteAllText(hlslPath, VortexShader.HlslTemplate(shader.ShaderType)); } catch { }
-                string rel = hlslPath;
-                try
-                {
-                    var pu = new Uri(projectPath.EndsWith("\\") ? projectPath : projectPath + "\\");
-                    rel = Uri.UnescapeDataString(pu.MakeRelativeUri(new Uri(hlslPath)).ToString());
-                }
-                catch { }
-                shader.VertexShaderPath = rel;
-                shader.PixelShaderPath = rel;
+            var hlslPath = saveDialog.FileName;
+            if (!hlslPath.EndsWith(".hlsl", StringComparison.OrdinalIgnoreCase)) hlslPath += ".hlsl";
 
-                if (shader.Save(saveDialog.FileName))
-                {
-                    Assets.Add(new AssetItem
-                    {
-                        Id = Assets.Count,
-                        Name = shader.Name,
-                        TypeName = $"{shader.ShaderType} Shader",
-                        IconCode = "\uE9F5",
-                        IconColor = "#FF569CD6",
-                        Type = AssetType.Shaders,
-                        Path = saveDialog.FileName
-                    });
+            var st = type == "Unlit" ? Editor.Core.Assets.ShaderType.Unlit
+                   : (type == "Transparent" ? Editor.Core.Assets.ShaderType.Transparent : Editor.Core.Assets.ShaderType.Standard);
+            try { System.IO.File.WriteAllText(hlslPath, VortexShader.HlslTemplate(st)); }
+            catch (Exception ex) { MessageBox.Show("Could not create the shader:\n" + ex.Message, "New Shader", MessageBoxButton.OK, MessageBoxImage.Error); return; }
 
-                    AssetDatabase.Instance.Refresh();
-                    // Open the shader source in Visual Studio for editing (falls back to the OS default if VS is absent).
-                    try { Editor.Core.Services.ScriptingService.OpenInVisualStudio(hlslPath); } catch { }
-                }
-            }
+            Assets.Add(new AssetItem
+            {
+                Id = Assets.Count,
+                Name = System.IO.Path.GetFileNameWithoutExtension(hlslPath),
+                TypeName = "HLSL Shader",
+                IconCode = "\uE9F5",
+                IconColor = "#FF569CD6",
+                Type = AssetType.Shaders,
+                Path = hlslPath
+            });
+            AssetDatabase.Instance.Refresh();
+            // Open the new shader in Visual Studio (or the OS default) so you can edit it right away.
+            try { Editor.Core.Services.ScriptingService.OpenInVisualStudio(hlslPath); } catch { }
         }
 
 

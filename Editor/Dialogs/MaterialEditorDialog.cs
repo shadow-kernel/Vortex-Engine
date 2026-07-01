@@ -782,7 +782,7 @@ namespace Editor.Dialogs
             var dlg = new Microsoft.Win32.OpenFileDialog
             {
                 Title = "Assign Shader",
-                Filter = "Shader (*.vshader;*.hlsl)|*.vshader;*.hlsl|All files|*.*"
+                Filter = "HLSL Shader (*.hlsl)|*.hlsl|Legacy shader asset (*.vshader)|*.vshader|All files|*.*"
             };
             if (!string.IsNullOrEmpty(proj))
             {

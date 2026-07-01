@@ -203,7 +203,10 @@ namespace Editor
         private static int    _fgArg = 0;           // --fg=<0..3>: dev hook to force DLSS Frame-Gen (verify the present hook)
         private SplashWindow  _bootSplash;          // kept up until the game's first frame is on screen, then closed (no black flash)
         private int           _bootFrames;          // GameHostTick counter, used to time the splash close
-        private DateTime      _hotReloadAt = DateTime.MinValue; // when the last script hot-reload happened (drives the overlay)
+        private DateTime      _hotReloadAt = DateTime.MinValue; // when the current hot-reload overlay phase started
+        private int           _hotReloadState = -1;             // -1 idle, 0 reloading, 1 done, 2 error
+        private string        _hotReloadMsg = "";               // overlay subtitle (what reloaded / the error)
+        private bool          _reloadPending;                   // a reload is queued for next frame (overlay shows first)
         private static Vortex.VuiHandle _vuiTestHandle; private static bool _vuiPrevDown;
         private static int _stressCountArg = 1000;
         private static bool _stressInit;
@@ -399,11 +402,31 @@ namespace Editor
 
                 // Script HOT-RELOAD: when you Alt-Tab back to the game window, recompile any changed scripts and
                 // re-run them live (save in VS -> focus the game -> your changes are in). No-op if nothing changed.
+                // Hot-reload (scripts + shaders), DEFERRED by one frame: on focus we show a "Hot-reloading…" overlay
+                // THIS frame, then do the actual (synchronous) recompile NEXT frame — so the overlay stays on screen
+                // during the brief compile freeze and you can tell it's working, not hanging. Then the ✓/✗ result shows.
                 if (DllWrapper.VortexAPI.GameHostConsumeFocusGained())
                 {
-                    try { DllWrapper.VortexAPI.ReloadMaterialShaders(); } catch { }   // recompile changed material shaders in the scene
-                    try { if (sr.ReloadScripts()) { _hotReloadAt = DateTime.UtcNow; GHLog("scripts hot-reloaded on focus"); } }
-                    catch (Exception hx) { GHLog("hot-reload error: " + hx.Message); }
+                    _reloadPending = true; _hotReloadState = 0; _hotReloadMsg = "Hot-reloading…"; _hotReloadAt = DateTime.UtcNow;
+                }
+                else if (_reloadPending)
+                {
+                    _reloadPending = false;
+                    var parts = new System.Collections.Generic.List<string>();
+                    bool error = false; string errMsg = null;
+                    try { int n = DllWrapper.VortexAPI.ReloadMaterialShaders(); if (n > 0) parts.Add(n + (n == 1 ? " shader" : " shaders")); } catch { }
+                    try
+                    {
+                        sr.ReloadScripts();
+                        if (sr.LastReloadOutcome == Editor.Scripting.ScriptRuntime.ReloadOutcome.Reloaded) parts.Add(sr.LastReloadSummary);
+                        else if (sr.LastReloadOutcome == Editor.Scripting.ScriptRuntime.ReloadOutcome.CompileError) { error = true; errMsg = sr.LastReloadError; }
+                    }
+                    catch (Exception hx) { error = true; errMsg = hx.Message; }
+
+                    if (error) { _hotReloadState = 2; _hotReloadMsg = errMsg ?? "compile error"; GHLog("hot-reload FAILED: " + errMsg); }
+                    else if (parts.Count > 0) { _hotReloadState = 1; _hotReloadMsg = string.Join(" + ", parts); GHLog("hot-reloaded: " + _hotReloadMsg); }
+                    else { _hotReloadState = 1; _hotReloadMsg = "Already up to date"; }
+                    _hotReloadAt = DateTime.UtcNow;
                 }
 
                 bool playing = Editor.Core.Services.PlayModeService.Instance.State == Editor.Core.Services.PlayState.Playing;
@@ -475,9 +498,9 @@ namespace Editor
                     if (acts != null) sr.InvokeUiActions(acts);   // button -> bound C# method
                 }
 
-                // Hot-reload overlay: dim the whole window + a quick loading bar (with what was reloaded). Drawn LAST,
-                // so it sits on top of the HUD + any menus. Fades out over ~0.9s.
-                DrawHotReloadOverlay(cw, ch, sr);
+                // Hot-reload overlay: dim the window + a status card (reloading / ✓ done / ✗ error). Drawn LAST so it
+                // sits on top of the HUD + any menus.
+                DrawHotReloadOverlay(cw, ch);
 
                 var scene = Editor.Core.Data.ProjectData.Current != null ? Editor.Core.Data.ProjectData.Current.ActiveScene : null;
                 Editor.Core.Services.PlayCameraHelper.ApplyMainCamera(scene);
@@ -502,30 +525,39 @@ namespace Editor
         // The script hot-reload overlay: for ~0.9s after a reload, dim the whole game window and show a card with a
         // quick indigo loading bar + what was reloaded, then fade out. Drawn into the current UI frame via the host
         // UIRect/UIText API (independent of the game scripts, which are being swapped out).
-        private void DrawHotReloadOverlay(int cw, int ch, Editor.Scripting.ScriptRuntime sr)
+        private void DrawHotReloadOverlay(int cw, int ch)
         {
-            if (_hotReloadAt == DateTime.MinValue) return;
+            if (_hotReloadState < 0) return;
             double elapsed = (DateTime.UtcNow - _hotReloadAt).TotalSeconds;
-            const double D = 0.9;
-            if (elapsed < 0 || elapsed > D) return;
+            // 'reloading' holds until the reload frame flips the state (3s safety cap); 'done' ~1.6s; 'error' ~4.5s.
+            double D = _hotReloadState == 0 ? 3.0 : (_hotReloadState == 2 ? 4.5 : 1.6);
+            if (elapsed < 0 || elapsed > D) { _hotReloadState = -1; return; }
 
             float t = (float)(elapsed / D);
-            float fade = t < 0.7f ? 1f : (1f - (t - 0.7f) / 0.3f);   // hold, then fade the last 30%
+            float fade = (_hotReloadState == 0) ? 1f : (t < 0.7f ? 1f : (1f - (t - 0.7f) / 0.3f)); // result holds then fades
             if (fade < 0f) fade = 0f;
-            float bar = t / 0.55f; if (bar > 1f) bar = 1f;           // bar fills over the first 55%
 
-            DllWrapper.VortexAPI.UIRect(0f, 0f, cw, ch, 0.02f, 0.02f, 0.03f, 0.55f * fade, 0f);   // dim the whole window
+            float tr, tg, tb, br, bg, bb; string title;
+            if (_hotReloadState == 1) { tr = 0.60f; tg = 0.90f; tb = 0.65f; br = 0.42f; bg = 0.80f; bb = 0.46f; title = "Hot-reloaded  ✓"; }
+            else if (_hotReloadState == 2) { tr = 1.0f; tg = 0.60f; tb = 0.60f; br = 0.92f; bg = 0.35f; bb = 0.35f; title = "Hot-reload failed  ✗"; }
+            else { tr = 0.78f; tg = 0.75f; tb = 0.98f; br = 0.55f; bg = 0.48f; bb = 0.95f; title = "Hot-reloading…"; }
 
-            float cardW = 400f, cardH = 104f;
+            DllWrapper.VortexAPI.UIRect(0f, 0f, cw, ch, 0.02f, 0.02f, 0.03f, 0.5f * fade, 0f);   // dim the whole window
+            float cardW = _hotReloadState == 2 ? 560f : 420f, cardH = 104f;
             float x = (cw - cardW) * 0.5f, y = (ch - cardH) * 0.5f;
             DllWrapper.VortexAPI.UIRect(x, y, cardW, cardH, 0.09f, 0.08f, 0.10f, 0.97f * fade, 12f);
-            DllWrapper.VortexAPI.UIText(x + 26f, y + 22f, cardW - 52f, 26f, "Hot-reloading scripts…", 17f, 0.92f, 0.90f, 0.96f, fade, 0, 600);
-            string what = string.IsNullOrEmpty(sr.LastReloadSummary) ? "recompiled" : sr.LastReloadSummary;
-            DllWrapper.VortexAPI.UIText(x + 26f, y + 50f, cardW - 52f, 18f, what, 12f, 0.55f, 0.80f, 0.52f, fade, 0, 400);
+            DllWrapper.VortexAPI.UIText(x + 26f, y + 20f, cardW - 52f, 26f, title, 17f, tr, tg, tb, fade, 0, 600);
+            DllWrapper.VortexAPI.UIText(x + 26f, y + 48f, cardW - 52f, 22f, _hotReloadMsg ?? "", 12f, 0.80f, 0.80f, 0.84f, fade, 0, 400);
 
             float bx = x + 26f, by = y + cardH - 22f, bw = cardW - 52f;
-            DllWrapper.VortexAPI.UIRect(bx, by, bw, 5f, 0.16f, 0.16f, 0.18f, fade, 3f);            // track
-            DllWrapper.VortexAPI.UIRect(bx, by, bw * bar, 5f, 0.42f, 0.36f, 0.90f, fade, 3f);       // indigo fill
+            DllWrapper.VortexAPI.UIRect(bx, by, bw, 5f, 0.16f, 0.16f, 0.18f, fade, 3f);           // track
+            if (_hotReloadState == 0)
+            {
+                float w = bw * 0.35f;
+                float px = bx + (bw - w) * (0.5f + 0.5f * (float)Math.Sin(elapsed * 6.0));         // indeterminate sweep
+                DllWrapper.VortexAPI.UIRect(px, by, w, 5f, br, bg, bb, fade, 3f);
+            }
+            else DllWrapper.VortexAPI.UIRect(bx, by, bw, 5f, br, bg, bb, fade, 3f);               // full
         }
 
         // Drain the host input event queues into reusable buffers + build the per-frame VUI input snapshot (no

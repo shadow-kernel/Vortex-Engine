@@ -59,7 +59,7 @@ EDITOR_INTERFACE void SetMaterialShader(int material_id, const char* hlsl_path)
 	}
 	graphics::dx12::DX12Renderer::instance().set_material_shader((uint32_t)material_id, w);
 }
-EDITOR_INTERFACE void ReloadMaterialShaders() { graphics::dx12::DX12Renderer::instance().reload_dirty_shaders(); }
+EDITOR_INTERFACE int ReloadMaterialShaders() { return graphics::dx12::DX12Renderer::instance().reload_dirty_shaders(); }
 
 // GPU capability — the DLSS hardware gate. The options UI shows DLSS only when GpuSupportsDlss() is true; on
 // every other machine the render-scale slider is the universal fallback.
