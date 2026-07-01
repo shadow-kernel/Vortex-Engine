@@ -14,14 +14,16 @@
 [![C++](https://img.shields.io/badge/ENGINE-C%2B%2B20-00599C?style=for-the-badge&logo=cplusplus&logoColor=white)](#-architecture)
 [![C#](https://img.shields.io/badge/EDITOR-.NET%204.8%20WPF-512BD4?style=for-the-badge&logo=dotnet&logoColor=white)](#-architecture)
 [![Status](https://img.shields.io/badge/STATUS-Active%20Alpha-FF6B6B?style=for-the-badge)](#-roadmap)
+[![License](https://img.shields.io/badge/LICENSE-MIT-3DA639?style=for-the-badge&logo=opensourceinitiative&logoColor=white)](LICENSE)
+[![Free](https://img.shields.io/badge/100%25%20FREE-incl.%20commercial-00B894?style=for-the-badge)](#-license)
 
 <br/>
 
 **Build worlds. Import anything. Press ▶ Play.**
 
-A two-part engine: a fast native **runtime** that compiles straight into your shipped games, and a separate **editor** for authoring scenes, assets and gameplay — wired together through a single thin C interop layer.
+**Free and open source (MIT) — free to use for anything, including commercial games.** A two-part engine: a fast native **runtime** that compiles straight into your shipped games, and a separate **editor** for authoring scenes, assets and gameplay — wired together through a single thin C interop layer. Contributions welcome. 🌀
 
-[Getting Started](#-getting-started) · [Architecture](#-architecture) · [Features](#-features) · [Roadmap](#-roadmap)
+[Getting Started](#-getting-started) · [Architecture](#-architecture) · [Features](#-features) · [Roadmap](#-roadmap) · [Contributing](#-contributing) · [License](#-license)
 
 </div>
 
@@ -82,9 +84,11 @@ flowchart LR
 ### Build & Run
 
 ```bash
-# 1. Clone
-git clone https://github.com/shadow-kernel/Vortex-Engine.git
+# 1. Clone WITH submodules (the NVIDIA Streamline SDK + the default 3D template are submodules)
+git clone --recurse-submodules https://github.com/shadow-kernel/Vortex-Engine.git
 cd Vortex-Engine
+# (already cloned without submodules? run:)
+git submodule update --init --recursive
 
 # 2. Restore native + managed NuGet packages
 nuget restore Engine/packages.config    -SolutionDirectory .
@@ -195,10 +199,55 @@ Vortex-Engine/
 
 ---
 
+## 🤝 Contributing
+
+Vortex is built in the open and **everyone is welcome** — code, docs, assets, bug
+reports, or ideas. Start with **[CONTRIBUTING.md](CONTRIBUTING.md)** for the build
+setup and PR flow, and please be excellent to each other per the
+**[Code of Conduct](CODE_OF_CONDUCT.md)**.
+
+> One rule to remember: **gameplay lives in project scripts (`VortexBehaviour`), never hardcoded in the engine** — keep the engine generic.
+
+---
+
+## 📄 License
+
+Vortex Engine is **free and open source** under the **[MIT License](LICENSE)**.
+
+**You can use it for anything — including commercial games — free of charge**, with
+no royalties and no "made with" requirement. Fork it, ship with it, build a
+business on it.
+
+Vortex bundles/links a few permissively-licensed third-party components, and can
+optionally use NVIDIA DLSS (proprietary, not bundled). Full details and
+attributions are in **[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)**.
+
+- **Assimp** (BSD-3) · **stb_image** (public domain/MIT) · **AvalonDock** (Ms-PL) · **.NET libs** (MIT)
+- **NVIDIA Streamline/DLSS** — optional, NVIDIA-proprietary, fetched at build time, never committed. If you *ship* a DLSS build, NVIDIA's attribution + registration terms apply to you as the distributor.
+- **Assets** in the default template: Kenney models (CC0) + author-generated textures.
+
+---
+
+## 💜 Support Vortex — Donate
+
+**Vortex is free forever — MIT-licensed, no royalties, no catch.** It's built in
+the open and given away so anyone can make games. If Vortex helps you, a donation
+keeps it that way.
+
+**Where it goes:** new engine features · better docs & tutorials · free **CC0
+asset packs** for the community · build/CI hosting so releases stay fast and reliable.
+
+**🎯 First goal — €1,000:** a year of build & CI hosting **plus** a free community
+asset pack. Every contribution, big or small, gets us there. 🙏
+
+> 💳 **[Donate via PayPal »](https://www.paypal.me/REPLACE_ME)** &nbsp;·&nbsp; <sub>(PayPal link coming — will be dropped in here)</sub>
+
+---
+
 <div align="center">
 
 ### 🌀 Built with passion. Powered by DirectX 12.
 
-<sub>Vortex Engine is in active alpha development — expect rapid change.</sub>
+<sub>Vortex Engine is free & open source (MIT) — in active alpha, expect rapid change. PRs welcome.</sub>
 
 </div>
