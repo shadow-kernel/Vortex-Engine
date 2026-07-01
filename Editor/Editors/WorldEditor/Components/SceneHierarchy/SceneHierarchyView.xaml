@@ -455,20 +455,27 @@
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    
+
                     <!-- Search Box -->
-                    <TextBox Grid.Column="0" Style="{StaticResource SearchBoxStyle}" 
+                    <TextBox Grid.Column="0" Style="{StaticResource SearchBoxStyle}"
                              Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
                              ToolTip="Search entities..."/>
-                    
+
+                    <!-- Locate Selected: scroll the tree to the selected object + jump the Asset Browser to its material -->
+                    <Button x:Name="LocateButton" Grid.Column="1" Content="&#xE1D2;"
+                            Style="{StaticResource IconButtonStyle}"
+                            ToolTip="Locate selected (reveal in tree + jump to its material in the Asset Browser) — F"
+                            Margin="4,0,0,0" Click="LocateSelected_Click"/>
+
                     <!-- Add Scene Button -->
-                    <Button Grid.Column="1" Content="&#xE8F4;" Style="{StaticResource IconButtonStyle}" 
+                    <Button Grid.Column="2" Content="&#xE8F4;" Style="{StaticResource IconButtonStyle}"
                             ToolTip="New Scene" Margin="4,0,0,0" Click="AddScene_Click"/>
-                    
+
                     <!-- Add Entity Button -->
-                    <Button x:Name="AddEntityButton" Grid.Column="2" Content="&#xE710;" 
-                            Style="{StaticResource IconButtonStyle}" 
+                    <Button x:Name="AddEntityButton" Grid.Column="3" Content="&#xE710;"
+                            Style="{StaticResource IconButtonStyle}"
                             ToolTip="Add Entity" Margin="4,0,0,0" Click="AddEntity_Click"/>
                 </Grid>
             </Border>

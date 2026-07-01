@@ -41,6 +41,11 @@ namespace vortex::graphics::dx12
 	// Maximum number of secondary render targets
 	constexpr u32 MAX_RENDER_TARGETS = 8;
 
+	// Editor transform gizmos render in a dedicated always-on-top pass. They reuse the TAIL slots of the per-object
+	// CB + instance VB (the editor scene never fills 8192 draw-runs / 262144 instances), so no extra buffers are
+	// needed. This caps how many gizmo meshes draw per frame (move=6, scale=7, rotate=3*segments).
+	constexpr u32 MAX_GIZMO_ITEMS = 512;
+
 	struct RendererDesc
 	{
 		HWND hwnd{ nullptr };
@@ -108,6 +113,9 @@ namespace vortex::graphics::dx12
 
 		// Render queue
 		void submit_render_item(const RenderItem& item);
+		// Submit an editor GIZMO mesh — goes into the separate gizmo queue and renders always-on-top (depth-disabled)
+		// in render_gizmos() after the scene. Used by the editor's move/rotate/scale gizmos + selection outline.
+		void submit_gizmo_item(const RenderItem& item);
 		// Submit `count` instances of the SAME mesh+material in ONE call (world_matrices = count * 16 floats,
 		// row-major 4x4 each). Avoids one P/Invoke per instance — the path for spawning large crowds.
 		void submit_mesh_instances(id::id_type mesh, id::id_type material, const float* world_matrices, u32 count);
@@ -359,6 +367,7 @@ namespace vortex::graphics::dx12
 		void wait_for_previous_frame();
 
 		void render_3d_scene();
+		void render_gizmos();   // dedicated always-on-top pass for editor gizmos (depth-disabled PSO)
 		bool capture_backbuffer_to_bmp(const char* path);
 		void render_fallback_triangle();
 		void render_grid();
@@ -501,6 +510,10 @@ namespace vortex::graphics::dx12
 		// Render queue - double buffered for thread safety
 		std::vector<RenderItem> m_render_queue;
 		std::vector<RenderItem> m_submit_queue;
+		// Separate double-buffered queue for editor gizmos so the optimized scene path never touches them; they draw
+		// in render_gizmos() after the scene with the depth-disabled gizmo PSO (always on top).
+		std::vector<RenderItem> m_gizmo_render;
+		std::vector<RenderItem> m_gizmo_submit;
 		std::mutex m_queue_mutex;
 		
 		// Batching structures for instanced rendering

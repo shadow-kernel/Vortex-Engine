@@ -241,6 +241,22 @@ namespace vortex::graphics::dx12
 			return false;
 		}
 
+		// Gizmo PSO: no backface culling (already set above) + depth test/write DISABLED so editor transform gizmos
+		// always render ON TOP of scene geometry and are never occluded. Same shaders/root sig/input layout, so it
+		// stays binding-compatible with the standard PerFrame/PerObject/instance-VB setup.
+		{
+			D3D12_DEPTH_STENCIL_DESC gizmo_ds{};
+			gizmo_ds.DepthEnable = FALSE;
+			gizmo_ds.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+			gizmo_ds.DepthFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+			gizmo_ds.StencilEnable = FALSE;
+			pso_desc.DepthStencilState = gizmo_ds;   // rasterizer already SOLID + CULL_NONE from double-sided above
+			if (FAILED(device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&m_gizmo_pso))))
+			{
+				return false;
+			}
+		}
+
 		return true;
 	}
 }

@@ -23,11 +23,12 @@ namespace Editor.DllWrapper
         private static long _gizmoMaterialYellow = ID.INVALID_ID;
         private static long _outlineMaterial = ID.INVALID_ID;
 
-        // Gizmo constants
-        public const float GIZMO_LENGTH = 1.2f;
-        public const float GIZMO_THICKNESS = 0.04f;
-        public const float GIZMO_ARROW_SIZE = 0.15f;
-        public const float GIZMO_ARROW_LENGTH = 0.3f;
+        // Gizmo constants — deliberately BIG + THICK so the handles are easy to see and grab. They also render
+        // always-on-top (depth-disabled gizmo pass), so size is purely about readability, not occlusion.
+        public const float GIZMO_LENGTH = 1.7f;
+        public const float GIZMO_THICKNESS = 0.10f;
+        public const float GIZMO_ARROW_SIZE = 0.30f;
+        public const float GIZMO_ARROW_LENGTH = 0.55f;
 
         private static bool _gizmosInitialized = false;
 
@@ -63,14 +64,15 @@ namespace Editor.DllWrapper
                 _gizmoMaterialYellow = CreateMaterial();
                 _outlineMaterial = CreateMaterial();
 
-                SetMaterialColor(_gizmoMaterialRed, 0.95f, 0.2f, 0.2f, 1.0f);
-                SetMaterialColor(_gizmoMaterialGreen, 0.2f, 0.95f, 0.2f, 1.0f);
-                SetMaterialColor(_gizmoMaterialBlue, 0.2f, 0.4f, 0.95f, 1.0f);
-                SetMaterialColor(_gizmoMaterialRedHighlight, 1.0f, 0.6f, 0.4f, 1.0f);
-                SetMaterialColor(_gizmoMaterialGreenHighlight, 0.6f, 1.0f, 0.4f, 1.0f);
-                SetMaterialColor(_gizmoMaterialBlueHighlight, 0.4f, 0.7f, 1.0f, 1.0f);
-                SetMaterialColor(_gizmoMaterialYellow, 1.0f, 1.0f, 0.3f, 1.0f);
-                SetMaterialColor(_outlineMaterial, 1.0f, 0.6f, 0.2f, 1.0f);
+                // Fully-saturated, bright axis colors; hovered axis goes near-white for an obvious highlight.
+                SetMaterialColor(_gizmoMaterialRed, 1.0f, 0.15f, 0.15f, 1.0f);
+                SetMaterialColor(_gizmoMaterialGreen, 0.15f, 1.0f, 0.2f, 1.0f);
+                SetMaterialColor(_gizmoMaterialBlue, 0.2f, 0.45f, 1.0f, 1.0f);
+                SetMaterialColor(_gizmoMaterialRedHighlight, 1.0f, 0.85f, 0.55f, 1.0f);
+                SetMaterialColor(_gizmoMaterialGreenHighlight, 0.8f, 1.0f, 0.55f, 1.0f);
+                SetMaterialColor(_gizmoMaterialBlueHighlight, 0.6f, 0.85f, 1.0f, 1.0f);
+                SetMaterialColor(_gizmoMaterialYellow, 1.0f, 0.95f, 0.25f, 1.0f);
+                SetMaterialColor(_outlineMaterial, 1.0f, 0.65f, 0.12f, 1.0f);
 
                 _gizmosInitialized = true;
             }
@@ -129,16 +131,16 @@ namespace Editor.DllWrapper
             long matZ = HoveredAxis == GizmoAxis.Z ? _gizmoMaterialBlueHighlight : _gizmoMaterialBlue;
 
             // X axis
-            SubmitMeshForRendering(_gizmoCube, matX, BuildAxisMatrix(posX + len * 0.5f, posY, posZ, len, thick, thick));
-            SubmitMeshForRendering(_gizmoCone, matX, BuildArrowMatrix(posX + len, posY, posZ, arrowSize, arrowLen, 0));
+            SubmitGizmoForRendering(_gizmoCube, matX, BuildAxisMatrix(posX + len * 0.5f, posY, posZ, len, thick, thick));
+            SubmitGizmoForRendering(_gizmoCone, matX, BuildArrowMatrix(posX + len, posY, posZ, arrowSize, arrowLen, 0));
 
             // Y axis
-            SubmitMeshForRendering(_gizmoCube, matY, BuildAxisMatrix(posX, posY + len * 0.5f, posZ, thick, len, thick));
-            SubmitMeshForRendering(_gizmoCone, matY, BuildArrowMatrix(posX, posY + len, posZ, arrowSize, arrowLen, 1));
+            SubmitGizmoForRendering(_gizmoCube, matY, BuildAxisMatrix(posX, posY + len * 0.5f, posZ, thick, len, thick));
+            SubmitGizmoForRendering(_gizmoCone, matY, BuildArrowMatrix(posX, posY + len, posZ, arrowSize, arrowLen, 1));
 
             // Z axis
-            SubmitMeshForRendering(_gizmoCube, matZ, BuildAxisMatrix(posX, posY, posZ + len * 0.5f, thick, thick, len));
-            SubmitMeshForRendering(_gizmoCone, matZ, BuildArrowMatrix(posX, posY, posZ + len, arrowSize, arrowLen, 2));
+            SubmitGizmoForRendering(_gizmoCube, matZ, BuildAxisMatrix(posX, posY, posZ + len * 0.5f, thick, thick, len));
+            SubmitGizmoForRendering(_gizmoCone, matZ, BuildArrowMatrix(posX, posY, posZ + len, arrowSize, arrowLen, 2));
         }
 
         private static void RenderDraggingAxis(float posX, float posY, float posZ, float scale)
@@ -153,18 +155,18 @@ namespace Editor.DllWrapper
             {
                 case GizmoAxis.X:
                     mat = _gizmoMaterialRedHighlight;
-                    SubmitMeshForRendering(_gizmoCube, _gizmoMaterialYellow, BuildAxisMatrix(posX, posY, posZ, extendedLen * 2, thick, thick));
-                    SubmitMeshForRendering(_gizmoCone, mat, BuildArrowMatrix(posX + GIZMO_LENGTH * scale, posY, posZ, arrowSize, arrowLen, 0));
+                    SubmitGizmoForRendering(_gizmoCube, _gizmoMaterialYellow, BuildAxisMatrix(posX, posY, posZ, extendedLen * 2, thick, thick));
+                    SubmitGizmoForRendering(_gizmoCone, mat, BuildArrowMatrix(posX + GIZMO_LENGTH * scale, posY, posZ, arrowSize, arrowLen, 0));
                     break;
                 case GizmoAxis.Y:
                     mat = _gizmoMaterialGreenHighlight;
-                    SubmitMeshForRendering(_gizmoCube, _gizmoMaterialYellow, BuildAxisMatrix(posX, posY, posZ, thick, extendedLen * 2, thick));
-                    SubmitMeshForRendering(_gizmoCone, mat, BuildArrowMatrix(posX, posY + GIZMO_LENGTH * scale, posZ, arrowSize, arrowLen, 1));
+                    SubmitGizmoForRendering(_gizmoCube, _gizmoMaterialYellow, BuildAxisMatrix(posX, posY, posZ, thick, extendedLen * 2, thick));
+                    SubmitGizmoForRendering(_gizmoCone, mat, BuildArrowMatrix(posX, posY + GIZMO_LENGTH * scale, posZ, arrowSize, arrowLen, 1));
                     break;
                 case GizmoAxis.Z:
                     mat = _gizmoMaterialBlueHighlight;
-                    SubmitMeshForRendering(_gizmoCube, _gizmoMaterialYellow, BuildAxisMatrix(posX, posY, posZ, thick, thick, extendedLen * 2));
-                    SubmitMeshForRendering(_gizmoCone, mat, BuildArrowMatrix(posX, posY, posZ + GIZMO_LENGTH * scale, arrowSize, arrowLen, 2));
+                    SubmitGizmoForRendering(_gizmoCube, _gizmoMaterialYellow, BuildAxisMatrix(posX, posY, posZ, thick, thick, extendedLen * 2));
+                    SubmitGizmoForRendering(_gizmoCone, mat, BuildArrowMatrix(posX, posY, posZ + GIZMO_LENGTH * scale, arrowSize, arrowLen, 2));
                     break;
             }
         }

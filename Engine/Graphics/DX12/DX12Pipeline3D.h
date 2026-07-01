@@ -27,6 +27,11 @@ namespace vortex::graphics::dx12
 		// Double-sided PSO for skybox/unlit materials (no backface culling)
 		ID3D12PipelineState* double_sided_pso() const { return m_double_sided_pso.Get(); }
 
+		// Gizmo PSO: same shaders/root sig, but depth test+write DISABLED and no backface culling, so editor
+		// transform gizmos render ALWAYS ON TOP of scene geometry (never occluded) and never cull when the camera
+		// is close/inside them. Drawn in a dedicated pass AFTER the scene.
+		ID3D12PipelineState* gizmo_pso() const { return m_gizmo_pso.Get(); }
+
 		// Compile a CUSTOM material shader (.hlsl, VSMain/PSMain) into a PSO that reuses this pipeline's root
 		// signature + input layout + render state — only the shader stages differ, so it stays binding-compatible
 		// with the same PerFrame/PerObject/light/texture setup. Returns nullptr on any compile/create failure (the
@@ -45,6 +50,7 @@ namespace vortex::graphics::dx12
 		ComPtr<ID3D12PipelineState> m_pipeline_state;
 		ComPtr<ID3D12PipelineState> m_wireframe_pso;
 		ComPtr<ID3D12PipelineState> m_double_sided_pso;
+		ComPtr<ID3D12PipelineState> m_gizmo_pso;   // depth-disabled, cull-none: gizmos always on top
 		ComPtr<ID3DBlob> m_vs_blob;
 		ComPtr<ID3DBlob> m_ps_blob;
 	};

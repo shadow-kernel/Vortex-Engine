@@ -29,19 +29,19 @@ namespace Editor.DllWrapper
             }
 
             // X axis with cube at end
-            SubmitMeshForRendering(_gizmoCube, matX, BuildAxisMatrix(posX + len * 0.5f, posY, posZ, len, thick, thick));
-            SubmitMeshForRendering(_gizmoCube, matX, BuildAxisMatrix(posX + len, posY, posZ, cubeSize, cubeSize, cubeSize));
+            SubmitGizmoForRendering(_gizmoCube, matX, BuildAxisMatrix(posX + len * 0.5f, posY, posZ, len, thick, thick));
+            SubmitGizmoForRendering(_gizmoCube, matX, BuildAxisMatrix(posX + len, posY, posZ, cubeSize, cubeSize, cubeSize));
 
             // Y axis with cube at end
-            SubmitMeshForRendering(_gizmoCube, matY, BuildAxisMatrix(posX, posY + len * 0.5f, posZ, thick, len, thick));
-            SubmitMeshForRendering(_gizmoCube, matY, BuildAxisMatrix(posX, posY + len, posZ, cubeSize, cubeSize, cubeSize));
+            SubmitGizmoForRendering(_gizmoCube, matY, BuildAxisMatrix(posX, posY + len * 0.5f, posZ, thick, len, thick));
+            SubmitGizmoForRendering(_gizmoCube, matY, BuildAxisMatrix(posX, posY + len, posZ, cubeSize, cubeSize, cubeSize));
 
             // Z axis with cube at end
-            SubmitMeshForRendering(_gizmoCube, matZ, BuildAxisMatrix(posX, posY, posZ + len * 0.5f, thick, thick, len));
-            SubmitMeshForRendering(_gizmoCube, matZ, BuildAxisMatrix(posX, posY, posZ + len, cubeSize, cubeSize, cubeSize));
+            SubmitGizmoForRendering(_gizmoCube, matZ, BuildAxisMatrix(posX, posY, posZ + len * 0.5f, thick, thick, len));
+            SubmitGizmoForRendering(_gizmoCube, matZ, BuildAxisMatrix(posX, posY, posZ + len, cubeSize, cubeSize, cubeSize));
 
             // Center cube for uniform scaling
-            SubmitMeshForRendering(_gizmoCube, _gizmoMaterialYellow, BuildAxisMatrix(posX, posY, posZ, cubeSize * 0.8f, cubeSize * 0.8f, cubeSize * 0.8f));
+            SubmitGizmoForRendering(_gizmoCube, _gizmoMaterialYellow, BuildAxisMatrix(posX, posY, posZ, cubeSize * 0.8f, cubeSize * 0.8f, cubeSize * 0.8f));
         }
 
         private static void RenderScaleDraggingAxis(float posX, float posY, float posZ, float scale)
@@ -53,16 +53,16 @@ namespace Editor.DllWrapper
             switch (DraggingAxis)
             {
                 case GizmoAxis.X:
-                    SubmitMeshForRendering(_gizmoCube, _gizmoMaterialYellow, BuildAxisMatrix(posX, posY, posZ, extendedLen * 2, thick, thick));
-                    SubmitMeshForRendering(_gizmoCube, _gizmoMaterialRedHighlight, BuildAxisMatrix(posX + GIZMO_LENGTH * scale, posY, posZ, cubeSize, cubeSize, cubeSize));
+                    SubmitGizmoForRendering(_gizmoCube, _gizmoMaterialYellow, BuildAxisMatrix(posX, posY, posZ, extendedLen * 2, thick, thick));
+                    SubmitGizmoForRendering(_gizmoCube, _gizmoMaterialRedHighlight, BuildAxisMatrix(posX + GIZMO_LENGTH * scale, posY, posZ, cubeSize, cubeSize, cubeSize));
                     break;
                 case GizmoAxis.Y:
-                    SubmitMeshForRendering(_gizmoCube, _gizmoMaterialYellow, BuildAxisMatrix(posX, posY, posZ, thick, extendedLen * 2, thick));
-                    SubmitMeshForRendering(_gizmoCube, _gizmoMaterialGreenHighlight, BuildAxisMatrix(posX, posY + GIZMO_LENGTH * scale, posZ, cubeSize, cubeSize, cubeSize));
+                    SubmitGizmoForRendering(_gizmoCube, _gizmoMaterialYellow, BuildAxisMatrix(posX, posY, posZ, thick, extendedLen * 2, thick));
+                    SubmitGizmoForRendering(_gizmoCube, _gizmoMaterialGreenHighlight, BuildAxisMatrix(posX, posY + GIZMO_LENGTH * scale, posZ, cubeSize, cubeSize, cubeSize));
                     break;
                 case GizmoAxis.Z:
-                    SubmitMeshForRendering(_gizmoCube, _gizmoMaterialYellow, BuildAxisMatrix(posX, posY, posZ, thick, thick, extendedLen * 2));
-                    SubmitMeshForRendering(_gizmoCube, _gizmoMaterialBlueHighlight, BuildAxisMatrix(posX, posY, posZ + GIZMO_LENGTH * scale, cubeSize, cubeSize, cubeSize));
+                    SubmitGizmoForRendering(_gizmoCube, _gizmoMaterialYellow, BuildAxisMatrix(posX, posY, posZ, thick, thick, extendedLen * 2));
+                    SubmitGizmoForRendering(_gizmoCube, _gizmoMaterialBlueHighlight, BuildAxisMatrix(posX, posY, posZ + GIZMO_LENGTH * scale, cubeSize, cubeSize, cubeSize));
                     break;
             }
         }

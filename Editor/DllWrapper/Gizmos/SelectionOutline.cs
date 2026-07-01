@@ -18,7 +18,7 @@ namespace Editor.DllWrapper
             if (!_gizmosInitialized) InitializeGizmos();
             if (_gizmoCube == ID.INVALID_ID || _outlineMaterial == ID.INVALID_ID) return;
 
-            float edgeThickness = 0.025f;
+            float edgeThickness = 0.05f;   // thicker, clearly-visible selection box (also renders always-on-top)
             float halfX = scaleX * 0.5f + edgeThickness;
             float halfY = scaleY * 0.5f + edgeThickness;
             float halfZ = scaleZ * 0.5f + edgeThickness;
@@ -109,7 +109,7 @@ namespace Editor.DllWrapper
             // Build rotation matrix to align Y axis with edge direction
             // We need to rotate the cube so its Y axis points along (dx, dy, dz)
             float[] matrix = BuildEdgeMatrix(midX, midY, midZ, dx, dy, dz, length, thickness);
-            SubmitMeshForRendering(_gizmoCube, _outlineMaterial, matrix);
+            SubmitGizmoForRendering(_gizmoCube, _outlineMaterial, matrix);
         }
 
         private static float[] BuildEdgeMatrix(float px, float py, float pz, float dx, float dy, float dz, float length, float thickness)

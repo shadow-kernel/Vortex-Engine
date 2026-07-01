@@ -253,6 +253,16 @@ namespace Editor.DllWrapper
         }
 
         [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SubmitGizmoItem(long meshId, long materialId, float[] worldMatrix);
+
+        /// <summary>Submit an editor gizmo mesh (move/rotate/scale handle or selection outline) — rendered ALWAYS
+        /// ON TOP of scene geometry (depth-disabled) in a dedicated pass after the scene.</summary>
+        public static void SubmitGizmoForRendering(long meshId, long materialId, float[] worldMatrix = null)
+        {
+            SubmitGizmoItem(meshId, materialId, worldMatrix);
+        }
+
+        [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void SubmitMeshInstances(long meshId, long materialId, float[] worldMatrices, int count);
 
         /// <summary>Submit <paramref name="count"/> instances of the SAME mesh+material in ONE call

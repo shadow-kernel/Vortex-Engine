@@ -903,6 +903,9 @@ namespace Editor.Dialogs
                     // Drop the cached engine material so the viewport rebuilds it with the new
                     // values on the next frame (edit -> render round-trip).
                     Editor.Core.Services.MaterialService.Instance.InvalidateVortexMaterial(_materialPath);
+                    // Also refresh the Asset Browser material tiles so the live sphere updates immediately (not just
+                    // the scene) — clears the thumbnail cache + re-queues the tiles.
+                    try { Editor.Editors.WorldEditor.Components.AssetBrowser.AssetBrowserView.InvalidateMaterialThumbnails(); } catch { }
                     _isDirty = false;
                     Title = $"Material Editor - {_material.Name}";
                     _statusText.Text = "Material saved.";

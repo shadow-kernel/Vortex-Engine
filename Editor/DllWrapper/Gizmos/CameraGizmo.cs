@@ -56,7 +56,7 @@ namespace Editor.DllWrapper
 
             // Just render the camera body cube
             float[] worldMatrix = BuildRotatedWorldMatrix(posX, posY, posZ, 0.25f, 0.25f, 0.25f, rotX, rotY, rotZ);
-            SubmitMeshForRendering(_cameraMesh, material, worldMatrix);
+            SubmitGizmoForRendering(_cameraMesh, material, worldMatrix);
             
             // Add a small direction indicator (short forward line)
             float radX = rotX * (float)(Math.PI / 180.0);
@@ -130,7 +130,7 @@ namespace Editor.DllWrapper
 
             // 1. Render camera body (small cube at position)
             float[] worldMatrix = BuildRotatedWorldMatrix(posX, posY, posZ, 0.3f, 0.3f, 0.3f, rotX, rotY, rotZ);
-            SubmitMeshForRendering(_cameraMesh, material, worldMatrix);
+            SubmitGizmoForRendering(_cameraMesh, material, worldMatrix);
 
             // 2. Calculate frustum corners for visualization
             float nearDist = 0.5f;   // Visual near plane distance
@@ -235,7 +235,7 @@ namespace Editor.DllWrapper
             float pitch = (float)Math.Asin(-dy) * (180.0f / (float)Math.PI);
 
             float[] worldMatrix = BuildRotatedWorldMatrix(midX, midY, midZ, thickness, thickness, length, pitch, yaw, 0);
-            SubmitMeshForRendering(_gizmoCube, material, worldMatrix);
+            SubmitGizmoForRendering(_gizmoCube, material, worldMatrix);
         }
 
         private static void RenderFrustumPlane(float[][] corners, long material)
@@ -274,7 +274,7 @@ namespace Editor.DllWrapper
             float pitch = (float)Math.Asin(-ny / nLen) * (180.0f / (float)Math.PI);
 
             float[] worldMatrix = BuildRotatedWorldMatrix(centerX, centerY, centerZ, width, height, 0.01f, pitch, yaw, 0);
-            SubmitMeshForRendering(_gizmoCube, material, worldMatrix);
+            SubmitGizmoForRendering(_gizmoCube, material, worldMatrix);
         }
 
         private static float[] BuildRotatedWorldMatrix(float posX, float posY, float posZ,

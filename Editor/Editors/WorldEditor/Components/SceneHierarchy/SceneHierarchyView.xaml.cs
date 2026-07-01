@@ -97,6 +97,12 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
                     }
                     break;
 
+                // Locate: reveal the selected object in the tree + jump the Asset Browser to its material
+                case Key.F when !ctrl && !shift:
+                    RevealAndLocateSelected();
+                    e.Handled = true;
+                    break;
+
                 // Duplicate
                 case Key.D when ctrl:
                     if (ViewModel.DuplicateEntityCommand.CanExecute(null))
@@ -205,6 +211,98 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
                 element = System.Windows.Media.VisualTreeHelper.GetParent(element);
             }
             return element as TreeViewItem;
+        }
+
+        #endregion
+
+        #region Locate / Reveal
+
+        private void LocateSelected_Click(object sender, RoutedEventArgs e) => RevealAndLocateSelected();
+
+        /// <summary>"Locate" the selected object: scroll the hierarchy tree to it (+ select), then jump the Asset
+        /// Browser to the folder of its material so the user can drill into it. Triggered by the toolbar button or F.</summary>
+        public void RevealAndLocateSelected()
+        {
+            var entity = ViewModel?.SelectedEntity ?? SelectionService.Instance.SelectedEntity;
+            if (entity == null)
+            {
+                (Application.Current?.MainWindow as MainWindow)?.ShowToast("Select an object first");
+                return;
+            }
+            RevealEntityInTree(entity);
+            LocateEntityMaterialInExplorer(entity);
+        }
+
+        /// <summary>Expand the entity's parent chain, select it, and scroll its tree row into view.</summary>
+        private void RevealEntityInTree(GameEntity entity)
+        {
+            try
+            {
+                // Make sure the entity's scene is the selected one so the tree shows it.
+                if (entity.Scene != null && ViewModel != null && ViewModel.SelectedScene != entity.Scene)
+                    ViewModel.SelectedScene = entity.Scene;
+
+                // Expand every ancestor (top-down) so the target's TreeViewItem gets realized.
+                var chain = new System.Collections.Generic.List<GameEntity>();
+                for (var p = entity.Parent; p != null; p = p.Parent) chain.Add(p);
+                for (int i = chain.Count - 1; i >= 0; i--) chain[i].IsExpanded = true;
+
+                if (ViewModel != null) ViewModel.SelectedEntity = entity;   // also selects in the viewport (SelectionService)
+
+                HierarchyTree.UpdateLayout();
+                var tvi = FindTreeViewItem(HierarchyTree, entity);
+                if (tvi != null) { tvi.IsSelected = true; tvi.BringIntoView(); }
+            }
+            catch { }
+        }
+
+        /// <summary>Recursively find the TreeViewItem container whose DataContext is <paramref name="data"/>. Realizes
+        /// child containers as it descends (they only exist once their parent is expanded).</summary>
+        private static TreeViewItem FindTreeViewItem(ItemsControl parent, object data)
+        {
+            if (parent == null) return null;
+            for (int i = 0; i < parent.Items.Count; i++)
+            {
+                var container = parent.ItemContainerGenerator.ContainerFromIndex(i) as TreeViewItem;
+                if (container == null) continue;
+                if (ReferenceEquals(parent.Items[i], data)) return container;
+                container.UpdateLayout();   // force child container generation for expanded nodes
+                var found = FindTreeViewItem(container, data);
+                if (found != null) return found;
+            }
+            return null;
+        }
+
+        /// <summary>Navigate the Asset Browser / file explorer to the folder of the selected object's material (.vmat),
+        /// so the user lands right where they can inspect/edit its material. Checks the entity + its submesh children.</summary>
+        private void LocateEntityMaterialInExplorer(GameEntity entity)
+        {
+            try
+            {
+                string matPath = entity.GetComponent<Editor.ECS.Components.Rendering.MeshRenderer>()?.MaterialPath;
+                if (string.IsNullOrEmpty(matPath) && entity.Children != null)
+                {
+                    foreach (var c in entity.Children)
+                    {
+                        var cmr = c.GetComponent<Editor.ECS.Components.Rendering.MeshRenderer>();
+                        if (!string.IsNullOrEmpty(cmr?.MaterialPath)) { matPath = cmr.MaterialPath; break; }
+                    }
+                }
+                if (string.IsNullOrEmpty(matPath))
+                {
+                    (Application.Current?.MainWindow as MainWindow)?.ShowToast("Revealed '" + entity.Name + "' (no material assigned)");
+                    return;
+                }
+                var proj = ProjectData.Current?.Path ?? "";
+                string full = System.IO.Path.IsPathRooted(matPath) ? matPath : System.IO.Path.Combine(proj, matPath);
+                var dir = System.IO.Path.GetDirectoryName(full);
+                if (!string.IsNullOrEmpty(dir) && System.IO.Directory.Exists(dir))
+                {
+                    Editor.Editors.WorldEditor.Components.FileExplorer.Services.FileExplorerService.Instance.NavigateToPath(dir);
+                    (Application.Current?.MainWindow as MainWindow)?.ShowToast("Located '" + entity.Name + "' → " + System.IO.Path.GetFileName(full));
+                }
+            }
+            catch { }
         }
 
         #endregion

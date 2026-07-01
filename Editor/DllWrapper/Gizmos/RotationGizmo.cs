@@ -44,7 +44,7 @@ namespace Editor.DllWrapper
         /// </summary>
         private static void RenderSmoothCircle(float cx, float cy, float cz, float radius, int axis, long material)
         {
-            float sphereSize = 0.03f; // Small spheres for smooth appearance
+            float sphereSize = radius * 0.05f; // proportional to the ring -> thick, readable circles that scale
 
             for (int i = 0; i < ROTATION_CIRCLE_SEGMENTS; i++)
             {
@@ -68,7 +68,7 @@ namespace Editor.DllWrapper
                 }
 
                 float[] matrix = BuildAxisMatrix(cx + x, cy + y, cz + z, sphereSize, sphereSize, sphereSize);
-                SubmitMeshForRendering(_gizmoSphere, material, matrix);
+                SubmitGizmoForRendering(_gizmoSphere, material, matrix);
             }
         }
     }

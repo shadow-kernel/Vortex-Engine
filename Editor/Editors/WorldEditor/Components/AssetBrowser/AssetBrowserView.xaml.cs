@@ -99,6 +99,8 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             // Stay in sync with the file tree's current folder + its contents.
             FileExplorerService.Instance.CurrentFolderChanged += OnExplorerFolderChanged;
             FileExplorerService.Instance.FolderContentsChanged += OnFolderContentsChanged;
+            // Re-render material tiles when a material/shader is edited elsewhere (Material Editor Apply / hot-reload).
+            MaterialThumbnailsInvalidated += OnMaterialThumbnailsInvalidated;
         }
 
         private void OnUnloadedCleanup(object sender, RoutedEventArgs e)
@@ -106,6 +108,13 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             // FileExplorerService outlives this control — don't let it keep us alive.
             try { FileExplorerService.Instance.CurrentFolderChanged -= OnExplorerFolderChanged; } catch { }
             try { FileExplorerService.Instance.FolderContentsChanged -= OnFolderContentsChanged; } catch { }
+            try { MaterialThumbnailsInvalidated -= OnMaterialThumbnailsInvalidated; } catch { }
+        }
+
+        private void OnMaterialThumbnailsInvalidated()
+        {
+            // Cache already cleared by InvalidateMaterialThumbnails; re-list so material tiles re-queue their spheres.
+            try { Application.Current?.Dispatcher?.BeginInvoke(new Action(() => RefreshAssets())); } catch { }
         }
 
         private void OnFolderContentsChanged(object sender, EventArgs e)
@@ -1512,11 +1521,33 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
         /// tile updates via INotifyPropertyChanged when the image lands. This (with SwapRenderQueue
         /// replacing the per-thumbnail RenderOnce) is what makes opening the Asset Browser smooth.
         /// </summary>
+        // Pending thumbnail renders processed by a throttled timer at RENDER priority. The old fire-and-forget
+        // Background-priority BeginInvoke was STARVED by the viewport's per-frame CompositionTarget.Rendering (also a
+        // dispatcher tick), so material spheres often never rendered (stuck on the tan placeholder). A Render-priority
+        // timer that renders a couple per tick interleaves fairly with the viewport, so previews appear within ~1s.
+        private static readonly System.Collections.Generic.Queue<Tuple<AssetItem, Func<ImageSource>>> _thumbQueue
+            = new System.Collections.Generic.Queue<Tuple<AssetItem, Func<ImageSource>>>();
+        private static System.Windows.Threading.DispatcherTimer _thumbTimer;
+
         private void QueueThumbnail(AssetItem item, Func<ImageSource> builder)
         {
-            Application.Current?.Dispatcher?.BeginInvoke(
-                System.Windows.Threading.DispatcherPriority.Background,
-                new Action(() => { try { item.Thumbnail = builder(); } catch { } }));
+            _thumbQueue.Enqueue(Tuple.Create(item, builder));
+            if (_thumbTimer == null)
+            {
+                _thumbTimer = new System.Windows.Threading.DispatcherTimer(System.Windows.Threading.DispatcherPriority.Render)
+                { Interval = TimeSpan.FromMilliseconds(16) };
+                _thumbTimer.Tick += (s, e) =>
+                {
+                    int budget = 2;   // a couple of offscreen renders per tick -> ~120/s, drains fast without freezing
+                    while (budget-- > 0 && _thumbQueue.Count > 0)
+                    {
+                        var job = _thumbQueue.Dequeue();
+                        try { job.Item1.Thumbnail = job.Item2(); } catch { }
+                    }
+                    if (_thumbQueue.Count == 0) _thumbTimer.Stop();
+                };
+            }
+            if (!_thumbTimer.IsEnabled) _thumbTimer.Start();
         }
 
         /// <summary>Explorer tab: the current folder's subfolders + ALL files (a real file browser).</summary>
@@ -1945,8 +1976,12 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             catch { return 0; }
         }
 
-        /// <summary>Drop cached material spheres so they re-render with a recompiled custom shader. Called by the editor
-        /// when material shaders hot-reload (Alt-Tab back after saving an .hlsl in VS).</summary>
+        /// <summary>Raised after material thumbnails are invalidated so live Asset Browser instances re-render their
+        /// material tiles (e.g. the Material Editor's Apply, or a shader hot-reload).</summary>
+        public static event Action MaterialThumbnailsInvalidated;
+
+        /// <summary>Drop cached material spheres so they re-render (recompiled shader / edited material). Called by the
+        /// editor on shader hot-reload (Alt-Tab back after saving an .hlsl) and by the Material Editor's Apply.</summary>
         public static void InvalidateMaterialThumbnails()
         {
             try
@@ -1956,6 +1991,7 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 foreach (var k in stale) _thumbCache.Remove(k);
             }
             catch { }
+            try { MaterialThumbnailsInvalidated?.Invoke(); } catch { }
         }
 
         [DllImport("kernel32.dll", EntryPoint = "CopyMemory", SetLastError = false)]
@@ -2120,18 +2156,26 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             try { key = "mat:" + vmatPath + ":" + System.IO.File.GetLastWriteTimeUtc(vmatPath).Ticks + ":" + ShaderStampFor(vmatPath); }
             catch { key = "mat:" + vmatPath; }
             if (_thumbCache.TryGetValue(key, out var cached)) return cached;
+            // Build a FRESH throwaway engine material for the sphere and delete it right after — do NOT use
+            // MaterialService's SHARED cache (GetOrBuildVortexMaterial). That shared material is also used by the
+            // scene and gets DeleteMaterial'd by scene/entity cleanup, leaving the browser's cached id dangling ->
+            // the engine renders the sphere with NO material = the preview's default WHITE (the "island (custom
+            // shader) renders white" bug). A private throwaway can't be freed underneath us and always has its
+            // custom shader freshly bound. Mirrors MaterialEditorDialog.RefreshPreview.
+            long mat = -1;
             try
             {
-                long mat = Editor.Core.Services.MaterialService.Instance.GetOrBuildVortexMaterial(vmatPath);
-                if (mat >= 0)
-                {
-                    var img = Core.Services.Rendering.AssetPreviewRenderer.RenderMaterialSphere(mat, 256);
-                    if (img != null) _thumbCache[key] = img;
-                    return img;
-                }
+                var vmat = Editor.Core.Assets.VortexMaterial.Load(vmatPath);
+                if (vmat == null) return null;
+                vmat.ResolvePathsAbsolute(System.IO.Path.GetDirectoryName(vmatPath));
+                mat = Editor.Core.Services.MaterialService.Instance.BuildEngineMaterial(vmat);
+                if (mat < 0) return null;
+                var img = Core.Services.Rendering.AssetPreviewRenderer.RenderMaterialSphere(mat, 256);
+                if (img != null) _thumbCache[key] = img;
+                return img;
             }
-            catch { }
-            return null;
+            catch { return null; }
+            finally { if (mat >= 0) { try { VortexAPI.DeleteMaterial(mat); } catch { } } }
         }
 
         #endregion

@@ -202,6 +202,11 @@ namespace vortex::graphics::dx12
 		if (m_submit_queue.empty()) return;
 		m_render_queue.swap(m_submit_queue);
 		m_submit_queue.clear();
+		// Gizmos are submitted alongside the scene each time it's (re)submitted; swap them in lockstep so they update
+		// with the selection (empty submit -> gizmos cleared, e.g. on deselect) and are reused together with the scene
+		// on static/orbit frames (the early-return above keeps both).
+		m_gizmo_render.swap(m_gizmo_submit);
+		m_gizmo_submit.clear();
 		m_queue_dirty = true;   // new geometry -> re-sort + rebuild runs this frame
 	}
 
@@ -542,6 +547,7 @@ namespace vortex::graphics::dx12
 			if (m_skybox_enabled) render_skybox();
 			if (m_grid_visible) render_grid();
 			if (!m_render_queue.empty()) render_3d_scene();
+			render_gizmos();   // always-on-top editor gizmos, drawn into the scaled RT before mvec/upscale
 
 			// ---- DLSS SR (optional) + Frame Generation (optional): both need the motion-vector pass ----
 			bool dlss_active = (m_dlss_mode > 0) && DX12Streamline::instance().dlss_ready()
@@ -664,6 +670,7 @@ namespace vortex::graphics::dx12
 			if (m_skybox_enabled) render_skybox();
 			if (m_grid_visible) render_grid();
 			if (!m_render_queue.empty()) render_3d_scene();
+			render_gizmos();   // always-on-top editor gizmos, drawn last so they're never occluded
 
 			barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
 			barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
