@@ -1571,6 +1571,10 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             foreach (var fsi in contents)
             {
                 if (fsi == null || fsi.IsDirectory) continue;
+                // Hide engine sidecar/metadata files — they're internal, not user-facing assets.
+                var fp = fsi.FullPath ?? "";
+                if (fp.EndsWith(".vmeta", StringComparison.OrdinalIgnoreCase) ||
+                    fp.EndsWith(".meta", StringComparison.OrdinalIgnoreCase)) continue;
                 Assets.Add(BuildFileItem(fsi));
             }
         }

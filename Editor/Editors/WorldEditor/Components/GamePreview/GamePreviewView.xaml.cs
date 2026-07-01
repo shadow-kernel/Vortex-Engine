@@ -270,6 +270,12 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                 }
             }
 
+            // Editor overlays (selection outline + transform gizmo + camera/light icons) — submitted EVERY frame
+            // (cheap, and they go in the always-on-top gizmo queue that's swapped each frame) so the gizmo instantly
+            // reflects the current tool mode / drag / hover / selection + camera. NOT while playing (game owns the view).
+            if (!playing && sceneToRender != null)
+                SceneRenderService.Instance.SubmitOverlays(sceneToRender);
+
             // Render the frame
             VortexAPI.RenderOnce();
             
@@ -434,12 +440,11 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                         float normalizedY = (float)(pos.Y / _host.ActualHeight);
                         float aspectRatio = (float)(_host.ActualWidth / _host.ActualHeight);
                         
-                        // Gizmo is positioned at object surface (top), not center!
-                        float gizmoPosY = transform.LocalPosition.Y + transform.LocalScale.Y * 0.5f;
-                        var gizmoPos = new Vector3f(transform.LocalPosition.X, 
-                                                     gizmoPosY, 
+                        // Gizmo is at the object's pivot/center (must match RenderGizmo so the click hits the arrows).
+                        var gizmoPos = new Vector3f(transform.LocalPosition.X,
+                                                     transform.LocalPosition.Y,
                                                      transform.LocalPosition.Z);
-                        
+
                         var axis = RaycastService.Instance.PickGizmoAxis(normalizedX, normalizedY, gizmoPos, aspectRatio, 1.0f);
                         if (axis != GizmoAxis.None)
                         {
@@ -614,11 +619,10 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                 float normalizedY = (float)(pos.Y / _host.ActualHeight);
                 float aspectRatio = (float)(_host.ActualWidth / _host.ActualHeight);
                 
-                // Gizmo is positioned at object surface (top), not center!
-                float gizmoPosY = selected.Transform.LocalPosition.Y + selected.Transform.LocalScale.Y * 0.5f;
+                // Gizmo is at the object's pivot/center (must match RenderGizmo).
                 var gizmoPos = new Vector3f(
                     selected.Transform.LocalPosition.X,
-                    gizmoPosY,
+                    selected.Transform.LocalPosition.Y,
                     selected.Transform.LocalPosition.Z);
                 
                 var hoveredAxis = RaycastService.Instance.PickGizmoAxis(normalizedX, normalizedY, gizmoPos, aspectRatio, 1.0f);

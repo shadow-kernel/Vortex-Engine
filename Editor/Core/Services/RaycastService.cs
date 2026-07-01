@@ -412,12 +412,11 @@ namespace Editor.Core.Services
         /// </summary>
         private GizmoAxis PickAxisGizmo(Ray ray, Vector3f gizmoCenter, float scale)
         {
-            // Match the visual gizmo size from VortexAPI (GIZMO_LENGTH = 1.2)
-            float axisLength = 1.2f * scale;
-            // LARGER hit area for easier clicking
-            float axisThickness = 0.35f * scale;
-            // Extra length for arrow tip (GIZMO_ARROW_LENGTH = 0.3)
-            float arrowTipExtra = 0.3f * scale;
+            // Match the ACTUAL rendered gizmo size (read the same constants the renderer uses, so the clickable
+            // hitboxes always line up with the visible arrows even when the sizes change).
+            float axisLength = Editor.DllWrapper.VortexAPI.GIZMO_LENGTH * scale;
+            float axisThickness = 0.35f * scale;                                      // generous hit area for easy clicking
+            float arrowTipExtra = Editor.DllWrapper.VortexAPI.GIZMO_ARROW_LENGTH * scale;
 
             // Test X axis (red) - extends from center to +X
             var xAxisCenter = new Vector3f(gizmoCenter.X + (axisLength + arrowTipExtra) * 0.5f, gizmoCenter.Y, gizmoCenter.Z);
@@ -445,8 +444,8 @@ namespace Editor.Core.Services
         /// </summary>
         private GizmoAxis PickRotationGizmo(Ray ray, Vector3f center, float scale)
         {
-            float radius = 1.2f * scale; // Circle radius
-            float tubeRadius = 0.15f * scale; // Thickness of the circle for picking
+            float radius = Editor.DllWrapper.VortexAPI.GIZMO_LENGTH * scale; // Circle radius (matches the rendered rings)
+            float tubeRadius = 0.28f * scale; // generous pick tolerance around the ring
 
             // Test each circle - check if ray passes near the circle
             // X rotation circle (in YZ plane)

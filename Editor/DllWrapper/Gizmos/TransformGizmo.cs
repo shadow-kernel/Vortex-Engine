@@ -89,8 +89,9 @@ namespace Editor.DllWrapper
         /// </summary>
         public static void RenderGizmo(float posX, float posY, float posZ, float objScaleY, float scale = 1.0f)
         {
-            // Position gizmo at top of object (surface) instead of center
-            float gizmoPosY = posY + objScaleY * 0.5f;
+            // Gizmo at the object's PIVOT/center (matches the selection box + how mainstream editors place it). objScaleY
+            // is kept for signature compatibility but no longer offsets the gizmo to the top surface.
+            float gizmoPosY = posY;
 
             switch (CurrentGizmoType)
             {

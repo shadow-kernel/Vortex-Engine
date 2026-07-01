@@ -200,10 +200,10 @@
             </ListBox.ItemsPanel>
             <ListBox.ItemTemplate>
                 <DataTemplate>
-                    <StackPanel Width="92">
-                        <!-- Square preview area -->
-                        <Border Background="#FF1A1A1C" CornerRadius="10"
-                                Width="84" Height="84" HorizontalAlignment="Center">
+                    <StackPanel Width="116">
+                        <!-- Square preview area (large so the material spheres read as big, voluminous previews) -->
+                        <Border Background="#FF1A1A1C" CornerRadius="12"
+                                Width="108" Height="108" HorizontalAlignment="Center">
                             <Grid>
                                 <!-- Glyph fallback (shown when the item has no real Thumbnail) -->
                                 <TextBlock Text="{Binding IconCode}" FontFamily="Segoe MDL2 Assets"
@@ -222,7 +222,7 @@
                         <TextBlock Text="{Binding Name}" FontSize="11" Foreground="#FFC8C8CE"
                                    FontFamily="Segoe UI Variable Text, Segoe UI"
                                    HorizontalAlignment="Center" TextAlignment="Center"
-                                   TextTrimming="CharacterEllipsis" MaxWidth="84"
+                                   TextTrimming="CharacterEllipsis" MaxWidth="108"
                                    Margin="0,7,0,0"/>
                         <TextBlock Text="{Binding TypeName}" FontSize="10" Foreground="#FF73737A"
                                    FontFamily="Segoe UI Variable Text, Segoe UI"

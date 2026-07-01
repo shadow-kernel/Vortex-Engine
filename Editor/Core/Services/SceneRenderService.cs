@@ -259,54 +259,51 @@ namespace Editor.Core.Services
             }
             if (scene.Name != "Lobby" && _ssDbg < 12) { _ssDbg++; try { System.IO.File.AppendAllText(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "vortex_submit.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " SubmitScene '" + scene.Name + "' topEnts=" + System.Linq.Enumerable.Count(scene.Entities) + " submitted=" + _submitN + "\r\n"); } catch { } }
 
-            // Render ALL camera and light icons in the scene
+        }
+
+        /// <summary>Editor overlays: camera/light icons + the selected entity's outline (or camera frustum) + the
+        /// transform gizmo. These all go into the always-on-top GIZMO queue, and this is called EVERY frame in edit
+        /// mode (decoupled from SubmitScene's static-reuse) so the gizmo instantly reflects the current tool mode /
+        /// drag / hover / selection + camera — without it, switching tools or releasing a drag wouldn't update on a
+        /// static scene.</summary>
+        public void SubmitOverlays(Data.Scene scene)
+        {
+            if (scene == null || scene.Entities == null) return;
+
             var selected = SelectionService.Instance.SelectedEntity;
             RenderAllCameraIcons(scene, selected);
             RenderAllLightIcons(scene, selected);
 
-            // Render selection outline and gizmo for selected entity
-            if (selected != null)
+            if (selected == null) return;
+            var transform = selected.Transform;
+            if (transform == null) return;
+
+            var pos = transform.LocalPosition;
+            var rot = transform.LocalRotation;
+
+            var camera = selected.GetComponent<Camera>();
+            if (camera != null)
             {
-                var transform = selected.Transform;
-                if (transform != null)
-                {
-                    var pos = transform.LocalPosition;
-                    var rot = transform.LocalRotation;
-                    var scale = transform.LocalScale;
-                    
-                    // Check if selected entity has a camera - render camera gizmo with FOV frustum
-                    var camera = selected.GetComponent<Camera>();
-                    if (camera != null)
-                    {
-                        // Render full camera gizmo with FOV frustum (selected camera)
-                        VortexAPI.RenderCameraGizmo(
-                            pos.X, pos.Y, pos.Z,
-                            rot.X, rot.Y, rot.Z,
-                            camera.FieldOfView,
-                            16f / 9f, // Default aspect ratio
-                            camera.CameraType == CameraType.MainCamera);
-                    }
-                    else
-                    {
-                        // Calculate combined bounds for parent entities with children
-                        var bounds = CalculateCombinedBounds(selected);
-                        
-                        // Render orange selection outline with rotation
-                        VortexAPI.RenderSelectionOutline(
-                            pos.X + bounds.CenterOffset.X, 
-                            pos.Y + bounds.CenterOffset.Y, 
-                            pos.Z + bounds.CenterOffset.Z, 
-                            bounds.Size.X, bounds.Size.Y, bounds.Size.Z,
-                            rot.X, rot.Y, rot.Z);
-                    }
-                    
-                    // Render gizmo at object surface (top), pass object's Y scale
-                    if (VortexAPI.AreGizmosVisible)
-                    {
-                        VortexAPI.RenderGizmo(pos.X, pos.Y, pos.Z, scale.Y, 1.0f);
-                    }
-                }
+                // Selected camera: show its FOV frustum instead of a box outline.
+                VortexAPI.RenderCameraGizmo(
+                    pos.X, pos.Y, pos.Z,
+                    rot.X, rot.Y, rot.Z,
+                    camera.FieldOfView, 16f / 9f,
+                    camera.CameraType == CameraType.MainCamera);
             }
+            else
+            {
+                var bounds = CalculateCombinedBounds(selected);
+                VortexAPI.RenderSelectionOutline(
+                    pos.X + bounds.CenterOffset.X,
+                    pos.Y + bounds.CenterOffset.Y,
+                    pos.Z + bounds.CenterOffset.Z,
+                    bounds.Size.X, bounds.Size.Y, bounds.Size.Z,
+                    rot.X, rot.Y, rot.Z);
+            }
+
+            if (VortexAPI.AreGizmosVisible)
+                VortexAPI.RenderGizmo(pos.X, pos.Y, pos.Z, transform.LocalScale.Y, 1.0f);
         }
 
         /// <summary>

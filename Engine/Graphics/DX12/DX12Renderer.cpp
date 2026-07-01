@@ -199,14 +199,15 @@ namespace vortex::graphics::dx12
 		// Nothing new submitted this frame -> KEEP last frame's render queue (reuse it). This lets the game
 		// submit a static scene ONCE and re-render it every frame with only the camera changing — a big CPU
 		// win (no per-frame scene walk + interop). Also prevents flicker on idle frames.
-		if (m_submit_queue.empty()) return;
-		m_render_queue.swap(m_submit_queue);
-		m_submit_queue.clear();
-		// Gizmos are submitted alongside the scene each time it's (re)submitted; swap them in lockstep so they update
-		// with the selection (empty submit -> gizmos cleared, e.g. on deselect) and are reused together with the scene
-		// on static/orbit frames (the early-return above keeps both).
+		// Gizmos/overlays are re-submitted EVERY frame by the editor (cheap) so they always reflect the current tool
+		// mode / drag / hover / selection + camera — independent of the scene's static-reuse below. Swap them
+		// unconditionally: an empty submit means "no gizmo this frame" (e.g. deselect / play mode), so they clear.
 		m_gizmo_render.swap(m_gizmo_submit);
 		m_gizmo_submit.clear();
+
+		if (m_submit_queue.empty()) return;   // scene: nothing new -> KEEP last frame's (camera-only orbit is free)
+		m_render_queue.swap(m_submit_queue);
+		m_submit_queue.clear();
 		m_queue_dirty = true;   // new geometry -> re-sort + rebuild runs this frame
 	}
 
