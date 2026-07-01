@@ -289,11 +289,16 @@ namespace Editor.Core.Services
             return project;
         }
 
+        // Template-metadata files that live at the template repo root but must NOT land in a created project.
+        private static readonly HashSet<string> _templateMetaFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        { "template.json", "preview.png", "README.md", ".gitmodules", ".gitattributes" };
+
         private static void CopyDirectoryFiltered(string sourceDir, string destDir, HashSet<string> skipDirNames)
         {
             Directory.CreateDirectory(destDir);
             foreach (var file in Directory.GetFiles(sourceDir))
             {
+                if (_templateMetaFiles.Contains(Path.GetFileName(file))) continue;
                 try { File.Copy(file, Path.Combine(destDir, Path.GetFileName(file)), true); } catch { }
             }
             foreach (var sub in Directory.GetDirectories(sourceDir))

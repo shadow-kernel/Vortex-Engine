@@ -102,6 +102,7 @@ namespace Editor.Scripting
         {
             if (!_active) return;
             Vortex.Time.DeltaTime = dt;
+            Vortex.Input.PollGamepad();   // refresh controller state once per tick (scripts read Input.LeftStickX etc.)
             for (int i = 0; i < _behaviours.Count; i++)
             {
                 try { _behaviours[i].Update(dt); }

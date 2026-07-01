@@ -141,6 +141,95 @@ namespace Vortex
         public static float MouseDeltaX { get { return Editor.UI.Vui.VuiStack.Instance.GameplayInputBlocked ? 0f : _mouseDeltaX; } internal set { _mouseDeltaX = value; } }
         public static float MouseDeltaY { get { return Editor.UI.Vui.VuiStack.Instance.GameplayInputBlocked ? 0f : _mouseDeltaY; } internal set { _mouseDeltaY = value; } }
         private static float _mouseDeltaX, _mouseDeltaY;
+
+        // ---- Gamepad / controller (XInput, first connected pad). Polled once per tick by the runtime, read here.
+        // Sticks/triggers are normalized to -1..1 / 0..1 with dead zones; frozen to neutral while a gameplay-blocking
+        // UI screen is up (same gate as mouse-look), so the pad can't drive the player through a menu. ----
+        private static bool _padOn;
+        private static float _lx, _ly, _rx, _ry, _lt, _rt;
+        private static ushort _buttons, _prevButtons;
+        private static bool Gated { get { return Editor.UI.Vui.VuiStack.Instance.GameplayInputBlocked; } }
+
+        /// <summary>True while a controller is connected.</summary>
+        public static bool GamepadConnected { get { return _padOn; } }
+        /// <summary>Left stick, -1..1 (X right, Y up). 0 when gated by a blocking UI screen.</summary>
+        public static float LeftStickX  { get { return Gated ? 0f : _lx; } }
+        public static float LeftStickY  { get { return Gated ? 0f : _ly; } }
+        /// <summary>Right stick, -1..1 (for look). 0 when gated.</summary>
+        public static float RightStickX { get { return Gated ? 0f : _rx; } }
+        public static float RightStickY { get { return Gated ? 0f : _ry; } }
+        /// <summary>Triggers, 0..1.</summary>
+        public static float LeftTrigger  { get { return Gated ? 0f : _lt; } }
+        public static float RightTrigger { get { return Gated ? 0f : _rt; } }
+
+        /// <summary>Is a controller button held? Names: A B X Y LB RB Back Start LeftStick RightStick
+        /// DPadUp DPadDown DPadLeft DPadRight.</summary>
+        public static bool GetGamepadButton(string name) { return !Gated && (_buttons & MaskOf(name)) != 0; }
+        /// <summary>Was a controller button pressed THIS tick (edge)?</summary>
+        public static bool GetGamepadButtonDown(string name)
+        { ushort m = MaskOf(name); return !Gated && (_buttons & m) != 0 && (_prevButtons & m) == 0; }
+
+        private static ushort MaskOf(string n)
+        {
+            if (string.IsNullOrEmpty(n)) return 0;
+            switch (n.ToLowerInvariant())
+            {
+                case "dpadup": return 0x0001; case "dpaddown": return 0x0002;
+                case "dpadleft": return 0x0004; case "dpadright": return 0x0008;
+                case "start": return 0x0010; case "back": return 0x0020;
+                case "leftstick": return 0x0040; case "rightstick": return 0x0080;
+                case "lb": case "leftshoulder": return 0x0100; case "rb": case "rightshoulder": return 0x0200;
+                case "a": return 0x1000; case "b": return 0x2000; case "x": return 0x4000; case "y": return 0x8000;
+                default: return 0;
+            }
+        }
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        private struct XINPUT_GAMEPAD { public ushort wButtons; public byte bLeftTrigger; public byte bRightTrigger; public short sThumbLX; public short sThumbLY; public short sThumbRX; public short sThumbRY; }
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        private struct XINPUT_STATE { public uint dwPacketNumber; public XINPUT_GAMEPAD Gamepad; }
+        [System.Runtime.InteropServices.DllImport("xinput1_4.dll", EntryPoint = "XInputGetState")]
+        private static extern uint XInputGetState(uint dwUserIndex, out XINPUT_STATE pState);
+        private static bool _xinputMissing;
+
+        /// <summary>Poll the first connected controller. Called by the runtime once per tick.</summary>
+        internal static void PollGamepad()
+        {
+            _prevButtons = _buttons;
+            if (_xinputMissing) { _padOn = false; return; }
+            try
+            {
+                for (uint i = 0; i < 4; i++)
+                {
+                    XINPUT_STATE s;
+                    if (XInputGetState(i, out s) == 0) // ERROR_SUCCESS
+                    {
+                        _padOn = true;
+                        _buttons = s.Gamepad.wButtons;
+                        _lx = Stick(s.Gamepad.sThumbLX, 7849);
+                        _ly = Stick(s.Gamepad.sThumbLY, 7849);
+                        _rx = Stick(s.Gamepad.sThumbRX, 8689);
+                        _ry = Stick(s.Gamepad.sThumbRY, 8689);
+                        _lt = Trigger(s.Gamepad.bLeftTrigger);
+                        _rt = Trigger(s.Gamepad.bRightTrigger);
+                        return;
+                    }
+                }
+                _padOn = false; _buttons = 0; _lx = _ly = _rx = _ry = _lt = _rt = 0f;
+            }
+            catch (DllNotFoundException) { _xinputMissing = true; _padOn = false; }
+            catch { _padOn = false; }
+        }
+
+        private static float Stick(short v, int dead)
+        {
+            float f = v;
+            if (f > dead) f = (f - dead) / (32767f - dead);
+            else if (f < -dead) f = (f + dead) / (32768f - dead);
+            else f = 0f;
+            return f < -1f ? -1f : (f > 1f ? 1f : f);
+        }
+        private static float Trigger(byte t) { return t <= 30 ? 0f : (t - 30) / (255f - 30f); }
     }
 
     /// <summary>Frame timing.</summary>
