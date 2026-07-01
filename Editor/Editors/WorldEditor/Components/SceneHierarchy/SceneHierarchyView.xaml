@@ -381,6 +381,16 @@
                     <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#569CD6"/>
                 </MenuItem.Icon>
             </MenuItem>
+            <MenuItem Header="Apply to Prefab" Click="ApplyToPrefab_Click" ToolTip="Write this instance's changes back to its prefab (updates all instances)">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#7CE0A3"/>
+                </MenuItem.Icon>
+            </MenuItem>
+            <MenuItem Header="Revert to Prefab" Click="RevertToPrefab_Click" ToolTip="Discard this instance's edits and reload it from its prefab">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE7A7;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#E6B422"/>
+                </MenuItem.Icon>
+            </MenuItem>
             <Separator/>
             <MenuItem Header="Rename" InputGestureText="F2" Click="RenameEntity_Click">
                 <MenuItem.Icon>

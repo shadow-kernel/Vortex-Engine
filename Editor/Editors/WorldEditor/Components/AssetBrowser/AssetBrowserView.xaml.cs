@@ -32,7 +32,8 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             Materials,
             Shaders,
             Scripts,
-            UI
+            UI,
+            Prefab
         }
 
         public class AssetItem : INotifyPropertyChanged
@@ -732,6 +733,19 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 //   Ctrl   -> open a standalone Model Viewer to inspect + fly around it
                 // (this also fixes the old bug where double-click opened the editor whose preview hijacked the
                 //  shared render queue, so the main viewport showed the model instead of the scene.)
+                // Prefab -> instantiate a fresh LINKED instance into the active scene (mainstream double-click behaviour).
+                bool isPrefab = item.Type == AssetType.Prefab || (item.Path?.EndsWith(".ventity", StringComparison.OrdinalIgnoreCase) ?? false);
+                if (isPrefab && !string.IsNullOrEmpty(item.Path))
+                {
+                    var scene = ProjectData.Current?.ActiveScene;
+                    var proj = ProjectData.Current?.Path ?? "";
+                    var full = System.IO.Path.IsPathRooted(item.Path) ? item.Path : System.IO.Path.Combine(proj, item.Path);
+                    var inst = Editor.Core.Services.PrefabService.Instance.InstantiatePrefab(full, scene);
+                    if (inst != null) Editor.Core.Services.SelectionService.Instance.Select(inst);
+                    else MessageBox.Show("Could not instantiate the prefab (empty or unreadable).", "Prefab", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+
                 bool isModel = item.Type == AssetType.Meshes || item.Type == AssetType.Models;
                 var mods = System.Windows.Input.Keyboard.Modifiers;
                 if (isModel && !string.IsNullOrEmpty(item.Path) && !item.Path.StartsWith("Primitive:", StringComparison.OrdinalIgnoreCase))
@@ -1607,6 +1621,8 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                     item.Type = AssetType.UI; item.TypeName = "UI Screen"; item.IconCode = ""; item.IconColor = "#FF4DB6E2"; break;
                 case ".vscene":
                     item.Type = AssetType.Explorer; item.TypeName = "Scene"; item.IconCode = ""; item.IconColor = "#FF6C5CE7"; break;
+                case ".ventity":
+                    item.Type = AssetType.Prefab; item.TypeName = "Prefab"; item.IconCode = ""; item.IconColor = "#FF4DB6E2"; break;
                 default:
                     item.Type = AssetType.Explorer;
                     item.TypeName = string.IsNullOrEmpty(ext) ? "File" : (ext.TrimStart('.').ToUpperInvariant() + " File");

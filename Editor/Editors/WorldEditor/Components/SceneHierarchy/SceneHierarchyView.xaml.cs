@@ -356,28 +356,37 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
 
         private void SaveAsPrefab_Click(object sender, RoutedEventArgs e)
         {
-            if (ViewModel?.SelectedEntity == null) return;
-
-            var project = ProjectData.Current;
-            if (project == null) return;
-
+            var entity = ViewModel?.SelectedEntity;
+            if (entity == null || ProjectData.Current == null) return;
             try
             {
-                ProjectService.Instance.SavePrefab(project, ViewModel.SelectedEntity);
-                MessageBox.Show(
-                    $"Prefab '{ViewModel.SelectedEntity.Name}.ventity' saved successfully!",
-                    "Save Prefab",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Information);
+                // One cohesive path (JSON) — links the entity to the new .ventity so it becomes an instance.
+                var path = PrefabService.Instance.SaveAsPrefab(entity);
+                if (path == null) { MessageBox.Show("Could not save prefab.", "Save Prefab", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+                (Application.Current?.MainWindow as MainWindow)?.ShowToast("Prefab saved — " + System.IO.Path.GetFileName(path));
             }
             catch (System.Exception ex)
             {
-                MessageBox.Show(
-                    $"Error saving prefab: {ex.Message}",
-                    "Error",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Error);
+                MessageBox.Show("Error saving prefab: " + ex.Message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
+        }
+
+        /// <summary>Apply this instance's current state back to its prefab asset (+ update other instances).</summary>
+        private void ApplyToPrefab_Click(object sender, RoutedEventArgs e)
+        {
+            var entity = ViewModel?.SelectedEntity;
+            if (entity == null || !entity.IsPrefabInstance) return;
+            if (PrefabService.Instance.ApplyToPrefab(entity))
+                (Application.Current?.MainWindow as MainWindow)?.ShowToast("Applied to prefab — " + System.IO.Path.GetFileName(entity.PrefabPath));
+        }
+
+        /// <summary>Discard this instance's local edits and reload it from its prefab (keeps its transform).</summary>
+        private void RevertToPrefab_Click(object sender, RoutedEventArgs e)
+        {
+            var entity = ViewModel?.SelectedEntity;
+            if (entity == null || !entity.IsPrefabInstance) return;
+            var fresh = PrefabService.Instance.RevertInstance(entity);
+            if (fresh != null) { ViewModel.SelectedEntity = fresh; (Application.Current?.MainWindow as MainWindow)?.ShowToast("Reverted to prefab"); }
         }
 
         #endregion
@@ -459,14 +468,9 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             {
                 try
                 {
-                    var entity = SceneService.Instance.LoadEntityFromPrefab(dialog.FileName);
-                    if (entity != null)
-                    {
-                        entity.Scene = ViewModel.SelectedScene;
-                        entity.RegenerateIds(); // Neue IDs f�r die Instanz
-                        ViewModel.SelectedScene.AddEntity(entity);
-                        ViewModel.SelectedEntity = entity;
-                    }
+                    var entity = PrefabService.Instance.InstantiatePrefab(dialog.FileName, ViewModel.SelectedScene);
+                    if (entity != null) ViewModel.SelectedEntity = entity;
+                    else MessageBox.Show("Could not instantiate the prefab (empty or unreadable).", "Prefab", MessageBoxButton.OK, MessageBoxImage.Warning);
                 }
                 catch (System.Exception ex)
                 {
@@ -913,16 +917,13 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
                         {
                             try
                             {
-                                var entity = SceneService.Instance.LoadEntityFromPrefab(file);
-                                if (entity != null && ViewModel?.SelectedScene != null)
-                                {
-                                    entity.Scene = ViewModel.SelectedScene;
-                                    ViewModel.SelectedScene.AddEntity(entity);
-                                }
+                                var scene = ViewModel?.SelectedScene ?? ProjectData.Current?.ActiveScene;
+                                var entity = PrefabService.Instance.InstantiatePrefab(file, scene);
+                                if (entity != null && ViewModel != null) ViewModel.SelectedEntity = entity;
                             }
                             catch
                             {
-                                MessageBox.Show($"Error loading prefab: {file}", "Error", 
+                                MessageBox.Show($"Error loading prefab: {file}", "Error",
                                     MessageBoxButton.OK, MessageBoxImage.Error);
                             }
                         }

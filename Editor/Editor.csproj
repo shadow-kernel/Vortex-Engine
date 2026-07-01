@@ -264,6 +264,7 @@
     <Compile Include="Core\Services\PlayCameraHelper.cs" />
     <Compile Include="Core\Services\PlayModeService.cs" />
     <Compile Include="Core\Services\ProjectService.cs" />
+    <Compile Include="Core\Services\PrefabService.cs" />
     <Compile Include="Core\Services\RaycastService.cs" />
     <Compile Include="Core\Services\Rendering\AssetPreviewRenderer.cs" />
     <Compile Include="Core\Services\Rendering\SecondaryViewportRenderer.cs" />

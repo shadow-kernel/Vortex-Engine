@@ -14,8 +14,8 @@ using System.Runtime.Serialization;
 namespace Editor.ECS
 {
     /// <summary>
-    /// Repräsentiert eine Spielentität in der Szene.
-    /// Enthält Komponenten und kann in einer Hierarchie organisiert werden.
+    /// Reprï¿½sentiert eine Spielentitï¿½t in der Szene.
+    /// Enthï¿½lt Komponenten und kann in einer Hierarchie organisiert werden.
     /// </summary>
     [DataContract(Name = "GameEntity", Namespace = "")]
     [KnownType(typeof(Transform))]
@@ -79,7 +79,7 @@ namespace Editor.ECS
             {
                 SetProperty(ref _isActive, value, nameof(IsActive));
 
-                // Während der Deserialisierung keine Engine-Registrierung
+                // Wï¿½hrend der Deserialisierung keine Engine-Registrierung
                 if (_isDeserializing)
                     return;
 
@@ -107,6 +107,21 @@ namespace Editor.ECS
             get => _tag;
             set => SetProperty(ref _tag, value, nameof(Tag));
         }
+
+        private string _prefabPath;
+        /// <summary>If this entity is a PREFAB INSTANCE, the project-relative path to its source .ventity file
+        /// (e.g. "Assets/Prefabs/Tree.ventity"). Null/empty for a plain scene entity. Links the instance to its
+        /// prefab so changes can be Applied back / Reverted, and so the UI can mark it as an instance.</summary>
+        [DataMember(Name = "prefabPath", Order = 8)]
+        public string PrefabPath
+        {
+            get => _prefabPath;
+            set => SetProperty(ref _prefabPath, value, nameof(PrefabPath));
+        }
+
+        /// <summary>True when this entity is linked to a prefab asset.</summary>
+        [IgnoreDataMember]
+        public bool IsPrefabInstance => !string.IsNullOrEmpty(_prefabPath);
 
         [DataMember(Name = "children", Order = 6)]
         public ObservableCollection<GameEntity> Children
@@ -143,7 +158,7 @@ namespace Editor.ECS
         }
 
         /// <summary>
-        /// Referenz zur übergeordneten Entity
+        /// Referenz zur ï¿½bergeordneten Entity
         /// </summary>
         [IgnoreDataMember]
         public GameEntity Parent
@@ -171,7 +186,7 @@ namespace Editor.ECS
         private bool _isSelected;
         
         /// <summary>
-        /// UI-State: Ist ausgewählt (für Multi-Select)
+        /// UI-State: Ist ausgewï¿½hlt (fï¿½r Multi-Select)
         /// </summary>
         [IgnoreDataMember]
         public bool IsSelected
@@ -183,7 +198,7 @@ namespace Editor.ECS
         private bool _isFolder;
         
         /// <summary>
-        /// Markiert diese Entity als Ordner (nur für Organisation, keine Komponenten)
+        /// Markiert diese Entity als Ordner (nur fï¿½r Organisation, keine Komponenten)
         /// </summary>
         [DataMember(Name = "isFolder", Order = 8)]
         public bool IsFolder
@@ -195,7 +210,7 @@ namespace Editor.ECS
         private bool _isLockedToParent;
         
         /// <summary>
-        /// Wenn true, kann diese Entity nicht einzeln ausgewählt oder verschoben werden.
+        /// Wenn true, kann diese Entity nicht einzeln ausgewï¿½hlt oder verschoben werden.
         /// Sie bewegt sich nur mit ihrem Parent zusammen (z.B. Submeshes eines importierten Modells).
         /// </summary>
         [DataMember(Name = "isLockedToParent", Order = 9)]
@@ -206,7 +221,7 @@ namespace Editor.ECS
         }
 
         /// <summary>
-        /// Ob die Entity in der Hierarchie aktiv ist (berücksichtigt Parent)
+        /// Ob die Entity in der Hierarchie aktiv ist (berï¿½cksichtigt Parent)
         /// </summary>
         [IgnoreDataMember]
         public bool ActiveInHierarchy
@@ -235,7 +250,7 @@ namespace Editor.ECS
 			if (_isDeserializing)
 				return;
 
-			// Ohne Transform keine Engine-Repräsentation (z.B. Folder-Only-Entities)
+			// Ohne Transform keine Engine-Reprï¿½sentation (z.B. Folder-Only-Entities)
 			if (Transform == null)
 				return;
 
@@ -314,7 +329,7 @@ namespace Editor.ECS
         public GameEntity(string name) : this()
         {
             Name = name;
-            // Jede Entity hat standardmäßig eine Transform-Komponente
+            // Jede Entity hat standardmï¿½ï¿½ig eine Transform-Komponente
             var transform = new Transform(this);
             _components.Add(transform);
             _transform = transform;
@@ -330,7 +345,7 @@ namespace Editor.ECS
         #region Component Management
 
         /// <summary>
-        /// Fügt eine Komponente hinzu (mit Undo/Redo Support)
+        /// Fï¿½gt eine Komponente hinzu (mit Undo/Redo Support)
         /// </summary>
         public void AddComponent(Component component)
         {
@@ -343,7 +358,7 @@ namespace Editor.ECS
         }
 
         /// <summary>
-        /// Fügt eine Komponente direkt hinzu (ohne Undo/Redo)
+        /// Fï¿½gt eine Komponente direkt hinzu (ohne Undo/Redo)
         /// </summary>
         internal void AddComponentDirect(Component component)
         {
@@ -391,7 +406,7 @@ namespace Editor.ECS
         }
 
         /// <summary>
-        /// Prüft ob eine Komponente eines bestimmten Typs existiert
+        /// Prï¿½ft ob eine Komponente eines bestimmten Typs existiert
         /// </summary>
         public bool HasComponent<T>() where T : Component
         {
@@ -399,7 +414,7 @@ namespace Editor.ECS
         }
 
         /// <summary>
-        /// Erstellt und fügt eine Komponente hinzu
+        /// Erstellt und fï¿½gt eine Komponente hinzu
         /// </summary>
         public T AddComponent<T>() where T : Component, new()
         {
@@ -413,7 +428,7 @@ namespace Editor.ECS
         #region Hierarchy Management
 
         /// <summary>
-        /// Fügt eine Kind-Entity hinzu (mit Undo/Redo Support)
+        /// Fï¿½gt eine Kind-Entity hinzu (mit Undo/Redo Support)
         /// </summary>
         public void AddChild(GameEntity child)
         {
@@ -443,7 +458,7 @@ namespace Editor.ECS
         }
 
         /// <summary>
-        /// Setzt die übergeordnete Entity
+        /// Setzt die ï¿½bergeordnete Entity
         /// </summary>
         public void SetParent(GameEntity parent)
         {
@@ -479,7 +494,7 @@ namespace Editor.ECS
         }
 
         /// <summary>
-        /// Gibt den vollständigen Pfad der Entity zurück
+        /// Gibt den vollstï¿½ndigen Pfad der Entity zurï¿½ck
         /// </summary>
         public string GetPath()
         {
@@ -508,7 +523,7 @@ namespace Editor.ECS
         internal void OnDeserializedMethod(StreamingContext context)
         {
             _isDeserializing = false;
-            // Setze Parent-Referenzen für Kinder
+            // Setze Parent-Referenzen fï¿½r Kinder
             if (_children != null)
             {
                 foreach (var child in _children)
@@ -518,7 +533,7 @@ namespace Editor.ECS
                 }
             }
 
-            // Setze Entity-Referenzen für Komponenten
+            // Setze Entity-Referenzen fï¿½r Komponenten
             if (_components != null)
             {
                 foreach (var component in _components)
@@ -532,14 +547,14 @@ namespace Editor.ECS
         }
 
         /// <summary>
-        /// Generiert neue IDs für diese Entity und alle Kinder/Komponenten.
-        /// Wird beim Kopieren/Einfügen verwendet.
+        /// Generiert neue IDs fï¿½r diese Entity und alle Kinder/Komponenten.
+        /// Wird beim Kopieren/Einfï¿½gen verwendet.
         /// </summary>
         public void RegenerateIds()
         {
             _id = Guid.NewGuid();
 
-            // Regeneriere IDs für alle Komponenten
+            // Regeneriere IDs fï¿½r alle Komponenten
             if (_components != null)
             {
                 foreach (var component in _components)
@@ -548,7 +563,7 @@ namespace Editor.ECS
                 }
             }
 
-            // Regeneriere IDs für alle Kinder
+            // Regeneriere IDs fï¿½r alle Kinder
             if (_children != null)
             {
                 foreach (var child in _children)
