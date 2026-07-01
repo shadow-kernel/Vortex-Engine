@@ -250,9 +250,30 @@ namespace Editor.Scripting
                 System.Diagnostics.Debug.WriteLine("[hot-reload] compile FAILED — keeping running scripts:\n" + log);
                 return false;
             }
+            LastReloadSummary = NewestScriptName();
             Begin(_currentScene, asm);   // tear down + re-instantiate + Start with the new code (also resets _lastScriptWrite)
             System.Diagnostics.Debug.WriteLine("[hot-reload] scripts reloaded from disk");
             return true;
+        }
+
+        /// <summary>Short description of the last successful hot-reload (the freshly-saved script) for the on-screen overlay.</summary>
+        public string LastReloadSummary { get; private set; } = "";
+
+        private static string NewestScriptName()
+        {
+            try
+            {
+                string dir = ScriptingService.ScriptsDir;
+                if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return "scripts";
+                string best = "scripts"; DateTime max = DateTime.MinValue;
+                foreach (var f in Directory.GetFiles(dir, "*.cs", SearchOption.AllDirectories))
+                {
+                    var t = File.GetLastWriteTimeUtc(f);
+                    if (t > max) { max = t; best = Path.GetFileName(f); }
+                }
+                return best;
+            }
+            catch { return "scripts"; }
         }
 
         private static DateTime LatestScriptWrite()

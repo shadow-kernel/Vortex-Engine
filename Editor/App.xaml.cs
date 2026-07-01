@@ -203,6 +203,7 @@ namespace Editor
         private static int    _fgArg = 0;           // --fg=<0..3>: dev hook to force DLSS Frame-Gen (verify the present hook)
         private SplashWindow  _bootSplash;          // kept up until the game's first frame is on screen, then closed (no black flash)
         private int           _bootFrames;          // GameHostTick counter, used to time the splash close
+        private DateTime      _hotReloadAt = DateTime.MinValue; // when the last script hot-reload happened (drives the overlay)
         private static Vortex.VuiHandle _vuiTestHandle; private static bool _vuiPrevDown;
         private static int _stressCountArg = 1000;
         private static bool _stressInit;
@@ -400,7 +401,7 @@ namespace Editor
                 // re-run them live (save in VS -> focus the game -> your changes are in). No-op if nothing changed.
                 if (DllWrapper.VortexAPI.GameHostConsumeFocusGained())
                 {
-                    try { if (sr.ReloadScripts()) GHLog("scripts hot-reloaded on focus"); }
+                    try { if (sr.ReloadScripts()) { _hotReloadAt = DateTime.UtcNow; GHLog("scripts hot-reloaded on focus"); } }
                     catch (Exception hx) { GHLog("hot-reload error: " + hx.Message); }
                 }
 
@@ -473,6 +474,10 @@ namespace Editor
                     if (acts != null) sr.InvokeUiActions(acts);   // button -> bound C# method
                 }
 
+                // Hot-reload overlay: dim the whole window + a quick loading bar (with what was reloaded). Drawn LAST,
+                // so it sits on top of the HUD + any menus. Fades out over ~0.9s.
+                DrawHotReloadOverlay(cw, ch, sr);
+
                 var scene = Editor.Core.Data.ProjectData.Current != null ? Editor.Core.Data.ProjectData.Current.ActiveScene : null;
                 Editor.Core.Services.PlayCameraHelper.ApplyMainCamera(scene);
                 // Submit ONCE per scene: the native swap_render_queue reuses last frame's render queue when
@@ -491,6 +496,35 @@ namespace Editor
                 }
             }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[GameHostTick] " + ex); }
+        }
+
+        // The script hot-reload overlay: for ~0.9s after a reload, dim the whole game window and show a card with a
+        // quick indigo loading bar + what was reloaded, then fade out. Drawn into the current UI frame via the host
+        // UIRect/UIText API (independent of the game scripts, which are being swapped out).
+        private void DrawHotReloadOverlay(int cw, int ch, Editor.Scripting.ScriptRuntime sr)
+        {
+            if (_hotReloadAt == DateTime.MinValue) return;
+            double elapsed = (DateTime.UtcNow - _hotReloadAt).TotalSeconds;
+            const double D = 0.9;
+            if (elapsed < 0 || elapsed > D) return;
+
+            float t = (float)(elapsed / D);
+            float fade = t < 0.7f ? 1f : (1f - (t - 0.7f) / 0.3f);   // hold, then fade the last 30%
+            if (fade < 0f) fade = 0f;
+            float bar = t / 0.55f; if (bar > 1f) bar = 1f;           // bar fills over the first 55%
+
+            DllWrapper.VortexAPI.UIRect(0f, 0f, cw, ch, 0.02f, 0.02f, 0.03f, 0.55f * fade, 0f);   // dim the whole window
+
+            float cardW = 400f, cardH = 104f;
+            float x = (cw - cardW) * 0.5f, y = (ch - cardH) * 0.5f;
+            DllWrapper.VortexAPI.UIRect(x, y, cardW, cardH, 0.09f, 0.08f, 0.10f, 0.97f * fade, 12f);
+            DllWrapper.VortexAPI.UIText(x + 26f, y + 22f, cardW - 52f, 26f, "Hot-reloading scripts…", 17f, 0.92f, 0.90f, 0.96f, fade, 0, 600);
+            string what = string.IsNullOrEmpty(sr.LastReloadSummary) ? "recompiled" : sr.LastReloadSummary;
+            DllWrapper.VortexAPI.UIText(x + 26f, y + 50f, cardW - 52f, 18f, what, 12f, 0.55f, 0.80f, 0.52f, fade, 0, 400);
+
+            float bx = x + 26f, by = y + cardH - 22f, bw = cardW - 52f;
+            DllWrapper.VortexAPI.UIRect(bx, by, bw, 5f, 0.16f, 0.16f, 0.18f, fade, 3f);            // track
+            DllWrapper.VortexAPI.UIRect(bx, by, bw * bar, 5f, 0.42f, 0.36f, 0.90f, fade, 3f);       // indigo fill
         }
 
         // Drain the host input event queues into reusable buffers + build the per-frame VUI input snapshot (no
