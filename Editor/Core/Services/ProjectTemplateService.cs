@@ -12,14 +12,15 @@ namespace Editor.Core.Services
     /// </summary>
     public sealed class ProjectTemplate
     {
-        public string Id;               // "empty" or the template folder name
-        public string Name;
-        public string Description;
-        public string Tagline;          // short one-liner under the name
-        public string ProjectDir;       // absolute dir to copy from (null for the Empty template)
-        public string PreviewImagePath; // absolute path to a rendered preview.png (may be null)
-        public bool IsEmpty;
-        public int Order;
+        // Properties (NOT fields) so WPF data-binding in the template cards works.
+        public string Id { get; set; }               // "empty" or the template folder name
+        public string Name { get; set; }
+        public string Description { get; set; }
+        public string Tagline { get; set; }          // short one-liner under the name
+        public string ProjectDir { get; set; }       // absolute dir to copy from (null for the Empty template)
+        public string PreviewImagePath { get; set; } // absolute path to a rendered preview.png (may be null)
+        public bool IsEmpty { get; set; }
+        public int Order { get; set; }
     }
 
     /// <summary>
