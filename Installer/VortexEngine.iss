@@ -4,7 +4,7 @@
 ; This script creates a professional installation wizard for Vortex Engine
 
 #define MyAppName "Vortex Engine"
-#define MyAppVersion "2.1.0"
+#define MyAppVersion "2.2.0"
 #define MyAppPublisher "Vortex Engine Team"
 #define MyAppURL "https://github.com/shadow-kernel/Vortex-Engine"
 #define MyAppExeName "Vortex Engine.exe"
