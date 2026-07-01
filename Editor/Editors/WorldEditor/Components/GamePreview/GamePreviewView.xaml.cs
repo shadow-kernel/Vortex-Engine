@@ -74,6 +74,8 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             this.Focusable = true;
             this.KeyDown += OnViewportKeyDown;
             this.KeyUp += OnViewportKeyUp;
+            // Safety: if mouse capture is lost while the right-drag cursor is hidden (e.g. Alt-Tab), bring it back.
+            this.LostMouseCapture += (s, ev) => { if (!IsPlaying) System.Windows.Input.Mouse.OverrideCursor = null; };
 
             // Enable drag and drop
             this.AllowDrop = true;
@@ -411,10 +413,14 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
 
             this.Focus();
             this.CaptureMouse();
-            
+
             // Get position relative to the viewport host, not the entire control
             var pos = _host != null ? e.GetPosition(_host) : e.GetPosition(this);
-            
+
+            // Right-mouse look/fly: hide the cursor while it's held (restored on release), like an FPS freecam.
+            if (e.RightButton == MouseButtonState.Pressed && !_isViewingThroughGameCamera)
+                System.Windows.Input.Mouse.OverrideCursor = System.Windows.Input.Cursors.None;
+
             // Only allow camera movement when in Free Camera mode (not viewing through a game camera)
             if (!_isViewingThroughGameCamera)
             {
@@ -470,7 +476,11 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         {
             if (IsPlaying) { e.Handled = true; return; } // game owns the mouse while playing
             this.ReleaseMouseCapture();
-            
+
+            // Right button released -> bring the cursor back (it was hidden for the look/fly drag).
+            if (e.RightButton != MouseButtonState.Pressed)
+                System.Windows.Input.Mouse.OverrideCursor = null;
+
             // Only allow camera control when in Free Camera mode
             if (!_isViewingThroughGameCamera)
             {
@@ -650,6 +660,17 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
 
         private void OnViewportKeyDown(object sender, KeyEventArgs e)
         {
+            // ESC de-focuses: drop the current selection + keyboard focus (and un-hide the cursor). Not while playing
+            // (there ESC drives the in-game menu).
+            if (e.Key == Key.Escape && !IsPlaying)
+            {
+                SelectionService.Instance.ClearSelection();
+                Keyboard.ClearFocus();
+                System.Windows.Input.Mouse.OverrideCursor = null;
+                e.Handled = true;
+                return;
+            }
+
             // Gizmo mode shortcuts (only when not in camera fly mode AND in Free Camera mode)
             if (_cameraController != null && !_cameraController.IsFlyMode && !_isViewingThroughGameCamera)
             {
@@ -1268,7 +1289,18 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         protected override void OnPreviewKeyDown(KeyEventArgs e)
         {
             base.OnPreviewKeyDown(e);
-            
+
+            // ESC de-focuses (deselect + drop keyboard focus). Preview handler so it works wherever the viewport is
+            // in the focus chain. Not while playing (ESC is the in-game menu there).
+            if (e.Key == Key.Escape && !IsPlaying)
+            {
+                SelectionService.Instance.ClearSelection();
+                Keyboard.ClearFocus();
+                System.Windows.Input.Mouse.OverrideCursor = null;
+                e.Handled = true;
+                return;
+            }
+
             // Forward WASD to camera (only in Free Camera mode)
             if (!_isViewingThroughGameCamera)
             {
