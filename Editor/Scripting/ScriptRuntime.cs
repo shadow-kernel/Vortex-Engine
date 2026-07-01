@@ -55,10 +55,15 @@ namespace Editor.Scripting
         /// instead of compiling source at startup — fast boot + no .cs source shipped with the game.</summary>
         public Assembly PrecompiledAssembly { get; set; }
 
-        public void Begin(Scene scene)
+        public void Begin(Scene scene) { Begin(scene, null); }
+
+        /// <summary>(Re)start the scripts on <paramref name="scene"/>. <paramref name="overrideAsm"/> lets the dev
+        /// hot-reload inject a freshly-compiled assembly instead of re-reading disk.</summary>
+        public void Begin(Scene scene, System.Reflection.Assembly overrideAsm)
         {
             End();
             if (scene?.Entities == null) return;
+            _currentScene = scene;   // remembered so hot-reload can re-begin the same scene
 
             Vortex.VortexBehaviour.Host = this;
             Vortex.Input.Host = this;
@@ -71,11 +76,12 @@ namespace Editor.Scripting
             _entitiesById.Clear();
             _nextHandle = 0;
 
-            string log;
-            Assembly asm = PrecompiledAssembly;
-            if (asm != null) log = "Using precompiled gameplay assembly: " + asm.GetName().Name;
+            string log = null;
+            Assembly asm = overrideAsm ?? PrecompiledAssembly;
+            if (asm != null) log = overrideAsm != null ? "Hot-reloaded gameplay assembly" : ("Using precompiled gameplay assembly: " + asm.GetName().Name);
             else asm = Compile(out log);
             LastBuildLog = log ?? "";
+            _lastScriptWrite = LatestScriptWrite();   // baseline for hot-reload change detection
             if (!string.IsNullOrEmpty(LastBuildLog))
                 System.Diagnostics.Debug.WriteLine("[ScriptRuntime] build:\n" + LastBuildLog);
             _scriptAsm = asm;
@@ -222,6 +228,48 @@ namespace Editor.Scripting
             _entitiesById.Clear();
             _scriptAsm = null;
             _active = false;
+        }
+
+        private Scene _currentScene;                       // last Begin's scene (for hot-reload)
+        private DateTime _lastScriptWrite = DateTime.MinValue;
+
+        /// <summary>Dev script HOT-RELOAD: if any script changed on disk, recompile and — only if it compiles — re-run
+        /// the scripts on the current scene with fresh state. A compile error keeps the running scripts + logs it, so
+        /// a typo never kills the game. No-op for a shipped game (scripts ship precompiled, not on disk) or if nothing
+        /// changed. Returns true when a reload actually happened. Wired to game-window re-focus (alt-tab back).</summary>
+        public bool ReloadScripts()
+        {
+            if (PrecompiledAssembly != null || _currentScene == null) return false;
+            DateTime now = LatestScriptWrite();
+            if (now <= _lastScriptWrite) return false;      // nothing changed since the last build -> no hitch
+            var asm = Compile(out string log);
+            LastBuildLog = log ?? "";
+            if (asm == null)
+            {
+                _lastScriptWrite = now; // don't retry the same broken source every focus; wait for the next save
+                System.Diagnostics.Debug.WriteLine("[hot-reload] compile FAILED — keeping running scripts:\n" + log);
+                return false;
+            }
+            Begin(_currentScene, asm);   // tear down + re-instantiate + Start with the new code (also resets _lastScriptWrite)
+            System.Diagnostics.Debug.WriteLine("[hot-reload] scripts reloaded from disk");
+            return true;
+        }
+
+        private static DateTime LatestScriptWrite()
+        {
+            try
+            {
+                string dir = ScriptingService.ScriptsDir;
+                if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return DateTime.MinValue;
+                DateTime max = DateTime.MinValue;
+                foreach (var f in Directory.GetFiles(dir, "*.cs", SearchOption.AllDirectories))
+                {
+                    var t = File.GetLastWriteTimeUtc(f);
+                    if (t > max) max = t;
+                }
+                return max;
+            }
+            catch { return DateTime.MinValue; }
         }
 
         private void InstantiateRecursive(GameEntity e, Assembly asm)

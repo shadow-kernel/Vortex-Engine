@@ -36,6 +36,8 @@ namespace vortex::runtime
         // next typed character (-1 if none) for text fields; next_key_pressed pops the next edge-pressed VK
         // (0 if none) for keybind capture.
         static int  mouse_wheel();
+        // True ONCE after the game window regains focus (Alt-Tab back) — the host uses it to hot-reload changed scripts.
+        static bool consume_focus_gained();
         static int  next_char();
         static int  next_key_pressed();
 

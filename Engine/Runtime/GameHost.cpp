@@ -26,6 +26,7 @@ namespace vortex::runtime
         // it on Alt-Tab. g_mouse_dx/dy are accumulated in WM_INPUT and consumed (reset) once per frame.
         bool g_captured = false;
         bool g_has_focus = true;
+        bool g_focus_gained = false;   // latched on WM_SETFOCUS (Alt-Tab back); consumed by the host for script hot-reload
         long g_mouse_dx = 0, g_mouse_dy = 0;
 
         // Retained-UI input event queues (same thread as the tick that drains them → no locking). Bounded so a
@@ -135,6 +136,7 @@ namespace vortex::runtime
             case WM_LBUTTONUP:   g_mdown = false; ReleaseCapture();  return 0;
             case WM_SETFOCUS:
                 g_has_focus = true;
+                g_focus_gained = true;   // Alt-Tab back -> the host hot-reloads changed scripts
                 return 0;
             case WM_KILLFOCUS:
                 // Lost focus (Alt+Tab): release + show the cursor and un-clip it so it's never stuck. The game
@@ -162,6 +164,7 @@ namespace vortex::runtime
     bool GameHost::key_down(int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; }
 
     int  GameHost::mouse_wheel() { int w = g_wheel_accum; g_wheel_accum = 0; return w; }
+    bool GameHost::consume_focus_gained() { bool f = g_focus_gained; g_focus_gained = false; return f; } // Alt-Tab back (once)
     int  GameHost::next_char() { if (g_char_queue.empty()) return -1; int c = g_char_queue.front(); g_char_queue.pop_front(); return c; }
     int  GameHost::next_key_pressed() { if (g_key_queue.empty()) return 0; int k = g_key_queue.front(); g_key_queue.pop_front(); return k; }
 

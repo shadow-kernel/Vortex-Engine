@@ -107,6 +107,7 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostMouseDX")] private static extern int GameHostMouseDXNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostMouseDY")] private static extern int GameHostMouseDYNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostMouseWheel")] private static extern int GameHostMouseWheelNative();
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostConsumeFocusGained")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool GameHostConsumeFocusGainedNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostNextChar")] private static extern int GameHostNextCharNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostNextKeyPressed")] private static extern int GameHostNextKeyPressedNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostToggleFullscreen")] private static extern void GameHostToggleFullscreenNative();
@@ -142,6 +143,8 @@ namespace Editor.DllWrapper
         public static int GameHostMouseDY() => GameHostMouseDYNative();
         /// <summary>Accumulated mouse-wheel notches since last call (+up/-down), then cleared.</summary>
         public static int GameHostMouseWheel() { try { return GameHostMouseWheelNative(); } catch { return 0; } }
+        /// <summary>True once after the game window regains focus (Alt-Tab back) — used to trigger script hot-reload.</summary>
+        public static bool GameHostConsumeFocusGained() { try { return GameHostConsumeFocusGainedNative(); } catch { return false; } }
         /// <summary>Next typed character for text fields, or -1 if the queue is empty.</summary>
         public static int GameHostNextChar() { try { return GameHostNextCharNative(); } catch { return -1; } }
         /// <summary>Next edge-pressed virtual-key for keybind capture, or 0 if the queue is empty.</summary>

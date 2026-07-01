@@ -395,6 +395,15 @@ namespace Editor
                     try { GHLog("GPU=" + DllWrapper.VortexAPI.GpuName() + " vendor=0x" + DllWrapper.VortexAPI.GpuVendorId().ToString("X4") + " dlssCapable=" + DllWrapper.VortexAPI.GpuSupportsDlss() + " renderScale=" + DllWrapper.VortexAPI.GetRenderScale()); } catch { }
                     if (_fgArg > 0) { try { DllWrapper.VortexAPI.SetFrameGenMode(_fgArg); GHLog("FrameGen forced x" + (_fgArg + 1)); } catch { } } } // dev: --fg=<0..3> (swapchain now exists)
                 var sr = Editor.Scripting.ScriptRuntime.Instance;
+
+                // Script HOT-RELOAD: when you Alt-Tab back to the game window, recompile any changed scripts and
+                // re-run them live (save in VS -> focus the game -> your changes are in). No-op if nothing changed.
+                if (DllWrapper.VortexAPI.GameHostConsumeFocusGained())
+                {
+                    try { if (sr.ReloadScripts()) GHLog("scripts hot-reloaded on focus"); }
+                    catch (Exception hx) { GHLog("hot-reload error: " + hx.Message); }
+                }
+
                 bool playing = Editor.Core.Services.PlayModeService.Instance.State == Editor.Core.Services.PlayState.Playing;
 
                 int cw = DllWrapper.VortexAPI.GameHostClientWidth();

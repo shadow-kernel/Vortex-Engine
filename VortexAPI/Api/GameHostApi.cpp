@@ -23,6 +23,7 @@ EDITOR_INTERFACE int  GameHostMouseDX() { return runtime::GameHost::mouse_dx(); 
 EDITOR_INTERFACE int  GameHostMouseDY() { return runtime::GameHost::mouse_dy(); }
 // Retained-UI input: wheel notches this frame; next typed char (-1 if none); next edge-pressed VK (0 if none).
 EDITOR_INTERFACE int  GameHostMouseWheel() { return runtime::GameHost::mouse_wheel(); }
+EDITOR_INTERFACE bool GameHostConsumeFocusGained() { return runtime::GameHost::consume_focus_gained(); } // Alt-Tab back -> hot-reload
 EDITOR_INTERFACE int  GameHostNextChar() { return runtime::GameHost::next_char(); }
 EDITOR_INTERFACE int  GameHostNextKeyPressed() { return runtime::GameHost::next_key_pressed(); }
 // Borderless-fullscreen toggle (also F11 natively) for the settings menu.
