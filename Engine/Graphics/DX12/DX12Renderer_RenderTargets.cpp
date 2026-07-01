@@ -51,16 +51,16 @@ namespace vortex::graphics::dx12
 	}
 	
 
-	void DX12Renderer::render_to_target(u32 target_id, const ViewportCamera& camera, bool render_grid)
+	void DX12Renderer::render_to_target(u32 target_id, const ViewportCamera& camera, bool render_grid, bool render_gizmos)
 	{
 		auto it = m_render_targets.find(target_id);
 		if (it == m_render_targets.end()) return;
-		
-		render_scene_to_target(it->second.get(), camera, render_grid);
-	}
-	
 
-	void DX12Renderer::render_scene_to_target(DX12RenderTarget* target, const ViewportCamera& camera, bool render_grid)
+		render_scene_to_target(it->second.get(), camera, render_grid, render_gizmos);
+	}
+
+
+	void DX12Renderer::render_scene_to_target(DX12RenderTarget* target, const ViewportCamera& camera, bool render_grid, bool render_gizmos)
 	{
 		using namespace DirectX;
 		
@@ -287,12 +287,23 @@ namespace vortex::graphics::dx12
 				m_command_list->DrawIndexedInstanced(mesh->index_count(), 1, 0, 0, 0);
 			}
 		}
-		
+
+		// Editor gizmo pass INTO the offscreen target (e.g. the Collision Editor's green collider wireframe).
+		// render_gizmos() reads m_active_rtv/m_active_dsv + the per-frame CB (which still holds THIS camera's VP
+		// until it's restored below), so retarget the actives to this RT/DSV first. Must be recorded BEFORE Close().
+		// The gizmo PSO is depth-disabled (always-on-top), so the wireframe draws over the mesh, exactly aligned.
+		if (render_gizmos && !m_gizmo_render.empty())
+		{
+			m_active_rtv = rtv; m_active_dsv = dsv;
+			m_active_width = target->width(); m_active_height = target->height();
+			this->render_gizmos();   // this-> so the bool param doesn't shadow the member function
+		}
+
 		// Execute commands
 		m_command_list->Close();
 		m_command_queue.execute_command_list(m_command_list.Get());
 		m_command_queue.signal_and_wait();
-		
+
 		// Restore main camera constants
 		if (m_per_frame_cb_mapped)
 			memcpy(m_per_frame_cb_mapped, &m_frame_constants, sizeof(m_frame_constants));

@@ -44,8 +44,10 @@ namespace Editor.Core.Services.Rendering
         public static ImageSource RenderMeshes(long[] meshIds, long[] materialIds, int size)
             => RenderMeshes(meshIds, materialIds, size, 0.74f, 0.62f, 1f);
 
-        /// <summary>Orbit-aware render: yaw/pitch (radians) rotate the camera around the asset, distScale zooms.</summary>
-        public static ImageSource RenderMeshes(long[] meshIds, long[] materialIds, int size, float yaw, float pitch, float distScale)
+        /// <summary>Orbit-aware render: yaw/pitch (radians) rotate the camera around the asset, distScale zooms.
+        /// <paramref name="renderGizmos"/> also draws the always-on-top GIZMO queue into the target (submit collider
+        /// wireframes before calling this) — used by the Collision Editor preview.</summary>
+        public static ImageSource RenderMeshes(long[] meshIds, long[] materialIds, int size, float yaw, float pitch, float distScale, bool renderGizmos = false)
         {
             if (meshIds == null || meshIds.Length == 0) return null;
             uint rt = AcquireTarget(size);   // cached + reused (not created/destroyed per render)
@@ -115,7 +117,7 @@ namespace Editor.Core.Services.Rendering
                 // swapchain (presenting per-render flashed the editor viewport), then render only
                 // into the offscreen target.
                 VortexAPI.SwapRenderQueue();
-                VortexAPI.RenderToSecondaryTarget(rt, cam, false);
+                VortexAPI.RenderToSecondaryTarget(rt, cam, false, renderGizmos);
                 if (!VortexAPI.PrepareSecondaryRenderTargetReadback(rt)) return null;
                 return ReadTargetToBitmap(rt);
             }

@@ -392,8 +392,13 @@ namespace Editor.Core.Services.Physics
             max = new V3(cc.Feet.X + r, cc.Feet.Y + Math.Max(cc.H, 2f * r) + r, cc.Feet.Z + r);
         }
 
+        // Contact skin: collide-and-slide pushes a character to EXACTLY a solid's surface, so a strict "penetrating"
+        // test would miss it. A small skin makes OnCollisionEnter (and trigger touch) fire when the character is at /
+        // just within reach of the surface — reliable "touched it" detection.
+        private const float ContactSkin = 0.06f;
+
         /// <summary>Boolean overlap test: the character capsule (sampled as spheres) vs a shape — same math as
-        /// Depenetrate but reports overlap instead of pushing.</summary>
+        /// Depenetrate but reports overlap (within a small contact skin) instead of pushing.</summary>
         private static bool CapsuleOverlapsShape(CharCap cc, Shape s)
         {
             float r = cc.R;
@@ -407,7 +412,7 @@ namespace Editor.Core.Services.Physics
                 float t = samples == 1 ? 0f : (float)k / (samples - 1);
                 V3 c = new V3(c0.X + (c1.X - c0.X) * t, c0.Y + (c1.Y - c0.Y) * t, c0.Z + (c1.Z - c0.Z) * t);
                 if (!ClosestOnShape(s, c, out var q)) continue;
-                if ((c - q).Len() < r + sr) return true;
+                if ((c - q).Len() < r + sr + ContactSkin) return true;
             }
             return false;
         }

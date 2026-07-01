@@ -7,7 +7,7 @@
         xmlns:worldEditor="clr-namespace:Editor.Editors.WorldEditor"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         mc:Ignorable="d"
-        Icon="{DynamicResource AppIcon}"
+        Icon="pack://application:,,,/Logo.ico"
         Title="Vortex Engine" Height="820" Width="1320"
         MinHeight="540" MinWidth="960"
         WindowStartupLocation="CenterScreen"

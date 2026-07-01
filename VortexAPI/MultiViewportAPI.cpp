@@ -44,10 +44,10 @@ EDITOR_INTERFACE bool HasRenderTarget(unsigned int target_id)
 	return vortex::graphics::dx12::DX12Renderer::instance().has_render_target(target_id);
 }
 
-EDITOR_INTERFACE void RenderToTarget(unsigned int target_id, viewport_camera_desc* camera, bool render_grid)
+EDITOR_INTERFACE void RenderToTarget(unsigned int target_id, viewport_camera_desc* camera, bool render_grid, bool render_gizmos)
 {
 	if (!camera) return;
-	
+
 	vortex::graphics::dx12::ViewportCamera cam{};
 	cam.position = { camera->position[0], camera->position[1], camera->position[2] };
 	cam.target = { camera->target[0], camera->target[1], camera->target[2] };
@@ -57,8 +57,8 @@ EDITOR_INTERFACE void RenderToTarget(unsigned int target_id, viewport_camera_des
 	cam.far_clip = camera->far_clip;
 	cam.orthographic = camera->orthographic != 0;
 	cam.ortho_size = camera->ortho_size;
-	
-	vortex::graphics::dx12::DX12Renderer::instance().render_to_target(target_id, cam, render_grid);
+
+	vortex::graphics::dx12::DX12Renderer::instance().render_to_target(target_id, cam, render_grid, render_gizmos);
 }
 
 EDITOR_INTERFACE bool PrepareRenderTargetReadback(unsigned int target_id)

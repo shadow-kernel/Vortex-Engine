@@ -589,8 +589,8 @@ namespace Editor.DllWrapper
         private static extern bool HasRenderTarget(uint targetId);
 
         [DllImport(_dllName, CallingConvention = _cc)]
-        private static extern void RenderToTarget(uint targetId, ref ViewportCameraDesc camera, 
-            [MarshalAs(UnmanagedType.I1)] bool renderGrid);
+        private static extern void RenderToTarget(uint targetId, ref ViewportCameraDesc camera,
+            [MarshalAs(UnmanagedType.I1)] bool renderGrid, [MarshalAs(UnmanagedType.I1)] bool renderGizmos);
 
         [DllImport(_dllName, CallingConvention = _cc)]
         [return: MarshalAs(UnmanagedType.I1)]
@@ -639,9 +639,9 @@ namespace Editor.DllWrapper
         /// <summary>
         /// Render the scene to a secondary render target with a specific camera.
         /// </summary>
-        public static void RenderToSecondaryTarget(uint targetId, ViewportCameraDesc camera, bool renderGrid = false)
+        public static void RenderToSecondaryTarget(uint targetId, ViewportCameraDesc camera, bool renderGrid = false, bool renderGizmos = false)
         {
-            try { RenderToTarget(targetId, ref camera, renderGrid); } catch { }
+            try { RenderToTarget(targetId, ref camera, renderGrid, renderGizmos); } catch { }
         }
 
         /// <summary>

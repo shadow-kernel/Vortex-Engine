@@ -328,7 +328,7 @@ namespace vortex::graphics::dx12
 		/// <summary>
 		/// Render the scene to a secondary render target with a specific camera.
 		/// </summary>
-		void render_to_target(u32 target_id, const ViewportCamera& camera, bool render_grid = false);
+		void render_to_target(u32 target_id, const ViewportCamera& camera, bool render_grid = false, bool render_gizmos = false);
 		
 		/// <summary>
 		/// Copy render target to staging buffer for CPU readback.
@@ -618,7 +618,7 @@ namespace vortex::graphics::dx12
 		u32 m_next_render_target_id{ 1 };
 		
 		// Helper for rendering to a specific target
-		void render_scene_to_target(DX12RenderTarget* target, const ViewportCamera& camera, bool render_grid);
+		void render_scene_to_target(DX12RenderTarget* target, const ViewportCamera& camera, bool render_grid, bool render_gizmos = false);
 
 		// Render-scale: (re)create m_scaled_rt at w x h (R8G8B8A8) when the scale/window size changes; idles the
 		// GPU first since the RT may be in flight. Returns false if creation failed (caller falls back to direct).

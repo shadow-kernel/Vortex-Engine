@@ -161,24 +161,28 @@ namespace Editor.Editors.PhysicsEditor
             trig.Unchecked += (s, e) => { col.IsTrigger = false; Rebuild(); };
             _body.Children.Add(trig);
 
-            // A trigger can carry a script that reacts to being touched (OnTriggerEnter/Stay/Exit) — no-fly zone,
-            // "change color on touch", etc. Surfaced only when Is Trigger is on.
-            if (col.IsTrigger) BuildTriggerScriptSection(ent);
+            // Any collider — trigger OR solid — can carry a script that reacts to contact: OnTriggerEnter/Stay/Exit
+            // for a trigger (no-fly zone, "change color on touch"); OnCollisionEnter for a solid (e.g. take damage
+            // when a character touches this wall/hazard).
+            BuildColliderScriptSection(ent, col);
 
             _body.Children.Add(ActionButton("Auto-fit to mesh", () => { AutoFit(ent, col); Rebuild(); }));
             _body.Children.Add(HelpBlock());
         }
 
-        /// <summary>Trigger-script UI: attach/replace/remove a VortexBehaviour on this entity and see which
-        /// collision events it can override, so a trigger volume can drive gameplay (touch = react).</summary>
-        private void BuildTriggerScriptSection(GameEntity ent)
+        /// <summary>Collider-script UI: attach/replace/remove a VortexBehaviour on this entity and see which contact
+        /// events it can override — works for triggers (OnTriggerEnter/Stay/Exit) AND solids (OnCollisionEnter).</summary>
+        private void BuildColliderScriptSection(GameEntity ent, Collider col)
         {
-            _body.Children.Add(Label("TRIGGER SCRIPT — reacts when touched"));
+            _body.Children.Add(Label("SCRIPT — reacts to contact"));
             var script = ent.GetComponent<Editor.ECS.Components.Scripting.Script>();
             string cur = script != null ? script.ScriptClassName : null;
+            string evts = col.IsTrigger
+                ? "OnTriggerEnter / OnTriggerStay / OnTriggerExit"
+                : "OnCollisionEnter (fires when a character touches this solid — e.g. take damage on contact)";
             _body.Children.Add(Note(string.IsNullOrEmpty(cur)
-                ? "Attach a script, then override OnTriggerEnter / OnTriggerStay / OnTriggerExit (and OnCollisionEnter for solids) to react when a character touches this collider — a no-fly zone, a hazard, a button, or 'change color on touch'."
-                : "Attached: " + cur + "  —  override OnTriggerEnter / OnTriggerStay / OnTriggerExit in it to react to touches."));
+                ? "Attach a script, then override " + evts + " to react when a character touches this collider."
+                : "Attached: " + cur + "  —  override " + evts + " in it."));
             _body.Children.Add(ActionButton(string.IsNullOrEmpty(cur) ? "Attach Script…" : "Change Script…", () => ShowTriggerScriptPicker(ent)));
             if (script != null)
                 _body.Children.Add(ActionButton("Remove Script", () => { ent.RemoveComponent(script); Rebuild(); }));

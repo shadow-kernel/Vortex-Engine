@@ -170,21 +170,61 @@ namespace Editor.Editors.PhysicsEditor
             _overlay.Children.Clear();
             if (!ready) { _img.Source = null; return; }
 
-            // 1) object image (empty sunlit world) from the shared offscreen renderer
-            try { _img.Source = AssetPreviewRenderer.RenderMeshes(_meshIds, _matIds, RenderSize, _yaw, _pitch, _distScale); }
+            // 1) Submit the collider wireframe into the GIZMO queue BEFORE the offscreen render swaps + draws it,
+            //    so the ENGINE draws it with the SAME camera as the object — perfectly aligned, exactly like the
+            //    scene view (no fragile managed projection).
+            if (col != null && col.IsEnabled) { try { SubmitColliderGizmo(col); } catch { } }
+
+            // 2) Object (empty sunlit world) + the green collider gizmo, both rendered by the engine into the target.
+            try { _img.Source = AssetPreviewRenderer.RenderMeshes(_meshIds, _matIds, RenderSize, _yaw, _pitch, _distScale, renderGizmos: true); }
             catch { _img.Source = null; }
 
-            // 2) recompute the SAME camera the renderer used, so the overlay lines up
+            // 3) Fine reference grid (managed overlay, faint) using the same camera framing.
             ComputeCamera();
-
             double w = ActualWidth, h = ActualHeight;
-            if (w < 4 || h < 4) return;
+            if (w >= 4 && h >= 4) DrawGrid(w, h);
+        }
 
-            // 3) fine reference grid on the ground plane (faint)
-            DrawGrid(w, h);
+        /// <summary>Submit the collider as a GREEN gizmo at the object's identity/origin position (the preview draws
+        /// the mesh at identity). Reuses the exact scene-view collider gizmo API, so it renders identically + aligned.</summary>
+        private void SubmitColliderGizmo(Collider col)
+        {
+            float cx = col.Center.X, cy = col.Center.Y, cz = col.Center.Z;
+            if (col is BoxCollider box)
+                VortexAPI.RenderColliderBox(cx, cy, cz, Math.Abs(box.Size.X * 0.5f), Math.Abs(box.Size.Y * 0.5f), Math.Abs(box.Size.Z * 0.5f), 0f);
+            else if (col is SphereCollider sph)
+                VortexAPI.RenderColliderSphere(cx, cy, cz, sph.Radius);
+            else if (col is CapsuleCollider cap)
+            {
+                float cr = cap.Radius;
+                VortexAPI.RenderColliderCapsule(cx, cy, cz, cr, Math.Max(0f, cap.Height * 0.5f - cr));
+            }
+            else // mesh / base collider: a box over the object's combined mesh bounds (edge-accurate collides vs the real tris)
+            {
+                if (TryCombinedBounds(out float bcx, out float bcy, out float bcz, out float hx, out float hy, out float hz))
+                    VortexAPI.RenderColliderBox(bcx, bcy, bcz, hx, hy, hz, 0f);
+            }
+        }
 
-            // 4) green collider wireframe (always-on-top, like the scene view)
-            if (col != null && col.IsEnabled) DrawCollider(col, w, h);
+        private bool TryCombinedBounds(out float cx, out float cy, out float cz, out float hx, out float hy, out float hz)
+        {
+            cx = cy = cz = hx = hy = hz = 0f;
+            float minX = 1e30f, minY = 1e30f, minZ = 1e30f, maxX = -1e30f, maxY = -1e30f, maxZ = -1e30f; bool any = false;
+            foreach (var m in _meshIds)
+            {
+                if (VortexAPI.GetMeshBounds(m, out float sx, out float sy, out float sz) &&
+                    VortexAPI.GetMeshBoundsCenter(m, out float mcx, out float mcy, out float mcz))
+                {
+                    any = true;
+                    minX = Math.Min(minX, mcx - sx * 0.5f); maxX = Math.Max(maxX, mcx + sx * 0.5f);
+                    minY = Math.Min(minY, mcy - sy * 0.5f); maxY = Math.Max(maxY, mcy + sy * 0.5f);
+                    minZ = Math.Min(minZ, mcz - sz * 0.5f); maxZ = Math.Max(maxZ, mcz + sz * 0.5f);
+                }
+            }
+            if (!any) return false;
+            cx = (minX + maxX) * 0.5f; cy = (minY + maxY) * 0.5f; cz = (minZ + maxZ) * 0.5f;
+            hx = (maxX - minX) * 0.5f; hy = (maxY - minY) * 0.5f; hz = (maxZ - minZ) * 0.5f;
+            return true;
         }
 
         private void ComputeCamera()
@@ -269,117 +309,5 @@ namespace Editor.Editors.PhysicsEditor
             }
         }
 
-        private void DrawCollider(Collider col, double w, double h)
-        {
-            var green = new SolidColorBrush(Color.FromRgb(0x40, 0xF2, 0x73)); // matches the scene collider gizmo
-            double t = 1.6;
-            // The mesh is submitted at IDENTITY (its local origin at world 0), so the collider — whose Center is
-            // relative to the entity origin — anchors at world origin + col.Center (NOT the bounds center).
-            float cx = col.Center.X, cy = col.Center.Y, cz = col.Center.Z;
-
-            if (col is BoxCollider box)
-            {
-                float hx = Math.Abs(box.Size.X * 0.5f), hy = Math.Abs(box.Size.Y * 0.5f), hz = Math.Abs(box.Size.Z * 0.5f);
-                DrawBox(cx, cy, cz, hx, hy, hz, w, h, green, t);
-            }
-            else if (col is SphereCollider sph)
-            {
-                DrawSphere(cx, cy, cz, sph.Radius, w, h, green, t);
-            }
-            else if (col is CapsuleCollider cap)
-            {
-                DrawCapsule(cx, cy, cz, cap.Radius, cap.Height, w, h, green, t);
-            }
-            else // mesh / base collider: outline the mesh bounds
-            {
-                if (VortexAPI.GetMeshBounds(_meshIds[0], out float sx, out float sy, out float sz))
-                    DrawBox(_cx, _cy, _cz, Math.Abs(sx * 0.5f), Math.Abs(sy * 0.5f), Math.Abs(sz * 0.5f), w, h, green, t);
-            }
-        }
-
-        private void DrawBox(float cx, float cy, float cz, float hx, float hy, float hz, double w, double h, Brush b, double t)
-        {
-            // 8 corners
-            float[,] c = new float[8, 3];
-            int k = 0;
-            for (int xi = -1; xi <= 1; xi += 2)
-                for (int yi = -1; yi <= 1; yi += 2)
-                    for (int zi = -1; zi <= 1; zi += 2)
-                    { c[k, 0] = cx + xi * hx; c[k, 1] = cy + yi * hy; c[k, 2] = cz + zi * hz; k++; }
-            // edges connect corners differing in exactly one axis
-            for (int i = 0; i < 8; i++)
-                for (int j = i + 1; j < 8; j++)
-                {
-                    int diff = 0;
-                    if (Math.Abs(c[i, 0] - c[j, 0]) > 1e-4) diff++;
-                    if (Math.Abs(c[i, 1] - c[j, 1]) > 1e-4) diff++;
-                    if (Math.Abs(c[i, 2] - c[j, 2]) > 1e-4) diff++;
-                    if (diff == 1) AddSeg(c[i, 0], c[i, 1], c[i, 2], c[j, 0], c[j, 1], c[j, 2], w, h, b, t);
-                }
-        }
-
-        private void DrawSphere(float cx, float cy, float cz, float r, double w, double h, Brush b, double t)
-        {
-            DrawCircle(cx, cy, cz, r, 0, w, h, b, t); // XY
-            DrawCircle(cx, cy, cz, r, 1, w, h, b, t); // XZ
-            DrawCircle(cx, cy, cz, r, 2, w, h, b, t); // YZ
-        }
-
-        // plane: 0 = XY (normal Z), 1 = XZ (normal Y), 2 = YZ (normal X)
-        private void DrawCircle(float cx, float cy, float cz, float r, int plane, double w, double h, Brush b, double t)
-        {
-            const int SEG = 40;
-            float px = 0, py = 0, pz = 0; bool first = true;
-            float fx0 = 0, fy0 = 0, fz0 = 0;
-            for (int i = 0; i <= SEG; i++)
-            {
-                double a = i * 2.0 * Math.PI / SEG;
-                float ca = (float)Math.Cos(a) * r, sa = (float)Math.Sin(a) * r;
-                float x, y, z;
-                if (plane == 0) { x = cx + ca; y = cy + sa; z = cz; }
-                else if (plane == 1) { x = cx + ca; y = cy; z = cz + sa; }
-                else { x = cx; y = cy + ca; z = cz + sa; }
-                if (!first) AddSeg(px, py, pz, x, y, z, w, h, b, t);
-                else { fx0 = x; fy0 = y; fz0 = z; }
-                px = x; py = y; pz = z; first = false;
-            }
-        }
-
-        private void DrawCapsule(float cx, float cy, float cz, float r, float height, double w, double h, Brush b, double t)
-        {
-            float halfCyl = Math.Max(0f, height * 0.5f - r);
-            float topY = cy + halfCyl, botY = cy - halfCyl;
-            // two rings (top/bottom of the cylinder)
-            DrawCircle(cx, topY, cz, r, 1, w, h, b, t);
-            DrawCircle(cx, botY, cz, r, 1, w, h, b, t);
-            // 4 vertical connectors
-            AddSeg(cx + r, topY, cz, cx + r, botY, cz, w, h, b, t);
-            AddSeg(cx - r, topY, cz, cx - r, botY, cz, w, h, b, t);
-            AddSeg(cx, topY, cz + r, cx, botY, cz + r, w, h, b, t);
-            AddSeg(cx, topY, cz - r, cx, botY, cz - r, w, h, b, t);
-            // dome arcs (top + bottom hemispheres, two planes each)
-            DrawArc(cx, topY, cz, r, 0, +1, w, h, b, t);
-            DrawArc(cx, topY, cz, r, 2, +1, w, h, b, t);
-            DrawArc(cx, botY, cz, r, 0, -1, w, h, b, t);
-            DrawArc(cx, botY, cz, r, 2, -1, w, h, b, t);
-        }
-
-        // half-circle arc in a vertical plane (0 = XY, 2 = YZ), dir +1 = upper dome, -1 = lower
-        private void DrawArc(float cx, float cy, float cz, float r, int plane, int dir, double w, double h, Brush b, double t)
-        {
-            const int SEG = 20;
-            float px = 0, py = 0, pz = 0; bool first = true;
-            for (int i = 0; i <= SEG; i++)
-            {
-                double a = Math.PI * i / SEG;                 // 0..pi
-                float horiz = (float)Math.Cos(a) * r;         // +r..-r
-                float vert = (float)Math.Sin(a) * r * dir;    // 0..r..0 (up or down)
-                float x, y, z;
-                if (plane == 0) { x = cx + horiz; y = cy + vert; z = cz; }
-                else { x = cx; y = cy + vert; z = cz + horiz; }
-                if (!first) AddSeg(px, py, pz, x, y, z, w, h, b, t);
-                px = x; py = y; pz = z; first = false;
-            }
-        }
     }
 }
