@@ -733,15 +733,34 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 //   Ctrl   -> open a standalone Model Viewer to inspect + fly around it
                 // (this also fixes the old bug where double-click opened the editor whose preview hijacked the
                 //  shared render queue, so the main viewport showed the model instead of the scene.)
-                // Prefab -> instantiate a fresh LINKED instance into the active scene (mainstream double-click behaviour).
+                // Prefab double-click:  plain = add a linked instance to the scene · Shift = add + select for editing
+                // (edit it, then right-click → Apply to Prefab) · Ctrl = big preview (open its mesh in the Model Viewer).
                 bool isPrefab = item.Type == AssetType.Prefab || (item.Path?.EndsWith(".ventity", StringComparison.OrdinalIgnoreCase) ?? false);
                 if (isPrefab && !string.IsNullOrEmpty(item.Path))
                 {
-                    var scene = ProjectData.Current?.ActiveScene;
+                    var pmods = System.Windows.Input.Keyboard.Modifiers;
                     var proj = ProjectData.Current?.Path ?? "";
                     var full = System.IO.Path.IsPathRooted(item.Path) ? item.Path : System.IO.Path.Combine(proj, item.Path);
+
+                    if ((pmods & System.Windows.Input.ModifierKeys.Control) != 0)
+                    {
+                        // Ctrl -> big preview: fly around the prefab's mesh in the standalone Model Viewer.
+                        var modelPath = PrefabFirstModelPath(full);
+                        if (!string.IsNullOrEmpty(modelPath))
+                            OpenModelViewer(new AssetItem { Path = modelPath, Name = item.Name, Type = AssetType.Models });
+                        else
+                            MessageBox.Show("This prefab has no renderable mesh to preview.", "Prefab", MessageBoxButton.OK, MessageBoxImage.Information);
+                        return;
+                    }
+
+                    var scene = ProjectData.Current?.ActiveScene;
                     var inst = Editor.Core.Services.PrefabService.Instance.InstantiatePrefab(full, scene);
-                    if (inst != null) Editor.Core.Services.SelectionService.Instance.Select(inst);
+                    if (inst != null)
+                    {
+                        Editor.Core.Services.SelectionService.Instance.Select(inst);
+                        if ((pmods & System.Windows.Input.ModifierKeys.Shift) != 0)
+                            (Application.Current?.MainWindow as MainWindow)?.ShowToast("Editing '" + inst.Name + "' — change it, then right-click → Apply to Prefab");
+                    }
                     else MessageBox.Show("Could not instantiate the prefab (empty or unreadable).", "Prefab", MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
                 }
@@ -1628,6 +1647,9 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                     item.TypeName = string.IsNullOrEmpty(ext) ? "File" : (ext.TrimStart('.').ToUpperInvariant() + " File");
                     item.IconCode = ""; item.IconColor = "#FF9A9AA1"; break;
             }
+            // Prefabs (.ventity) render their first mesh as the tile, so they look like the object they spawn.
+            if (item.Type == AssetType.Prefab && fsi != null)
+                QueueThumbnail(item, () => GetOrBuildPrefabThumb(fsi.FullPath));
             return item;
         }
 
@@ -2159,6 +2181,53 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 var mats = new long[subs.Length];
                 for (int i = 0; i < subs.Length; i++) { meshes[i] = subs[i].MeshId; mats[i] = subs[i].MaterialId; }
                 var img = BuildMeshThumbnail(meshes, mats, 256);
+                if (img != null) _thumbCache[key] = img;
+                return img;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>Load a .ventity prefab and return the ABSOLUTE model-file path of its first MeshRenderer (skips
+        /// primitives). Used for the prefab preview + thumbnail. Null if the prefab has no model-based mesh.</summary>
+        private static string PrefabFirstModelPath(string ventityPath)
+        {
+            try
+            {
+                var entity = Editor.Core.Services.SceneService.Instance.LoadEntityFromPrefab(ventityPath);
+                var rel = FindFirstModelPath(entity);
+                if (string.IsNullOrEmpty(rel)) return null;
+                var proj = ProjectData.Current?.Path ?? "";
+                var full = System.IO.Path.IsPathRooted(rel) ? rel : System.IO.Path.Combine(proj, rel);
+                return System.IO.File.Exists(full) ? full : null;
+            }
+            catch { return null; }
+        }
+
+        private static string FindFirstModelPath(Editor.ECS.GameEntity e)
+        {
+            if (e == null) return null;
+            var mr = e.GetComponent<Editor.ECS.Components.Rendering.MeshRenderer>();
+            var p = mr?.MeshPath;
+            if (!string.IsNullOrEmpty(p) && !p.StartsWith("Primitive:", StringComparison.OrdinalIgnoreCase)) return p;
+            if (e.Children != null)
+                foreach (var c in e.Children) { var cp = FindFirstModelPath(c); if (!string.IsNullOrEmpty(cp)) return cp; }
+            return null;
+        }
+
+        /// <summary>Render a prefab (.ventity) thumbnail — its first model mesh, so prefab tiles look like the object
+        /// they spawn (not a flat icon). Cached by the .ventity's mtime.</summary>
+        private static ImageSource GetOrBuildPrefabThumb(string ventityPath)
+        {
+            if (string.IsNullOrEmpty(ventityPath) || !System.IO.File.Exists(ventityPath)) return null;
+            string key;
+            try { key = "prefab:" + ventityPath + ":" + System.IO.File.GetLastWriteTimeUtc(ventityPath).Ticks; }
+            catch { key = "prefab:" + ventityPath; }
+            if (_thumbCache.TryGetValue(key, out var cached)) return cached;
+            try
+            {
+                var full = PrefabFirstModelPath(ventityPath);
+                if (string.IsNullOrEmpty(full)) return null;
+                var img = Core.Services.Rendering.AssetPreviewRenderer.RenderModel(full, 256);
                 if (img != null) _thumbCache[key] = img;
                 return img;
             }

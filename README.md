@@ -1,6 +1,8 @@
 <div align="center">
 
-# 🌀 Vortex Engine
+<img src="Editor/Assets/Images/Logo.png" alt="Vortex Engine" width="140"/>
+
+# Vortex Engine
 
 ### A modern, lightweight game engine — native **DirectX 12** core, clean **WPF** editor.
 
