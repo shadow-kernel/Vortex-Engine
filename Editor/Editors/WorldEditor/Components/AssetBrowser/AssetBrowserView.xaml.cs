@@ -637,12 +637,12 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 Title = "Save Shader",
                 Filter = "Vortex Shader|*.vshader",
                 DefaultExt = ".vshader",
-                InitialDirectory = System.IO.Path.Combine(projectPath, "Shaders"),
+                InitialDirectory = System.IO.Path.Combine(projectPath, "Assets", "Shaders"),
                 FileName = $"New{type}Shader.vshader"
             };
 
-            // Ensure Shaders folder exists
-            var shadersDir = System.IO.Path.Combine(projectPath, "Shaders");
+            // Ensure Assets/Shaders folder exists (same place ProjectService/ScriptingService use for scripts/shaders)
+            var shadersDir = System.IO.Path.Combine(projectPath, "Assets", "Shaders");
             if (!System.IO.Directory.Exists(shadersDir))
                 System.IO.Directory.CreateDirectory(shadersDir);
 
@@ -664,7 +664,21 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 }
                 
                 shader.Name = System.IO.Path.GetFileNameWithoutExtension(saveDialog.FileName);
-                
+
+                // Write a real .hlsl next to the .vshader (a starter the user edits) and link it from the shader asset,
+                // stored PROJECT-RELATIVE (survives moves, like material texture paths).
+                var hlslPath = System.IO.Path.ChangeExtension(saveDialog.FileName, ".hlsl");
+                try { System.IO.File.WriteAllText(hlslPath, VortexShader.HlslTemplate(shader.ShaderType)); } catch { }
+                string rel = hlslPath;
+                try
+                {
+                    var pu = new Uri(projectPath.EndsWith("\\") ? projectPath : projectPath + "\\");
+                    rel = Uri.UnescapeDataString(pu.MakeRelativeUri(new Uri(hlslPath)).ToString());
+                }
+                catch { }
+                shader.VertexShaderPath = rel;
+                shader.PixelShaderPath = rel;
+
                 if (shader.Save(saveDialog.FileName))
                 {
                     Assets.Add(new AssetItem
@@ -677,10 +691,10 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                         Type = AssetType.Shaders,
                         Path = saveDialog.FileName
                     });
-                    
+
                     AssetDatabase.Instance.Refresh();
-                    MessageBox.Show($"Shader created: {shader.Name}\n\nYou can now assign this shader to materials.", 
-                        "Shader Created", MessageBoxButton.OK, MessageBoxImage.Information);
+                    // Open the shader source in Visual Studio for editing (falls back to the OS default if VS is absent).
+                    try { Editor.Core.Services.ScriptingService.OpenInVisualStudio(hlslPath); } catch { }
                 }
             }
         }
@@ -1065,6 +1079,38 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                         return true;
                     }
                     return false;
+
+                case AssetType.Shaders:
+                {
+                    // Open the shader's .hlsl source in Visual Studio. Resolve: the file itself if it's already an
+                    // .hlsl, else the .vshader's linked PixelShaderPath, else a sibling <name>.hlsl.
+                    string hlsl = null;
+                    if (extension == ".hlsl") hlsl = fullPath;
+                    else if (System.IO.File.Exists(fullPath))
+                    {
+                        try
+                        {
+                            var vs = Core.Assets.VortexShader.Load(fullPath);
+                            if (vs != null && !string.IsNullOrEmpty(vs.PixelShaderPath))
+                            {
+                                var p = vs.PixelShaderPath;
+                                hlsl = System.IO.Path.IsPathRooted(p) ? p : System.IO.Path.Combine(projectPath, p);
+                            }
+                        }
+                        catch { }
+                        if (string.IsNullOrEmpty(hlsl) || !System.IO.File.Exists(hlsl))
+                        {
+                            var sib = System.IO.Path.ChangeExtension(fullPath, ".hlsl");
+                            if (System.IO.File.Exists(sib)) hlsl = sib;
+                        }
+                    }
+                    if (!string.IsNullOrEmpty(hlsl) && System.IO.File.Exists(hlsl))
+                    {
+                        Editor.Core.Services.ScriptingService.OpenInVisualStudio(hlsl);
+                        return true;
+                    }
+                    return false; // built-in shader (e.g. "Shader:Standard") has no editable file
+                }
 
                 case AssetType.UI:
                     if (System.IO.File.Exists(fullPath))

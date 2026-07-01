@@ -199,5 +199,39 @@ namespace Editor.Core.Assets
                 Tags = new List<string> { "Transparent" }
             };
         }
+
+        /// <summary>Starter .hlsl source for a new shader (entry points VSMain/PSMain). The vertex layout +
+        /// PerFrame/PerObject cbuffers mirror the engine's standard pipeline, so an edited shader can be assigned to
+        /// a material. The user opens this in Visual Studio and customizes it.</summary>
+        public static string HlslTemplate(ShaderType type)
+        {
+            bool unlit = type == ShaderType.Unlit;
+            string psBody = unlit
+                ? "    return BaseColor; // unlit: flat base color (sample a texture / add effects here)"
+                : "    float3 n = normalize(i.norm);\n" +
+                  "    float3 L = normalize(-LightDirection);\n" +
+                  "    float ndl = saturate(dot(n, L)) * DirectionalIntensity;\n" +
+                  "    float3 lit = BaseColor.rgb * (LightColor * ndl + AmbientStrength);\n" +
+                  "    return float4(lit, BaseColor.a);";
+            return
+"// Custom shader — entry points VSMain (vertex) + PSMain (pixel). The vertex layout and the PerFrame/PerObject\n" +
+"// cbuffers match the engine's standard pipeline, so this can be assigned to a material. Edit freely in VS;\n" +
+"// with shader hot-reload on, re-focusing the viewport picks up your changes.\n\n" +
+"cbuffer PerFrame : register(b0)\n{\n" +
+"    row_major float4x4 ViewProjection;\n    float3 CameraPosition;      float Padding0;\n" +
+"    float3 LightDirection;      float DirectionalIntensity;\n    float3 LightColor;          float AmbientStrength;\n" +
+"    uint PointLightCount; uint SpotLightCount; uint2 FramePadding;\n};\n\n" +
+"cbuffer PerObject : register(b1)\n{\n" +
+"    row_major float4x4 World;\n    float4 BaseColor;\n    float Metallic; float Roughness; float AO; float NormalStrength;\n" +
+"    uint HasAlbedoTexture; uint HasNormalTexture; uint HasMetallicTexture; uint HasRoughnessTexture;\n" +
+"    uint HasAOTexture; uint UseDirectXNormals; uint IsUnlit; float EmissiveStrength;\n};\n\n" +
+"struct VS_IN\n{\n    float3 pos : POSITION;\n    float3 norm : NORMAL;\n    float2 uv : TEXCOORD0;\n" +
+"    float4 iw0 : INSTANCEWORLD0;\n    float4 iw1 : INSTANCEWORLD1;\n    float4 iw2 : INSTANCEWORLD2;\n    float4 iw3 : INSTANCEWORLD3;\n};\n\n" +
+"struct PS_IN\n{\n    float4 pos : SV_POSITION;\n    float3 worldPos : TEXCOORD1;\n    float3 norm : TEXCOORD2;\n    float2 uv : TEXCOORD0;\n};\n\n" +
+"PS_IN VSMain(VS_IN input)\n{\n    PS_IN o;\n    float4x4 W = float4x4(input.iw0, input.iw1, input.iw2, input.iw3);\n" +
+"    float4 wp = mul(float4(input.pos, 1), W);\n    o.worldPos = wp.xyz;\n    o.pos = mul(wp, ViewProjection);\n" +
+"    o.norm = normalize(mul(input.norm, (float3x3)W));\n    o.uv = input.uv;\n    return o;\n}\n\n" +
+"float4 PSMain(PS_IN i) : SV_TARGET\n{\n" + psBody + "\n}\n";
+        }
     }
 }
