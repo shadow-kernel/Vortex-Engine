@@ -76,7 +76,7 @@ jobs:
       shell: pwsh
       run: |
         $out = "x64/${{ env.BUILD_CONFIGURATION }}"
-        $required = @("Vortex Engine.exe", "VortexAPI.dll", "Assimp64.dll")
+        $required = @("Vortex Engine.exe", "VortexAPI.dll", "assimp-vc143-mt.dll")
         $missing = $required | Where-Object { -not (Test-Path "$out/$_") }
         if ($missing) { Write-Error "Missing required artifacts in $out : $($missing -join ', ')"; exit 1 }
         Write-Host "OK: $($required -join ', ') present in $out"

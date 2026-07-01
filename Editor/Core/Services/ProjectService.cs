@@ -142,7 +142,16 @@ namespace Editor.Core.Services
             {
                 var sceneFilePath = Path.Combine(scenesPath, sceneRef.RelativePath);
 
-                if (AssetVfs.Exists(sceneFilePath))
+                if (AssetVfs.IsMounted)
+                {
+                    // SHIPPED GAME: create a lazy stub from the manifest (id/name/path) and DON'T deserialize it.
+                    // Each scene lives in its own Scenes/<name>.vpak, mounted + deserialized only when that scene is
+                    // entered (boot scene at startup, others via Scene.Load) — a 100-scene game never loads them all.
+                    var stub = new Scene { Project = project, FilePath = sceneFilePath, Id = sceneRef.Id, Name = sceneRef.Name };
+                    project.Scenes.Add(stub);
+                    loadedSceneIds.Add(sceneRef.Id);
+                }
+                else if (AssetVfs.Exists(sceneFilePath))
                 {
                     try
                     {

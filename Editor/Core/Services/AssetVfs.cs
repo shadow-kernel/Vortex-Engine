@@ -15,36 +15,67 @@ namespace Editor.Core.Services
     /// </summary>
     public static class AssetVfs
     {
-        private static Dictionary<string, byte[]> _files;
+        private static Dictionary<string, byte[]> _files;   // core pak (manifest + shared assets + scripts)
         private static string _root; // the (virtual) project root = folder the .vpak sits in
+        // Additive scene packs, mounted on demand so a 100-scene game doesn't load every scene at boot — each
+        // scene ships in its own Scenes/<name>.vpak and is mounted only when that scene is (about to be) loaded.
+        private static readonly Dictionary<string, Dictionary<string, byte[]>> _layers =
+            new Dictionary<string, Dictionary<string, byte[]>>(StringComparer.OrdinalIgnoreCase);
 
         public static bool IsMounted => _files != null;
         public static int FileCount => _files != null ? _files.Count : 0;
+        /// <summary>The mounted game root (folder the core .vpak sits in) — used to locate scene packs.</summary>
+        public static string Root => _root;
 
-        /// <summary>Load a .vpak fully into RAM. Root = the pak's folder (the game/project root).</summary>
+        /// <summary>Load the core .vpak fully into RAM. Root = the pak's folder (the game/project root).</summary>
         public static void Mount(string vpakPath)
         {
             _files = VortexPak.Read(vpakPath);
             _root = Path.GetDirectoryName(Path.GetFullPath(vpakPath));
         }
 
+        /// <summary>Mount an extra pak layer (a scene pack) under a name, on demand. Idempotent + never throws.</summary>
+        public static void MountLayer(string name, string vpakPath)
+        {
+            if (string.IsNullOrEmpty(name) || _layers.ContainsKey(name)) return;
+            try { if (File.Exists(vpakPath)) _layers[name] = VortexPak.Read(vpakPath); }
+            catch { /* a missing/damaged scene pack falls back to the core pak / disk */ }
+        }
+
+        /// <summary>Free a scene pack's bytes (its scene is already deserialized into RAM entities).</summary>
+        public static void UnmountLayer(string name)
+        {
+            if (!string.IsNullOrEmpty(name)) _layers.Remove(name);
+        }
+
         public static void Unmount()
         {
             _files = null;
             _root = null;
+            _layers.Clear();
         }
 
-        /// <summary>Fetch bytes for a path (absolute under the root, or already project-relative). False if not packed.</summary>
+        /// <summary>Fetch bytes for a path (absolute under the root, or already project-relative) — searches the
+        /// core pak then any mounted scene packs. False if not packed anywhere.</summary>
         public static bool TryGetBytes(string path, out byte[] data)
         {
             data = null;
-            if (_files == null || string.IsNullOrEmpty(path)) return false;
-            return _files.TryGetValue(ToKey(path), out data);
+            if (string.IsNullOrEmpty(path)) return false;
+            var key = ToKey(path);
+            if (_files != null && _files.TryGetValue(key, out data)) return true;
+            foreach (var layer in _layers.Values)
+                if (layer.TryGetValue(key, out data)) return true;
+            return false;
         }
 
         public static bool Contains(string path)
         {
-            return _files != null && !string.IsNullOrEmpty(path) && _files.ContainsKey(ToKey(path));
+            if (string.IsNullOrEmpty(path)) return false;
+            var key = ToKey(path);
+            if (_files != null && _files.ContainsKey(key)) return true;
+            foreach (var layer in _layers.Values)
+                if (layer.ContainsKey(key)) return true;
+            return false;
         }
 
         /// <summary>True if the path is in the mounted pak OR on disk — use this for asset existence guards.</summary>

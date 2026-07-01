@@ -41,6 +41,7 @@ namespace Editor.Core.Services
                 try { previous.DeactivateEntities(); } catch { }
             }
             project.ActiveScene = target;
+            MountSceneAssets(target);   // stream in this scene's pack before we deserialize it
             target.Load();
             target.ActivateEntities();
             target.IsActive = true;
@@ -66,6 +67,19 @@ namespace Editor.Core.Services
 
             System.Diagnostics.Debug.WriteLine("[GameRuntime] switched to scene '" + target.Name + "'");
             return true;
+        }
+
+        /// <summary>Mount a scene's on-demand asset pack (Scenes/&lt;name&gt;.vpak) before it's loaded, so a shipped game
+        /// only pays for the scene it's entering. No-op in the editor (loose files) or if already mounted / the pack
+        /// is absent (then it falls back to the core pak / disk — e.g. old single-pak games still work).</summary>
+        public static void MountSceneAssets(Scene scene)
+        {
+            if (scene == null || !AssetVfs.IsMounted) return;
+            var baseName = System.IO.Path.GetFileNameWithoutExtension(scene.FilePath);
+            if (string.IsNullOrEmpty(baseName)) baseName = scene.Name;
+            if (string.IsNullOrEmpty(baseName)) return;
+            var pak = System.IO.Path.Combine(AssetVfs.Root ?? "", "Scenes", baseName + ".vpak");
+            AssetVfs.MountLayer(baseName, pak);
         }
 
         /// <summary>If a script requested a scene change this tick, perform it now (call AFTER ScriptRuntime.Update).</summary>

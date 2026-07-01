@@ -4,7 +4,7 @@
 ; This script creates a professional installation wizard for Vortex Engine
 
 #define MyAppName "Vortex Engine"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "2.1.0"
 #define MyAppPublisher "Vortex Engine Team"
 #define MyAppURL "https://github.com/shadow-kernel/Vortex-Engine"
 #define MyAppExeName "Vortex Engine.exe"
@@ -56,7 +56,7 @@ Name: "german"; MessagesFile: "compiler:Languages\German.isl"
 [CustomMessages]
 english.DeleteUserData=Delete user settings and project cache?
 english.DeleteUserDataDesc=This will remove all saved preferences and cached data from %1
-german.DeleteUserData=Benutzereinstellungen und Projektcache löschen?
+german.DeleteUserData=Benutzereinstellungen und Projektcache lï¿½schen?
 german.DeleteUserDataDesc=Dies entfernt alle gespeicherten Einstellungen und Cache-Daten aus %1
 
 [Tasks]

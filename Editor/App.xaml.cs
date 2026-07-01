@@ -175,6 +175,7 @@ namespace Editor
                 if (scene != null)
                 {
                     splash.SetProgress(0.62, "Loading scene…");
+                    Editor.Core.Services.GameRuntime.MountSceneAssets(scene); // stream in the start scene's pack
                     scene.Load();
                     scene.ActivateEntities();
                     scene.IsActive = true;

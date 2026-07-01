@@ -96,10 +96,13 @@ namespace Editor.Core.Services.Build
                     scriptsOk = CompileScripts(projectRoot, tmpDll, out scriptLog);
                     sb.AppendLine(scriptsOk ? "• Scripts compiled OK -> GameScripts.dll" : "• SCRIPTS FAILED TO COMPILE");
 
-                    // BINARY ASSET PAK: pack the manifest + every asset (NOT .cs source) + the compiled DLL into ONE
-                    // opaque, compressed+obfuscated Assets.vpak. The shipped game has no readable or editable asset
-                    // files — the player decompresses it all into RAM at startup.
+                    // BINARY ASSET PAKS (streaming-friendly, like a real engine's asset bundles): the shared/core
+                    // assets + manifest + compiled scripts go into ONE opaque, compressed+obfuscated core Assets.vpak,
+                    // and EACH scene ships in its OWN Scenes/<name>.vpak. The player mounts the core pak + only the
+                    // START scene's pack at boot, and streams the others on demand — so a 100-scene game never loads
+                    // every scene (or one giant file) up front. Nothing is readable/editable in the shipped game.
                     var entries = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, byte[]>>();
+                    var sceneEntries = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, byte[]>>();
                     var manifest = Path.Combine(projectRoot, "project.vortex");
                     if (File.Exists(manifest))
                         entries.Add(new System.Collections.Generic.KeyValuePair<string, byte[]>("project.vortex", File.ReadAllBytes(manifest)));
@@ -115,7 +118,12 @@ namespace Editor.Core.Services.Build
                             var f = files[i];
                             if (Path.GetExtension(f).Equals(".cs", StringComparison.OrdinalIgnoreCase)) continue; // source -> compiled DLL
                             var rel = "Assets/" + f.Substring(assetsSrc.Length).TrimStart('\\', '/').Replace('\\', '/');
-                            entries.Add(new System.Collections.Generic.KeyValuePair<string, byte[]>(rel, File.ReadAllBytes(f)));
+                            // Scene files go into their own per-scene pack (streamed on demand); everything else is shared.
+                            if (Path.GetExtension(f).Equals(".vscene", StringComparison.OrdinalIgnoreCase) &&
+                                rel.StartsWith("Assets/Scenes/", StringComparison.OrdinalIgnoreCase))
+                                sceneEntries.Add(new System.Collections.Generic.KeyValuePair<string, byte[]>(rel, File.ReadAllBytes(f)));
+                            else
+                                entries.Add(new System.Collections.Generic.KeyValuePair<string, byte[]>(rel, File.ReadAllBytes(f)));
                             assetCount++;
                             if ((i & 7) == 0 && files.Length > 0)
                                 P(0.38 + 0.45 * ((double)i / files.Length), "Packing assets… (" + assetCount + " files)");
@@ -125,14 +133,27 @@ namespace Editor.Core.Services.Build
                         entries.Add(new System.Collections.Generic.KeyValuePair<string, byte[]>("GameScripts.dll", File.ReadAllBytes(tmpDll)));
                     try { if (File.Exists(tmpDll)) File.Delete(tmpDll); } catch { }
 
-                    P(0.86, "Writing Assets.vpak…");
+                    P(0.86, "Writing asset paks…");
                     VortexPak.Write(Path.Combine(outputDir, "Assets.vpak"), entries);
-                    sb.AppendLine("• Packed " + assetCount + " assets + manifest + scripts -> Assets.vpak (compressed + obfuscated)");
+                    // One pak per scene: Scenes/<sceneFileName>.vpak
+                    if (sceneEntries.Count > 0)
+                    {
+                        var scenesOut = Path.Combine(outputDir, "Scenes");
+                        Directory.CreateDirectory(scenesOut);
+                        foreach (var se in sceneEntries)
+                        {
+                            var baseName = Path.GetFileNameWithoutExtension(se.Key);
+                            var one = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, byte[]>> { se };
+                            VortexPak.Write(Path.Combine(scenesOut, baseName + ".vpak"), one);
+                        }
+                    }
+                    sb.AppendLine("• Packed " + (assetCount - sceneEntries.Count) + " shared assets + manifest + scripts -> Assets.vpak; "
+                        + sceneEntries.Count + " scene(s) -> Scenes/*.vpak (streamed on demand)");
                     P(0.93, "Finalizing…");
 
                     // Player marker: its presence makes the runtime boot straight into the game (no editor UI).
                     File.WriteAllText(Path.Combine(outputDir, "player.vortex"),
-                        "{\"game\":\"" + (projectName ?? "Game").Replace("\"", "'") + "\",\"pak\":\"Assets.vpak\",\"scriptsDll\":\"GameScripts.dll\"}");
+                        "{\"game\":\"" + (projectName ?? "Game").Replace("\"", "'") + "\",\"pak\":\"Assets.vpak\",\"scenePaks\":\"Scenes\",\"scriptsDll\":\"GameScripts.dll\"}");
                     sb.AppendLine("• Player marker written (player.vortex)");
                 }
 
@@ -166,12 +187,81 @@ namespace Editor.Core.Services.Build
                           "binary, decompressed into RAM at startup). No readable/editable source files, and no dev\r\n" +
                           "hot-reload tooling — this is the build to ship.\r\n"));
 
+                // RELEASE: also wrap the game into a clean Windows INSTALLER (the way real games ship — most people
+                // never see a raw exe folder). Uses Inno Setup if it's installed; the portable folder stays either way.
+                if (!debug)
+                {
+                    P(0.97, "Building installer…");
+                    try
+                    {
+                        var setupExe = TryBuildGameInstaller(outputDir, name, projectName);
+                        if (setupExe != null) sb.AppendLine("• Installer built -> " + setupExe);
+                        else sb.AppendLine("• No installer (Inno Setup 6 not found). Install it from jrsoftware.org to ship a one-click <game>-Setup.exe; the folder above is the portable build.");
+                    }
+                    catch (Exception ix) { sb.AppendLine("• Installer step skipped: " + ix.Message); }
+                }
+
                 P(1.0, "Done");
                 if (!scriptsOk)
                     return new ExportResult { Success = false, OutputDir = outputDir, Message = "Export done, but SCRIPTS FAILED TO COMPILE:\n\n" + scriptLog };
                 return new ExportResult { Success = true, OutputDir = outputDir, Message = sb.ToString() };
             }
             catch (Exception ex) { return Fail("Export failed: " + ex.Message); }
+        }
+
+        /// <summary>Wrap a finished release export folder into a Windows installer via Inno Setup (ISCC). Returns the
+        /// path to &lt;game&gt;-Setup.exe, or null if Inno Setup isn't installed / the build failed. The installer output
+        /// goes in a SIBLING folder so it's never packed into itself; the portable folder is left intact.</summary>
+        private static string TryBuildGameInstaller(string gameDir, string exeBaseName, string productName)
+        {
+            string iscc = null;
+            foreach (var c in new[] { @"C:\Program Files (x86)\Inno Setup 6\ISCC.exe", @"C:\Program Files\Inno Setup 6\ISCC.exe" })
+                if (File.Exists(c)) { iscc = c; break; }
+            if (iscc == null) return null;
+
+            var outDir = gameDir.TrimEnd('\\', '/') + "_Installer";
+            Directory.CreateDirectory(outDir);
+            var appId = "{{" + Guid.NewGuid().ToString().ToUpperInvariant() + "}";
+            var title = (productName ?? exeBaseName).Replace("\"", "'");
+            var iss =
+                "#define MyName \"" + title + "\"\r\n" +
+                "#define MyExe \"" + exeBaseName + ".exe\"\r\n" +
+                "[Setup]\r\n" +
+                "AppId=" + appId + "\r\n" +
+                "AppName={#MyName}\r\nAppVersion=1.0.0\r\nAppVerName={#MyName} 1.0.0\r\n" +
+                "DefaultDirName={autopf}\\{#MyName}\r\nDefaultGroupName={#MyName}\r\nAllowNoIcons=yes\r\n" +
+                "OutputDir=" + outDir + "\r\nOutputBaseFilename=" + exeBaseName + "-Setup\r\n" +
+                "Compression=lzma2/ultra64\r\nSolidCompression=yes\r\nWizardStyle=modern\r\n" +
+                "MinVersion=10.0\r\nArchitecturesAllowed=x64compatible\r\nArchitecturesInstallIn64BitMode=x64compatible\r\n" +
+                "PrivilegesRequired=admin\r\nPrivilegesRequiredOverridesAllowed=dialog\r\n" +
+                "UninstallDisplayIcon={app}\\{#MyExe}\r\nUninstallDisplayName={#MyName}\r\n" +
+                "[Tasks]\r\n" +
+                "Name: \"desktopicon\"; Description: \"{cm:CreateDesktopIcon}\"; GroupDescription: \"{cm:AdditionalIcons}\"; Flags: unchecked\r\n" +
+                "[Files]\r\n" +
+                "Source: \"" + gameDir + "\\*\"; DestDir: \"{app}\"; Flags: recursesubdirs createallsubdirs ignoreversion\r\n" +
+                "[Icons]\r\n" +
+                "Name: \"{group}\\{#MyName}\"; Filename: \"{app}\\{#MyExe}\"\r\n" +
+                "Name: \"{group}\\{cm:UninstallProgram,{#MyName}}\"; Filename: \"{uninstallexe}\"\r\n" +
+                "Name: \"{autodesktop}\\{#MyName}\"; Filename: \"{app}\\{#MyExe}\"; Tasks: desktopicon\r\n" +
+                "[Run]\r\n" +
+                "Filename: \"{app}\\{#MyExe}\"; Description: \"{cm:LaunchProgram,{#MyName}}\"; Flags: nowait postinstall skipifsilent\r\n";
+
+            var issPath = Path.Combine(Path.GetTempPath(), exeBaseName + "_" + Guid.NewGuid().ToString("N") + ".iss");
+            File.WriteAllText(issPath, iss);
+            try
+            {
+                var psi = new System.Diagnostics.ProcessStartInfo(iscc, "\"" + issPath + "\"")
+                { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+                using (var proc = System.Diagnostics.Process.Start(psi))
+                {
+                    proc.StandardOutput.ReadToEnd(); proc.StandardError.ReadToEnd();
+                    if (!proc.WaitForExit(240000) || proc.ExitCode != 0) return null;
+                }
+            }
+            finally { try { File.Delete(issPath); } catch { } }
+
+            var setup = Path.Combine(outDir, exeBaseName + "-Setup.exe");
+            return File.Exists(setup) ? setup : null;
         }
 
         private static bool CompileScripts(string projectRoot, string outDll, out string log)
