@@ -184,6 +184,124 @@ namespace Vortex
             }
         }
 
+        /// <summary>Poll the first connected controller once per tick. Order: Windows.Gaming.Input.Gamepad
+        /// (normalized — Xbox + any pad Windows maps as a gamepad, incl. DualSense on Win11) → RawGameController
+        /// (a Sony DualSense/DualShock that wasn't mapped as a Gamepad, by vendor id) → XInput (last resort).
+        /// Windows.Gaming.Input handles USB + Bluetooth + the DualSense HID internally, so a PS5 pad "just works"
+        /// with no extra software.</summary>
+        internal static void PollGamepad()
+        {
+            _prevButtons = _buttons;
+
+            if (!_wgiMissing)
+            {
+                try
+                {
+                    var pads = Windows.Gaming.Input.Gamepad.Gamepads;
+                    if (pads != null && pads.Count > 0)
+                    {
+                        var r = pads[0].GetCurrentReading();
+                        _padOn = true;
+                        _lx = Dead((float)r.LeftThumbstickX);
+                        _ly = Dead((float)r.LeftThumbstickY);
+                        _rx = Dead((float)r.RightThumbstickX);
+                        _ry = Dead((float)r.RightThumbstickY);
+                        _lt = Clamp01((float)r.LeftTrigger);
+                        _rt = Clamp01((float)r.RightTrigger);
+                        _buttons = MapWgiButtons(r.Buttons);
+                        return;
+                    }
+                    if (PollRawSony()) return;
+                    _padOn = false; _buttons = 0; _lx = _ly = _rx = _ry = _lt = _rt = 0f;
+                    return;
+                }
+                catch (System.IO.FileNotFoundException) { _wgiMissing = true; }
+                catch (TypeLoadException) { _wgiMissing = true; }
+                catch { _padOn = false; return; }
+            }
+
+            PollXInput(); // WinRT unavailable (very old Windows) -> Xbox pads via XInput
+        }
+
+        private static float Clamp01(float v) { return v < 0f ? 0f : (v > 1f ? 1f : v); }
+        private static float Dead(float v) { const float d = 0.16f; if (v > d) return (v - d) / (1f - d); if (v < -d) return (v + d) / (1f - d); return 0f; }
+
+        private static ushort MapWgiButtons(Windows.Gaming.Input.GamepadButtons b)
+        {
+            var W = Windows.Gaming.Input.GamepadButtons.None;
+            ushort m = 0;
+            if ((b & Windows.Gaming.Input.GamepadButtons.A) != W) m |= 0x1000;             // PS: Cross
+            if ((b & Windows.Gaming.Input.GamepadButtons.B) != W) m |= 0x2000;             // PS: Circle
+            if ((b & Windows.Gaming.Input.GamepadButtons.X) != W) m |= 0x4000;             // PS: Square
+            if ((b & Windows.Gaming.Input.GamepadButtons.Y) != W) m |= 0x8000;             // PS: Triangle
+            if ((b & Windows.Gaming.Input.GamepadButtons.LeftShoulder) != W) m |= 0x0100;  // L1
+            if ((b & Windows.Gaming.Input.GamepadButtons.RightShoulder) != W) m |= 0x0200; // R1
+            if ((b & Windows.Gaming.Input.GamepadButtons.DPadUp) != W) m |= 0x0001;
+            if ((b & Windows.Gaming.Input.GamepadButtons.DPadDown) != W) m |= 0x0002;
+            if ((b & Windows.Gaming.Input.GamepadButtons.DPadLeft) != W) m |= 0x0004;
+            if ((b & Windows.Gaming.Input.GamepadButtons.DPadRight) != W) m |= 0x0008;
+            if ((b & Windows.Gaming.Input.GamepadButtons.Menu) != W) m |= 0x0010;          // Start / PS: Options
+            if ((b & Windows.Gaming.Input.GamepadButtons.View) != W) m |= 0x0020;          // Back / PS: Create
+            if ((b & Windows.Gaming.Input.GamepadButtons.LeftThumbstick) != W) m |= 0x0040;
+            if ((b & Windows.Gaming.Input.GamepadButtons.RightThumbstick) != W) m |= 0x0080;
+            return m;
+        }
+
+        // A Sony pad (DualSense/DualShock) that Windows didn't surface as a Gamepad — read it raw and map the
+        // common HID layout to the Xbox-style bitmask so scripts stay controller-agnostic.
+        private static bool PollRawSony()
+        {
+            var raws = Windows.Gaming.Input.RawGameController.RawGameControllers;
+            if (raws == null) return false;
+            foreach (var rc in raws)
+            {
+                if (rc.HardwareVendorId != 0x054C) continue; // Sony
+                var btns = new bool[rc.ButtonCount];
+                var sws = new Windows.Gaming.Input.GameControllerSwitchPosition[rc.SwitchCount];
+                var ax = new double[rc.AxisCount];
+                rc.GetCurrentReading(btns, sws, ax);
+                _padOn = true;
+                _lx = ax.Length > 0 ? Dead((float)(ax[0] * 2 - 1)) : 0f;
+                _ly = ax.Length > 1 ? Dead((float)-(ax[1] * 2 - 1)) : 0f; // HID Y is down-positive -> invert
+                _rx = ax.Length > 2 ? Dead((float)(ax[2] * 2 - 1)) : 0f;
+                _ry = ax.Length > 5 ? Dead((float)-(ax[5] * 2 - 1)) : (ax.Length > 3 ? Dead((float)-(ax[3] * 2 - 1)) : 0f);
+                _lt = ax.Length > 3 ? Clamp01((float)ax[3]) : 0f;
+                _rt = ax.Length > 4 ? Clamp01((float)ax[4]) : 0f;
+                ushort m = 0;
+                if (Btn(btns, 1)) m |= 0x1000; // Cross  -> A
+                if (Btn(btns, 2)) m |= 0x2000; // Circle -> B
+                if (Btn(btns, 0)) m |= 0x4000; // Square -> X
+                if (Btn(btns, 3)) m |= 0x8000; // Triangle -> Y
+                if (Btn(btns, 4)) m |= 0x0100; // L1
+                if (Btn(btns, 5)) m |= 0x0200; // R1
+                if (Btn(btns, 9)) m |= 0x0010; // Options -> Start
+                if (Btn(btns, 8)) m |= 0x0020; // Create  -> Back
+                if (Btn(btns, 10)) m |= 0x0040; // L3
+                if (Btn(btns, 11)) m |= 0x0080; // R3
+                if (sws.Length > 0)
+                {
+                    switch (sws[0])
+                    {
+                        case Windows.Gaming.Input.GameControllerSwitchPosition.Up:        m |= 0x0001; break;
+                        case Windows.Gaming.Input.GameControllerSwitchPosition.UpRight:   m |= 0x0001 | 0x0008; break;
+                        case Windows.Gaming.Input.GameControllerSwitchPosition.Right:     m |= 0x0008; break;
+                        case Windows.Gaming.Input.GameControllerSwitchPosition.DownRight: m |= 0x0002 | 0x0008; break;
+                        case Windows.Gaming.Input.GameControllerSwitchPosition.Down:      m |= 0x0002; break;
+                        case Windows.Gaming.Input.GameControllerSwitchPosition.DownLeft:  m |= 0x0002 | 0x0004; break;
+                        case Windows.Gaming.Input.GameControllerSwitchPosition.Left:      m |= 0x0004; break;
+                        case Windows.Gaming.Input.GameControllerSwitchPosition.UpLeft:    m |= 0x0001 | 0x0004; break;
+                    }
+                }
+                _buttons = m;
+                return true;
+            }
+            return false;
+        }
+
+        private static bool Btn(bool[] a, int i) { return i >= 0 && i < a.Length && a[i]; }
+        private static bool _wgiMissing;
+
+        // ---- XInput fallback (only if WinRT is unavailable) ----
         [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
         private struct XINPUT_GAMEPAD { public ushort wButtons; public byte bLeftTrigger; public byte bRightTrigger; public short sThumbLX; public short sThumbLY; public short sThumbRX; public short sThumbRY; }
         [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
@@ -192,17 +310,15 @@ namespace Vortex
         private static extern uint XInputGetState(uint dwUserIndex, out XINPUT_STATE pState);
         private static bool _xinputMissing;
 
-        /// <summary>Poll the first connected controller. Called by the runtime once per tick.</summary>
-        internal static void PollGamepad()
+        private static void PollXInput()
         {
-            _prevButtons = _buttons;
             if (_xinputMissing) { _padOn = false; return; }
             try
             {
                 for (uint i = 0; i < 4; i++)
                 {
                     XINPUT_STATE s;
-                    if (XInputGetState(i, out s) == 0) // ERROR_SUCCESS
+                    if (XInputGetState(i, out s) == 0)
                     {
                         _padOn = true;
                         _buttons = s.Gamepad.wButtons;

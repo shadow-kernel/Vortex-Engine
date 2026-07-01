@@ -15,6 +15,9 @@
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
     <Deterministic>true</Deterministic>
     <LangVersion>9.0</LangVersion>
+    <!-- Enables consuming WinRT (Windows.Gaming.Input) from this classic .NET FW WPF app so PlayStation
+         (DualSense/DualShock) + Xbox controllers work natively over USB/Bluetooth without extra software. -->
+    <TargetPlatformVersion>10.0.26100.0</TargetPlatformVersion>
     <NuGetPackageImportStamp>
     </NuGetPackageImportStamp>
   </PropertyGroup>
@@ -43,6 +46,13 @@
     <ApplicationIcon>Logo.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
+    <!-- WinRT: native game-controller support (Windows.Gaming.Input) incl. PlayStation DualSense/DualShock. -->
+    <Reference Include="System.Runtime.WindowsRuntime" />
+    <Reference Include="System.Runtime.InteropServices.WindowsRuntime" />
+    <Reference Include="Windows">
+      <HintPath>C:\Program Files (x86)\Windows Kits\10\UnionMetadata\10.0.26100.0\Windows.winmd</HintPath>
+      <Private>False</Private>
+    </Reference>
     <Reference Include="AvalonDock, Version=4.72.1.0, Culture=neutral, PublicKeyToken=3e4669d2f30244f4, processorArchitecture=MSIL">
       <HintPath>..\packages\Dirkster.AvalonDock.4.72.1\lib\net40\AvalonDock.dll</HintPath>
     </Reference>
