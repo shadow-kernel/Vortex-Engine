@@ -51,7 +51,10 @@ namespace Editor.Core.Assets
         public bool TwoSided { get; set; } = false;
         public string BlendMode { get; set; } = "Opaque"; // Opaque, AlphaBlend, AlphaTest, Additive
         public string ShaderType { get; set; } = "StandardPBR"; // StandardPBR, Unlit, Subsurface
-        
+        /// <summary>Optional path (project-relative) to a custom shader asset (.vshader or .hlsl) assigned in the
+        /// Material Editor. Null = the built-in shader for ShaderType. Round-trips via System.Text.Json.</summary>
+        public string ShaderAsset { get; set; }
+
         // Rendering options
         public bool CastShadows { get; set; } = true;
         public bool ReceiveShadows { get; set; } = true;

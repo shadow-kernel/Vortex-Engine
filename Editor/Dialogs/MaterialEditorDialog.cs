@@ -175,6 +175,10 @@ namespace Editor.Dialogs
             _shaderTypeCombo.SelectionChanged += (s, e) => MarkDirty();
             stack.Children.Add(_shaderTypeCombo);
 
+            // Shader ASSET slot: assign a custom .vshader/.hlsl to this material, with a live graphical link + Edit-in-VS.
+            stack.Children.Add(CreateLabel("Shader Asset", 12));
+            stack.Children.Add(BuildShaderSlot());
+
             // Render Mode
             stack.Children.Add(CreateLabel("Render Mode"));
             _renderModeCombo = DialogStyles.CreateComboBox(new[] { "Opaque", "Cutout", "Transparent" }, 0);
@@ -653,6 +657,8 @@ namespace Editor.Dialogs
             _receiveShadowsCheck.IsChecked = _material.ReceiveShadows;
             SelectComboText(_shaderTypeCombo, _material.ShaderType);
             SelectComboText(_renderModeCombo, _material.BlendMode);
+            _shaderAssetPath = _material.ShaderAsset;
+            UpdateShaderSlotUi();
 
             SetTexturePreview(_material.AlbedoTexture, _albedoPreview, _albedoPathText);
             _albedoPath = _material.AlbedoTexture;
@@ -689,13 +695,156 @@ namespace Editor.Dialogs
                 // blend mode. Both combos hold ComboBoxItems, so read .Content, not ToString() (which
                 // would yield "System.Windows.Controls.ComboBoxItem").
                 ShaderType = GetComboText(_shaderTypeCombo, "Standard PBR"),
-                BlendMode = GetComboText(_renderModeCombo, "Opaque")
+                BlendMode = GetComboText(_renderModeCombo, "Opaque"),
+                ShaderAsset = string.IsNullOrEmpty(_shaderAssetPath) ? null : _shaderAssetPath
             };
 
             if (_baseColorPreview.Background is SolidColorBrush brush)
                 mat.SetBaseColor(brush.Color);
 
             return mat;
+        }
+
+        // ---- Shader Asset slot: assign a custom .vshader/.hlsl to a material, with a live graphical link ----
+        private string _shaderAssetPath;
+        private TextBlock _shaderAssetText;
+        private Border _shaderNode;
+        private TextBlock _shaderNodeLabel;
+        private TextBlock _shaderWireArrow;
+
+        private UIElement BuildShaderSlot()
+        {
+            var panel = new StackPanel { Margin = new Thickness(0, 0, 0, 12) };
+
+            _shaderAssetText = new TextBlock
+            {
+                Text = "Built-in (from Shader type)",
+                Foreground = new SolidColorBrush(Color.FromRgb(150, 150, 155)),
+                FontSize = 12, Margin = new Thickness(0, 0, 0, 6),
+                TextTrimming = System.Windows.TextTrimming.CharacterEllipsis
+            };
+            panel.Children.Add(_shaderAssetText);
+
+            var btns = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
+            btns.Children.Add(MiniButton("Browse…", () => BrowseShaderAsset()));
+            btns.Children.Add(MiniButton("Clear", () => SetShaderAsset(null)));
+            btns.Children.Add(MiniButton("Edit in VS", () => EditShaderInVs()));
+            panel.Children.Add(btns);
+
+            // graphical link: [Shader] ──▶ [Material]  (the shader node + arrow turn green when a shader is assigned)
+            var row = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal, Margin = new Thickness(0, 12, 0, 0) };
+            _shaderNode = LinkNode("Built-in", out _shaderNodeLabel);
+            row.Children.Add(_shaderNode);
+            _shaderWireArrow = new TextBlock { Text = "  ──▶  ", FontSize = 13, VerticalAlignment = VerticalAlignment.Center, Foreground = new SolidColorBrush(Color.FromRgb(120, 120, 126)) };
+            row.Children.Add(_shaderWireArrow);
+            row.Children.Add(LinkNode("Material", out var _matLabel));
+            panel.Children.Add(row);
+            return panel;
+        }
+
+        private static Border LinkNode(string text, out TextBlock label)
+        {
+            label = new TextBlock { Text = text, Foreground = Brushes.White, FontSize = 12,
+                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            return new Border
+            {
+                MinWidth = 92, Height = 30, CornerRadius = new CornerRadius(6), Padding = new Thickness(8, 0, 8, 0),
+                Background = new SolidColorBrush(Color.FromRgb(0x2C, 0x2C, 0x34)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(120, 120, 126)), BorderThickness = new Thickness(1),
+                Child = label
+            };
+        }
+
+        private Button MiniButton(string text, Action onClick)
+        {
+            var b = new Button
+            {
+                Content = text, Margin = new Thickness(0, 0, 6, 0), Padding = new Thickness(9, 3, 9, 3),
+                FontSize = 11, Cursor = System.Windows.Input.Cursors.Hand,
+                Background = new SolidColorBrush(Color.FromRgb(45, 45, 50)),
+                Foreground = Brushes.White, BorderThickness = new Thickness(0)
+            };
+            b.Click += (s, e) => onClick();
+            return b;
+        }
+
+        private void BrowseShaderAsset()
+        {
+            var proj = Editor.Core.Data.ProjectData.Current?.Path;
+            var dlg = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "Assign Shader",
+                Filter = "Shader (*.vshader;*.hlsl)|*.vshader;*.hlsl|All files|*.*"
+            };
+            if (!string.IsNullOrEmpty(proj))
+            {
+                var sd = System.IO.Path.Combine(proj, "Assets", "Shaders");
+                if (System.IO.Directory.Exists(sd)) dlg.InitialDirectory = sd;
+            }
+            if (dlg.ShowDialog() == true) SetShaderAsset(dlg.FileName);
+        }
+
+        private void SetShaderAsset(string path)
+        {
+            _shaderAssetPath = string.IsNullOrEmpty(path) ? null : MakeProjectRelative(path);
+            UpdateShaderSlotUi();
+            MarkDirty();   // fires the debounced preview refresh; the link + preview reflect the change live
+        }
+
+        private void EditShaderInVs()
+        {
+            var hlsl = ResolveShaderHlsl(_shaderAssetPath);
+            if (!string.IsNullOrEmpty(hlsl) && System.IO.File.Exists(hlsl))
+            {
+                try { Editor.Core.Services.ScriptingService.OpenInVisualStudio(hlsl); } catch { }
+            }
+            else MessageBox.Show("Assign a shader first (Browse…); then Edit in VS opens its .hlsl.", "Shader",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        private void UpdateShaderSlotUi()
+        {
+            bool linked = !string.IsNullOrEmpty(_shaderAssetPath);
+            string name = linked ? System.IO.Path.GetFileNameWithoutExtension(_shaderAssetPath) : null;
+            var green = new SolidColorBrush(Color.FromRgb(90, 200, 120));
+            var grey = new SolidColorBrush(Color.FromRgb(120, 120, 126));
+            if (_shaderAssetText != null) _shaderAssetText.Text = linked ? ("Custom: " + name) : "Built-in (from Shader type)";
+            if (_shaderNodeLabel != null) _shaderNodeLabel.Text = linked ? name : "Built-in";
+            if (_shaderWireArrow != null) _shaderWireArrow.Foreground = linked ? green : grey;
+            if (_shaderNode != null) _shaderNode.BorderBrush = linked ? green : grey;
+        }
+
+        private static string MakeProjectRelative(string path)
+        {
+            var proj = Editor.Core.Data.ProjectData.Current?.Path;
+            if (string.IsNullOrEmpty(proj) || string.IsNullOrEmpty(path) || !System.IO.Path.IsPathRooted(path)) return path;
+            try
+            {
+                var pu = new Uri(proj.EndsWith("\\") ? proj : proj + "\\");
+                return Uri.UnescapeDataString(pu.MakeRelativeUri(new Uri(path)).ToString());
+            }
+            catch { return path; }
+        }
+
+        private static string ResolveShaderHlsl(string shaderAsset)
+        {
+            if (string.IsNullOrEmpty(shaderAsset)) return null;
+            var proj = Editor.Core.Data.ProjectData.Current?.Path ?? "";
+            string full = System.IO.Path.IsPathRooted(shaderAsset) ? shaderAsset : System.IO.Path.Combine(proj, shaderAsset);
+            if (full.EndsWith(".hlsl", StringComparison.OrdinalIgnoreCase)) return full;
+            try
+            {
+                var vs = Editor.Core.Assets.VortexShader.Load(full);
+                if (vs != null && !string.IsNullOrEmpty(vs.PixelShaderPath))
+                {
+                    var p = vs.PixelShaderPath;
+                    var h = System.IO.Path.IsPathRooted(p) ? p : System.IO.Path.Combine(proj, p);
+                    if (System.IO.File.Exists(h)) return h;
+                }
+            }
+            catch { }
+            var sib = System.IO.Path.ChangeExtension(full, ".hlsl");
+            return System.IO.File.Exists(sib) ? sib : full;
         }
 
         private static string GetComboText(ComboBox combo, string fallback)
