@@ -302,6 +302,28 @@ namespace Editor.Core.Services
                     rot.X, rot.Y, rot.Z);
             }
 
+            // Green collider wireframe for the selected entity, so you SEE its collision shape where it sits.
+            var col = selected.GetComponent<Editor.ECS.Components.Physics.Collider>();
+            if (col != null && col.IsEnabled)
+            {
+                float sx = transform.LocalScale.X, sy = transform.LocalScale.Y, sz = transform.LocalScale.Z;
+                float ccx = pos.X + col.Center.X * sx, ccy = pos.Y + col.Center.Y * sy, ccz = pos.Z + col.Center.Z * sz;
+                if (col is Editor.ECS.Components.Physics.BoxCollider bc)
+                    VortexAPI.RenderColliderBox(ccx, ccy, ccz, Math.Abs(bc.Size.X * 0.5f * sx), Math.Abs(bc.Size.Y * 0.5f * sy), Math.Abs(bc.Size.Z * 0.5f * sz), rot.Y);
+                else if (col is Editor.ECS.Components.Physics.SphereCollider spc)
+                    VortexAPI.RenderColliderSphere(ccx, ccy, ccz, spc.Radius * Math.Max(Math.Abs(sx), Math.Max(Math.Abs(sy), Math.Abs(sz))));
+                else if (col is Editor.ECS.Components.Physics.CapsuleCollider cpc)
+                {
+                    float cr = cpc.Radius * Math.Max(Math.Abs(sx), Math.Abs(sz));
+                    VortexAPI.RenderColliderCapsule(ccx, ccy, ccz, cr, Math.Max(0f, cpc.Height * 0.5f * Math.Abs(sy) - cr));
+                }
+                else // Mesh / base collider: outline the entity's bounds
+                {
+                    var b = CalculateCombinedBounds(selected);
+                    VortexAPI.RenderColliderBox(pos.X + b.CenterOffset.X, pos.Y + b.CenterOffset.Y, pos.Z + b.CenterOffset.Z, b.Size.X * 0.5f, b.Size.Y * 0.5f, b.Size.Z * 0.5f, rot.Y);
+                }
+            }
+
             if (VortexAPI.AreGizmosVisible)
                 VortexAPI.RenderGizmo(pos.X, pos.Y, pos.Z, transform.LocalScale.Y, 1.0f);
         }

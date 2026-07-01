@@ -73,6 +73,8 @@ namespace Editor.Scripting
             Vortex.Application.Host = this;
             Vortex.Camera.Host = this;
             Vortex.Physics.Host = this;
+            if (Editor.Core.Services.Physics.CollisionService.MeshTriangleProvider == null)
+                Editor.Core.Services.Physics.CollisionService.MeshTriangleProvider = ResolveMeshTriangles;
             try { Editor.Core.Services.Physics.CollisionService.Build(scene); } catch { } // build the collision world for this scene
 
             _entitiesById.Clear();
@@ -512,11 +514,36 @@ namespace Editor.Scripting
             catch { }
         }
 
-        Vortex.Vector3 Vortex.IScriptHost.MoveCharacter(Vortex.Vector3 feet, float radius, float height, Vortex.Vector3 move, out bool grounded)
+        // Edge-accurate mesh colliders: resolve an imported model's real triangles (native export), VFS-aware + cached.
+        private static readonly System.Collections.Generic.Dictionary<string, float[]> _triCache =
+            new System.Collections.Generic.Dictionary<string, float[]>(System.StringComparer.OrdinalIgnoreCase);
+        private static float[] ResolveMeshTriangles(string meshPath)
+        {
+            if (string.IsNullOrEmpty(meshPath) || meshPath.StartsWith("Primitive:", System.StringComparison.OrdinalIgnoreCase)) return null;
+            float[] cached; if (_triCache.TryGetValue(meshPath, out cached)) return cached;
+            float[] tris = null;
+            try
+            {
+                var actual = meshPath; int h = actual.LastIndexOf('#'); if (h > 0) actual = actual.Substring(0, h);
+                var proj = Editor.Core.Data.ProjectData.Current != null ? Editor.Core.Data.ProjectData.Current.Path : null;
+                var abs = System.IO.Path.IsPathRooted(actual) ? actual : (proj != null ? System.IO.Path.Combine(proj, actual) : actual);
+                var ext = System.IO.Path.GetExtension(actual); if (ext != null) ext = ext.TrimStart('.');
+                byte[] bytes;
+                if (Editor.Core.Services.AssetVfs.IsMounted && Editor.Core.Services.AssetVfs.TryGetBytes(abs, out bytes) && bytes != null)
+                    tris = Editor.DllWrapper.VortexAPI.GetModelTrianglesFromMemory(bytes, ext);
+                else if (System.IO.File.Exists(abs))
+                    tris = Editor.DllWrapper.VortexAPI.GetModelTriangles(abs);
+            }
+            catch { }
+            _triCache[meshPath] = tris;
+            return tris;
+        }
+
+        Vortex.Vector3 Vortex.IScriptHost.MoveCharacter(Vortex.Vector3 feet, float radius, float height, Vortex.Vector3 move, out bool grounded, long selfId)
         {
             var f = new Editor.ECS.Vector3(feet.X, feet.Y, feet.Z);
             var m = new Editor.ECS.Vector3(move.X, move.Y, move.Z);
-            var r = Editor.Core.Services.Physics.CollisionService.MoveCharacter(f, radius, height, m, out grounded);
+            var r = Editor.Core.Services.Physics.CollisionService.MoveCharacter(f, radius, height, m, out grounded, selfId);
             return new Vortex.Vector3(r.X, r.Y, r.Z);
         }
 

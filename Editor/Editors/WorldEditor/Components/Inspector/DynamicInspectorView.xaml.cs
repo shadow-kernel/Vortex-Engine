@@ -34,7 +34,11 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
                 { typeof(Camera), comp => CreateCameraInspector((Camera)comp) },
                 { typeof(Light), comp => CreateLightInspector((Light)comp) },
                 { typeof(Skybox), comp => CreateSkyboxInspector((Skybox)comp) },
-                { typeof(Script), comp => CreateScriptInspector((Script)comp) }
+                { typeof(Script), comp => CreateScriptInspector((Script)comp) },
+                { typeof(ECS.Components.Physics.BoxCollider), comp => CreateColliderInspector((ECS.Components.Physics.Collider)comp) },
+                { typeof(ECS.Components.Physics.SphereCollider), comp => CreateColliderInspector((ECS.Components.Physics.Collider)comp) },
+                { typeof(ECS.Components.Physics.CapsuleCollider), comp => CreateColliderInspector((ECS.Components.Physics.Collider)comp) },
+                { typeof(ECS.Components.Physics.MeshCollider), comp => CreateColliderInspector((ECS.Components.Physics.Collider)comp) },
             };
 
             // Accept scripts dropped from the Project Explorer / Asset Browser / Windows Explorer.
@@ -385,6 +389,22 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
 
             relativePath = ScriptingService.MakeRelative(ScriptingService.ProjectRoot, abs);
             return true;
+        }
+
+        private UserControl CreateColliderInspector(ECS.Components.Physics.Collider col)
+        {
+            Func<string, System.Windows.Media.Brush> brush = hex => (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFromString(hex);
+            var panel = new StackPanel { Margin = new Thickness(10, 6, 10, 10) };
+            panel.Children.Add(new TextBlock { Text = col.DisplayName, Foreground = brush("#FFE9E9ED"), FontSize = 12.5, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 8) });
+            var trig = new CheckBox { Content = "Is Trigger", Foreground = brush("#FFC8C8CE"), IsChecked = col.IsTrigger, Margin = new Thickness(0, 0, 0, 8) };
+            trig.Checked += (s, e) => col.IsTrigger = true;
+            trig.Unchecked += (s, e) => col.IsTrigger = false;
+            panel.Children.Add(trig);
+            panel.Children.Add(new TextBlock { Text = "Solid collision shape. Edit size / center and switch shapes in the Collision Editor.", Foreground = brush("#FF8A8A92"), FontSize = 10.5, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 8) });
+            var btn = new Button { Content = "Open Collision Editor…", Padding = new Thickness(12, 6, 12, 6), Cursor = System.Windows.Input.Cursors.Hand, HorizontalAlignment = HorizontalAlignment.Left, Foreground = System.Windows.Media.Brushes.White, Background = brush("#FF6C5CE7"), BorderThickness = new Thickness(0) };
+            btn.Click += (s, e) => { try { Editor.Editors.PhysicsEditor.CollisionEditorWindow.Open(Window.GetWindow(this)); } catch { } };
+            panel.Children.Add(btn);
+            return new UserControl { Content = panel };
         }
 
         private void AddComponentMenuItem(ContextMenu menu, string header, Action action)

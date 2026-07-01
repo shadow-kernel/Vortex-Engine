@@ -287,6 +287,7 @@
     <Compile Include="Core\Services\ProjectTemplateService.cs" />
     <Compile Include="Core\Services\Physics\CollisionService.cs" />
     <Compile Include="Editors\PhysicsEditor\CollisionEditorWindow.cs" />
+    <Compile Include="DllWrapper\Gizmos\ColliderGizmo.cs" />
     <Compile Include="Core\Services\RaycastService.cs" />
     <Compile Include="Core\Services\Rendering\AssetPreviewRenderer.cs" />
     <Compile Include="Core\Services\Rendering\SecondaryViewportRenderer.cs" />

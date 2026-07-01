@@ -36,7 +36,8 @@ namespace Vortex
         bool GetKey(string key);
 
         // Collide-and-slide a character capsule (feet, radius, height) against the scene's colliders.
-        Vector3 MoveCharacter(Vector3 feet, float radius, float height, Vector3 move, out bool grounded);
+        // selfId registers this character so other characters can't walk through it (0 = anonymous).
+        Vector3 MoveCharacter(Vector3 feet, float radius, float height, Vector3 move, out bool grounded, long selfId);
 
         // Request switching the active scene by name (deferred — applied by the runtime after this tick).
         void LoadScene(string name);
@@ -415,8 +416,15 @@ namespace Vortex
         /// (input + gravity). No collision world yet → returns feet+move unchanged.</summary>
         public static Vector3 MoveCharacter(Vector3 feet, float radius, float height, Vector3 move)
         {
+            return MoveCharacter(feet, radius, height, move, 0);
+        }
+
+        /// <summary>As above, but <paramref name="characterId"/> (e.g. your entity's EntityId) registers this
+        /// character so OTHER characters can't walk through it — for multiplayer / multiple actors.</summary>
+        public static Vector3 MoveCharacter(Vector3 feet, float radius, float height, Vector3 move, long characterId)
+        {
             if (Host == null) return new Vector3(feet.X + move.X, feet.Y + move.Y, feet.Z + move.Z);
-            bool g; var r = Host.MoveCharacter(feet, radius, height, move, out g); _grounded = g; return r;
+            bool g; var r = Host.MoveCharacter(feet, radius, height, move, out g, characterId); _grounded = g; return r;
         }
     }
 

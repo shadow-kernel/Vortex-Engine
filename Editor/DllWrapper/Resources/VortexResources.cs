@@ -311,6 +311,40 @@ namespace Editor.DllWrapper
         public static int GetSubmeshCount(string filepath) => GetModelSubmeshCount(filepath);
 
         [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int GetModelTriangleData([MarshalAs(UnmanagedType.LPStr)] string filepath, float[] outPositions, int maxFloats);
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int GetModelTriangleDataFromMemory(byte[] data, int length, [MarshalAs(UnmanagedType.LPStr)] string extHint, float[] outPositions, int maxFloats);
+
+        /// <summary>A model's TRIANGLE vertex positions (x,y,z per vertex, 3 verts/triangle, all submeshes, indices
+        /// expanded) in local model space — for edge-accurate mesh colliders that match what's rendered. Null if the
+        /// model has no geometry / can't be read.</summary>
+        public static float[] GetModelTriangles(string filepath)
+        {
+            if (string.IsNullOrEmpty(filepath)) return null;
+            int needed = GetModelTriangleData(filepath, null, 0);
+            if (needed <= 0) return null;
+            var buf = new float[needed];
+            return TrimFloats(buf, GetModelTriangleData(filepath, buf, needed));
+        }
+
+        /// <summary>Triangle positions for a model whose bytes live in the in-RAM asset pak (shipped game).</summary>
+        public static float[] GetModelTrianglesFromMemory(byte[] data, string extHint)
+        {
+            if (data == null || data.Length == 0) return null;
+            int needed = GetModelTriangleDataFromMemory(data, data.Length, extHint ?? "", null, 0);
+            if (needed <= 0) return null;
+            var buf = new float[needed];
+            return TrimFloats(buf, GetModelTriangleDataFromMemory(data, data.Length, extHint ?? "", buf, needed));
+        }
+
+        private static float[] TrimFloats(float[] buf, int w)
+        {
+            if (w <= 0) return null;
+            if (w == buf.Length) return buf;
+            var t = new float[w]; System.Array.Copy(buf, t, w); return t;
+        }
+
+        [DllImport(_dllName, CallingConvention = _cc)]
         private static extern int GetModelSubmeshNames(
             [MarshalAs(UnmanagedType.LPStr)] string filepath,
             IntPtr outNames,

@@ -52,6 +52,13 @@ namespace Editor.Core.Services.Physics
         private static readonly List<Shape> _world = new List<Shape>();
         public static bool IsBuilt { get; private set; }
 
+        // Dynamic character capsules (multiplayer): each character auto-registers when it moves, so OTHER characters
+        // collide against it — you can't walk through another player's character. Keyed by a caller id (e.g. entity id).
+        private struct CharCap { public V3 Feet; public float R, H; }
+        private static readonly Dictionary<long, CharCap> _chars = new Dictionary<long, CharCap>();
+        public static void RemoveCharacter(long id) { _chars.Remove(id); }
+        public static void ClearCharacters() { _chars.Clear(); }
+
         /// <summary>Optional hook that returns an imported model's local-space triangles (flat float[] x,y,z…) for a
         /// MeshRenderer MeshPath. Set by the runtime (native mesh export). Null → imported models fall back to a box.</summary>
         public static Func<string, float[]> MeshTriangleProvider;
@@ -207,12 +214,22 @@ namespace Editor.Core.Services.Physics
         /// displacement. Returns the resolved feet position; <paramref name="grounded"/> is true if it's resting on a
         /// surface. Tunnel-free (substepped) and clip-free (iterated depenetration).</summary>
         public static Vector3 MoveCharacter(Vector3 feet, float radius, float height, Vector3 displacement, out bool grounded)
+            => MoveCharacter(feet, radius, height, displacement, out grounded, 0);
+
+        /// <summary>Same, but <paramref name="selfId"/> registers this character's capsule so OTHER characters can't
+        /// walk through it (multiplayer). Pass a stable id (e.g. the entity id); 0 = anonymous (no registration).</summary>
+        public static Vector3 MoveCharacter(Vector3 feet, float radius, float height, Vector3 displacement, out bool grounded, long selfId)
         {
             grounded = false;
-            if (!IsBuilt || _world.Count == 0) return new Vector3(feet.X + displacement.X, feet.Y + displacement.Y, feet.Z + displacement.Z);
-            V3 p = From(feet); V3 disp = From(displacement);
             radius = Math.Max(0.05f, radius);
             float segLen = Math.Max(0f, height - 2f * radius);
+            if (!IsBuilt || (_world.Count == 0 && _chars.Count == 0))
+            {
+                var np = new Vector3(feet.X + displacement.X, feet.Y + displacement.Y, feet.Z + displacement.Z);
+                if (selfId != 0) _chars[selfId] = new CharCap { Feet = From(np), R = radius, H = height };
+                return np;
+            }
+            V3 p = From(feet); V3 disp = From(displacement);
 
             float dlen = disp.Len();
             int steps = Math.Max(1, (int)Math.Ceiling(dlen / (radius * 0.5f)));
@@ -223,15 +240,16 @@ namespace Editor.Core.Services.Physics
                 p = p + step;
                 for (int iter = 0; iter < 5; iter++)
                 {
-                    if (!Depenetrate(ref p, radius, segLen, ref g)) break;
+                    if (!Depenetrate(ref p, radius, segLen, ref g, selfId)) break;
                 }
             }
             grounded = g;
+            if (selfId != 0) _chars[selfId] = new CharCap { Feet = p, R = radius, H = height };
             return To(p);
         }
 
         // Returns true if any push happened this pass.
-        private static bool Depenetrate(ref V3 feet, float r, float segLen, ref bool grounded)
+        private static bool Depenetrate(ref V3 feet, float r, float segLen, ref bool grounded, long selfId)
         {
             // capsule segment: from feet+r to feet+r+segLen (vertical)
             V3 c0 = new V3(feet.X, feet.Y + r, feet.Z);
@@ -265,6 +283,31 @@ namespace Editor.Core.Services.Physics
                     }
                 }
             }
+            // other characters (multiplayer): capsule vs capsule — can't walk through another player.
+            if (_chars.Count > 0)
+            {
+                foreach (var kv in _chars)
+                {
+                    if (kv.Key == selfId) continue;
+                    var cc = kv.Value;
+                    V3 oA = new V3(cc.Feet.X, cc.Feet.Y + cc.R, cc.Feet.Z);
+                    V3 oB = new V3(cc.Feet.X, cc.Feet.Y + Math.Max(cc.R, cc.H - cc.R), cc.Feet.Z);
+                    for (int k = 0; k < samples; k++)
+                    {
+                        float t = samples == 1 ? 0f : (float)k / (samples - 1);
+                        V3 c = new V3(c0.X + (c1.X - c0.X) * t, c0.Y + (c1.Y - c0.Y) * t, c0.Z + (c1.Z - c0.Z) * t);
+                        V3 q = ClosestOnSeg(oA, oB, c);
+                        V3 d = c - q; float dl = d.Len();
+                        if (dl < r + cc.R && dl > 1e-6f)
+                        {
+                            float depth = (r + cc.R) - dl;
+                            V3 n = d * (1f / dl); if (n.Y < -0.2f) n = new V3(n.X, 0f, n.Z).Norm(); // don't get shoved into the floor
+                            if (depth > bestDepth) { bestDepth = depth; bestNormal = n; }
+                        }
+                    }
+                }
+            }
+
             if (bestDepth > 1e-5f)
             {
                 feet = feet + bestNormal * bestDepth;

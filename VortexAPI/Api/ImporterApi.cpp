@@ -78,6 +78,57 @@ EDITOR_INTERFACE int ImportModelFromMemoryWithMaterials(
 	return count;
 }
 
+// Collision: return a model's TRIANGLE vertex positions (x,y,z per vertex, 3 verts/triangle, all submeshes,
+// indices expanded) so the managed collision system can build edge-accurate mesh colliders that match what's
+// rendered. Pass out_positions=null (or max_floats=0) for a size query -> returns the required float count;
+// otherwise returns the number of floats written. Local model space (the caller applies the entity transform).
+EDITOR_INTERFACE int GetModelTriangleData(const char* filepath, float* out_positions, int max_floats)
+{
+	if (!filepath) return 0;
+	auto model = graphics::ModelImporter::import_from_file(filepath);
+	size_t total_idx = 0;
+	for (const auto& sm : model.submeshes) total_idx += sm.indices.size();
+	int needed = static_cast<int>(total_idx * 3);
+	if (!out_positions || max_floats <= 0) return needed; // size query
+	int w = 0;
+	for (const auto& sm : model.submeshes)
+	{
+		for (u32 idx : sm.indices)
+		{
+			if (idx >= sm.vertices.size()) continue;
+			if (w + 3 > max_floats) return w;
+			const auto& p = sm.vertices[idx].position;
+			out_positions[w++] = p.x; out_positions[w++] = p.y; out_positions[w++] = p.z;
+		}
+	}
+	return w;
+}
+
+// Same as GetModelTriangleData but for a model whose bytes live in the in-RAM asset pak (shipped game).
+EDITOR_INTERFACE int GetModelTriangleDataFromMemory(const unsigned char* data, int length, const char* ext_hint,
+	float* out_positions, int max_floats)
+{
+	if (!data || length <= 0) return 0;
+	auto model = graphics::ModelImporter::import_from_memory(
+		reinterpret_cast<const u8*>(data), static_cast<u64>(length), ext_hint ? ext_hint : "", "");
+	size_t total_idx = 0;
+	for (const auto& sm : model.submeshes) total_idx += sm.indices.size();
+	int needed = static_cast<int>(total_idx * 3);
+	if (!out_positions || max_floats <= 0) return needed;
+	int w = 0;
+	for (const auto& sm : model.submeshes)
+	{
+		for (u32 idx : sm.indices)
+		{
+			if (idx >= sm.vertices.size()) continue;
+			if (w + 3 > max_floats) return w;
+			const auto& p = sm.vertices[idx].position;
+			out_positions[w++] = p.x; out_positions[w++] = p.y; out_positions[w++] = p.z;
+		}
+	}
+	return w;
+}
+
 // Get submesh count without importing (for pre-allocation)
 EDITOR_INTERFACE int GetModelSubmeshCount(const char* filepath)
 {
