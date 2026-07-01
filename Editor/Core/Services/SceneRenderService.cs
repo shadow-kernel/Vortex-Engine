@@ -1063,6 +1063,39 @@ namespace Editor.Core.Services
         }
 
         /// <summary>
+        /// Set an entity's base color at runtime (used by scripts — e.g. change color when a trigger is touched).
+        /// Updates the C# MeshRenderer color and pushes it to the engine material immediately so it shows this
+        /// frame, even under submit-once (the material is referenced by id, so changing its color is live).
+        /// </summary>
+        public void SetEntityColor(GameEntity entity, float r, float g, float b, float a = 1f)
+        {
+            if (entity == null) return;
+            var mr = entity.GetComponent<MeshRenderer>();
+            if (mr != null) { mr.ColorR = r; mr.ColorG = g; mr.ColorB = b; mr.ColorA = a; }
+
+            // Per-entity material (primitives / single mesh / texture fallback).
+            if (_entityMaterials.TryGetValue(entity.Id, out long matId) && matId >= 0)
+            {
+                VortexAPI.SetMaterialBaseColor(matId, r, g, b, a);
+                _entityMaterialColors[entity.Id] = (r, g, b, a);
+            }
+
+            // Imported multi-submesh models have no per-entity material — tint the shared per-mesh-path materials
+            // instead (note: this tints every instance that shares the same mesh path).
+            if (mr != null && !string.IsNullOrEmpty(mr.MeshPath))
+            {
+                long baseMat = GetMaterialForMeshPath(mr.MeshPath);
+                if (baseMat >= 0) VortexAPI.SetMaterialBaseColor(baseMat, r, g, b, a);
+                for (int n = 0; n < 64; n++)
+                {
+                    long sm = GetMaterialForMeshPath(mr.MeshPath + "#submesh" + n);
+                    if (sm >= 0) VortexAPI.SetMaterialBaseColor(sm, r, g, b, a);
+                    else if (n > 0) break;
+                }
+            }
+        }
+
+        /// <summary>
         /// Notify that an entity's mesh has changed.
         /// </summary>
         public void OnMeshChanged(Guid entityId)

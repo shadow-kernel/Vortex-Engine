@@ -30,6 +30,14 @@ namespace Editor.Scripting
         private readonly Dictionary<long, GameEntity> _entitiesById = new Dictionary<long, GameEntity>();
         private long _nextHandle;
         private readonly List<Vortex.VortexBehaviour> _behaviours = new List<Vortex.VortexBehaviour>();
+        // Reverse maps so collision/trigger events can be dispatched to the right behaviour.
+        private readonly Dictionary<long, Vortex.VortexBehaviour> _behavioursByHandle = new Dictionary<long, Vortex.VortexBehaviour>();
+        private readonly Dictionary<GameEntity, Vortex.VortexBehaviour> _behavioursByEntity = new Dictionary<GameEntity, Vortex.VortexBehaviour>();
+        // Reusable buffers drained each tick from CollisionService (avoid per-frame allocation).
+        private readonly List<Editor.Core.Services.Physics.CollisionService.Contact> _evEnter = new List<Editor.Core.Services.Physics.CollisionService.Contact>();
+        private readonly List<Editor.Core.Services.Physics.CollisionService.Contact> _evStay = new List<Editor.Core.Services.Physics.CollisionService.Contact>();
+        private readonly List<Editor.Core.Services.Physics.CollisionService.Contact> _evExit = new List<Editor.Core.Services.Physics.CollisionService.Contact>();
+        private readonly List<Editor.Core.Services.Physics.CollisionService.Contact> _evCollide = new List<Editor.Core.Services.Physics.CollisionService.Contact>();
 
         // The loaded gameplay assembly (precompiled .dll for the shipped game, or the runtime-compiled scripts).
         // Kept so a UI button can spin up its screen's "<Screen>Actions" class on demand even if the user never
@@ -78,6 +86,8 @@ namespace Editor.Scripting
             try { Editor.Core.Services.Physics.CollisionService.Build(scene); } catch { } // build the collision world for this scene
 
             _entitiesById.Clear();
+            _behavioursByHandle.Clear();
+            _behavioursByEntity.Clear();
             _nextHandle = 0;
 
             string log = null;
@@ -119,6 +129,70 @@ namespace Editor.Scripting
                 try { b.Update(dt); }
                 catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] UI Update error: " + ex.Message); }
             }
+
+            // Collision/trigger events fire AFTER everyone moved this tick, so overlaps are tested at final positions.
+            DispatchCollisionEvents();
+        }
+
+        private enum EvKind { Enter, Stay, Exit, Collision }
+
+        /// <summary>Drain this tick's trigger/collision overlaps from CollisionService and deliver them as
+        /// OnTriggerEnter/Stay/Exit / OnCollisionEnter to the relevant behaviours (both the collider owner and the
+        /// touching character), so a collider can act as a no-fly zone / "react when touched".</summary>
+        private void DispatchCollisionEvents()
+        {
+            try { Editor.Core.Services.Physics.CollisionService.StepEvents(_evEnter, _evStay, _evExit, _evCollide); }
+            catch { return; }
+            for (int i = 0; i < _evEnter.Count; i++) DispatchContact(_evEnter[i], EvKind.Enter);
+            for (int i = 0; i < _evStay.Count; i++) DispatchContact(_evStay[i], EvKind.Stay);
+            for (int i = 0; i < _evExit.Count; i++) DispatchContact(_evExit[i], EvKind.Exit);
+            for (int i = 0; i < _evCollide.Count; i++) DispatchContact(_evCollide[i], EvKind.Collision);
+        }
+
+        private void DispatchContact(Editor.Core.Services.Physics.CollisionService.Contact c, EvKind kind)
+        {
+            var owner = c.Other;
+            if (owner == null) return;
+            _entitiesById.TryGetValue(c.CharacterId, out var charEnt);
+            if (charEnt == null) return;                                    // stale/unknown character — don't fire a phantom contact
+            if (ReferenceEquals(charEnt, owner)) return;                    // never fire on self
+
+            _behavioursByHandle.TryGetValue(c.CharacterId, out var charBeh);
+            _behavioursByEntity.TryGetValue(owner, out var ownerBeh);
+
+            // Fire on the collider OWNER's behaviour (other = the character that touched it).
+            if (ownerBeh != null)
+            {
+                var hit = new Vortex.TriggerHit(c.CharacterId, charEnt?.Name, EntityTag(charEnt));
+                Invoke(ownerBeh, kind, hit);
+            }
+            // And on the touching CHARACTER's behaviour (other = the collider owner) so either side can react.
+            if (charBeh != null)
+            {
+                var hit = new Vortex.TriggerHit(ownerBeh?.EntityId ?? 0, owner.Name, EntityTag(owner));
+                Invoke(charBeh, kind, hit);
+            }
+        }
+
+        private static string EntityTag(GameEntity e)
+        {
+            if (e == null) return "";
+            try { var p = e.GetType().GetProperty("Tag"); var v = p?.GetValue(e) as string; return v ?? ""; } catch { return ""; }
+        }
+
+        private static void Invoke(Vortex.VortexBehaviour b, EvKind kind, Vortex.TriggerHit hit)
+        {
+            try
+            {
+                switch (kind)
+                {
+                    case EvKind.Enter: b.OnTriggerEnter(hit); break;
+                    case EvKind.Stay: b.OnTriggerStay(hit); break;
+                    case EvKind.Exit: b.OnTriggerExit(hit); break;
+                    case EvKind.Collision: b.OnCollisionEnter(hit); break;
+                }
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] " + kind + " error: " + ex.Message); }
         }
 
         /// <summary>Invoke the C# method bound to each fired UI button action (the button↔code link). Routing
@@ -231,6 +305,9 @@ namespace Editor.Scripting
             _uiActions.Clear();
             _behaviours.Clear();
             _entitiesById.Clear();
+            _behavioursByHandle.Clear();
+            _behavioursByEntity.Clear();
+            try { Editor.Core.Services.Physics.CollisionService.ResetEvents(); Editor.Core.Services.Physics.CollisionService.ClearCharacters(); } catch { }
             _scriptAsm = null;
             _active = false;
         }
@@ -346,6 +423,8 @@ namespace Editor.Scripting
                         behaviour.EntityId = handle;
                         _entitiesById[handle] = e;
                         _behaviours.Add(behaviour);
+                        _behavioursByHandle[handle] = behaviour;
+                        _behavioursByEntity[e] = behaviour;
                     }
                     catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] instantiate '" + script.ScriptClassName + "' failed: " + ex.Message); }
                 }
@@ -446,6 +525,12 @@ namespace Editor.Scripting
         {
             if (_entitiesById.TryGetValue(entityId, out var e) && e.Transform != null)
                 e.Transform.LocalRotation = new ECS.Vector3(eulerDegrees.X, eulerDegrees.Y, eulerDegrees.Z);
+        }
+
+        void Vortex.IScriptHost.SetEntityColor(long entityId, float r, float g, float b)
+        {
+            if (_entitiesById.TryGetValue(entityId, out var e))
+                Editor.Core.Services.SceneRenderService.Instance.SetEntityColor(e, r, g, b, 1f);
         }
 
         [System.Runtime.InteropServices.DllImport("user32.dll")]

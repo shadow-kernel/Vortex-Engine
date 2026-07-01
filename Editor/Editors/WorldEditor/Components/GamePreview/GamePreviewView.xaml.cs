@@ -1027,6 +1027,16 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         private readonly System.Collections.Generic.List<(GameEntity ent, Vector3 start)> _physicsEntities
             = new System.Collections.Generic.List<(GameEntity, Vector3)>();
 
+        // Non-destructive Play: full snapshot of every entity's local transform + the editor free-camera pose,
+        // captured on Play and restored on Stop so nothing scripts/physics touched stays changed. (Vector3 is a
+        // value-type struct, so storing it is a deep copy.)
+        private readonly System.Collections.Generic.List<(GameEntity ent, Vector3 pos, Vector3 rot, Vector3 scale)> _transformSnapshot
+            = new System.Collections.Generic.List<(GameEntity, Vector3, Vector3, Vector3)>();
+        private readonly System.Collections.Generic.List<(GameEntity ent, float r, float g, float b, float a)> _colorSnapshot
+            = new System.Collections.Generic.List<(GameEntity, float, float, float, float)>();
+        private float _snapCamX, _snapCamY, _snapCamZ, _snapCamYaw, _snapCamPitch, _snapCamRoll;
+        private bool _hasCamSnap;
+
         /// <summary>On Play: register every Dynamic-Rigidbody entity with the engine physics tick and
         /// snapshot its start position so Stop can restore it.</summary>
         private void BeginPlaySimulation()
@@ -1034,6 +1044,11 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             if (_simActive) return; // ignore Resume (Paused->Playing) so we don't re-snapshot mid-fall
             _simActive = true;
             _physicsEntities.Clear();
+
+            // Snapshot BEFORE any registration or ScriptRuntime.Begin (Start() can move things on frame 0),
+            // so Stop restores the exact pre-play state.
+            SnapshotSceneForPlay();
+
             VortexAPI.ClearAllRigidbodies();
             VortexAPI.ClearAllColliders();
             VortexAPI.ResetGameClock(); // start the game timer at 0 for this play session
@@ -1132,20 +1147,72 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             }
         }
 
-        /// <summary>On Stop: clear the engine bodies and restore each entity's pre-play position.</summary>
+        /// <summary>Capture the editor free-camera pose + every entity's local transform before Play so Stop
+        /// can put everything back exactly as it was (fully non-destructive play).</summary>
+        private void SnapshotSceneForPlay()
+        {
+            if (_cameraController != null)
+            {
+                _snapCamX = _cameraController.PositionX; _snapCamY = _cameraController.PositionY; _snapCamZ = _cameraController.PositionZ;
+                _snapCamYaw = _cameraController.Yaw; _snapCamPitch = _cameraController.Pitch; _snapCamRoll = _cameraController.Roll;
+                _hasCamSnap = true;
+            }
+            _transformSnapshot.Clear();
+            _colorSnapshot.Clear();
+            var scene = _currentScene ?? ProjectData.Current?.ActiveScene;
+            if (scene?.Entities != null)
+                foreach (var e in scene.Entities) SnapshotTransformRecursive(e);
+        }
+
+        private void SnapshotTransformRecursive(GameEntity e)
+        {
+            if (e == null) return;
+            if (e.Transform != null)
+                _transformSnapshot.Add((e, e.Transform.LocalPosition, e.Transform.LocalRotation, e.Transform.LocalScale));
+            // Also snapshot the base color so a script that recolors an entity (e.g. on trigger touch) is reverted.
+            var mr = e.GetComponent<Editor.ECS.Components.Rendering.MeshRenderer>();
+            if (mr != null)
+                _colorSnapshot.Add((e, mr.ColorR, mr.ColorG, mr.ColorB, mr.ColorA));
+            if (e.Children != null)
+                foreach (var c in e.Children) SnapshotTransformRecursive(c);
+        }
+
+        /// <summary>On Stop: clear the engine bodies and restore the FULL pre-play snapshot — every entity's
+        /// position/rotation/scale AND the editor free-camera pose — so nothing a script or physics touched
+        /// stays changed. Play is purely temporary.</summary>
         private void EndPlaySimulation()
         {
             if (!_simActive) return;
             _simActive = false;
-            Editor.Scripting.ScriptRuntime.Instance.End(); // stop gameplay scripts (OnDestroy)
+            Editor.Scripting.ScriptRuntime.Instance.End(); // stop gameplay scripts (OnDestroy) BEFORE restoring
             VortexAPI.ClearAllRigidbodies();
-            foreach (var (ent, start) in _physicsEntities)
+
+            // Restore every entity's local transform (pos/rot/scale). The setters re-sync the engine, so this
+            // reverts anything a script or the physics tick moved — supersedes the old position-only restore.
+            foreach (var s in _transformSnapshot)
             {
-                if (ent?.Transform != null) ent.Transform.LocalPosition = start; // restores + re-syncs to engine
+                if (s.ent?.Transform == null) continue;
+                s.ent.Transform.LocalPosition = s.pos;
+                s.ent.Transform.LocalRotation = s.rot;
+                s.ent.Transform.LocalScale = s.scale;
             }
+            _transformSnapshot.Clear();
             _physicsEntities.Clear();
-            // The edit/fly camera is untouched during play (play renders through the main camera),
-            // so on Stop the viewport simply resumes the build camera — nothing to restore.
+
+            // Restore any script-driven color changes (e.g. a trigger that recolors an object) to pre-play.
+            foreach (var cs in _colorSnapshot)
+                SceneRenderService.Instance.SetEntityColor(cs.ent, cs.r, cs.g, cs.b, cs.a);
+            _colorSnapshot.Clear();
+
+            // Park the editor free-camera back exactly where it was before Play. Play renders through the game
+            // main camera, which otherwise leaves the viewport frozen at the game's last pose until a right-drag.
+            if (_hasCamSnap && _cameraController != null)
+            {
+                _cameraController.SetFromEntityTransform(_snapCamX, _snapCamY, _snapCamZ, _snapCamPitch, _snapCamYaw, _snapCamRoll);
+                _hasCamSnap = false;
+            }
+
+            _sceneDirty = true; // re-submit the reverted scene so the viewport shows the restored state at once
         }
 
         /// <summary>

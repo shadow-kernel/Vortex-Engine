@@ -52,6 +52,9 @@ namespace Vortex
         // Set the player camera's vertical field of view (degrees).
         void SetCameraFov(float fovDegrees);
 
+        // Set an entity's base color at runtime (e.g. change color when a trigger is touched).
+        void SetEntityColor(long entityId, float r, float g, float b);
+
         // 2D UI overlay (immediate mode), coordinates in viewport pixels (top-left origin).
         void UIRect(float x, float y, float w, float h, float r, float g, float b, float a, float radius);
         void UIText(float x, float y, float w, float h, string text, float size, float r, float g, float b, float a, int align, int weight);
@@ -66,9 +69,26 @@ namespace Vortex
     }
 
     /// <summary>
+    /// A collision/trigger contact passed to OnTriggerEnter/Stay/Exit and OnCollisionEnter. Identifies the OTHER
+    /// entity involved (the one that entered your trigger, or the surface you hit).
+    /// </summary>
+    public struct TriggerHit
+    {
+        /// <summary>Script handle of the other entity (0 if it has no script).</summary>
+        public long EntityId;
+        /// <summary>Name of the other entity.</summary>
+        public string Name;
+        /// <summary>Tag of the other entity (e.g. "Player", "Enemy").</summary>
+        public string Tag;
+        public TriggerHit(long id, string name, string tag) { EntityId = id; Name = name ?? ""; Tag = tag ?? ""; }
+    }
+
+    /// <summary>
     /// Base class for all gameplay behaviours — like MonoBehaviour. Override Start (called once when
     /// play begins) and Update (called every tick). Move your entity via Position / Translate, read
-    /// input via Input.GetKey, and timing via Time.DeltaTime.
+    /// input via Input.GetKey, and timing via Time.DeltaTime. For collision zones, mark a Collider as
+    /// a Trigger and override OnTriggerEnter/OnTriggerStay/OnTriggerExit (e.g. a no-fly zone, or "change
+    /// color when touched"); for solid contacts override OnCollisionEnter.
     /// </summary>
     public abstract class VortexBehaviour
     {
@@ -128,9 +148,21 @@ namespace Vortex
             }
         }
 
+        /// <summary>Set this entity's base color at runtime — e.g. flash a color when a trigger is touched.</summary>
+        public void SetColor(float r, float g, float b) { Host?.SetEntityColor(EntityId, r, g, b); }
+
         public virtual void Start() { }
         public virtual void Update(float dt) { }
         public virtual void OnDestroy() { }
+
+        /// <summary>Called once when another character first enters this entity's TRIGGER collider.</summary>
+        public virtual void OnTriggerEnter(TriggerHit other) { }
+        /// <summary>Called every tick while another character stays inside this entity's TRIGGER collider.</summary>
+        public virtual void OnTriggerStay(TriggerHit other) { }
+        /// <summary>Called once when another character leaves this entity's TRIGGER collider.</summary>
+        public virtual void OnTriggerExit(TriggerHit other) { }
+        /// <summary>Called once when a character first touches this entity's SOLID (non-trigger) collider.</summary>
+        public virtual void OnCollisionEnter(TriggerHit other) { }
     }
 
     /// <summary>Keyboard + mouse input. Key names match WPF keys, e.g. "W", "Space", "LeftShift".</summary>

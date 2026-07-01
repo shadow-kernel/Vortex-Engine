@@ -22,6 +22,7 @@ namespace Editor.Editors.PhysicsEditor
         private static CollisionEditorWindow _open;
         private StackPanel _body;
         private TextBlock _entityName;
+        private CollisionPreviewControl _preview;
 
         public static CollisionEditorWindow Open(Window owner)
         {
@@ -34,7 +35,7 @@ namespace Editor.Editors.PhysicsEditor
         private CollisionEditorWindow()
         {
             Title = "Collision Editor";
-            Width = 380; Height = 620; MinWidth = 340; MinHeight = 420;
+            Width = 400; Height = 760; MinWidth = 360; MinHeight = 520;
             Background = Br("#FF161618");
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
@@ -49,6 +50,13 @@ namespace Editor.Editors.PhysicsEditor
             DockPanel.SetDock(header, Dock.Top);
             root.Children.Add(header);
 
+            // Live preview: the selected object in an empty sunlit world with its collider in green + a fine grid.
+            var previewWrap = new Border { Height = 250, Background = Br("#FF0F0F12"), BorderBrush = Br("#FF2C2C32"), BorderThickness = new Thickness(0, 0, 0, 1) };
+            _preview = new CollisionPreviewControl();
+            previewWrap.Child = _preview;
+            DockPanel.SetDock(previewWrap, Dock.Top);
+            root.Children.Add(previewWrap);
+
             var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Padding = new Thickness(16, 14, 16, 16) };
             _body = new StackPanel();
             scroll.Content = _body;
@@ -56,8 +64,25 @@ namespace Editor.Editors.PhysicsEditor
 
             Content = root;
 
+            // Borrow the shared render queue while open (the main viewport yields), like the other preview dialogs.
+            Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.ActivePreviewDialogs++;
+
             SelectionService.Instance.SelectionChanged += OnSelectionChanged;
-            Closed += (s, e) => { try { SelectionService.Instance.SelectionChanged -= OnSelectionChanged; } catch { } _open = null; };
+            Closed += (s, e) =>
+            {
+                try { SelectionService.Instance.SelectionChanged -= OnSelectionChanged; } catch { }
+                try { _preview?.Dispose(); } catch { }
+                try
+                {
+                    Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.ActivePreviewDialogs--;
+                    Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.RequestResubmit();
+                    // Only free the SHARED offscreen render target if no other preview dialog is still using it.
+                    if (Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.ActivePreviewDialogs <= 0)
+                        Editor.Core.Services.Rendering.AssetPreviewRenderer.DestroyPreviewTarget();
+                }
+                catch { }
+                _open = null;
+            };
             Rebuild();
         }
 
@@ -73,6 +98,7 @@ namespace Editor.Editors.PhysicsEditor
             _body.Children.Clear();
             var ent = Ent;
             _entityName.Text = ent != null ? ("Entity:  " + ent.Name) : "No entity selected";
+            _preview?.SetTarget(ent);
 
             if (ent == null)
             {
@@ -131,12 +157,75 @@ namespace Editor.Editors.PhysicsEditor
             }
 
             var trig = new CheckBox { Content = "Is Trigger (overlap only — no solid blocking)", Foreground = Br("#FFC8C8CE"), IsChecked = col.IsTrigger, Margin = new Thickness(0, 12, 0, 4) };
-            trig.Checked += (s, e) => col.IsTrigger = true;
-            trig.Unchecked += (s, e) => col.IsTrigger = false;
+            trig.Checked += (s, e) => { col.IsTrigger = true; Rebuild(); };
+            trig.Unchecked += (s, e) => { col.IsTrigger = false; Rebuild(); };
             _body.Children.Add(trig);
+
+            // A trigger can carry a script that reacts to being touched (OnTriggerEnter/Stay/Exit) — no-fly zone,
+            // "change color on touch", etc. Surfaced only when Is Trigger is on.
+            if (col.IsTrigger) BuildTriggerScriptSection(ent);
 
             _body.Children.Add(ActionButton("Auto-fit to mesh", () => { AutoFit(ent, col); Rebuild(); }));
             _body.Children.Add(HelpBlock());
+        }
+
+        /// <summary>Trigger-script UI: attach/replace/remove a VortexBehaviour on this entity and see which
+        /// collision events it can override, so a trigger volume can drive gameplay (touch = react).</summary>
+        private void BuildTriggerScriptSection(GameEntity ent)
+        {
+            _body.Children.Add(Label("TRIGGER SCRIPT — reacts when touched"));
+            var script = ent.GetComponent<Editor.ECS.Components.Scripting.Script>();
+            string cur = script != null ? script.ScriptClassName : null;
+            _body.Children.Add(Note(string.IsNullOrEmpty(cur)
+                ? "Attach a script, then override OnTriggerEnter / OnTriggerStay / OnTriggerExit (and OnCollisionEnter for solids) to react when a character touches this collider — a no-fly zone, a hazard, a button, or 'change color on touch'."
+                : "Attached: " + cur + "  —  override OnTriggerEnter / OnTriggerStay / OnTriggerExit in it to react to touches."));
+            _body.Children.Add(ActionButton(string.IsNullOrEmpty(cur) ? "Attach Script…" : "Change Script…", () => ShowTriggerScriptPicker(ent)));
+            if (script != null)
+                _body.Children.Add(ActionButton("Remove Script", () => { ent.RemoveComponent(script); Rebuild(); }));
+        }
+
+        private void ShowTriggerScriptPicker(GameEntity ent)
+        {
+            var menu = new ContextMenu();
+            try
+            {
+                foreach (var rel in ScriptingService.EnumerateScripts())
+                {
+                    var r = rel;
+                    var mi = new MenuItem { Header = System.IO.Path.GetFileNameWithoutExtension(r) };
+                    mi.Click += (s, e) => AttachTriggerScript(ent, r);
+                    menu.Items.Add(mi);
+                }
+            }
+            catch { }
+            if (menu.Items.Count > 0) menu.Items.Add(new Separator());
+            var nw = new MenuItem { Header = "New Script…" };
+            nw.Click += (s, e) => CreateAndAttachTriggerScript(ent);
+            menu.Items.Add(nw);
+            menu.IsOpen = true;
+        }
+
+        private void AttachTriggerScript(GameEntity ent, string rel)
+        {
+            if (ent == null || string.IsNullOrEmpty(rel)) return;
+            var existing = ent.GetComponent<Editor.ECS.Components.Scripting.Script>();
+            if (existing != null) ent.RemoveComponent(existing);
+            ent.AddComponent(new Editor.ECS.Components.Scripting.Script(ent, rel));
+            SelectionService.Instance.Select(ent); // refresh the main inspector too
+            Rebuild();
+        }
+
+        private void CreateAndAttachTriggerScript(GameEntity ent)
+        {
+            try
+            {
+                var baseName = string.IsNullOrWhiteSpace(ent.Name) ? "TriggerBehaviour" : ent.Name + "Trigger";
+                var abs = ScriptingService.CreateScript(baseName);
+                var rel = ScriptingService.MakeRelative(ScriptingService.ProjectRoot, abs);
+                AttachTriggerScript(ent, rel);
+                ScriptingService.OpenInVisualStudio(abs);
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[CollisionEditor] " + ex.Message); }
         }
 
         private void SetType<T>(GameEntity ent) where T : Collider, new()

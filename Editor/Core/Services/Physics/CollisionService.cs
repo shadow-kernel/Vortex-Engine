@@ -47,10 +47,22 @@ namespace Editor.Core.Services.Physics
             public V3 A, B;               // capsule segment
             public V3[] Tris;             // triangles: flat [v0,v1,v2, v0,v1,v2, ...]
             public V3 Min, Max;           // world AABB (broadphase)
+            public GameEntity Owner;      // the entity this shape belongs to (for trigger/collision event dispatch)
         }
 
         private static readonly List<Shape> _world = new List<Shape>();
+        // Trigger colliders (IsTrigger): NOT solid — they never block, only report overlap enter/stay/exit.
+        private static readonly List<Shape> _triggers = new List<Shape>();
         public static bool IsBuilt { get; private set; }
+
+        /// <summary>A trigger/collision contact: a character (by its script handle) touched an entity's collider.</summary>
+        public struct Contact { public long CharacterId; public GameEntity Other; }
+
+        // Overlap state for enter/exit diffing, keyed by (characterHandle, shapeIndex).
+        private static readonly HashSet<(long, int)> _prevTrig = new HashSet<(long, int)>();
+        private static readonly HashSet<(long, int)> _curTrig = new HashSet<(long, int)>();
+        private static readonly HashSet<(long, int)> _prevSolid = new HashSet<(long, int)>();
+        private static readonly HashSet<(long, int)> _curSolid = new HashSet<(long, int)>();
 
         // Dynamic character capsules (multiplayer): each character auto-registers when it moves, so OTHER characters
         // collide against it — you can't walk through another player's character. Keyed by a caller id (e.g. entity id).
@@ -63,13 +75,20 @@ namespace Editor.Core.Services.Physics
         /// MeshRenderer MeshPath. Set by the runtime (native mesh export). Null → imported models fall back to a box.</summary>
         public static Func<string, float[]> MeshTriangleProvider;
 
-        public static void Clear() { _world.Clear(); IsBuilt = false; }
+        public static void Clear() { _world.Clear(); _triggers.Clear(); _chars.Clear(); ResetEvents(); IsBuilt = false; }
+
+        /// <summary>Reset the per-frame overlap state (call on Build / scene switch / play end so stale pairs
+        /// don't fire phantom Enter/Exit after a reload).</summary>
+        public static void ResetEvents() { _prevTrig.Clear(); _curTrig.Clear(); _prevSolid.Clear(); _curSolid.Clear(); }
 
         /// <summary>Rebuild the collision world from every Collider in the scene (world-space). Call on scene load /
         /// play start; the static world doesn't change as the character moves.</summary>
         public static void Build(Scene scene)
         {
             _world.Clear();
+            _triggers.Clear();
+            _chars.Clear();   // characters re-register on their next MoveCharacter — don't leak across scene switches / replays
+            ResetEvents();
             IsBuilt = true;
             if (scene == null || scene.Entities == null) return;
             foreach (var e in scene.Entities) AddRecursive(e);
@@ -79,9 +98,10 @@ namespace Editor.Core.Services.Physics
         {
             if (e == null) return;
             var col = e.GetComponent<Collider>();
-            if (col != null && col.IsEnabled && !col.IsTrigger)
+            if (col != null && col.IsEnabled)
             {
-                try { var s = BuildShape(e, col); if (s != null) _world.Add(s); } catch { }
+                // Solid colliders block (go into _world); triggers only report overlap (go into _triggers).
+                try { var s = BuildShape(e, col); if (s != null) { s.Owner = e; if (col.IsTrigger) _triggers.Add(s); else _world.Add(s); } } catch { }
             }
             if (e.Children != null) foreach (var c in e.Children) AddRecursive(c);
         }
@@ -313,6 +333,81 @@ namespace Editor.Core.Services.Physics
                 feet = feet + bestNormal * bestDepth;
                 if (bestNormal.Y > 0.5f) grounded = true;
                 return true;
+            }
+            return false;
+        }
+
+        /// <summary>Detect trigger + solid overlaps for every registered character this frame and diff against last
+        /// frame. Fills <paramref name="enter"/>/<paramref name="stay"/>/<paramref name="exit"/> (trigger colliders)
+        /// and <paramref name="collisionEnter"/> (solid colliders). Call ONCE per tick, AFTER all characters have
+        /// moved (MoveCharacter registered them). Each Contact = (character handle, the OTHER entity touched).</summary>
+        public static void StepEvents(List<Contact> enter, List<Contact> stay, List<Contact> exit, List<Contact> collisionEnter)
+        {
+            enter?.Clear(); stay?.Clear(); exit?.Clear(); collisionEnter?.Clear();
+            _curTrig.Clear(); _curSolid.Clear();
+
+            if (_chars.Count > 0 && (_triggers.Count > 0 || _world.Count > 0))
+            {
+                foreach (var kv in _chars)
+                {
+                    long cid = kv.Key; var cc = kv.Value;
+                    CapsuleBounds(cc, out var capMin, out var capMax);
+
+                    for (int ti = 0; ti < _triggers.Count; ti++)
+                    {
+                        var s = _triggers[ti];
+                        if (!AabbOverlap(capMin, capMax, s.Min, s.Max)) continue;
+                        if (!CapsuleOverlapsShape(cc, s)) continue;
+                        var key = (cid, ti);
+                        _curTrig.Add(key);
+                        stay?.Add(new Contact { CharacterId = cid, Other = s.Owner });
+                        if (!_prevTrig.Contains(key)) enter?.Add(new Contact { CharacterId = cid, Other = s.Owner });
+                    }
+
+                    for (int wi = 0; wi < _world.Count; wi++)
+                    {
+                        var s = _world[wi];
+                        if (!AabbOverlap(capMin, capMax, s.Min, s.Max)) continue;
+                        if (!CapsuleOverlapsShape(cc, s)) continue;
+                        var key = (cid, wi);
+                        _curSolid.Add(key);
+                        if (!_prevSolid.Contains(key)) collisionEnter?.Add(new Contact { CharacterId = cid, Other = s.Owner });
+                    }
+                }
+            }
+
+            // Exits: pairs that were overlapping last frame but not now.
+            foreach (var key in _prevTrig)
+                if (!_curTrig.Contains(key) && key.Item2 < _triggers.Count)
+                    exit?.Add(new Contact { CharacterId = key.Item1, Other = _triggers[key.Item2].Owner });
+
+            _prevTrig.Clear(); foreach (var k in _curTrig) _prevTrig.Add(k);
+            _prevSolid.Clear(); foreach (var k in _curSolid) _prevSolid.Add(k);
+        }
+
+        private static void CapsuleBounds(CharCap cc, out V3 min, out V3 max)
+        {
+            float r = cc.R;
+            min = new V3(cc.Feet.X - r, cc.Feet.Y - r, cc.Feet.Z - r);
+            max = new V3(cc.Feet.X + r, cc.Feet.Y + Math.Max(cc.H, 2f * r) + r, cc.Feet.Z + r);
+        }
+
+        /// <summary>Boolean overlap test: the character capsule (sampled as spheres) vs a shape — same math as
+        /// Depenetrate but reports overlap instead of pushing.</summary>
+        private static bool CapsuleOverlapsShape(CharCap cc, Shape s)
+        {
+            float r = cc.R;
+            float segLen = Math.Max(0f, cc.H - 2f * r);
+            V3 c0 = new V3(cc.Feet.X, cc.Feet.Y + r, cc.Feet.Z);
+            V3 c1 = new V3(cc.Feet.X, cc.Feet.Y + r + segLen, cc.Feet.Z);
+            int samples = Math.Max(2, (int)Math.Ceiling(segLen / r) + 1);
+            float sr = ShapeRadius(s);
+            for (int k = 0; k < samples; k++)
+            {
+                float t = samples == 1 ? 0f : (float)k / (samples - 1);
+                V3 c = new V3(c0.X + (c1.X - c0.X) * t, c0.Y + (c1.Y - c0.Y) * t, c0.Z + (c1.Z - c0.Z) * t);
+                if (!ClosestOnShape(s, c, out var q)) continue;
+                if ((c - q).Len() < r + sr) return true;
             }
             return false;
         }
