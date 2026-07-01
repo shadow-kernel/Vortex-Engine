@@ -4,7 +4,7 @@
 ; This script creates a professional installation wizard for Vortex Engine
 
 #define MyAppName "Vortex Engine"
-#define MyAppVersion "2.2.1"
+#define MyAppVersion "2.3.0"
 #define MyAppPublisher "Vortex Engine Team"
 #define MyAppURL "https://github.com/shadow-kernel/Vortex-Engine"
 #define MyAppExeName "Vortex Engine.exe"
@@ -36,6 +36,11 @@ WizardSizePercent=120
 ; Require admin for Program Files installation
 PrivilegesRequired=admin
 PrivilegesRequiredOverridesAllowed=dialog
+; Auto-update: AppMutex lets a silent updater (/CLOSEAPPLICATIONS) cleanly close the running editor before
+; overwriting files; SetupMutex stops two updater installs racing. AppMutex MUST match the mutex the app holds
+; (App.OnStartup creates "VortexEngineSingleInstance").
+AppMutex=VortexEngineSingleInstance
+SetupMutex=VortexEngineSetup
 ; Minimum Windows version (Windows 10)
 MinVersion=10.0
 ; Architecture
@@ -83,6 +88,9 @@ Name: "{userappdata}\Microsoft\Internet Explorer\Quick Launch\{#MyAppName}"; Fil
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+; Silent auto-update relaunch: fires ONLY on a /SILENT or /VERYSILENT install (the in-app updater), so the editor
+; comes back after updating. runasoriginaluser relaunches it de-elevated (the installer itself runs elevated).
+Filename: "{app}\{#MyAppExeName}"; Flags: nowait runasoriginaluser skipifnotsilent
 
 [Registry]
 ; File associations (optional - for .vortex project files)
@@ -262,7 +270,7 @@ begin
   Result := True;
   
   // Check if application is running
-  if CheckForMutexes('{#MyAppName}') then
+  if CheckForMutexes('VortexEngineSingleInstance') then
   begin
     if MsgBox('Vortex Engine is currently running. Please close it before uninstalling.' + #13#10#13#10 +
               'Would you like to force close the application?', mbConfirmation, MB_YESNO) = IDYES then

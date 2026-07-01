@@ -116,6 +116,12 @@ namespace Editor.Core.Services
             var manifestPath = Path.Combine(projectPath, ManifestFileName);
             var manifest = DataSerializer.LoadFromJson<ProjectManifest>(manifestPath);
 
+            // Editor-only compatibility gate: migrate an older-format project (with a backup) or warn on a project
+            // saved by a NEWER engine, before it loads. The shipped game's pak is read-only + has no UI, so skip
+            // when mounted. Up-to-date projects (the common case) pass through with no dialog.
+            if (!AssetVfs.IsMounted)
+                Editor.Dialogs.ProjectMigrationDialog.EnsureCompatible(projectPath, manifest, manifestPath);
+
             // Erstelle ProjectData aus Manifest
             var project = new ProjectData(manifest.Id, projectPath, manifest.Name)
             {
@@ -391,6 +397,9 @@ namespace Editor.Core.Services
                     ThumbnailPath = project.ImagePath,
                     LastOpenSceneId = project.ActiveScene?.Id,
                     StartSceneId = project.StartSceneId, // the game's boot scene (persisted choice; null ⇒ first)
+                    // Stamp the version the project was saved with, so the migration gate can check it on open.
+                    EngineVersion = Editor.Core.EngineInfo.VersionString,
+                    FormatVersion = Editor.Core.EngineInfo.CurrentProjectFormatVersion,
                 };
 
                 // Füge Szenen-Referenzen hinzu

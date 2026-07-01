@@ -289,6 +289,12 @@
     <Compile Include="Editors\PhysicsEditor\CollisionEditorWindow.cs" />
     <Compile Include="Editors\PhysicsEditor\CollisionPreviewControl.cs" />
     <Compile Include="DllWrapper\Gizmos\ColliderGizmo.cs" />
+    <Compile Include="Core\EngineInfo.cs" />
+    <Compile Include="Core\Services\Update\UpdateService.cs" />
+    <Compile Include="Dialogs\UpdateDialog.cs" />
+    <Compile Include="Core\Migration\ProjectMigration.cs" />
+    <Compile Include="Core\Migration\ProjectMigrationService.cs" />
+    <Compile Include="Dialogs\ProjectMigrationDialog.cs" />
     <Compile Include="Scripting\DualSenseHid.cs" />
     <Compile Include="Core\Services\RaycastService.cs" />
     <Compile Include="Core\Services\Rendering\AssetPreviewRenderer.cs" />

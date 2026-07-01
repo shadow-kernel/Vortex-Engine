@@ -5,7 +5,7 @@ using System.Runtime.Serialization;
 namespace Editor.Core.Data
 {
     /// <summary>
-    /// Leichtgewichtiges Projekt-Manifest das nur Metadaten und Referenzen enthält.
+    /// Leichtgewichtiges Projekt-Manifest das nur Metadaten und Referenzen enthï¿½lt.
     /// Die eigentlichen Szenen werden in separaten .vscene Dateien gespeichert.
     /// </summary>
     [DataContract(Name = "ProjectManifest", Namespace = "")]
@@ -36,7 +36,15 @@ namespace Editor.Core.Data
         public string EngineVersion { get; set; } = "1.0.0";
 
         /// <summary>
-        /// Letzte Änderung
+        /// Project format/schema revision â€” the migration key. Bumped only when a change makes older projects
+        /// need migrating. Absent/0 in an existing project.vortex is treated as the current format (legacy projects
+        /// are NOT force-migrated). Stamped to the engine's current format on every save.
+        /// </summary>
+        [DataMember(Name = "formatVersion", Order = 9)]
+        public int FormatVersion { get; set; } = 0;
+
+        /// <summary>
+        /// Letzte ï¿½nderung
         /// </summary>
         [DataMember(Name = "lastModified", Order = 4)]
         public DateTime LastModified { get; set; }
@@ -60,7 +68,7 @@ namespace Editor.Core.Data
         public Guid? StartSceneId { get; set; }
 
         /// <summary>
-        /// ID der zuletzt geöffneten Szene (für Editor)
+        /// ID der zuletzt geï¿½ffneten Szene (fï¿½r Editor)
         /// </summary>
         [DataMember(Name = "lastOpenSceneId", Order = 8)]
         public Guid? LastOpenSceneId { get; set; }
@@ -155,13 +163,13 @@ namespace Editor.Core.Data
         public int DefaultScreenWidth { get; set; } = 1920;
 
         /// <summary>
-        /// Standard-Bildschirmhöhe
+        /// Standard-Bildschirmhï¿½he
         /// </summary>
         [DataMember(Name = "defaultScreenHeight", Order = 3)]
         public int DefaultScreenHeight { get; set; } = 1080;
 
         /// <summary>
-        /// Ob Vollbild standardmäßig aktiv ist
+        /// Ob Vollbild standardmï¿½ï¿½ig aktiv ist
         /// </summary>
         [DataMember(Name = "fullscreenByDefault", Order = 4)]
         public bool FullscreenByDefault { get; set; } = false;

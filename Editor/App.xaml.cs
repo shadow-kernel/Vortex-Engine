@@ -80,6 +80,10 @@ namespace Editor
                 return;
             }
 
+            // Single-instance mutex — held for the app's lifetime so the installer (AppMutex) can cleanly close a
+            // running editor during an auto-update. Editor mode only (player/stress already returned above).
+            try { _singleInstanceMutex = new System.Threading.Mutex(true, "VortexEngineSingleInstance"); } catch { }
+
             // Defer the heavy work to Background priority so the splash paints + animates first.
             Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, new Action(() =>
             {
@@ -90,9 +94,37 @@ namespace Editor
                 // Close the splash when the editor window has actually rendered its first frame. ContentRendered is a
                 // reliable one-shot — unlike the old 850ms Background DispatcherTimer, which a heavy project-load
                 // (it runs at the same/low priority) could starve, leaving the splash stuck on screen for many seconds.
-                main.ContentRendered += (s, ev) => { try { splash.FadeOutAndClose(); } catch { try { splash.Close(); } catch { } } };
+                main.ContentRendered += (s, ev) =>
+                {
+                    try { splash.FadeOutAndClose(); } catch { try { splash.Close(); } catch { } }
+                    CheckForUpdatesAsync(); // fire-and-forget; only does anything for installed builds
+                };
                 main.Show(); // -> MainWindow.Loaded loads the last project or opens the project browser
             }));
+        }
+
+        private static System.Threading.Mutex _singleInstanceMutex;
+
+        /// <summary>Non-blocking auto-update check: only for installer builds; Patch auto-installs, Minor/Major ask.
+        /// Wrapped so a failure can never affect startup.</summary>
+        private async void CheckForUpdatesAsync()
+        {
+            try
+            {
+                if (!Editor.Core.Services.Update.UpdateService.IsInstalledBuild()) return;
+                var info = await Editor.Core.Services.Update.UpdateService.CheckAsync();
+                if (info == null || info.Bump == Editor.Core.Services.Update.BumpType.None) return;
+
+                // Marshal the dialog to the UI thread — CheckAsync uses ConfigureAwait(false), so this continuation
+                // may resume on a thread-pool thread, and a WPF Window can only be created/shown on the UI thread.
+                Dispatcher.Invoke(new Action(() =>
+                {
+                    var dlg = new Editor.Dialogs.UpdateDialog(info);
+                    if (MainWindow != null && MainWindow.IsLoaded) dlg.Owner = MainWindow;
+                    dlg.ShowDialog(); // patch auto-installs inside; minor/major ask first
+                }));
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Update] check failed: " + ex.Message); }
         }
 
         /// <summary>Boots the bundled game with NO editor UI: load project from the exe folder, activate the
