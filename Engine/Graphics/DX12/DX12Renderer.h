@@ -201,6 +201,9 @@ namespace vortex::graphics::dx12
 		// good PSO on failure). Cheap when nothing changed. Call on window focus / before a material-preview render.
 		// Returns how many shaders were recompiled this call (0 = nothing changed).
 		int reload_dirty_shaders();
+		// Cheap (no-compile) check: does any assigned .hlsl differ on disk from what we last compiled? Used so the
+		// hot-reload overlay only appears on a REAL change (never a spurious "already up to date").
+		bool any_material_shader_dirty() const;
 
 		// Grid rendering
 		void set_grid_visible(bool visible) { m_grid_visible = visible; }
@@ -382,6 +385,12 @@ namespace vortex::graphics::dx12
 		// Custom per-material shaders: material_id -> its compiled PSO + source .hlsl + last-seen mtime (hot-reload).
 		struct CustomShader { ComPtr<ID3D12PipelineState> pso; std::wstring path; unsigned long long mtime{ 0 }; };
 		std::unordered_map<u32, CustomShader> m_custom_shaders;
+		// Shared PSO cache keyed by .hlsl PATH (not material id): many materials + repeated preview rebuilds reuse ONE
+		// compiled PSO, so an assigned shader recompiles only when its file's mtime changes (not every orbit frame).
+		// Also drives the hot-reload dirty check so the overlay only appears on a REAL change.
+		struct CachedPso { ComPtr<ID3D12PipelineState> pso; unsigned long long mtime{ 0 }; };
+		std::unordered_map<std::wstring, CachedPso> m_pso_cache;
+		ComPtr<ID3D12PipelineState> get_or_compile_pso(const std::wstring& hlsl_path);
 		DX12GridPipeline m_grid_pipeline;  // Grid rendering pipeline
 		DX12SkyboxPipeline m_skybox_pipeline; // Skybox rendering pipeline
 		DX12UpscalePipeline m_upscale;        // Fullscreen upscale (render-scale composite + the DLSS slot)

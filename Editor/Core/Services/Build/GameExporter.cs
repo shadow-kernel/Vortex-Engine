@@ -23,16 +23,19 @@ namespace Editor.Core.Services.Build
     /// </summary>
     public static class GameExporter
     {
-        public static ExportResult Export(string outputDir, Action<double, string> progress = null)
+        public static ExportResult Export(string outputDir, Action<double, string> progress = null, bool debug = false)
         {
             var project = ProjectData.Current;
             if (project == null) return Fail("No project is open.");
-            return ExportFromPath(project.Path, project.Name, outputDir, progress);
+            return ExportFromPath(project.Path, project.Name, outputDir, progress, debug);
         }
 
         /// <summary>Export a project by path. Used by Export() for the open project, and by build harnesses.
-        /// <paramref name="progress"/> (optional) reports (fraction 0..1, status text) for a build dialog.</summary>
-        public static ExportResult ExportFromPath(string projectRoot, string projectName, string outputDir, Action<double, string> progress = null)
+        /// <paramref name="progress"/> (optional) reports (fraction 0..1, status text) for a build dialog.
+        /// <paramref name="debug"/> = a DEBUG build: ship the project loose + as source with a debug marker so the
+        /// game boots with dev tooling (script + shader hot-reload, on-screen overlay) ON. Release (default) packs
+        /// everything into an opaque Assets.vpak and ships hot-reload OFF.</summary>
+        public static ExportResult ExportFromPath(string projectRoot, string projectName, string outputDir, Action<double, string> progress = null, bool debug = false)
         {
             Action<double, string> P = (f, s) => { try { progress?.Invoke(f, s); } catch { } };
             var sb = new StringBuilder();
@@ -61,53 +64,82 @@ namespace Editor.Core.Services.Build
                 int shaderCount = CopyShaders(outputDir);
                 sb.AppendLine("• Shaders: " + shaderCount + " files copied -> Shaders/");
 
-                // 2) Compile gameplay scripts -> a temp DLL (ships COMPILED, never as source).
-                P(0.22, "Compiling gameplay scripts…");
-                var tmpDll = Path.Combine(Path.GetTempPath(), "GameScripts_" + Guid.NewGuid().ToString("N") + ".dll");
-                string scriptLog;
-                bool scriptsOk = CompileScripts(projectRoot, tmpDll, out scriptLog);
-                sb.AppendLine(scriptsOk ? "• Scripts compiled OK -> GameScripts.dll" : "• SCRIPTS FAILED TO COMPILE");
-
-                // 3) BINARY ASSET PAK: pack the manifest + every asset (NOT .cs source) + the compiled DLL
-                //    into ONE opaque, compressed+obfuscated Assets.vpak. The shipped game has no readable or
-                //    editable asset files — the player decompresses it all into RAM at startup.
-                var entries = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, byte[]>>();
-                var manifest = Path.Combine(projectRoot, "project.vortex");
-                if (File.Exists(manifest))
-                    entries.Add(new System.Collections.Generic.KeyValuePair<string, byte[]>("project.vortex", File.ReadAllBytes(manifest)));
-
-                P(0.38, "Packing assets…");
-                var assetsSrc = Path.Combine(projectRoot, "Assets");
-                int assetCount = 0;
-                if (Directory.Exists(assetsSrc))
-                {
-                    var files = Directory.GetFiles(assetsSrc, "*", SearchOption.AllDirectories);
-                    for (int i = 0; i < files.Length; i++)
-                    {
-                        var f = files[i];
-                        if (Path.GetExtension(f).Equals(".cs", StringComparison.OrdinalIgnoreCase)) continue; // source -> compiled DLL
-                        var rel = "Assets/" + f.Substring(assetsSrc.Length).TrimStart('\\', '/').Replace('\\', '/');
-                        entries.Add(new System.Collections.Generic.KeyValuePair<string, byte[]>(rel, File.ReadAllBytes(f)));
-                        assetCount++;
-                        if ((i & 7) == 0 && files.Length > 0)
-                            P(0.38 + 0.45 * ((double)i / files.Length), "Packing assets… (" + assetCount + " files)");
-                    }
-                }
-                if (scriptsOk && File.Exists(tmpDll))
-                    entries.Add(new System.Collections.Generic.KeyValuePair<string, byte[]>("GameScripts.dll", File.ReadAllBytes(tmpDll)));
-                try { if (File.Exists(tmpDll)) File.Delete(tmpDll); } catch { }
-
-                P(0.86, "Writing Assets.vpak…");
-                VortexPak.Write(Path.Combine(outputDir, "Assets.vpak"), entries);
-                sb.AppendLine("• Packed " + assetCount + " assets + manifest + scripts -> Assets.vpak (compressed + obfuscated)");
-                P(0.93, "Finalizing…");
-
-                // 4) Player marker + a branded <Game>.exe entry point + README.
-                // The marker's presence makes the runtime boot straight into the game (no editor UI).
+                // 2) Package the project. DEBUG = loose + source (dev tooling / hot-reload ON); RELEASE = packed +
+                //    compiled + obfuscated (hot-reload OFF). The branded exe + README (below) are shared by both.
+                bool scriptsOk = true; string scriptLog = null;
                 const string exe = "Vortex Engine.exe";
-                File.WriteAllText(Path.Combine(outputDir, "player.vortex"),
-                    "{\"game\":\"" + (projectName ?? "Game").Replace("\"", "'") + "\",\"pak\":\"Assets.vpak\",\"scriptsDll\":\"GameScripts.dll\"}");
-                sb.AppendLine("• Player marker written (player.vortex)");
+                if (debug)
+                {
+                    // DEBUG export: ship the project LOOSE on disk (readable/editable) with SOURCE scripts + .hlsl
+                    // shaders and a debug marker, so the game boots with dev tooling ON — script + shader hot-reload
+                    // and the on-screen overlay work exactly like the editor's "external window" run. Nothing packed.
+                    P(0.22, "Validating gameplay scripts…");
+                    var tmpDllDbg = Path.Combine(Path.GetTempPath(), "GameScripts_" + Guid.NewGuid().ToString("N") + ".dll");
+                    scriptsOk = CompileScripts(projectRoot, tmpDllDbg, out scriptLog);   // validate only; ship as source
+                    try { if (File.Exists(tmpDllDbg)) File.Delete(tmpDllDbg); } catch { }
+                    sb.AppendLine(scriptsOk ? "• Scripts validated OK (shipped as source for hot-reload)" : "• SCRIPTS FAILED TO COMPILE");
+
+                    P(0.40, "Copying project (loose, editable)…");
+                    var manifestSrc = Path.Combine(projectRoot, "project.vortex");
+                    if (File.Exists(manifestSrc)) File.Copy(manifestSrc, Path.Combine(outputDir, "project.vortex"), true);
+                    int looseCount = 0;
+                    var assetsSrcDbg = Path.Combine(projectRoot, "Assets");
+                    if (Directory.Exists(assetsSrcDbg)) looseCount = CopyTree(assetsSrcDbg, Path.Combine(outputDir, "Assets"));
+                    sb.AppendLine("• Debug: copied project loose — " + looseCount + " files (source scripts + shaders included)");
+
+                    P(0.90, "Writing debug marker…");
+                    File.WriteAllText(Path.Combine(outputDir, "player.vortex"),
+                        "{\"game\":\"" + (projectName ?? "Game").Replace("\"", "'") + "\",\"debug\":true}");
+                    sb.AppendLine("• Player marker written (player.vortex, debug=true) — hot-reload ENABLED");
+                    P(0.93, "Finalizing…");
+                }
+                else
+                {
+                    // RELEASE export: compile scripts -> DLL (ships COMPILED, never as source).
+                    P(0.22, "Compiling gameplay scripts…");
+                    var tmpDll = Path.Combine(Path.GetTempPath(), "GameScripts_" + Guid.NewGuid().ToString("N") + ".dll");
+                    scriptsOk = CompileScripts(projectRoot, tmpDll, out scriptLog);
+                    sb.AppendLine(scriptsOk ? "• Scripts compiled OK -> GameScripts.dll" : "• SCRIPTS FAILED TO COMPILE");
+
+                    // BINARY ASSET PAK: pack the manifest + every asset (NOT .cs source) + the compiled DLL into ONE
+                    // opaque, compressed+obfuscated Assets.vpak. The shipped game has no readable or editable asset
+                    // files — the player decompresses it all into RAM at startup.
+                    var entries = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, byte[]>>();
+                    var manifest = Path.Combine(projectRoot, "project.vortex");
+                    if (File.Exists(manifest))
+                        entries.Add(new System.Collections.Generic.KeyValuePair<string, byte[]>("project.vortex", File.ReadAllBytes(manifest)));
+
+                    P(0.38, "Packing assets…");
+                    var assetsSrc = Path.Combine(projectRoot, "Assets");
+                    int assetCount = 0;
+                    if (Directory.Exists(assetsSrc))
+                    {
+                        var files = Directory.GetFiles(assetsSrc, "*", SearchOption.AllDirectories);
+                        for (int i = 0; i < files.Length; i++)
+                        {
+                            var f = files[i];
+                            if (Path.GetExtension(f).Equals(".cs", StringComparison.OrdinalIgnoreCase)) continue; // source -> compiled DLL
+                            var rel = "Assets/" + f.Substring(assetsSrc.Length).TrimStart('\\', '/').Replace('\\', '/');
+                            entries.Add(new System.Collections.Generic.KeyValuePair<string, byte[]>(rel, File.ReadAllBytes(f)));
+                            assetCount++;
+                            if ((i & 7) == 0 && files.Length > 0)
+                                P(0.38 + 0.45 * ((double)i / files.Length), "Packing assets… (" + assetCount + " files)");
+                        }
+                    }
+                    if (scriptsOk && File.Exists(tmpDll))
+                        entries.Add(new System.Collections.Generic.KeyValuePair<string, byte[]>("GameScripts.dll", File.ReadAllBytes(tmpDll)));
+                    try { if (File.Exists(tmpDll)) File.Delete(tmpDll); } catch { }
+
+                    P(0.86, "Writing Assets.vpak…");
+                    VortexPak.Write(Path.Combine(outputDir, "Assets.vpak"), entries);
+                    sb.AppendLine("• Packed " + assetCount + " assets + manifest + scripts -> Assets.vpak (compressed + obfuscated)");
+                    P(0.93, "Finalizing…");
+
+                    // Player marker: its presence makes the runtime boot straight into the game (no editor UI).
+                    File.WriteAllText(Path.Combine(outputDir, "player.vortex"),
+                        "{\"game\":\"" + (projectName ?? "Game").Replace("\"", "'") + "\",\"pak\":\"Assets.vpak\",\"scriptsDll\":\"GameScripts.dll\"}");
+                    sb.AppendLine("• Player marker written (player.vortex)");
+                }
 
                 try
                 {
@@ -127,11 +159,16 @@ namespace Editor.Core.Services.Build
                 catch { }
 
                 File.WriteAllText(Path.Combine(outputDir, "README.txt"),
-                    "Vortex Engine — exported game: " + projectName + "\r\n" +
+                    "Vortex Engine — exported game: " + projectName + (debug ? "  [DEBUG BUILD]" : "  [RELEASE BUILD]") + "\r\n" +
                     "Created " + DateTime.Now + "\r\n\r\n" +
-                    "Double-click '" + name + ".exe' to play (boots straight into the game — no editor).\r\n" +
-                    "All assets + the compiled gameplay code are packed into Assets.vpak (one opaque binary,\r\n" +
-                    "decompressed into RAM at startup). There are no readable/editable source files in this folder.\r\n");
+                    "Double-click '" + name + ".exe' to play (boots straight into the game — no editor).\r\n\r\n" +
+                    (debug
+                        ? "DEBUG build: assets + scripts + shaders ship LOOSE and editable next to the exe. Dev tooling is\r\n" +
+                          "ON — edit a script or a shader (.hlsl), save, then Alt-Tab back to the game window and your\r\n" +
+                          "change hot-reloads live (with an on-screen status overlay). Do NOT distribute a debug build.\r\n"
+                        : "RELEASE build: all assets + the compiled gameplay code are packed into Assets.vpak (one opaque\r\n" +
+                          "binary, decompressed into RAM at startup). No readable/editable source files, and no dev\r\n" +
+                          "hot-reload tooling — this is the build to ship.\r\n"));
 
                 P(1.0, "Done");
                 if (!scriptsOk)
@@ -220,6 +257,25 @@ namespace Editor.Core.Services.Build
                 {
                     try { File.Copy(f, Path.Combine(outDir, Path.GetFileName(f)), true); n++; } catch { }
                 }
+            }
+            return n;
+        }
+
+        /// <summary>Recursively copy a directory tree (skipping build caches), returning the file count. Used by the
+        /// DEBUG export to ship the project loose + editable.</summary>
+        private static int CopyTree(string src, string dst)
+        {
+            int n = 0;
+            Directory.CreateDirectory(dst);
+            foreach (var f in Directory.GetFiles(src))
+            {
+                try { File.Copy(f, Path.Combine(dst, Path.GetFileName(f)), true); n++; } catch { }
+            }
+            foreach (var d in Directory.GetDirectories(src))
+            {
+                var nm = Path.GetFileName(d);
+                if (nm == "obj" || nm == "bin" || nm == ".vs") continue;
+                n += CopyTree(d, Path.Combine(dst, nm));
             }
             return n;
         }

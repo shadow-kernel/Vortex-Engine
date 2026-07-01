@@ -217,6 +217,9 @@ EDITOR_INTERFACE bool MaterialHasTexture(id::id_type material_id)
 
 EDITOR_INTERFACE void DestroyMaterial(id::id_type material_id)
 {
+	// Also drop any per-material custom-shader binding so throwaway preview materials (rebuilt every orbit frame in
+	// the Material Editor) don't accumulate stale entries. The shared PSO cache keeps the compiled shader alive.
+	graphics::dx12::DX12Renderer::instance().set_material_shader((uint32_t)material_id, L"");
 	graphics::ResourceRegistry::instance().destroy_material(material_id);
 }
 

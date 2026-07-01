@@ -173,24 +173,39 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
         {
             var project = ProjectData.Current;
             if (project == null) { MessageBox.Show("Open a project first.", "Export", MessageBoxButton.OK, MessageBoxImage.Information); return; }
-            var outDir = System.IO.Path.Combine(project.Path, "Build", project.Name);
-            var msg = "Export Game packages a runnable build into:\n  " + outDir +
-                      "\n\nIt copies the engine runtime + all Assets, compiles your gameplay scripts, and writes a launcher.\n\nExport now?";
-            if (MessageBox.Show(msg, "Export Game", MessageBoxButton.YesNo, MessageBoxImage.Information) == MessageBoxResult.Yes)
-                ExportGame(open: true);
+            var choice = AskBuildType();
+            if (choice == null) return;
+            ExportGame(open: true, debug: choice.Value);
         }
 
-        /// <summary>Exports the current project to &lt;project&gt;/Build/&lt;name&gt; via GameExporter. Returns the output dir or null.</summary>
-        private string ExportGame(bool open)
+        /// <summary>Ask which build to produce. Returns true=DEBUG, false=RELEASE, null=cancel.
+        /// DEBUG ships loose + editable source/shaders with dev hot-reload ON (test only); RELEASE packs everything
+        /// into an opaque pak with hot-reload OFF (the build to ship).</summary>
+        private static bool? AskBuildType()
+        {
+            var res = MessageBox.Show(
+                "Choose the build type:\n\n" +
+                "YES  =  RELEASE  —  packed + obfuscated, no source, hot-reload OFF.  This is the build to ship.\n\n" +
+                "NO   =  DEBUG    —  loose + editable scripts/shaders, hot-reload ON.  For testing — don't distribute.\n\n" +
+                "Cancel to abort.",
+                "Export Game — build type", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
+            if (res == MessageBoxResult.Yes) return false;   // release
+            if (res == MessageBoxResult.No) return true;     // debug
+            return null;                                      // cancel
+        }
+
+        /// <summary>Exports the current project to &lt;project&gt;/Build/&lt;name&gt;[-Debug] via GameExporter. Returns the output dir or null.</summary>
+        private string ExportGame(bool open, bool debug = false)
         {
             var project = ProjectData.Current;
             if (project == null) { MessageBox.Show("Open a project first.", "Export", MessageBoxButton.OK, MessageBoxImage.Information); return null; }
-            var outDir = System.IO.Path.Combine(project.Path, "Build", project.Name);
+            // Debug builds go to a separate folder so they never overwrite the shippable release build.
+            var outDir = System.IO.Path.Combine(project.Path, "Build", project.Name + (debug ? "-Debug" : ""));
             string projPath = project.Path, projName = project.Name;
 
             // Run the export on a BACKGROUND thread behind a modal progress dialog. ShowDialog() pumps messages, so
             // the bar animates live (the export only touches files + the compiler — no UI state — so it's thread-safe).
-            var dlg = new BuildProgressDialog("Building " + (projName ?? "game"));
+            var dlg = new BuildProgressDialog("Building " + (projName ?? "game") + (debug ? " — Debug" : " — Release"));
             var owner = Window.GetWindow(this);
             if (owner != null && owner.IsVisible) dlg.Owner = owner;
 
@@ -198,7 +213,7 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
             var task = System.Threading.Tasks.Task.Run(() =>
             {
                 r = Editor.Core.Services.Build.GameExporter.ExportFromPath(projPath, projName, outDir,
-                    (frac, status) => { try { dlg.Dispatcher.BeginInvoke(new Action(() => dlg.Report(frac, status))); } catch { } });
+                    (frac, status) => { try { dlg.Dispatcher.BeginInvoke(new Action(() => dlg.Report(frac, status))); } catch { } }, debug);
             });
             task.ContinueWith(_ => { try { dlg.Dispatcher.BeginInvoke(new Action(() => dlg.Done())); } catch { } });
             dlg.ShowDialog();   // blocks until the export completes and Done() closes the dialog
@@ -208,7 +223,7 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
                 MessageBox.Show(r != null ? r.Message : "Export failed.", "Export — problem", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return null;
             }
-            if (open && MessageBox.Show("Game exported (scripts compiled OK) to:\n" + r.OutputDir + "\n\nOpen the folder?",
+            if (open && MessageBox.Show((debug ? "DEBUG build (hot-reload ON)" : "RELEASE build") + " exported to:\n" + r.OutputDir + "\n\nOpen the folder?",
                     "Export complete", MessageBoxButton.YesNo, MessageBoxImage.Information) == MessageBoxResult.Yes)
                 try { System.Diagnostics.Process.Start("explorer.exe", "\"" + r.OutputDir + "\""); } catch { }
             return r.OutputDir;
@@ -236,12 +251,16 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
 
         private void Build_Click(object sender, RoutedEventArgs e)
         {
-            ExportGame(open: true);
+            var choice = AskBuildType();
+            if (choice == null) return;
+            ExportGame(open: true, debug: choice.Value);
         }
 
         private void BuildAndRun_Click(object sender, RoutedEventArgs e)
         {
-            var outDir = ExportGame(open: false);
+            var choice = AskBuildType();
+            if (choice == null) return;
+            var outDir = ExportGame(open: false, debug: choice.Value);
             if (outDir == null) return;
             // Launch the produced .cmd launcher. (A chrome-less standalone player is the documented next step;
             // for now this opens the project in the Vortex player from the exported folder.)

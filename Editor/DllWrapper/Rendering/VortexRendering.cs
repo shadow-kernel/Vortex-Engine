@@ -122,6 +122,7 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "FrameGenPresentedFps")] private static extern int FrameGenPresentedFpsNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SetMaterialShader", CharSet = CharSet.Ansi)] private static extern void SetMaterialShaderNative(int materialId, string hlslPath);
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "ReloadMaterialShaders")] private static extern int ReloadMaterialShadersNative();
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "AnyMaterialShaderDirty")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool AnyMaterialShaderDirtyNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GpuVendorId")] private static extern int GpuVendorIdNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GpuSupportsDlss")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool GpuSupportsDlssNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GpuName")] private static extern int GpuNameNative(byte[] buf, int cap);
@@ -169,6 +170,7 @@ namespace Editor.DllWrapper
         public static void SetMaterialShader(int materialId, string hlslPath) { try { SetMaterialShaderNative(materialId, hlslPath ?? ""); } catch { } }
         /// <summary>Recompile any custom material shader whose .hlsl changed on disk (hot-reload). Returns how many were recompiled (0 = nothing changed).</summary>
         public static int ReloadMaterialShaders() { try { return ReloadMaterialShadersNative(); } catch { return 0; } }
+        public static bool AnyMaterialShaderDirty() { try { return AnyMaterialShaderDirtyNative(); } catch { return false; } }
         public static float GetRenderScale() { try { return GetRenderScaleNative(); } catch { return 1f; } }
         /// <summary>GPU vendor id (0x10DE NVIDIA, 0x1002 AMD, 0x8086 Intel) of the selected adapter.</summary>
         public static int GpuVendorId() { try { return GpuVendorIdNative(); } catch { return 0; } }

@@ -243,6 +243,14 @@ namespace Editor.Scripting
         /// <summary>First compiler error line when LastReloadOutcome == CompileError (shown in the overlay).</summary>
         public string LastReloadError { get; private set; }
 
+        /// <summary>Cheap (no-compile) check: has any script been saved since the last (re)build? Used so the
+        /// hot-reload overlay only appears when there's a REAL change to apply.</summary>
+        public bool ScriptsChanged()
+        {
+            if (PrecompiledAssembly != null || _currentScene == null) return false;
+            return LatestScriptWrite() > _lastScriptWrite;
+        }
+
         public bool ReloadScripts()
         {
             LastReloadOutcome = ReloadOutcome.Unchanged;

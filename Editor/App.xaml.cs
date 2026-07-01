@@ -104,7 +104,21 @@ namespace Editor
             {
                 splash.SetProgress(0.10, "Starting engine…");
                 DllWrapper.VortexAPI.InitEngineRuntime();
-                Editor.Core.Services.PlayModeService.Instance.IsReleaseMode = true;       // shipped game: no dev banner
+                // A DEBUG export writes {"debug":true} into player.vortex and ships the project LOOSE (no pak). That
+                // keeps dev tooling ON: script + shader hot-reload + the on-screen overlay. A RELEASE export packs
+                // everything and omits the flag -> IsReleaseMode true -> hot-reload OFF.
+                bool debugExport = false;
+                try
+                {
+                    var marker = System.IO.Path.Combine(exeDir, "player.vortex");
+                    if (System.IO.File.Exists(marker))
+                    {
+                        var mk = System.IO.File.ReadAllText(marker).Replace(" ", "");
+                        if (mk.IndexOf("\"debug\":true", StringComparison.OrdinalIgnoreCase) >= 0) debugExport = true;
+                    }
+                }
+                catch { }
+                Editor.Core.Services.PlayModeService.Instance.IsReleaseMode = !debugExport;  // release: no dev tooling
                 try { Editor.Core.Services.EditorViewportService.Instance.AreGizmosVisible = false; } catch { } // no editor gizmos/icons in the game
 
                 // Mount the binary asset pak INTO RAM (assets + manifest + compiled scripts, decompressed) so
@@ -405,9 +419,20 @@ namespace Editor
                 // Hot-reload (scripts + shaders), DEFERRED by one frame: on focus we show a "Hot-reloading…" overlay
                 // THIS frame, then do the actual (synchronous) recompile NEXT frame — so the overlay stays on screen
                 // during the brief compile freeze and you can tell it's working, not hanging. Then the ✓/✗ result shows.
-                if (DllWrapper.VortexAPI.GameHostConsumeFocusGained())
+                // Dev-only: a RELEASE export must NOT hot-reload or show the overlay (it ships without source/shaders to
+                // recompile). IsReleaseMode is true for shipped/release-exported games, false for --project (dev) runs.
+                if (!Editor.Core.Services.PlayModeService.Instance.IsReleaseMode
+                    && DllWrapper.VortexAPI.GameHostConsumeFocusGained())
                 {
-                    _reloadPending = true; _hotReloadState = 0; _hotReloadMsg = "Hot-reloading…"; _hotReloadAt = DateTime.UtcNow;
+                    // Only surface the overlay when something ACTUALLY changed on disk (cheap no-compile checks) —
+                    // re-focusing with no edits must stay silent (no "already up to date" flash).
+                    bool shadersDirty = false, scriptsDirty = false;
+                    try { shadersDirty = DllWrapper.VortexAPI.AnyMaterialShaderDirty(); } catch { }
+                    try { scriptsDirty = sr.ScriptsChanged(); } catch { }
+                    if (shadersDirty || scriptsDirty)
+                    {
+                        _reloadPending = true; _hotReloadState = 0; _hotReloadMsg = "Hot-reloading…"; _hotReloadAt = DateTime.UtcNow;
+                    }
                 }
                 else if (_reloadPending)
                 {
@@ -425,7 +450,7 @@ namespace Editor
 
                     if (error) { _hotReloadState = 2; _hotReloadMsg = errMsg ?? "compile error"; GHLog("hot-reload FAILED: " + errMsg); }
                     else if (parts.Count > 0) { _hotReloadState = 1; _hotReloadMsg = string.Join(" + ", parts); GHLog("hot-reloaded: " + _hotReloadMsg); }
-                    else { _hotReloadState = 1; _hotReloadMsg = "Already up to date"; }
+                    else { _hotReloadState = -1; }   // nothing recompiled after all -> just hide the overlay silently
                     _hotReloadAt = DateTime.UtcNow;
                 }
 

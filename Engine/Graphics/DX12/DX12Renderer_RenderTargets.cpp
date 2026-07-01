@@ -208,7 +208,12 @@ namespace vortex::graphics::dx12
 		// Render 3D objects
 		if (!m_render_queue.empty())
 		{
-			m_command_list->SetPipelineState(m_wireframe_mode ? m_pipeline_3d.wireframe_pso() : m_pipeline_3d.pipeline_state());
+			// Custom per-material shaders (assigned .hlsl) must show in previews too — so the Material Editor sphere
+			// and the Asset Browser material thumbnail match the scene. Bind the default PBR PSO up front, then swap
+			// to a material's custom PSO per object (guarded so we only call SetPipelineState when it actually changes).
+			ID3D12PipelineState* default_pso = m_wireframe_mode ? m_pipeline_3d.wireframe_pso() : m_pipeline_3d.pipeline_state();
+			m_command_list->SetPipelineState(default_pso);
+			ID3D12PipelineState* cur_pso = default_pso;
 			m_command_list->SetGraphicsRootSignature(m_pipeline_3d.root_signature());
 			m_command_list->SetGraphicsRootConstantBufferView(0, m_per_frame_cb->GetGPUVirtualAddress());
 			m_command_list->SetGraphicsRootConstantBufferView(2, m_light_cb->GetGPUVirtualAddress()); // point/spot lights
@@ -235,6 +240,14 @@ namespace vortex::graphics::dx12
 				// Full PBR material + textures (matches render_3d_scene) so previews show the REAL material, not a
 				// flat base color.
 				auto* mat = reg.get_material(item.material_id);
+				// A compiled custom per-material shader overrides the built-in PSO for THIS object (mirrors
+				// render_3d_scene). Objects without one fall back to the default PBR PSO bound above.
+				{
+					ID3D12PipelineState* want_pso = default_pso;
+					auto csit = m_custom_shaders.find((u32)item.material_id);
+					if (csit != m_custom_shaders.end() && csit->second.pso) want_pso = csit->second.pso.Get();
+					if (want_pso != cur_pso) { m_command_list->SetPipelineState(want_pso); cur_pso = want_pso; }
+				}
 				if (mat)
 				{
 					const auto& props = mat->properties();

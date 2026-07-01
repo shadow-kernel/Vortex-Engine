@@ -25,6 +25,25 @@ namespace Editor
             SetupGlobalKeyboardShortcuts();
             Loaded += OnMainWindowLoaded;
             Closing += OnWindowClosing;
+            Activated += OnEditorActivated;
+        }
+
+        /// <summary>Editor-side shader hot-reload: Alt-Tab back to the editor after saving an .hlsl in VS and any
+        /// changed material shader is recompiled so the SCENE VIEWPORT and the ASSET BROWSER material thumbnails
+        /// update live. Gated by a cheap dirty-check so re-focusing with no edits does nothing (no flicker).</summary>
+        private void OnEditorActivated(object sender, EventArgs e)
+        {
+            try
+            {
+                if (ProjectData.Current == null) return;
+                if (!DllWrapper.VortexAPI.AnyMaterialShaderDirty()) return;
+                int n = DllWrapper.VortexAPI.ReloadMaterialShaders();   // recompile + re-point cached scene/thumb materials
+                if (n <= 0) return;
+                Editor.Editors.WorldEditor.Components.AssetBrowser.AssetBrowserView.InvalidateMaterialThumbnails();
+                try { Editor.Editors.WorldEditor.Components.FileExplorer.Services.FileExplorerService.Instance.RefreshCurrentFolderContents(); } catch { }
+                ShowToast(n == 1 ? "1 shader hot-reloaded" : n + " shaders hot-reloaded");
+            }
+            catch { }
         }
 
         private void SetupGlobalKeyboardShortcuts()

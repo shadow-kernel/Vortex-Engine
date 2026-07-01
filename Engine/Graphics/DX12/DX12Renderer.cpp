@@ -388,33 +388,67 @@ namespace vortex::graphics::dx12
 		return ((unsigned long long)d.ftLastWriteTime.dwHighDateTime << 32) | d.ftLastWriteTime.dwLowDateTime;
 	}
 
+	// Compile a .hlsl into a PSO ONCE per (path, mtime) and cache it. Repeated calls with the same up-to-date file
+	// return the cached PSO with no recompile — this is what stops the Material Editor preview from re-running fxc on
+	// every orbit frame. A compile failure keeps the last-good cached PSO (never black).
+	ComPtr<ID3D12PipelineState> DX12Renderer::get_or_compile_pso(const std::wstring& hlsl_path)
+	{
+		if (hlsl_path.empty()) return nullptr;
+		unsigned long long mt = shader_file_mtime(hlsl_path);
+		auto it = m_pso_cache.find(hlsl_path);
+		if (it != m_pso_cache.end() && it->second.pso && it->second.mtime == mt)
+			return it->second.pso;                                 // cached + up-to-date -> no recompile
+		if (it != m_pso_cache.end() && it->second.pso)
+			m_command_queue.flush();                               // GPU-idle before swapping an in-use PSO
+		auto pso = m_pipeline_3d.create_custom_pso(DX12Core::instance().device(), hlsl_path);
+		auto& e = m_pso_cache[hlsl_path];
+		e.mtime = mt;
+		if (pso) e.pso = pso;                                      // else keep last-good (or nullptr -> built-in)
+		return e.pso;
+	}
+
 	void DX12Renderer::set_material_shader(u32 material_id, const std::wstring& hlsl_path)
 	{
 		if (hlsl_path.empty()) { m_custom_shaders.erase(material_id); return; }   // revert to built-in
-		auto pso = m_pipeline_3d.create_custom_pso(DX12Core::instance().device(), hlsl_path);
 		auto& e = m_custom_shaders[material_id];
 		e.path = hlsl_path;
+		e.pso = get_or_compile_pso(hlsl_path);   // shared cache: recompiles only if the file changed
 		e.mtime = shader_file_mtime(hlsl_path);
-		if (pso) e.pso = pso;   // compile fail -> keep whatever we had (nullptr -> the 3D pass uses the built-in PSO)
 	}
 
 	int DX12Renderer::reload_dirty_shaders()
 	{
-		if (m_custom_shaders.empty()) return 0;
-		bool idled = false;
-		int reloaded = 0;
+		if (m_pso_cache.empty()) return 0;
+		// Recompile each distinct .hlsl whose file changed (the cache is keyed by path, so shared shaders compile once).
+		int changed = 0;
+		for (auto& kv : m_pso_cache)
+		{
+			unsigned long long mt = shader_file_mtime(kv.first);
+			if (mt == 0ull || mt == kv.second.mtime) continue;     // unchanged
+			m_command_queue.flush();                               // GPU-idle before swapping in-use PSOs
+			auto pso = m_pipeline_3d.create_custom_pso(DX12Core::instance().device(), kv.first);
+			kv.second.mtime = mt;
+			if (pso) { kv.second.pso = pso; ++changed; }           // keep old PSO on compile failure -> never black
+		}
+		if (changed == 0) return 0;
+		// Re-point every live material to its refreshed cached PSO.
 		for (auto& kv : m_custom_shaders)
 		{
-			auto& e = kv.second;
-			if (e.path.empty()) continue;
-			unsigned long long mt = shader_file_mtime(e.path);
-			if (mt == 0ull || mt == e.mtime) continue;             // unchanged since last build
-			e.mtime = mt;
-			if (!idled) { m_command_queue.flush(); idled = true; } // GPU-idle before swapping in-use PSOs
-			auto pso = m_pipeline_3d.create_custom_pso(DX12Core::instance().device(), e.path);
-			if (pso) { e.pso = pso; ++reloaded; }                  // keep the old PSO on compile failure -> never black
+			if (kv.second.path.empty()) continue;
+			auto it = m_pso_cache.find(kv.second.path);
+			if (it != m_pso_cache.end()) { kv.second.pso = it->second.pso; kv.second.mtime = it->second.mtime; }
 		}
-		return reloaded;
+		return changed;
+	}
+
+	bool DX12Renderer::any_material_shader_dirty() const
+	{
+		for (auto& kv : m_pso_cache)
+		{
+			unsigned long long mt = shader_file_mtime(kv.first);
+			if (mt != 0ull && mt != kv.second.mtime) return true;
+		}
+		return false;
 	}
 
 	void DX12Renderer::render_frame()

@@ -52,10 +52,21 @@
     <ClInclude Include="Common\VortexAssert.h" />
     <ClInclude Include="Graphics\DX12\DX12SkyboxPipeline.h" />
     <ClInclude Include="Components\Skybox.h" />
+    <ClInclude Include="Graphics\DX12\DX12MotionVectorPipeline.h" />
+    <ClInclude Include="Graphics\DX12\DX12Renderer_Internal.h" />
+    <ClInclude Include="Graphics\DX12\DX12ShaderCompiler.h" />
+    <ClInclude Include="Graphics\DX12\DX12Streamline.h" />
+    <ClInclude Include="Graphics\DX12\DX12UpscalePipeline.h" />
+    <ClInclude Include="Graphics\DX12\UIOverlay.h" />
+    <ClInclude Include="Graphics\Geometry\MeshDecimator.h" />
+    <ClInclude Include="Graphics\Importers\ModelImporter_Internal.h" />
+    <ClInclude Include="Graphics\Resources\ResourceRegistry_Internal.h" />
+    <ClInclude Include="Runtime\GameHost.h" />
+    <ClInclude Include="Common\Id.h" />
+    <ClInclude Include="Components\Entity.h" />
+    <ClInclude Include="ThirdParty\stb_image.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="Common\Id.h" />
-    <ClCompile Include="Components\Entity.h" />
     <ClCompile Include="Components\Entity.cpp" />
     <ClCompile Include="Components\Transform.cpp" />
     <ClCompile Include="Runtime\SceneManager.cpp" />
@@ -97,5 +108,35 @@
     <ClCompile Include="Graphics\DX12\DX12SkyboxPipeline.cpp" />
     <ClCompile Include="Components\Skybox.cpp" />
     <ClCompile Include="Graphics\DX12\DX12GridPipeline.cpp" />
+    <ClCompile Include="Graphics\DX12\DX12MotionVectorPipeline.cpp" />
+    <ClCompile Include="Graphics\DX12\DX12Renderer_Queue.cpp" />
+    <ClCompile Include="Graphics\DX12\DX12Renderer_3DScene.cpp" />
+    <ClCompile Include="Graphics\DX12\DX12Renderer_Grid.cpp" />
+    <ClCompile Include="Graphics\DX12\DX12Renderer_Init.cpp" />
+    <ClCompile Include="Graphics\DX12\DX12Renderer_Skybox.cpp" />
+    <ClCompile Include="Graphics\DX12\DX12Renderer_Lights.cpp" />
+    <ClCompile Include="Graphics\DX12\DX12Renderer_RenderTargets.cpp" />
+    <ClCompile Include="Graphics\DX12\UIOverlay.cpp" />
+    <ClCompile Include="Graphics\DX12\DX12ShaderCompiler.cpp" />
+    <ClCompile Include="Graphics\DX12\DX12Streamline.cpp" />
+    <ClCompile Include="Graphics\DX12\DX12UpscalePipeline.cpp" />
+    <ClCompile Include="Graphics\Geometry\MeshDecimator.cpp" />
+    <ClCompile Include="Graphics\Importers\ModelImporter_Process.cpp" />
+    <ClCompile Include="Graphics\Resources\ResourceRegistry_Textures.cpp" />
+    <ClCompile Include="Graphics\Resources\ResourceRegistry_Materials.cpp" />
+    <ClCompile Include="Graphics\Resources\ResourceRegistry_Import.cpp" />
+    <ClCompile Include="Graphics\Resources\ResourceRegistry_Lod.cpp" />
+    <ClCompile Include="Runtime\GameHost.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <FxCompile Include="Shaders\basic.hlsl" />
+    <FxCompile Include="Shaders\grid.hlsl" />
+    <FxCompile Include="Shaders\motionvector.hlsl" />
+    <FxCompile Include="Shaders\skybox.hlsl" />
+    <FxCompile Include="Shaders\standard.hlsl" />
+    <FxCompile Include="Shaders\upscale.hlsl" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="packages.config" />
   </ItemGroup>
 </Project>

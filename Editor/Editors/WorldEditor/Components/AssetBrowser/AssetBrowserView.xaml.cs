@@ -1927,6 +1927,37 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
         private static readonly Dictionary<string, ImageSource> _thumbCache = new Dictionary<string, ImageSource>();
         private static long _defaultThumbMat = -1;
 
+        /// <summary>Last-write time (ticks) of a .vmat's assigned custom shader (.hlsl), or 0 if none. Folded into the
+        /// material thumbnail cache key so editing the shader invalidates the cached sphere (Explorer hot-reload).</summary>
+        private static long ShaderStampFor(string vmatPath)
+        {
+            try
+            {
+                var vm = Editor.Core.Assets.VortexMaterial.Load(vmatPath);
+                var sa = vm?.ShaderAsset;
+                if (string.IsNullOrEmpty(sa)) return 0;
+                string proj = Editor.Core.Data.ProjectData.Current?.Path ?? "";
+                string full = System.IO.Path.IsPathRooted(sa) ? sa : System.IO.Path.Combine(proj, sa);
+                if (!full.EndsWith(".hlsl", StringComparison.OrdinalIgnoreCase))
+                    full = System.IO.Path.ChangeExtension(full, ".hlsl");
+                return System.IO.File.Exists(full) ? System.IO.File.GetLastWriteTimeUtc(full).Ticks : 0;
+            }
+            catch { return 0; }
+        }
+
+        /// <summary>Drop cached material spheres so they re-render with a recompiled custom shader. Called by the editor
+        /// when material shaders hot-reload (Alt-Tab back after saving an .hlsl in VS).</summary>
+        public static void InvalidateMaterialThumbnails()
+        {
+            try
+            {
+                var stale = new System.Collections.Generic.List<string>();
+                foreach (var k in _thumbCache.Keys) if (k.StartsWith("mat:", StringComparison.Ordinal)) stale.Add(k);
+                foreach (var k in stale) _thumbCache.Remove(k);
+            }
+            catch { }
+        }
+
         [DllImport("kernel32.dll", EntryPoint = "CopyMemory", SetLastError = false)]
         private static extern void CopyMemory(IntPtr dest, IntPtr src, int count);
 
@@ -2083,9 +2114,10 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
         private static ImageSource GetOrBuildMaterialThumb(string vmatPath)
         {
             if (string.IsNullOrEmpty(vmatPath) || !System.IO.File.Exists(vmatPath)) return null;
-            // Key includes the last-write time so editing the material re-renders the sphere (not a stale icon).
+            // Key folds in BOTH the .vmat's mtime AND its assigned custom shader (.hlsl) mtime, so editing the
+            // material OR its shader re-renders the sphere (not a stale icon) — the Explorer's shader hot-reload.
             string key;
-            try { key = "mat:" + vmatPath + ":" + System.IO.File.GetLastWriteTimeUtc(vmatPath).Ticks; }
+            try { key = "mat:" + vmatPath + ":" + System.IO.File.GetLastWriteTimeUtc(vmatPath).Ticks + ":" + ShaderStampFor(vmatPath); }
             catch { key = "mat:" + vmatPath; }
             if (_thumbCache.TryGetValue(key, out var cached)) return cached;
             try
