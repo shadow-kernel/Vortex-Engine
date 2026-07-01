@@ -169,33 +169,22 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
             }
         }
 
-        private void BuildSettings_Click(object sender, RoutedEventArgs e)
+        private void BuildSettings_Click(object sender, RoutedEventArgs e) => RunExport();
+
+        /// <summary>Show the Export options dialog (Release/Debug + open-folder / run-after), then export accordingly.</summary>
+        private void RunExport(bool defaultRun = false)
         {
             var project = ProjectData.Current;
             if (project == null) { MessageBox.Show("Open a project first.", "Export", MessageBoxButton.OK, MessageBoxImage.Information); return; }
-            var choice = AskBuildType();
-            if (choice == null) return;
-            ExportGame(open: true, debug: choice.Value);
-        }
-
-        /// <summary>Ask which build to produce. Returns true=DEBUG, false=RELEASE, null=cancel.
-        /// DEBUG ships loose + editable source/shaders with dev hot-reload ON (test only); RELEASE packs everything
-        /// into an opaque pak with hot-reload OFF (the build to ship).</summary>
-        private static bool? AskBuildType()
-        {
-            var res = MessageBox.Show(
-                "Choose the build type:\n\n" +
-                "YES  =  RELEASE  —  packed + obfuscated, no source, hot-reload OFF.  This is the build to ship.\n\n" +
-                "NO   =  DEBUG    —  loose + editable scripts/shaders, hot-reload ON.  For testing — don't distribute.\n\n" +
-                "Cancel to abort.",
-                "Export Game — build type", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
-            if (res == MessageBoxResult.Yes) return false;   // release
-            if (res == MessageBoxResult.No) return true;     // debug
-            return null;                                      // cancel
+            var opts = new Editor.Dialogs.ExportDialog(project.Name, defaultRun);
+            var owner = Window.GetWindow(this);
+            if (owner != null && owner.IsVisible) opts.Owner = owner;
+            if (opts.ShowDialog() != true) return;
+            ExportGame(opts.OpenFolder, opts.IsDebug, opts.RunAfter);
         }
 
         /// <summary>Exports the current project to &lt;project&gt;/Build/&lt;name&gt;[-Debug] via GameExporter. Returns the output dir or null.</summary>
-        private string ExportGame(bool open, bool debug = false)
+        private string ExportGame(bool openFolder, bool debug, bool run)
         {
             var project = ProjectData.Current;
             if (project == null) { MessageBox.Show("Open a project first.", "Export", MessageBoxButton.OK, MessageBoxImage.Information); return null; }
@@ -223,10 +212,26 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
                 MessageBox.Show(r != null ? r.Message : "Export failed.", "Export — problem", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return null;
             }
-            if (open && MessageBox.Show((debug ? "DEBUG build (hot-reload ON)" : "RELEASE build") + " exported to:\n" + r.OutputDir + "\n\nOpen the folder?",
-                    "Export complete", MessageBoxButton.YesNo, MessageBoxImage.Information) == MessageBoxResult.Yes)
-                try { System.Diagnostics.Process.Start("explorer.exe", "\"" + r.OutputDir + "\""); } catch { }
+            if (run) LaunchBuild(r.OutputDir);
+            if (openFolder) try { System.Diagnostics.Process.Start("explorer.exe", "\"" + r.OutputDir + "\""); } catch { }
             return r.OutputDir;
+        }
+
+        /// <summary>Launch the branded game exe produced by the export.</summary>
+        private static void LaunchBuild(string outDir)
+        {
+            try
+            {
+                var exes = System.IO.Directory.GetFiles(outDir, "*.exe");
+                string exe = null;   // prefer the branded <Name>.exe over the generic engine exe
+                foreach (var f in exes) { if (!System.IO.Path.GetFileName(f).Equals("Vortex Engine.exe", StringComparison.OrdinalIgnoreCase)) { exe = f; break; } }
+                if (exe == null && exes.Length > 0) exe = exes[0];
+                if (exe != null)
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe) { UseShellExecute = true, WorkingDirectory = outDir });
+                else
+                    System.Diagnostics.Process.Start("explorer.exe", "\"" + outDir + "\"");
+            }
+            catch (Exception ex) { MessageBox.Show("Could not launch: " + ex.Message, "Run", MessageBoxButton.OK, MessageBoxImage.Warning); }
         }
 
         private static Editor.Editors.WorldEditor.Components.Git.GitWindow _gitWindow;
@@ -249,31 +254,10 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
             }
         }
 
-        private void Build_Click(object sender, RoutedEventArgs e)
-        {
-            var choice = AskBuildType();
-            if (choice == null) return;
-            ExportGame(open: true, debug: choice.Value);
-        }
+        private void Build_Click(object sender, RoutedEventArgs e) => RunExport();
 
-        private void BuildAndRun_Click(object sender, RoutedEventArgs e)
-        {
-            var choice = AskBuildType();
-            if (choice == null) return;
-            var outDir = ExportGame(open: false, debug: choice.Value);
-            if (outDir == null) return;
-            // Launch the produced .cmd launcher. (A chrome-less standalone player is the documented next step;
-            // for now this opens the project in the Vortex player from the exported folder.)
-            try
-            {
-                var cmd = System.IO.Directory.GetFiles(outDir, "Play *.cmd");
-                if (cmd.Length > 0)
-                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(cmd[0]) { UseShellExecute = true, WorkingDirectory = outDir });
-                else
-                    System.Diagnostics.Process.Start("explorer.exe", "\"" + outDir + "\"");
-            }
-            catch (Exception ex) { MessageBox.Show("Could not launch: " + ex.Message, "Run", MessageBoxButton.OK, MessageBoxImage.Warning); }
-        }
+        // "Build & Run" opens the same dialog but with "Run after export" pre-checked.
+        private void BuildAndRun_Click(object sender, RoutedEventArgs e) => RunExport(defaultRun: true);
 
         private void Exit_Click(object sender, RoutedEventArgs e)
         {

@@ -28,20 +28,41 @@ namespace Editor
             Activated += OnEditorActivated;
         }
 
-        /// <summary>Editor-side shader hot-reload: Alt-Tab back to the editor after saving an .hlsl in VS and any
-        /// changed material shader is recompiled so the SCENE VIEWPORT and the ASSET BROWSER material thumbnails
-        /// update live. Gated by a cheap dirty-check so re-focusing with no edits does nothing (no flicker).</summary>
+        /// <summary>Editor-side hot-reload on focus (Alt-Tab back from VS): recompile changed material shaders (scene
+        /// viewport + Asset Browser thumbnails), AND — while the game is playing IN THE VIEWPORT — recompile + re-run
+        /// changed gameplay scripts. The blocking GameHost loop already does this for the external/standalone window;
+        /// this wires the same live hot-reload for the editor's own play modes ("world build" + viewport play), all
+        /// from the SAME project source you edit. Cheap dirty-checks so re-focusing with no edits does nothing.</summary>
         private void OnEditorActivated(object sender, EventArgs e)
         {
             try
             {
                 if (ProjectData.Current == null) return;
-                if (!DllWrapper.VortexAPI.AnyMaterialShaderDirty()) return;
-                int n = DllWrapper.VortexAPI.ReloadMaterialShaders();   // recompile + re-point cached scene/thumb materials
-                if (n <= 0) return;
-                Editor.Editors.WorldEditor.Components.AssetBrowser.AssetBrowserView.InvalidateMaterialThumbnails();
-                try { Editor.Editors.WorldEditor.Components.FileExplorer.Services.FileExplorerService.Instance.RefreshCurrentFolderContents(); } catch { }
-                ShowToast(n == 1 ? "1 shader hot-reloaded" : n + " shaders hot-reloaded");
+
+                // (1) Shader hot-reload — edit mode AND viewport play (the scene viewport + thumbnails show it).
+                if (DllWrapper.VortexAPI.AnyMaterialShaderDirty())
+                {
+                    int n = DllWrapper.VortexAPI.ReloadMaterialShaders();
+                    if (n > 0)
+                    {
+                        Editor.Editors.WorldEditor.Components.AssetBrowser.AssetBrowserView.InvalidateMaterialThumbnails();
+                        try { Editor.Editors.WorldEditor.Components.FileExplorer.Services.FileExplorerService.Instance.RefreshCurrentFolderContents(); } catch { }
+                        ShowToast(n == 1 ? "1 shader hot-reloaded" : n + " shaders hot-reloaded");
+                    }
+                }
+
+                // (2) SCRIPT hot-reload while playing IN THE VIEWPORT (▶). The external/standalone window handles this
+                //     in the blocking GameHost loop; the viewport play runs on the editor tick, so wire it here.
+                var sr = Editor.Scripting.ScriptRuntime.Instance;
+                var pms = Editor.Core.Services.PlayModeService.Instance;
+                if (pms.State == Editor.Core.Services.PlayState.Playing && !pms.IsExternalWindow && sr.ScriptsChanged())
+                {
+                    sr.ReloadScripts();
+                    if (sr.LastReloadOutcome == Editor.Scripting.ScriptRuntime.ReloadOutcome.Reloaded)
+                        ShowToast("Scripts hot-reloaded — " + sr.LastReloadSummary);
+                    else if (sr.LastReloadOutcome == Editor.Scripting.ScriptRuntime.ReloadOutcome.CompileError)
+                        ShowToast("Hot-reload failed: " + sr.LastReloadError);
+                }
             }
             catch { }
         }

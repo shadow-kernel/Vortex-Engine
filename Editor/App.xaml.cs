@@ -108,13 +108,23 @@ namespace Editor
                 // keeps dev tooling ON: script + shader hot-reload + the on-screen overlay. A RELEASE export packs
                 // everything and omits the flag -> IsReleaseMode true -> hot-reload OFF.
                 bool debugExport = false;
+                string debugProjectPath = null;   // a DEBUG build references the ORIGINAL project (no copies) — load from here
                 try
                 {
                     var marker = System.IO.Path.Combine(exeDir, "player.vortex");
                     if (System.IO.File.Exists(marker))
                     {
-                        var mk = System.IO.File.ReadAllText(marker).Replace(" ", "");
-                        if (mk.IndexOf("\"debug\":true", StringComparison.OrdinalIgnoreCase) >= 0) debugExport = true;
+                        var raw = System.IO.File.ReadAllText(marker);
+                        if (raw.Replace(" ", "").IndexOf("\"debug\":true", StringComparison.OrdinalIgnoreCase) >= 0) debugExport = true;
+                        // Parse projectPath from the RAW text (project paths can contain spaces — don't strip them).
+                        int ki = raw.IndexOf("\"projectPath\"", StringComparison.OrdinalIgnoreCase);
+                        if (ki >= 0)
+                        {
+                            int c = raw.IndexOf(':', ki);
+                            int q1 = c >= 0 ? raw.IndexOf('"', c + 1) : -1;
+                            int q2 = q1 >= 0 ? raw.IndexOf('"', q1 + 1) : -1;
+                            if (q1 >= 0 && q2 > q1) debugProjectPath = raw.Substring(q1 + 1, q2 - q1 - 1).Replace("\\\\", "\\");
+                        }
                     }
                 }
                 catch { }
@@ -138,8 +148,10 @@ namespace Editor
                     }
                 }
 
-                // --project: play a project straight from disk (dev/testing) instead of the exe-dir export layout.
-                string projDir = !string.IsNullOrEmpty(_projectArg) ? _projectArg : exeDir;
+                // Where to load the project from: --project (dev arg) > a DEBUG build's referenced original project
+                // (so it edits/hot-reloads the SAME files as the editor, not copies) > the exe dir (release/packed).
+                string projDir = !string.IsNullOrEmpty(_projectArg) ? _projectArg
+                               : (!string.IsNullOrEmpty(debugProjectPath) && System.IO.Directory.Exists(debugProjectPath) ? debugProjectPath : exeDir);
                 if (!string.IsNullOrEmpty(_projectArg)) Editor.Core.Services.PlayModeService.Instance.IsReleaseMode = false;
                 splash.SetProgress(0.45, "Loading project…");
                 var project = Editor.Core.Services.ProjectService.Instance.LoadProjectFromPath(projDir);

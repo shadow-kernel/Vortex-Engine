@@ -70,27 +70,22 @@ namespace Editor.Core.Services.Build
                 const string exe = "Vortex Engine.exe";
                 if (debug)
                 {
-                    // DEBUG export: ship the project LOOSE on disk (readable/editable) with SOURCE scripts + .hlsl
-                    // shaders and a debug marker, so the game boots with dev tooling ON — script + shader hot-reload
-                    // and the on-screen overlay work exactly like the editor's "external window" run. Nothing packed.
+                    // DEBUG export: DO NOT copy the project. The build REFERENCES the original project folder on disk,
+                    // so hot-reload watches the SAME source files you edit in the editor / VS — there are NO stale
+                    // copies in the build folder to accidentally edit. We ship only the runtime + engine shaders + a
+                    // marker holding the original project path; the player loads + hot-reloads straight from there.
                     P(0.22, "Validating gameplay scripts…");
                     var tmpDllDbg = Path.Combine(Path.GetTempPath(), "GameScripts_" + Guid.NewGuid().ToString("N") + ".dll");
-                    scriptsOk = CompileScripts(projectRoot, tmpDllDbg, out scriptLog);   // validate only; ship as source
+                    scriptsOk = CompileScripts(projectRoot, tmpDllDbg, out scriptLog);   // validate only (never shipped in debug)
                     try { if (File.Exists(tmpDllDbg)) File.Delete(tmpDllDbg); } catch { }
-                    sb.AppendLine(scriptsOk ? "• Scripts validated OK (shipped as source for hot-reload)" : "• SCRIPTS FAILED TO COMPILE");
-
-                    P(0.40, "Copying project (loose, editable)…");
-                    var manifestSrc = Path.Combine(projectRoot, "project.vortex");
-                    if (File.Exists(manifestSrc)) File.Copy(manifestSrc, Path.Combine(outputDir, "project.vortex"), true);
-                    int looseCount = 0;
-                    var assetsSrcDbg = Path.Combine(projectRoot, "Assets");
-                    if (Directory.Exists(assetsSrcDbg)) looseCount = CopyTree(assetsSrcDbg, Path.Combine(outputDir, "Assets"));
-                    sb.AppendLine("• Debug: copied project loose — " + looseCount + " files (source scripts + shaders included)");
+                    sb.AppendLine(scriptsOk ? "• Scripts validated OK" : "• SCRIPTS FAILED TO COMPILE");
 
                     P(0.90, "Writing debug marker…");
+                    var projAbs = Path.GetFullPath(projectRoot).Replace("\\", "\\\\").Replace("\"", "'");
                     File.WriteAllText(Path.Combine(outputDir, "player.vortex"),
-                        "{\"game\":\"" + (projectName ?? "Game").Replace("\"", "'") + "\",\"debug\":true}");
-                    sb.AppendLine("• Player marker written (player.vortex, debug=true) — hot-reload ENABLED");
+                        "{\"game\":\"" + (projectName ?? "Game").Replace("\"", "'") + "\",\"debug\":true,\"projectPath\":\"" + projAbs + "\"}");
+                    sb.AppendLine("• Debug marker written — the build REFERENCES the ORIGINAL project (" + Path.GetFullPath(projectRoot) + ").");
+                    sb.AppendLine("  Edit your scripts/shaders there and they hot-reload live in this build (no copies to edit).");
                     P(0.93, "Finalizing…");
                 }
                 else
@@ -163,9 +158,10 @@ namespace Editor.Core.Services.Build
                     "Created " + DateTime.Now + "\r\n\r\n" +
                     "Double-click '" + name + ".exe' to play (boots straight into the game — no editor).\r\n\r\n" +
                     (debug
-                        ? "DEBUG build: assets + scripts + shaders ship LOOSE and editable next to the exe. Dev tooling is\r\n" +
-                          "ON — edit a script or a shader (.hlsl), save, then Alt-Tab back to the game window and your\r\n" +
-                          "change hot-reloads live (with an on-screen status overlay). Do NOT distribute a debug build.\r\n"
+                        ? "DEBUG build: this folder holds ONLY the runtime — it REFERENCES your original project on disk\r\n" +
+                          "(" + Path.GetFullPath(projectRoot) + ").\r\n" +
+                          "Edit your scripts/shaders THERE (the same files the editor uses — no copies), save, then Alt-Tab\r\n" +
+                          "back to the game and your change hot-reloads live. Needs the project present; don't distribute.\r\n"
                         : "RELEASE build: all assets + the compiled gameplay code are packed into Assets.vpak (one opaque\r\n" +
                           "binary, decompressed into RAM at startup). No readable/editable source files, and no dev\r\n" +
                           "hot-reload tooling — this is the build to ship.\r\n"));

@@ -303,6 +303,7 @@
       <DependentUpon>ColorPickerDialog.xaml</DependentUpon>
     </Compile>
     <Compile Include="Dialogs\DialogStyles.cs" />
+    <Compile Include="Dialogs\ExportDialog.cs" />
     <Compile Include="Dialogs\ImportResultDialog.xaml.cs">
       <DependentUpon>ImportResultDialog.xaml</DependentUpon>
     </Compile>
