@@ -72,6 +72,8 @@ namespace Editor.Scripting
             Vortex.Cursor.Host = this;
             Vortex.Application.Host = this;
             Vortex.Camera.Host = this;
+            Vortex.Physics.Host = this;
+            try { Editor.Core.Services.Physics.CollisionService.Build(scene); } catch { } // build the collision world for this scene
 
             _entitiesById.Clear();
             _nextHandle = 0;
@@ -508,6 +510,14 @@ namespace Editor.Scripting
         {
             try { Editor.DllWrapper.VortexAPI.SetViewFOV(fovDegrees); }
             catch { }
+        }
+
+        Vortex.Vector3 Vortex.IScriptHost.MoveCharacter(Vortex.Vector3 feet, float radius, float height, Vortex.Vector3 move, out bool grounded)
+        {
+            var f = new Editor.ECS.Vector3(feet.X, feet.Y, feet.Z);
+            var m = new Editor.ECS.Vector3(move.X, move.Y, move.Z);
+            var r = Editor.Core.Services.Physics.CollisionService.MoveCharacter(f, radius, height, m, out grounded);
+            return new Vortex.Vector3(r.X, r.Y, r.Z);
         }
 
         bool Vortex.IScriptHost.GetKey(string key)

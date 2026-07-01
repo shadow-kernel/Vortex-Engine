@@ -263,6 +263,11 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             contextMenu.Items.Add(new Separator());
             AddComponentMenuItem(contextMenu, "Rigidbody", () => AddComponent<ECS.Components.Physics.Rigidbody>());
             AddComponentMenuItem(contextMenu, "Box Collider", () => AddComponent<ECS.Components.Physics.BoxCollider>());
+            AddComponentMenuItem(contextMenu, "Sphere Collider", () => AddComponent<ECS.Components.Physics.SphereCollider>());
+            AddComponentMenuItem(contextMenu, "Capsule Collider", () => AddComponent<ECS.Components.Physics.CapsuleCollider>());
+            AddComponentMenuItem(contextMenu, "Mesh Collider (edge-accurate)", () => AddComponent<ECS.Components.Physics.MeshCollider>());
+            contextMenu.Items.Add(new Separator());
+            AddComponentMenuItem(contextMenu, "Open Collision Editor…", () => Editor.Editors.PhysicsEditor.CollisionEditorWindow.Open(Window.GetWindow(this)));
 
             // Script: list existing scripts to assign, plus "New Script…"
             contextMenu.Items.Add(new Separator());

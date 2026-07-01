@@ -35,6 +35,9 @@ namespace Vortex
         void SetRotation(long entityId, Vector3 eulerDegrees);
         bool GetKey(string key);
 
+        // Collide-and-slide a character capsule (feet, radius, height) against the scene's colliders.
+        Vector3 MoveCharacter(Vector3 feet, float radius, float height, Vector3 move, out bool grounded);
+
         // Request switching the active scene by name (deferred — applied by the runtime after this tick).
         void LoadScene(string name);
 
@@ -392,6 +395,29 @@ namespace Vortex
         internal static IScriptHost Host;
         /// <summary>Vertical field of view in degrees (clamped 30–120 by the engine).</summary>
         public static void SetFieldOfView(float fovDegrees) { if (Host != null) Host.SetCameraFov(fovDegrees); }
+    }
+
+    /// <summary>
+    /// Collision. <see cref="MoveCharacter"/> resolves a character capsule (feet position, radius, height) against
+    /// the scene's Collider components with collide-and-slide: the ground is solid, you can't walk through
+    /// walls/props/models, and you can't clip through even up close. <see cref="Grounded"/> is true when the last
+    /// move ended resting on a surface (use it to reset jumping/gravity). Add Colliders to your level objects in
+    /// the editor; the character itself needs no collider — you pass its capsule to MoveCharacter each frame.
+    /// </summary>
+    public static class Physics
+    {
+        internal static IScriptHost Host;
+        private static bool _grounded;
+        public static bool Grounded { get { return _grounded; } }
+
+        /// <summary>Move a character capsule (feet = the entity/eye base, radius, total height) by <paramref name="move"/>
+        /// and return the collision-resolved feet position. Call it each frame with your desired displacement
+        /// (input + gravity). No collision world yet → returns feet+move unchanged.</summary>
+        public static Vector3 MoveCharacter(Vector3 feet, float radius, float height, Vector3 move)
+        {
+            if (Host == null) return new Vector3(feet.X + move.X, feet.Y + move.Y, feet.Z + move.Z);
+            bool g; var r = Host.MoveCharacter(feet, radius, height, move, out g); _grounded = g; return r;
+        }
     }
 
     /// <summary>
