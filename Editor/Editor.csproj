@@ -292,6 +292,7 @@
     <Compile Include="Core\EngineInfo.cs" />
     <Compile Include="Core\Services\Update\UpdateService.cs" />
     <Compile Include="Dialogs\UpdateDialog.cs" />
+    <Compile Include="Dialogs\AboutDialog.cs" />
     <Compile Include="Core\Migration\ProjectMigration.cs" />
     <Compile Include="Core\Migration\ProjectMigrationService.cs" />
     <Compile Include="Dialogs\ProjectMigrationDialog.cs" />

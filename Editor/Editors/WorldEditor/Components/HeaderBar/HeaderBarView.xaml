@@ -511,7 +511,7 @@ d:DesignHeight="64" d:DesignWidth="1200">
                 <MenuItem Header="_Documentation" Click="Documentation_Click"/>
                 <MenuItem Header="_API Reference"/>
                 <Separator/>
-                <MenuItem Header="_Check for Updates..."/>
+                <MenuItem Header="_Check for Updates..." Click="CheckUpdates_Click"/>
                 <MenuItem Header="_About Vortex Engine" Click="About_Click"/>
             </MenuItem>
             </Menu>

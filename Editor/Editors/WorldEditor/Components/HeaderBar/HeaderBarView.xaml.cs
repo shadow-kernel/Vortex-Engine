@@ -415,11 +415,37 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
 
         private void About_Click(object sender, RoutedEventArgs e)
         {
-            MessageBox.Show(
-                "Vortex Engine\n\nVersion 1.0.0\n\n� 2024 Shadow Kernel",
-                "�ber Vortex Engine",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
+            Editor.Dialogs.AboutDialog.Open(Window.GetWindow(this));
+        }
+
+        /// <summary>Manual update check (Help menu) — same flow as the startup check, but always gives
+        /// feedback ("up to date" / dev build) instead of staying silent.</summary>
+        private async void CheckUpdates_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (!Editor.Core.Services.Update.UpdateService.IsInstalledBuild())
+                {
+                    MessageBox.Show("Updates apply to installed builds only (this is a portable/dev run).",
+                        "Check for Updates", MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+                }
+                var info = await Editor.Core.Services.Update.UpdateService.CheckAsync();
+                if (info == null)
+                {
+                    MessageBox.Show("You're up to date — Vortex " + Editor.Core.EngineInfo.VersionString + " is the latest version.",
+                        "Check for Updates", MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+                }
+                var dlg = new Editor.Dialogs.UpdateDialog(info);
+                var owner = Window.GetWindow(this);
+                if (owner != null && owner.IsLoaded) dlg.Owner = owner;
+                dlg.ShowDialog();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Update check failed: " + ex.Message, "Check for Updates", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
         }
 
         #endregion
