@@ -840,6 +840,17 @@ namespace Vortex
         public void Resume() => Editor.Core.Services.AudioPlaybackService.Instance.ScriptResume(_component);
         public bool IsPlaying => Editor.Core.Services.AudioPlaybackService.Instance.ScriptIsPlaying(_component);
 
+        /// <summary>(Re)start silent and glide to full volume over <paramref name="seconds"/> —
+        /// ambience swells, creeping dread. Sample-accurate, no zipper noise.</summary>
+        public void FadeIn(float seconds) => Editor.Core.Services.AudioPlaybackService.Instance.ScriptFadeIn(_component, seconds);
+
+        /// <summary>Glide to silence over <paramref name="seconds"/>, then stop and free the voice.</summary>
+        public void FadeOut(float seconds) => Editor.Core.Services.AudioPlaybackService.Instance.ScriptFadeOut(_component, seconds);
+
+        /// <summary>Glide the fade envelope (0..1, on top of Volume) to a live target —
+        /// duck a heartbeat under dialogue, swell a drone. Retargets smoothly mid-fade.</summary>
+        public void FadeTo(float target, float seconds) => Editor.Core.Services.AudioPlaybackService.Instance.ScriptFadeTo(_component, target, seconds);
+
         /// <summary>Live volume (0..1) — audible immediately while playing.</summary>
         public float Volume { get => _component.Volume; set => _component.Volume = value; }
         /// <summary>Live pitch — audible immediately while playing.</summary>

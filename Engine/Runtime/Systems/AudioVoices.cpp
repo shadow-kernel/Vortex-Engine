@@ -38,6 +38,9 @@ namespace vortex::runtime::audio {
 			// listener zone weight). Only built while the reverb node exists.
 			ma_splitter_node splitter{};
 			bool		splitter_alive{ false };
+			// FadeOut semantics: release the voice once its fade has completed.
+			std::chrono::steady_clock::time_point fade_stop_deadline{};
+			bool		fade_stop_pending{ false };
 			// Doppler: velocity = position delta / wall-clock between pushes.
 			std::chrono::steady_clock::time_point last_push{};
 			bool		has_last_push{ false };
@@ -163,6 +166,7 @@ namespace vortex::runtime::audio {
 			}
 			slot.in_use = false;
 			slot.paused = false;
+			slot.fade_stop_pending = false;
 			++slot.generation;
 		}
 	}
@@ -194,12 +198,20 @@ namespace vortex::runtime::audio {
 		float listener[3]{};
 		internal_listener_position(listener); // game space, same as slot.position
 
+		const auto now = std::chrono::steady_clock::now();
 		for (voice_slot& slot : g_slots)
 		{
 			if (!slot.in_use) continue;
 
 			// Looping voices never hit at_end; paused voices hold their position.
 			if (!slot.looping && ma_sound_at_end(&slot.sound))
+			{
+				release_slot(slot);
+				continue;
+			}
+
+			// A completed FadeOut releases the voice back to the pool.
+			if (slot.fade_stop_pending && now >= slot.fade_stop_deadline)
 			{
 				release_slot(slot);
 				continue;
@@ -350,6 +362,7 @@ namespace vortex::runtime::audio {
 		target->spatial = voice_spatial{};
 		target->correction = 1.0f;
 		target->has_last_push = false;
+		target->fade_stop_pending = false;
 		apply_spatial(*target); // default blend 0 -> plain 2D until the bridge pushes spatial data
 
 		ma_sound_set_volume(&target->sound, target->volume);
@@ -486,6 +499,30 @@ namespace vortex::runtime::audio {
 		// matching set_listener — slot.position stays game-space.
 		ma_sound_set_position(&slot->sound, x, y, -z);
 		ma_sound_set_velocity(&slot->sound, vx, vy, -vz);
+	}
+
+	void voice_fade(voice_handle handle, f32 target, f32 seconds, bool stop_when_done)
+	{
+		std::lock_guard<std::mutex> lock(g_voices_mutex);
+		voice_slot* slot = resolve(handle);
+		if (!slot) return;
+
+		const f32 goal = target < 0.0f ? 0.0f : (target > 1.0f ? 1.0f : target);
+		const u64 ms = seconds <= 0.0f ? 0 : (u64)(seconds * 1000.0f);
+		// -1 start = fade from the CURRENT envelope value — retargeting an in-flight
+		// fade glides instead of snapping. miniaudio renders this sample-accurately
+		// on the audio thread, independent of the volume property.
+		ma_sound_set_fade_in_milliseconds(&slot->sound, -1.0f, goal, ms);
+
+		if (stop_when_done)
+		{
+			slot->fade_stop_pending = true;
+			slot->fade_stop_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+		}
+		else
+		{
+			slot->fade_stop_pending = false;
+		}
 	}
 
 	void voice_set_reverb_send(voice_handle handle, f32 send)

@@ -294,6 +294,34 @@ namespace Editor.Core.Services
             return b != null && VortexAudio.IsVoicePlaying(b.Handle);
         }
 
+        /// <summary>FadeIn: (re)start the source silent and ramp the envelope to 1.</summary>
+        public void ScriptFadeIn(AudioSource source, float seconds)
+        {
+            ScriptPlay(source);
+            var b = FindBinding(source);
+            if (b == null || b.Handle == VortexAudio.InvalidVoice) return;
+            VortexAudio.FadeVoice(b.Handle, 0f, 0f);          // snap envelope to 0
+            VortexAudio.FadeVoice(b.Handle, 1f, seconds);     // glide up
+        }
+
+        /// <summary>FadeOut: ramp to silence, then stop and free the voice natively.</summary>
+        public void ScriptFadeOut(AudioSource source, float seconds)
+        {
+            var b = FindBinding(source);
+            if (b == null || b.Handle == VortexAudio.InvalidVoice) return;
+            b.WantsPlay = false; // the bridge must not restart it while it fades away
+            VortexAudio.FadeVoice(b.Handle, 0f, seconds, stopWhenDone: true);
+            b.Handle = VortexAudio.InvalidVoice; // native reaps after the fade
+        }
+
+        /// <summary>FadeTo: glide the envelope to a live target (ducks/swells) —
+        /// composed ON TOP of the source volume, retargets smoothly mid-fade.</summary>
+        public void ScriptFadeTo(AudioSource source, float target, float seconds)
+        {
+            var b = FindBinding(source);
+            if (b != null) VortexAudio.FadeVoice(b.Handle, target, seconds);
+        }
+
         /// <summary>In-flight one-shot handles: tracked so Pause/Stop/scene switches
         /// silence them with everything else, pruned as they finish. Scripts still
         /// never see a handle.</summary>
@@ -334,23 +362,22 @@ namespace Editor.Core.Services
             return h;
         }
 
-        // ---- music channel (API fixed here; native fade envelopes arrive with #17 —
-        // until then the fades are C#-side linear ramps ticked per frame) ---------------
+        // ---- music channel: streamed looping track at priority 0; fades are the
+        // NATIVE sample-accurate envelopes from #17 (no per-frame C# ramps) ----------
 
         private ulong _musicCurrent = VortexAudio.InvalidVoice;
         private ulong _musicPrevious = VortexAudio.InvalidVoice;
         private string _musicCurrentClip;     // same-clip guard: Play/CrossFade per frame must not restart
         private float _musicVolume = 1f;      // user target volume
-        private float _musicCurrentGain;      // 0..1 fade progress of the current track
-        private float _musicPreviousGain;
-        private float _musicFadeInSpeed;      // gain per second
-        private float _musicFadeOutSpeed;
-        private int _musicLastTickMs;
 
         public float MusicVolume
         {
             get => _musicVolume;
-            set => _musicVolume = value < 0f ? 0f : (value > 1f ? 1f : value);
+            set
+            {
+                _musicVolume = value < 0f ? 0f : (value > 1f ? 1f : value);
+                VortexAudio.SetVoiceVolume(_musicCurrent, _musicVolume); // envelope multiplies on top
+            }
         }
 
         public bool MusicIsPlaying => VortexAudio.IsVoicePlaying(_musicCurrent);
@@ -382,7 +409,7 @@ namespace Editor.Core.Services
 
             // Start the NEW track first — if it can't start (undecodable file), the
             // currently playing music keeps playing instead of fading into silence.
-            var h = VortexAudio.PlayVoice(path, 0f, 1f, 0f, loop, 0, stream: true, bus: VortexAudio.BusMusic);
+            var h = VortexAudio.PlayVoice(path, _musicVolume, 1f, 0f, loop, 0, stream: true, bus: VortexAudio.BusMusic);
             if (h == VortexAudio.InvalidVoice)
             {
                 _failedPaths.Add(clip);
@@ -393,10 +420,11 @@ namespace Editor.Core.Services
             SwapMusicToPrevious(fadeOutSeconds);
             _musicCurrent = h;
             _musicCurrentClip = clip;
-            _musicCurrentGain = fadeInSeconds <= 0f ? 1f : 0f;
-            _musicFadeInSpeed = fadeInSeconds <= 0f ? 0f : 1f / fadeInSeconds;
-            _musicLastTickMs = Environment.TickCount;
-            VortexAudio.SetVoiceVolume(_musicCurrent, _musicVolume * _musicCurrentGain);
+            if (fadeInSeconds > 0f)
+            {
+                VortexAudio.FadeVoice(h, 0f, 0f);            // envelope starts silent
+                VortexAudio.FadeVoice(h, 1f, fadeInSeconds); // native sample-accurate ramp
+            }
         }
 
         public void MusicStop(float fadeOutSeconds = 0f)
@@ -424,45 +452,17 @@ namespace Editor.Core.Services
             if (_musicCurrent != VortexAudio.InvalidVoice)
             {
                 _musicPrevious = _musicCurrent;
-                _musicPreviousGain = _musicCurrentGain;
-                _musicFadeOutSpeed = fadeOutSeconds <= 0f ? float.MaxValue : 1f / fadeOutSeconds;
                 _musicCurrent = VortexAudio.InvalidVoice;
-                _musicCurrentGain = 0f;
+                // Native fade to silence, voice self-releases when done.
+                VortexAudio.FadeVoice(_musicPrevious, 0f, fadeOutSeconds <= 0f ? 0.05f : fadeOutSeconds, stopWhenDone: true);
             }
         }
 
         private void TickMusic()
         {
-            if (_musicCurrent == VortexAudio.InvalidVoice && _musicPrevious == VortexAudio.InvalidVoice) return;
-
-            var now = Environment.TickCount;
-            float dt = (now - _musicLastTickMs) / 1000f;
-            _musicLastTickMs = now;
-            if (dt < 0f || dt > 0.5f) dt = 0f; // clock wrap / long stall — skip one step
-
-            if (_musicCurrent != VortexAudio.InvalidVoice)
-            {
-                if (_musicCurrentGain < 1f)
-                {
-                    _musicCurrentGain += dt * _musicFadeInSpeed;
-                    if (_musicCurrentGain > 1f) _musicCurrentGain = 1f;
-                }
-                VortexAudio.SetVoiceVolume(_musicCurrent, _musicVolume * _musicCurrentGain);
-            }
-
-            if (_musicPrevious != VortexAudio.InvalidVoice)
-            {
-                _musicPreviousGain -= dt * _musicFadeOutSpeed;
-                if (_musicPreviousGain <= 0f)
-                {
-                    VortexAudio.StopVoice(_musicPrevious);
-                    _musicPrevious = VortexAudio.InvalidVoice;
-                }
-                else
-                {
-                    VortexAudio.SetVoiceVolume(_musicPrevious, _musicVolume * _musicPreviousGain);
-                }
-            }
+            // Reap the fading-out handle once the native envelope released it.
+            if (_musicPrevious != VortexAudio.InvalidVoice && !VortexAudio.IsVoiceValid(_musicPrevious))
+                _musicPrevious = VortexAudio.InvalidVoice;
         }
 
         private void CollectRecursive(GameEntity e, ref bool warnedMultipleListeners)

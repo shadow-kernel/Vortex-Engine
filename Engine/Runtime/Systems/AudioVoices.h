@@ -66,6 +66,12 @@ namespace vortex::runtime::audio {
 	// the reverb node is down.
 	void voice_set_reverb_send(voice_handle handle, f32 send);
 
+	// Fade envelope (issue #17): a sample-accurate multiplier ON TOP of the voice
+	// volume (final gain = volume x bus x envelope — no write conflicts, no zipper).
+	// target 0..1; starting a new fade retargets smoothly from the CURRENT value.
+	// stop_when_done releases the voice once the fade completes (FadeOut semantics).
+	void voice_fade(voice_handle handle, f32 target, f32 seconds, bool stop_when_done);
+
 	// Stats for diagnostics and the future mixer window meters.
 	u32 voices_active_count();
 	u32 voices_stolen_count();	// total steals since initialize

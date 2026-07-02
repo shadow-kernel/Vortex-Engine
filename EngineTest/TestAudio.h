@@ -81,6 +81,9 @@ public:
 		// -- reverb send bus (issue #15) ----------------------------------------------
 		run_reverb_tests(wav_path);
 
+		// -- fade envelopes (issue #17) --------------------------------------------------
+		run_fade_tests(wav_path);
+
 		// -- 3D spatialization measurement demo (issue #9) --------------------------
 		// Opt-in: VORTEX_AUDIO_SPATIAL_DEMO=<phase-file>. An external meter samples
 		// per-channel device peaks and correlates them against the phase timestamps.
@@ -301,6 +304,43 @@ private:
 		voice_stop(s3);
 
 		std::remove(long_wav.c_str());
+	}
+
+	// Fades (issue #17): the envelope must actually change the mixed level (bus
+	// meters), FadeOut must release the voice back to the pool.
+	void run_fade_tests(const std::string& wav)
+	{
+		using namespace runtime::audio;
+
+		// FadeTo 0 drops the metered level while the voice keeps playing.
+		voice_params p{};
+		p.loop = true;
+		p.volume = 0.7f;
+		voice_handle v = voice_play(wav.c_str(), p);
+		tick_seconds(0.4f);
+		f32 rms_full = 0;
+		mixer_get_bus_levels(bus::master, nullptr, &rms_full);
+
+		voice_fade(v, 0.0f, 0.15f, false);
+		tick_seconds(0.6f);
+		f32 rms_faded = 0;
+		mixer_get_bus_levels(bus::master, nullptr, &rms_faded);
+		check("FadeTo 0 silences the mix while the voice lives",
+			rms_full > 0.02f && rms_faded < rms_full * 0.25f && voice_is_valid(v));
+
+		// Retarget mid-fade back up — no snap, ends audible again.
+		voice_fade(v, 1.0f, 0.15f, false);
+		tick_seconds(0.5f);
+		f32 rms_back = 0;
+		mixer_get_bus_levels(bus::master, nullptr, &rms_back);
+		check("retargeted fade comes back up", rms_back > rms_faded * 2.0f);
+
+		// FadeOut releases the voice once silent.
+		const u32 active_before = voices_active_count();
+		voice_fade(v, 0.0f, 0.2f, true);
+		tick_seconds(0.6f);
+		check("FadeOut frees the voice after the fade",
+			!voice_is_valid(v) && voices_active_count() == active_before - 1);
 	}
 
 	// Reverb (issue #15): the freeverb node must produce a TAIL — audio on the

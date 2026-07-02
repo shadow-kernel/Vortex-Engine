@@ -111,6 +111,13 @@ EDITOR_INTERFACE void AudioSetVoiceReverbSend(u64 handle, f32 send)
 	runtime::audio::voice_set_reverb_send(handle, send);
 }
 
+// ---- fade envelopes (issue #17): sample-accurate multiplier on top of volume.
+// target 0..1; stop_when_done releases the voice after the fade (FadeOut).
+EDITOR_INTERFACE void AudioFadeVoice(u64 handle, f32 target, f32 seconds, s32 stop_when_done)
+{
+	runtime::audio::voice_fade(handle, target, seconds, stop_when_done != 0);
+}
+
 // Hands a .vpak audio entry to the native engine — the name then plays exactly
 // like a file path (both decoded and streaming voices). Data is copied natively.
 EDITOR_INTERFACE s32 AudioRegisterClipData(const char* name, const void* data, u64 size)

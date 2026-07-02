@@ -84,6 +84,9 @@ namespace Editor.DllWrapper
         private static extern void AudioSetVoiceReverbSend(ulong handle, float send);
 
         [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void AudioFadeVoice(ulong handle, float target, float seconds, int stopWhenDone);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
         private static extern int AudioRegisterClipData([MarshalAs(UnmanagedType.LPUTF8Str)] string name,
             byte[] data, ulong size);
 
@@ -182,6 +185,13 @@ namespace Editor.DllWrapper
         public static void SetVoiceReverbSend(ulong handle, float send)
         {
             if (handle != InvalidVoice) AudioSetVoiceReverbSend(handle, send);
+        }
+
+        /// <summary>Sample-accurate fade envelope on top of the voice volume. Retargets
+        /// smoothly mid-fade; stopWhenDone frees the voice after the fade (FadeOut).</summary>
+        public static void FadeVoice(ulong handle, float target, float seconds, bool stopWhenDone = false)
+        {
+            if (handle != InvalidVoice) AudioFadeVoice(handle, target, seconds, stopWhenDone ? 1 : 0);
         }
 
         /// <summary>Hands an encoded audio blob (e.g. a .vpak entry) to the native engine;
