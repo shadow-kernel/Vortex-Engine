@@ -19,6 +19,26 @@ EDITOR_INTERFACE s32 AudioValidateClip(const char* path)
 	return runtime::audio::validate_clip(path) ? 1 : 0;
 }
 
+// Editor asset browser: duration/format facts for tile tooltips.
+EDITOR_INTERFACE s32 AudioGetClipInfo(const char* path, f32* duration_seconds, s32* sample_rate, s32* channels)
+{
+	f32 duration = 0.0f;
+	u32 rate = 0, ch = 0;
+	const bool ok = runtime::audio::clip_info(path, &duration, &rate, &ch);
+	if (duration_seconds) *duration_seconds = duration;
+	if (sample_rate) *sample_rate = (s32)rate;
+	if (channels) *channels = (s32)ch;
+	return ok ? 1 : 0;
+}
+
+// Editor asset browser: per-bin peak amplitudes (0..1) for waveform thumbnails.
+// Decodes the whole clip once — call from a background thread.
+EDITOR_INTERFACE s32 AudioGetWaveform(const char* path, f32* peaks, s32 bin_count)
+{
+	if (!peaks || bin_count <= 0) return 0;
+	return runtime::audio::clip_waveform(path, peaks, (u32)bin_count) ? 1 : 0;
+}
+
 EDITOR_INTERFACE u64 AudioPlayVoice(const char* path, f32 volume, f32 pitch, f32 pan, s32 loop, s32 priority, s32 stream)
 {
 	runtime::audio::voice_params params{};

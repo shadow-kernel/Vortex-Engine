@@ -25,6 +25,14 @@ namespace Editor.DllWrapper
         private static extern int AudioValidateClip([MarshalAs(UnmanagedType.LPUTF8Str)] string path);
 
         [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int AudioGetClipInfo([MarshalAs(UnmanagedType.LPUTF8Str)] string path,
+            out float durationSeconds, out int sampleRate, out int channels);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int AudioGetWaveform([MarshalAs(UnmanagedType.LPUTF8Str)] string path,
+            [In, Out] float[] peaks, int binCount);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
         private static extern ulong AudioPlayVoice([MarshalAs(UnmanagedType.LPUTF8Str)] string path,
             float volume, float pitch, float pan, int loop, int priority, int stream);
 
@@ -82,6 +90,22 @@ namespace Editor.DllWrapper
         /// PreloadClip, same permanent-failure semantics.</summary>
         public static bool ValidateClip(string path)
             => !string.IsNullOrEmpty(path) && AudioValidateClip(path) != 0;
+
+        /// <summary>Duration/format facts for browser tooltips. False = unreadable clip.</summary>
+        public static bool GetClipInfo(string path, out float durationSeconds, out int sampleRate, out int channels)
+        {
+            durationSeconds = 0; sampleRate = 0; channels = 0;
+            return !string.IsNullOrEmpty(path) && AudioGetClipInfo(path, out durationSeconds, out sampleRate, out channels) != 0;
+        }
+
+        /// <summary>Per-bin peak amplitudes (0..1) for waveform thumbnails. Decodes the
+        /// whole clip once — call from a background thread.</summary>
+        public static float[] GetWaveform(string path, int binCount)
+        {
+            if (string.IsNullOrEmpty(path) || binCount <= 0) return null;
+            var peaks = new float[binCount];
+            return AudioGetWaveform(path, peaks, binCount) != 0 ? peaks : null;
+        }
 
         /// <summary>Starts a voice; returns InvalidVoice when the clip can't be decoded
         /// or every pooled voice outranks this request (priority 0 = most important).

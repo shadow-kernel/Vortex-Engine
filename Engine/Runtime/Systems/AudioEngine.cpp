@@ -311,6 +311,119 @@ namespace vortex::runtime::audio {
 		return true;
 	}
 
+	namespace {
+		// Shared decoder-open for the editor helpers: registered blob or file path.
+		// Forces f32 output (the default keeps the file's native format — reading
+		// s16 data into float buffers would be garbage); channels/rate stay native.
+		bool open_probe_decoder(const char* path, ma_decoder* out)
+		{
+			ma_decoder_config config = ma_decoder_config_init(ma_format_f32, 0, 0);
+			u64 size = 0;
+			const void* bytes = registered_clip_bytes(path, &size);
+			if (bytes)
+			{
+				return ma_decoder_init_memory(bytes, (size_t)size, &config, out) == MA_SUCCESS;
+			}
+			wchar_t wide[1024];
+			if (!internal_widen_path(path, wide, 1024)) return false;
+			return ma_decoder_init_file_w(wide, &config, out) == MA_SUCCESS;
+		}
+	}
+
+	bool clip_info(const char* path, f32* out_duration_seconds, u32* out_sample_rate, u32* out_channels)
+	{
+		if (out_duration_seconds) *out_duration_seconds = 0.0f;
+		if (out_sample_rate) *out_sample_rate = 0;
+		if (out_channels) *out_channels = 0;
+		if (g_state == engine_state::uninitialized || !path || !*path) return false;
+
+		ma_decoder decoder{};
+		if (!open_probe_decoder(path, &decoder)) return false;
+
+		ma_uint64 frames = 0;
+		ma_decoder_get_length_in_pcm_frames(&decoder, &frames);
+		if (frames == 0)
+		{
+			// Unknown length (stb_vorbis OGG) — count by decoding, still header-cheap
+			// relative to the waveform pass that usually follows.
+			const u32 ch = decoder.outputChannels > 0 ? decoder.outputChannels : 1;
+			std::vector<f32> scratch(4096 * ch);
+			for (;;)
+			{
+				ma_uint64 read = 0;
+				if (ma_decoder_read_pcm_frames(&decoder, scratch.data(), 4096, &read) != MA_SUCCESS || read == 0)
+					break;
+				frames += read;
+			}
+		}
+		if (out_sample_rate) *out_sample_rate = decoder.outputSampleRate;
+		if (out_channels) *out_channels = decoder.outputChannels;
+		if (out_duration_seconds && decoder.outputSampleRate > 0)
+			*out_duration_seconds = (f32)((double)frames / decoder.outputSampleRate);
+		ma_decoder_uninit(&decoder);
+		return true;
+	}
+
+	bool clip_waveform(const char* path, f32* out_peaks, u32 bin_count)
+	{
+		if (!out_peaks || bin_count == 0) return false;
+		for (u32 i = 0; i < bin_count; ++i) out_peaks[i] = 0.0f;
+		if (g_state == engine_state::uninitialized || !path || !*path) return false;
+
+		ma_decoder decoder{};
+		if (!open_probe_decoder(path, &decoder)) return false;
+
+		// Some decoders (notably stb_vorbis-backed OGG) report an unknown length —
+		// collect coarse per-1024-frame peaks first, then re-bin afterwards, which
+		// works for both known and unknown lengths with bounded memory.
+		const u32 channels = decoder.outputChannels > 0 ? decoder.outputChannels : 1;
+		constexpr ma_uint64 k_group = 1024;
+		std::vector<f32> coarse;
+		coarse.reserve(4096);
+
+		std::vector<f32> chunk(4096 * channels);
+		f32 group_peak = 0.0f;
+		ma_uint64 in_group = 0;
+		for (;;)
+		{
+			ma_uint64 frames_read = 0;
+			if (ma_decoder_read_pcm_frames(&decoder, chunk.data(), 4096, &frames_read) != MA_SUCCESS || frames_read == 0)
+				break;
+			for (ma_uint64 f = 0; f < frames_read; ++f)
+			{
+				f32 peak = 0.0f;
+				for (u32 c = 0; c < channels; ++c)
+				{
+					const f32 v = fabsf(chunk[f * channels + c]);
+					if (v > peak) peak = v;
+				}
+				if (peak > group_peak) group_peak = peak;
+				if (++in_group >= k_group)
+				{
+					coarse.push_back(group_peak);
+					group_peak = 0.0f;
+					in_group = 0;
+				}
+			}
+		}
+		if (in_group > 0) coarse.push_back(group_peak);
+		ma_decoder_uninit(&decoder);
+		if (coarse.empty()) return false;
+
+		// Re-bin the coarse peaks into the requested resolution.
+		for (u32 b = 0; b < bin_count; ++b)
+		{
+			const size_t start = (size_t)((u64)b * coarse.size() / bin_count);
+			size_t end = (size_t)((u64)(b + 1) * coarse.size() / bin_count);
+			if (end <= start) end = start + 1;
+			f32 peak = 0.0f;
+			for (size_t i = start; i < end && i < coarse.size(); ++i)
+				if (coarse[i] > peak) peak = coarse[i];
+			out_peaks[b] = peak;
+		}
+		return true;
+	}
+
 	const void* registered_clip_bytes(const char* name, u64* out_size)
 	{
 		if (out_size) *out_size = 0;

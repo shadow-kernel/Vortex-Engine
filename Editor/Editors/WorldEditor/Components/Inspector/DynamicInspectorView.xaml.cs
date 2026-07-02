@@ -402,11 +402,11 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Scripting] CreateAndAssign failed: " + ex.Message); }
         }
 
-        // ---- drag & drop: drop a .cs onto the inspector to assign it to the selected entity ----
+        // ---- drag & drop: drop a .cs (script) or an audio clip onto the inspector ----
         private void DynamicInspector_DragOver(object sender, DragEventArgs e)
         {
             string rel;
-            e.Effects = (_selectedEntity != null && TryGetDroppedScript(e, out rel))
+            e.Effects = (_selectedEntity != null && (TryGetDroppedScript(e, out rel) || TryGetDroppedAudio(e, out rel)))
                 ? DragDropEffects.Copy : DragDropEffects.None;
             e.Handled = true;
         }
@@ -418,7 +418,67 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             {
                 AssignScript(rel);
                 e.Handled = true;
+                return;
             }
+            if (_selectedEntity != null && TryGetDroppedAudio(e, out rel))
+            {
+                AssignAudioClip(rel);
+                e.Handled = true;
+            }
+        }
+
+        /// <summary>Drop an audio asset (browser tile / project explorer / Windows file)
+        /// onto the inspector: assigns the entity's AudioSource clip — adding the
+        /// component first if there is none, mirroring the script auto-attach.</summary>
+        private void AssignAudioClip(string relativePath)
+        {
+            if (_selectedEntity == null || string.IsNullOrEmpty(relativePath)) return;
+
+            var source = _selectedEntity.GetComponent<ECS.Components.Audio.AudioSource>();
+            if (source == null)
+            {
+                source = new ECS.Components.Audio.AudioSource(_selectedEntity);
+                _selectedEntity.AddComponent(source);
+            }
+            source.AudioClipPath = relativePath;
+            RefreshInspector();
+        }
+
+        private static bool TryGetDroppedAudio(DragEventArgs e, out string relativePath)
+        {
+            relativePath = null;
+            string abs = null;
+
+            var fsi = e.Data.GetData("FileSystemItem") as Editor.Editors.WorldEditor.Components.FileExplorer.Models.FileSystemItem;
+            if (fsi != null) abs = fsi.FullPath;
+
+            if (abs == null && e.Data.GetDataPresent("AssetPath"))
+                abs = e.Data.GetData("AssetPath") as string;
+
+            if (abs == null && e.Data.GetDataPresent(DataFormats.FileDrop))
+            {
+                var arr = e.Data.GetData(DataFormats.FileDrop) as string[];
+                if (arr != null && arr.Length > 0) abs = arr[0];
+            }
+
+            if (string.IsNullOrEmpty(abs)) return false;
+            var ext = System.IO.Path.GetExtension(abs).ToLowerInvariant();
+            if (ext != ".wav" && ext != ".mp3" && ext != ".ogg" && ext != ".flac") return false;
+
+            // AudioSource clip paths are project-relative; audio browser tiles already
+            // drag relative paths, explorer/Windows drops arrive absolute.
+            if (!System.IO.Path.IsPathRooted(abs))
+            {
+                relativePath = abs.Replace('\\', '/');
+                return true;
+            }
+            var rel = ScriptingService.MakeRelative(ScriptingService.ProjectRoot, abs);
+            // MakeRelative returns the absolute path unchanged when the file is OUTSIDE
+            // the project — that would store a non-portable path that breaks on another
+            // machine. Reject out-of-project drops (the file must be imported first).
+            if (string.IsNullOrEmpty(rel) || System.IO.Path.IsPathRooted(rel)) return false;
+            relativePath = rel;
+            return true;
         }
 
         private static bool TryGetDroppedScript(DragEventArgs e, out string relativePath)

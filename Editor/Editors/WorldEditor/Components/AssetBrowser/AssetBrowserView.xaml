@@ -181,6 +181,10 @@
                 <RadioButton x:Name="ScriptsTab" Content="Scripts" GroupName="AssetType"
                              Style="{StaticResource CategoryPill}"
                              Checked="AssetTypeTab_Checked"/>
+                <RadioButton x:Name="AudioTab" Content="Audio" GroupName="AssetType"
+                             Style="{StaticResource CategoryPill}"
+                             Checked="AssetTypeTab_Checked"
+                             ToolTip="Audio clips — click a tile to audition, drag onto an AudioSource to assign"/>
             </StackPanel>
         </Border>
 
@@ -203,7 +207,8 @@
                     <StackPanel Width="116">
                         <!-- Square preview area (large so the material spheres read as big, voluminous previews) -->
                         <Border Background="#FF1A1A1C" CornerRadius="12"
-                                Width="108" Height="108" HorizontalAlignment="Center">
+                                Width="108" Height="108" HorizontalAlignment="Center"
+                                ToolTip="{Binding ToolTipText}" ToolTipService.IsEnabled="{Binding HasToolTip}">
                             <Grid>
                                 <!-- Glyph fallback (shown when the item has no real Thumbnail) -->
                                 <TextBlock Text="{Binding IconCode}" FontFamily="Segoe MDL2 Assets"

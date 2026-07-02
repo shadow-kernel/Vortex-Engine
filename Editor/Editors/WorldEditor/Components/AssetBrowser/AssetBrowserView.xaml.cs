@@ -33,7 +33,8 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             Shaders,
             Scripts,
             UI,
-            Prefab
+            Prefab,
+            Audio
         }
 
         public class AssetItem : INotifyPropertyChanged
@@ -59,6 +60,21 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 get => _thumbnail;
                 set { _thumbnail = value; PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Thumbnail))); }
             }
+
+            /// <summary>Tile tooltip (e.g. "WAV · 0:02 · 44kHz · mono" for audio). Set lazily
+            /// from the async metadata probe; empty tooltips are disabled via HasToolTip.</summary>
+            private string _toolTipText;
+            public string ToolTipText
+            {
+                get => _toolTipText;
+                set
+                {
+                    _toolTipText = value;
+                    PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ToolTipText)));
+                    PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasToolTip)));
+                }
+            }
+            public bool HasToolTip => !string.IsNullOrEmpty(_toolTipText);
 
             public event PropertyChangedEventHandler PropertyChanged;
         }
@@ -110,6 +126,7 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             try { FileExplorerService.Instance.CurrentFolderChanged -= OnExplorerFolderChanged; } catch { }
             try { FileExplorerService.Instance.FolderContentsChanged -= OnFolderContentsChanged; } catch { }
             try { MaterialThumbnailsInvalidated -= OnMaterialThumbnailsInvalidated; } catch { }
+            try { StopAudition(); } catch { }
         }
 
         private void OnMaterialThumbnailsInvalidated()
@@ -362,6 +379,10 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                     dialog.Filter = "Shaders|*.hlsl;*.glsl;*.shader;*.vshader|All Files|*.*";
                     dialog.Title = "Import Shader";
                     break;
+                case AssetType.Audio:
+                    dialog.Filter = "Audio Files|*.wav;*.mp3;*.ogg;*.flac|All Files|*.*";
+                    dialog.Title = "Import Audio";
+                    break;
             }
 
             if (dialog.ShowDialog() == true)
@@ -430,6 +451,7 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 AssetType.Textures => Dialogs.AssetImportDialog.ImportAssetType.Texture,
                 AssetType.Materials => Dialogs.AssetImportDialog.ImportAssetType.Material,
                 AssetType.Shaders => Dialogs.AssetImportDialog.ImportAssetType.Shader,
+                AssetType.Audio => Dialogs.AssetImportDialog.ImportAssetType.Audio,
                 _ => Dialogs.AssetImportDialog.ImportAssetType.Model
             };
         }
@@ -492,6 +514,7 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 AssetType.Textures => "Assets/Textures",
                 AssetType.Materials => "Assets/Materials",
                 AssetType.Shaders => "Assets/Shaders",
+                AssetType.Audio => "Assets/Audio",
                 _ => "Assets"
             };
         }
@@ -727,8 +750,10 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 case "MaterialsTab": _currentType = AssetType.Materials; break;
                 case "ShadersTab": _currentType = AssetType.Shaders; break;
                 case "ScriptsTab": _currentType = AssetType.Scripts; break;
+                case "AudioTab": _currentType = AssetType.Audio; break;
             }
 
+            StopAudition(); // leaving the audio tab (or re-entering) silences the preview
             RefreshAssets();
         }
 
@@ -737,6 +762,48 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             if (AssetList.SelectedItem is AssetItem item)
             {
                 AssetSelected?.Invoke(this, item);
+
+                // Audio audition: selecting a clip plays it, selecting another one stops
+                // the previous — the listen-tweak-listen loop sound design lives on.
+                if (item.Type == AssetType.Audio && item.IsImported)
+                    Audition(item);
+                else
+                    StopAudition();
+            }
+        }
+
+        // ---- audio audition (issue #12) -------------------------------------------
+        private static ulong _auditionVoice = DllWrapper.VortexAudio.InvalidVoice;
+
+        private void Audition(AssetItem item)
+        {
+            StopAudition();
+            try
+            {
+                var projectPath = ProjectData.Current?.Path;
+                if (string.IsNullOrEmpty(projectPath) || string.IsNullOrEmpty(item.Path)) return;
+                var full = System.IO.Path.IsPathRooted(item.Path)
+                    ? item.Path
+                    : System.IO.Path.Combine(projectPath, item.Path);
+                if (!System.IO.File.Exists(full)) return;
+                // stream:true — auditioning must never fully decode a multi-minute clip
+                // on the UI thread (freeze) or pin its PCM for the session (streaming
+                // uses the cheap header-probe path). Priority 0 so a running play-mode
+                // soundscape can't steal the preview.
+                _auditionVoice = DllWrapper.VortexAudio.PlayVoice(full, 1f, 1f, 0f, loop: false, priority: 0, stream: true);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("[Audio] audition failed: " + ex.Message);
+            }
+        }
+
+        private static void StopAudition()
+        {
+            if (_auditionVoice != DllWrapper.VortexAudio.InvalidVoice)
+            {
+                DllWrapper.VortexAudio.StopVoice(_auditionVoice);
+                _auditionVoice = DllWrapper.VortexAudio.InvalidVoice;
             }
         }
 
@@ -1669,10 +1736,151 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 case AssetType.Scripts:
                     LoadScripts();
                     break;
+                case AssetType.Audio:
+                    LoadAudioAssets();
+                    break;
             }
 
             UpdateEmptyState();
             StartBackgroundThumbnailPreload();
+        }
+
+        /// <summary>Audio tab: every clip under Assets/ (disk is the source of truth —
+        /// manually copied files show up too), waveform thumbnails + duration tooltips
+        /// generated on a background thread (a 5-minute mp3 decode must never block the
+        /// UI), bitmap rendered on the dispatcher when the peaks land.</summary>
+        private void LoadAudioAssets()
+        {
+            var projectPath = ProjectData.Current?.Path;
+            if (string.IsNullOrEmpty(projectPath)) return;
+            var assetsDir = System.IO.Path.Combine(projectPath, "Assets");
+            if (!System.IO.Directory.Exists(assetsDir)) return;
+
+            string[] files;
+            try { files = System.IO.Directory.GetFiles(assetsDir, "*.*", System.IO.SearchOption.AllDirectories); }
+            catch { return; }
+
+            var audioExts = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".wav", ".mp3", ".ogg", ".flac" };
+            foreach (var file in files)
+            {
+                var ext = System.IO.Path.GetExtension(file);
+                if (!audioExts.Contains(ext)) continue;
+
+                var rel = file.Substring(projectPath.Length).TrimStart('\\', '/').Replace('\\', '/');
+                var meta = AssetDatabase.Instance.GetAssetByPath(rel);
+                var item = new AssetItem
+                {
+                    Id = Assets.Count,
+                    Name = System.IO.Path.GetFileNameWithoutExtension(file),
+                    TypeName = ext.TrimStart('.').ToUpperInvariant() + " Audio",
+                    IconCode = "\uE767", // speaker glyph, same as the AudioSource component
+                    IconColor = "#CE9178",
+                    Type = AssetType.Audio,
+                    Path = rel,
+                    AssetGuid = meta?.Guid ?? Guid.Empty,
+                    IsImported = true
+                };
+                Assets.Add(item);
+                QueueAudioPreview(item, file);
+            }
+        }
+
+        /// <summary>Waveform + clip-info probe on a worker thread (decode is the heavy
+        /// part), WriteableBitmap render + property set back on the dispatcher.
+        /// Concurrency-capped so a folder of long files doesn't spawn 50 decodes.</summary>
+        private static readonly System.Threading.SemaphoreSlim _audioPreviewGate = new System.Threading.SemaphoreSlim(2);
+
+        private static void QueueAudioPreview(AssetItem item, string fullPath)
+        {
+            string cacheKey;
+            try { cacheKey = "audio:" + fullPath + ":" + System.IO.File.GetLastWriteTimeUtc(fullPath).Ticks; }
+            catch { cacheKey = "audio:" + fullPath; }
+
+            if (_thumbCache.TryGetValue(cacheKey, out var cached))
+            {
+                item.Thumbnail = cached;
+                if (_audioInfoCache.TryGetValue(cacheKey, out var info)) item.ToolTipText = info;
+                return;
+            }
+
+            System.Threading.Tasks.Task.Run(async () =>
+            {
+                await _audioPreviewGate.WaitAsync();
+                try
+                {
+                    var peaks = DllWrapper.VortexAudio.GetWaveform(fullPath, 108);
+                    string tooltip = null;
+                    if (DllWrapper.VortexAudio.GetClipInfo(fullPath, out var duration, out var rate, out var channels))
+                    {
+                        var mins = (int)(duration / 60);
+                        var secs = (int)(duration % 60);
+                        tooltip = string.Format("{0} · {1}:{2:D2} · {3} kHz · {4}",
+                            System.IO.Path.GetExtension(fullPath).TrimStart('.').ToUpperInvariant(),
+                            mins, secs, rate / 1000, channels == 1 ? "mono" : channels + " ch");
+                    }
+
+                    Application.Current?.Dispatcher?.BeginInvoke(
+                        System.Windows.Threading.DispatcherPriority.Background,
+                        new Action(() =>
+                        {
+                            if (peaks != null)
+                            {
+                                var bmp = RenderWaveform(peaks, 108, 108);
+                                if (bmp != null)
+                                {
+                                    _thumbCache[cacheKey] = bmp;
+                                    item.Thumbnail = bmp;
+                                }
+                            }
+                            if (tooltip != null)
+                            {
+                                _audioInfoCache[cacheKey] = tooltip;
+                                item.ToolTipText = tooltip;
+                            }
+                        }));
+                }
+                catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Audio] preview failed: " + ex.Message); }
+                finally { _audioPreviewGate.Release(); }
+            });
+        }
+
+        private static readonly Dictionary<string, string> _audioInfoCache = new Dictionary<string, string>();
+
+        /// <summary>Classic center-mirrored peak waveform on the tile's dark background.</summary>
+        private static ImageSource RenderWaveform(float[] peaks, int width, int height)
+        {
+            try
+            {
+                var wb = new System.Windows.Media.Imaging.WriteableBitmap(
+                    width, height, 96, 96, System.Windows.Media.PixelFormats.Bgra32, null);
+                var pixels = new int[width * height];
+                unchecked
+                {
+                    const int bg = (int)0xFF1A1A1C;
+                    const int fg = (int)0xFFCE9178;   // the audio accent color
+                    const int fgDim = (int)0xFF6E4E3F;
+                    for (int i = 0; i < pixels.Length; i++) pixels[i] = bg;
+
+                    int center = height / 2;
+                    for (int x = 0; x < width; x++)
+                    {
+                        float peak = peaks[x * peaks.Length / width];
+                        int half = (int)(peak * (height * 0.46f));
+                        if (half < 1) half = 1;
+                        for (int y = center - half; y <= center + half; y++)
+                        {
+                            if (y < 0 || y >= height) continue;
+                            // Slightly dim the outer third for a bit of depth.
+                            bool outer = Math.Abs(y - center) > half * 2 / 3;
+                            pixels[y * width + x] = outer ? fgDim : fg;
+                        }
+                    }
+                }
+                wb.WritePixels(new Int32Rect(0, 0, width, height), pixels, width * 4, 0);
+                wb.Freeze();
+                return wb;
+            }
+            catch { return null; }
         }
 
         private static bool _preloadKicked;

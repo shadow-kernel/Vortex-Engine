@@ -35,6 +35,13 @@ namespace vortex::runtime::audio {
 	// STREAMING plays so an undecodable clip can never steal a live voice, and to
 	// let the bridge blacklist bad clips instead of retrying forever.
 	bool validate_clip(const char* path);
+
+	// Editor support: header-level clip facts for browser tooltips.
+	bool clip_info(const char* path, f32* out_duration_seconds, u32* out_sample_rate, u32* out_channels);
+	// Editor support: decode the clip once and reduce it to bin_count peak
+	// amplitudes (0..1, mono-folded) for waveform thumbnails. Heavy for long
+	// files — call from a background thread.
+	bool clip_waveform(const char* path, f32* out_peaks, u32 bin_count);
 	// Raw bytes of a registered clip (valid until shutdown), or nullptr. Used by
 	// the voice layer to stream from memory via a ma_decoder (miniaudio's STREAM
 	// flag only streams from files, not from registered encoded data).
