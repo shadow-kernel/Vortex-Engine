@@ -67,6 +67,11 @@ public:
 		// -- voice pool (issue #7) -------------------------------------------------
 		run_voice_tests(wav_path);
 
+		// -- 3D spatialization measurement demo (issue #9) --------------------------
+		// Opt-in: VORTEX_AUDIO_SPATIAL_DEMO=<phase-file>. An external meter samples
+		// per-channel device peaks and correlates them against the phase timestamps.
+		run_spatial_demo_if_requested(wav_path);
+
 		// -- unload / refcount -----------------------------------------------------
 		runtime::resource_manager::unload(handle);
 		check("unload releases cached sound", !runtime::audio::is_loaded(wav_path.c_str()));
@@ -86,6 +91,79 @@ public:
 	}
 
 private:
+	// Plays a scripted sequence of spatial configurations, writing "<phase> <ms>"
+	// (GetTickCount64) lines so the external per-channel peak meter can prove
+	// distance attenuation, spatial-blend mixing and stereo panning.
+	void run_spatial_demo_if_requested(const std::string& wav)
+	{
+		char* phase_file = nullptr;
+		size_t len = 0;
+		if (_dupenv_s(&phase_file, &len, "VORTEX_AUDIO_SPATIAL_DEMO") != 0 || !phase_file) return;
+		std::string out_path(phase_file);
+		free(phase_file);
+
+		using namespace runtime::audio;
+		FILE* f = nullptr;
+		if (fopen_s(&f, out_path.c_str(), "w") != 0 || !f) return;
+		auto mark = [&](const char* phase)
+		{
+			fprintf(f, "%s %llu\n", phase, (unsigned long long)GetTickCount64());
+			fflush(f);
+			std::cout << "[spatial] " << phase << "\n";
+		};
+
+		set_listener(0, 0, 0, 0, 0, 1, 0, 1, 0); // origin, facing +z
+
+		voice_params p{};
+		p.loop = true;
+		p.volume = 1.0f;
+		voice_handle v = voice_play(wav.c_str(), p);
+
+		voice_spatial sp{};
+		sp.spatial_blend = 1.0f;
+		sp.min_distance = 1.0f;
+		sp.max_distance = 30.0f;
+		sp.rolloff_mode = 0;   // logarithmic/inverse
+		sp.doppler_level = 0.0f;
+		voice_set_spatial(v, sp);
+
+		voice_set_position(v, 0, 0, 2);      mark("near");       tick_seconds(1.6f);
+		voice_set_position(v, 0, 0, 25);     mark("far");        tick_seconds(1.6f);
+		sp.spatial_blend = 0.0f; voice_set_spatial(v, sp);
+		                                     mark("farblend0");  tick_seconds(1.6f);
+		sp.spatial_blend = 0.5f; voice_set_spatial(v, sp);
+		                                     mark("farblend05"); tick_seconds(1.6f);
+		sp.spatial_blend = 1.0f; voice_set_spatial(v, sp);
+		voice_set_position(v, -8, 0, 0.5f);  mark("xneg");       tick_seconds(1.6f);
+		voice_set_position(v, 8, 0, 0.5f);   mark("xpos");       tick_seconds(1.6f);
+		// Exact standalone-scene geometry (camera listener + far emitter) — must
+		// attenuate to ~0.07, catches environment-specific regressions.
+		set_listener(0, 1.7f, 4.6f, 0, -0.15f, -0.99f, 0, 1, 0);
+		voice_set_position(v, 14, 1, 0);     mark("sageom");     tick_seconds(1.6f);
+
+		// Same geometry but replaying the component bridge's PER-FRAME push pattern
+		// (PushProperties + listener each tick) — catches repeated-setter regressions.
+		mark("perframe");
+		{
+			const float dt = 1.0f / 60.0f;
+			for (float t = 0.0f; t < 1.6f; t += dt)
+			{
+				set_listener(0, 1.7f, 4.6f, 0, -0.15f, -0.99f, 0, 1, 0);
+				voice_set_volume(v, 0.9f);
+				voice_set_pitch(v, 1.0f);
+				voice_set_pan(v, 0.0f);
+				voice_set_spatial(v, sp);
+				voice_set_position(v, 14, 1, 0);
+				runtime::systems::update_audio(dt);
+				std::this_thread::sleep_for(std::chrono::milliseconds(16));
+			}
+		}
+		mark("end");
+
+		voice_stop(v);
+		fclose(f);
+	}
+
 	void run_voice_tests(const std::string& wav)
 	{
 		using namespace runtime::audio;

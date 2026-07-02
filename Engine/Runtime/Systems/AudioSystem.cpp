@@ -5,7 +5,6 @@ namespace vortex::runtime::systems {
 
 	namespace {
 		static bool g_initialized{ false };
-		static bool g_startup_beep_played{ false };
 	}
 
 	bool audio_initialized()
@@ -18,7 +17,6 @@ namespace vortex::runtime::systems {
 		if (g_initialized) return;
 		audio::initialize();
 		g_initialized = true;
-		g_startup_beep_played = false;
 	}
 
 	void shutdown_audio()
@@ -33,16 +31,8 @@ namespace vortex::runtime::systems {
 	void update_audio(float dt)
 	{
 		if (!g_initialized) return;
-
-		// update_audio only ticks while the game simulation runs, so the first tick
-		// marks "runtime started in play mode". The beep is the audible smoke test
-		// from issue #6; issue #8 replaces it with real AudioSource playback.
-		if (!g_startup_beep_played)
-		{
-			g_startup_beep_played = true;
-			audio::play_test_beep();
-		}
-
 		audio::update(dt);
+		// (The issue-#6 startup test beep is gone: AudioSource playback is the real
+		// audible path now; play_test_beep() stays available for diagnostics.)
 	}
 }

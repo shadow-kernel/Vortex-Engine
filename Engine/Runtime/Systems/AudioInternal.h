@@ -19,4 +19,9 @@ namespace vortex::runtime::audio {
 	// (the C# bridge marshals UTF-8), falls back to the ANSI code page (legacy
 	// engine-internal callers). Returns false when conversion fails or overflows.
 	bool internal_widen_path(const char* narrow, wchar_t* out, size_t out_chars);
+
+	// Listener position in GAME space (left-handed, +z forward). miniaudio itself
+	// stores the right-handed mirror (z negated at the boundary) — never mix the
+	// two spaces in distance math.
+	void internal_listener_position(float out[3]);
 }

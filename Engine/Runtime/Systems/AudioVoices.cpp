@@ -2,6 +2,8 @@
 #include "AudioEngine.h"
 #include "AudioInternal.h"
 
+#include <chrono>
+#include <cmath>
 #include <mutex>
 #include <vector>
 
@@ -21,10 +23,14 @@ namespace vortex::runtime::audio {
 			bool		in_use{ false };
 			bool		paused{ false };
 			s32			priority{ 128 };
-			f32			volume{ 1.0f };
+			f32			volume{ 1.0f };	// base volume; the blend correction multiplies on top
+			f32			correction{ 1.0f };	// current blend correction — EVERY ma volume write must include it
 			bool		looping{ false };
-			f32			position[3]{};	// world position (steal tiebreak + #9 spatializer)
-			voice_spatial spatial{};	// stored now, becomes DSP in issue #9
+			f32			position[3]{};	// world position (steal tiebreak + spatializer)
+			voice_spatial spatial{};
+			// Doppler: velocity = position delta / wall-clock between pushes.
+			std::chrono::steady_clock::time_point last_push{};
+			bool		has_last_push{ false };
 		};
 
 		// The pool itself is the only allocation, made once in voices_initialize.
@@ -55,6 +61,78 @@ namespace vortex::runtime::audio {
 		f32 clamp_pitch(f32 pitch)
 		{
 			return pitch < 0.01f ? 0.01f : (pitch > 100.0f ? 100.0f : pitch);
+		}
+
+		// Rolloff mapping (documented so Steam Audio v2 can swap the panner without
+		// changing attenuation semantics):
+		//   AudioRolloffMode.Logarithmic (0) -> ma_attenuation_model_inverse (1/d)
+		//   AudioRolloffMode.Linear      (1) -> ma_attenuation_model_linear
+		//   AudioRolloffMode.Custom      (2) -> inverse (custom curves are post-v1)
+		ma_attenuation_model to_attenuation_model(s32 rolloff_mode)
+		{
+			return rolloff_mode == 1 ? ma_attenuation_model_linear : ma_attenuation_model_inverse;
+		}
+
+		// Same math miniaudio's spatializer uses (rolloff factor 1) — needed on the
+		// CPU side for the spatial-blend volume compensation below.
+		f32 model_attenuation(const voice_spatial& sp, f32 distance)
+		{
+			const f32 min_d = sp.min_distance > 0.01f ? sp.min_distance : 0.01f;
+			const f32 max_d = sp.max_distance > min_d ? sp.max_distance : min_d + 0.01f;
+			const f32 d = distance < min_d ? min_d : (distance > max_d ? max_d : distance);
+			if (sp.rolloff_mode == 1)
+			{
+				const f32 a = 1.0f - (d - min_d) / (max_d - min_d);
+				return a < 0.0f ? 0.0f : a;
+			}
+			return min_d / d; // inverse
+		}
+
+		// Apply the stored spatial properties to the miniaudio sound. Must be called
+		// with g_voices_mutex held.
+		// Spatial blend: 0 disables the spatializer entirely (flat 2D + stereo pan);
+		// > 0 enables it. Values in between keep full 3D panning but scale doppler by
+		// the blend and compensate the distance attenuation toward 2D in
+		// voices_update (effective gain = (1-b) + b*attenuation).
+		void apply_spatial(voice_slot& slot)
+		{
+			ma_sound* s = &slot.sound;
+			const voice_spatial& sp = slot.spatial;
+
+			if (sp.spatial_blend <= 0.0f)
+			{
+				ma_sound_set_spatialization_enabled(s, MA_FALSE);
+				// Disabling skips the spatializer's process step, which is the only
+				// place dopplerPitch gets recomputed — a voice that was moving keeps
+				// its stale pitch forever otherwise. Reset it explicitly.
+				s->engineNode.spatializer.dopplerPitch = 1.0f;
+				return;
+			}
+
+			const f32 blend = sp.spatial_blend > 1.0f ? 1.0f : sp.spatial_blend;
+			const f32 min_d = sp.min_distance > 0.01f ? sp.min_distance : 0.01f;
+
+			ma_sound_set_spatialization_enabled(s, MA_TRUE);
+			ma_sound_set_positioning(s, ma_positioning_absolute);
+			ma_sound_set_attenuation_model(s, to_attenuation_model(sp.rolloff_mode));
+			ma_sound_set_min_distance(s, min_d);
+			ma_sound_set_max_distance(s, sp.max_distance > min_d ? sp.max_distance : min_d + 0.01f);
+			// Doppler factor capped at 2: with the 150 u/s velocity cap this keeps
+			// miniaudio's doppler denominator (343.3 - factor*speed) strictly positive —
+			// unclamped inspector values could drive the pitch ratio to +inf and into
+			// the resampler's float->uint32 UB (same class clamp_pitch guards).
+			const f32 doppler = sp.doppler_level < 0.0f ? 0.0f : (sp.doppler_level > 2.0f ? 2.0f : sp.doppler_level);
+			ma_sound_set_doppler_factor(s, doppler * blend);
+			// Partial blend computes its volume correction against a 0.001-floored
+			// attenuation replica; mirror the floor into miniaudio or linear rolloff
+			// hits exact 0 past max_distance and the product loses the (1-b) 2D share.
+			ma_sound_set_min_gain(s, blend < 1.0f ? 0.001f : 0.0f);
+
+			// Spread approximation: miniaudio has no stereo-spread parameter, but its
+			// directional attenuation factor de-focuses the source (0 = fully
+			// omnidirectional/wide, 1 = point source) — a serviceable v1 mapping.
+			const f32 spread = sp.spread < 0.0f ? 0.0f : (sp.spread > 360.0f ? 360.0f : sp.spread);
+			ma_sound_set_directional_attenuation_factor(s, 1.0f - spread / 360.0f);
 		}
 
 		// Must be called with g_voices_mutex held. Bumping the generation is what
@@ -91,13 +169,40 @@ namespace vortex::runtime::audio {
 	void voices_update(float /*dt*/)
 	{
 		std::lock_guard<std::mutex> lock(g_voices_mutex);
+
+		float listener[3]{};
+		internal_listener_position(listener); // game space, same as slot.position
+
 		for (voice_slot& slot : g_slots)
 		{
+			if (!slot.in_use) continue;
+
 			// Looping voices never hit at_end; paused voices hold their position.
-			if (slot.in_use && !slot.looping && ma_sound_at_end(&slot.sound))
+			if (!slot.looping && ma_sound_at_end(&slot.sound))
 			{
 				release_slot(slot);
+				continue;
 			}
+
+			// Spatial blend 0<b<1: the spatializer runs at full strength, so pull the
+			// effective attenuation back toward 2D with a volume correction —
+			// effective gain becomes (1-b) + b*attenuation instead of attenuation.
+			f32 correction = 1.0f;
+			const f32 blend = slot.spatial.spatial_blend;
+			if (blend > 0.0f && blend < 1.0f)
+			{
+				const f32 dx = slot.position[0] - listener[0];
+				const f32 dy = slot.position[1] - listener[1];
+				const f32 dz = slot.position[2] - listener[2];
+				const f32 distance = sqrtf(dx * dx + dy * dy + dz * dz);
+				// Floored on BOTH sides: apply_spatial sets ma min_gain to the same
+				// 0.001, so correction * ma_gain == (1-b) + b*attenuation exactly.
+				const f32 attenuation = model_attenuation(slot.spatial, distance);
+				const f32 floor = attenuation > 0.001f ? attenuation : 0.001f;
+				correction = ((1.0f - blend) + blend * floor) / floor;
+			}
+			slot.correction = correction;
+			ma_sound_set_volume(&slot.sound, slot.volume * correction);
 		}
 	}
 
@@ -141,10 +246,12 @@ namespace vortex::runtime::audio {
 			target = victim;
 		}
 
+		// No MA_SOUND_FLAG_NO_SPATIALIZATION: the spatializer is toggled at runtime
+		// per the AudioSource's spatial blend (flag would bake 2D at init).
 		wchar_t wide[1024];
 		if (!internal_widen_path(path, wide, 1024)) return invalid_voice;
 		const ma_result result = ma_sound_init_from_file_w(engine, wide,
-			MA_SOUND_FLAG_DECODE | MA_SOUND_FLAG_NO_SPATIALIZATION, nullptr, nullptr, &target->sound);
+			MA_SOUND_FLAG_DECODE, nullptr, nullptr, &target->sound);
 		if (result != MA_SUCCESS) return invalid_voice;
 
 		target->in_use = true;
@@ -154,6 +261,9 @@ namespace vortex::runtime::audio {
 		target->looping = params.loop;
 		target->position[0] = target->position[1] = target->position[2] = 0.0f;
 		target->spatial = voice_spatial{};
+		target->correction = 1.0f;
+		target->has_last_push = false;
+		apply_spatial(*target); // default blend 0 -> plain 2D until the bridge pushes spatial data
 
 		ma_sound_set_volume(&target->sound, target->volume);
 		ma_sound_set_pitch(&target->sound, clamp_pitch(params.pitch));
@@ -219,7 +329,11 @@ namespace vortex::runtime::audio {
 		if (voice_slot* slot = resolve(handle))
 		{
 			slot->volume = volume < 0.0f ? 0.0f : volume;
-			ma_sound_set_volume(&slot->sound, slot->volume);
+			// Include the current blend correction: the bridge pushes volume AFTER
+			// voices_update each frame, so a raw write here would stomp the corrected
+			// gain for the whole inter-frame interval (partial blend collapsed to
+			// full-3D with frame-rate gain flutter — caught in review).
+			ma_sound_set_volume(&slot->sound, slot->volume * slot->correction);
 		}
 	}
 
@@ -244,15 +358,47 @@ namespace vortex::runtime::audio {
 	void voice_set_position(voice_handle handle, f32 x, f32 y, f32 z)
 	{
 		std::lock_guard<std::mutex> lock(g_voices_mutex);
-		if (voice_slot* slot = resolve(handle))
+		voice_slot* slot = resolve(handle);
+		if (!slot) return;
+
+		// Doppler feed: velocity from the push delta over wall-clock time. Guarded
+		// against teleports (huge jumps must not scream a pitch spike) and stale
+		// pushes (dt outside a sane frame range -> treat as fresh placement).
+		const auto now = std::chrono::steady_clock::now();
+		f32 vx = 0.0f, vy = 0.0f, vz = 0.0f;
+		if (slot->has_last_push)
 		{
-			slot->position[0] = x;
-			slot->position[1] = y;
-			slot->position[2] = z;
-			// No audible effect until #9 enables the spatializer per voice, but the
-			// miniaudio-side position is kept current so #9 is pure DSP wiring.
-			ma_sound_set_position(&slot->sound, x, y, z);
+			const f32 dt = std::chrono::duration<f32>(now - slot->last_push).count();
+			const f32 dx = x - slot->position[0];
+			const f32 dy = y - slot->position[1];
+			const f32 dz = z - slot->position[2];
+			const f32 jump = sqrtf(dx * dx + dy * dy + dz * dz);
+			if (dt > 0.0001f && dt < 0.5f && jump < 25.0f)
+			{
+				constexpr f32 k_max_speed = 150.0f; // beyond this it's a glitch, not motion
+				vx = dx / dt; vy = dy / dt; vz = dz / dt;
+				const f32 speed = sqrtf(vx * vx + vy * vy + vz * vz);
+				if (speed > k_max_speed)
+				{
+					const f32 scale = k_max_speed / speed;
+					vx *= scale; vy *= scale; vz *= scale;
+				}
+			}
 		}
+		if (!slot->has_last_push)
+		{
+			internal_log("voice %u first pos: (%.1f, %.1f, %.1f)", (u32)(handle & 0xFFFF'FFFF), x, y, z);
+		}
+		slot->position[0] = x;
+		slot->position[1] = y;
+		slot->position[2] = z;
+		slot->last_push = now;
+		slot->has_last_push = true;
+
+		// z mirrored at the miniaudio boundary (LH game space -> RH spatializer),
+		// matching set_listener — slot.position stays game-space.
+		ma_sound_set_position(&slot->sound, x, y, -z);
+		ma_sound_set_velocity(&slot->sound, vx, vy, -vz);
 	}
 
 	void voice_set_spatial(voice_handle handle, const voice_spatial& spatial)
@@ -260,7 +406,14 @@ namespace vortex::runtime::audio {
 		std::lock_guard<std::mutex> lock(g_voices_mutex);
 		if (voice_slot* slot = resolve(handle))
 		{
+			if (slot->spatial.spatial_blend != spatial.spatial_blend)
+			{
+				internal_log("voice %u spatial: blend %.2f min %.1f max %.1f rolloff %d",
+					(u32)(handle & 0xFFFF'FFFF), spatial.spatial_blend,
+					spatial.min_distance, spatial.max_distance, spatial.rolloff_mode);
+			}
 			slot->spatial = spatial;
+			apply_spatial(*slot);
 		}
 	}
 

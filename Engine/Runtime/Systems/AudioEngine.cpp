@@ -2,6 +2,7 @@
 #include "AudioInternal.h"
 #include "AudioVoices.h"
 
+#include <chrono>
 #include <cstdarg>
 #include <cstdio>
 #include <cmath>
@@ -51,6 +52,14 @@ namespace vortex::runtime::audio {
 
 		// Silent-mode pump scratch (keeps the node graph clock advancing off-device).
 		static float			g_silent_pump_accumulator{ 0.0f };
+
+		// Game-space listener position (miniaudio holds the z-mirrored copy) plus the
+		// velocity-tracking state — reset on initialize so a stale pre-shutdown pose
+		// can't fake a velocity into the first frame of the next session.
+		static float			g_listener_pos[3]{};
+		static float			g_listener_last[3]{};
+		static std::chrono::steady_clock::time_point g_listener_last_push{};
+		static bool				g_listener_has_last{ false };
 
 		void log_v(const char* fmt, va_list args)
 		{
@@ -213,6 +222,8 @@ namespace vortex::runtime::audio {
 		ma_engine_uninit(&g_engine);
 		g_state = engine_state::uninitialized;
 		g_silent_pump_accumulator = 0.0f;
+		g_listener_has_last = false;
+		g_listener_pos[0] = g_listener_pos[1] = g_listener_pos[2] = 0.0f;
 		log("shut down");
 	}
 
@@ -305,9 +316,47 @@ namespace vortex::runtime::audio {
 	void set_listener(f32 px, f32 py, f32 pz, f32 fx, f32 fy, f32 fz, f32 ux, f32 uy, f32 uz)
 	{
 		if (g_state == engine_state::uninitialized) return;
-		ma_engine_listener_set_position(&g_engine, 0, px, py, pz);
-		ma_engine_listener_set_direction(&g_engine, 0, fx, fy, fz);
-		ma_engine_listener_set_world_up(&g_engine, 0, ux, uy, uz);
+
+		// Listener velocity for doppler, same push-delta scheme as voice positions
+		// (teleport + stale-dt guarded, speed-capped).
+		const auto now = std::chrono::steady_clock::now();
+		float vx = 0.0f, vy = 0.0f, vz = 0.0f;
+		if (g_listener_has_last)
+		{
+			const float dt = std::chrono::duration<float>(now - g_listener_last_push).count();
+			const float dx = px - g_listener_last[0], dy = py - g_listener_last[1], dz = pz - g_listener_last[2];
+			const float jump = sqrtf(dx * dx + dy * dy + dz * dz);
+			if (dt > 0.0001f && dt < 0.5f && jump < 25.0f)
+			{
+				constexpr float k_max_speed = 150.0f;
+				vx = dx / dt; vy = dy / dt; vz = dz / dt;
+				const float speed = sqrtf(vx * vx + vy * vy + vz * vz);
+				if (speed > k_max_speed)
+				{
+					const float scale = k_max_speed / speed;
+					vx *= scale; vy *= scale; vz *= scale;
+				}
+			}
+		}
+		g_listener_last[0] = px; g_listener_last[1] = py; g_listener_last[2] = pz;
+		g_listener_last_push = now;
+		g_listener_has_last = true;
+		g_listener_pos[0] = px; g_listener_pos[1] = py; g_listener_pos[2] = pz;
+
+		// Handedness boundary: the engine is left-handed (DirectX, +z forward),
+		// miniaudio's spatializer math is right-handed — without the z mirror a
+		// source on the player's left pans into the RIGHT ear (measured).
+		ma_engine_listener_set_position(&g_engine, 0, px, py, -pz);
+		ma_engine_listener_set_direction(&g_engine, 0, fx, fy, -fz);
+		ma_engine_listener_set_world_up(&g_engine, 0, ux, uy, -uz);
+		ma_engine_listener_set_velocity(&g_engine, 0, vx, vy, -vz);
+	}
+
+	void internal_listener_position(float out[3])
+	{
+		out[0] = g_listener_pos[0];
+		out[1] = g_listener_pos[1];
+		out[2] = g_listener_pos[2];
 	}
 
 	void play_test_beep()

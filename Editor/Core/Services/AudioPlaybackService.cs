@@ -260,9 +260,13 @@ namespace Editor.Core.Services
 
         private ECS.Vector3 ReadWorldPosition(GameEntity e)
         {
-            // Engine transform is authoritative during play (physics/scripts move it there).
-            if (Editor.Utilities.ID.IsValid(e.EntityId))
-                return VortexAPI.ReadEntityPosition(e.EntityId);
+            // The C# transform is the reliable source: scripts write it (and sync to
+            // engine), and editor play mirrors physics results back into it per frame.
+            // Do NOT read back via EntityId here — deserialized entities that never got
+            // an engine entity keep the default id 0, and ReadEntityPosition(0) returns
+            // entity #0 (typically the camera), which pinned every sound to the
+            // listener (measured: zero attenuation). Rigidbody-driven sources in the
+            // standalone player can revisit this once physics mirroring exists there.
             return e.Transform != null ? e.Transform.LocalPosition : new ECS.Vector3(0, 0, 0);
         }
 
