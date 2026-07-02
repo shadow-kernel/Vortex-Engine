@@ -40,10 +40,11 @@ namespace Editor.Dialogs
 
             string body = needs
                 ? "This project was created with an older version of Vortex and must be updated to open with the current engine (v" + Editor.Core.EngineInfo.VersionString + ").\n\n" +
-                  "Vortex will make a backup first (in the project's .ve\\backups folder) and then update it automatically. This is safe and reversible."
+                  "Vortex will make a backup first (in the project's .ve\\backups folder) and then update it step by step. This is safe and reversible."
                 : "This project was saved with a newer version of Vortex" + (string.IsNullOrEmpty(plan.SavedWithEngine) ? "" : " (v" + plan.SavedWithEngine + ")") +
                   " than the one you're running (v" + Editor.Core.EngineInfo.VersionString + ").\n\n" +
-                  "It may not open correctly, and saving could lose newer data. Update Vortex to the latest version, or open at your own risk.";
+                  "Opening it is blocked: this build could misread or destroy data written by the newer version. " +
+                  "Update Vortex to the latest version, then open the project again.";
             root.Children.Add(new TextBlock { Text = body, Foreground = DialogStyles.TextBrush, FontSize = 12.5, TextWrapping = TextWrapping.Wrap, LineHeight = 18, Margin = new Thickness(30, 0, 0, 14) });
 
             if (needs && plan.Steps != null && plan.Steps.Count > 0)
@@ -56,13 +57,38 @@ namespace Editor.Dialogs
             }
 
             var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-            var cancel = DialogStyles.CreateButton("Cancel", 90, false);
-            cancel.Margin = new Thickness(0, 0, 8, 0);
-            cancel.Click += (s, e) => { DialogResult = false; Close(); };
-            actions.Children.Add(cancel);
-            var ok = DialogStyles.CreateButton(needs ? "Back up & update" : "Open anyway", 150, true);
-            ok.Click += (s, e) => { DialogResult = true; Close(); };
-            actions.Children.Add(ok);
+            if (needs)
+            {
+                var cancel = DialogStyles.CreateButton("Cancel", 90, false);
+                cancel.Margin = new Thickness(0, 0, 8, 0);
+                cancel.Click += (s, e) => { DialogResult = false; Close(); };
+                actions.Children.Add(cancel);
+                var ok = DialogStyles.CreateButton("Back up & update", 150, true);
+                ok.Click += (s, e) => { DialogResult = true; Close(); };
+                actions.Children.Add(ok);
+            }
+            else
+            {
+                // NewerThanEngine is a HARD BLOCK — there is no "open anyway" (a re-save from an older
+                // build could silently destroy newer data). Offer the update path instead.
+                var update = DialogStyles.CreateButton("Check for Updates…", 160, false);
+                update.Margin = new Thickness(0, 0, 8, 0);
+                update.Click += async (s, e) =>
+                {
+                    try
+                    {
+                        var info = await Editor.Core.Services.Update.UpdateService.CheckAsync();
+                        if (info != null) { var u = new UpdateDialog(info) { Owner = this }; u.ShowDialog(); }
+                        else MessageBox.Show(this, "No newer release is available yet.", "Check for Updates",
+                            MessageBoxButton.OK, MessageBoxImage.Information);
+                    }
+                    catch { }
+                };
+                actions.Children.Add(update);
+                var close = DialogStyles.CreateButton("Close", 90, true);
+                close.Click += (s, e) => { DialogResult = false; Close(); };
+                actions.Children.Add(close);
+            }
             root.Children.Add(actions);
 
             Content = root;
@@ -90,17 +116,27 @@ namespace Editor.Dialogs
             };
             if (app != null && !app.Dispatcher.CheckAccess()) app.Dispatcher.Invoke(show); else show();
 
-            if (!proceed)
-                throw new Editor.Core.Exceptions.ProjectException("Opening the project was cancelled (version mismatch).");
+            if (!proceed || plan.Status == MigrationStatus.NewerThanEngine)
+                throw new Editor.Core.Exceptions.ProjectException(plan.Status == MigrationStatus.NewerThanEngine
+                    ? "This project was saved with a newer Vortex version (" + (plan.SavedWithEngine ?? "?") + ") — update the engine to open it."
+                    : "Opening the project was cancelled (version mismatch).");
 
             if (plan.Status == MigrationStatus.NeedsMigration)
             {
-                bool ok = ProjectMigrationService.Migrate(projectDir, manifest, manifestPath,
-                    m => System.Diagnostics.Debug.WriteLine("[Migrate] " + m));
+                // Splash-style progress window: live step-by-step log while the Trafo chain runs on a
+                // background task (backup -> each step -> re-stamp). Marshal to the UI thread if needed.
+                bool ok = false;
+                Action run = () =>
+                {
+                    var owner = Application.Current != null ? Application.Current.MainWindow : null;
+                    ok = MigrationProgressDialog.Run(owner != null && owner.IsLoaded ? owner : null,
+                        projectDir, manifest, manifestPath, plan);
+                };
+                if (app != null && !app.Dispatcher.CheckAccess()) app.Dispatcher.Invoke(run); else run();
+
                 if (!ok)
                     throw new Editor.Core.Exceptions.ProjectException("Project migration failed — the backup was restored. The project was not opened.");
             }
-            // NewerThanEngine + proceed == "open anyway": just return and let it load.
         }
     }
 }

@@ -323,6 +323,13 @@ namespace Editor.Core.Services.Build
         private static string FindEngineShaders()
         {
             var p = Path.GetDirectoryName(typeof(GameExporter).Assembly.Location);
+
+            // Installed layout FIRST: the installer ships <app>\Shaders next to the exe. Without this an
+            // export from an INSTALLED editor copied 0 shaders -> the shipped game rendered white.
+            var local = Path.Combine(p ?? "", "Shaders");
+            if (Directory.Exists(local) && File.Exists(Path.Combine(local, "standard.hlsl"))) return local;
+
+            // Dev checkout: walk up from x64/<Config> to the repo's Engine/Shaders.
             for (int i = 0; i < 7 && !string.IsNullOrEmpty(p); i++)
             {
                 var c = Path.Combine(p, "Engine", "Shaders");

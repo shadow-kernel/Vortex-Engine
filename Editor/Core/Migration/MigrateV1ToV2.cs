@@ -1,0 +1,42 @@
+using System.IO;
+using Editor.Core.Data;
+
+namespace Editor.Core.Migration
+{
+    /// <summary>
+    /// Format v1 -> v2: prepare pre-animation projects for the skeletal-animation era (engine 2.4+).
+    /// Everything here is additive and idempotent — running it twice is harmless:
+    ///  - create the standard Assets/Animations folder (home of .vanim clips),
+    ///  - regenerate the auto-generated VortexScripting.cs IntelliSense stub, which in old projects
+    ///    predates the animation API (PlayAnimation, Vortex.Animation, OnAnimationEvent) and would make
+    ///    Visual Studio lie about the script surface,
+    ///  - drop the session thumbnail/renderable caches folder if present (stale pre-2.4 formats).
+    /// </summary>
+    public sealed class MigrateV1ToV2 : IProjectMigration
+    {
+        public int FromVersion => 1;
+        public int ToVersion => 2;
+        public string Description => "Prepare the project for the animation system (Assets/Animations folder, refreshed scripting API stub)";
+
+        public void Apply(string projectDir, ProjectManifest manifest)
+        {
+            // 1) standard animations folder
+            Directory.CreateDirectory(Path.Combine(projectDir, "Assets", "Animations"));
+
+            // 2) refresh the IntelliSense stub to the CURRENT engine API (adds PlayAnimation & co.)
+            var scriptsDir = Path.Combine(projectDir, "Assets", "Scripts");
+            if (Directory.Exists(scriptsDir))
+            {
+                var stub = Path.Combine(scriptsDir, "VortexScripting.cs");
+                File.WriteAllText(stub, Services.ScriptingService.ApiTemplate());
+            }
+
+            // 3) stale editor cache from older versions (safe to drop; rebuilt on demand)
+            var cache = Path.Combine(projectDir, "Cache");
+            if (Directory.Exists(cache))
+            {
+                try { Directory.Delete(cache, true); } catch { /* locked = leave it */ }
+            }
+        }
+    }
+}

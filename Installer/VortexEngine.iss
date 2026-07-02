@@ -4,7 +4,7 @@
 ; This script creates a professional installation wizard for Vortex Engine
 
 #define MyAppName "Vortex Engine"
-#define MyAppVersion "2.5.0"
+#define MyAppVersion "2.5.1"
 #define MyAppPublisher "Vortex Engine Team"
 #define MyAppURL "https://github.com/shadow-kernel/Vortex-Engine"
 #define MyAppExeName "Vortex Engine.exe"
@@ -79,6 +79,10 @@ Source: "..\Engine\x64\Release\Engine.lib"; DestDir: "{app}"; Flags: ignoreversi
 Source: "..\x64\Release\Resources\*"; DestDir: "{app}\Resources"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 ; Templates and assets
 Source: "..\x64\Release\Templates\*"; DestDir: "{app}\Templates"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+; Engine shaders — REQUIRED for rendering. The native renderer resolves <exe>\Shaders first (installed
+; layout) and only falls back to walking up to the repo's Engine\Shaders in dev checkouts. Without this
+; an installed editor renders a WHITE viewport (no PSOs compile). Ships .hlsl + any precompiled bin\*.cso.
+Source: "..\Engine\Shaders\*"; DestDir: "{app}\Shaders"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
