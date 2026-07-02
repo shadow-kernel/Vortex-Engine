@@ -381,6 +381,12 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
             }
         }
 
+        private void AudioMixer_Click(object sender, RoutedEventArgs e)
+        {
+            try { Editor.Editors.AudioEditor.AudioMixerWindow.Open(Window.GetWindow(this)); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[AudioMixer] open failed: " + ex.Message); }
+        }
+
         private void ResetLayout_Click(object sender, RoutedEventArgs e)
         {
             var worldEditor = FindParent<WorldEditorView>(this);
