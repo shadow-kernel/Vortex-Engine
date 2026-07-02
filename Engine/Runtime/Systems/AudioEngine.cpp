@@ -1,4 +1,6 @@
 #include "AudioEngine.h"
+#include "AudioInternal.h"
+#include "AudioVoices.h"
 
 #include <cstdarg>
 #include <cstdio>
@@ -6,7 +8,6 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
-#include <vector>
 
 // This is the single translation unit that compiles miniaudio and stb_vorbis.
 // Order matters (documented miniaudio pattern): stb_vorbis header first so the
@@ -38,10 +39,9 @@ namespace vortex::runtime::audio {
 		static std::unordered_map<std::string, ma_sound*> g_sounds;
 		static std::mutex		g_sounds_mutex;
 
-		// Live fire-and-forget instances; reaped in update() once they finish.
-		// The proper voice pool with priorities replaces this in issue #7.
-		static std::vector<ma_sound*> g_one_shots;
-		static std::mutex		g_one_shots_mutex;
+		// Fixed pool size for the voice layer (AudioVoices.cpp); make this a
+		// project setting once audio project settings exist.
+		inline constexpr u32	k_max_voices{ 32 };
 
 		// Generated test beep (no asset needed): finite PCM buffer + one reusable sound.
 		static float*			g_beep_pcm{ nullptr };
@@ -116,6 +116,11 @@ namespace vortex::runtime::audio {
 		}
 	}
 
+	ma_engine* internal_engine()
+	{
+		return g_state != engine_state::uninitialized ? &g_engine : nullptr;
+	}
+
 	bool initialize()
 	{
 		if (g_state != engine_state::uninitialized) return g_state == engine_state::device;
@@ -124,6 +129,7 @@ namespace vortex::runtime::audio {
 		if (ma_engine_init(nullptr, &g_engine) == MA_SUCCESS)
 		{
 			g_state = engine_state::device;
+			voices_initialize(k_max_voices);
 			log("initialized: device '%s', %u Hz, %u channels",
 				g_engine.pDevice ? g_engine.pDevice->playback.name : "?",
 				ma_engine_get_sample_rate(&g_engine),
@@ -140,6 +146,7 @@ namespace vortex::runtime::audio {
 		if (ma_engine_init(&config, &g_engine) == MA_SUCCESS)
 		{
 			g_state = engine_state::silent;
+			voices_initialize(k_max_voices);
 			log("WARNING: no audio output device available — running silent");
 			return false;
 		}
@@ -151,15 +158,7 @@ namespace vortex::runtime::audio {
 	void shutdown()
 	{
 		if (g_state == engine_state::uninitialized) return;
-		{
-			std::lock_guard<std::mutex> lock(g_one_shots_mutex);
-			for (ma_sound* sound : g_one_shots)
-			{
-				ma_sound_uninit(sound);
-				delete sound;
-			}
-			g_one_shots.clear();
-		}
+		voices_shutdown();
 		unload_all_sounds();
 		shutdown_beep();
 		ma_engine_uninit(&g_engine);
@@ -241,28 +240,9 @@ namespace vortex::runtime::audio {
 
 	bool play_one_shot(const char* path, float volume)
 	{
-		if (g_state == engine_state::uninitialized || !path || !*path) return false;
-
-		// Warm the cache first; the instance below then shares the decoded buffer
-		// (miniaudio's resource manager ref-counts by path + DECODE flag).
-		if (!preload(path)) return false;
-
-		ma_sound* sound = new ma_sound{};
-		const ma_result result = ma_sound_init_from_file(&g_engine, path,
-			MA_SOUND_FLAG_DECODE | MA_SOUND_FLAG_NO_SPATIALIZATION, nullptr, nullptr, sound);
-		if (result != MA_SUCCESS)
-		{
-			delete sound;
-			log("WARNING: one-shot init failed for '%s' (%s)", path, ma_result_description(result));
-			return false;
-		}
-
-		ma_sound_set_volume(sound, volume < 0.0f ? 0.0f : volume);
-		ma_sound_start(sound);
-
-		std::lock_guard<std::mutex> lock(g_one_shots_mutex);
-		g_one_shots.push_back(sound);
-		return true;
+		voice_params params{};
+		params.volume = volume;
+		return voice_play(path, params) != invalid_voice;
 	}
 
 	void play_test_beep()
@@ -277,20 +257,7 @@ namespace vortex::runtime::audio {
 	{
 		if (g_state == engine_state::uninitialized) return;
 
-		// Reap finished one-shots (looping never applies to them, so at_end is final).
-		{
-			std::lock_guard<std::mutex> lock(g_one_shots_mutex);
-			for (size_t i = g_one_shots.size(); i > 0; --i)
-			{
-				ma_sound* sound = g_one_shots[i - 1];
-				if (ma_sound_at_end(sound))
-				{
-					ma_sound_uninit(sound);
-					delete sound;
-					g_one_shots.erase(g_one_shots.begin() + (i - 1));
-				}
-			}
-		}
+		voices_update(dt);
 
 		if (g_state == engine_state::silent)
 		{

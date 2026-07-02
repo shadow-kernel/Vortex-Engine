@@ -73,7 +73,9 @@
     <ClInclude Include="Runtime\ResourceManager.h" />
     <ClInclude Include="Runtime\SceneManager.h" />
     <ClInclude Include="Runtime\Systems\AudioEngine.h" />
+    <ClInclude Include="Runtime\Systems\AudioInternal.h" />
     <ClInclude Include="Runtime\Systems\AudioSystem.h" />
+    <ClInclude Include="Runtime\Systems\AudioVoices.h" />
     <ClInclude Include="Runtime\Systems\PhysicsSystem.h" />
     <ClInclude Include="Runtime\Systems\RenderSystem.h" />
     <ClInclude Include="Runtime\Systems\RenderSystemDX12.h" />
@@ -147,6 +149,7 @@
     <ClCompile Include="Runtime\SceneManager.cpp" />
     <ClCompile Include="Runtime\Systems\AudioEngine.cpp" />
     <ClCompile Include="Runtime\Systems\AudioSystem.cpp" />
+    <ClCompile Include="Runtime\Systems\AudioVoices.cpp" />
     <ClCompile Include="Runtime\Systems\PhysicsSystem.cpp" />
     <ClCompile Include="Runtime\Systems\RenderSystem.cpp" />
     <ClCompile Include="Runtime\Systems\RenderSystemDX12.cpp" />

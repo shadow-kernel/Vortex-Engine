@@ -3,6 +3,7 @@
 #include "..\Engine\Runtime\ResourceManager.h"
 #include "..\Engine\Runtime\Systems\AudioSystem.h"
 #include "..\Engine\Runtime\Systems\AudioEngine.h"
+#include "..\Engine\Runtime\Systems\AudioVoices.h"
 
 #include "Test.h"
 
@@ -63,6 +64,9 @@ public:
 		runtime::audio::play_test_beep();
 		tick_seconds(1.2f);
 
+		// -- voice pool (issue #7) -------------------------------------------------
+		run_voice_tests(wav_path);
+
 		// -- unload / refcount -----------------------------------------------------
 		runtime::resource_manager::unload(handle);
 		check("unload releases cached sound", !runtime::audio::is_loaded(wav_path.c_str()));
@@ -82,6 +86,87 @@ public:
 	}
 
 private:
+	void run_voice_tests(const std::string& wav)
+	{
+		using namespace runtime::audio;
+		const char* path = wav.c_str();
+		const u32 max_voices = voices_max_count();
+		check("voice pool sized", max_voices > 0);
+
+		// Handle lifecycle: play → playing, pause → not playing, resume, stop → stale.
+		voice_params p{};
+		p.loop = true;
+		voice_handle v = voice_play(path, p);
+		check("voice_play returns valid handle", v != invalid_voice && voice_is_valid(v));
+		check("voice reports playing", voice_is_playing(v));
+		voice_pause(v);
+		check("paused voice not playing but still valid", !voice_is_playing(v) && voice_is_valid(v));
+		voice_resume(v);
+		check("resumed voice playing", voice_is_playing(v));
+		voice_set_volume(v, 0.5f);
+		voice_set_pitch(v, 1.2f);
+		voice_set_pan(v, -0.5f);
+		voice_stop(v);
+		check("stopped voice handle is stale", !voice_is_valid(v) && !voice_is_playing(v));
+		voice_set_volume(v, 1.0f);	// must be safe no-ops on the stale handle
+		voice_stop(v);
+
+		// Priority stealing: fill the pool with unimportant looping voices, then a
+		// more important request must steal (not fail), invalidating one victim.
+		std::vector<voice_handle> fillers;
+		voice_params low{};
+		low.loop = true;
+		low.priority = 200;
+		low.volume = 0.1f;
+		for (u32 i = 0; i < max_voices; ++i) fillers.push_back(voice_play(path, low));
+		check("pool filled to max", voices_active_count() == max_voices);
+
+		const u32 stolen_before = voices_stolen_count();
+		voice_params high{};
+		high.loop = true;
+		high.priority = 10;
+		voice_handle important = voice_play(path, high);
+		check("high-priority play steals when pool is full", important != invalid_voice);
+		check("steal counted", voices_stolen_count() == stolen_before + 1);
+		check("pool did not grow past max", voices_active_count() == max_voices);
+		int stale = 0;
+		for (voice_handle f : fillers) if (!voice_is_valid(f)) ++stale;
+		check("exactly one filler voice was stolen", stale == 1);
+
+		// The reverse must fail: everything playing outranks the request.
+		voice_params unimportant{};
+		unimportant.loop = true;
+		unimportant.priority = 250;
+		// Pool is full of priority-200 (and one priority-10) voices; 250 is less
+		// important than all of them.
+		check("low-priority play rejected on full pool",
+			voice_play(path, unimportant) == invalid_voice);
+
+		for (voice_handle f : fillers) voice_stop(f);
+		voice_stop(important);
+		check("pool empty after stopping all", voices_active_count() == 0);
+
+		// Stress: 220 one-shots (0.5 s clip) — pool never exceeds max, everything
+		// reaps back automatically once finished.
+		voice_params one_shot{};
+		one_shot.volume = 0.05f;
+		u32 accepted = 0;
+		u32 peak_active = 0;
+		for (int i = 0; i < 220; ++i)
+		{
+			if (voice_play(path, one_shot) != invalid_voice) ++accepted;
+			const u32 active = voices_active_count();
+			if (active > peak_active) peak_active = active;
+			if ((i % 40) == 39) tick_seconds(0.05f);
+		}
+		check("stress: all 220 plays accepted", accepted == 220);
+		check("stress: active voices never exceeded max", peak_active <= max_voices);
+		tick_seconds(0.8f);
+		check("stress: finished one-shots auto-returned to pool", voices_active_count() == 0);
+		std::cout << "[info] stress: peak active " << peak_active
+			<< ", total stolen " << voices_stolen_count() << "\n";
+	}
+
 	void check(const char* what, bool ok)
 	{
 		std::cout << (ok ? "[PASS] " : "[FAIL] ") << what << "\n";
