@@ -1070,12 +1070,14 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             // engine) — this just scaffolds it so a freshly-loaded project is controllable on Play.
             EnsurePlayerControllerOnMainCamera(scene);
 
+            // Start PlayOnAwake AudioSources + bind the AudioListener BEFORE scripts run:
+            // VortexBehaviour.Start() may call Vortex.Audio (music, stingers), which needs
+            // the playback service active.
+            Editor.Core.Services.AudioPlaybackService.Instance.BeginPlay(scene);
+
             // Compile + start the gameplay scripts (VortexBehaviour.Start on every Script component).
             // Player movement, camera control and all gameplay live in scripts — the editor only runs them.
             Editor.Scripting.ScriptRuntime.Instance.Begin(scene);
-
-            // Start PlayOnAwake AudioSources + bind the AudioListener (native voice pool).
-            Editor.Core.Services.AudioPlaybackService.Instance.BeginPlay(scene);
         }
 
         /// <summary>If the main camera has no Script component, write + attach the project's editable

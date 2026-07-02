@@ -159,6 +159,15 @@ namespace Vortex
         /// <summary>Set this entity's base color at runtime — e.g. flash a color when a trigger is touched.</summary>
         public void SetColor(float r, float g, float b) { Host?.SetEntityColor(EntityId, r, g, b); }
 
+        /// <summary>This entity's AudioSource component as a script handle (Play/Stop/Pause/
+        /// Resume, live Volume/Pitch), or null if the entity has none.</summary>
+        public AudioSource GetAudioSource()
+        {
+            var entity = Editor.Scripting.ScriptRuntime.Instance.FindEntityByHandle(EntityId);
+            var component = entity?.GetComponent<Editor.ECS.Components.Audio.AudioSource>();
+            return component != null ? new AudioSource(component) : null;
+        }
+
         /// <summary>Play an animation clip on this entity's Animator. Pass a clip NAME from the Animator's
         /// clip table (e.g. "Walk") or a .vanim path. fade &gt; 0 crossfades from the current pose (seconds).
         /// Returns false when the entity has no Animator / the clip can't be found.</summary>
@@ -740,5 +749,89 @@ namespace Vortex
             catch { }
             return p;
         }
+    }
+
+    /// <summary>
+    /// Game audio for scripts. Clip paths are project-relative ("Assets/Audio/scream.wav")
+    /// and resolve identically in editor play mode and shipped .vpak builds. One-shots use
+    /// pooled voices that auto-reclaim — nothing to hold on to or free.
+    /// <code>
+    /// // Jump-scare stinger when the player trips a trigger:
+    /// public class ScareTrigger : VortexBehaviour
+    /// {
+    ///     public override void OnTriggerEnter(TriggerHit hit)
+    ///     {
+    ///         if (hit.Tag != "Player") return;
+    ///         Audio.PlayOneShot("Assets/Audio/stinger.wav", Position, 1f);   // 3D, at this entity
+    ///         Audio.Music.CrossFade("Assets/Audio/chase.ogg", 2f);           // chase music sneaks in
+    ///     }
+    /// }
+    /// </code>
+    /// </summary>
+    public static class Audio
+    {
+        /// <summary>Play a positional (3D) one-shot at a world position — no entity needed.
+        /// Distance attenuation uses sensible defaults (min 1, max 500, logarithmic).</summary>
+        public static void PlayOneShot(string clipPath, Vector3 position, float volume = 1f, float pitch = 1f)
+            => Editor.Core.Services.AudioPlaybackService.Instance.PlayOneShot(clipPath, position.X, position.Y, position.Z, volume, pitch);
+
+        /// <summary>Play a flat 2D one-shot (UI clicks, stingers) — no position, no attenuation.</summary>
+        public static void PlayOneShot2D(string clipPath, float volume = 1f, float pitch = 1f)
+            => Editor.Core.Services.AudioPlaybackService.Instance.PlayOneShot2D(clipPath, volume, pitch);
+
+        /// <summary>The music channel: one streamed, looping track at priority 0 (never stolen),
+        /// with fade-in and crossfade. Fades are frame-ticked ramps for now (native envelopes
+        /// arrive with the fade-envelope feature); the API shape is final.</summary>
+        public static class Music
+        {
+            /// <summary>Start a track, fading in over fadeInSeconds (0 = immediate). A track
+            /// that is already playing is faded out quickly and replaced.</summary>
+            public static void Play(string clipPath, float fadeInSeconds = 0f)
+                => Editor.Core.Services.AudioPlaybackService.Instance.MusicPlay(clipPath, fadeInSeconds);
+
+            /// <summary>Fade the current track out while the new one fades in, overlapping.</summary>
+            public static void CrossFade(string clipPath, float seconds)
+                => Editor.Core.Services.AudioPlaybackService.Instance.MusicCrossFade(clipPath, seconds);
+
+            public static void Stop(float fadeOutSeconds = 0f)
+                => Editor.Core.Services.AudioPlaybackService.Instance.MusicStop(fadeOutSeconds);
+
+            public static bool IsPlaying
+                => Editor.Core.Services.AudioPlaybackService.Instance.MusicIsPlaying;
+
+            /// <summary>Music channel volume (multiplies the per-track fades).</summary>
+            public static float Volume
+            {
+                get => Editor.Core.Services.AudioPlaybackService.Instance.MusicVolume;
+                set => Editor.Core.Services.AudioPlaybackService.Instance.MusicVolume = value;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Script-side handle to an entity's AudioSource component — get it via
+    /// <see cref="VortexBehaviour.GetAudioSource"/>. Play/Stop/Pause/Resume control the
+    /// component's voice; Volume/Pitch write through to the component, so inspector and
+    /// script always agree.
+    /// </summary>
+    public sealed class AudioSource
+    {
+        private readonly Editor.ECS.Components.Audio.AudioSource _component;
+        internal AudioSource(Editor.ECS.Components.Audio.AudioSource component) { _component = component; }
+
+        /// <summary>(Re)start this source's clip from the beginning — works regardless of PlayOnAwake.</summary>
+        public void Play() => Editor.Core.Services.AudioPlaybackService.Instance.ScriptPlay(_component);
+        public void Stop() => Editor.Core.Services.AudioPlaybackService.Instance.ScriptStop(_component);
+        public void Pause() => Editor.Core.Services.AudioPlaybackService.Instance.ScriptPause(_component);
+        public void Resume() => Editor.Core.Services.AudioPlaybackService.Instance.ScriptResume(_component);
+        public bool IsPlaying => Editor.Core.Services.AudioPlaybackService.Instance.ScriptIsPlaying(_component);
+
+        /// <summary>Live volume (0..1) — audible immediately while playing.</summary>
+        public float Volume { get => _component.Volume; set => _component.Volume = value; }
+        /// <summary>Live pitch — audible immediately while playing.</summary>
+        public float Pitch { get => _component.Pitch; set => _component.Pitch = value; }
+        public bool Loop { get => _component.Loop; set => _component.Loop = value; }
+        /// <summary>Project-relative clip path; takes effect on the next Play().</summary>
+        public string Clip { get => _component.AudioClipPath; set => _component.AudioClipPath = value; }
     }
 }

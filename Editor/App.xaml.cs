@@ -230,8 +230,9 @@ namespace Editor
                 Editor.Core.Services.PlayModeService.Instance.IsExternalWindow = true;
                 Editor.Core.Services.PlayModeService.Instance.SetGameView(true);
                 Editor.Core.Services.PlayModeService.Instance.Play();
+                // Audio BEFORE scripts: Start() may call Vortex.Audio (music/stingers).
+                if (scene != null) Editor.Core.Services.AudioPlaybackService.Instance.BeginPlay(scene);
                 if (scene != null) Editor.Scripting.ScriptRuntime.Instance.Begin(scene);
-                if (scene != null) Editor.Core.Services.AudioPlaybackService.Instance.BeginPlay(scene); // PlayOnAwake voices + listener
 
                 // Keep the splash up — DON'T fade here. The native window is created hidden and revealed only once
                 // its first frame is rendered; GameHostTick closes this splash right after, so there's no black flash.

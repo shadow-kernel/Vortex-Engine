@@ -53,6 +53,14 @@ namespace Editor.Scripting
             for (int i = 0; i < _behaviours.Count; i++) { if (i > 0) sb.Append(","); sb.Append(_behaviours[i].GetType().Name); }
             return _behaviours.Count + "[" + sb + "]";
         }
+
+        /// <summary>The scene entity a behaviour handle is attached to (null for UI action
+        /// controllers / after End). Used by the Vortex.Audio script surface to reach the
+        /// entity's AudioSource component.</summary>
+        internal GameEntity FindEntityByHandle(long handle)
+        {
+            return _entitiesById.TryGetValue(handle, out var e) ? e : null;
+        }
         private bool _active;
 
         /// <summary>Last compile diagnostics (empty on success) — surfaced to the user.</summary>

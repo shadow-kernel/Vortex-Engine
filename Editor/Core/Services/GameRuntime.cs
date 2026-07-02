@@ -66,9 +66,10 @@ namespace Editor.Core.Services
             }
             catch { }
 
-            // 5) start the new scene's gameplay scripts + its PlayOnAwake audio
-            try { Editor.Scripting.ScriptRuntime.Instance.Begin(target); } catch { }
+            // 5) start the new scene's PlayOnAwake audio, then its gameplay scripts
+            // (audio first — Start() may call Vortex.Audio for music/stingers)
             try { Editor.Core.Services.AudioPlaybackService.Instance.BeginPlay(target); } catch { }
+            try { Editor.Scripting.ScriptRuntime.Instance.Begin(target); } catch { }
 
             System.Diagnostics.Debug.WriteLine("[GameRuntime] switched to scene '" + target.Name + "'");
             return true;
