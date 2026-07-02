@@ -10,7 +10,7 @@ namespace Editor.Core
     public static class EngineInfo
     {
         /// <summary>Current engine version (semver: major.minor.patch).</summary>
-        public static readonly Version Version = new Version(2, 4, 0);
+        public static readonly Version Version = new Version(2, 4, 1);
 
         /// <summary>Version as a bare string, no leading 'v' (e.g. "2.3.0").</summary>
         public static string VersionString => Version.ToString(3);

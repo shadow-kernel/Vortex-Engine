@@ -48,56 +48,74 @@ namespace Editor.Core.Services.Update
             catch { return false; }
         }
 
-        /// <summary>Query the latest GitHub release. Returns null on error / no update / not newer.</summary>
+        /// <summary>
+        /// Query the GitHub releases. Returns null on error / no update / not newer. Notes aggregate the
+        /// FULL changelogs of EVERY release newer than the running version (a user updating 2.2 -> 2.4
+        /// sees what 2.3 AND 2.4 brought), newest first.
+        /// </summary>
         public static async Task<UpdateInfo> CheckAsync()
         {
             try
             {
-                string url = $"https://api.github.com/repos/{Editor.Core.EngineInfo.RepoOwner}/{Editor.Core.EngineInfo.RepoName}/releases/latest";
+                string url = $"https://api.github.com/repos/{Editor.Core.EngineInfo.RepoOwner}/{Editor.Core.EngineInfo.RepoName}/releases?per_page=20";
                 using (var resp = await _http.GetAsync(url).ConfigureAwait(false))
                 {
                     if (!resp.IsSuccessStatusCode) return null;
                     var json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
                     using (var doc = JsonDocument.Parse(json))
                     {
-                        var root = doc.RootElement;
-                        if (root.TryGetProperty("draft", out var d) && d.GetBoolean()) return null;
-                        string tag = root.TryGetProperty("tag_name", out var t) ? t.GetString() : null;
-                        if (string.IsNullOrEmpty(tag)) return null;
-                        var latest = ParseVersion(tag);
-                        if (latest == null) return null;
-
+                        if (doc.RootElement.ValueKind != JsonValueKind.Array) return null;
                         var current = Editor.Core.EngineInfo.Version;
-                        if (latest <= current) return null; // up to date (or a downgrade)
 
-                        // find the Setup exe asset
-                        string setupUrl = null, setupName = null;
-                        if (root.TryGetProperty("assets", out var assets) && assets.ValueKind == JsonValueKind.Array)
+                        UpdateInfo best = null;
+                        var notes = new System.Text.StringBuilder();
+
+                        foreach (var rel in doc.RootElement.EnumerateArray())
                         {
-                            foreach (var a in assets.EnumerateArray())
+                            if (rel.TryGetProperty("draft", out var d) && d.GetBoolean()) continue;
+                            if (rel.TryGetProperty("prerelease", out var pr) && pr.GetBoolean()) continue;
+                            string tag = rel.TryGetProperty("tag_name", out var t) ? t.GetString() : null;
+                            var ver = ParseVersion(tag);
+                            if (ver == null || ver <= current) continue;
+
+                            string body = rel.TryGetProperty("body", out var b) ? (b.GetString() ?? "") : "";
+                            notes.AppendLine("# " + (tag ?? ver.ToString(3)));
+                            notes.AppendLine(body.Trim());
+                            notes.AppendLine();
+
+                            if (best != null && ver <= best.Latest) continue; // keep collecting notes, not the target
+
+                            // find this release's Setup exe asset
+                            string setupUrl = null, setupName = null;
+                            if (rel.TryGetProperty("assets", out var assets) && assets.ValueKind == JsonValueKind.Array)
                             {
-                                string name = a.TryGetProperty("name", out var n) ? n.GetString() : "";
-                                if (!string.IsNullOrEmpty(name) && name.StartsWith("VortexEngine-Setup", StringComparison.OrdinalIgnoreCase)
-                                    && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                                foreach (var a in assets.EnumerateArray())
                                 {
-                                    setupName = name;
-                                    setupUrl = a.TryGetProperty("browser_download_url", out var u) ? u.GetString() : null;
-                                    break;
+                                    string name = a.TryGetProperty("name", out var n) ? n.GetString() : "";
+                                    if (!string.IsNullOrEmpty(name) && name.StartsWith("VortexEngine-Setup", StringComparison.OrdinalIgnoreCase)
+                                        && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        setupName = name;
+                                        setupUrl = a.TryGetProperty("browser_download_url", out var u) ? u.GetString() : null;
+                                        break;
+                                    }
                                 }
                             }
-                        }
-                        if (string.IsNullOrEmpty(setupUrl)) return null; // no installer asset -> can't self-update
-                        if (!IsGitHubUrl(setupUrl)) return null;         // only ever run an installer fetched from GitHub
+                            if (string.IsNullOrEmpty(setupUrl) || !IsGitHubUrl(setupUrl)) continue; // can't self-update to this one
 
-                        return new UpdateInfo
-                        {
-                            Latest = latest,
-                            Tag = tag,
-                            Notes = root.TryGetProperty("body", out var b) ? (b.GetString() ?? "") : "",
-                            SetupUrl = setupUrl,
-                            SetupName = setupName,
-                            Bump = Classify(current, latest),
-                        };
+                            best = new UpdateInfo
+                            {
+                                Latest = ver,
+                                Tag = tag,
+                                SetupUrl = setupUrl,
+                                SetupName = setupName,
+                            };
+                        }
+
+                        if (best == null) return null;
+                        best.Notes = notes.ToString().Trim();
+                        best.Bump = Classify(current, best.Latest);
+                        return best;
                     }
                 }
             }
@@ -172,36 +190,59 @@ namespace Editor.Core.Services.Update
         }
 
         /// <summary>
-        /// Launch the installer silently (elevated — the app installs into Program Files) so it closes this
-        /// running instance, installs the new version over it, and relaunches it; then shut down so the files
-        /// are unlocked for the overwrite.
+        /// Install the downloaded setup and restart the app — via a detached RELAY script, because launching
+        /// the installer directly from the running app is a guaranteed-lost race: the app still holds the
+        /// AppMutex ("VortexEngineSingleInstance") when the silent installer checks it, and /SUPPRESSMSGBOXES
+        /// answers the "application is running" prompt with CANCEL — the install silently never happened
+        /// (the pre-2.4.1 bug: download, exit, still the old version). The relay:
+        ///   1. waits for THIS process to fully exit (mutex released, files unlocked — deterministic, no race),
+        ///   2. runs the installer /VERYSILENT (elevated via UAC),
+        ///   3. the installer's [Run] skipifnotsilent entry relaunches the new version de-elevated.
         /// </summary>
         public static void InstallAndRestart(string setupPath)
         {
             try
             {
+                int pid = System.Diagnostics.Process.GetCurrentProcess().Id;
+                string log = Path.Combine(Path.GetTempPath(), "VortexUpdate.log");
+                string script = Path.Combine(Path.GetTempPath(), "VortexUpdateRelay.ps1");
+
+                // The relay waits up to 30s for us to die, then installs. -Verb RunAs = the single UAC consent.
+                // If the setup's [Run] relaunch ever failed (defensive), the relay starts the app itself — but
+                // only when the install log shows no fresh launch happened is hard to detect, so instead the
+                // relay checks whether the app came back within 15s and starts it de-elevated via explorer if not.
+                File.WriteAllText(script,
+                    "$ErrorActionPreference = 'SilentlyContinue'\n" +
+                    "Wait-Process -Id " + pid + " -Timeout 30\n" +
+                    "Start-Sleep -Milliseconds 500\n" +   // let the OS release file handles/mutex fully
+                    "$p = Start-Process -FilePath '" + setupPath.Replace("'", "''") + "' " +
+                        "-ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CLOSEAPPLICATIONS','/FORCECLOSEAPPLICATIONS','/NOCANCEL','/SP-','/LOG=\"" + log.Replace("'", "''") + "\"' " +
+                        "-Verb RunAs -PassThru -Wait\n" +
+                    "Start-Sleep -Seconds 3\n" +
+                    "if (-not (Get-Process -Name 'Vortex Engine' -ErrorAction SilentlyContinue)) {\n" +
+                    "  $exe = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'Vortex Engine\\Vortex Engine.exe'\n" +
+                    "  if (Test-Path $exe) { explorer.exe \"$exe\" }\n" +   // explorer relaunch = de-elevated
+                    "}\n");
+
                 var psi = new System.Diagnostics.ProcessStartInfo
                 {
-                    FileName = setupPath,
-                    // /VERYSILENT: no UI  /CLOSEAPPLICATIONS: RM closes us if we're slow to exit (AppMutex)
-                    // /SP-: skip the "This will install…" prompt  /NORESTART: never reboot.
-                    // The installer relaunches the editor via its skipifnotsilent [Run] entry — NOT /RESTARTAPPLICATIONS
-                    // (which, combined with our self-exit + the [Run], could launch two instances).
-                    Arguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /NOCANCEL /SP-",
-                    UseShellExecute = true,
-                    Verb = "runas", // elevate (Program Files write) — single UAC consent
+                    FileName = "powershell.exe",
+                    Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"" + script + "\"",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
                 };
                 var proc = System.Diagnostics.Process.Start(psi);
-                if (proc == null) return; // couldn't start — stay on the current version
+                if (proc == null) return; // couldn't start the relay — stay on the current version
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine("[Update] install launch failed: " + ex.Message);
-                return; // user likely declined UAC — stay on the current version
+                System.Diagnostics.Debug.WriteLine("[Update] relay launch failed: " + ex.Message);
+                return; // stay on the current version
             }
 
-            // Exit NOW (skip the blocking native engine teardown in OnExit, which could hang and keep the DLLs
-            // locked) so the elevated installer can overwrite our files. It relaunches us via its [Run] entry.
+            // Release the single-instance mutex explicitly, then exit NOW (skip the blocking native engine
+            // teardown in OnExit, which could hang and keep DLLs locked). The relay takes over from here.
+            Editor.App.ReleaseSingleInstanceMutex();
             Environment.Exit(0);
         }
     }

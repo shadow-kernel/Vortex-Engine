@@ -105,6 +105,15 @@ namespace Editor
 
         private static System.Threading.Mutex _singleInstanceMutex;
 
+        /// <summary>Release the single-instance mutex early (auto-update handoff: the silent installer's
+        /// AppMutex check must see it free BEFORE this process finishes dying).</summary>
+        public static void ReleaseSingleInstanceMutex()
+        {
+            try { _singleInstanceMutex?.ReleaseMutex(); } catch { }
+            try { _singleInstanceMutex?.Dispose(); } catch { }
+            _singleInstanceMutex = null;
+        }
+
         /// <summary>Non-blocking auto-update check: only for installer builds; Patch auto-installs, Minor/Major ask.
         /// Wrapped so a failure can never affect startup.</summary>
         private async void CheckForUpdatesAsync()

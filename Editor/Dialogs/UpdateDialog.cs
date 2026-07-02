@@ -31,8 +31,9 @@ namespace Editor.Dialogs
             _auto = info.Bump == BumpType.Patch;
 
             Title = "Vortex Engine — Update";
-            Width = 520;
+            Width = 580;
             SizeToContent = SizeToContent.Height;
+            MaxHeight = 720;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             ResizeMode = ResizeMode.NoResize;
             Background = B(DialogStyles.BackgroundColor);
@@ -86,24 +87,18 @@ namespace Editor.Dialogs
                 root.Children.Add(warn);
             }
 
-            if (!_auto)
+            // "What's new" — the FULL changelogs of every release between the running and the latest version
+            // (UpdateService aggregates them, newest first). Always shown, also while a patch auto-installs.
+            root.Children.Add(new TextBlock { Text = "WHAT'S NEW", FontSize = 10.5, FontWeight = FontWeights.SemiBold, Foreground = DialogStyles.TextSecondaryBrush, Margin = new Thickness(0, 0, 0, 6) });
+            var notesBox = new Border
             {
-                // "What's new"
-                root.Children.Add(new TextBlock { Text = "WHAT'S NEW", FontSize = 10.5, FontWeight = FontWeights.SemiBold, Foreground = DialogStyles.TextSecondaryBrush, Margin = new Thickness(0, 0, 0, 6) });
-                var notesBox = new Border
-                {
-                    Background = B(DialogStyles.PanelColor), BorderBrush = DialogStyles.BorderBrush, BorderThickness = new Thickness(1),
-                    CornerRadius = new CornerRadius(8), Padding = new Thickness(12), Margin = new Thickness(0, 0, 0, 16)
-                };
-                var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, MaxHeight = 220 };
-                scroll.Content = new TextBlock
-                {
-                    Text = string.IsNullOrWhiteSpace(_info.Notes) ? "See the release page for details." : _info.Notes.Trim(),
-                    Foreground = DialogStyles.TextBrush, FontSize = 12, TextWrapping = TextWrapping.Wrap, LineHeight = 17
-                };
-                notesBox.Child = scroll;
-                root.Children.Add(notesBox);
-            }
+                Background = B(DialogStyles.PanelColor), BorderBrush = DialogStyles.BorderBrush, BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(8), Padding = new Thickness(14, 10, 14, 12), Margin = new Thickness(0, 0, 0, 16)
+            };
+            var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, MaxHeight = 320 };
+            scroll.Content = BuildNotesView(_info.Notes);
+            notesBox.Child = scroll;
+            root.Children.Add(notesBox);
 
             // progress (hidden until downloading)
             _status = new TextBlock { Text = _auto ? "Downloading…" : "", Foreground = DialogStyles.TextSecondaryBrush, FontSize = 11.5, Margin = new Thickness(0, 0, 0, 6), Visibility = _auto ? Visibility.Visible : Visibility.Collapsed };
@@ -126,6 +121,80 @@ namespace Editor.Dialogs
             }
             root.Children.Add(_actions);
             return root;
+        }
+
+        /// <summary>
+        /// Render the aggregated release notes as styled text (markdown-lite): '# vX.Y.Z' version headers in
+        /// accent, '##'/'###' section headers bold, '*'/'-' items as bullets, bold markers and link syntax
+        /// stripped so the GitHub-generated changelog reads cleanly.
+        /// </summary>
+        private UIElement BuildNotesView(string notes)
+        {
+            var panel = new StackPanel();
+            if (string.IsNullOrWhiteSpace(notes))
+            {
+                panel.Children.Add(new TextBlock { Text = "See the release page for details.", Foreground = DialogStyles.TextSecondaryBrush, FontSize = 12 });
+                return panel;
+            }
+
+            bool first = true;
+            foreach (var raw in notes.Replace("\r", "").Split('\n'))
+            {
+                string line = raw.TrimEnd();
+                if (line.Trim().Length == 0) continue;
+
+                if (line.StartsWith("# "))          // version header ("# v2.4.1")
+                {
+                    panel.Children.Add(new TextBlock
+                    {
+                        Text = line.Substring(2).Trim(),
+                        FontSize = 14.5, FontWeight = FontWeights.Bold,
+                        Foreground = DialogStyles.AccentBrush,
+                        Margin = new Thickness(0, first ? 0 : 14, 0, 4)
+                    });
+                }
+                else if (line.StartsWith("### ") || line.StartsWith("## "))
+                {
+                    panel.Children.Add(new TextBlock
+                    {
+                        Text = CleanMd(line.TrimStart('#', ' ')),
+                        FontSize = 12.5, FontWeight = FontWeights.SemiBold,
+                        Foreground = DialogStyles.TextBrush,
+                        Margin = new Thickness(0, 8, 0, 3)
+                    });
+                }
+                else if (line.TrimStart().StartsWith("* ") || line.TrimStart().StartsWith("- "))
+                {
+                    panel.Children.Add(new TextBlock
+                    {
+                        Text = "•  " + CleanMd(line.TrimStart(' ', '*', '-')),
+                        FontSize = 12, Foreground = DialogStyles.TextBrush,
+                        TextWrapping = TextWrapping.Wrap, LineHeight = 17,
+                        Margin = new Thickness(8, 1, 0, 1)
+                    });
+                }
+                else
+                {
+                    panel.Children.Add(new TextBlock
+                    {
+                        Text = CleanMd(line.Trim()),
+                        FontSize = 12, Foreground = DialogStyles.TextSecondaryBrush,
+                        TextWrapping = TextWrapping.Wrap, LineHeight = 17,
+                        Margin = new Thickness(0, 1, 0, 1)
+                    });
+                }
+                first = false;
+            }
+            return panel;
+        }
+
+        /// <summary>Strip markdown noise for plain-text display: **bold**, `code`, [text](url) -> text, bare PR links shortened.</summary>
+        private static string CleanMd(string s)
+        {
+            s = s.Replace("**", "").Replace("`", "");
+            s = System.Text.RegularExpressions.Regex.Replace(s, @"\[([^\]]+)\]\([^)]+\)", "$1");   // [text](url) -> text
+            s = System.Text.RegularExpressions.Regex.Replace(s, @"https://github\.com/\S+/(?:pull|compare|commit)/(\S+)", "($1)"); // shorten PR/compare links
+            return s;
         }
 
         private async void StartDownload()
