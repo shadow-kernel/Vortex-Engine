@@ -18,6 +18,9 @@
 #include <thread>
 #include <vector>
 
+#include <psapi.h>
+#pragma comment(lib, "psapi.lib")
+
 using namespace vortex;
 
 // Audio smoke test (issue #6): device init, decode via ResourceManager::load_audio,
@@ -66,6 +69,9 @@ public:
 
 		// -- voice pool (issue #7) -------------------------------------------------
 		run_voice_tests(wav_path);
+
+		// -- streaming playback (issue #10) -----------------------------------------
+		run_streaming_tests(wav_path);
 
 		// -- 3D spatialization measurement demo (issue #9) --------------------------
 		// Opt-in: VORTEX_AUDIO_SPATIAL_DEMO=<phase-file>. An external meter samples
@@ -162,6 +168,131 @@ private:
 
 		voice_stop(v);
 		fclose(f);
+	}
+
+	static size_t working_set()
+	{
+		PROCESS_MEMORY_COUNTERS pmc{};
+		GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc));
+		return pmc.WorkingSetSize;
+	}
+
+	// Streaming (issue #10): a long clip must NOT hold its full decoded PCM in
+	// memory, loops must survive the buffer boundary, and pak-style registered
+	// memory blobs must stream like files.
+	void run_streaming_tests(const std::string& short_wav)
+	{
+		using namespace runtime::audio;
+
+		// 5 minutes mono 16-bit — ~26 MB encoded, ~50-100 MB as decoded PCM.
+		const std::string long_wav = write_wav("vortex_audio_long.wav", 300, 110.0f);
+		check("long test wav written", !long_wav.empty());
+
+		voice_params quiet{};
+		quiet.volume = 0.0f; // memory measurement, not an audibility test
+
+		// Stream FIRST (heap is cold), decode second — the other way round the
+		// allocator reuses the freed decode pages and hides the stream footprint.
+		const size_t mem0 = working_set();
+		voice_params stream_params = quiet;
+		stream_params.stream = true;
+		stream_params.loop = true;
+		voice_handle streamed = voice_play(long_wav.c_str(), stream_params);
+		check("streamed long voice starts", streamed != invalid_voice);
+		tick_seconds(0.5f);
+		check("streamed voice is playing", voice_is_playing(streamed));
+		const size_t mem_stream = working_set();
+		voice_stop(streamed);
+
+		voice_handle decoded = voice_play(long_wav.c_str(), quiet);
+		check("decoded long voice starts", decoded != invalid_voice);
+		const size_t mem_decode = working_set();
+		voice_stop(decoded);
+
+		const long long stream_delta = (long long)mem_stream - (long long)mem0;
+		const long long decode_delta = (long long)mem_decode - (long long)mem0;
+		std::cout << "[info] memory delta: streamed " << (stream_delta / (1024 * 1024))
+			<< " MB vs decoded " << (decode_delta / (1024 * 1024)) << " MB\n";
+		check("streaming uses a fraction of full-decode memory",
+			decode_delta > 30LL * 1024 * 1024 && stream_delta * 4 < decode_delta);
+		unload_sound(long_wav.c_str());
+
+		// Seamless loop: a 0.5 s clip streamed with loop must still be playing
+		// well past several wrap-arounds.
+		voice_params loop_stream{};
+		loop_stream.volume = 0.05f;
+		loop_stream.loop = true;
+		loop_stream.stream = true;
+		voice_handle looped = voice_play(short_wav.c_str(), loop_stream);
+		check("streamed loop starts", looped != invalid_voice);
+		tick_seconds(1.6f); // >3 wrap-arounds
+		check("streamed loop survives wrap-around", voice_is_playing(looped));
+		voice_stop(looped);
+
+		// Pak-style path: encoded bytes registered in memory stream like a file
+		// (this is what shipped .vpak builds do — no loose files, no temp extract).
+		std::vector<uint8_t> bytes;
+		{
+			FILE* f = nullptr;
+			if (fopen_s(&f, long_wav.c_str(), "rb") == 0 && f)
+			{
+				fseek(f, 0, SEEK_END);
+				bytes.resize((size_t)_ftelli64(f));
+				fseek(f, 0, SEEK_SET);
+				fread(bytes.data(), 1, bytes.size(), f);
+				fclose(f);
+			}
+		}
+		check("registered pak blob accepted",
+			register_clip_data("vpak://longtest.wav", bytes.data(), bytes.size()));
+		voice_handle pak_stream = voice_play("vpak://longtest.wav", stream_params);
+		check("registered blob streams", pak_stream != invalid_voice);
+		tick_seconds(0.4f);
+		check("registered stream is playing", voice_is_playing(pak_stream));
+
+		// Registered names must also work for the normal decode path.
+		std::vector<uint8_t> short_bytes;
+		{
+			FILE* f = nullptr;
+			if (fopen_s(&f, short_wav.c_str(), "rb") == 0 && f)
+			{
+				fseek(f, 0, SEEK_END);
+				short_bytes.resize((size_t)_ftelli64(f));
+				fseek(f, 0, SEEK_SET);
+				fread(short_bytes.data(), 1, short_bytes.size(), f);
+				fclose(f);
+			}
+		}
+		register_clip_data("vpak://shorttest.wav", short_bytes.data(), short_bytes.size());
+		voice_params decoded_pak{};
+		decoded_pak.volume = 0.05f;
+		voice_handle pak_decoded = voice_play("vpak://shorttest.wav", decoded_pak);
+		check("registered blob decodes (non-stream)", pak_decoded != invalid_voice);
+
+		// Music + two ambience beds simultaneously.
+		voice_handle s2 = voice_play(long_wav.c_str(), stream_params);
+		voice_handle s3 = voice_play(short_wav.c_str(), loop_stream);
+		tick_seconds(0.4f);
+		check("three simultaneous streams play",
+			voice_is_playing(pak_stream) && voice_is_playing(s2) && voice_is_playing(s3));
+
+		// An undecodable streaming clip must be rejected BEFORE slot selection —
+		// otherwise it would steal (and kill) a live voice on every retry.
+		const std::string garbage = write_garbage_file();
+		voice_params bad_stream{};
+		bad_stream.stream = true;
+		const u32 active_before = voices_active_count();
+		check("corrupt streaming clip rejected without stealing",
+			voice_play(garbage.c_str(), bad_stream) == invalid_voice
+			&& voices_active_count() == active_before);
+		std::remove(garbage.c_str());
+
+		voice_stop(pak_stream);
+		voice_stop(pak_decoded);
+		voice_stop(s2);
+		voice_stop(s3);
+
+		std::remove(long_wav.c_str());
 	}
 
 	void run_voice_tests(const std::string& wav)
@@ -274,13 +405,18 @@ private:
 	// Minimal 16-bit PCM mono RIFF wav: 0.5 s, 660 Hz sine.
 	std::string write_test_wav()
 	{
-		const std::string path = temp_path("vortex_audio_test.wav");
+		return write_wav("vortex_audio_test.wav", 0.5f, 660.0f);
+	}
+
+	std::string write_wav(const char* name, float seconds, float frequency)
+	{
+		const std::string path = temp_path(name);
 		const uint32_t sample_rate = 44100;
-		const uint32_t frames = sample_rate / 2;
+		const uint32_t frames = (uint32_t)(sample_rate * seconds);
 		std::vector<int16_t> pcm(frames);
 		for (uint32_t i = 0; i < frames; ++i)
 		{
-			pcm[i] = (int16_t)(0.35f * 32767.0f * sinf(i * 660.0f * 2.0f * 3.14159265f / sample_rate));
+			pcm[i] = (int16_t)(0.35f * 32767.0f * sinf(i * frequency * 2.0f * 3.14159265f / sample_rate));
 		}
 
 		const uint32_t data_size = frames * sizeof(int16_t);

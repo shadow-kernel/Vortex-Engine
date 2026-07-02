@@ -9,6 +9,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 // This is the single translation unit that compiles miniaudio and stb_vorbis.
 // Order matters (documented miniaudio pattern): stb_vorbis header first so the
@@ -39,6 +40,12 @@ namespace vortex::runtime::audio {
 		// later plays of the same file share the buffer instead of re-decoding.
 		static std::unordered_map<std::string, ma_sound*> g_sounds;
 		static std::mutex		g_sounds_mutex;
+
+		// Encoded blobs registered with miniaudio's resource manager (pak entries).
+		// miniaudio does NOT copy registered data, so the engine owns these buffers;
+		// they are unregistered at shutdown and freed after the engine dies.
+		static std::unordered_map<std::string, std::vector<u8>> g_registered_clips;
+		static std::mutex		g_registered_mutex;
 
 		// Fixed pool size for the voice layer (AudioVoices.cpp); make this a
 		// project setting once audio project settings exist.
@@ -219,7 +226,19 @@ namespace vortex::runtime::audio {
 		voices_shutdown();
 		unload_all_sounds();
 		shutdown_beep();
+		{
+			// Unregister BEFORE the engine dies, free the buffers after.
+			std::lock_guard<std::mutex> lock(g_registered_mutex);
+			for (auto& [name, bytes] : g_registered_clips)
+			{
+				ma_resource_manager_unregister_data(ma_engine_get_resource_manager(&g_engine), name.c_str());
+			}
+		}
 		ma_engine_uninit(&g_engine);
+		{
+			std::lock_guard<std::mutex> lock(g_registered_mutex);
+			g_registered_clips.clear();
+		}
 		g_state = engine_state::uninitialized;
 		g_silent_pump_accumulator = 0.0f;
 		g_listener_has_last = false;
@@ -237,6 +256,74 @@ namespace vortex::runtime::audio {
 		return g_state == engine_state::device;
 	}
 
+	bool register_clip_data(const char* name, const void* data, u64 size)
+	{
+		if (g_state == engine_state::uninitialized || !name || !*name || !data || size == 0) return false;
+
+		std::lock_guard<std::mutex> lock(g_registered_mutex);
+		if (g_registered_clips.count(name)) return true;
+
+		auto& bytes = g_registered_clips[name];
+		bytes.assign((const u8*)data, (const u8*)data + size);
+		const ma_result result = ma_resource_manager_register_encoded_data(
+			ma_engine_get_resource_manager(&g_engine), name, bytes.data(), (size_t)bytes.size());
+		if (result != MA_SUCCESS)
+		{
+			g_registered_clips.erase(name);
+			log("WARNING: register_clip_data failed for '%s' (%s)", name, ma_result_description(result));
+			return false;
+		}
+		log("registered clip data '%s' (%llu bytes)", name, (unsigned long long)size);
+		return true;
+	}
+
+	bool is_registered_clip(const char* name)
+	{
+		if (!name) return false;
+		std::lock_guard<std::mutex> lock(g_registered_mutex);
+		return g_registered_clips.count(name) != 0;
+	}
+
+	bool validate_clip(const char* path)
+	{
+		if (g_state == engine_state::uninitialized || !path || !*path) return false;
+
+		ma_decoder probe{};
+		ma_result result;
+		u64 size = 0;
+		const void* bytes = registered_clip_bytes(path, &size);
+		if (bytes)
+		{
+			result = ma_decoder_init_memory(bytes, (size_t)size, nullptr, &probe);
+		}
+		else
+		{
+			wchar_t wide[1024];
+			if (!internal_widen_path(path, wide, 1024)) return false;
+			result = ma_decoder_init_file_w(wide, nullptr, &probe);
+		}
+		if (result != MA_SUCCESS)
+		{
+			log("WARNING: clip failed validation: '%s' (%s)", path, ma_result_description(result));
+			return false;
+		}
+		ma_decoder_uninit(&probe);
+		return true;
+	}
+
+	const void* registered_clip_bytes(const char* name, u64* out_size)
+	{
+		if (out_size) *out_size = 0;
+		if (!name) return nullptr;
+		std::lock_guard<std::mutex> lock(g_registered_mutex);
+		auto it = g_registered_clips.find(name);
+		if (it == g_registered_clips.end()) return nullptr;
+		if (out_size) *out_size = (u64)it->second.size();
+		// Stable until shutdown: entries are never erased mid-session and the
+		// vector is filled once at registration.
+		return it->second.data();
+	}
+
 	bool preload(const char* path)
 	{
 		if (g_state == engine_state::uninitialized || !path || !*path) return false;
@@ -246,19 +333,33 @@ namespace vortex::runtime::audio {
 			if (g_sounds.count(path)) return true;
 		}
 
-		// Decode fully up front (MA_SOUND_FLAG_DECODE) — load-time cost instead of a
-		// first-play hitch, and the decoded buffer is shared by all future instances.
-		// Wide-char open: narrow fopen mangles paths outside the ANSI code page
-		// (non-ASCII usernames in %TEMP%, unicode project folders).
-		wchar_t wide[1024];
-		if (!internal_widen_path(path, wide, 1024))
-		{
-			log("WARNING: unconvertible path '%s'", path);
-			return false;
-		}
+		// File paths: decode fully up front (MA_SOUND_FLAG_DECODE) — load-time cost
+		// instead of a first-play hitch, decoded PCM shared by all instances.
+		// Registered names: the resource manager keeps the node ENCODED (the DECODE
+		// flag is ignored for pre-registered data), so each instance decodes on
+		// demand from the shared encoded bytes — fine for wav, revisit for heavy
+		// compressed pak SFX in #20 (register_decoded_data would trade memory back).
+		// Real paths go through the wide-char open (narrow fopen mangles paths
+		// outside the ANSI code page).
 		ma_sound* sound = new ma_sound{};
-		const ma_result result = ma_sound_init_from_file_w(&g_engine, wide,
-			MA_SOUND_FLAG_DECODE | MA_SOUND_FLAG_NO_SPATIALIZATION, nullptr, nullptr, sound);
+		ma_result result;
+		if (is_registered_clip(path))
+		{
+			result = ma_sound_init_from_file(&g_engine, path,
+				MA_SOUND_FLAG_DECODE | MA_SOUND_FLAG_NO_SPATIALIZATION, nullptr, nullptr, sound);
+		}
+		else
+		{
+			wchar_t wide[1024];
+			if (!internal_widen_path(path, wide, 1024))
+			{
+				delete sound;
+				log("WARNING: unconvertible path '%s'", path);
+				return false;
+			}
+			result = ma_sound_init_from_file_w(&g_engine, wide,
+				MA_SOUND_FLAG_DECODE | MA_SOUND_FLAG_NO_SPATIALIZATION, nullptr, nullptr, sound);
+		}
 		if (result != MA_SUCCESS)
 		{
 			delete sound;

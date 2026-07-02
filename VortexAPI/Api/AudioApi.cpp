@@ -13,7 +13,13 @@ EDITOR_INTERFACE s32 AudioPreloadClip(const char* path)
 	return runtime::audio::preload(path) ? 1 : 0;
 }
 
-EDITOR_INTERFACE u64 AudioPlayVoice(const char* path, f32 volume, f32 pitch, f32 pan, s32 loop, s32 priority)
+// Header-probe only (no full decode) — the streaming counterpart of AudioPreloadClip.
+EDITOR_INTERFACE s32 AudioValidateClip(const char* path)
+{
+	return runtime::audio::validate_clip(path) ? 1 : 0;
+}
+
+EDITOR_INTERFACE u64 AudioPlayVoice(const char* path, f32 volume, f32 pitch, f32 pan, s32 loop, s32 priority, s32 stream)
 {
 	runtime::audio::voice_params params{};
 	params.volume = volume;
@@ -21,7 +27,15 @@ EDITOR_INTERFACE u64 AudioPlayVoice(const char* path, f32 volume, f32 pitch, f32
 	params.pan = pan;
 	params.loop = loop != 0;
 	params.priority = priority;
+	params.stream = stream != 0;
 	return runtime::audio::voice_play(path, params);
+}
+
+// Hands a .vpak audio entry to the native engine — the name then plays exactly
+// like a file path (both decoded and streaming voices). Data is copied natively.
+EDITOR_INTERFACE s32 AudioRegisterClipData(const char* name, const void* data, u64 size)
+{
+	return runtime::audio::register_clip_data(name, data, size) ? 1 : 0;
 }
 
 EDITOR_INTERFACE void AudioStopVoice(u64 handle)

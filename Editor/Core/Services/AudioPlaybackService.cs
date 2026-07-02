@@ -192,10 +192,14 @@ namespace Editor.Core.Services
             var path = ResolveClipPath(clip);
             if (path == null) return;
 
-            // Preload separates the two failure modes: undecodable clip = permanent
-            // (stop retrying, else it re-probes the decoder + logs every frame),
-            // pool full/outranked = transient (retry after the cooldown).
-            if (!VortexAudio.PreloadClip(path))
+            // Preload/validate separates the two failure modes: undecodable clip =
+            // permanent (stop retrying, else it re-probes the decoder + logs every
+            // frame), pool full/outranked = transient (retry after the cooldown).
+            // Streaming clips get the cheap header-probe instead of a full decode.
+            bool clipOk = b.Source.Streaming
+                ? VortexAudio.ValidateClip(path)
+                : VortexAudio.PreloadClip(path);
+            if (!clipOk)
             {
                 _failedPaths.Add(clip);
                 b.WantsPlay = false;
@@ -208,7 +212,8 @@ namespace Editor.Core.Services
                 b.Source.Pitch,
                 b.Source.StereoPan,
                 b.Source.Loop,
-                b.Source.Priority);
+                b.Source.Priority,
+                b.Source.Streaming);
 
             if (b.Handle != VortexAudio.InvalidVoice)
             {
@@ -270,9 +275,13 @@ namespace Editor.Core.Services
             return e.Transform != null ? e.Transform.LocalPosition : new ECS.Vector3(0, 0, 0);
         }
 
-        /// <summary>Project-relative clip path → absolute file the native decoder can open.
-        /// Editor + loose-file builds read from disk; pak-only shipped builds extract the
-        /// entry to a temp cache (until #10/#20 give miniaudio a real VFS data source).
+        /// <summary>Clips already handed to the native engine as in-memory blobs.</summary>
+        private readonly HashSet<string> _registeredPakClips = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>Project-relative clip path → something the native decoder can open.
+        /// Editor + loose-file builds resolve to a disk path; pak-only shipped builds
+        /// register the entry's bytes with miniaudio's resource manager and return the
+        /// clip name itself (works for decoded AND streaming voices — no temp files).
         /// Never throws: net48 Path APIs throw on invalid path chars, and a malformed
         /// serialized clip path must not take down the render tick.</summary>
         private string ResolveClipPath(string clip)
@@ -281,6 +290,8 @@ namespace Editor.Core.Services
 
             try
             {
+                if (_registeredPakClips.Contains(clip)) return clip;
+
                 if (Path.IsPathRooted(clip) && File.Exists(clip)) return clip;
 
                 var root = ProjectData.Current?.Path;
@@ -292,7 +303,13 @@ namespace Editor.Core.Services
 
                 if (AssetVfs.TryGetBytes(clip, out var bytes))
                 {
-                    return ExtractToCache(clip, bytes);
+                    if (VortexAudio.RegisterClipData(clip, bytes))
+                    {
+                        _registeredPakClips.Add(clip);
+                        return clip;
+                    }
+                    _failedPaths.Add(clip);
+                    return null;
                 }
             }
             catch (Exception ex)
@@ -306,35 +323,6 @@ namespace Editor.Core.Services
             if (_warnedPaths.Add(clip))
                 System.Diagnostics.Debug.WriteLine("[Audio] clip not found: '" + clip + "'");
             return null;
-        }
-
-        /// <summary>Write pak bytes to the temp cache, keyed by CONTENT (hash + length),
-        /// not by path: a path-only key would keep serving v1 audio after a game update
-        /// replaced the clip, and would collide between two games that use the same
-        /// conventional relative path. Same content dedupes naturally.</summary>
-        private static string ExtractToCache(string clip, byte[] bytes)
-        {
-            var cacheDir = Path.Combine(Path.GetTempPath(), "VortexAudioCache");
-            Directory.CreateDirectory(cacheDir);
-
-            string contentKey;
-            using (var md5 = System.Security.Cryptography.MD5.Create())
-            {
-                var hash = md5.ComputeHash(bytes);
-                contentKey = BitConverter.ToString(hash, 0, 8).Replace("-", "") + "_" + bytes.Length;
-            }
-
-            var cached = Path.Combine(cacheDir, contentKey + "_" + Path.GetFileName(clip));
-            var existing = new FileInfo(cached);
-            if (existing.Exists && existing.Length == bytes.Length) return cached;
-
-            // Write-then-move so a crash mid-write can't leave a truncated file that
-            // File.Exists would trust forever.
-            var tmp = cached + ".tmp";
-            File.WriteAllBytes(tmp, bytes);
-            if (File.Exists(cached)) File.Delete(cached);
-            File.Move(tmp, cached);
-            return cached;
         }
     }
 }

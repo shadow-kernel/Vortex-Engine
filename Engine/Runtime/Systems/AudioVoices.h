@@ -18,6 +18,10 @@ namespace vortex::runtime::audio {
 		f32 pitch{ 1.0f };
 		f32 pan{ -0.0f };		// -1 left .. +1 right
 		bool loop{ false };
+		// Stream from disk/pak in chunks instead of pre-decoding the whole clip —
+		// for music and long ambience beds (a 5-minute OGG fully decoded is tens of
+		// MB of PCM; streamed it stays at its encoded size + a small decode window).
+		bool stream{ false };
 		s32 priority{ 128 };	// 0 = most important .. 256 = least (Unity convention)
 	};
 

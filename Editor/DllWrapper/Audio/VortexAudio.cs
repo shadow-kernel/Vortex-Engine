@@ -22,8 +22,15 @@ namespace Editor.DllWrapper
         private static extern int AudioPreloadClip([MarshalAs(UnmanagedType.LPUTF8Str)] string path);
 
         [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int AudioValidateClip([MarshalAs(UnmanagedType.LPUTF8Str)] string path);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
         private static extern ulong AudioPlayVoice([MarshalAs(UnmanagedType.LPUTF8Str)] string path,
-            float volume, float pitch, float pan, int loop, int priority);
+            float volume, float pitch, float pan, int loop, int priority, int stream);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int AudioRegisterClipData([MarshalAs(UnmanagedType.LPUTF8Str)] string name,
+            byte[] data, ulong size);
 
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void AudioStopVoice(ulong handle);
@@ -71,12 +78,26 @@ namespace Editor.DllWrapper
         public static bool PreloadClip(string path)
             => !string.IsNullOrEmpty(path) && AudioPreloadClip(path) != 0;
 
+        /// <summary>Header-probe without decoding — the cheap streaming counterpart of
+        /// PreloadClip, same permanent-failure semantics.</summary>
+        public static bool ValidateClip(string path)
+            => !string.IsNullOrEmpty(path) && AudioValidateClip(path) != 0;
+
         /// <summary>Starts a voice; returns InvalidVoice when the clip can't be decoded
-        /// or every pooled voice outranks this request (priority 0 = most important).</summary>
-        public static ulong PlayVoice(string path, float volume, float pitch, float pan, bool loop, int priority)
+        /// or every pooled voice outranks this request (priority 0 = most important).
+        /// stream = decode on demand (music/long ambience) instead of full pre-decode.</summary>
+        public static ulong PlayVoice(string path, float volume, float pitch, float pan, bool loop, int priority, bool stream = false)
         {
             if (string.IsNullOrEmpty(path)) return InvalidVoice;
-            return AudioPlayVoice(path, volume, pitch, pan, loop ? 1 : 0, priority);
+            return AudioPlayVoice(path, volume, pitch, pan, loop ? 1 : 0, priority, stream ? 1 : 0);
+        }
+
+        /// <summary>Hands an encoded audio blob (e.g. a .vpak entry) to the native engine;
+        /// the name then resolves like a file path for both decoded and streaming voices.</summary>
+        public static bool RegisterClipData(string name, byte[] data)
+        {
+            if (string.IsNullOrEmpty(name) || data == null || data.Length == 0) return false;
+            return AudioRegisterClipData(name, data, (ulong)data.Length) != 0;
         }
 
         public static void StopVoice(ulong handle) { if (handle != InvalidVoice) AudioStopVoice(handle); }

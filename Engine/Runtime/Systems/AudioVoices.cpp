@@ -28,6 +28,9 @@ namespace vortex::runtime::audio {
 			bool		looping{ false };
 			f32			position[3]{};	// world position (steal tiebreak + spatializer)
 			voice_spatial spatial{};
+			// Set when streaming a registered in-memory blob: the sound reads through
+			// this decoder (decode-on-demand); released together with the sound.
+			ma_decoder*	stream_decoder{ nullptr };
 			// Doppler: velocity = position delta / wall-clock between pushes.
 			std::chrono::steady_clock::time_point last_push{};
 			bool		has_last_push{ false };
@@ -140,6 +143,12 @@ namespace vortex::runtime::audio {
 		void release_slot(voice_slot& slot)
 		{
 			ma_sound_uninit(&slot.sound);
+			if (slot.stream_decoder)
+			{
+				ma_decoder_uninit(slot.stream_decoder);
+				delete slot.stream_decoder;
+				slot.stream_decoder = nullptr;
+			}
 			slot.in_use = false;
 			slot.paused = false;
 			++slot.generation;
@@ -211,9 +220,11 @@ namespace vortex::runtime::audio {
 		ma_engine* engine = internal_engine();
 		if (!engine || !path || !*path) return invalid_voice;
 
-		// Decode/cache up front (shared PCM); a file no decoder accepts never
-		// occupies — or worse, steals — a voice.
-		if (!preload(path)) return invalid_voice;
+		// Gate BEFORE slot selection: a file no decoder accepts must never occupy —
+		// or worse, steal — a live voice. Non-streaming plays decode/cache up front;
+		// streaming plays get a cheap header-probe instead (preloading would fully
+		// decode exactly what streaming avoids).
+		if (params.stream ? !validate_clip(path) : !preload(path)) return invalid_voice;
 
 		std::lock_guard<std::mutex> lock(g_voices_mutex);
 		if (g_slots.empty()) return invalid_voice;
@@ -248,11 +259,52 @@ namespace vortex::runtime::audio {
 
 		// No MA_SOUND_FLAG_NO_SPATIALIZATION: the spatializer is toggled at runtime
 		// per the AudioSource's spatial blend (flag would bake 2D at init).
-		wchar_t wide[1024];
-		if (!internal_widen_path(path, wide, 1024)) return invalid_voice;
-		const ma_result result = ma_sound_init_from_file_w(engine, wide,
-			MA_SOUND_FLAG_DECODE, nullptr, nullptr, &target->sound);
-		if (result != MA_SUCCESS) return invalid_voice;
+		// STREAM decodes on demand through the resource manager's job thread;
+		// registered pak names resolve via the narrow lookup, real paths via wide.
+		const ma_uint32 flags = params.stream ? MA_SOUND_FLAG_STREAM : MA_SOUND_FLAG_DECODE;
+		ma_result result;
+		ma_decoder* stream_decoder = nullptr;
+		if (is_registered_clip(path))
+		{
+			if (params.stream)
+			{
+				// miniaudio's STREAM flag only streams from files — for registered
+				// in-memory blobs (pak entries), stream through a ma_decoder over the
+				// bytes instead: decode-on-demand, no full PCM in memory.
+				u64 size = 0;
+				const void* bytes = registered_clip_bytes(path, &size);
+				if (!bytes) return invalid_voice;
+				stream_decoder = new ma_decoder{};
+				result = ma_decoder_init_memory(bytes, (size_t)size, nullptr, stream_decoder);
+				if (result == MA_SUCCESS)
+				{
+					result = ma_sound_init_from_data_source(engine, stream_decoder, 0, nullptr, &target->sound);
+					if (result != MA_SUCCESS) ma_decoder_uninit(stream_decoder);
+				}
+				if (result != MA_SUCCESS)
+				{
+					delete stream_decoder;
+					stream_decoder = nullptr;
+				}
+			}
+			else
+			{
+				result = ma_sound_init_from_file(engine, path, flags, nullptr, nullptr, &target->sound);
+			}
+		}
+		else
+		{
+			wchar_t wide[1024];
+			if (!internal_widen_path(path, wide, 1024)) return invalid_voice;
+			result = ma_sound_init_from_file_w(engine, wide, flags, nullptr, nullptr, &target->sound);
+		}
+		if (result != MA_SUCCESS)
+		{
+			internal_log("WARNING: voice init failed for '%s' (%s%s)", path,
+				ma_result_description(result), params.stream ? ", streaming" : "");
+			return invalid_voice;
+		}
+		target->stream_decoder = stream_decoder;
 
 		target->in_use = true;
 		target->paused = false;

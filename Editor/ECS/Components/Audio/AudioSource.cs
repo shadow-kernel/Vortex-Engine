@@ -1,4 +1,4 @@
-using System.Runtime.Serialization;
+ï»¿using System.Runtime.Serialization;
 
 namespace Editor.ECS.Components.Audio
 {
@@ -13,7 +13,7 @@ namespace Editor.ECS.Components.Audio
     }
 
     /// <summary>
-    /// AudioSource-Komponente für Audio-Wiedergabe.
+    /// AudioSource-Komponente fÃ¼r Audio-Wiedergabe.
     /// </summary>
     [DataContract(Name = "AudioSource", Namespace = "")]
     public class AudioSource : Component
@@ -33,6 +33,7 @@ namespace Editor.ECS.Components.Audio
         private float _reverbZoneMix = 1f;
         private float _dopplerLevel = 1f;
         private float _spread;
+        private bool _streaming;
 
         public override string DisplayName => "Audio Source";
         public override string IconCode => "\uE767";
@@ -49,7 +50,7 @@ namespace Editor.ECS.Components.Audio
         }
 
         /// <summary>
-        /// Lautstärke (0-1)
+        /// LautstÃ¤rke (0-1)
         /// </summary>
         [DataMember(Name = "volume", Order = 11)]
         public float Volume
@@ -59,7 +60,7 @@ namespace Editor.ECS.Components.Audio
         }
 
         /// <summary>
-        /// Tonhöhe
+        /// TonhÃ¶he
         /// </summary>
         [DataMember(Name = "pitch", Order = 12)]
         public float Pitch
@@ -99,7 +100,7 @@ namespace Editor.ECS.Components.Audio
         }
 
         /// <summary>
-        /// Räumliche Mischung (0=2D, 1=3D)
+        /// RÃ¤umliche Mischung (0=2D, 1=3D)
         /// </summary>
         [DataMember(Name = "spatialBlend", Order = 16)]
         public float SpatialBlend
@@ -109,7 +110,7 @@ namespace Editor.ECS.Components.Audio
         }
 
         /// <summary>
-        /// Minimale Distanz für 3D-Audio
+        /// Minimale Distanz fÃ¼r 3D-Audio
         /// </summary>
         [DataMember(Name = "minDistance", Order = 17)]
         public float MinDistance
@@ -119,7 +120,7 @@ namespace Editor.ECS.Components.Audio
         }
 
         /// <summary>
-        /// Maximale Distanz für 3D-Audio
+        /// Maximale Distanz fÃ¼r 3D-Audio
         /// </summary>
         [DataMember(Name = "maxDistance", Order = 18)]
         public float MaxDistance
@@ -139,7 +140,7 @@ namespace Editor.ECS.Components.Audio
         }
 
         /// <summary>
-        /// Priorität (0=höchste, 256=niedrigste)
+        /// PrioritÃ¤t (0=hÃ¶chste, 256=niedrigste)
         /// </summary>
         [DataMember(Name = "priority", Order = 20)]
         public int Priority
@@ -169,7 +170,7 @@ namespace Editor.ECS.Components.Audio
         }
 
         /// <summary>
-        /// Doppler-Effekt-Stärke
+        /// Doppler-Effekt-StÃ¤rke
         /// </summary>
         [DataMember(Name = "dopplerLevel", Order = 23)]
         public float DopplerLevel
@@ -179,13 +180,25 @@ namespace Editor.ECS.Components.Audio
         }
 
         /// <summary>
-        /// Räumliche Ausbreitung in Grad
+        /// RÃ¤umliche Ausbreitung in Grad
         /// </summary>
         [DataMember(Name = "spread", Order = 24)]
         public float Spread
         {
             get => _spread;
             set => SetProperty(ref _spread, value, nameof(Spread));
+        }
+
+        /// <summary>
+        /// Streaming statt Voll-Dekodierung â€” fÃ¼r Musik und lange Ambience-Loops.
+        /// Ein 5-Minuten-OGG voll dekodiert = zig MB PCM; gestreamt bleibt nur die
+        /// komprimierte Datei plus ein kleines Dekodier-Fenster im Speicher.
+        /// </summary>
+        [DataMember(Name = "streaming", Order = 25)]
+        public bool Streaming
+        {
+            get => _streaming;
+            set => SetProperty(ref _streaming, value, nameof(Streaming));
         }
 
         public AudioSource() : base() { }

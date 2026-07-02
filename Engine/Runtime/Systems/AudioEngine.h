@@ -25,6 +25,20 @@ namespace vortex::runtime::audio {
 	// is missing or no decoder accepts it.
 	bool preload(const char* path);
 	bool is_loaded(const char* path);
+
+	// Registers an in-memory ENCODED audio blob (e.g. a .vpak entry) under a name
+	// that preload/voice_play open exactly like a file path. The data is copied and
+	// owned by the audio engine until shutdown. Re-registering a name is a no-op.
+	bool register_clip_data(const char* name, const void* data, u64 size);
+	bool is_registered_clip(const char* name);
+	// Cheap decodability probe (header parse only, no full decode) — used to gate
+	// STREAMING plays so an undecodable clip can never steal a live voice, and to
+	// let the bridge blacklist bad clips instead of retrying forever.
+	bool validate_clip(const char* path);
+	// Raw bytes of a registered clip (valid until shutdown), or nullptr. Used by
+	// the voice layer to stream from memory via a ma_decoder (miniaudio's STREAM
+	// flag only streams from files, not from registered encoded data).
+	const void* registered_clip_bytes(const char* name, u64* out_size);
 	// Release one cached sound / all cached sounds (shutdown implies unload_all).
 	void unload_sound(const char* path);
 	void unload_all_sounds();
