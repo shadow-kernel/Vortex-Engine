@@ -1,5 +1,6 @@
 #include "AudioEngine.h"
 #include "AudioInternal.h"
+#include "AudioMixer.h"
 #include "AudioVoices.h"
 
 #include <chrono>
@@ -194,6 +195,7 @@ namespace vortex::runtime::audio {
 		if (ma_engine_init(nullptr, &g_engine) == MA_SUCCESS)
 		{
 			g_state = engine_state::device;
+			mixer_initialize();
 			voices_initialize(k_max_voices);
 			log("initialized: device '%s', %u Hz, %u channels",
 				g_engine.pDevice ? g_engine.pDevice->playback.name : "?",
@@ -211,6 +213,7 @@ namespace vortex::runtime::audio {
 		if (ma_engine_init(&config, &g_engine) == MA_SUCCESS)
 		{
 			g_state = engine_state::silent;
+			mixer_initialize();
 			voices_initialize(k_max_voices);
 			log("WARNING: no audio output device available — running silent");
 			return false;
@@ -224,6 +227,7 @@ namespace vortex::runtime::audio {
 	{
 		if (g_state == engine_state::uninitialized) return;
 		voices_shutdown();
+		mixer_shutdown();   // after voices (they attach into the bus groups)
 		unload_all_sounds();
 		shutdown_beep();
 		{
@@ -586,6 +590,7 @@ namespace vortex::runtime::audio {
 		if (g_state == engine_state::uninitialized) return;
 
 		voices_update(dt);
+		mixer_update(dt);
 
 		if (g_state == engine_state::silent)
 		{

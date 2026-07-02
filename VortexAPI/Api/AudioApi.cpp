@@ -1,5 +1,6 @@
 #include "../ApiCommon.h"
 #include "..\..\Engine\Runtime\Systems\AudioEngine.h"
+#include "..\..\Engine\Runtime\Systems\AudioMixer.h"
 #include "..\..\Engine\Runtime\Systems\AudioVoices.h"
 
 // Voice-level audio API (issue #7). Handles are opaque u64 values with a
@@ -39,7 +40,7 @@ EDITOR_INTERFACE s32 AudioGetWaveform(const char* path, f32* peaks, s32 bin_coun
 	return runtime::audio::clip_waveform(path, peaks, (u32)bin_count) ? 1 : 0;
 }
 
-EDITOR_INTERFACE u64 AudioPlayVoice(const char* path, f32 volume, f32 pitch, f32 pan, s32 loop, s32 priority, s32 stream)
+EDITOR_INTERFACE u64 AudioPlayVoice(const char* path, f32 volume, f32 pitch, f32 pan, s32 loop, s32 priority, s32 stream, s32 out_bus)
 {
 	runtime::audio::voice_params params{};
 	params.volume = volume;
@@ -48,7 +49,51 @@ EDITOR_INTERFACE u64 AudioPlayVoice(const char* path, f32 volume, f32 pitch, f32
 	params.loop = loop != 0;
 	params.priority = priority;
 	params.stream = stream != 0;
+	params.bus = out_bus;
 	return runtime::audio::voice_play(path, params);
+}
+
+// ---- mixer buses (issue #13). Bus indices: 0 Master, 1 Music, 2 SFX,
+// 3 Ambience, 4 UI — stable, the C# side binds by these. -----------------------
+
+EDITOR_INTERFACE void AudioSetBusVolume(s32 bus, f32 volume)
+{
+	runtime::audio::mixer_set_bus_volume(runtime::audio::mixer_bus_from_index(bus), volume);
+}
+
+EDITOR_INTERFACE f32 AudioGetBusVolume(s32 bus)
+{
+	return runtime::audio::mixer_get_bus_volume(runtime::audio::mixer_bus_from_index(bus));
+}
+
+EDITOR_INTERFACE void AudioSetBusMute(s32 bus, s32 mute)
+{
+	runtime::audio::mixer_set_bus_mute(runtime::audio::mixer_bus_from_index(bus), mute != 0);
+}
+
+EDITOR_INTERFACE s32 AudioGetBusMute(s32 bus)
+{
+	return runtime::audio::mixer_get_bus_mute(runtime::audio::mixer_bus_from_index(bus)) ? 1 : 0;
+}
+
+// Live peak/RMS of a bus (linear 0..1) — feeds the mixer window meters.
+EDITOR_INTERFACE void AudioGetBusLevels(s32 bus, f32* peak, f32* rms)
+{
+	runtime::audio::mixer_get_bus_levels(runtime::audio::mixer_bus_from_index(bus), peak, rms);
+}
+
+// duck_db < 0 installs/replaces the rule (e.g. -12); >= 0 removes it.
+EDITOR_INTERFACE void AudioSetDuck(s32 trigger_bus, s32 target_bus, f32 duck_db, f32 attack_ms, f32 release_ms, f32 threshold)
+{
+	runtime::audio::mixer_set_duck(
+		runtime::audio::mixer_bus_from_index(trigger_bus),
+		runtime::audio::mixer_bus_from_index(target_bus),
+		duck_db, attack_ms, release_ms, threshold);
+}
+
+EDITOR_INTERFACE void AudioClearDucks()
+{
+	runtime::audio::mixer_clear_ducks();
 }
 
 // Hands a .vpak audio entry to the native engine — the name then plays exactly

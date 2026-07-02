@@ -68,6 +68,11 @@ namespace Editor.Core.Services
             _musicVolume = 1f;
             _musicCurrentClip = null;
 
+            // Project mixer state (bus volumes/mutes + duck rules) — identical in
+            // editor play mode and the shipped game.
+            try { AudioMixerConfig.Load(ProjectData.Current?.Path).Apply(); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Audio] mixer config apply failed: " + ex.Message); }
+
             try
             {
                 if (scene?.Entities == null) return;
@@ -372,7 +377,7 @@ namespace Editor.Core.Services
 
             // Start the NEW track first — if it can't start (undecodable file), the
             // currently playing music keeps playing instead of fading into silence.
-            var h = VortexAudio.PlayVoice(path, 0f, 1f, 0f, loop, 0, stream: true);
+            var h = VortexAudio.PlayVoice(path, 0f, 1f, 0f, loop, 0, stream: true, bus: VortexAudio.BusMusic);
             if (h == VortexAudio.InvalidVoice)
             {
                 _failedPaths.Add(clip);
@@ -515,7 +520,8 @@ namespace Editor.Core.Services
                 b.Source.StereoPan,
                 b.Source.Loop,
                 b.Source.Priority,
-                b.Source.Streaming);
+                b.Source.Streaming,
+                b.Source.OutputBus);
 
             if (b.Handle != VortexAudio.InvalidVoice)
             {

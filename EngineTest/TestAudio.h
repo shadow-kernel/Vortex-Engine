@@ -3,6 +3,7 @@
 #include "..\Engine\Runtime\ResourceManager.h"
 #include "..\Engine\Runtime\Systems\AudioSystem.h"
 #include "..\Engine\Runtime\Systems\AudioEngine.h"
+#include "..\Engine\Runtime\Systems\AudioMixer.h"
 #include "..\Engine\Runtime\Systems\AudioVoices.h"
 
 #include "Test.h"
@@ -72,6 +73,9 @@ public:
 
 		// -- streaming playback (issue #10) -----------------------------------------
 		run_streaming_tests(wav_path);
+
+		// -- mixer buses + ducking (issue #13) ---------------------------------------
+		run_mixer_tests(wav_path);
 
 		// -- 3D spatialization measurement demo (issue #9) --------------------------
 		// Opt-in: VORTEX_AUDIO_SPATIAL_DEMO=<phase-file>. An external meter samples
@@ -293,6 +297,81 @@ private:
 		voice_stop(s3);
 
 		std::remove(long_wav.c_str());
+	}
+
+	// Mixer (issue #13): assertions run against the REAL DSP — the per-bus metering
+	// nodes report what actually flows through each bus.
+	void run_mixer_tests(const std::string& wav)
+	{
+		using namespace runtime::audio;
+
+		check("mixer groups exist", mixer_group(bus::master) != nullptr
+			&& mixer_group(bus::music) != nullptr && mixer_group(bus::sfx) != nullptr
+			&& mixer_group(bus::ambience) != nullptr && mixer_group(bus::ui) != nullptr);
+
+		// Routing: a voice on SFX must register on the SFX meter AND on master.
+		voice_params sfx_params{};
+		sfx_params.loop = true;
+		sfx_params.volume = 0.6f;
+		sfx_params.bus = (s32)bus::sfx;
+		voice_handle v = voice_play(wav.c_str(), sfx_params);
+		tick_seconds(0.4f);
+		f32 sfx_peak = 0, sfx_rms = 0, master_peak = 0, master_rms = 0, music_rms = 0;
+		mixer_get_bus_levels(bus::sfx, &sfx_peak, &sfx_rms);
+		mixer_get_bus_levels(bus::master, &master_peak, &master_rms);
+		mixer_get_bus_levels(bus::music, nullptr, &music_rms);
+		check("SFX voice meters on the SFX bus", sfx_rms > 0.01f);
+		check("SFX voice reaches the master bus", master_rms > 0.01f);
+		check("music bus stays silent", music_rms < 0.005f);
+
+		// Bus volume: dropping SFX to 0 silences the routed voice at the master.
+		mixer_set_bus_volume(bus::sfx, 0.0f);
+		tick_seconds(0.5f);
+		mixer_get_bus_levels(bus::master, &master_peak, &master_rms);
+		check("bus volume 0 silences routed voices", master_rms < 0.01f);
+		mixer_set_bus_volume(bus::sfx, 1.0f);
+
+		// Mute/unmute round-trip.
+		mixer_set_bus_mute(bus::sfx, true);
+		tick_seconds(0.4f);
+		mixer_get_bus_levels(bus::master, &master_peak, &master_rms);
+		const bool muted_silent = master_rms < 0.01f;
+		mixer_set_bus_mute(bus::sfx, false);
+		tick_seconds(0.4f);
+		mixer_get_bus_levels(bus::master, &master_peak, &master_rms);
+		check("bus mute silences, unmute restores", muted_silent && master_rms > 0.01f);
+
+		// Ducking: a loud MUSIC trigger must dip the AMBIENCE bus by roughly the
+		// configured amount (-12 dB = x0.25), then release when the trigger stops.
+		voice_params amb_params{};
+		amb_params.loop = true;
+		amb_params.volume = 0.6f;
+		amb_params.bus = (s32)bus::ambience;
+		voice_handle amb = voice_play(wav.c_str(), amb_params);
+		mixer_set_duck(bus::music, bus::ambience, -12.0f, 40.0f, 150.0f, 0.02f);
+		tick_seconds(0.5f);
+		f32 amb_rms_free = 0;
+		mixer_get_bus_levels(bus::ambience, nullptr, &amb_rms_free);
+
+		voice_params music_params{};
+		music_params.loop = true;
+		music_params.volume = 0.8f;
+		music_params.bus = (s32)bus::music;
+		voice_handle mus = voice_play(wav.c_str(), music_params);
+		tick_seconds(0.8f); // attack + meter settle
+		f32 amb_rms_ducked = 0;
+		mixer_get_bus_levels(bus::ambience, nullptr, &amb_rms_ducked);
+		check("ducking dips the target bus", amb_rms_free > 0.01f && amb_rms_ducked < amb_rms_free * 0.55f);
+
+		voice_stop(mus);
+		tick_seconds(1.0f); // release + meter settle
+		f32 amb_rms_released = 0;
+		mixer_get_bus_levels(bus::ambience, nullptr, &amb_rms_released);
+		check("duck releases when the trigger stops", amb_rms_released > amb_rms_ducked * 1.5f);
+
+		mixer_clear_ducks();
+		voice_stop(amb);
+		voice_stop(v);
 	}
 
 	void run_voice_tests(const std::string& wav)

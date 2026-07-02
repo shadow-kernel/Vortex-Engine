@@ -779,6 +779,20 @@ namespace Vortex
         public static void PlayOneShot2D(string clipPath, float volume = 1f, float pitch = 1f)
             => Editor.Core.Services.AudioPlaybackService.Instance.PlayOneShot2D(clipPath, volume, pitch);
 
+        /// <summary>Mixer bus volume by name ("Master", "Music", "SFX", "Ambience", "UI"),
+        /// 0..1 — the settings-screen sliders call this. Applies in real time.</summary>
+        public static void SetBusVolume(string busName, float volume)
+        {
+            var bus = Editor.DllWrapper.VortexAudio.BusIndexFromName(busName);
+            if (bus >= 0) Editor.DllWrapper.VortexAudio.SetBusVolume(bus, volume);
+        }
+
+        public static float GetBusVolume(string busName)
+        {
+            var bus = Editor.DllWrapper.VortexAudio.BusIndexFromName(busName);
+            return bus >= 0 ? Editor.DllWrapper.VortexAudio.GetBusVolume(bus) : 1f;
+        }
+
         /// <summary>The music channel: one streamed, looping track at priority 0 (never stolen),
         /// with fade-in and crossfade. Fades are frame-ticked ramps for now (native envelopes
         /// arrive with the fade-envelope feature); the API shape is final.</summary>

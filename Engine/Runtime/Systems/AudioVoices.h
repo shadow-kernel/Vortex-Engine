@@ -23,6 +23,7 @@ namespace vortex::runtime::audio {
 		// MB of PCM; streamed it stays at its encoded size + a small decode window).
 		bool stream{ false };
 		s32 priority{ 128 };	// 0 = most important .. 256 = least (Unity convention)
+		s32 bus{ 2 };			// mixer bus index (audio::bus; default sfx)
 	};
 
 	// 3D properties mirrored from the AudioSource component. Stored per voice by

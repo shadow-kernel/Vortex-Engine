@@ -1,3 +1,4 @@
+using System;
 using System.Runtime.InteropServices;
 
 namespace Editor.DllWrapper
@@ -11,6 +12,25 @@ namespace Editor.DllWrapper
     public static class VortexAudio
     {
         public const ulong InvalidVoice = 0;
+
+        /// <summary>Stable mixer bus indices — match the native audio::bus enum.</summary>
+        public const int BusMaster = 0;
+        public const int BusMusic = 1;
+        public const int BusSfx = 2;
+        public const int BusAmbience = 3;
+        public const int BusUi = 4;
+        public const int BusCount = 5;
+
+        public static readonly string[] BusNames = { "Master", "Music", "SFX", "Ambience", "UI" };
+
+        /// <summary>Bus name ("Music", case-insensitive) → index, -1 when unknown.</summary>
+        public static int BusIndexFromName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return -1;
+            for (int i = 0; i < BusNames.Length; i++)
+                if (string.Equals(BusNames[i], name, StringComparison.OrdinalIgnoreCase)) return i;
+            return -1;
+        }
 
         private const string _dllName = "VortexAPI.dll";
         private const CallingConvention _cc = CallingConvention.Cdecl;
@@ -34,7 +54,28 @@ namespace Editor.DllWrapper
 
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern ulong AudioPlayVoice([MarshalAs(UnmanagedType.LPUTF8Str)] string path,
-            float volume, float pitch, float pan, int loop, int priority, int stream);
+            float volume, float pitch, float pan, int loop, int priority, int stream, int outBus);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void AudioSetBusVolume(int bus, float volume);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern float AudioGetBusVolume(int bus);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void AudioSetBusMute(int bus, int mute);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int AudioGetBusMute(int bus);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void AudioGetBusLevels(int bus, out float peak, out float rms);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void AudioSetDuck(int triggerBus, int targetBus, float duckDb, float attackMs, float releaseMs, float threshold);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void AudioClearDucks();
 
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern int AudioRegisterClipData([MarshalAs(UnmanagedType.LPUTF8Str)] string name,
@@ -109,12 +150,23 @@ namespace Editor.DllWrapper
 
         /// <summary>Starts a voice; returns InvalidVoice when the clip can't be decoded
         /// or every pooled voice outranks this request (priority 0 = most important).
-        /// stream = decode on demand (music/long ambience) instead of full pre-decode.</summary>
-        public static ulong PlayVoice(string path, float volume, float pitch, float pan, bool loop, int priority, bool stream = false)
+        /// stream = decode on demand (music/long ambience) instead of full pre-decode.
+        /// bus routes the voice through a mixer bus (default SFX).</summary>
+        public static ulong PlayVoice(string path, float volume, float pitch, float pan, bool loop, int priority, bool stream = false, int bus = BusSfx)
         {
             if (string.IsNullOrEmpty(path)) return InvalidVoice;
-            return AudioPlayVoice(path, volume, pitch, pan, loop ? 1 : 0, priority, stream ? 1 : 0);
+            return AudioPlayVoice(path, volume, pitch, pan, loop ? 1 : 0, priority, stream ? 1 : 0, bus);
         }
+
+        public static void SetBusVolume(int bus, float volume) => AudioSetBusVolume(bus, volume);
+        public static float GetBusVolume(int bus) => AudioGetBusVolume(bus);
+        public static void SetBusMute(int bus, bool mute) => AudioSetBusMute(bus, mute ? 1 : 0);
+        public static bool GetBusMute(int bus) => AudioGetBusMute(bus) != 0;
+        public static void GetBusLevels(int bus, out float peak, out float rms) => AudioGetBusLevels(bus, out peak, out rms);
+        /// <summary>duckDb &lt; 0 installs/replaces the rule (e.g. -12 dB); &gt;= 0 removes it.</summary>
+        public static void SetDuck(int triggerBus, int targetBus, float duckDb, float attackMs, float releaseMs, float threshold = 0.05f)
+            => AudioSetDuck(triggerBus, targetBus, duckDb, attackMs, releaseMs, threshold);
+        public static void ClearDucks() => AudioClearDucks();
 
         /// <summary>Hands an encoded audio blob (e.g. a .vpak entry) to the native engine;
         /// the name then resolves like a file path for both decoded and streaming voices.</summary>

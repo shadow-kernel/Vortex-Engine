@@ -1,6 +1,7 @@
 #include "AudioVoices.h"
 #include "AudioEngine.h"
 #include "AudioInternal.h"
+#include "AudioMixer.h"
 
 #include <chrono>
 #include <cmath>
@@ -262,6 +263,9 @@ namespace vortex::runtime::audio {
 		// STREAM decodes on demand through the resource manager's job thread;
 		// registered pak names resolve via the narrow lookup, real paths via wide.
 		const ma_uint32 flags = params.stream ? MA_SOUND_FLAG_STREAM : MA_SOUND_FLAG_DECODE;
+		// Every voice attaches to its mixer bus group (nullptr before the mixer is
+		// up — then it falls back to the engine output as before).
+		ma_sound_group* group = (ma_sound_group*)mixer_group(mixer_bus_from_index(params.bus));
 		ma_result result;
 		ma_decoder* stream_decoder = nullptr;
 		if (is_registered_clip(path))
@@ -278,7 +282,7 @@ namespace vortex::runtime::audio {
 				result = ma_decoder_init_memory(bytes, (size_t)size, nullptr, stream_decoder);
 				if (result == MA_SUCCESS)
 				{
-					result = ma_sound_init_from_data_source(engine, stream_decoder, 0, nullptr, &target->sound);
+					result = ma_sound_init_from_data_source(engine, stream_decoder, 0, group, &target->sound);
 					if (result != MA_SUCCESS) ma_decoder_uninit(stream_decoder);
 				}
 				if (result != MA_SUCCESS)
@@ -289,14 +293,14 @@ namespace vortex::runtime::audio {
 			}
 			else
 			{
-				result = ma_sound_init_from_file(engine, path, flags, nullptr, nullptr, &target->sound);
+				result = ma_sound_init_from_file(engine, path, flags, group, nullptr, &target->sound);
 			}
 		}
 		else
 		{
 			wchar_t wide[1024];
 			if (!internal_widen_path(path, wide, 1024)) return invalid_voice;
-			result = ma_sound_init_from_file_w(engine, wide, flags, nullptr, nullptr, &target->sound);
+			result = ma_sound_init_from_file_w(engine, wide, flags, group, nullptr, &target->sound);
 		}
 		if (result != MA_SUCCESS)
 		{

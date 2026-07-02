@@ -34,6 +34,7 @@ namespace Editor.ECS.Components.Audio
         private float _dopplerLevel = 1f;
         private float _spread;
         private bool _streaming;
+        private int _outputBus = 2; // SFX
 
         public override string DisplayName => "Audio Source";
         public override string IconCode => "\uE767";
@@ -199,6 +200,17 @@ namespace Editor.ECS.Components.Audio
         {
             get => _streaming;
             set => SetProperty(ref _streaming, value, nameof(Streaming));
+        }
+
+        /// <summary>
+        /// Mixer-Bus (0 Master, 1 Music, 2 SFX, 3 Ambience, 4 UI). Bus-Volume/Mute
+        /// wirken auf alle Voices dieses Busses in Echtzeit.
+        /// </summary>
+        [DataMember(Name = "outputBus", Order = 26)]
+        public int OutputBus
+        {
+            get => _outputBus;
+            set => SetProperty(ref _outputBus, value, nameof(OutputBus));
         }
 
         public AudioSource() : base() { }
