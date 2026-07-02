@@ -316,6 +316,7 @@
     <Compile Include="Core\Services\AudioMixerConfig.cs" />
     <Compile Include="ECS\Components\Audio\ReverbZone.cs" />
     <Compile Include="Core\Services\AudioPlaybackService.cs" />
+    <Compile Include="Core\Services\AudioPreviewService.cs" />
     <Compile Include="Core\Services\GameRuntime.cs" />
     <Compile Include="Core\Services\SelectionService.cs" />
     <Compile Include="Core\Services\ShaderService.cs" />

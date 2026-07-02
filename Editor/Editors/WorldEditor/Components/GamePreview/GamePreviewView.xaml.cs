@@ -187,6 +187,15 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
 
 
 
+            // Edit-mode audio preview follows the live inspector values + the editor
+            // camera every frame (cheap no-op while nothing previews).
+            if (!playing && _cameraController != null)
+            {
+                Editor.Core.Services.AudioPreviewService.Instance.Tick(
+                    _cameraController.PositionX, _cameraController.PositionY, _cameraController.PositionZ,
+                    _cameraController.Yaw, _cameraController.Pitch);
+            }
+
             // Advance the running game one tick, then mirror the engine's (physics-updated) transforms
             // back into the C# transforms so the viewport shows the live simulation.
             if (playing)
@@ -1069,6 +1078,9 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             // PlayerController. The movement logic lives 100% in that editable project script (not the
             // engine) — this just scaffolds it so a freshly-loaded project is controllable on Play.
             EnsurePlayerControllerOnMainCamera(scene);
+
+            // Edit-mode previews must never bleed into play mode.
+            Editor.Core.Services.AudioPreviewService.Instance.Stop();
 
             // Start PlayOnAwake AudioSources + bind the AudioListener BEFORE scripts run:
             // VortexBehaviour.Start() may call Vortex.Audio (music, stingers), which needs

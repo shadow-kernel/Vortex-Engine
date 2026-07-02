@@ -40,6 +40,8 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
                 { typeof(ECS.Components.Physics.CapsuleCollider), comp => CreateColliderInspector((ECS.Components.Physics.Collider)comp) },
                 { typeof(ECS.Components.Physics.MeshCollider), comp => CreateColliderInspector((ECS.Components.Physics.Collider)comp) },
                 { typeof(ECS.Components.Animation.Animator), comp => CreateAnimatorInspector((ECS.Components.Animation.Animator)comp) },
+                { typeof(ECS.Components.Audio.AudioSource), comp => CreateAudioSourceInspector((ECS.Components.Audio.AudioSource)comp) },
+                { typeof(ECS.Components.Audio.ReverbZone), comp => CreateReverbZoneInspector((ECS.Components.Audio.ReverbZone)comp) },
             };
 
             // Accept scripts dropped from the Project Explorer / Asset Browser / Windows Explorer.
@@ -213,6 +215,143 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             inspector.RemoveRequested += (s, e) => RemoveComponentAndRefresh(animator);
             return inspector;
         }
+
+        // ---- AudioSource + ReverbZone inspectors (issues #12/#15/#19) -----------------
+        // Programmatic rows in the dark style; every setter writes the live component,
+        // and the edit-mode preview (AudioPreviewService) hears changes immediately.
+
+        private UserControl CreateAudioSourceInspector(ECS.Components.Audio.AudioSource src)
+        {
+            var panel = InspectorPanel("Audio Source", src, out var body);
+
+            body.Children.Add(AudioTextRow("Audio Clip", () => src.AudioClipPath ?? "", v => src.AudioClipPath = v,
+                "Project-relative .wav/.mp3/.ogg/.flac or .vsndc container — drag from the Audio tab"));
+            body.Children.Add(AudioSliderRow("Volume", 0, 1, () => src.Volume, v => src.Volume = v));
+            body.Children.Add(AudioSliderRow("Pitch", 0.25f, 3, () => src.Pitch, v => src.Pitch = v));
+            body.Children.Add(AudioCheckRow("Loop", () => src.Loop, v => src.Loop = v));
+            body.Children.Add(AudioCheckRow("Play On Awake", () => src.PlayOnAwake, v => src.PlayOnAwake = v));
+            body.Children.Add(AudioCheckRow("Mute", () => src.Mute, v => src.Mute = v));
+            body.Children.Add(AudioCheckRow("Streaming (music/long ambience)", () => src.Streaming, v => src.Streaming = v));
+            body.Children.Add(AudioComboRow("Output Bus", DllWrapper.VortexAudio.BusNames, () => src.OutputBus, v => src.OutputBus = v));
+            body.Children.Add(AudioSliderRow("Spatial Blend (0=2D, 1=3D)", 0, 1, () => src.SpatialBlend, v => src.SpatialBlend = v));
+            body.Children.Add(AudioSliderRow("Min Distance", 0.1f, 50, () => src.MinDistance, v => src.MinDistance = v));
+            body.Children.Add(AudioSliderRow("Max Distance", 1, 1000, () => src.MaxDistance, v => src.MaxDistance = v));
+            body.Children.Add(AudioComboRow("Rolloff", new[] { "Logarithmic", "Linear", "Custom" }, () => (int)src.RolloffMode, v => src.RolloffMode = (ECS.Components.Audio.AudioRolloffMode)v));
+            body.Children.Add(AudioSliderRow("Priority (0=highest)", 0, 256, () => src.Priority, v => src.Priority = (int)v));
+            body.Children.Add(AudioSliderRow("Stereo Pan", -1, 1, () => src.StereoPan, v => src.StereoPan = v));
+            body.Children.Add(AudioSliderRow("Reverb Zone Mix", 0, 1, () => src.ReverbZoneMix, v => src.ReverbZoneMix = v));
+            body.Children.Add(AudioSliderRow("Doppler Level", 0, 2, () => src.DopplerLevel, v => src.DopplerLevel = v));
+            body.Children.Add(AudioSliderRow("Spread", 0, 360, () => src.Spread, v => src.Spread = v));
+
+            // ---- edit-mode preview (issue #19) ----
+            var previewRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 10, 0, 0) };
+            var indicator = new TextBlock { Text = "", Foreground = InspBrush("#FF7CE0A3"), FontSize = 11, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) };
+            var spatialToggle = new CheckBox { Content = "Listen from camera (3D)", Foreground = InspBrush("#FFB4B4BC"), FontSize = 11, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0), IsChecked = src.SpatialBlend > 0f };
+            var play = AudioButton("Preview  ▶", "#FF7CE0A3");
+            play.ToolTip = "Play this source now, with the current settings — no play mode needed";
+            play.Click += (s, e) =>
+            {
+                Core.Services.AudioPreviewService.Instance.Start(src, spatialToggle.IsChecked == true);
+                indicator.Text = Core.Services.AudioPreviewService.Instance.IsPreviewing(src) ? "playing…" : "";
+            };
+            var stop = AudioButton("Stop  ■", "#FFB76B7E");
+            stop.Click += (s, e) => { Core.Services.AudioPreviewService.Instance.Stop(); indicator.Text = ""; };
+            previewRow.Children.Add(play);
+            previewRow.Children.Add(stop);
+            previewRow.Children.Add(spatialToggle);
+            previewRow.Children.Add(indicator);
+            body.Children.Add(previewRow);
+
+            return panel;
+        }
+
+        private UserControl CreateReverbZoneInspector(ECS.Components.Audio.ReverbZone zone)
+        {
+            var panel = InspectorPanel("Reverb Zone", zone, out var body);
+            body.Children.Add(AudioComboRow("Shape", new[] { "Sphere", "Box" }, () => zone.Shape, v => zone.Shape = v));
+            body.Children.Add(AudioSliderRow("Radius (sphere)", 0.5f, 100, () => zone.Radius, v => zone.Radius = v));
+            body.Children.Add(AudioSliderRow("Falloff", 0.1f, 20, () => zone.Falloff, v => zone.Falloff = v));
+            body.Children.Add(AudioSliderRow("Decay Time (s)", 0.1f, 20, () => zone.DecayTime, v => zone.DecayTime = v));
+            body.Children.Add(AudioSliderRow("Wet Level", 0, 1, () => zone.WetLevel, v => zone.WetLevel = v));
+            body.Children.Add(AudioSliderRow("Pre-Delay (ms)", 0, 200, () => zone.PreDelayMs, v => zone.PreDelayMs = v));
+            body.Children.Add(new TextBlock { Text = "Box half extents edit via the transform-scaled gizmo (issue #18) or the scene file for now.", Foreground = InspBrush("#FF66666E"), FontSize = 10.5, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 0) });
+            return panel;
+        }
+
+        // ---- tiny row builders shared by the audio inspectors ----
+
+        private UserControl InspectorPanel(string title, Component component, out StackPanel body)
+        {
+            var border = new Border { Background = InspBrush("#FF1E1E22"), CornerRadius = new CornerRadius(6), Padding = new Thickness(10, 8, 10, 10), Margin = new Thickness(0, 5, 0, 0) };
+            var stack = new StackPanel();
+            var head = new Grid();
+            head.Children.Add(new TextBlock { Text = title, Foreground = InspBrush("#FFE9E9ED"), FontSize = 12.5, FontWeight = FontWeights.SemiBold });
+            var rm = new Button { Content = "✕", FontSize = 12, Foreground = InspBrush("#FFB76B7E"), Background = System.Windows.Media.Brushes.Transparent, BorderThickness = new Thickness(0), Cursor = System.Windows.Input.Cursors.Hand, HorizontalAlignment = HorizontalAlignment.Right, ToolTip = "Remove component" };
+            rm.Click += (s, e) => RemoveComponentAndRefresh(component);
+            head.Children.Add(rm);
+            stack.Children.Add(head);
+            body = new StackPanel { Margin = new Thickness(0, 6, 0, 0) };
+            stack.Children.Add(body);
+            border.Child = stack;
+            return new UserControl { Content = border };
+        }
+
+        private UIElement AudioSliderRow(string label, float min, float max, Func<float> get, Action<float> set)
+        {
+            var row = new StackPanel { Margin = new Thickness(0, 4, 0, 0) };
+            var head = new Grid();
+            head.Children.Add(new TextBlock { Text = label, Foreground = InspBrush("#FFB4B4BC"), FontSize = 11 });
+            var valueText = new TextBlock { Foreground = InspBrush("#FF8A8A92"), FontSize = 11, HorizontalAlignment = HorizontalAlignment.Right, Text = get().ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) };
+            head.Children.Add(valueText);
+            row.Children.Add(head);
+            var slider = new Slider { Minimum = min, Maximum = max, Value = get(), SmallChange = (max - min) / 100.0, Foreground = InspBrush("#FF6C5CE7") };
+            slider.ValueChanged += (s, e) =>
+            {
+                set((float)slider.Value);
+                valueText.Text = ((float)slider.Value).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+            };
+            row.Children.Add(slider);
+            return row;
+        }
+
+        private UIElement AudioCheckRow(string label, Func<bool> get, Action<bool> set)
+        {
+            var check = new CheckBox { Content = label, Foreground = InspBrush("#FFC8C8CE"), FontSize = 11, Margin = new Thickness(0, 6, 0, 0), IsChecked = get() };
+            check.Checked += (s, e) => set(true);
+            check.Unchecked += (s, e) => set(false);
+            return check;
+        }
+
+        private UIElement AudioTextRow(string label, Func<string> get, Action<string> set, string tooltip)
+        {
+            var row = new StackPanel { Margin = new Thickness(0, 2, 0, 0) };
+            row.Children.Add(new TextBlock { Text = label, Foreground = InspBrush("#FFB4B4BC"), FontSize = 11 });
+            var box = new TextBox { Text = get(), Background = InspBrush("#FF141416"), Foreground = InspBrush("#FFE9E9ED"), BorderBrush = InspBrush("#FF2C2C32"), Padding = new Thickness(6, 4, 6, 4), Margin = new Thickness(0, 3, 0, 0), ToolTip = tooltip };
+            box.TextChanged += (s, e) => set(box.Text);
+            row.Children.Add(box);
+            return row;
+        }
+
+        private UIElement AudioComboRow(string label, string[] options, Func<int> get, Action<int> set)
+        {
+            var row = new StackPanel { Margin = new Thickness(0, 4, 0, 0) };
+            row.Children.Add(new TextBlock { Text = label, Foreground = InspBrush("#FFB4B4BC"), FontSize = 11 });
+            var combo = new ComboBox { Margin = new Thickness(0, 3, 0, 0) };
+            foreach (var o in options) combo.Items.Add(o);
+            var current = get();
+            combo.SelectedIndex = current >= 0 && current < options.Length ? current : 0;
+            combo.SelectionChanged += (s, e) => set(combo.SelectedIndex);
+            row.Children.Add(combo);
+            return row;
+        }
+
+        private Button AudioButton(string text, string accent)
+        {
+            return new Button { Content = text, Padding = new Thickness(10, 4, 10, 4), Background = InspBrush("#FF26262B"), Foreground = InspBrush(accent), BorderBrush = InspBrush("#FF3A3A42"), Cursor = System.Windows.Input.Cursors.Hand };
+        }
+
+        private static System.Windows.Media.SolidColorBrush InspBrush(string hex)
+            => new System.Windows.Media.SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(hex));
 
         private UserControl CreateGenericComponentInspector(Component component)
         {
