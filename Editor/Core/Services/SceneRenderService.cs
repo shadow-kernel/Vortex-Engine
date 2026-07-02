@@ -302,6 +302,7 @@ namespace Editor.Core.Services
             var selected = SelectionService.Instance.SelectedEntity;
             RenderAllCameraIcons(scene, selected);
             RenderAllLightIcons(scene, selected);
+            RenderAllAudioIcons(scene, selected);
 
             if (selected == null) return;
             var transform = selected.Transform;
@@ -354,8 +355,55 @@ namespace Editor.Core.Services
                 }
             }
 
+            // Audio gizmos (issue #18): the selected AudioSource's min/max distance spheres and a
+            // selected ReverbZone's boundary + falloff shell. Values are read fresh every frame,
+            // so inspector edits and entity drags update the shapes live.
+            var audioSrc = selected.GetComponent<ECS.Components.Audio.AudioSource>();
+            if (audioSrc != null && audioSrc.IsEnabled)
+                VortexAPI.RenderAudioRangeSpheres(pos.X, pos.Y, pos.Z, audioSrc.MinDistance, audioSrc.MaxDistance);
+            var reverbZone = selected.GetComponent<ECS.Components.Audio.ReverbZone>();
+            if (reverbZone != null && reverbZone.IsEnabled)
+                // Max(0.01, extent) — NOT Abs — mirrors the runtime test (ZoneWeight), so the drawn box is
+                // exactly the audible one even for hand-edited negative extents.
+                VortexAPI.RenderReverbZoneGizmo(pos.X, pos.Y, pos.Z, reverbZone.Shape, reverbZone.Radius,
+                    Math.Max(0.01f, reverbZone.BoxExtents.X), Math.Max(0.01f, reverbZone.BoxExtents.Y), Math.Max(0.01f, reverbZone.BoxExtents.Z),
+                    reverbZone.Falloff);
+
             if (VortexAPI.AreGizmosVisible)
                 VortexAPI.RenderGizmo(pos.X, pos.Y, pos.Z, transform.LocalScale.Y, 1.0f);
+        }
+
+        /// <summary>Speaker icons at every AudioSource and a head icon at every AudioListener —
+        /// camera-facing billboards, drawn regardless of selection (like camera icons).</summary>
+        private void RenderAllAudioIcons(Data.Scene scene, GameEntity selected)
+        {
+            if (!VortexAPI.AreGizmosVisible) return;
+            var cam = EditorCameraController.Instance;
+            foreach (var entity in scene.Entities)
+                RenderAudioIconRecursive(entity, selected, cam.PositionX, cam.PositionY, cam.PositionZ);
+        }
+
+        private void RenderAudioIconRecursive(GameEntity entity, GameEntity selected, float camX, float camY, float camZ)
+        {
+            var transform = entity.Transform;
+            if (transform != null)
+            {
+                var pos = transform.LocalPosition;
+                if (entity.GetComponent<ECS.Components.Audio.AudioSource>() != null)
+                    VortexAPI.RenderAudioSourceIcon(pos.X, pos.Y, pos.Z, camX, camY, camZ, entity == selected);
+                if (entity.GetComponent<ECS.Components.Audio.AudioListener>() != null)
+                {
+                    // Listeners usually sit on a camera entity — float the head above the camera icon.
+                    float lift = entity.GetComponent<Camera>() != null ? 0.45f : 0f;
+                    VortexAPI.RenderAudioListenerIcon(pos.X, pos.Y + lift, pos.Z, camX, camY, camZ);
+                }
+            }
+
+            if (entity.Children != null)
+            {
+                foreach (var child in entity.Children)
+                    RenderAudioIconRecursive(child, selected, camX, camY, camZ);
+            }
         }
 
         /// <summary>

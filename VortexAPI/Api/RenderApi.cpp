@@ -336,6 +336,18 @@ EDITOR_INTERFACE void SubmitGizmoItem(id::id_type mesh_id, id::id_type material_
 	graphics::dx12::DX12Renderer::instance().submit_gizmo_item(item);
 }
 
+// Same always-on-top gizmo pass, but rasterized as WIREFRAME: one call draws a whole shape (audio range
+// sphere, reverb-zone box) as a fine triangle net instead of hundreds of scaled-cube edge segments.
+EDITOR_INTERFACE void SubmitGizmoWireItem(id::id_type mesh_id, id::id_type material_id, float* world_matrix)
+{
+	graphics::dx12::RenderItem item{};
+	item.mesh_id = mesh_id;
+	item.material_id = material_id;
+	if (world_matrix) memcpy(&item.world_matrix, world_matrix, sizeof(DirectX::XMFLOAT4X4));
+	else DirectX::XMStoreFloat4x4(&item.world_matrix, DirectX::XMMatrixIdentity());
+	graphics::dx12::DX12Renderer::instance().submit_gizmo_wire_item(item);
+}
+
 // Submit `count` instances of the SAME mesh+material in ONE call (world_matrices = count*16 floats, row-major
 // 4x4 each). The renderer groups them into a single DrawIndexedInstanced — the path for spawning large crowds
 // without one P/Invoke per instance.

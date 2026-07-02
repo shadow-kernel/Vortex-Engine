@@ -263,6 +263,16 @@ namespace Editor.DllWrapper
         }
 
         [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SubmitGizmoWireItem(long meshId, long materialId, float[] worldMatrix);
+
+        /// <summary>Like <see cref="SubmitGizmoForRendering"/>, but rasterized as WIREFRAME: one call draws a
+        /// whole shape (audio range sphere, reverb-zone box) as a fine triangle net of thin lines.</summary>
+        public static void SubmitGizmoWireForRendering(long meshId, long materialId, float[] worldMatrix = null)
+        {
+            SubmitGizmoWireItem(meshId, materialId, worldMatrix);
+        }
+
+        [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void SubmitMeshInstances(long meshId, long materialId, float[] worldMatrices, int count);
 
         /// <summary>Submit <paramref name="count"/> instances of the SAME mesh+material in ONE call

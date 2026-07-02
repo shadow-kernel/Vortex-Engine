@@ -289,6 +289,7 @@
     <Compile Include="Editors\PhysicsEditor\CollisionEditorWindow.cs" />
     <Compile Include="Editors\PhysicsEditor\CollisionPreviewControl.cs" />
     <Compile Include="DllWrapper\Gizmos\ColliderGizmo.cs" />
+    <Compile Include="DllWrapper\Gizmos\AudioGizmo.cs" />
     <Compile Include="Core\EngineInfo.cs" />
     <Compile Include="Core\Services\Update\UpdateService.cs" />
     <Compile Include="Dialogs\UpdateDialog.cs" />

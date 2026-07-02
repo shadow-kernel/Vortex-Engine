@@ -128,6 +128,15 @@ namespace vortex::graphics::dx12
 	}
 
 
+	void DX12Renderer::submit_gizmo_wire_item(const RenderItem& item)
+	{
+		std::lock_guard<std::mutex> lock(m_queue_mutex);
+		// Solid + wire share the tail CB/VB slot range — cap their SUM, not each list.
+		if (m_gizmo_submit.size() + m_gizmo_wire_submit.size() < MAX_GIZMO_ITEMS)
+			m_gizmo_wire_submit.push_back(item);
+	}
+
+
 	void DX12Renderer::submit_mesh_instances(id::id_type mesh, id::id_type material, const float* world_matrices, u32 count)
 	{
 		if (!world_matrices || count == 0) return;

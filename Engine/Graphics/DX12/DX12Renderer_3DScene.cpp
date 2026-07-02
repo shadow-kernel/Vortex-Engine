@@ -446,6 +446,7 @@ namespace vortex::graphics::dx12
 				const auto& props = mat->properties();
 				obj.base_color = props.base_color; obj.metallic = props.metallic; obj.roughness = props.roughness;
 				obj.ao = props.ao; obj.normal_strength = props.normal_strength; obj.use_directx_normals = props.use_directx_normals;
+				obj.is_unlit = props.is_unlit; obj.emissive_strength = props.emissive_strength; // feed the PS's unlit path (was zeroed padding)
 				auto* tex = mat->albedo_texture();
 				if (tex && tex->is_valid() && tex->srv_gpu().ptr != 0) { obj.has_albedo_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(3, tex->srv_gpu()); }
 				auto* normal = mat->normal_texture();
@@ -529,7 +530,7 @@ namespace vortex::graphics::dx12
 	// extra GPU buffers are needed. One draw per gizmo mesh (few per frame) — no instancing/culling.
 	void DX12Renderer::render_gizmos()
 	{
-		if (m_gizmo_render.empty()) return;
+		if (m_gizmo_render.empty() && m_gizmo_wire_render.empty()) return;
 		auto* gpso = m_pipeline_3d.gizmo_pso();
 		if (!gpso) return;
 
@@ -545,43 +546,70 @@ namespace vortex::graphics::dx12
 		auto& reg = ResourceRegistry::instance();
 		const u32 cbBase = MAX_DRAW_RUNS - MAX_GIZMO_ITEMS;         // tail CB slots (never used by the scene)
 		const u32 vbBase = MAX_RENDER_OBJECTS - MAX_GIZMO_ITEMS;    // tail instance-VB slots
-		size_t n = (std::min)(m_gizmo_render.size(), (size_t)MAX_GIZMO_ITEMS);
-		for (size_t i = 0; i < n; ++i)
+
+		// Draw one gizmo list; `slot` indexes the shared tail CB/VB range and keeps advancing across lists so
+		// solid + wire items never alias a slot (their SUM is capped at MAX_GIZMO_ITEMS at submit time).
+		u32 slot = 0;
+		auto draw_list = [&](const std::vector<RenderItem>& list)
 		{
-			const RenderItem& item = m_gizmo_render[i];
-			Mesh* mesh = reg.get_mesh(item.mesh_id);
-			if (!mesh || !mesh->is_valid()) continue;
-
-			PerObjectConstants obj{};
-			obj.world = item.world_matrix;
-			obj.base_color = { 0.9f, 0.9f, 0.95f, 1.0f };
-			obj.metallic = 0.0f; obj.roughness = 1.0f; obj.ao = 1.0f; obj.normal_strength = 1.0f;
-			obj.use_directx_normals = 1;
-			auto* mat = reg.get_material(item.material_id);
-			if (mat) obj.base_color = mat->properties().base_color;
-
-			u32 cbSlot = cbBase + (u32)i;
-			u32 vbSlot = vbBase + (u32)i;
-			if (m_per_object_cb_mapped) memcpy((u8*)m_per_object_cb_mapped + (size_t)cbSlot * 256, &obj, sizeof(obj));
-			m_command_list->SetGraphicsRootConstantBufferView(1, m_per_object_cb->GetGPUVirtualAddress() + (size_t)cbSlot * 256);
-			if (m_instance_vb_mapped) memcpy((u8*)m_instance_vb_mapped + (size_t)vbSlot * 64, &item.world_matrix, 64);
-
-			D3D12_VERTEX_BUFFER_VIEW vbs[2];
-			vbs[0] = mesh->vertex_buffer_view();
-			vbs[1].BufferLocation = m_instance_vb->GetGPUVirtualAddress() + (UINT64)vbSlot * 64;
-			vbs[1].SizeInBytes = 64;
-			vbs[1].StrideInBytes = 64;
-			m_command_list->IASetVertexBuffers(0, 2, vbs);
-			if (mesh->has_indices())
+			for (size_t i = 0; i < list.size() && slot < MAX_GIZMO_ITEMS; ++i)
 			{
-				m_command_list->IASetIndexBuffer(&mesh->index_buffer_view());
-				m_command_list->DrawIndexedInstanced(mesh->index_count(), 1, 0, 0, 0);
+				const RenderItem& item = list[i];
+				Mesh* mesh = reg.get_mesh(item.mesh_id);
+				if (!mesh || !mesh->is_valid()) continue;
+
+				PerObjectConstants obj{};
+				obj.world = item.world_matrix;
+				obj.base_color = { 0.9f, 0.9f, 0.95f, 1.0f };
+				obj.metallic = 0.0f; obj.roughness = 1.0f; obj.ao = 1.0f; obj.normal_strength = 1.0f;
+				obj.use_directx_normals = 1;
+				obj.emissive_strength = 1.0f;
+				auto* mat = reg.get_material(item.material_id);
+				if (mat)
+				{
+					const auto& props = mat->properties();
+					obj.base_color = props.base_color;
+					obj.is_unlit = props.is_unlit;                    // unlit gizmo materials = constant bright color,
+					obj.emissive_strength = props.emissive_strength;  // readable from every angle / in shadow
+				}
+
+				u32 cbSlot = cbBase + slot;
+				u32 vbSlot = vbBase + slot;
+				++slot;
+				if (m_per_object_cb_mapped) memcpy((u8*)m_per_object_cb_mapped + (size_t)cbSlot * 256, &obj, sizeof(obj));
+				m_command_list->SetGraphicsRootConstantBufferView(1, m_per_object_cb->GetGPUVirtualAddress() + (size_t)cbSlot * 256);
+				if (m_instance_vb_mapped) memcpy((u8*)m_instance_vb_mapped + (size_t)vbSlot * 64, &item.world_matrix, 64);
+
+				D3D12_VERTEX_BUFFER_VIEW vbs[2];
+				vbs[0] = mesh->vertex_buffer_view();
+				vbs[1].BufferLocation = m_instance_vb->GetGPUVirtualAddress() + (UINT64)vbSlot * 64;
+				vbs[1].SizeInBytes = 64;
+				vbs[1].StrideInBytes = 64;
+				m_command_list->IASetVertexBuffers(0, 2, vbs);
+				if (mesh->has_indices())
+				{
+					m_command_list->IASetIndexBuffer(&mesh->index_buffer_view());
+					m_command_list->DrawIndexedInstanced(mesh->index_count(), 1, 0, 0, 0);
+				}
+				else
+				{
+					m_command_list->DrawInstanced(mesh->vertex_count(), 1, 0, 0);
+				}
+				++m_draw_call_count;
 			}
-			else
+		};
+
+		draw_list(m_gizmo_render);
+
+		// Wireframe gizmos (audio range spheres, reverb zones): same pass, wire PSO.
+		if (!m_gizmo_wire_render.empty())
+		{
+			auto* wpso = m_pipeline_3d.gizmo_wire_pso();
+			if (wpso)
 			{
-				m_command_list->DrawInstanced(mesh->vertex_count(), 1, 0, 0);
+				m_command_list->SetPipelineState(wpso);
+				draw_list(m_gizmo_wire_render);
 			}
-			++m_draw_call_count;
 		}
 	}
 

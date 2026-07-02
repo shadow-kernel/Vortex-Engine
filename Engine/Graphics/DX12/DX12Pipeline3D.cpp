@@ -268,6 +268,26 @@ namespace vortex::graphics::dx12
 			{
 				return false;
 			}
+
+			// Gizmo WIRE PSO: rasterized as wireframe — a whole audio range sphere or reverb-zone shape draws
+			// as one fine triangle net (thin lines) instead of hundreds of scaled-cube edge segments. Unlike the
+			// solid gizmo PSO this one KEEPS the depth TEST (write still off): a volume shape's far half hides
+			// naturally behind scene geometry, which halves the on-screen line density and reads as 3D instead
+			// of an always-on-top line salad. Handles/icons stay on the depth-disabled solid PSO.
+			rasterizer.FillMode = D3D12_FILL_MODE_WIREFRAME;
+			pso_desc.RasterizerState = rasterizer;
+			D3D12_DEPTH_STENCIL_DESC wire_ds{};
+			wire_ds.DepthEnable = TRUE;
+			wire_ds.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+			wire_ds.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+			wire_ds.StencilEnable = FALSE;
+			pso_desc.DepthStencilState = wire_ds;
+			if (FAILED(device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&m_gizmo_wire_pso))))
+			{
+				return false;
+			}
+			rasterizer.FillMode = D3D12_FILL_MODE_SOLID;   // restore for the skinned PSO below
+			pso_desc.RasterizerState = rasterizer;
 		}
 
 		// Skinned PSO (optional — only when skinned.hlsl compiled): the rigid input layout + BLENDINDICES/

@@ -32,6 +32,10 @@ namespace vortex::graphics::dx12
 		// is close/inside them. Drawn in a dedicated pass AFTER the scene.
 		ID3D12PipelineState* gizmo_pso() const { return m_gizmo_pso.Get(); }
 
+		// Gizmo WIRE PSO: like gizmo_pso but rasterized WIREFRAME — draws a whole range sphere / zone shape
+		// as one fine triangle net (thin lines) in a single draw call.
+		ID3D12PipelineState* gizmo_wire_pso() const { return m_gizmo_wire_pso.Get(); }
+
 		// Skinned PSO: skinned.hlsl VS (GPU skinning off the bone-palette root SRV at param 8) + the
 		// standard PS. Input layout adds BLENDINDICES/BLENDWEIGHT on slot 0 (52-byte vertex); the
 		// per-instance INSTANCEWORLD stream on slot 1 is kept, so a skinned draw is a 1-instance
@@ -58,6 +62,7 @@ namespace vortex::graphics::dx12
 		ComPtr<ID3D12PipelineState> m_wireframe_pso;
 		ComPtr<ID3D12PipelineState> m_double_sided_pso;
 		ComPtr<ID3D12PipelineState> m_gizmo_pso;   // depth-disabled, cull-none: gizmos always on top
+		ComPtr<ID3D12PipelineState> m_gizmo_wire_pso; // gizmo PSO variant with WIREFRAME fill (fine-net shapes)
 		ComPtr<ID3D12PipelineState> m_skinned_pso; // GPU skinning (skinned.hlsl VS + standard PS)
 		ComPtr<ID3DBlob> m_vs_blob;
 		ComPtr<ID3DBlob> m_ps_blob;

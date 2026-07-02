@@ -206,6 +206,8 @@ namespace vortex::graphics::dx12
 		// unconditionally: an empty submit means "no gizmo this frame" (e.g. deselect / play mode), so they clear.
 		m_gizmo_render.swap(m_gizmo_submit);
 		m_gizmo_submit.clear();
+		m_gizmo_wire_render.swap(m_gizmo_wire_submit);
+		m_gizmo_wire_submit.clear();
 
 		if (m_submit_queue.empty()) return;   // scene: nothing new -> KEEP last frame's (camera-only orbit is free)
 		m_render_queue.swap(m_submit_queue);

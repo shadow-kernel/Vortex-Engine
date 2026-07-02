@@ -130,6 +130,9 @@ namespace vortex::graphics::dx12
 		// Submit an editor GIZMO mesh — goes into the separate gizmo queue and renders always-on-top (depth-disabled)
 		// in render_gizmos() after the scene. Used by the editor's move/rotate/scale gizmos + selection outline.
 		void submit_gizmo_item(const RenderItem& item);
+		// Same always-on-top pass, but rasterized as WIREFRAME (fine triangle net) — one draw renders a whole
+		// audio range sphere / reverb-zone shape as thin lines instead of hundreds of scaled-cube edge segments.
+		void submit_gizmo_wire_item(const RenderItem& item);
 		// Submit `count` instances of the SAME mesh+material in ONE call (world_matrices = count * 16 floats,
 		// row-major 4x4 each). Avoids one P/Invoke per instance — the path for spawning large crowds.
 		void submit_mesh_instances(id::id_type mesh, id::id_type material, const float* world_matrices, u32 count);
@@ -536,7 +539,10 @@ namespace vortex::graphics::dx12
 		UINT has_roughness_texture;           // 4 bytes
 	UINT has_ao_texture;                  // 4 bytes
 		UINT use_directx_normals;             // 4 bytes
-		UINT padding[2];                      // 8 bytes
+		// Mirrors IsUnlit/EmissiveStrength in the standard.hlsl cbuffer (same 8 bytes that used to be
+		// unnamed padding — the shader fields existed but were never fed, so unlit shading never engaged).
+		UINT is_unlit;                        // 4 bytes
+		float emissive_strength;              // 4 bytes
 		};  // Total: 128 bytes, aligned to 256
 		
 		// Light constant buffer
@@ -550,6 +556,10 @@ namespace vortex::graphics::dx12
 		// in render_gizmos() after the scene with the depth-disabled gizmo PSO (always on top).
 		std::vector<RenderItem> m_gizmo_render;
 		std::vector<RenderItem> m_gizmo_submit;
+		// Wireframe gizmo queue: same pass, drawn with the wire (fill-mode WIREFRAME) gizmo PSO after the
+		// solid items. Shares the tail CB/VB slots — solid + wire together are capped at MAX_GIZMO_ITEMS.
+		std::vector<RenderItem> m_gizmo_wire_render;
+		std::vector<RenderItem> m_gizmo_wire_submit;
 		std::mutex m_queue_mutex;
 		
 		// Batching structures for instanced rendering
