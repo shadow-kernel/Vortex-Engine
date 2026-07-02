@@ -37,6 +37,11 @@ namespace Editor.Core.Services
         [DataMember(Name = "ducks", Order = 2)]
         public List<DuckRule> Ducks { get; set; } = new List<DuckRule>();
 
+        /// <summary>Steam Audio v2 (#21) project master switch. When true, sources with EnableHrtf render through
+        /// Steam Audio's HRTF/occlusion (if phonon.dll is present); false (default) = the v1 spatializer everywhere.</summary>
+        [DataMember(Name = "steamAudioEnabled", Order = 3)]
+        public bool SteamAudioEnabled { get; set; }
+
         public const string RelativePath = "ProjectSettings/AudioMixer.json";
 
         /// <summary>Loads the project's mixer config (the designer-tuned defaults), or defaults when none exists.
@@ -105,6 +110,9 @@ namespace Editor.Core.Services
                 if (d != null && d.DuckDb < 0f)
                     VortexAudio.SetDuck(d.TriggerBus, d.TargetBus, d.DuckDb, d.AttackMs, d.ReleaseMs, d.Threshold);
             }
+            // Steam Audio master switch (#21) — turning it on lazily inits HRTF/occlusion natively (no-op if
+            // phonon.dll is absent), so an opted-in AudioSource can route through it.
+            VortexAudio.SteamSetEnabled(SteamAudioEnabled);
         }
 
         private void Normalize()

@@ -55,8 +55,9 @@ namespace Editor.Core.Services.Build
 
                 // 1) Engine runtime = the editor's own Release output (exe + native + managed DLLs).
                 var runtimeDir = Path.GetDirectoryName(typeof(GameExporter).Assembly.Location);
-                int n = CopyRuntime(runtimeDir, outputDir);
-                sb.AppendLine("• Runtime: " + n + " files copied");
+                bool usesSteamAudio = ProjectUsesSteamAudio(projectRoot);
+                int n = CopyRuntime(runtimeDir, outputDir, usesSteamAudio);
+                sb.AppendLine("• Runtime: " + n + " files copied" + (usesSteamAudio ? " (incl. Steam Audio phonon.dll)" : ""));
 
                 // Engine shaders ship as loose files next to the exe (the native engine is a static lib in the exe and
                 // can't read the C#-only .vpak). The runtime resolves <exe>/Shaders first; without this a shipped game
@@ -350,19 +351,37 @@ namespace Editor.Core.Services.Build
             return null;
         }
 
-        private static int CopyRuntime(string runtimeDir, string outDir)
+        private static int CopyRuntime(string runtimeDir, string outDir, bool includeSteamAudio)
         {
             int n = 0;
             if (string.IsNullOrEmpty(runtimeDir) || !Directory.Exists(runtimeDir)) return 0;
             foreach (var f in Directory.GetFiles(runtimeDir))
             {
                 var ext = (Path.GetExtension(f) ?? "").ToLowerInvariant();
+                var name = Path.GetFileName(f);
+                // phonon.dll is the optional ~50 MB Steam Audio runtime (#21) — only ship it when this project has
+                // Steam Audio enabled, so a game that doesn't use it isn't bloated by 50 MB.
+                if (!includeSteamAudio && name.Equals("phonon.dll", StringComparison.OrdinalIgnoreCase)) continue;
                 if (ext == ".dll" || ext == ".exe" || ext == ".json" || ext == ".config")
                 {
-                    try { File.Copy(f, Path.Combine(outDir, Path.GetFileName(f)), true); n++; } catch { }
+                    try { File.Copy(f, Path.Combine(outDir, name), true); n++; } catch { }
                 }
             }
             return n;
+        }
+
+        /// <summary>True if the project turned Steam Audio (#21) on in its mixer config — determines whether the
+        /// ~50 MB phonon.dll runtime is shipped with the exported game.</summary>
+        private static bool ProjectUsesSteamAudio(string projectRoot)
+        {
+            try
+            {
+                var f = Path.Combine(projectRoot, "ProjectSettings", "AudioMixer.json");
+                if (!File.Exists(f)) return false;
+                var json = File.ReadAllText(f).Replace(" ", "").Replace("\t", "");
+                return json.Contains("\"steamAudioEnabled\":true");
+            }
+            catch { return false; }
         }
 
         /// <summary>Recursively copy a directory tree (skipping build caches), returning the file count. Used by the

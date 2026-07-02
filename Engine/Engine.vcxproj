@@ -78,6 +78,7 @@
     <ClInclude Include="Runtime\Systems\AudioReverb.h" />
     <ClInclude Include="Runtime\Systems\AudioSystem.h" />
     <ClInclude Include="Runtime\Systems\AudioVoices.h" />
+    <ClInclude Include="Runtime\Systems\SteamAudio.h" />
     <ClInclude Include="Runtime\Systems\PhysicsSystem.h" />
     <ClInclude Include="Runtime\Systems\RenderSystem.h" />
     <ClInclude Include="Runtime\Systems\RenderSystemDX12.h" />
@@ -154,6 +155,7 @@
     <ClCompile Include="Runtime\Systems\AudioReverb.cpp" />
     <ClCompile Include="Runtime\Systems\AudioSystem.cpp" />
     <ClCompile Include="Runtime\Systems\AudioVoices.cpp" />
+    <ClCompile Include="Runtime\Systems\SteamAudio.cpp" />
     <ClCompile Include="Runtime\Systems\PhysicsSystem.cpp" />
     <ClCompile Include="Runtime\Systems\RenderSystem.cpp" />
     <ClCompile Include="Runtime\Systems\RenderSystemDX12.cpp" />
@@ -233,7 +235,7 @@
       <LanguageStandard>stdcpp20</LanguageStandard>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
-      <AdditionalIncludeDirectories>$(ProjectDir)ThirdParty;$(SolutionDir)ThirdParty\assimp6\include;$(SolutionDir)ThirdParty\Streamline\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)ThirdParty;$(SolutionDir)ThirdParty\assimp6\include;$(SolutionDir)ThirdParty\Streamline\include;$(SolutionDir)ThirdParty\steam-audio\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>
@@ -254,7 +256,7 @@
       <LanguageStandard>stdcpp20</LanguageStandard>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
-      <AdditionalIncludeDirectories>$(ProjectDir)ThirdParty;$(SolutionDir)ThirdParty\assimp6\include;$(SolutionDir)ThirdParty\Streamline\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)ThirdParty;$(SolutionDir)ThirdParty\assimp6\include;$(SolutionDir)ThirdParty\Streamline\include;$(SolutionDir)ThirdParty\steam-audio\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>
@@ -276,7 +278,7 @@
       <CallingConvention>FastCall</CallingConvention>
       <FloatingPointModel>Fast</FloatingPointModel>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <AdditionalIncludeDirectories>$(ProjectDir)ThirdParty;$(SolutionDir)ThirdParty\assimp6\include;$(SolutionDir)ThirdParty\Streamline\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)ThirdParty;$(SolutionDir)ThirdParty\assimp6\include;$(SolutionDir)ThirdParty\Streamline\include;$(SolutionDir)ThirdParty\steam-audio\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>
@@ -300,7 +302,7 @@
       <CallingConvention>FastCall</CallingConvention>
       <FloatingPointModel>Fast</FloatingPointModel>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <AdditionalIncludeDirectories>$(ProjectDir)ThirdParty;$(SolutionDir)ThirdParty\assimp6\include;$(SolutionDir)ThirdParty\Streamline\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)ThirdParty;$(SolutionDir)ThirdParty\assimp6\include;$(SolutionDir)ThirdParty\Streamline\include;$(SolutionDir)ThirdParty\steam-audio\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>

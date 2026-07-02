@@ -77,8 +77,18 @@ namespace Editor.Core.Services
             // only, layer the player's own saved volume/mute choices on top so their settings survive a restart. (#20)
             try
             {
-                AudioMixerConfig.Load(ProjectData.Current?.Path).Apply();
+                var mixer = AudioMixerConfig.Load(ProjectData.Current?.Path);
+                mixer.Apply();
                 GameAudioSettings.Instance.LoadAndApply();
+
+                // Steam Audio (#21): once the master switch is on, feed the level's collision geometry to the
+                // occlusion scene so an opted-in source behind a wall is muffled. HRTF works without this; occlusion
+                // needs it. Best-effort — if collision isn't built yet, occlusion simply has no geometry.
+                if (mixer.SteamAudioEnabled &&
+                    Physics.CollisionService.ExportOcclusionGeometry(out var occVerts, out var occIdx))
+                {
+                    VortexAudio.SteamSetGeometry(occVerts, occIdx);
+                }
             }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Audio] mixer config apply failed: " + ex.Message); }
 
@@ -570,7 +580,10 @@ namespace Editor.Core.Services
                 b.Source.Loop,
                 b.Source.Priority,
                 b.Source.Streaming,
-                b.Source.OutputBus);
+                b.Source.OutputBus,
+                // Steam Audio v2 (#21): only meaningful for 3D sources; ignored unless SA is enabled + available.
+                hrtf: b.Source.EnableHrtf && b.Source.SpatialBlend > 0f,
+                occlusion: b.Source.EnableOcclusion && b.Source.EnableHrtf && b.Source.SpatialBlend > 0f);
             b.RolledVolumeScale = volumeScale;
             b.RolledPitchScale = pitchScale;
 

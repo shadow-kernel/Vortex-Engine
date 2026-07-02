@@ -3,6 +3,7 @@
 #include "AudioInternal.h"
 #include "AudioMixer.h"
 #include "AudioReverb.h"
+#include "SteamAudio.h"
 
 #include <chrono>
 #include <cmath>
@@ -38,6 +39,10 @@ namespace vortex::runtime::audio {
 			// listener zone weight). Only built while the reverb node exists.
 			ma_splitter_node splitter{};
 			bool		splitter_alive{ false };
+			// Steam Audio v2 (issue #21): when set, this voice runs HRTF binaural (+ optional occlusion)
+			// through a per-voice node spliced between the sound and its splitter/bus. Owns the node.
+			steam::source* steam_src{ nullptr };
+			bool		steam_occlusion{ false };
 			// FadeOut semantics: release the voice once its fade has completed.
 			std::chrono::steady_clock::time_point fade_stop_deadline{};
 			bool		fade_stop_pending{ false };
@@ -112,6 +117,15 @@ namespace vortex::runtime::audio {
 			ma_sound* s = &slot.sound;
 			const voice_spatial& sp = slot.spatial;
 
+			// Steam Audio (HRTF) voice: it owns all spatialization — never let the v1 spatializer run in
+			// parallel, or the source would be spatialized twice (once by miniaudio, once by the binaural node).
+			if (slot.steam_src)
+			{
+				ma_sound_set_spatialization_enabled(s, MA_FALSE);
+				s->engineNode.spatializer.dopplerPitch = 1.0f;
+				return;
+			}
+
 			if (sp.spatial_blend <= 0.0f)
 			{
 				ma_sound_set_spatialization_enabled(s, MA_FALSE);
@@ -152,7 +166,14 @@ namespace vortex::runtime::audio {
 		// invalidates every handle that still points at this slot.
 		void release_slot(voice_slot& slot)
 		{
-			ma_sound_uninit(&slot.sound);
+			ma_sound_uninit(&slot.sound);   // detaches the sound from the graph first
+			if (slot.steam_src)
+			{
+				// The steam node sat between the (now-detached) sound and the splitter — safe to uninit now.
+				steam::destroy_source(slot.steam_src);
+				slot.steam_src = nullptr;
+				slot.steam_occlusion = false;
+			}
 			if (slot.splitter_alive)
 			{
 				ma_splitter_node_uninit(&slot.splitter, nullptr);
@@ -216,6 +237,11 @@ namespace vortex::runtime::audio {
 				release_slot(slot);
 				continue;
 			}
+
+			// Steam Audio voices: push the current world position (+ occlusion enable) to the module. The
+			// binaural direction is recomputed from this and the listener; the occlusion sim reads it off-thread.
+			if (slot.steam_src)
+				steam::set_source(slot.steam_src, slot.position[0], slot.position[1], slot.position[2], slot.steam_occlusion);
 
 			// Spatial blend 0<b<1: the spatializer runs at full strength, so pull the
 			// effective attenuation back toward 2D with a volume correction —
@@ -364,6 +390,25 @@ namespace vortex::runtime::audio {
 		target->has_last_push = false;
 		target->fade_stop_pending = false;
 		apply_spatial(*target); // default blend 0 -> plain 2D until the bridge pushes spatial data
+
+			// Steam Audio v2 (issue #21): opted-in + available -> splice the per-voice binaural node between the
+			// sound and its downstream (splitter if reverb is up, else the bus/endpoint). The v1 spatializer is
+			// turned off for this voice (Steam Audio owns direction); apply_spatial's steam_src guard keeps it off.
+			if (params.hrtf && steam::is_available())
+			{
+				steam::source* ss = steam::create_source();
+				if (ss)
+				{
+					ma_node* snode = steam::node_of(ss);
+					ma_node* out_target = target->splitter_alive ? (ma_node*)&target->splitter
+						: (group ? (ma_node*)group : ma_engine_get_endpoint(engine));
+					ma_sound_set_spatialization_enabled(&target->sound, MA_FALSE);
+					ma_node_attach_output_bus(&target->sound, 0, snode, 0);
+					ma_node_attach_output_bus(snode, 0, out_target, 0);
+					target->steam_src = ss;
+					target->steam_occlusion = params.occlusion;
+				}
+			}
 
 		ma_sound_set_volume(&target->sound, target->volume);
 		ma_sound_set_pitch(&target->sound, clamp_pitch(params.pitch));

@@ -24,6 +24,11 @@ namespace vortex::runtime::audio {
 		bool stream{ false };
 		s32 priority{ 128 };	// 0 = most important .. 256 = least (Unity convention)
 		s32 bus{ 2 };			// mixer bus index (audio::bus; default sfx)
+		// Steam Audio v2 (issue #21) — opt-in per voice. hrtf routes the voice through the binaural node
+		// (replacing the v1 spatializer); occlusion additionally includes it in the ray-traced occlusion sim.
+		// Ignored unless Steam Audio is available; the voice falls back to the v1 spatializer.
+		bool hrtf{ false };
+		bool occlusion{ false };
 	};
 
 	// 3D properties mirrored from the AudioSource component. Stored per voice by

@@ -2,6 +2,7 @@
 #include "AudioInternal.h"
 #include "AudioMixer.h"
 #include "AudioVoices.h"
+#include "SteamAudio.h"
 
 #include <chrono>
 #include <cstdarg>
@@ -227,6 +228,7 @@ namespace vortex::runtime::audio {
 	{
 		if (g_state == engine_state::uninitialized) return;
 		voices_shutdown();
+		steam::shutdown();  // after voices — they destroy their Steam Audio sources (and thus the ma_nodes) first
 		mixer_shutdown();   // after voices (they attach into the bus groups)
 		unload_all_sounds();
 		shutdown_beep();
@@ -568,6 +570,28 @@ namespace vortex::runtime::audio {
 		ma_engine_listener_set_direction(&g_engine, 0, fx, fy, -fz);
 		ma_engine_listener_set_world_up(&g_engine, 0, ux, uy, -uz);
 		ma_engine_listener_set_velocity(&g_engine, 0, vx, vy, -vz);
+
+		// Steam Audio gets GAME-space values (left-handed) — it applies the same z-mirror internally.
+		steam::set_listener(px, py, pz, fx, fy, fz, ux, uy, uz);
+	}
+
+	void steam_set_enabled(bool enabled)
+	{
+		steam::set_enabled(enabled);
+		if (enabled)
+		{
+			if (g_state != engine_state::uninitialized && !steam::is_available())
+				steam::initialize(ma_engine_get_sample_rate(&g_engine), 1024);
+		}
+		else
+		{
+			steam::shutdown();
+		}
+	}
+
+	void steam_set_geometry(const float* verts, u32 vertex_count, const s32* indices, u32 index_count)
+	{
+		steam::set_geometry(verts, vertex_count, indices, index_count);
 	}
 
 	void internal_listener_position(float out[3])

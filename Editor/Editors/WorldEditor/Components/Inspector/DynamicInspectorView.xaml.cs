@@ -243,6 +243,12 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             body.Children.Add(AudioSliderRow("Doppler Level", 0, 2, () => src.DopplerLevel, v => src.DopplerLevel = v));
             body.Children.Add(AudioSliderRow("Spread", 0, 360, () => src.Spread, v => src.Spread = v));
 
+            // ---- Steam Audio v2 (issue #21): per-source HRTF binaural + ray-traced occlusion. Opt-in and only
+            // active when the project master switch (Audio Mixer window) is on AND phonon.dll is present; otherwise
+            // the v1 spatializer is used. Occlusion needs HRTF and a 3D source (Spatial Blend > 0). ----
+            body.Children.Add(AudioCheckRow("HRTF binaural (Steam Audio)", () => src.EnableHrtf, v => src.EnableHrtf = v));
+            body.Children.Add(AudioCheckRow("Occlusion behind walls (needs HRTF)", () => src.EnableOcclusion, v => src.EnableOcclusion = v));
+
             // ---- edit-mode preview (issue #19) ----
             var previewRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 10, 0, 0) };
             var indicator = new TextBlock { Text = "", Foreground = InspBrush("#FF7CE0A3"), FontSize = 11, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) };

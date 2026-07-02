@@ -41,7 +41,7 @@ EDITOR_INTERFACE s32 AudioGetWaveform(const char* path, f32* peaks, s32 bin_coun
 	return runtime::audio::clip_waveform(path, peaks, (u32)bin_count) ? 1 : 0;
 }
 
-EDITOR_INTERFACE u64 AudioPlayVoice(const char* path, f32 volume, f32 pitch, f32 pan, s32 loop, s32 priority, s32 stream, s32 out_bus)
+EDITOR_INTERFACE u64 AudioPlayVoice(const char* path, f32 volume, f32 pitch, f32 pan, s32 loop, s32 priority, s32 stream, s32 out_bus, s32 hrtf, s32 occlusion)
 {
 	runtime::audio::voice_params params{};
 	params.volume = volume;
@@ -51,7 +51,21 @@ EDITOR_INTERFACE u64 AudioPlayVoice(const char* path, f32 volume, f32 pitch, f32
 	params.priority = priority;
 	params.stream = stream != 0;
 	params.bus = out_bus;
+	params.hrtf = hrtf != 0;              // Steam Audio HRTF (#21), opt-in; no-op unless SA is available
+	params.occlusion = occlusion != 0;
 	return runtime::audio::voice_play(path, params);
+}
+
+// Steam Audio v2 (issue #21): project master switch + occlusion geometry. Both no-op unless phonon.dll loads.
+EDITOR_INTERFACE void AudioSteamSetEnabled(s32 enabled)
+{
+	runtime::audio::steam_set_enabled(enabled != 0);
+}
+
+EDITOR_INTERFACE void AudioSteamSetGeometry(const f32* verts, s32 vertex_count, const s32* indices, s32 index_count)
+{
+	if (!verts || !indices || vertex_count <= 0 || index_count < 3) return;
+	runtime::audio::steam_set_geometry(verts, (u32)vertex_count, indices, (u32)index_count);
 }
 
 // ---- mixer buses (issue #13). Bus indices: 0 Master, 1 Music, 2 SFX,

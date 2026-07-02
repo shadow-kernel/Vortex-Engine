@@ -31,6 +31,15 @@ is **not** bundled in this source repository.
 - **License:** Dual Public Domain (Unlicense) / MIT. © Sean Barrett.
 - **Text:** embedded at the bottom of `Engine/ThirdParty/stb_vorbis.c` · upstream: https://github.com/nothings/stb
 
+### Steam Audio (Valve Phonon SDK)
+- **Use:** optional audio v2 layer (issue #21) — HRTF binaural spatialization + ray-traced occlusion, plugged into
+  miniaudio's node graph as a custom per-voice node. Off by default (opt-in per project + per source). Headers +
+  import lib are committed (`ThirdParty/steam-audio/include`, `ThirdParty/steam-audio/lib/windows-x64/phonon.lib`);
+  the runtime `phonon.dll` is **loaded dynamically at run time** and is fetched separately (not committed — see
+  `ThirdParty/steam-audio/fetch-phonon-dll.ps1`), so the engine builds and boots without it.
+- **License:** Apache License 2.0. © Valve Corporation. Vendorable into this MIT repo with the NOTICE preserved.
+- **Text:** [`ThirdParty/steam-audio/LICENSE`](ThirdParty/steam-audio/LICENSE) · upstream: https://github.com/ValveSoftware/steam-audio (v4.8.1)
+
 ---
 
 ## Linked into the editor (restored via NuGet at build; not committed here)

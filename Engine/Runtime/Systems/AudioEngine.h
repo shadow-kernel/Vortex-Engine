@@ -58,6 +58,11 @@ namespace vortex::runtime::audio {
 	// entity (editor play mode and standalone player alike).
 	void set_listener(f32 px, f32 py, f32 pz, f32 fx, f32 fy, f32 fz, f32 ux, f32 uy, f32 uz);
 
+	// Steam Audio v2 (issue #21) master switch + occlusion geometry, forwarded to the SteamAudio module.
+	// Off by default; turning it on lazily initializes Steam Audio (HRTF + occlusion) if phonon.dll is present.
+	void steam_set_enabled(bool enabled);
+	void steam_set_geometry(const float* verts, u32 vertex_count, const s32* indices, u32 index_count);
+
 	// Short generated sine beep — the audible smoke test that the device works
 	// without needing any asset on disk.
 	void play_test_beep();

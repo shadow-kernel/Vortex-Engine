@@ -1,0 +1,7 @@
+# The Steam Audio runtime binaries are large (~50 MB) and NOT committed — headers + the import lib are enough to
+# build, and phonon.dll is loaded dynamically at run time (fetched via fetch-phonon-dll.ps1). Ignore any DLL/PDB
+# that lands here so a local fetch can't accidentally be committed.
+*.dll
+*.pdb
+lib/**/GPUUtilities.dll
+lib/**/TrueAudioNext.dll

@@ -77,6 +77,68 @@ namespace Editor.Core.Services.Physics
 
         public static void Clear() { _world.Clear(); _triggers.Clear(); _chars.Clear(); ResetEvents(); IsBuilt = false; }
 
+        /// <summary>Steam Audio v2 (#21): flatten the SOLID world colliders into a world-space triangle soup
+        /// (vertex xyz array + per-triangle vertex indices) for the acoustic occlusion scene. Mesh colliders emit
+        /// their triangles directly; box colliders emit their oriented box; spheres/capsules emit their AABB box as
+        /// a coarse occluder. Returns false when there is nothing solid to occlude with. Triggers are excluded
+        /// (they never block).</summary>
+        public static bool ExportOcclusionGeometry(out float[] verts, out int[] indices)
+        {
+            verts = null; indices = null;
+            if (_world.Count == 0) return false;
+            var vs = new List<float>();
+            var idx = new List<int>();
+
+            void AddTri(V3 a, V3 b, V3 c)
+            {
+                int bi = vs.Count / 3;
+                vs.Add(a.X); vs.Add(a.Y); vs.Add(a.Z);
+                vs.Add(b.X); vs.Add(b.Y); vs.Add(b.Z);
+                vs.Add(c.X); vs.Add(c.Y); vs.Add(c.Z);
+                idx.Add(bi); idx.Add(bi + 1); idx.Add(bi + 2);
+            }
+            void AddBox(V3 c, V3 hx, V3 hy, V3 hz)
+            {
+                // 8 corners indexed by sign bits (sx,sy,sz), then 12 triangles (6 quad faces).
+                V3 P(int sx, int sy, int sz) => c + hx * sx + hy * sy + hz * sz;
+                V3 ppp = P(1, 1, 1), ppm = P(1, 1, -1), pmp = P(1, -1, 1), pmm = P(1, -1, -1);
+                V3 mpp = P(-1, 1, 1), mpm = P(-1, 1, -1), mmp = P(-1, -1, 1), mmm = P(-1, -1, -1);
+                void Quad(V3 a, V3 b, V3 d, V3 e) { AddTri(a, b, d); AddTri(a, d, e); }
+                Quad(ppp, ppm, pmm, pmp);   // +X
+                Quad(mpp, mmp, mmm, mpm);   // -X
+                Quad(ppp, mpp, mpm, ppm);   // +Y
+                Quad(pmp, pmm, mmm, mmp);   // -Y
+                Quad(ppp, pmp, mmp, mpp);   // +Z
+                Quad(ppm, mpm, mmm, pmm);   // -Z
+            }
+
+            foreach (var s in _world)
+            {
+                if (s == null) continue;
+                if (s.Kind == Kind.Tris && s.Tris != null)
+                {
+                    for (int i = 0; i + 2 < s.Tris.Length; i += 3)
+                        AddTri(s.Tris[i], s.Tris[i + 1], s.Tris[i + 2]);
+                }
+                else if (s.Kind == Kind.Box)
+                {
+                    AddBox(s.Center, s.AxX * s.Half.X, s.AxY * s.Half.Y, s.AxZ * s.Half.Z);
+                }
+                else // Sphere / Capsule -> coarse AABB occluder
+                {
+                    var c = (s.Min + s.Max) * 0.5f;
+                    AddBox(c, new V3((s.Max.X - s.Min.X) * 0.5f, 0, 0),
+                              new V3(0, (s.Max.Y - s.Min.Y) * 0.5f, 0),
+                              new V3(0, 0, (s.Max.Z - s.Min.Z) * 0.5f));
+                }
+            }
+
+            if (idx.Count < 3) return false;
+            verts = vs.ToArray();
+            indices = idx.ToArray();
+            return true;
+        }
+
         /// <summary>Reset the per-frame overlap state (call on Build / scene switch / play end so stale pairs
         /// don't fire phantom Enter/Exit after a reload).</summary>
         public static void ResetEvents() { _prevTrig.Clear(); _curTrig.Clear(); _prevSolid.Clear(); _curSolid.Clear(); }

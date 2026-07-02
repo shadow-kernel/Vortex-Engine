@@ -35,6 +35,8 @@ namespace Editor.ECS.Components.Audio
         private float _spread;
         private bool _streaming;
         private int _outputBus = 2; // SFX
+        private bool _enableHrtf;
+        private bool _enableOcclusion;
 
         public override string DisplayName => "Audio Source";
         public override string IconCode => "\uE767";
@@ -211,6 +213,29 @@ namespace Editor.ECS.Components.Audio
         {
             get => _outputBus;
             set => SetProperty(ref _outputBus, value, nameof(OutputBus));
+        }
+
+        /// <summary>
+        /// Steam Audio v2 (#21): render this source with HRTF binaural spatialization instead of the v1 stereo
+        /// panner — real front/back &amp; above/below on headphones. Only takes effect when Steam Audio is enabled
+        /// for the project AND phonon.dll is present; otherwise the v1 spatializer is used.
+        /// </summary>
+        [DataMember(Name = "enableHrtf", Order = 27)]
+        public bool EnableHrtf
+        {
+            get => _enableHrtf;
+            set => SetProperty(ref _enableHrtf, value, nameof(EnableHrtf));
+        }
+
+        /// <summary>
+        /// Steam Audio v2 (#21): include this source in ray-traced occlusion against the level's collision
+        /// geometry — a wall between it and the listener muffles it. Requires <see cref="EnableHrtf"/>.
+        /// </summary>
+        [DataMember(Name = "enableOcclusion", Order = 28)]
+        public bool EnableOcclusion
+        {
+            get => _enableOcclusion;
+            set => SetProperty(ref _enableOcclusion, value, nameof(EnableOcclusion));
         }
 
         public AudioSource() : base() { }

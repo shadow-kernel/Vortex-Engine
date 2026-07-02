@@ -54,7 +54,13 @@ namespace Editor.DllWrapper
 
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern ulong AudioPlayVoice([MarshalAs(UnmanagedType.LPUTF8Str)] string path,
-            float volume, float pitch, float pan, int loop, int priority, int stream, int outBus);
+            float volume, float pitch, float pan, int loop, int priority, int stream, int outBus, int hrtf, int occlusion);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void AudioSteamSetEnabled(int enabled);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void AudioSteamSetGeometry(float[] verts, int vertexCount, int[] indices, int indexCount);
 
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void AudioSetBusVolume(int bus, float volume);
@@ -161,10 +167,23 @@ namespace Editor.DllWrapper
         /// or every pooled voice outranks this request (priority 0 = most important).
         /// stream = decode on demand (music/long ambience) instead of full pre-decode.
         /// bus routes the voice through a mixer bus (default SFX).</summary>
-        public static ulong PlayVoice(string path, float volume, float pitch, float pan, bool loop, int priority, bool stream = false, int bus = BusSfx)
+        public static ulong PlayVoice(string path, float volume, float pitch, float pan, bool loop, int priority, bool stream = false, int bus = BusSfx,
+            bool hrtf = false, bool occlusion = false)
         {
             if (string.IsNullOrEmpty(path)) return InvalidVoice;
-            return AudioPlayVoice(path, volume, pitch, pan, loop ? 1 : 0, priority, stream ? 1 : 0, bus);
+            return AudioPlayVoice(path, volume, pitch, pan, loop ? 1 : 0, priority, stream ? 1 : 0, bus, hrtf ? 1 : 0, occlusion ? 1 : 0);
+        }
+
+        /// <summary>Steam Audio v2 (#21) project master switch. Off by default; turning it on lazily initializes
+        /// HRTF + occlusion if phonon.dll is present next to the app. Safe no-op when the DLL is missing.</summary>
+        public static void SteamSetEnabled(bool enabled) => AudioSteamSetEnabled(enabled ? 1 : 0);
+
+        /// <summary>Publish the scene's occlusion geometry to Steam Audio: flat vertex xyz array + triangle vertex
+        /// indices. Rebuilds the acoustic scene. No-op unless Steam Audio is enabled + available.</summary>
+        public static void SteamSetGeometry(float[] verts, int[] indices)
+        {
+            if (verts == null || indices == null || verts.Length < 9 || indices.Length < 3) return;
+            AudioSteamSetGeometry(verts, verts.Length / 3, indices, indices.Length);
         }
 
         public static void SetBusVolume(int bus, float volume) => AudioSetBusVolume(bus, volume);
