@@ -46,6 +46,7 @@ Key deliverables:
 - Scene transitions (`LoadScene` with loading-screen hook), `Debug.Log` + dev console + debug draw
 - Animation events (keyframe callbacks → footstep sounds sync with walk cycles), gamepad/keyboard menu navigation for VUI
 - **Horror Starter template**: FP controller v2, flashlight with battery + flicker, interaction prompts, footsteps, doors, example jump-scare — all as project scripts, per the gameplay-in-scripts philosophy
+- **Entity attachment & weapon package** ([epic #169](https://github.com/shadow-kernel/Vortex-Engine/issues/169)): **bone sockets** (entities follow animated bones — character holds flashlight/pistol), runtime `AttachTo`/`Detach`/`GetBoneWorldTransform` API, socket authoring UI, **bone-masked animation layers** (aim while walking), synced character+weapon clip pairs (reload), **first-person viewmodel layer** (own FOV, no wall clipping, DLSS-safe motion vectors), camera shake/recoil primitives, and a complete pistol sample (recoil, muzzle flash lite, shells, ammo/reload) — full particle smoke/tracers/decals upgrade lands with v3.3.0 VFX
 
 **Unlocks:** horror game production starts. The starter template doubles as the engine's showcase and the test bed for every v2.6/v2.7 feature.
 
