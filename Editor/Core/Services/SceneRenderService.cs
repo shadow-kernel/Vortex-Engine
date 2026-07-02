@@ -348,10 +348,14 @@ namespace Editor.Core.Services
                     float cr = cpc.Radius * Math.Max(Math.Abs(sx), Math.Abs(sz));
                     VortexAPI.RenderColliderCapsule(ccx, ccy, ccz, cr, Math.Max(0f, cpc.Height * 0.5f * Math.Abs(sy) - cr));
                 }
-                else // Mesh / base collider: outline the entity's bounds
+                else // Mesh / base collider: draw the ACTUAL render mesh as a green net (the collision mesh IS the
+                     // render mesh), so a round object shows a round net — not a box. Falls back to a bounds net box.
                 {
-                    var b = CalculateCombinedBounds(selected);
-                    VortexAPI.RenderColliderBox(pos.X + b.CenterOffset.X, pos.Y + b.CenterOffset.Y, pos.Z + b.CenterOffset.Z, b.Size.X * 0.5f, b.Size.Y * 0.5f, b.Size.Z * 0.5f, rot.Y);
+                    if (!RenderMeshColliderWireframe(selected))
+                    {
+                        var b = CalculateCombinedBounds(selected);
+                        VortexAPI.RenderColliderBox(pos.X + b.CenterOffset.X, pos.Y + b.CenterOffset.Y, pos.Z + b.CenterOffset.Z, b.Size.X * 0.5f, b.Size.Y * 0.5f, b.Size.Z * 0.5f, rot.Y);
+                    }
                 }
             }
 
@@ -404,6 +408,43 @@ namespace Editor.Core.Services
                 foreach (var child in entity.Children)
                     RenderAudioIconRecursive(child, selected, camX, camY, camZ);
             }
+        }
+
+        /// <summary>Draw a Mesh Collider as a green wireframe net over the entity's ACTUAL render mesh (the collision
+        /// mesh is the render mesh), at the same world transform the mesh renders with. Mirrors the submesh resolution
+        /// in RenderMesh so multi-submesh imports net every part. Returns false (caller falls back to a bounds box)
+        /// when the entity has no usable render mesh.</summary>
+        private bool RenderMeshColliderWireframe(GameEntity entity)
+        {
+            var meshRenderer = entity.GetComponent<MeshRenderer>();
+            if (meshRenderer == null || !meshRenderer.IsEnabled || string.IsNullOrEmpty(meshRenderer.MeshPath))
+                return false;
+
+            long meshId = GetOrCreateMesh(entity.Id, meshRenderer);
+            if (meshId < 0) return false;
+
+            float[] worldMatrix = BuildWorldMatrixWithParent(entity);
+
+            // Multi-submesh imported model: net every cached submesh (same path the renderer submits).
+            var ext = System.IO.Path.GetExtension(meshRenderer.MeshPath)?.ToLowerInvariant();
+            if (string.IsNullOrEmpty(meshRenderer.MaterialPath) && IsModelFileExtension(ext))
+            {
+                bool any = false;
+                for (int n = 0; n < 64; n++)
+                {
+                    string sub = meshRenderer.MeshPath + "#submesh" + n;
+                    if (_submeshMeshCache.TryGetValue(sub, out long subMesh) && subMesh >= 0)
+                    {
+                        VortexAPI.RenderColliderMeshWire(subMesh, worldMatrix);
+                        any = true;
+                    }
+                    else if (n > 0) break;
+                }
+                if (any) return true;
+            }
+
+            VortexAPI.RenderColliderMeshWire(meshId, worldMatrix);
+            return true;
         }
 
         /// <summary>

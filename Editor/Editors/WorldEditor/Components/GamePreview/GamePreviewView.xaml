@@ -281,7 +281,7 @@ d:DesignHeight="400" d:DesignWidth="600">
                                 <ToggleButton x:Name="SnapToggleBtn" Content="&#xE81E;" Style="{StaticResource ToolToggleButtonStyle}"
                                               ToolTip="Toggle Snap" Checked="OnSnapToggle" Unchecked="OnSnapToggle"/>
                                 <ToggleButton x:Name="CollisionToggleBtn" Content="&#xE809;" Style="{StaticResource ToolToggleButtonStyle}"
-                                              ToolTip="Show Collision (green collider frame)" IsChecked="True" Checked="OnCollisionToggle" Unchecked="OnCollisionToggle"/>
+                                              ToolTip="Show Collision (green collider net)" IsChecked="True" Checked="OnCollisionToggle" Unchecked="OnCollisionToggle"/>
                             </StackPanel>
                         </Border>
                         <!-- View options pill -->
