@@ -313,6 +313,7 @@
     <Compile Include="Core\Services\Build\GameExporter.cs" />
     <Compile Include="Core\Services\Build\VortexPak.cs" />
     <Compile Include="Core\Services\AssetVfs.cs" />
+    <Compile Include="Core\Services\AudioPlaybackService.cs" />
     <Compile Include="Core\Services\GameRuntime.cs" />
     <Compile Include="Core\Services\SelectionService.cs" />
     <Compile Include="Core\Services\ShaderService.cs" />
@@ -366,6 +367,7 @@
     <Compile Include="Editors\AnimationEditor\AnimationEditorWindow.cs" />
     <Compile Include="Editors\AnimationEditor\AnimationPreviewControl.cs" />
     <Compile Include="Editors\AnimationEditor\TimelineControl.cs" />
+    <Compile Include="DllWrapper\Audio\VortexAudio.cs" />
     <Compile Include="DllWrapper\Core\VortexCore.cs" />
     <Compile Include="DllWrapper\Gizmos\CameraGizmo.cs" />
     <Compile Include="DllWrapper\Gizmos\RotationGizmo.cs" />

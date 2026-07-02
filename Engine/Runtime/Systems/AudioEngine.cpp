@@ -52,16 +52,44 @@ namespace vortex::runtime::audio {
 		// Silent-mode pump scratch (keeps the node graph clock advancing off-device).
 		static float			g_silent_pump_accumulator{ 0.0f };
 
-		void log(const char* fmt, ...)
+		void log_v(const char* fmt, va_list args)
 		{
 			char buffer[1024];
-			va_list args;
-			va_start(args, fmt);
 			vsnprintf(buffer, sizeof(buffer), fmt, args);
-			va_end(args);
 			OutputDebugStringA("[VortexAudio] ");
 			OutputDebugStringA(buffer);
 			OutputDebugStringA("\n");
+
+			// Opt-in file log (same pattern as the Streamline diagnostics): set
+			// VORTEX_AUDIO_LOG to a file path to capture audio events from outside
+			// a debugger — used by automated play-mode verification.
+			static char log_path[512];
+			static bool checked_env{ false };
+			if (!checked_env)
+			{
+				checked_env = true;
+				size_t len{ 0 };
+				getenv_s(&len, log_path, sizeof(log_path), "VORTEX_AUDIO_LOG");
+				if (len == 0) log_path[0] = '\0';
+			}
+			if (log_path[0])
+			{
+				FILE* f{ nullptr };
+				if (fopen_s(&f, log_path, "a") == 0 && f)
+				{
+					fputs(buffer, f);
+					fputc('\n', f);
+					fclose(f);
+				}
+			}
+		}
+
+		void log(const char* fmt, ...)
+		{
+			va_list args;
+			va_start(args, fmt);
+			log_v(fmt, args);
+			va_end(args);
 		}
 
 		bool init_beep()
@@ -119,6 +147,27 @@ namespace vortex::runtime::audio {
 	ma_engine* internal_engine()
 	{
 		return g_state != engine_state::uninitialized ? &g_engine : nullptr;
+	}
+
+	void internal_log(const char* fmt, ...)
+	{
+		va_list args;
+		va_start(args, fmt);
+		log_v(fmt, args);
+		va_end(args);
+	}
+
+	bool internal_widen_path(const char* narrow, wchar_t* out, size_t out_chars)
+	{
+		if (!narrow || !out || out_chars == 0) return false;
+		// Strict UTF-8 first: ANSI umlaut bytes are invalid UTF-8, so this reliably
+		// separates the UTF-8 (C# bridge) callers from legacy ACP (engine) callers.
+		int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, narrow, -1, out, (int)out_chars);
+		if (n == 0)
+		{
+			n = MultiByteToWideChar(CP_ACP, 0, narrow, -1, out, (int)out_chars);
+		}
+		return n != 0;
 	}
 
 	bool initialize()
@@ -188,8 +237,16 @@ namespace vortex::runtime::audio {
 
 		// Decode fully up front (MA_SOUND_FLAG_DECODE) — load-time cost instead of a
 		// first-play hitch, and the decoded buffer is shared by all future instances.
+		// Wide-char open: narrow fopen mangles paths outside the ANSI code page
+		// (non-ASCII usernames in %TEMP%, unicode project folders).
+		wchar_t wide[1024];
+		if (!internal_widen_path(path, wide, 1024))
+		{
+			log("WARNING: unconvertible path '%s'", path);
+			return false;
+		}
 		ma_sound* sound = new ma_sound{};
-		const ma_result result = ma_sound_init_from_file(&g_engine, path,
+		const ma_result result = ma_sound_init_from_file_w(&g_engine, wide,
 			MA_SOUND_FLAG_DECODE | MA_SOUND_FLAG_NO_SPATIALIZATION, nullptr, nullptr, sound);
 		if (result != MA_SUCCESS)
 		{
@@ -243,6 +300,14 @@ namespace vortex::runtime::audio {
 		voice_params params{};
 		params.volume = volume;
 		return voice_play(path, params) != invalid_voice;
+	}
+
+	void set_listener(f32 px, f32 py, f32 pz, f32 fx, f32 fy, f32 fz, f32 ux, f32 uy, f32 uz)
+	{
+		if (g_state == engine_state::uninitialized) return;
+		ma_engine_listener_set_position(&g_engine, 0, px, py, pz);
+		ma_engine_listener_set_direction(&g_engine, 0, fx, fy, fz);
+		ma_engine_listener_set_world_up(&g_engine, 0, ux, uy, uz);
 	}
 
 	void play_test_beep()

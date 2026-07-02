@@ -6,6 +6,13 @@
 // generation counter — stale handles (stolen/finished voices) are safely
 // ignored on every call, so C# never has to worry about lifetime races.
 
+// Decode + cache a clip; 1 = playable, 0 = missing/undecodable. Lets the bridge
+// distinguish a permanently bad clip (stop retrying) from a full voice pool.
+EDITOR_INTERFACE s32 AudioPreloadClip(const char* path)
+{
+	return runtime::audio::preload(path) ? 1 : 0;
+}
+
 EDITOR_INTERFACE u64 AudioPlayVoice(const char* path, f32 volume, f32 pitch, f32 pan, s32 loop, s32 priority)
 {
 	runtime::audio::voice_params params{};
@@ -55,6 +62,29 @@ EDITOR_INTERFACE void AudioSetVoicePitch(u64 handle, f32 pitch)
 EDITOR_INTERFACE void AudioSetVoicePan(u64 handle, f32 pan)
 {
 	runtime::audio::voice_set_pan(handle, pan);
+}
+
+EDITOR_INTERFACE void AudioSetVoicePosition(u64 handle, f32 x, f32 y, f32 z)
+{
+	runtime::audio::voice_set_position(handle, x, y, z);
+}
+
+EDITOR_INTERFACE void AudioSetVoiceSpatial(u64 handle, f32 spatial_blend, f32 min_distance,
+	f32 max_distance, s32 rolloff_mode, f32 doppler_level, f32 spread)
+{
+	runtime::audio::voice_spatial spatial{};
+	spatial.spatial_blend = spatial_blend;
+	spatial.min_distance = min_distance;
+	spatial.max_distance = max_distance;
+	spatial.rolloff_mode = rolloff_mode;
+	spatial.doppler_level = doppler_level;
+	spatial.spread = spread;
+	runtime::audio::voice_set_spatial(handle, spatial);
+}
+
+EDITOR_INTERFACE void AudioSetListener(f32 px, f32 py, f32 pz, f32 fx, f32 fy, f32 fz, f32 ux, f32 uy, f32 uz)
+{
+	runtime::audio::set_listener(px, py, pz, fx, fy, fz, ux, uy, uz);
 }
 
 EDITOR_INTERFACE s32 AudioHasDevice()

@@ -31,6 +31,7 @@ namespace Editor.Core.Services
 
             // 1) stop the current scene's gameplay scripts + drop its retained-UI screens (UI is scene-specific —
             // else e.g. the lobby's free-cursor menu would leak into Match and keep the cursor unlocked there).
+            try { Editor.Core.Services.AudioPlaybackService.Instance.EndPlay(); } catch { } // silence the old scene
             try { Editor.Scripting.ScriptRuntime.Instance.End(); } catch { }
             try { Editor.UI.Vui.VuiStack.Instance.Clear(); } catch { }
 
@@ -65,8 +66,9 @@ namespace Editor.Core.Services
             }
             catch { }
 
-            // 5) start the new scene's gameplay scripts
+            // 5) start the new scene's gameplay scripts + its PlayOnAwake audio
             try { Editor.Scripting.ScriptRuntime.Instance.Begin(target); } catch { }
+            try { Editor.Core.Services.AudioPlaybackService.Instance.BeginPlay(target); } catch { }
 
             System.Diagnostics.Debug.WriteLine("[GameRuntime] switched to scene '" + target.Name + "'");
             return true;

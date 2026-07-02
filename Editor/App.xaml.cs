@@ -231,6 +231,7 @@ namespace Editor
                 Editor.Core.Services.PlayModeService.Instance.SetGameView(true);
                 Editor.Core.Services.PlayModeService.Instance.Play();
                 if (scene != null) Editor.Scripting.ScriptRuntime.Instance.Begin(scene);
+                if (scene != null) Editor.Core.Services.AudioPlaybackService.Instance.BeginPlay(scene); // PlayOnAwake voices + listener
 
                 // Keep the splash up — DON'T fade here. The native window is created hidden and revealed only once
                 // its first frame is rendered; GameHostTick closes this splash right after, so there's no black flash.
@@ -566,6 +567,7 @@ namespace Editor
                     sr.Update(dt);
                     if (pressed) GHLog("after Update pending=" + (sr.PendingScene ?? "(null)"));
                     Editor.Core.Services.GameRuntime.ProcessPendingSceneSwitch();
+                    Editor.Core.Services.AudioPlaybackService.Instance.Tick(); // voices + listener AFTER scripts moved things
                 }
 
                 // Retained UI: AFTER scripts mutated slots/screens, BEFORE the 3D submit. Emits into the same single

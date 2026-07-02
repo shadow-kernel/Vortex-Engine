@@ -211,6 +211,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                 ReadbackPhysics();
                 Editor.Scripting.ScriptRuntime.Instance.Update(deltaTime); // run gameplay scripts (movement, etc.)
                 Editor.Core.Services.GameRuntime.ProcessPendingSceneSwitch(); // a script may have called Scene.Load
+                Editor.Core.Services.AudioPlaybackService.Instance.Tick(); // sync voices + listener AFTER scripts moved things
                 if (external)
                     Editor.Core.Services.PlayCameraHelper.ApplyPose(_extSnapPos, _extSnapRot); // editor = frozen placeholder
                 else
@@ -831,6 +832,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             if (state == Editor.Core.Services.PlayState.Playing)
             {
                 BeginPlaySimulation();
+                Editor.Core.Services.AudioPlaybackService.Instance.ResumeAll(); // no-op unless resuming from Pause
                 SetGameViewportLock(true);   // hide the viewport toolbar while the game runs
                 VortexAPI.ShowGrid(false);   // the editor grid/gizmos are build aids — not the game
                 VortexAPI.ShowGizmos(false);
@@ -850,7 +852,11 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                 UpdateGamePlaceholder();     // hide the "Press Play" overlay
                 return;
             }
-            if (state == Editor.Core.Services.PlayState.Paused) { ReleaseGameMouse(); UpdateGamePlaceholder(); return; }
+            if (state == Editor.Core.Services.PlayState.Paused)
+            {
+                Editor.Core.Services.AudioPlaybackService.Instance.PauseAll(); // freeze audio with the game
+                ReleaseGameMouse(); UpdateGamePlaceholder(); return;
+            }
 
             // Editing (Stopped): end the sim, free the mouse. Stay clean if we're still on the Game tab
             // (then the placeholder returns); otherwise restore the editor toolbar.
@@ -1067,6 +1073,9 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             // Compile + start the gameplay scripts (VortexBehaviour.Start on every Script component).
             // Player movement, camera control and all gameplay live in scripts — the editor only runs them.
             Editor.Scripting.ScriptRuntime.Instance.Begin(scene);
+
+            // Start PlayOnAwake AudioSources + bind the AudioListener (native voice pool).
+            Editor.Core.Services.AudioPlaybackService.Instance.BeginPlay(scene);
         }
 
         /// <summary>If the main camera has no Script component, write + attach the project's editable
@@ -1184,6 +1193,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         {
             if (!_simActive) return;
             _simActive = false;
+            Editor.Core.Services.AudioPlaybackService.Instance.EndPlay(); // silence component voices first
             Editor.Scripting.ScriptRuntime.Instance.End(); // stop gameplay scripts (OnDestroy) BEFORE restoring
             VortexAPI.ClearAllRigidbodies();
 

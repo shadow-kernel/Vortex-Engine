@@ -23,6 +23,8 @@ namespace vortex::runtime::audio {
 			s32			priority{ 128 };
 			f32			volume{ 1.0f };
 			bool		looping{ false };
+			f32			position[3]{};	// world position (steal tiebreak + #9 spatializer)
+			voice_spatial spatial{};	// stored now, becomes DSP in issue #9
 		};
 
 		// The pool itself is the only allocation, made once in voices_initialize.
@@ -139,7 +141,9 @@ namespace vortex::runtime::audio {
 			target = victim;
 		}
 
-		const ma_result result = ma_sound_init_from_file(engine, path,
+		wchar_t wide[1024];
+		if (!internal_widen_path(path, wide, 1024)) return invalid_voice;
+		const ma_result result = ma_sound_init_from_file_w(engine, wide,
 			MA_SOUND_FLAG_DECODE | MA_SOUND_FLAG_NO_SPATIALIZATION, nullptr, nullptr, &target->sound);
 		if (result != MA_SUCCESS) return invalid_voice;
 
@@ -148,6 +152,8 @@ namespace vortex::runtime::audio {
 		target->priority = params.priority;
 		target->volume = params.volume < 0.0f ? 0.0f : params.volume;
 		target->looping = params.loop;
+		target->position[0] = target->position[1] = target->position[2] = 0.0f;
+		target->spatial = voice_spatial{};
 
 		ma_sound_set_volume(&target->sound, target->volume);
 		ma_sound_set_pitch(&target->sound, clamp_pitch(params.pitch));
@@ -156,6 +162,8 @@ namespace vortex::runtime::audio {
 		ma_sound_start(&target->sound);
 
 		const u32 index = (u32)(target - g_slots.data());
+		internal_log("voice %u started: '%s' (vol %.2f, pitch %.2f, loop %d, prio %d)",
+			index, path, target->volume, params.pitch, params.loop ? 1 : 0, params.priority);
 		return make_handle(index, target->generation);
 	}
 
@@ -164,6 +172,7 @@ namespace vortex::runtime::audio {
 		std::lock_guard<std::mutex> lock(g_voices_mutex);
 		if (voice_slot* slot = resolve(handle))
 		{
+			internal_log("voice %u stopped", (u32)(handle & 0xFFFF'FFFF));
 			release_slot(*slot);
 		}
 	}
@@ -229,6 +238,29 @@ namespace vortex::runtime::audio {
 		if (voice_slot* slot = resolve(handle))
 		{
 			ma_sound_set_pan(&slot->sound, pan < -1.0f ? -1.0f : (pan > 1.0f ? 1.0f : pan));
+		}
+	}
+
+	void voice_set_position(voice_handle handle, f32 x, f32 y, f32 z)
+	{
+		std::lock_guard<std::mutex> lock(g_voices_mutex);
+		if (voice_slot* slot = resolve(handle))
+		{
+			slot->position[0] = x;
+			slot->position[1] = y;
+			slot->position[2] = z;
+			// No audible effect until #9 enables the spatializer per voice, but the
+			// miniaudio-side position is kept current so #9 is pure DSP wiring.
+			ma_sound_set_position(&slot->sound, x, y, z);
+		}
+	}
+
+	void voice_set_spatial(voice_handle handle, const voice_spatial& spatial)
+	{
+		std::lock_guard<std::mutex> lock(g_voices_mutex);
+		if (voice_slot* slot = resolve(handle))
+		{
+			slot->spatial = spatial;
 		}
 	}
 

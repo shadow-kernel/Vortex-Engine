@@ -21,6 +21,18 @@ namespace vortex::runtime::audio {
 		s32 priority{ 128 };	// 0 = most important .. 256 = least (Unity convention)
 	};
 
+	// 3D properties mirrored from the AudioSource component. Stored per voice by
+	// issue #8's component bridge; issue #9's spatializer turns them into DSP.
+	struct voice_spatial
+	{
+		f32 spatial_blend{ 0.0f };	// 0 = flat 2D, 1 = fully positional
+		f32 min_distance{ 1.0f };
+		f32 max_distance{ 500.0f };
+		s32 rolloff_mode{ 0 };		// 0 = logarithmic, 1 = linear, 2 = custom
+		f32 doppler_level{ 1.0f };
+		f32 spread{ 0.0f };			// degrees
+	};
+
 	// Pool lifetime — driven by audio::initialize/shutdown, not called directly.
 	void voices_initialize(u32 max_voices);
 	void voices_shutdown();
@@ -42,6 +54,9 @@ namespace vortex::runtime::audio {
 	void voice_set_volume(voice_handle handle, f32 volume);
 	void voice_set_pitch(voice_handle handle, f32 pitch);
 	void voice_set_pan(voice_handle handle, f32 pan);
+	// World position, pushed per frame by the component bridge for 3D voices.
+	void voice_set_position(voice_handle handle, f32 x, f32 y, f32 z);
+	void voice_set_spatial(voice_handle handle, const voice_spatial& spatial);
 
 	// Stats for diagnostics and the future mixer window meters.
 	u32 voices_active_count();

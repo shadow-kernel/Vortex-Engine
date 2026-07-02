@@ -33,6 +33,10 @@ namespace vortex::runtime::audio {
 	// pool (issue #7) lands. Volume is linear 0..1.
 	bool play_one_shot(const char* path, float volume = 1.0f);
 
+	// Drives miniaudio's listener 0 — pushed per frame from the AudioListener
+	// entity (editor play mode and standalone player alike).
+	void set_listener(f32 px, f32 py, f32 pz, f32 fx, f32 fy, f32 fz, f32 ux, f32 uy, f32 uz);
+
 	// Short generated sine beep — the audible smoke test that the device works
 	// without needing any asset on disk.
 	void play_test_beep();
