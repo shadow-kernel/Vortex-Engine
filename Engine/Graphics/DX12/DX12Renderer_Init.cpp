@@ -46,6 +46,13 @@ namespace vortex::graphics::dx12
 	return false;
 	if (FAILED(m_instance_vb->Map(0, &r, &m_instance_vb_mapped))) return false;
 
+	// Bone palettes for GPU skinning: 64 bytes per bone matrix, bound as a root SRV (StructuredBuffer<float4>)
+	// at palette offsets. Uploaded once per queue swap from the staged CPU palettes.
+	rd.Width = (UINT64)64 * MAX_BONE_MATRICES;
+	if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_bone_vb))))
+	return false;
+	if (FAILED(m_bone_vb->Map(0, &r, &m_bone_vb_mapped))) return false;
+
 	// Light buffer: Point lights (16 * 32 bytes) + Spot lights (8 * 64 bytes) = 1024 bytes, aligned to 256
 	rd.Width = 1280; // 256-byte aligned
 	if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_light_cb))))

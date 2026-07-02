@@ -13,6 +13,28 @@ namespace vortex::graphics
 		DirectX::XMFLOAT2 uv;
 	};
 
+	// Per-vertex skinning influences (kept PARALLEL to a submesh's VertexPosNormalUV array so every
+	// existing consumer — decimator, triangle queries, serializer — stays untouched). Max 4 influences,
+	// u8 indices into the model's bone palette (<=255 bones), weights normalized at import.
+	struct VertexSkin
+	{
+		u8 bone_indices[4]{ 0, 0, 0, 0 };
+		float bone_weights[4]{ 0.0f, 0.0f, 0.0f, 0.0f };
+	};
+
+	// The INTERLEAVED GPU vertex for skinned meshes (52 bytes). pos/normal/uv sit at the same offsets as
+	// VertexPosNormalUV, so the rigid PSOs (input layout reads offsets 0/12/24; stride comes from the VBV)
+	// can still draw a skinned mesh in bind pose — only the skinned PSO additionally reads offsets 32/36.
+	struct SkinnedVertexPosNormalUV
+	{
+		DirectX::XMFLOAT3 position;   // offset 0
+		DirectX::XMFLOAT3 normal;     // offset 12
+		DirectX::XMFLOAT2 uv;         // offset 24
+		u8 bone_indices[4];           // offset 32 (R8G8B8A8_UINT)
+		float bone_weights[4];        // offset 36 (R32G32B32A32_FLOAT)
+	};
+	static_assert(sizeof(SkinnedVertexPosNormalUV) == 52, "skinned vertex must stay 52 bytes (GPU input layout)");
+
 	struct MeshData
 	{
 		std::vector<VertexPosNormalUV> vertices;

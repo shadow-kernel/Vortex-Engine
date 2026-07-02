@@ -55,6 +55,14 @@ namespace Vortex
         // Set an entity's base color at runtime (e.g. change color when a trigger is touched).
         void SetEntityColor(long entityId, float r, float g, float b);
 
+        // Skeletal animation: play a clip on an entity's Animator (clip = table name or .vanim path);
+        // fade > 0 crossfades from the current pose. State machines are game logic — build them in scripts.
+        bool PlayAnimation(long entityId, string clip, float fade);
+        void StopAnimation(long entityId);
+        void SetAnimationSpeed(long entityId, float speed);
+        bool IsAnimationPlaying(long entityId, string clip);
+        float GetAnimationTime(long entityId);
+
         // 2D UI overlay (immediate mode), coordinates in viewport pixels (top-left origin).
         void UIRect(float x, float y, float w, float h, float r, float g, float b, float a, float radius);
         void UIText(float x, float y, float w, float h, string text, float size, float r, float g, float b, float a, int align, int weight);
@@ -151,9 +159,30 @@ namespace Vortex
         /// <summary>Set this entity's base color at runtime — e.g. flash a color when a trigger is touched.</summary>
         public void SetColor(float r, float g, float b) { Host?.SetEntityColor(EntityId, r, g, b); }
 
+        /// <summary>Play an animation clip on this entity's Animator. Pass a clip NAME from the Animator's
+        /// clip table (e.g. "Walk") or a .vanim path. fade &gt; 0 crossfades from the current pose (seconds).
+        /// Returns false when the entity has no Animator / the clip can't be found.</summary>
+        public bool PlayAnimation(string clip, float fade = 0f) { return Host != null && Host.PlayAnimation(EntityId, clip, fade); }
+
+        /// <summary>Freeze this entity's animation on the current pose.</summary>
+        public void StopAnimation() { Host?.StopAnimation(EntityId); }
+
+        /// <summary>Playback speed multiplier for this entity's animation (1 = authored speed).</summary>
+        public void SetAnimationSpeed(float speed) { Host?.SetAnimationSpeed(EntityId, speed); }
+
+        /// <summary>Is an animation playing? Pass a clip name to ask about that clip specifically.</summary>
+        public bool IsAnimationPlaying(string clip = null) { return Host != null && Host.IsAnimationPlaying(EntityId, clip); }
+
+        /// <summary>Current playback time (seconds) of this entity's animation.</summary>
+        public float AnimationTime { get { return Host != null ? Host.GetAnimationTime(EntityId) : 0f; } }
+
         public virtual void Start() { }
         public virtual void Update(float dt) { }
         public virtual void OnDestroy() { }
+
+        /// <summary>Called when the playing clip crosses one of its EVENT markers (authored in the Keyframe
+        /// Editor) — e.g. footstep sounds, attack hit frames. The marker's name is passed.</summary>
+        public virtual void OnAnimationEvent(string name) { }
 
         /// <summary>Called once when another character first enters this entity's TRIGGER collider.</summary>
         public virtual void OnTriggerEnter(TriggerHit other) { }
@@ -503,6 +532,33 @@ namespace Vortex
             if (Host == null) return new Vector3(feet.X + move.X, feet.Y + move.Y, feet.Z + move.Z);
             bool g; var r = Host.MoveCharacter(feet, radius, height, move, out g, characterId); _grounded = g; return r;
         }
+    }
+
+    /// <summary>
+    /// Skeletal animation on OTHER entities (your own entity has PlayAnimation() directly on the
+    /// behaviour). Clip = a name from the target's Animator clip table (e.g. "Walk") or a .vanim path.
+    /// Animation state machines are game logic — build them in scripts with these calls.
+    /// </summary>
+    public static class Animation
+    {
+        internal static IScriptHost Host;
+
+        /// <summary>Play a clip on an entity's Animator; fade &gt; 0 crossfades (seconds).</summary>
+        public static bool Play(long entityId, string clip, float fade = 0f)
+            { return Host != null && Host.PlayAnimation(entityId, clip, fade); }
+
+        /// <summary>Freeze an entity's animation on its current pose.</summary>
+        public static void Stop(long entityId) { if (Host != null) Host.StopAnimation(entityId); }
+
+        /// <summary>Playback speed multiplier (1 = authored speed).</summary>
+        public static void SetSpeed(long entityId, float speed) { if (Host != null) Host.SetAnimationSpeed(entityId, speed); }
+
+        /// <summary>Is an animation playing on the entity? Pass a clip name to ask about that clip.</summary>
+        public static bool IsPlaying(long entityId, string clip = null)
+            { return Host != null && Host.IsAnimationPlaying(entityId, clip); }
+
+        /// <summary>Current playback time in seconds.</summary>
+        public static float Time(long entityId) { return Host != null ? Host.GetAnimationTime(entityId) : 0f; }
     }
 
     /// <summary>

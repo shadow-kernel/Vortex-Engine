@@ -29,6 +29,153 @@ namespace vortex::graphics
 		data.bounds_max = max_bound;
 	}
 
+	namespace
+	{
+		// Assimp matrices are column-vector convention (v' = M * v); the engine is row-vector
+		// (mul(vec, mat), DirectXMath) — so conversion is a transpose.
+		DirectX::XMFLOAT4X4 to_row_vector(const aiMatrix4x4& m)
+		{
+			return DirectX::XMFLOAT4X4(
+				m.a1, m.b1, m.c1, m.d1,
+				m.a2, m.b2, m.c2, m.d2,
+				m.a3, m.b3, m.c3, m.d3,
+				m.a4, m.b4, m.c4, m.d4);
+		}
+
+		s32 find_node_index(const ImportedModelData& data, const char* name)
+		{
+			for (size_t i = 0; i < data.nodes.size(); ++i)
+				if (data.nodes[i].name == name) return (s32)i;
+			return -1;
+		}
+
+		void collect_nodes(const aiNode* node, s32 parent, ImportedModelData& data)
+		{
+			SkeletonNodeData nd;
+			nd.name = node->mName.C_Str();
+			nd.parent = parent;
+			nd.local_bind = to_row_vector(node->mTransformation);
+			s32 self = (s32)data.nodes.size();
+			data.nodes.push_back(std::move(nd));
+			for (u32 i = 0; i < node->mNumChildren; ++i)
+				collect_nodes(node->mChildren[i], self, data);
+		}
+	}
+
+	// Build the node hierarchy + compact bone palette. Only runs its full work when the scene actually
+	// carries bones or animations, so static models pay nothing.
+	void ModelImporter::build_skeleton(void* scene_ptr, ImportedModelData& data)
+	{
+		const aiScene* scene = static_cast<const aiScene*>(scene_ptr);
+		if (!scene || !scene->mRootNode) return;
+
+		bool any_bones = false;
+		for (u32 m = 0; m < scene->mNumMeshes; ++m)
+			if (scene->mMeshes[m]->mNumBones > 0) { any_bones = true; break; }
+		if (!any_bones && scene->mNumAnimations == 0) return;
+
+		collect_nodes(scene->mRootNode, -1, data);
+
+		// Compact bone palette: every aiBone (deduped by node name) gets one entry. Vertex indices are
+		// u8, so the palette caps at 255 — beyond that, extra bones are dropped (weights renormalize).
+		for (u32 m = 0; m < scene->mNumMeshes; ++m)
+		{
+			const aiMesh* mesh = scene->mMeshes[m];
+			for (u32 b = 0; b < mesh->mNumBones; ++b)
+			{
+				const aiBone* bone = mesh->mBones[b];
+				s32 node = find_node_index(data, bone->mName.C_Str());
+				if (node < 0) continue;
+				bool known = false;
+				for (const auto& e : data.bones)
+					if (e.node_index == (u32)node)
+					{
+						known = true;
+						// aiBone offset matrices are MESH-relative: a second mesh attached to a
+						// differently-transformed node carries a DIFFERENT offset for the same bone.
+						// v1 keeps ONE palette entry per node (first mesh wins) — warn on mismatch so
+						// a distorted multi-mesh rig is diagnosable instead of silently wrong.
+						DirectX::XMFLOAT4X4 other = to_row_vector(bone->mOffsetMatrix);
+						const float* a = &e.inverse_bind._11;
+						const float* o = &other._11;
+						for (int k = 0; k < 16; ++k)
+							if (fabsf(a[k] - o[k]) > 0.001f)
+							{
+								OutputDebugStringA(("ModelImporter: bone '" + std::string(bone->mName.C_Str())
+									+ "' has mesh-dependent offset matrices — multi-mesh rig may deform incorrectly\n").c_str());
+								break;
+							}
+						break;
+					}
+				if (known) continue;
+				if (data.bones.size() >= 255)
+				{
+					OutputDebugStringA("ModelImporter: bone palette full (255) — extra bones dropped\n");
+					break;
+				}
+				SkeletonBoneData bd;
+				bd.node_index = (u32)node;
+				bd.inverse_bind = to_row_vector(bone->mOffsetMatrix);
+				data.bones.push_back(bd);
+			}
+		}
+
+		if (!data.bones.empty())
+			OutputDebugStringA(("ModelImporter: skeleton — " + std::to_string(data.nodes.size()) + " nodes, "
+				+ std::to_string(data.bones.size()) + " bones\n").c_str());
+	}
+
+	void ModelImporter::extract_animations(void* scene_ptr, ImportedModelData& data)
+	{
+		const aiScene* scene = static_cast<const aiScene*>(scene_ptr);
+		if (!scene || scene->mNumAnimations == 0 || data.nodes.empty()) return;
+
+		for (u32 a = 0; a < scene->mNumAnimations; ++a)
+		{
+			const aiAnimation* anim = scene->mAnimations[a];
+			double tps = anim->mTicksPerSecond > 0.0 ? anim->mTicksPerSecond : 25.0;
+
+			AnimationClipData clip;
+			clip.name = anim->mName.length > 0 ? anim->mName.C_Str() : ("Clip" + std::to_string(a));
+			clip.duration_sec = (float)(anim->mDuration / tps);
+
+			for (u32 c = 0; c < anim->mNumChannels; ++c)
+			{
+				const aiNodeAnim* ch = anim->mChannels[c];
+				s32 node = find_node_index(data, ch->mNodeName.C_Str());
+				if (node < 0) continue;
+
+				AnimChannelData channel;
+				channel.node_index = node;
+				channel.position_keys.reserve(ch->mNumPositionKeys);
+				for (u32 k = 0; k < ch->mNumPositionKeys; ++k)
+				{
+					const auto& key = ch->mPositionKeys[k];
+					channel.position_keys.push_back({ (float)(key.mTime / tps), key.mValue.x, key.mValue.y, key.mValue.z });
+				}
+				channel.rotation_keys.reserve(ch->mNumRotationKeys);
+				for (u32 k = 0; k < ch->mNumRotationKeys; ++k)
+				{
+					const auto& key = ch->mRotationKeys[k];
+					channel.rotation_keys.push_back({ (float)(key.mTime / tps), key.mValue.x, key.mValue.y, key.mValue.z, key.mValue.w });
+				}
+				channel.scale_keys.reserve(ch->mNumScalingKeys);
+				for (u32 k = 0; k < ch->mNumScalingKeys; ++k)
+				{
+					const auto& key = ch->mScalingKeys[k];
+					channel.scale_keys.push_back({ (float)(key.mTime / tps), key.mValue.x, key.mValue.y, key.mValue.z });
+				}
+				clip.channels.push_back(std::move(channel));
+			}
+
+			if (!clip.channels.empty())
+				data.animations.push_back(std::move(clip));
+		}
+
+		if (!data.animations.empty())
+			OutputDebugStringA(("ModelImporter: " + std::to_string(data.animations.size()) + " animation clip(s)\n").c_str());
+	}
+
 	void ModelImporter::process_node(void* node_ptr, void* scene_ptr, ImportedModelData& data)
 	{
 		aiNode* node = static_cast<aiNode*>(node_ptr);
@@ -37,7 +184,7 @@ namespace vortex::graphics
 		for (u32 i = 0; i < node->mNumMeshes; i++)
 		{
 			aiMesh* mesh = scene->mMeshes[node->mMeshes[i]];
-			SubMeshData submesh = process_mesh(mesh, (void*)scene);
+			SubMeshData submesh = process_mesh(mesh, (void*)scene, data);
 			if (!submesh.vertices.empty())
 			{
 				data.submeshes.push_back(std::move(submesh));
@@ -50,7 +197,7 @@ namespace vortex::graphics
 		}
 	}
 
-	SubMeshData ModelImporter::process_mesh(void* mesh_ptr, void* scene_ptr)
+	SubMeshData ModelImporter::process_mesh(void* mesh_ptr, void* scene_ptr, ImportedModelData& data)
 	{
 		aiMesh* mesh = static_cast<aiMesh*>(mesh_ptr);
 		SubMeshData result;
@@ -97,6 +244,60 @@ namespace vortex::graphics
 			for (u32 j = 0; j < face.mNumIndices; j++)
 			{
 				result.indices.push_back(face.mIndices[j]);
+			}
+		}
+
+		// Skinning: distribute each bone's weights into the per-vertex 4-slot table (LimitBoneWeights
+		// already capped influences at 4; the smallest-weight replacement below is belt-and-braces).
+		if (mesh->mNumBones > 0 && !data.bones.empty())
+		{
+			result.skin.resize(mesh->mNumVertices);
+			for (u32 b = 0; b < mesh->mNumBones; ++b)
+			{
+				const aiBone* bone = mesh->mBones[b];
+				s32 node = find_node_index(data, bone->mName.C_Str());
+				if (node < 0) continue;
+				s32 palette = -1;
+				for (size_t p = 0; p < data.bones.size(); ++p)
+					if (data.bones[p].node_index == (u32)node) { palette = (s32)p; break; }
+				if (palette < 0) continue;   // dropped by the 255-bone cap
+
+				for (u32 w = 0; w < bone->mNumWeights; ++w)
+				{
+					const aiVertexWeight& vw = bone->mWeights[w];
+					if (vw.mVertexId >= result.skin.size() || vw.mWeight <= 0.0f) continue;
+					VertexSkin& vs = result.skin[vw.mVertexId];
+					int slot = -1;
+					for (int s = 0; s < 4; ++s)
+						if (vs.bone_weights[s] == 0.0f) { slot = s; break; }
+					if (slot < 0)
+					{
+						int smallest = 0;
+						for (int s = 1; s < 4; ++s)
+							if (vs.bone_weights[s] < vs.bone_weights[smallest]) smallest = s;
+						if (vs.bone_weights[smallest] < vw.mWeight) slot = smallest;
+					}
+					if (slot >= 0)
+					{
+						vs.bone_indices[slot] = (u8)palette;
+						vs.bone_weights[slot] = vw.mWeight;
+					}
+				}
+			}
+
+			// Normalize (sum -> 1). Vertices no bone touched fall back to full weight on palette entry 0.
+			for (auto& vs : result.skin)
+			{
+				float sum = vs.bone_weights[0] + vs.bone_weights[1] + vs.bone_weights[2] + vs.bone_weights[3];
+				if (sum > 0.0001f)
+				{
+					for (int s = 0; s < 4; ++s) vs.bone_weights[s] /= sum;
+				}
+				else
+				{
+					vs.bone_indices[0] = 0;
+					vs.bone_weights[0] = 1.0f;
+				}
 			}
 		}
 

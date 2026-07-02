@@ -6,6 +6,7 @@
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
+#include <assimp/config.h>   // AI_CONFIG_* importer property keys (FBX pivot collapsing)
 #endif
 
 #include <algorithm>

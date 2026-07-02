@@ -139,10 +139,14 @@ namespace Editor.Core.Assets
                     return AssetType.Scene;
 
                 case ".vprefab":
+                case ".ventity":
                     return AssetType.Prefab;
 
                 case ".vui":
                     return AssetType.UI;
+
+                case ".vanim":
+                    return AssetType.Animation;
 
                 default:
                     return AssetType.Unknown;

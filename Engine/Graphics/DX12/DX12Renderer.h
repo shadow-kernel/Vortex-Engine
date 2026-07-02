@@ -41,6 +41,16 @@ namespace vortex::graphics::dx12
 	// Maximum number of secondary render targets
 	constexpr u32 MAX_RENDER_TARGETS = 8;
 
+	// Bone-palette capacity (float4x4 matrices) for GPU skinning. 65536 x 64 B = 4 MB persistently-mapped
+	// UPLOAD buffer, split into TWO halves that alternate per upload: the CPU always writes the half the
+	// in-flight frames are NOT reading (uploads happen after the frame-start fence wait, which guarantees
+	// the 2-frames-back user of the same half has finished) — no torn palettes on animated characters.
+	constexpr u32 MAX_BONE_MATRICES = 65536;
+	constexpr u32 MAX_BONE_MATRICES_PER_FRAME = MAX_BONE_MATRICES / 2;   // per-half capacity (~250 chars x 128 bones)
+
+	// RenderItem.bone_offset value that marks a RIGID (non-skinned) item.
+	constexpr u32 NO_BONES = 0xFFFFFFFFu;
+
 	// Editor transform gizmos render in a dedicated always-on-top pass. They reuse the TAIL slots of the per-object
 	// CB + instance VB (the editor scene never fills 8192 draw-runs / 262144 instances), so no extra buffers are
 	// needed. This caps how many gizmo meshes draw per frame (move=6, scale=7, rotate=3*segments).
@@ -58,6 +68,10 @@ namespace vortex::graphics::dx12
 		id::id_type mesh_id{ id::invalid_id };
 		id::id_type material_id{ id::invalid_id };
 		DirectX::XMFLOAT4X4 world_matrix;
+		// GPU skinning: offset (in matrices) into the frame's bone-palette buffer + palette size.
+		// NO_BONES = rigid item (the default; every existing submit path is untouched).
+		u32 bone_offset{ NO_BONES };
+		u32 bone_count{ 0 };
 	};
 	
 	/// <summary>
@@ -119,6 +133,12 @@ namespace vortex::graphics::dx12
 		// Submit `count` instances of the SAME mesh+material in ONE call (world_matrices = count * 16 floats,
 		// row-major 4x4 each). Avoids one P/Invoke per instance — the path for spawning large crowds.
 		void submit_mesh_instances(id::id_type mesh, id::id_type material, const float* world_matrices, u32 count);
+		// Submit a SKINNED mesh: world matrix + this frame's bone palette (bone_count row-major 4x4s,
+		// each = inverseBind * boneWorld — computed by the managed AnimationService). The palette is staged
+		// CPU-side and uploaded to the GPU bone buffer on the next queue swap. Skinned items must be
+		// re-submitted every frame their pose changes (they are inherently dynamic).
+		void submit_skinned_item(id::id_type mesh, id::id_type material, const float* world_matrix,
+			const float* bone_matrices, u32 bone_count);
 		void clear_render_queue();
 
 		// Camera
@@ -485,6 +505,22 @@ namespace vortex::graphics::dx12
 		void* m_per_object_cb_mapped{ nullptr };
 		ComPtr<ID3D12Resource> m_instance_vb;          // per-instance world matrices (GPU instancing)
 		void* m_instance_vb_mapped{ nullptr };
+		// Bone palettes for GPU skinning: staged CPU-side per submit batch (m_bone_submit), swapped with the
+		// render queue, then uploaded into the ALTERNATE half of the persistently-mapped buffer AFTER the
+		// frame fence wait (see MAX_BONE_MATRICES_PER_FRAME) — root SRV param 8 points into the active half.
+		ComPtr<ID3D12Resource> m_bone_vb;
+		void* m_bone_vb_mapped{ nullptr };
+		std::vector<float> m_bone_submit;   // guarded by m_queue_mutex (like m_submit_queue)
+		std::vector<float> m_bone_render;
+		bool m_bone_upload_pending{ false };   // set by swap_render_queue; consumed by upload_staged_bone_palettes
+		u32 m_bone_active_half{ 0 };           // which buffer half the CURRENT render queue's offsets point into
+		// Upload staged palettes into the inactive half + flip. Callers must guarantee that half is not
+		// referenced by any still-executing frame (after the frame fence wait, or after a full flush).
+		void upload_staged_bone_palettes();
+		D3D12_GPU_VIRTUAL_ADDRESS bone_palette_base_va() const
+		{
+			return m_bone_vb->GetGPUVirtualAddress() + (UINT64)m_bone_active_half * MAX_BONE_MATRICES_PER_FRAME * 64;
+		}
 
 		struct alignas(256) PerObjectConstants
 		{
@@ -543,6 +579,11 @@ namespace vortex::graphics::dx12
 			id::id_type lodMesh[4]{ id::invalid_id, id::invalid_id, id::invalid_id, id::invalid_id };
 			float lodT1sq{ 0 }, lodT2sq{ 0 }, lodT3sq{ 0 }; // squared distance thresholds -> LOD1/2/3
 			u32 lodCount[4]{ 0, 0, 0, 0 };                  // visible instances per LOD (single-threaded pack)
+			// GPU skinning: skinned items form 1-item runs (each needs its own bone palette bound at
+			// root param 8). Skinned runs skip geometric LOD (no decimated skin streams exist).
+			bool skinned{ false };
+			u32 boneOffset{ 0 };
+			u32 boneCount{ 0 };
 		};
 		std::vector<DrawRun> m_draw_runs;     // per-frame scratch (reused)
 		std::vector<u32> m_item_run;          // run index per render-queue item (for flat parallel cull)

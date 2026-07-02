@@ -10,12 +10,14 @@ namespace vortex::graphics
 		, m_ib_view(other.m_ib_view)
 		, m_vertex_count(other.m_vertex_count)
 		, m_index_count(other.m_index_count)
+		, m_skinned(other.m_skinned)
 		, m_name(std::move(other.m_name))
 	{
 		other.m_vb_view = {};
 		other.m_ib_view = {};
 		other.m_vertex_count = 0;
 		other.m_index_count = 0;
+		other.m_skinned = false;
 	}
 
 	Mesh& Mesh::operator=(Mesh&& other) noexcept
@@ -29,12 +31,14 @@ namespace vortex::graphics
 			m_ib_view = other.m_ib_view;
 			m_vertex_count = other.m_vertex_count;
 			m_index_count = other.m_index_count;
+			m_skinned = other.m_skinned;
 			m_name = std::move(other.m_name);
 
 			other.m_vb_view = {};
 			other.m_ib_view = {};
 			other.m_vertex_count = 0;
 			other.m_index_count = 0;
+			other.m_skinned = false;
 		}
 		return *this;
 	}
@@ -137,6 +141,7 @@ namespace vortex::graphics
 		m_ib_view = {};
 		m_vertex_count = 0;
 		m_index_count = 0;
+		m_skinned = false;
 		m_name.clear();
 		m_bounds_min[0] = m_bounds_min[1] = m_bounds_min[2] = 0;
 		m_bounds_max[0] = m_bounds_max[1] = m_bounds_max[2] = 1;

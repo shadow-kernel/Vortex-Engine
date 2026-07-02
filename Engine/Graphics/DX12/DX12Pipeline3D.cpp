@@ -81,11 +81,13 @@ namespace vortex::graphics::dx12
 
 	void DX12Pipeline3D::shutdown()
 	{
+		m_skinned_pso.Reset();
 		m_wireframe_pso.Reset();
 		m_pipeline_state.Reset();
 		m_root_signature.Reset();
 		m_vs_blob.Reset();
 		m_ps_blob.Reset();
+		m_skinned_vs_blob.Reset();
 	}
 
 	bool DX12Pipeline3D::compile_shaders()
@@ -94,6 +96,10 @@ namespace vortex::graphics::dx12
 		// failure aborts renderer init (DX12Renderer.cpp) rather than degrading, so this must always resolve.
 		m_vs_blob = DX12ShaderCompiler::load_shader("standard", "vs", "VSMain", "vs_5_0");
 		m_ps_blob = DX12ShaderCompiler::load_shader("standard", "ps", "PSMain", "ps_5_0");
+		// Skinned VS (skinned.hlsl) is OPTIONAL: a missing/broken file only disables GPU skinning (skinned
+		// meshes then draw through the rigid PSO in bind pose) — it never aborts renderer init.
+		m_skinned_vs_blob = DX12ShaderCompiler::load_shader("skinned", "vs", "VSMain", "vs_5_0");
+		if (!m_skinned_vs_blob) OutputDebugStringA("DX12Pipeline3D: skinned.hlsl unavailable — GPU skinning disabled\n");
 		return m_vs_blob != nullptr && m_ps_blob != nullptr;
 	}
 
@@ -102,8 +108,11 @@ namespace vortex::graphics::dx12
 		auto serialize = get_serialize_root_signature();
 		if (!serialize) return false;
 
-		D3D12_ROOT_PARAMETER params[8] = {};
-		
+		// Params 0-7 are the long-standing ABI (every existing SetGraphicsRoot* call keeps its index).
+		// Param 8 is NEW: the bone-palette root SRV (t5, vertex-only) for GPU skinning — a root
+		// descriptor (raw GPU VA), so it costs no descriptor-heap slot and rigid draws simply never bind it.
+		D3D12_ROOT_PARAMETER params[9] = {};
+
 		params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
 		params[0].Descriptor.ShaderRegister = 0;
 		params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
@@ -124,12 +133,16 @@ namespace vortex::graphics::dx12
 			srv_ranges[i].BaseShaderRegister = i;
 			srv_ranges[i].RegisterSpace = 0;
 			srv_ranges[i].OffsetInDescriptorsFromTableStart = 0;
-			
+
 			params[3 + i].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
 			params[3 + i].DescriptorTable.NumDescriptorRanges = 1;
 			params[3 + i].DescriptorTable.pDescriptorRanges = &srv_ranges[i];
 			params[3 + i].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 		}
+
+		params[8].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;   // root SRV: StructuredBuffer<float4> BoneRows (t5)
+		params[8].Descriptor.ShaderRegister = 5;
+		params[8].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
 
 		D3D12_STATIC_SAMPLER_DESC sampler{};
 		sampler.Filter = D3D12_FILTER_ANISOTROPIC;
@@ -147,7 +160,7 @@ namespace vortex::graphics::dx12
 		sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
 		D3D12_ROOT_SIGNATURE_DESC desc{};
-		desc.NumParameters = 8;
+		desc.NumParameters = 9;
 		desc.pParameters = params;
 		desc.NumStaticSamplers = 1;
 		desc.pStaticSamplers = &sampler;
@@ -255,6 +268,43 @@ namespace vortex::graphics::dx12
 			{
 				return false;
 			}
+		}
+
+		// Skinned PSO (optional — only when skinned.hlsl compiled): the rigid input layout + BLENDINDICES/
+		// BLENDWEIGHT at offsets 32/36 on slot 0 (the 52-byte SkinnedVertexPosNormalUV), INSTANCEWORLD slot 1
+		// kept. Same root signature; the VS reads the bone palette from the root SRV at param 8. Uses the
+		// standard PS blob — pixel shading of a skinned character is identical to a rigid mesh.
+		if (m_skinned_vs_blob)
+		{
+			D3D12_INPUT_ELEMENT_DESC skinned_layout[] = {
+				{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+				{ "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+				{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+				{ "BLENDINDICES", 0, DXGI_FORMAT_R8G8B8A8_UINT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+				{ "BLENDWEIGHT", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 36, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+				{ "INSTANCEWORLD", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0,  D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
+				{ "INSTANCEWORLD", 1, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 16, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
+				{ "INSTANCEWORLD", 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 32, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
+				{ "INSTANCEWORLD", 3, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 48, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 }
+			};
+
+			D3D12_RASTERIZER_DESC skinned_raster{};
+			skinned_raster.FillMode = D3D12_FILL_MODE_SOLID;
+			skinned_raster.CullMode = D3D12_CULL_MODE_BACK;
+			skinned_raster.DepthClipEnable = TRUE;
+
+			D3D12_DEPTH_STENCIL_DESC skinned_ds{};
+			skinned_ds.DepthEnable = TRUE;
+			skinned_ds.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+			skinned_ds.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+
+			pso_desc.VS = { m_skinned_vs_blob->GetBufferPointer(), m_skinned_vs_blob->GetBufferSize() };
+			pso_desc.PS = { m_ps_blob->GetBufferPointer(), m_ps_blob->GetBufferSize() };
+			pso_desc.RasterizerState = skinned_raster;
+			pso_desc.DepthStencilState = skinned_ds;
+			pso_desc.InputLayout = { skinned_layout, _countof(skinned_layout) };
+			if (FAILED(device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&m_skinned_pso))))
+				OutputDebugStringA("DX12Pipeline3D: skinned PSO creation failed — GPU skinning disabled\n");
 		}
 
 		return true;

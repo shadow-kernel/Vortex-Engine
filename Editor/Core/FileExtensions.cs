@@ -1,7 +1,7 @@
 namespace Editor.Core
 {
     /// <summary>
-    /// Konstanten für Vortex Engine Dateierweiterungen
+    /// Konstanten fï¿½r Vortex Engine Dateierweiterungen
     /// </summary>
     public static class FileExtensions
     {
@@ -31,7 +31,12 @@ namespace Editor.Core
         public const string Shader = ".vshader";
 
         /// <summary>
-        /// Gibt alle Vortex Engine Dateierweiterungen zurück
+        /// Vortex Engine Animations-Clip (.vanim)
+        /// </summary>
+        public const string Animation = ".vanim";
+
+        /// <summary>
+        /// Gibt alle Vortex Engine Dateierweiterungen zurï¿½ck
         /// </summary>
         public static string[] All => new[]
         {
@@ -39,11 +44,12 @@ namespace Editor.Core
             Scene,
             Entity,
             Material,
-            Shader
+            Shader,
+            Animation
         };
 
         /// <summary>
-        /// Prüft ob eine Dateiendung eine Vortex Engine Datei ist
+        /// Prï¿½ft ob eine Dateiendung eine Vortex Engine Datei ist
         /// </summary>
         public static bool IsVortexFile(string extension)
         {
@@ -54,6 +60,7 @@ namespace Editor.Core
                 case Entity:
                 case Material:
                 case Shader:
+                case Animation:
                     return true;
                 default:
                     return false;

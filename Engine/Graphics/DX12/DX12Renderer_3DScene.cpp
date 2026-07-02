@@ -175,8 +175,13 @@ namespace vortex::graphics::dx12
 			{
 				const auto idMesh = m_render_queue[i].mesh_id;
 				const auto idMat = m_render_queue[i].material_id;
+				const bool skinnedRun = m_render_queue[i].bone_offset != NO_BONES;
 				size_t j = i;
-				while (j < objectCount && m_render_queue[j].mesh_id == idMesh && m_render_queue[j].material_id == idMat) ++j;
+				if (skinnedRun)
+					j = i + 1;   // each skinned item is its OWN run (needs its own bone palette bound)
+				else
+					while (j < objectCount && m_render_queue[j].mesh_id == idMesh && m_render_queue[j].material_id == idMat
+						&& m_render_queue[j].bone_offset == NO_BONES) ++j;
 				u32 cnt = (u32)(j - i);
 				Mesh* meshp = reg.get_mesh(idMesh);
 				float minx = 0, miny = 0, minz = 0, maxx = 1, maxy = 1, maxz = 1;
@@ -188,7 +193,14 @@ namespace vortex::graphics::dx12
 				float bdx = maxx - minx, bdy = maxy - miny, bdz = maxz - minz;
 				run.localR = 0.5f * sqrtf(bdx * bdx + bdy * bdy + bdz * bdz);
 				run.vbBase = vbBase; run.visible = 0;
-				if (m_geo_lod_enabled)
+				if (skinnedRun)
+				{
+					run.skinned = true;
+					run.boneOffset = m_render_queue[i].bone_offset;
+					run.boneCount = m_render_queue[i].bone_count;
+					run.localR *= 2.0f;   // animated poses leave the bind-pose bounds — inflate the cull sphere
+				}
+				if (m_geo_lod_enabled && !skinnedRun)
 				{
 					const auto* chain = reg.get_lod_chain(idMesh);
 					if (chain && chain->lod_count > 1)
@@ -411,12 +423,24 @@ namespace vortex::graphics::dx12
 			obj.metallic = 0.7f; obj.roughness = 0.35f; obj.ao = 1.0f; obj.normal_strength = 1.0f;
 			obj.use_directx_normals = 1;
 			auto* mat = reg.get_material(run.mat);
+			// Skinned runs use the skinned PSO + bind their bone palette (root SRV param 8). Custom material
+			// shaders don't apply to skinned meshes in v1 (they'd need a skinned input-layout variant).
 			// A compiled custom per-material shader overrides the built-in PSO; else unlit -> double-sided, else PBR.
-			auto csit = m_custom_shaders.find((u32)run.mat);
-			if (csit != m_custom_shaders.end() && csit->second.pso)
-				m_command_list->SetPipelineState(csit->second.pso.Get());
-			else if (mat && mat->properties().is_unlit) m_command_list->SetPipelineState(double_sided_pso);
-			else m_command_list->SetPipelineState(pso);
+			auto* skinned_pso = m_pipeline_3d.skinned_pso();
+			if (run.skinned && skinned_pso && m_bone_vb)
+			{
+				m_command_list->SetPipelineState(skinned_pso);
+				m_command_list->SetGraphicsRootShaderResourceView(8,
+					bone_palette_base_va() + (UINT64)run.boneOffset * 64);
+			}
+			else
+			{
+				auto csit = m_custom_shaders.find((u32)run.mat);
+				if (csit != m_custom_shaders.end() && csit->second.pso)
+					m_command_list->SetPipelineState(csit->second.pso.Get());
+				else if (mat && mat->properties().is_unlit) m_command_list->SetPipelineState(double_sided_pso);
+				else m_command_list->SetPipelineState(pso);
+			}
 			if (mat)
 			{
 				const auto& props = mat->properties();

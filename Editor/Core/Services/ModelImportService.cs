@@ -306,6 +306,37 @@ namespace Editor.Core.Services
                         }
                         catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[ModelImportService] .vmat write failed: {ex.Message}"); }
 
+                        // EXTRACT EMBEDDED ANIMATION CLIPS as .vanim files into an animations/ subfolder —
+                        // exactly mirroring the per-submesh .vmat pattern. Clips become standalone, editable
+                        // (Keyframe Editor), name-keyed assets that survive re-import and ship in the pak.
+                        try
+                        {
+                            int clipCount = VortexAPI.GetAnimationCount(targetModelPath);
+                            if (clipCount > 0)
+                            {
+                                var nodes = VortexAPI.GetSkeletonNodes(targetModelPath);
+                                var animDir = Path.Combine(modelSubDir, "animations");
+                                Directory.CreateDirectory(animDir);
+                                var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                                for (int c = 0; c < clipCount; c++)
+                                {
+                                    if (!VortexAPI.GetAnimationInfo(targetModelPath, c, out string clipName, out float durationSec)) continue;
+                                    var flat = VortexAPI.GetAnimationData(targetModelPath, c);
+                                    var clip = Core.Animation.AnimationService.ClipFromModelData(clipName, durationSec, flat, nodes);
+                                    if (clip == null || clip.Tracks.Count == 0) continue;
+
+                                    clip.Model = relativePath.Replace('\\', '/');
+                                    string safe = string.Concat((clipName ?? $"Clip{c}").Split(Path.GetInvalidFileNameChars()));
+                                    if (string.IsNullOrWhiteSpace(safe)) safe = $"Clip{c}";
+                                    string unique = safe; int suffix = 1;
+                                    while (!usedNames.Add(unique)) unique = safe + "_" + suffix++;
+                                    clip.Save(Path.Combine(animDir, unique + ".vanim"));
+                                }
+                                System.Diagnostics.Debug.WriteLine($"[ModelImportService] extracted {clipCount} animation clip(s) -> animations/");
+                            }
+                        }
+                        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[ModelImportService] .vanim extract failed: {ex.Message}"); }
+
                         // Build structured asset graph for editor/engine sync
                         try
                         {

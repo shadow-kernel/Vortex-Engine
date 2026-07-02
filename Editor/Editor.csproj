@@ -354,6 +354,15 @@
     <Compile Include="Dialogs\TextureEditorDialog.cs" />
     <Compile Include="Dialogs\UniversalModelEditorDialog.cs" />
     <Compile Include="DllWrapper\Camera\VortexCamera.cs" />
+    <Compile Include="DllWrapper\Animation\VortexAnimation.cs" />
+    <Compile Include="Core\Animation\VortexAnimClip.cs" />
+    <Compile Include="Core\Animation\SkeletonDef.cs" />
+    <Compile Include="Core\Animation\AnimationService.cs" />
+    <Compile Include="ECS\Components\Animation\Animator.cs" />
+    <Compile Include="Editors\WorldEditor\Components\Inspector\AnimatorInspector.cs" />
+    <Compile Include="Editors\AnimationEditor\AnimationEditorWindow.cs" />
+    <Compile Include="Editors\AnimationEditor\AnimationPreviewControl.cs" />
+    <Compile Include="Editors\AnimationEditor\TimelineControl.cs" />
     <Compile Include="DllWrapper\Core\VortexCore.cs" />
     <Compile Include="DllWrapper\Gizmos\CameraGizmo.cs" />
     <Compile Include="DllWrapper\Gizmos\RotationGizmo.cs" />

@@ -63,7 +63,11 @@ namespace Editor.Core.Serialization
             // Audio
             typeof(AudioSource),
             typeof(AudioListener),
-            
+
+            // Animation
+            typeof(Editor.ECS.Components.Animation.Animator),
+            typeof(Editor.ECS.Components.Animation.AnimatorClipEntry),
+
             // Scripting
             typeof(Script)
         };

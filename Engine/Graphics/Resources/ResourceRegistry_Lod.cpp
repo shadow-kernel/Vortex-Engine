@@ -7,12 +7,40 @@ namespace vortex::graphics
 		if (submesh.vertices.empty())
 			return id::invalid_id;
 
-		MeshData mesh_data;
-		mesh_data.vertices = submesh.vertices;
-		mesh_data.indices = submesh.indices;
+		id::id_type mesh_id = id::invalid_id;
+		const bool skinned = submesh.has_skin() && submesh.skin.size() == submesh.vertices.size();
+		if (skinned)
+		{
+			// Interleave into the 52-byte skinned vertex (pos/normal/uv at the same offsets as the rigid
+			// vertex, so every rigid draw path still works; the skinned PSO reads the extra 20 bytes).
+			std::vector<SkinnedVertexPosNormalUV> verts(submesh.vertices.size());
+			for (size_t i = 0; i < submesh.vertices.size(); ++i)
+			{
+				const auto& v = submesh.vertices[i];
+				const auto& s = submesh.skin[i];
+				auto& d = verts[i];
+				d.position = v.position; d.normal = v.normal; d.uv = v.uv;
+				memcpy(d.bone_indices, s.bone_indices, 4);
+				memcpy(d.bone_weights, s.bone_weights, 4 * sizeof(float));
+			}
+			auto mesh = std::make_unique<Mesh>();
+			if (!mesh->create_from_vertices(m_device, verts.data(), (u32)verts.size(),
+				sizeof(SkinnedVertexPosNormalUV),
+				submesh.indices.empty() ? nullptr : submesh.indices.data(), (u32)submesh.indices.size()))
+				return id::invalid_id;
+			mesh->set_name(name);
+			mesh->set_skinned(true);
+			mesh_id = m_next_mesh_id++;
+			m_meshes[mesh_id] = std::move(mesh);
+		}
+		else
+		{
+			MeshData mesh_data;
+			mesh_data.vertices = submesh.vertices;
+			mesh_data.indices = submesh.indices;
+			mesh_id = create_mesh(mesh_data, name);
+		}
 
-		id::id_type mesh_id = create_mesh(mesh_data, name);
-		
 		if (mesh_id != id::invalid_id)
 		{
 			auto* mesh = get_mesh(mesh_id);
@@ -20,7 +48,7 @@ namespace vortex::graphics
 			{
 				float minX = FLT_MAX, minY = FLT_MAX, minZ = FLT_MAX;
 				float maxX = -FLT_MAX, maxY = -FLT_MAX, maxZ = -FLT_MAX;
-				
+
 				for (const auto& vertex : submesh.vertices)
 				{
 					minX = std::min(minX, vertex.position.x);
@@ -30,11 +58,13 @@ namespace vortex::graphics
 					maxY = std::max(maxY, vertex.position.y);
 					maxZ = std::max(maxZ, vertex.position.z);
 				}
-				
+
 				mesh->set_bounds(minX, minY, minZ, maxX, maxY, maxZ);
 			}
 			// Build decimated LOD meshes for this submesh while its CPU geometry is still available.
-			register_lod_chain(mesh_id, submesh, name);
+			// Skinned meshes SKIP LOD: the decimator can't carry bone weights (see design doc).
+			if (!skinned)
+				register_lod_chain(mesh_id, submesh, name);
 		}
 
 		return mesh_id;

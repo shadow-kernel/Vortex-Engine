@@ -52,6 +52,9 @@ namespace Editor.Core.Services
             // doesn't carry the old scene's wrapped back buffers across the transition.
             try { Editor.DllWrapper.VortexAPI.OnSceneSwitch(); } catch { }
             try { SceneRenderService.Instance.ClearAllRenderables(); } catch { }
+            // Mesh ids are session-local and about to be re-imported — drop the animation system's
+            // skinned-mesh lookup + playback states along with the renderable caches.
+            try { Editor.Core.Animation.AnimationService.Instance.OnSceneSwitch(); } catch { }
             try { SceneRenderService.Instance.PreloadSceneAssets(target); } catch { }
 
             // 4) point the renderer at the new scene's main camera

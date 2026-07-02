@@ -44,10 +44,28 @@ namespace Editor.Core.Services.Rendering
         public static ImageSource RenderMeshes(long[] meshIds, long[] materialIds, int size)
             => RenderMeshes(meshIds, materialIds, size, 0.74f, 0.62f, 1f);
 
+        /// <summary>
+        /// Skinned-aware orbit render (the Keyframe Editor preview): meshes that carry skin data are
+        /// submitted through the GPU-skinning path with <paramref name="bonePalette"/> (boneCount row-major
+        /// 4x4s, from AnimationService.EvaluatePalette), so the preview shows the POSED character. Rigid
+        /// submeshes of the same model render normally. Null palette = everything renders rigid (bind pose).
+        /// <paramref name="focusPoint"/> (world xyz, optional) overrides the camera target — used for
+        /// panning and for framing a selected bone; null = frame the combined mesh bounds as before.
+        /// </summary>
+        public static ImageSource RenderSkinnedMeshes(long[] meshIds, long[] materialIds,
+            float[] bonePalette, int boneCount, int size, float yaw, float pitch, float distScale,
+            bool renderGizmos = false, float[] focusPoint = null)
+            => RenderMeshesCore(meshIds, materialIds, bonePalette, boneCount, size, yaw, pitch, distScale, renderGizmos, focusPoint);
+
         /// <summary>Orbit-aware render: yaw/pitch (radians) rotate the camera around the asset, distScale zooms.
         /// <paramref name="renderGizmos"/> also draws the always-on-top GIZMO queue into the target (submit collider
         /// wireframes before calling this) — used by the Collision Editor preview.</summary>
         public static ImageSource RenderMeshes(long[] meshIds, long[] materialIds, int size, float yaw, float pitch, float distScale, bool renderGizmos = false)
+            => RenderMeshesCore(meshIds, materialIds, null, 0, size, yaw, pitch, distScale, renderGizmos, null);
+
+        private static ImageSource RenderMeshesCore(long[] meshIds, long[] materialIds,
+            float[] bonePalette, int boneCount, int size, float yaw, float pitch, float distScale,
+            bool renderGizmos, float[] focusPoint)
         {
             if (meshIds == null || meshIds.Length == 0) return null;
             uint rt = AcquireTarget(size);   // cached + reused (not created/destroyed per render)
@@ -89,12 +107,18 @@ namespace Editor.Core.Services.Rendering
                     catch { }
                 }
 
+                // Camera target: the combined mesh bounds center, unless the caller focuses a specific
+                // world point (preview panning / frame-selected-bone in the Keyframe Editor).
+                if (focusPoint != null && focusPoint.Length >= 3)
+                { cx = focusPoint[0]; cy = focusPoint[1]; cz = focusPoint[2]; }
+
                 const float fov = 35f;
                 float fovHalf = fov * 0.5f * (float)Math.PI / 180f;
                 // 0.92 = model fills ~92% of the frame (very large, minimal margin). Higher factor -> smaller dist -> bigger.
                 float dist = radius / (0.92f * (float)Math.Tan(fovHalf));
                 pitch = Math.Max(-1.5f, Math.Min(1.5f, pitch));
-                distScale = Math.Max(0.2f, Math.Min(5f, distScale));
+                // 0.02 lets the Keyframe Editor zoom right onto a hand/face (near clip scales with d below).
+                distScale = Math.Max(0.02f, Math.Min(12f, distScale));
                 float d = dist * distScale;
                 float px = cx + d * (float)(Math.Cos(pitch) * Math.Sin(yaw));
                 float py = cy + d * (float)Math.Sin(pitch);
@@ -110,7 +134,10 @@ namespace Editor.Core.Services.Rendering
                 {
                     long mat = (materialIds != null && i < materialIds.Length && materialIds[i] >= 0)
                         ? materialIds[i] : -1;
-                    VortexAPI.SubmitMeshForRendering(meshIds[i], mat, idm);
+                    if (bonePalette != null && boneCount > 0 && VortexAPI.MeshIsSkinned(meshIds[i]))
+                        VortexAPI.SubmitSkinnedMesh(meshIds[i], mat, idm, bonePalette, boneCount);
+                    else
+                        VortexAPI.SubmitMeshForRendering(meshIds[i], mat, idm);
                 }
 
                 // Swap our submitted item into the active queue WITHOUT presenting to the main

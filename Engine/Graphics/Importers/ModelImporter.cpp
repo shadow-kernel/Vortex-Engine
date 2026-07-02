@@ -8,14 +8,19 @@ namespace vortex::graphics
 		ImportedModelData result;
 
 		Assimp::Importer importer;
-		
+		// FBX: collapse the $AssimpFbx$ pivot pseudo-node chains (Translation/PreRotation/...) into the
+		// real nodes. Without this a Mixamo rig imports as ~200 unreadable pseudo-nodes; with it the
+		// skeleton is the ~65 actual bones (animation channels are remapped by Assimp automatically).
+		importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);
+
 		const aiScene* scene = importer.ReadFile(filepath,
 			aiProcess_Triangulate |
 			aiProcess_GenNormals |
 			aiProcess_CalcTangentSpace |
 			aiProcess_FlipUVs |
 			aiProcess_JoinIdenticalVertices |
-			aiProcess_SortByPType);
+			aiProcess_SortByPType |
+			aiProcess_LimitBoneWeights);   // max 4 influences per vertex (matches the 52-byte skinned vertex)
 
 		if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode)
 		{
@@ -40,8 +45,14 @@ namespace vortex::graphics
 
 		OutputDebugStringA(("ModelImporter: Loading " + result.name + "\n").c_str());
 
+		// Skeleton FIRST: process_mesh resolves aiBone node names against the node table.
+		build_skeleton((void*)scene, result);
+
 		// Process node hierarchy
 		process_node(scene->mRootNode, (void*)scene, result);
+
+		// Animation clips (keys converted to seconds; channels resolved to node indices).
+		extract_animations((void*)scene, result);
 
 		// Extract materials and assign textures to submeshes
 		extract_materials((void*)scene, result, filepath);
@@ -60,13 +71,15 @@ namespace vortex::graphics
 		if (!data || length == 0) return result;
 
 		Assimp::Importer importer;
+		importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);   // see import_from_file
 		const aiScene* scene = importer.ReadFileFromMemory(data, (size_t)length,
 			aiProcess_Triangulate |
 			aiProcess_GenNormals |
 			aiProcess_CalcTangentSpace |
 			aiProcess_FlipUVs |
 			aiProcess_JoinIdenticalVertices |
-			aiProcess_SortByPType,
+			aiProcess_SortByPType |
+			aiProcess_LimitBoneWeights,
 			ext_hint.c_str());
 
 		if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode)
@@ -76,7 +89,9 @@ namespace vortex::graphics
 		}
 
 		result.name = "MemoryModel";
+		build_skeleton((void*)scene, result);
 		process_node(scene->mRootNode, (void*)scene, result);
+		extract_animations((void*)scene, result);
 
 		// Build relative texture paths off the virtual folder; never touch the disk (assets are in the pak).
 		std::string base = virtual_dir;

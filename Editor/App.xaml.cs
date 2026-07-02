@@ -579,13 +579,19 @@ namespace Editor
                 // changing (camera is set separately, not via instance data). This removes the per-frame
                 // 300-entity walk + ~470 P/Invokes — the CPU bottleneck. on_scene_switch clears the queue on a
                 // transition, and the scene-reference change below re-submits the new scene exactly once.
-                // Re-submit when the scene changes OR a script added/changed world geometry (Vortex.World). The
-                // scene + the script-built world are submitted together so submit-once keeps both.
-                if (scene != null && (!ReferenceEquals(scene, _ghSubmittedScene) || Editor.Core.Services.WorldService.Dirty))
+                // Re-submit when the scene changes OR a script added/changed world geometry (Vortex.World) OR
+                // something DYNAMIC moved this frame: a script-driven Transform (SceneRenderService.RuntimeDirty,
+                // set by Transform.SyncToEngine during play) or an active Animator (skinned poses change every
+                // frame). Without this, moving/animated entities rendered frozen in the shipped GameHost loop
+                // while looking correct in editor play (which re-submits per frame) — the submit-once trap.
+                bool dynamicDirty = playing && (Editor.Core.Services.SceneRenderService.RuntimeDirty
+                    || Editor.Core.Animation.AnimationService.Instance.HasActiveAnimators);
+                if (scene != null && (!ReferenceEquals(scene, _ghSubmittedScene) || Editor.Core.Services.WorldService.Dirty || dynamicDirty))
                 {
                     Editor.Core.Services.SceneRenderService.Instance.SubmitScene(scene);
                     Editor.Core.Services.WorldService.Submit();
                     Editor.Core.Services.WorldService.ClearDirty();
+                    Editor.Core.Services.SceneRenderService.RuntimeDirty = false;
                     _ghSubmittedScene = scene;
                 }
             }

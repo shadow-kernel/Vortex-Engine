@@ -39,6 +39,7 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
                 { typeof(ECS.Components.Physics.SphereCollider), comp => CreateColliderInspector((ECS.Components.Physics.Collider)comp) },
                 { typeof(ECS.Components.Physics.CapsuleCollider), comp => CreateColliderInspector((ECS.Components.Physics.Collider)comp) },
                 { typeof(ECS.Components.Physics.MeshCollider), comp => CreateColliderInspector((ECS.Components.Physics.Collider)comp) },
+                { typeof(ECS.Components.Animation.Animator), comp => CreateAnimatorInspector((ECS.Components.Animation.Animator)comp) },
             };
 
             // Accept scripts dropped from the Project Explorer / Asset Browser / Windows Explorer.
@@ -206,6 +207,13 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             return inspector;
         }
 
+        private UserControl CreateAnimatorInspector(ECS.Components.Animation.Animator animator)
+        {
+            var inspector = new AnimatorInspector(animator);
+            inspector.RemoveRequested += (s, e) => RemoveComponentAndRefresh(animator);
+            return inspector;
+        }
+
         private UserControl CreateGenericComponentInspector(Component component)
         {
             // Create a simple border with the component name
@@ -311,6 +319,9 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             contextMenu.Items.Add(new Separator());
             AddComponentMenuItem(contextMenu, "Skybox", () => AddComponent<Skybox>());
             
+            contextMenu.Items.Add(new Separator());
+            AddComponentMenuItem(contextMenu, "Animator", () => AddComponent<ECS.Components.Animation.Animator>());
+
             contextMenu.Items.Add(new Separator());
             AddComponentMenuItem(contextMenu, "Rigidbody", () => AddComponent<ECS.Components.Physics.Rigidbody>());
             AddComponentMenuItem(contextMenu, "Box Collider", () => AddComponent<ECS.Components.Physics.BoxCollider>());

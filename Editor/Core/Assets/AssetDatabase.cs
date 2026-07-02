@@ -164,6 +164,8 @@ namespace Editor.Core.Assets
                 ".wav" or ".mp3" or ".ogg" or ".flac" => AssetType.Audio,
                 ".cs" or ".cpp" or ".h" => AssetType.Script,
                 ".ttf" or ".otf" => AssetType.Font,
+                ".vui" => AssetType.UI,
+                ".vanim" => AssetType.Animation,
                 _ => AssetType.Unknown
             };
         }

@@ -83,6 +83,10 @@ namespace Editor.ECS.Components
             if (!Editor.Utilities.ID.IsValid(engineId)) return;
 
             Editor.DllWrapper.VortexAPI.SetEntityTransform(engineId, _localPosition, _localRotation, _localScale);
+
+            // Draw matrices are baked into the render queue at SubmitScene time — flag the change so the
+            // submit-once GameHost loop re-submits and script-moved entities visibly move in shipped games.
+            Editor.Core.Services.SceneRenderService.RuntimeDirty = true;
         }
 
         /// <summary>

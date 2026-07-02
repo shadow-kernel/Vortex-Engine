@@ -12,6 +12,9 @@ namespace vortex::graphics
 	{
 	std::vector<VertexPosNormalUV> vertices;
 	std::vector<u32> indices;
+	// Skinning influences, PARALLEL to `vertices` (empty = rigid submesh). Filled from aiMesh::mBones.
+	std::vector<VertexSkin> skin;
+	bool has_skin() const { return !skin.empty(); }
 	u32 material_index{ 0 };
 	float base_color[4]{ 0.8f, 0.8f, 0.8f, 1.0f }; // diffuse/base color from the model's material (e.g. Kenney flat colors)
 	float metallic{ 0.0f };                         // PBR metallic factor from the material
@@ -25,6 +28,42 @@ namespace vortex::graphics
 	std::string emissive_texture;  // Emissive map
 	};
 
+	// ---- Skeletal animation data (green-field; see ANIMATION_SYSTEM_DESIGN.md) ----
+	// The full node hierarchy carries the transforms; the bone palette is the compact subset that
+	// vertices reference (u8 indices -> max 255 palette entries). Clips key NODES by index; the
+	// managed layer converts node indices to bone NAMES for the .vanim asset (rename-survivable).
+
+	struct SkeletonNodeData
+	{
+		std::string name;
+		s32 parent{ -1 };                      // index into the node array; -1 = root
+		DirectX::XMFLOAT4X4 local_bind;        // node's local bind-pose transform (row-vector convention)
+	};
+
+	struct SkeletonBoneData
+	{
+		u32 node_index{ 0 };                   // which hierarchy node this palette entry follows
+		DirectX::XMFLOAT4X4 inverse_bind;      // aiBone::mOffsetMatrix (mesh space -> bone space)
+	};
+
+	struct AnimVec3Key { float t; float x, y, z; };          // t in SECONDS
+	struct AnimQuatKey { float t; float x, y, z, w; };       // t in SECONDS
+
+	struct AnimChannelData
+	{
+		s32 node_index{ -1 };
+		std::vector<AnimVec3Key> position_keys;
+		std::vector<AnimQuatKey> rotation_keys;
+		std::vector<AnimVec3Key> scale_keys;
+	};
+
+	struct AnimationClipData
+	{
+		std::string name;
+		float duration_sec{ 0.0f };
+		std::vector<AnimChannelData> channels;
+	};
+
 	struct ImportedModelData
 	{
 		std::vector<SubMeshData> submeshes;
@@ -33,13 +72,21 @@ namespace vortex::graphics
 		DirectX::XMFLOAT3 bounds_min{ 0.0f, 0.0f, 0.0f };
 		DirectX::XMFLOAT3 bounds_max{ 0.0f, 0.0f, 0.0f };
 		std::string name;
-		
+		// Skeleton + clips (empty for static models).
+		std::vector<SkeletonNodeData> nodes;
+		std::vector<SkeletonBoneData> bones;
+		std::vector<AnimationClipData> animations;
+		bool has_skeleton() const { return !bones.empty(); }
+
 		bool is_valid() const { return !submeshes.empty(); }
-		void clear() 
-		{ 
-			submeshes.clear(); 
+		void clear()
+		{
+			submeshes.clear();
 			material_names.clear();
 			texture_paths.clear();
+			nodes.clear();
+			bones.clear();
+			animations.clear();
 		}
 	};
 
@@ -84,8 +131,11 @@ namespace vortex::graphics
 	private:
 	static void calculate_bounds(ImportedModelData& data);
 	static void process_node(void* node, void* scene, ImportedModelData& data);
-	static SubMeshData process_mesh(void* mesh, void* scene);
+	static SubMeshData process_mesh(void* mesh, void* scene, ImportedModelData& data);
 	static void extract_materials(void* scene, ImportedModelData& data, const std::string& filepath, bool allow_disk_search = true);
 	static void search_textures_in_directory(const std::string& dir, ImportedModelData& data);
+	// Skeleton/clip extraction (must run BEFORE process_node so bone lookups can resolve node names).
+	static void build_skeleton(void* scene, ImportedModelData& data);
+	static void extract_animations(void* scene, ImportedModelData& data);
 	};
 }

@@ -81,6 +81,15 @@ namespace Editor.Scripting
             Vortex.Application.Host = this;
             Vortex.Camera.Host = this;
             Vortex.Physics.Host = this;
+            Vortex.Animation.Host = this;
+
+            // Fresh Animator playback states for this run; animation-event markers route to OnAnimationEvent.
+            Editor.Core.Animation.AnimationService.Instance.ResetStates();
+            if (!_animEventsHooked)
+            {
+                Editor.Core.Animation.AnimationService.Instance.AnimationEvent += OnAnimationServiceEvent;
+                _animEventsHooked = true;
+            }
             if (Editor.Core.Services.Physics.CollisionService.MeshTriangleProvider == null)
                 Editor.Core.Services.Physics.CollisionService.MeshTriangleProvider = ResolveMeshTriangles;
             try { Editor.Core.Services.Physics.CollisionService.Build(scene); } catch { } // build the collision world for this scene
@@ -130,8 +139,26 @@ namespace Editor.Scripting
                 catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] UI Update error: " + ex.Message); }
             }
 
+            // Skeletal animation: advance every Animator AFTER behaviours ran, so a same-frame
+            // PlayAnimation() takes effect immediately. This is the one tick all three play drivers share.
+            try { Editor.Core.Animation.AnimationService.Instance.Step(_currentScene, dt); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] Animation step error: " + ex.Message); }
+
             // Collision/trigger events fire AFTER everyone moved this tick, so overlaps are tested at final positions.
             DispatchCollisionEvents();
+        }
+
+        private bool _animEventsHooked;
+
+        /// <summary>Route an AnimEvent marker (footstep, attack hit, ...) to the entity's behaviour.</summary>
+        private void OnAnimationServiceEvent(GameEntity entity, string name)
+        {
+            if (entity == null) return;
+            if (_behavioursByEntity.TryGetValue(entity, out var b) && b != null)
+            {
+                try { b.OnAnimationEvent(name); }
+                catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] OnAnimationEvent error: " + ex.Message); }
+            }
         }
 
         private enum EvKind { Enter, Stay, Exit, Collision }
@@ -308,6 +335,7 @@ namespace Editor.Scripting
             _behavioursByHandle.Clear();
             _behavioursByEntity.Clear();
             try { Editor.Core.Services.Physics.CollisionService.ResetEvents(); Editor.Core.Services.Physics.CollisionService.ClearCharacters(); } catch { }
+            try { Editor.Core.Animation.AnimationService.Instance.ResetStates(); } catch { }
             _scriptAsm = null;
             _active = false;
         }
@@ -531,6 +559,38 @@ namespace Editor.Scripting
         {
             if (_entitiesById.TryGetValue(entityId, out var e))
                 Editor.Core.Services.SceneRenderService.Instance.SetEntityColor(e, r, g, b, 1f);
+        }
+
+        // --- skeletal animation (Vortex.Animation / VortexBehaviour sugar -> AnimationService) ---
+
+        bool Vortex.IScriptHost.PlayAnimation(long entityId, string clip, float fade)
+        {
+            return _entitiesById.TryGetValue(entityId, out var e)
+                && Editor.Core.Animation.AnimationService.Instance.Play(e, clip, fade);
+        }
+
+        void Vortex.IScriptHost.StopAnimation(long entityId)
+        {
+            if (_entitiesById.TryGetValue(entityId, out var e))
+                Editor.Core.Animation.AnimationService.Instance.Stop(e);
+        }
+
+        void Vortex.IScriptHost.SetAnimationSpeed(long entityId, float speed)
+        {
+            if (_entitiesById.TryGetValue(entityId, out var e))
+                Editor.Core.Animation.AnimationService.Instance.SetSpeed(e, speed);
+        }
+
+        bool Vortex.IScriptHost.IsAnimationPlaying(long entityId, string clip)
+        {
+            return _entitiesById.TryGetValue(entityId, out var e)
+                && Editor.Core.Animation.AnimationService.Instance.IsPlaying(e, clip);
+        }
+
+        float Vortex.IScriptHost.GetAnimationTime(long entityId)
+        {
+            return _entitiesById.TryGetValue(entityId, out var e)
+                ? Editor.Core.Animation.AnimationService.Instance.GetTime(e) : 0f;
         }
 
         [System.Runtime.InteropServices.DllImport("user32.dll")]

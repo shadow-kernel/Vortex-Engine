@@ -54,6 +54,11 @@ namespace vortex::graphics
 		bool has_indices() const { return m_index_count > 0; }
 		bool is_valid() const { return m_vertex_buffer != nullptr; }
 
+		// Skinned meshes carry the interleaved 52-byte vertex (pos/normal/uv + bone indices/weights);
+		// the renderer routes them to the skinned PSO. Rigid paths can still draw them (same offsets).
+		bool is_skinned() const { return m_skinned; }
+		void set_skinned(bool s) { m_skinned = s; }
+
 		const std::string& name() const { return m_name; }
 		void set_name(const std::string& name) { m_name = name; }
 
@@ -71,6 +76,7 @@ namespace vortex::graphics
 		D3D12_INDEX_BUFFER_VIEW m_ib_view{};
 		u32 m_vertex_count{ 0 };
 		u32 m_index_count{ 0 };
+		bool m_skinned{ false };
 		std::string m_name;
 		float m_bounds_min[3]{ 0, 0, 0 };
 		float m_bounds_max[3]{ 1, 1, 1 };

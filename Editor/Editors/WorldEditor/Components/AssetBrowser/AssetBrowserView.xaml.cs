@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -514,6 +514,7 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
 
             // Always offer a UI Screen (the retained-mode .vui editor) regardless of the current tab.
             AddMenuItem(contextMenu, "UI Screen (.vui)", () => CreateNewUiScreen());
+            AddMenuItem(contextMenu, "Animation Clip (.vanim)", () => CreateNewAnimationClip());
             switch (_currentType)
             {
                 case AssetType.Materials:
@@ -630,6 +631,38 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             catch (Exception ex) { MessageBox.Show("Could not create the UI screen:\n" + ex.Message, "UI", MessageBoxButton.OK, MessageBoxImage.Error); return; }
 
             try { Editor.Editors.UIEditor.UIEditorWindow.Open(Window.GetWindow(this), saveDialog.FileName); } catch { }
+        }
+
+        private void CreateNewAnimationClip()
+        {
+            var projectPath = ProjectData.Current?.Path;
+            if (string.IsNullOrEmpty(projectPath))
+            {
+                MessageBox.Show("Please open a project first.", "No Project", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            var animDir = System.IO.Path.Combine(projectPath, "Assets", "Animations");
+            if (!System.IO.Directory.Exists(animDir)) System.IO.Directory.CreateDirectory(animDir);
+
+            var saveDialog = new Microsoft.Win32.SaveFileDialog
+            {
+                Title = "New Animation Clip", Filter = "Vortex Animation|*.vanim", DefaultExt = ".vanim",
+                InitialDirectory = animDir, FileName = "NewClip.vanim"
+            };
+            if (saveDialog.ShowDialog() != true) return;
+
+            try
+            {
+                var clip = new Editor.Core.Animation.VortexAnimClip
+                {
+                    Name = System.IO.Path.GetFileNameWithoutExtension(saveDialog.FileName)
+                };
+                clip.Save(saveDialog.FileName);
+                AssetDatabase.Instance.Refresh();
+            }
+            catch (Exception ex) { MessageBox.Show("Could not create the animation clip:\n" + ex.Message, "Animation", MessageBoxButton.OK, MessageBoxImage.Error); return; }
+
+            try { Editor.Editors.AnimationEditor.AnimationEditorWindow.Open(Window.GetWindow(this), saveDialog.FileName); } catch { }
         }
 
         private void CreateNewShader(string type)
@@ -831,6 +864,7 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             AddMenu(menu, "New Material", () => CreateNewMaterial("Opaque"), 0xE91B, "#FFBD63C5");
             AddMenu(menu, "New Shader", () => CreateNewShader("VertFrag"), 0xE9F5, "#FF569CD6");
             AddMenu(menu, "New UI Screen", () => CreateNewUiScreen(), 0xE7F4, "#FF4DB6E2");
+            AddMenu(menu, "New Animation Clip", () => CreateNewAnimationClip(), 0xE768, "#FFC586C0");
             menu.Items.Add(new Separator());
             AddMenu(menu, "Refresh", () => { FileExplorerService.Instance.RefreshCurrentFolderContents(); RefreshAssets(); }, 0xE72C, "#FF9A9AA1");
             return menu;
@@ -1152,6 +1186,18 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                     if (proj != null && target != null) proj.ActiveScene = target;
                 }
                 catch (Exception ex) { MessageBox.Show("Could not open the scene:\n" + ex.Message, "Scene", MessageBoxButton.OK, MessageBoxImage.Error); }
+                return true;
+            }
+
+            // Double-click a .vanim -> Keyframe Editor.
+            if (extension == ".vanim" && System.IO.File.Exists(fullPath))
+            {
+                try { Editor.Editors.AnimationEditor.AnimationEditorWindow.Open(Window.GetWindow(this), fullPath); }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("Could not open the Keyframe Editor:\n" + ex.Message, "Keyframe Editor",
+                        MessageBoxButton.OK, MessageBoxImage.Error);
+                }
                 return true;
             }
 
@@ -1757,6 +1803,8 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                     item.Type = AssetType.Textures; item.TypeName = "Texture"; item.IconCode = ""; item.IconColor = "#FF4EC9B0"; break;
                 case ".vui":
                     item.Type = AssetType.UI; item.TypeName = "UI Screen"; item.IconCode = ""; item.IconColor = "#FF4DB6E2"; break;
+                case ".vanim":
+                    item.Type = AssetType.Explorer; item.TypeName = "Animation Clip"; item.IconCode = ""; item.IconColor = "#FFC586C0"; break;
                 case ".vscene":
                     item.Type = AssetType.Explorer; item.TypeName = "Scene"; item.IconCode = ""; item.IconColor = "#FF6C5CE7"; break;
                 case ".ventity":

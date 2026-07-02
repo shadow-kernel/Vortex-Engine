@@ -352,6 +352,18 @@ namespace Vortex
         /// <summary>Set this entity's base color at runtime (e.g. flash a color when a trigger is touched).</summary>
         public void SetColor(float r, float g, float b) { }
 
+        /// <summary>Play an animation clip on this entity's Animator (clip-table name like ""Walk"" or a
+        /// .vanim path). fade &gt; 0 crossfades from the current pose (seconds).</summary>
+        public bool PlayAnimation(string clip, float fade = 0f) => false;
+        /// <summary>Freeze this entity's animation on the current pose.</summary>
+        public void StopAnimation() { }
+        /// <summary>Playback speed multiplier (1 = authored speed).</summary>
+        public void SetAnimationSpeed(float speed) { }
+        /// <summary>Is an animation playing? Pass a clip name to ask about that clip specifically.</summary>
+        public bool IsAnimationPlaying(string clip = null) => false;
+        /// <summary>Current playback time (seconds) of this entity's animation.</summary>
+        public float AnimationTime => 0f;
+
         public virtual void Start() { }
         public virtual void Update(float dt) { }
         public virtual void OnDestroy() { }
@@ -364,6 +376,18 @@ namespace Vortex
         public virtual void OnTriggerExit(TriggerHit other) { }
         /// <summary>Called once when a character touches this entity's SOLID collider.</summary>
         public virtual void OnCollisionEnter(TriggerHit other) { }
+        /// <summary>Called when the playing clip crosses one of its EVENT markers (footsteps, hits, ...).</summary>
+        public virtual void OnAnimationEvent(string name) { }
+    }
+
+    /// <summary>Skeletal animation on OTHER entities (your own entity has PlayAnimation() directly).</summary>
+    public static class Animation
+    {
+        public static bool Play(long entityId, string clip, float fade = 0f) => false;
+        public static void Stop(long entityId) { }
+        public static void SetSpeed(long entityId, float speed) { }
+        public static bool IsPlaying(long entityId, string clip = null) => false;
+        public static float Time(long entityId) => 0f;
     }
 
     /// <summary>A collision/trigger contact — identifies the OTHER entity (who touched your trigger / what you hit).</summary>

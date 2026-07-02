@@ -117,6 +117,8 @@ namespace vortex::graphics::dx12
 		m_per_object_cb.Reset();
 		if (m_instance_vb && m_instance_vb_mapped) { m_instance_vb->Unmap(0, nullptr); m_instance_vb_mapped = nullptr; }
 		m_instance_vb.Reset();
+		if (m_bone_vb && m_bone_vb_mapped) { m_bone_vb->Unmap(0, nullptr); m_bone_vb_mapped = nullptr; }
+		m_bone_vb.Reset();
 		if (m_light_cb && m_light_cb_mapped) { m_light_cb->Unmap(0, nullptr); m_light_cb_mapped = nullptr; }
 		m_light_cb.Reset();
 		if (m_grid_cb && m_grid_cb_mapped) { m_grid_cb->Unmap(0, nullptr); m_grid_cb_mapped = nullptr; }
@@ -209,6 +211,29 @@ namespace vortex::graphics::dx12
 		m_render_queue.swap(m_submit_queue);
 		m_submit_queue.clear();
 		m_queue_dirty = true;   // new geometry -> re-sort + rebuild runs this frame
+
+		// Bone palettes travel with the scene queue: adopt the staged palettes now, but do NOT touch the
+		// GPU buffer yet — the previous frame's command list may still be reading it. The actual memcpy
+		// happens in upload_staged_bone_palettes(), which callers run only after a fence wait / flush and
+		// which writes the ALTERNATE buffer half. A reused queue (no new submissions) keeps the previous
+		// upload + active half intact, so its items' bone offsets stay valid.
+		m_bone_render.swap(m_bone_submit);
+		m_bone_submit.clear();
+		m_bone_upload_pending = true;
+	}
+
+
+	void DX12Renderer::upload_staged_bone_palettes()
+	{
+		if (!m_bone_upload_pending) return;
+		m_bone_upload_pending = false;
+		if (!m_bone_vb_mapped || m_bone_render.empty()) return;
+		// Flip halves: the half we write was last used TWO uploads ago — the caller's fence wait/flush
+		// guarantees that frame has finished, so the write can never tear an in-flight read.
+		m_bone_active_half ^= 1u;
+		size_t bytes = (std::min)(m_bone_render.size() * sizeof(float), (size_t)MAX_BONE_MATRICES_PER_FRAME * 64);
+		memcpy((u8*)m_bone_vb_mapped + (size_t)m_bone_active_half * MAX_BONE_MATRICES_PER_FRAME * 64,
+			m_bone_render.data(), bytes);
 	}
 
 
@@ -224,6 +249,9 @@ namespace vortex::graphics::dx12
 			std::lock_guard<std::mutex> lock(m_queue_mutex);
 			m_render_queue.clear();
 			m_submit_queue.clear();
+			m_bone_submit.clear();
+			m_bone_render.clear();
+			m_bone_upload_pending = false;
 		}
 		// The GPU is idle; collapse per-buffer fence tracking to the completed value.
 		UINT64 fv = m_command_queue.current_fence_value();
@@ -494,6 +522,10 @@ namespace vortex::graphics::dx12
 		// Wait for this frame's previous work to complete (proper double buffering)
 		// Only wait if GPU hasn't finished with this buffer yet
 		m_command_queue.wait_for_fence_value(m_frame_fence_values[idx]);
+
+		// Bone palettes: now that the 2-frames-back work is provably done, upload this frame's staged
+		// palettes into the buffer half that frame used (the in-flight previous frame reads the other half).
+		upload_staged_bone_palettes();
 
 		update_per_frame_constants();   // aspect from swapchain dims — a UNIFORM render-scale keeps it matching
 

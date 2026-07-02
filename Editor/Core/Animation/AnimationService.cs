@@ -1,0 +1,497 @@
+using System;
+using System.Collections.Generic;
+using System.Numerics;
+
+namespace Editor.Core.Animation
+{
+    /// <summary>
+    /// Central skeletal-animation evaluator ("gameplay in scripts, engine renders" — pose math lives
+    /// here in managed code; the native renderer just consumes bone palettes).
+    ///
+    /// Responsibilities:
+    ///  - clip (.vanim) + skeleton caches (path-keyed, VFS-aware like MaterialService)
+    ///  - per-Animator playback state (time, speed, loop, crossfade) advanced by Step(dt) from
+    ///    ScriptRuntime.Update — the one tick all three play drivers share
+    ///  - palette computation: palette[b] = inverseBind[b] * boneWorld[b] (row-vector, System.Numerics)
+    ///  - animation EVENTS fired into gameplay scripts (footsteps, attack hits)
+    ///  - static evaluation helpers reused verbatim by the Keyframe Editor preview
+    /// </summary>
+    public class AnimationService
+    {
+        public static AnimationService Instance { get; } = new AnimationService();
+
+        private readonly Dictionary<string, VortexAnimClip> _clips = new Dictionary<string, VortexAnimClip>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, SkeletonDef> _skeletons = new Dictionary<string, SkeletonDef>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<Guid, AnimatorState> _states = new Dictionary<Guid, AnimatorState>();
+        private readonly Dictionary<long, bool> _skinnedMeshCache = new Dictionary<long, bool>();
+
+        /// <summary>Fired when playback crosses an AnimEvent marker. ScriptRuntime routes it to behaviours.</summary>
+        public event Action<ECS.GameEntity, string> AnimationEvent;
+
+        /// <summary>True while any Animator advanced a pose in the last Step — drives per-frame re-submit.</summary>
+        public bool HasActiveAnimators { get; private set; }
+
+        private class AnimatorState
+        {
+            public ECS.GameEntity Entity;
+            public SkeletonDef Skeleton;
+            public VortexAnimClip Clip;
+            public int[] TrackNodes;              // clip.Tracks[i] -> skeleton node index (-1 = unresolved)
+            public float Time;
+            public float Speed = 1f;
+            public bool Loop = true;
+            public bool Playing;
+            public bool StartHandled;             // PlayOnStart applied
+            // Crossfade: pose snapshot of the previous clip at switch time, blended out over FadeDuration.
+            public Vector3[] FadeT; public Quaternion[] FadeR; public Vector3[] FadeS;
+            public float FadeDuration, FadeElapsed;
+            public float[] Palette;               // current pose, flattened (boneCount * 16)
+        }
+
+        // ------------------------------------------------------------------ caches
+
+        /// <summary>Load a clip by path (project-relative or absolute), cached. Null on failure.</summary>
+        public VortexAnimClip GetClip(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return null;
+            string full = ResolveAssetPath(path);
+            if (full == null) return null;
+            if (_clips.TryGetValue(full, out var cached)) return cached;
+            var clip = VortexAnimClip.Load(full);
+            _clips[full] = clip;   // negative results cached too (avoids re-hitting disk every frame)
+            return clip;
+        }
+
+        /// <summary>Drop a clip from the cache (Keyframe Editor save / file change).</summary>
+        public void InvalidateClip(string path)
+        {
+            string full = ResolveAssetPath(path);
+            if (full != null) _clips.Remove(full);
+        }
+
+        /// <summary>Skeleton of a model (path with or without '#submeshN'), cached. Null when not skinned.</summary>
+        public SkeletonDef GetSkeleton(string meshPath)
+        {
+            string full = ResolveModelPath(meshPath);
+            if (full == null) return null;
+            if (_skeletons.TryGetValue(full, out var cached)) return cached;
+            var skel = SkeletonDef.Load(full);
+            _skeletons[full] = skel;
+            return skel;
+        }
+
+        /// <summary>Is this registered mesh skinned? (interop result cached per mesh id).</summary>
+        public bool IsMeshSkinned(long meshId)
+        {
+            if (meshId < 0) return false;
+            if (_skinnedMeshCache.TryGetValue(meshId, out bool s)) return s;
+            s = DllWrapper.VortexAPI.MeshIsSkinned(meshId);
+            _skinnedMeshCache[meshId] = s;
+            return s;
+        }
+
+        /// <summary>Full playback/state reset (play start/stop, scene switch). Caches survive.</summary>
+        public void ResetStates()
+        {
+            _states.Clear();
+            HasActiveAnimators = false;
+        }
+
+        /// <summary>Scene switch: mesh ids are session-local and get re-imported — drop the skinned lookup.</summary>
+        public void OnSceneSwitch()
+        {
+            _skinnedMeshCache.Clear();
+            ResetStates();
+        }
+
+        // ------------------------------------------------------------------ per-frame tick
+
+        /// <summary>Advance every enabled Animator in the scene. Called from ScriptRuntime.Update AFTER
+        /// behaviours ran, so a same-frame Play() takes effect immediately.</summary>
+        public void Step(Data.Scene scene, float dt)
+        {
+            HasActiveAnimators = false;
+            if (scene?.Entities == null) return;
+            foreach (var e in scene.Entities) StepRecursive(e, dt);
+        }
+
+        private void StepRecursive(ECS.GameEntity entity, float dt)
+        {
+            if (entity == null || !entity.IsActive) return;
+            var animator = entity.GetComponent<ECS.Components.Animation.Animator>();
+            if (animator != null && animator.IsEnabled) StepEntity(entity, animator, dt);
+            if (entity.Children != null)
+                foreach (var c in entity.Children) StepRecursive(c, dt);
+        }
+
+        private void StepEntity(ECS.GameEntity entity, ECS.Components.Animation.Animator animator, float dt)
+        {
+            var state = GetOrCreateState(entity);
+            if (state?.Skeleton == null) return;
+
+            if (!state.StartHandled)
+            {
+                state.StartHandled = true;
+                if (animator.PlayOnStart && !string.IsNullOrEmpty(animator.DefaultClip))
+                    Play(entity, animator.DefaultClip, 0f);
+            }
+
+            if (!state.Playing || state.Clip == null) return;
+
+            float prev = state.Time;
+            state.Time += dt * state.Speed * animator.Speed;
+
+            float dur = Math.Max(state.Clip.DurationSec, 0.0001f);
+            bool loop = state.Loop && state.Clip.Loop;
+            if (state.Time >= dur)
+            {
+                if (loop) state.Time %= dur;
+                else { state.Time = dur; state.Playing = false; }
+            }
+
+            FireEvents(entity, state.Clip, prev, state.Time, loop && state.Time < prev);
+
+            if (state.FadeDuration > 0f)
+            {
+                state.FadeElapsed += dt;
+                if (state.FadeElapsed >= state.FadeDuration) { state.FadeDuration = 0f; state.FadeT = null; state.FadeR = null; state.FadeS = null; }
+            }
+
+            state.Palette = EvaluateStatePalette(state);
+            HasActiveAnimators = true;
+        }
+
+        private void FireEvents(ECS.GameEntity entity, VortexAnimClip clip, float from, float to, bool wrapped)
+        {
+            if (clip.Events == null || clip.Events.Count == 0 || AnimationEvent == null) return;
+            foreach (var ev in clip.Events)
+            {
+                bool hit = wrapped ? (ev.T > from || ev.T <= to) : (ev.T > from && ev.T <= to);
+                if (hit && !string.IsNullOrEmpty(ev.Name))
+                {
+                    try { AnimationEvent(entity, ev.Name); }
+                    catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[AnimationService] event handler failed: " + ex.Message); }
+                }
+            }
+        }
+
+        private AnimatorState GetOrCreateState(ECS.GameEntity entity)
+        {
+            if (_states.TryGetValue(entity.Id, out var state)) return state;
+
+            state = new AnimatorState { Entity = entity, Skeleton = ResolveSkeletonFor(entity) };
+            _states[entity.Id] = state;
+            return state;
+        }
+
+        /// <summary>
+        /// Skeleton for an Animator's entity — its own MeshRenderer, or (multi-submesh models import as a
+        /// parent container with '#submeshN' children) the first DESCENDANT that resolves to a skinned model.
+        /// </summary>
+        private SkeletonDef ResolveSkeletonFor(ECS.GameEntity entity)
+        {
+            if (entity == null) return null;
+            var mr = entity.GetComponent<ECS.Components.Rendering.MeshRenderer>();
+            var skeleton = mr != null ? GetSkeleton(mr.MeshPath) : null;
+            if (skeleton != null && skeleton.IsValid) return skeleton;
+            if (entity.Children != null)
+            {
+                foreach (var c in entity.Children)
+                {
+                    var cs = ResolveSkeletonFor(c);
+                    if (cs != null && cs.IsValid) return cs;
+                }
+            }
+            return null;
+        }
+
+        // ------------------------------------------------------------------ playback control (script API)
+
+        /// <summary>Start a clip. nameOrPath resolves against the Animator's clip table first, then as a
+        /// .vanim path. fade &gt; 0 crossfades from the current pose. False when the clip can't resolve.</summary>
+        public bool Play(ECS.GameEntity entity, string nameOrPath, float fade = 0f)
+        {
+            if (entity == null || string.IsNullOrEmpty(nameOrPath)) return false;
+
+            // Without an enabled Animator, Step() never advances the state — playing would freeze the
+            // character on frame 0 while IsAnimationPlaying reports true. Refuse instead.
+            var animator = entity.GetComponent<ECS.Components.Animation.Animator>();
+            if (animator == null || !animator.IsEnabled) return false;
+
+            var state = GetOrCreateState(entity);
+            if (state?.Skeleton == null) return false;
+
+            string path = animator.ResolveClipPath(nameOrPath) ?? nameOrPath;
+            var clip = GetClip(path);
+            if (clip == null) return false;
+
+            // Snapshot the CURRENT pose for the crossfade (static from-pose -> new clip over `fade` sec).
+            if (fade > 0f && state.Clip != null && state.Playing)
+            {
+                int n = state.Skeleton.Nodes.Length;
+                state.FadeT = new Vector3[n]; state.FadeR = new Quaternion[n]; state.FadeS = new Vector3[n];
+                EvaluateLocals(state.Skeleton, state.Clip, state.TrackNodes, state.Time, state.FadeT, state.FadeR, state.FadeS);
+                state.FadeDuration = fade;
+                state.FadeElapsed = 0f;
+            }
+            else
+            {
+                state.FadeDuration = 0f; state.FadeT = null; state.FadeR = null; state.FadeS = null;
+            }
+
+            state.Clip = clip;
+            state.TrackNodes = ResolveTrackNodes(state.Skeleton, clip);
+            state.Time = 0f;
+            state.Loop = clip.Loop;
+            state.Playing = true;
+            state.StartHandled = true;
+            state.Palette = EvaluateStatePalette(state);
+            return true;
+        }
+
+        public void Stop(ECS.GameEntity entity)
+        {
+            if (entity != null && _states.TryGetValue(entity.Id, out var s)) { s.Playing = false; s.StartHandled = true; }
+        }
+
+        public void SetSpeed(ECS.GameEntity entity, float speed)
+        {
+            if (entity != null && _states.TryGetValue(entity.Id, out var s)) s.Speed = speed;
+        }
+
+        public bool IsPlaying(ECS.GameEntity entity, string nameOrPath = null)
+        {
+            if (entity == null || !_states.TryGetValue(entity.Id, out var s) || !s.Playing || s.Clip == null) return false;
+            if (string.IsNullOrEmpty(nameOrPath)) return true;
+            // Match by clip name or by the Animator's clip-table entry name (both are what scripts pass).
+            if (string.Equals(s.Clip.Name, nameOrPath, StringComparison.OrdinalIgnoreCase)) return true;
+            var animator = entity.GetComponent<ECS.Components.Animation.Animator>();
+            string path = animator?.ResolveClipPath(nameOrPath);
+            return path != null && GetClip(path) == s.Clip;
+        }
+
+        public float GetTime(ECS.GameEntity entity)
+            => entity != null && _states.TryGetValue(entity.Id, out var s) ? s.Time : 0f;
+
+        // ------------------------------------------------------------------ palette access (render submit)
+
+        /// <summary>
+        /// The bone palette to render this entity's skinned mesh with: the animated pose while playing,
+        /// else the model's bind pose. False when the model has no skeleton (render rigid as before).
+        /// </summary>
+        public bool TryGetPalette(ECS.GameEntity entity, string meshPath, out float[] palette, out int boneCount)
+        {
+            palette = null; boneCount = 0;
+
+            SkeletonDef skeleton = null;
+            if (entity != null && _states.TryGetValue(entity.Id, out var state))
+            {
+                skeleton = state.Skeleton;
+                if (state.Palette != null) { palette = state.Palette; boneCount = skeleton.Bones.Length; return true; }
+            }
+            skeleton = skeleton ?? GetSkeleton(meshPath);
+            if (skeleton == null || !skeleton.IsValid) return false;
+
+            palette = skeleton.BindPosePalette();
+            boneCount = skeleton.Bones.Length;
+            return true;
+        }
+
+        // ------------------------------------------------------------------ evaluation core (Keyframe Editor reuses)
+
+        private float[] EvaluateStatePalette(AnimatorState state)
+        {
+            var skel = state.Skeleton;
+            int n = skel.Nodes.Length;
+            var t = new Vector3[n]; var r = new Quaternion[n]; var s = new Vector3[n];
+            EvaluateLocals(skel, state.Clip, state.TrackNodes, state.Time, t, r, s);
+
+            if (state.FadeDuration > 0f && state.FadeT != null)
+            {
+                float w = Math.Min(state.FadeElapsed / state.FadeDuration, 1f);   // 0 = old pose, 1 = new clip
+                for (int i = 0; i < n; i++)
+                {
+                    t[i] = Vector3.Lerp(state.FadeT[i], t[i], w);
+                    r[i] = Quaternion.Slerp(state.FadeR[i], r[i], w);
+                    s[i] = Vector3.Lerp(state.FadeS[i], s[i], w);
+                }
+            }
+
+            return skel.FlattenPalette(ComposeWorlds(skel, t, r, s));
+        }
+
+        /// <summary>Map clip tracks to skeleton node indices (bone NAMES -> node table).</summary>
+        public static int[] ResolveTrackNodes(SkeletonDef skel, VortexAnimClip clip)
+        {
+            var map = new int[clip.Tracks.Count];
+            for (int i = 0; i < clip.Tracks.Count; i++) map[i] = skel.FindNode(clip.Tracks[i].Bone);
+            return map;
+        }
+
+        /// <summary>
+        /// Sample every node's local TRS at `time`: bind pose for untracked nodes, keyed values (with
+        /// per-component bind fallback) for tracked ones.
+        /// </summary>
+        public static void EvaluateLocals(SkeletonDef skel, VortexAnimClip clip, int[] trackNodes, float time,
+            Vector3[] outT, Quaternion[] outR, Vector3[] outS)
+        {
+            for (int i = 0; i < skel.Nodes.Length; i++)
+            {
+                outT[i] = skel.Nodes[i].BindTranslation;
+                outR[i] = skel.Nodes[i].BindRotation;
+                outS[i] = skel.Nodes[i].BindScale;
+            }
+            if (clip == null) return;
+            if (trackNodes == null || trackNodes.Length != clip.Tracks.Count) trackNodes = ResolveTrackNodes(skel, clip);
+
+            for (int i = 0; i < clip.Tracks.Count; i++)
+            {
+                int node = trackNodes[i];
+                if (node < 0) continue;
+                var track = clip.Tracks[i];
+                if (track.Pos != null && track.Pos.Count > 0) outT[node] = SampleVec3(track.Pos, time);
+                if (track.Rot != null && track.Rot.Count > 0) outR[node] = SampleQuat(track.Rot, time);
+                if (track.Scale != null && track.Scale.Count > 0) outS[node] = SampleVec3(track.Scale, time);
+            }
+        }
+
+        /// <summary>Compose node worlds from local TRS (row-vector: local * parentWorld; parents precede children).</summary>
+        public static Matrix4x4[] ComposeWorlds(SkeletonDef skel, Vector3[] t, Quaternion[] r, Vector3[] s)
+        {
+            var worlds = new Matrix4x4[skel.Nodes.Length];
+            for (int i = 0; i < skel.Nodes.Length; i++)
+            {
+                Matrix4x4 local = Matrix4x4.CreateScale(s[i])
+                                * Matrix4x4.CreateFromQuaternion(r[i])
+                                * Matrix4x4.CreateTranslation(t[i]);
+                int parent = skel.Nodes[i].Parent;
+                worlds[i] = (parent >= 0 && parent < i) ? local * worlds[parent] : local;
+            }
+            return worlds;
+        }
+
+        /// <summary>One-shot pose evaluation (Keyframe Editor preview): clip at `time` -> flattened palette.</summary>
+        public static float[] EvaluatePalette(SkeletonDef skel, VortexAnimClip clip, float time)
+        {
+            int n = skel.Nodes.Length;
+            var t = new Vector3[n]; var r = new Quaternion[n]; var s = new Vector3[n];
+            EvaluateLocals(skel, clip, null, time, t, r, s);
+            return skel.FlattenPalette(ComposeWorlds(skel, t, r, s));
+        }
+
+        /// <summary>Node world matrices at `time` (Keyframe Editor bone overlay).</summary>
+        public static Matrix4x4[] EvaluateNodeWorlds(SkeletonDef skel, VortexAnimClip clip, float time)
+        {
+            int n = skel.Nodes.Length;
+            var t = new Vector3[n]; var r = new Quaternion[n]; var s = new Vector3[n];
+            EvaluateLocals(skel, clip, null, time, t, r, s);
+            return ComposeWorlds(skel, t, r, s);
+        }
+
+        public static Vector3 SampleVec3(List<AnimKeyVec3> keys, float time)
+        {
+            int count = keys.Count;
+            if (count == 1) return new Vector3(keys[0].X, keys[0].Y, keys[0].Z);
+            if (time <= keys[0].T) return new Vector3(keys[0].X, keys[0].Y, keys[0].Z);
+            var last = keys[count - 1];
+            if (time >= last.T) return new Vector3(last.X, last.Y, last.Z);
+
+            int hi = UpperBound(keys.Count, i => keys[i].T, time);
+            var a = keys[hi - 1]; var b = keys[hi];
+            float span = b.T - a.T;
+            float f = span > 0.00001f ? (time - a.T) / span : 0f;
+            return Vector3.Lerp(new Vector3(a.X, a.Y, a.Z), new Vector3(b.X, b.Y, b.Z), f);
+        }
+
+        public static Quaternion SampleQuat(List<AnimKeyQuat> keys, float time)
+        {
+            int count = keys.Count;
+            if (count == 1) return Normalize(keys[0]);
+            if (time <= keys[0].T) return Normalize(keys[0]);
+            var last = keys[count - 1];
+            if (time >= last.T) return Normalize(last);
+
+            int hi = UpperBound(keys.Count, i => keys[i].T, time);
+            var a = keys[hi - 1]; var b = keys[hi];
+            float span = b.T - a.T;
+            float f = span > 0.00001f ? (time - a.T) / span : 0f;
+            return Quaternion.Slerp(Normalize(a), Normalize(b), f);
+        }
+
+        private static Quaternion Normalize(AnimKeyQuat k)
+        {
+            var q = new Quaternion(k.X, k.Y, k.Z, k.W);
+            float len = q.Length();
+            return len > 0.00001f ? Quaternion.Normalize(q) : Quaternion.Identity;
+        }
+
+        /// <summary>First index whose key time is &gt; value (keys sorted ascending). Result in [1, count-1].</summary>
+        private static int UpperBound(int count, Func<int, float> timeAt, float value)
+        {
+            int lo = 1, hi = count - 1;
+            while (lo < hi)
+            {
+                int mid = (lo + hi) / 2;
+                if (timeAt(mid) <= value) lo = mid + 1; else hi = mid;
+            }
+            return lo;
+        }
+
+        // ------------------------------------------------------------------ import conversion
+
+        /// <summary>
+        /// Convert one FBX-embedded clip (the flat float layout from GetModelAnimationData — see
+        /// AnimationApi.cpp) into a name-keyed .vanim clip. `nodes` supplies node-index -> bone-name.
+        /// </summary>
+        public static VortexAnimClip ClipFromModelData(string name, float durationSec, float[] flat,
+            DllWrapper.VortexAPI.SkeletonNodeInfo[] nodes)
+        {
+            if (flat == null || flat.Length < 1 || nodes == null) return null;
+            var clip = new VortexAnimClip { Name = name, DurationSec = Math.Max(durationSec, 0.0001f) };
+
+            int p = 0;
+            int channelCount = (int)flat[p++];
+            for (int c = 0; c < channelCount && p < flat.Length; c++)
+            {
+                int nodeIndex = (int)flat[p++];
+                int posCount = (int)flat[p++];
+                int rotCount = (int)flat[p++];
+                int scaleCount = (int)flat[p++];
+
+                string bone = (nodeIndex >= 0 && nodeIndex < nodes.Length) ? nodes[nodeIndex].Name : null;
+                var track = bone != null ? new AnimTrack { Bone = bone } : null;
+
+                for (int k = 0; k < posCount; k++, p += 4)
+                    track?.Pos.Add(new AnimKeyVec3 { T = flat[p], X = flat[p + 1], Y = flat[p + 2], Z = flat[p + 3] });
+                for (int k = 0; k < rotCount; k++, p += 5)
+                    track?.Rot.Add(new AnimKeyQuat { T = flat[p], X = flat[p + 1], Y = flat[p + 2], Z = flat[p + 3], W = flat[p + 4] });
+                for (int k = 0; k < scaleCount; k++, p += 4)
+                    track?.Scale.Add(new AnimKeyVec3 { T = flat[p], X = flat[p + 1], Y = flat[p + 2], Z = flat[p + 3] });
+
+                if (track != null) clip.Tracks.Add(track);
+            }
+            return clip;
+        }
+
+        // ------------------------------------------------------------------ path helpers
+
+        /// <summary>Model path (with optional '#submeshN') -> full path usable by loaders. Null for primitives.</summary>
+        public static string ResolveModelPath(string meshPath)
+        {
+            if (string.IsNullOrEmpty(meshPath) || meshPath.StartsWith("Primitive:", StringComparison.OrdinalIgnoreCase))
+                return null;
+            string actual = meshPath;
+            int hash = meshPath.LastIndexOf('#');
+            if (hash > 0) actual = meshPath.Substring(0, hash);
+            return ResolveAssetPath(actual);
+        }
+
+        private static string ResolveAssetPath(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return null;
+            if (System.IO.Path.IsPathRooted(path)) return path;
+            var projectPath = Data.ProjectData.Current?.Path;
+            return string.IsNullOrEmpty(projectPath) ? path : System.IO.Path.Combine(projectPath, path);
+        }
+    }
+}

@@ -24,6 +24,13 @@ namespace Editor.Core.Services
             }
         }
 
+        /// <summary>
+        /// Set when a script/runtime change invalidated the baked render queue (Transform.SyncToEngine
+        /// during play). The submit-once GameHost loop re-submits the scene and clears it — without this,
+        /// script-moved entities render frozen in shipped games (editor play re-submits every frame anyway).
+        /// </summary>
+        public static bool RuntimeDirty;
+
         private readonly Dictionary<Guid, long> _entityMeshes = new Dictionary<Guid, long>();
         private static int _meshDbg; // diagnostic: log first few mesh creations
         private static int _submitN, _ssDbg; // diagnostic: count submits per SubmitScene
@@ -211,6 +218,22 @@ namespace Editor.Core.Services
             // Build world matrix from transform (including parent transforms)
             float[] worldMatrix = BuildWorldMatrixWithParent(entity);
 
+            // Skinned characters: an entity with an Animator + a skinned model renders through the GPU
+            // skinning path — the AnimationService supplies the bone palette (animated pose while playing,
+            // bind pose in edit mode). Rigid submeshes of the same model still go through the normal path.
+            // The Animator may sit on an ANCESTOR: multi-submesh models import as a parent container with
+            // '#submeshN' child entities, and the user drops the Animator on the container.
+            float[] bonePalette = null; int boneCount = 0;
+            var animatorOwner = entity;
+            var animator = entity.GetComponent<Editor.ECS.Components.Animation.Animator>();
+            while (animator == null && animatorOwner.Parent != null)
+            {
+                animatorOwner = animatorOwner.Parent;
+                animator = animatorOwner.GetComponent<Editor.ECS.Components.Animation.Animator>();
+            }
+            if (animator != null && animator.IsEnabled)
+                Core.Animation.AnimationService.Instance.TryGetPalette(animatorOwner, meshRenderer.MeshPath, out bonePalette, out boneCount);
+
             // Imported models (no explicit .vmat) are multi-submesh with per-submesh colored materials —
             // submit EVERY submesh, not just the first, so e.g. a Kenney tree shows trunk + leaves.
             var ext = System.IO.Path.GetExtension(meshRenderer.MeshPath)?.ToLowerInvariant();
@@ -222,7 +245,10 @@ namespace Editor.Core.Services
                     string sub = meshRenderer.MeshPath + "#submesh" + n;
                     if (_submeshMeshCache.TryGetValue(sub, out long subMesh) && subMesh >= 0)
                     {
-                        VortexAPI.SubmitMeshForRendering(subMesh, GetMaterialForMeshPath(sub), worldMatrix);
+                        if (bonePalette != null && Core.Animation.AnimationService.Instance.IsMeshSkinned(subMesh))
+                            VortexAPI.SubmitSkinnedMesh(subMesh, GetMaterialForMeshPath(sub), worldMatrix, bonePalette, boneCount);
+                        else
+                            VortexAPI.SubmitMeshForRendering(subMesh, GetMaterialForMeshPath(sub), worldMatrix);
                         _submitN++;
                         any = true;
                     }
@@ -233,7 +259,10 @@ namespace Editor.Core.Services
 
             // Primitive / single mesh / explicitly-assigned .vmat:
             long materialId = GetOrCreateMaterial(entity.Id, meshRenderer);
-            VortexAPI.SubmitMeshForRendering(meshId, materialId, worldMatrix);
+            if (bonePalette != null && Core.Animation.AnimationService.Instance.IsMeshSkinned(meshId))
+                VortexAPI.SubmitSkinnedMesh(meshId, materialId, worldMatrix, bonePalette, boneCount);
+            else
+                VortexAPI.SubmitMeshForRendering(meshId, materialId, worldMatrix);
             _submitN++;
         }
 

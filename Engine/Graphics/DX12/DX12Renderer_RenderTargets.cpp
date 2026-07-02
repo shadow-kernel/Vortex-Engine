@@ -71,6 +71,7 @@ namespace vortex::graphics::dx12
 		
 		// Ensure previous work is complete before rendering to secondary target
 		m_command_queue.flush();
+		upload_staged_bone_palettes();   // GPU idle — safe; previews then render the freshly-swapped pose
 		m_command_allocators[idx]->Reset();
 		
 		auto* pso = m_render_queue.empty() ? m_pipeline.pipeline_state() :
@@ -242,10 +243,22 @@ namespace vortex::graphics::dx12
 				auto* mat = reg.get_material(item.material_id);
 				// A compiled custom per-material shader overrides the built-in PSO for THIS object (mirrors
 				// render_3d_scene). Objects without one fall back to the default PBR PSO bound above.
+				// Skinned items switch to the skinned PSO + bind their bone palette so PREVIEWS (thumbnails,
+				// Keyframe Editor, Prefab Editor) show the posed character, not the bind pose.
 				{
 					ID3D12PipelineState* want_pso = default_pso;
-					auto csit = m_custom_shaders.find((u32)item.material_id);
-					if (csit != m_custom_shaders.end() && csit->second.pso) want_pso = csit->second.pso.Get();
+					const bool skinned_item = item.bone_offset != NO_BONES && m_pipeline_3d.skinned_pso() && m_bone_vb;
+					if (skinned_item)
+					{
+						want_pso = m_pipeline_3d.skinned_pso();
+						m_command_list->SetGraphicsRootShaderResourceView(8,
+							bone_palette_base_va() + (UINT64)item.bone_offset * 64);
+					}
+					else
+					{
+						auto csit = m_custom_shaders.find((u32)item.material_id);
+						if (csit != m_custom_shaders.end() && csit->second.pso) want_pso = csit->second.pso.Get();
+					}
 					if (want_pso != cur_pso) { m_command_list->SetPipelineState(want_pso); cur_pso = want_pso; }
 				}
 				if (mat)

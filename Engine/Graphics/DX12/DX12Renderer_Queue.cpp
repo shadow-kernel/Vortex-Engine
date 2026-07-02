@@ -39,6 +39,7 @@ namespace vortex::graphics::dx12
 		// The command list + queue are shared with the editor frame; finish all prior GPU work before
 		// reusing them. Simple full sync — perf is not the priority for the play window.
 		m_command_queue.flush();
+		upload_staged_bone_palettes();   // GPU idle after the flush — safe to write either buffer half
 
 		// Target the game window's own swapchain + depth at its own size, using the CURRENT camera
 		// (the caller sets the game's main camera before calling this).
@@ -143,10 +144,37 @@ namespace vortex::graphics::dx12
 	}
 	
 
-	void DX12Renderer::clear_render_queue() 
-	{ 
+	void DX12Renderer::submit_skinned_item(id::id_type mesh, id::id_type material, const float* world_matrix,
+		const float* bone_matrices, u32 bone_count)
+	{
+		if (!world_matrix || !bone_matrices || bone_count == 0) return;
 		std::lock_guard<std::mutex> lock(m_queue_mutex);
-		m_submit_queue.clear(); 
+
+		RenderItem item;
+		item.mesh_id = mesh;
+		item.material_id = material;
+		memcpy(&item.world_matrix, world_matrix, sizeof(DirectX::XMFLOAT4X4));
+
+		// Stage the palette; the offset is in MATRICES (root SRV binds at the active half's VA + offset * 64).
+		u32 offset = (u32)(m_bone_submit.size() / 16);
+		if (offset + bone_count > MAX_BONE_MATRICES_PER_FRAME)
+		{
+			// Palette half full — submit as rigid (bind pose) instead of overrunning.
+			m_submit_queue.push_back(item);
+			return;
+		}
+		item.bone_offset = offset;
+		item.bone_count = bone_count;
+		m_bone_submit.insert(m_bone_submit.end(), bone_matrices, bone_matrices + (size_t)bone_count * 16);
+		m_submit_queue.push_back(item);
+	}
+
+
+	void DX12Renderer::clear_render_queue()
+	{
+		std::lock_guard<std::mutex> lock(m_queue_mutex);
+		m_submit_queue.clear();
+		m_bone_submit.clear();
 	}
 
 
