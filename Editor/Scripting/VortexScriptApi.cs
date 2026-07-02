@@ -784,7 +784,12 @@ namespace Vortex
         public static void SetBusVolume(string busName, float volume)
         {
             var bus = Editor.DllWrapper.VortexAudio.BusIndexFromName(busName);
-            if (bus >= 0) Editor.DllWrapper.VortexAudio.SetBusVolume(bus, volume);
+            if (bus >= 0)
+            {
+                Editor.DllWrapper.VortexAudio.SetBusVolume(bus, volume);
+                // Shipped game: persist the player's choice so it survives a restart (#20). No-op in the editor.
+                Editor.Core.Services.GameAudioSettings.Instance.Persist();
+            }
         }
 
         public static float GetBusVolume(string busName)

@@ -39,7 +39,10 @@ namespace Editor.Core.Services
 
         public const string RelativePath = "ProjectSettings/AudioMixer.json";
 
-        /// <summary>Loads the project's mixer config, or defaults when none exists yet.</summary>
+        /// <summary>Loads the project's mixer config (the designer-tuned defaults), or defaults when none exists.
+        /// In the editor this is the loose ProjectSettings file; in a SHIPPED game the same config is packed into the
+        /// .vpak, so we fall back to reading it through AssetVfs. Per-player runtime overrides (settings screen) are a
+        /// separate layer applied on top — see <see cref="GameAudioSettings"/>. (#20)</summary>
         public static AudioMixerConfig Load(string projectPath)
         {
             try
@@ -50,6 +53,17 @@ namespace Editor.Core.Services
                     if (File.Exists(file))
                     {
                         var loaded = Serialization.DataSerializer.FromJson<AudioMixerConfig>(File.ReadAllText(file));
+                        if (loaded != null) { loaded.Normalize(); return loaded; }
+                    }
+                }
+
+                // Shipped game: no loose file on disk — the config lives in the mounted core pak.
+                if (AssetVfs.IsMounted && AssetVfs.Contains(RelativePath))
+                {
+                    var json = AssetVfs.GetText(RelativePath);
+                    if (!string.IsNullOrEmpty(json))
+                    {
+                        var loaded = Serialization.DataSerializer.FromJson<AudioMixerConfig>(json);
                         if (loaded != null) { loaded.Normalize(); return loaded; }
                     }
                 }

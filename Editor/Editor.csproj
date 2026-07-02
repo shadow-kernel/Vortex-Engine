@@ -315,6 +315,7 @@
     <Compile Include="Core\Services\Build\VortexPak.cs" />
     <Compile Include="Core\Services\AssetVfs.cs" />
     <Compile Include="Core\Services\AudioMixerConfig.cs" />
+    <Compile Include="Core\Services\GameAudioSettings.cs" />
     <Compile Include="ECS\Components\Audio\ReverbZone.cs" />
     <Compile Include="Core\Services\AudioPlaybackService.cs" />
     <Compile Include="Core\Services\AudioPreviewService.cs" />

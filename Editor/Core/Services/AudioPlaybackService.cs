@@ -72,9 +72,14 @@ namespace Editor.Core.Services
             _musicVolume = 1f;
             _musicCurrentClip = null;
 
-            // Project mixer state (bus volumes/mutes + duck rules) — identical in
-            // editor play mode and the shipped game.
-            try { AudioMixerConfig.Load(ProjectData.Current?.Path).Apply(); }
+            // Project mixer state (bus volumes/mutes + duck rules) — identical in editor play mode and the shipped
+            // game (the config ships packed in the .vpak and loads through AssetVfs there). Then, in a SHIPPED game
+            // only, layer the player's own saved volume/mute choices on top so their settings survive a restart. (#20)
+            try
+            {
+                AudioMixerConfig.Load(ProjectData.Current?.Path).Apply();
+                GameAudioSettings.Instance.LoadAndApply();
+            }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Audio] mixer config apply failed: " + ex.Message); }
 
             try

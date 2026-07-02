@@ -133,6 +133,17 @@ namespace Editor.Core.Services.Build
                         entries.Add(new System.Collections.Generic.KeyValuePair<string, byte[]>("GameScripts.dll", File.ReadAllBytes(tmpDll)));
                     try { if (File.Exists(tmpDll)) File.Delete(tmpDll); } catch { }
 
+                    // ProjectSettings that the runtime reads live OUTSIDE Assets/ (so the asset walk misses them).
+                    // Pack the mixer config (bus volumes/mutes + ducking) so the shipped game boots with the same mix
+                    // the designer tuned — without it the game falls back to flat defaults. (#20)
+                    var mixerCfg = Path.Combine(projectRoot, AudioMixerConfig.RelativePath.Replace('/', Path.DirectorySeparatorChar));
+                    if (File.Exists(mixerCfg))
+                    {
+                        entries.Add(new System.Collections.Generic.KeyValuePair<string, byte[]>(
+                            AudioMixerConfig.RelativePath, File.ReadAllBytes(mixerCfg)));
+                        sb.AppendLine("• Packed audio mixer config -> Assets.vpak");
+                    }
+
                     P(0.86, "Writing asset paks…");
                     VortexPak.Write(Path.Combine(outputDir, "Assets.vpak"), entries);
                     // One pak per scene: Scenes/<sceneFileName>.vpak
