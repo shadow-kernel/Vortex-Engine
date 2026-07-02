@@ -2,6 +2,7 @@
 #include "AudioEngine.h"
 #include "AudioInternal.h"
 #include "AudioMixer.h"
+#include "AudioReverb.h"
 
 #include <chrono>
 #include <cmath>
@@ -32,6 +33,11 @@ namespace vortex::runtime::audio {
 			// Set when streaming a registered in-memory blob: the sound reads through
 			// this decoder (decode-on-demand); released together with the sound.
 			ma_decoder*	stream_decoder{ nullptr };
+			// Reverb send: sound -> splitter -> (bus 0: dry to the mixer group,
+			// bus 1: wet send into the global reverb node, gain = reverbZoneMix x
+			// listener zone weight). Only built while the reverb node exists.
+			ma_splitter_node splitter{};
+			bool		splitter_alive{ false };
 			// Doppler: velocity = position delta / wall-clock between pushes.
 			std::chrono::steady_clock::time_point last_push{};
 			bool		has_last_push{ false };
@@ -144,6 +150,11 @@ namespace vortex::runtime::audio {
 		void release_slot(voice_slot& slot)
 		{
 			ma_sound_uninit(&slot.sound);
+			if (slot.splitter_alive)
+			{
+				ma_splitter_node_uninit(&slot.splitter, nullptr);
+				slot.splitter_alive = false;
+			}
 			if (slot.stream_decoder)
 			{
 				ma_decoder_uninit(slot.stream_decoder);
@@ -310,6 +321,26 @@ namespace vortex::runtime::audio {
 		}
 		target->stream_decoder = stream_decoder;
 
+		// Reverb send plumbing: re-route sound -> splitter, splitter bus 0 (dry) to
+		// where the sound was headed, bus 1 (wet, gain 0 until the zone service says
+		// otherwise) into the global reverb. Send is PRE-fader (per-voice).
+		target->splitter_alive = false;
+		ma_node* reverb = (ma_node*)reverb_node();
+		if (reverb)
+		{
+			const u32 channels = ma_engine_get_channels(engine);
+			ma_splitter_node_config split_config = ma_splitter_node_config_init(channels);
+			if (ma_splitter_node_init(ma_engine_get_node_graph(engine), &split_config, nullptr, &target->splitter) == MA_SUCCESS)
+			{
+				ma_node* dry_target = group ? (ma_node*)group : ma_engine_get_endpoint(engine);
+				ma_node_attach_output_bus(&target->sound, 0, &target->splitter, 0);
+				ma_node_attach_output_bus(&target->splitter, 0, dry_target, 0);
+				ma_node_attach_output_bus(&target->splitter, 1, reverb, 0);
+				ma_node_set_output_bus_volume(&target->splitter, 1, 0.0f);
+				target->splitter_alive = true;
+			}
+		}
+
 		target->in_use = true;
 		target->paused = false;
 		target->priority = params.priority;
@@ -455,6 +486,19 @@ namespace vortex::runtime::audio {
 		// matching set_listener — slot.position stays game-space.
 		ma_sound_set_position(&slot->sound, x, y, -z);
 		ma_sound_set_velocity(&slot->sound, vx, vy, -vz);
+	}
+
+	void voice_set_reverb_send(voice_handle handle, f32 send)
+	{
+		std::lock_guard<std::mutex> lock(g_voices_mutex);
+		if (voice_slot* slot = resolve(handle))
+		{
+			if (slot->splitter_alive)
+			{
+				const f32 s = send < 0.0f ? 0.0f : (send > 1.0f ? 1.0f : send);
+				ma_node_set_output_bus_volume(&slot->splitter, 1, s);
+			}
+		}
 	}
 
 	void voice_set_spatial(voice_handle handle, const voice_spatial& spatial)

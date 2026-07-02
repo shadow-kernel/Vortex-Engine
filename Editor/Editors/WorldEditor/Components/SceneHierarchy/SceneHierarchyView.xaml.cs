@@ -533,6 +533,11 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             ViewModel?.CreateAudioSourceCommand.Execute(null);
         }
 
+        private void CreateReverbZone_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel?.CreateReverbZoneCommand.Execute(null);
+        }
+
         #endregion
 
         #region Entity Creation - UI

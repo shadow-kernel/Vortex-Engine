@@ -75,6 +75,7 @@
     <ClInclude Include="Runtime\Systems\AudioEngine.h" />
     <ClInclude Include="Runtime\Systems\AudioInternal.h" />
     <ClInclude Include="Runtime\Systems\AudioMixer.h" />
+    <ClInclude Include="Runtime\Systems\AudioReverb.h" />
     <ClInclude Include="Runtime\Systems\AudioSystem.h" />
     <ClInclude Include="Runtime\Systems\AudioVoices.h" />
     <ClInclude Include="Runtime\Systems\PhysicsSystem.h" />
@@ -150,6 +151,7 @@
     <ClCompile Include="Runtime\SceneManager.cpp" />
     <ClCompile Include="Runtime\Systems\AudioEngine.cpp" />
     <ClCompile Include="Runtime\Systems\AudioMixer.cpp" />
+    <ClCompile Include="Runtime\Systems\AudioReverb.cpp" />
     <ClCompile Include="Runtime\Systems\AudioSystem.cpp" />
     <ClCompile Include="Runtime\Systems\AudioVoices.cpp" />
     <ClCompile Include="Runtime\Systems\PhysicsSystem.cpp" />

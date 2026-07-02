@@ -1,4 +1,4 @@
-using Editor.Core.Abstractions;
+﻿using Editor.Core.Abstractions;
 using Editor.Core.UndoRedo;
 using Editor.Core.UndoRedo.Commands;
 using Editor.DllWrapper;
@@ -31,6 +31,7 @@ namespace Editor.ECS
     [KnownType(typeof(Components.Physics.Rigidbody))]
     [KnownType(typeof(Components.Audio.AudioSource))]
     [KnownType(typeof(Components.Audio.AudioListener))]
+    [KnownType(typeof(Components.Audio.ReverbZone))]
     [KnownType(typeof(Components.Animation.Animator))]
     [KnownType(typeof(Components.Animation.AnimatorClipEntry))]
     [KnownType(typeof(Components.Scripting.Script))]

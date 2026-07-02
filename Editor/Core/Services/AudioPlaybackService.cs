@@ -104,6 +104,7 @@ namespace Editor.Core.Services
             try
             {
                 UpdateListener();
+                UpdateReverbZones(_listenerPos);
                 TickMusic();
 
                 foreach (var b in _bindings)
@@ -199,6 +200,10 @@ namespace Editor.Core.Services
             _musicCurrentClip = null;
             foreach (var h in _oneShots) VortexAudio.StopVoice(h);
             _oneShots.Clear();
+            _zones.Clear();
+            _zoneWeight = 0f;
+            _lastDecay = _lastWet = _lastPredelay = -1f;
+            VortexAudio.SetReverbParams(1f, 0f, 0f); // tail off outside play
         }
 
         private static void SnapshotBinding(SourceBinding b)
@@ -472,6 +477,10 @@ namespace Editor.Core.Services
                 _bindings.Add(b);
             }
 
+            var zone = e.GetComponent<ReverbZone>();
+            if (zone != null)
+                _zones.Add(new ZoneBinding { Zone = zone, Entity = e });
+
             var listener = e.GetComponent<AudioListener>();
             if (listener != null && listener.IsEnabled)
             {
@@ -542,10 +551,92 @@ namespace Editor.Core.Services
             VortexAudio.SetVoicePan(b.Handle, s.StereoPan);
             VortexAudio.SetVoiceSpatial(b.Handle, s.SpatialBlend, s.MinDistance, s.MaxDistance,
                 (int)s.RolloffMode, s.DopplerLevel, s.Spread);
+            // Per-source reverb feed = the source's own mix x how deep the LISTENER
+            // sits in reverb zones this frame (issue #15).
+            VortexAudio.SetVoiceReverbSend(b.Handle, s.ReverbZoneMix * _zoneWeight);
 
             var pos = ReadWorldPosition(b.Entity);
             VortexAudio.SetVoicePosition(b.Handle, pos.X, pos.Y, pos.Z);
         }
+
+        // ---- reverb zones (issue #15) --------------------------------------------
+
+        private sealed class ZoneBinding
+        {
+            public ReverbZone Zone;
+            public GameEntity Entity;
+        }
+
+        private readonly List<ZoneBinding> _zones = new List<ZoneBinding>();
+        private float _zoneWeight;   // blended listener weight 0..1 this frame
+        private float _lastDecay = -1f, _lastWet = -1f, _lastPredelay = -1f;
+
+        /// <summary>Computes the listener's blended reverb this frame: inside a zone =
+        /// full weight, within the falloff shell = smooth 0..1, overlapping zones
+        /// blend by weight. Pushes the blended parameters natively when they change.</summary>
+        private void UpdateReverbZones(ECS.Vector3 listenerPos)
+        {
+            float totalWeight = 0f;
+            float decay = 0f, wet = 0f, predelay = 0f;
+
+            foreach (var zb in _zones)
+            {
+                if (zb.Zone == null || !zb.Zone.IsEnabled || zb.Entity == null || !zb.Entity.IsActive) continue;
+                var center = zb.Entity.Transform != null ? zb.Entity.Transform.LocalPosition : new ECS.Vector3(0, 0, 0);
+                float w = ZoneWeight(zb.Zone, center, listenerPos);
+                if (w <= 0f) continue;
+                totalWeight += w;
+                decay += zb.Zone.DecayTime * w;
+                wet += zb.Zone.WetLevel * w;
+                predelay += zb.Zone.PreDelayMs * w;
+            }
+
+            if (totalWeight > 0f)
+            {
+                decay /= totalWeight;
+                wet /= totalWeight;
+                predelay /= totalWeight;
+            }
+            _zoneWeight = totalWeight > 1f ? 1f : totalWeight;
+
+            // The effective tail loudness is zone wet x listener depth.
+            float effectiveWet = wet * _zoneWeight;
+            if (Math.Abs(decay - _lastDecay) > 0.01f || Math.Abs(effectiveWet - _lastWet) > 0.005f
+                || Math.Abs(predelay - _lastPredelay) > 0.5f)
+            {
+                _lastDecay = decay;
+                _lastWet = effectiveWet;
+                _lastPredelay = predelay;
+                VortexAudio.SetReverbParams(decay <= 0f ? 1f : decay, effectiveWet, predelay);
+            }
+        }
+
+        /// <summary>1 inside the shape, easing to 0 at boundary + falloff.</summary>
+        private static float ZoneWeight(ReverbZone zone, ECS.Vector3 center, ECS.Vector3 p)
+        {
+            float outside;
+            if (zone.Shape == (int)ReverbZoneShape.Box)
+            {
+                var ex = zone.BoxExtents;
+                float dx = Math.Abs(p.X - center.X) - Math.Max(0.01f, ex.X);
+                float dy = Math.Abs(p.Y - center.Y) - Math.Max(0.01f, ex.Y);
+                float dz = Math.Abs(p.Z - center.Z) - Math.Max(0.01f, ex.Z);
+                outside = Math.Max(dx, Math.Max(dy, dz)); // <= 0 means inside
+            }
+            else
+            {
+                float ddx = p.X - center.X, ddy = p.Y - center.Y, ddz = p.Z - center.Z;
+                outside = (float)Math.Sqrt(ddx * ddx + ddy * ddy + ddz * ddz) - Math.Max(0.01f, zone.Radius);
+            }
+
+            if (outside <= 0f) return 1f;
+            float falloff = Math.Max(0.01f, zone.Falloff);
+            if (outside >= falloff) return 0f;
+            float t = 1f - outside / falloff;
+            return t * t * (3f - 2f * t); // smoothstep — no click at the door
+        }
+
+        private ECS.Vector3 _listenerPos;
 
         private void UpdateListener()
         {
@@ -559,6 +650,7 @@ namespace Editor.Core.Services
             if (t == null) return;
 
             var pos = t.LocalPosition;
+            _listenerPos = pos;
             // Same yaw/pitch convention as PlayCameraHelper.ApplyPose — ears follow the eyes.
             float pitchDeg = t.LocalRotation.X;
             if (pitchDeg > 89f) pitchDeg = 89f; else if (pitchDeg < -89f) pitchDeg = -89f;

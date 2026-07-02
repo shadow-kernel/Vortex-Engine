@@ -1,6 +1,7 @@
 #include "AudioMixer.h"
 #include "AudioEngine.h"
 #include "AudioInternal.h"
+#include "AudioReverb.h"
 
 #include <atomic>
 #include <cmath>
@@ -143,11 +144,15 @@ namespace vortex::runtime::audio {
 		g_ducks.clear();
 		g_mixer_alive = true;
 		internal_log("mixer up: Master + Music/SFX/Ambience/UI");
+
+		// The global reverb hangs off the master bus — needs the tree first.
+		reverb_initialize();
 	}
 
 	void mixer_shutdown()
 	{
 		if (!g_mixer_alive) return;
+		reverb_shutdown(); // voice splitters feed it; voices are already gone
 		std::lock_guard<std::mutex> lock(g_mixer_mutex);
 		// Children before master (their meters feed master's group).
 		for (s32 i = (s32)bus::count - 1; i >= 0; --i)

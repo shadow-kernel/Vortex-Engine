@@ -296,6 +296,11 @@
                         <TextBlock Text="&#xE767;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#CE9178"/>
                     </MenuItem.Icon>
                 </MenuItem>
+                <MenuItem Header="Reverb Zone" Click="CreateReverbZone_Click">
+                    <MenuItem.Icon>
+                        <TextBlock Text="&#xE9A1;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#CE9178"/>
+                    </MenuItem.Icon>
+                </MenuItem>
             </MenuItem>
             
             <!-- UI -->

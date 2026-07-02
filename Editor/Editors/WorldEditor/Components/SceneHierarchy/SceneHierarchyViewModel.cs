@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
@@ -141,6 +141,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
         #region Other Commands
         public ICommand CreateCameraCommand { get; }
         public ICommand CreateAudioSourceCommand { get; }
+        public ICommand CreateReverbZoneCommand { get; }
         #endregion
 
         #region UI Commands
@@ -190,6 +191,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             // Camera & Audio
             CreateCameraCommand = new RelayCommand(_ => CreateCamera());
             CreateAudioSourceCommand = new RelayCommand(_ => CreateAudioSource());
+            CreateReverbZoneCommand = new RelayCommand(_ => CreateReverbZone());
 
             // UI
             CreateUICanvasCommand = new RelayCommand(_ => CreateUIElement("Canvas"));
@@ -393,6 +395,16 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             if (_selectedScene == null) return;
             var entity = _selectedScene.CreateSkybox();
             SelectedEntity = entity;
+        }
+
+        private void CreateReverbZone()
+        {
+            if (_selectedScene == null) return;
+            var entity = new GameEntity(_selectedScene, "Reverb Zone");
+            entity.AddComponent(new ReverbZone(entity));
+            _selectedScene.AddEntity(entity);
+            SelectedEntity = entity;
+            SelectionService.Instance.RequestFocus(entity);
         }
 
         private void CreateAudioSource()

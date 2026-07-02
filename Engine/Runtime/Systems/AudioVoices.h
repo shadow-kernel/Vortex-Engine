@@ -62,6 +62,9 @@ namespace vortex::runtime::audio {
 	// World position, pushed per frame by the component bridge for 3D voices.
 	void voice_set_position(voice_handle handle, f32 x, f32 y, f32 z);
 	void voice_set_spatial(voice_handle handle, const voice_spatial& spatial);
+	// Reverb send gain 0..1 (reverbZoneMix x listener zone weight) — no-op while
+	// the reverb node is down.
+	void voice_set_reverb_send(voice_handle handle, f32 send);
 
 	// Stats for diagnostics and the future mixer window meters.
 	u32 voices_active_count();

@@ -78,6 +78,12 @@ namespace Editor.DllWrapper
         private static extern void AudioClearDucks();
 
         [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void AudioSetReverbParams(float decaySeconds, float wetLevel, float predelayMs);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void AudioSetVoiceReverbSend(ulong handle, float send);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
         private static extern int AudioRegisterClipData([MarshalAs(UnmanagedType.LPUTF8Str)] string name,
             byte[] data, ulong size);
 
@@ -167,6 +173,16 @@ namespace Editor.DllWrapper
         public static void SetDuck(int triggerBus, int targetBus, float duckDb, float attackMs, float releaseMs, float threshold = 0.05f)
             => AudioSetDuck(triggerBus, targetBus, duckDb, attackMs, releaseMs, threshold);
         public static void ClearDucks() => AudioClearDucks();
+
+        /// <summary>Blended reverb-zone parameters (global freeverb send bus).</summary>
+        public static void SetReverbParams(float decaySeconds, float wetLevel, float predelayMs)
+            => AudioSetReverbParams(decaySeconds, wetLevel, predelayMs);
+
+        /// <summary>Per-voice reverb send (reverbZoneMix x listener zone weight, 0..1).</summary>
+        public static void SetVoiceReverbSend(ulong handle, float send)
+        {
+            if (handle != InvalidVoice) AudioSetVoiceReverbSend(handle, send);
+        }
 
         /// <summary>Hands an encoded audio blob (e.g. a .vpak entry) to the native engine;
         /// the name then resolves like a file path for both decoded and streaming voices.</summary>

@@ -4,6 +4,7 @@
 #include "..\Engine\Runtime\Systems\AudioSystem.h"
 #include "..\Engine\Runtime\Systems\AudioEngine.h"
 #include "..\Engine\Runtime\Systems\AudioMixer.h"
+#include "..\Engine\Runtime\Systems\AudioReverb.h"
 #include "..\Engine\Runtime\Systems\AudioVoices.h"
 
 #include "Test.h"
@@ -76,6 +77,9 @@ public:
 
 		// -- mixer buses + ducking (issue #13) ---------------------------------------
 		run_mixer_tests(wav_path);
+
+		// -- reverb send bus (issue #15) ----------------------------------------------
+		run_reverb_tests(wav_path);
 
 		// -- 3D spatialization measurement demo (issue #9) --------------------------
 		// Opt-in: VORTEX_AUDIO_SPATIAL_DEMO=<phase-file>. An external meter samples
@@ -297,6 +301,50 @@ private:
 		voice_stop(s3);
 
 		std::remove(long_wav.c_str());
+	}
+
+	// Reverb (issue #15): the freeverb node must produce a TAIL — audio on the
+	// master bus after the dry voice has stopped — and stay silent at send 0.
+	void run_reverb_tests(const std::string& wav)
+	{
+		using namespace runtime::audio;
+		check("reverb node exists", reverb_node() != nullptr);
+
+		// Reference: send 0, voice stops -> master falls silent quickly.
+		reverb_set_params(3.0f, 0.9f, 0.0f);
+		voice_params p{};
+		p.volume = 0.8f;
+		voice_handle v = voice_play(wav.c_str(), p);
+		tick_seconds(0.3f);
+		voice_stop(v);
+		tick_seconds(0.35f);
+		f32 dry_after = 0;
+		mixer_get_bus_levels(bus::master, nullptr, &dry_after);
+
+		// With full send: the tail must ring on AFTER the voice stopped.
+		v = voice_play(wav.c_str(), p);
+		voice_set_reverb_send(v, 1.0f);
+		tick_seconds(0.4f);
+		voice_stop(v);
+		tick_seconds(0.35f);
+		f32 wet_after = 0;
+		mixer_get_bus_levels(bus::master, nullptr, &wet_after);
+		check("reverb tail rings after the voice stops", wet_after > dry_after * 2.0f && wet_after > 0.004f);
+
+		// Wet 0 shuts the reverb up even at full send (allow the master METER's own
+		// display decay to drain — it holds ~0.4 s of history after the dry stop).
+		reverb_set_params(3.0f, 0.0f, 0.0f);
+		v = voice_play(wav.c_str(), p);
+		voice_set_reverb_send(v, 1.0f);
+		tick_seconds(0.4f);
+		voice_stop(v);
+		tick_seconds(0.7f);
+		f32 muted_after = 0;
+		mixer_get_bus_levels(bus::master, nullptr, &muted_after);
+		check("wet level 0 silences the reverb", muted_after < 0.006f);
+
+		reverb_set_params(1.0f, 0.0f, 0.0f);
+		tick_seconds(0.3f); // let any remainder die before the next suite
 	}
 
 	// Mixer (issue #13): assertions run against the REAL DSP — the per-bus metering

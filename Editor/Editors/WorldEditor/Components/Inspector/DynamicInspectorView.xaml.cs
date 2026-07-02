@@ -320,6 +320,13 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             AddComponentMenuItem(contextMenu, "Skybox", () => AddComponent<Skybox>());
             
             contextMenu.Items.Add(new Separator());
+            var audioMenu = new MenuItem { Header = "Audio" };
+            AddSubMenuItem(audioMenu, "Audio Source", () => AddComponent<ECS.Components.Audio.AudioSource>());
+            AddSubMenuItem(audioMenu, "Audio Listener", () => AddComponent<ECS.Components.Audio.AudioListener>());
+            AddSubMenuItem(audioMenu, "Reverb Zone", () => AddComponent<ECS.Components.Audio.ReverbZone>());
+            contextMenu.Items.Add(audioMenu);
+
+            contextMenu.Items.Add(new Separator());
             AddComponentMenuItem(contextMenu, "Animator", () => AddComponent<ECS.Components.Animation.Animator>());
 
             contextMenu.Items.Add(new Separator());

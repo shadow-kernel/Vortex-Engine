@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.Serialization;
@@ -63,6 +63,7 @@ namespace Editor.Core.Serialization
             // Audio
             typeof(AudioSource),
             typeof(AudioListener),
+            typeof(ReverbZone),
 
             // Animation
             typeof(Editor.ECS.Components.Animation.Animator),

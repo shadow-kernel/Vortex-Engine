@@ -1,6 +1,7 @@
 #include "../ApiCommon.h"
 #include "..\..\Engine\Runtime\Systems\AudioEngine.h"
 #include "..\..\Engine\Runtime\Systems\AudioMixer.h"
+#include "..\..\Engine\Runtime\Systems\AudioReverb.h"
 #include "..\..\Engine\Runtime\Systems\AudioVoices.h"
 
 // Voice-level audio API (issue #7). Handles are opaque u64 values with a
@@ -94,6 +95,20 @@ EDITOR_INTERFACE void AudioSetDuck(s32 trigger_bus, s32 target_bus, f32 duck_db,
 EDITOR_INTERFACE void AudioClearDucks()
 {
 	runtime::audio::mixer_clear_ducks();
+}
+
+// ---- reverb (issue #15): one global freeverb send bus -------------------------
+
+// Blended zone parameters (the C# zone service computes weights per frame).
+EDITOR_INTERFACE void AudioSetReverbParams(f32 decay_seconds, f32 wet_level, f32 predelay_ms)
+{
+	runtime::audio::reverb_set_params(decay_seconds, wet_level, predelay_ms);
+}
+
+// Per-voice send gain (reverbZoneMix x listener zone weight, 0..1).
+EDITOR_INTERFACE void AudioSetVoiceReverbSend(u64 handle, f32 send)
+{
+	runtime::audio::voice_set_reverb_send(handle, send);
 }
 
 // Hands a .vpak audio entry to the native engine — the name then plays exactly
