@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Runtime.Serialization;
 using System.Xml;
@@ -129,6 +129,7 @@ namespace Editor.Core.Assets
                 case ".wav":
                 case ".mp3":
                 case ".ogg":
+            case ".vsndc":
                     return AssetType.Audio;
 
                 case ".vshader":

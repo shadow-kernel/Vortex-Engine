@@ -786,11 +786,23 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                     ? item.Path
                     : System.IO.Path.Combine(projectPath, item.Path);
                 if (!System.IO.File.Exists(full)) return;
+
+                float volume = 1f, pitch = 1f;
+                if (Core.Audio.SoundContainerService.IsContainerPath(full))
+                {
+                    // Container tiles roll a fresh clip each click — click twice, hear variation.
+                    if (!Core.Audio.SoundContainerService.Resolve(full, out var rolled)) return;
+                    full = System.IO.Path.Combine(projectPath, rolled.ClipPath);
+                    if (!System.IO.File.Exists(full)) return;
+                    volume = rolled.VolumeScale;
+                    pitch = rolled.PitchScale;
+                }
+
                 // stream:true — auditioning must never fully decode a multi-minute clip
                 // on the UI thread (freeze) or pin its PCM for the session (streaming
                 // uses the cheap header-probe path). Priority 0 so a running play-mode
                 // soundscape can't steal the preview.
-                _auditionVoice = DllWrapper.VortexAudio.PlayVoice(full, 1f, 1f, 0f, loop: false, priority: 0, stream: true);
+                _auditionVoice = DllWrapper.VortexAudio.PlayVoice(full, volume, pitch, 0f, loop: false, priority: 0, stream: true);
             }
             catch (Exception ex)
             {
@@ -817,6 +829,17 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                     FileExplorerService.Instance.NavigateTo(item.Source);
                     return;
                 }
+                // Sound container -> its editor (entries, ranges, audition).
+                if (item.Type == AssetType.Audio && item.IsImported
+                    && Core.Audio.SoundContainerService.IsContainerPath(item.Path))
+                {
+                    var root0 = ProjectData.Current?.Path;
+                    if (!string.IsNullOrEmpty(root0))
+                        Editor.Editors.AudioEditor.SoundContainerEditorWindow.Open(
+                            Window.GetWindow(this), System.IO.Path.Combine(root0, item.Path));
+                    return;
+                }
+
                 AssetDoubleClicked?.Invoke(this, item);
                 // reveal the asset's folder in the file tree (browser -> tree sync)
                 if (item.IsImported && !string.IsNullOrEmpty(item.Path))
@@ -866,6 +889,27 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
         }
 
         // ---- right-click context menu (built dynamically per selection) ----
+        /// <summary>Creates Assets/Audio/NewSoundContainer.vsndc (unique name) and opens
+        /// its editor.</summary>
+        private void CreateSoundContainer()
+        {
+            try
+            {
+                var root = ProjectData.Current?.Path;
+                if (string.IsNullOrEmpty(root)) return;
+                var dir = System.IO.Path.Combine(root, "Assets", "Audio");
+                System.IO.Directory.CreateDirectory(dir);
+                var path = System.IO.Path.Combine(dir, "NewSoundContainer" + Core.Audio.SoundContainer.FileExtension);
+                int n = 1;
+                while (System.IO.File.Exists(path))
+                    path = System.IO.Path.Combine(dir, "NewSoundContainer" + (++n) + Core.Audio.SoundContainer.FileExtension);
+                new Core.Audio.SoundContainer().Save(path);
+                RefreshAssets();
+                Editor.Editors.AudioEditor.SoundContainerEditorWindow.Open(Window.GetWindow(this), path);
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Audio] create container failed: " + ex.Message); }
+        }
+
         private void AssetList_RightDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
         {
             var dep = e.OriginalSource as System.Windows.DependencyObject;
@@ -895,6 +939,14 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
         private ContextMenu BuildAssetContextMenu(AssetItem item)
         {
             var menu = new ContextMenu { Background = Br("#FF161618"), BorderBrush = Br("#FF3A3A3E") };
+
+            // Audio tab: containers are authored right here.
+            if (_currentType == AssetType.Audio)
+            {
+                AddMenu(menu, "New Sound Container", CreateSoundContainer, 0xF158, "#FFCE9178");
+                if (item != null) menu.Items.Add(new Separator());
+            }
+
             if (item != null)
             {
                 bool isPrefabItem = item.Type == AssetType.Prefab || (item.Path?.EndsWith(".ventity", StringComparison.OrdinalIgnoreCase) ?? false);
@@ -1760,20 +1812,21 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             try { files = System.IO.Directory.GetFiles(assetsDir, "*.*", System.IO.SearchOption.AllDirectories); }
             catch { return; }
 
-            var audioExts = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".wav", ".mp3", ".ogg", ".flac" };
+            var audioExts = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".wav", ".mp3", ".ogg", ".flac", ".vsndc" };
             foreach (var file in files)
             {
                 var ext = System.IO.Path.GetExtension(file);
                 if (!audioExts.Contains(ext)) continue;
 
+                var isContainer = ext.Equals(".vsndc", StringComparison.OrdinalIgnoreCase);
                 var rel = file.Substring(projectPath.Length).TrimStart('\\', '/').Replace('\\', '/');
                 var meta = AssetDatabase.Instance.GetAssetByPath(rel);
                 var item = new AssetItem
                 {
                     Id = Assets.Count,
                     Name = System.IO.Path.GetFileNameWithoutExtension(file),
-                    TypeName = ext.TrimStart('.').ToUpperInvariant() + " Audio",
-                    IconCode = "\uE767", // speaker glyph, same as the AudioSource component
+                    TypeName = isContainer ? "Sound Container" : ext.TrimStart('.').ToUpperInvariant() + " Audio",
+                    IconCode = isContainer ? "\uF158" : "\uE767", // dice vs speaker
                     IconColor = "#CE9178",
                     Type = AssetType.Audio,
                     Path = rel,
@@ -1781,7 +1834,19 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                     IsImported = true
                 };
                 Assets.Add(item);
-                QueueAudioPreview(item, file);
+                if (isContainer)
+                {
+                    try
+                    {
+                        var container = Core.Audio.SoundContainer.Load(file);
+                        item.ToolTipText = "Sound Container \u00B7 " + container.Entries.Count + " clips \u00B7 double-click to edit";
+                    }
+                    catch { }
+                }
+                else
+                {
+                    QueueAudioPreview(item, file);
+                }
             }
         }
 

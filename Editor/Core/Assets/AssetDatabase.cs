@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -161,7 +161,7 @@ namespace Editor.Core.Assets
                 ".png" or ".jpg" or ".jpeg" or ".tga" or ".bmp" or ".psd" or ".hdr" or ".dds" => AssetType.Texture,
                 ".ventity" => AssetType.Prefab,
                 ".hlsl" or ".glsl" or ".shader" => AssetType.Shader,
-                ".wav" or ".mp3" or ".ogg" or ".flac" => AssetType.Audio,
+                ".wav" or ".mp3" or ".ogg" or ".flac" or ".vsndc" => AssetType.Audio,
                 ".cs" or ".cpp" or ".h" => AssetType.Script,
                 ".ttf" or ".otf" => AssetType.Font,
                 ".vui" => AssetType.UI,

@@ -34,6 +34,10 @@ namespace Editor.Core.Services
             /// <summary>Script called Pause() — ResumeAll (editor un-pause) must NOT
             /// override a deliberate script pause.</summary>
             public bool ScriptPaused;
+            /// <summary>Container roll of the CURRENT voice — the per-frame property
+            /// push must keep multiplying these in or the variation gets stomped.</summary>
+            public float RolledVolumeScale = 1f;
+            public float RolledPitchScale = 1f;
             // Pre-play values of everything scripts can write through the handle —
             // play must stay non-destructive (mirrors the transform snapshot).
             public float OrigVolume;
@@ -348,6 +352,19 @@ namespace Editor.Core.Services
         {
             if (!_active || string.IsNullOrEmpty(clip) || _failedPaths.Contains(clip))
                 return VortexAudio.InvalidVoice;
+
+            // Containers roll a fresh clip + variation per shot.
+            if (Core.Audio.SoundContainerService.IsContainerPath(clip))
+            {
+                var containerAbs = ResolveContainerFile(clip);
+                if (containerAbs == null || !Core.Audio.SoundContainerService.Resolve(containerAbs, out var rolled))
+                    return VortexAudio.InvalidVoice;
+                clip = rolled.ClipPath;
+                volume *= rolled.VolumeScale;
+                pitch *= rolled.PitchScale;
+                if (_failedPaths.Contains(clip)) return VortexAudio.InvalidVoice;
+            }
+
             var path = ResolveClipPath(clip);
             if (path == null) return VortexAudio.InvalidVoice;
             // Same permanent-failure discipline as component voices: an undecodable
@@ -505,6 +522,24 @@ namespace Editor.Core.Services
             var clip = b.Source.AudioClipPath;
             if (_failedPaths.Contains(clip)) { b.WantsPlay = false; return; }
 
+            // Sound containers (.vsndc): every (re)start rolls a fresh clip + pitch/
+            // volume variation — footsteps stop sounding like a metronome.
+            float volumeScale = 1f, pitchScale = 1f;
+            if (Core.Audio.SoundContainerService.IsContainerPath(clip))
+            {
+                var containerAbs = ResolveContainerFile(clip);
+                if (containerAbs == null || !Core.Audio.SoundContainerService.Resolve(containerAbs, out var rolled))
+                {
+                    if (_warnedPaths.Add(clip))
+                        System.Diagnostics.Debug.WriteLine("[Audio] container empty/missing: '" + clip + "'");
+                    return;
+                }
+                clip = rolled.ClipPath;
+                volumeScale = rolled.VolumeScale;
+                pitchScale = rolled.PitchScale;
+                if (_failedPaths.Contains(clip)) return;
+            }
+
             var path = ResolveClipPath(clip);
             if (path == null) return;
 
@@ -524,13 +559,15 @@ namespace Editor.Core.Services
             }
 
             b.Handle = VortexAudio.PlayVoice(path,
-                b.Source.Mute ? 0f : b.Source.Volume,
-                b.Source.Pitch,
+                (b.Source.Mute ? 0f : b.Source.Volume) * volumeScale,
+                b.Source.Pitch * pitchScale,
                 b.Source.StereoPan,
                 b.Source.Loop,
                 b.Source.Priority,
                 b.Source.Streaming,
                 b.Source.OutputBus);
+            b.RolledVolumeScale = volumeScale;
+            b.RolledPitchScale = pitchScale;
 
             if (b.Handle != VortexAudio.InvalidVoice)
             {
@@ -546,8 +583,8 @@ namespace Editor.Core.Services
         private void PushProperties(SourceBinding b)
         {
             var s = b.Source;
-            VortexAudio.SetVoiceVolume(b.Handle, s.Mute ? 0f : s.Volume);
-            VortexAudio.SetVoicePitch(b.Handle, s.Pitch);
+            VortexAudio.SetVoiceVolume(b.Handle, (s.Mute ? 0f : s.Volume) * b.RolledVolumeScale);
+            VortexAudio.SetVoicePitch(b.Handle, s.Pitch * b.RolledPitchScale);
             VortexAudio.SetVoicePan(b.Handle, s.StereoPan);
             VortexAudio.SetVoiceSpatial(b.Handle, s.SpatialBlend, s.MinDistance, s.MaxDistance,
                 (int)s.RolloffMode, s.DopplerLevel, s.Spread);
@@ -677,6 +714,38 @@ namespace Editor.Core.Services
 
         /// <summary>Clips already handed to the native engine as in-memory blobs.</summary>
         private readonly HashSet<string> _registeredPakClips = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>Container file (.vsndc) → absolute path: loose file in the project,
+        /// or extracted from the mounted pak (text asset, tiny).</summary>
+        private string ResolveContainerFile(string containerRel)
+        {
+            try
+            {
+                if (Path.IsPathRooted(containerRel) && File.Exists(containerRel)) return containerRel;
+                var root = ProjectData.Current?.Path;
+                if (!string.IsNullOrEmpty(root))
+                {
+                    var full = Path.Combine(root, containerRel);
+                    if (File.Exists(full)) return full;
+                }
+                if (AssetVfs.TryGetBytes(containerRel, out var bytes))
+                {
+                    var tmp = Path.Combine(Path.GetTempPath(), "VortexContainers",
+                        (uint)containerRel.ToLowerInvariant().GetHashCode() + "_" + bytes.Length + "_" + Path.GetFileName(containerRel));
+                    if (!File.Exists(tmp))
+                    {
+                        Directory.CreateDirectory(Path.GetDirectoryName(tmp));
+                        File.WriteAllBytes(tmp, bytes);
+                    }
+                    return tmp;
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("[Audio] container resolve failed: " + ex.Message);
+            }
+            return null;
+        }
 
         /// <summary>Project-relative clip path → something the native decoder can open.
         /// Editor + loose-file builds resolve to a disk path; pak-only shipped builds

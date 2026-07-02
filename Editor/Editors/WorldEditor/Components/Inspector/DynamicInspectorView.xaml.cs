@@ -470,7 +470,7 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
 
             if (string.IsNullOrEmpty(abs)) return false;
             var ext = System.IO.Path.GetExtension(abs).ToLowerInvariant();
-            if (ext != ".wav" && ext != ".mp3" && ext != ".ogg" && ext != ".flac") return false;
+            if (ext != ".wav" && ext != ".mp3" && ext != ".ogg" && ext != ".flac" && ext != ".vsndc") return false;
 
             // AudioSource clip paths are project-relative; audio browser tiles already
             // drag relative paths, explorer/Windows drops arrive absolute.
