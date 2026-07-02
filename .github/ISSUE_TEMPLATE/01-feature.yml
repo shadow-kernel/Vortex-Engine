@@ -1,0 +1,49 @@
+name: "✨ Feature Request"
+description: "Propose a new engine or editor feature"
+title: "[Feature] "
+labels: ["type:feature", "status:triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for proposing a feature! Check the [Roadmap](../../wiki/Roadmap) and existing issues first to avoid duplicates.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / Motivation
+      description: What can't you do today? Why does the engine need this?
+      placeholder: "As a game developer I want to ... but currently ..."
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: How should it work? UI mockups, API sketches and file formats welcome.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Engine Area
+      options:
+        - Rendering
+        - Audio
+        - Assets / Asset DB
+        - Editor / Tooling
+        - Scripting / API
+        - Physics / Collision
+        - Animation
+        - UI (VUI)
+        - AI / Navigation
+        - Claude Integration
+        - Performance
+        - Build / CI / Packaging
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Workarounds you tried, other engines' approaches, etc.

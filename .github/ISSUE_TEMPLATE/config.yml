@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 📖 Engine Wiki (Architecture, Roadmap, Design Docs)
+    url: https://github.com/shadow-kernel/Vortex-Engine/wiki
+    about: Read the design docs and the roadmap before filing feature requests.
+  - name: 🗺️ Roadmap Project Board
+    url: https://github.com/shadow-kernel/Vortex-Engine/projects
+    about: See what is planned, in progress, and done.

@@ -1,0 +1,46 @@
+name: "🐛 Bug Report"
+description: "Something in the engine or editor is broken"
+title: "[Bug] "
+labels: ["type:bug", "status:triage"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: Clear description of the bug. Screenshots / F12 captures help a lot.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to Reproduce
+      placeholder: |
+        1. Create a new 3D Starter project
+        2. Import model X
+        3. Press Play
+        4. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Engine Version
+      placeholder: "v2.5.1 (Help → About)"
+    validations:
+      required: true
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU / Driver
+      placeholder: "RTX 4070, driver 566.xx"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / Stack Trace
+      render: text

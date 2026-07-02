@@ -1,0 +1,31 @@
+name: "⚡ Performance Issue"
+description: "FPS drops, stutter, long load times, memory growth"
+title: "[Perf] "
+labels: ["type:perf", "status:triage"]
+body:
+  - type: textarea
+    id: symptom
+    attributes:
+      label: Symptom
+      description: What is slow? Include Real/Shown FPS readout numbers if possible.
+    validations:
+      required: true
+  - type: textarea
+    id: scene
+    attributes:
+      label: Scene / Content
+      description: Instance count, triangle count, texture sizes, DLSS mode (SR/FG), render scale.
+    validations:
+      required: true
+  - type: input
+    id: hardware
+    attributes:
+      label: Hardware
+      placeholder: "CPU / GPU / RAM / monitor refresh rate"
+    validations:
+      required: true
+  - type: textarea
+    id: measurements
+    attributes:
+      label: Measurements
+      description: Before/after numbers, PIX/Nsight captures, frame times.
