@@ -21,6 +21,16 @@ is **not** bundled in this source repository.
 - **License:** Dual Public Domain (Unlicense) / MIT. © Sean Barrett.
 - **Text:** embedded at the bottom of `Engine/ThirdParty/stb_image.h` · upstream: https://github.com/nothings/stb
 
+### miniaudio
+- **Use:** audio engine backend — playback device (WASAPI), mixing node graph, WAV/FLAC/MP3 decoding (`Engine/ThirdParty/miniaudio.h`, v0.11.22).
+- **License:** Dual Public Domain (Unlicense) / MIT-0 ("No Attribution"). © David Reid.
+- **Text:** embedded at the bottom of `Engine/ThirdParty/miniaudio.h` · upstream: https://github.com/mackron/miniaudio
+
+### stb_vorbis
+- **Use:** OGG Vorbis decoding, hooked into miniaudio (`Engine/ThirdParty/stb_vorbis.c`, v1.22).
+- **License:** Dual Public Domain (Unlicense) / MIT. © Sean Barrett.
+- **Text:** embedded at the bottom of `Engine/ThirdParty/stb_vorbis.c` · upstream: https://github.com/nothings/stb
+
 ---
 
 ## Linked into the editor (restored via NuGet at build; not committed here)

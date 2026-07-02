@@ -1,14 +1,19 @@
 #pragma comment(lib, "Engine.lib")
 
-#define TEST_ECS 1
+// Pick exactly one test. TEST_AUDIO is the non-interactive smoke test and the
+// default; TEST_ECS is the original interactive ECS stress test.
+#define TEST_AUDIO 1
+#define TEST_ECS 0
 
-#if TEST_ECS
+#if TEST_AUDIO
+#include "TestAudio.h"
+#elif TEST_ECS
 #include "TestECS.h"
 #else
 #error "No test defined"
 #endif
 
-int main() 
+int main()
 {
 
 #if _DEBUG

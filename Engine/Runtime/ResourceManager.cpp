@@ -1,5 +1,6 @@
 #include "ResourceManager.h"
 #include "AssetDatabase.h"
+#include "Systems/AudioEngine.h"
 
 #include <unordered_map>
 #include <mutex>
@@ -78,7 +79,19 @@ namespace vortex::runtime::resource_manager {
 	resource_handle load_texture(const char* path) { return load_resource(path ? path : ""); }
 	resource_handle load_material(const char* path) { return load_resource(path ? path : ""); }
 	resource_handle load_shader(const char* path) { return load_resource(path ? path : ""); }
-	resource_handle load_audio(const char* path) { return load_resource(path ? path : ""); }
+
+	resource_handle load_audio(const char* path)
+	{
+		resource_handle handle = load_resource(path ? path : "");
+		if (handle.is_valid())
+		{
+			// Decode + cache now (wav/flac/mp3/ogg) so bad files are reported at load
+			// time and first play is hitch-free. Failure keeps the handle valid —
+			// playback of an undecodable file just stays silent with a logged warning.
+			audio::preload(path);
+		}
+		return handle;
+	}
 
 	resource_handle load_mesh_by_guid(const char* guid)
 	{
@@ -140,6 +153,10 @@ namespace vortex::runtime::resource_manager {
 		{
 			g_path_by_handle.erase(handle.value);
 			g_cache.erase(it);
+			// Unconditional: preload accepts any decodable path (miniaudio content-sniffs
+			// past unknown extensions), so the release side must not extension-filter.
+			// A path that was never audio is a cheap no-op inside unload_sound.
+			audio::unload_sound(key.c_str());
 		}
 	}
 }

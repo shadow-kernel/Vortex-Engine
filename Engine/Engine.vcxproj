@@ -72,11 +72,15 @@
     <ClInclude Include="Runtime\RenderLoop.h" />
     <ClInclude Include="Runtime\ResourceManager.h" />
     <ClInclude Include="Runtime\SceneManager.h" />
+    <ClInclude Include="Runtime\Systems\AudioEngine.h" />
     <ClInclude Include="Runtime\Systems\AudioSystem.h" />
     <ClInclude Include="Runtime\Systems\PhysicsSystem.h" />
     <ClInclude Include="Runtime\Systems\RenderSystem.h" />
     <ClInclude Include="Runtime\Systems\RenderSystemDX12.h" />
+    <ClInclude Include="ThirdParty\miniaudio.h" />
     <ClInclude Include="ThirdParty\stb_image.h" />
+    <!-- stb_vorbis.c is #included by AudioEngine.cpp (miniaudio OGG hookup), never compiled standalone -->
+    <ClInclude Include="ThirdParty\stb_vorbis.c" />
     <ClInclude Include="Utilities\MathTypes.h" />
     <ClInclude Include="Utilities\Utilities.h" />
     <ClInclude Include="VortexAPI\GameEntity.h" />
@@ -141,6 +145,7 @@
     <ClCompile Include="Runtime\RenderLoop.cpp" />
     <ClCompile Include="Runtime\ResourceManager.cpp" />
     <ClCompile Include="Runtime\SceneManager.cpp" />
+    <ClCompile Include="Runtime\Systems\AudioEngine.cpp" />
     <ClCompile Include="Runtime\Systems\AudioSystem.cpp" />
     <ClCompile Include="Runtime\Systems\PhysicsSystem.cpp" />
     <ClCompile Include="Runtime\Systems\RenderSystem.cpp" />

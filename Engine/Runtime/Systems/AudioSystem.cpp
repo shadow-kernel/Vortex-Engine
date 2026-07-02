@@ -1,10 +1,11 @@
 #include "AudioSystem.h"
+#include "AudioEngine.h"
 
 namespace vortex::runtime::systems {
 
 	namespace {
 		static bool g_initialized{ false };
-		static float g_sim_time{ 0.0f };
+		static bool g_startup_beep_played{ false };
 	}
 
 	bool audio_initialized()
@@ -14,12 +15,16 @@ namespace vortex::runtime::systems {
 
 	void initialize_audio()
 	{
+		if (g_initialized) return;
+		audio::initialize();
 		g_initialized = true;
-		g_sim_time = 0.0f;
+		g_startup_beep_played = false;
 	}
 
 	void shutdown_audio()
 	{
+		if (!g_initialized) return;
+		audio::shutdown();
 		g_initialized = false;
 	}
 
@@ -28,7 +33,16 @@ namespace vortex::runtime::systems {
 	void update_audio(float dt)
 	{
 		if (!g_initialized) return;
-		g_sim_time += dt;
-		// TODO(audio): update 3D voices, listener transform, streaming.
+
+		// update_audio only ticks while the game simulation runs, so the first tick
+		// marks "runtime started in play mode". The beep is the audible smoke test
+		// from issue #6; issue #8 replaces it with real AudioSource playback.
+		if (!g_startup_beep_played)
+		{
+			g_startup_beep_played = true;
+			audio::play_test_beep();
+		}
+
+		audio::update(dt);
 	}
 }
