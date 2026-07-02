@@ -158,7 +158,11 @@ msbuild Vortex.slnx /t:Build /p:Configuration=Release /p:Platform=x64
 
 ## 🗺️ Roadmap
 
-We're building toward a complete, **Apple-clean** engine you can ship a **16-player Battle Royale** with.
+The full roadmap now lives on GitHub: **[Milestones](../../milestones)** (v2.6.0 → v4.0.0), the **[issue backlog](../../issues)** sorted by `P0`–`P3` priority labels, and the **[Wiki](../../wiki)** with the design docs, [feature status matrix](../../wiki/Feature-Status-Matrix) and the [horror-game-readiness gate](../../wiki/Horror-Game-Readiness).
+
+**The plan in one line:** v2.6 Audio Engine → v2.7 Horror Essentials (*game-dev-ready gate*) → v2.8 Global Asset DB → v2.9 Asset Store + Claude Sound Studio → **v3.0 Claude-Native Engine** → v3.1 Physics v2 (Jolt) → v3.2 AI & Navigation → v3.3 VFX → v3.4 World & Streaming → **v4.0 XXL: 10x-performance GPU-driven renderer**.
+
+We're building toward a complete, **Apple-clean** engine you can ship a **16-player Battle Royale** with — and the first shipped game will be a **first-person horror** title.
 
 | Status | Milestone |
 |:------:|-----------|
