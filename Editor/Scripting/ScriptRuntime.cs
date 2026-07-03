@@ -115,6 +115,9 @@ namespace Editor.Scripting
             _lastScriptWrite = LatestScriptWrite();   // baseline for hot-reload change detection
             if (!string.IsNullOrEmpty(LastBuildLog))
                 System.Diagnostics.Debug.WriteLine("[ScriptRuntime] build:\n" + LastBuildLog);
+            // Surface a compile FAILURE in the editor Console so the user sees WHY their scripts didn't run.
+            if (asm == null && !string.IsNullOrEmpty(LastBuildLog))
+                Editor.Core.Services.ConsoleService.Instance.LogError("Script build failed:\n" + LastBuildLog);
             _scriptAsm = asm;
             if (asm == null) { _active = true; return; } // no scripts / compile failed -> nothing to run
 
@@ -124,8 +127,25 @@ namespace Editor.Scripting
             for (int i = 0; i < _behaviours.Count; i++)
             {
                 try { _behaviours[i].Start(); }
-                catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] Start error: " + ex.Message); }
+                catch (Exception ex) { LogScriptError("Start", _behaviours[i], ex); }
             }
+        }
+
+        /// <summary>Report a script exception to BOTH the VS debug output and the editor's Console panel (so the user
+        /// sees which script threw, in which phase, and why — the game's errors surface where the game runs).</summary>
+        private static string _lastErrKey;
+        private static DateTime _lastErrTime;
+        private static void LogScriptError(string phase, object behaviour, Exception ex)
+        {
+            var who = behaviour?.GetType().Name ?? "Script";
+            var msg = who + "." + phase + "(): " + (ex?.InnerException?.Message ?? ex?.Message ?? "error");
+            System.Diagnostics.Debug.WriteLine("[ScriptRuntime] " + msg);
+            // Throttle a per-frame-repeating exception (a script throwing every Update) so it can't flood the Console
+            // ~60×/sec and freeze the UI: the same message reaches the Console at most once per second.
+            var now = DateTime.UtcNow;
+            if (msg == _lastErrKey && (now - _lastErrTime).TotalSeconds < 1.0) return;
+            _lastErrKey = msg; _lastErrTime = now;
+            try { Editor.Core.Services.ConsoleService.Instance.LogError(msg); } catch { }
         }
 
         /// <summary>Tick every running behaviour.</summary>
@@ -137,14 +157,14 @@ namespace Editor.Scripting
             for (int i = 0; i < _behaviours.Count; i++)
             {
                 try { _behaviours[i].Update(dt); }
-                catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] Update error: " + ex.Message); }
+                catch (Exception ex) { LogScriptError("Update", _behaviours[i], ex); }
             }
             // Auto-instantiated UI action controllers tick too, so a screen's class can drive its own widgets.
             foreach (var b in _uiActions.Values)
             {
                 if (b == null) continue;
                 try { b.Update(dt); }
-                catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] UI Update error: " + ex.Message); }
+                catch (Exception ex) { LogScriptError("UI Update", b, ex); }
             }
 
             // Skeletal animation: advance every Animator AFTER behaviours ran, so a same-frame

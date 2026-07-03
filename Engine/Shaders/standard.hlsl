@@ -40,6 +40,9 @@ cbuffer PerObject : register(b1)
     uint UseDirectXNormals;
     uint IsUnlit;
     float EmissiveStrength;
+    float2 UVTiling;         // texture repeat scale (mirrors PerObjectConstants at byte offset 128)
+    uint HasHeightTexture;   // @136 — parallax/displacement height map bound
+    float HeightScale;       // @140 — parallax depth
 };
 
 struct PointLight
@@ -73,6 +76,8 @@ Texture2D NormalTexture    : register(t1);
 Texture2D MetallicTexture  : register(t2);
 Texture2D RoughnessTexture : register(t3);
 Texture2D AOTexture        : register(t4);
+// t5 is the vertex-stage bone-palette root SRV (skinning). Height/displacement map lives at t6 (pixel).
+Texture2D HeightTexture    : register(t6);
 SamplerState LinearSampler : register(s0);
 
 struct VS_IN
@@ -108,9 +113,13 @@ PS_IN VSMain(VS_IN input)
     output.norm = normalize(mul(input.norm, (float3x3)World));
     output.uv = input.uv;
 
+    // Derive a tangent basis from the normal. Guard on the PRE-normalized cross length: for a flat up-facing
+    // surface (N=(0,1,0), a ground/ceiling plane) cross(N,(0,1,0))=(0,0,0) and normalize() would yield NaN — and
+    // `length(NaN) < 0.001` is FALSE (all NaN comparisons are false), so the old fallback was dead code and the
+    // tangent stayed NaN. That NaN now feeds the parallax path -> NaN UVs -> the whole surface renders black.
     float3 N = output.norm;
-    float3 T = normalize(cross(N, float3(0, 1, 0)));
-    if (length(T) < 0.001) T = normalize(cross(N, float3(1, 0, 0)));
+    float3 c = cross(N, float3(0, 1, 0));
+    float3 T = (dot(c, c) < 1e-6) ? normalize(cross(N, float3(1, 0, 0))) : normalize(c);
     float3 B = normalize(cross(N, T));
     output.tangent = T;
     output.bitangent = B;
@@ -157,11 +166,27 @@ float Attenuation(float distance, float range)
 
 float4 PSMain(PS_IN input) : SV_TARGET
 {
+    // Texture repeat scale: multiply UVs so a small tiling texture repeats across a large surface instead of being
+    // stretched once (the "blurry ground" bug). Guard against an unset/zero tiling (e.g. a non-material draw) -> 1x.
+    float2 tiling = (UVTiling.x > 0.0 && UVTiling.y > 0.0) ? UVTiling : float2(1.0, 1.0);
+    float2 uv = input.uv * tiling;
+
+    // Parallax mapping: shift the UVs along the tangent-space view direction by the height map, so a "texture with
+    // depth" reads as real relief (stones stand out) instead of a flat decal. Guarded: no height map / zero scale
+    // leaves UVs untouched. max(Vt.z,..) tames swimming at grazing angles.
+    if (HasHeightTexture != 0 && HeightScale > 0.0) {
+        float3 Vw = normalize(CameraPosition - input.worldPos);
+        float3x3 TBN = float3x3(normalize(input.tangent), normalize(input.bitangent), normalize(input.norm));
+        float3 Vt = mul(TBN, Vw);
+        float h = HeightTexture.Sample(LinearSampler, uv).r;
+        uv -= (Vt.xy / max(Vt.z, 0.15)) * ((1.0 - h) * HeightScale);
+    }
+
     float3 albedo = BaseColor.rgb;
     float alpha = BaseColor.a;
 
     if (HasAlbedoTexture != 0) {
-        float4 tex = AlbedoTexture.Sample(LinearSampler, input.uv);
+        float4 tex = AlbedoTexture.Sample(LinearSampler, uv);
         albedo = SRGBToLinear(tex.rgb);
         alpha = tex.a;
     }
@@ -178,22 +203,22 @@ float4 PSMain(PS_IN input) : SV_TARGET
 
     float metallic = Metallic;
     if (HasMetallicTexture != 0) {
-        metallic = MetallicTexture.Sample(LinearSampler, input.uv).r;
+        metallic = MetallicTexture.Sample(LinearSampler, uv).r;
     }
 
     float roughness = max(Roughness, 0.04);
     if (HasRoughnessTexture != 0) {
-        roughness = max(RoughnessTexture.Sample(LinearSampler, input.uv).r, 0.04);
+        roughness = max(RoughnessTexture.Sample(LinearSampler, uv).r, 0.04);
     }
 
     float ao = AO;
     if (HasAOTexture != 0) {
-        ao = AOTexture.Sample(LinearSampler, input.uv).r;
+        ao = AOTexture.Sample(LinearSampler, uv).r;
     }
 
     float3 N = normalize(input.norm);
     if (HasNormalTexture != 0) {
-        float3 normalMap = NormalTexture.Sample(LinearSampler, input.uv).rgb;
+        float3 normalMap = NormalTexture.Sample(LinearSampler, uv).rgb;
         normalMap = normalMap * 2.0 - 1.0;
         if (UseDirectXNormals == 0) normalMap.y = -normalMap.y;
         normalMap.xy *= NormalStrength;

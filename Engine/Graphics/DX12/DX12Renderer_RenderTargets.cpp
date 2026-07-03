@@ -237,6 +237,7 @@ namespace vortex::graphics::dx12
 				obj_cb.world = item.world_matrix;
 				obj_cb.base_color = { 0.8f, 0.8f, 0.8f, 1.0f };
 				obj_cb.metallic = 0.0f; obj_cb.roughness = 0.5f; obj_cb.ao = 1.0f; obj_cb.normal_strength = 1.0f;
+				obj_cb.uv_tiling = { 1.0f, 1.0f };   // default so a no-material object isn't left with a 0,0 tiling
 
 				// Full PBR material + textures (matches render_3d_scene) so previews show the REAL material, not a
 				// flat base color.
@@ -278,6 +279,11 @@ namespace vortex::graphics::dx12
 					if (roughness_tex && roughness_tex->is_valid() && roughness_tex->srv_gpu().ptr != 0) { obj_cb.has_roughness_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(6, roughness_tex->srv_gpu()); }
 					auto* ao_tex = mat->ao_texture();
 					if (ao_tex && ao_tex->is_valid() && ao_tex->srv_gpu().ptr != 0) { obj_cb.has_ao_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(7, ao_tex->srv_gpu()); }
+					// UV tiling + height/parallax — so previews/thumbnails/game-window match the scene viewport.
+					obj_cb.uv_tiling = props.uv_tiling;
+					obj_cb.height_scale = props.height_scale;
+					auto* height_tex = mat->height_texture();
+					if (height_tex && height_tex->is_valid() && height_tex->srv_gpu().ptr != 0) { obj_cb.has_height_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(9, height_tex->srv_gpu()); }
 				}
 				
 				void* dest = static_cast<u8*>(m_per_object_cb_mapped) + i * 256;

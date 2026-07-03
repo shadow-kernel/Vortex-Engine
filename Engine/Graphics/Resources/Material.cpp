@@ -104,6 +104,12 @@ namespace vortex::graphics
 		update_gpu_data();
 	}
 
+	void Material::set_uv_tiling(float u, float v)
+	{
+		m_properties.uv_tiling = { u, v };
+		update_gpu_data();
+	}
+
 	void Material::set_albedo_texture(Texture* texture)
 	{
 		m_albedo_texture = texture;
@@ -136,6 +142,18 @@ namespace vortex::graphics
 	{
 		m_ao_texture = texture;
 		m_properties.has_ao_texture = (texture && texture->is_valid()) ? 1 : 0;
+		update_gpu_data();
+	}
+
+	void Material::set_height_texture(Texture* texture)
+	{
+		m_height_texture = texture;
+		update_gpu_data();
+	}
+
+	void Material::set_height_scale(float value)
+	{
+		m_properties.height_scale = value;
 		update_gpu_data();
 	}
 

@@ -543,7 +543,11 @@ namespace vortex::graphics::dx12
 		// unnamed padding — the shader fields existed but were never fed, so unlit shading never engaged).
 		UINT is_unlit;                        // 4 bytes
 		float emissive_strength;              // 4 bytes
-		};  // Total: 128 bytes, aligned to 256
+		// UV tiling (texture repeat scale) — mirrors standard.hlsl's UVTiling at the SAME byte offset (128).
+		DirectX::XMFLOAT2 uv_tiling;          // 8 bytes @128
+		UINT has_height_texture;              // 4 bytes @136 (parallax/displacement height map bound)
+		float height_scale;                   // 4 bytes @140 (parallax depth) -> row 8 full (128-143)
+		};  // Total: 144 bytes, aligned to 256
 		
 		// Light constant buffer
 		ComPtr<ID3D12Resource> m_light_cb;

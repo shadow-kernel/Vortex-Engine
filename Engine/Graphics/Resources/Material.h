@@ -32,6 +32,9 @@ namespace vortex::graphics
 		u32 use_directx_normals{ 1 };                             // 4 bytes (1 = DirectX, 0 = OpenGL)
 		u32 is_unlit{ 0 };                                        // 4 bytes (1 = unlit/emissive, ignores lighting)
 		float emissive_strength{ 1.0f };                          // 4 bytes (brightness multiplier for unlit)
+		DirectX::XMFLOAT2 uv_tiling{ 1.0f, 1.0f };                // 8 bytes (texture repeat scale; 1,1 = no tiling)
+		float height_scale{ 0.05f };                              // 4 bytes (parallax/displacement depth)
+		float _pad_h{ 0.0f };                                     // 4 bytes (keep the struct 16-byte aligned)
 	};
 
 
@@ -62,6 +65,8 @@ namespace vortex::graphics
 		void set_use_directx_normals(bool use_directx);
 		void set_unlit(bool is_unlit);
 		void set_emissive_strength(float strength);
+		void set_uv_tiling(float u, float v);
+		void set_height_scale(float value);
 
 		// Texture setters
 		void set_albedo_texture(Texture* texture);
@@ -69,6 +74,7 @@ namespace vortex::graphics
 		void set_metallic_texture(Texture* texture);
 		void set_roughness_texture(Texture* texture);
 		void set_ao_texture(Texture* texture);
+		void set_height_texture(Texture* texture);
 
 		// Property getters
 		const MaterialProperties& properties() const { return m_properties; }
@@ -81,6 +87,7 @@ namespace vortex::graphics
 		Texture* metallic_texture() const { return m_metallic_texture; }
 		Texture* roughness_texture() const { return m_roughness_texture; }
 		Texture* ao_texture() const { return m_ao_texture; }
+		Texture* height_texture() const { return m_height_texture; }
 
 		bool is_valid() const { return m_constant_buffer != nullptr; }
 		bool uses_directx_normals() const { return m_properties.use_directx_normals != 0; }
@@ -103,5 +110,6 @@ namespace vortex::graphics
 		Texture* m_metallic_texture{ nullptr };
 		Texture* m_roughness_texture{ nullptr };
 		Texture* m_ao_texture{ nullptr };
+		Texture* m_height_texture{ nullptr };
 	};
 }

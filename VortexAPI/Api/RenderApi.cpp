@@ -294,6 +294,25 @@ EDITOR_INTERFACE void SetMaterialEmissiveStrength(id::id_type material_id, float
 	if (mat) mat->set_emissive_strength(strength);
 }
 
+EDITOR_INTERFACE void SetMaterialUVTiling(id::id_type material_id, float u, float v)
+{
+	auto* mat = graphics::ResourceRegistry::instance().get_material(material_id);
+	if (mat) mat->set_uv_tiling(u, v);
+}
+
+EDITOR_INTERFACE void SetMaterialHeightTexture(id::id_type material_id, id::id_type texture_id)
+{
+	auto* mat = graphics::ResourceRegistry::instance().get_material(material_id);
+	auto* tex = graphics::ResourceRegistry::instance().get_texture(texture_id);
+	if (mat && tex) mat->set_height_texture(tex);
+}
+
+EDITOR_INTERFACE void SetMaterialHeightScale(id::id_type material_id, float scale)
+{
+	auto* mat = graphics::ResourceRegistry::instance().get_material(material_id);
+	if (mat) mat->set_height_scale(scale);
+}
+
 // Render item submission
 EDITOR_INTERFACE void SubmitRenderItem(id::id_type mesh_id, id::id_type material_id, float* world_matrix)
 {

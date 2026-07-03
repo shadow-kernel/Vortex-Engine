@@ -109,9 +109,11 @@ namespace vortex::graphics::dx12
 		if (!serialize) return false;
 
 		// Params 0-7 are the long-standing ABI (every existing SetGraphicsRoot* call keeps its index).
-		// Param 8 is NEW: the bone-palette root SRV (t5, vertex-only) for GPU skinning — a root
-		// descriptor (raw GPU VA), so it costs no descriptor-heap slot and rigid draws simply never bind it.
-		D3D12_ROOT_PARAMETER params[9] = {};
+		// Param 8 is the bone-palette root SRV (t5, vertex-only) for GPU skinning — a root descriptor (raw GPU VA),
+		// so it costs no descriptor-heap slot and rigid draws simply never bind it.
+		// Param 9 is NEW: the HEIGHT/displacement map descriptor table (t6, pixel) for parallax mapping — additive, so
+		// every existing SetGraphicsRoot* index is unchanged; a material with no height map simply never binds it.
+		D3D12_ROOT_PARAMETER params[10] = {};
 
 		params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
 		params[0].Descriptor.ShaderRegister = 0;
@@ -125,7 +127,7 @@ namespace vortex::graphics::dx12
 		params[2].Descriptor.ShaderRegister = 2;
 		params[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
-		static D3D12_DESCRIPTOR_RANGE srv_ranges[5] = {};
+		static D3D12_DESCRIPTOR_RANGE srv_ranges[6] = {};
 		for (int i = 0; i < 5; i++)
 		{
 			srv_ranges[i].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -144,6 +146,17 @@ namespace vortex::graphics::dx12
 		params[8].Descriptor.ShaderRegister = 5;
 		params[8].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
 
+		// Height/displacement map descriptor table at t6 (pixel), for parallax mapping.
+		srv_ranges[5].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+		srv_ranges[5].NumDescriptors = 1;
+		srv_ranges[5].BaseShaderRegister = 6;
+		srv_ranges[5].RegisterSpace = 0;
+		srv_ranges[5].OffsetInDescriptorsFromTableStart = 0;
+		params[9].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+		params[9].DescriptorTable.NumDescriptorRanges = 1;
+		params[9].DescriptorTable.pDescriptorRanges = &srv_ranges[5];
+		params[9].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
 		D3D12_STATIC_SAMPLER_DESC sampler{};
 		sampler.Filter = D3D12_FILTER_ANISOTROPIC;
 		sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
@@ -160,7 +173,7 @@ namespace vortex::graphics::dx12
 		sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
 		D3D12_ROOT_SIGNATURE_DESC desc{};
-		desc.NumParameters = 9;
+		desc.NumParameters = 10;
 		desc.pParameters = params;
 		desc.NumStaticSamplers = 1;
 		desc.pStaticSamplers = &sampler;

@@ -86,6 +86,15 @@ namespace Editor.DllWrapper
         private static extern void SetMaterialEmissiveStrength(long materialId, float strength);
 
         [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetMaterialUVTiling(long materialId, float u, float v);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetMaterialHeightTexture(long materialId, long textureId);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetMaterialHeightScale(long materialId, float scale);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
         [return: MarshalAs(UnmanagedType.I1)]
         private static extern bool MaterialHasTexture(long materialId);
 
@@ -129,6 +138,20 @@ namespace Editor.DllWrapper
         /// </summary>
         public static void SetMaterialEmissiveBrightness(long materialId, float strength)
             => SetMaterialEmissiveStrength(materialId, strength);
+
+        /// <summary>Texture repeat scale (UV tiling). 1,1 = no tiling; higher repeats the texture across the surface
+        /// so a small tiling texture stays crisp on a large mesh instead of being stretched once.</summary>
+        public static void SetMaterialTiling(long materialId, float u, float v)
+            => SetMaterialUVTiling(materialId, u, v);
+
+        /// <summary>Assign a height/displacement map (grayscale) — the shader parallax-maps the surface so it reads
+        /// with real depth. Pair with <see cref="SetMaterialHeightDepth"/> for the strength.</summary>
+        public static void SetMaterialHeightMap(long materialId, long textureId)
+            => SetMaterialHeightTexture(materialId, textureId);
+
+        /// <summary>Parallax/displacement depth for the height map (0 = flat; ~0.02–0.1 typical).</summary>
+        public static void SetMaterialHeightDepth(long materialId, float scale)
+            => SetMaterialHeightScale(materialId, scale);
 
         public static bool HasMaterialTexture(long materialId)
             => MaterialHasTexture(materialId);

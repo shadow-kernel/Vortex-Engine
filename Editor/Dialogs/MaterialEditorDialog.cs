@@ -30,6 +30,7 @@ namespace Editor.Dialogs
         private Border _baseColorPreview;
         private Slider _metallicSlider, _roughnessSlider, _normalStrengthSlider, _aoSlider;
         private TextBlock _metallicValue, _roughnessValue, _normalStrengthValue, _aoValue;
+        private TextBox _tilingUBox, _tilingVBox;   // UV tiling (texture repeat scale)
         private CheckBox _twoSidedCheck, _receiveShadowsCheck, _castShadowsCheck;
         private TextBlock _statusText;
 
@@ -43,9 +44,10 @@ namespace Editor.Dialogs
         private bool _orbiting;
 
         // Texture paths and previews
-        private string _albedoPath, _normalPath, _metallicPath, _roughnessPath, _aoPath;
-        private Border _albedoPreview, _normalPreview, _metallicPreviewBorder, _roughnessPreview, _aoPreview;
-        private TextBlock _albedoPathText, _normalPathText, _metallicPathText, _roughnessPathText, _aoPathText;
+        private string _albedoPath, _normalPath, _metallicPath, _roughnessPath, _aoPath, _heightPath;
+        private Border _albedoPreview, _normalPreview, _metallicPreviewBorder, _roughnessPreview, _aoPreview, _heightPreview;
+        private TextBlock _albedoPathText, _normalPathText, _metallicPathText, _roughnessPathText, _aoPathText, _heightPathText;
+        private TextBox _heightScaleBox;   // parallax/displacement depth
 
         public MaterialEditorDialog()
         {
@@ -246,6 +248,13 @@ namespace Editor.Dialogs
             (_aoSlider, _aoValue, row) = CreateSliderRow("Ambient Occlusion", 0, 1, _material.AmbientOcclusion);
             stack.Children.Add(row);
 
+            // UV Tiling (texture repeat scale) — the fix for "the texture looks stretched/blurry on a big surface":
+            // set e.g. 16 to repeat the texture 16× across the mesh so it stays crisp.
+            stack.Children.Add(BuildTilingRow());
+
+            // Height Depth (parallax strength) — only visible when a Height map is assigned; ~0.02–0.08 typical.
+            stack.Children.Add(BuildHeightScaleRow());
+
             // Separator
             stack.Children.Add(new Separator { Background = new SolidColorBrush(Color.FromRgb(60, 60, 60)), Margin = new Thickness(0, 15, 0, 15) });
 
@@ -305,6 +314,11 @@ namespace Editor.Dialogs
             (_aoPreview, _aoPathText) = CreateTextureSlot("Ambient Occlusion", wrapPanel,
                 path => { _aoPath = path; MarkDirty(); },
                 () => BrowseTexture("AO"));
+
+            // Height / Displacement map (grayscale) — a "texture with depth"; parallax-mapped in the shader.
+            (_heightPreview, _heightPathText) = CreateTextureSlot("Height (Displacement)", wrapPanel,
+                path => { _heightPath = path; MarkDirty(); },
+                () => BrowseTexture("Height"));
 
             stack.Children.Add(wrapPanel);
             scroll.Content = stack;
@@ -529,6 +543,86 @@ namespace Editor.Dialogs
             return string.IsNullOrEmpty(proj) ? path : System.IO.Path.Combine(proj, path);
         }
 
+        /// <summary>Row with two number boxes for UV tiling (U, V). Editing marks dirty; values are read in
+        /// GetMaterialFromUI and applied to the engine so the change previews live.</summary>
+        private FrameworkElement BuildTilingRow()
+        {
+            // Display the EFFECTIVE tiling: a stored 0/negative renders as 1 (see ReadTiling + the render-path guard),
+            // so show 1 too — otherwise the box would show "0" while the surface tiles 1×, and a save would silently
+            // rewrite it to 1 anyway.
+            var t = _material?.UVTiling;
+            float u = (t != null && t.Length > 0 && t[0] > 0f) ? t[0] : 1f;
+            float v = (t != null && t.Length > 1 && t[1] > 0f) ? t[1] : 1f;
+
+            var panel = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
+            panel.Children.Add(new TextBlock
+            {
+                Text = "Tiling (U, V) — texture repeats across the surface",
+                Foreground = new SolidColorBrush(Color.FromRgb(136, 136, 136)), FontSize = 11
+            });
+            var boxes = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 3, 0, 0) };
+            TextBox MakeBox(float val)
+            {
+                var tb = new TextBox
+                {
+                    Text = val.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture),
+                    Width = 70, Margin = new Thickness(0, 0, 8, 0),
+                    Background = new SolidColorBrush(Color.FromRgb(20, 20, 22)),
+                    Foreground = new SolidColorBrush(Color.FromRgb(233, 233, 237)),
+                    BorderBrush = new SolidColorBrush(Color.FromRgb(44, 44, 50)),
+                    Padding = new Thickness(6, 3, 6, 3)
+                };
+                tb.TextChanged += (s, e) => MarkDirty();
+                return tb;
+            }
+            _tilingUBox = MakeBox(u);
+            _tilingVBox = MakeBox(v);
+            boxes.Children.Add(_tilingUBox);
+            boxes.Children.Add(_tilingVBox);
+            panel.Children.Add(boxes);
+            return panel;
+        }
+
+        /// <summary>Row with the parallax/displacement depth for the Height map (0 = flat).</summary>
+        private FrameworkElement BuildHeightScaleRow()
+        {
+            var panel = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
+            panel.Children.Add(new TextBlock
+            {
+                Text = "Height Depth (needs a Height map) — parallax strength",
+                Foreground = new SolidColorBrush(Color.FromRgb(136, 136, 136)), FontSize = 11
+            });
+            _heightScaleBox = new TextBox
+            {
+                Text = (_material?.HeightScale ?? 0.05f).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture),
+                Width = 90, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 3, 0, 0),
+                Background = new SolidColorBrush(Color.FromRgb(20, 20, 22)),
+                Foreground = new SolidColorBrush(Color.FromRgb(233, 233, 237)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(44, 44, 50)),
+                Padding = new Thickness(6, 3, 6, 3)
+            };
+            _heightScaleBox.TextChanged += (s, e) => MarkDirty();
+            panel.Children.Add(_heightScaleBox);
+            return panel;
+        }
+
+        private static float ReadHeightScale(TextBox box)
+        {
+            if (box != null && float.TryParse(box.Text, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out float f) && f >= 0f && !float.IsInfinity(f) && !float.IsNaN(f))
+                return f;
+            return 0.05f;
+        }
+
+        /// <summary>Parse a tiling box -> a positive float; blank/invalid/≤0 falls back to 1 (no tiling).</summary>
+        private static float ReadTiling(TextBox box)
+        {
+            if (box != null && float.TryParse(box.Text, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out float f) && f > 0f && !float.IsInfinity(f))
+                return f;
+            return 1f;
+        }
+
         private (Slider slider, TextBlock valueText, FrameworkElement row) CreateSliderRow(string label, double min, double max, double value)
         {
             var grid = new Grid { Margin = new Thickness(0, 0, 0, 10) };
@@ -716,6 +810,9 @@ namespace Editor.Dialogs
             UpdateShaderSlotUi();
             _footstepSoundPath = _material.FootstepSound;
             UpdateFootstepSlotUi();
+            var tl = _material.UVTiling;
+            if (_tilingUBox != null) _tilingUBox.Text = ((tl != null && tl.Length > 0 && tl[0] > 0f) ? tl[0] : 1f).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+            if (_tilingVBox != null) _tilingVBox.Text = ((tl != null && tl.Length > 1 && tl[1] > 0f) ? tl[1] : 1f).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
 
             SetTexturePreview(_material.AlbedoTexture, _albedoPreview, _albedoPathText);
             _albedoPath = _material.AlbedoTexture;
@@ -727,6 +824,9 @@ namespace Editor.Dialogs
             _roughnessPath = _material.RoughnessTexture;
             SetTexturePreview(_material.AOTexture, _aoPreview, _aoPathText);
             _aoPath = _material.AOTexture;
+            SetTexturePreview(_material.HeightTexture, _heightPreview, _heightPathText);
+            _heightPath = _material.HeightTexture;
+            if (_heightScaleBox != null) _heightScaleBox.Text = _material.HeightScale.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
 
             _isDirty = false;
         }
@@ -745,6 +845,8 @@ namespace Editor.Dialogs
                 MetallicTexture = _metallicPath,
                 RoughnessTexture = _roughnessPath,
                 AOTexture = _aoPath,
+                HeightTexture = _heightPath,
+                HeightScale = ReadHeightScale(_heightScaleBox),
                 TwoSided = _twoSidedCheck.IsChecked == true,
                 CastShadows = _castShadowsCheck.IsChecked == true,
                 ReceiveShadows = _receiveShadowsCheck.IsChecked == true,
@@ -754,7 +856,8 @@ namespace Editor.Dialogs
                 ShaderType = GetComboText(_shaderTypeCombo, "Standard PBR"),
                 BlendMode = GetComboText(_renderModeCombo, "Opaque"),
                 ShaderAsset = string.IsNullOrEmpty(_shaderAssetPath) ? null : _shaderAssetPath,
-                FootstepSound = string.IsNullOrEmpty(_footstepSoundPath) ? null : _footstepSoundPath
+                FootstepSound = string.IsNullOrEmpty(_footstepSoundPath) ? null : _footstepSoundPath,
+                UVTiling = new float[] { ReadTiling(_tilingUBox), ReadTiling(_tilingVBox) }
             };
 
             if (_baseColorPreview.Background is SolidColorBrush brush)

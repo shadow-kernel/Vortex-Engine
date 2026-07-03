@@ -284,6 +284,8 @@
     <Compile Include="Core\Services\MultiViewportRenderService.cs" />
     <Compile Include="Core\Services\PlayCameraHelper.cs" />
     <Compile Include="Core\Services\PlayModeService.cs" />
+    <Compile Include="Core\Services\ConsoleService.cs" />
+    <Compile Include="Editors\WorldEditor\Components\Console\ConsoleView.cs" />
     <Compile Include="Core\Services\ProjectService.cs" />
     <Compile Include="Core\Services\PrefabService.cs" />
     <Compile Include="Core\Services\ProjectTemplateService.cs" />

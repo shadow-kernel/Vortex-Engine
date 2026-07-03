@@ -1463,7 +1463,7 @@ namespace Editor.Dialogs
             if (!Path.IsPathRooted(full))
                 full = Path.Combine(_modelData.Directory, full);
             if (!File.Exists(full)) return;
-            long tex = Editor.DllWrapper.VortexAPI.ImportTextureFromFile(full);
+            long tex = Core.Services.MaterialService.ImportTextureCached(full);   // cached -> no repeated 4K GPU re-upload
             if (tex >= 0) setter(materialId, tex);
         }
 

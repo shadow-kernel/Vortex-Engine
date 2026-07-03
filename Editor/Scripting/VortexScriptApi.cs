@@ -215,6 +215,16 @@ namespace Vortex
         public virtual void OnCollisionEnter(TriggerHit other) { }
     }
 
+    /// <summary>Log to the editor's Console panel (bottom, next to the Explorer) — shows while the game plays, with
+    /// timestamps and Info/Warn/Error colours. Unity-style: pass anything, it's ToString()'d.</summary>
+    public static class Debug
+    {
+        public static void Log(object message) => Editor.Core.Services.ConsoleService.Instance.Log(Str(message));
+        public static void LogWarning(object message) => Editor.Core.Services.ConsoleService.Instance.LogWarning(Str(message));
+        public static void LogError(object message) => Editor.Core.Services.ConsoleService.Instance.LogError(Str(message));
+        private static string Str(object m) => m?.ToString() ?? "null";
+    }
+
     /// <summary>Keyboard + mouse input. Key names match WPF keys, e.g. "W", "Space", "LeftShift".</summary>
     public static class Input
     {

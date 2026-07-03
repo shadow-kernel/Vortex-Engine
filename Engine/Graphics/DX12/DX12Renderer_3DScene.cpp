@@ -422,6 +422,7 @@ namespace vortex::graphics::dx12
 			obj.base_color = { 0.85f, 0.85f, 0.88f, 1.0f };
 			obj.metallic = 0.7f; obj.roughness = 0.35f; obj.ao = 1.0f; obj.normal_strength = 1.0f;
 			obj.use_directx_normals = 1;
+			obj.uv_tiling = { 1.0f, 1.0f };
 			auto* mat = reg.get_material(run.mat);
 			// Skinned runs use the skinned PSO + bind their bone palette (root SRV param 8). Custom material
 			// shaders don't apply to skinned meshes in v1 (they'd need a skinned input-layout variant).
@@ -447,6 +448,7 @@ namespace vortex::graphics::dx12
 				obj.base_color = props.base_color; obj.metallic = props.metallic; obj.roughness = props.roughness;
 				obj.ao = props.ao; obj.normal_strength = props.normal_strength; obj.use_directx_normals = props.use_directx_normals;
 				obj.is_unlit = props.is_unlit; obj.emissive_strength = props.emissive_strength; // feed the PS's unlit path (was zeroed padding)
+				obj.uv_tiling = props.uv_tiling;   // texture repeat scale -> the PS multiplies UVs by this
 				auto* tex = mat->albedo_texture();
 				if (tex && tex->is_valid() && tex->srv_gpu().ptr != 0) { obj.has_albedo_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(3, tex->srv_gpu()); }
 				auto* normal = mat->normal_texture();
@@ -457,6 +459,9 @@ namespace vortex::graphics::dx12
 				if (roughness_tex && roughness_tex->is_valid() && roughness_tex->srv_gpu().ptr != 0) { obj.has_roughness_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(6, roughness_tex->srv_gpu()); }
 				auto* ao_tex = mat->ao_texture();
 				if (ao_tex && ao_tex->is_valid() && ao_tex->srv_gpu().ptr != 0) { obj.has_ao_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(7, ao_tex->srv_gpu()); }
+				auto* height_tex = mat->height_texture();
+				if (height_tex && height_tex->is_valid() && height_tex->srv_gpu().ptr != 0) { obj.has_height_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(9, height_tex->srv_gpu()); }
+				obj.height_scale = props.height_scale;   // parallax depth (root param 9 = height map at t6)
 			}
 			// One CB slot per run; clamp to the CB capacity (runs beyond reuse the last slot — only matters
 			// with thousands of DISTINCT materials, which instancing makes rare).

@@ -377,6 +377,16 @@ namespace Editor.Core.Services
             if (vmat.EmissiveStrength > 0f)
                 VortexAPI.SetMaterialEmissiveBrightness(mat, vmat.EmissiveStrength);
 
+            // UV tiling (texture repeat scale) — always applied (it's a scalar, no texture re-import), so tiling shows
+            // in the scene AND thumbnails/previews. Falls back to 1 for a missing/zero value.
+            var tl = vmat.UVTiling;
+            float tu = (tl != null && tl.Length > 0 && tl[0] > 0f) ? tl[0] : 1f;
+            float tv = (tl != null && tl.Length > 1 && tl[1] > 0f) ? tl[1] : 1f;
+            VortexAPI.SetMaterialTiling(mat, tu, tv);
+
+            // Parallax/displacement depth (scalar) — applied even in the scalars-only path.
+            VortexAPI.SetMaterialHeightDepth(mat, vmat.HeightScale);
+
             if (!includeTextures) return;   // scalars-only path (thumbnails/previews) — skip texture/shader re-import
 
             // Texture maps (resolved to absolute paths above)
@@ -385,6 +395,7 @@ namespace Editor.Core.Services
             BindMap(mat, vmat.MetallicTexture, VortexAPI.SetMaterialMetallicMap);
             BindMap(mat, vmat.RoughnessTexture, VortexAPI.SetMaterialRoughnessMap);
             BindMap(mat, vmat.AOTexture, VortexAPI.SetMaterialAOMap);
+            BindMap(mat, vmat.HeightTexture, VortexAPI.SetMaterialHeightMap);
 
             // Custom shader: compile the assigned .hlsl into a per-material PSO (the 3D pass + material preview bind
             // it instead of the built-in PBR). A compile failure is a no-op engine-side (falls back to built-in).
@@ -417,10 +428,32 @@ namespace Editor.Core.Services
             return System.IO.File.Exists(sib) ? sib : null;
         }
 
+        // Texture id cache, keyed by absolute path + last-write time. The native importer has NO path dedup and the
+        // engine never frees textures, so re-importing the SAME file (e.g. a 4K map on every material-preview render,
+        // or every thumbnail rebuild) re-uploads the whole texture to the GPU on the UI thread — a 4K upload stalls
+        // the window ("preview hangs / unbedienbar") AND leaks VRAM. Caching by (path, mtime) uploads once and reuses;
+        // an edited texture (new mtime) re-imports. Static: texture ids are session-global and shared.
+        private static readonly Dictionary<string, long> _textureIdCache =
+            new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>Import a texture ONCE per (path, mtime) and reuse the GPU id on later calls. Use this everywhere a
+        /// texture is bound repeatedly (previews, thumbnails, live scene) instead of VortexAPI.ImportTextureFromFile.</summary>
+        public static long ImportTextureCached(string absPath)
+        {
+            if (string.IsNullOrEmpty(absPath) || !File.Exists(absPath)) return -1;
+            string key;
+            try { key = absPath + "|" + File.GetLastWriteTimeUtc(absPath).Ticks; }
+            catch { key = absPath; }
+            if (_textureIdCache.TryGetValue(key, out long cached) && cached >= 0) return cached;
+            long id = VortexAPI.ImportTextureFromFile(absPath);
+            if (id >= 0) _textureIdCache[key] = id;
+            return id;
+        }
+
         private static void BindMap(long materialId, string texturePath, Action<long, long> setter)
         {
             if (string.IsNullOrEmpty(texturePath) || !File.Exists(texturePath)) return;
-            long tex = VortexAPI.ImportTextureFromFile(texturePath);
+            long tex = ImportTextureCached(texturePath);   // cached -> a 4K map uploads once, not on every render
             if (tex >= 0) setter(materialId, tex);
         }
 
