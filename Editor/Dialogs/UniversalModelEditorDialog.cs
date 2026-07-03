@@ -33,6 +33,11 @@ namespace Editor.Dialogs
         private TextBlock _statsText;
         private TabControl _rightTabs;
 
+        // Default placement scale (persisted to the model's .vimport sidecar, applied when the model is dropped
+        // into a scene). Editable in the preview bar.
+        private float _defaultScale = 1.0f;
+        private TextBox _scaleBox;
+
         // Live 3D preview (model rendered with the current material edits)
         private Image _previewImage;
         private long[] _previewMeshIds;
@@ -169,9 +174,17 @@ namespace Editor.Dialogs
             border.Child = _previewImage;
             WireOrbit(_previewImage);
 
-            // Subtle hint at the bottom so the controls are discoverable.
+            // Two rows: a compact "Default scale" bar on top, the live preview below.
             var grid = new Grid();
-            grid.Children.Add(border);
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+
+            var scaleBar = BuildDefaultScaleBar();
+            Grid.SetRow(scaleBar, 0);
+            grid.Children.Add(scaleBar);
+
+            var previewCell = new Grid();
+            previewCell.Children.Add(border);
             var hint = new TextBlock
             {
                 Text = "Drag: orbit   ·   Wheel: zoom",
@@ -182,9 +195,76 @@ namespace Editor.Dialogs
                 Margin = new Thickness(0, 0, 0, 10),
                 IsHitTestVisible = false
             };
-            grid.Children.Add(hint);
+            previewCell.Children.Add(hint);
+            Grid.SetRow(previewCell, 1);
+            grid.Children.Add(previewCell);
+
             var outer = new Border { Child = grid };
             return outer;
+        }
+
+        /// <summary>The "Default scale" bar above the preview: sets a placement scale saved to the model's .vimport
+        /// sidecar and applied when the model is dropped into a scene (so an over/under-sized source model comes in
+        /// at the size you want). Commit on Enter or focus-out.</summary>
+        private Border BuildDefaultScaleBar()
+        {
+            _defaultScale = Core.Services.ModelImportSettings.LoadDefaultScale(_modelData?.FilePath);
+
+            var bar = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(28, 28, 31)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(48, 48, 54)),
+                BorderThickness = new Thickness(0, 0, 0, 1),
+                Padding = new Thickness(16, 8, 16, 8)
+            };
+            var row = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            row.Children.Add(new TextBlock
+            {
+                Text = "Default scale",
+                Foreground = new SolidColorBrush(Color.FromRgb(205, 205, 211)),
+                FontSize = 12.5, FontWeight = FontWeights.Medium,
+                VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0)
+            });
+            _scaleBox = new TextBox
+            {
+                Width = 74,
+                Text = _defaultScale.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture),
+                Background = new SolidColorBrush(Color.FromRgb(18, 18, 20)),
+                Foreground = Brushes.White,
+                BorderBrush = new SolidColorBrush(Color.FromRgb(70, 70, 80)),
+                BorderThickness = new Thickness(1),
+                Padding = new Thickness(6, 3, 6, 3),
+                VerticalContentAlignment = VerticalAlignment.Center
+            };
+            _scaleBox.LostKeyboardFocus += (s, e) => CommitDefaultScale();
+            _scaleBox.KeyDown += (s, e) => { if (e.Key == Key.Enter) { CommitDefaultScale(); Keyboard.ClearFocus(); } };
+            row.Children.Add(_scaleBox);
+            row.Children.Add(new TextBlock
+            {
+                Text = "applied when this model is added to a scene",
+                Foreground = new SolidColorBrush(Color.FromRgb(130, 130, 138)),
+                FontSize = 11.5, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 0, 0)
+            });
+            bar.Child = row;
+            return bar;
+        }
+
+        /// <summary>Parse + persist the default scale to the model's .vimport sidecar (reverts the box on bad input).</summary>
+        private void CommitDefaultScale()
+        {
+            if (_scaleBox == null) return;
+            if (float.TryParse(_scaleBox.Text, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var v) && v > 0.0001f)
+            {
+                _defaultScale = v;
+                Core.Services.ModelImportSettings.SaveDefaultScale(_modelData?.FilePath, _defaultScale);
+                if (_statusText != null)
+                    _statusText.Text = $"Default scale set to {_defaultScale.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)} — applied when this model is placed";
+            }
+            else
+            {
+                _scaleBox.Text = _defaultScale.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
+            }
         }
 
         /// <summary>Left column: model header + the submesh list + the material list.</summary>
@@ -1423,6 +1503,29 @@ namespace Editor.Dialogs
             um.EmissiveStrength = vmat.EmissiveStrength;
             um.TwoSided = vmat.TwoSided;
             try { um.BaseColor = vmat.GetBaseColor(); } catch { }
+
+            // Reload the TEXTURE MAPS too. Without this the Model Editor kept the pre-edit textures, so swapping a
+            // texture in the (child) Material Editor changed NOTHING in the model preview — the core "the saved
+            // material isn't applied" bug. Resolve the .vmat's stored (materials/-relative) paths to ABSOLUTE against
+            // the .vmat's own folder so they match the UniversalMaterial convention and ToVortexMaterial / BindLiveMap
+            // can load them straight away.
+            try
+            {
+                string vmatDir = System.IO.Path.GetDirectoryName(vmatPath);
+                if (!string.IsNullOrEmpty(vmatDir)) vmat.ResolvePathsAbsolute(vmatDir);
+            }
+            catch { }
+            try
+            {
+                um.SetTexture(TextureMapType.Albedo, vmat.AlbedoTexture);
+                um.SetTexture(TextureMapType.Normal, vmat.NormalTexture);
+                um.SetTexture(TextureMapType.Metallic, vmat.MetallicTexture);
+                um.SetTexture(TextureMapType.Roughness, vmat.RoughnessTexture);
+                um.SetTexture(TextureMapType.AmbientOcclusion, vmat.AOTexture);
+                um.SetTexture(TextureMapType.Emissive, vmat.EmissiveTexture);
+                um.SetTexture(TextureMapType.Height, vmat.HeightTexture);
+            }
+            catch { }
         }
 
         private void PropagateMaterialsToScene()

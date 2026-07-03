@@ -1603,10 +1603,13 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 var help = new TextBlock { Text = Editor.Core.Services.PrefabService.WorkflowHelp, Foreground = Br("#FFB4B4BC"), FontSize = 11.5, TextWrapping = TextWrapping.Wrap, LineHeight = 17, Margin = new Thickness(0, 0, 0, 18) };
                 panel.Children.Add(new Border { Background = Br("#FF1E1E22"), BorderBrush = Br("#FF2C2C32"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Padding = new Thickness(12, 10, 12, 12), Margin = new Thickness(0, 0, 0, 18), Child = help });
 
-                panel.Children.Add(PrefabActionButton("", "Edit Prefab", "Edit its components — add Scripts, Controllers, Colliders… — then Apply to save into the prefab", true,
-                    () => { PlacePrefabInstance(full, item.Name, editHint: true); win.Close(); }));
-                panel.Children.Add(PrefabActionButton("", "Add to Scene", "Drop a linked instance into the scene", false,
-                    () => PlacePrefabInstance(full, item.Name, editHint: false)));
+                // TOP action = Add to Scene (the most common thing you do with a prefab). "Edit Prefab" now really
+                // EDITS the template in isolation - it used to drop an instance into the scene (the exact "button
+                // says A but does B" bug). Edit now = edit; the topmost button = add to scene.
+                panel.Children.Add(PrefabActionButton("", "Add to Scene", "Drop a linked instance of this prefab into the active scene", true,
+                    () => { PlacePrefabInstance(full, item.Name, editHint: false); win.Close(); }));
+                panel.Children.Add(PrefabActionButton("", "Edit Prefab", "Open the prefab template in isolation - add Scripts / Colliders / components - then Save to update every placed instance", false,
+                    () => { win.Close(); OpenIsolatedPrefabEditor(full, item.Name); }));
                 if (!string.IsNullOrEmpty(modelPath))
                     panel.Children.Add(PrefabActionButton("", "Edit Model", "Open the object's model (submeshes, materials, textures) in the Model Editor", false,
                         () => { try { Dialogs.UniversalModelEditorDialog.OpenForModel(win, modelPath); } catch (Exception ex) { MessageBox.Show("Could not open the Model Editor:\n" + ex.Message, "Model Editor", MessageBoxButton.OK, MessageBoxImage.Error); } }));

@@ -266,7 +266,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                 // renderer-global FOV to its own value (player FOV / the in-game slider, up to 120), which
                 // would otherwise LEAK into the editor freecam and distort/clip the view (ground + skybox
                 // vanished at wide angles when looking around). 60 = the editor camera's configured FOV.
-                VortexAPI.SetViewFOV(60f);
+                VortexAPI.SetViewFOV(RaycastService.EditorFovYDegrees); // same FOV the picker assumes (no ray drift)
                 if (_playGridHidden) { VortexAPI.ShowGrid(_savedGrid); _playGridHidden = false; } // restore grid once
             }
 
@@ -499,7 +499,9 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                                                      transform.LocalPosition.Y,
                                                      transform.LocalPosition.Z);
 
-                        var axis = RaycastService.Instance.PickGizmoAxis(normalizedX, normalizedY, gizmoPos, aspectRatio, 1.0f);
+                        // SAME distance-based scale the renderer uses, so the hit boxes line up with the drawn arrows.
+                        float gizmoScale = RaycastService.ComputeGizmoScale(gizmoPos);
+                        var axis = RaycastService.Instance.PickGizmoAxis(normalizedX, normalizedY, gizmoPos, aspectRatio, gizmoScale);
                         if (axis != GizmoAxis.None)
                         {
                             _isDraggingGizmo = true;
@@ -577,69 +579,65 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                     
                     // Apply delta based on current gizmo mode
                     var gizmoMode = TransformGizmoService.Instance.CurrentMode;
-                    
+                    // Grid snap (the viewport "Snap" toggle): translate snaps to the grid spacing, rotate to 15°,
+                    // scale to 0.25 — so the tools give the precise, quantised control the user asked for.
+                    bool snap = EditorViewportService.Instance.SnapToGrid;
+
                     switch (gizmoMode)
                     {
                         case TransformGizmoService.GizmoMode.Translate:
-                            transform.LocalPosition = new ECS.Vector3(
+                        {
+                            var np = new ECS.Vector3(
                                 transform.LocalPosition.X + delta.X,
                                 transform.LocalPosition.Y + delta.Y,
                                 transform.LocalPosition.Z + delta.Z);
+                            if (snap)
+                                np = new ECS.Vector3(
+                                    EditorViewportService.Instance.SnapValue(np.X),
+                                    EditorViewportService.Instance.SnapValue(np.Y),
+                                    EditorViewportService.Instance.SnapValue(np.Z));
+                            transform.LocalPosition = np;
                             break;
-                            
+                        }
+
                         case TransformGizmoService.GizmoMode.Rotate:
+                        {
                             // Convert delta to rotation (degrees)
                             float rotSpeed = 50.0f;
                             float rotDelta = (delta.X + delta.Y + delta.Z) * rotSpeed;
+                            var r = transform.LocalRotation;
                             switch (_activeGizmoAxis)
                             {
-                                case GizmoAxis.X:
-                                    transform.LocalRotation = new ECS.Vector3(
-                                        transform.LocalRotation.X + rotDelta,
-                                        transform.LocalRotation.Y,
-                                        transform.LocalRotation.Z);
-                                    break;
-                                case GizmoAxis.Y:
-                                    transform.LocalRotation = new ECS.Vector3(
-                                        transform.LocalRotation.X,
-                                        transform.LocalRotation.Y + rotDelta,
-                                        transform.LocalRotation.Z);
-                                    break;
-                                case GizmoAxis.Z:
-                                    transform.LocalRotation = new ECS.Vector3(
-                                        transform.LocalRotation.X,
-                                        transform.LocalRotation.Y,
-                                        transform.LocalRotation.Z + rotDelta);
-                                    break;
+                                case GizmoAxis.X: r = new ECS.Vector3(r.X + rotDelta, r.Y, r.Z); break;
+                                case GizmoAxis.Y: r = new ECS.Vector3(r.X, r.Y + rotDelta, r.Z); break;
+                                case GizmoAxis.Z: r = new ECS.Vector3(r.X, r.Y, r.Z + rotDelta); break;
                             }
+                            if (snap)
+                                r = new ECS.Vector3(SnapTo(r.X, 15f), SnapTo(r.Y, 15f), SnapTo(r.Z, 15f));
+                            transform.LocalRotation = r;
                             break;
-                            
+                        }
+
                         case TransformGizmoService.GizmoMode.Scale:
+                        {
                             // Convert delta to scale
                             float scaleSpeed = 0.5f;
                             float scaleDelta = (delta.X + delta.Y + delta.Z) * scaleSpeed;
+                            var sc = transform.LocalScale;
                             switch (_activeGizmoAxis)
                             {
-                                case GizmoAxis.X:
-                                    transform.LocalScale = new ECS.Vector3(
-                                        Math.Max(0.01f, transform.LocalScale.X + scaleDelta),
-                                        transform.LocalScale.Y,
-                                        transform.LocalScale.Z);
-                                    break;
-                                case GizmoAxis.Y:
-                                    transform.LocalScale = new ECS.Vector3(
-                                        transform.LocalScale.X,
-                                        Math.Max(0.01f, transform.LocalScale.Y + scaleDelta),
-                                        transform.LocalScale.Z);
-                                    break;
-                                case GizmoAxis.Z:
-                                    transform.LocalScale = new ECS.Vector3(
-                                        transform.LocalScale.X,
-                                        transform.LocalScale.Y,
-                                        Math.Max(0.01f, transform.LocalScale.Z + scaleDelta));
-                                    break;
+                                case GizmoAxis.X: sc = new ECS.Vector3(Math.Max(0.01f, sc.X + scaleDelta), sc.Y, sc.Z); break;
+                                case GizmoAxis.Y: sc = new ECS.Vector3(sc.X, Math.Max(0.01f, sc.Y + scaleDelta), sc.Z); break;
+                                case GizmoAxis.Z: sc = new ECS.Vector3(sc.X, sc.Y, Math.Max(0.01f, sc.Z + scaleDelta)); break;
                             }
+                            if (snap)
+                                sc = new ECS.Vector3(
+                                    Math.Max(0.01f, SnapTo(sc.X, 0.25f)),
+                                    Math.Max(0.01f, SnapTo(sc.Y, 0.25f)),
+                                    Math.Max(0.01f, SnapTo(sc.Z, 0.25f)));
+                            transform.LocalScale = sc;
                             break;
+                        }
                     }
                     
                     // Notify inspector to update in real-time
@@ -660,6 +658,14 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                     _cameraController?.OnMouseMove(pos);
                 }
             }
+        }
+
+        /// <summary>Round <paramref name="value"/> to the nearest multiple of <paramref name="increment"/>
+        /// (rotation/scale snap during a gizmo drag). Grid/position snap uses EditorViewportService.SnapValue.</summary>
+        private static float SnapTo(float value, float increment)
+        {
+            if (increment <= 0f) return value;
+            return (float)Math.Round(value / increment) * increment;
         }
 
         private void UpdateGizmoHover(Point pos)
@@ -683,7 +689,8 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                     selected.Transform.LocalPosition.Y,
                     selected.Transform.LocalPosition.Z);
                 
-                var hoveredAxis = RaycastService.Instance.PickGizmoAxis(normalizedX, normalizedY, gizmoPos, aspectRatio, 1.0f);
+                float gizmoScale = RaycastService.ComputeGizmoScale(gizmoPos);
+                var hoveredAxis = RaycastService.Instance.PickGizmoAxis(normalizedX, normalizedY, gizmoPos, aspectRatio, gizmoScale);
                 VortexAPI.HoveredAxis = hoveredAxis;
                 VortexAPI.IsDraggingGizmo = _isDraggingGizmo;
                 VortexAPI.DraggingAxis = _activeGizmoAxis;

@@ -33,6 +33,13 @@ namespace Editor.Core.Services
         private static RaycastService _instance;
         public static RaycastService Instance => _instance ?? (_instance = new RaycastService());
 
+        /// <summary>Vertical field-of-view (degrees) the EDITOR viewport renders with. This MUST match the value
+        /// GamePreviewView pushes via VortexAPI.SetViewFOV and the native renderer's m_fov_degrees (60°) — otherwise
+        /// every picking ray is computed for a different frustum than what's on screen, so hits only line up near the
+        /// screen centre and drift ever further off toward the edges (the "hitboxes are wrong / I have to get ultra
+        /// close" bug). Single source of truth: change it here and pass it to SetViewFOV.</summary>
+        public const float EditorFovYDegrees = 60.0f;
+
         private RaycastService() { }
 
         /// <summary>
@@ -158,27 +165,25 @@ namespace Editor.Core.Services
             var transform = entity.GetComponent<Transform>();
             if (transform == null) return null;
 
-            var pos = transform.LocalPosition;
-            var scale = transform.LocalScale;
-
-            // Use AABB (Axis-Aligned Bounding Box) for picking
-            var center = new Vector3f(pos.X, pos.Y, pos.Z);
-            
-            // Default bounding box size (minimum 0.5 units for small objects)
-            float minSize = 0.5f;
-            var halfExtents = new Vector3f(
-                Math.Max(scale.X * 0.5f, minSize * 0.5f), 
-                Math.Max(scale.Y * 0.5f, minSize * 0.5f), 
-                Math.Max(scale.Z * 0.5f, minSize * 0.5f));
-
-            // Check for MeshRenderer - if present and enabled, use its scale
-            var meshRenderer = entity.GetComponent<MeshRenderer>();
-            if (meshRenderer != null && meshRenderer.IsEnabled)
+            // Pick against the entity's REAL world-space bounds (actual mesh extents + accumulated parent
+            // transform), NOT a box derived from LocalScale alone. The old code assumed every mesh was a unit
+            // cube, so an imported model at scale 1 got a 0.5-unit hitbox you had to click almost dead-centre —
+            // that's the "hitboxes are totally wrong, I have to get ultra close" bug. SceneRenderService already
+            // caches mesh bounds (GetMeshBounds) + world matrices, so reuse them for a hitbox that matches what's
+            // drawn. Falls back to a scale box if bounds aren't available yet.
+            Vector3f center, halfExtents;
+            if (!SceneRenderService.Instance.TryGetWorldPickBounds(entity,
+                    out center, out halfExtents))
             {
-                // MeshRenderer exists, use scale directly
-                halfExtents = new Vector3f(scale.X * 0.5f, scale.Y * 0.5f, scale.Z * 0.5f);
+                var pos = transform.LocalPosition;
+                var scale = transform.LocalScale;
+                center = new Vector3f(pos.X, pos.Y, pos.Z);
+                halfExtents = new Vector3f(
+                    Math.Max(Math.Abs(scale.X) * 0.5f, 0.25f),
+                    Math.Max(Math.Abs(scale.Y) * 0.5f, 0.25f),
+                    Math.Max(Math.Abs(scale.Z) * 0.5f, 0.25f));
             }
-            
+
             float? distance = RayAABBIntersect(ray, center, halfExtents);
 
             if (distance.HasValue && distance.Value > 0)
@@ -222,8 +227,8 @@ namespace Editor.Core.Services
             var right = Cross(worldUp, forward).Normalized;
             var up = Cross(forward, right).Normalized;
 
-            // FOV must match DX12Renderer: XM_PIDIV4 = 45 degrees
-            float fovY = 45.0f * (float)(Math.PI / 180.0);
+            // FOV must match the editor viewport's actual render FOV (see EditorFovYDegrees).
+            float fovY = EditorFovYDegrees * (float)(Math.PI / 180.0);
             float tanHalfFov = (float)Math.Tan(fovY * 0.5f);
             
             // Assume 16:9 if we don't have actual dimensions
@@ -276,8 +281,8 @@ namespace Editor.Core.Services
             var right = Cross(worldUp, forward).Normalized;
             var up = Cross(forward, right).Normalized;
 
-            // 45 degree FOV matching DX12Renderer (XM_PIDIV4)
-            float fovY = 45.0f * (float)(Math.PI / 180.0);
+            // FOV must match the editor viewport's actual render FOV (see EditorFovYDegrees).
+            float fovY = EditorFovYDegrees * (float)(Math.PI / 180.0);
             float tanHalfFov = (float)Math.Tan(fovY * 0.5f);
 
             float rayX = ndcX * tanHalfFov * aspectRatio;
@@ -382,6 +387,26 @@ namespace Editor.Core.Services
         public GizmoAxis PickGizmoAxis(float screenX, float screenY, Vector3f gizmoCenter, float scale = 1.0f)
         {
             return PickGizmoAxis(screenX, screenY, gizmoCenter, 16.0f / 9.0f, scale);
+        }
+
+        /// <summary>Camera-distance-based gizmo scale so the handles stay a roughly CONSTANT SIZE ON SCREEN
+        /// (Blender/Unreal behaviour) instead of shrinking to a few unclickable pixels when you zoom out. The SAME
+        /// value must feed both the RENDER (SceneRenderService.SubmitOverlays -> VortexAPI.RenderGizmo) and the
+        /// PICK (PickGizmoAxis) so the clickable boxes always sit exactly on the drawn arrows. Both callers pass the
+        /// selected entity's gizmo centre, so they compute an identical scale from the shared editor camera.</summary>
+        public static float ComputeGizmoScale(Vector3f gizmoCenter)
+        {
+            var cam = EditorCameraController.Instance;
+            if (cam == null) return 1.0f;
+            float dx = gizmoCenter.X - cam.PositionX;
+            float dy = gizmoCenter.Y - cam.PositionY;
+            float dz = gizmoCenter.Z - cam.PositionZ;
+            float dist = (float)Math.Sqrt(dx * dx + dy * dy + dz * dz);
+            // ~0.13 * distance keeps the gizmo at a fixed fraction of the vertical view (see EditorFovYDegrees).
+            // Clamp so it never collapses to nothing up close nor explodes at extreme distance.
+            float s = dist * 0.13f;
+            if (s < 0.35f) s = 0.35f; else if (s > 60.0f) s = 60.0f;
+            return s;
         }
 
         /// <summary>

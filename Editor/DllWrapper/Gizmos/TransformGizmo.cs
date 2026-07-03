@@ -183,12 +183,21 @@ namespace Editor.DllWrapper
 
         private static float[] BuildArrowMatrix(float px, float py, float pz, float size, float length, int axis)
         {
+            // The cone primitive points along +Y (apex at +half-height, see ConeGenerator). To make the arrowhead
+            // point ALONG its axis we must ROTATE it, not just stretch it — the old code only scaled, so the X and Z
+            // arrows stayed pointing straight up (the "arrow tip faces the wrong way" bug). Each matrix below is a
+            // proper rotation (determinant > 0, so no backface flip) that maps the cone's local +Y onto +X / +Y / +Z,
+            // with the height scaled by 'length' (h) and the radius by 'size' (r). Row-major: rows are the images of
+            // local X/Y/Z, translation in the last row.
             float r = size, h = length;
             switch (axis)
             {
-                case 0: return new float[] { h, 0, 0, 0, 0, r, 0, 0, 0, 0, r, 0, px, py, pz, 1 };
-                case 1: return new float[] { r, 0, 0, 0, 0, h, 0, 0, 0, 0, r, 0, px, py, pz, 1 };
-                case 2: return new float[] { r, 0, 0, 0, 0, r, 0, 0, 0, 0, h, 0, px, py, pz, 1 };
+                // +Y -> +X : rotate -90° about Z.  local X->(0,-r,0), local Y(height)->(h,0,0)=+X apex, local Z->(0,0,r)
+                case 0: return new float[] { 0, -r, 0, 0,  h, 0, 0, 0,  0, 0, r, 0,  px, py, pz, 1 };
+                // +Y -> +Y : identity orientation (already correct).
+                case 1: return new float[] { r, 0, 0, 0,  0, h, 0, 0,  0, 0, r, 0,  px, py, pz, 1 };
+                // +Y -> +Z : rotate +90° about X.  local X->(r,0,0), local Y(height)->(0,0,h)=+Z apex, local Z->(0,-r,0)
+                case 2: return new float[] { r, 0, 0, 0,  0, 0, h, 0,  0, -r, 0, 0,  px, py, pz, 1 };
                 default: return BuildAxisMatrix(px, py, pz, size, size, size);
             }
         }

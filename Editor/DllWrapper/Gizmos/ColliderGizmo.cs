@@ -10,69 +10,79 @@ namespace Editor.DllWrapper
     /// 3D. The material is UNLIT so the green stays bright and readable from every angle / in shadow.</summary>
     public static partial class VortexAPI
     {
-        private static long _colliderMaterial = ID.INVALID_ID;   // bright unlit green net
-        private static long _gizmoCylinder = ID.INVALID_ID;      // capsule body (radius 0.5, height 1.0, Y axis)
+        private static long _colliderMaterial = ID.INVALID_ID;        // bright unlit green net = SOLID (blocks)
+        private static long _colliderTriggerMaterial = ID.INVALID_ID; // amber net = TRIGGER (overlap only, passable)
+        private static long _gizmoCylinder = ID.INVALID_ID;           // capsule body (radius 0.5, height 1.0, Y axis)
 
         private static void EnsureColliderResources()
         {
             if (!_gizmosInitialized) InitializeGizmos();
             if (_colliderMaterial == ID.INVALID_ID && _gizmoCube != ID.INVALID_ID)
                 _colliderMaterial = MakeUnlitMaterial(0.25f, 0.95f, 0.45f);
+            if (_colliderTriggerMaterial == ID.INVALID_ID && _gizmoCube != ID.INVALID_ID)
+                _colliderTriggerMaterial = MakeUnlitMaterial(1.0f, 0.62f, 0.12f);
             if (_gizmoCylinder == ID.INVALID_ID)
                 _gizmoCylinder = CreateCylinderMesh(0.5f, 1.0f);
         }
 
+        /// <summary>Green net for a SOLID collider, amber for a TRIGGER — so toggling "Is Trigger / solid vs
+        /// passable" visibly recolours the wireframe in the viewport (it used to look identical, reading as
+        /// "the toggle does nothing").</summary>
+        private static long ColliderMat(bool isTrigger)
+            => (isTrigger && _colliderTriggerMaterial != ID.INVALID_ID) ? _colliderTriggerMaterial : _colliderMaterial;
+
         /// <summary>Axis-aligned-then-Y-rotated wireframe-net box (unit _gizmoCube scaled to full extents). Only Y
         /// rotation, matching the runtime collision test which rotates colliders about Y.</summary>
-        public static void RenderColliderBox(float cx, float cy, float cz, float hx, float hy, float hz, float rotYdeg)
+        public static void RenderColliderBox(float cx, float cy, float cz, float hx, float hy, float hz, float rotYdeg, bool isTrigger = false)
         {
             EnsureColliderResources();
             if (_colliderMaterial == ID.INVALID_ID || _gizmoCube == ID.INVALID_ID) return;
             double r = rotYdeg * Math.PI / 180.0; float c = (float)Math.Cos(r), s = (float)Math.Sin(r);
             // Rows are the Y-rotated unit axes scaled to the box's full extents (local x maps to (c,0,-s), z to (s,0,c)).
-            SubmitGizmoWireForRendering(_gizmoCube, _colliderMaterial, BuildBasisMatrix(
+            SubmitGizmoWireForRendering(_gizmoCube, ColliderMat(isTrigger), BuildBasisMatrix(
                 cx, cy, cz,
                 c, 0f, -s, hx * 2f,
                 0f, 1f, 0f, hy * 2f,
                 s, 0f, c, hz * 2f));
         }
 
-        public static void RenderColliderSphere(float cx, float cy, float cz, float rad)
+        public static void RenderColliderSphere(float cx, float cy, float cz, float rad, bool isTrigger = false)
         {
             EnsureColliderResources();
-            AudioWireSphere(cx, cy, cz, rad, _colliderMaterial);   // shared wire-net sphere (radius clamp inside)
+            AudioWireSphere(cx, cy, cz, rad, ColliderMat(isTrigger));   // shared wire-net sphere (radius clamp inside)
         }
 
         /// <summary>Draw the entity's actual render mesh as a green wireframe net at its world transform — the faithful
         /// collision preview for a Mesh Collider (the collision mesh IS the render mesh here), so a round object shows a
         /// round green net instead of a box around its bounds.</summary>
-        public static void RenderColliderMeshWire(long meshId, float[] worldMatrix)
+        public static void RenderColliderMeshWire(long meshId, float[] worldMatrix, bool isTrigger = false)
         {
             EnsureColliderResources();
             if (_colliderMaterial == ID.INVALID_ID || meshId < 0 || worldMatrix == null) return;
-            SubmitGizmoWireForRendering(meshId, _colliderMaterial, worldMatrix);
+            SubmitGizmoWireForRendering(meshId, ColliderMat(isTrigger), worldMatrix);
         }
 
         /// <summary>Capsule = a wire-net cylinder body plus a wire-net sphere at each cap. halfH is the half-height of
         /// the CYLINDRICAL section (caps sit at cy +/- halfH); a zero-height capsule collapses to a single sphere.</summary>
-        public static void RenderColliderCapsule(float cx, float cy, float cz, float rad, float halfH)
+        public static void RenderColliderCapsule(float cx, float cy, float cz, float rad, float halfH, bool isTrigger = false)
         {
             EnsureColliderResources();
             if (_colliderMaterial == ID.INVALID_ID) return;
+            long mat = ColliderMat(isTrigger);
             if (halfH > 0.005f && _gizmoCylinder != ID.INVALID_ID)
             {
                 // Cylinder body (mesh radius 0.5, height 1.0 along Y -> scale to diameter / full cylinder height).
-                SubmitGizmoWireForRendering(_gizmoCylinder, _colliderMaterial, BuildBasisMatrix(
+                SubmitGizmoWireForRendering(_gizmoCylinder, mat, BuildBasisMatrix(
                     cx, cy, cz,
                     1f, 0f, 0f, rad * 2f,
                     0f, 1f, 0f, halfH * 2f,
                     0f, 0f, 1f, rad * 2f));
-                AudioWireSphere(cx, cy + halfH, cz, rad, _colliderMaterial);
-                AudioWireSphere(cx, cy - halfH, cz, rad, _colliderMaterial);
+                AudioWireSphere(cx, cy + halfH, cz, rad, mat);
+                AudioWireSphere(cx, cy - halfH, cz, rad, mat);
             }
             else
             {
-                AudioWireSphere(cx, cy, cz, rad, _colliderMaterial);
+                AudioWireSphere(cx, cy, cz, rad, mat);
             }
         }
     }

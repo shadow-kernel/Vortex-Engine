@@ -376,22 +376,23 @@ namespace Editor.Core.Services
             {
                 float sx = transform.LocalScale.X, sy = transform.LocalScale.Y, sz = transform.LocalScale.Z;
                 float ccx = pos.X + col.Center.X * sx, ccy = pos.Y + col.Center.Y * sy, ccz = pos.Z + col.Center.Z * sz;
+                bool trig = col.IsTrigger; // amber net for a trigger, green for a solid — visible toggle feedback
                 if (col is Editor.ECS.Components.Physics.BoxCollider bc)
-                    VortexAPI.RenderColliderBox(ccx, ccy, ccz, Math.Abs(bc.Size.X * 0.5f * sx), Math.Abs(bc.Size.Y * 0.5f * sy), Math.Abs(bc.Size.Z * 0.5f * sz), rot.Y);
+                    VortexAPI.RenderColliderBox(ccx, ccy, ccz, Math.Abs(bc.Size.X * 0.5f * sx), Math.Abs(bc.Size.Y * 0.5f * sy), Math.Abs(bc.Size.Z * 0.5f * sz), rot.Y, trig);
                 else if (col is Editor.ECS.Components.Physics.SphereCollider spc)
-                    VortexAPI.RenderColliderSphere(ccx, ccy, ccz, spc.Radius * Math.Max(Math.Abs(sx), Math.Max(Math.Abs(sy), Math.Abs(sz))));
+                    VortexAPI.RenderColliderSphere(ccx, ccy, ccz, spc.Radius * Math.Max(Math.Abs(sx), Math.Max(Math.Abs(sy), Math.Abs(sz))), trig);
                 else if (col is Editor.ECS.Components.Physics.CapsuleCollider cpc)
                 {
                     float cr = cpc.Radius * Math.Max(Math.Abs(sx), Math.Abs(sz));
-                    VortexAPI.RenderColliderCapsule(ccx, ccy, ccz, cr, Math.Max(0f, cpc.Height * 0.5f * Math.Abs(sy) - cr));
+                    VortexAPI.RenderColliderCapsule(ccx, ccy, ccz, cr, Math.Max(0f, cpc.Height * 0.5f * Math.Abs(sy) - cr), trig);
                 }
                 else // Mesh / base collider: draw the ACTUAL render mesh as a green net (the collision mesh IS the
                      // render mesh), so a round object shows a round net — not a box. Falls back to a bounds net box.
                 {
-                    if (!RenderMeshColliderWireframe(selected))
+                    if (!RenderMeshColliderWireframe(selected, trig))
                     {
                         var b = CalculateCombinedBounds(selected);
-                        VortexAPI.RenderColliderBox(pos.X + b.CenterOffset.X, pos.Y + b.CenterOffset.Y, pos.Z + b.CenterOffset.Z, b.Size.X * 0.5f, b.Size.Y * 0.5f, b.Size.Z * 0.5f, rot.Y);
+                        VortexAPI.RenderColliderBox(pos.X + b.CenterOffset.X, pos.Y + b.CenterOffset.Y, pos.Z + b.CenterOffset.Z, b.Size.X * 0.5f, b.Size.Y * 0.5f, b.Size.Z * 0.5f, rot.Y, trig);
                     }
                 }
             }
@@ -411,7 +412,12 @@ namespace Editor.Core.Services
                     reverbZone.Falloff);
 
             if (VortexAPI.AreGizmosVisible)
-                VortexAPI.RenderGizmo(pos.X, pos.Y, pos.Z, transform.LocalScale.Y, 1.0f);
+            {
+                // Constant on-screen size (Blender/Unreal feel) — the identical scale is used by the picker in
+                // GamePreviewView (RaycastService.ComputeGizmoScale), so the clickable boxes sit on the drawn arrows.
+                float gizmoScale = RaycastService.ComputeGizmoScale(new Vector3f(pos.X, pos.Y, pos.Z));
+                VortexAPI.RenderGizmo(pos.X, pos.Y, pos.Z, transform.LocalScale.Y, gizmoScale);
+            }
         }
 
         /// <summary>Speaker icons at every AudioSource and a head icon at every AudioListener —
@@ -451,7 +457,7 @@ namespace Editor.Core.Services
         /// mesh is the render mesh), at the same world transform the mesh renders with. Mirrors the submesh resolution
         /// in RenderMesh so multi-submesh imports net every part. Returns false (caller falls back to a bounds box)
         /// when the entity has no usable render mesh.</summary>
-        private bool RenderMeshColliderWireframe(GameEntity entity)
+        private bool RenderMeshColliderWireframe(GameEntity entity, bool isTrigger = false)
         {
             var meshRenderer = entity.GetComponent<MeshRenderer>();
             if (meshRenderer == null || !meshRenderer.IsEnabled || string.IsNullOrEmpty(meshRenderer.MeshPath))
@@ -472,7 +478,7 @@ namespace Editor.Core.Services
                     string sub = meshRenderer.MeshPath + "#submesh" + n;
                     if (_submeshMeshCache.TryGetValue(sub, out long subMesh) && subMesh >= 0)
                     {
-                        VortexAPI.RenderColliderMeshWire(subMesh, worldMatrix);
+                        VortexAPI.RenderColliderMeshWire(subMesh, worldMatrix, isTrigger);
                         any = true;
                     }
                     else if (n > 0) break;
@@ -480,7 +486,7 @@ namespace Editor.Core.Services
                 if (any) return true;
             }
 
-            VortexAPI.RenderColliderMeshWire(meshId, worldMatrix);
+            VortexAPI.RenderColliderMeshWire(meshId, worldMatrix, isTrigger);
             return true;
         }
 
@@ -563,6 +569,50 @@ namespace Editor.Core.Services
 
 
             return bounds;
+        }
+
+        /// <summary>World-space AABB for viewport PICKING — the real hitbox that should match what's drawn.
+        /// Uses the actual mesh bounds (cached from the engine) transformed by the entity's full world matrix
+        /// (so it's correct for children of scaled/moved parents), instead of the old "LocalScale is the size"
+        /// guess that made imported models almost unclickable. Non-mesh entities (cameras/lights/empties) get a
+        /// small clickable box at their world position. Returns false only if the entity has no transform.</summary>
+        public bool TryGetWorldPickBounds(GameEntity entity, out Vector3f center, out Vector3f halfExtents)
+        {
+            center = new Vector3f(0, 0, 0);
+            halfExtents = new Vector3f(0.25f, 0.25f, 0.25f);
+            var t = entity?.Transform;
+            if (t == null) return false;
+
+            // World transform (walks the parent chain). Translation is the last row; scale is each basis row length.
+            float[] wm;
+            try { wm = BuildWorldMatrixWithParent(entity); }
+            catch { wm = BuildWorldMatrix(t); }
+            float wpx = wm[12], wpy = wm[13], wpz = wm[14];
+            float sx = (float)Math.Sqrt(wm[0] * wm[0] + wm[1] * wm[1] + wm[2] * wm[2]);
+            float sy = (float)Math.Sqrt(wm[4] * wm[4] + wm[5] * wm[5] + wm[6] * wm[6]);
+            float sz = (float)Math.Sqrt(wm[8] * wm[8] + wm[9] * wm[9] + wm[10] * wm[10]);
+
+            var mr = entity.GetComponent<MeshRenderer>();
+            if (mr != null && mr.IsEnabled && !string.IsNullOrEmpty(mr.MeshPath))
+            {
+                var mb = GetMeshBoundsAndCenter(mr.MeshPath);
+                // AABB centred on the mesh's real centre (offset scaled by world scale). Rotation isn't folded into
+                // the box (a broadphase AABB); the extents are the real mesh size so the box tracks the drawn model.
+                center = new Vector3f(wpx + mb.Center.X * sx, wpy + mb.Center.Y * sy, wpz + mb.Center.Z * sz);
+                halfExtents = new Vector3f(
+                    Math.Max(Math.Abs(mb.Size.X * sx) * 0.5f, 0.1f),
+                    Math.Max(Math.Abs(mb.Size.Y * sy) * 0.5f, 0.1f),
+                    Math.Max(Math.Abs(mb.Size.Z * sz) * 0.5f, 0.1f));
+                return true;
+            }
+
+            // No mesh: a modest box at the world pivot so lights/cameras/empties stay clickable.
+            center = new Vector3f(wpx, wpy, wpz);
+            halfExtents = new Vector3f(
+                Math.Max(Math.Abs(sx) * 0.5f, 0.35f),
+                Math.Max(Math.Abs(sy) * 0.5f, 0.35f),
+                Math.Max(Math.Abs(sz) * 0.5f, 0.35f));
+            return true;
         }
 
         // Cache for mesh bounds (size in local space)
@@ -902,8 +952,21 @@ namespace Editor.Core.Services
                 {
                     if (fromVfs)
                     {
-                        System.Diagnostics.Debug.WriteLine("[SceneRenderService] .vmesh from pak not supported; pack source model instead");
-                        return -1;
+                        // Shipped game: the native .vmesh loader is disk-path only (no bytes overload). Spill the
+                        // packed bytes to a per-run temp file (mirrors AudioPlaybackService's container handling) so
+                        // packed .vmesh meshes still load — otherwise a Release build renders them as missing geometry.
+                        try
+                        {
+                            var tmp = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "VortexVMesh",
+                                (uint)fullPath.ToLowerInvariant().GetHashCode() + "_" + vfsBytes.Length + ".vmesh");
+                            if (!System.IO.File.Exists(tmp))
+                            {
+                                System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(tmp));
+                                System.IO.File.WriteAllBytes(tmp, vfsBytes);
+                            }
+                            return VortexAPI.LoadVMeshFromFile(tmp);
+                        }
+                        catch { return -1; }
                     }
                     return VortexAPI.LoadVMeshFromFile(fullPath);
                 }

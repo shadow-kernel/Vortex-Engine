@@ -157,6 +157,9 @@ namespace Editor.Editors.PhysicsEditor
             }
 
             var trig = new CheckBox { Content = "Is Trigger (overlap only — no solid blocking)", Foreground = Br("#FFC8C8CE"), IsChecked = col.IsTrigger, Margin = new Thickness(0, 12, 0, 4) };
+            // On toggle: persist to the component and Rebuild() (which re-targets the preview) so the collider net
+            // recolours — amber = trigger, green = solid — in this preview AND the main viewport (which reads
+            // IsTrigger live every frame). Before, both looked identical, so the toggle appeared to do nothing.
             trig.Checked += (s, e) => { col.IsTrigger = true; Rebuild(); };
             trig.Unchecked += (s, e) => { col.IsTrigger = false; Rebuild(); };
             _body.Children.Add(trig);

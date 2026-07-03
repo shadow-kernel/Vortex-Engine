@@ -190,19 +190,20 @@ namespace Editor.Editors.PhysicsEditor
         private void SubmitColliderGizmo(Collider col)
         {
             float cx = col.Center.X, cy = col.Center.Y, cz = col.Center.Z;
+            bool trig = col.IsTrigger; // amber net for a trigger, green for a solid — so the toggle is visible here too
             if (col is BoxCollider box)
-                VortexAPI.RenderColliderBox(cx, cy, cz, Math.Abs(box.Size.X * 0.5f), Math.Abs(box.Size.Y * 0.5f), Math.Abs(box.Size.Z * 0.5f), 0f);
+                VortexAPI.RenderColliderBox(cx, cy, cz, Math.Abs(box.Size.X * 0.5f), Math.Abs(box.Size.Y * 0.5f), Math.Abs(box.Size.Z * 0.5f), 0f, trig);
             else if (col is SphereCollider sph)
-                VortexAPI.RenderColliderSphere(cx, cy, cz, sph.Radius);
+                VortexAPI.RenderColliderSphere(cx, cy, cz, sph.Radius, trig);
             else if (col is CapsuleCollider cap)
             {
                 float cr = cap.Radius;
-                VortexAPI.RenderColliderCapsule(cx, cy, cz, cr, Math.Max(0f, cap.Height * 0.5f - cr));
+                VortexAPI.RenderColliderCapsule(cx, cy, cz, cr, Math.Max(0f, cap.Height * 0.5f - cr), trig);
             }
             else // mesh / base collider: a box over the object's combined mesh bounds (edge-accurate collides vs the real tris)
             {
                 if (TryCombinedBounds(out float bcx, out float bcy, out float bcz, out float hx, out float hy, out float hz))
-                    VortexAPI.RenderColliderBox(bcx, bcy, bcz, hx, hy, hz, 0f);
+                    VortexAPI.RenderColliderBox(bcx, bcy, bcz, hx, hy, hz, 0f, trig);
             }
         }
 

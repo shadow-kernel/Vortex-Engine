@@ -196,7 +196,7 @@ namespace Editor.Editors.WorldEditor.DragDrop
                 if (!ModelImportService.IsSupportedModelFormat(extension))
                 {
                     MessageBox.Show(
-                        $"Unsupported file format: {extension}\n\nSupported formats:\n• FBX, OBJ, GLTF, GLB, DAE, 3DS, Blend, VMesh",
+                        $"Unsupported file format: {extension}\n\nSupported formats:\nï¿½ FBX, OBJ, GLTF, GLB, DAE, 3DS, Blend, VMesh",
                         "Unsupported Format",
                         MessageBoxButton.OK,
                         MessageBoxImage.Warning);
@@ -330,6 +330,10 @@ namespace Editor.Editors.WorldEditor.DragDrop
             // Create parent container entity
             var parentEntity = new GameEntity(_scene, modelName);
             parentEntity.Transform.LocalPosition = new ECS.Vector3(0, 0, 0);
+            // Apply the model's default placement scale (set in the Model Editor, stored in its .vimport sidecar).
+            float defScale = Core.Services.ModelImportSettings.LoadDefaultScale(fullModelPath);
+            if (Math.Abs(defScale - 1f) > 0.0001f)
+                parentEntity.Transform.LocalScale = new ECS.Vector3(defScale, defScale, defScale);
             _scene.AddEntity(parentEntity);
 
             // Create child entity for each submesh
@@ -496,6 +500,11 @@ namespace Editor.Editors.WorldEditor.DragDrop
             // TODO: Convert dropPosition to 3D world position via raycasting
             // For now, place at origin
             entity.Transform.LocalPosition = new ECS.Vector3(0, 0, 0);
+            // Apply the model's default placement scale (Model Editor -> .vimport sidecar); a no-op (1.0) for
+            // primitives / meshes without a sidecar.
+            float defScale = Core.Services.ModelImportSettings.LoadDefaultScale(meshPath);
+            if (Math.Abs(defScale - 1f) > 0.0001f)
+                entity.Transform.LocalScale = new ECS.Vector3(defScale, defScale, defScale);
 
             // Add to scene
             _scene.AddEntity(entity);
