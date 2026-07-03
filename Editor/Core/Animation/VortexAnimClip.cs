@@ -38,11 +38,26 @@ namespace Editor.Core.Animation
         public List<AnimKeyVec3> Scale { get; set; } = new List<AnimKeyVec3>();
     }
 
-    /// <summary>Named marker on the timeline (footsteps, attack hits, ...). Fired into gameplay scripts.</summary>
+    /// <summary>Marker on the timeline (footsteps, attack hits, ...). Two independent roles, either or both:
+    ///  • <see cref="Name"/> is dispatched into gameplay scripts (OnAnimationEvent) so code can react.
+    ///  • <see cref="Sound"/> is played AUTOMATICALLY by AnimationService when the playhead crosses it — the
+    ///    editor-authored animation-SFX path (Unreal "Play Sound" notify / Unity Animation Event). Playback stays
+    ///    audio-plumbing-only; the sound is routed through an AudioSource on the animated entity when available.</summary>
     public class AnimEvent
     {
         public float T { get; set; }
         public string Name { get; set; } = "";
+
+        /// <summary>Optional clip to play when crossed (project-relative path). Empty = a plain named/script event.</summary>
+        public string Sound { get; set; }
+
+        /// <summary>Optional AudioSource to route the sound through: the NAME of an AudioSource component on the
+        /// animated entity itself or one of its children. That source's Volume / Pitch / 3D settings shape the
+        /// sound. Empty = use the entity's own AudioSource if it has one, otherwise a plain 2D one-shot.</summary>
+        public string AudioSource { get; set; }
+
+        /// <summary>Extra volume multiplier applied on top of the AudioSource's volume (1 = unchanged).</summary>
+        public float Volume { get; set; } = 1f;
     }
 
     /// <summary>

@@ -139,17 +139,26 @@ namespace Editor.Core.Animation
             if (!state.Playing || state.Clip == null) return;
 
             float prev = state.Time;
-            state.Time += dt * state.Speed * animator.Speed;
+            float step = dt * state.Speed * animator.Speed;   // signed — negative when playing in reverse
+            state.Time += step;
 
             float dur = Math.Max(state.Clip.DurationSec, 0.0001f);
             bool loop = state.Loop && state.Clip.Loop;
+            bool wrapped = false;
             if (state.Time >= dur)
             {
-                if (loop) state.Time %= dur;
+                if (loop) { state.Time %= dur; wrapped = true; }   // forward wrap past the end
                 else { state.Time = dur; state.Playing = false; }
             }
+            else if (state.Time < 0f)
+            {
+                // Reverse playback: clamp/wrap the LOWER bound too, or Time runs unbounded-negative and the event
+                // crossing test misfires every frame (fixed alongside direction-aware FireEvents below).
+                if (loop) { state.Time = ((state.Time % dur) + dur) % dur; wrapped = true; }
+                else { state.Time = 0f; state.Playing = false; }
+            }
 
-            FireEvents(entity, state.Clip, prev, state.Time, loop && state.Time < prev);
+            FireEvents(entity, state.Clip, prev, state.Time, wrapped, step >= 0f);
 
             if (state.FadeDuration > 0f)
             {
@@ -161,18 +170,78 @@ namespace Editor.Core.Animation
             HasActiveAnimators = true;
         }
 
-        private void FireEvents(ECS.GameEntity entity, VortexAnimClip clip, float from, float to, bool wrapped)
+        private void FireEvents(ECS.GameEntity entity, VortexAnimClip clip, float from, float to, bool wrapped, bool forward)
         {
-            if (clip.Events == null || clip.Events.Count == 0 || AnimationEvent == null) return;
+            // NOTE: no early-out on AnimationEvent == null anymore — a SOUND event must fire even when no script is
+            // subscribed (the editor-authored SFX case). We still only touch scripts when there is a subscriber.
+            if (clip.Events == null || clip.Events.Count == 0) return;
             foreach (var ev in clip.Events)
             {
-                bool hit = wrapped ? (ev.T > from || ev.T <= to) : (ev.T > from && ev.T <= to);
-                if (hit && !string.IsNullOrEmpty(ev.Name))
+                // Direction-aware crossing: forward fires (from, to]; reverse fires [to, from). `wrapped` means the
+                // playhead looped, so the crossed interval is the two open ends of the clip instead of a middle span.
+                bool hit = forward
+                    ? (wrapped ? (ev.T > from || ev.T <= to) : (ev.T > from && ev.T <= to))
+                    : (wrapped ? (ev.T < from || ev.T >= to) : (ev.T < from && ev.T >= to));
+                if (!hit) continue;
+
+                // Sound events play automatically, no gameplay code required.
+                if (!string.IsNullOrEmpty(ev.Sound) || !string.IsNullOrEmpty(ev.AudioSource))
+                {
+                    try { PlayEventSound(entity, ev); }
+                    catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[AnimationService] event sound failed: " + ex.Message); }
+                }
+
+                // Named events still dispatch into gameplay scripts (unchanged behaviour).
+                if (!string.IsNullOrEmpty(ev.Name) && AnimationEvent != null)
                 {
                     try { AnimationEvent(entity, ev.Name); }
                     catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[AnimationService] event handler failed: " + ex.Message); }
                 }
             }
+        }
+
+        /// <summary>Play a sound-event's clip through an AudioSource on the animated entity (or a named child) so its
+        /// Volume / Pitch / 3D settings shape the sound; falls back to a plain 2D one-shot when the entity has no
+        /// AudioSource. The clip is the event's own <see cref="AnimEvent.Sound"/>, or — if that is empty but an
+        /// AudioSource is referenced — that source's configured clip (so an event can just "trigger the source").</summary>
+        private void PlayEventSound(ECS.GameEntity entity, AnimEvent ev)
+        {
+            var svc = Editor.Core.Services.AudioPlaybackService.Instance;
+            if (svc == null || entity == null) return;
+
+            // Resolve the routing AudioSource AND the entity that owns it (so a 3D sound plays from the RIGHT place).
+            ECS.GameEntity srcEntity;
+            ECS.Components.Audio.AudioSource src;
+            if (!string.IsNullOrEmpty(ev.AudioSource))
+            {
+                // A source was named explicitly: the entity itself (by name) or a descendant child. If it isn't found
+                // we do NOT silently reroute through the parent's source — fall through to a plain one-shot instead.
+                srcEntity = string.Equals(entity.Name, ev.AudioSource, StringComparison.Ordinal) ? entity : entity.Find(ev.AudioSource);
+                src = srcEntity?.GetComponent<ECS.Components.Audio.AudioSource>();
+            }
+            else
+            {
+                srcEntity = entity;
+                src = entity.GetComponent<ECS.Components.Audio.AudioSource>();
+            }
+
+            if (src != null && src.Mute) return;   // a muted source silences its animation sounds too
+
+            string clip = !string.IsNullOrEmpty(ev.Sound) ? ev.Sound : src?.AudioClipPath;
+            if (string.IsNullOrEmpty(clip)) return;
+
+            float mul = ev.Volume <= 0f ? 1f : ev.Volume;
+            float vol = (src != null ? src.Volume : 1f) * mul;
+            float pitch = src != null ? src.Pitch : 1f;
+            bool spatial = src != null && src.SpatialBlend > 0.01f;
+
+            var posEntity = srcEntity ?? entity;   // play from the source's own transform, not always the parent's
+            if (spatial && posEntity.Transform != null)
+            {
+                var p = posEntity.Transform.LocalPosition;   // world pos source-of-truth (see AudioPlaybackService.ReadWorldPosition)
+                svc.PlayOneShot(clip, p.X, p.Y, p.Z, vol, pitch);
+            }
+            else svc.PlayOneShot2D(clip, vol, pitch);
         }
 
         private AnimatorState GetOrCreateState(ECS.GameEntity entity)

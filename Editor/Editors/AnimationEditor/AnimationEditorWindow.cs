@@ -975,6 +975,65 @@ namespace Editor.Editors.AnimationEditor
                     row.Children.Add(x);
 
                     _inspector.Children.Add(row);
+
+                    // --- Sound slot: a clip played AUTOMATICALLY when the playhead crosses this frame ---------------
+                    bool hasSound = !string.IsNullOrEmpty(evRef.Sound);
+                    var sRow = new Grid { Margin = new Thickness(0, 0, 0, hasSound ? 2 : 10) };
+                    sRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                    sRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+                    var sBtn = new Button
+                    {
+                        Content = hasSound ? ("♪  " + System.IO.Path.GetFileName(evRef.Sound)) : "＋ Add sound…",
+                        Background = Br(hasSound ? "#FF2A2440" : "#FF202023"),
+                        Foreground = Br(hasSound ? "#FFC9B8FF" : "#FF8A8A92"),
+                        BorderBrush = Br("#FF34343C"), BorderThickness = new Thickness(1),
+                        Padding = new Thickness(7, 3, 7, 3), Cursor = Cursors.Hand,
+                        HorizontalContentAlignment = HorizontalAlignment.Left, FontSize = 11.5,
+                        ToolTip = hasSound ? evRef.Sound : "Play a sound automatically when the playhead reaches this frame"
+                    };
+                    sBtn.Click += (s, e) =>
+                    {
+                        var picked = Editor.Core.Util.FilePicker.OpenFile(
+                            "Audio|*.wav;*.mp3;*.ogg;*.flac|All files|*.*", "Pick a sound for this animation event", DefaultAudioDir());
+                        if (string.IsNullOrEmpty(picked)) return;
+                        evRef.Sound = MakeProjectRelative(picked);
+                        MarkDirty(); _timeline.Refresh(); RefreshInspector();
+                    };
+                    sRow.Children.Add(sBtn);
+
+                    if (hasSound)
+                    {
+                        var clr = new Button
+                        {
+                            Content = "✕", Width = 24, Height = 24, Margin = new Thickness(4, 0, 0, 0),
+                            Background = Br("#FF26262B"), Foreground = Br("#FF98989F"),
+                            BorderBrush = Br("#FF3A3A42"), BorderThickness = new Thickness(1),
+                            Cursor = Cursors.Hand, ToolTip = "Remove sound"
+                        };
+                        clr.Click += (s, e) => { evRef.Sound = null; MarkDirty(); _timeline.Refresh(); RefreshInspector(); };
+                        Grid.SetColumn(clr, 1);
+                        sRow.Children.Add(clr);
+                    }
+                    _inspector.Children.Add(sRow);
+
+                    if (hasSound)
+                    {
+                        // Optional: route the sound through a named AudioSource on the entity (its Volume/Pitch/3D shape it).
+                        var viaRow = new Grid { Margin = new Thickness(0, 0, 0, 10) };
+                        viaRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                        viaRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                        viaRow.Children.Add(new TextBlock
+                        {
+                            Text = "via source", Foreground = Br("#FF6C6C74"), FontSize = 10.5,
+                            VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(2, 0, 6, 0)
+                        });
+                        var viaBox = SmallBox(evRef.AudioSource, v => { evRef.AudioSource = string.IsNullOrWhiteSpace(v) ? null : v.Trim(); MarkDirty(); });
+                        viaBox.ToolTip = "Optional: the NAME of an AudioSource on this entity (or a child) to route through — its Volume / Pitch / 3D settings shape the sound. Empty = a plain 2D one-shot.";
+                        Grid.SetColumn(viaBox, 1);
+                        viaRow.Children.Add(viaBox);
+                        _inspector.Children.Add(viaRow);
+                    }
                 }
             }
 
@@ -1222,6 +1281,28 @@ namespace Editor.Editors.AnimationEditor
         // ===================== styled UI helpers =====================
 
         private static Brush Br(string hex) => (Brush)new BrushConverter().ConvertFromString(hex);
+
+        /// <summary>Start folder for the sound picker: the project's Assets/Audio if it exists, else the project root.</summary>
+        private static string DefaultAudioDir()
+        {
+            var proj = Editor.Core.Data.ProjectData.Current?.Path;
+            if (string.IsNullOrEmpty(proj)) return null;
+            var audio = System.IO.Path.Combine(proj, "Assets", "Audio");
+            return System.IO.Directory.Exists(audio) ? audio : proj;
+        }
+
+        /// <summary>Convert an absolute picked path into a project-relative one (so clips resolve in the exported game).</summary>
+        private static string MakeProjectRelative(string path)
+        {
+            var proj = Editor.Core.Data.ProjectData.Current?.Path;
+            if (string.IsNullOrEmpty(proj) || string.IsNullOrEmpty(path) || !System.IO.Path.IsPathRooted(path)) return path;
+            try
+            {
+                var pu = new Uri(proj.EndsWith("\\") ? proj : proj + "\\");
+                return Uri.UnescapeDataString(pu.MakeRelativeUri(new Uri(path)).ToString());
+            }
+            catch { return path; }
+        }
 
         // net48 float.TryParse accepts "NaN"/"Infinity" — reject non-finite values or they corrupt the
         // clip (unsaveable JSON, runaway playhead, scrollbar-extent exceptions)

@@ -261,8 +261,8 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
         {
             var panel = InspectorPanel("Audio Source", src, out var body);
 
-            body.Children.Add(AudioTextRow("Audio Clip", () => src.AudioClipPath ?? "", v => src.AudioClipPath = v,
-                "Project-relative .wav/.mp3/.ogg/.flac or .vsndc container — drag from the Audio tab"));
+            body.Children.Add(AudioPickerRow("Audio Clip", () => src.AudioClipPath ?? "", v => src.AudioClipPath = v,
+                "Project-relative .wav/.mp3/.ogg/.flac or .vsndc container — Browse…, or drag from the Audio tab"));
             body.Children.Add(AudioSliderRow("Volume", 0, 1, () => src.Volume, v => src.Volume = v));
             body.Children.Add(AudioSliderRow("Pitch", 0.25f, 3, () => src.Pitch, v => src.Pitch = v));
             body.Children.Add(AudioCheckRow("Loop", () => src.Loop, v => src.Loop = v));
@@ -373,6 +373,51 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             box.TextChanged += (s, e) => set(box.Text);
             row.Children.Add(box);
             return row;
+        }
+
+        /// <summary>Like <see cref="AudioTextRow"/> but with a Browse… button that opens an audio file picker (on the
+        /// STA FilePicker thread so it can't deadlock the renderer) and stores a project-relative path.</summary>
+        private UIElement AudioPickerRow(string label, Func<string> get, Action<string> set, string tooltip)
+        {
+            var row = new StackPanel { Margin = new Thickness(0, 2, 0, 0) };
+            row.Children.Add(new TextBlock { Text = label, Foreground = InspBrush("#FFB4B4BC"), FontSize = 11 });
+
+            var grid = new Grid { Margin = new Thickness(0, 3, 0, 0) };
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var box = new TextBox { Text = get(), Background = InspBrush("#FF141416"), Foreground = InspBrush("#FFE9E9ED"), BorderBrush = InspBrush("#FF2C2C32"), Padding = new Thickness(6, 4, 6, 4), ToolTip = tooltip, VerticalContentAlignment = VerticalAlignment.Center };
+            box.TextChanged += (s, e) => set(box.Text);
+            Grid.SetColumn(box, 0);
+            grid.Children.Add(box);
+
+            var browse = new Button { Content = "Browse…", Margin = new Thickness(6, 0, 0, 0), Padding = new Thickness(10, 4, 10, 4), Background = InspBrush("#FF26262B"), Foreground = InspBrush("#FF9C8CFF"), BorderBrush = InspBrush("#FF3A3A42"), Cursor = System.Windows.Input.Cursors.Hand, ToolTip = "Pick an audio clip or .vsndc container" };
+            browse.Click += (s, e) =>
+            {
+                var proj = Core.Data.ProjectData.Current?.Path;
+                var audioDir = string.IsNullOrEmpty(proj) ? null : System.IO.Path.Combine(proj, "Assets", "Audio");
+                var start = (audioDir != null && System.IO.Directory.Exists(audioDir)) ? audioDir : proj;
+                var picked = Core.Util.FilePicker.OpenFile("Audio + Containers|*.wav;*.mp3;*.ogg;*.flac;*.vsndc|All files|*.*", "Pick an audio clip", start);
+                if (string.IsNullOrEmpty(picked)) return;
+                box.Text = MakeProjRel(picked);   // TextChanged fires set()
+            };
+            Grid.SetColumn(browse, 1);
+            grid.Children.Add(browse);
+
+            row.Children.Add(grid);
+            return row;
+        }
+
+        private static string MakeProjRel(string path)
+        {
+            var proj = Core.Data.ProjectData.Current?.Path;
+            if (string.IsNullOrEmpty(proj) || string.IsNullOrEmpty(path) || !System.IO.Path.IsPathRooted(path)) return path;
+            try
+            {
+                var pu = new Uri(proj.EndsWith("\\") ? proj : proj + "\\");
+                return Uri.UnescapeDataString(pu.MakeRelativeUri(new Uri(path)).ToString());
+            }
+            catch { return path; }
         }
 
         private UIElement AudioComboRow(string label, string[] options, Func<int> get, Action<int> set)

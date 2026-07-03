@@ -1256,6 +1256,7 @@ namespace Editor.Dialogs
                 // material all get that material's data.
                 var matDir = Path.Combine(_modelData.Directory, "materials");
                 Directory.CreateDirectory(matDir);
+                var savedPaths = new System.Collections.Generic.List<string>();
                 for (int i = 0; i < _modelData.Submeshes.Count; i++)
                 {
                     var sub = _modelData.Submeshes[i];
@@ -1266,8 +1267,8 @@ namespace Editor.Dialogs
 
                     var vmat = VortexMaterial.FromUniversalMaterial(material);
                     vmat.MakePathsRelative(matDir);
-                    if (vmat.Save(Path.Combine(matDir, $"submesh_{i}.vmat")))
-                        savedCount++;
+                    var vmatPath = Path.Combine(matDir, $"submesh_{i}.vmat");
+                    if (vmat.Save(vmatPath)) { savedCount++; savedPaths.Add(vmatPath); }
                 }
 
                 AssetDatabase.Instance.Refresh();
@@ -1278,6 +1279,19 @@ namespace Editor.Dialogs
                 // "{modelRelPath}#submesh{i}"). Mutating in place avoids any material-ownership /
                 // double-free issues, and is a safe no-op if the model isn't in the scene.
                 PropagateMaterialsToScene();
+
+                // Same refresh recipe the Material Editor runs on save (MaterialEditorDialog.OnMaterialSaved) — WITHOUT
+                // it, Save Materials wrote the .vmat but nothing repainted: the Explorer prefab/model thumbnails, the
+                // Prefab Editor's live preview and the scene all kept showing the pre-edit look ("save doesn't work").
+                //  1) drop each saved .vmat's cached engine material so it rebuilds from disk,
+                //  2) bust the mat:/model:/prefab: thumbnail cache (fires MaterialThumbnailsInvalidated -> RefreshAssets),
+                //  3) ask the live scene viewport to re-submit next frame,
+                //  4) refresh this editor's own preview.
+                foreach (var p in savedPaths)
+                    try { Editor.Core.Services.MaterialService.Instance.InvalidateVortexMaterial(p); } catch { }
+                try { Editor.Editors.WorldEditor.Components.AssetBrowser.AssetBrowserView.InvalidateMaterialThumbnails(); } catch { }
+                try { Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.RequestResubmit(); } catch { }
+                try { RefreshPreview(); } catch { }
 
                 _statusText.Text = $"Saved {savedCount} material(s)";
             }

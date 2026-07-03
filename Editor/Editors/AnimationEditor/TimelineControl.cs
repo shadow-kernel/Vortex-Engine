@@ -338,28 +338,46 @@ namespace Editor.Editors.AnimationEditor
                     Stroke = new SolidColorBrush(C_MicroHdr), StrokeThickness = 1.5, SnapsToDevicePixels = true
                 });
 
-            // event flags
+            // event flags — sound events get a distinct violet flag + a ♪ tag so they read apart from script events
             if (_clip?.Events != null)
             {
                 var evBrush = new SolidColorBrush(C_Event);
+                var sndBrush = new SolidColorBrush(Color.FromRgb(0xB5, 0x9C, 0xFF));
                 foreach (var ev in _clip.Events)
                 {
                     double x = TimeToX(ev.T);
                     if (x < -8 || x > w + 8) continue;
+                    bool isSound = !string.IsNullOrEmpty(ev.Sound) || !string.IsNullOrEmpty(ev.AudioSource);
+                    var brush = isSound ? sndBrush : evBrush;
+                    string tip = (string.IsNullOrEmpty(ev.Name) ? "(sound)" : ev.Name)
+                                 + "  @ " + ev.T.ToString("0.###", CultureInfo.InvariantCulture) + "s"
+                                 + (isSound && !string.IsNullOrEmpty(ev.Sound) ? ("\n♪ " + System.IO.Path.GetFileName(ev.Sound)) : "");
                     var flag = new Polygon
                     {
                         Points = new PointCollection { new Point(0, 0), new Point(8, 3.5), new Point(0, 7), new Point(0, 14) },
-                        Fill = evBrush,
-                        Stroke = evBrush,
+                        Fill = brush,
+                        Stroke = brush,
                         StrokeThickness = 1,
                         Tag = ev,
                         Cursor = Cursors.Hand,
-                        ToolTip = ev.Name + "  @ " + ev.T.ToString("0.###", CultureInfo.InvariantCulture) + "s"
+                        ToolTip = tip
                     };
                     Canvas.SetLeft(flag, x);
                     Canvas.SetTop(flag, 2);
                     flag.MouseRightButtonUp += OnEventFlagRightClick;
                     _ruler.Children.Add(flag);
+
+                    if (isSound)
+                    {
+                        var note = new TextBlock
+                        {
+                            Text = "♪", FontSize = 9, Foreground = brush,
+                            IsHitTestVisible = false, ToolTip = tip
+                        };
+                        Canvas.SetLeft(note, x + 6);
+                        Canvas.SetTop(note, 1);
+                        _ruler.Children.Add(note);
+                    }
                 }
             }
 

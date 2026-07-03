@@ -31,12 +31,14 @@ namespace Editor.Editors.WorldEditor.Components.ModelViewer
         private Point _lastMouse;
         private DateTime _lastRender = DateTime.MinValue;
         private bool _ready;
+        private readonly string _fullModelPath;   // set for imported-model previews; enables live reload on material save
 
         public string ModelName { get; }
 
         public ModelViewerControl(string fullModelPath, string modelName)
         {
             ModelName = modelName;
+            _fullModelPath = fullModelPath;
             Background = new SolidColorBrush(Color.FromRgb(24, 24, 26));
             Focusable = true;
 
@@ -53,6 +55,9 @@ namespace Editor.Editors.WorldEditor.Components.ModelViewer
             }
             catch { }
 
+            // Live-refresh subscription is wired on Loaded / torn down on Unloaded (see BuildUi) — NOT here — so a
+            // caller that forgets to Dispose() this control (e.g. the Model Viewer window / Mesh Editor) can't leak
+            // it onto the process-lifetime static event. Bound to the visual-tree lifecycle, it self-cleans on close.
             BuildUi(modelName);
         }
 
@@ -144,7 +149,27 @@ namespace Editor.Editors.WorldEditor.Components.ModelViewer
             MouseWheel += OnWheel;
             KeyDown += OnKeyDown;
             SizeChanged += (s, e) => { if (_ready) Render(); };
-            Loaded += (s, e) => { _ready = true; Render(); Focus(); };
+            Loaded += (s, e) => { _ready = true; SubscribeMaterialRefresh(); Render(); Focus(); };
+            Unloaded += (s, e) => UnsubscribeMaterialRefresh();
+        }
+
+        // Subscribe/unsubscribe are idempotent (the -= before += guarantees a single subscription across repeated
+        // Loaded events, e.g. tab switches) and only wire imported-model previews — primitive previews have no .vmat
+        // on disk to reload. Bound to Loaded/Unloaded so the static-event subscription can never outlive the control.
+        private void SubscribeMaterialRefresh()
+        {
+            if (string.IsNullOrEmpty(_fullModelPath)) return;
+            try
+            {
+                Editor.Editors.WorldEditor.Components.AssetBrowser.AssetBrowserView.MaterialThumbnailsInvalidated -= OnMaterialsInvalidated;
+                Editor.Editors.WorldEditor.Components.AssetBrowser.AssetBrowserView.MaterialThumbnailsInvalidated += OnMaterialsInvalidated;
+            }
+            catch { }
+        }
+
+        private void UnsubscribeMaterialRefresh()
+        {
+            try { Editor.Editors.WorldEditor.Components.AssetBrowser.AssetBrowserView.MaterialThumbnailsInvalidated -= OnMaterialsInvalidated; } catch { }
         }
 
         private void OnMouseDown(object sender, MouseButtonEventArgs e)
@@ -188,6 +213,38 @@ namespace Editor.Editors.WorldEditor.Components.ModelViewer
             Render();
         }
 
+        private void OnMaterialsInvalidated()
+        {
+            if (string.IsNullOrEmpty(_fullModelPath)) return;
+            try
+            {
+                if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(new Action(ReloadFromDisk)); return; }
+                ReloadFromDisk();
+            }
+            catch { }
+        }
+
+        /// <summary>Re-import the model so freshly-saved .vmat materials show, then re-render. Imported-model previews
+        /// only (primitive previews own a throwaway mesh/material with nothing on disk to reload).</summary>
+        public void ReloadFromDisk()
+        {
+            if (string.IsNullOrEmpty(_fullModelPath)) return;
+            try
+            {
+                var subs = VortexAPI.ImportModelWithMaterialsFromFile(_fullModelPath);
+                if (subs != null && subs.Length > 0)
+                {
+                    var meshes = new long[subs.Length];
+                    var mats = new long[subs.Length];
+                    for (int i = 0; i < subs.Length; i++) { meshes[i] = subs[i].MeshId; mats[i] = subs[i].MaterialId; }
+                    _meshIds = meshes; _matIds = mats;
+                    if (_emptyHint != null) _emptyHint.Visibility = Visibility.Collapsed;
+                }
+            }
+            catch { }
+            Render();
+        }
+
         private void Render()
         {
             if (_meshIds == null) return;
@@ -205,6 +262,7 @@ namespace Editor.Editors.WorldEditor.Components.ModelViewer
 
         public void Dispose()
         {
+            UnsubscribeMaterialRefresh();   // belt-and-braces; Unloaded already handles the normal close path
             // Imported-model meshes are engine-cached + shared (nothing to free). Generated PRIMITIVE meshes are
             // owned copies created just for this preview — free them (and the throwaway material) so opening the
             // prefab preview repeatedly doesn't leak a mesh/material per open.
