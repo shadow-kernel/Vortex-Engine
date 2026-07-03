@@ -143,6 +143,66 @@ namespace Editor.Core.Services
             return fresh;
         }
 
+        /// <summary>A prefab asset (.ventity) — or a folder of them — was DELETED. Clear PrefabPath on every scene
+        /// instance that pointed at it, across ALL open scenes, so the hierarchy stops showing them as linked to a
+        /// missing asset (the prefab badge is data-bound to IsPrefabInstance, so this updates it live — no explicit
+        /// hierarchy refresh needed). Returns how many instances were unlinked. Pass isDirectory=true to unlink every
+        /// instance whose prefab lived UNDER the deleted folder.</summary>
+        public int OnPrefabDeleted(string deletedPath, bool isDirectory = false)
+        {
+            var project = ProjectData.Current;
+            if (project == null || project.Scenes == null || string.IsNullOrEmpty(deletedPath)) return 0;
+            string targetFull;
+            try { targetFull = Path.GetFullPath(Resolve(deletedPath, project)); }
+            catch { return 0; }
+
+            // Collect the instances to unlink WITHOUT mutating yet, so the unlink can be made UNDOABLE.
+            var pairs = new List<(GameEntity entity, string oldPath)>();
+            foreach (var scene in project.Scenes)
+            {
+                if (scene?.Entities == null) continue;
+                CollectMatchingInstances(scene.Entities, targetFull, isDirectory, project, pairs);
+            }
+            if (pairs.Count == 0) return 0;
+
+            // The file delete itself is undoable (Ctrl+Z restores the .ventity), so the unlink MUST undo in lockstep
+            // or a Ctrl+Z would restore the file while leaving every instance permanently detached (silent data loss).
+            // Register the unlink as its own undoable step: Execute/redo clears PrefabPath (badge disappears), Undo
+            // restores it (badge returns). It sits on the stack just after the file-delete command, so undo re-links
+            // the instances and a further undo brings the file back.
+            var snapshot = pairs.ToArray();
+            var cmd = new Editor.Core.UndoRedo.Commands.ActionCommand(
+                "Unlink " + snapshot.Length + " prefab instance" + (snapshot.Length == 1 ? "" : "s"),
+                () => { foreach (var p in snapshot) p.entity.PrefabPath = null; },       // execute / redo
+                () => { foreach (var p in snapshot) p.entity.PrefabPath = p.oldPath; });  // undo -> relink
+            Editor.Core.UndoRedo.UndoRedoManager.Instance.Execute(cmd);   // runs the unlink once + registers undo
+            return snapshot.Length;
+        }
+
+        private static void CollectMatchingInstances(IEnumerable<GameEntity> entities, string targetFull, bool isDirectory, ProjectData project, List<(GameEntity entity, string oldPath)> outList)
+        {
+            if (entities == null) return;
+            foreach (var e in entities)
+            {
+                if (e == null) continue;
+                if (e.IsPrefabInstance)
+                {
+                    string instFull = null;
+                    try { instFull = Path.GetFullPath(Resolve(e.PrefabPath, project)); } catch { }
+                    if (instFull != null)
+                    {
+                        // Normalize BOTH sides (relative vs absolute, slash direction) before comparing, or instances
+                        // stored project-relative won't match an absolute deleted path.
+                        bool hit = isDirectory
+                            ? instFull.StartsWith(targetFull.TrimEnd('\\', '/') + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                            : string.Equals(instFull, targetFull, StringComparison.OrdinalIgnoreCase);
+                        if (hit) outList.Add((e, e.PrefabPath));
+                    }
+                }
+                CollectMatchingInstances(e.Children, targetFull, isDirectory, project, outList);
+            }
+        }
+
         // ---- helpers ----
 
         /// <summary>Serialize an entity as a prefab TEMPLATE — the file must not itself carry a PrefabPath.</summary>

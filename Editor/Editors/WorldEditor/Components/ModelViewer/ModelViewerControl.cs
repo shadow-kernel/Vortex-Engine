@@ -17,10 +17,12 @@ namespace Editor.Editors.WorldEditor.Components.ModelViewer
     /// </summary>
     public class ModelViewerControl : UserControl, IDisposable
     {
-        private readonly long[] _meshIds;
-        private readonly long[] _matIds;
-        private readonly Image _image;
-        private readonly TextBlock _emptyHint;
+        private long[] _meshIds;
+        private long[] _matIds;
+        private bool _ownsMeshes;        // true when _meshIds are generated primitives this control created + must free
+        private long _ownedMaterial = -1; // a throwaway engine material to free on Dispose (-1 = none)
+        private Image _image;
+        private TextBlock _emptyHint;
 
         private float _yaw = 0.7f;
         private float _pitch = 0.35f;
@@ -51,6 +53,29 @@ namespace Editor.Editors.WorldEditor.Components.ModelViewer
             }
             catch { }
 
+            BuildUi(modelName);
+        }
+
+        /// <summary>Preview ctor for caller-provided engine meshes (e.g. a generated primitive) rendered with the
+        /// same orbit / zoom / keyboard UI as an imported model. When <paramref name="ownsMeshes"/> is true the
+        /// meshes — and <paramref name="ownedMaterial"/> if &gt;= 0 — are freed on Dispose (use for throwaway
+        /// primitives created just for this preview so they don't leak).</summary>
+        public ModelViewerControl(long[] meshIds, long[] matIds, string modelName, bool ownsMeshes, long ownedMaterial = -1)
+        {
+            ModelName = modelName;
+            Background = new SolidColorBrush(Color.FromRgb(24, 24, 26));
+            Focusable = true;
+
+            _meshIds = (meshIds != null && meshIds.Length > 0) ? meshIds : null;
+            _matIds = matIds;
+            _ownsMeshes = ownsMeshes;
+            _ownedMaterial = ownedMaterial;
+
+            BuildUi(modelName);
+        }
+
+        private void BuildUi(string modelName)
+        {
             var root = new Grid();
             root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
@@ -178,6 +203,15 @@ namespace Editor.Editors.WorldEditor.Components.ModelViewer
             catch { }
         }
 
-        public void Dispose() { /* meshes are engine-cached + shared; nothing per-instance to free */ }
+        public void Dispose()
+        {
+            // Imported-model meshes are engine-cached + shared (nothing to free). Generated PRIMITIVE meshes are
+            // owned copies created just for this preview — free them (and the throwaway material) so opening the
+            // prefab preview repeatedly doesn't leak a mesh/material per open.
+            if (_ownsMeshes && _meshIds != null)
+                foreach (var m in _meshIds) { try { if (m >= 0) VortexAPI.DeleteMesh(m); } catch { } }
+            if (_ownedMaterial >= 0) { try { VortexAPI.DeleteMaterial(_ownedMaterial); } catch { } }
+            _meshIds = null; _matIds = null; _ownsMeshes = false; _ownedMaterial = -1;
+        }
     }
 }

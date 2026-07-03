@@ -104,6 +104,7 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             // Note: MouseDoubleClick is already bound in XAML, don't add it again here
             AssetList.PreviewMouseLeftButtonDown += AssetList_PreviewMouseLeftButtonDown;
             AssetList.PreviewMouseMove += AssetList_PreviewMouseMove;
+            AssetList.PreviewMouseLeftButtonUp += AssetList_PreviewMouseLeftButtonUp;
             Loaded += OnLoaded;
             Unloaded += OnUnloadedCleanup;
 
@@ -323,10 +324,22 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
         // Drag and drop support
         private Point _dragStartPoint;
         private bool _isDragging;
+        private bool _dragArmed;   // only a genuine single left-press arms a drag — NOT the 2nd press of a double-click
 
         private void AssetList_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
             _dragStartPoint = e.GetPosition(null);
+            _isDragging = false;
+            // CRITICAL: only arm a drag on a real single click. The 2nd press of a double-click jitters a few px
+            // from the 1st press's start point, which used to trip the drag threshold and launch the MODAL
+            // DoDragDrop loop — that loop swallows the gesture so WPF never raises MouseDoubleClick (the reason
+            // "Ctrl/Shift + double-click a prefab does nothing"). Arming only on ClickCount==1 fixes it.
+            _dragArmed = (e.ClickCount == 1);
+        }
+
+        private void AssetList_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            _dragArmed = false;
             _isDragging = false;
         }
 
@@ -335,8 +348,11 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             if (e.LeftButton != MouseButtonState.Pressed)
             {
                 _isDragging = false;
+                _dragArmed = false;
                 return;
             }
+
+            if (!_dragArmed) return;   // a double-click (or a modified click) never armed a drag
 
             var currentPos = e.GetPosition(null);
             var diff = _dragStartPoint - currentPos;
@@ -344,15 +360,17 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             if (Math.Abs(diff.X) > SystemParameters.MinimumHorizontalDragDistance ||
                 Math.Abs(diff.Y) > SystemParameters.MinimumVerticalDragDistance)
             {
-                if (!_isDragging && AssetList.SelectedItem is AssetItem item)
+                // Modified gestures (Ctrl/Shift) are preview/edit shortcuts, not a drag-to-place — never start a drag.
+                if (!_isDragging && Keyboard.Modifiers == ModifierKeys.None && AssetList.SelectedItem is AssetItem item)
                 {
                     _isDragging = true;
-                    
+                    _dragArmed = false;
+
                     var data = new DataObject();
                     data.SetData("AssetItem", item);
                     data.SetData("AssetGuid", item.AssetGuid.ToString());
                     data.SetData("AssetPath", item.Path);
-                    
+
                     System.Windows.DragDrop.DoDragDrop(AssetList, data, DragDropEffects.Copy);
                     _isDragging = false;
                 }
@@ -859,9 +877,21 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             }
         }
 
+        /// <summary>Walk up from a hit-tested element to the ListBoxItem and return its AssetItem — robust against a
+        /// Ctrl+click clearing AssetList.SelectedItem (mirrors AssetList_RightDown).</summary>
+        private static AssetItem ResolveClickedAsset(System.Windows.DependencyObject dep)
+        {
+            while (dep != null && !(dep is ListBoxItem)) dep = System.Windows.Media.VisualTreeHelper.GetParent(dep);
+            return (dep as ListBoxItem)?.DataContext as AssetItem;
+        }
+
         private void AssetList_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
         {
-            if (AssetList.SelectedItem is AssetItem item)
+            // Resolve the clicked tile from the hit-tested element, NOT AssetList.SelectedItem: a Ctrl+click in a
+            // (default Single-mode) ListBox TOGGLES selection off, so SelectedItem would be null on a Ctrl+double-
+            // click and the whole handler would early-return. Fall back to SelectedItem for keyboard-driven opens.
+            var item = ResolveClickedAsset(e.OriginalSource as System.Windows.DependencyObject) ?? AssetList.SelectedItem as AssetItem;
+            if (item != null)
             {
                 // Folder tile -> navigate into it (syncs the tree via CurrentFolderChanged).
                 if (item.IsFolder && item.Source != null)
@@ -907,8 +937,8 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                     var proj = ProjectData.Current?.Path ?? "";
                     var full = System.IO.Path.IsPathRooted(item.Path) ? item.Path : System.IO.Path.Combine(proj, item.Path);
 
-                    if ((pmods & System.Windows.Input.ModifierKeys.Shift) != 0) { OpenPrefabEditor(item, full); return; }   // edit
-                    if ((pmods & System.Windows.Input.ModifierKeys.Control) != 0) { OpenPrefabEditor(item, full); return; } // large preview
+                    if ((pmods & System.Windows.Input.ModifierKeys.Shift) != 0) { OpenPrefabEditor(item, full); return; }        // edit hub
+                    if ((pmods & System.Windows.Input.ModifierKeys.Control) != 0) { OpenPrefabLargePreview(item, full); return; } // large live preview
                     PlacePrefabInstance(full, item.Name, editHint: false);   // plain double-click -> drop into scene
                     return;
                 }
@@ -1084,7 +1114,28 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
         {
             if (item.Source == null) return;
             if (MessageBox.Show("Delete '" + item.Name + "'?", "Delete", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+
+            // Capture BEFORE deletion — needed to unlink prefab instances afterwards.
+            bool wasDir = item.IsFolder;
+            string deletedPath = item.Source.FullPath;
+            bool affectsPrefabs = wasDir || (deletedPath?.EndsWith(PrefabService.PrefabExtension, StringComparison.OrdinalIgnoreCase) ?? false);
+
             FileExplorerService.Instance.Delete(item.Source);
+
+            // If a .ventity prefab (or a folder containing prefabs) was actually removed, clear PrefabPath on every
+            // instance across ALL open scenes so the hierarchy no longer shows them as linked to a now-missing asset
+            // (the badge is data-bound to IsPrefabInstance, so it updates live). Only when the file is truly gone.
+            if (affectsPrefabs && !System.IO.File.Exists(deletedPath) && !System.IO.Directory.Exists(deletedPath))
+            {
+                try
+                {
+                    int unlinked = PrefabService.Instance.OnPrefabDeleted(deletedPath, wasDir);
+                    if (unlinked > 0)
+                        (Application.Current?.MainWindow as MainWindow)?.ShowToast("Unlinked " + unlinked + " prefab instance" + (unlinked == 1 ? "" : "s") + " (source deleted)");
+                }
+                catch { }
+            }
+
             RefreshAssets();
         }
 
@@ -1193,7 +1244,9 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
 
                 string modelPath = PrefabFirstModelPath(full);
                 int entityCount = 0, meshParts = 0;
-                try { var root = Editor.Core.Services.SceneService.Instance.LoadEntityFromPrefab(full); CountPrefab(root, ref entityCount, ref meshParts); } catch { }
+                Editor.ECS.GameEntity prefabRoot = null;
+                var prefabMats = new System.Collections.Generic.List<(string entity, string matName, string vmatFull)>();
+                try { prefabRoot = Editor.Core.Services.SceneService.Instance.LoadEntityFromPrefab(full); CountPrefab(prefabRoot, ref entityCount, ref meshParts); CollectPrefabMaterials(prefabRoot, prefabMats); } catch { }
 
                 var win = new Window
                 {
@@ -1207,14 +1260,11 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 root2.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
                 root2.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(360) });
 
-                // Left: live 3D preview (reuse the proven Model Viewer control), or a placeholder for primitive prefabs.
+                // Left: LIVE 3D preview — an interactive orbit view of the object the prefab spawns, whether that is
+                // an imported mesh OR a generated primitive (rendered with the prefab's real material). Placeholder
+                // only when neither exists. The control may own engine resources -> disposed on window Closed below.
                 var leftHost = new Border { Background = Br("#FF1B1B1E"), Margin = new Thickness(0) };
-                if (!string.IsNullOrEmpty(modelPath))
-                {
-                    try { leftHost.Child = new Editor.Editors.WorldEditor.Components.ModelViewer.ModelViewerControl(modelPath, item.Name); }
-                    catch { leftHost.Child = PrefabPlaceholder(item.Name); }
-                }
-                else leftHost.Child = PrefabPlaceholder(item.Name);
+                leftHost.Child = BuildPrefabPreview(prefabRoot, modelPath, item.Name);
                 Grid.SetColumn(leftHost, 0);
                 root2.Children.Add(leftHost);
 
@@ -1236,11 +1286,46 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 panel.Children.Add(PrefabActionButton("", "Show in Explorer", "Reveal the .ventity file on disk", false,
                     () => { try { System.Diagnostics.Process.Start("explorer.exe", "/select,\"" + full + "\""); } catch { } }));
 
+                // Materials — one row per mesh part; works for PRIMITIVE prefabs too (which have no imported model, so
+                // the model-only "Edit Materials…" button above never appears for them). The material NAME is also the
+                // footstep key, so surfacing it answers "which step sound does walking on this play?".
+                if (prefabMats.Count > 0)
+                {
+                    panel.Children.Add(new TextBlock { Text = "Materials", Foreground = Br("#FFE9E9ED"), FontSize = 13.5, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 10, 0, 6) });
+                    foreach (var m in prefabMats)
+                    {
+                        string vmat = m.vmatFull;                 // absolute .vmat path, or null
+                        string matName = m.matName;               // capture for the click closure
+                        // A named material whose .vmat file is missing (renders white) is NOT the same as "no material
+                        // assigned" (renders the inline base color) — label them distinctly so the message isn't wrong.
+                        bool assignedButMissing = vmat == null && !string.Equals(matName, "Default", StringComparison.Ordinal);
+                        string sub = (m.entity ?? "mesh") + (vmat != null ? "   ·   open in Material Editor"
+                                                            : assignedButMissing ? "   ·   .vmat file missing"
+                                                            : "   ·   inline color (no .vmat)");
+                        panel.Children.Add(PrefabActionButton("", matName, sub, false, () =>
+                        {
+                            if (vmat != null)
+                            {
+                                try { Dialogs.MaterialEditorDialog.OpenMaterial(win, vmat); }
+                                catch (Exception ex) { MessageBox.Show("Could not open the Material Editor:\n" + ex.Message, "Material Editor", MessageBoxButton.OK, MessageBoxImage.Error); }
+                            }
+                            else if (assignedButMissing)
+                                MessageBox.Show("The material '" + matName + "' is assigned to this mesh part but its .vmat file was not found on disk — the part renders with the default (white) material until the file is restored or a new material is assigned.", "Material file missing", MessageBoxButton.OK, MessageBoxImage.Warning);
+                            else
+                                MessageBox.Show("This mesh part has no .vmat material assigned — it renders with its inline base color. Assign a material in the Inspector (Material picker) to give it a named, editable material.", "Material", MessageBoxButton.OK, MessageBoxImage.Information);
+                        }));
+                    }
+                    panel.Children.Add(new TextBlock { Text = "Footsteps follow the material NAME above — the game's FootstepAudio script maps each name to a step sound (via Physics.GroundMaterial). Rename or reassign the material to change the step.", Foreground = Br("#FF73737A"), FontSize = 10.5, TextWrapping = TextWrapping.Wrap, LineHeight = 15, Margin = new Thickness(2, 8, 0, 6) });
+                }
+
                 var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Content = panel, Background = Br("#FF161618") };
                 Grid.SetColumn(scroll, 1);
                 root2.Children.Add(scroll);
 
                 win.Content = root2;
+                // The live preview control may own engine meshes/material (generated primitive) — free them when the
+                // window closes so repeatedly opening the prefab editor doesn't leak.
+                win.Closed += (s, e) => { try { (leftHost.Child as IDisposable)?.Dispose(); } catch { } };
                 win.Show(); // non-modal, like the Model Viewer — keep the editor usable
             }
             catch (Exception ex) { MessageBox.Show("Could not open the prefab: " + ex.Message, "Prefab", MessageBoxButton.OK, MessageBoxImage.Error); }
@@ -1253,6 +1338,189 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             var mr = e.GetComponent<Editor.ECS.Components.Rendering.MeshRenderer>();
             if (mr != null && !string.IsNullOrEmpty(mr.MeshPath)) meshParts++;
             if (e.Children != null) foreach (var c in e.Children) CountPrefab(c, ref entities, ref meshParts);
+        }
+
+        // ---- prefab live preview (imported mesh OR generated primitive, with the prefab's material) ----
+
+        /// <summary>Builds the LIVE 3D preview element for a prefab: an interactive orbit ModelViewerControl for
+        /// either an imported mesh (modelPath) OR a generated primitive built from the prefab's MeshRenderer (with
+        /// its material). Falls back to the static placeholder only if neither exists. The returned control may own
+        /// engine resources (a generated primitive) — the caller disposes it when the host window closes.</summary>
+        private UIElement BuildPrefabPreview(Editor.ECS.GameEntity root, string modelPath, string name)
+        {
+            // 1) imported mesh file -> the proven file-based viewer (engine-cached, shared meshes; nothing to free).
+            if (!string.IsNullOrEmpty(modelPath))
+            {
+                try { return new ModelViewer.ModelViewerControl(modelPath, name); }
+                catch { return PrefabPlaceholder(name); }
+            }
+
+            // 2) primitive prefab (Plane/Cube/... — no mesh FILE): generate the engine mesh + build the prefab's
+            //    material, and render it with the SAME orbit control. Isolated via AssetPreviewRenderer (offscreen
+            //    secondary target -> RequestResubmit), so it never hijacks the main scene viewport.
+            string prim = PrefabFirstPrimitiveName(root);
+            if (!string.IsNullOrEmpty(prim))
+            {
+                long mesh = -1, mat = -1;
+                try
+                {
+                    mesh = CreatePrimitiveMesh(prim);
+                    if (mesh >= 0)
+                    {
+                        mat = BuildPrefabPreviewMaterial(root);   // -1 if none -> renders with a default material
+                        // Ownership of mesh+mat transfers to the control ONLY on a successful ctor return.
+                        return new ModelViewer.ModelViewerControl(new[] { mesh }, mat >= 0 ? new[] { mat } : null, name, ownsMeshes: true, ownedMaterial: mat);
+                    }
+                }
+                catch
+                {
+                    // The ctor (or material build) threw before ownership transferred — free the orphaned engine
+                    // resources ourselves, else they leak (nothing else tracks these ids).
+                    if (mesh >= 0) { try { VortexAPI.DeleteMesh(mesh); } catch { } }
+                    if (mat >= 0) { try { VortexAPI.DeleteMaterial(mat); } catch { } }
+                }
+            }
+            return PrefabPlaceholder(name);
+        }
+
+        /// <summary>First "Primitive:*" MeshPath in the prefab tree (recurses children); the bare primitive name
+        /// (e.g. "Plane"), or null if the prefab has no primitive mesh.</summary>
+        private static string PrefabFirstPrimitiveName(Editor.ECS.GameEntity e)
+        {
+            if (e == null) return null;
+            var mr = e.GetComponent<Editor.ECS.Components.Rendering.MeshRenderer>();
+            var p = mr?.MeshPath;
+            if (!string.IsNullOrEmpty(p) && p.StartsWith("Primitive:", StringComparison.OrdinalIgnoreCase))
+                return p.Substring("Primitive:".Length);
+            if (e.Children != null)
+                foreach (var c in e.Children) { var cp = PrefabFirstPrimitiveName(c); if (!string.IsNullOrEmpty(cp)) return cp; }
+            return null;
+        }
+
+        /// <summary>Create a fresh (owned) engine mesh for a primitive name, matching the scene's primitive mapping
+        /// (Capsule->Cylinder, Quad->Plane). Caller owns the returned mesh and must DeleteMesh it.</summary>
+        private static long CreatePrimitiveMesh(string prim)
+        {
+            switch ((prim ?? "").ToLowerInvariant())
+            {
+                case "cube": return VortexAPI.CreateCubeMesh(1f);
+                case "sphere": return VortexAPI.CreateSphereMesh(0.62f);
+                case "plane":
+                case "quad": return VortexAPI.CreatePlaneMesh(1.5f, 1.5f);
+                case "cylinder":
+                case "capsule": return VortexAPI.CreateCylinderMesh(0.5f, 1.1f);
+                case "cone": return VortexAPI.CreateConeMesh(0.5f, 1.1f);
+                default: return VortexAPI.CreateCubeMesh(1f);
+            }
+        }
+
+        /// <summary>First entity (recursing children) that actually has a mesh, for reading its material.</summary>
+        private static Editor.ECS.Components.Rendering.MeshRenderer FindFirstMeshRenderer(Editor.ECS.GameEntity e)
+        {
+            if (e == null) return null;
+            var mr = e.GetComponent<Editor.ECS.Components.Rendering.MeshRenderer>();
+            if (mr != null && !string.IsNullOrEmpty(mr.MeshPath)) return mr;
+            if (e.Children != null)
+                foreach (var c in e.Children) { var cm = FindFirstMeshRenderer(c); if (cm != null) return cm; }
+            return null;
+        }
+
+        /// <summary>Build a THROWAWAY engine material for the prefab preview so the primitive renders with its real
+        /// look. Returns -1 if none. Mirrors the scene's material precedence (a .vmat wins, else the inline color).
+        /// CRITICAL: a .vmat is built as a FRESH throwaway (MaterialService.BuildEngineMaterial), NOT the SHARED
+        /// GetOrBuildVortexMaterial cache — that shared id can be freed by scene/entity cleanup underneath the
+        /// preview (the documented "renders white" hazard). The returned id is owned -> deleted on window close.</summary>
+        private static long BuildPrefabPreviewMaterial(Editor.ECS.GameEntity root)
+        {
+            var mr = FindFirstMeshRenderer(root);
+            if (mr == null) return -1;
+
+            // .vmat wins (full PBR + textures) — fresh throwaway from the file.
+            if (!string.IsNullOrEmpty(mr.MaterialPath) && !mr.MaterialPath.StartsWith("Material:", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    var proj = ProjectData.Current?.Path ?? "";
+                    var full = System.IO.Path.IsPathRooted(mr.MaterialPath) ? mr.MaterialPath : System.IO.Path.Combine(proj, mr.MaterialPath);
+                    if (System.IO.File.Exists(full))
+                    {
+                        var vmat = Editor.Core.Assets.VortexMaterial.Load(full);
+                        if (vmat != null)
+                        {
+                            vmat.ResolvePathsAbsolute(System.IO.Path.GetDirectoryName(full));
+                            long m = Editor.Core.Services.MaterialService.Instance.BuildEngineMaterial(vmat);
+                            if (m >= 0) return m;
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            // else: inline base color (+ PBR scalars) throwaway material.
+            try
+            {
+                long mid = VortexAPI.CreateNewMaterial();
+                if (mid < 0) return -1;
+                VortexAPI.SetMaterialBaseColor(mid, mr.ColorR, mr.ColorG, mr.ColorB, mr.ColorA);
+                try { VortexAPI.SetMaterialMetallicValue(mid, mr.Metallic); VortexAPI.SetMaterialRoughnessValue(mid, mr.Roughness); } catch { }
+                return mid;
+            }
+            catch { return -1; }
+        }
+
+        /// <summary>Collect (entity name, material name, absolute .vmat path or null) for every mesh part in the
+        /// prefab tree — for the Prefab Editor's material list. vmatFull is null when the part uses an inline color
+        /// (or a legacy "Material:" placeholder) rather than a real .vmat file.</summary>
+        private static void CollectPrefabMaterials(Editor.ECS.GameEntity e, System.Collections.Generic.List<(string entity, string matName, string vmatFull)> outList)
+        {
+            if (e == null) return;
+            var mr = e.GetComponent<Editor.ECS.Components.Rendering.MeshRenderer>();
+            if (mr != null && !string.IsNullOrEmpty(mr.MeshPath))   // a real mesh part (primitive OR imported)
+            {
+                string rel = mr.MaterialPath;
+                string full = null, name = "Default";
+                if (!string.IsNullOrEmpty(rel) && !rel.StartsWith("Material:", StringComparison.OrdinalIgnoreCase))
+                {
+                    var proj = ProjectData.Current?.Path ?? "";
+                    full = System.IO.Path.IsPathRooted(rel) ? rel : System.IO.Path.Combine(proj, rel);
+                    name = System.IO.Path.GetFileNameWithoutExtension(rel);
+                    if (!System.IO.File.Exists(full)) full = null;   // name still shown; Open button explains it's inline
+                }
+                outList.Add((e.Name, name, full));
+            }
+            if (e.Children != null) foreach (var c in e.Children) CollectPrefabMaterials(c, outList);
+        }
+
+        /// <summary>Ctrl+double-click: a LARGE, maximized, preview-ONLY window (no action panel) to inspect / fly
+        /// around the object the prefab spawns — distinct from Shift's edit hub. Same live preview for imported
+        /// meshes AND primitives; disposes its owned engine resources on close.</summary>
+        private void OpenPrefabLargePreview(AssetItem item, string full)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(full) || !System.IO.File.Exists(full))
+                { MessageBox.Show("This prefab file could not be found.", "Prefab", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+
+                string modelPath = PrefabFirstModelPath(full);
+                Editor.ECS.GameEntity prefabRoot = null;
+                try { prefabRoot = Editor.Core.Services.SceneService.Instance.LoadEntityFromPrefab(full); } catch { }
+
+                var host = new Border { Background = Br("#FF161618") };
+                host.Child = BuildPrefabPreview(prefabRoot, modelPath, item.Name);
+
+                var win = new Window
+                {
+                    Title = "Preview — " + item.Name,
+                    Width = 1280, Height = 800, MinWidth = 640, MinHeight = 420,
+                    Background = Br("#FF161618"), Owner = Window.GetWindow(this),
+                    WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                    WindowState = WindowState.Maximized,
+                    Content = host
+                };
+                win.Closed += (s, e) => { try { (host.Child as IDisposable)?.Dispose(); } catch { } };
+                win.Show();
+            }
+            catch (Exception ex) { MessageBox.Show("Could not open the preview: " + ex.Message, "Prefab", MessageBoxButton.OK, MessageBoxImage.Error); }
         }
 
         private UIElement PrefabPlaceholder(string name)
