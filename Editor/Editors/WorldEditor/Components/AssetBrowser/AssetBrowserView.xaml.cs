@@ -443,7 +443,21 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                     break;
             }
 
-            if (dialog.ShowDialog() == true)
+            // Start the picker in the folder the user is browsing in the Explorer (sync the dialog path with the
+            // Explorer view), matching every other file dialog in the editor.
+            try { var startDir = CurrentExplorerAbsoluteFolder(); if (!string.IsNullOrEmpty(startDir)) dialog.InitialDirectory = startDir; } catch { }
+
+            // CRITICAL — why Import (uniquely) "crashed" the editor: on the UI thread OpenFileDialog.ShowDialog()
+            // DEADLOCKS. The shell dialog's COM STA initialisation waits on the COM apartment that the live DX12/DXGI
+            // renderer holds on the UI thread, so the dialog NEVER opens and the editor hangs (white, "not responding"
+            // -> WerFault, which reads as a crash). Confirmed: the UI thread sits inside ShowDialog, Responding=false,
+            // no dialog window exists. The robust fix is to run the file picker on a DEDICATED STA thread, which gets
+            // its own COM apartment (no deadlock); the UI thread blocks on Join for the modal's duration so no
+            // render/thumbnail tick re-enters native meanwhile. WPF's Microsoft.Win32 dialog does NOT work off the UI
+            // thread, so PickImportFilesSTA uses WinForms' OpenFileDialog (which does).
+            string[] pickedFiles = PickImportFilesSTA(dialog.Filter, dialog.Title, dialog.InitialDirectory);
+            Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.RequestResubmit();
+            if (pickedFiles != null && pickedFiles.Length > 0)
             {
                 bool isModelType = _currentType == AssetType.Models || _currentType == AssetType.Meshes;
                 // Models/meshes ALWAYS go through ModelImportService (folder + materials/.vmat) and land in the
@@ -452,7 +466,7 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 if (isModelType)
                 {
                     string targetFolder = CurrentImportFolder();
-                    foreach (var file in dialog.FileNames)
+                    foreach (var file in pickedFiles)
                     {
                         try
                         {
@@ -467,12 +481,12 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 }
 
                 // Use the new AssetImportDialog for single file with tag support
-                if (dialog.FileNames.Length == 1)
+                if (pickedFiles.Length == 1)
                 {
                     var importType = GetImportAssetType(_currentType);
                     var importResult = Dialogs.AssetImportDialog.ShowImportDialog(
                         Window.GetWindow(this),
-                        dialog.FileName,
+                        pickedFiles[0],
                         importType);
 
                     if (importResult.Success)
@@ -483,9 +497,39 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 else
                 {
                     // Batch import without individual dialogs
-                    ImportMultipleFiles(dialog.FileNames);
+                    ImportMultipleFiles(pickedFiles);
                 }
             }
+        }
+
+        /// <summary>Open a file picker on a DEDICATED STA thread (its own COM apartment) using WinForms'
+        /// OpenFileDialog — which, unlike WPF's Microsoft.Win32.OpenFileDialog, works off the UI thread. Running the
+        /// picker on the UI thread DEADLOCKS against the live DX12/DXGI COM apartment (the editor hangs white — the
+        /// reported "Import crash"). The UI thread blocks on Join for the modal's duration, so nothing on it re-enters
+        /// the native renderer meanwhile. Returns the chosen file paths, or null if cancelled. Multi-select is on.</summary>
+        private static string[] PickImportFilesSTA(string filter, string title, string initialDir)
+        {
+            string[] files = null;
+            var t = new System.Threading.Thread(() =>
+            {
+                try
+                {
+                    using (var dlg = new System.Windows.Forms.OpenFileDialog())
+                    {
+                        dlg.Multiselect = true;
+                        if (!string.IsNullOrEmpty(filter)) dlg.Filter = filter;
+                        if (!string.IsNullOrEmpty(title)) dlg.Title = title;
+                        if (!string.IsNullOrEmpty(initialDir)) dlg.InitialDirectory = initialDir;
+                        if (dlg.ShowDialog() == System.Windows.Forms.DialogResult.OK) files = dlg.FileNames;
+                    }
+                }
+                catch { }
+            });
+            t.SetApartmentState(System.Threading.ApartmentState.STA);
+            t.IsBackground = true;
+            t.Start();
+            t.Join();
+            return files;
         }
 
         /// <summary>The folder (relative to Assets) where an import should land — the CURRENT explorer folder,
@@ -498,6 +542,28 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             if (rel.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase))
                 rel = rel.Substring("Assets/".Length);
             return rel;
+        }
+
+        /// <summary>Absolute path of the folder the user is currently browsing in the Explorer — used to sync the
+        /// import file-picker's start folder with the Explorer. Falls back to the project's Assets folder, then the
+        /// project root; null if none exists.</summary>
+        private string CurrentExplorerAbsoluteFolder()
+        {
+            try
+            {
+                var root = ProjectData.Current?.Path;
+                if (string.IsNullOrEmpty(root)) return null;
+                var rel = (_currentFolderRel ?? "").Replace('/', System.IO.Path.DirectorySeparatorChar).Trim(System.IO.Path.DirectorySeparatorChar);
+                if (!string.IsNullOrEmpty(rel))
+                {
+                    var abs = System.IO.Path.Combine(root, rel);
+                    if (System.IO.Directory.Exists(abs)) return abs;
+                }
+                var assets = System.IO.Path.Combine(root, "Assets");
+                if (System.IO.Directory.Exists(assets)) return assets;
+                return System.IO.Directory.Exists(root) ? root : null;
+            }
+            catch { return null; }
         }
         
         private Dialogs.AssetImportDialog.ImportAssetType GetImportAssetType(AssetType type)
@@ -809,6 +875,7 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 case "ShadersTab": _currentType = AssetType.Shaders; break;
                 case "ScriptsTab": _currentType = AssetType.Scripts; break;
                 case "AudioTab": _currentType = AssetType.Audio; break;
+                case "PrefabsTab": _currentType = AssetType.Prefab; break;
             }
 
             StopAudition(); // leaving the audio tab (or re-entering) silences the preview
@@ -1115,23 +1182,23 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             if (item.Source == null) return;
             if (MessageBox.Show("Delete '" + item.Name + "'?", "Delete", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
 
-            // Capture BEFORE deletion — needed to unlink prefab instances afterwards.
+            // Capture BEFORE deletion — needed to remove the prefab's instances afterwards.
             bool wasDir = item.IsFolder;
             string deletedPath = item.Source.FullPath;
             bool affectsPrefabs = wasDir || (deletedPath?.EndsWith(PrefabService.PrefabExtension, StringComparison.OrdinalIgnoreCase) ?? false);
 
             FileExplorerService.Instance.Delete(item.Source);
 
-            // If a .ventity prefab (or a folder containing prefabs) was actually removed, clear PrefabPath on every
-            // instance across ALL open scenes so the hierarchy no longer shows them as linked to a now-missing asset
-            // (the badge is data-bound to IsPrefabInstance, so it updates live). Only when the file is truly gone.
+            // If a .ventity prefab (or a folder containing prefabs) was actually removed, DELETE every instance of it
+            // across ALL open scenes (an instance whose source is gone is meaningless). Undoable in lockstep with the
+            // file delete. Only when the file is truly gone.
             if (affectsPrefabs && !System.IO.File.Exists(deletedPath) && !System.IO.Directory.Exists(deletedPath))
             {
                 try
                 {
-                    int unlinked = PrefabService.Instance.OnPrefabDeleted(deletedPath, wasDir);
-                    if (unlinked > 0)
-                        (Application.Current?.MainWindow as MainWindow)?.ShowToast("Unlinked " + unlinked + " prefab instance" + (unlinked == 1 ? "" : "s") + " (source deleted)");
+                    int removed = PrefabService.Instance.OnPrefabDeleted(deletedPath, wasDir);
+                    if (removed > 0)
+                        (Application.Current?.MainWindow as MainWindow)?.ShowToast("Removed " + removed + " prefab instance" + (removed == 1 ? "" : "s") + " (source deleted)");
                 }
                 catch { }
             }
@@ -1227,7 +1294,7 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             if (inst == null) { MessageBox.Show("Could not instantiate the prefab (empty or unreadable).", "Prefab", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
             Editor.Core.Services.SelectionService.Instance.Select(inst);
             var mw = Application.Current?.MainWindow as MainWindow;
-            if (editHint) mw?.ShowToast("Editing '" + inst.Name + "' — change it in the Inspector, then right-click → Apply to Prefab");
+            if (editHint) mw?.ShowToast("Editing '" + inst.Name + "' — add Scripts / Controllers / components in the Inspector, then right-click → Apply to Prefab to save them into the prefab (updates every instance)");
             else mw?.ShowToast("Added '" + inst.Name + "' to the scene");
         }
 
@@ -1276,20 +1343,22 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 var help = new TextBlock { Text = Editor.Core.Services.PrefabService.WorkflowHelp, Foreground = Br("#FFB4B4BC"), FontSize = 11.5, TextWrapping = TextWrapping.Wrap, LineHeight = 17, Margin = new Thickness(0, 0, 0, 18) };
                 panel.Children.Add(new Border { Background = Br("#FF1E1E22"), BorderBrush = Br("#FF2C2C32"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Padding = new Thickness(12, 10, 12, 12), Margin = new Thickness(0, 0, 0, 18), Child = help });
 
-                panel.Children.Add(PrefabActionButton("", "Edit in Scene", "Add an instance & select it to edit, then Apply", true,
+                panel.Children.Add(PrefabActionButton("", "Edit Prefab", "Edit its components — add Scripts, Controllers, Colliders… — then Apply to save into the prefab", true,
                     () => { PlacePrefabInstance(full, item.Name, editHint: true); win.Close(); }));
                 panel.Children.Add(PrefabActionButton("", "Add to Scene", "Drop a linked instance into the scene", false,
                     () => PlacePrefabInstance(full, item.Name, editHint: false)));
                 if (!string.IsNullOrEmpty(modelPath))
-                    panel.Children.Add(PrefabActionButton("", "Edit Materials…", "Open the object's mesh in the Model Editor", false,
+                    panel.Children.Add(PrefabActionButton("", "Edit Model", "Open the object's model (submeshes, materials, textures) in the Model Editor", false,
                         () => { try { Dialogs.UniversalModelEditorDialog.OpenForModel(win, modelPath); } catch (Exception ex) { MessageBox.Show("Could not open the Model Editor:\n" + ex.Message, "Model Editor", MessageBoxButton.OK, MessageBoxImage.Error); } }));
                 panel.Children.Add(PrefabActionButton("", "Show in Explorer", "Reveal the .ventity file on disk", false,
                     () => { try { System.Diagnostics.Process.Start("explorer.exe", "/select,\"" + full + "\""); } catch { } }));
 
-                // Materials — one row per mesh part; works for PRIMITIVE prefabs too (which have no imported model, so
-                // the model-only "Edit Materials…" button above never appears for them). The material NAME is also the
-                // footstep key, so surfacing it answers "which step sound does walking on this play?".
-                if (prefabMats.Count > 0)
+                // Materials — one row per mesh part, ONLY for prefabs with no imported model (primitives). Model
+                // prefabs get the "Edit Materials…" button above, which opens the full Model Editor (submesh list +
+                // PBR + textures) — so listing every submesh here too would just be redundant "Default" clutter. For
+                // a primitive floor the material NAME is also the footstep key, so surfacing it answers "which step
+                // sound does walking on this play?".
+                if (string.IsNullOrEmpty(modelPath) && prefabMats.Count > 0)
                 {
                     panel.Children.Add(new TextBlock { Text = "Materials", Foreground = Br("#FFE9E9ED"), FontSize = 13.5, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 10, 0, 6) });
                     foreach (var m in prefabMats)
@@ -2099,6 +2168,9 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 case AssetType.Audio:
                     LoadAudioAssets();
                     break;
+                case AssetType.Prefab:
+                    LoadPrefabs();
+                    break;
             }
 
             UpdateEmptyState();
@@ -2428,6 +2500,33 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                         Name = System.IO.Path.GetFileNameWithoutExtension(rel), Path = abs, IsImported = true,
                         Type = AssetType.Scripts, TypeName = "Script", IconCode = "", IconColor = "#FF9B59B6"
                     });
+                }
+            }
+            catch { }
+        }
+
+        /// <summary>Prefabs tab: every .ventity in the project (project-wide, under Assets/), each shown as a rendered
+        /// tile — treat a prefab like a model. Type==Prefab lights up all the existing prefab interactions for free:
+        /// double-click places a linked instance, Shift opens the Prefab Editor, Ctrl the large preview, right-click
+        /// the prefab context menu.</summary>
+        private void LoadPrefabs()
+        {
+            try
+            {
+                var root = ProjectData.Current?.Path;
+                if (string.IsNullOrEmpty(root)) return;
+                var assetsDir = System.IO.Path.Combine(root, "Assets");
+                if (!System.IO.Directory.Exists(assetsDir)) return;
+                foreach (var abs in System.IO.Directory.EnumerateFiles(assetsDir, "*" + PrefabService.PrefabExtension, System.IO.SearchOption.AllDirectories)
+                                       .OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
+                {
+                    var item = new AssetItem
+                    {
+                        Name = System.IO.Path.GetFileNameWithoutExtension(abs), Path = abs, IsImported = true,
+                        Type = AssetType.Prefab, TypeName = "Prefab", IconCode = "", IconColor = "#FF4DB6E2"
+                    };
+                    Assets.Add(item);
+                    QueueThumbnail(item, () => GetOrBuildPrefabThumb(abs));   // rendered preview, throttled + cached
                 }
             }
             catch { }
@@ -2944,6 +3043,15 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 var entity = Editor.Core.Services.SceneService.Instance.LoadEntityFromPrefab(ventityPath);
                 var rel = FindFirstModelPath(entity);
                 if (string.IsNullOrEmpty(rel)) return null;
+                // Imported-model submeshes are stored as "<model file>#submeshN" (e.g. washer.glb#submesh0). Strip the
+                // submesh selector to get the real FILE — importing it re-imports ALL submeshes, i.e. the whole model,
+                // which is exactly what the prefab spawns. Without this the '#submesh' suffix broke File.Exists and the
+                // prefab (a multi-mesh imported model) fell back to the "no mesh" placeholder. Match the authoritative
+                // resolver (SceneRenderService): LastIndexOf + only strip a real "#submesh" token, so a model whose
+                // folder/file name legitimately contains '#' (a legal path char) is not truncated.
+                int hash = rel.LastIndexOf('#');
+                if (hash > 0 && rel.Length > hash + 7 && string.CompareOrdinal(rel, hash + 1, "submesh", 0, 7) == 0)
+                    rel = rel.Substring(0, hash);
                 var proj = ProjectData.Current?.Path ?? "";
                 var full = System.IO.Path.IsPathRooted(rel) ? rel : System.IO.Path.Combine(proj, rel);
                 return System.IO.File.Exists(full) ? full : null;
@@ -2962,8 +3070,9 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             return null;
         }
 
-        /// <summary>Render a prefab (.ventity) thumbnail — its first model mesh, so prefab tiles look like the object
-        /// they spawn (not a flat icon). Cached by the .ventity's mtime.</summary>
+        /// <summary>Render a prefab (.ventity) thumbnail so every prefab tile shows a real pre-rendered preview of the
+        /// object it spawns (not a flat glyph) — model prefabs render the whole model, primitive prefabs render the
+        /// generated primitive with the prefab's material. Cached by the .ventity's mtime.</summary>
         private static ImageSource GetOrBuildPrefabThumb(string ventityPath)
         {
             if (string.IsNullOrEmpty(ventityPath) || !System.IO.File.Exists(ventityPath)) return null;
@@ -2973,11 +3082,32 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             if (_thumbCache.TryGetValue(key, out var cached)) return cached;
             try
             {
+                // Model-based prefab -> render the whole model (all submeshes), exactly like a Model tile.
                 var full = PrefabFirstModelPath(ventityPath);
-                if (string.IsNullOrEmpty(full)) return null;
-                var img = Core.Services.Rendering.AssetPreviewRenderer.RenderModel(full, 256);
-                if (img != null) _thumbCache[key] = img;
-                return img;
+                if (!string.IsNullOrEmpty(full))
+                {
+                    var img = Core.Services.Rendering.AssetPreviewRenderer.RenderModel(full, 256);
+                    if (img != null) _thumbCache[key] = img;
+                    return img;
+                }
+                // Primitive-based prefab (Plane/Cube/... saved as .ventity) -> render the generated primitive with the
+                // prefab's material, so EVERY prefab has a live-rendered preview instead of a flat puzzle glyph.
+                var root = Editor.Core.Services.SceneService.Instance.LoadEntityFromPrefab(ventityPath);
+                var prim = PrefabFirstPrimitiveName(root);
+                if (!string.IsNullOrEmpty(prim))
+                {
+                    long mesh = CreatePrimitiveMesh(prim);
+                    if (mesh >= 0)
+                    {
+                        long mat = BuildPrefabPreviewMaterial(root);   // throwaway; free after the synchronous render
+                        var img = BuildMeshThumbnail(new[] { mesh }, new[] { mat >= 0 ? mat : EnsureDefaultThumbMaterial() }, 256);
+                        try { VortexAPI.DeleteMesh(mesh); } catch { }
+                        if (mat >= 0) { try { VortexAPI.DeleteMaterial(mat); } catch { } }
+                        if (img != null) _thumbCache[key] = img;
+                        return img;
+                    }
+                }
+                return null;
             }
             catch { return null; }
         }

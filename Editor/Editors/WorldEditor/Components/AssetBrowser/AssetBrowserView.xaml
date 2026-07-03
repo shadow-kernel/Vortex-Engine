@@ -185,6 +185,10 @@
                              Style="{StaticResource CategoryPill}"
                              Checked="AssetTypeTab_Checked"
                              ToolTip="Audio clips — click a tile to audition, drag onto an AudioSource to assign"/>
+                <RadioButton x:Name="PrefabsTab" Content="Prefabs" GroupName="AssetType"
+                             Style="{StaticResource CategoryPill}"
+                             Checked="AssetTypeTab_Checked"
+                             ToolTip="All .ventity prefabs in the project — double-click to place, Shift+double-click to edit"/>
             </StackPanel>
         </Border>
 

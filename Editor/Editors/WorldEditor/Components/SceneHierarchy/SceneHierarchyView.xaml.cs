@@ -219,8 +219,11 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
 
         private void LocateSelected_Click(object sender, RoutedEventArgs e) => RevealAndLocateSelected();
 
-        /// <summary>"Locate" the selected object: scroll the hierarchy tree to it (+ select), then jump the Asset
-        /// Browser to the folder of its material so the user can drill into it. Triggered by the toolbar button or F.</summary>
+        /// <summary>"Locate" the selected object: scroll the hierarchy tree to it and select it. HIERARCHY-ONLY —
+        /// it deliberately does NOT touch the Asset Browser. Finding/selecting a linked prefab (.ventity) in the
+        /// explorer is the job of the Inspector's prefab "Find" button, so the two actions stay separate (every
+        /// entity is typically a prefab, so an automatic explorer jump on every locate would be noise).
+        /// Triggered by the toolbar button or F.</summary>
         public void RevealAndLocateSelected()
         {
             var entity = ViewModel?.SelectedEntity ?? SelectionService.Instance.SelectedEntity;
@@ -230,7 +233,6 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
                 return;
             }
             RevealEntityInTree(entity);
-            LocateEntityMaterialInExplorer(entity);
         }
 
         /// <summary>Expand the entity's parent chain, select it, and scroll its tree row into view.</summary>
@@ -271,52 +273,6 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
                 if (found != null) return found;
             }
             return null;
-        }
-
-        /// <summary>Navigate the Asset Browser / file explorer to the folder of the selected object's material (.vmat),
-        /// so the user lands right where they can inspect/edit its material. Checks the entity + its submesh children.</summary>
-        private void LocateEntityMaterialInExplorer(GameEntity entity)
-        {
-            try
-            {
-                // Prefab instance: reveal + SELECT its SOURCE prefab (.ventity) in the explorer — that's the asset
-                // behind the object (not just its material).
-                if (!string.IsNullOrEmpty(entity.PrefabPath))
-                {
-                    var pproj = ProjectData.Current?.Path ?? "";
-                    string pfull = System.IO.Path.IsPathRooted(entity.PrefabPath) ? entity.PrefabPath : System.IO.Path.Combine(pproj, entity.PrefabPath);
-                    if (System.IO.File.Exists(pfull))
-                    {
-                        Editor.Editors.WorldEditor.Components.AssetBrowser.AssetBrowserView.SelectFileInExplorer(pfull);
-                        (Application.Current?.MainWindow as MainWindow)?.ShowToast("Located prefab '" + System.IO.Path.GetFileName(pfull) + "'");
-                        return;
-                    }
-                }
-
-                string matPath = entity.GetComponent<Editor.ECS.Components.Rendering.MeshRenderer>()?.MaterialPath;
-                if (string.IsNullOrEmpty(matPath) && entity.Children != null)
-                {
-                    foreach (var c in entity.Children)
-                    {
-                        var cmr = c.GetComponent<Editor.ECS.Components.Rendering.MeshRenderer>();
-                        if (!string.IsNullOrEmpty(cmr?.MaterialPath)) { matPath = cmr.MaterialPath; break; }
-                    }
-                }
-                if (string.IsNullOrEmpty(matPath))
-                {
-                    (Application.Current?.MainWindow as MainWindow)?.ShowToast("Revealed '" + entity.Name + "' (no material assigned)");
-                    return;
-                }
-                var proj = ProjectData.Current?.Path ?? "";
-                string full = System.IO.Path.IsPathRooted(matPath) ? matPath : System.IO.Path.Combine(proj, matPath);
-                var dir = System.IO.Path.GetDirectoryName(full);
-                if (!string.IsNullOrEmpty(dir) && System.IO.Directory.Exists(dir))
-                {
-                    Editor.Editors.WorldEditor.Components.FileExplorer.Services.FileExplorerService.Instance.NavigateToPath(dir);
-                    (Application.Current?.MainWindow as MainWindow)?.ShowToast("Located '" + entity.Name + "' → " + System.IO.Path.GetFileName(full));
-                }
-            }
-            catch { }
         }
 
         #endregion

@@ -121,7 +121,31 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         /// <summary>Force the editor viewport to re-submit the scene next frame — call after an external edit
         /// (imported-model material/texture assignment, entity add/remove, mesh change) so it shows immediately.</summary>
         public static void RequestResubmit() { if (_active != null) { _active._sceneDirty = true; _active._resubmitHoldFrames = 30; } }
-        
+
+        /// <summary>Immediately STOP the editor viewport's per-frame DX12 render tick. Call this BEFORE any
+        /// update-triggered process exit: with a project loaded, CompositionTarget.Rendering drives the native
+        /// renderer every frame, and abruptly Environment.Exit()-ing the process out from under that live loop is
+        /// what turned the in-app "Check for Updates" into an all-white screen + crash (at startup the loop is idle,
+        /// so it "just worked"). Unsubscribing the tick + clearing the ready flag quiesces the renderer first, so the
+        /// exit/hand-off to the installer is clean. Safe to call from any thread; no-op if the viewport isn't active.</summary>
+        public static void SuspendRendering()
+        {
+            try
+            {
+                var app = System.Windows.Application.Current;
+                Action stop = () =>
+                {
+                    var a = _active;
+                    if (a == null) return;
+                    a._isRendererInitialized = false;                              // render gate closes
+                    CompositionTarget.Rendering -= a.OnCompositionTargetRendering; // no more per-frame native calls
+                };
+                if (app != null && !app.Dispatcher.CheckAccess()) app.Dispatcher.Invoke(stop);
+                else stop();
+            }
+            catch { }
+        }
+
         // Flag to prevent camera jumping when refreshing camera list
         private bool _isRefreshingCameraList;
         

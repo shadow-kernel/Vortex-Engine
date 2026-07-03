@@ -240,6 +240,14 @@ namespace Editor.Core.Services.Update
                 return; // stay on the current version
             }
 
+            // The relay is now running and WILL take over — so it is finally safe to quiesce the live DX12 render
+            // loop. Doing this ONLY here (not earlier) means an aborted install above returns with rendering intact.
+            // With a project open, CompositionTarget.Rendering calls the native renderer every frame; Environment.Exit
+            // out from under that live loop is what painted the viewport white and crashed the in-app "Check for
+            // Updates" (the startup check dodged it only because the loop is idle with no scene loaded). Stop the tick,
+            // then exit cleanly.
+            try { Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.SuspendRendering(); } catch { }
+
             // Release the single-instance mutex explicitly, then exit NOW (skip the blocking native engine
             // teardown in OnExit, which could hang and keep DLLs locked). The relay takes over from here.
             Editor.App.ReleaseSingleInstanceMutex();

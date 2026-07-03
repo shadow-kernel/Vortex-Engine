@@ -507,10 +507,10 @@
                              Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
                              ToolTip="Search entities..."/>
 
-                    <!-- Locate Selected: scroll the tree to the selected object + jump the Asset Browser to its material -->
+                    <!-- Locate Selected: scroll the tree to the selected object + select it (hierarchy only) -->
                     <Button x:Name="LocateButton" Grid.Column="1" Content="&#xE1D2;"
                             Style="{StaticResource IconButtonStyle}"
-                            ToolTip="Locate selected (reveal in tree + jump to its material in the Asset Browser) — F"
+                            ToolTip="Locate selected — scroll the hierarchy to it and select it (F). To find its prefab in the Asset Browser use the Inspector's prefab Find button."
                             Margin="4,0,0,0" Click="LocateSelected_Click"/>
 
                     <!-- Add Scene Button -->

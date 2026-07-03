@@ -56,8 +56,11 @@ namespace Editor.Core.Services
         }
 
         /// <summary>Load a .ventity and add a fresh LINKED instance to the scene (new ids, synced to the engine so it
-        /// renders immediately). Returns the new instance, or null.</summary>
-        public GameEntity InstantiatePrefab(string prefabPath, Scene scene, GameEntity parent = null)
+        /// renders immediately). Returns the new instance, or null. <paramref name="undoable"/>=true (the default, for
+        /// a user placing an instance) records the add on the undo stack; pass FALSE for internal re-instantiation
+        /// (Apply/Revert propagation) whose paired removal is a RAW, non-undoable RemoveFromScene — otherwise the add
+        /// pushes a stray CollectionAddCommand with no matching removal and corrupts the undo stack.</summary>
+        public GameEntity InstantiatePrefab(string prefabPath, Scene scene, GameEntity parent = null, bool undoable = true)
         {
             var project = ProjectData.Current;
             if (string.IsNullOrEmpty(prefabPath) || scene == null) return null;
@@ -74,12 +77,21 @@ namespace Editor.Core.Services
             if (parent != null)
             {
                 entity.Parent = parent;
-                parent.Children.Add(entity);
+                parent.Children.Add(entity);   // child add is already raw (non-undoable)
                 entity.SyncEngineStateRecursive(parent.ActiveInHierarchy);
+            }
+            else if (undoable)
+            {
+                scene.AddEntity(entity);   // undoable add (user place) -> syncs to the engine -> the instance renders
             }
             else
             {
-                scene.AddEntity(entity);   // AddEntity syncs to the engine -> the instance renders
+                // RAW add — mirrors what scene.AddEntity does MINUS the CollectionAddCommand, so it stays symmetric
+                // with RevertInstance's raw RemoveFromScene and never leaves a dangling undo command on the stack.
+                entity.Scene = scene;
+                scene.Entities.Add(entity);
+                entity.SyncEngineStateRecursive(scene.IsActive);
+                scene.IsDirty = true;
             }
 
             // Force the editor's render service to resolve meshes/materials for the WHOLE new subtree so even a
@@ -118,6 +130,10 @@ namespace Editor.Core.Services
 
             try { PropagateToOtherInstances(instance); } catch { }
             try { Editor.Core.Assets.AssetDatabase.Instance.Refresh(); } catch { }
+            // The viewport does NOT watch the Entities collection for changes, so re-instantiated instances would keep
+            // showing the stale baked queue until an unrelated event dirties it — force a re-bake so every instance
+            // visually updates the moment Apply runs.
+            RequestViewportResubmit();
             return true;
         }
 
@@ -133,7 +149,9 @@ namespace Editor.Core.Services
 
             RemoveFromScene(instance);
 
-            var fresh = InstantiatePrefab(prefabPath, scene, parent);
+            // undoable:false — RemoveFromScene above is a RAW (non-undoable) removal, so the re-add must be raw too,
+            // else each Apply/Revert leaves a stray CollectionAddCommand on the undo stack with no matching removal.
+            var fresh = InstantiatePrefab(prefabPath, scene, parent, undoable: false);
             if (fresh?.Transform != null && oldT != null)
             {
                 fresh.Transform.LocalPosition = oldT.LocalPosition;
@@ -143,11 +161,11 @@ namespace Editor.Core.Services
             return fresh;
         }
 
-        /// <summary>A prefab asset (.ventity) — or a folder of them — was DELETED. Clear PrefabPath on every scene
-        /// instance that pointed at it, across ALL open scenes, so the hierarchy stops showing them as linked to a
-        /// missing asset (the prefab badge is data-bound to IsPrefabInstance, so this updates it live — no explicit
-        /// hierarchy refresh needed). Returns how many instances were unlinked. Pass isDirectory=true to unlink every
-        /// instance whose prefab lived UNDER the deleted folder.</summary>
+        /// <summary>A prefab asset (.ventity) — or a folder of them — was DELETED. REMOVE every scene instance that
+        /// pointed at it, across ALL open scenes (an instance whose source prefab is gone is meaningless). The removal
+        /// is UNDOABLE in lockstep with the (undoable) file delete: Ctrl+Z re-creates the instances and a further
+        /// Ctrl+Z restores the .ventity file. Returns how many instances were removed. Pass isDirectory=true to remove
+        /// every instance whose prefab lived UNDER the deleted folder.</summary>
         public int OnPrefabDeleted(string deletedPath, bool isDirectory = false)
         {
             var project = ProjectData.Current;
@@ -156,30 +174,55 @@ namespace Editor.Core.Services
             try { targetFull = Path.GetFullPath(Resolve(deletedPath, project)); }
             catch { return 0; }
 
-            // Collect the instances to unlink WITHOUT mutating yet, so the unlink can be made UNDOABLE.
-            var pairs = new List<(GameEntity entity, string oldPath)>();
+            var toDelete = new List<GameEntity>();
             foreach (var scene in project.Scenes)
             {
                 if (scene?.Entities == null) continue;
-                CollectMatchingInstances(scene.Entities, targetFull, isDirectory, project, pairs);
+                CollectMatchingInstances(scene.Entities, targetFull, isDirectory, project, toDelete);
             }
-            if (pairs.Count == 0) return 0;
+            if (toDelete.Count == 0) return 0;
 
-            // The file delete itself is undoable (Ctrl+Z restores the .ventity), so the unlink MUST undo in lockstep
-            // or a Ctrl+Z would restore the file while leaving every instance permanently detached (silent data loss).
-            // Register the unlink as its own undoable step: Execute/redo clears PrefabPath (badge disappears), Undo
-            // restores it (badge returns). It sits on the stack just after the file-delete command, so undo re-links
-            // the instances and a further undo brings the file back.
-            var snapshot = pairs.ToArray();
-            var cmd = new Editor.Core.UndoRedo.Commands.ActionCommand(
-                "Unlink " + snapshot.Length + " prefab instance" + (snapshot.Length == 1 ? "" : "s"),
-                () => { foreach (var p in snapshot) p.entity.PrefabPath = null; },       // execute / redo
-                () => { foreach (var p in snapshot) p.entity.PrefabPath = p.oldPath; });  // undo -> relink
-            Editor.Core.UndoRedo.UndoRedoManager.Instance.Execute(cmd);   // runs the unlink once + registers undo
-            return snapshot.Length;
+            // Remove the instances UNDOABLY. DeleteEntitiesCommand only mutates the C# ObservableCollections, so pair
+            // it (in a CompositeCommand) with an ActionCommand that detaches/re-attaches each instance from the NATIVE
+            // engine via SyncEngineStateRecursive + refreshes the viewport — mirroring Scene.RemoveEntity/AddEntity.
+            // Do NOT use SceneRenderService.RemoveEntity here: it DeleteMesh's imported-model meshes that are SHARED
+            // across instances (double-free). Order: detach-engine THEN remove-from-collection; Undo runs in reverse
+            // (re-insert THEN re-attach), so instances come back rendered.
+            int n = toDelete.Count;
+            var composite = new Editor.Core.UndoRedo.Commands.CompositeCommand("Delete " + n + " prefab instance" + (n == 1 ? "" : "s"));
+            composite.Add(new Editor.Core.UndoRedo.Commands.ActionCommand("detach prefab instances",
+                () => { foreach (var e in toDelete) { try { e.SyncEngineStateRecursive(false); } catch { } } RequestViewportResubmit(); },
+                () => { foreach (var e in toDelete) { try { e.SyncEngineStateRecursive(true); } catch { } } RequestViewportResubmit(); }));
+            composite.Add(new DeleteEntitiesCommand(toDelete));
+            Editor.Core.UndoRedo.UndoRedoManager.Instance.Execute(composite);
+
+            // If the currently-selected entity was one of the removed instances (or a descendant of one), clear the
+            // selection — DeleteEntitiesCommand only mutates the C# collections, so otherwise the Inspector + the
+            // viewport gizmo keep operating on a now-detached ghost entity.
+            try
+            {
+                var sel = SelectionService.Instance.SelectedEntity;
+                if (sel != null)
+                    foreach (var e in toDelete)
+                        if (ContainsEntity(e, sel)) { SelectionService.Instance.Select((GameEntity)null); break; }
+            }
+            catch { }
+
+            return n;
         }
 
-        private static void CollectMatchingInstances(IEnumerable<GameEntity> entities, string targetFull, bool isDirectory, ProjectData project, List<(GameEntity entity, string oldPath)> outList)
+        /// <summary>True if <paramref name="target"/> is <paramref name="root"/> or anywhere under it.</summary>
+        private static bool ContainsEntity(GameEntity root, GameEntity target)
+        {
+            if (root == null) return false;
+            if (ReferenceEquals(root, target)) return true;
+            if (root.Children != null)
+                foreach (var c in root.Children)
+                    if (ContainsEntity(c, target)) return true;
+            return false;
+        }
+
+        private static void CollectMatchingInstances(IEnumerable<GameEntity> entities, string targetFull, bool isDirectory, ProjectData project, List<GameEntity> outList)
         {
             if (entities == null) return;
             foreach (var e in entities)
@@ -196,7 +239,7 @@ namespace Editor.Core.Services
                         bool hit = isDirectory
                             ? instFull.StartsWith(targetFull.TrimEnd('\\', '/') + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
                             : string.Equals(instFull, targetFull, StringComparison.OrdinalIgnoreCase);
-                        if (hit) outList.Add((e, e.PrefabPath));
+                        if (hit) outList.Add(e);
                     }
                 }
                 CollectMatchingInstances(e.Children, targetFull, isDirectory, project, outList);
@@ -216,11 +259,26 @@ namespace Editor.Core.Services
 
         private void PropagateToOtherInstances(GameEntity source)
         {
-            var scene = source.Scene;
-            if (scene == null) return;
+            var project = ProjectData.Current;
+            if (project?.Scenes == null) return;
+            // Update EVERY instance of this prefab across ALL open scenes (not just the source's scene), each keeping
+            // its own transform. Instances in non-active scenes become data+engine-correct and render live once their
+            // scene is activated (the viewport can only present the single active scene).
             var targets = new List<GameEntity>();
-            CollectInstances(scene.Entities, source.PrefabPath, source, targets);
+            foreach (var sc in project.Scenes)
+            {
+                if (sc?.Entities == null) continue;
+                CollectInstances(sc.Entities, source.PrefabPath, source, targets);
+            }
             foreach (var t in targets) RevertInstance(t);   // re-instantiates from the just-saved prefab, keeps transform
+        }
+
+        /// <summary>Ask the editor viewport to re-bake its render queue next frame. The viewport does not subscribe to
+        /// Entities CollectionChanged, so programmatic add/remove/apply must call this or the change stays invisible
+        /// until an unrelated event (selection, transform, scene switch) dirties it.</summary>
+        private static void RequestViewportResubmit()
+        {
+            try { Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.RequestResubmit(); } catch { }
         }
 
         private static void CollectInstances(IEnumerable<GameEntity> entities, string prefabPath, GameEntity exclude, List<GameEntity> outList)
