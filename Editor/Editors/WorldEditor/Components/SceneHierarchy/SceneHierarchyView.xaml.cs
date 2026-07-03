@@ -279,6 +279,20 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
         {
             try
             {
+                // Prefab instance: reveal its SOURCE prefab (.ventity) first — that's the asset behind the object.
+                if (!string.IsNullOrEmpty(entity.PrefabPath))
+                {
+                    var pproj = ProjectData.Current?.Path ?? "";
+                    string pfull = System.IO.Path.IsPathRooted(entity.PrefabPath) ? entity.PrefabPath : System.IO.Path.Combine(pproj, entity.PrefabPath);
+                    var pdir = System.IO.Path.GetDirectoryName(pfull);
+                    if (!string.IsNullOrEmpty(pdir) && System.IO.Directory.Exists(pdir))
+                    {
+                        Editor.Editors.WorldEditor.Components.FileExplorer.Services.FileExplorerService.Instance.NavigateToPath(pdir);
+                        (Application.Current?.MainWindow as MainWindow)?.ShowToast("Located prefab '" + System.IO.Path.GetFileName(pfull) + "'");
+                        return;
+                    }
+                }
+
                 string matPath = entity.GetComponent<Editor.ECS.Components.Rendering.MeshRenderer>()?.MaterialPath;
                 if (string.IsNullOrEmpty(matPath) && entity.Children != null)
                 {

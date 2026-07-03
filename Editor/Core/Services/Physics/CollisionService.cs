@@ -147,8 +147,33 @@ namespace Editor.Core.Services.Physics
         public static bool RaycastDown(Vector3 origin, float maxDist, out Vector3 hit, out string tag)
         {
             hit = origin; tag = "";
-            V3 o = From(origin);
-            float bestT = maxDist; Shape best = null;
+            var best = RaycastDownShape(From(origin), maxDist, out float bestT);
+            if (best == null) return false;
+            hit = new Vector3(origin.X, origin.Y - bestT, origin.Z);
+            tag = best.Owner != null ? (best.Owner.Tag ?? "") : "";
+            return true;
+        }
+
+        /// <summary>Like <see cref="RaycastDown"/> but returns the surface's MATERIAL name (the file name of the hit
+        /// entity's MeshRenderer material, e.g. "grass" from "Assets/Materials/grass.vmat"). This is the SCALABLE way
+        /// to drive surface-aware audio/effects: map material -> sound ONCE and every object using that material works
+        /// automatically, across every scene — no per-entity tagging. "" when the surface has no material.</summary>
+        public static bool RaycastDownMaterial(Vector3 origin, float maxDist, out Vector3 hit, out string material)
+        {
+            hit = origin; material = "";
+            var best = RaycastDownShape(From(origin), maxDist, out float bestT);
+            if (best == null) return false;
+            hit = new Vector3(origin.X, origin.Y - bestT, origin.Z);
+            var mr = best.Owner != null ? best.Owner.GetComponent<Editor.ECS.Components.Rendering.MeshRenderer>() : null;
+            var path = mr != null ? mr.MaterialPath : null;
+            material = string.IsNullOrEmpty(path) ? "" : System.IO.Path.GetFileNameWithoutExtension(path);
+            return true;
+        }
+
+        // Closest solid shape straight below `o` within maxDist (shared by the tag + material raycasts).
+        private static Shape RaycastDownShape(V3 o, float maxDist, out float bestT)
+        {
+            bestT = maxDist; Shape best = null;
             foreach (var s in _world)
             {
                 if (s == null) continue;
@@ -158,10 +183,7 @@ namespace Editor.Core.Services.Physics
                     : RayDownAabb(o, s.Min, s.Max, bestT, out t);
                 if (got && t <= bestT) { bestT = t; best = s; }
             }
-            if (best == null) return false;
-            hit = new Vector3(origin.X, origin.Y - bestT, origin.Z);
-            tag = best.Owner != null ? (best.Owner.Tag ?? "") : "";
-            return true;
+            return best;
         }
 
         // Downward ray (dir = -Y) vs world AABB. Exact for axis-aligned boxes; misses in XZ => no hit; a point below

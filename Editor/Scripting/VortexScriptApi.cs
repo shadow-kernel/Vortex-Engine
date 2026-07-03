@@ -43,6 +43,10 @@ namespace Vortex
         // Tag (the material) or "" if nothing is below. The "what am I standing on?" query for footsteps.
         string GroundTag(Vector3 origin, float maxDist);
 
+        // Like GroundTag but returns the surface's MATERIAL name (from the hit entity's MeshRenderer material) —
+        // the scalable, tag-free way to drive surface-aware audio (map material -> sound once, works everywhere).
+        string GroundMaterial(Vector3 origin, float maxDist);
+
         // Request switching the active scene by name (deferred — applied by the runtime after this tick).
         void LoadScene(string name);
 
@@ -553,6 +557,16 @@ namespace Vortex
         public static string GroundTag(Vector3 from, float maxDist = 3f)
         {
             return Host != null ? (Host.GroundTag(from, maxDist) ?? "") : "";
+        }
+
+        /// <summary>Ray straight DOWN from <paramref name="from"/> against the world colliders — returns the
+        /// <b>material</b> name of the surface you're standing on (the file name of that object's material, e.g.
+        /// "grass" from grass.vmat), or "" if nothing is below. This is the SCALABLE alternative to
+        /// <see cref="GroundTag"/> for surface-aware audio: map material→sound ONCE and every object that uses that
+        /// material plays the right footstep automatically — in every scene, with no per-object tagging.</summary>
+        public static string GroundMaterial(Vector3 from, float maxDist = 3f)
+        {
+            return Host != null ? (Host.GroundMaterial(from, maxDist) ?? "") : "";
         }
     }
 

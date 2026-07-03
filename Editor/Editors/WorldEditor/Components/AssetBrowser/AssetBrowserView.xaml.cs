@@ -856,10 +856,10 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 //   Ctrl   -> open a standalone Model Viewer to inspect + fly around it
                 // (this also fixes the old bug where double-click opened the editor whose preview hijacked the
                 //  shared render queue, so the main viewport showed the model instead of the scene.)
-                // Prefab double-click — consistent with every other asset ("double-click opens its editor"):
-                //   plain  -> open the Prefab Editor (preview + what Save/Add/Apply/Revert mean + one-click actions)
-                //   Ctrl   -> Edit in Scene: add a linked instance, select it, hint how to Apply changes back
-                //   Shift  -> Add to Scene: just drop a linked instance
+                // Prefab double-click — same feel as a model ("double-click drops it into the scene"):
+                //   plain  -> place a linked instance into the scene
+                //   Shift  -> open the Prefab Editor (edit the prefab)
+                //   Ctrl   -> large preview (the Prefab Editor's preview hub)
                 bool isPrefab = item.Type == AssetType.Prefab || (item.Path?.EndsWith(".ventity", StringComparison.OrdinalIgnoreCase) ?? false);
                 if (isPrefab && !string.IsNullOrEmpty(item.Path))
                 {
@@ -867,9 +867,9 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                     var proj = ProjectData.Current?.Path ?? "";
                     var full = System.IO.Path.IsPathRooted(item.Path) ? item.Path : System.IO.Path.Combine(proj, item.Path);
 
-                    if ((pmods & System.Windows.Input.ModifierKeys.Control) != 0) { PlacePrefabInstance(full, item.Name, editHint: true); return; }
-                    if ((pmods & System.Windows.Input.ModifierKeys.Shift)   != 0) { PlacePrefabInstance(full, item.Name, editHint: false); return; }
-                    OpenPrefabEditor(item, full);
+                    if ((pmods & System.Windows.Input.ModifierKeys.Shift) != 0) { OpenPrefabEditor(item, full); return; }   // edit
+                    if ((pmods & System.Windows.Input.ModifierKeys.Control) != 0) { OpenPrefabEditor(item, full); return; } // large preview
+                    PlacePrefabInstance(full, item.Name, editHint: false);   // plain double-click -> drop into scene
                     return;
                 }
 

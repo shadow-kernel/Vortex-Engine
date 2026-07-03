@@ -707,6 +707,13 @@ namespace Editor.Scripting
             return Editor.Core.Services.Physics.CollisionService.RaycastDown(o, maxDist, out hit, out tag) ? (tag ?? "") : "";
         }
 
+        string Vortex.IScriptHost.GroundMaterial(Vortex.Vector3 origin, float maxDist)
+        {
+            var o = new Editor.ECS.Vector3(origin.X, origin.Y, origin.Z);
+            Editor.ECS.Vector3 hit; string mat;
+            return Editor.Core.Services.Physics.CollisionService.RaycastDownMaterial(o, maxDist, out hit, out mat) ? (mat ?? "") : "";
+        }
+
         bool Vortex.IScriptHost.GetKey(string key)
         {
             if (string.IsNullOrEmpty(key)) return false;

@@ -52,7 +52,23 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             else
                 MeshComboBox.SelectedIndex = 0;
 
-            MaterialComboBox.SelectedIndex = 0;
+            // Material: SHOW the actually-assigned material (from MaterialPath) instead of always "Default". A path
+            // assigned in code or a picker (e.g. "Assets/Materials/grass.vmat") now displays as "grass". (Fixes the
+            // bug where an assigned material read as unset.)
+            MaterialComboBox.Items.Clear();
+            MaterialComboBox.Items.Add(new ComboBoxItem { Content = "Default" });
+            var matPath = _meshRenderer.MaterialPath;
+            bool hasMat = !string.IsNullOrEmpty(matPath) &&
+                          !matPath.StartsWith("Material:", StringComparison.OrdinalIgnoreCase); // legacy placeholder = unset
+            if (hasMat)
+            {
+                MaterialComboBox.Items.Add(new ComboBoxItem { Content = System.IO.Path.GetFileNameWithoutExtension(matPath) });
+                MaterialComboBox.SelectedIndex = 1;
+            }
+            else
+            {
+                MaterialComboBox.SelectedIndex = 0;
+            }
 
             _isUpdating = false;
         }
@@ -77,7 +93,10 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             var selectedItem = MaterialComboBox.SelectedItem as ComboBoxItem;
             if (selectedItem == null) return;
 
-            _meshRenderer.MaterialPath = $"Material:{selectedItem.Content}";
+            // "Default" clears the assignment (engine default material). Any other item is the already-assigned
+            // material's display name (informational) — changing the actual material is done via the picker button.
+            if ((selectedItem.Content as string) == "Default")
+                _meshRenderer.MaterialPath = null;
         }
 
         private void SelectMeshButton_Click(object sender, RoutedEventArgs e)
@@ -101,6 +120,7 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             if (dialog.ShowDialog() == true && dialog.SelectedAsset != null)
             {
                 _meshRenderer.MaterialPath = dialog.SelectedAsset.Path;
+                UpdateUI();   // reflect the new material in the dropdown immediately
             }
         }
 

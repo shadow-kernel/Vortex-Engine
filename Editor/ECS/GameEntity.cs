@@ -119,7 +119,11 @@ namespace Editor.ECS
         public string PrefabPath
         {
             get => _prefabPath;
-            set => SetProperty(ref _prefabPath, value, nameof(PrefabPath));
+            set
+            {
+                if (SetProperty(ref _prefabPath, value, nameof(PrefabPath)))
+                    OnPropertyChanged(nameof(IsPrefabInstance));   // keep the hierarchy prefab marker live
+            }
         }
 
         /// <summary>True when this entity is linked to a prefab asset.</summary>
