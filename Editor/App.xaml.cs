@@ -85,21 +85,47 @@ namespace Editor
             try { _singleInstanceMutex = new System.Threading.Mutex(true, "VortexEngineSingleInstance"); } catch { }
 
             // Defer the heavy work to Background priority so the splash paints + animates first.
-            Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, new Action(() =>
+            Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, new Action(async () =>
             {
-                DllWrapper.VortexAPI.InitEngineRuntime();
+                // UPDATE FIRST — BEFORE the engine/renderer and the project load. If an update is applied here,
+                // UpdateService.InstallAndRestart calls Environment.Exit and we never reach InitEngineRuntime, so:
+                //  • no DX12 device / swapchain is held while the installer replaces files, and
+                //  • the restart isn't racing a live engine (the "restart crashes because the engine is already open"
+                //    bug). The splash stays up as the "Checking for updates…" cover.
+                await CheckForUpdatesBeforeStartupAsync();
 
-                var main = new MainWindow();
-                MainWindow = main;
-                // Close the splash when the editor window has actually rendered its first frame. ContentRendered is a
-                // reliable one-shot — unlike the old 850ms Background DispatcherTimer, which a heavy project-load
-                // (it runs at the same/low priority) could starve, leaving the splash stuck on screen for many seconds.
-                main.ContentRendered += (s, ev) =>
+                try
                 {
-                    try { splash.FadeOutAndClose(); } catch { try { splash.Close(); } catch { } }
-                    CheckForUpdatesAsync(); // fire-and-forget; only does anything for installed builds
-                };
-                main.Show(); // -> MainWindow.Loaded loads the last project or opens the project browser
+                    // No update applied -> normal boot. (Project format migration still runs, with a backup, during
+                    // the project load below via ProjectMigrationDialog.EnsureCompatible — now on a freshly-updated engine.)
+                    DllWrapper.VortexAPI.InitEngineRuntime();
+
+                    var main = new MainWindow();
+                    MainWindow = main;
+                    // Close the splash when the editor window has actually rendered its first frame. ContentRendered is a
+                    // reliable one-shot — unlike the old 850ms Background DispatcherTimer, which a heavy project-load
+                    // (it runs at the same/low priority) could starve, leaving the splash stuck on screen for many seconds.
+                    main.ContentRendered += (s, ev) =>
+                    {
+                        try { splash.FadeOutAndClose(); } catch { try { splash.Close(); } catch { } }
+                    };
+                    main.Show(); // -> MainWindow.Loaded loads the last project or opens the project browser
+                }
+                catch (Exception ex)
+                {
+                    // Native engine init (DX12 device) can throw on an unsupported GPU/driver. This runs in an
+                    // async-void continuation with no editor-mode unhandled handler, so without this the topmost splash
+                    // would stay up forever over the crash. Tear the splash down and surface the error.
+                    try { splash.Close(); } catch { }
+                    try
+                    {
+                        MessageBox.Show("Vortex Engine could not start:\n\n" + ex.Message +
+                            "\n\nThis usually means the GPU or graphics driver does not support the required DirectX 12 features.",
+                            "Startup failed", MessageBoxButton.OK, MessageBoxImage.Error);
+                    }
+                    catch { }
+                    Shutdown();
+                }
             }));
         }
 
@@ -114,9 +140,11 @@ namespace Editor
             _singleInstanceMutex = null;
         }
 
-        /// <summary>Non-blocking auto-update check: only for installer builds; Patch auto-installs, Minor/Major ask.
-        /// Wrapped so a failure can never affect startup.</summary>
-        private async void CheckForUpdatesAsync()
+        /// <summary>Auto-update gate run BEFORE engine/project init (installer builds only): Patch auto-installs,
+        /// Minor/Major ask. AWAITABLE so the boot sequence waits for it — and if the user updates, InstallAndRestart
+        /// exits the process here, before any DX12 device exists, so the installer + restart are clean. A failure can
+        /// never block startup (fully wrapped; on any error we just fall through to a normal boot).</summary>
+        private async System.Threading.Tasks.Task CheckForUpdatesBeforeStartupAsync()
         {
             try
             {
@@ -126,14 +154,15 @@ namespace Editor
 
                 // Marshal the dialog to the UI thread — CheckAsync uses ConfigureAwait(false), so this continuation
                 // may resume on a thread-pool thread, and a WPF Window can only be created/shown on the UI thread.
+                // No Owner: MainWindow doesn't exist yet (that's the point — we gate before it's built).
                 Dispatcher.Invoke(new Action(() =>
                 {
-                    var dlg = new Editor.Dialogs.UpdateDialog(info);
-                    if (MainWindow != null && MainWindow.IsLoaded) dlg.Owner = MainWindow;
-                    dlg.ShowDialog(); // patch auto-installs inside; minor/major ask first
+                    // Topmost so it sits above the (topmost) splash cover, which is still up during the gate.
+                    var dlg = new Editor.Dialogs.UpdateDialog(info) { Topmost = true };
+                    dlg.ShowDialog(); // patch auto-installs inside (Environment.Exit -> boot never continues); minor/major ask first
                 }));
             }
-            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Update] check failed: " + ex.Message); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Update] pre-start check failed: " + ex.Message); }
         }
 
         /// <summary>Boots the bundled game with NO editor UI: load project from the exe folder, activate the

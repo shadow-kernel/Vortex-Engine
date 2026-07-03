@@ -313,9 +313,48 @@ namespace Editor.Core.Services
         public long BuildEngineMaterial(VortexMaterial vmat)
         {
             if (vmat == null) return -1;
-
             long mat = VortexAPI.CreateNewMaterial();
             if (mat < 0) return -1;
+            ApplyVmatValues(mat, vmat, includeTextures: true);
+            return mat;
+        }
+
+        /// <summary>Push a saved .vmat's state onto an EXISTING engine material id. Used to make a re-imported model
+        /// (Explorer thumbnail, Prefab Editor preview) reflect the Model Editor's edits, which live in the sidecar
+        /// .vmat — NOT the model file's embedded materials. <paramref name="includeTextures"/> = false skips texture
+        /// (re)import: the engine's import_texture has NO path dedup, so re-uploading maps on every throwaway thumbnail
+        /// build leaks GPU textures — thumbnails/previews use scalars-only (base color is what users edit).</summary>
+        public void ApplyVmatToMaterial(long materialId, string vmatPath, bool includeTextures = true)
+        {
+            if (materialId < 0 || string.IsNullOrEmpty(vmatPath) || !File.Exists(vmatPath)) return;
+            var vmat = VortexMaterial.Load(vmatPath);
+            if (vmat == null) return;
+            if (includeTextures) { try { vmat.ResolvePathsAbsolute(Path.GetDirectoryName(vmatPath)); } catch { } }
+            ApplyVmatValues(materialId, vmat, includeTextures);
+        }
+
+        /// <summary>For a freshly re-imported model, overlay each submesh's sidecar <c>materials/submesh_i.vmat</c>
+        /// (what the Model Editor saves) onto the imported material ids — so Explorer thumbnails and the Prefab Editor
+        /// preview show the EDITED base colour / PBR. Scalars-only by default (no texture re-import -> no GPU leak on
+        /// repeated throwaway renders). No-op if the model has no materials/.</summary>
+        public void ApplyModelSidecarVmats(long[] materialIds, string modelFullPath, bool includeTextures = false)
+        {
+            if (materialIds == null || string.IsNullOrEmpty(modelFullPath)) return;
+            string matDir;
+            try { matDir = Path.Combine(Path.GetDirectoryName(modelFullPath) ?? "", "materials"); }
+            catch { return; }
+            if (!Directory.Exists(matDir)) return;
+            for (int i = 0; i < materialIds.Length; i++)
+            {
+                try { ApplyVmatToMaterial(materialIds[i], Path.Combine(matDir, $"submesh_{i}.vmat"), includeTextures); } catch { }
+            }
+        }
+
+        /// <summary>Apply a VortexMaterial's base color + PBR scalars (+ texture maps + shader when includeTextures) to
+        /// an engine material id. Texture paths must already be absolute (call ResolvePathsAbsolute first).</summary>
+        private void ApplyVmatValues(long mat, VortexMaterial vmat, bool includeTextures)
+        {
+            if (mat < 0 || vmat == null) return;
 
             // Base color
             var c = vmat.BaseColor;
@@ -338,6 +377,8 @@ namespace Editor.Core.Services
             if (vmat.EmissiveStrength > 0f)
                 VortexAPI.SetMaterialEmissiveBrightness(mat, vmat.EmissiveStrength);
 
+            if (!includeTextures) return;   // scalars-only path (thumbnails/previews) — skip texture/shader re-import
+
             // Texture maps (resolved to absolute paths above)
             BindMap(mat, vmat.AlbedoTexture, VortexAPI.SetMaterialAlbedoTexture);
             BindMap(mat, vmat.NormalTexture, VortexAPI.SetMaterialNormalMap);
@@ -352,8 +393,6 @@ namespace Editor.Core.Services
                 var hlsl = ResolveShaderHlsl(vmat.ShaderAsset);
                 if (!string.IsNullOrEmpty(hlsl)) VortexAPI.SetMaterialShader((int)mat, hlsl);
             }
-
-            return mat;
         }
 
         /// <summary>Resolve a material's ShaderAsset (.vshader/.hlsl, project-relative) to the absolute .hlsl to compile.</summary>

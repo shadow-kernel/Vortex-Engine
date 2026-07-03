@@ -84,6 +84,43 @@ namespace Editor.Core.Services
             return -1;
         }
 
+        /// <summary>Apply <paramref name="apply"/> to EVERY live scene material of a model's submesh, matched by the
+        /// ACTUAL registered mesh-path key resolved to an absolute file — so a material edit reaches the object no
+        /// matter how it stored its model path (project-relative, absolute, or a prefab that stored just the file
+        /// name). This is what makes an edited material's colour update in the live viewport / placed instances, where
+        /// a single fixed-key lookup missed prefab-placed models. Returns how many live materials were updated.</summary>
+        public static int ApplyToLiveMaterialsForModel(string modelAbsPath, int submeshIndex, Action<long> apply)
+        {
+            if (string.IsNullOrEmpty(modelAbsPath) || apply == null) return 0;
+            string modelFull;
+            try { modelFull = System.IO.Path.GetFullPath(modelAbsPath); } catch { modelFull = modelAbsPath; }
+            var proj = Data.ProjectData.Current?.Path;
+            int n = 0;
+            // Snapshot the keys: apply() only mutates native materials, not the dictionary, but be defensive.
+            foreach (var kv in new List<KeyValuePair<string, long>>(_meshPathToMaterialId))
+            {
+                var key = kv.Key;
+                int hash = key.LastIndexOf('#');
+                if (hash <= 0 || !(key.Length > hash + 7 && key.Substring(hash + 1, 7) == "submesh")) continue;
+                if (!int.TryParse(key.Substring(hash + 8), out int idx) || idx != submeshIndex) continue;
+
+                var basePath = key.Substring(0, hash);
+                bool match = false;
+                try
+                {
+                    var baseAbs = System.IO.Path.IsPathRooted(basePath) || string.IsNullOrEmpty(proj)
+                        ? basePath : System.IO.Path.Combine(proj, basePath);
+                    match = string.Equals(System.IO.Path.GetFullPath(baseAbs), modelFull, StringComparison.OrdinalIgnoreCase);
+                }
+                catch { }
+                // Match on the RESOLVED absolute path only — NEVER a bare filename fallback, which would apply this
+                // model's edit to a DIFFERENT model that merely shares a file name (e.g. two washer.glb) and corrupt it.
+
+                if (match && kv.Value >= 0) { try { apply(kv.Value); n++; } catch { } }
+            }
+            return n;
+        }
+
         private bool _isInitialized;
 
         private SceneRenderService() { }

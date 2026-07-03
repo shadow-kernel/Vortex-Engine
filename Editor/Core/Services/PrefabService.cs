@@ -257,6 +257,22 @@ namespace Editor.Core.Services
             finally { entity.PrefabPath = saved; }
         }
 
+        /// <summary>Reload EVERY instance of a prefab (across all open scenes) from the .ventity on disk, each keeping
+        /// its own transform. Call after the prefab TEMPLATE was edited directly (the isolated Prefab Editor) so the
+        /// change reaches placed instances without needing a source instance to propagate from.</summary>
+        public void ReloadInstancesFromPrefab(string prefabPathAbsOrRel)
+        {
+            var project = ProjectData.Current;
+            if (project?.Scenes == null || string.IsNullOrEmpty(prefabPathAbsOrRel)) return;
+            var full = Resolve(prefabPathAbsOrRel, project);
+            var rel = ToProjectRelative(full, project.Path);
+            var targets = new List<GameEntity>();
+            foreach (var sc in project.Scenes)
+                if (sc?.Entities != null) CollectInstances(sc.Entities, rel, null, targets);
+            foreach (var t in targets) { try { RevertInstance(t); } catch { } }
+            RequestViewportResubmit();
+        }
+
         private void PropagateToOtherInstances(GameEntity source)
         {
             var project = ProjectData.Current;

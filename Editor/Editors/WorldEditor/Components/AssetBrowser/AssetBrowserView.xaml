@@ -36,6 +36,12 @@
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+            <Style.Triggers>
+                <!-- The ".." up-one-level tile reads as a faint, secondary affordance. -->
+                <DataTrigger Binding="{Binding IsParentUp}" Value="True">
+                    <Setter Property="Opacity" Value="0.5"/>
+                </DataTrigger>
+            </Style.Triggers>
         </Style>
 
         <!-- Toolbar icon button -->
@@ -196,10 +202,14 @@
         <ListBox x:Name="AssetList" Grid.Row="3"
                  Background="Transparent" BorderThickness="0"
                  Padding="10,0,10,10"
+                 SelectionMode="Extended"
+                 AllowDrop="True"
                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                  ItemContainerStyle="{StaticResource AssetItemStyle}"
                  SelectionChanged="AssetList_SelectionChanged"
                  PreviewMouseRightButtonDown="AssetList_RightDown"
+                 DragOver="AssetList_DragOver"
+                 Drop="AssetList_Drop"
                  MouseDoubleClick="AssetList_MouseDoubleClick">
             <ListBox.ItemsPanel>
                 <ItemsPanelTemplate>

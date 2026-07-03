@@ -1087,15 +1087,13 @@ namespace Editor.Dialogs
             browseBtn.FontSize = 11;
             browseBtn.Click += (s, e) =>
             {
-                var dialog = new OpenFileDialog
+                // STA FilePicker (the WPF shell dialog deadlocks the live renderer — the "browse crashes" bug).
+                var picked = Editor.Core.Util.FilePicker.OpenFile(
+                    "Images|*.png;*.jpg;*.jpeg;*.tga;*.bmp;*.dds;*.hdr|All|*.*",
+                    $"Select {slot.DisplayName} Texture", _modelData.Directory);
+                if (!string.IsNullOrEmpty(picked))
                 {
-                    Title = $"Select {slot.DisplayName} Texture",
-                    Filter = "Images|*.png;*.jpg;*.jpeg;*.tga;*.bmp;*.dds;*.hdr|All|*.*",
-                    InitialDirectory = _modelData.Directory
-                };
-                if (dialog.ShowDialog() == true)
-                {
-                    slot.FilePath = dialog.FileName;
+                    slot.FilePath = picked;
                     UpdatePropertiesPanel();
                     UpdateStats();
                 }
@@ -1429,32 +1427,32 @@ namespace Editor.Dialogs
 
         private void PropagateMaterialsToScene()
         {
-            var projectPath = Core.Data.ProjectData.Current?.Path ?? "";
-            string relPath = _modelData.FilePath ?? "";
-            if (!string.IsNullOrEmpty(projectPath) && relPath.StartsWith(projectPath, StringComparison.OrdinalIgnoreCase))
-                relPath = relPath.Substring(projectPath.Length).TrimStart('\\', '/');
+            var modelAbs = _modelData.FilePath ?? "";   // absolute model path (matched by SceneRenderService, any key form)
 
             for (int i = 0; i < _modelData.Submeshes.Count; i++)
             {
                 int matIdx = _modelData.Submeshes[i].MaterialIndex;
                 if (matIdx < 0 || matIdx >= _modelData.Materials.Count) continue;
 
-                long liveId = Core.Services.SceneRenderService.GetMaterialForMeshPath($"{relPath}#submesh{i}");
-                if (liveId < 0) continue; // not placed in the scene (or path mismatch) -> safe skip
-
                 var m = _modelData.Materials[matIdx];
                 var c = m.BaseColor;
-                Editor.DllWrapper.VortexAPI.SetMaterialBaseColor(liveId, c.R / 255f, c.G / 255f, c.B / 255f, c.A / 255f);
-                Editor.DllWrapper.VortexAPI.SetMaterialMetallicValue(liveId, m.Metallic);
-                Editor.DllWrapper.VortexAPI.SetMaterialRoughnessValue(liveId, m.Roughness);
-                Editor.DllWrapper.VortexAPI.SetMaterialAOValue(liveId, m.AOStrength);
-                Editor.DllWrapper.VortexAPI.SetMaterialNormalStrengthValue(liveId, m.NormalStrength);
+                // Push edited PBR + texture maps onto EVERY live material of this model's submesh i — including
+                // prefab-placed instances, which a single fixed-key lookup used to miss (so the colour never changed
+                // in the scene / viewport / game). Runs the maps once per matched material.
+                Core.Services.SceneRenderService.ApplyToLiveMaterialsForModel(modelAbs, i, liveId =>
+                {
+                    Editor.DllWrapper.VortexAPI.SetMaterialBaseColor(liveId, c.R / 255f, c.G / 255f, c.B / 255f, c.A / 255f);
+                    Editor.DllWrapper.VortexAPI.SetMaterialMetallicValue(liveId, m.Metallic);
+                    Editor.DllWrapper.VortexAPI.SetMaterialRoughnessValue(liveId, m.Roughness);
+                    Editor.DllWrapper.VortexAPI.SetMaterialAOValue(liveId, m.AOStrength);
+                    Editor.DllWrapper.VortexAPI.SetMaterialNormalStrengthValue(liveId, m.NormalStrength);
 
-                BindLiveMap(liveId, m.GetTextureSlot(TextureMapType.Albedo)?.FilePath, Editor.DllWrapper.VortexAPI.SetMaterialAlbedoTexture);
-                BindLiveMap(liveId, m.GetTextureSlot(TextureMapType.Normal)?.FilePath, Editor.DllWrapper.VortexAPI.SetMaterialNormalMap);
-                BindLiveMap(liveId, m.GetTextureSlot(TextureMapType.Metallic)?.FilePath, Editor.DllWrapper.VortexAPI.SetMaterialMetallicMap);
-                BindLiveMap(liveId, m.GetTextureSlot(TextureMapType.Roughness)?.FilePath, Editor.DllWrapper.VortexAPI.SetMaterialRoughnessMap);
-                BindLiveMap(liveId, m.GetTextureSlot(TextureMapType.AmbientOcclusion)?.FilePath, Editor.DllWrapper.VortexAPI.SetMaterialAOMap);
+                    BindLiveMap(liveId, m.GetTextureSlot(TextureMapType.Albedo)?.FilePath, Editor.DllWrapper.VortexAPI.SetMaterialAlbedoTexture);
+                    BindLiveMap(liveId, m.GetTextureSlot(TextureMapType.Normal)?.FilePath, Editor.DllWrapper.VortexAPI.SetMaterialNormalMap);
+                    BindLiveMap(liveId, m.GetTextureSlot(TextureMapType.Metallic)?.FilePath, Editor.DllWrapper.VortexAPI.SetMaterialMetallicMap);
+                    BindLiveMap(liveId, m.GetTextureSlot(TextureMapType.Roughness)?.FilePath, Editor.DllWrapper.VortexAPI.SetMaterialRoughnessMap);
+                    BindLiveMap(liveId, m.GetTextureSlot(TextureMapType.AmbientOcclusion)?.FilePath, Editor.DllWrapper.VortexAPI.SetMaterialAOMap);
+                });
             }
         }
 

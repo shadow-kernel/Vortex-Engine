@@ -16,11 +16,16 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
         private GameEntity _selectedEntity;
         private Dictionary<Type, Func<Component, UserControl>> _inspectorFactories;
 
+        /// <summary>When true this inspector IGNORES the global SelectionService and is driven ONLY by SetEntity — so
+        /// it can edit a standalone entity (the isolated Prefab Editor) without the main scene's selection stealing it.
+        /// Set BEFORE the control is loaded.</summary>
+        public bool IsolatedMode { get; set; }
+
         public DynamicInspectorView()
         {
             InitializeComponent();
             InitializeInspectorFactories();
-            
+
             Loaded += OnLoaded;
             Unloaded += OnUnloaded;
         }
@@ -52,6 +57,7 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
 
         private void OnLoaded(object sender, RoutedEventArgs e)
         {
+            if (IsolatedMode) return;   // isolated Prefab Editor drives this inspector only via SetEntity
             SelectionService.Instance.SelectionChanged += OnSelectionChanged;
         }
 

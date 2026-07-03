@@ -49,6 +49,7 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             public Guid AssetGuid { get; set; }
             public bool IsImported { get; set; }
             public bool IsFolder { get; set; }
+            public bool IsParentUp { get; set; }          // the ".." tile: navigate up / drop-to-move-up-a-level
             public FileSystemItem Source { get; set; }   // backing file/folder for explorer items
 
             /// <summary>Real preview image (texture bitmap / generated color swatch / material sphere).
@@ -379,14 +380,182 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                     _dragArmed = false;
 
                     var data = new DataObject();
+                    // Scene-placement payload (viewport consumer): the primary tile.
                     data.SetData("AssetItem", item);
                     data.SetData("AssetGuid", item.AssetGuid.ToString());
                     data.SetData("AssetPath", item.Path);
 
-                    System.Windows.DragDrop.DoDragDrop(AssetList, data, DragDropEffects.Copy);
+                    // File-MOVE payload (folder-drop consumer): the absolute source path of EVERY selected explorer
+                    // tile, so a multiselect drag moves them all into the dropped-on folder.
+                    var paths = new System.Collections.Generic.List<string>();
+                    foreach (var o in AssetList.SelectedItems)
+                        if (o is AssetItem sel && !string.IsNullOrEmpty(sel.Source?.FullPath))
+                            paths.Add(sel.Source.FullPath);
+                    if (paths.Count > 0) data.SetData("AssetSourcePaths", paths.ToArray());
+
+                    System.Windows.DragDrop.DoDragDrop(AssetList, data, DragDropEffects.Copy | DragDropEffects.Move);
                     _isDragging = false;
                 }
             }
+        }
+
+        /// <summary>The absolute destination folder a drag would move INTO if dropped on this tile: a real folder
+        /// tile's own folder, or the ".." tile's parent folder. Null if the tile isn't a move target.</summary>
+        private static string DropDestFolder(AssetItem target)
+        {
+            if (target == null || !target.IsFolder) return null;
+            if (target.IsParentUp) return target.Path;          // ".." -> the parent folder
+            return target.Source?.FullPath;
+        }
+
+        /// <summary>Show a Move cursor only when hovering a FOLDER (or "..") tile we can move the dragged files into.</summary>
+        private void AssetList_DragOver(object sender, DragEventArgs e)
+        {
+            var dest = DropDestFolder(ResolveClickedAsset(e.OriginalSource as System.Windows.DependencyObject));
+            bool canMove = !string.IsNullOrEmpty(dest) && System.IO.Directory.Exists(dest) && e.Data.GetDataPresent("AssetSourcePaths");
+            e.Effects = canMove ? DragDropEffects.Move : DragDropEffects.None;
+            e.Handled = true;
+        }
+
+        /// <summary>Drop selected files/folders onto a folder (or "..") tile -> MOVE them there on disk, UNDOABLY.</summary>
+        private void AssetList_Drop(object sender, DragEventArgs e)
+        {
+            try
+            {
+                var destDir = DropDestFolder(ResolveClickedAsset(e.OriginalSource as System.Windows.DependencyObject));
+                if (string.IsNullOrEmpty(destDir) || !System.IO.Directory.Exists(destDir)) return;
+                if (!(e.Data.GetData("AssetSourcePaths") is string[] paths) || paths.Length == 0) return;
+
+                var moves = PlanMoves(paths, destDir);
+                if (moves.Count == 0) return;
+
+                // Undoable: Ctrl+Z moves them back, Ctrl+Y / Ctrl+Shift+Z re-moves. Targets are fixed at plan time so
+                // undo/redo are exact inverses. Execute runs the forward move immediately. ApplyMoves NEVER overwrites
+                // an occupied destination (it skips) — so a name clash at the source on undo is a reported skip, not a
+                // silent no-op or a destructive overwrite.
+                Editor.Core.UndoRedo.UndoRedoManager.Instance.Execute(new Editor.Core.UndoRedo.Commands.ActionCommand(
+                    moves.Count == 1 ? "Move 1 item" : $"Move {moves.Count} items",
+                    () => { int skipped = ApplyMoves(moves, forward: true); RefreshAfterMove(); ReportMoveSkips(skipped); },
+                    () => { int skipped = ApplyMoves(moves, forward: false); RefreshAfterMove(); ReportMoveSkips(skipped); }));
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[AssetBrowser] drop-move failed: " + ex.Message); }
+            e.Handled = true;
+        }
+
+        private static string SafeParentDir(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return null;
+            try { return System.IO.Path.GetDirectoryName(path.TrimEnd('\\', '/')); } catch { return null; }
+        }
+
+        /// <summary>True if <paramref name="path"/> is the project root or inside it — so ".." never navigates above the project.</summary>
+        private static bool IsWithinProject(string path)
+        {
+            var proj = ProjectData.Current?.Path;
+            if (string.IsNullOrEmpty(proj) || string.IsNullOrEmpty(path)) return false;
+            try
+            {
+                var p = System.IO.Path.GetFullPath(path).TrimEnd('\\', '/');
+                var r = System.IO.Path.GetFullPath(proj).TrimEnd('\\', '/');
+                return p.Equals(r, StringComparison.OrdinalIgnoreCase)
+                    || p.StartsWith(r + System.IO.Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+            }
+            catch { return false; }
+        }
+
+        private struct MoveOp { public string Src; public string Dst; public bool IsDir; }
+
+        /// <summary>Compute the (src -> dst) moves without performing them: skips a move into the same folder, refuses
+        /// to move a folder into itself/a descendant, and disambiguates name clashes with " (N)" ONCE so redo/undo match.</summary>
+        private List<MoveOp> PlanMoves(string[] sourcePaths, string destDir)
+        {
+            var list = new List<MoveOp>();
+            var destTrim = destDir.TrimEnd('\\', '/');
+            var sep = System.IO.Path.DirectorySeparatorChar;
+            foreach (var src in sourcePaths)
+            {
+                if (string.IsNullOrEmpty(src)) continue;
+                bool isDir = System.IO.Directory.Exists(src);
+                bool isFile = System.IO.File.Exists(src);
+                if (!isDir && !isFile) continue;
+
+                var trimmed = src.TrimEnd('\\', '/');
+                var name = System.IO.Path.GetFileName(trimmed);
+                var srcParent = System.IO.Path.GetDirectoryName(trimmed);
+                if (string.Equals(srcParent, destTrim, StringComparison.OrdinalIgnoreCase)) continue; // already here
+                if (isDir && (destTrim + sep).StartsWith(trimmed + sep, StringComparison.OrdinalIgnoreCase)) continue; // into itself/descendant
+
+                var target = UniqueTarget(System.IO.Path.Combine(destDir, name), isDir);
+                list.Add(new MoveOp { Src = trimmed, Dst = target, IsDir = isDir });
+            }
+            return list;
+        }
+
+        /// <summary>Apply the planned moves; forward = src->dst (do/redo), else dst->src (undo). NEVER overwrites an
+        /// occupied destination (File.Move/Directory.Move on .NET FW throw on an existing target — and overwriting
+        /// would be data loss): such an op is SKIPPED and counted. Moves a file's .meta sidecar alongside it. Each op
+        /// is independent. Returns the number of ops that could NOT complete (occupied target or error).</summary>
+        private static int ApplyMoves(List<MoveOp> moves, bool forward)
+        {
+            if (moves == null) return 0;
+            int skipped = 0;
+            foreach (var mv in moves)
+            {
+                var from = forward ? mv.Src : mv.Dst;
+                var to = forward ? mv.Dst : mv.Src;
+                try
+                {
+                    if (mv.IsDir)
+                    {
+                        if (!System.IO.Directory.Exists(from)) { skipped++; continue; }
+                        if (System.IO.Directory.Exists(to)) { skipped++; continue; }  // occupied -> skip, never clobber
+                        System.IO.Directory.Move(from, to);
+                    }
+                    else
+                    {
+                        if (!System.IO.File.Exists(from)) { skipped++; continue; }
+                        if (System.IO.File.Exists(to)) { skipped++; continue; }       // occupied -> skip, never clobber
+                        System.IO.File.Move(from, to);
+                        var fromMeta = from + Editor.Core.Assets.AssetDatabase.MetaFileExtension;
+                        var toMeta = to + Editor.Core.Assets.AssetDatabase.MetaFileExtension;
+                        if (System.IO.File.Exists(fromMeta) && !System.IO.File.Exists(toMeta))
+                            try { System.IO.File.Move(fromMeta, toMeta); } catch { }
+                    }
+                }
+                catch (Exception ex) { skipped++; System.Diagnostics.Debug.WriteLine("[AssetBrowser] move '" + from + "' failed: " + ex.Message); }
+            }
+            return skipped;
+        }
+
+        /// <summary>Tell the user when a move/undo couldn't complete because the destination name was already taken —
+        /// so a skipped undo isn't a silent no-op.</summary>
+        private void ReportMoveSkips(int skipped)
+        {
+            if (skipped <= 0) return;
+            (Application.Current?.MainWindow as MainWindow)?.ShowToast(
+                skipped == 1 ? "1 item couldn't be moved — a file/folder with that name already exists there"
+                             : skipped + " items couldn't be moved — names already exist there");
+        }
+
+        private void RefreshAfterMove()
+        {
+            try { FileExplorerService.Instance.RefreshCurrentFolderContents(); } catch { }
+            RefreshAssets();
+        }
+
+        private static string UniqueTarget(string target, bool isDir)
+        {
+            bool Exists(string p) => isDir ? System.IO.Directory.Exists(p) : System.IO.File.Exists(p);
+            if (!Exists(target)) return target;
+            var dir = System.IO.Path.GetDirectoryName(target);
+            var stem = System.IO.Path.GetFileNameWithoutExtension(target);
+            var ext = System.IO.Path.GetExtension(target);
+            for (int i = 2; i < 1000; i++)
+            {
+                var cand = System.IO.Path.Combine(dir, $"{stem} ({i}){ext}");
+                if (!Exists(cand)) return cand;
+            }
+            return target;
         }
 
         private void OnLoaded(object sender, RoutedEventArgs e)
@@ -499,7 +668,8 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                     var importResult = Dialogs.AssetImportDialog.ShowImportDialog(
                         Window.GetWindow(this),
                         pickedFiles[0],
-                        importType);
+                        importType,
+                        CurrentImportRelFolder(_currentType));   // pre-fill the target with the current explorer folder
 
                     if (importResult.Success)
                     {
@@ -532,6 +702,19 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             if (rel.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase))
                 rel = rel.Substring("Assets/".Length);
             return rel;
+        }
+
+        /// <summary>The PROJECT-relative folder (e.g. "Assets/Textures/wood") that an import should land in: the folder
+        /// the user is browsing in the Explorer if it's a real Assets subfolder, else the asset type's default folder.
+        /// Fixes "textures always import to Assets/ regardless of where I am".</summary>
+        private string CurrentImportRelFolder(AssetType type)
+        {
+            var rel = (_currentFolderRel ?? "").Replace('\\', '/').Trim('/');
+            if (!string.IsNullOrEmpty(rel)
+                && rel.StartsWith("Assets", StringComparison.OrdinalIgnoreCase)
+                && !rel.Equals("Assets", StringComparison.OrdinalIgnoreCase))
+                return rel;                       // a real explorer subfolder -> import right here
+            return GetDefaultTargetFolder(type);  // at Assets root / a type-filter tab -> the type's default folder
         }
 
         /// <summary>Absolute path of the folder the user is currently browsing in the Explorer — used to sync the
@@ -584,7 +767,7 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 {
                     var extension = System.IO.Path.GetExtension(filePath).ToLowerInvariant();
                     var fileName = System.IO.Path.GetFileName(filePath);
-                    var targetFolder = GetDefaultTargetFolder(_currentType);
+                    var targetFolder = CurrentImportRelFolder(_currentType);   // land in the current explorer folder
                     var targetPath = System.IO.Path.Combine(projectPath, targetFolder, fileName);
                     
                     // Ensure directory exists
@@ -926,6 +1109,13 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             var item = ResolveClickedAsset(e.OriginalSource as System.Windows.DependencyObject) ?? AssetList.SelectedItem as AssetItem;
             if (item != null)
             {
+                // ".." tile -> go up one level.
+                if (item.IsParentUp)
+                {
+                    if (!string.IsNullOrEmpty(item.Path)) FileExplorerService.Instance.NavigateToPath(item.Path);
+                    else FileExplorerService.Instance.NavigateUp();
+                    return;
+                }
                 // Folder tile -> navigate into it (syncs the tree via CurrentFolderChanged).
                 if (item.IsFolder && item.Source != null)
                 {
@@ -1041,6 +1231,7 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
 
         private ContextMenu BuildAssetContextMenu(AssetItem item)
         {
+            if (item != null && item.IsParentUp) return null;   // the ".." tile has no actions
             var menu = new ContextMenu { Background = Br("#FF161618"), BorderBrush = Br("#FF3A3A3E") };
 
             // Audio tab: containers are authored right here.
@@ -1250,8 +1441,7 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
 
         // ---- prefab actions ----
 
-        /// <summary>Drop a fresh linked instance of the prefab into the active scene, select it, and (optionally)
-        /// hint how to push edits back. Shared by the Ctrl/Shift double-click paths and the Prefab Editor.</summary>
+        /// <summary>Drop a fresh linked instance of the prefab into the active scene and select it.</summary>
         private void PlacePrefabInstance(string full, string name, bool editHint)
         {
             var scene = ProjectData.Current?.ActiveScene;
@@ -1259,46 +1449,113 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             var inst = Editor.Core.Services.PrefabService.Instance.InstantiatePrefab(full, scene);
             if (inst == null) { MessageBox.Show("Could not instantiate the prefab (empty or unreadable).", "Prefab", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
             Editor.Core.Services.SelectionService.Instance.Select(inst);
-            var mw = Application.Current?.MainWindow as MainWindow;
-            if (editHint) BeginPrefabEditSession(inst, scene);
-            else mw?.ShowToast("Added '" + inst.Name + "' to the scene");
+            (Application.Current?.MainWindow as MainWindow)?.ShowToast("Added '" + inst.Name + "' to the scene");
         }
 
-        /// <summary>Start a guided Prefab Edit Session. The prefab is spawned as a temporary edit instance (already
-        /// done by the caller) and selected; a persistent banner tells the user to edit its components in the Inspector
-        /// and gives an explicit <b>Save to Prefab</b> / <b>Cancel</b>. Save writes the edits back into the .ventity
-        /// (updating every existing instance) AND removes the temporary instance again, so the net effect is "you
-        /// edited the prefab", not "you added an object". This is the fix for the old confusing flow where Edit silently
-        /// dropped an instance into the scene with no obvious way to save.</summary>
-        private void BeginPrefabEditSession(GameEntity inst, Scene scene)
+        /// <summary>The REAL "Edit Prefab": open the prefab for ISOLATED editing. The .ventity is loaded as a STANDALONE
+        /// entity (nothing is added to the active scene) and its components are edited in a dedicated window — add
+        /// Scripts / Colliders / Audio / any component, tweak values. Save writes the edited template back into the
+        /// .ventity and reloads every placed instance. This replaces the old flow that dropped an instance into the
+        /// scene (which read as "Add", not "Edit").</summary>
+        private void OpenIsolatedPrefabEditor(string full, string name)
         {
-            var mw = Application.Current?.MainWindow as MainWindow;
-            if (mw == null) return;
-            void Finish(bool save)
+            if (string.IsNullOrEmpty(full) || !System.IO.File.Exists(full))
+            { MessageBox.Show("This prefab file could not be found.", "Prefab", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+
+            GameEntity root;
+            try { root = Editor.Core.Services.SceneService.Instance.LoadEntityFromPrefab(full); }
+            catch (Exception ex) { MessageBox.Show("Could not load the prefab:\n" + ex.Message, "Prefab", MessageBoxButton.OK, MessageBoxImage.Error); return; }
+            if (root == null) { MessageBox.Show("The prefab is empty or unreadable.", "Prefab", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+            root.PrefabPath = null;   // this is the TEMPLATE, not an instance
+
+            System.Windows.Media.Brush B(string h) => (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFromString(h);
+
+            var win = new Window
+            {
+                Title = "Edit Prefab — " + name,
+                Width = 940, Height = 660,
+                Background = B("#FF161618"),
+                Owner = Window.GetWindow(this),
+                WindowStartupLocation = WindowStartupLocation.CenterOwner
+            };
+
+            var grid = new Grid();
+            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            var split = new Grid();
+            split.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(240) });
+            split.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            Grid.SetRow(split, 0);
+            grid.Children.Add(split);
+
+            // Left: flattened entity hierarchy of the prefab.
+            var listPanel = new StackPanel { Margin = new Thickness(10, 10, 6, 10) };
+            listPanel.Children.Add(new TextBlock { Text = "PREFAB ENTITIES", Foreground = B("#FF6E6E77"), FontSize = 10.5, Margin = new Thickness(2, 0, 0, 8) });
+            var hierarchy = new ListBox { Background = System.Windows.Media.Brushes.Transparent, BorderThickness = new Thickness(0), Foreground = B("#FFDDDDE2") };
+            AddPrefabHierarchyRows(root, 0, hierarchy, B);
+            listPanel.Children.Add(hierarchy);
+            var leftScroll = new ScrollViewer { Content = listPanel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+            Grid.SetColumn(leftScroll, 0);
+            split.Children.Add(leftScroll);
+
+            // Right: an ISOLATED inspector (ignores the main scene selection).
+            var inspector = new Editor.Editors.WorldEditor.Components.Inspector.DynamicInspectorView { IsolatedMode = true };
+            Grid.SetColumn(inspector, 1);
+            split.Children.Add(inspector);
+            hierarchy.SelectionChanged += (s, e) =>
+            {
+                if (hierarchy.SelectedItem is ListBoxItem li && li.Tag is GameEntity ge) inspector.SetEntity(ge);
+            };
+            if (hierarchy.Items.Count > 0) hierarchy.SelectedIndex = 0; else inspector.SetEntity(root);
+
+            // Footer: Save + Close.
+            var footer = new Grid { Margin = new Thickness(12, 8, 12, 12) };
+            footer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            footer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            Grid.SetRow(footer, 1);
+            footer.Children.Add(new TextBlock { Text = "Add Scripts / Colliders / components, then Save — updates every placed instance.", Foreground = B("#FF8A8A92"), FontSize = 11.5, VerticalAlignment = VerticalAlignment.Center });
+            var btnRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+            Grid.SetColumn(btnRow, 1);
+            System.Windows.Controls.Button MakeBtn(string txt, string bg, string fg)
+                => new System.Windows.Controls.Button { Content = txt, Margin = new Thickness(8, 0, 0, 0), Padding = new Thickness(16, 6, 16, 6), Background = B(bg), Foreground = B(fg), BorderThickness = new Thickness(0), Cursor = Cursors.Hand, FontSize = 12.5 };
+            var save = MakeBtn("Save to Prefab", "#FF6C5CE7", "#FFFFFFFF");
+            var close = MakeBtn("Close", "#FF33333A", "#FFCDCDD3");
+            save.Click += (s, e) =>
             {
                 try
                 {
-                    if (save)
-                    {
-                        if (Editor.Core.Services.PrefabService.Instance.ApplyToPrefab(inst))
-                            mw.ShowToast("Saved changes into the prefab — every instance updated");
-                        else
-                            mw.ShowToast("Nothing to save (prefab unchanged)");
-                    }
-                    // Remove the temporary edit instance either way: on Save the changes now live in the .ventity, on
-                    // Cancel they are discarded. Editing the prefab must not leave a stray object behind in the scene.
-                    if (Editor.Core.Services.SelectionService.Instance.SelectedEntity == inst)
-                        Editor.Core.Services.SelectionService.Instance.ClearSelection();
-                    scene?.RemoveEntity(inst);
-                    if (!save) mw.ShowToast("Cancelled — prefab left unchanged");
+                    root.PrefabPath = null;
+                    Editor.Core.Services.SceneService.Instance.SaveEntityAsPrefab(root, full);   // write the template back
+                    Editor.Core.Services.PrefabService.Instance.ReloadInstancesFromPrefab(full); // refresh placed instances
+                    InvalidateMaterialThumbnails();                                               // refresh the prefab tile
                     Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.RequestResubmit();
+                    (Application.Current?.MainWindow as MainWindow)?.ShowToast("Saved to prefab — every instance updated");
+                    win.Close();
                 }
-                catch { }
-            }
-            mw.ShowEditBanner(
-                "Editing prefab '" + inst.Name + "' — change its components in the Inspector, then:",
-                "Save to Prefab", () => Finish(true),
-                "Cancel", () => Finish(false));
+                catch (Exception ex) { MessageBox.Show("Could not save the prefab:\n" + ex.Message, "Prefab", MessageBoxButton.OK, MessageBoxImage.Error); }
+            };
+            close.Click += (s, e) => win.Close();
+            btnRow.Children.Add(close);
+            btnRow.Children.Add(save);
+            footer.Children.Add(btnRow);
+            grid.Children.Add(footer);
+
+            win.Content = grid;
+            win.ShowDialog();
+        }
+
+        /// <summary>Add one indented ListBoxItem per prefab entity (depth-first), each tagged with its GameEntity.</summary>
+        private void AddPrefabHierarchyRows(GameEntity e, int depth, ListBox target, Func<string, System.Windows.Media.Brush> B)
+        {
+            if (e == null) return;
+            target.Items.Add(new ListBoxItem
+            {
+                Content = new string(' ', depth * 4) + (string.IsNullOrEmpty(e.Name) ? "(entity)" : e.Name),
+                Tag = e, Foreground = B(depth == 0 ? "#FFF0F0F3" : "#FFC8C8CE"), Padding = new Thickness(4, 3, 4, 3)
+            });
+            if (e.Children != null)
+                foreach (var c in e.Children) AddPrefabHierarchyRows(c, depth + 1, target, B);
         }
 
         /// <summary>A floating, self-contained editor/preview hub for a .ventity prefab: a live 3D preview of the
@@ -2423,6 +2680,19 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             if (folder == null) return;
             var contents = FileExplorerService.Instance.CurrentFolderContents;
 
+            // ".." up-one-level tile — shown unless we're at the project root. Semi-transparent (see the IsParentUp
+            // DataTrigger in the XAML). Doubles as a drop target: drop files onto it to move them up a level.
+            var parentAbs = SafeParentDir(folder.FullPath);
+            if (!string.IsNullOrEmpty(parentAbs) && IsWithinProject(parentAbs) && System.IO.Directory.Exists(parentAbs))
+            {
+                Assets.Add(new AssetItem
+                {
+                    Name = "..", Path = parentAbs, IsFolder = true, IsParentUp = true, IsImported = true,
+                    TypeName = "Up one level", IconCode = "", IconColor = "#FFE6B422",
+                    ToolTipText = "Go up to " + System.IO.Path.GetFileName(parentAbs.TrimEnd('\\', '/'))
+                });
+            }
+
             // folders first
             foreach (var fsi in contents)
             {
@@ -3057,6 +3327,7 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 var meshes = new long[subs.Length];
                 var mats = new long[subs.Length];
                 for (int i = 0; i < subs.Length; i++) { meshes[i] = subs[i].MeshId; mats[i] = subs[i].MaterialId; }
+                Core.Services.MaterialService.Instance.ApplyModelSidecarVmats(mats, fullPath);   // reflect Model-Editor .vmat edits, not just embedded materials
                 var img = BuildMeshThumbnail(meshes, mats, 256);
                 if (img != null) _thumbCache[key] = img;
                 return img;

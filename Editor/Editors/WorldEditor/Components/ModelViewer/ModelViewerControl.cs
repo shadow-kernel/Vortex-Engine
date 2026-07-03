@@ -51,6 +51,7 @@ namespace Editor.Editors.WorldEditor.Components.ModelViewer
                     _meshIds = new long[subs.Length];
                     _matIds = new long[subs.Length];
                     for (int i = 0; i < subs.Length; i++) { _meshIds[i] = subs[i].MeshId; _matIds[i] = subs[i].MaterialId; }
+                    Editor.Core.Services.MaterialService.Instance.ApplyModelSidecarVmats(_matIds, fullModelPath);   // edited .vmat materials
                 }
             }
             catch { }
@@ -237,6 +238,7 @@ namespace Editor.Editors.WorldEditor.Components.ModelViewer
                     var meshes = new long[subs.Length];
                     var mats = new long[subs.Length];
                     for (int i = 0; i < subs.Length; i++) { meshes[i] = subs[i].MeshId; mats[i] = subs[i].MaterialId; }
+                    Editor.Core.Services.MaterialService.Instance.ApplyModelSidecarVmats(mats, _fullModelPath);   // edited .vmat materials
                     _meshIds = meshes; _matIds = mats;
                     if (_emptyHint != null) _emptyHint.Visibility = Visibility.Collapsed;
                 }

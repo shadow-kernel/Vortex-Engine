@@ -222,6 +222,21 @@ namespace Editor.Dialogs
             _status.Text = "Installing… Vortex will restart.";
             // hand off to the installer (elevated, silent) — this shuts the app down.
             UpdateService.InstallAndRestart(path);
+
+            // If we're STILL here, InstallAndRestart did NOT Environment.Exit — the installer relay failed to launch
+            // (blocked powershell, temp not writable, …). The patch dialog has no buttons, and during the pre-startup
+            // gate this modal blocks the whole boot; so report and auto-close so the app continues on the current
+            // version instead of hanging on "Installing…" forever.
+            _status.Text = "Could not start the installer. Continuing on the current version — you can update later from the website.";
+            if (_primary != null) _primary.IsEnabled = true;
+            if (_secondary != null) _secondary.IsEnabled = true;
+            try
+            {
+                var t = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
+                t.Tick += (s, e) => { t.Stop(); try { Close(); } catch { } };
+                t.Start();
+            }
+            catch { try { Close(); } catch { } }
         }
     }
 }

@@ -187,6 +187,7 @@ namespace Editor.Core.Services.Rendering
                 var meshes = new long[subs.Length];
                 var mats = new long[subs.Length];
                 for (int i = 0; i < subs.Length; i++) { meshes[i] = subs[i].MeshId; mats[i] = subs[i].MaterialId; }
+                Editor.Core.Services.MaterialService.Instance.ApplyModelSidecarVmats(mats, fullPath);   // show edited .vmat materials
                 return RenderMeshes(meshes, mats, size);
             }
             catch { return null; }

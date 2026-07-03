@@ -47,10 +47,13 @@ namespace Editor.Dialogs
 
         public AssetImportResult Result { get; private set; }
 
-        public AssetImportDialog(string sourcePath, ImportAssetType type)
+        private readonly string _defaultFolder;   // project-relative folder to pre-fill (the Explorer's current folder)
+
+        public AssetImportDialog(string sourcePath, ImportAssetType type, string defaultFolder = null)
         {
             _sourcePath = sourcePath;
             _assetType = type;
+            _defaultFolder = defaultFolder;
 
             Title = "Import Asset";
             Width = 600;
@@ -124,7 +127,9 @@ namespace Editor.Dialogs
             folderPanel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             folderPanel.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             
-            _targetFolderBox = CreateTextBox(GetDefaultFolder(_assetType));
+            // Pre-fill with the folder the user is browsing (so importing while inside Models/abc lands there), else
+            // the asset type's default folder.
+            _targetFolderBox = CreateTextBox(string.IsNullOrEmpty(_defaultFolder) ? GetDefaultFolder(_assetType) : _defaultFolder);
             folderPanel.Children.Add(_targetFolderBox);
             
             var browseBtn = CreateButton("...", 30);
@@ -534,9 +539,9 @@ namespace Editor.Dialogs
             };
         }
 
-        public static AssetImportResult ShowImportDialog(Window owner, string filePath, ImportAssetType type)
+        public static AssetImportResult ShowImportDialog(Window owner, string filePath, ImportAssetType type, string defaultFolder = null)
         {
-            var dialog = new AssetImportDialog(filePath, type) { Owner = owner };
+            var dialog = new AssetImportDialog(filePath, type, defaultFolder) { Owner = owner };
             if (dialog.ShowDialog() == true)
                 return dialog.Result;
             return new AssetImportResult { Success = false };

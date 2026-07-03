@@ -283,22 +283,25 @@ namespace Editor.Dialogs
             var wrapPanel = new WrapPanel();
 
             // Create texture slots
-            (_albedoPreview, _albedoPathText) = CreateTextureSlot("Albedo (Base Color)", wrapPanel, 
-                path => { _albedoPath = path; MarkDirty(); }, 
+            // Setters keep the ABSOLUTE path in memory (matching the in-memory material convention); VortexMaterial's
+            // own ResolvePathsRelative(materialDir) does the single, correct conversion to a MATERIAL-relative path on
+            // save. (Storing project-relative here double-relativized it and silently lost the texture.)
+            (_albedoPreview, _albedoPathText) = CreateTextureSlot("Albedo (Base Color)", wrapPanel,
+                path => { _albedoPath = path; MarkDirty(); },
                 () => BrowseTexture("Albedo"));
-            
+
             (_normalPreview, _normalPathText) = CreateTextureSlot("Normal Map", wrapPanel,
                 path => { _normalPath = path; MarkDirty(); },
                 () => BrowseTexture("Normal"));
-            
+
             (_metallicPreviewBorder, _metallicPathText) = CreateTextureSlot("Metallic Map", wrapPanel,
                 path => { _metallicPath = path; MarkDirty(); },
                 () => BrowseTexture("Metallic"));
-            
+
             (_roughnessPreview, _roughnessPathText) = CreateTextureSlot("Roughness Map", wrapPanel,
                 path => { _roughnessPath = path; MarkDirty(); },
                 () => BrowseTexture("Roughness"));
-            
+
             (_aoPreview, _aoPathText) = CreateTextureSlot("Ambient Occlusion", wrapPanel,
                 path => { _aoPath = path; MarkDirty(); },
                 () => BrowseTexture("AO"));
@@ -442,13 +445,16 @@ namespace Editor.Dialogs
 
         private void SetTexturePreview(string path, Border preview, TextBlock pathText)
         {
-            if (!string.IsNullOrEmpty(path) && File.Exists(path))
+            // Stored texture paths are project-RELATIVE — resolve to absolute so the preview loads (and so a relative
+            // path saved earlier still shows on reopen). A rooted path is used as-is.
+            var abs = ResolveTexturePath(path);
+            if (!string.IsNullOrEmpty(abs) && File.Exists(abs))
             {
                 try
                 {
                     var bitmap = new BitmapImage();
                     bitmap.BeginInit();
-                    bitmap.UriSource = new Uri(path);
+                    bitmap.UriSource = new Uri(abs);
                     bitmap.DecodePixelWidth = 120;
                     bitmap.CacheOption = BitmapCacheOption.OnLoad;
                     bitmap.EndInit();
@@ -480,12 +486,47 @@ namespace Editor.Dialogs
 
         private string BrowseTexture(string type)
         {
-            var dialog = new OpenFileDialog
+            // STA FilePicker (NOT the WPF shell dialog, which deadlocks the live DX12/DXGI renderer on the UI thread —
+            // that was the "browse crashes the engine" report). Starts in the project's texture folder, not C:\.
+            return Editor.Core.Util.FilePicker.OpenFile(
+                "Image Files|*.png;*.jpg;*.jpeg;*.tga;*.bmp;*.dds;*.hdr|All Files|*.*",
+                $"Select {type} Texture", DefaultTextureDir());
+        }
+
+        /// <summary>Start folder for texture pickers: the material's own folder if known, else the project's
+        /// Assets/Textures, else the project root — so the user never re-navigates from C:\.</summary>
+        private string DefaultTextureDir()
+        {
+            var proj = Editor.Core.Data.ProjectData.Current?.Path;
+            try
             {
-                Title = $"Select {type} Texture",
-                Filter = "Image Files|*.png;*.jpg;*.jpeg;*.tga;*.bmp;*.dds;*.hdr|All Files|*.*"
-            };
-            return dialog.ShowDialog() == true ? dialog.FileName : null;
+                var matDir = string.IsNullOrEmpty(_materialPath) ? null : System.IO.Path.GetDirectoryName(_materialPath);
+                if (!string.IsNullOrEmpty(matDir) && System.IO.Directory.Exists(matDir)) return matDir;
+            }
+            catch { }
+            if (string.IsNullOrEmpty(proj)) return null;
+            var tex = System.IO.Path.Combine(proj, "Assets", "Textures");
+            return System.IO.Directory.Exists(tex) ? tex : proj;
+        }
+
+        /// <summary>Resolve a (possibly material-relative) texture path to absolute for loading/preview. Material paths
+        /// are stored relative to the MATERIAL folder on disk; in memory they are already absolute, so a rooted path
+        /// passes straight through — this only kicks in as a safety net for a relative value.</summary>
+        private string ResolveTexturePath(string path)
+        {
+            if (string.IsNullOrEmpty(path) || System.IO.Path.IsPathRooted(path)) return path;
+            try
+            {
+                var matDir = string.IsNullOrEmpty(_materialPath) ? null : System.IO.Path.GetDirectoryName(_materialPath);
+                if (!string.IsNullOrEmpty(matDir))
+                {
+                    var abs = System.IO.Path.GetFullPath(System.IO.Path.Combine(matDir, path));
+                    if (System.IO.File.Exists(abs)) return abs;
+                }
+            }
+            catch { }
+            var proj = Editor.Core.Data.ProjectData.Current?.Path;
+            return string.IsNullOrEmpty(proj) ? path : System.IO.Path.Combine(proj, path);
         }
 
         private (Slider slider, TextBlock valueText, FrameworkElement row) CreateSliderRow(string label, double min, double max, double value)
