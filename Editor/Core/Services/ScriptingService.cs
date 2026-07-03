@@ -89,8 +89,7 @@ namespace Editor.Core.Services
             var playerDir = Path.Combine(scriptsDir, "Player");
             Directory.CreateDirectory(playerDir);
 
-            var apiPath = Path.Combine(scriptsDir, "VortexScripting.cs");
-            File.WriteAllText(apiPath, ApiTemplate()); // always refresh — the stub is auto-generated and must mirror the current engine API
+            RemoveLegacyApiStub(scriptsDir);   // no API stub anymore — the .csproj references the real engine assembly
 
             var path = Path.Combine(playerDir, "PlayerController.cs");
             if (!File.Exists(path)) File.WriteAllText(path, PlayerControllerTemplate());
@@ -107,11 +106,27 @@ namespace Editor.Core.Services
             var sln = Path.Combine(root, name + ".sln");
 
             var scriptsDir = ScriptsDir;
-            var apiPath = Path.Combine(scriptsDir, "VortexScripting.cs");
-            File.WriteAllText(apiPath, ApiTemplate()); // always refresh — the stub is auto-generated and must mirror the current engine API
-            if (!File.Exists(csproj)) File.WriteAllText(csproj, CsprojTemplate(name));
+            // The old hand-maintained API stub (VortexScripting.cs) kept going stale — VS couldn't resolve newly
+            // added engine API (Physics.GroundMaterial, Audio.PlayOneShot, …) even though the game compiled + ran
+            // fine. Fix forever: drop the stub and reference the REAL engine assembly (the exact one ScriptRuntime
+            // compiles against) in the .csproj — IntelliSense can never drift from the engine again.
+            RemoveLegacyApiStub(scriptsDir);
+            var apiAsm = typeof(Vortex.VortexBehaviour).Assembly.Location;
+            File.WriteAllText(csproj, CsprojTemplate(name, apiAsm));   // always (re)write so the reference path stays current for this machine
             if (!File.Exists(sln)) File.WriteAllText(sln, SlnTemplate(name));
             return sln;
+        }
+
+        /// <summary>Deletes the obsolete auto-generated API stub (VortexScripting.cs) if present — the scripts
+        /// project now references the real engine assembly instead, so a stub would only duplicate + drift.</summary>
+        private static void RemoveLegacyApiStub(string scriptsDir)
+        {
+            try
+            {
+                var stub = Path.Combine(scriptsDir ?? "", "VortexScripting.cs");
+                if (File.Exists(stub)) File.Delete(stub);
+            }
+            catch { }
         }
 
         /// <summary>Opens the scripts solution (and optionally a specific file) in Visual Studio.</summary>
@@ -502,7 +517,7 @@ namespace Vortex
 }
 ";
 
-        private static string CsprojTemplate(string name) =>
+        private static string CsprojTemplate(string name, string apiAssemblyPath) =>
 @"<Project Sdk=""Microsoft.NET.Sdk"">
 
   <PropertyGroup>
@@ -516,8 +531,20 @@ namespace Vortex
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- All gameplay scripts in this project. -->
+    <!-- All gameplay scripts. (The old VS-only API stub VortexScripting.cs is gone — excluded here in case an
+         old copy lingers — because we reference the REAL engine assembly below instead.) -->
     <Compile Include=""Assets\Scripts\**\*.cs"" />
+    <Compile Remove=""Assets\Scripts\VortexScripting.cs"" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The real Vortex scripting API: the SAME assembly the editor compiles your scripts against at runtime, so
+         every type/method (Physics, Audio, Vector3, VortexBehaviour, …) resolves in VS exactly as it will run.
+         The editor (re)writes this path for this machine each time it opens the scripts, so it can't go stale. -->
+    <Reference Include=""VortexEngine"">
+      <HintPath>" + apiAssemblyPath + @"</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 
 </Project>

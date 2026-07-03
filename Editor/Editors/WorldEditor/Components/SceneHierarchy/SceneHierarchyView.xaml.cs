@@ -279,15 +279,15 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
         {
             try
             {
-                // Prefab instance: reveal its SOURCE prefab (.ventity) first — that's the asset behind the object.
+                // Prefab instance: reveal + SELECT its SOURCE prefab (.ventity) in the explorer — that's the asset
+                // behind the object (not just its material).
                 if (!string.IsNullOrEmpty(entity.PrefabPath))
                 {
                     var pproj = ProjectData.Current?.Path ?? "";
                     string pfull = System.IO.Path.IsPathRooted(entity.PrefabPath) ? entity.PrefabPath : System.IO.Path.Combine(pproj, entity.PrefabPath);
-                    var pdir = System.IO.Path.GetDirectoryName(pfull);
-                    if (!string.IsNullOrEmpty(pdir) && System.IO.Directory.Exists(pdir))
+                    if (System.IO.File.Exists(pfull))
                     {
-                        Editor.Editors.WorldEditor.Components.FileExplorer.Services.FileExplorerService.Instance.NavigateToPath(pdir);
+                        Editor.Editors.WorldEditor.Components.AssetBrowser.AssetBrowserView.SelectFileInExplorer(pfull);
                         (Application.Current?.MainWindow as MainWindow)?.ShowToast("Located prefab '" + System.IO.Path.GetFileName(pfull) + "'");
                         return;
                     }

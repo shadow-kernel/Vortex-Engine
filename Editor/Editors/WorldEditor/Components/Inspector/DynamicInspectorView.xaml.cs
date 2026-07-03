@@ -91,6 +91,10 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             EntityNameTextBox.Text = _selectedEntity.Name;
             EntityActiveCheckBox.IsChecked = _selectedEntity.IsActive;
 
+            // Prefab instance: show which prefab this object comes from, with a button to select it in the Explorer.
+            if (_selectedEntity.IsPrefabInstance)
+                DynamicComponentsContainer.Children.Add(CreatePrefabRow(_selectedEntity));
+
             // Add Transform inspector (always present)
             var transform = _selectedEntity.GetComponent<Transform>();
             if (transform != null)
@@ -109,6 +113,39 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
                     DynamicComponentsContainer.Children.Add(inspector);
                 }
             }
+        }
+
+        /// <summary>A small header card shown for a prefab INSTANCE: which prefab it comes from + a button that
+        /// selects that prefab in the Asset Browser.</summary>
+        private UIElement CreatePrefabRow(GameEntity entity)
+        {
+            var border = new Border { Background = InspBrush("#FF1B2A3A"), CornerRadius = new CornerRadius(10), Padding = new Thickness(12, 9, 8, 9), Margin = new Thickness(0, 0, 0, 10) };
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var icon = new TextBlock { Text = "", FontFamily = new System.Windows.Media.FontFamily("Segoe MDL2 Assets"), FontSize = 14, Foreground = InspBrush("#FF6FB0FF"), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 9, 0) };
+            System.Windows.Controls.Grid.SetColumn(icon, 0);
+
+            var label = new TextBlock { Text = "Prefab · " + System.IO.Path.GetFileNameWithoutExtension(entity.PrefabPath ?? ""), Foreground = InspBrush("#FF9FCBFF"), FontSize = 12.5, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = entity.PrefabPath };
+            System.Windows.Controls.Grid.SetColumn(label, 1);
+
+            var btn = new Button { Content = "", FontFamily = new System.Windows.Media.FontFamily("Segoe MDL2 Assets"), FontSize = 12, Foreground = InspBrush("#FF9FCBFF"), Background = System.Windows.Media.Brushes.Transparent, BorderThickness = new Thickness(0), Cursor = System.Windows.Input.Cursors.Hand, ToolTip = "Select this prefab in the Asset Browser", Padding = new Thickness(6, 2, 6, 2) };
+            btn.Click += (s, e) =>
+            {
+                var proj = Editor.Core.Data.ProjectData.Current?.Path ?? "";
+                var full = System.IO.Path.IsPathRooted(entity.PrefabPath) ? entity.PrefabPath : System.IO.Path.Combine(proj, entity.PrefabPath ?? "");
+                if (System.IO.File.Exists(full))
+                    Editor.Editors.WorldEditor.Components.AssetBrowser.AssetBrowserView.SelectFileInExplorer(full);
+            };
+            System.Windows.Controls.Grid.SetColumn(btn, 2);
+
+            grid.Children.Add(icon);
+            grid.Children.Add(label);
+            grid.Children.Add(btn);
+            border.Child = grid;
+            return border;
         }
 
         private UserControl CreateInspectorForComponent(Component component)

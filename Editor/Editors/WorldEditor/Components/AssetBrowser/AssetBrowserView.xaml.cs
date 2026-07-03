@@ -200,6 +200,46 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             UpdateBreadcrumb(rel);
             if (_currentType == AssetType.Explorer) RefreshAssets();   // reload the folder's contents
             else { try { _assetsView?.Refresh(); } catch { } }
+            ApplyPendingSelect();   // if something asked to reveal a specific file (e.g. Locate -> a prefab), select it
+        }
+
+        // Set by SelectFileInExplorer (e.g. from "Locate selected" on a prefab instance) to highlight a specific
+        // file once its folder has loaded. Static so the hierarchy/inspector can request it without a direct ref.
+        private static string PendingSelectFullPath;
+
+        /// <summary>Navigate the browser to a file's folder AND select/scroll to that file (not just the folder).</summary>
+        public static void SelectFileInExplorer(string fullPath)
+        {
+            if (string.IsNullOrEmpty(fullPath)) return;
+            PendingSelectFullPath = fullPath;
+            var dir = System.IO.Path.GetDirectoryName(fullPath);
+            if (!string.IsNullOrEmpty(dir)) FileExplorerService.Instance.NavigateToPath(dir);
+        }
+
+        private void ApplyPendingSelect()
+        {
+            var target = PendingSelectFullPath;
+            if (string.IsNullOrEmpty(target) || AssetList == null) return;
+            PendingSelectFullPath = null;
+            try
+            {
+                var norm = System.IO.Path.GetFullPath(target);
+                var proj = ProjectData.Current?.Path ?? "";
+                foreach (var it in Assets)
+                {
+                    var itemFull = it.Source?.FullPath;
+                    if (string.IsNullOrEmpty(itemFull) && !string.IsNullOrEmpty(it.Path))
+                        itemFull = System.IO.Path.IsPathRooted(it.Path) ? it.Path : System.IO.Path.Combine(proj, it.Path);
+                    if (!string.IsNullOrEmpty(itemFull) &&
+                        string.Equals(System.IO.Path.GetFullPath(itemFull), norm, StringComparison.OrdinalIgnoreCase))
+                    {
+                        AssetList.SelectedItem = it;
+                        try { AssetList.ScrollIntoView(it); } catch { }
+                        break;
+                    }
+                }
+            }
+            catch { }
         }
 
         private void UpdateBreadcrumb(string rel)
