@@ -150,14 +150,10 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
                 browse.Click += (s, e) =>
                 {
                     var proj = Editor.Core.Data.ProjectData.Current?.Path;
-                    var dlg = new Microsoft.Win32.OpenFileDialog
+                    var picked = Editor.Core.Util.FilePicker.OpenFile("Vortex Animation (*.vanim)|*.vanim", "Browse for a .vanim clip", proj != null ? System.IO.Path.Combine(proj, "Assets") : null);
+                    if (!string.IsNullOrEmpty(picked))
                     {
-                        Filter = "Vortex Animation (*.vanim)|*.vanim",
-                        InitialDirectory = proj != null ? System.IO.Path.Combine(proj, "Assets") : null
-                    };
-                    if (dlg.ShowDialog() == true)
-                    {
-                        string rel = dlg.FileName;
+                        string rel = picked;
                         if (proj != null && rel.StartsWith(proj, StringComparison.OrdinalIgnoreCase))
                             rel = rel.Substring(proj.Length).TrimStart('\\', '/');
                         entry.Path = rel.Replace('\\', '/');

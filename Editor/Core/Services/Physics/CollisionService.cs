@@ -170,6 +170,32 @@ namespace Editor.Core.Services.Physics
             return true;
         }
 
+        /// <summary>Downward ray: returns the FOOTSTEP SOUND assigned (in the Material Editor) to the material of the
+        /// surface below <paramref name="origin"/> — a project-relative clip / .vsndc path, or "" if the surface has
+        /// no material or no footstep sound. This is what makes footsteps fully EDITOR-authored: assign a material to a
+        /// floor, give the material a step sound in the Material Editor, and every floor using it plays that step — no
+        /// per-material script dictionary. The game's FootstepAudio behaviour reads this via Physics.GroundStepSound.</summary>
+        public static bool RaycastDownStepSound(Vector3 origin, float maxDist, out Vector3 hit, out string stepSound)
+        {
+            hit = origin; stepSound = "";
+            var best = RaycastDownShape(From(origin), maxDist, out float bestT);
+            if (best == null) return false;
+            hit = new Vector3(origin.X, origin.Y - bestT, origin.Z);
+            var mr = best.Owner != null ? best.Owner.GetComponent<Editor.ECS.Components.Rendering.MeshRenderer>() : null;
+            var path = mr != null ? mr.MaterialPath : null;
+            if (string.IsNullOrEmpty(path)) return true;
+            try
+            {
+                var proj = Editor.Core.Data.ProjectData.Current?.Path ?? "";
+                var full = System.IO.Path.IsPathRooted(path) ? path : System.IO.Path.Combine(proj, path);
+                // Editor: load the loose absolute .vmat; shipped game: fall back to the project-relative VFS key.
+                var vmat = Editor.Core.Assets.VortexMaterial.Load(full) ?? Editor.Core.Assets.VortexMaterial.Load(path);
+                if (vmat != null && !string.IsNullOrEmpty(vmat.FootstepSound)) stepSound = vmat.FootstepSound;
+            }
+            catch { }
+            return true;
+        }
+
         // Closest solid shape straight below `o` within maxDist (shared by the tag + material raycasts).
         private static Shape RaycastDownShape(V3 o, float maxDist, out float bestT)
         {

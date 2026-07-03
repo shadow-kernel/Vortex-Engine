@@ -432,24 +432,16 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             if (project == null) return;
 
             // �ffne Datei-Dialog zum Ausw�hlen eines Prefabs
-            var dialog = new Microsoft.Win32.OpenFileDialog
-            {
-                Title = "Select Prefab to Instantiate",
-                Filter = "Prefab Files (*.ventity)|*.ventity",
-                InitialDirectory = System.IO.Path.Combine(project.Path, "Assets", "Prefabs")
-            };
+            var prefabsDir = System.IO.Path.Combine(project.Path, "Assets", "Prefabs");
+            if (!System.IO.Directory.Exists(prefabsDir)) System.IO.Directory.CreateDirectory(prefabsDir);
 
-            // Erstelle Prefabs-Ordner falls nicht vorhanden
-            if (!System.IO.Directory.Exists(dialog.InitialDirectory))
-            {
-                System.IO.Directory.CreateDirectory(dialog.InitialDirectory);
-            }
-
-            if (dialog.ShowDialog() == true)
+            // STA-thread picker — a WPF file dialog on the live UI thread deadlocks against the DX12/DXGI COM apartment.
+            var picked = Editor.Core.Util.FilePicker.OpenFile("Prefab Files (*.ventity)|*.ventity", "Select Prefab to Instantiate", prefabsDir);
+            if (!string.IsNullOrEmpty(picked))
             {
                 try
                 {
-                    var entity = PrefabService.Instance.InstantiatePrefab(dialog.FileName, ViewModel.SelectedScene);
+                    var entity = PrefabService.Instance.InstantiatePrefab(picked, ViewModel.SelectedScene);
                     if (entity != null) ViewModel.SelectedEntity = entity;
                     else MessageBox.Show("Could not instantiate the prefab (empty or unreadable).", "Prefab", MessageBoxButton.OK, MessageBoxImage.Warning);
                 }
@@ -664,18 +656,13 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
                 System.IO.Directory.CreateDirectory(scenesFolder);
             }
 
-            var dialog = new Microsoft.Win32.OpenFileDialog
-            {
-                Title = "Load Scene",
-                Filter = "Scene Files (*.vscene)|*.vscene",
-                InitialDirectory = scenesFolder
-            };
-
-            if (dialog.ShowDialog() == true)
+            // STA-thread picker — a WPF file dialog on the live UI thread deadlocks against the DX12/DXGI COM apartment.
+            var picked = Editor.Core.Util.FilePicker.OpenFile("Scene Files (*.vscene)|*.vscene", "Load Scene", scenesFolder);
+            if (!string.IsNullOrEmpty(picked))
             {
                 try
                 {
-                    var scene = SceneService.Instance.LoadScene(dialog.FileName);
+                    var scene = SceneService.Instance.LoadScene(picked);
                     if (scene != null)
                     {
                         scene.Project = project;

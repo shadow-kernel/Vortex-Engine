@@ -281,6 +281,12 @@ namespace Editor
         private System.Windows.Controls.TextBlock _toastText;
         private System.Windows.Threading.DispatcherTimer _toastTimer;
 
+        // Persistent "you are editing a prefab" banner (see ShowEditBanner) — a top-docked strip with a title and up
+        // to two action buttons. Unlike the toast it stays open until HideEditBanner() is called.
+        private System.Windows.Controls.Primitives.Popup _bannerPopup;
+        private System.Windows.Controls.TextBlock _bannerText;
+        private System.Windows.Controls.StackPanel _bannerButtons;
+
         public void ShowToast(string message)
         {
             try
@@ -329,6 +335,98 @@ namespace Editor
                 _toastTimer.Stop(); _toastTimer.Start();
             }
             catch { }
+        }
+
+        /// <summary>Show a persistent top-docked banner with a title and up to two action buttons. Used by the Prefab
+        /// Edit Session so the user always sees they are editing a prefab and has an explicit Save / Cancel — the fix
+        /// for "Edit just added an object and I didn't know how to save it". Call <see cref="HideEditBanner"/> to close.
+        /// primary/secondary actions run on the UI thread; the banner auto-hides after either fires.</summary>
+        public void ShowEditBanner(string message, string primaryLabel, Action primaryAction,
+                                   string secondaryLabel = null, Action secondaryAction = null)
+        {
+            try
+            {
+                var conv = new System.Windows.Media.BrushConverter();
+                if (_bannerPopup == null)
+                {
+                    var icon = new System.Windows.Controls.TextBlock
+                    {
+                        Text = "", // Edit glyph
+                        FontFamily = new System.Windows.Media.FontFamily("Segoe MDL2 Assets"),
+                        FontSize = 14, Margin = new Thickness(0, 0, 10, 0),
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Foreground = (System.Windows.Media.Brush)conv.ConvertFromString("#9C8CFF")
+                    };
+                    _bannerText = new System.Windows.Controls.TextBlock
+                    {
+                        Foreground = System.Windows.Media.Brushes.White, FontSize = 13,
+                        VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis
+                    };
+                    _bannerButtons = new System.Windows.Controls.StackPanel
+                    {
+                        Orientation = System.Windows.Controls.Orientation.Horizontal,
+                        Margin = new Thickness(18, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center
+                    };
+                    var sp = new System.Windows.Controls.StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
+                    sp.Children.Add(icon); sp.Children.Add(_bannerText); sp.Children.Add(_bannerButtons);
+                    var border = new System.Windows.Controls.Border
+                    {
+                        Background = (System.Windows.Media.Brush)conv.ConvertFromString("#F02A2440"),
+                        BorderBrush = (System.Windows.Media.Brush)conv.ConvertFromString("#5A4F9C"),
+                        BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10),
+                        Padding = new Thickness(16, 9, 12, 9), Child = sp
+                    };
+                    _bannerPopup = new System.Windows.Controls.Primitives.Popup
+                    {
+                        PlacementTarget = this,
+                        Placement = System.Windows.Controls.Primitives.PlacementMode.Top,
+                        AllowsTransparency = true, StaysOpen = true, Child = border
+                    };
+                }
+                _bannerText.Text = message;
+                _bannerButtons.Children.Clear();
+                _bannerButtons.Children.Add(MakeBannerButton(primaryLabel, "#5A4F9C", "#7C6CFF", () => { HideEditBanner(); primaryAction?.Invoke(); }));
+                if (!string.IsNullOrEmpty(secondaryLabel))
+                    _bannerButtons.Children.Add(MakeBannerButton(secondaryLabel, "#33333A", "#4A4A55", () => { HideEditBanner(); secondaryAction?.Invoke(); }));
+                // Dock just below the header bar, centred horizontally over the window.
+                _bannerPopup.HorizontalOffset = 0;
+                _bannerPopup.VerticalOffset = -(ActualHeight - 96);
+                _bannerPopup.IsOpen = false;
+                _bannerPopup.IsOpen = true;
+            }
+            catch { }
+        }
+
+        /// <summary>Hide the persistent edit banner if it is showing.</summary>
+        public void HideEditBanner()
+        {
+            try { if (_bannerPopup != null) _bannerPopup.IsOpen = false; } catch { }
+        }
+
+        private System.Windows.Controls.Button MakeBannerButton(string label, string bg, string hover, Action onClick)
+        {
+            var conv = new System.Windows.Media.BrushConverter();
+            var btn = new System.Windows.Controls.Button
+            {
+                Content = label, Margin = new Thickness(6, 0, 0, 0), Padding = new Thickness(12, 5, 12, 5),
+                Foreground = System.Windows.Media.Brushes.White, FontSize = 12, Cursor = Cursors.Hand,
+                Background = (System.Windows.Media.Brush)conv.ConvertFromString(bg),
+                BorderThickness = new Thickness(0)
+            };
+            // A minimal rounded template so the button reads as a pill, not the default chrome.
+            var tpl = new System.Windows.Controls.ControlTemplate(typeof(System.Windows.Controls.Button));
+            var bd = new System.Windows.FrameworkElementFactory(typeof(System.Windows.Controls.Border));
+            bd.SetValue(System.Windows.Controls.Border.BackgroundProperty, new System.Windows.Data.Binding("Background") { RelativeSource = System.Windows.Data.RelativeSource.TemplatedParent });
+            bd.SetValue(System.Windows.Controls.Border.CornerRadiusProperty, new CornerRadius(6));
+            bd.SetValue(System.Windows.Controls.Border.PaddingProperty, new Thickness(12, 5, 12, 5));
+            var cp = new System.Windows.FrameworkElementFactory(typeof(System.Windows.Controls.ContentPresenter));
+            cp.SetValue(System.Windows.Controls.ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+            cp.SetValue(System.Windows.Controls.ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
+            bd.AppendChild(cp);
+            tpl.VisualTree = bd;
+            btn.Template = tpl;
+            btn.Click += (s, e) => { try { onClick?.Invoke(); } catch { } };
+            return btn;
         }
 
         #region Borderless maximize fix

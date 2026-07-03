@@ -187,6 +187,12 @@ namespace Editor.Dialogs
             stack.Children.Add(CreateLabel("Shader Asset", 12));
             stack.Children.Add(BuildShaderSlot());
 
+            // Footstep Sound slot: assign a step clip (.wav/.mp3/.ogg/.flac or a .vsndc Sound Container) to this
+            // material. The game's FootstepAudio script plays it (via Physics.GroundStepSound) when the player walks on
+            // a surface using this material — footsteps are authored ENTIRELY here, no code.
+            stack.Children.Add(CreateLabel("Footstep Sound", 12));
+            stack.Children.Add(BuildFootstepSlot());
+
             // Render Mode
             stack.Children.Add(CreateLabel("Render Mode"));
             _renderModeCombo = DialogStyles.CreateComboBox(new[] { "Opaque", "Cutout", "Transparent" }, 0);
@@ -667,6 +673,8 @@ namespace Editor.Dialogs
             SelectComboText(_renderModeCombo, _material.BlendMode);
             _shaderAssetPath = _material.ShaderAsset;
             UpdateShaderSlotUi();
+            _footstepSoundPath = _material.FootstepSound;
+            UpdateFootstepSlotUi();
 
             SetTexturePreview(_material.AlbedoTexture, _albedoPreview, _albedoPathText);
             _albedoPath = _material.AlbedoTexture;
@@ -704,7 +712,8 @@ namespace Editor.Dialogs
                 // would yield "System.Windows.Controls.ComboBoxItem").
                 ShaderType = GetComboText(_shaderTypeCombo, "Standard PBR"),
                 BlendMode = GetComboText(_renderModeCombo, "Opaque"),
-                ShaderAsset = string.IsNullOrEmpty(_shaderAssetPath) ? null : _shaderAssetPath
+                ShaderAsset = string.IsNullOrEmpty(_shaderAssetPath) ? null : _shaderAssetPath,
+                FootstepSound = string.IsNullOrEmpty(_footstepSoundPath) ? null : _footstepSoundPath
             };
 
             if (_baseColorPreview.Background is SolidColorBrush brush)
@@ -779,17 +788,15 @@ namespace Editor.Dialogs
         private void BrowseShaderAsset()
         {
             var proj = Editor.Core.Data.ProjectData.Current?.Path;
-            var dlg = new Microsoft.Win32.OpenFileDialog
-            {
-                Title = "Assign Shader",
-                Filter = "HLSL Shader (*.hlsl)|*.hlsl|Legacy shader asset (*.vshader)|*.vshader|All files|*.*"
-            };
+            string startDir = null;
             if (!string.IsNullOrEmpty(proj))
             {
                 var sd = System.IO.Path.Combine(proj, "Assets", "Shaders");
-                if (System.IO.Directory.Exists(sd)) dlg.InitialDirectory = sd;
+                if (System.IO.Directory.Exists(sd)) startDir = sd;
             }
-            if (dlg.ShowDialog() == true) SetShaderAsset(dlg.FileName);
+            // STA-thread picker — a WPF file dialog on the live UI thread deadlocks against the DX12/DXGI COM apartment.
+            var picked = Editor.Core.Util.FilePicker.OpenFile("HLSL Shader (*.hlsl)|*.hlsl|Legacy shader asset (*.vshader)|*.vshader|All files|*.*", "Assign Shader", startDir);
+            if (!string.IsNullOrEmpty(picked)) SetShaderAsset(picked);
         }
 
         private void SetShaderAsset(string path)
@@ -797,6 +804,56 @@ namespace Editor.Dialogs
             _shaderAssetPath = string.IsNullOrEmpty(path) ? null : MakeProjectRelative(path);
             UpdateShaderSlotUi();
             MarkDirty();   // fires the debounced preview refresh; the link + preview reflect the change live
+        }
+
+        // ---- Footstep Sound slot: assign a step clip / .vsndc container to this material (played by FootstepAudio) ----
+        private string _footstepSoundPath;
+        private TextBlock _footstepSoundText;
+
+        private UIElement BuildFootstepSlot()
+        {
+            var panel = new StackPanel { Margin = new Thickness(0, 0, 0, 12) };
+            _footstepSoundText = new TextBlock
+            {
+                Text = "None (silent when walked on)",
+                Foreground = new SolidColorBrush(Color.FromRgb(150, 150, 155)),
+                FontSize = 12, Margin = new Thickness(0, 0, 0, 6),
+                TextTrimming = System.Windows.TextTrimming.CharacterEllipsis
+            };
+            panel.Children.Add(_footstepSoundText);
+            var btns = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
+            btns.Children.Add(MiniButton("Browse…", () => BrowseFootstepSound()));
+            btns.Children.Add(MiniButton("Clear", () => SetFootstepSound(null)));
+            panel.Children.Add(btns);
+            return panel;
+        }
+
+        private void BrowseFootstepSound()
+        {
+            var proj = Editor.Core.Data.ProjectData.Current?.Path;
+            string startDir = null;
+            if (!string.IsNullOrEmpty(proj))
+            {
+                var ad = System.IO.Path.Combine(proj, "Assets", "Audio");
+                if (System.IO.Directory.Exists(ad)) startDir = ad;
+            }
+            // STA-thread picker — a WPF file dialog on the live UI thread deadlocks against the DX12/DXGI COM apartment.
+            var picked = Editor.Core.Util.FilePicker.OpenFile("Audio + Containers|*.wav;*.mp3;*.ogg;*.flac;*.vsndc|All files|*.*", "Assign Footstep Sound", startDir);
+            if (!string.IsNullOrEmpty(picked)) SetFootstepSound(picked);
+        }
+
+        private void SetFootstepSound(string path)
+        {
+            _footstepSoundPath = string.IsNullOrEmpty(path) ? null : MakeProjectRelative(path);
+            UpdateFootstepSlotUi();
+            MarkDirty();
+        }
+
+        private void UpdateFootstepSlotUi()
+        {
+            bool set = !string.IsNullOrEmpty(_footstepSoundPath);
+            if (_footstepSoundText != null)
+                _footstepSoundText.Text = set ? ("Step: " + System.IO.Path.GetFileName(_footstepSoundPath)) : "None (silent when walked on)";
         }
 
         private void EditShaderInVs()
@@ -890,6 +947,37 @@ namespace Editor.Dialogs
             }
         }
 
+        /// <summary>Fired after a material is saved (Apply or Save As), with the saved .vmat path. Lets whoever opened
+        /// this editor (e.g. the Model Editor) reload the .vmat and re-render its OWN preview live.</summary>
+        public static event Action<string> MaterialSaved;
+
+        /// <summary>Refresh EVERYTHING after a save so no preview is stale: drop the cached engine material, re-render
+        /// this editor's own sphere, invalidate the Asset Browser thumbnails, force the live scene viewport to rebuild
+        /// + redraw the material, and notify the opener (Model Editor) to reload. Called by both Apply and Save As.</summary>
+        private void OnMaterialSaved()
+        {
+            try { Editor.Core.Services.MaterialService.Instance.InvalidateVortexMaterial(_materialPath); } catch { }
+            try { Editor.Editors.WorldEditor.Components.AssetBrowser.AssetBrowserView.InvalidateMaterialThumbnails(); } catch { }
+            try { RefreshPreview(); } catch { }                                                              // this editor's sphere
+            try { Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.RequestResubmit(); } catch { } // live scene
+            try { MaterialSaved?.Invoke(_materialPath); } catch { }                                          // parent Model Editor
+        }
+
+        /// <summary>Ctrl+S = Apply (save), Ctrl+Shift+S = Save As — handled HERE so the keystroke saves the MATERIAL
+        /// instead of bubbling up to MainWindow, which would save the SCENE (the "save doesn't refresh" report).</summary>
+        protected override void OnPreviewKeyDown(System.Windows.Input.KeyEventArgs e)
+        {
+            base.OnPreviewKeyDown(e);
+            // Ignore OS key-repeat: holding Ctrl+S must save ONCE, not re-run the save + heavy preview re-render ~30×/sec.
+            if (e.IsRepeat) return;
+            if (e.Key == System.Windows.Input.Key.S && (System.Windows.Input.Keyboard.Modifiers & System.Windows.Input.ModifierKeys.Control) != 0)
+            {
+                if ((System.Windows.Input.Keyboard.Modifiers & System.Windows.Input.ModifierKeys.Shift) != 0) SaveAs_Click(this, null);
+                else Apply_Click(this, null);
+                e.Handled = true;
+            }
+        }
+
         private void Apply_Click(object sender, RoutedEventArgs e)
         {
             _material = GetMaterialFromUI();
@@ -900,15 +988,10 @@ namespace Editor.Dialogs
                     var directory = Path.GetDirectoryName(_materialPath);
                     _material.ResolvePathsRelative(directory);
                     _material.Save(_materialPath);
-                    // Drop the cached engine material so the viewport rebuilds it with the new
-                    // values on the next frame (edit -> render round-trip).
-                    Editor.Core.Services.MaterialService.Instance.InvalidateVortexMaterial(_materialPath);
-                    // Also refresh the Asset Browser material tiles so the live sphere updates immediately (not just
-                    // the scene) — clears the thumbnail cache + re-queues the tiles.
-                    try { Editor.Editors.WorldEditor.Components.AssetBrowser.AssetBrowserView.InvalidateMaterialThumbnails(); } catch { }
                     _isDirty = false;
                     Title = $"Material Editor - {_material.Name}";
                     _statusText.Text = "Material saved.";
+                    OnMaterialSaved();   // preview + thumbnails + live scene + opener, all in one broadcast
                 }
                 catch (Exception ex)
                 {
@@ -923,28 +1006,24 @@ namespace Editor.Dialogs
 
         private void SaveAs_Click(object sender, RoutedEventArgs e)
         {
-            var dialog = new SaveFileDialog
+            var proj = Editor.Core.Data.ProjectData.Current?.Path;
+            var startDir = string.IsNullOrEmpty(proj) ? null : System.IO.Path.Combine(proj, "Assets", "Materials");
+            // STA-thread picker — a WPF file dialog on the live UI thread deadlocks against the DX12/DXGI COM apartment.
+            var savePath = Editor.Core.Util.FilePicker.SaveFile("Vortex Material|*.vmat", "Save Material", _materialNameBox.Text + ".vmat", ".vmat", startDir);
+            if (!string.IsNullOrEmpty(savePath))
             {
-                Title = "Save Material",
-                Filter = "Vortex Material|*.vmat",
-                DefaultExt = ".vmat",
-                FileName = _materialNameBox.Text + ".vmat"
-            };
-
-            if (dialog.ShowDialog() == true)
-            {
-                _materialPath = dialog.FileName;
+                _materialPath = savePath;
                 _material = GetMaterialFromUI();
                 try
                 {
                     var directory = Path.GetDirectoryName(_materialPath);
                     _material.ResolvePathsRelative(directory);
                     _material.Save(_materialPath);
-                    Editor.Core.Services.MaterialService.Instance.InvalidateVortexMaterial(_materialPath);
                     _isDirty = false;
                     Title = $"Material Editor - {_material.Name}";
                     _statusText.Text = $"Saved: {Path.GetFileName(_materialPath)}";
                     AssetDatabase.Instance.Refresh();
+                    OnMaterialSaved();
                 }
                 catch (Exception ex)
                 {

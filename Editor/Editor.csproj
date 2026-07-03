@@ -276,6 +276,7 @@
     <Compile Include="Core\Services\EditorStateService.cs" />
     <Compile Include="Core\Services\EditorViewportService.cs" />
     <Compile Include="Core\Services\EntityClipboardService.cs" />
+    <Compile Include="Core\Util\FilePicker.cs" />
     <Compile Include="Core\Services\InputBindingsService.cs" />
     <Compile Include="Core\Services\MaterialService.cs" />
     <Compile Include="Core\Services\MeshService.cs" />

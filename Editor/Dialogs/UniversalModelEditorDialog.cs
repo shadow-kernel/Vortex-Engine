@@ -824,12 +824,35 @@ namespace Editor.Dialogs
             }
             if (!string.IsNullOrEmpty(vmat) && System.IO.File.Exists(vmat))
             {
+                // LIVE UPDATE: while the (modal) Material Editor is open, listen for its save. On save, reload this
+                // submesh's material from the just-written .vmat and re-render the Model Editor's own 3D preview +
+                // property panel — so editing + saving a material shows instantly in the model preview behind it.
+                var editedVmat = System.IO.Path.GetFullPath(vmat);
+                var editedMat = _selectedMaterial;
+                Action<string> onSaved = savedPath =>
+                {
+                    try
+                    {
+                        if (string.IsNullOrEmpty(savedPath)) return;
+                        if (!string.Equals(System.IO.Path.GetFullPath(savedPath), editedVmat, StringComparison.OrdinalIgnoreCase)) return;
+                        ReloadUniversalMaterialFromVmat(editedMat, savedPath);
+                        // Coalesce via the 180ms debounce instead of an immediate synchronous full-model render: the
+                        // Material Editor already did its own 768px sphere render on this same save, so a direct
+                        // RefreshPreview here would stack two synchronous GPU render+readbacks on the UI thread per save
+                        // (a visible hitch on heavy models). SchedulePreviewRefresh keeps the live update but throttled.
+                        SchedulePreviewRefresh();
+                        UpdatePropertiesPanel();
+                    }
+                    catch { }
+                };
+                MaterialEditorDialog.MaterialSaved += onSaved;
                 try { MaterialEditorDialog.OpenMaterial(Window.GetWindow(this), vmat); }
                 catch (Exception ex)
                 {
                     MessageBox.Show("Could not open the Material Editor:\n" + ex.Message, "Material Editor",
                         MessageBoxButton.OK, MessageBoxImage.Error);
                 }
+                finally { MaterialEditorDialog.MaterialSaved -= onSaved; }
             }
             else
                 MessageBox.Show("Save the model's materials first (Save Materials).", "Material Editor",
@@ -1372,6 +1395,22 @@ namespace Editor.Dialogs
             vmat.SetBaseColor(m.BaseColor);
             vmat.ResolvePathsAbsolute(_modelData.Directory);
             return vmat;
+        }
+
+        /// <summary>Reload a UniversalMaterial's scalar/color fields from a just-saved .vmat, so the Model Editor
+        /// preview reflects an edit made in the (child) Material Editor without reopening the model.</summary>
+        private void ReloadUniversalMaterialFromVmat(UniversalMaterial um, string vmatPath)
+        {
+            if (um == null) return;
+            var vmat = VortexMaterial.Load(vmatPath);
+            if (vmat == null) return;
+            um.Metallic = vmat.Metallic;
+            um.Roughness = vmat.Roughness;
+            um.NormalStrength = vmat.NormalStrength;
+            um.AOStrength = vmat.AmbientOcclusion;
+            um.EmissiveStrength = vmat.EmissiveStrength;
+            um.TwoSided = vmat.TwoSided;
+            try { um.BaseColor = vmat.GetBaseColor(); } catch { }
         }
 
         private void PropagateMaterialsToScene()

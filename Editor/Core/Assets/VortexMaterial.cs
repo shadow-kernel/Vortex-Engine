@@ -55,6 +55,13 @@ namespace Editor.Core.Assets
         /// Material Editor. Null = the built-in shader for ShaderType. Round-trips via System.Text.Json.</summary>
         public string ShaderAsset { get; set; }
 
+        /// <summary>Optional project-relative path to a FOOTSTEP sound (a .wav/.mp3/.ogg/.flac clip, or a .vsndc Sound
+        /// Container for variation) assigned in the Material Editor. This is authoring DATA only — it does not affect
+        /// rendering. The game's FootstepAudio script reads it via Physics.GroundStepSound(pos) and plays it when the
+        /// player walks on a surface using this material, so footsteps are configured entirely in the editor (assign a
+        /// material to a floor, give the material a step sound — done, no code). Null = the surface plays no step.</summary>
+        public string FootstepSound { get; set; }
+
         // Rendering options
         public bool CastShadows { get; set; } = true;
         public bool ReceiveShadows { get; set; } = true;

@@ -615,16 +615,10 @@ namespace Editor.Editors.AnimationEditor
 
         private void BindModelDialog()
         {
-            var dlg = new Microsoft.Win32.OpenFileDialog
-            {
-                Title = "Bind model",
-                Filter = "3D Models|*.fbx;*.obj;*.gltf;*.glb;*.dae|All Files|*.*"
-            };
             var root = Editor.Core.Data.ProjectData.Current?.Path;
-            if (!string.IsNullOrEmpty(root) && Directory.Exists(root)) dlg.InitialDirectory = root;
-            if (dlg.ShowDialog(this) != true) return;
-
-            string picked = dlg.FileName;
+            // STA-thread picker — a WPF file dialog on the live UI thread deadlocks against the DX12/DXGI COM apartment.
+            string picked = Editor.Core.Util.FilePicker.OpenFile("3D Models|*.fbx;*.obj;*.gltf;*.glb;*.dae|All Files|*.*", "Bind model", root);
+            if (string.IsNullOrEmpty(picked)) return;
             string rel = picked;
             if (!string.IsNullOrEmpty(root) && picked.StartsWith(root, StringComparison.OrdinalIgnoreCase))
                 rel = picked.Substring(root.Length).TrimStart('\\', '/');

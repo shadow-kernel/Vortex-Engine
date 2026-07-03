@@ -986,22 +986,14 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
 
         private void ImportAsset_Click(object sender, RoutedEventArgs e)
         {
-            var openDialog = new Microsoft.Win32.OpenFileDialog
-            {
-                Title = "Import Asset",
-                // Note: GLB/GLTF not supported by Assimp 3.0!
-                Filter = "Supported 3D Models|*.fbx;*.obj;*.dae;*.3ds;*.blend|" +
-                         "FBX Files|*.fbx|" +
-                         "OBJ Files|*.obj|" +
-                         "Collada|*.dae|" +
-                         "All Files|*.*",
-                Multiselect = false
-            };
-
-            if (openDialog.ShowDialog() == true)
+            // STA-thread picker — a WPF file dialog on the live UI thread deadlocks against the DX12/DXGI COM apartment.
+            var picked = Editor.Core.Util.FilePicker.OpenFile(
+                "Supported 3D Models|*.fbx;*.obj;*.dae;*.3ds;*.blend|FBX Files|*.fbx|OBJ Files|*.obj|Collada|*.dae|All Files|*.*",
+                "Import Asset", Editor.Core.Data.ProjectData.Current?.Path);
+            if (!string.IsNullOrEmpty(picked))
             {
                 // Log the import attempt
-                System.Diagnostics.Debug.WriteLine($"[Import] Starting import of: {openDialog.FileName}");
+                System.Diagnostics.Debug.WriteLine($"[Import] Starting import of: {picked}");
                 
                 // Check if Assimp is available
                 bool assimpAvailable = VortexAPI.IsAssimpAvailable();
@@ -1019,7 +1011,7 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
                     return;
                 }
                 
-                var result = ModelImportService.Instance.ImportModel(openDialog.FileName);
+                var result = ModelImportService.Instance.ImportModel(picked);
                 
                 if (result.Success)
                 {

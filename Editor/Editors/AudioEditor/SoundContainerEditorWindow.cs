@@ -62,11 +62,14 @@ namespace Editor.Editors.AudioEditor
             var addEntry = MakeButton("+  Add clip", "#FFC8C8CE");
             addEntry.Click += (s, e) =>
             {
-                var dialog = new Microsoft.Win32.OpenFileDialog { Filter = "Audio|*.wav;*.mp3;*.ogg;*.flac", Multiselect = true, Title = "Add clips to container" };
-                if (dialog.ShowDialog() == true)
+                // Route through the STA-thread picker — a WPF file dialog on the live UI thread deadlocks against the
+                // DX12/DXGI COM apartment and hangs the editor white (the reported "Add crashes the engine").
+                var root2 = ProjectData.Current?.Path ?? "";
+                var startDir = string.IsNullOrEmpty(root2) ? null : System.IO.Path.Combine(root2, "Assets", "Audio");
+                var files = Editor.Core.Util.FilePicker.OpenFiles("Audio|*.wav;*.mp3;*.ogg;*.flac", "Add clips to container", startDir, true);
+                if (files != null && files.Length > 0)
                 {
-                    var root2 = ProjectData.Current?.Path ?? "";
-                    foreach (var file in dialog.FileNames)
+                    foreach (var file in files)
                     {
                         var rel = file.StartsWith(root2, StringComparison.OrdinalIgnoreCase)
                             ? file.Substring(root2.Length).TrimStart('\\', '/').Replace('\\', '/')

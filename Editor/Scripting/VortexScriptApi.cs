@@ -47,6 +47,10 @@ namespace Vortex
         // the scalable, tag-free way to drive surface-aware audio (map material -> sound once, works everywhere).
         string GroundMaterial(Vector3 origin, float maxDist);
 
+        // Returns the FOOTSTEP SOUND assigned to the surface's material in the Material Editor (a project-relative
+        // clip / .vsndc path), or "" — footsteps authored entirely in the editor, no per-material script dictionary.
+        string GroundStepSound(Vector3 origin, float maxDist);
+
         // Request switching the active scene by name (deferred — applied by the runtime after this tick).
         void LoadScene(string name);
 
@@ -567,6 +571,16 @@ namespace Vortex
         public static string GroundMaterial(Vector3 from, float maxDist = 3f)
         {
             return Host != null ? (Host.GroundMaterial(from, maxDist) ?? "") : "";
+        }
+
+        /// <summary>Ray straight DOWN from <paramref name="from"/> — returns the <b>footstep sound</b> assigned to the
+        /// surface's material in the Material Editor (a project-relative clip / .vsndc path), or "" if none. This is
+        /// the EDITOR-FIRST footstep API: the sound lives on the material (assigned in the Material Editor), so a
+        /// footstep script is just <c>Audio.PlayOneShot(Physics.GroundStepSound(pos), pos)</c> — adding a new surface
+        /// never touches code, only the Material Editor.</summary>
+        public static string GroundStepSound(Vector3 from, float maxDist = 3f)
+        {
+            return Host != null ? (Host.GroundStepSound(from, maxDist) ?? "") : "";
         }
     }
 

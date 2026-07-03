@@ -435,21 +435,11 @@ namespace Editor.Dialogs
             var projectPath = ProjectData.Current?.Path;
             if (string.IsNullOrEmpty(projectPath)) return;
 
-            var dialog = new Microsoft.Win32.OpenFileDialog
+            // Proper folder browser on an STA thread (a WPF file dialog on the live UI thread deadlocks the renderer).
+            var selectedPath = Editor.Core.Util.FilePicker.PickFolder("Select the target folder inside the project", Path.Combine(projectPath, _targetFolderBox.Text));
+            if (selectedPath != null && selectedPath.StartsWith(projectPath, StringComparison.OrdinalIgnoreCase))
             {
-                Title = "Select folder (pick any file inside)",
-                CheckFileExists = false,
-                FileName = "Folder Selection",
-                InitialDirectory = Path.Combine(projectPath, _targetFolderBox.Text)
-            };
-
-            if (dialog.ShowDialog() == true)
-            {
-                var selectedPath = Path.GetDirectoryName(dialog.FileName);
-                if (selectedPath != null && selectedPath.StartsWith(projectPath, StringComparison.OrdinalIgnoreCase))
-                {
-                    _targetFolderBox.Text = selectedPath.Substring(projectPath.Length).TrimStart('\\', '/');
-                }
+                _targetFolderBox.Text = selectedPath.Substring(projectPath.Length).TrimStart('\\', '/');
             }
         }
 

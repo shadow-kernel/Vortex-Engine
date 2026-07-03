@@ -714,6 +714,13 @@ namespace Editor.Scripting
             return Editor.Core.Services.Physics.CollisionService.RaycastDownMaterial(o, maxDist, out hit, out mat) ? (mat ?? "") : "";
         }
 
+        string Vortex.IScriptHost.GroundStepSound(Vortex.Vector3 origin, float maxDist)
+        {
+            var o = new Editor.ECS.Vector3(origin.X, origin.Y, origin.Z);
+            Editor.ECS.Vector3 hit; string step;
+            return Editor.Core.Services.Physics.CollisionService.RaycastDownStepSound(o, maxDist, out hit, out step) ? (step ?? "") : "";
+        }
+
         bool Vortex.IScriptHost.GetKey(string key)
         {
             if (string.IsNullOrEmpty(key)) return false;

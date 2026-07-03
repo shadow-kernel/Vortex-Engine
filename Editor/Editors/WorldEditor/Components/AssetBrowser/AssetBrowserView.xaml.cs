@@ -92,9 +92,12 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
         private string _currentFolderRel = "Assets";   // project-relative folder currently shown
         private bool _syncingFromBrowser;               // echo guard for browser->tree
 
+        private static AssetBrowserView _active;   // for static callers (SelectFileInExplorer) to reach the live browser
+
         public AssetBrowserView()
         {
             InitializeComponent();
+            _active = this;
             AssetList.ItemsSource = Assets;
 
             // A filtered view over the assets — drives both the search box and folder-scoping.
@@ -213,6 +216,15 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
         {
             if (string.IsNullOrEmpty(fullPath)) return;
             PendingSelectFullPath = fullPath;
+            // Force the EXPLORER tab active first — otherwise, if a type-tab (Prefabs/Materials/…) is showing, the
+            // folder-scoped Assets list never contains the target file and the select silently no-ops (the "Find /
+            // locate does nothing" bug). Switching the tab reloads the folder, then ApplyPendingSelect selects it.
+            try
+            {
+                if (_active != null && _active._currentType != AssetType.Explorer && _active.ExplorerTab != null)
+                    _active.ExplorerTab.IsChecked = true;   // fires AssetTypeTab_Checked -> Explorer + RefreshAssets
+            }
+            catch { }
             var dir = System.IO.Path.GetDirectoryName(fullPath);
             if (!string.IsNullOrEmpty(dir)) FileExplorerService.Instance.NavigateToPath(dir);
         }
@@ -508,29 +520,7 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
         /// reported "Import crash"). The UI thread blocks on Join for the modal's duration, so nothing on it re-enters
         /// the native renderer meanwhile. Returns the chosen file paths, or null if cancelled. Multi-select is on.</summary>
         private static string[] PickImportFilesSTA(string filter, string title, string initialDir)
-        {
-            string[] files = null;
-            var t = new System.Threading.Thread(() =>
-            {
-                try
-                {
-                    using (var dlg = new System.Windows.Forms.OpenFileDialog())
-                    {
-                        dlg.Multiselect = true;
-                        if (!string.IsNullOrEmpty(filter)) dlg.Filter = filter;
-                        if (!string.IsNullOrEmpty(title)) dlg.Title = title;
-                        if (!string.IsNullOrEmpty(initialDir)) dlg.InitialDirectory = initialDir;
-                        if (dlg.ShowDialog() == System.Windows.Forms.DialogResult.OK) files = dlg.FileNames;
-                    }
-                }
-                catch { }
-            });
-            t.SetApartmentState(System.Threading.ApartmentState.STA);
-            t.IsBackground = true;
-            t.Start();
-            t.Join();
-            return files;
-        }
+            => Editor.Core.Util.FilePicker.OpenFiles(filter, title, initialDir, true);
 
         /// <summary>The folder (relative to Assets) where an import should land — the CURRENT explorer folder,
         /// or "Models" when sitting at the Assets root.</summary>
@@ -697,34 +687,26 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 return;
             }
 
-            var saveDialog = new Microsoft.Win32.SaveFileDialog
-            {
-                Title = "Save Material",
-                Filter = "Vortex Material|*.vmat",
-                DefaultExt = ".vmat",
-                InitialDirectory = System.IO.Path.Combine(projectPath, "Materials"),
-                FileName = $"New{type}Material.vmat"
-            };
-
             // Ensure Materials folder exists
             var materialsDir = System.IO.Path.Combine(projectPath, "Materials");
             if (!System.IO.Directory.Exists(materialsDir))
                 System.IO.Directory.CreateDirectory(materialsDir);
 
-            if (saveDialog.ShowDialog() == true)
+            var savePath = Editor.Core.Util.FilePicker.SaveFile("Vortex Material|*.vmat", "Save Material", $"New{type}Material.vmat", ".vmat", materialsDir);
+            if (!string.IsNullOrEmpty(savePath))
             {
                 var material = new VortexMaterial
                 {
-                    Name = System.IO.Path.GetFileNameWithoutExtension(saveDialog.FileName),
+                    Name = System.IO.Path.GetFileNameWithoutExtension(savePath),
                     BlendMode = type
                 };
-                
+
                 if (type == "Transparent")
                 {
                     material.BaseColor = new float[] { 1f, 1f, 1f, 0.5f };
                 }
-                
-                if (material.Save(saveDialog.FileName))
+
+                if (material.Save(savePath))
                 {
                     var materialId = VortexAPI.CreateNewMaterial();
                     Assets.Add(new AssetItem
@@ -735,7 +717,7 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                         IconCode = "\uE91B",
                         IconColor = "#FFBD63C5",
                         Type = AssetType.Materials,
-                        Path = saveDialog.FileName
+                        Path = savePath
                     });
                     
                     AssetDatabase.Instance.Refresh();
@@ -754,12 +736,8 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             var uiDir = System.IO.Path.Combine(projectPath, "Assets", "UI");
             if (!System.IO.Directory.Exists(uiDir)) System.IO.Directory.CreateDirectory(uiDir);
 
-            var saveDialog = new Microsoft.Win32.SaveFileDialog
-            {
-                Title = "New UI Screen", Filter = "Vortex UI|*.vui", DefaultExt = ".vui",
-                InitialDirectory = uiDir, FileName = "NewScreen.vui"
-            };
-            if (saveDialog.ShowDialog() != true) return;
+            var savePath = Editor.Core.Util.FilePicker.SaveFile("Vortex UI|*.vui", "New UI Screen", "NewScreen.vui", ".vui", uiDir);
+            if (string.IsNullOrEmpty(savePath)) return;
 
             // A blank full-screen root the user can drop elements into.
             const string template = "{\n" +
@@ -772,12 +750,12 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 "  }\n}\n";
             try
             {
-                System.IO.File.WriteAllText(saveDialog.FileName, template);
+                System.IO.File.WriteAllText(savePath, template);
                 AssetDatabase.Instance.Refresh();
             }
             catch (Exception ex) { MessageBox.Show("Could not create the UI screen:\n" + ex.Message, "UI", MessageBoxButton.OK, MessageBoxImage.Error); return; }
 
-            try { Editor.Editors.UIEditor.UIEditorWindow.Open(Window.GetWindow(this), saveDialog.FileName); } catch { }
+            try { Editor.Editors.UIEditor.UIEditorWindow.Open(Window.GetWindow(this), savePath); } catch { }
         }
 
         private void CreateNewAnimationClip()
@@ -791,25 +769,21 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             var animDir = System.IO.Path.Combine(projectPath, "Assets", "Animations");
             if (!System.IO.Directory.Exists(animDir)) System.IO.Directory.CreateDirectory(animDir);
 
-            var saveDialog = new Microsoft.Win32.SaveFileDialog
-            {
-                Title = "New Animation Clip", Filter = "Vortex Animation|*.vanim", DefaultExt = ".vanim",
-                InitialDirectory = animDir, FileName = "NewClip.vanim"
-            };
-            if (saveDialog.ShowDialog() != true) return;
+            var savePath = Editor.Core.Util.FilePicker.SaveFile("Vortex Animation|*.vanim", "New Animation Clip", "NewClip.vanim", ".vanim", animDir);
+            if (string.IsNullOrEmpty(savePath)) return;
 
             try
             {
                 var clip = new Editor.Core.Animation.VortexAnimClip
                 {
-                    Name = System.IO.Path.GetFileNameWithoutExtension(saveDialog.FileName)
+                    Name = System.IO.Path.GetFileNameWithoutExtension(savePath)
                 };
-                clip.Save(saveDialog.FileName);
+                clip.Save(savePath);
                 AssetDatabase.Instance.Refresh();
             }
             catch (Exception ex) { MessageBox.Show("Could not create the animation clip:\n" + ex.Message, "Animation", MessageBoxButton.OK, MessageBoxImage.Error); return; }
 
-            try { Editor.Editors.AnimationEditor.AnimationEditorWindow.Open(Window.GetWindow(this), saveDialog.FileName); } catch { }
+            try { Editor.Editors.AnimationEditor.AnimationEditorWindow.Open(Window.GetWindow(this), savePath); } catch { }
         }
 
         private void CreateNewShader(string type)
@@ -826,17 +800,9 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 System.IO.Directory.CreateDirectory(shadersDir);
 
             // A shader is ONE .hlsl file (entry points VSMain/PSMain) \u2014 no separate .vshader metadata file. Name it here.
-            var saveDialog = new Microsoft.Win32.SaveFileDialog
-            {
-                Title = "New Shader \u2014 name it",
-                Filter = "HLSL Shader|*.hlsl",
-                DefaultExt = ".hlsl",
-                InitialDirectory = shadersDir,
-                FileName = (type == "Unlit" ? "NewUnlitShader" : "NewShader") + ".hlsl"
-            };
-            if (saveDialog.ShowDialog() != true) return;
-
-            var hlslPath = saveDialog.FileName;
+            var hlslPath = Editor.Core.Util.FilePicker.SaveFile("HLSL Shader|*.hlsl", "New Shader \u2014 name it",
+                (type == "Unlit" ? "NewUnlitShader" : "NewShader") + ".hlsl", ".hlsl", shadersDir);
+            if (string.IsNullOrEmpty(hlslPath)) return;
             if (!hlslPath.EndsWith(".hlsl", StringComparison.OrdinalIgnoreCase)) hlslPath += ".hlsl";
 
             var st = type == "Unlit" ? Editor.Core.Assets.ShaderType.Unlit
@@ -1294,8 +1260,45 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             if (inst == null) { MessageBox.Show("Could not instantiate the prefab (empty or unreadable).", "Prefab", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
             Editor.Core.Services.SelectionService.Instance.Select(inst);
             var mw = Application.Current?.MainWindow as MainWindow;
-            if (editHint) mw?.ShowToast("Editing '" + inst.Name + "' — add Scripts / Controllers / components in the Inspector, then right-click → Apply to Prefab to save them into the prefab (updates every instance)");
+            if (editHint) BeginPrefabEditSession(inst, scene);
             else mw?.ShowToast("Added '" + inst.Name + "' to the scene");
+        }
+
+        /// <summary>Start a guided Prefab Edit Session. The prefab is spawned as a temporary edit instance (already
+        /// done by the caller) and selected; a persistent banner tells the user to edit its components in the Inspector
+        /// and gives an explicit <b>Save to Prefab</b> / <b>Cancel</b>. Save writes the edits back into the .ventity
+        /// (updating every existing instance) AND removes the temporary instance again, so the net effect is "you
+        /// edited the prefab", not "you added an object". This is the fix for the old confusing flow where Edit silently
+        /// dropped an instance into the scene with no obvious way to save.</summary>
+        private void BeginPrefabEditSession(GameEntity inst, Scene scene)
+        {
+            var mw = Application.Current?.MainWindow as MainWindow;
+            if (mw == null) return;
+            void Finish(bool save)
+            {
+                try
+                {
+                    if (save)
+                    {
+                        if (Editor.Core.Services.PrefabService.Instance.ApplyToPrefab(inst))
+                            mw.ShowToast("Saved changes into the prefab — every instance updated");
+                        else
+                            mw.ShowToast("Nothing to save (prefab unchanged)");
+                    }
+                    // Remove the temporary edit instance either way: on Save the changes now live in the .ventity, on
+                    // Cancel they are discarded. Editing the prefab must not leave a stray object behind in the scene.
+                    if (Editor.Core.Services.SelectionService.Instance.SelectedEntity == inst)
+                        Editor.Core.Services.SelectionService.Instance.ClearSelection();
+                    scene?.RemoveEntity(inst);
+                    if (!save) mw.ShowToast("Cancelled — prefab left unchanged");
+                    Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.RequestResubmit();
+                }
+                catch { }
+            }
+            mw.ShowEditBanner(
+                "Editing prefab '" + inst.Name + "' — change its components in the Inspector, then:",
+                "Save to Prefab", () => Finish(true),
+                "Cancel", () => Finish(false));
         }
 
         /// <summary>A floating, self-contained editor/preview hub for a .ventity prefab: a live 3D preview of the
@@ -1720,6 +1723,18 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                         return true;
                     }
                     return false;
+
+                case AssetType.Audio:
+                    // Double-clicking an audio file (in ANY tab, incl. Explorer) AUDITIONS it in-editor / opens its
+                    // Sound Container editor — NOT the Windows default app. Returning true stops OpenOrPlaceAsset from
+                    // falling through to FileExplorerService.OpenFile (the OS handoff).
+                    if (!string.IsNullOrEmpty(item.Path) && item.Path.EndsWith(".vsndc", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (System.IO.File.Exists(fullPath))
+                            try { Editor.Editors.AudioEditor.SoundContainerEditorWindow.Open(Window.GetWindow(this), fullPath); } catch { }
+                    }
+                    else Audition(item);
+                    return true;
 
                 case AssetType.Meshes:
                 case AssetType.Models:
@@ -2462,6 +2477,17 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                     item.Type = AssetType.Explorer; item.TypeName = "Scene"; item.IconCode = ""; item.IconColor = "#FF6C5CE7"; break;
                 case ".ventity":
                     item.Type = AssetType.Prefab; item.TypeName = "Prefab"; item.IconCode = ""; item.IconColor = "#FF4DB6E2"; break;
+                case ".wav": case ".mp3": case ".ogg": case ".flac":
+                    // Audio in the Explorer tab behaves exactly like the Audio tab: speaker icon + waveform thumbnail,
+                    // click-to-audition + double-click preview (OpenAssetInEditor) instead of opening in Windows.
+                    item.Type = AssetType.Audio; item.TypeName = ext.TrimStart('.').ToUpperInvariant() + " Audio";
+                    item.IconCode = ""; item.IconColor = "#CE9178"; item.IsImported = true;
+                    if (fsi != null) QueueAudioPreview(item, fsi.FullPath);
+                    break;
+                case ".vsndc":
+                    item.Type = AssetType.Audio; item.TypeName = "Sound Container";
+                    item.IconCode = ""; item.IconColor = "#CE9178"; item.IsImported = true;
+                    break;
                 default:
                     item.Type = AssetType.Explorer;
                     item.TypeName = string.IsNullOrEmpty(ext) ? "File" : (ext.TrimStart('.').ToUpperInvariant() + " File");
@@ -2875,8 +2901,12 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
         {
             try
             {
+                // Clear material tiles AND every tile that RENDERS a material — model + prefab thumbnails — since a
+                // material edit can change how any of them look and the browser can't cheaply know which use it.
                 var stale = new System.Collections.Generic.List<string>();
-                foreach (var k in _thumbCache.Keys) if (k.StartsWith("mat:", StringComparison.Ordinal)) stale.Add(k);
+                foreach (var k in _thumbCache.Keys)
+                    if (k.StartsWith("mat:", StringComparison.Ordinal) || k.StartsWith("model:", StringComparison.Ordinal) || k.StartsWith("prefab:", StringComparison.Ordinal))
+                        stale.Add(k);
                 foreach (var k in stale) _thumbCache.Remove(k);
             }
             catch { }

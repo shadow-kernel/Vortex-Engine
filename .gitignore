@@ -364,3 +364,9 @@ FodyWeavers.xsd
 # local build scratch (not part of the project)
 /tools/
 /_baseline/
+
+# Local Claude Code session data
+.claude/
+
+# Inno Setup build output
+Installer/Output/
