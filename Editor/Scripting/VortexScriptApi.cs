@@ -39,6 +39,10 @@ namespace Vortex
         // selfId registers this character so other characters can't walk through it (0 = anonymous).
         Vector3 MoveCharacter(Vector3 feet, float radius, float height, Vector3 move, out bool grounded, long selfId);
 
+        // Ray straight down from `origin` (up to maxDist) against the world colliders — returns the surface entity's
+        // Tag (the material) or "" if nothing is below. The "what am I standing on?" query for footsteps.
+        string GroundTag(Vector3 origin, float maxDist);
+
         // Request switching the active scene by name (deferred — applied by the runtime after this tick).
         void LoadScene(string name);
 
@@ -540,6 +544,15 @@ namespace Vortex
         {
             if (Host == null) return new Vector3(feet.X + move.X, feet.Y + move.Y, feet.Z + move.Z);
             bool g; var r = Host.MoveCharacter(feet, radius, height, move, out g, characterId); _grounded = g; return r;
+        }
+
+        /// <summary>Ray straight DOWN from <paramref name="from"/> (up to <paramref name="maxDist"/>) against the world
+        /// colliders — returns the <b>Tag</b> of the surface entity you're standing on (its material), or "" if
+        /// nothing is below. This is the standard "what am I standing on?" query. Use it for material-based footsteps:
+        /// tag your floors ("grass", "wood", "metal", …) and pick the step sound from the returned tag.</summary>
+        public static string GroundTag(Vector3 from, float maxDist = 3f)
+        {
+            return Host != null ? (Host.GroundTag(from, maxDist) ?? "") : "";
         }
     }
 

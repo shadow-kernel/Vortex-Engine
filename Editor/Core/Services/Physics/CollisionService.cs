@@ -139,6 +139,65 @@ namespace Editor.Core.Services.Physics
             return true;
         }
 
+        /// <summary>Cast a ray straight DOWN from <paramref name="origin"/> up to <paramref name="maxDist"/> against the
+        /// solid world colliders, and return the closest hit point + the owning entity's Tag (the surface material).
+        /// The standard "what am I standing on?" query — used for material-based footsteps. Box/sphere/capsule use their
+        /// world AABB (exact for the flat, axis-aligned floors this is meant for); mesh colliders use ray-vs-triangle.
+        /// Returns false when nothing is under the point.</summary>
+        public static bool RaycastDown(Vector3 origin, float maxDist, out Vector3 hit, out string tag)
+        {
+            hit = origin; tag = "";
+            V3 o = From(origin);
+            float bestT = maxDist; Shape best = null;
+            foreach (var s in _world)
+            {
+                if (s == null) continue;
+                float t;
+                bool got = (s.Kind == Kind.Tris && s.Tris != null)
+                    ? RayDownTris(o, s.Tris, bestT, out t)
+                    : RayDownAabb(o, s.Min, s.Max, bestT, out t);
+                if (got && t <= bestT) { bestT = t; best = s; }
+            }
+            if (best == null) return false;
+            hit = new Vector3(origin.X, origin.Y - bestT, origin.Z);
+            tag = best.Owner != null ? (best.Owner.Tag ?? "") : "";
+            return true;
+        }
+
+        // Downward ray (dir = -Y) vs world AABB. Exact for axis-aligned boxes; misses in XZ => no hit; a point below
+        // the box never hits; above/inside => distance down to the top face (0 if already inside).
+        private static bool RayDownAabb(V3 o, V3 min, V3 max, float maxDist, out float t)
+        {
+            t = 0f;
+            if (o.X < min.X || o.X > max.X || o.Z < min.Z || o.Z > max.Z) return false;
+            if (o.Y < min.Y) return false;
+            t = o.Y - max.Y; if (t < 0f) t = 0f;
+            return t <= maxDist;
+        }
+
+        // Downward ray vs a flat triangle soup — Möller–Trumbore per triangle, closest hit.
+        private static bool RayDownTris(V3 o, V3[] tris, float maxDist, out float t)
+        {
+            t = maxDist; bool any = false;
+            V3 d = new V3(0f, -1f, 0f);
+            for (int i = 0; i + 2 < tris.Length; i += 3)
+            {
+                V3 v0 = tris[i], v1 = tris[i + 1], v2 = tris[i + 2];
+                V3 e1 = v1 - v0, e2 = v2 - v0;
+                V3 p = new V3(d.Y * e2.Z - d.Z * e2.Y, d.Z * e2.X - d.X * e2.Z, d.X * e2.Y - d.Y * e2.X);
+                float det = e1.Dot(p);
+                if (det > -1e-7f && det < 1e-7f) continue;
+                float inv = 1f / det;
+                V3 tv = o - v0;
+                float u = tv.Dot(p) * inv; if (u < 0f || u > 1f) continue;
+                V3 q = new V3(tv.Y * e1.Z - tv.Z * e1.Y, tv.Z * e1.X - tv.X * e1.Z, tv.X * e1.Y - tv.Y * e1.X);
+                float vv = d.Dot(q) * inv; if (vv < 0f || u + vv > 1f) continue;
+                float hitT = e2.Dot(q) * inv;
+                if (hitT >= 0f && hitT < t) { t = hitT; any = true; }
+            }
+            return any;
+        }
+
         /// <summary>Reset the per-frame overlap state (call on Build / scene switch / play end so stale pairs
         /// don't fire phantom Enter/Exit after a reload).</summary>
         public static void ResetEvents() { _prevTrig.Clear(); _curTrig.Clear(); _prevSolid.Clear(); _curSolid.Clear(); }

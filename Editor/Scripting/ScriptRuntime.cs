@@ -700,6 +700,13 @@ namespace Editor.Scripting
             return new Vortex.Vector3(r.X, r.Y, r.Z);
         }
 
+        string Vortex.IScriptHost.GroundTag(Vortex.Vector3 origin, float maxDist)
+        {
+            var o = new Editor.ECS.Vector3(origin.X, origin.Y, origin.Z);
+            Editor.ECS.Vector3 hit; string tag;
+            return Editor.Core.Services.Physics.CollisionService.RaycastDown(o, maxDist, out hit, out tag) ? (tag ?? "") : "";
+        }
+
         bool Vortex.IScriptHost.GetKey(string key)
         {
             if (string.IsNullOrEmpty(key)) return false;
