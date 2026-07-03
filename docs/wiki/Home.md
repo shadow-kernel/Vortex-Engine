@@ -35,6 +35,14 @@ Full details per milestone: [[Roadmap]].
 
 ## Wiki pages
 
+**Developer Documentation** — how to program the engine
+- [[Developer-Guide]] — the entry point: how the layers fit and where everything is documented
+- [[Scripting-Getting-Started]] — write your first `VortexBehaviour`, the lifecycle, compile & hot-reload
+- [[Scripting-API-Reference]] — every type/method in the `Vortex` namespace (Input, Physics, Audio, UI, …)
+- [[Entities-and-Components]] — the `GameEntity` / `Component` model and every component type
+- [[Native-DLL-API]] — the complete `VortexAPI.dll` C ABI (the DLL surface)
+- [[Managed-Interop-Bindings]] — the C# P/Invoke wrappers over the DLL
+
 **Overview**
 - [[Roadmap]] — all 10 milestones + backlog, issue-by-issue
 - [[Architecture]] — the 3-layer native/managed engine design
