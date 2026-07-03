@@ -1,4 +1,21 @@
+<div align="center">
+
+<img src="https://raw.githubusercontent.com/shadow-kernel/Vortex-Engine/main/Editor/Assets/Images/Logo.png" alt="Vortex Engine" width="130"/>
+
 # Vortex Engine Wiki
+
+### Build worlds. Import anything. Press ▶ Play.
+
+[![Website](https://img.shields.io/badge/WEBSITE-engine.vortexstudio.dev-6C5CE7?style=for-the-badge)](https://engine.vortexstudio.dev)
+[![Platform](https://img.shields.io/badge/PLATFORM-Windows%20x64-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/shadow-kernel/Vortex-Engine)
+[![Graphics](https://img.shields.io/badge/GRAPHICS-DirectX%2012-00A6FB?style=for-the-badge&logo=microsoft&logoColor=white)](Architecture)
+[![License](https://img.shields.io/badge/LICENSE-MIT-3DA639?style=for-the-badge)](https://github.com/shadow-kernel/Vortex-Engine/blob/main/LICENSE)
+
+**📖 New here? Jump straight to the [[Developer-Guide]] · [[Scripting-Getting-Started]] · [[Scripting-API-Reference]]**
+
+</div>
+
+---
 
 **Vortex Engine** is an open-source (MIT) game engine for Windows: a native **C++ Direct3D 12** rendering core, a **C# VortexAPI** scripting layer (gameplay lives in project scripts as `VortexBehaviour`, never hardcoded in the engine), and a **WPF editor** with dockable panels, inspectors, and live viewport. The first shipped game target is a **first-person horror** title; the long-term goal is a UE5-class feature set at ~10x performance via a GPU-driven renderer.
 
@@ -34,6 +51,14 @@
 Full details per milestone: [[Roadmap]].
 
 ## Wiki pages
+
+**Developer Documentation** — how to program the engine
+- [[Developer-Guide]] — the entry point: how the layers fit and where everything is documented
+- [[Scripting-Getting-Started]] — write your first `VortexBehaviour`, the lifecycle, compile & hot-reload
+- [[Scripting-API-Reference]] — every type/method in the `Vortex` namespace (Input, Physics, Audio, UI, …)
+- [[Entities-and-Components]] — the `GameEntity` / `Component` model and every component type
+- [[Native-DLL-API]] — the complete `VortexAPI.dll` C ABI (the DLL surface)
+- [[Managed-Interop-Bindings]] — the C# P/Invoke wrappers over the DLL
 
 **Overview**
 - [[Roadmap]] — all 10 milestones + backlog, issue-by-issue
