@@ -325,6 +325,7 @@
     <Compile Include="Core\Services\AudioPreviewService.cs" />
     <Compile Include="Core\Services\GameRuntime.cs" />
     <Compile Include="Core\Services\SelectionService.cs" />
+    <Compile Include="Core\Services\ShaderAssetService.cs" />
     <Compile Include="Core\Services\ShaderService.cs" />
     <Compile Include="Core\Services\TransformGizmoService.cs" />
     <Compile Include="Core\Services\ViewportRenderer.cs" />

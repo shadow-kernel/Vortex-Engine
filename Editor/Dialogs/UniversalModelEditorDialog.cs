@@ -1346,6 +1346,22 @@ namespace Editor.Dialogs
                     var vmat = VortexMaterial.FromUniversalMaterial(material);
                     vmat.MakePathsRelative(matDir);
                     var vmatPath = Path.Combine(matDir, $"submesh_{i}.vmat");
+
+                    // FromUniversalMaterial has NO shader/footstep fields (the Model Editor doesn't author
+                    // them) — without this carry-over, every Save Materials silently STRIPPED the sidecar's
+                    // ShaderAsset + FootstepSound assigned in the Material Editor, killing the custom shader
+                    // and the surface's step sound on the next reload.
+                    try
+                    {
+                        var prev = VortexMaterial.Load(vmatPath);
+                        if (prev != null)
+                        {
+                            vmat.ShaderAsset = prev.ShaderAsset;
+                            vmat.FootstepSound = prev.FootstepSound;
+                        }
+                    }
+                    catch { }
+
                     if (vmat.Save(vmatPath)) { savedCount++; savedPaths.Add(vmatPath); }
                 }
 
