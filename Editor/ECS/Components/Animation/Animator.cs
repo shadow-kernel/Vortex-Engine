@@ -70,6 +70,18 @@ namespace Editor.ECS.Components.Animation
         public Animator() : base() { }
         public Animator(GameEntity entity) : base(entity) { }
 
+        /// <summary>DataContractSerializer creates this object UNINITIALIZED (no ctor, no field initializers),
+        /// so restore the non-trivial defaults here. Without this, a .ventity/scene missing "speed" deserializes
+        /// to Speed=0 — which silently freezes playback at frame 0 (dt is multiplied by Speed).</summary>
+        [OnDeserializing]
+        private void OnDeserializingMethod(StreamingContext context)
+        {
+            _clips = new List<AnimatorClipEntry>();
+            _defaultClip = "";
+            _playOnStart = true;
+            _speed = 1f;
+        }
+
         /// <summary>Resolve a clip NAME from the table to its .vanim path; a direct path passes through.</summary>
         public string ResolveClipPath(string nameOrPath)
         {

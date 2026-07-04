@@ -65,12 +65,17 @@ namespace Editor.Core.Services
             var project = ProjectData.Current;
             if (string.IsNullOrEmpty(prefabPath) || scene == null) return null;
             var full = Resolve(prefabPath, project);
-            if (!File.Exists(full)) return null;
+            // VFS-aware (pak OR disk) so a future runtime Instantiate works in shipped builds too;
+            // DataSerializer.LoadFromJson below already reads through the VFS.
+            if (!AssetVfs.Exists(full)) return null;
 
             var entity = DataSerializer.LoadFromJson<GameEntity>(full);
             if (entity == null) return null;
             entity.RegenerateIds();
-            entity.Scene = scene;
+            // Scene refs must be set on the WHOLE subtree (deserialize leaves children with the root's
+            // then-null Scene) — otherwise children register into the native DEFAULT scene instead of the
+            // active one, unlike scene-loaded entities which are fixed recursively on load.
+            SetSceneRecursive(entity, scene);
             entity.PrefabPath = ToProjectRelative(full, project?.Path);
             SetActiveRecursive(entity, true);   // a freshly-loaded subtree must be active or SubmitEntity skips it
 
@@ -118,6 +123,14 @@ namespace Editor.Core.Services
                 foreach (var c in e.Children) SetActiveRecursive(c, active);
         }
 
+        private static void SetSceneRecursive(GameEntity e, Scene scene)
+        {
+            if (e == null) return;
+            e.Scene = scene;
+            if (e.Children != null)
+                foreach (var c in e.Children) SetSceneRecursive(c, scene);
+        }
+
         /// <summary>Write the instance's current state back to its prefab asset, then update every OTHER instance of
         /// that prefab in the active scene (each keeps its own transform). Returns false if not a prefab instance.</summary>
         public bool ApplyToPrefab(GameEntity instance)
@@ -158,7 +171,47 @@ namespace Editor.Core.Services
                 fresh.Transform.LocalRotation = oldT.LocalRotation;
                 fresh.Transform.LocalScale = oldT.LocalScale;
             }
+
+            // Carry over per-instance components the TEMPLATE doesn't have (like the transform above,
+            // they are instance overrides): an Animator or Script configured on the instance used to be
+            // silently DELETED by every Apply/Revert/isolated-editor-Save — the character snapped back to
+            // bind pose and its behaviours vanished. Only managed-only component types are safe to MOVE
+            // (the old entity is discarded); engine-backed ones (MeshRenderer/colliders) come from the template.
+            if (fresh != null)
+            {
+                try { CarryOverInstanceComponents(instance, fresh); } catch { }
+            }
             return fresh;
+        }
+
+        /// <summary>Move Animator/Script components that exist on the old instance root but have no same-type
+        /// counterpart in the fresh template copy. These are pure managed data, so re-homing the object is safe.</summary>
+        private static void CarryOverInstanceComponents(GameEntity oldInstance, GameEntity fresh)
+        {
+            if (oldInstance?.Components == null || fresh == null) return;
+            var toMove = new List<ECS.Component>();
+            foreach (var c in oldInstance.Components)
+            {
+                if (c is ECS.Components.Animation.Animator && fresh.GetComponent<ECS.Components.Animation.Animator>() == null)
+                    toMove.Add(c);
+                else if (c is ECS.Components.Scripting.Script s && !HasScript(fresh, s))
+                    toMove.Add(c);
+            }
+            foreach (var c in toMove)
+            {
+                oldInstance.Components.Remove(c);
+                c.Entity = fresh;
+                fresh.Components.Add(c);
+            }
+        }
+
+        private static bool HasScript(GameEntity e, ECS.Components.Scripting.Script s)
+        {
+            foreach (var c in e.Components)
+                if (c is ECS.Components.Scripting.Script other &&
+                    string.Equals(other.ScriptPath, s.ScriptPath, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            return false;
         }
 
         /// <summary>A prefab asset (.ventity) — or a folder of them — was DELETED. REMOVE every scene instance that
@@ -251,10 +304,67 @@ namespace Editor.Core.Services
         /// <summary>Serialize an entity as a prefab TEMPLATE — the file must not itself carry a PrefabPath.</summary>
         private static void WriteTemplate(GameEntity entity, string file)
         {
+            // Normalize asset paths to PROJECT-RELATIVE first (permanently — relative is the correct form
+            // for the live entity too). The Asset Browser used to bake ABSOLUTE paths ("C:\...\model.fbx#submesh0")
+            // into entities; frozen into a .ventity they break shipped builds (the pak keys are relative, so
+            // mesh + skeleton lookups miss the VFS) and any moved/renamed project.
+            NormalizeAssetPathsRecursive(entity);
+
             var saved = entity.PrefabPath;
             entity.PrefabPath = null;
             try { DataSerializer.SaveAsJson(entity, file); }
             finally { entity.PrefabPath = saved; }
+        }
+
+        /// <summary>Rewrite absolute under-project asset paths to project-relative on the whole subtree.
+        /// MeshRenderer paths are rewritten via their private backing fields (the public setters reload
+        /// native handles — pointless churn for a pure string normalization).</summary>
+        private static void NormalizeAssetPathsRecursive(GameEntity e)
+        {
+            var projectPath = ProjectData.Current?.Path;
+            if (e == null || string.IsNullOrEmpty(projectPath)) return;
+
+            foreach (var comp in e.Components)
+            {
+                if (comp is ECS.Components.Rendering.MeshRenderer mr)
+                {
+                    NormalizeField(mr, "_meshPath", projectPath);
+                    NormalizeField(mr, "_materialPath", projectPath);
+                    NormalizeField(mr, "_texturePath", projectPath);
+                    NormalizeField(mr, "_shaderPath", projectPath);
+                }
+                else if (comp is ECS.Components.Animation.Animator anim && anim.Clips != null)
+                {
+                    foreach (var clip in anim.Clips)
+                        if (clip != null) clip.Path = ToProjectRelative(clip.Path ?? "", projectPath);
+                }
+                else if (comp is ECS.Components.Scripting.Script script)
+                {
+                    script.ScriptPath = ToProjectRelative(script.ScriptPath ?? "", projectPath);
+                }
+                else if (comp is ECS.Components.Audio.AudioSource audio)
+                {
+                    audio.AudioClipPath = ToProjectRelative(audio.AudioClipPath ?? "", projectPath);
+                }
+            }
+
+            if (e.Children != null)
+                foreach (var c in e.Children) NormalizeAssetPathsRecursive(c);
+        }
+
+        private static void NormalizeField(object target, string fieldName, string projectPath)
+        {
+            try
+            {
+                var f = target.GetType().GetField(fieldName,
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                if (f == null) return;
+                var val = f.GetValue(target) as string;
+                if (string.IsNullOrEmpty(val)) return;
+                var rel = ToProjectRelative(val, projectPath);
+                if (!string.Equals(rel, val, StringComparison.Ordinal)) f.SetValue(target, rel);
+            }
+            catch { /* normalization is best-effort — never block a save */ }
         }
 
         /// <summary>Reload EVERY instance of a prefab (across all open scenes) from the .ventity on disk, each keeping
