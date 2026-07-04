@@ -24,16 +24,40 @@ namespace Editor.Editors.PhysicsEditor
         private TextBlock _entityName;
         private CollisionPreviewControl _preview;
 
-        public static CollisionEditorWindow Open(Window owner)
+        /// <summary>Non-null = explicit-target mode: this window edits EXACTLY this entity and ignores the global
+        /// SelectionService. Used by the isolated Prefab Editor, whose entity lives outside the scene — following the
+        /// scene selection there would edit the WRONG entity (or show "No entity selected").</summary>
+        private readonly GameEntity _fixedTarget;
+
+        /// <summary>Raised after this editor structurally changes its target entity (collider type switched or
+        /// removed, contact script attached or removed) so an external inspector — e.g. the isolated Prefab
+        /// Editor's — can re-render its component cards instead of keeping stale ones bound to removed components.</summary>
+        public event Action TargetModified;
+
+        public static CollisionEditorWindow Open(Window owner, GameEntity fixedTarget = null)
         {
-            if (_open != null) { try { _open.Activate(); return _open; } catch { _open = null; } }
-            _open = new CollisionEditorWindow { Owner = owner };
+            if (_open != null)
+            {
+                if (ReferenceEquals(_open._fixedTarget, fixedTarget))
+                {
+                    try { _open.Activate(); return _open; } catch { _open = null; }
+                }
+                else
+                {
+                    // The open window is bound to a different target (scene selection vs. an isolated prefab
+                    // entity) — re-using it would edit the WRONG entity. Close it and open one for this target.
+                    try { _open.Close(); } catch { }
+                    _open = null;
+                }
+            }
+            _open = new CollisionEditorWindow(fixedTarget) { Owner = owner };
             _open.Show();
             return _open;
         }
 
-        private CollisionEditorWindow()
+        private CollisionEditorWindow(GameEntity fixedTarget)
         {
+            _fixedTarget = fixedTarget;
             Title = "Collision Editor";
             Width = 400; Height = 760; MinWidth = 360; MinHeight = 520;
             Background = Br("#FF161618");
@@ -70,10 +94,11 @@ namespace Editor.Editors.PhysicsEditor
             // preview's queue swaps (Redraw) and the main viewport's frames mutually self-contained.
             Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.ActiveCoexistPreviews++;
 
-            SelectionService.Instance.SelectionChanged += OnSelectionChanged;
+            if (_fixedTarget == null)   // explicit-target mode never follows the scene selection
+                SelectionService.Instance.SelectionChanged += OnSelectionChanged;
             Closed += (s, e) =>
             {
-                try { SelectionService.Instance.SelectionChanged -= OnSelectionChanged; } catch { }
+                try { if (_fixedTarget == null) SelectionService.Instance.SelectionChanged -= OnSelectionChanged; } catch { }
                 try { _preview?.Dispose(); } catch { }
                 try
                 {
@@ -95,13 +120,15 @@ namespace Editor.Editors.PhysicsEditor
             Dispatcher.BeginInvoke(new Action(Rebuild));
         }
 
-        private GameEntity Ent => SelectionService.Instance.SelectedEntity;
+        private GameEntity Ent => _fixedTarget ?? SelectionService.Instance.SelectedEntity;
 
         private void Rebuild()
         {
             _body.Children.Clear();
             var ent = Ent;
-            _entityName.Text = ent != null ? ("Entity:  " + ent.Name) : "No entity selected";
+            _entityName.Text = ent != null
+                ? ("Entity:  " + ent.Name + (_fixedTarget != null ? "   ·   isolated prefab" : ""))
+                : "No entity selected";
             _preview?.SetTarget(ent);
 
             if (ent == null)
@@ -120,7 +147,7 @@ namespace Editor.Editors.PhysicsEditor
             row.Children.Add(TypeButton("Sphere", col is SphereCollider, () => SetType<SphereCollider>(ent)));
             row.Children.Add(TypeButton("Capsule", col is CapsuleCollider, () => SetType<CapsuleCollider>(ent)));
             row.Children.Add(TypeButton("Mesh", col is MeshCollider, () => SetType<MeshCollider>(ent)));
-            if (col != null) row.Children.Add(TypeButton("Remove", false, () => { ent.RemoveComponent(col); Rebuild(); }));
+            if (col != null) row.Children.Add(TypeButton("Remove", false, () => { RemoveComponentFromTarget(ent, col); RaiseTargetModified(); Rebuild(); }));
             _body.Children.Add(row);
 
             if (col == null)
@@ -192,7 +219,7 @@ namespace Editor.Editors.PhysicsEditor
                 : "Attached: " + cur + "  —  override " + evts + " in it."));
             _body.Children.Add(ActionButton(string.IsNullOrEmpty(cur) ? "Attach Script…" : "Change Script…", () => ShowTriggerScriptPicker(ent)));
             if (script != null)
-                _body.Children.Add(ActionButton("Remove Script", () => { ent.RemoveComponent(script); Rebuild(); }));
+                _body.Children.Add(ActionButton("Remove Script", () => { RemoveComponentFromTarget(ent, script); RaiseTargetModified(); Rebuild(); }));
         }
 
         private void ShowTriggerScriptPicker(GameEntity ent)
@@ -220,9 +247,10 @@ namespace Editor.Editors.PhysicsEditor
         {
             if (ent == null || string.IsNullOrEmpty(rel)) return;
             var existing = ent.GetComponent<Editor.ECS.Components.Scripting.Script>();
-            if (existing != null) ent.RemoveComponent(existing);
-            ent.AddComponent(new Editor.ECS.Components.Scripting.Script(ent, rel));
-            SelectionService.Instance.Select(ent); // refresh the main inspector too
+            if (existing != null) RemoveComponentFromTarget(ent, existing);
+            AddComponentToTarget(ent, new Editor.ECS.Components.Scripting.Script(ent, rel));
+            if (_fixedTarget == null) SelectionService.Instance.Select(ent); // refresh the main inspector too
+            RaiseTargetModified();
             Rebuild();
         }
 
@@ -242,13 +270,36 @@ namespace Editor.Editors.PhysicsEditor
         private void SetType<T>(GameEntity ent) where T : Collider, new()
         {
             var existing = ent.GetComponent<Collider>();
-            if (existing != null) ent.RemoveComponent(existing);
+            if (existing != null) RemoveComponentFromTarget(ent, existing);
             var c = new T { Entity = ent };
             if (existing != null) { c.Center = existing.Center; c.IsTrigger = existing.IsTrigger; }
-            ent.AddComponent(c);
+            AddComponentToTarget(ent, c);
             AutoFit(ent, c);
-            SelectionService.Instance.Select(ent); // refresh the main inspector too
+            if (_fixedTarget == null) SelectionService.Instance.Select(ent); // refresh the main inspector too
+            RaiseTargetModified();
             Rebuild();
+        }
+
+        /// <summary>Add a component honoring the target mode: undoable for scene entities, DIRECT for an explicit
+        /// fixed target — the isolated Prefab Editor's entity is a throwaway outside the scene, and a global undo
+        /// entry referencing it would let a later Ctrl+Z in the main editor mutate a ghost.</summary>
+        private void AddComponentToTarget(GameEntity ent, Component c)
+        {
+            if (_fixedTarget != null) ent.AddComponentDirect(c);
+            else ent.AddComponent(c);
+        }
+
+        /// <summary>Remove counterpart of <see cref="AddComponentToTarget"/> — same undo-hygiene rule.</summary>
+        private void RemoveComponentFromTarget(GameEntity ent, Component c)
+        {
+            if (_fixedTarget != null) ent.Components.Remove(c);
+            else ent.RemoveComponent(c);
+        }
+
+        private void RaiseTargetModified()
+        {
+            var h = TargetModified;
+            if (h != null) { try { h(); } catch { } }
         }
 
         private static void AutoFit(GameEntity ent, Collider col)
