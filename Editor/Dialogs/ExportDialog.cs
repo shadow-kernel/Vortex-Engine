@@ -36,8 +36,9 @@ namespace Editor.Dialogs
             root.Children.Add(new TextBlock { Text = "Export “" + (projectName ?? "Game") + "”", FontSize = 17, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 4) });
             root.Children.Add(new TextBlock { Text = "Choose the build type.", Foreground = B("#9A9AA1"), FontSize = 12, Margin = new Thickness(0, 0, 0, 16) });
 
-            _release = MakeChoice("Release", "Packed + obfuscated, no source, hot-reload OFF. The build to ship.", true);
-            _debug = MakeChoice("Debug", "References your ORIGINAL project on disk — edit scripts/shaders there and they hot-reload live in the build. For testing; don’t distribute.", false);
+            // Default to DEBUG: it's the fast test/iterate build. Release (ship build) is an explicit opt-in.
+            _release = MakeChoice("Release", "Packed + obfuscated, no source, hot-reload OFF. The build to ship.", false);
+            _debug = MakeChoice("Debug", "References your ORIGINAL project on disk — edit scripts/shaders there and they hot-reload live in the build. For testing; don’t distribute.", true);
             root.Children.Add(_release);
             root.Children.Add(_debug);
 

@@ -95,6 +95,15 @@ namespace vortex::graphics::dx12
 			if (n) f.read(out.data(), n);
 			return true;
 		}
+
+		bool write_blob(const std::wstring& path, ID3DBlob* blob)
+		{
+			if (!blob) return false;
+			std::ofstream f(path, std::ios::binary);
+			if (!f) return false;
+			f.write(static_cast<const char*>(blob->GetBufferPointer()), (std::streamsize)blob->GetBufferSize());
+			return f.good();
+		}
 	}
 
 	const std::wstring& DX12ShaderCompiler::shaders_dir()
@@ -172,5 +181,45 @@ namespace vortex::graphics::dx12
 
 		// 2) compile from source (dev + hot-reload)
 		return compile_from_file(dir + L"\\" + wname + L".hlsl", entry, target);
+	}
+
+	int DX12ShaderCompiler::precompile_builtins(const std::wstring& out_bin_dir)
+	{
+		// The canonical ship-list: every (shader, stage) the engine's pipelines ask load_shader() for. Keep in
+		// sync with the load_shader() call sites (DX12Pipeline3D/Skybox/Grid/MotionVector/Upscale/Pipeline).
+		// skinned has NO ps of its own — the skinned PSO reuses standard's pixel shader.
+		struct BuiltinShader { const char* name; const char* stage; const char* entry; const char* target; };
+		static const BuiltinShader kBuiltins[] =
+		{
+			{ "standard",     "vs", "VSMain",  "vs_5_0" }, { "standard",     "ps", "PSMain",  "ps_5_0" },
+			{ "skinned",      "vs", "VSMain",  "vs_5_0" },
+			{ "skybox",       "vs", "SkyVS",   "vs_5_0" }, { "skybox",       "ps", "SkyPS",   "ps_5_0" },
+			{ "grid",         "vs", "GridVS",  "vs_5_0" }, { "grid",         "ps", "GridPS",  "ps_5_0" },
+			{ "motionvector", "vs", "MvecVS",  "vs_5_0" }, { "motionvector", "ps", "MvecPS",  "ps_5_0" },
+			{ "upscale",      "vs", "VSMain",  "vs_5_0" }, { "upscale",      "ps", "PSMain",  "ps_5_0" },
+			{ "basic",        "vs", "BasicVS", "vs_5_0" }, { "basic",        "ps", "BasicPS", "ps_5_0" },
+		};
+
+		const std::wstring& dir = shaders_dir();
+		if (dir.empty()) { sh_log("precompile: shaders dir not found"); return 0; }
+
+		CreateDirectoryW(out_bin_dir.c_str(), nullptr); // no-op if it already exists (GameExporter also creates it)
+
+		int written = 0;
+		constexpr int expected = (int)(sizeof(kBuiltins) / sizeof(kBuiltins[0]));
+		for (const auto& s : kBuiltins)
+		{
+			std::string nm(s.name), st(s.stage);
+			std::wstring wname(nm.begin(), nm.end()), wstage(st.begin(), st.end());
+			auto blob = compile_from_file(dir + L"\\" + wname + L".hlsl", s.entry, s.target);
+			if (!blob) { sh_log(std::string("precompile FAILED: ") + s.name + "." + s.stage); continue; }
+			if (write_blob(out_bin_dir + L"\\" + wname + L"." + wstage + L".cso", blob.Get())) ++written;
+			else sh_log(std::string("precompile: could not write ") + s.name + "." + s.stage + ".cso");
+		}
+		sh_log("precompiled " + std::to_string(written) + "/" + std::to_string(expected) + " built-in shader blobs -> " + narrow(out_bin_dir));
+		// ALL-OR-NOTHING contract: a partial set would ship a game with some pipelines shaderless (no .hlsl source
+		// is packaged when precompile "succeeds"), so report 0 unless EVERY blob landed — the exporter then falls
+		// back to shipping loose .hlsl and the build always renders.
+		return written == expected ? written : 0;
 	}
 }

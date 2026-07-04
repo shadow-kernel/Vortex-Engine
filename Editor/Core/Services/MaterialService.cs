@@ -232,7 +232,10 @@ namespace Editor.Core.Services
         /// </summary>
         public long LoadVortexMaterial(string vmatPath)
         {
-            if (!File.Exists(vmatPath)) return GetDefaultMaterial();
+            // AssetVfs.Exists = in the shipped pak OR on disk. A shipped Release build has NO loose .vmat on
+            // disk (only the in-RAM pak), so a plain File.Exists here made every .vmat collapse to the default
+            // material = untextured objects. VortexMaterial.Load is already VFS-aware.
+            if (!AssetVfs.Exists(vmatPath)) return GetDefaultMaterial();
 
             try
             {
@@ -261,7 +264,9 @@ namespace Editor.Core.Services
         /// </summary>
         public long GetOrBuildVortexMaterial(string vmatPath)
         {
-            if (string.IsNullOrEmpty(vmatPath) || !File.Exists(vmatPath))
+            // Shipped Release build: the .vmat lives only in the in-RAM pak, not on disk — a plain File.Exists
+            // check here was THE "textures missing after Release export" bug (every .vmat -> default material).
+            if (string.IsNullOrEmpty(vmatPath) || !AssetVfs.Exists(vmatPath))
                 return GetDefaultMaterial();
 
             string key = Path.GetFullPath(vmatPath);
@@ -440,20 +445,30 @@ namespace Editor.Core.Services
         /// texture is bound repeatedly (previews, thumbnails, live scene) instead of VortexAPI.ImportTextureFromFile.</summary>
         public static long ImportTextureCached(string absPath)
         {
-            if (string.IsNullOrEmpty(absPath) || !File.Exists(absPath)) return -1;
+            if (string.IsNullOrEmpty(absPath)) return -1;
+
+            // Shipped game: textures live in the in-RAM pak (no loose files on disk). Editor: loose disk files.
+            // Mirror SceneRenderService.ImportTexturePath so the .vmat texture pipeline isn't AssetVfs-blind —
+            // that blindness was the "textures missing after Release export" bug (File.Exists always failed in
+            // the pak, so a map was never bound). ImportTextureFromBytes sniffs PNG/JPG/DDS from the buffer.
+            byte[] vfsBytes = null;
+            bool fromVfs = AssetVfs.IsMounted && AssetVfs.TryGetBytes(absPath, out vfsBytes);
+            if (!fromVfs && !File.Exists(absPath)) return -1;
+
             string key;
-            try { key = absPath + "|" + File.GetLastWriteTimeUtc(absPath).Ticks; }
-            catch { key = absPath; }
+            if (fromVfs) key = "vfs|" + absPath;              // pak is immutable at runtime -> path alone is a stable key
+            else { try { key = absPath + "|" + File.GetLastWriteTimeUtc(absPath).Ticks; } catch { key = absPath; } }
+
             if (_textureIdCache.TryGetValue(key, out long cached) && cached >= 0) return cached;
-            long id = VortexAPI.ImportTextureFromFile(absPath);
+            long id = fromVfs ? VortexAPI.ImportTextureFromBytes(vfsBytes) : VortexAPI.ImportTextureFromFile(absPath);
             if (id >= 0) _textureIdCache[key] = id;
             return id;
         }
 
         private static void BindMap(long materialId, string texturePath, Action<long, long> setter)
         {
-            if (string.IsNullOrEmpty(texturePath) || !File.Exists(texturePath)) return;
-            long tex = ImportTextureCached(texturePath);   // cached -> a 4K map uploads once, not on every render
+            if (string.IsNullOrEmpty(texturePath)) return;
+            long tex = ImportTextureCached(texturePath);   // AssetVfs (shipped) or disk (editor); uploaded once per key
             if (tex >= 0) setter(materialId, tex);
         }
 

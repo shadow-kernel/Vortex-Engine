@@ -255,6 +255,16 @@ namespace Editor.DllWrapper
             [In, Out] long[] textureIds,
             int maxSubmeshes);
 
+        // UTF-8 path so an output folder with non-ASCII chars precompiles correctly (native decodes CP_UTF8).
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int PrecompileBuiltinShaders([MarshalAs(UnmanagedType.LPUTF8Str)] string outBinDir);
+
+        /// <summary>Precompile the engine's built-in shaders to <paramref name="outBinDir"/>/*.cso (Release export:
+        /// ship compiled bytecode, never .hlsl source, no per-launch compile). Returns the number of .cso blobs
+        /// written; 0 means the precompiler was unavailable (caller should ship loose .hlsl as a fallback).</summary>
+        public static int PrecompileBuiltinShadersTo(string outBinDir)
+            => string.IsNullOrEmpty(outBinDir) ? 0 : PrecompileBuiltinShaders(outBinDir);
+
         public static long ImportModelFromFile(string filepath) => ImportModel(filepath);
         public static long ImportTextureFromFile(string filepath) => ImportTexture(filepath);
 

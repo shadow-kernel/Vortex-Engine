@@ -1,4 +1,6 @@
 #include "../ApiCommon.h"
+#include <windows.h>
+#include "..\..\Engine\Graphics\DX12\DX12ShaderCompiler.h"
 
 EDITOR_INTERFACE id::id_type ImportModel(const char* filepath)
 {
@@ -240,6 +242,20 @@ EDITOR_INTERFACE bool ExportMeshToVMesh(id::id_type mesh_id, const char* filepat
 {
 	if (!filepath) return false;
 	return graphics::ResourceRegistry::instance().export_mesh_to_vmesh(mesh_id, filepath);
+}
+
+// Precompile the engine's built-in shaders to <out_bin_dir>/*.cso for a Release export: the shipped game then
+// carries compiled bytecode only (no readable .hlsl source, no per-launch D3DCompile). Reads source from the
+// engine's resolved shaders dir; uses d3dcompiler only (no device state), so it's safe from the editor process.
+// Returns the number of .cso blobs written (0 = precompiler unavailable -> caller ships loose .hlsl as fallback).
+EDITOR_INTERFACE int PrecompileBuiltinShaders(const char* out_bin_dir_utf8)
+{
+	if (!out_bin_dir_utf8 || !*out_bin_dir_utf8) return 0;
+	int n = MultiByteToWideChar(CP_UTF8, 0, out_bin_dir_utf8, -1, nullptr, 0);
+	if (n <= 0) return 0;
+	std::wstring w(static_cast<size_t>(n - 1), L'\0');
+	MultiByteToWideChar(CP_UTF8, 0, out_bin_dir_utf8, -1, &w[0], n);
+	return graphics::dx12::DX12ShaderCompiler::precompile_builtins(w);
 }
 
 EDITOR_INTERFACE bool HasAssimpSupport()

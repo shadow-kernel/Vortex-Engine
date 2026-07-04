@@ -34,5 +34,12 @@ namespace vortex::graphics::dx12
 
 		// The resolved shaders directory: <exe>/Shaders (shipped) or <repo>/Engine/Shaders (dev). Empty if not found.
 		static const std::wstring& shaders_dir();
+
+		// Precompile every built-in engine shader to <out_bin_dir>/<name>.<stage>.cso, reading source from
+		// shaders_dir(). The Release export calls this so a shipped game carries compiled bytecode ONLY (no .hlsl
+		// source, no per-launch compile). Uses d3dcompiler only (no device state), so it's safe from the editor
+		// process. ALL-OR-NOTHING: returns the blob count on full success, 0 if ANY shader failed to compile or
+		// write (the caller discards partial output and ships loose .hlsl as the fallback).
+		static int precompile_builtins(const std::wstring& out_bin_dir);
 	};
 }

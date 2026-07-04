@@ -59,11 +59,10 @@ namespace Editor.Core.Services.Build
                 int n = CopyRuntime(runtimeDir, outputDir, usesSteamAudio);
                 sb.AppendLine("• Runtime: " + n + " files copied" + (usesSteamAudio ? " (incl. Steam Audio phonon.dll)" : ""));
 
-                // Engine shaders ship as loose files next to the exe (the native engine is a static lib in the exe and
-                // can't read the C#-only .vpak). The runtime resolves <exe>/Shaders first; without this a shipped game
-                // would have NO shaders. Copies .hlsl (compiled at runtime) + any precompiled bin/*.cso.
-                int shaderCount = CopyShaders(outputDir);
-                sb.AppendLine("• Shaders: " + shaderCount + " files copied -> Shaders/");
+                // Engine shaders ship as loose files next to the exe (the native engine is a static lib in the exe
+                // and can't read the C#-only .vpak). HOW they ship is build-dependent (below): DEBUG copies loose
+                // .hlsl (compiled at runtime for hot-reload); RELEASE precompiles to Shaders/bin/*.cso and ships NO
+                // .hlsl source (faster launch + source not distributed).
 
                 // 2) Package the project. DEBUG = loose + source (dev tooling / hot-reload ON); RELEASE = packed +
                 //    compiled + obfuscated (hot-reload OFF). The branded exe + README (below) are shared by both.
@@ -81,6 +80,10 @@ namespace Editor.Core.Services.Build
                     try { if (File.Exists(tmpDllDbg)) File.Delete(tmpDllDbg); } catch { }
                     sb.AppendLine(scriptsOk ? "• Scripts validated OK" : "• SCRIPTS FAILED TO COMPILE");
 
+                    // DEBUG ships loose .hlsl so shaders hot-reload live (compiled at runtime by the native engine).
+                    int shaderCountDbg = CopyShaders(outputDir);
+                    sb.AppendLine("• Shaders: " + shaderCountDbg + " loose file(s) -> Shaders/ (compiled at runtime, hot-reload)");
+
                     P(0.90, "Writing debug marker…");
                     var projAbs = Path.GetFullPath(projectRoot).Replace("\\", "\\\\").Replace("\"", "'");
                     File.WriteAllText(Path.Combine(outputDir, "player.vortex"),
@@ -96,6 +99,26 @@ namespace Editor.Core.Services.Build
                     var tmpDll = Path.Combine(Path.GetTempPath(), "GameScripts_" + Guid.NewGuid().ToString("N") + ".dll");
                     scriptsOk = CompileScripts(projectRoot, tmpDll, out scriptLog);
                     sb.AppendLine(scriptsOk ? "• Scripts compiled OK -> GameScripts.dll" : "• SCRIPTS FAILED TO COMPILE");
+
+                    // Shaders: precompile the engine built-ins to bytecode and ship ONLY .cso — no .hlsl source in a
+                    // release build (faster launch: no per-run D3DCompile; source not distributed). Falls back to
+                    // shipping loose .hlsl if the native precompiler is unavailable, so the build always renders.
+                    // The native side is ALL-OR-NOTHING (returns 0 unless every blob compiled + wrote — a partial
+                    // set would ship pipelines with no shader at all), and a stale VortexAPI.dll without the new
+                    // export must ALSO mean fallback (EntryPointNotFoundException), not an aborted export.
+                    var shaderBin = Path.Combine(outputDir, "Shaders", "bin");
+                    Directory.CreateDirectory(shaderBin);
+                    int shaderCso;
+                    try { shaderCso = Editor.DllWrapper.VortexAPI.PrecompileBuiltinShadersTo(shaderBin); }
+                    catch { shaderCso = 0; }
+                    if (shaderCso > 0)
+                        sb.AppendLine("• Shaders: precompiled " + shaderCso + " built-ins -> Shaders/bin/*.cso (no source shipped)");
+                    else
+                    {
+                        try { Directory.Delete(Path.Combine(outputDir, "Shaders"), true); } catch { }
+                        int fb = CopyShaders(outputDir);
+                        sb.AppendLine("• Shaders: precompiler unavailable — shipped " + fb + " loose .hlsl (fallback)");
+                    }
 
                     // BINARY ASSET PAKS (streaming-friendly, like a real engine's asset bundles): the shared/core
                     // assets + manifest + compiled scripts go into ONE opaque, compressed+obfuscated core Assets.vpak,

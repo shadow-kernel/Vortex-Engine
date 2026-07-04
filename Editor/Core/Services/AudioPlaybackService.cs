@@ -569,7 +569,7 @@ namespace Editor.Core.Services
             {
                 _failedPaths.Add(clip);
                 b.WantsPlay = false;
-                System.Diagnostics.Debug.WriteLine("[Audio] clip failed to decode, giving up: '" + clip + "'");
+                AudioFail("[Audio] clip failed to decode, giving up: '" + clip + "'");
                 return;
             }
 
@@ -765,6 +765,34 @@ namespace Editor.Core.Services
             return null;
         }
 
+        /// <summary>Surface audio failures in a SHIPPED build. In the editor these are Debug.WriteLine (visible in
+        /// the debugger); a standalone Release build swallowed them all, so "sounds don't play" had no visible cause.
+        /// Only writes when running from a mounted pak (shipped) and only on failure — no editor noise, no happy-path
+        /// cost. Writes next to the pak so the log sits beside the game exe.</summary>
+        private static void AudioFail(string msg)
+        {
+            System.Diagnostics.Debug.WriteLine(msg);
+            if (!AssetVfs.IsMounted) return;
+            string line = DateTime.Now.ToString("HH:mm:ss") + "  " + msg + Environment.NewLine;
+            try
+            {
+                var dir = AssetVfs.Root ?? AppDomain.CurrentDomain.BaseDirectory;
+                File.AppendAllText(Path.Combine(dir, "player-audio.log"), line);
+            }
+            catch
+            {
+                // The install dir is often write-protected (Program Files) — exactly the shipped scenario this
+                // log exists for. Fall back to LocalAppData\VortexEngine so the diagnostics still land somewhere.
+                try
+                {
+                    var alt = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VortexEngine");
+                    Directory.CreateDirectory(alt);
+                    File.AppendAllText(Path.Combine(alt, "player-audio.log"), line);
+                }
+                catch { /* logging must never break playback */ }
+            }
+        }
+
         /// <summary>Project-relative clip path → something the native decoder can open.
         /// Editor + loose-file builds resolve to a disk path; pak-only shipped builds
         /// register the entry's bytes with miniaudio's resource manager and return the
@@ -795,6 +823,7 @@ namespace Editor.Core.Services
                         _registeredPakClips.Add(clip);
                         return clip;
                     }
+                    AudioFail("[Audio] pak clip found (" + bytes.Length + " bytes) but native register/decode FAILED: '" + clip + "'");
                     _failedPaths.Add(clip);
                     return null;
                 }
@@ -808,7 +837,8 @@ namespace Editor.Core.Services
             }
 
             if (_warnedPaths.Add(clip))
-                System.Diagnostics.Debug.WriteLine("[Audio] clip not found: '" + clip + "'");
+                AudioFail("[Audio] clip not found: '" + clip + "'" +
+                          (AssetVfs.IsMounted ? "  (SHIPPED: not packed, or the stored path doesn't match the pak key)" : ""));
             return null;
         }
     }
