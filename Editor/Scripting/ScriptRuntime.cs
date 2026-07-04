@@ -91,6 +91,9 @@ namespace Editor.Scripting
             Vortex.Physics.Host = this;
             Vortex.Animation.Host = this;
 
+            // Scripted scene-atmosphere state starts clean each run (a previous run's ambient/fog must not leak).
+            Editor.Core.Services.SceneRenderService.ScriptAmbientOverride = null;
+
             // Fresh Animator playback states for this run; animation-event markers route to OnAnimationEvent.
             Editor.Core.Animation.AnimationService.Instance.ResetStates();
             if (!_animEventsHooked)
@@ -364,6 +367,11 @@ namespace Editor.Scripting
             _behavioursByEntity.Clear();
             try { Editor.Core.Services.Physics.CollisionService.ResetEvents(); Editor.Core.Services.Physics.CollisionService.ClearCharacters(); } catch { }
             try { Editor.Core.Animation.AnimationService.Instance.ResetStates(); } catch { }
+            // Return the scene atmosphere to editor defaults: scripted ambient stops overriding and any
+            // scripted fog is switched off — otherwise the horror scene's darkness/fog sticks to the
+            // EDITOR viewport after leaving play mode (the fog CB is persistent frame state).
+            Editor.Core.Services.SceneRenderService.ScriptAmbientOverride = null;
+            try { Editor.DllWrapper.VortexAPI.SetFog(0f, 0f, 0f, 0f, 0f, 0f); } catch { }
             _scriptAsm = null;
             _active = false;
         }

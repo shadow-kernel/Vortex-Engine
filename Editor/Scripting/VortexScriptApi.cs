@@ -819,8 +819,13 @@ namespace Vortex
     /// Per-entity control lives on GetLight() (Vortex.Light); this class is the GLOBAL ambient/sun/fog surface.</summary>
     public static class Lighting
     {
-        /// <summary>Global ambient strength (0 = pitch black, 1 = flat-lit). Dip it for darkness/flicker.</summary>
-        public static void SetAmbient(float strength) { Editor.DllWrapper.VortexAPI.SetAmbientLightStrength(strength); }
+        /// <summary>Global ambient strength (0 = pitch black, 1 = flat-lit). Dip it for darkness/flicker.
+        /// Registered as an OVERRIDE so scene re-submits don't stomp it back to the editor default.</summary>
+        public static void SetAmbient(float strength)
+        {
+            Editor.Core.Services.SceneRenderService.ScriptAmbientOverride = strength;
+            Editor.DllWrapper.VortexAPI.SetAmbientLightStrength(strength);
+        }
         /// <summary>The sun/key directional light: direction (dx,dy,dz), color (r,g,b 0..1), and intensity.</summary>
         public static void SetDirectional(float dx, float dy, float dz, float r, float g, float b, float intensity)
             { Editor.DllWrapper.VortexAPI.SetDirectionalLightParams(dx, dy, dz, r, g, b, intensity); }

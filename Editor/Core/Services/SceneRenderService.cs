@@ -1582,7 +1582,14 @@ namespace Editor.Core.Services
         #region Light Management
 
         private bool _hasSceneLights = false;
+        private bool _hasDirectionalLight = false;
         private bool _hasSkybox = false;
+
+        /// <summary>Ambient strength a game SCRIPT set via Vortex.Lighting.SetAmbient during play. While set,
+        /// scene re-submits must NOT stomp it with the editor defaults below — the shipped-game loop re-submits
+        /// after every scripted light change, so the default (0.35) used to win the tug-of-war every time and a
+        /// pitch-black horror scene snapped back to bright. Cleared by ScriptRuntime on play begin/end.</summary>
+        public static float? ScriptAmbientOverride;
 
         /// <summary>
         /// Submit all lights in the scene to the renderer.
@@ -1591,8 +1598,9 @@ namespace Editor.Core.Services
         {
             // Clear previous frame's lights
             VortexAPI.ClearAllLights();
-            
+
             _hasSceneLights = false;
+            _hasDirectionalLight = false;
             _hasSkybox = false;
 
             // Collect and submit all lights and skybox
@@ -1600,22 +1608,32 @@ namespace Editor.Core.Services
             {
                 SubmitEntityLightsRecursive(entity);
             }
-            
+
             // If no lights in scene, use default directional light
             if (!_hasSceneLights)
             {
                 // Default sun light (like Unity/Unreal default scene)
                 VortexAPI.SetDirectionalLightParams(
                     -0.5f, -0.7f, 0.5f,  // Direction
-                    1.0f, 0.98f, 0.95f,   // Warm white color
-                    3.0f);                // Strong intensity for PBR
+                    1.0f, 0.98f, 0.95f,   // Strong intensity for PBR
+                    3.0f);
+            }
+            else if (!_hasDirectionalLight)
+            {
+                // The scene HAS lights but no directional one — force the sun OFF. The directional light is
+                // PERSISTENT renderer state (ClearAllLights only clears the point/spot lists), so a default
+                // sun set by an earlier lightless submit (project boot, scene switch) would otherwise burn
+                // forever and drown out point/spot-only horror scenes — the flashlight looked broken because
+                // a full-strength sun was still lighting the bunker.
+                VortexAPI.SetDirectionalLightParams(0f, -1f, 0f, 1f, 1f, 1f, 0f);
             }
             
-            // If no skybox, disable skybox rendering and set default ambient
+            // If no skybox, disable skybox rendering and set default ambient — unless a game script owns
+            // the ambient right now (horror scenes crush it to ~0.01; the default would flood the dark).
             if (!_hasSkybox)
             {
                 VortexAPI.EnableSkybox(false);
-                VortexAPI.SetAmbientLightStrength(0.35f);  // was 0.15 — too dark for a fresh scene; matches the engine header default (0.4)
+                VortexAPI.SetAmbientLightStrength(ScriptAmbientOverride ?? 0.35f);  // 0.35 matches the engine header default
             }
         }
 
@@ -1678,11 +1696,11 @@ namespace Editor.Core.Services
                         break;
                 }
                 
-                // Also set ambient light based on skybox colors
+                // Also set ambient light based on skybox colors — unless a game script owns the ambient.
                 var (ambientR, ambientG, ambientB) = skybox.GetAmbientColor();
                 float ambientBrightness = Math.Max(Math.Max(ambientR, ambientG), ambientB);
                 ambientBrightness = Math.Max(ambientBrightness, 0.2f);
-                VortexAPI.SetAmbientLightStrength(ambientBrightness);
+                VortexAPI.SetAmbientLightStrength(ScriptAmbientOverride ?? ambientBrightness);
             }
 
             var light = entity.GetComponent<ECS.Components.Lighting.Light>();
@@ -1714,6 +1732,7 @@ namespace Editor.Core.Services
                     switch (light.LightType)
                     {
                         case ECS.Components.Lighting.LightType.Directional:
+                            _hasDirectionalLight = true;
                             VortexAPI.SetDirectionalLightParams(
                                 dirX, dirY, dirZ,
                                 light.ColorR, light.ColorG, light.ColorB,
