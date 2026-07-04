@@ -64,8 +64,11 @@ namespace Editor.Editors.PhysicsEditor
 
             Content = root;
 
-            // Borrow the shared render queue while open (the main viewport yields), like the other preview dialogs.
-            Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.ActivePreviewDialogs++;
+            // COEXIST with the live main viewport (don't pause it): this window is modeless, and pausing froze
+            // the scene view on its last frame — so toggling Is Trigger here showed no recolour until close.
+            // The coexist counter keeps the tick running with full per-frame scene re-submission, which makes the
+            // preview's queue swaps (Redraw) and the main viewport's frames mutually self-contained.
+            Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.ActiveCoexistPreviews++;
 
             SelectionService.Instance.SelectionChanged += OnSelectionChanged;
             Closed += (s, e) =>
@@ -74,10 +77,11 @@ namespace Editor.Editors.PhysicsEditor
                 try { _preview?.Dispose(); } catch { }
                 try
                 {
-                    Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.ActivePreviewDialogs--;
+                    Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.ActiveCoexistPreviews--;
                     Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.RequestResubmit();
-                    // Only free the SHARED offscreen render target if no other preview dialog is still using it.
-                    if (Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.ActivePreviewDialogs <= 0)
+                    // Only free the SHARED offscreen render target if no other preview dialog/window uses it.
+                    if (Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.ActivePreviewDialogs <= 0 &&
+                        Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.ActiveCoexistPreviews <= 0)
                         Editor.Core.Services.Rendering.AssetPreviewRenderer.DestroyPreviewTarget();
                 }
                 catch { }

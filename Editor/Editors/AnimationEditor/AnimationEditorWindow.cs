@@ -143,8 +143,9 @@ namespace Editor.Editors.AnimationEditor
                 {
                     Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.ActivePreviewDialogs--;
                     Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.RequestResubmit();
-                    // Only free the SHARED offscreen render target if no other preview dialog is still using it.
-                    if (Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.ActivePreviewDialogs <= 0)
+                    // Only free the SHARED offscreen render target if no other preview dialog/window uses it.
+                    if (Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.ActivePreviewDialogs <= 0 &&
+                        Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.ActiveCoexistPreviews <= 0)
                         Editor.Core.Services.Rendering.AssetPreviewRenderer.DestroyPreviewTarget();
                 }
                 catch { }

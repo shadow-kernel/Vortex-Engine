@@ -32,6 +32,11 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         private bool _isDraggingGizmo;
         private GizmoAxis _activeGizmoAxis = GizmoAxis.None;
         private Point _lastDragPos;
+        // UNSNAPPED shadow values of the dragged transform. With Snap on, writing back the snapped value and
+        // re-adding per-event deltas to it discards every sub-increment delta (a slow, steady drag never reaches
+        // the rounding threshold and the object freezes) — so deltas accumulate HERE and the transform gets
+        // Snap(accumulated) each event: total mouse travel decides the cell, not the per-event step size.
+        private ECS.Vector3 _dragRawPos, _dragRawRot, _dragRawScale;
 
         // Drag and drop handler
         private ViewportDropHandler _dropHandler;
@@ -118,6 +123,11 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         /// render queue. While &gt; 0, the viewport re-submits its scene EVERY frame so the preview never hijacks
         /// the freecam (the "obj shows in the background" bug). Editors ++ on open, -- on close.</summary>
         public static int ActivePreviewDialogs = 0;
+        /// <summary>Modeless preview windows (Collision Editor) that COEXIST with a live main viewport: the tick
+        /// keeps running (so e.g. an Is-Trigger toggle recolours the scene's collider net immediately) but the
+        /// scene is re-submitted every frame, because the window's offscreen preview swaps the shared render
+        /// queue whenever it redraws. Modal editor dialogs stay on ActivePreviewDialogs, which fully pauses.</summary>
+        public static int ActiveCoexistPreviews = 0;
         /// <summary>Force the editor viewport to re-submit the scene next frame — call after an external edit
         /// (imported-model material/texture assignment, entity add/remove, mesh change) so it shows immediately.</summary>
         public static void RequestResubmit() { if (_active != null) { _active._sceneDirty = true; _active._resubmitHoldFrames = 30; } }
@@ -285,7 +295,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             {
                 if (_resubmitHoldFrames > 0) _resubmitHoldFrames--;
                 bool stressDirty = Core.Services.StressTestService.Dirty;
-                bool needSubmit = IsPlaying || _sceneDirty || ActivePreviewDialogs > 0 || _resubmitHoldFrames > 0 || stressDirty || !ReferenceEquals(sceneToRender, _submittedScene);
+                bool needSubmit = IsPlaying || _sceneDirty || ActivePreviewDialogs > 0 || ActiveCoexistPreviews > 0 || _resubmitHoldFrames > 0 || stressDirty || !ReferenceEquals(sceneToRender, _submittedScene);
                 if (needSubmit)
                 {
                     SceneRenderService.Instance.SubmitScene(sceneToRender);
@@ -483,9 +493,11 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                 e.MiddleButton != MouseButtonState.Pressed &&
                 !_isViewingThroughGameCamera)  // Only allow selection in Free Camera mode
             {
-                // Check if clicking on gizmo axis
+                // Check if clicking on gizmo axis — but only while gizmos are DRAWN. With the "Show Gizmos"
+                // toggle off the renderer skips the gizmo pass, and an invisible hitbox that silently starts
+                // an axis drag would move the selection with nothing on screen.
                 var selected = SelectionService.Instance.SelectedEntity;
-                if (selected != null)
+                if (selected != null && VortexAPI.AreGizmosVisible)
                 {
                     var transform = selected.Transform;
                     if (transform != null && _host != null && _host.ActualWidth > 0 && _host.ActualHeight > 0)
@@ -507,6 +519,10 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                             _isDraggingGizmo = true;
                             _activeGizmoAxis = axis;
                             _lastDragPos = pos;
+                            // Seed the unsnapped drag accumulators from the CURRENT transform (see field docs).
+                            _dragRawPos = transform.LocalPosition;
+                            _dragRawRot = transform.LocalRotation;
+                            _dragRawScale = transform.LocalScale;
                             VortexAPI.IsDraggingGizmo = true;
                             VortexAPI.DraggingAxis = axis;
                             e.Handled = true;
@@ -587,10 +603,14 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                     {
                         case TransformGizmoService.GizmoMode.Translate:
                         {
-                            var np = new ECS.Vector3(
-                                transform.LocalPosition.X + delta.X,
-                                transform.LocalPosition.Y + delta.Y,
-                                transform.LocalPosition.Z + delta.Z);
+                            // Accumulate into the UNSNAPPED shadow value; the transform gets Snap(accumulated).
+                            // Snapping the transform and re-adding deltas to it loses every sub-step delta (a
+                            // slow drag never crossed the rounding threshold, so the object froze with Snap on).
+                            _dragRawPos = new ECS.Vector3(
+                                _dragRawPos.X + delta.X,
+                                _dragRawPos.Y + delta.Y,
+                                _dragRawPos.Z + delta.Z);
+                            var np = _dragRawPos;
                             if (snap)
                                 np = new ECS.Vector3(
                                     EditorViewportService.Instance.SnapValue(np.X),
@@ -602,40 +622,42 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
 
                         case TransformGizmoService.GizmoMode.Rotate:
                         {
-                            // Convert delta to rotation (degrees)
+                            // Convert delta to rotation (degrees); accumulate unsnapped (see Translate).
                             float rotSpeed = 50.0f;
                             float rotDelta = (delta.X + delta.Y + delta.Z) * rotSpeed;
-                            var r = transform.LocalRotation;
+                            var raw = _dragRawRot;
                             switch (_activeGizmoAxis)
                             {
-                                case GizmoAxis.X: r = new ECS.Vector3(r.X + rotDelta, r.Y, r.Z); break;
-                                case GizmoAxis.Y: r = new ECS.Vector3(r.X, r.Y + rotDelta, r.Z); break;
-                                case GizmoAxis.Z: r = new ECS.Vector3(r.X, r.Y, r.Z + rotDelta); break;
+                                case GizmoAxis.X: raw = new ECS.Vector3(raw.X + rotDelta, raw.Y, raw.Z); break;
+                                case GizmoAxis.Y: raw = new ECS.Vector3(raw.X, raw.Y + rotDelta, raw.Z); break;
+                                case GizmoAxis.Z: raw = new ECS.Vector3(raw.X, raw.Y, raw.Z + rotDelta); break;
                             }
-                            if (snap)
-                                r = new ECS.Vector3(SnapTo(r.X, 15f), SnapTo(r.Y, 15f), SnapTo(r.Z, 15f));
-                            transform.LocalRotation = r;
+                            _dragRawRot = raw;
+                            transform.LocalRotation = snap
+                                ? new ECS.Vector3(SnapTo(raw.X, 15f), SnapTo(raw.Y, 15f), SnapTo(raw.Z, 15f))
+                                : raw;
                             break;
                         }
 
                         case TransformGizmoService.GizmoMode.Scale:
                         {
-                            // Convert delta to scale
+                            // Convert delta to scale; accumulate unsnapped (see Translate).
                             float scaleSpeed = 0.5f;
                             float scaleDelta = (delta.X + delta.Y + delta.Z) * scaleSpeed;
-                            var sc = transform.LocalScale;
+                            var raw = _dragRawScale;
                             switch (_activeGizmoAxis)
                             {
-                                case GizmoAxis.X: sc = new ECS.Vector3(Math.Max(0.01f, sc.X + scaleDelta), sc.Y, sc.Z); break;
-                                case GizmoAxis.Y: sc = new ECS.Vector3(sc.X, Math.Max(0.01f, sc.Y + scaleDelta), sc.Z); break;
-                                case GizmoAxis.Z: sc = new ECS.Vector3(sc.X, sc.Y, Math.Max(0.01f, sc.Z + scaleDelta)); break;
+                                case GizmoAxis.X: raw = new ECS.Vector3(Math.Max(0.01f, raw.X + scaleDelta), raw.Y, raw.Z); break;
+                                case GizmoAxis.Y: raw = new ECS.Vector3(raw.X, Math.Max(0.01f, raw.Y + scaleDelta), raw.Z); break;
+                                case GizmoAxis.Z: raw = new ECS.Vector3(raw.X, raw.Y, Math.Max(0.01f, raw.Z + scaleDelta)); break;
                             }
-                            if (snap)
-                                sc = new ECS.Vector3(
-                                    Math.Max(0.01f, SnapTo(sc.X, 0.25f)),
-                                    Math.Max(0.01f, SnapTo(sc.Y, 0.25f)),
-                                    Math.Max(0.01f, SnapTo(sc.Z, 0.25f)));
-                            transform.LocalScale = sc;
+                            _dragRawScale = raw;
+                            transform.LocalScale = snap
+                                ? new ECS.Vector3(
+                                    Math.Max(0.01f, SnapTo(raw.X, 0.25f)),
+                                    Math.Max(0.01f, SnapTo(raw.Y, 0.25f)),
+                                    Math.Max(0.01f, SnapTo(raw.Z, 0.25f)))
+                                : raw;
                             break;
                         }
                     }
@@ -677,12 +699,12 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             }
             
             var selected = SelectionService.Instance.SelectedEntity;
-            if (selected != null && selected.Transform != null)
+            if (selected != null && selected.Transform != null && VortexAPI.AreGizmosVisible)
             {
                 float normalizedX = (float)(pos.X / _host.ActualWidth);
                 float normalizedY = (float)(pos.Y / _host.ActualHeight);
                 float aspectRatio = (float)(_host.ActualWidth / _host.ActualHeight);
-                
+
                 // Gizmo is at the object's pivot/center (must match RenderGizmo).
                 var gizmoPos = new Vector3f(
                     selected.Transform.LocalPosition.X,

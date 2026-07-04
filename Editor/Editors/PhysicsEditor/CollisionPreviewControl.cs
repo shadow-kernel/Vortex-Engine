@@ -101,8 +101,14 @@ namespace Editor.Editors.PhysicsEditor
         // ---- mesh loading (cached by path) ----
         private void LoadMesh()
         {
+            // Imported multi-material models: the SELECTED entity is often the parent CONTAINER (no MeshRenderer;
+            // the drop handler auto-selects it and that's where users put the collider) and its children carry
+            // "<model>#submeshN" paths — neither is a file on disk. Resolve both, otherwise the preview is blank
+            // for every imported model ("preview not rendered at all"): fall back to the first descendant's mesh
+            // path, and strip the '#submeshN' selector before importing (keeping just that submesh when indexed).
             var mr = _ent?.GetComponent<MeshRenderer>();
             string mp = mr?.MeshPath;
+            if (string.IsNullOrEmpty(mp)) mp = FindDescendantMeshPath(_ent);
             if (string.IsNullOrEmpty(mp)) { FreeMeshes(); _meshPathCached = null; return; }
             if (mp == _meshPathCached && _meshIds != null) return; // same mesh already loaded — no re-import
 
@@ -118,20 +124,71 @@ namespace Editor.Editors.PhysicsEditor
                 }
                 else
                 {
+                    // Strip a real "#submeshN" token (matching the authoritative resolver in SceneRenderService:
+                    // LastIndexOf + token check, so a legal '#' in a folder/file name isn't truncated).
                     string full = mp;
+                    int submeshIndex = -1;
+                    int hash = full.LastIndexOf('#');
+                    if (hash > 0 && full.Length > hash + 8 &&
+                        string.CompareOrdinal(full, hash + 1, "submesh", 0, 7) == 0 &&
+                        int.TryParse(full.Substring(hash + 8), out int si))
+                    {
+                        submeshIndex = si;
+                        full = full.Substring(0, hash);
+                    }
+
                     var root = Editor.Core.Data.ProjectData.Current?.Path;
                     if (!System.IO.Path.IsPathRooted(full) && !string.IsNullOrEmpty(root))
                         full = System.IO.Path.Combine(root, full);
                     var subs = VortexAPI.ImportModelWithMaterialsFromFile(full);
                     if (subs != null && subs.Length > 0)
                     {
-                        _meshIds = new long[subs.Length]; _matIds = new long[subs.Length];
-                        for (int i = 0; i < subs.Length; i++) { _meshIds[i] = subs[i].MeshId; _matIds[i] = subs[i].MaterialId; }
+                        if (submeshIndex >= 0 && submeshIndex < subs.Length)
+                        {
+                            // A single "#submeshN" child was selected — preview exactly that submesh, and free
+                            // the sibling imports we don't keep (the native import allocates fresh copies).
+                            for (int i = 0; i < subs.Length; i++)
+                                if (i != submeshIndex) { try { if (subs[i].MeshId >= 0) VortexAPI.DeleteMesh(subs[i].MeshId); } catch { } }
+                            _meshIds = new[] { subs[submeshIndex].MeshId };
+                            _matIds = new[] { subs[submeshIndex].MaterialId };
+                        }
+                        else
+                        {
+                            _meshIds = new long[subs.Length]; _matIds = new long[subs.Length];
+                            for (int i = 0; i < subs.Length; i++) { _meshIds[i] = subs[i].MeshId; _matIds[i] = subs[i].MaterialId; }
+                        }
                     }
                     else { _meshIds = null; _matIds = null; }
                 }
             }
             catch { _meshIds = null; _matIds = null; }
+        }
+
+        /// <summary>First MeshPath found in the entity's descendants (depth-first). For an imported model's parent
+        /// container this returns a child's "<model>#submeshN" path; LoadMesh strips the selector and, since the
+        /// parent represents the WHOLE model, previews all submeshes (submeshIndex stays -1 only for real files —
+        /// so pass the raw child path through and let the parent case import everything via the stripped file).</summary>
+        private static string FindDescendantMeshPath(GameEntity ent)
+        {
+            if (ent?.Children == null) return null;
+            foreach (var child in ent.Children)
+            {
+                var mr = child?.GetComponent<MeshRenderer>();
+                if (!string.IsNullOrEmpty(mr?.MeshPath))
+                {
+                    string p = mr.MeshPath;
+                    // The parent stands for the whole model: drop the "#submeshN" selector so ALL submeshes render.
+                    int hash = p.LastIndexOf('#');
+                    if (hash > 0 && p.Length > hash + 8 &&
+                        string.CompareOrdinal(p, hash + 1, "submesh", 0, 7) == 0 &&
+                        int.TryParse(p.Substring(hash + 8), out _))
+                        p = p.Substring(0, hash);
+                    return p;
+                }
+                var deeper = FindDescendantMeshPath(child);
+                if (deeper != null) return deeper;
+            }
+            return null;
         }
 
         /// <summary>Delete the engine meshes this control created/imported. They are owned COPIES (the native

@@ -596,13 +596,20 @@ namespace Editor.Core.Services
             if (mr != null && mr.IsEnabled && !string.IsNullOrEmpty(mr.MeshPath))
             {
                 var mb = GetMeshBoundsAndCenter(mr.MeshPath);
-                // AABB centred on the mesh's real centre (offset scaled by world scale). Rotation isn't folded into
-                // the box (a broadphase AABB); the extents are the real mesh size so the box tracks the drawn model.
-                center = new Vector3f(wpx + mb.Center.X * sx, wpy + mb.Center.Y * sy, wpz + mb.Center.Z * sz);
+                // World AABB of the ROTATED local box. The old version applied centre + extents on world axes
+                // (scale only), so any rotated non-uniform object (a wall turned 90°) had its hitbox crossways
+                // to the drawn mesh — clicks on the visible object missed and empty air hit. Row-vector matrix:
+                // local axis i is row i (rows already include scale), so the centre offset transforms with the
+                // full 3x3, and the tight world half-extent per axis is the |R·S| absolute-column sum.
+                float cx = mb.Center.X * wm[0] + mb.Center.Y * wm[4] + mb.Center.Z * wm[8];
+                float cy = mb.Center.X * wm[1] + mb.Center.Y * wm[5] + mb.Center.Z * wm[9];
+                float cz = mb.Center.X * wm[2] + mb.Center.Y * wm[6] + mb.Center.Z * wm[10];
+                center = new Vector3f(wpx + cx, wpy + cy, wpz + cz);
+                float hx = Math.Abs(mb.Size.X) * 0.5f, hy = Math.Abs(mb.Size.Y) * 0.5f, hz = Math.Abs(mb.Size.Z) * 0.5f;
                 halfExtents = new Vector3f(
-                    Math.Max(Math.Abs(mb.Size.X * sx) * 0.5f, 0.1f),
-                    Math.Max(Math.Abs(mb.Size.Y * sy) * 0.5f, 0.1f),
-                    Math.Max(Math.Abs(mb.Size.Z * sz) * 0.5f, 0.1f));
+                    Math.Max(Math.Abs(wm[0]) * hx + Math.Abs(wm[4]) * hy + Math.Abs(wm[8]) * hz, 0.1f),
+                    Math.Max(Math.Abs(wm[1]) * hx + Math.Abs(wm[5]) * hy + Math.Abs(wm[9]) * hz, 0.1f),
+                    Math.Max(Math.Abs(wm[2]) * hx + Math.Abs(wm[6]) * hy + Math.Abs(wm[10]) * hz, 0.1f));
                 return true;
             }
 

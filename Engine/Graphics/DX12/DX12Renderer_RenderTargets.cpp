@@ -311,7 +311,9 @@ namespace vortex::graphics::dx12
 		// render_gizmos() reads m_active_rtv/m_active_dsv + the per-frame CB (which still holds THIS camera's VP
 		// until it's restored below), so retarget the actives to this RT/DSV first. Must be recorded BEFORE Close().
 		// The gizmo PSO is depth-disabled (always-on-top), so the wireframe draws over the mesh, exactly aligned.
-		if (render_gizmos && !m_gizmo_render.empty())
+		// Gate on BOTH queues: collider nets are WIRE-only items (SubmitGizmoWireItem), so a solid-queue-only
+		// check silently skipped the pass and the Collision Editor preview never showed its wireframe.
+		if (render_gizmos && (!m_gizmo_render.empty() || !m_gizmo_wire_render.empty()))
 		{
 			m_active_rtv = rtv; m_active_dsv = dsv;
 			m_active_width = target->width(); m_active_height = target->height();
