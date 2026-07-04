@@ -26,6 +26,7 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
 
         private readonly Animator _animator;
         private readonly StackPanel _clipRows;
+        private TextBox _defaultClipBox;   // kept so "Add clips from model" can reflect the seeded DefaultClip
 
         public event EventHandler RemoveRequested;
 
@@ -69,7 +70,7 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             RebuildClipRows();
 
             var addClip = SmallButton("+  Add Clip");
-            addClip.Margin = new Thickness(0, 2, 0, 8);
+            addClip.Margin = new Thickness(0, 2, 0, 4);
             addClip.Click += (s, e) =>
             {
                 _animator.Clips.Add(new AnimatorClipEntry { Name = "Clip" + _animator.Clips.Count, Path = "" });
@@ -77,9 +78,28 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             };
             root.Children.Add(addClip);
 
+            // One-click fill from the model's own animations/ folder (where the importer extracts clips).
+            var fromModel = SmallButton("Add clips from model");
+            fromModel.Margin = new Thickness(0, 0, 0, 8);
+            fromModel.ToolTip = "Add every animations/*.vanim next to this entity's model";
+            fromModel.Click += (s, e) =>
+            {
+                string meshPath = FindMeshPath(_animator.Entity);
+                if (meshPath == null ||
+                    !Editor.Core.Animation.AnimationService.TryPopulateClipsFromModel(_animator, meshPath))
+                {
+                    MessageBox.Show("No animations/*.vanim found next to this entity's model.", "Animator",
+                        MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+                }
+                if (_defaultClipBox != null) _defaultClipBox.Text = _animator.DefaultClip;
+                RebuildClipRows();
+            };
+            root.Children.Add(fromModel);
+
             // Default clip + playback settings
             root.Children.Add(SectionLabel("PLAYBACK"));
-            root.Children.Add(TextRow("Default Clip", _animator.DefaultClip, v => _animator.DefaultClip = v));
+            root.Children.Add(TextRow("Default Clip", _animator.DefaultClip, v => _animator.DefaultClip = v, out _defaultClipBox));
             var playRow = new Grid { Margin = new Thickness(0, 2, 0, 2) };
             playRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(92) });
             playRow.ColumnDefinitions.Add(new ColumnDefinition());
@@ -208,17 +228,36 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             VerticalContentAlignment = VerticalAlignment.Center
         };
 
-        private UIElement TextRow(string label, string value, Action<string> commit)
+        /// <summary>The entity's own MeshRenderer.MeshPath, or the first descendant's (multi-submesh
+        /// models import as a parent container whose '#submeshN' children carry the paths).</summary>
+        private static string FindMeshPath(Editor.ECS.GameEntity entity)
+        {
+            if (entity == null) return null;
+            var mr = entity.GetComponent<Editor.ECS.Components.Rendering.MeshRenderer>();
+            if (mr != null && !string.IsNullOrEmpty(mr.MeshPath)) return mr.MeshPath;
+            if (entity.Children != null)
+            {
+                foreach (var c in entity.Children)
+                {
+                    var p = FindMeshPath(c);
+                    if (p != null) return p;
+                }
+            }
+            return null;
+        }
+
+        private UIElement TextRow(string label, string value, Action<string> commit, out TextBox box)
         {
             var row = new Grid { Margin = new Thickness(0, 2, 0, 2) };
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(92) });
             row.ColumnDefinitions.Add(new ColumnDefinition());
             row.Children.Add(new TextBlock { Text = label, Foreground = LabelFg, FontSize = 11.5, VerticalAlignment = VerticalAlignment.Center });
-            var box = Field(value);
-            box.LostFocus += (s, e) => commit(box.Text.Trim());
-            box.KeyDown += (s, e) => { if (e.Key == Key.Enter) commit(box.Text.Trim()); };
-            Grid.SetColumn(box, 1);
-            row.Children.Add(box);
+            var field = Field(value);
+            field.LostFocus += (s, e) => commit(field.Text.Trim());
+            field.KeyDown += (s, e) => { if (e.Key == Key.Enter) commit(field.Text.Trim()); };
+            Grid.SetColumn(field, 1);
+            row.Children.Add(field);
+            box = field;
             return row;
         }
 

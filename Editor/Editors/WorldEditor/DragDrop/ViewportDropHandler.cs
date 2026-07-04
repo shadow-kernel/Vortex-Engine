@@ -36,6 +36,11 @@ namespace Editor.Editors.WorldEditor.DragDrop
             if (data == null)
                 return false;
 
+            // A dragged .vmat is a material ASSIGN onto the object under the cursor (Unreal-style),
+            // not a scene add — the viewport routes it through HandleMaterialDrop with its pick result.
+            if (GetMaterialDropPath(data) != null)
+                return true;
+
             // Check for file drop from Windows Explorer
             if (data.GetDataPresent(DataFormats.FileDrop))
             {
@@ -91,6 +96,11 @@ namespace Editor.Editors.WorldEditor.DragDrop
             if (data == null || _scene == null)
                 return;
 
+            // Material payloads never create entities — the viewport assigns them to its raycast pick
+            // via HandleMaterialDrop (this method has no cursor-to-entity information).
+            if (GetMaterialDropPath(data) != null)
+                return;
+
             // Handle file drop from Windows Explorer
             if (data.GetDataPresent(DataFormats.FileDrop))
             {
@@ -122,6 +132,111 @@ namespace Editor.Editors.WorldEditor.DragDrop
                     HandleAssetDrop(assetGuid, dropPosition);
                 }
             }
+        }
+
+        /// <summary>
+        /// The dragged material's path when the payload is a single .vmat (Asset Browser "AssetPath"
+        /// or a Windows-Explorer file drop); null for every other payload.
+        /// </summary>
+        public static string GetMaterialDropPath(IDataObject data)
+        {
+            if (data == null)
+                return null;
+
+            if (data.GetDataPresent("AssetPath"))
+            {
+                var path = data.GetData("AssetPath") as string;
+                if (!string.IsNullOrEmpty(path) && path.EndsWith(".vmat", StringComparison.OrdinalIgnoreCase))
+                    return path;
+            }
+
+            if (data.GetDataPresent(DataFormats.FileDrop))
+            {
+                var files = data.GetData(DataFormats.FileDrop) as string[];
+                if (files != null && files.Length > 0 && !string.IsNullOrEmpty(files[0]) &&
+                    files[0].EndsWith(".vmat", StringComparison.OrdinalIgnoreCase))
+                    return files[0];
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Unreal-style material assignment: a dropped .vmat lands on the entity picked under the cursor.
+        /// Handles the imported-model shapes: a '#submeshN' child gets the material directly, a parent
+        /// CONTAINER (no MeshRenderer, submesh children) applies it to ALL parts, and a raw multi-submesh
+        /// base path is NEVER assigned directly — SceneRenderService only renders every submesh while
+        /// MaterialPath is empty, so assigning there would collapse the model to submesh 0. Returns true
+        /// when at least one MeshRenderer changed.
+        /// </summary>
+        public bool HandleMaterialDrop(GameEntity target, string vmatPath)
+        {
+            if (target == null || string.IsNullOrEmpty(vmatPath))
+                return false;
+
+            // Store project-relative with forward slashes — the same form every other .vmat binding uses.
+            var projectPath = Core.Data.ProjectData.Current?.Path ?? "";
+            string rel = vmatPath;
+            if (!string.IsNullOrEmpty(projectPath) && Path.IsPathRooted(rel) &&
+                rel.StartsWith(projectPath, StringComparison.OrdinalIgnoreCase))
+            {
+                rel = rel.Substring(projectPath.Length)
+                    .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            }
+            rel = rel.Replace('\\', '/');
+
+            var meshRenderer = target.GetComponent<MeshRenderer>();
+            if (meshRenderer == null || IsMultiSubmeshBasePath(meshRenderer.MeshPath))
+            {
+                // Container / multi-submesh base: assign to the '#submeshN' children instead.
+                bool any = false;
+                if (target.Children != null)
+                {
+                    foreach (var child in target.Children)
+                    {
+                        var childRenderer = child.GetComponent<MeshRenderer>();
+                        if (childRenderer != null && !string.IsNullOrEmpty(childRenderer.MeshPath) &&
+                            childRenderer.MeshPath.IndexOf("#submesh", StringComparison.OrdinalIgnoreCase) >= 0)
+                        {
+                            childRenderer.MaterialPath = rel;
+                            any = true;
+                        }
+                    }
+                }
+                if (!any)
+                    System.Diagnostics.Debug.WriteLine($"[ViewportDropHandler] Material drop skipped: '{target.Name}' has no assignable MeshRenderer (multi-submesh base without submesh children)");
+                return any;
+            }
+
+            meshRenderer.MaterialPath = rel;
+            System.Diagnostics.Debug.WriteLine($"[ViewportDropHandler] Assigned material '{rel}' to '{target.Name}'");
+            return true;
+        }
+
+        /// <summary>
+        /// True when a MeshRenderer's MeshPath is the RAW base path of a multi-submesh model (no
+        /// '#submeshN' token) — the shape SceneRenderService renders via its all-submeshes loop.
+        /// </summary>
+        private static bool IsMultiSubmeshBasePath(string meshPath)
+        {
+            if (string.IsNullOrEmpty(meshPath) || meshPath.IndexOf('#') >= 0 ||
+                meshPath.StartsWith("Primitive:", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            var extension = Path.GetExtension(meshPath)?.ToLowerInvariant();
+            bool isModelFile = extension == ".fbx" || extension == ".obj" || extension == ".gltf" ||
+                               extension == ".glb" || extension == ".dae" || extension == ".3ds" ||
+                               extension == ".blend";
+            if (!isModelFile)
+                return false;
+
+            var projectPath = Core.Data.ProjectData.Current?.Path ?? "";
+            string fullPath = Path.IsPathRooted(meshPath) ? meshPath : Path.Combine(projectPath, meshPath);
+            if (!File.Exists(fullPath))
+                return false;
+
+            try { return VortexAPI.GetSubmeshCount(fullPath) > 1; }
+            catch { return false; }
         }
 
         /// <summary>
@@ -396,6 +511,9 @@ namespace Editor.Editors.WorldEditor.DragDrop
                 parentEntity.AddChild(childEntity);
             }
 
+            // Animated model? Give the container a pre-filled Animator so it moves out of the box.
+            TryAddAnimatorForModel(parentEntity, relativePath);
+
             // Select the parent entity
             Core.Services.SelectionService.Instance.Select(parentEntity);
             System.Diagnostics.Debug.WriteLine($"[ViewportDropHandler] Created multi-material entity with {submeshes.Length} submeshes");
@@ -524,6 +642,9 @@ namespace Editor.Editors.WorldEditor.DragDrop
 
             entity.AddComponent(meshRenderer);
 
+            // Animated model? Give the entity a pre-filled Animator so it moves out of the box.
+            TryAddAnimatorForModel(entity, meshPath);
+
             // TODO: Convert dropPosition to 3D world position via raycasting
             // For now, place at origin
             entity.Transform.LocalPosition = new ECS.Vector3(0, 0, 0);
@@ -536,6 +657,35 @@ namespace Editor.Editors.WorldEditor.DragDrop
             // Add to scene
             _scene.AddEntity(entity);
             System.Diagnostics.Debug.WriteLine($"[ViewportDropHandler] Entity added to scene. HasImportedMaterial: {meshRenderer.HasImportedMaterial}");
+        }
+
+        /// <summary>
+        /// If the model has extracted sibling animations (animations/*.vanim) and the entity has no
+        /// Animator yet, add one pre-filled via AnimationService.TryPopulateClipsFromModel — imported
+        /// characters then animate out of the box (PlayOnStart defaults true). No-op for primitives,
+        /// models without an animations folder, or entities that already carry an Animator.
+        /// </summary>
+        private static void TryAddAnimatorForModel(GameEntity entity, string meshPath)
+        {
+            try
+            {
+                if (entity == null || string.IsNullOrEmpty(meshPath) ||
+                    meshPath.StartsWith("Primitive:", StringComparison.OrdinalIgnoreCase))
+                    return;
+                if (entity.GetComponent<ECS.Components.Animation.Animator>() != null)
+                    return;
+
+                var animator = new ECS.Components.Animation.Animator(entity);
+                if (Core.Animation.AnimationService.TryPopulateClipsFromModel(animator, meshPath))
+                {
+                    entity.AddComponentDirect(animator);
+                    System.Diagnostics.Debug.WriteLine($"[ViewportDropHandler] Auto-added Animator with {animator.Clips.Count} clip(s) to '{entity.Name}'");
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ViewportDropHandler] Auto-Animator failed: {ex.Message}");
+            }
         }
 
         /// <summary>

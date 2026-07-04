@@ -542,6 +542,55 @@ namespace Editor.Core.Animation
             return clip;
         }
 
+        // ------------------------------------------------------------------ clip auto-fill (editor helper)
+
+        /// <summary>
+        /// Fill an Animator's clip table from the model's sibling "animations" folder (the .vanim files
+        /// the importer extracts next to the model). Adds one entry per file (Name = file stem, Path =
+        /// project-relative with forward slashes), skips names already in the table, and seeds
+        /// DefaultClip with the first clip when empty. Pure file scan — no engine calls. True when the
+        /// folder holds at least one .vanim.
+        /// </summary>
+        public static bool TryPopulateClipsFromModel(ECS.Components.Animation.Animator animator, string meshPath)
+        {
+            if (animator == null) return false;
+
+            string modelFull = ResolveModelPath(meshPath);   // strips '#submeshN', resolves project-relative
+            if (modelFull == null) return false;
+
+            string animDir = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(modelFull) ?? "", "animations");
+            if (!System.IO.Directory.Exists(animDir)) return false;
+
+            string[] files;
+            try { files = System.IO.Directory.GetFiles(animDir, "*.vanim"); }
+            catch { return false; }
+            if (files.Length == 0) return false;
+
+            Array.Sort(files, StringComparer.OrdinalIgnoreCase);   // deterministic table + DefaultClip
+            var projectPath = Data.ProjectData.Current?.Path;
+            foreach (var file in files)
+            {
+                string name = System.IO.Path.GetFileNameWithoutExtension(file);
+                bool exists = false;
+                foreach (var c in animator.Clips)
+                    if (string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase)) { exists = true; break; }
+                if (exists) continue;
+
+                string rel = file;
+                if (!string.IsNullOrEmpty(projectPath) && rel.StartsWith(projectPath, StringComparison.OrdinalIgnoreCase))
+                    rel = rel.Substring(projectPath.Length).TrimStart('\\', '/');
+                animator.Clips.Add(new ECS.Components.Animation.AnimatorClipEntry
+                {
+                    Name = name,
+                    Path = rel.Replace('\\', '/')
+                });
+            }
+
+            if (string.IsNullOrEmpty(animator.DefaultClip) && animator.Clips.Count > 0)
+                animator.DefaultClip = animator.Clips[0].Name;
+            return true;
+        }
+
         // ------------------------------------------------------------------ path helpers
 
         /// <summary>Model path (with optional '#submeshN') -> full path usable by loaders. Null for primitives.</summary>

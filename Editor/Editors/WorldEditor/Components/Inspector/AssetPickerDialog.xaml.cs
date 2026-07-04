@@ -95,9 +95,10 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
         {
             _allAssets.Clear();
 
-            // Built-in fallbacks so there is always a sane choice even in an empty project.
-            _allAssets.Add(new AssetPickerItem { Name = "Default", TypeName = "Standard Material", IconCode = "\uE91B", IconColor = "#BD63C5", Path = "Material:Default" });
-            _allAssets.Add(new AssetPickerItem { Name = "Unlit White", TypeName = "Unlit Material", IconCode = "\uE91B", IconColor = "#FFFFFF", Path = "Material:UnlitWhite" });
+            // "Default" = CLEAR the assignment (engine default material). Path is intentionally null:
+            // the old "Material:Default"/"Material:UnlitWhite" placeholder paths serialized into scenes
+            // but never resolved to a real material at render time.
+            _allAssets.Add(new AssetPickerItem { Name = "Default", TypeName = "Standard Material", IconCode = "\uE91B", IconColor = "#BD63C5", Path = null });
 
             // Real .vmat assets from the project. This is what makes an edited material assignable to
             // a mesh \u2014 the path is the project-relative .vmat that SceneRenderService.GetOrCreateMaterial

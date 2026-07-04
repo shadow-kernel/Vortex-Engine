@@ -183,7 +183,7 @@ namespace Editor.Dialogs
                 MeshCountText.Text = $"Submeshes: {_result.Submeshes.Count} (separate materials)";
                 foreach (var submesh in _result.Submeshes)
                 {
-                    var info = $"• {submesh.Name}";
+                    var info = $"ï¿½ {submesh.Name}";
                     if (submesh.TextureId >= 0)
                         info += " [textured]";
                     MeshListPanel.Children.Add(CreateListItem(info));
@@ -197,7 +197,7 @@ namespace Editor.Dialogs
                 
                 foreach (var meshName in _result.SubmeshNames)
                 {
-                    MeshListPanel.Children.Add(CreateListItem($"• {meshName}"));
+                    MeshListPanel.Children.Add(CreateListItem($"ï¿½ {meshName}"));
                 }
             }
             else
@@ -220,7 +220,7 @@ namespace Editor.Dialogs
                 MaterialCountText.Text = $"Found: {_result.MaterialNames.Count} material(s)";
                 foreach (var matName in _result.MaterialNames)
                 {
-                    MaterialListPanel.Children.Add(CreateListItem($"• {matName}"));
+                    MaterialListPanel.Children.Add(CreateListItem($"ï¿½ {matName}"));
                 }
             }
             else
@@ -256,7 +256,7 @@ namespace Editor.Dialogs
                 TextureCountText.Text = $"Referenced: {_result.TexturePaths.Count} texture(s)";
                 foreach (var tex in _result.TexturePaths)
                 {
-                    TextureListPanel.Children.Add(CreateListItem($"• {Path.GetFileName(tex)}"));
+                    TextureListPanel.Children.Add(CreateListItem($"ï¿½ {Path.GetFileName(tex)}"));
                 }
             }
             else
@@ -348,8 +348,16 @@ namespace Editor.Dialogs
                             MaterialHandle = submesh.MaterialId
                         };
 
-                        // Set texture path for persistence
-                        if (!string.IsNullOrEmpty(submesh.TexturePath))
+                        // Bind the generated per-submesh .vmat (the single source of truth, mirroring
+                        // ViewportDropHandler): the engine renders FROM it, later Material-Editor edits
+                        // apply, and the assignment survives a restart. Without it these entities kept
+                        // only the session-local MaterialHandle and reverted to the embedded materials.
+                        string vmatRel = FindSubmeshVmat(projectPath, _result.RelativePath, i);
+                        if (vmatRel != null)
+                            meshRenderer.MaterialPath = vmatRel;
+
+                        // Fallback only when no .vmat exists (older imports): persist the raw texture path.
+                        if (vmatRel == null && !string.IsNullOrEmpty(submesh.TexturePath))
                         {
                             string relTexPath = submesh.TexturePath;
                             if (!string.IsNullOrEmpty(projectPath) && submesh.TexturePath.StartsWith(projectPath, StringComparison.OrdinalIgnoreCase))
@@ -393,7 +401,14 @@ namespace Editor.Dialogs
                         MaterialHandle = _result.MaterialId
                     };
 
-                    if (!string.IsNullOrEmpty(texturePath))
+                    // Bind the model's sidecar .vmat (single-submesh imports write materials/submesh_0.vmat)
+                    // so Material-Editor edits apply and persist across a restart â€” mirrors ViewportDropHandler.
+                    string vmatRel = FindSubmeshVmat(projectPath, _result.RelativePath, 0);
+                    if (vmatRel != null)
+                        meshRenderer.MaterialPath = vmatRel;
+
+                    // Fallback only when no .vmat exists (older imports): persist the raw texture path.
+                    if (vmatRel == null && !string.IsNullOrEmpty(texturePath))
                     {
                         string relTexPath = texturePath;
                         if (!string.IsNullOrEmpty(projectPath) && texturePath.StartsWith(projectPath, StringComparison.OrdinalIgnoreCase))
@@ -422,6 +437,26 @@ namespace Editor.Dialogs
 
             DialogResult = true;
             Close();
+        }
+
+        /// <summary>
+        /// Project-relative path (forward slashes) of the importer-generated
+        /// &lt;modelDir&gt;/materials/submesh_{index}.vmat, or null when none exists.
+        /// </summary>
+        private static string FindSubmeshVmat(string projectPath, string modelRelativePath, int index)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(modelRelativePath))
+                    return null;
+
+                string modelDir = Path.GetDirectoryName(modelRelativePath) ?? "";
+                string vmatRel = Path.Combine(modelDir, "materials", $"submesh_{index}.vmat").Replace('\\', '/');
+                if (File.Exists(Path.Combine(projectPath ?? "", vmatRel)))
+                    return vmatRel;
+            }
+            catch { }
+            return null;
         }
 
         private void Close_Click(object sender, RoutedEventArgs e)

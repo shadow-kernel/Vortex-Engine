@@ -52,23 +52,16 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             else
                 MeshComboBox.SelectedIndex = 0;
 
-            // Material: SHOW the actually-assigned material (from MaterialPath) instead of always "Default". A path
-            // assigned in code or a picker (e.g. "Assets/Materials/grass.vmat") now displays as "grass". (Fixes the
-            // bug where an assigned material read as unset.)
-            MaterialComboBox.Items.Clear();
-            MaterialComboBox.Items.Add(new ComboBoxItem { Content = "Default" });
+            // Material slot: SHOW the actually-assigned material (from MaterialPath). A path assigned in
+            // code, via drag&drop or the picker (e.g. "Assets/Materials/grass.vmat") displays as "grass";
+            // no assignment (or a legacy "Material:" placeholder) reads "Default" = engine default material.
             var matPath = _meshRenderer.MaterialPath;
             bool hasMat = !string.IsNullOrEmpty(matPath) &&
                           !matPath.StartsWith("Material:", StringComparison.OrdinalIgnoreCase); // legacy placeholder = unset
-            if (hasMat)
-            {
-                MaterialComboBox.Items.Add(new ComboBoxItem { Content = System.IO.Path.GetFileNameWithoutExtension(matPath) });
-                MaterialComboBox.SelectedIndex = 1;
-            }
-            else
-            {
-                MaterialComboBox.SelectedIndex = 0;
-            }
+            MaterialNameText.Text = hasMat ? System.IO.Path.GetFileNameWithoutExtension(matPath) : "Default";
+            MaterialSlot.ToolTip = hasMat
+                ? matPath + "\nDouble-click: open in the Material Editor"
+                : "Drop a .vmat here — double-click to open it in the Material Editor";
 
             _isUpdating = false;
         }
@@ -86,17 +79,63 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             OnMeshChanged(meshType);
         }
 
-        private void MaterialComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        private void ClearMaterialButton_Click(object sender, RoutedEventArgs e)
         {
-            if (_isUpdating || _meshRenderer == null) return;
+            if (_meshRenderer == null) return;
+            _meshRenderer.MaterialPath = null;   // back to the engine default material
+            UpdateUI();
+            GamePreview.GamePreviewView.RequestResubmit();
+        }
 
-            var selectedItem = MaterialComboBox.SelectedItem as ComboBoxItem;
-            if (selectedItem == null) return;
+        private void MaterialSlot_DragOver(object sender, DragEventArgs e)
+        {
+            e.Effects = Editor.Editors.WorldEditor.DragDrop.ViewportDropHandler.GetMaterialDropPath(e.Data) != null
+                ? DragDropEffects.Copy
+                : DragDropEffects.None;
+            e.Handled = true;
+        }
 
-            // "Default" clears the assignment (engine default material). Any other item is the already-assigned
-            // material's display name (informational) — changing the actual material is done via the picker button.
-            if ((selectedItem.Content as string) == "Default")
-                _meshRenderer.MaterialPath = null;
+        private void MaterialSlot_Drop(object sender, DragEventArgs e)
+        {
+            if (_meshRenderer == null) return;
+
+            var vmatPath = Editor.Editors.WorldEditor.DragDrop.ViewportDropHandler.GetMaterialDropPath(e.Data);
+            if (vmatPath == null) return;
+
+            _meshRenderer.MaterialPath = ToProjectRelativePath(vmatPath);
+            UpdateUI();
+            GamePreview.GamePreviewView.RequestResubmit();
+            e.Handled = true;
+        }
+
+        private void MaterialSlot_MouseLeftButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (e.ClickCount != 2 || _meshRenderer == null) return;
+
+            var matPath = _meshRenderer.MaterialPath;
+            if (string.IsNullOrEmpty(matPath) || matPath.StartsWith("Material:", StringComparison.OrdinalIgnoreCase))
+                return;
+
+            var projectPath = Editor.Core.Data.ProjectData.Current?.Path ?? "";
+            string fullPath = System.IO.Path.IsPathRooted(matPath) ? matPath : System.IO.Path.Combine(projectPath, matPath);
+            if (!System.IO.File.Exists(fullPath)) return;
+
+            try { Dialogs.MaterialEditorDialog.OpenMaterial(Window.GetWindow(this), fullPath); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[MeshRendererInspector] Material Editor failed: {ex.Message}"); }
+            e.Handled = true;
+        }
+
+        /// <summary>Serialized asset paths are project-relative with forward slashes — normalize a picked/dropped path.</summary>
+        private static string ToProjectRelativePath(string path)
+        {
+            var projectPath = Editor.Core.Data.ProjectData.Current?.Path;
+            string rel = path;
+            if (!string.IsNullOrEmpty(projectPath) && System.IO.Path.IsPathRooted(rel) &&
+                rel.StartsWith(projectPath, StringComparison.OrdinalIgnoreCase))
+            {
+                rel = rel.Substring(projectPath.Length).TrimStart('\\', '/');
+            }
+            return rel.Replace('\\', '/');
         }
 
         private void SelectMeshButton_Click(object sender, RoutedEventArgs e)
@@ -119,8 +158,10 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             
             if (dialog.ShowDialog() == true && dialog.SelectedAsset != null)
             {
-                _meshRenderer.MaterialPath = dialog.SelectedAsset.Path;
-                UpdateUI();   // reflect the new material in the dropdown immediately
+                // "Default" carries a null Path = clear the assignment (engine default material).
+                _meshRenderer.MaterialPath = string.IsNullOrEmpty(dialog.SelectedAsset.Path) ? null : dialog.SelectedAsset.Path;
+                UpdateUI();   // reflect the new material in the slot immediately
+                GamePreview.GamePreviewView.RequestResubmit();
             }
         }
 

@@ -784,6 +784,22 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             }
         }
 
+        /// <summary>Entity under a viewport point — the SAME normalized-ray pick click selection uses
+        /// (host-relative coords + aspect ratio). Used by the .vmat drag-assign. Null over empty space.</summary>
+        private GameEntity PickEntityAtViewportPoint(Point hostPos)
+        {
+            if (_host == null || _host.ActualWidth <= 0 || _host.ActualHeight <= 0) return null;
+
+            float normalizedX = (float)(hostPos.X / _host.ActualWidth);
+            float normalizedY = (float)(hostPos.Y / _host.ActualHeight);
+            float aspectRatio = (float)(_host.ActualWidth / _host.ActualHeight);
+
+            var scene = _currentScene ?? ProjectData.Current?.ActiveScene;
+            if (scene == null) return null;
+
+            return RaycastService.Instance.PickEntity(normalizedX, normalizedY, scene, aspectRatio);
+        }
+
         private void HandleEntityPicking(Point screenPos)
         {
             if (_host == null || _host.ActualWidth <= 0 || _host.ActualHeight <= 0) return;
@@ -1364,6 +1380,26 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         private void OnDrop(object sender, DragEventArgs e)
         {
             EnsureDropHandler();
+
+            // Unreal-style material assign: a dropped .vmat goes onto the OBJECT under the cursor
+            // (raycast pick, same as click selection) instead of creating an entity. A miss is a no-op.
+            string vmatPath = ViewportDropHandler.GetMaterialDropPath(e.Data);
+            if (vmatPath != null)
+            {
+                if (_dropHandler != null)
+                {
+                    var picked = PickEntityAtViewportPoint(_host != null ? e.GetPosition(_host) : e.GetPosition(this));
+                    if (picked != null && _dropHandler.HandleMaterialDrop(picked, vmatPath))
+                    {
+                        RequestResubmit();   // submit-once viewport: show the new material immediately
+                        (Application.Current?.MainWindow as MainWindow)?.ShowToast(
+                            "Material '" + System.IO.Path.GetFileNameWithoutExtension(vmatPath) + "' → " + picked.Name);
+                    }
+                }
+                e.Handled = true;
+                return;
+            }
+
             if (_dropHandler != null && _dropHandler.CanAcceptDrop(e.Data))
             {
                 var dropPos = e.GetPosition(this);
