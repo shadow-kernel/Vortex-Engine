@@ -1511,12 +1511,30 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             };
             if (hierarchy.Items.Count > 0) hierarchy.SelectedIndex = 0; else inspector.SetEntity(root);
 
-            // Footer: Save + Close.
+            // Footer: Solid toggle + Save + Close.
             var footer = new Grid { Margin = new Thickness(12, 8, 12, 12) };
             footer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             footer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             Grid.SetRow(footer, 1);
-            footer.Children.Add(new TextBlock { Text = "Add Scripts / Colliders / components, then Save — updates every placed instance.", Foreground = B("#FF8A8A92"), FontSize = 11.5, VerticalAlignment = VerticalAlignment.Center });
+            var footNote = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+
+            // "Solid" = the one-click answer to "how do I make this wall prefab block the player": ensures a
+            // NON-TRIGGER MeshCollider on every entity in the subtree that has a MeshRenderer (the exact-shape
+            // collider; putting it on the mesh-bearing entities dodges the root-has-no-mesh trap where the
+            // collision service silently produces no shape). Unchecking removes exactly those auto-added ones.
+            var solidCb = new CheckBox
+            {
+                Content = "Solid — blocks the player",
+                Foreground = B("#FFCDCDD3"), FontSize = 12, VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 14, 0),
+                IsChecked = HasNonTriggerCollider(root),
+                ToolTip = "Adds an exact-shape Mesh Collider (Is Trigger off) to every mesh entity in this prefab.\nSave afterwards to update all placed instances."
+            };
+            solidCb.Checked += (s, e) => { SetPrefabSolid(root, true); RefreshIsolatedInspector(hierarchy, inspector, root); };
+            solidCb.Unchecked += (s, e) => { SetPrefabSolid(root, false); RefreshIsolatedInspector(hierarchy, inspector, root); };
+            footNote.Children.Add(solidCb);
+            footNote.Children.Add(new TextBlock { Text = "Add Scripts / Colliders / components, then Save — updates every placed instance.", Foreground = B("#FF8A8A92"), FontSize = 11.5, VerticalAlignment = VerticalAlignment.Center });
+            footer.Children.Add(footNote);
             var btnRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
             Grid.SetColumn(btnRow, 1);
             System.Windows.Controls.Button MakeBtn(string txt, string bg, string fg)
@@ -1545,6 +1563,60 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
 
             win.Content = grid;
             win.ShowDialog();
+        }
+
+        /// <summary>True if any entity in the subtree carries a non-trigger (solid) collider.</summary>
+        private static bool HasNonTriggerCollider(GameEntity e)
+        {
+            if (e == null) return false;
+            var col = e.GetComponent<Editor.ECS.Components.Physics.Collider>();
+            if (col != null && !col.IsTrigger) return true;
+            if (e.Children != null)
+                foreach (var c in e.Children)
+                    if (HasNonTriggerCollider(c)) return true;
+            return false;
+        }
+
+        /// <summary>The isolated Prefab Editor's "Solid" toggle: on = ensure a non-trigger MeshCollider on every
+        /// MESH-bearing entity in the subtree (exact shape; the collision service builds shapes from the entity's
+        /// own MeshRenderer, so the root container would silently produce none); off = remove exactly those.
+        /// Uses AddComponentDirect / raw removal — the isolated entity must not touch the global undo stack.</summary>
+        private static void SetPrefabSolid(GameEntity e, bool solid)
+        {
+            if (e == null) return;
+            var mr = e.GetComponent<Editor.ECS.Components.Rendering.MeshRenderer>();
+            var col = e.GetComponent<Editor.ECS.Components.Physics.Collider>();
+            if (solid)
+            {
+                if (mr != null && col == null)
+                {
+                    var mc = new Editor.ECS.Components.Physics.MeshCollider(e) { IsTrigger = false };
+                    e.AddComponentDirect(mc);
+                }
+                else if (col != null && col.IsTrigger)
+                {
+                    col.IsTrigger = false;
+                }
+            }
+            else
+            {
+                if (col is Editor.ECS.Components.Physics.MeshCollider && !col.IsTrigger)
+                    e.Components.Remove(col);
+            }
+            if (e.Children != null)
+                foreach (var c in e.Children) SetPrefabSolid(c, solid);
+        }
+
+        /// <summary>Re-display the currently selected prefab entity in the isolated inspector after a
+        /// programmatic component change (the inspector doesn't watch the Components collection).</summary>
+        private static void RefreshIsolatedInspector(ListBox hierarchy, Editor.Editors.WorldEditor.Components.Inspector.DynamicInspectorView inspector, GameEntity root)
+        {
+            try
+            {
+                var ge = (hierarchy.SelectedItem as ListBoxItem)?.Tag as GameEntity ?? root;
+                inspector.SetEntity(ge);
+            }
+            catch { }
         }
 
         /// <summary>Add one indented ListBoxItem per prefab entity (depth-first), each tagged with its GameEntity.</summary>
@@ -2115,18 +2187,27 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                         fullPath = System.IO.Path.Combine(projectPath, item.Path);
                     }
 
+                    // Entity paths must be PROJECT-RELATIVE (item.Path is ABSOLUTE from the Explorer tab):
+                    // absolute paths get frozen into scenes AND prefabs, where they break shipped builds
+                    // (pak keys are relative) and moved/renamed projects. fullPath stays absolute for the
+                    // native import; everything stored on components uses entityPath.
+                    string entityPath = item.Path;
+                    if (System.IO.Path.IsPathRooted(entityPath) && !string.IsNullOrEmpty(projectPath) &&
+                        entityPath.StartsWith(projectPath, StringComparison.OrdinalIgnoreCase))
+                        entityPath = entityPath.Substring(projectPath.Length).TrimStart('\\', '/').Replace('\\', '/');
+
                     if (System.IO.File.Exists(fullPath))
                     {
                         // Check how many submeshes the model has
                         int submeshCount = VortexAPI.GetSubmeshCount(fullPath);
-                        
+
                         if (submeshCount > 1)
                         {
                             // Multi-material model - create parent with child entities
                             var result = VortexAPI.ImportModelWithMaterialsFromFile(fullPath);
                             if (result != null && result.Length > 0)
                             {
-                                CreateMultiMaterialEntity(scene, item.Name, item.Path, result, projectPath);
+                                CreateMultiMaterialEntity(scene, item.Name, entityPath, result, projectPath);
                                 return;
                             }
                         }
@@ -2140,7 +2221,7 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                                         var entity = new ECS.GameEntity(scene, item.Name);
                                         var meshRenderer = new ECS.Components.Rendering.MeshRenderer(entity)
                                         {
-                                            MeshPath = item.Path,
+                                            MeshPath = entityPath,
                                             MaterialHandle = result[0].MaterialId
                                         };
 
@@ -2148,7 +2229,7 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                                         // FROM it (base color + textures) and it survives a restart.
                                         try
                                         {
-                                            string modelDir = System.IO.Path.GetDirectoryName(item.Path) ?? "";
+                                            string modelDir = System.IO.Path.GetDirectoryName(entityPath) ?? "";
                                             string vmatRel = System.IO.Path.Combine(modelDir, "materials", "submesh_0.vmat").Replace('\\', '/');
                                             if (System.IO.File.Exists(System.IO.Path.Combine(projectPath, vmatRel)))
                                                 meshRenderer.MaterialPath = vmatRel;
@@ -2184,7 +2265,8 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                                 
                                         if (result[0].MaterialId >= 0)
                                         {
-                                            Core.Services.SceneRenderService.RegisterMaterialForMeshPath(item.Path, result[0].MaterialId);
+                                            // Register under the SAME key the entity stores (relative) or the lookup misses.
+                                            Core.Services.SceneRenderService.RegisterMaterialForMeshPath(entityPath, result[0].MaterialId);
                                         }
                                 
                                         entity.AddComponent(meshRenderer);
@@ -2197,11 +2279,17 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                             }
                         }
 
-                // Single mesh or primitive - create simple entity (fallback)
+                // Single mesh or primitive - create simple entity (fallback). Store project-relative paths
+                // (item.Path is absolute from the Explorer tab) — same reasoning as the model branch above.
+                string fbPath = item.Path;
+                var fbProj = ProjectData.Current?.Path ?? "";
+                if (System.IO.Path.IsPathRooted(fbPath) && !string.IsNullOrEmpty(fbProj) &&
+                    fbPath.StartsWith(fbProj, StringComparison.OrdinalIgnoreCase))
+                    fbPath = fbPath.Substring(fbProj.Length).TrimStart('\\', '/').Replace('\\', '/');
                 var fallbackEntity = new ECS.GameEntity(scene, item.Name);
                 var fallbackMeshRenderer = new ECS.Components.Rendering.MeshRenderer(fallbackEntity)
                 {
-                    MeshPath = item.Path
+                    MeshPath = fbPath
                 };
                 fallbackEntity.AddComponent(fallbackMeshRenderer);
                 fallbackEntity.Transform.LocalPosition = new ECS.Vector3(0, 0, 0);
