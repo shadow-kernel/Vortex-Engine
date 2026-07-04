@@ -120,7 +120,9 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SetFrameGenMode")] private static extern void SetFrameGenModeNative(int mode);
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GetFrameGenMode")] private static extern int GetFrameGenModeNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "FrameGenPresentedFps")] private static extern int FrameGenPresentedFpsNative();
-        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SetMaterialShader", CharSet = CharSet.Ansi)] private static extern void SetMaterialShaderNative(int materialId, string hlslPath);
+        // UTF-8 path (native decodes CP_UTF8) — CharSet.Ansi garbled non-ASCII project paths (umlauts!), so the
+        // shader silently failed to compile. Same pattern as VortexResources.PrecompileBuiltinShaders.
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SetMaterialShader")] private static extern void SetMaterialShaderNative(int materialId, [MarshalAs(UnmanagedType.LPUTF8Str)] string hlslPath);
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "ReloadMaterialShaders")] private static extern int ReloadMaterialShadersNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "AnyMaterialShaderDirty")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool AnyMaterialShaderDirtyNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GpuVendorId")] private static extern int GpuVendorIdNative();

@@ -872,6 +872,9 @@ namespace Editor.Dialogs
         private Border _shaderNode;
         private TextBlock _shaderNodeLabel;
         private TextBlock _shaderWireArrow;
+        private ComboBox _shaderCombo;
+        private bool _shaderComboSync;   // guards SelectionChanged while code (not the user) sets the selection
+        private const string NewShaderTag = "__new_shader__";
 
         private UIElement BuildShaderSlot()
         {
@@ -885,6 +888,22 @@ namespace Editor.Dialogs
                 TextTrimming = System.Windows.TextTrimming.CharacterEllipsis
             };
             panel.Children.Add(_shaderAssetText);
+
+            // Dropdown: built-in + every project .hlsl + New Shader… — the quick path. Browse… stays for
+            // files outside the list (a legacy .vshader, or an .hlsl outside Assets/).
+            _shaderCombo = new ComboBox
+            {
+                FontSize = 12, Margin = new Thickness(0, 0, 0, 6),
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                Background = DialogStyles.DropdownBackgroundBrush,
+                Foreground = DialogStyles.TextBrush,
+                BorderBrush = DialogStyles.BorderBrush,
+                BorderThickness = new Thickness(1),
+                Padding = new Thickness(8, 5, 8, 5)
+            };
+            _shaderCombo.SelectionChanged += ShaderCombo_SelectionChanged;
+            panel.Children.Add(_shaderCombo);
+            RefreshShaderCombo();
 
             var btns = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
             btns.Children.Add(MiniButton("Browse…", () => BrowseShaderAsset()));
@@ -950,6 +969,115 @@ namespace Editor.Dialogs
             MarkDirty();   // fires the debounced preview refresh; the link + preview reflect the change live
         }
 
+        /// <summary>Rebuild the shader dropdown: "Built-in (Standard PBR)" (Tag null = no ShaderAsset), one entry
+        /// per project .hlsl (Tag = project-relative forward-slash path), and "New Shader…".</summary>
+        private void RefreshShaderCombo()
+        {
+            if (_shaderCombo == null) return;
+            bool prev = _shaderComboSync;
+            _shaderComboSync = true;
+            try
+            {
+                _shaderCombo.Items.Clear();
+                _shaderCombo.Items.Add(ShaderComboItem("Built-in (Standard PBR)", null));
+                foreach (var rel in Editor.Core.Services.ShaderAssetService.EnumerateProjectShaders())
+                    _shaderCombo.Items.Add(ShaderComboItem(rel, rel));
+                _shaderCombo.Items.Add(ShaderComboItem("New Shader…", NewShaderTag));
+                SyncShaderCombo();
+            }
+            finally { _shaderComboSync = prev; }
+        }
+
+        /// <summary>Point the dropdown at the current _shaderAssetPath without firing the assignment logic —
+        /// keeps it in step with Browse…/Clear/material-load. An assigned path that isn't in the list (Browse…
+        /// outside Assets/, legacy .vshader) gets its own entry so the combo still shows the truth.</summary>
+        private void SyncShaderCombo()
+        {
+            if (_shaderCombo == null) return;
+            bool prev = _shaderComboSync;
+            _shaderComboSync = true;
+            try
+            {
+                if (string.IsNullOrEmpty(_shaderAssetPath))
+                {
+                    if (_shaderCombo.Items.Count > 0) _shaderCombo.SelectedIndex = 0;   // Built-in
+                    return;
+                }
+                string want = _shaderAssetPath.Replace('\\', '/');
+                foreach (var obj in _shaderCombo.Items)
+                {
+                    var item = obj as ComboBoxItem;
+                    var tag = item?.Tag as string;
+                    if (tag == null || tag == NewShaderTag) continue;
+                    if (string.Equals(tag.Replace('\\', '/'), want, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _shaderCombo.SelectedItem = item;
+                        return;
+                    }
+                }
+                var extra = ShaderComboItem(_shaderAssetPath, _shaderAssetPath);
+                _shaderCombo.Items.Insert(Math.Max(0, _shaderCombo.Items.Count - 1), extra);   // before "New Shader…"
+                _shaderCombo.SelectedItem = extra;
+            }
+            finally { _shaderComboSync = prev; }
+        }
+
+        private static ComboBoxItem ShaderComboItem(string text, string tag)
+        {
+            // Same dark item styling as DialogStyles.CreateComboBox (which only takes a fixed string[]).
+            return new ComboBoxItem
+            {
+                Content = text, Tag = tag,
+                Background = DialogStyles.DropdownBackgroundBrush,
+                Foreground = DialogStyles.TextBrush,
+                Padding = new Thickness(8, 5, 8, 5)
+            };
+        }
+
+        private void ShaderCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_shaderComboSync) return;
+            var item = _shaderCombo?.SelectedItem as ComboBoxItem;
+            if (item == null) return;
+            var tag = item.Tag as string;
+            if (tag == NewShaderTag) { CreateNewShaderFromCombo(); return; }
+            SetShaderAsset(tag);   // null = built-in; else project-relative forward-slash path (same as Browse…)
+        }
+
+        /// <summary>"New Shader…" in the dropdown — same flow as the Asset Browser's New Shader: name ONE .hlsl
+        /// (entry points VSMain/PSMain) under Assets/Shaders from the Standard template, assign it to this
+        /// material and open it in Visual Studio.</summary>
+        private void CreateNewShaderFromCombo()
+        {
+            var proj = Editor.Core.Data.ProjectData.Current?.Path;
+            if (string.IsNullOrEmpty(proj))
+            {
+                MessageBox.Show("Please open a project first.", "New Shader", MessageBoxButton.OK, MessageBoxImage.Warning);
+                SyncShaderCombo();
+                return;
+            }
+            var shadersDir = System.IO.Path.Combine(proj, "Assets", "Shaders");
+            try { System.IO.Directory.CreateDirectory(shadersDir); } catch { }
+
+            // STA-thread picker — a WPF file dialog on the live UI thread deadlocks against the DX12/DXGI COM apartment.
+            var hlslPath = Editor.Core.Util.FilePicker.SaveFile("HLSL Shader|*.hlsl", "New Shader — name it", "NewShader.hlsl", ".hlsl", shadersDir);
+            if (string.IsNullOrEmpty(hlslPath)) { SyncShaderCombo(); return; }   // cancelled — restore the selection
+            if (!hlslPath.EndsWith(".hlsl", StringComparison.OrdinalIgnoreCase)) hlslPath += ".hlsl";
+
+            try { System.IO.File.WriteAllText(hlslPath, VortexShader.HlslTemplate(Editor.Core.Assets.ShaderType.Standard)); }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Could not create the shader:\n" + ex.Message, "New Shader", MessageBoxButton.OK, MessageBoxImage.Error);
+                SyncShaderCombo();
+                return;
+            }
+
+            try { AssetDatabase.Instance.Refresh(); } catch { }
+            RefreshShaderCombo();       // the new .hlsl appears in the list
+            SetShaderAsset(hlslPath);   // assign it (project-relative), select it, refresh the preview
+            try { Editor.Core.Services.ScriptingService.OpenInVisualStudio(hlslPath); } catch { }
+        }
+
         // ---- Footstep Sound slot: assign a step clip / .vsndc container to this material (played by FootstepAudio) ----
         private string _footstepSoundPath;
         private TextBlock _footstepSoundText;
@@ -1002,7 +1130,7 @@ namespace Editor.Dialogs
 
         private void EditShaderInVs()
         {
-            var hlsl = ResolveShaderHlsl(_shaderAssetPath);
+            var hlsl = Editor.Core.Services.ShaderAssetService.ResolveShaderHlsl(_shaderAssetPath);
             if (!string.IsNullOrEmpty(hlsl) && System.IO.File.Exists(hlsl))
             {
                 try { Editor.Core.Services.ScriptingService.OpenInVisualStudio(hlsl); } catch { }
@@ -1021,6 +1149,7 @@ namespace Editor.Dialogs
             if (_shaderNodeLabel != null) _shaderNodeLabel.Text = linked ? name : "Built-in";
             if (_shaderWireArrow != null) _shaderWireArrow.Foreground = linked ? green : grey;
             if (_shaderNode != null) _shaderNode.BorderBrush = linked ? green : grey;
+            SyncShaderCombo();   // dropdown always mirrors the assignment (Browse…/Clear/material load included)
         }
 
         private static string MakeProjectRelative(string path)
@@ -1033,27 +1162,6 @@ namespace Editor.Dialogs
                 return Uri.UnescapeDataString(pu.MakeRelativeUri(new Uri(path)).ToString());
             }
             catch { return path; }
-        }
-
-        private static string ResolveShaderHlsl(string shaderAsset)
-        {
-            if (string.IsNullOrEmpty(shaderAsset)) return null;
-            var proj = Editor.Core.Data.ProjectData.Current?.Path ?? "";
-            string full = System.IO.Path.IsPathRooted(shaderAsset) ? shaderAsset : System.IO.Path.Combine(proj, shaderAsset);
-            if (full.EndsWith(".hlsl", StringComparison.OrdinalIgnoreCase)) return full;
-            try
-            {
-                var vs = Editor.Core.Assets.VortexShader.Load(full);
-                if (vs != null && !string.IsNullOrEmpty(vs.PixelShaderPath))
-                {
-                    var p = vs.PixelShaderPath;
-                    var h = System.IO.Path.IsPathRooted(p) ? p : System.IO.Path.Combine(proj, p);
-                    if (System.IO.File.Exists(h)) return h;
-                }
-            }
-            catch { }
-            var sib = System.IO.Path.ChangeExtension(full, ".hlsl");
-            return System.IO.File.Exists(sib) ? sib : full;
         }
 
         private static string GetComboText(ComboBox combo, string fallback)

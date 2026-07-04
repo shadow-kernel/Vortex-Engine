@@ -355,8 +355,9 @@ namespace Editor.Core.Services
             }
         }
 
-        /// <summary>Apply a VortexMaterial's base color + PBR scalars (+ texture maps + shader when includeTextures) to
-        /// an engine material id. Texture paths must already be absolute (call ResolvePathsAbsolute first).</summary>
+        /// <summary>Apply a VortexMaterial's base color + PBR scalars + custom shader (+ texture maps when
+        /// includeTextures) to an engine material id. Texture paths must already be absolute (call
+        /// ResolvePathsAbsolute first).</summary>
         private void ApplyVmatValues(long mat, VortexMaterial vmat, bool includeTextures)
         {
             if (mat < 0 || vmat == null) return;
@@ -392,7 +393,18 @@ namespace Editor.Core.Services
             // Parallax/displacement depth (scalar) — applied even in the scalars-only path.
             VortexAPI.SetMaterialHeightDepth(mat, vmat.HeightScale);
 
-            if (!includeTextures) return;   // scalars-only path (thumbnails/previews) — skip texture/shader re-import
+            // Custom shader: compile the assigned .hlsl into a per-material PSO (the 3D pass + material preview bind
+            // it instead of the built-in PBR). Bound ABOVE the scalars-only early-out on purpose: the thumbnail /
+            // sidecar path (includeTextures: false) must render custom-shader materials too, and the engine's
+            // path-keyed PSO cache makes a re-bind cheap (no recompile). A compile failure is a no-op engine-side
+            // (falls back to built-in). ShaderAssetService also serves the shipped game (extracts pak-only .hlsl).
+            if (!string.IsNullOrEmpty(vmat.ShaderAsset))
+            {
+                var hlsl = ShaderAssetService.ResolveShaderHlsl(vmat.ShaderAsset);
+                if (!string.IsNullOrEmpty(hlsl)) VortexAPI.SetMaterialShader((int)mat, hlsl);
+            }
+
+            if (!includeTextures) return;   // scalars-only path (thumbnails/previews) — skip texture re-import
 
             // Texture maps (resolved to absolute paths above)
             BindMap(mat, vmat.AlbedoTexture, VortexAPI.SetMaterialAlbedoTexture);
@@ -401,36 +413,6 @@ namespace Editor.Core.Services
             BindMap(mat, vmat.RoughnessTexture, VortexAPI.SetMaterialRoughnessMap);
             BindMap(mat, vmat.AOTexture, VortexAPI.SetMaterialAOMap);
             BindMap(mat, vmat.HeightTexture, VortexAPI.SetMaterialHeightMap);
-
-            // Custom shader: compile the assigned .hlsl into a per-material PSO (the 3D pass + material preview bind
-            // it instead of the built-in PBR). A compile failure is a no-op engine-side (falls back to built-in).
-            if (!string.IsNullOrEmpty(vmat.ShaderAsset))
-            {
-                var hlsl = ResolveShaderHlsl(vmat.ShaderAsset);
-                if (!string.IsNullOrEmpty(hlsl)) VortexAPI.SetMaterialShader((int)mat, hlsl);
-            }
-        }
-
-        /// <summary>Resolve a material's ShaderAsset (.vshader/.hlsl, project-relative) to the absolute .hlsl to compile.</summary>
-        private static string ResolveShaderHlsl(string shaderAsset)
-        {
-            if (string.IsNullOrEmpty(shaderAsset)) return null;
-            var proj = Editor.Core.Data.ProjectData.Current?.Path ?? "";
-            string full = System.IO.Path.IsPathRooted(shaderAsset) ? shaderAsset : System.IO.Path.Combine(proj, shaderAsset);
-            if (full.EndsWith(".hlsl", StringComparison.OrdinalIgnoreCase)) return System.IO.File.Exists(full) ? full : null;
-            try
-            {
-                var vs = Editor.Core.Assets.VortexShader.Load(full);
-                if (vs != null && !string.IsNullOrEmpty(vs.PixelShaderPath))
-                {
-                    var p = vs.PixelShaderPath;
-                    var h = System.IO.Path.IsPathRooted(p) ? p : System.IO.Path.Combine(proj, p);
-                    if (System.IO.File.Exists(h)) return h;
-                }
-            }
-            catch { }
-            var sib = System.IO.Path.ChangeExtension(full, ".hlsl");
-            return System.IO.File.Exists(sib) ? sib : null;
         }
 
         // Texture id cache, keyed by absolute path + last-write time. The native importer has NO path dedup and the
