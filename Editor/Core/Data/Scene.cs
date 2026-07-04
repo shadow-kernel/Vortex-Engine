@@ -31,6 +31,7 @@ namespace Editor.Core.Data
         private string _filePath;
         private ObservableCollection<GameEntity> _entities;
 		private bool _isActive;
+		private bool _isExpanded;
         private SceneHandle _engineHandle;
 
         [DataMember(Name = "id", Order = 0)]
@@ -116,6 +117,18 @@ namespace Editor.Core.Data
 		{
 			get => _isActive;
 			internal set => SetProperty(ref _isActive, value, nameof(IsActive));
+		}
+
+		/// <summary>
+		/// UI-State: Ist die Szene im Hierarchy-View aufgeklappt (nicht serialisiert).
+		/// Standardm��ig sind Szenen zugeklappt � nur die aktive Szene wird aufgeklappt.
+		/// Zweiweg-gebunden an den TreeViewItem, damit manuelles Auf-/Zuklappen erhalten bleibt.
+		/// </summary>
+		[IgnoreDataMember]
+		public bool IsExpanded
+		{
+			get => _isExpanded;
+			set => SetProperty(ref _isExpanded, value, nameof(IsExpanded));
 		}
 
         public Scene()

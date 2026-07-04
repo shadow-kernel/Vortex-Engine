@@ -92,7 +92,10 @@
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Padding" Value="6,5"/>
             <Setter Property="MinHeight" Value="28"/>
-            <Setter Property="IsExpanded" Value="True"/>
+            <!-- Expansion follows the row's data IsExpanded (Scene or GameEntity). Scenes are collapsed by
+                 default (only the active one is expanded — driven from the ViewModel); GameEntity.IsExpanded
+                 defaults to true so entity sub-hierarchies stay expanded. TwoWay keeps manual toggles. -->
+            <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}"/>
             <Setter Property="HorizontalContentAlignment" Value="Left"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
             <Setter Property="Template">
@@ -111,8 +114,8 @@
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
-                                    <ToggleButton x:Name="Expander" Grid.Column="0" 
-                                                  IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}}"
+                                    <ToggleButton x:Name="Expander" Grid.Column="0"
+                                                  IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}"
                                                   ClickMode="Press" Width="16" Height="16">
                                         <ToggleButton.Template>
                                             <ControlTemplate TargetType="ToggleButton">

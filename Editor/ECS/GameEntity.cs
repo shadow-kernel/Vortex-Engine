@@ -521,6 +521,10 @@ namespace Editor.ECS
         internal void OnDeserializingMethod(StreamingContext context)
         {
             _isDeserializing = true;
+            // DataContractSerializer creates this object UNINITIALIZED (no ctor, no field initializers), so
+            // non-serialized defaults must be re-established here. IsExpanded is [IgnoreDataMember] and defaults
+            // to true — without this, every entity loaded from disk rendered its sub-hierarchy collapsed.
+            _isExpanded = true;
         }
 
         /// <summary>

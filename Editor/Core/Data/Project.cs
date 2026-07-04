@@ -48,11 +48,19 @@ namespace Editor.Core.Data
 				var previous = _activeScene;
 				if (SetProperty(ref _activeScene, value, nameof(ActiveScene)))
 				{
+					// Only the active scene stays expanded in the hierarchy. Driving IsExpanded here
+					// (the single choke point for activation) covers EVERY path, incl. delete-promotion.
 					if (previous != null)
+					{
 						previous.IsActive = false;
+						previous.IsExpanded = false;
+					}
 
 					if (_activeScene != null)
+					{
 						_activeScene.IsActive = true;
+						_activeScene.IsExpanded = true;
+					}
 				}
 			}
 		}

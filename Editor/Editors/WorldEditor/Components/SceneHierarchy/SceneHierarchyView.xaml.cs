@@ -241,8 +241,14 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             try
             {
                 // Make sure the entity's scene is the selected one so the tree shows it.
-                if (entity.Scene != null && ViewModel != null && ViewModel.SelectedScene != entity.Scene)
-                    ViewModel.SelectedScene = entity.Scene;
+                if (entity.Scene != null)
+                {
+                    if (ViewModel != null && ViewModel.SelectedScene != entity.Scene)
+                        ViewModel.SelectedScene = entity.Scene;
+                    // Scenes are collapsed by default (only the active one is open), so expand the target's
+                    // scene first � otherwise its TreeViewItem never realizes and the reveal below no-ops.
+                    entity.Scene.IsExpanded = true;
+                }
 
                 // Expand every ancestor (top-down) so the target's TreeViewItem gets realized.
                 var chain = new System.Collections.Generic.List<GameEntity>();

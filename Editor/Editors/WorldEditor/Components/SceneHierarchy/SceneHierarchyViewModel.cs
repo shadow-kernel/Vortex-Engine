@@ -207,13 +207,15 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
 			{
 				var initialScene = project.ActiveScene ?? project.Scenes[0];
 
-				// Mark all scenes inactive first
+				// Mark all scenes inactive first � and collapsed by default. Only the active scene
+				// gets expanded (below, in ActivateScene).
 				foreach (var scene in project.Scenes)
 				{
 					if (scene != initialScene)
 					{
 						scene.IsActive = false;
 						scene.DeactivateEntities();
+						scene.IsExpanded = false;
 					}
 				}
 
@@ -236,6 +238,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
 			if (previous != null && previous != scene)
 			{
 				previous.DeactivateEntities();
+				previous.IsExpanded = false; // only the active scene stays expanded
 			}
 
 			if (_currentProject != null)
@@ -246,6 +249,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
 			scene.Load();
 			scene.ActivateEntities();
 			scene.IsActive = true;
+			scene.IsExpanded = true; // expand the newly active scene
 			SelectedScene = scene;
 			OnPropertyChanged(nameof(Entities));
 		}
@@ -257,6 +261,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
 
 			scene.DeactivateEntities();
 			scene.IsActive = false;
+			scene.IsExpanded = false; // a deactivated scene collapses
 
 			if (_currentProject != null && _currentProject.ActiveScene == scene)
 			{
@@ -275,6 +280,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
 
             var scene = new Scene(_currentProject, $"New Scene {_currentProject.Scenes.Count + 1}");
             _currentProject.AddScene(scene);
+            scene.IsExpanded = true; // a freshly created scene is expanded so entities added to it are visible
             SelectedScene = scene;
         }
 
