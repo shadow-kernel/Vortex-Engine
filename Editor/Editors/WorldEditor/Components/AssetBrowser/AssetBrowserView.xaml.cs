@@ -1162,7 +1162,7 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
 
                     if ((pmods & System.Windows.Input.ModifierKeys.Shift) != 0) { OpenPrefabEditor(item, full); return; }        // edit hub
                     if ((pmods & System.Windows.Input.ModifierKeys.Control) != 0) { OpenPrefabLargePreview(item, full); return; } // large live preview
-                    PlacePrefabInstance(full, item.Name, editHint: false);   // plain double-click -> drop into scene
+                    PlacePrefabInstance(full, item.Name);   // plain double-click -> drop into scene
                     return;
                 }
 
@@ -1250,9 +1250,11 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 {
                     var proj = ProjectData.Current?.Path ?? "";
                     var full = System.IO.Path.IsPathRooted(item.Path) ? item.Path : System.IO.Path.Combine(proj, item.Path ?? "");
+                    // Two honest actions only: EDIT opens the isolated template editor, ADD drops an instance.
+                    // (The old "Edit in Scene" entry was behaviourally identical to "Add to Scene" — a button
+                    // that said A and did B — so it's gone.)
                     AddMenu(menu, "Open Prefab (Edit)", () => OpenPrefabEditor(item, full), 0xE70F, "#FF9C8CFF");
-                    AddMenu(menu, "Edit in Scene", () => PlacePrefabInstance(full, item.Name, editHint: true), 0xE70F, "#FF7CE0A3");
-                    AddMenu(menu, "Add to Scene (Instance)", () => PlacePrefabInstance(full, item.Name, editHint: false), 0xE710, "#FF4EC9B0");
+                    AddMenu(menu, "Add to Scene (Instance)", () => PlacePrefabInstance(full, item.Name), 0xE710, "#FF4EC9B0");
                 }
                 else
                     AddMenu(menu, "Open / Edit", () => OpenOrPlaceAsset(item), 0xE70F, "#FF9C8CFF");
@@ -1442,7 +1444,7 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
         // ---- prefab actions ----
 
         /// <summary>Drop a fresh linked instance of the prefab into the active scene and select it.</summary>
-        private void PlacePrefabInstance(string full, string name, bool editHint)
+        private void PlacePrefabInstance(string full, string name)
         {
             var scene = ProjectData.Current?.ActiveScene;
             if (scene == null) { MessageBox.Show("No active scene. Open or create a scene first.", "Prefab", MessageBoxButton.OK, MessageBoxImage.Information); return; }
@@ -1607,7 +1609,7 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 // EDITS the template in isolation - it used to drop an instance into the scene (the exact "button
                 // says A but does B" bug). Edit now = edit; the topmost button = add to scene.
                 panel.Children.Add(PrefabActionButton("", "Add to Scene", "Drop a linked instance of this prefab into the active scene", true,
-                    () => { PlacePrefabInstance(full, item.Name, editHint: false); win.Close(); }));
+                    () => { PlacePrefabInstance(full, item.Name); win.Close(); }));
                 panel.Children.Add(PrefabActionButton("", "Edit Prefab", "Open the prefab template in isolation - add Scripts / Colliders / components - then Save to update every placed instance", false,
                     () => { win.Close(); OpenIsolatedPrefabEditor(full, item.Name); }));
                 if (!string.IsNullOrEmpty(modelPath))

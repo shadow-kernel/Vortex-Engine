@@ -357,8 +357,20 @@ namespace Editor.Editors.WorldEditor.DragDrop
                     MaterialHandle = submesh.MaterialId
                 };
 
-                // Find the best matching texture for this submesh
-                if (texturePaths.Count > 0)
+                // Bind the per-submesh .vmat (the single source of truth, mirroring AssetBrowserView's
+                // "Add to Scene"): the engine renders FROM it and Model-Editor material saves persist across a
+                // restart. Without this, drag-dropped instances silently reverted to the embedded materials.
+                try
+                {
+                    string modelDir = Path.GetDirectoryName(relativePath) ?? "";
+                    string vmatRel = Path.Combine(modelDir, "materials", $"submesh_{i}.vmat").Replace('\\', '/');
+                    if (File.Exists(Path.Combine(projectPath, vmatRel)))
+                        meshRenderer.MaterialPath = vmatRel;
+                }
+                catch { }
+
+                // Fallback only when there is no .vmat (older imports): guess a texture from the model folder.
+                if (string.IsNullOrEmpty(meshRenderer.MaterialPath) && texturePaths.Count > 0)
                 {
                     string texPath = FindTextureForSubmesh(childName, texturePaths);
                     if (!string.IsNullOrEmpty(texPath))
@@ -482,8 +494,23 @@ namespace Editor.Editors.WorldEditor.DragDrop
                 System.Diagnostics.Debug.WriteLine($"[ViewportDropHandler] Set MaterialHandle to {materialId}");
             }
 
-            // Save the texture path for persistence (so it survives restart)
-            if (!string.IsNullOrEmpty(texturePath))
+            // Bind the model's sidecar .vmat (single-submesh models write materials/submesh_0.vmat) so Model-Editor
+            // material saves persist for drag-dropped instances too — mirrors AssetBrowserView's "Add to Scene".
+            try
+            {
+                if (!meshPath.StartsWith("Primitive:", StringComparison.OrdinalIgnoreCase))
+                {
+                    var projPath = Core.Data.ProjectData.Current?.Path ?? "";
+                    string modelDir = Path.GetDirectoryName(meshPath) ?? "";
+                    string vmatRel = Path.Combine(modelDir, "materials", "submesh_0.vmat").Replace('\\', '/');
+                    if (!string.IsNullOrEmpty(projPath) && File.Exists(Path.Combine(projPath, vmatRel)))
+                        meshRenderer.MaterialPath = vmatRel;
+                }
+            }
+            catch { }
+
+            // Save the texture path for persistence (so it survives restart) — the .vmat, when bound, wins.
+            if (string.IsNullOrEmpty(meshRenderer.MaterialPath) && !string.IsNullOrEmpty(texturePath))
             {
                 // Convert to relative path if possible
                 var projectPath = Core.Data.ProjectData.Current?.Path;
