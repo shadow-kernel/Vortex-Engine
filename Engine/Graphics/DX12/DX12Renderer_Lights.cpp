@@ -90,6 +90,17 @@ namespace vortex::graphics::dx12
 	m_point_lights.clear();
 	m_spot_lights.clear();
 	}
+
+	void DX12Renderer::set_fog(const DirectX::XMFLOAT3& color, float density, float height_y, float height_falloff)
+	{
+		// Persistent frame state: update_per_frame_constants re-uploads m_frame_constants every frame,
+		// and the offscreen path copies it too — so one call here reaches every render path.
+		m_frame_constants.fog_color = color;
+		m_frame_constants.fog_density = density > 0.0f ? density : 0.0f;   // NaN/negative-proof (shader gates on <= 0)
+		m_frame_constants.fog_height_y = height_y;
+		m_frame_constants.fog_height_falloff = height_falloff > 0.0f ? height_falloff : 0.0f;
+		m_frame_constants.fog_mode = 0;
+	}
 	
 
 	void DX12Renderer::set_directional_light_full(const DirectX::XMFLOAT3& direction, const DirectX::XMFLOAT3& color, float intensity)

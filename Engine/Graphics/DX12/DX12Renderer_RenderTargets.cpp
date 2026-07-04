@@ -149,6 +149,24 @@ namespace vortex::graphics::dx12
 				gl.color = m_point_lights[i].color; gl.intensity = m_point_lights[i].intensity;
 				memcpy(lptr + i * sizeof(GPUPointLight), &gl, sizeof(GPUPointLight));
 			}
+			// Spot lights too (same layout as update_light_buffer: after the point block, direction
+			// normalized). spot_light_count was already written to b0 above, but the SPOT DATA region
+			// held stale bytes from the main loop — previews/secondary viewports lit spots wrongly.
+			u8* sptr = lptr + MAX_POINT_LIGHTS * sizeof(GPUPointLight);
+			for (size_t i = 0; i < m_spot_lights.size() && i < MAX_SPOT_LIGHTS; ++i)
+			{
+				GPUSpotLight gs{};
+				gs.position = m_spot_lights[i].position; gs.range = m_spot_lights[i].range;
+				DirectX::XMFLOAT3 dir = m_spot_lights[i].direction;
+				float len = sqrtf(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+				if (len > 0.0001f) { dir.x /= len; dir.y /= len; dir.z /= len; }
+				gs.direction = dir;
+				gs.spot_angle = m_spot_lights[i].spot_angle;
+				gs.color = m_spot_lights[i].color;
+				gs.intensity = m_spot_lights[i].intensity;
+				gs.inner_spot_angle = m_spot_lights[i].inner_spot_angle;
+				memcpy(sptr + i * sizeof(GPUSpotLight), &gs, sizeof(GPUSpotLight));
+			}
 		}
 
 		if (m_per_frame_cb_mapped)

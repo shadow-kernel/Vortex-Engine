@@ -180,6 +180,16 @@ namespace Vortex
             return component != null ? new AudioSource(component) : null;
         }
 
+        /// <summary>This entity's Light component as a script handle — the runtime light-control API
+        /// (flashlight toggle, dying-bulb flicker, color shifts). Null if the entity has no Light.
+        /// Changes take effect next frame in editor play AND in shipped builds.</summary>
+        public Light GetLight()
+        {
+            var entity = Editor.Scripting.ScriptRuntime.Instance.FindEntityByHandle(EntityId);
+            var component = entity?.GetComponent<Editor.ECS.Components.Lighting.Light>();
+            return component != null ? new Light(component) : null;
+        }
+
         /// <summary>Play an animation clip on this entity's Animator. Pass a clip NAME from the Animator's
         /// clip table (e.g. "Walk") or a .vanim path. fade &gt; 0 crossfades from the current pose (seconds).
         /// Returns false when the entity has no Animator / the clip can't be found.</summary>
@@ -768,8 +778,45 @@ namespace Vortex
         public static bool DlssSupported { get { return Editor.DllWrapper.VortexAPI.GpuSupportsDlss(); } }
     }
 
+    /// <summary>A script handle to one entity's Light component (get it via GetLight() in a VortexBehaviour).
+    /// Property writes go straight to the managed component, which the renderer re-reads every submitted frame;
+    /// each write also marks the scene runtime-dirty so the shipped game's submit-once loop re-submits — the
+    /// same mechanism scripted Transforms use. This is the flashlight/flicker API (Welle A #26).</summary>
+    public class Light
+    {
+        private readonly Editor.ECS.Components.Lighting.Light _c;
+        internal Light(Editor.ECS.Components.Lighting.Light c) { _c = c; }
+
+        private static void Dirty() { Editor.Core.Services.SceneRenderService.RuntimeDirty = true; }
+
+        /// <summary>Switch the light on/off (the flashlight toggle). The default sun stays suppressed
+        /// while the component exists, so toggling off really means darkness.</summary>
+        public bool Enabled { get { return _c.IsEnabled; } set { _c.IsEnabled = value; Dirty(); } }
+        /// <summary>Brightness. Modulate per Update() for flicker.</summary>
+        public float Intensity { get { return _c.Intensity; } set { _c.Intensity = value; Dirty(); } }
+        /// <summary>Reach in world units (point/spot).</summary>
+        public float Range { get { return _c.Range; } set { _c.Range = value; Dirty(); } }
+        /// <summary>Outer cone angle in degrees (spot).</summary>
+        public float SpotAngle { get { return _c.SpotAngle; } set { _c.SpotAngle = value; Dirty(); } }
+        /// <summary>Inner full-brightness cone angle in degrees (spot).</summary>
+        public float InnerSpotAngle { get { return _c.InnerSpotAngle; } set { _c.InnerSpotAngle = value; Dirty(); } }
+        /// <summary>Light color, each channel 0..1.</summary>
+        public void SetColor(float r, float g, float b) { _c.ColorR = r; _c.ColorG = g; _c.ColorB = b; Dirty(); }
+
+        /// <summary>Procedural flicker in [0..1] — multiply into Intensity each Update() for a dying
+        /// bulb: <c>light.Intensity = 40f * Light.Flicker(t, 14f);</c>. Two detuned sines, cheap + loopless.</summary>
+        public static float Flicker(float time, float speed = 12f)
+        {
+            float s = (float)System.Math.Sin(time * speed);
+            float s2 = (float)System.Math.Sin(time * speed * 2.3f + 1.7f);
+            float v = 0.5f + 0.35f * s + 0.15f * s2;
+            return v < 0f ? 0f : (v > 1f ? 1f : v);
+        }
+    }
+
     /// <summary>Lighting/atmosphere control for game scripts — flicker, lightning, mood. With submit-once a static
-    /// scene keeps whatever the script last set, so per-frame changes here drive a living, flickering environment.</summary>
+    /// scene keeps whatever the script last set, so per-frame changes here drive a living, flickering environment.
+    /// Per-entity control lives on GetLight() (Vortex.Light); this class is the GLOBAL ambient/sun/fog surface.</summary>
     public static class Lighting
     {
         /// <summary>Global ambient strength (0 = pitch black, 1 = flat-lit). Dip it for darkness/flicker.</summary>
@@ -778,6 +825,21 @@ namespace Vortex
         public static void SetDirectional(float dx, float dy, float dz, float r, float g, float b, float intensity)
             { Editor.DllWrapper.VortexAPI.SetDirectionalLightParams(dx, dy, dz, r, g, b, intensity); }
         public static void ClearLights() { Editor.DllWrapper.VortexAPI.ClearAllLights(); }
+    }
+
+    /// <summary>Scene atmosphere for game scripts (Welle A #27): exp2 distance fog with optional ground
+    /// mist. The flashlight cone visibly "cuts" into the fog. Setting persists until changed — call once
+    /// in Start(). <c>Atmosphere.SetFog(density: 0.14f, heightY: 1.2f, heightFalloff: 0.6f, r: 0.016f, g: 0.02f, b: 0.027f);</c></summary>
+    public static class Atmosphere
+    {
+        /// <summary>Enable fog: <paramref name="density"/> &gt; 0 (try 0.05–0.2); heightFalloff &gt; 0 makes it
+        /// ground mist below heightY (0 = uniform distance fog). Colors are linear 0..1 (keep them DARK for horror).</summary>
+        public static void SetFog(float density, float heightY = 0f, float heightFalloff = 0f,
+                                  float r = 0.02f, float g = 0.025f, float b = 0.035f)
+            { Editor.DllWrapper.VortexAPI.SetFog(r, g, b, density, heightY, heightFalloff); }
+
+        /// <summary>Turn fog off.</summary>
+        public static void ClearFog() { Editor.DllWrapper.VortexAPI.SetFog(0f, 0f, 0f, 0f, 0f, 0f); }
     }
 
     /// <summary>Script-driven world geometry — assemble a level/backdrop from meshes without authoring a scene

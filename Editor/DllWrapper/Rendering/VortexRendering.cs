@@ -713,6 +713,11 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void SetAmbientStrength(float strength);
 
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetFogParams(
+            float colorR, float colorG, float colorB,
+            float density, float heightY, float heightFalloff);
+
         /// <summary>
         /// Clear all dynamic lights. Call at the beginning of each frame before submitting new lights.
         /// </summary>
@@ -767,6 +772,13 @@ namespace Editor.DllWrapper
         public static void SetAmbientLightStrength(float strength)
         {
             try { SetAmbientStrength(strength); } catch { }
+        }
+
+        /// <summary>Scene-wide exp2 fog (Welle A #27). density &lt;= 0 = off; heightFalloff &gt; 0 turns it
+        /// into ground mist below heightY. Colors linear 0..1. Persistent until changed (per-frame CB).</summary>
+        public static void SetFog(float r, float g, float b, float density, float heightY, float heightFalloff)
+        {
+            try { SetFogParams(r, g, b, density, heightY, heightFalloff); } catch { }
         }
 
         #endregion

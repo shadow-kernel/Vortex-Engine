@@ -181,6 +181,10 @@ namespace vortex::graphics::dx12
 		void add_point_light(const PointLightData& light);
 		void add_spot_light(const SpotLightData& light);
 
+		// Fog (Welle A #27): scene-wide exp2 distance/height fog, written straight into the persistent
+		// PerFrameConstants fields (density <= 0 disables). Colors are linear 0..1.
+		void set_fog(const DirectX::XMFLOAT3& color, float density, float height_y, float height_falloff);
+
 		// Rendering mode
 		void set_wireframe_mode(bool enabled) { m_wireframe_mode = enabled; }
 		bool is_wireframe_mode() const { return m_wireframe_mode; }
@@ -479,6 +483,14 @@ namespace vortex::graphics::dx12
 			u32 point_light_count;
 			u32 spot_light_count;
 			u32 padding1[2];
+			// Fog (Welle A #27) — APPENDED so all prior offsets stay put; ABI-coupled byte-for-byte
+			// to standard.hlsl's PerFrame cbuffer (FogColor @128). density 0 = fog off (the default).
+			DirectX::XMFLOAT3 fog_color;
+			float fog_density;
+			float fog_height_y;        // height-fog reference height (world Y)
+			float fog_height_falloff;  // 0 = pure distance fog; >0 = ground mist below fog_height_y
+			u32 fog_mode;              // reserved (0 today); density gates the effect
+			float fog_padding;
 		};
 		
 		// Separate light buffer for GPU

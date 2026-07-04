@@ -1686,24 +1686,30 @@ namespace Editor.Core.Services
             }
 
             var light = entity.GetComponent<ECS.Components.Lighting.Light>();
+            if (light != null)
+            {
+                // A PRESENT light suppresses the default sun even while disabled — otherwise an
+                // all-lights-off scene (horror: flashlight toggled off) snaps back to full daylight.
+                _hasSceneLights = true;
+            }
             if (light != null && light.IsEnabled)
             {
-                _hasSceneLights = true;
-                
                 var transform = entity.Transform;
                 if (transform != null)
                 {
-                    var pos = transform.LocalPosition;
-                    var rot = transform.LocalRotation;
-
-                    // Calculate forward direction from rotation
-                    float radX = rot.X * (float)(Math.PI / 180.0);
-                    float radY = rot.Y * (float)(Math.PI / 180.0);
-                    
-                    // Forward direction (looking down -Z in local space, transformed by Y then X rotation)
-                    float dirX = (float)(Math.Sin(radY) * Math.Cos(radX));
-                    float dirY = (float)(-Math.Sin(radX));
-                    float dirZ = (float)(Math.Cos(radY) * Math.Cos(radX));
+                    // WORLD transform (parent chain included) — a flashlight is naturally a CHILD of the
+                    // player camera, and lights used to submit LocalPosition/LocalRotation: a parented spot
+                    // rendered at its local offset near the origin with an unrotated cone. Meshes already
+                    // accumulate the chain; lights now match. Local forward is +Z (the old Euler math was
+                    // exactly Ry·Rx·(0,0,1)), so the world forward is the matrix's third basis row.
+                    float[] wm;
+                    try { wm = BuildWorldMatrixWithParent(entity); }
+                    catch { wm = BuildWorldMatrix(transform); }
+                    float px = wm[12], py = wm[13], pz = wm[14];
+                    float dirX = wm[8], dirY = wm[9], dirZ = wm[10];
+                    float dl = (float)Math.Sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ);
+                    if (dl > 1e-6f) { dirX /= dl; dirY /= dl; dirZ /= dl; }
+                    else { dirX = 0f; dirY = 0f; dirZ = 1f; }
 
                     switch (light.LightType)
                     {
@@ -1716,14 +1722,14 @@ namespace Editor.Core.Services
 
                         case ECS.Components.Lighting.LightType.Point:
                             VortexAPI.SubmitPointLight(
-                                pos.X, pos.Y, pos.Z,
+                                px, py, pz,
                                 light.ColorR, light.ColorG, light.ColorB,
                                 light.Intensity, light.Range);
                             break;
 
                         case ECS.Components.Lighting.LightType.Spot:
                             VortexAPI.SubmitSpotLight(
-                                pos.X, pos.Y, pos.Z,
+                                px, py, pz,
                                 dirX, dirY, dirZ,
                                 light.ColorR, light.ColorG, light.ColorB,
                                 light.Intensity, light.Range,
@@ -2020,7 +2026,10 @@ namespace Editor.Core.Services
             var light = entity.GetComponent<ECS.Components.Lighting.Light>();
             if (light != null)
             {
-                var pos = entity.Transform?.LocalPosition ?? ECS.Vector3.Zero;
+                // World position so the icon/outline sits where the light actually shines (parented lights).
+                ECS.Vector3 pos;
+                try { var wm = BuildWorldMatrixWithParent(entity); pos = new ECS.Vector3(wm[12], wm[13], wm[14]); }
+                catch { pos = entity.Transform?.LocalPosition ?? ECS.Vector3.Zero; }
                 var rot = entity.Transform?.LocalRotation ?? ECS.Vector3.Zero;
                 
                 // Light icon color based on type

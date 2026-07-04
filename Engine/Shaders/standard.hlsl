@@ -22,7 +22,27 @@ cbuffer PerFrame : register(b0)
     uint PointLightCount;
     uint SpotLightCount;
     uint2 FramePadding;
+    // Fog (Welle A #27) — byte-matches the appended C++ PerFrameConstants fields (FogColor @128).
+    float3 FogColor;
+    float FogDensity;
+    float FogHeightY;
+    float FogHeightFalloff;
+    uint FogMode;
+    float FogPadding;
 };
+
+// Exp2 distance fog with optional height weighting (ground mist below FogHeightY).
+// Applied in LINEAR space before tonemapping; FogDensity 0 = off (default).
+float3 ApplyFog(float3 color, float3 worldPos)
+{
+    if (FogDensity <= 0.0) return color;
+    float dist = length(CameraPosition - worldPos);
+    float d = FogDensity * dist;
+    float f = 1.0 - exp2(-d * d);
+    if (FogHeightFalloff > 0.0)
+        f *= saturate((FogHeightY - worldPos.y) * FogHeightFalloff);
+    return lerp(color, FogColor, saturate(f));
+}
 
 cbuffer PerObject : register(b1)
 {
@@ -194,6 +214,7 @@ float4 PSMain(PS_IN input) : SV_TARGET
     // UNLIT/EMISSIVE PATH - bypass all lighting calculations (for skybox, etc.)
     if (IsUnlit != 0) {
         float3 emissive = albedo * EmissiveStrength;
+        emissive = ApplyFog(emissive, input.worldPos);  // fog swallows unlit props too (atmosphere consistency)
         // Apply simple tone mapping for HDR
         emissive = emissive / (emissive + 1.0);
         // Gamma correction
@@ -338,6 +359,10 @@ float4 PSMain(PS_IN input) : SV_TARGET
     ambient += specularAmbient + rimLight;
 
     float3 color = ambient + Lo;
+
+    // Fog before tonemap (linear space): the flashlight cone "cuts" into the mist because lit
+    // fragments still carry their radiance; distant/unlit ones converge to FogColor.
+    color = ApplyFog(color, input.worldPos);
 
     // ACES Filmic Tone Mapping (RRT+ODT fit)
     float3 x = color * 0.5;

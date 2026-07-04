@@ -60,6 +60,15 @@ EDITOR_INTERFACE void SetAmbientStrength(float strength)
 	graphics::dx12::DX12Renderer::instance().set_ambient_strength(strength);
 }
 
+// Scene-wide fog (Welle A #27): exp2 distance fog, optional ground mist below heightY when
+// heightFalloff > 0. density <= 0 turns fog off. Colors are linear 0..1.
+EDITOR_INTERFACE void SetFogParams(
+	float colorR, float colorG, float colorB,
+	float density, float heightY, float heightFalloff)
+{
+	graphics::dx12::DX12Renderer::instance().set_fog({ colorR, colorG, colorB }, density, heightY, heightFalloff);
+}
+
 
 // ============== SKYBOX API ==============
 
