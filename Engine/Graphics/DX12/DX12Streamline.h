@@ -45,6 +45,12 @@ namespace vortex::graphics::dx12
 		// Returns true if Streamline is up. Idempotent; harmless to call when the DLLs aren't present.
 		bool init();
 
+		// True when DLSS/Streamline is intentionally skipped this session because a debugger is attached
+		// (NGX's debug components DebugBreak() under IsDebuggerPresent, freezing F5 at the splash) and the
+		// VORTEX_DLSS_UNDER_DEBUGGER=1 override is not set. Shared by init() and the DLSS capability gate,
+		// so "capable" is never reported for a session in which DLSS can't engage.
+		static bool skipped_for_debugger();
+
 		// True once slInit has succeeded and the entry points resolved.
 		bool available() const { return m_available; }
 

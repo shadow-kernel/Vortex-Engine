@@ -112,11 +112,13 @@ namespace vortex::graphics::dx12
 			bool isNvidia = (chosen.VendorId == 0x10DE);
 			bool hasRtx = (m_adapter_name.find(L"RTX") != std::wstring::npos);
 			// Prefer Streamline's REAL support query (driver/OS/HW checked); fall back to the NVIDIA+RTX heuristic
-			// when Streamline isn't available, so the gate still works on every machine.
+			// when Streamline isn't available, so the gate still works on every machine. When Streamline was
+			// intentionally skipped (debugger session), report NOT capable — DLSS can never engage this session,
+			// and advertising it would make SetDlssMode silently no-op with "supported" still shown as true.
 			if (DX12Streamline::instance().available())
 				m_dlss_capable = DX12Streamline::instance().is_dlss_supported(chosen_luid);
 			else
-				m_dlss_capable = isNvidia && hasRtx;
+				m_dlss_capable = isNvidia && hasRtx && !DX12Streamline::skipped_for_debugger();
 		}
 
 		HRESULT hr = fn(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&m_device));

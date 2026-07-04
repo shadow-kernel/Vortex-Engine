@@ -85,6 +85,17 @@ namespace vortex::graphics::dx12
 		return inst;
 	}
 
+	bool DX12Streamline::skipped_for_debugger()
+	{
+		if (!IsDebuggerPresent()) return false;
+		// GetEnvironmentVariableA only fills the buffer when it FITS (else it returns the required size without
+		// writing), so gate on n < sizeof(buf) before reading buf[0] — an oversized value must not read garbage.
+		char buf[32];
+		DWORD n = GetEnvironmentVariableA("VORTEX_DLSS_UNDER_DEBUGGER", buf, sizeof(buf));
+		bool force = n > 0 && n < sizeof(buf) && buf[0] == '1';
+		return !force;
+	}
+
 	bool DX12Streamline::init()
 	{
 		if (m_available) return true;
@@ -94,14 +105,10 @@ namespace vortex::graphics::dx12
 		// at the startup splash under Visual Studio's F5 (the standalone exe runs fine precisely because that break
 		// is gated on a debugger being present). DLSS is a render-time upscaler that isn't needed while debugging, so
 		// staying disabled here just falls back to the render-scale path. Set VORTEX_DLSS_UNDER_DEBUGGER=1 to force it.
+		if (skipped_for_debugger())
 		{
-			char _env[8];
-			bool force = GetEnvironmentVariableA("VORTEX_DLSS_UNDER_DEBUGGER", _env, sizeof(_env)) > 0 && _env[0] == '1';
-			if (IsDebuggerPresent() && !force)
-			{
-				sl_log("[streamline] debugger attached -> DLSS init skipped (avoids the NGX debugger break that freezes F5; set VORTEX_DLSS_UNDER_DEBUGGER=1 to force)");
-				return false;
-			}
+			sl_log("[streamline] debugger attached -> DLSS init skipped (avoids the NGX debugger break that freezes F5; set VORTEX_DLSS_UNDER_DEBUGGER=1 to force)");
+			return false;
 		}
 
 		// sl.interposer.dll is expected next to the exe (we copy the SL DLLs there post-build). If it's not there
