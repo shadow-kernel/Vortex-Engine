@@ -223,12 +223,37 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             if (component is Camera)
                 SceneRenderService.Instance.RemoveEntityCamera(_selectedEntity.Id);
 
-            _selectedEntity.RemoveComponent(component);
+            RemoveComponentRespectingMode(component);
             RefreshInspector();
 
             // The editor viewport uses submit-once (it reuses the last scene submission), so nudge it to
             // rebuild the queue — otherwise the removed renderer / light / skybox / collider would linger.
             Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.RequestResubmit();
+        }
+
+        /// <summary>Removes a component honoring the editor mode: undoable in scene mode, DIRECT in IsolatedMode.
+        /// The isolated Prefab Editor edits a throwaway entity outside the scene — pushing a command for it onto
+        /// the GLOBAL UndoRedoManager would let a later Ctrl+Z in the main editor mutate a ghost.</summary>
+        private void RemoveComponentRespectingMode(Component component)
+        {
+            if (_selectedEntity == null || component == null) return;
+            if (IsolatedMode)
+            {
+                if (!(component is Transform))   // Transform is never removable (mirrors GameEntity.RemoveComponent)
+                    _selectedEntity.Components.Remove(component);
+            }
+            else
+            {
+                _selectedEntity.RemoveComponent(component);
+            }
+        }
+
+        /// <summary>Add counterpart of <see cref="RemoveComponentRespectingMode"/> — same undo-hygiene rule.</summary>
+        private void AddComponentRespectingMode(Component component)
+        {
+            if (_selectedEntity == null || component == null) return;
+            if (IsolatedMode) _selectedEntity.AddComponentDirect(component);
+            else _selectedEntity.AddComponent(component);
         }
 
         private UserControl CreateScriptInspector(Script script)
@@ -239,14 +264,14 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             {
                 if (_selectedEntity != null)
                 {
-                    _selectedEntity.RemoveComponent(script);
+                    RemoveComponentRespectingMode(script);
                     RefreshInspector();
                 }
             };
             inspector.ChangeRequested += (s, e) =>
             {
                 // remove the old, then open the picker to assign a new one
-                if (_selectedEntity != null) _selectedEntity.RemoveComponent(script);
+                if (_selectedEntity != null) RemoveComponentRespectingMode(script);
                 ShowScriptPicker();
             };
             return inspector;
@@ -569,7 +594,7 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             AddComponentMenuItem(contextMenu, "Capsule Collider", () => AddComponent<ECS.Components.Physics.CapsuleCollider>());
             AddComponentMenuItem(contextMenu, "Mesh Collider (edge-accurate)", () => AddComponent<ECS.Components.Physics.MeshCollider>());
             contextMenu.Items.Add(new Separator());
-            AddComponentMenuItem(contextMenu, "Open Collision Editor…", () => Editor.Editors.PhysicsEditor.CollisionEditorWindow.Open(Window.GetWindow(this)));
+            AddComponentMenuItem(contextMenu, "Open Collision Editor…", () => OpenCollisionEditor());
 
             // Script: list existing scripts to assign, plus "New Script…"
             contextMenu.Items.Add(new Separator());
@@ -624,7 +649,7 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
                 RefreshInspector();
                 return;
             }
-            _selectedEntity.AddComponent(new Script(_selectedEntity, relativePath));
+            AddComponentRespectingMode(new Script(_selectedEntity, relativePath));
             RefreshInspector();
         }
 
@@ -678,7 +703,7 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             if (source == null)
             {
                 source = new ECS.Components.Audio.AudioSource(_selectedEntity);
-                _selectedEntity.AddComponent(source);
+                AddComponentRespectingMode(source);
             }
             source.AudioClipPath = relativePath;
             RefreshInspector();
@@ -763,11 +788,134 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             trig.Checked += (s, e) => col.IsTrigger = true;
             trig.Unchecked += (s, e) => col.IsTrigger = false;
             panel.Children.Add(trig);
-            panel.Children.Add(new TextBlock { Text = "Solid collision shape. Edit size / center and switch shapes in the Collision Editor.", Foreground = brush("#FF8A8A92"), FontSize = 10.5, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 8) });
+
+            // ---- inline shape fields: write the live component directly (the CollisionService and the
+            // collider gizmo read these) — no round-trip through the Collision Editor needed. ----
+            panel.Children.Add(ColliderLabel("Center"));
+            panel.Children.Add(ColliderVector3Row(col.Center, v => col.Center = v));
+
+            if (col is ECS.Components.Physics.BoxCollider box)
+            {
+                panel.Children.Add(ColliderLabel("Size"));
+                panel.Children.Add(ColliderVector3Row(box.Size, v => box.Size = v));
+            }
+            else if (col is ECS.Components.Physics.SphereCollider sph)
+            {
+                panel.Children.Add(ColliderLabel("Radius"));
+                panel.Children.Add(ColliderFloatRow(sph.Radius, v => sph.Radius = v));
+            }
+            else if (col is ECS.Components.Physics.CapsuleCollider cap)
+            {
+                panel.Children.Add(ColliderLabel("Radius"));
+                panel.Children.Add(ColliderFloatRow(cap.Radius, v => cap.Radius = v));
+                panel.Children.Add(ColliderLabel("Height"));
+                panel.Children.Add(ColliderFloatRow(cap.Height, v => cap.Height = v));
+            }
+            else if (col is ECS.Components.Physics.MeshCollider)
+            {
+                panel.Children.Add(new TextBlock { Text = "Exact mesh shape (uses this entity's Mesh Renderer).", Foreground = brush("#FF8A8A92"), FontSize = 10.5, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 8) });
+            }
+
+            // Mesh-shaped colliders are built from the entity's OWN MeshRenderer — the CollisionService
+            // silently produces no shape when there is none. Warn loudly instead of letting a "collider"
+            // that does nothing sit on a wall prefab.
+            bool meshShaped = col is ECS.Components.Physics.MeshCollider || col.GetType() == typeof(ECS.Components.Physics.Collider);
+            var owner = col.Entity ?? _selectedEntity;
+            if (meshShaped && owner != null && owner.GetComponent<MeshRenderer>() == null)
+            {
+                panel.Children.Add(new Border
+                {
+                    Background = brush("#FF3A1E22"),
+                    BorderBrush = brush("#FF7E3A44"),
+                    BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(6),
+                    Padding = new Thickness(9, 7, 9, 8),
+                    Margin = new Thickness(0, 0, 0, 8),
+                    Child = new TextBlock
+                    {
+                        Text = "No Mesh Renderer on this entity — this collider produces NO collision. Add it to the child that has the mesh, or use a Box Collider.",
+                        Foreground = brush("#FFFF8A96"),
+                        FontSize = 11,
+                        TextWrapping = TextWrapping.Wrap
+                    }
+                });
+            }
+
+            panel.Children.Add(new TextBlock { Text = "Switch shapes, auto-fit and preview in the Collision Editor.", Foreground = brush("#FF8A8A92"), FontSize = 10.5, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 8) });
             var btn = new Button { Content = "Open Collision Editor…", Padding = new Thickness(12, 6, 12, 6), Cursor = System.Windows.Input.Cursors.Hand, HorizontalAlignment = HorizontalAlignment.Left, Foreground = System.Windows.Media.Brushes.White, Background = brush("#FF6C5CE7"), BorderThickness = new Thickness(0) };
-            btn.Click += (s, e) => { try { Editor.Editors.PhysicsEditor.CollisionEditorWindow.Open(Window.GetWindow(this)); } catch { } };
+            btn.Click += (s, e) => OpenCollisionEditor();
             panel.Children.Add(btn);
             return new UserControl { Content = panel };
+        }
+
+        /// <summary>Opens the Collision Editor targeting the right entity: in IsolatedMode (Prefab Editor) the
+        /// window is pinned to the inspected standalone entity — otherwise it would follow the MAIN scene
+        /// selection and edit the wrong entity (or show "No entity selected").</summary>
+        private void OpenCollisionEditor()
+        {
+            try
+            {
+                var wnd = Editor.Editors.PhysicsEditor.CollisionEditorWindow.Open(Window.GetWindow(this), IsolatedMode ? _selectedEntity : null);
+                if (IsolatedMode && wnd != null)
+                {
+                    // Re-render our cards when the Collision Editor swaps/removes components on the isolated
+                    // entity — otherwise this inspector keeps fields bound to a removed collider instance.
+                    // (-= first so repeated opens never stack duplicate handlers.)
+                    wnd.TargetModified -= RefreshInspector;
+                    wnd.TargetModified += RefreshInspector;
+                }
+            }
+            catch { }
+        }
+
+        // ---- collider numeric-row builders (mirror the Collision Editor's NumBox / Vector3 rows) ----
+
+        private TextBlock ColliderLabel(string text)
+            => new TextBlock { Text = text, Foreground = InspBrush("#FF6E6E77"), FontSize = 10.5, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 4) };
+
+        private UIElement ColliderVector3Row(Vector3 v, Action<Vector3> set)
+        {
+            var g = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+            for (int i = 0; i < 3; i++) g.ColumnDefinitions.Add(new ColumnDefinition());
+            float x = v.X, y = v.Y, z = v.Z;
+            var fx = ColliderNumBox(x, nv => { x = nv; set(new Vector3(x, y, z)); }, "X", "#FFE06C6C");
+            var fy = ColliderNumBox(y, nv => { y = nv; set(new Vector3(x, y, z)); }, "Y", "#FF7CE0A3");
+            var fz = ColliderNumBox(z, nv => { z = nv; set(new Vector3(x, y, z)); }, "Z", "#FF6C9CE0");
+            Grid.SetColumn(fx, 0); Grid.SetColumn(fy, 1); Grid.SetColumn(fz, 2);
+            g.Children.Add(fx); g.Children.Add(fy); g.Children.Add(fz);
+            return g;
+        }
+
+        private UIElement ColliderFloatRow(float v, Action<float> set)
+        {
+            var p = new StackPanel { Margin = new Thickness(0, 0, 0, 8), Width = 120, HorizontalAlignment = HorizontalAlignment.Left };
+            p.Children.Add(ColliderNumBox(v, set, null, "#FFC8C8CE"));
+            return p;
+        }
+
+        private UIElement ColliderNumBox(float value, Action<float> set, string tag, string tagColor)
+        {
+            var wrap = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 8, 0) };
+            if (tag != null) wrap.Children.Add(new TextBlock { Text = tag, Foreground = InspBrush(tagColor), FontSize = 12, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0), Width = 12 });
+            var tb = new TextBox
+            {
+                Text = value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                Background = InspBrush("#FF202023"), Foreground = InspBrush("#FFF0F0F3"), BorderBrush = InspBrush("#FF34343C"),
+                BorderThickness = new Thickness(1), Padding = new Thickness(7, 5, 7, 5), MinWidth = 46,
+                CaretBrush = InspBrush("#FF6C5CE7")
+            };
+            tb.TextChanged += (s, e) =>
+            {
+                float nv;
+                if (float.TryParse(tb.Text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out nv))
+                {
+                    set(nv);
+                    // Submit-once viewport: nudge a re-submit so the collider gizmo follows the edit at once.
+                    Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.RequestResubmit();
+                }
+            };
+            wrap.Children.Add(tb);
+            return wrap;
         }
 
         private void AddComponentMenuItem(ContextMenu menu, string header, Action action)
@@ -787,10 +935,10 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
         private void AddComponent<T>() where T : Component, new()
         {
             if (_selectedEntity == null) return;
-            
+
             if (!_selectedEntity.HasComponent<T>())
             {
-                _selectedEntity.AddComponent<T>();
+                AddComponentRespectingMode(new T { Entity = _selectedEntity });
                 RefreshInspector();
             }
         }
@@ -798,11 +946,11 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
         private void AddLightComponent(LightType lightType)
         {
             if (_selectedEntity == null) return;
-            
+
             if (!_selectedEntity.HasComponent<Light>())
             {
                 var light = new Light(_selectedEntity, lightType);
-                _selectedEntity.AddComponent(light);
+                AddComponentRespectingMode(light);
                 RefreshInspector();
             }
         }
