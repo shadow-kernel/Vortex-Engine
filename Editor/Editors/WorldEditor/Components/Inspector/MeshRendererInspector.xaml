@@ -80,24 +80,33 @@
                         Click="SelectMeshButton_Click"/>
             </Grid>
 
-            <!-- Material Selection -->
+            <!-- Material Slot: shows the assigned .vmat, is a .vmat drop target, double-click opens the Material Editor -->
             <Grid Margin="0,5">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="80"/>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
                 <TextBlock Text="Material" Style="{StaticResource PropertyLabel}"/>
-                <ComboBox x:Name="MaterialComboBox" Grid.Column="1"
-                          Style="{StaticResource PropertyComboBox}"
-                          SelectionChanged="MaterialComboBox_SelectionChanged">
-                    <ComboBoxItem Content="Default"/>
-                </ComboBox>
+                <Border x:Name="MaterialSlot" Grid.Column="1" Height="28" CornerRadius="4"
+                        Background="#FF161618" BorderBrush="#FF33333A" BorderThickness="1"
+                        AllowDrop="True" DragEnter="MaterialSlot_DragOver" DragOver="MaterialSlot_DragOver"
+                        Drop="MaterialSlot_Drop" MouseLeftButtonDown="MaterialSlot_MouseLeftButtonDown"
+                        ToolTip="Drop a .vmat here — double-click to open it in the Material Editor">
+                    <TextBlock x:Name="MaterialNameText" Text="Default" FontSize="12"
+                               Foreground="#FFE9E9ED" VerticalAlignment="Center"
+                               Margin="8,0" TextTrimming="CharacterEllipsis"/>
+                </Border>
                 <Button Grid.Column="2" Content="&#xE8E5;" FontFamily="Segoe MDL2 Assets"
                         Background="Transparent" BorderThickness="0" Foreground="#FF9A9AA1"
                         Padding="6" FontSize="12" ToolTip="Select Material"
                         Click="SelectMaterialButton_Click"/>
+                <Button Grid.Column="3" Content="&#xE711;" FontFamily="Segoe MDL2 Assets"
+                        Background="Transparent" BorderThickness="0" Foreground="#FF9A9AA1"
+                        Padding="6" FontSize="12" ToolTip="Clear material (engine default)"
+                        Click="ClearMaterialButton_Click"/>
             </Grid>
 
             <!-- Shadow Options -->
