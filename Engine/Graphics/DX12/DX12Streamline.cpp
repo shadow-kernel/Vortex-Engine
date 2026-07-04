@@ -87,11 +87,16 @@ namespace vortex::graphics::dx12
 
 	bool DX12Streamline::skipped_for_debugger()
 	{
-		if (!IsDebuggerPresent()) return false;
 		// GetEnvironmentVariableA only fills the buffer when it FITS (else it returns the required size without
 		// writing), so gate on n < sizeof(buf) before reading buf[0] — an oversized value must not read garbage.
 		char buf[32];
-		DWORD n = GetEnvironmentVariableA("VORTEX_DLSS_UNDER_DEBUGGER", buf, sizeof(buf));
+		// VORTEX_SKIP_DLSS=1 is set by the MANAGED editor when a .NET debugger is attached (VS F5 managed-only
+		// debugging does not reliably set the native BeingDebugged flag, so IsDebuggerPresent() alone missed it
+		// and NGX froze startup inside LoadLibrary("sl.interposer.dll")).
+		DWORD n = GetEnvironmentVariableA("VORTEX_SKIP_DLSS", buf, sizeof(buf));
+		bool debugged = (n > 0 && n < sizeof(buf) && buf[0] == '1') || IsDebuggerPresent();
+		if (!debugged) return false;
+		n = GetEnvironmentVariableA("VORTEX_DLSS_UNDER_DEBUGGER", buf, sizeof(buf));
 		bool force = n > 0 && n < sizeof(buf) && buf[0] == '1';
 		return !force;
 	}
@@ -113,6 +118,9 @@ namespace vortex::graphics::dx12
 
 		// sl.interposer.dll is expected next to the exe (we copy the SL DLLs there post-build). If it's not there
 		// this is a non-Streamline machine/build -> stay disabled, the renderer uses the render-scale upscale.
+		// Log BEFORE the load: NGX can hang inside its DllMain under a debugger, and without this line a frozen
+		// startup left the log completely empty — invisible root cause.
+		sl_log("[streamline] loading sl.interposer.dll ...");
 		HMODULE mod = LoadLibraryW(L"sl.interposer.dll");
 		if (!mod)
 		{

@@ -18,6 +18,15 @@ namespace Editor
         {
             base.OnStartup(e);
 
+            // VS F5 debugs this C# app with the MANAGED debugger, which does NOT reliably set the native
+            // BeingDebugged flag — so the native IsDebuggerPresent() gate that skips DLSS/Streamline under a
+            // debugger (NGX hangs inside LoadLibrary("sl.interposer.dll") when debugged, freezing startup at
+            // the splash with "only native code is running") never fired for managed-only F5. The managed side
+            // knows FOR CERTAIN whether a debugger is attached: mark the process before any engine init runs;
+            // DX12Streamline::skipped_for_debugger() honors the marker. VORTEX_DLSS_UNDER_DEBUGGER=1 still forces.
+            if (System.Diagnostics.Debugger.IsAttached)
+                Environment.SetEnvironmentVariable("VORTEX_SKIP_DLSS", "1");
+
             // Standalone PLAYER mode: a 'player.vortex' marker next to the exe (written by Export Game)
             // or a --play arg boots straight into the game (no editor UI).
             string exeDir = AppDomain.CurrentDomain.BaseDirectory;
