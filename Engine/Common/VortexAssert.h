@@ -38,38 +38,26 @@ namespace vortex
 #ifdef _WIN32
 		OutputDebugStringA(buffer);
 		OutputDebugStringA("\n");
-
-		// Debug builds: LOG the failed assertion (debug output + a log file) and CONTINUE.
-		//
-		// This used to pop a MODAL MessageBoxA here. That is fatal for the editor: engine init runs on the WPF
-		// UI thread, and the startup splash is Topmost — so the message box appears BEHIND the splash, invisible,
-		// and the UI thread blocks in the dialog's modal message loop forever. The editor then "hangs at
-		// Starting…", and under the VS debugger you land in break mode with "only native code is running" (the
-		// thread sitting inside the native MessageBox loop). Standalone it works because the tripping assert is
-		// timing-dependent. Logging + continue mirrors that working path and removes the deadlock.
-		//
-		// Devs who WANT to stop on an assert can set the env var VORTEX_ASSERT_BREAK=1 to break into an attached
-		// debugger at the failing assert instead.
+		
+		// Show message box in debug builds
 		#ifdef _DEBUG
+		int result = MessageBoxA(nullptr, buffer, "Vortex Engine - Assertion Failed", 
+			MB_ABORTRETRYIGNORE | MB_ICONERROR | MB_DEFBUTTON2);
+		
+		switch (result)
 		{
-			char _logpath[MAX_PATH];
-			char _tmp[MAX_PATH];
-			DWORD _n = GetTempPathA(MAX_PATH, _tmp);
-			if (_n > 0 && _n < MAX_PATH)
-			{
-				snprintf(_logpath, sizeof(_logpath), "%svortex_asserts.log", _tmp);
-				FILE* _f = nullptr;
-				if (fopen_s(&_f, _logpath, "a") == 0 && _f)
-				{
-					fprintf(_f, "%s\n\n", buffer);
-					fclose(_f);
-				}
-			}
-			char _brk[8];
-			if (GetEnvironmentVariableA("VORTEX_ASSERT_BREAK", _brk, sizeof(_brk)) > 0 && _brk[0] == '1' && IsDebuggerPresent())
+		case IDABORT:
+			std::abort();
+			break;
+		case IDRETRY:
+			if (IsDebuggerPresent())
 			{
 				__debugbreak();
 			}
+			break;
+		case IDIGNORE:
+			// Continue execution
+			break;
 		}
 		#else
 		// In release, just log and continue

@@ -89,6 +89,21 @@ namespace vortex::graphics::dx12
 	{
 		if (m_available) return true;
 
+		// Skip DLSS/Streamline entirely when a debugger is attached. Streamline loads NVIDIA NGX, whose dev/debug
+		// components call DebugBreak() on an internal worker thread when IsDebuggerPresent() — which HALTS the editor
+		// at the startup splash under Visual Studio's F5 (the standalone exe runs fine precisely because that break
+		// is gated on a debugger being present). DLSS is a render-time upscaler that isn't needed while debugging, so
+		// staying disabled here just falls back to the render-scale path. Set VORTEX_DLSS_UNDER_DEBUGGER=1 to force it.
+		{
+			char _env[8];
+			bool force = GetEnvironmentVariableA("VORTEX_DLSS_UNDER_DEBUGGER", _env, sizeof(_env)) > 0 && _env[0] == '1';
+			if (IsDebuggerPresent() && !force)
+			{
+				sl_log("[streamline] debugger attached -> DLSS init skipped (avoids the NGX debugger break that freezes F5; set VORTEX_DLSS_UNDER_DEBUGGER=1 to force)");
+				return false;
+			}
+		}
+
 		// sl.interposer.dll is expected next to the exe (we copy the SL DLLs there post-build). If it's not there
 		// this is a non-Streamline machine/build -> stay disabled, the renderer uses the render-scale upscale.
 		HMODULE mod = LoadLibraryW(L"sl.interposer.dll");
