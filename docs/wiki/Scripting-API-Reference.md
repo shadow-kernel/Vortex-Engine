@@ -240,6 +240,47 @@ Lighting/atmosphere for scripts — flicker, lightning, mood. With submit-once r
 
 ---
 
+## `Atmosphere`
+
+Scene fog (Welle A #27): exp2 distance fog with optional ground mist. The flashlight cone visibly "cuts" into it. Persistent until changed — call once in `Start()` for a static mood, or per frame for weather.
+
+▸ `static void SetFog(float density, float heightY = 0, float heightFalloff = 0, float r = 0.02f, float g = 0.025f, float b = 0.035f)` — `density > 0` enables (try `0.05–0.2`); `heightFalloff > 0` turns it into ground mist below `heightY`. Colors linear `0..1` — keep them dark for horror.
+▸ `static void ClearFog()` — fog off.
+
+Authoring note: fog can also be set per scene **without any script** in the editor's **Environment** panel (saved into the `.vscene`, applied automatically in the editor, in play mode and in shipped games). Scripts override the authored values at runtime; leaving play mode restores them.
+
+---
+
+## `PostFx`
+
+Screen post-effects (#28/#29): vignette, animated film grain, chromatic aberration — the horror tension package. Settings are persistent renderer state, apply the **same frame**, and work in the editor viewport, play mode and shipped games. All effects off = the whole post pipeline is bypassed (zero GPU cost).
+
+▸ `static void SetVignette(bool enabled, float intensity = 0.8f, float smoothness = 0.5f, float roundness = 1f, float r = 0, float g = 0, float b = 0)` — darkened screen edges ("claustrophobia dial"). `roundness 1` = circular on any aspect, `0` = follows the screen shape.
+▸ `static void SetGrain(bool enabled, float intensity = 0.35f, float size = 1.6f)` — luminance-weighted animated grain (shadows grain more); `size` in output pixels (1–3 is filmic).
+▸ `static void SetChromaticAberration(bool enabled, float strength = 0.35f, float falloff = 1.2f)` — radial RGB fringing towards the edges. `0.2–0.6` = unease, `2+` = heavy VHS smear.
+▸ `static void ClearAll()` — everything off.
+
+The signature use: ramp the dread as the monster closes in —
+
+```csharp
+public class PanicFx : VortexBehaviour
+{
+    float panic;                       // 0 = calm, 1 = it's right behind you
+    public override void Update(float dt)
+    {
+        float target = MonsterNearby() ? 1f : 0f;               // your game's proximity check
+        panic += (target - panic) * System.Math.Min(1f, dt * 0.5f);   // ~2 s ramp
+        PostFx.SetGrain(true, 0.1f + 0.5f * panic, 1.6f);
+        PostFx.SetVignette(true, 0.6f + 0.6f * panic, 0.45f);
+        PostFx.SetChromaticAberration(panic > 0.15f, 0.25f + 1.2f * panic, 1.2f);
+    }
+}
+```
+
+Like fog, all three effects are also authorable per scene in the editor's **Environment** panel (serialized in the `.vscene`, no script needed).
+
+---
+
 ## `World`
 
 Script-driven world geometry — assemble a level/backdrop from meshes without authoring a scene file. Render-only (no collision yet); placements persist until `Clear()`.
