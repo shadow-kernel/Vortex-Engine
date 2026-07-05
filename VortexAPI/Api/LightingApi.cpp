@@ -22,18 +22,24 @@ EDITOR_INTERFACE void SetDirectionalLight(
 	);
 }
 
-// Add a point light (max 16 per frame)
+// Add a point light (max 16 per frame). Shadow params (#25): castShadows != 0 requests a 6-face
+// cube block in the point shadow atlas — the renderer takes the first two such lights per frame.
+// Internal ABI: changed in lockstep with the editor's P/Invoke (both live in this repo).
 EDITOR_INTERFACE void AddPointLight(
 	float posX, float posY, float posZ,
 	float colorR, float colorG, float colorB,
-	float intensity, float range)
+	float intensity, float range,
+	int castShadows, float shadowStrength, float shadowBias)
 {
 	graphics::dx12::DX12Renderer::PointLightData light{};
 	light.position = { posX, posY, posZ };
 	light.color = { colorR, colorG, colorB };
 	light.intensity = intensity;
 	light.range = range;
-	
+	light.cast_shadows = castShadows != 0 ? 1u : 0u;
+	light.shadow_strength = shadowStrength;
+	light.shadow_bias = shadowBias;
+
 	graphics::dx12::DX12Renderer::instance().add_point_light(light);
 }
 

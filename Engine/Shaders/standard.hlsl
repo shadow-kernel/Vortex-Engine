@@ -106,6 +106,10 @@ cbuffer LightBuffer : register(b2)
     row_major float4x4 CascadeVP[3];
     float4 CascadeSplits;    // x/y/z = far view-distance of cascade 0/1/2, w = max shadow distance
     float4 DirShadowParams;  // x strength (0..1), y depth bias (NDC), z cascade count (0 = off), w unused
+    // Point light cube shadows (#25) — appended @1504 (buffer grown to 2304). Up to 2 shadowed
+    // point lights x 6 perspective faces in the t9 atlas (4x3 grid of 1024² tiles).
+    float4 PointShadows[2];              // x = point-light index (-1 = unused), y strength, z bias, w unused
+    row_major float4x4 PointFaceVP[12];  // shadow slot p, face f (+X,-X,+Y,-Y,+Z,-Z) -> [p*6+f]
 };
 
 Texture2D AlbedoTexture    : register(t0);
@@ -120,6 +124,8 @@ Texture2D HeightTexture    : register(t6);
 Texture2D ShadowMap        : register(t7);
 // t8: the directional light's cascade atlas (#24) — 2x2 tiles, cascade c in tile c.
 Texture2D CsmShadowMap     : register(t8);
+// t9: the point-light face atlas (#25) — 4x3 grid of 1024² tiles, tile = slot*6 + face.
+Texture2D PointShadowMap   : register(t9);
 SamplerState LinearSampler : register(s0);
 SamplerComparisonState ShadowSampler : register(s1);
 
@@ -178,6 +184,49 @@ float SampleCascadeShadow(float3 worldPos)
         return lerp(1.0, lit / 9.0, saturate(DirShadowParams.x));
     }
     return 1.0;   // beyond every cascade -> lit
+}
+
+// Point light cube shadow (#25): pick the face by the major axis of light->pixel, project with
+// that face's 90° perspective VP and compare in its atlas tile. The whole light->pixel segment
+// lies inside the chosen face's frustum, so every occluder on the ray is in that face's depth map.
+float SamplePointShadow(float3 worldPos, float3 lightPos, int lightIndex)
+{
+    [unroll]
+    for (int p = 0; p < 2; ++p)
+    {
+        if ((int)PointShadows[p].x != lightIndex) continue;
+
+        float3 d = worldPos - lightPos;
+        float3 ad = abs(d);
+        int face;
+        if (ad.x >= ad.y && ad.x >= ad.z) face = d.x > 0.0 ? 0 : 1;
+        else if (ad.y >= ad.z)            face = d.y > 0.0 ? 2 : 3;
+        else                              face = d.z > 0.0 ? 4 : 5;
+
+        float4 sp = mul(float4(worldPos, 1.0), PointFaceVP[p * 6 + face]);
+        if (sp.w <= 0.0) return 1.0;
+        float3 ndc = sp.xyz / sp.w;
+        float2 suv = ndc.xy * float2(0.5, -0.5) + 0.5;
+        if (any(saturate(suv) != suv) || ndc.z > 1.0) return 1.0;
+
+        // Tile mapping: 4-column grid of 1024² tiles in the 4096x3072 atlas; keep the 3x3 kernel
+        // inside the tile (face seams are covered by the adjacent face's frustum overlap).
+        const float tileTexel = 1.0 / 1024.0;
+        suv = clamp(suv, tileTexel * 1.5, 1.0 - tileTexel * 1.5);
+        int tile = p * 6 + face;
+        float2 auv = (suv + float2(tile & 3, tile >> 2)) * float2(0.25, 1.0 / 3.0);
+
+        const float2 atlasTexel = float2(1.0 / 4096.0, 1.0 / 3072.0);
+        float lit = 0.0;
+        [unroll]
+        for (int y = -1; y <= 1; ++y)
+            [unroll]
+            for (int x = -1; x <= 1; ++x)
+                lit += PointShadowMap.SampleCmpLevelZero(ShadowSampler,
+                    auv + float2((float)x, (float)y) * atlasTexel, ndc.z - PointShadows[p].z);
+        return lerp(1.0, lit / 9.0, saturate(PointShadows[p].y));
+    }
+    return 1.0;   // this light casts no shadow
 }
 
 struct VS_IN
@@ -371,6 +420,9 @@ float4 PSMain(PS_IN input) : SV_TARGET
 
             float atten = Attenuation(dist, PointLights[i].range);
             float3 radiance = PointLights[i].color * PointLights[i].intensity * atten;
+
+            // Point cube shadows (#25): a no-op for lights without a shadow slot.
+            radiance *= SamplePointShadow(input.worldPos, PointLights[i].position, (int)i);
 
             float D = D_GGX(NdotH, roughness);
             float G = G_Smith(NdotV, NdotL, roughness);

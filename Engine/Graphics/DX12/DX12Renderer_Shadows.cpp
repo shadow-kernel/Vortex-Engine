@@ -154,7 +154,8 @@ namespace vortex::graphics::dx12
 			bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 			D3D12_RANGE none{ 0, 0 };
 
-			bd.Width = (UINT64)256 * (MAX_SHADOW_SPOTS + CSM_CASCADES);   // spot tiles + cascade tiles (#24)
+			// Spot tiles + cascade tiles (#24) + point face tiles (#25).
+			bd.Width = (UINT64)256 * (MAX_SHADOW_SPOTS + CSM_CASCADES + MAX_SHADOW_POINTS * 6);
 			if (FAILED(dev->CreateCommittedResource(&up, D3D12_HEAP_FLAG_NONE, &bd,
 				D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_shadow_pass_cb)))) return false;
 			if (FAILED(m_shadow_pass_cb->Map(0, &none, &m_shadow_pass_cb_mapped))) return false;
@@ -233,6 +234,126 @@ namespace vortex::graphics::dx12
 
 		OutputDebugStringA("[shadows] CSM atlas ready\n");
 		return true;
+	}
+
+
+	// #25: the point-light face atlas — 4x3 grid of POINT_SHADOW_TILE² tiles (2 lights x 6 faces).
+	bool DX12Renderer::ensure_point_shadow_map()
+	{
+		if (m_point_shadow_map) return true;
+
+		auto* dev = DX12Core::instance().device();
+		if (!dev) return false;
+
+		if (m_point_srv_cpu.ptr == 0)
+		{
+			if (!ResourceRegistry::instance().reserve_srv_slot(m_point_srv_cpu, m_point_srv_gpu))
+				return false;
+		}
+
+		D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+		D3D12_RESOURCE_DESC rd{};
+		rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+		rd.Width = (UINT64)POINT_ATLAS_COLS * POINT_SHADOW_TILE;                       // 4096
+		rd.Height = ((MAX_SHADOW_POINTS * 6 + POINT_ATLAS_COLS - 1) / POINT_ATLAS_COLS) * POINT_SHADOW_TILE; // 3072
+		rd.DepthOrArraySize = 1; rd.MipLevels = 1;
+		rd.Format = DXGI_FORMAT_R32_TYPELESS;
+		rd.SampleDesc.Count = 1;
+		rd.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+		D3D12_CLEAR_VALUE cv{};
+		cv.Format = DXGI_FORMAT_D32_FLOAT;
+		cv.DepthStencil.Depth = 1.0f;
+
+		if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
+			D3D12_RESOURCE_STATE_DEPTH_WRITE, &cv, IID_PPV_ARGS(&m_point_shadow_map))))
+		{
+			OutputDebugStringA("[shadows] point shadow atlas creation failed\n");
+			return false;
+		}
+		m_point_shadow_state = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+
+		if (!m_point_shadow_dsv_heap)
+		{
+			D3D12_DESCRIPTOR_HEAP_DESC dh{};
+			dh.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+			dh.NumDescriptors = 1;
+			if (FAILED(dev->CreateDescriptorHeap(&dh, IID_PPV_ARGS(&m_point_shadow_dsv_heap))))
+				return false;
+		}
+		D3D12_DEPTH_STENCIL_VIEW_DESC dsv{};
+		dsv.Format = DXGI_FORMAT_D32_FLOAT;
+		dsv.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+		dev->CreateDepthStencilView(m_point_shadow_map.Get(), &dsv, m_point_shadow_dsv_heap->GetCPUDescriptorHandleForHeapStart());
+
+		D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+		srv.Format = DXGI_FORMAT_R32_FLOAT;
+		srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+		srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+		srv.Texture2D.MipLevels = 1;
+		dev->CreateShaderResourceView(m_point_shadow_map.Get(), &srv, m_point_srv_cpu);
+
+		m_point_shadow_ready = true;
+		OutputDebugStringA("[shadows] point shadow atlas ready\n");
+		return true;
+	}
+
+
+	// #25: select the first shadow-requesting point lights + build their 6 face VPs (LookToLH along
+	// ±X/±Y/±Z with the standard cube-face up vectors, 90° perspective, far = light range).
+	void DX12Renderer::prepare_point_shadows()
+	{
+		using namespace DirectX;
+
+		m_shadow_point_count = 0;
+		if (!m_pipeline_3d.shadow_pso() || !m_point_shadow_ready) return;
+
+		{
+			char buf[8];
+			DWORD n = GetEnvironmentVariableA("VORTEX_NO_POINT_SHADOWS", buf, sizeof(buf));
+			if (n > 0 && n < sizeof(buf) && buf[0] == '1') return;
+		}
+
+		static const XMVECTORF32 kDirs[6] = {
+			{ { {  1,  0,  0, 0 } } }, { { { -1,  0,  0, 0 } } },
+			{ { {  0,  1,  0, 0 } } }, { { {  0, -1,  0, 0 } } },
+			{ { {  0,  0,  1, 0 } } }, { { {  0,  0, -1, 0 } } },
+		};
+		static const XMVECTORF32 kUps[6] = {
+			{ { { 0, 1,  0, 0 } } }, { { { 0, 1, 0, 0 } } },
+			{ { { 0, 0, -1, 0 } } }, { { { 0, 0, 1, 0 } } },
+			{ { { 0, 1,  0, 0 } } }, { { { 0, 1, 0, 0 } } },
+		};
+
+		for (size_t i = 0; i < m_point_lights.size() && i < MAX_POINT_LIGHTS
+			&& m_shadow_point_count < MAX_SHADOW_POINTS; ++i)
+		{
+			const PointLightData& pl = m_point_lights[i];
+			if (!pl.cast_shadows || pl.shadow_strength <= 0.0f) continue;
+
+			ShadowPoint& spn = m_shadow_points[m_shadow_point_count];
+			spn.light_index = (int)i;
+			spn.strength = pl.shadow_strength < 0.0f ? 0.0f : (pl.shadow_strength > 1.0f ? 1.0f : pl.shadow_strength);
+			spn.bias = pl.shadow_bias > 0.0f ? pl.shadow_bias : 0.0015f;
+
+			XMVECTOR pos = XMLoadFloat3(&pl.position);
+			const float farZ = pl.range > 0.1f ? pl.range : 0.1f;
+			XMMATRIX proj = XMMatrixPerspectiveFovLH(XM_PIDIV2, 1.0f, 0.05f, farZ);
+			for (u32 f = 0; f < 6; ++f)
+			{
+				XMMATRIX view = XMMatrixLookToLH(pos, kDirs[f], kUps[f]);
+				XMStoreFloat4x4(&spn.face_vp[f], view * proj);
+				if (m_shadow_pass_cb_mapped)
+				{
+					PerFrameConstants sc = m_frame_constants;
+					sc.view_projection = spn.face_vp[f];
+					memcpy((u8*)m_shadow_pass_cb_mapped
+						+ (size_t)(MAX_SHADOW_SPOTS + CSM_CASCADES + m_shadow_point_count * 6 + f) * 256,
+						&sc, sizeof(sc));
+				}
+			}
+			m_shadow_point_count++;
+		}
 	}
 
 
@@ -345,9 +466,11 @@ namespace vortex::graphics::dx12
 		m_shadow_spot_count = 0;
 		m_frame_constants.shadow_map_texel = 1.0f / (float)SHADOW_TILE_SIZE;
 
-		// Directional cascades (#24) — prepared BEFORE the spot early-outs (own kill switch, own
-		// atlas): a missing spot atlas or VORTEX_NO_SPOT_SHADOWS must not leave stale cascade state.
+		// Directional cascades (#24) + point cube shadows (#25) — prepared BEFORE the spot
+		// early-outs (own kill switches, own atlases): a missing spot atlas or
+		// VORTEX_NO_SPOT_SHADOWS must not leave stale cascade/point state.
 		prepare_csm_cascades();
+		prepare_point_shadows();
 
 		if (!m_pipeline_3d.shadow_pso() || !m_shadow_map) return;
 
@@ -389,7 +512,8 @@ namespace vortex::graphics::dx12
 	void DX12Renderer::render_shadow_pass()
 	{
 		using namespace DirectX;
-		if ((m_shadow_spot_count == 0 && m_csm_count == 0) || !m_shadow_instance_vb_mapped) return;
+		if ((m_shadow_spot_count == 0 && m_csm_count == 0 && m_shadow_point_count == 0)
+			|| !m_shadow_instance_vb_mapped) return;
 
 		auto& reg = ResourceRegistry::instance();
 
@@ -448,7 +572,9 @@ namespace vortex::graphics::dx12
 		};
 
 		// ---- record one tile: pack into the shared VB, tile viewport, b0 clone, instanced draws ----
-		auto draw_tile = [&](u32 tileX, u32 tileY, u32 cbSlot)
+		// Pixel-origin + size parameters so spot/cascade tiles (2048²) and point face tiles (1024²)
+		// share the identical body.
+		auto draw_tile = [&](u32 pxX, u32 pxY, u32 tileSize, u32 cbSlot)
 		{
 			if (casters.empty()) return;   // empty tile stays cleared -> fully lit, correct
 
@@ -458,11 +584,10 @@ namespace vortex::graphics::dx12
 			for (size_t i = 0; i < casters.size(); ++i)
 				memcpy(vb + (size_t)(vb_used + i) * 64, casters[i].world, 64);
 
-			const float tile = (float)SHADOW_TILE_SIZE;
-			const LONG tx = (LONG)(tileX * SHADOW_TILE_SIZE);
-			const LONG ty = (LONG)(tileY * SHADOW_TILE_SIZE);
-			D3D12_VIEWPORT vp{}; vp.TopLeftX = (float)tx; vp.TopLeftY = (float)ty; vp.Width = tile; vp.Height = tile; vp.MaxDepth = 1.0f;
-			D3D12_RECT sc{}; sc.left = tx; sc.top = ty; sc.right = tx + (LONG)SHADOW_TILE_SIZE; sc.bottom = ty + (LONG)SHADOW_TILE_SIZE;
+			const LONG tx = (LONG)pxX;
+			const LONG ty = (LONG)pxY;
+			D3D12_VIEWPORT vp{}; vp.TopLeftX = (float)tx; vp.TopLeftY = (float)ty; vp.Width = (float)tileSize; vp.Height = (float)tileSize; vp.MaxDepth = 1.0f;
+			D3D12_RECT sc{}; sc.left = tx; sc.top = ty; sc.right = tx + (LONG)tileSize; sc.bottom = ty + (LONG)tileSize;
 			m_command_list->RSSetViewports(1, &vp);
 			m_command_list->RSSetScissorRects(1, &sc);
 			m_command_list->SetGraphicsRootConstantBufferView(0, m_shadow_pass_cb->GetGPUVirtualAddress() + (UINT64)cbSlot * 256);
@@ -522,7 +647,7 @@ namespace vortex::graphics::dx12
 			for (u32 t = 0; t < m_shadow_spot_count; ++t)
 			{
 				pack_casters(extract_shadow_frustum(m_shadow_spots[t].vp));
-				draw_tile(t & 1, (t >> 1) & 1, t);
+				draw_tile((t & 1) * SHADOW_TILE_SIZE, ((t >> 1) & 1) * SHADOW_TILE_SIZE, SHADOW_TILE_SIZE, t);
 			}
 
 			// Hand the atlas to the pixel shaders (t7) for every scene pass this frame.
@@ -558,7 +683,8 @@ namespace vortex::graphics::dx12
 			for (u32 c = 0; c < m_csm_count; ++c)
 			{
 				pack_casters(extract_shadow_frustum(m_csm_vp[c]));
-				draw_tile(c & 1, (c >> 1) & 1, MAX_SHADOW_SPOTS + c);
+				draw_tile((c & 1) * SHADOW_TILE_SIZE, ((c >> 1) & 1) * SHADOW_TILE_SIZE,
+					SHADOW_TILE_SIZE, MAX_SHADOW_SPOTS + c);
 			}
 
 			D3D12_RESOURCE_BARRIER b{};
@@ -569,6 +695,48 @@ namespace vortex::graphics::dx12
 			b.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 			m_command_list->ResourceBarrier(1, &b);
 			m_csm_map_state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		}
+
+		// ---- point-light face atlas (#25): t9 — 6 perspective tiles per shadowed light ----
+		if (m_shadow_point_count > 0 && m_point_shadow_map)
+		{
+			if (m_point_shadow_state != D3D12_RESOURCE_STATE_DEPTH_WRITE)
+			{
+				D3D12_RESOURCE_BARRIER b{};
+				b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+				b.Transition.pResource = m_point_shadow_map.Get();
+				b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+				b.Transition.StateBefore = m_point_shadow_state;
+				b.Transition.StateAfter = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+				m_command_list->ResourceBarrier(1, &b);
+				m_point_shadow_state = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+			}
+
+			auto pdsv = m_point_shadow_dsv_heap->GetCPUDescriptorHandleForHeapStart();
+			m_command_list->ClearDepthStencilView(pdsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+			m_command_list->OMSetRenderTargets(0, nullptr, FALSE, &pdsv);
+
+			for (u32 p = 0; p < m_shadow_point_count; ++p)
+			{
+				for (u32 f = 0; f < 6; ++f)
+				{
+					pack_casters(extract_shadow_frustum(m_shadow_points[p].face_vp[f]));
+					const u32 tile = p * 6 + f;
+					draw_tile((tile % POINT_ATLAS_COLS) * POINT_SHADOW_TILE,
+						(tile / POINT_ATLAS_COLS) * POINT_SHADOW_TILE,
+						POINT_SHADOW_TILE,
+						MAX_SHADOW_SPOTS + CSM_CASCADES + tile);
+				}
+			}
+
+			D3D12_RESOURCE_BARRIER b{};
+			b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+			b.Transition.pResource = m_point_shadow_map.Get();
+			b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+			b.Transition.StateBefore = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+			b.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+			m_command_list->ResourceBarrier(1, &b);
+			m_point_shadow_state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		}
 	}
 }

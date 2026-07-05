@@ -99,6 +99,10 @@ namespace vortex::graphics::dx12
 		if (!ensure_csm_map(2 * SHADOW_TILE_SIZE))
 			OutputDebugStringA("[shadows] eager CSM-atlas init failed — directional shadows disabled\n");
 
+		// Point cube shadows (#25): eager t9 atlas (4x3 grid of 1024² face tiles, 2 lights x 6 faces).
+		if (!ensure_point_shadow_map())
+			OutputDebugStringA("[shadows] eager point-atlas init failed — point shadows disabled\n");
+
 		// 2D UI overlay (optional — if D2D/DirectWrite init fails the 3D renderer is unaffected).
 		if (m_ui_overlay.initialize(core.device(), m_command_queue.queue(), DX12Swapchain::MaxBufferCount))
 			OutputDebugStringA("UI overlay OK\n");
@@ -154,6 +158,10 @@ namespace vortex::graphics::dx12
 		m_csm_map.Reset();
 		m_csm_dsv_heap.Reset();
 		m_csm_srv_cpu = {}; m_csm_srv_gpu = {}; m_csm_map_size = 0; m_csm_count = 0;
+		// Point shadow resources (#25).
+		m_point_shadow_map.Reset();
+		m_point_shadow_dsv_heap.Reset();
+		m_point_srv_cpu = {}; m_point_srv_gpu = {}; m_point_shadow_ready = false; m_shadow_point_count = 0;
 		if (m_light_cb && m_light_cb_mapped) { m_light_cb->Unmap(0, nullptr); m_light_cb_mapped = nullptr; }
 		m_light_cb.Reset();
 		if (m_grid_cb && m_grid_cb_mapped) { m_grid_cb->Unmap(0, nullptr); m_grid_cb_mapped = nullptr; }

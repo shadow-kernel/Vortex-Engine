@@ -703,7 +703,8 @@ namespace Editor.DllWrapper
         private static extern void AddPointLight(
             float posX, float posY, float posZ,
             float colorR, float colorG, float colorB,
-            float intensity, float range);
+            float intensity, float range,
+            int castShadows, float shadowStrength, float shadowBias);
 
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void AddSpotLight(
@@ -777,14 +778,21 @@ namespace Editor.DllWrapper
         }
 
         /// <summary>
-        /// Add a point light to the scene. Maximum 16 per frame.
+        /// Add a point light to the scene. Maximum 16 per frame. Shadow params (#25): castShadows
+        /// requests 6-face cube shadows — the renderer shadows the first two such lights per frame.
         /// </summary>
         public static void SubmitPointLight(
             float posX, float posY, float posZ,
             float colorR, float colorG, float colorB,
-            float intensity, float range)
+            float intensity, float range,
+            bool castShadows = false, float shadowStrength = 1.0f, float shadowBias = 0.0015f)
         {
-            try { AddPointLight(posX, posY, posZ, colorR, colorG, colorB, intensity, range); } catch { }
+            try
+            {
+                AddPointLight(posX, posY, posZ, colorR, colorG, colorB, intensity, range,
+                    castShadows ? 1 : 0, shadowStrength, shadowBias);
+            }
+            catch { }
         }
 
         /// <summary>

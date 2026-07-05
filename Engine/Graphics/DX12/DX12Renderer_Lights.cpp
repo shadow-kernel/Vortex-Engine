@@ -132,6 +132,26 @@ namespace vortex::graphics::dx12
 		memcpy(csm_ptr + (size_t)CSM_CASCADES * 64, splits, 16);
 		float params[4] = { m_dir_shadow_strength, m_dir_shadow_bias, (float)m_csm_count, 0.0f };
 		memcpy(csm_ptr + (size_t)CSM_CASCADES * 64 + 16, params, 16);
+
+		// Point shadow tail (#25) @1504: PointShadows[2] entries + PointFaceVP[12] — byte-matched
+		// to standard.hlsl. Entry x = -1 keeps the shader's scan a no-op for unshadowed frames.
+		u8* pt_ptr = csm_ptr + (size_t)CSM_CASCADES * 64 + 32;
+		for (u32 p = 0; p < MAX_SHADOW_POINTS; ++p)
+		{
+			float entry[4] = { -1.0f, 0.0f, 0.0f, 0.0f };
+			if (p < m_shadow_point_count)
+			{
+				entry[0] = (float)m_shadow_points[p].light_index;
+				entry[1] = m_shadow_points[p].strength;
+				entry[2] = m_shadow_points[p].bias;
+			}
+			memcpy(pt_ptr + (size_t)p * 16, entry, 16);
+		}
+		u8* fv_ptr = pt_ptr + (size_t)MAX_SHADOW_POINTS * 16;
+		for (u32 p = 0; p < MAX_SHADOW_POINTS; ++p)
+			for (u32 f = 0; f < 6; ++f)
+				memcpy(fv_ptr + ((size_t)p * 6 + f) * 64,
+					(p < m_shadow_point_count) ? &m_shadow_points[p].face_vp[f] : &ident, 64);
 	}
 	}
 	}

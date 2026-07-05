@@ -164,6 +164,12 @@ namespace vortex::graphics::dx12
 			float range;
 			DirectX::XMFLOAT3 color;
 			float intensity;
+			// Point shadows (#25): the first MAX_SHADOW_POINTS submitted point lights with
+			// cast_shadows get a 6-face cube block in the point shadow atlas. CPU-side only;
+			// the 32-byte GPUPointLight ABI is untouched (shadow data travels in the b2 tail).
+			u32 cast_shadows{ 0 };
+			float shadow_strength{ 1.0f };
+			float shadow_bias{ 0.0015f };
 		};
 		
 		struct SpotLightData
@@ -425,6 +431,8 @@ namespace vortex::graphics::dx12
 											// RESERVED ResourceRegistry heap slot (the scene pass binds that heap)
 		bool ensure_csm_map(u32 size);      // #24: same recipe for the directional cascade atlas (t8)
 		void prepare_csm_cascades();        // #24: splits + snapped ortho crops (called by prepare_shadow_pass)
+		bool ensure_point_shadow_map();     // #25: the 6-face point shadow atlas (t9)
+		void prepare_point_shadows();       // #25: select lights + build the 6 face VPs each
 		bool capture_backbuffer_to_bmp(const char* path);
 		void render_fallback_triangle();
 		void render_grid();
@@ -781,6 +789,24 @@ namespace vortex::graphics::dx12
 		float m_dir_shadow_strength{ 1.0f };
 		float m_dir_shadow_bias{ 0.0008f };
 		float m_dir_shadow_distance{ 80.0f };
+
+		// ---- Point light cube shadows (#25) ----
+		// A THIRD atlas (t9): up to MAX_SHADOW_POINTS point lights x 6 perspective faces of
+		// POINT_SHADOW_TILE² each, laid out 4 tiles per row. Face VPs + per-light shadow params
+		// travel in the b2 tail after the CSM block; GPUPointLight's 32-byte ABI stays untouched
+		// (the shader scans the tiny PointShadow list for its light index).
+		static constexpr u32 MAX_SHADOW_POINTS = 2;
+		static constexpr u32 POINT_SHADOW_TILE = 1024;
+		static constexpr u32 POINT_ATLAS_COLS = 4;      // 12 tiles -> 4096 x 3072
+		ComPtr<ID3D12Resource> m_point_shadow_map;
+		ComPtr<ID3D12DescriptorHeap> m_point_shadow_dsv_heap;
+		D3D12_RESOURCE_STATES m_point_shadow_state{ D3D12_RESOURCE_STATE_DEPTH_WRITE };
+		D3D12_CPU_DESCRIPTOR_HANDLE m_point_srv_cpu{};
+		D3D12_GPU_DESCRIPTOR_HANDLE m_point_srv_gpu{};
+		bool m_point_shadow_ready{ false };
+		struct ShadowPoint { int light_index; float strength; float bias; DirectX::XMFLOAT4X4 face_vp[6]; };
+		ShadowPoint m_shadow_points[MAX_SHADOW_POINTS]{};
+		u32 m_shadow_point_count{ 0 };
 
 		// Create SRV descriptor heap for textures
 		bool create_srv_heap();

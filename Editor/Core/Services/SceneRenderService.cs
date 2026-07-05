@@ -1759,10 +1759,15 @@ namespace Editor.Core.Services
                             break;
 
                         case ECS.Components.Lighting.LightType.Point:
+                            // Point cube shadows (#25): same ShadowType gate + legacy bias mapping
+                            // as spots (0.05 default x 0.03 = the tuned 0.0015 NDC bias).
                             VortexAPI.SubmitPointLight(
                                 px, py, pz,
                                 light.ColorR, light.ColorG, light.ColorB,
-                                light.Intensity, light.Range);
+                                light.Intensity, light.Range,
+                                light.ShadowType != ECS.Components.Lighting.ShadowType.None,
+                                light.ShadowStrength,
+                                light.ShadowBias * 0.03f);
                             break;
 
                         case ECS.Components.Lighting.LightType.Spot:
