@@ -1289,6 +1289,15 @@ namespace Vortex
                                          float temperature = 0f, float tint = 0f)
             { Editor.DllWrapper.VortexAPI.SetPostColorGrade(enabled, exposure, contrast, saturation, temperature, tint); }
 
+        /// <summary>Bloom (#30): everything brighter than <paramref name="threshold"/> glows. knee
+        /// softens the cutoff (no shimmer on grazing highlights), intensity is the glow strength
+        /// (0 = off, bit-exact passthrough), scatter 0..1 spreads the glow wider. The horror
+        /// staple for dying flashlight bulbs, exit signs and monster eyes:
+        /// <c>PostFx.SetBloom(true, 0.7f, 0.5f, 1.2f, 0.7f);</c></summary>
+        public static void SetBloom(bool enabled, float threshold = 0.75f, float knee = 0.5f,
+                                    float intensity = 0.7f, float scatter = 0.65f)
+            { Editor.DllWrapper.VortexAPI.SetPostBloom(enabled, threshold, knee, intensity, scatter); }
+
         /// <summary>Everything off — back to the clean image (and the zero-cost render path).</summary>
         public static void ClearAll()
         {
@@ -1296,6 +1305,7 @@ namespace Vortex
             Editor.DllWrapper.VortexAPI.SetPostGrain(false, 0f, 0f);
             Editor.DllWrapper.VortexAPI.SetPostChromaticAberration(false, 0f, 0f);
             Editor.DllWrapper.VortexAPI.SetPostColorGrade(false, 0f, 1f, 1f, 0f, 0f);
+            Editor.DllWrapper.VortexAPI.SetPostBloom(false, 0.75f, 0.5f, 0f, 0.65f);
             Editor.DllWrapper.VortexAPI.SetPostDebugInvert(false);
         }
     }

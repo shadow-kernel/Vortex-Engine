@@ -190,6 +190,61 @@
                 </StackPanel>
             </Border>
 
+            <!-- ================= BLOOM ================= -->
+            <Border Style="{StaticResource SectionCard}">
+                <StackPanel>
+                    <Grid>
+                        <TextBlock Text="Bloom" Style="{StaticResource SectionTitle}"/>
+                        <CheckBox x:Name="BloomOn" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                  Checked="AnyChanged" Unchecked="AnyChanged"/>
+                    </Grid>
+                    <Grid Style="{StaticResource PropRow}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="92"/><ColumnDefinition Width="*"/><ColumnDefinition Width="52"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Threshold" Style="{StaticResource PropLabel}"
+                                   ToolTip="Brightness where the glow starts — lower makes more of the scene bloom"/>
+                        <Slider x:Name="BloomThreshold" Grid.Column="1" Minimum="0" Maximum="1.5"
+                                VerticalAlignment="Center" ValueChanged="AnyChanged"/>
+                        <TextBox x:Name="BloomThresholdBox" Grid.Column="2" Style="{StaticResource ValueBox}"
+                                 Margin="8,0,0,0" LostFocus="AnyBoxCommit" KeyDown="AnyBoxKey"/>
+                    </Grid>
+                    <Grid Style="{StaticResource PropRow}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="92"/><ColumnDefinition Width="*"/><ColumnDefinition Width="52"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Soft Knee" Style="{StaticResource PropLabel}"
+                                   ToolTip="Softens the threshold cutoff — avoids shimmer on barely-bright highlights"/>
+                        <Slider x:Name="BloomKnee" Grid.Column="1" Minimum="0" Maximum="1"
+                                VerticalAlignment="Center" ValueChanged="AnyChanged"/>
+                        <TextBox x:Name="BloomKneeBox" Grid.Column="2" Style="{StaticResource ValueBox}"
+                                 Margin="8,0,0,0" LostFocus="AnyBoxCommit" KeyDown="AnyBoxKey"/>
+                    </Grid>
+                    <Grid Style="{StaticResource PropRow}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="92"/><ColumnDefinition Width="*"/><ColumnDefinition Width="52"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Intensity" Style="{StaticResource PropLabel}"
+                                   ToolTip="Glow strength in the final image; 0 = off (bit-exact passthrough)"/>
+                        <Slider x:Name="BloomIntensity" Grid.Column="1" Minimum="0" Maximum="3"
+                                VerticalAlignment="Center" ValueChanged="AnyChanged"/>
+                        <TextBox x:Name="BloomIntensityBox" Grid.Column="2" Style="{StaticResource ValueBox}"
+                                 Margin="8,0,0,0" LostFocus="AnyBoxCommit" KeyDown="AnyBoxKey"/>
+                    </Grid>
+                    <Grid Style="{StaticResource PropRow}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="92"/><ColumnDefinition Width="*"/><ColumnDefinition Width="52"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Scatter" Style="{StaticResource PropLabel}"
+                                   ToolTip="How far the glow spreads — higher bleeds wider around bright spots"/>
+                        <Slider x:Name="BloomScatter" Grid.Column="1" Minimum="0" Maximum="1"
+                                VerticalAlignment="Center" ValueChanged="AnyChanged"/>
+                        <TextBox x:Name="BloomScatterBox" Grid.Column="2" Style="{StaticResource ValueBox}"
+                                 Margin="8,0,0,0" LostFocus="AnyBoxCommit" KeyDown="AnyBoxKey"/>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
             <!-- ================= COLOR GRADING ================= -->
             <Border Style="{StaticResource SectionCard}">
                 <StackPanel>

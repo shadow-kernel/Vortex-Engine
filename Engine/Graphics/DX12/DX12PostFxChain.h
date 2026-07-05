@@ -22,6 +22,10 @@ namespace vortex::graphics::dx12
 	// v1 registers two passes sharing one uber-PSO (postfx.hlsl, feature bits per pass in its CB):
 	//   pass 0  "composite"  — vignette + film grain + chromatic aberration in one pass (#29)
 	//   pass 1  "invert"     — trivial debug pass proving the multi-pass ping-pong (#28 AC), off in production
+	// Bloom (#30) prepends a mip sub-chain (bloom.hlsl: soft-knee bright-pass -> progressive 13-tap
+	// downsamples -> additive tent upsamples over up to MAX_BLOOM_MIPS half-res levels) and the uber
+	// pass composites the result via flag 32 — sampling scene (t0) AND bloom (t1) from the chain's
+	// shared shader-visible SRV heap, the piece single-SRV-per-RT binding couldn't do before.
 	//
 	// Traps honored (render-scale work): RTs are EXPLICIT R8G8B8A8_UNORM (class default is BGRA and
 	// would mismatch the back buffer PSO format), every pass sets its own full-output viewport, and
@@ -52,6 +56,13 @@ namespace vortex::graphics::dx12
 			float saturation{ 1.0f };        // 1 = neutral, 0 = greyscale
 			float temperature{ 0.0f };       // -1 cool .. +1 warm
 			float tint{ 0.0f };              // -1 green .. +1 magenta
+			// Bloom (#30) — SDR v1: thresholds the post-tonemap R8G8B8A8 scene (HDR intermediate
+			// is the documented follow-up). intensity 0 keeps the whole chain bypassed (bit-exact).
+			bool bloom{ false };
+			float bloom_threshold{ 0.75f };  // brightness where glow starts (0..~1.5 useful in SDR)
+			float bloom_knee{ 0.5f };        // soft-knee width below the threshold
+			float bloom_intensity{ 0.7f };   // composite strength
+			float bloom_scatter{ 0.65f };    // per-mip additive weight (how far the glow spreads)
 			bool debug_invert{ false };      // #28 chain-test pass — never shipped on
 		};
 
@@ -65,7 +76,14 @@ namespace vortex::graphics::dx12
 		bool active() const
 		{
 			return m_pso && (m_params.vignette || m_params.grain || m_params.ca
-				|| m_params.grade || m_params.debug_invert);
+				|| m_params.grade || m_params.debug_invert || bloom_requested());
+		}
+
+		// Bloom runs only when its PSOs built (shader present) AND intensity is meaningful —
+		// intensity 0 must be a bit-exact passthrough (#30 AC), so it doesn't even redirect.
+		bool bloom_requested() const
+		{
+			return m_pso_bloom_up && m_params.bloom && m_params.bloom_intensity > 0.0001f;
 		}
 
 		// MAIN-VIEW gate: post-FX is a GAME-camera look, not an editor tool — the editor's freecam
@@ -96,21 +114,71 @@ namespace vortex::graphics::dx12
 			float grain_ca[4];         // grain intensity, grain size, ca strength, ca falloff
 			float grade1[4];           // exposure, contrast, saturation, temperature
 			float grade2[4];           // tint, reserved, reserved, reserved
+			float bloom[4];            // composite intensity, reserved, reserved, reserved
 		};
-		static_assert(sizeof(PassCB) == 96, "PassCB must byte-match postfx.hlsl");
+		static_assert(sizeof(PassCB) == 112, "PassCB must byte-match postfx.hlsl");
+
+		// Byte-matched to bloom.hlsl's BloomCB — keep both in sync.
+		struct BloomCB
+		{
+			float src_texel[2];        // 1 / source-level size
+			float threshold; float knee;
+			float sample_scale; float weight;
+			float pad[2];
+		};
+		static_assert(sizeof(BloomCB) == 32, "BloomCB must byte-match bloom.hlsl");
 
 		static constexpr u32 MAX_PASSES = 2;
+		static constexpr u32 MAX_BLOOM_MIPS = 6;
+		// 256B CB slots: 0 uber, 1 invert, 2 prefilter, 3..7 downsample, 8..12 upsample.
+		static constexpr u32 CB_SLOTS = 16;
+		static constexpr u32 CB_SLOT_PREFILTER = 2;
+		static constexpr u32 CB_SLOT_DOWN = 3;                       // + (mip-1)
+		static constexpr u32 CB_SLOT_UP = CB_SLOT_DOWN + (MAX_BLOOM_MIPS - 1);   // + (mip-1)
+		// Shared shader-visible SRV heap layout, per slot: [0] chain input RT, [1..] bloom mips.
+		static constexpr u32 SHARED_SRVS_PER_SLOT = 1 + MAX_BLOOM_MIPS;
+
+		// A bloom mip level: color-only R11G11B10_FLOAT (float headroom while mips accumulate;
+		// deliberately NOT a DX12RenderTarget, which would drag a depth buffer + readback staging
+		// allocation along for every level of the chain).
+		struct BloomMip
+		{
+			ComPtr<ID3D12Resource> tex;
+			u32 w{ 0 }, h{ 0 };
+			D3D12_RESOURCE_STATES state{ D3D12_RESOURCE_STATE_RENDER_TARGET };
+		};
 
 		bool ensure_rt(ID3D12Device* device, int slot, int ping, u32 w, u32 h);
+		bool ensure_bloom_chain(int slot, u32 w, u32 h);
+		void record_bloom(ID3D12GraphicsCommandList* cmd, int slot, u32 w, u32 h);
+		void mip_transition(ID3D12GraphicsCommandList* cmd, BloomMip& mip, D3D12_RESOURCE_STATES to);
+		D3D12_CPU_DESCRIPTOR_HANDLE bloom_rtv(int slot, u32 mip) const;
+		D3D12_CPU_DESCRIPTOR_HANDLE shared_srv_cpu(u32 index) const;
+		D3D12_GPU_DESCRIPTOR_HANDLE shared_srv_gpu(u32 index) const;
+		void write_shared_srvs(int slot);
 
 		ComPtr<ID3D12RootSignature> m_root_signature;
 		ComPtr<ID3D12PipelineState> m_pso;
-		ComPtr<ID3D12Resource> m_cb;          // MAX_PASSES x 256B upload heap, persistently mapped
+		ComPtr<ID3D12PipelineState> m_pso_bloom_pre;   // bright-pass + first downsample
+		ComPtr<ID3D12PipelineState> m_pso_bloom_down;  // 13-tap downsample
+		ComPtr<ID3D12PipelineState> m_pso_bloom_up;    // tent upsample, additive (ONE/ONE)
+		ComPtr<ID3D12Resource> m_cb;          // CB_SLOTS x 256B upload heap, persistently mapped
 		void* m_cb_mapped{ nullptr };
 		DX12RenderTarget m_rt[2][2];          // [slot][ping] — ping B only exists once 2+ passes ran
+		BloomMip m_bloom_mip[2][MAX_BLOOM_MIPS];   // [slot][level], level 0 = half res
+		u32 m_bloom_mips[2]{ 0, 0 };
+		ComPtr<ID3D12DescriptorHeap> m_bloom_rtv_heap;   // 2 x MAX_BLOOM_MIPS RTVs
+		// THE shared shader-visible SRV heap (the #30 two-texture-composite enabler): the uber
+		// pass binds scene color (t0) AND bloom (t1) from here — per-RT single-slot heaps can't
+		// do that (one CBV_SRV_UAV heap bindable at a time, and shader-visible heaps are illegal
+		// CopyDescriptors sources). SRVs are (re)written in place whenever an RT is (re)created.
+		ComPtr<ID3D12DescriptorHeap> m_srv_heap_shared;
+		u32 m_rtv_increment{ 0 }, m_srv_increment{ 0 };
+		bool m_shared_dirty[2]{ true, true }; // shared-heap SRVs need a rewrite (RT/mips recreated)
 		DX12CommandQueue* m_queue{ nullptr }; // for the GPU-idle before re-creating an in-flight RT
 		ID3D12Device* m_device{ nullptr };    // borrowed (DX12Core owns it) — for lazy ping-B creation
 		DXGI_FORMAT m_format{ DXGI_FORMAT_R8G8B8A8_UNORM };
+		DXGI_FORMAT m_bloom_format{ DXGI_FORMAT_R11G11B10_FLOAT };
 		Params m_params;
 		bool m_main_view{ false };            // editor viewport clean by default; player enables at boot
 	};

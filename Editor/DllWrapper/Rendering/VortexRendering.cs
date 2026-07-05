@@ -738,6 +738,10 @@ namespace Editor.DllWrapper
             float exposure, float contrast, float saturation, float temperature, float tint);
 
         [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetPostFxBloom([MarshalAs(UnmanagedType.I1)] bool enabled,
+            float threshold, float knee, float intensity, float scatter);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void SetPostFxDebugInvert([MarshalAs(UnmanagedType.I1)] bool enabled);
 
         [DllImport(_dllName, CallingConvention = _cc)]
@@ -839,6 +843,14 @@ namespace Editor.DllWrapper
             float temperature, float tint)
         {
             try { SetPostFxColorGrade(enabled, exposure, contrast, saturation, temperature, tint); } catch { }
+        }
+
+        /// <summary>Post-FX bloom (#30): soft-knee bright-pass -> progressive mip chain -> additive
+        /// glow composite. threshold = brightness where glow starts (SDR 0..~1.5), knee = soft width,
+        /// intensity = composite strength (0 = bit-exact passthrough), scatter = glow spread (0..1).</summary>
+        public static void SetPostBloom(bool enabled, float threshold, float knee, float intensity, float scatter)
+        {
+            try { SetPostFxBloom(enabled, threshold, knee, intensity, scatter); } catch { }
         }
 
         /// <summary>Debug: the #28 chain-verification invert pass (second pass, proves ping-pong).</summary>

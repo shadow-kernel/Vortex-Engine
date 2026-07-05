@@ -198,6 +198,8 @@ namespace vortex::graphics::dx12
 			{ "motionvector", "vs", "MvecVS",  "vs_5_0" }, { "motionvector", "ps", "MvecPS",  "ps_5_0" },
 			{ "upscale",      "vs", "VSMain",  "vs_5_0" }, { "upscale",      "ps", "PSMain",  "ps_5_0" },
 			{ "postfx",       "vs", "VSMain",  "vs_5_0" }, { "postfx",       "ps", "PSMain",  "ps_5_0" },
+			{ "bloom",        "vs", "VSMain",  "vs_5_0" }, { "bloom",   "ps_pre",  "PSPrefilter",  "ps_5_0" },
+			{ "bloom",   "ps_down", "PSDownsample", "ps_5_0" }, { "bloom", "ps_up", "PSUpsample", "ps_5_0" },
 			{ "basic",        "vs", "BasicVS", "vs_5_0" }, { "basic",        "ps", "BasicPS", "ps_5_0" },
 		};
 

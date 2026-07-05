@@ -169,6 +169,7 @@
     <!-- Shaders are loaded + compiled at RUNTIME by DX12ShaderCompiler (VSMain/PSMain etc.), NOT build-time FXC
          (which would default to a 'main' entry point and fail). Kept as None so they appear in the project. -->
     <None Include="Shaders\basic.hlsl" />
+    <None Include="Shaders\bloom.hlsl" />
     <None Include="Shaders\grid.hlsl" />
     <None Include="Shaders\motionvector.hlsl" />
     <None Include="Shaders\skinned.hlsl" />

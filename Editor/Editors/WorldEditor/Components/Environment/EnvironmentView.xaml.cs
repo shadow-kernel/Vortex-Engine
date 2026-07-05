@@ -61,6 +61,12 @@ namespace Editor.Editors.WorldEditor.Components.Environment
                 SetPair(CaStrength, CaStrengthBox, s.CaStrength);
                 SetPair(CaFalloff, CaFalloffBox, s.CaFalloff);
 
+                BloomOn.IsChecked = s.BloomEnabled;
+                SetPair(BloomThreshold, BloomThresholdBox, s.BloomThreshold);
+                SetPair(BloomKnee, BloomKneeBox, s.BloomKnee);
+                SetPair(BloomIntensity, BloomIntensityBox, s.BloomIntensity);
+                SetPair(BloomScatter, BloomScatterBox, s.BloomScatter);
+
                 GradeOn.IsChecked = s.GradeEnabled;
                 SetPair(Exposure, ExposureBox, s.Exposure);
                 SetPair(Contrast, ContrastBox, s.Contrast);
@@ -111,6 +117,12 @@ namespace Editor.Editors.WorldEditor.Components.Environment
             s.CaEnabled = CaOn.IsChecked == true;
             s.CaStrength = (float)CaStrength.Value;
             s.CaFalloff = (float)CaFalloff.Value;
+
+            s.BloomEnabled = BloomOn.IsChecked == true;
+            s.BloomThreshold = (float)BloomThreshold.Value;
+            s.BloomKnee = (float)BloomKnee.Value;
+            s.BloomIntensity = (float)BloomIntensity.Value;
+            s.BloomScatter = (float)BloomScatter.Value;
 
             s.GradeEnabled = GradeOn.IsChecked == true;
             s.Exposure = (float)Exposure.Value;
@@ -185,6 +197,10 @@ namespace Editor.Editors.WorldEditor.Components.Environment
             if (box == GrainSizeBox) return GrainSize;
             if (box == CaStrengthBox) return CaStrength;
             if (box == CaFalloffBox) return CaFalloff;
+            if (box == BloomThresholdBox) return BloomThreshold;
+            if (box == BloomKneeBox) return BloomKnee;
+            if (box == BloomIntensityBox) return BloomIntensity;
+            if (box == BloomScatterBox) return BloomScatter;
             if (box == ExposureBox) return Exposure;
             if (box == ContrastBox) return Contrast;
             if (box == SaturationBox) return Saturation;
@@ -205,6 +221,10 @@ namespace Editor.Editors.WorldEditor.Components.Environment
             GrainSizeBox.Text = Fmt(GrainSize.Value);
             CaStrengthBox.Text = Fmt(CaStrength.Value);
             CaFalloffBox.Text = Fmt(CaFalloff.Value);
+            BloomThresholdBox.Text = Fmt(BloomThreshold.Value);
+            BloomKneeBox.Text = Fmt(BloomKnee.Value);
+            BloomIntensityBox.Text = Fmt(BloomIntensity.Value);
+            BloomScatterBox.Text = Fmt(BloomScatter.Value);
             ExposureBox.Text = Fmt(Exposure.Value);
             ContrastBox.Text = Fmt(Contrast.Value);
             SaturationBox.Text = Fmt(Saturation.Value);

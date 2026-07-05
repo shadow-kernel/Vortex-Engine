@@ -9,16 +9,18 @@ cbuffer PostFx : register(b0)
 {
     float2 TexelSize;      // 1 / output size
     float  Time;           // seconds since renderer start (grain re-seed)
-    uint   Flags;          // 1 vignette, 2 grain, 4 chromatic aberration, 8 invert, 16 color grading
+    uint   Flags;          // 1 vignette, 2 grain, 4 chromatic aberration, 8 invert, 16 color grading, 32 bloom
     float4 Vignette;       // x intensity, y smoothness, z roundness (1 = circular), w unused
     float4 VignetteColor;  // rgb linear, w unused
     float4 GrainCA;        // x grain intensity, y grain size (px), z CA strength, w CA radial falloff
     float4 Grade1;         // x exposure (stops), y contrast, z saturation, w temperature (-1..1)
     float4 Grade2;         // x tint (-1..1 green<->magenta), yzw reserved
+    float4 BloomP;         // x bloom composite intensity, yzw reserved
 };
 
-Texture2D    Src : register(t0);
-SamplerState Smp : register(s0);
+Texture2D    Src      : register(t0);
+Texture2D    BloomTex : register(t1);   // bloom.hlsl chain result (mip 0) — only sampled under flag 32
+SamplerState Smp      : register(s0);
 
 struct VS_OUT
 {
@@ -64,6 +66,14 @@ float4 PSMain(VS_OUT i) : SV_TARGET
     else
     {
         col = Src.Sample(Smp, uv).rgb;
+    }
+
+    if (Flags & 32)
+    {
+        // Bloom (#30): additively composite the blurred bright-pass chain (bloom.hlsl, sampled
+        // bilinearly from its half-res mip 0). Added BEFORE grain/grading/vignette so the glow is
+        // shaped by the grade and darkened by the vignette like any other scene light.
+        col += BloomTex.Sample(Smp, uv).rgb * BloomP.x;
     }
 
     if (Flags & 2)

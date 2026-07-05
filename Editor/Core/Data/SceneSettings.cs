@@ -48,6 +48,28 @@ namespace Editor.Core.Data
         [DataMember(Name = "temperature", Order = 44)] public float Temperature { get; set; }
         [DataMember(Name = "tint", Order = 45)] public float Tint { get; set; }
 
+        // ---- Bloom (#30) ----
+        [DataMember(Name = "bloomOn", Order = 50)] public bool BloomEnabled { get; set; }
+        [DataMember(Name = "bloomThreshold", Order = 51)] public float BloomThreshold { get; set; } = 0.75f;
+        [DataMember(Name = "bloomKnee", Order = 52)] public float BloomKnee { get; set; } = 0.5f;
+        [DataMember(Name = "bloomIntensity", Order = 53)] public float BloomIntensity { get; set; } = 0.7f;
+        [DataMember(Name = "bloomScatter", Order = 54)] public float BloomScatter { get; set; } = 0.65f;
+
+        /// <summary>DataContractSerializer builds an UNINITIALIZED object (field initializers never
+        /// run), so members missing from an older .vscene would deserialize as 0 — a scene saved
+        /// before bloom existed must still open with the neutral bloom defaults, not zeros. Restore
+        /// every non-zero default here; authored values then overwrite whichever members the file has.</summary>
+        [OnDeserializing]
+        private void RestoreDefaults(StreamingContext context)
+        {
+            FogDensity = 0.08f; FogR = 0.02f; FogG = 0.025f; FogB = 0.035f;
+            VignetteIntensity = 0.8f; VignetteSmoothness = 0.5f; VignetteRoundness = 1.0f;
+            GrainIntensity = 0.35f; GrainSize = 1.6f;
+            CaStrength = 0.35f; CaFalloff = 1.2f;
+            Contrast = 1.0f; Saturation = 1.0f;
+            BloomThreshold = 0.75f; BloomKnee = 0.5f; BloomIntensity = 0.7f; BloomScatter = 0.65f;
+        }
+
         /// <summary>Push every setting into the renderer (persistent frame state, same-frame visible).</summary>
         public void Apply()
         {
@@ -58,6 +80,7 @@ namespace Editor.Core.Data
             DllWrapper.VortexAPI.SetPostGrain(GrainEnabled, GrainIntensity, GrainSize);
             DllWrapper.VortexAPI.SetPostChromaticAberration(CaEnabled, CaStrength, CaFalloff);
             DllWrapper.VortexAPI.SetPostColorGrade(GradeEnabled, Exposure, Contrast, Saturation, Temperature, Tint);
+            DllWrapper.VortexAPI.SetPostBloom(BloomEnabled, BloomThreshold, BloomKnee, BloomIntensity, BloomScatter);
         }
 
         /// <summary>Renderer back to a clean image (used when a scene without settings becomes live).</summary>

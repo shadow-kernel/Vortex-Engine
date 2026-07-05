@@ -522,6 +522,18 @@ EDITOR_INTERFACE void SetPostFxColorGrade(bool enabled, float exposure, float co
 	p.temperature = temperature; p.tint = tint;
 }
 
+// Bloom (#30): soft-knee bright-pass -> progressive mip down/up chain -> additive composite in the
+// uber pass. threshold = brightness where glow starts (SDR 0..~1.5), knee = soft width below it,
+// intensity = composite strength (0 = bit-exact passthrough, the chain never even redirects),
+// scatter = per-mip accumulate weight (how far the glow spreads).
+EDITOR_INTERFACE void SetPostFxBloom(bool enabled, float threshold, float knee, float intensity, float scatter)
+{
+	auto& p = graphics::dx12::DX12Renderer::instance().postfx().params();
+	p.bloom = enabled;
+	p.bloom_threshold = threshold; p.bloom_knee = knee;
+	p.bloom_intensity = intensity; p.bloom_scatter = scatter;
+}
+
 // Chain-verification pass (#28 AC): a trivial invert as a SECOND pass, proving the ping-pong. Debug only.
 EDITOR_INTERFACE void SetPostFxDebugInvert(bool enabled)
 {
