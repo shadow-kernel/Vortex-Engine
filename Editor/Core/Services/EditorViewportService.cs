@@ -56,6 +56,10 @@ namespace Editor.Core.Services
             }
         }
 
+        /// <summary>#49: when true (and AreCollidersVisible), EVERY entity's collider is drawn — not just
+        /// the selection. Level-building view: all trigger zones + walkable bounds at a glance.</summary>
+        public bool ShowAllColliders { get; set; }
+
         public bool SnapToGrid
         {
             get => _snapToGrid;

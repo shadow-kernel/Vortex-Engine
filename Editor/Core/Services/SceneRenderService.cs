@@ -340,6 +340,48 @@ namespace Editor.Core.Services
 
         }
 
+        /// <summary>One entity's collider as a wireframe net (green solid / amber trigger) into the gizmo
+        /// queue — shared by the selected-entity overlay and the "show all colliders" walk (#49).</summary>
+        private void SubmitColliderGizmoFor(GameEntity entity)
+        {
+            var transform = entity != null ? entity.Transform : null;
+            if (transform == null) return;
+            var col = entity.GetComponent<Editor.ECS.Components.Physics.Collider>();
+            if (col == null || !col.IsEnabled) return;
+
+            var pos = transform.LocalPosition;
+            var rot = transform.LocalRotation;
+            float sx = transform.LocalScale.X, sy = transform.LocalScale.Y, sz = transform.LocalScale.Z;
+            float ccx = pos.X + col.Center.X * sx, ccy = pos.Y + col.Center.Y * sy, ccz = pos.Z + col.Center.Z * sz;
+            bool trig = col.IsTrigger; // amber net for a trigger, green for a solid — visible toggle feedback
+            if (col is Editor.ECS.Components.Physics.BoxCollider bc)
+                VortexAPI.RenderColliderBox(ccx, ccy, ccz, Math.Abs(bc.Size.X * 0.5f * sx), Math.Abs(bc.Size.Y * 0.5f * sy), Math.Abs(bc.Size.Z * 0.5f * sz), rot.Y, trig);
+            else if (col is Editor.ECS.Components.Physics.SphereCollider spc)
+                VortexAPI.RenderColliderSphere(ccx, ccy, ccz, spc.Radius * Math.Max(Math.Abs(sx), Math.Max(Math.Abs(sy), Math.Abs(sz))), trig);
+            else if (col is Editor.ECS.Components.Physics.CapsuleCollider cpc)
+            {
+                float cr = cpc.Radius * Math.Max(Math.Abs(sx), Math.Abs(sz));
+                VortexAPI.RenderColliderCapsule(ccx, ccy, ccz, cr, Math.Max(0f, cpc.Height * 0.5f * Math.Abs(sy) - cr), trig);
+            }
+            else // Mesh / base collider: draw the ACTUAL render mesh as a green net (the collision mesh IS the
+                 // render mesh), so a round object shows a round net — not a box. Falls back to a bounds net box.
+            {
+                if (!RenderMeshColliderWireframe(entity, trig))
+                {
+                    var b = CalculateCombinedBounds(entity);
+                    VortexAPI.RenderColliderBox(pos.X + b.CenterOffset.X, pos.Y + b.CenterOffset.Y, pos.Z + b.CenterOffset.Z, b.Size.X * 0.5f, b.Size.Y * 0.5f, b.Size.Z * 0.5f, rot.Y, trig);
+                }
+            }
+        }
+
+        private void SubmitColliderGizmosRecursive(GameEntity entity, GameEntity skip)
+        {
+            if (entity == null || !entity.IsActive) return;
+            if (!ReferenceEquals(entity, skip)) SubmitColliderGizmoFor(entity);
+            if (entity.Children != null)
+                foreach (var c in entity.Children) SubmitColliderGizmosRecursive(c, skip);
+        }
+
         /// <summary>Editor overlays: camera/light icons + the selected entity's outline (or camera frustum) + the
         /// transform gizmo. These all go into the always-on-top GIZMO queue, and this is called EVERY frame in edit
         /// mode (decoupled from SubmitScene's static-reuse) so the gizmo instantly reflects the current tool mode /
@@ -353,6 +395,13 @@ namespace Editor.Core.Services
             RenderAllCameraIcons(scene, selected);
             RenderAllLightIcons(scene, selected);
             RenderAllAudioIcons(scene, selected);
+
+            // #49: "Show ALL colliders" — every entity's collision shape at a glance (trigger zones
+            // amber, solids green) while level-building. The selected entity's collider still draws
+            // through the block below, so skip it here to avoid a double net.
+            if (EditorViewportService.Instance.AreCollidersVisible && EditorViewportService.Instance.ShowAllColliders)
+                foreach (var entity in scene.Entities)
+                    SubmitColliderGizmosRecursive(entity, selected);
 
             if (selected == null) return;
             var transform = selected.Transform;
@@ -384,31 +433,8 @@ namespace Editor.Core.Services
 
             // Green collider wireframe for the selected entity, so you SEE its collision shape where it sits.
             // Gated by the "Show Collision" viewport toggle (EditorViewportService.AreCollidersVisible).
-            var col = selected.GetComponent<Editor.ECS.Components.Physics.Collider>();
-            if (col != null && col.IsEnabled && EditorViewportService.Instance.AreCollidersVisible)
-            {
-                float sx = transform.LocalScale.X, sy = transform.LocalScale.Y, sz = transform.LocalScale.Z;
-                float ccx = pos.X + col.Center.X * sx, ccy = pos.Y + col.Center.Y * sy, ccz = pos.Z + col.Center.Z * sz;
-                bool trig = col.IsTrigger; // amber net for a trigger, green for a solid — visible toggle feedback
-                if (col is Editor.ECS.Components.Physics.BoxCollider bc)
-                    VortexAPI.RenderColliderBox(ccx, ccy, ccz, Math.Abs(bc.Size.X * 0.5f * sx), Math.Abs(bc.Size.Y * 0.5f * sy), Math.Abs(bc.Size.Z * 0.5f * sz), rot.Y, trig);
-                else if (col is Editor.ECS.Components.Physics.SphereCollider spc)
-                    VortexAPI.RenderColliderSphere(ccx, ccy, ccz, spc.Radius * Math.Max(Math.Abs(sx), Math.Max(Math.Abs(sy), Math.Abs(sz))), trig);
-                else if (col is Editor.ECS.Components.Physics.CapsuleCollider cpc)
-                {
-                    float cr = cpc.Radius * Math.Max(Math.Abs(sx), Math.Abs(sz));
-                    VortexAPI.RenderColliderCapsule(ccx, ccy, ccz, cr, Math.Max(0f, cpc.Height * 0.5f * Math.Abs(sy) - cr), trig);
-                }
-                else // Mesh / base collider: draw the ACTUAL render mesh as a green net (the collision mesh IS the
-                     // render mesh), so a round object shows a round net — not a box. Falls back to a bounds net box.
-                {
-                    if (!RenderMeshColliderWireframe(selected, trig))
-                    {
-                        var b = CalculateCombinedBounds(selected);
-                        VortexAPI.RenderColliderBox(pos.X + b.CenterOffset.X, pos.Y + b.CenterOffset.Y, pos.Z + b.CenterOffset.Z, b.Size.X * 0.5f, b.Size.Y * 0.5f, b.Size.Z * 0.5f, rot.Y, trig);
-                    }
-                }
-            }
+            if (EditorViewportService.Instance.AreCollidersVisible)
+                SubmitColliderGizmoFor(selected);
 
             // Audio gizmos (issue #18): the selected AudioSource's min/max distance spheres and a
             // selected ReverbZone's boundary + falloff shell. Values are read fresh every frame,

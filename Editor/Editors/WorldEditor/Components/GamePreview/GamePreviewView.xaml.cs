@@ -1679,6 +1679,14 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             }
         }
 
+        /// <summary>Context-menu option on the collision toggle (#49): draw EVERY entity's collider, not
+        /// just the selection — level-building view for trigger zones and walkable bounds.</summary>
+        private void OnShowAllCollidersToggle(object sender, RoutedEventArgs e)
+        {
+            if (sender is System.Windows.Controls.MenuItem mi)
+                EditorViewportService.Instance.ShowAllColliders = mi.IsChecked;
+        }
+
         /// <summary>Highlight the active transform tool (Move/Rotate/Scale) and clear the others. Driven off
         /// TransformGizmoService.ModeChanged so it stays correct whether the tool is switched from these buttons
         /// or the W/E/R shortcuts.</summary>

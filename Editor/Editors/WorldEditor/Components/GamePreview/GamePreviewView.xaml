@@ -281,7 +281,15 @@ d:DesignHeight="400" d:DesignWidth="600">
                                 <ToggleButton x:Name="SnapToggleBtn" Content="&#xE81E;" Style="{StaticResource ToolToggleButtonStyle}"
                                               ToolTip="Toggle Snap" Checked="OnSnapToggle" Unchecked="OnSnapToggle"/>
                                 <ToggleButton x:Name="CollisionToggleBtn" Content="&#xE809;" Style="{StaticResource ToolToggleButtonStyle}"
-                                              ToolTip="Show Collision (green collider net)" IsChecked="True" Checked="OnCollisionToggle" Unchecked="OnCollisionToggle"/>
+                                              ToolTip="Show Collision (green net = solid, amber = trigger). Right-click: show ALL colliders, not just the selection."
+                                              IsChecked="True" Checked="OnCollisionToggle" Unchecked="OnCollisionToggle">
+                                    <ToggleButton.ContextMenu>
+                                        <ContextMenu>
+                                            <MenuItem x:Name="ShowAllCollidersItem" Header="Show ALL colliders (not just selection)"
+                                                      IsCheckable="True" Click="OnShowAllCollidersToggle"/>
+                                        </ContextMenu>
+                                    </ToggleButton.ContextMenu>
+                                </ToggleButton>
                             </StackPanel>
                         </Border>
                         <!-- View options pill -->
