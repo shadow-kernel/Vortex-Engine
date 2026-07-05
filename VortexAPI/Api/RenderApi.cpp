@@ -511,6 +511,17 @@ EDITOR_INTERFACE void SetPostFxChromaticAberration(bool enabled, float strength,
 	p.ca_strength = strength; p.ca_falloff = falloff;
 }
 
+// Color grading (#31): exposure (EV stops), contrast, saturation, temperature (-1 cool..+1 warm),
+// tint (-1 green..+1 magenta). Single pass, folded into the post uber-pass.
+EDITOR_INTERFACE void SetPostFxColorGrade(bool enabled, float exposure, float contrast, float saturation,
+	float temperature, float tint)
+{
+	auto& p = graphics::dx12::DX12Renderer::instance().postfx().params();
+	p.grade = enabled;
+	p.exposure = exposure; p.contrast = contrast; p.saturation = saturation;
+	p.temperature = temperature; p.tint = tint;
+}
+
 // Chain-verification pass (#28 AC): a trivial invert as a SECOND pass, proving the ping-pong. Debug only.
 EDITOR_INTERFACE void SetPostFxDebugInvert(bool enabled)
 {

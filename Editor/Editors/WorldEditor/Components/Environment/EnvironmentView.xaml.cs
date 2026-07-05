@@ -60,6 +60,13 @@ namespace Editor.Editors.WorldEditor.Components.Environment
                 CaOn.IsChecked = s.CaEnabled;
                 SetPair(CaStrength, CaStrengthBox, s.CaStrength);
                 SetPair(CaFalloff, CaFalloffBox, s.CaFalloff);
+
+                GradeOn.IsChecked = s.GradeEnabled;
+                SetPair(Exposure, ExposureBox, s.Exposure);
+                SetPair(Contrast, ContrastBox, s.Contrast);
+                SetPair(Saturation, SaturationBox, s.Saturation);
+                SetPair(Temperature, TemperatureBox, s.Temperature);
+                SetPair(Tint, TintBox, s.Tint);
             }
             finally { _loading = false; }
         }
@@ -104,6 +111,13 @@ namespace Editor.Editors.WorldEditor.Components.Environment
             s.CaEnabled = CaOn.IsChecked == true;
             s.CaStrength = (float)CaStrength.Value;
             s.CaFalloff = (float)CaFalloff.Value;
+
+            s.GradeEnabled = GradeOn.IsChecked == true;
+            s.Exposure = (float)Exposure.Value;
+            s.Contrast = (float)Contrast.Value;
+            s.Saturation = (float)Saturation.Value;
+            s.Temperature = (float)Temperature.Value;
+            s.Tint = (float)Tint.Value;
 
             SyncBoxes();
             s.Apply();
@@ -171,6 +185,11 @@ namespace Editor.Editors.WorldEditor.Components.Environment
             if (box == GrainSizeBox) return GrainSize;
             if (box == CaStrengthBox) return CaStrength;
             if (box == CaFalloffBox) return CaFalloff;
+            if (box == ExposureBox) return Exposure;
+            if (box == ContrastBox) return Contrast;
+            if (box == SaturationBox) return Saturation;
+            if (box == TemperatureBox) return Temperature;
+            if (box == TintBox) return Tint;
             return null;
         }
 
@@ -186,6 +205,11 @@ namespace Editor.Editors.WorldEditor.Components.Environment
             GrainSizeBox.Text = Fmt(GrainSize.Value);
             CaStrengthBox.Text = Fmt(CaStrength.Value);
             CaFalloffBox.Text = Fmt(CaFalloff.Value);
+            ExposureBox.Text = Fmt(Exposure.Value);
+            ContrastBox.Text = Fmt(Contrast.Value);
+            SaturationBox.Text = Fmt(Saturation.Value);
+            TemperatureBox.Text = Fmt(Temperature.Value);
+            TintBox.Text = Fmt(Tint.Value);
         }
 
         // ---------- helpers ----------

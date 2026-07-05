@@ -1282,12 +1282,20 @@ namespace Vortex
         public static void SetChromaticAberration(bool enabled, float strength = 0.35f, float falloff = 1.2f)
             { Editor.DllWrapper.VortexAPI.SetPostChromaticAberration(enabled, strength, falloff); }
 
+        /// <summary>Color grading (#31): exposure in EV stops, contrast (1 = neutral), saturation (1 =
+        /// neutral, 0 = greyscale), temperature (-1 cool .. +1 warm), tint (-1 green .. +1 magenta).
+        /// The horror mood dial — a cold, desaturated, low-exposure grade turns any scene grim.</summary>
+        public static void SetColorGrade(bool enabled, float exposure = 0f, float contrast = 1f, float saturation = 1f,
+                                         float temperature = 0f, float tint = 0f)
+            { Editor.DllWrapper.VortexAPI.SetPostColorGrade(enabled, exposure, contrast, saturation, temperature, tint); }
+
         /// <summary>Everything off — back to the clean image (and the zero-cost render path).</summary>
         public static void ClearAll()
         {
             Editor.DllWrapper.VortexAPI.SetPostVignette(false, 0f, 0f, 0f, 0f, 0f, 0f);
             Editor.DllWrapper.VortexAPI.SetPostGrain(false, 0f, 0f);
             Editor.DllWrapper.VortexAPI.SetPostChromaticAberration(false, 0f, 0f);
+            Editor.DllWrapper.VortexAPI.SetPostColorGrade(false, 0f, 1f, 1f, 0f, 0f);
             Editor.DllWrapper.VortexAPI.SetPostDebugInvert(false);
         }
     }

@@ -190,6 +190,67 @@
                 </StackPanel>
             </Border>
 
+            <!-- ================= COLOR GRADING ================= -->
+            <Border Style="{StaticResource SectionCard}">
+                <StackPanel>
+                    <Grid>
+                        <TextBlock Text="Color Grading" Style="{StaticResource SectionTitle}"/>
+                        <CheckBox x:Name="GradeOn" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                  Checked="AnyChanged" Unchecked="AnyChanged"/>
+                    </Grid>
+                    <Grid Style="{StaticResource PropRow}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="92"/><ColumnDefinition Width="*"/><ColumnDefinition Width="52"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Exposure" Style="{StaticResource PropLabel}" ToolTip="EV stops (2^EV)"/>
+                        <Slider x:Name="Exposure" Grid.Column="1" Minimum="-3" Maximum="3"
+                                VerticalAlignment="Center" ValueChanged="AnyChanged"/>
+                        <TextBox x:Name="ExposureBox" Grid.Column="2" Style="{StaticResource ValueBox}"
+                                 Margin="8,0,0,0" LostFocus="AnyBoxCommit" KeyDown="AnyBoxKey"/>
+                    </Grid>
+                    <Grid Style="{StaticResource PropRow}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="92"/><ColumnDefinition Width="*"/><ColumnDefinition Width="52"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Contrast" Style="{StaticResource PropLabel}"/>
+                        <Slider x:Name="Contrast" Grid.Column="1" Minimum="0" Maximum="2"
+                                VerticalAlignment="Center" ValueChanged="AnyChanged"/>
+                        <TextBox x:Name="ContrastBox" Grid.Column="2" Style="{StaticResource ValueBox}"
+                                 Margin="8,0,0,0" LostFocus="AnyBoxCommit" KeyDown="AnyBoxKey"/>
+                    </Grid>
+                    <Grid Style="{StaticResource PropRow}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="92"/><ColumnDefinition Width="*"/><ColumnDefinition Width="52"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Saturation" Style="{StaticResource PropLabel}"/>
+                        <Slider x:Name="Saturation" Grid.Column="1" Minimum="0" Maximum="2"
+                                VerticalAlignment="Center" ValueChanged="AnyChanged"/>
+                        <TextBox x:Name="SaturationBox" Grid.Column="2" Style="{StaticResource ValueBox}"
+                                 Margin="8,0,0,0" LostFocus="AnyBoxCommit" KeyDown="AnyBoxKey"/>
+                    </Grid>
+                    <Grid Style="{StaticResource PropRow}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="92"/><ColumnDefinition Width="*"/><ColumnDefinition Width="52"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Temperature" Style="{StaticResource PropLabel}" ToolTip="-1 cool / blue .. +1 warm / orange"/>
+                        <Slider x:Name="Temperature" Grid.Column="1" Minimum="-1" Maximum="1"
+                                VerticalAlignment="Center" ValueChanged="AnyChanged"/>
+                        <TextBox x:Name="TemperatureBox" Grid.Column="2" Style="{StaticResource ValueBox}"
+                                 Margin="8,0,0,0" LostFocus="AnyBoxCommit" KeyDown="AnyBoxKey"/>
+                    </Grid>
+                    <Grid Style="{StaticResource PropRow}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="92"/><ColumnDefinition Width="*"/><ColumnDefinition Width="52"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Tint" Style="{StaticResource PropLabel}" ToolTip="-1 green .. +1 magenta"/>
+                        <Slider x:Name="Tint" Grid.Column="1" Minimum="-1" Maximum="1"
+                                VerticalAlignment="Center" ValueChanged="AnyChanged"/>
+                        <TextBox x:Name="TintBox" Grid.Column="2" Style="{StaticResource ValueBox}"
+                                 Margin="8,0,0,0" LostFocus="AnyBoxCommit" KeyDown="AnyBoxKey"/>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
             <!-- ================= CHROMATIC ABERRATION ================= -->
             <Border Style="{StaticResource SectionCard}">
                 <StackPanel>

@@ -333,6 +333,7 @@ Screen post-effects (#28/#29): vignette, animated film grain, chromatic aberrati
 ▸ `static void SetVignette(bool enabled, float intensity = 0.8f, float smoothness = 0.5f, float roundness = 1f, float r = 0, float g = 0, float b = 0)` — darkened screen edges ("claustrophobia dial"). `roundness 1` = circular on any aspect, `0` = follows the screen shape.
 ▸ `static void SetGrain(bool enabled, float intensity = 0.35f, float size = 1.6f)` — luminance-weighted animated grain (shadows grain more); `size` in output pixels (1–3 is filmic).
 ▸ `static void SetChromaticAberration(bool enabled, float strength = 0.35f, float falloff = 1.2f)` — radial RGB fringing towards the edges. `0.2–0.6` = unease, `2+` = heavy VHS smear.
+▸ `static void SetColorGrade(bool enabled, float exposure = 0f, float contrast = 1f, float saturation = 1f, float temperature = 0f, float tint = 0f)` — the mood dial (#31). `exposure` in EV stops, `contrast`/`saturation` 1 = neutral (saturation 0 = greyscale), `temperature` -1 cool/blue .. +1 warm/orange, `tint` -1 green .. +1 magenta. A cold, low-saturation, low-exposure grade turns any scene grim.
 ▸ `static void ClearAll()` — everything off.
 
 The signature use: ramp the dread as the monster closes in —

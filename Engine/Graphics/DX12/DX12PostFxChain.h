@@ -45,6 +45,13 @@ namespace vortex::graphics::dx12
 			bool ca{ false };
 			float ca_strength{ 0.35f };      // percent of half-screen at the edge
 			float ca_falloff{ 1.2f };        // radial power (higher = clean center, smeared edges)
+			// Color grading (#31)
+			bool grade{ false };
+			float exposure{ 0.0f };          // EV stops (2^EV); 0 = neutral
+			float contrast{ 1.0f };          // 1 = neutral
+			float saturation{ 1.0f };        // 1 = neutral, 0 = greyscale
+			float temperature{ 0.0f };       // -1 cool .. +1 warm
+			float tint{ 0.0f };              // -1 green .. +1 magenta
 			bool debug_invert{ false };      // #28 chain-test pass — never shipped on
 		};
 
@@ -57,7 +64,8 @@ namespace vortex::graphics::dx12
 		// True when at least one pass would run this frame — the renderer's redirect gate.
 		bool active() const
 		{
-			return m_pso && (m_params.vignette || m_params.grain || m_params.ca || m_params.debug_invert);
+			return m_pso && (m_params.vignette || m_params.grain || m_params.ca
+				|| m_params.grade || m_params.debug_invert);
 		}
 
 		// MAIN-VIEW gate: post-FX is a GAME-camera look, not an editor tool — the editor's freecam
@@ -86,8 +94,10 @@ namespace vortex::graphics::dx12
 			float vignette[4];         // intensity, smoothness, roundness, unused
 			float vignette_color[4];   // rgb + unused
 			float grain_ca[4];         // grain intensity, grain size, ca strength, ca falloff
+			float grade1[4];           // exposure, contrast, saturation, temperature
+			float grade2[4];           // tint, reserved, reserved, reserved
 		};
-		static_assert(sizeof(PassCB) == 64, "PassCB must byte-match postfx.hlsl");
+		static_assert(sizeof(PassCB) == 96, "PassCB must byte-match postfx.hlsl");
 
 		static constexpr u32 MAX_PASSES = 2;
 

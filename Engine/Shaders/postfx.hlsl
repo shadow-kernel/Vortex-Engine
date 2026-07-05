@@ -9,10 +9,12 @@ cbuffer PostFx : register(b0)
 {
     float2 TexelSize;      // 1 / output size
     float  Time;           // seconds since renderer start (grain re-seed)
-    uint   Flags;          // 1 = vignette, 2 = grain, 4 = chromatic aberration, 8 = invert (chain test)
+    uint   Flags;          // 1 vignette, 2 grain, 4 chromatic aberration, 8 invert, 16 color grading
     float4 Vignette;       // x intensity, y smoothness, z roundness (1 = circular), w unused
     float4 VignetteColor;  // rgb linear, w unused
     float4 GrainCA;        // x grain intensity, y grain size (px), z CA strength, w CA radial falloff
+    float4 Grade1;         // x exposure (stops), y contrast, z saturation, w temperature (-1..1)
+    float4 Grade2;         // x tint (-1..1 green<->magenta), yzw reserved
 };
 
 Texture2D    Src : register(t0);
@@ -72,6 +74,22 @@ float4 PSMain(VS_OUT i) : SV_TARGET
         float  n = Hash21(cell + frac(Time * float2(17.131, 3.7171)) * 289.17) * 2.0 - 1.0;
         float  luma = dot(col, float3(0.299, 0.587, 0.114));
         col = saturate(col + n * GrainCA.x * 0.25 * (1.0 - saturate(luma)));
+    }
+
+    if (Flags & 16)
+    {
+        // Color grading (#31): exposure -> white balance -> contrast -> saturation. Order matters (photographic).
+        col *= exp2(Grade1.x);                                   // exposure in stops (2^EV)
+
+        // White balance: warm/cool (temperature) on the R/B axis, green/magenta (tint) on the G axis.
+        // Cheap channel scale around 1 — enough for a mood shift without a full chromatic-adaptation matrix.
+        float3 wb = float3(1.0 + Grade1.w * 0.2, 1.0 + Grade2.x * 0.2, 1.0 - Grade1.w * 0.2);
+        col *= wb;
+
+        col = (col - 0.5) * max(Grade1.y, 0.0) + 0.5;            // contrast around mid-grey
+        float luma = dot(col, float3(0.299, 0.587, 0.114));      // saturation: lerp from luminance
+        col = lerp(luma.xxx, col, Grade1.z);
+        col = max(col, 0.0);
     }
 
     if (Flags & 1)

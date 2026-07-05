@@ -110,6 +110,15 @@ namespace vortex::graphics::dx12
 			m_params.vignette = true;
 			m_params.debug_invert = true;
 		}
+		// VORTEX_GRADE_TEST=1: force a strong cold, desaturated grade (engine-path isolation for #31).
+		DWORD gn = GetEnvironmentVariableA("VORTEX_GRADE_TEST", test, sizeof(test));
+		if (gn > 0 && gn < sizeof(test) && test[0] == '1')
+		{
+			m_main_view = true;
+			m_params.grade = true;
+			m_params.exposure = -0.3f; m_params.contrast = 1.35f;
+			m_params.saturation = 0.15f; m_params.temperature = -0.85f; m_params.tint = 0.0f;
+		}
 
 		return true;
 	}
@@ -157,7 +166,7 @@ namespace vortex::graphics::dx12
 
 		// The enabled pass list, in chain order. Each entry is a CB slot; all share the uber-PSO.
 		u32 passes[MAX_PASSES]; u32 n = 0;
-		if (m_params.vignette || m_params.grain || m_params.ca) passes[n++] = 0;
+		if (m_params.vignette || m_params.grain || m_params.ca || m_params.grade) passes[n++] = 0;
 		if (m_params.debug_invert) passes[n++] = 1;
 		if (n == 0) return;   // renderer gates on active(), but stay safe against a mid-frame toggle
 
@@ -167,7 +176,8 @@ namespace vortex::graphics::dx12
 			cb.texel[0] = 1.0f / (float)w;
 			cb.texel[1] = 1.0f / (float)h;
 			cb.time = time_seconds;
-			cb.flags = (m_params.vignette ? 1u : 0u) | (m_params.grain ? 2u : 0u) | (m_params.ca ? 4u : 0u);
+			cb.flags = (m_params.vignette ? 1u : 0u) | (m_params.grain ? 2u : 0u) | (m_params.ca ? 4u : 0u)
+				| (m_params.grade ? 16u : 0u);
 			cb.vignette[0] = m_params.vig_intensity;
 			cb.vignette[1] = m_params.vig_smoothness;
 			cb.vignette[2] = m_params.vig_roundness;
@@ -178,6 +188,11 @@ namespace vortex::graphics::dx12
 			cb.grain_ca[1] = m_params.grain_size;
 			cb.grain_ca[2] = m_params.ca_strength;
 			cb.grain_ca[3] = m_params.ca_falloff;
+			cb.grade1[0] = m_params.exposure;
+			cb.grade1[1] = m_params.contrast;
+			cb.grade1[2] = m_params.saturation;
+			cb.grade1[3] = m_params.temperature;
+			cb.grade2[0] = m_params.tint;
 			memcpy(m_cb_mapped, &cb, sizeof(cb));
 
 			PassCB tb{};

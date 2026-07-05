@@ -734,6 +734,10 @@ namespace Editor.DllWrapper
             float strength, float falloff);
 
         [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetPostFxColorGrade([MarshalAs(UnmanagedType.I1)] bool enabled,
+            float exposure, float contrast, float saturation, float temperature, float tint);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void SetPostFxDebugInvert([MarshalAs(UnmanagedType.I1)] bool enabled);
 
         [DllImport(_dllName, CallingConvention = _cc)]
@@ -827,6 +831,14 @@ namespace Editor.DllWrapper
         public static void SetPostChromaticAberration(bool enabled, float strength, float falloff)
         {
             try { SetPostFxChromaticAberration(enabled, strength, falloff); } catch { }
+        }
+
+        /// <summary>Post-FX color grading (#31): exposure (EV), contrast, saturation, temperature
+        /// (-1 cool..+1 warm), tint (-1 green..+1 magenta). Persistent renderer state like the others.</summary>
+        public static void SetPostColorGrade(bool enabled, float exposure, float contrast, float saturation,
+            float temperature, float tint)
+        {
+            try { SetPostFxColorGrade(enabled, exposure, contrast, saturation, temperature, tint); } catch { }
         }
 
         /// <summary>Debug: the #28 chain-verification invert pass (second pass, proves ping-pong).</summary>

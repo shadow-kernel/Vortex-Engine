@@ -40,6 +40,14 @@ namespace Editor.Core.Data
         [DataMember(Name = "caStrength", Order = 31)] public float CaStrength { get; set; } = 0.35f;
         [DataMember(Name = "caFalloff", Order = 32)] public float CaFalloff { get; set; } = 1.2f;
 
+        // ---- Color grading (#31) ----
+        [DataMember(Name = "gradeOn", Order = 40)] public bool GradeEnabled { get; set; }
+        [DataMember(Name = "exposure", Order = 41)] public float Exposure { get; set; }
+        [DataMember(Name = "contrast", Order = 42)] public float Contrast { get; set; } = 1.0f;
+        [DataMember(Name = "saturation", Order = 43)] public float Saturation { get; set; } = 1.0f;
+        [DataMember(Name = "temperature", Order = 44)] public float Temperature { get; set; }
+        [DataMember(Name = "tint", Order = 45)] public float Tint { get; set; }
+
         /// <summary>Push every setting into the renderer (persistent frame state, same-frame visible).</summary>
         public void Apply()
         {
@@ -49,6 +57,7 @@ namespace Editor.Core.Data
                 VignetteRoundness, VignetteR, VignetteG, VignetteB);
             DllWrapper.VortexAPI.SetPostGrain(GrainEnabled, GrainIntensity, GrainSize);
             DllWrapper.VortexAPI.SetPostChromaticAberration(CaEnabled, CaStrength, CaFalloff);
+            DllWrapper.VortexAPI.SetPostColorGrade(GradeEnabled, Exposure, Contrast, Saturation, Temperature, Tint);
         }
 
         /// <summary>Renderer back to a clean image (used when a scene without settings becomes live).</summary>
