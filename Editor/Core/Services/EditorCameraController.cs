@@ -110,8 +110,24 @@ namespace Editor.Core.Services
         public void OnMouseUp(MouseButtonEventArgs e)
         {
             if (e.RightButton == MouseButtonState.Released)
+            {
                 _rightMouseDown = false;
+                // Leaving fly mode: drop all movement state so nothing can carry over into the next
+                // fly session (belt to the per-frame self-heal in Update).
+                _wKey = _sKey = _aKey = _dKey = _qKey = _eKey = _shiftKey = false;
+            }
         }
+
+        /// <summary>Physical key state via GetAsyncKeyState â€” true while the key is really held,
+        /// regardless of WPF focus. Used only to RELEASE stale movement flags (see Update).</summary>
+        private static bool IsPhysicallyDown(int vk)
+        {
+            try { return (GetAsyncKeyState(vk) & 0x8000) != 0; }
+            catch { return false; } // if the query itself fails, treat as released -> camera stops
+        }
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern short GetAsyncKeyState(int vKey);
 
         public void OnMouseMove(Point pos)
         {
@@ -143,6 +159,13 @@ namespace Editor.Core.Services
 
         public void OnKeyDown(Key key)
         {
+            // Ctrl/Alt chords are editor COMMANDS (Ctrl+S save, Ctrl+D duplicate, ...), not movement.
+            // The viewport forwards every key here; without this guard the command's letter set a movement
+            // flag, and when the command stole focus the matching KeyUp never arrived -> the flag stayed on
+            // and the camera "flew by itself" the next time fly mode started.
+            if ((Keyboard.Modifiers & (ModifierKeys.Control | ModifierKeys.Alt)) != 0)
+                return;
+
             switch (key)
             {
                 case Key.W: _wKey = true; break;
@@ -174,6 +197,21 @@ namespace Editor.Core.Services
         {
             // Only move when right mouse is held
             if (!_rightMouseDown) return;
+
+            // SELF-HEAL stuck flags before applying movement. The flags are fed by WPF KeyDown/KeyUp pairs,
+            // and the Up half is easy to lose: ESC calls Keyboard.ClearFocus, a panel click moves focus, a
+            // Ctrl-command opens a dialog â€” release the key afterwards and no KeyUp ever reaches the viewport.
+            // The stale flag then moved the camera on its own every time fly mode started (the "camera
+            // constantly flies down" bug = a stuck Q). GetAsyncKeyState is the physical truth independent of
+            // WPF focus, so a flag may only STAY on while its key is really held. (Never sets flags â€” typing
+            // W in some other panel must not fly the camera; only the viewport's KeyDown can turn a flag on.)
+            if (_wKey && !IsPhysicallyDown(0x57)) _wKey = false;         // 'W'
+            if (_sKey && !IsPhysicallyDown(0x53)) _sKey = false;         // 'S'
+            if (_aKey && !IsPhysicallyDown(0x41)) _aKey = false;         // 'A'
+            if (_dKey && !IsPhysicallyDown(0x44)) _dKey = false;         // 'D'
+            if (_qKey && !IsPhysicallyDown(0x51)) _qKey = false;         // 'Q'
+            if (_eKey && !IsPhysicallyDown(0x45)) _eKey = false;         // 'E'
+            if (_shiftKey && !IsPhysicallyDown(0x10)) _shiftKey = false; // VK_SHIFT
 
             float speed = MoveSpeed * dt;
             if (_shiftKey) speed *= SprintMultiplier;
@@ -275,7 +313,7 @@ namespace Editor.Core.Services
                 float crossY = fz * baseUpX - fx * baseUpZ;
                 float crossZ = fx * baseUpY - fy * baseUpX;
                 
-                // Rodrigues formula: v_rot = v*cos(?) + (k×v)*sin(?) + k*(k·v)*(1-cos(?))
+                // Rodrigues formula: v_rot = v*cos(?) + (kï¿½v)*sin(?) + k*(kï¿½v)*(1-cos(?))
                 upX = baseUpX * cosR + crossX * sinR + fx * dot * (1 - cosR);
                 upY = baseUpY * cosR + crossY * sinR + fy * dot * (1 - cosR);
                 upZ = baseUpZ * cosR + crossZ * sinR + fz * dot * (1 - cosR);
