@@ -246,6 +246,155 @@ namespace Editor.Core.Services.Physics
             return any;
         }
 
+        /// <summary>General raycast (#35): closest SOLID-world hit along an arbitrary direction. Boxes test as
+        /// exact OBBs (ray transformed into box space), spheres analytically, mesh colliders per triangle
+        /// (Möller–Trumbore), capsules as their AABB. <paramref name="layerMask"/> filters by the owning
+        /// entity's Layer bit. Returns hit point, unit normal (facing the ray origin) and the hit entity.</summary>
+        public static bool Raycast(Vector3 origin, Vector3 direction, float maxDist, int layerMask,
+            out Vector3 hitPoint, out Vector3 hitNormal, out GameEntity hitEntity, out float hitDist)
+        {
+            hitPoint = origin; hitNormal = new Vector3(0, 1, 0); hitEntity = null; hitDist = 0f;
+            V3 o = From(origin);
+            V3 d = From(direction).Norm();
+            if (d.Len() < 0.5f || maxDist <= 0f) return false;
+
+            float bestT = maxDist; Shape best = null; V3 bestN = new V3(0, 1, 0);
+            foreach (var s in _world)
+            {
+                if (s == null) continue;
+                if (s.Owner != null && (layerMask & (1 << (s.Owner.Layer & 31))) == 0) continue;
+                float t; V3 n;
+                bool got;
+                if (s.Kind == Kind.Tris && s.Tris != null) got = RayTris(o, d, s.Tris, bestT, out t, out n);
+                else if (s.Kind == Kind.Box) got = RayObb(o, d, s, bestT, out t, out n);
+                else if (s.Kind == Kind.Sphere) got = RaySphere(o, d, s.Center, s.Radius, bestT, out t, out n);
+                else got = RayAabbGeneric(o, d, s.Min, s.Max, bestT, out t, out n);   // capsule: coarse AABB
+                if (got && t < bestT) { bestT = t; best = s; bestN = n; }
+            }
+            if (best == null) return false;
+
+            hitDist = bestT;
+            hitPoint = To(o + d * bestT);
+            hitNormal = To(bestN);
+            hitEntity = best.Owner;
+            return true;
+        }
+
+        // Ray vs triangle soup — Möller–Trumbore per triangle, closest hit + geometric normal flipped
+        // to face the ray origin.
+        private static bool RayTris(V3 o, V3 d, V3[] tris, float maxDist, out float t, out V3 n)
+        {
+            t = maxDist; n = new V3(0, 1, 0); bool any = false;
+            for (int i = 0; i + 2 < tris.Length; i += 3)
+            {
+                V3 v0 = tris[i], v1 = tris[i + 1], v2 = tris[i + 2];
+                V3 e1 = v1 - v0, e2 = v2 - v0;
+                V3 p = Cross(d, e2);
+                float det = e1.Dot(p);
+                if (det > -1e-7f && det < 1e-7f) continue;
+                float inv = 1f / det;
+                V3 tv = o - v0;
+                float u = tv.Dot(p) * inv; if (u < 0f || u > 1f) continue;
+                V3 q = Cross(tv, e1);
+                float vv = d.Dot(q) * inv; if (vv < 0f || u + vv > 1f) continue;
+                float hitT = e2.Dot(q) * inv;
+                if (hitT >= 0f && hitT < t)
+                {
+                    t = hitT; any = true;
+                    var tn = Cross(e1, e2).Norm();
+                    n = tn.Dot(d) > 0f ? tn * -1f : tn;
+                }
+            }
+            return any;
+        }
+
+        // Ray vs oriented box: transform the ray into box space (project on the OBB axes), slab-test there,
+        // return the entry face's world-space normal.
+        private static bool RayObb(V3 o, V3 d, Shape s, float maxDist, out float t, out V3 n)
+        {
+            t = 0f; n = new V3(0, 1, 0);
+            V3 rel = o - s.Center;
+            float[] ro = { rel.Dot(s.AxX), rel.Dot(s.AxY), rel.Dot(s.AxZ) };
+            float[] rd = { d.Dot(s.AxX), d.Dot(s.AxY), d.Dot(s.AxZ) };
+            float[] h = { s.Half.X, s.Half.Y, s.Half.Z };
+            float tmin = 0f, tmax = maxDist; int axis = -1; float sign = 1f;
+            for (int i = 0; i < 3; i++)
+            {
+                if (rd[i] > -1e-8f && rd[i] < 1e-8f)
+                {
+                    if (ro[i] < -h[i] || ro[i] > h[i]) return false;
+                    continue;
+                }
+                float inv = 1f / rd[i];
+                float t1 = (-h[i] - ro[i]) * inv, t2 = (h[i] - ro[i]) * inv;
+                float lo = t1 < t2 ? t1 : t2, hi = t1 < t2 ? t2 : t1;
+                if (lo > tmin) { tmin = lo; axis = i; sign = rd[i] > 0f ? -1f : 1f; }
+                if (hi < tmax) tmax = hi;
+                if (tmin > tmax) return false;
+            }
+            if (axis < 0) return false;   // started inside — no clean entry face
+            t = tmin;
+            n = (axis == 0 ? s.AxX : axis == 1 ? s.AxY : s.AxZ) * sign;
+            return t <= maxDist;
+        }
+
+        private static bool RaySphere(V3 o, V3 d, V3 c, float r, float maxDist, out float t, out V3 n)
+        {
+            t = 0f; n = new V3(0, 1, 0);
+            V3 m = o - c;
+            float b = m.Dot(d), cc = m.Dot(m) - r * r;
+            if (cc > 0f && b > 0f) return false;
+            float disc = b * b - cc;
+            if (disc < 0f) return false;
+            t = -b - (float)Math.Sqrt(disc);
+            if (t < 0f || t > maxDist) return false;
+            n = ((o + d * t) - c).Norm();
+            return true;
+        }
+
+        private static bool RayAabbGeneric(V3 o, V3 d, V3 min, V3 max, float maxDist, out float t, out V3 n)
+        {
+            t = 0f; n = new V3(0, 1, 0);
+            float tmin = 0f, tmax = maxDist; int axis = -1; float sign = 1f;
+            float[] ov = { o.X, o.Y, o.Z }, dv = { d.X, d.Y, d.Z }, mn = { min.X, min.Y, min.Z }, mx = { max.X, max.Y, max.Z };
+            for (int i = 0; i < 3; i++)
+            {
+                if (dv[i] > -1e-8f && dv[i] < 1e-8f)
+                {
+                    if (ov[i] < mn[i] || ov[i] > mx[i]) return false;
+                    continue;
+                }
+                float inv = 1f / dv[i];
+                float t1 = (mn[i] - ov[i]) * inv, t2 = (mx[i] - ov[i]) * inv;
+                float lo = t1 < t2 ? t1 : t2, hi = t1 < t2 ? t2 : t1;
+                if (lo > tmin) { tmin = lo; axis = i; sign = dv[i] > 0f ? -1f : 1f; }
+                if (hi < tmax) tmax = hi;
+                if (tmin > tmax) return false;
+            }
+            if (axis < 0) return false;
+            t = tmin;
+            n = axis == 0 ? new V3(sign, 0, 0) : axis == 1 ? new V3(0, sign, 0) : new V3(0, 0, sign);
+            return true;
+        }
+
+        private static V3 Cross(V3 a, V3 b)
+            => new V3(a.Y * b.Z - a.Z * b.Y, a.Z * b.X - a.X * b.Z, a.X * b.Y - a.Y * b.X);
+
+        /// <summary>Incrementally add a (runtime-spawned) entity subtree's colliders to the built world —
+        /// unlike a full Build() this does NOT reset trigger overlap state, so no phantom Enter events.</summary>
+        public static void AddEntityShapes(GameEntity e) { if (IsBuilt && e != null) AddRecursive(e); }
+
+        /// <summary>Remove every collider shape owned by the given entity subtree (runtime Destroy).</summary>
+        public static void RemoveEntityShapes(GameEntity root)
+        {
+            if (root == null) return;
+            var set = new HashSet<GameEntity>();
+            void Collect(GameEntity e) { if (e == null) return; set.Add(e); if (e.Children != null) foreach (var c in e.Children) Collect(c); }
+            Collect(root);
+            _world.RemoveAll(s => s != null && s.Owner != null && set.Contains(s.Owner));
+            _triggers.RemoveAll(s => s != null && s.Owner != null && set.Contains(s.Owner));
+        }
+
         /// <summary>Reset the per-frame overlap state (call on Build / scene switch / play end so stale pairs
         /// don't fire phantom Enter/Exit after a reload).</summary>
         public static void ResetEvents() { _prevTrig.Clear(); _curTrig.Clear(); _prevSolid.Clear(); _curSolid.Clear(); }

@@ -151,9 +151,55 @@ Supports Xbox and PlayStation (DualSense/DualShock) pads via `Windows.Gaming.Inp
 
 ## `Scene`
 
-Scene control. The **game** decides when/which scene loads; the switch is **deferred to the end of the current tick**, so it's safe to call from inside `Update`.
+Scene control, entity queries and runtime spawning. The **game** decides when/which scene loads; the switch is **deferred to the end of the current tick**, so it's safe to call from inside `Update`.
 
 ▸ `static void Load(string name)` — request switching to the scene named `name` (matches a scene authored in the project).
+▸ `static event Action<string> Loading` — fired right before a requested switch is applied — hook it to show a loading screen / fade. Cleared automatically on play stop.
+
+**Entity queries (#39)** — all queries return **script handles** (`long`, `0` = not found): the same ids used by `TriggerHit`, `RaycastHit` and behaviours' `EntityId`.
+
+▸ `static long Find(string name)` — first entity with that exact name, anywhere in the scene.
+▸ `static long[] FindByTag(string tag)` — every entity carrying the Tag (set in the Inspector).
+▸ `static long Parent(long entity)` / `static long[] Children(long entity)` — hierarchy traversal.
+▸ `static string NameOf(long entity)` / `static string TagOf(long entity)`
+▸ `static Vector3 PositionOf(long entity)` / `static void SetPositionOf(long entity, Vector3 p)` — read/move ANY entity.
+▸ `static T GetBehaviour<T>(long entity)` — the script instance running on another entity: `Scene.GetBehaviour<DoorController>(door)?.Open();`
+▸ `static Light GetLight(long entity)` / `static AudioSource GetAudioSource(long entity)` — drive any entity's light/audio from a manager script.
+▸ `static void SetActive(long entity, bool active)` — show/hide an entity (+children) at runtime. (Colliders of hidden entities currently stay solid.)
+
+**Runtime spawning (#36)** — THE jump-scare primitive:
+
+▸ `static long Instantiate(string prefabPath, Vector3 position, float yawDegrees = 0)` — spawn a `.ventity` prefab (e.g. `"Assets/Prefabs/Monster.ventity"`). Its scripts `Start()` the same frame, its colliders join the world, it renders immediately. Returns the new entity's handle.
+▸ `static void Destroy(long entity)` — remove an entity from the running game (behaviours get `OnDestroy`, rendering + colliders removed). Play mode never alters the authored scene: spawns/destroys are rolled back when play stops.
+
+---
+
+## `Events`
+
+Typed event bus (#38) — decoupled game-wide messaging. Define an event class in your scripts, subscribe in `Start`, publish from anywhere. Subscriptions clear automatically on play stop / scene switch.
+
+▸ `static void Subscribe<T>(Action<T> handler)` / `static void Unsubscribe<T>(Action<T> handler)`
+▸ `static void Publish<T>(T evt)` — delivered immediately; a throwing handler is logged and skipped.
+
+```csharp
+public class MonsterSpotted { public Vector3 Where; }
+// in the monster:   Events.Publish(new MonsterSpotted { Where = Position });
+// in the music AI:  Events.Subscribe<MonsterSpotted>(OnSpotted);
+```
+
+For DIRECT entity-to-entity calls use `SendMessage(targetEntity, "open")` on the behaviour — the target's `OnMessage(string, object)` runs the same frame.
+
+---
+
+## `Save`
+
+Persistent save data (#40) — PlayerPrefs-style key/value storage **plus save slots**, stored per game under `%APPDATA%\VortexGames\<project>`. Identical in editor play and shipped builds. Auto-flushes on scene switch + play end; call `Flush()` after a checkpoint to be crash-safe.
+
+▸ `static void SetInt/SetFloat/SetString/SetBool(string key, value)`
+▸ `static int GetInt(string key, int def = 0)` (+ `GetFloat/GetString/GetBool`)
+▸ `static bool HasKey(string key)` / `static void DeleteKey(string key)` / `static void DeleteAll()`
+▸ `static void UseSlot(int slot)` / `static int CurrentSlot { get; }` / `static bool SlotExists(int slot)` / `static void DeleteSlot(int slot)`
+▸ `static void Flush()` — write to disk now.
 
 ---
 
@@ -194,6 +240,35 @@ Character collision. `MoveCharacter` resolves a capsule (feet position, radius, 
 ▸ `static string GroundTag(Vector3 from, float maxDist = 3f)` — the **Tag** of the surface entity below you (e.g. tag floors `"grass"`, `"wood"`, `"metal"`), or `""`. The classic "what am I standing on?" query.
 ▸ `static string GroundMaterial(Vector3 from, float maxDist = 3f)` — the **material name** of the surface (e.g. `"grass"` from `grass.vmat`), or `""`. Scalable: map material→sound once and every object using that material plays the right footstep, in every scene, with no per-object tagging.
 ▸ `static string GroundStepSound(Vector3 from, float maxDist = 3f)` — the **footstep sound** assigned to the surface's material in the Material Editor (a project-relative clip / `.vsndc` path), or `""`. Editor-first: a footstep script becomes `Audio.PlayOneShot(Physics.GroundStepSound(pos), pos)` and adding a new surface never touches code.
+
+**General raycast (#35)** — any direction, against the solid colliders. Line-of-sight, interaction rays, "what am I looking at":
+
+▸ `static bool Raycast(Vector3 origin, Vector3 direction, float maxDist, out RaycastHit hit, int layerMask = ~0)` — closest hit with `Point`, `Normal` (faces the origin), `Distance`, `EntityId`, `Name`, `Tag`. `layerMask` filters by entity Layer bit.
+▸ `static bool Raycast(Vector3 origin, Vector3 direction, float maxDist, int layerMask = ~0)` — just "did I hit something?".
+
+```csharp
+RaycastHit hit;
+if (Physics.Raycast(eyePos, Forward, 2.5f, out hit) && hit.Tag == "Door")
+    SendMessage(hit.EntityId, "interact");
+```
+
+Boxes test as exact oriented boxes, spheres analytically, mesh colliders per triangle.
+
+**Coroutines + timers (#37)** — on every `VortexBehaviour`:
+
+▸ `Coroutine StartCoroutine(IEnumerator routine)` — `yield return new WaitForSeconds(1.5f)` pauses, `yield return null` waits one frame. The first step runs immediately.
+▸ `void StopCoroutine(Coroutine c)` / `void StopAllCoroutines()`
+▸ `void Invoke(Action action, float delay)` / `void InvokeRepeating(Action action, float delay, float interval)` / `void CancelInvokes()`
+
+```csharp
+IEnumerator JumpScare()
+{
+    GetLight().Enabled = false;                  // lights out
+    yield return new WaitForSeconds(1.5f);       // let the dread build
+    Scene.Instantiate("Assets/Prefabs/Monster.ventity", Position + Forward * 2f, Rotation.Y + 180f);
+    Audio.PlayOneShot("Assets/Audio/sting.wav", Position);
+}
+```
 
 ---
 

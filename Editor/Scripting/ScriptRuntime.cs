@@ -63,6 +63,323 @@ namespace Editor.Scripting
         }
         private bool _active;
 
+        // ================= Scripting wave (#35-#40): handles, queries, coroutines, spawn/destroy =================
+
+        // Handles for ARBITRARY entities (not just scripted ones), assigned on demand — the ids TriggerHit,
+        // RaycastHit and Scene.Find hand to scripts. One canonical handle per entity for the whole run.
+        private readonly Dictionary<GameEntity, long> _handlesByEntity = new Dictionary<GameEntity, long>();
+
+        internal long HandleForEntity(GameEntity e)
+        {
+            if (e == null) return 0;
+            if (_handlesByEntity.TryGetValue(e, out var h)) return h;
+            long handle = ++_nextHandle;
+            _entitiesById[handle] = e;
+            _handlesByEntity[e] = handle;
+            return handle;
+        }
+
+        // ---- entity queries (#39) ----
+
+        internal long FindEntityHandle(string name)
+        {
+            if (string.IsNullOrEmpty(name) || _currentScene?.Entities == null) return 0;
+            GameEntity found = null;
+            void Walk(GameEntity e)
+            {
+                if (found != null || e == null) return;
+                if (e.Name == name) { found = e; return; }
+                if (e.Children != null) foreach (var c in e.Children) Walk(c);
+            }
+            foreach (var e in _currentScene.Entities) { Walk(e); if (found != null) break; }
+            return found != null ? HandleForEntity(found) : 0;
+        }
+
+        internal long[] FindEntityHandlesByTag(string tag)
+        {
+            var result = new List<long>();
+            if (string.IsNullOrEmpty(tag) || _currentScene?.Entities == null) return result.ToArray();
+            void Walk(GameEntity e)
+            {
+                if (e == null) return;
+                if (e.Tag == tag) result.Add(HandleForEntity(e));
+                if (e.Children != null) foreach (var c in e.Children) Walk(c);
+            }
+            foreach (var e in _currentScene.Entities) Walk(e);
+            return result.ToArray();
+        }
+
+        internal long GetParentHandle(long id)
+        {
+            var e = FindEntityByHandle(id);
+            return e?.Parent != null ? HandleForEntity(e.Parent) : 0;
+        }
+
+        internal long[] GetChildHandles(long id)
+        {
+            var e = FindEntityByHandle(id);
+            if (e?.Children == null || e.Children.Count == 0) return new long[0];
+            var result = new long[e.Children.Count];
+            for (int i = 0; i < e.Children.Count; i++) result[i] = HandleForEntity(e.Children[i]);
+            return result;
+        }
+
+        internal string EntityNameOf(long id) { return FindEntityByHandle(id)?.Name ?? ""; }
+        internal string EntityTagOf(long id) { return FindEntityByHandle(id)?.Tag ?? ""; }
+
+        internal Vortex.VortexBehaviour BehaviourOf(long id)
+        {
+            if (_behavioursByHandle.TryGetValue(id, out var b) && b != null) return b;
+            var e = FindEntityByHandle(id);
+            return e != null && _behavioursByEntity.TryGetValue(e, out var b2) ? b2 : null;
+        }
+
+        internal bool SetEntityActive(long id, bool active)
+        {
+            var e = FindEntityByHandle(id);
+            if (e == null) return false;
+            if (!_activeChanged.ContainsKey(e)) _activeChanged[e] = e.IsActive;   // restore on play end
+            e.IsActive = active;
+            try { e.SyncEngineStateRecursive(active); } catch { }
+            Editor.Core.Services.SceneRenderService.RuntimeDirty = true;
+            return true;
+        }
+
+        // ---- entity messaging (#38) ----
+
+        internal void SendEntityMessage(long targetId, string message, object arg)
+        {
+            var b = BehaviourOf(targetId);
+            if (b == null) return;
+            try { b.OnMessage(message ?? "", arg); }
+            catch (Exception ex) { LogScriptError("OnMessage", b, ex); }
+        }
+
+        // ---- coroutines + timers (#37) ----
+
+        private sealed class Co
+        {
+            public Vortex.VortexBehaviour Owner;
+            public System.Collections.IEnumerator Routine;
+            public float Wait;
+            public Vortex.Coroutine Handle;
+        }
+        private sealed class Inv
+        {
+            public Vortex.VortexBehaviour Owner;
+            public Action Action;
+            public float Due;
+            public float Interval;   // 0 = one-shot
+            public bool Cancelled;
+        }
+        private readonly List<Co> _coroutines = new List<Co>();
+        private readonly List<Inv> _invokes = new List<Inv>();
+
+        internal Vortex.Coroutine StartCoroutine(Vortex.VortexBehaviour owner, System.Collections.IEnumerator routine)
+        {
+            var handle = new Vortex.Coroutine();
+            if (routine == null || !_active) { handle.Done = true; return handle; }
+            var co = new Co { Owner = owner, Routine = routine, Wait = 0f, Handle = handle };
+            _coroutines.Add(co);
+            AdvanceCoroutine(co);   // Unity semantics: the first MoveNext runs immediately
+            return handle;
+        }
+
+        internal void StopAllCoroutines(Vortex.VortexBehaviour owner)
+        {
+            for (int i = 0; i < _coroutines.Count; i++)
+                if (ReferenceEquals(_coroutines[i].Owner, owner)) _coroutines[i].Handle.Stopped = true;
+        }
+
+        internal void ScheduleInvoke(Vortex.VortexBehaviour owner, Action action, float delay, float interval)
+        {
+            if (action == null || !_active) return;
+            _invokes.Add(new Inv { Owner = owner, Action = action, Due = delay > 0f ? delay : 0f, Interval = interval });
+        }
+
+        internal void CancelInvokes(Vortex.VortexBehaviour owner)
+        {
+            for (int i = 0; i < _invokes.Count; i++)
+                if (ReferenceEquals(_invokes[i].Owner, owner)) _invokes[i].Cancelled = true;
+        }
+
+        private void AdvanceCoroutine(Co c)
+        {
+            bool more;
+            try { more = c.Routine.MoveNext(); }
+            catch (Exception ex) { LogScriptError("Coroutine", c.Owner, ex); c.Handle.Done = true; return; }
+            if (!more) { c.Handle.Done = true; return; }
+            c.Wait = (c.Routine.Current as Vortex.WaitForSeconds)?.Seconds ?? 0f;   // yield return null = one frame
+        }
+
+        private void TickCoroutinesAndInvokes(float dt)
+        {
+            // Snapshot the counts: coroutines/invokes STARTED during this tick already ran their first
+            // step (StartCoroutine) or wait a full delay — they must not double-advance this frame.
+            int nc = _coroutines.Count;
+            for (int i = 0; i < nc; i++)
+            {
+                var c = _coroutines[i];
+                if (c.Handle.Stopped || c.Handle.Done) continue;
+                c.Wait -= dt;
+                if (c.Wait > 0f) continue;
+                AdvanceCoroutine(c);
+            }
+            _coroutines.RemoveAll(c => c.Handle.Stopped || c.Handle.Done);
+
+            int ni = _invokes.Count;
+            for (int i = 0; i < ni; i++)
+            {
+                var v = _invokes[i];
+                if (v.Cancelled) continue;
+                v.Due -= dt;
+                if (v.Due > 0f) continue;
+                try { v.Action(); }
+                catch (Exception ex) { LogScriptError("Invoke", v.Owner, ex); }
+                if (v.Interval > 0f) v.Due = v.Interval;   // fixed re-arm (no catch-up burst after a hitch)
+                else v.Cancelled = true;
+            }
+            _invokes.RemoveAll(v => v.Cancelled);
+        }
+
+        // ---- runtime instantiate/destroy (#36) + the play-mode restore ledger ----
+        // Editor play runs the AUTHORED scene in place — runtime spawns/destroys/SetActive must not leak
+        // into the asset. Every mutation is recorded and rolled back in End().
+
+        private readonly List<GameEntity> _spawned = new List<GameEntity>();
+        private sealed class RemovedRec { public GameEntity Entity; public GameEntity Parent; public int Index; }
+        private readonly List<RemovedRec> _removed = new List<RemovedRec>();
+        private readonly Dictionary<GameEntity, bool> _activeChanged = new Dictionary<GameEntity, bool>();
+
+        internal long InstantiatePrefabAt(string prefabPath, Vortex.Vector3 pos, float yawDeg)
+        {
+            if (!_active || _currentScene == null || string.IsNullOrEmpty(prefabPath)) return 0;
+            GameEntity ent = null;
+            try { ent = Editor.Core.Services.PrefabService.Instance.InstantiatePrefab(prefabPath, _currentScene, null, false); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] Instantiate failed: " + ex.Message); }
+            if (ent == null)
+            {
+                try { Editor.Core.Services.ConsoleService.Instance.LogError("Instantiate: prefab not found: " + prefabPath); } catch { }
+                return 0;
+            }
+            _spawned.Add(ent);
+
+            long handle = HandleForEntity(ent);
+            ((Vortex.IScriptHost)this).SetPosition(handle, pos);
+            var rot = ((Vortex.IScriptHost)this).GetRotation(handle); rot.Y = yawDeg;
+            ((Vortex.IScriptHost)this).SetRotation(handle, rot);
+
+            try { ent.SyncEngineStateRecursive(true); } catch { }
+            Editor.Core.Services.SceneRenderService.RuntimeDirty = true;
+            try { Editor.Core.Services.Physics.CollisionService.AddEntityShapes(ent); } catch { }
+
+            // Its Script components come alive immediately — a spawned monster thinks from THIS frame.
+            if (_scriptAsm != null)
+            {
+                int before = _behaviours.Count;
+                InstantiateRecursive(ent, _scriptAsm);
+                for (int i = before; i < _behaviours.Count; i++)
+                {
+                    try { _behaviours[i].Start(); }
+                    catch (Exception ex) { LogScriptError("Start", _behaviours[i], ex); }
+                }
+            }
+            return handle;
+        }
+
+        internal bool DestroyEntity(long id)
+        {
+            var e = FindEntityByHandle(id);
+            if (e == null || _currentScene == null) return false;
+
+            // OnDestroy + unregister every behaviour in the subtree (and their coroutines/timers).
+            var doomed = new List<Vortex.VortexBehaviour>();
+            void Collect(GameEntity x)
+            {
+                if (x == null) return;
+                if (_behavioursByEntity.TryGetValue(x, out var b) && b != null) doomed.Add(b);
+                if (x.Children != null) foreach (var c in x.Children) Collect(c);
+            }
+            Collect(e);
+            foreach (var b in doomed)
+            {
+                try { b.OnDestroy(); } catch (Exception ex) { LogScriptError("OnDestroy", b, ex); }
+                _behaviours.Remove(b);
+                _behavioursByHandle.Remove(b.EntityId);
+                var be = FindEntityByHandle(b.EntityId);
+                if (be != null) _behavioursByEntity.Remove(be);
+                StopAllCoroutines(b);
+                CancelInvokes(b);
+            }
+
+            try { Editor.Core.Services.Physics.CollisionService.RemoveEntityShapes(e); } catch { }
+            try { e.SyncEngineStateRecursive(false); } catch { }
+
+            // Detach from the live tree. Authored entities are LEDGERED and restored on play end;
+            // runtime-spawned ones are gone for good.
+            if (_spawned.Remove(e))
+            {
+                if (e.Parent != null) e.Parent.Children.Remove(e); else _currentScene.Entities.Remove(e);
+            }
+            else
+            {
+                var rec = new RemovedRec { Entity = e, Parent = e.Parent };
+                if (e.Parent != null) { rec.Index = e.Parent.Children.IndexOf(e); e.Parent.Children.Remove(e); }
+                else { rec.Index = _currentScene.Entities.IndexOf(e); _currentScene.Entities.Remove(e); }
+                _removed.Add(rec);
+            }
+
+            // Release the subtree's script handles — a stale id must resolve to nothing, not a ghost.
+            void Release(GameEntity x)
+            {
+                if (x == null) return;
+                if (_handlesByEntity.TryGetValue(x, out var h)) { _handlesByEntity.Remove(x); _entitiesById.Remove(h); }
+                if (x.Children != null) foreach (var c in x.Children) Release(c);
+            }
+            Release(e);
+
+            Editor.Core.Services.SceneRenderService.RuntimeDirty = true;
+            return true;
+        }
+
+        /// <summary>Roll every runtime scene mutation back (spawns out, destroys back in, SetActive
+        /// restored) — play mode must never alter the authored scene.</summary>
+        private void RollbackRuntimeSceneChanges()
+        {
+            foreach (var e in _spawned)
+            {
+                try
+                {
+                    e.SyncEngineStateRecursive(false);
+                    if (e.Parent != null) e.Parent.Children.Remove(e); else _currentScene?.Entities.Remove(e);
+                }
+                catch { }
+            }
+            _spawned.Clear();
+
+            for (int i = _removed.Count - 1; i >= 0; i--)
+            {
+                var r = _removed[i];
+                try
+                {
+                    var list = r.Parent != null ? r.Parent.Children : _currentScene?.Entities;
+                    if (list != null && !list.Contains(r.Entity))
+                        list.Insert(Math.Min(Math.Max(r.Index, 0), list.Count), r.Entity);
+                    r.Entity.SyncEngineStateRecursive(r.Entity.IsActive);
+                }
+                catch { }
+            }
+            _removed.Clear();
+
+            foreach (var kv in _activeChanged)
+            {
+                try { kv.Key.IsActive = kv.Value; kv.Key.SyncEngineStateRecursive(kv.Value); } catch { }
+            }
+            _activeChanged.Clear();
+
+            Editor.Core.Services.SceneRenderService.RuntimeDirty = true;
+        }
+
         /// <summary>Last compile diagnostics (empty on success) — surfaced to the user.</summary>
         public string LastBuildLog { get; private set; } = "";
 
@@ -131,7 +448,10 @@ namespace Editor.Scripting
             foreach (var e in scene.Entities) InstantiateRecursive(e, asm);
 
             _active = true;
-            for (int i = 0; i < _behaviours.Count; i++)
+            // Snapshot the count: a Start() that calls Scene.Instantiate appends new behaviours which
+            // are ALREADY Start()ed by InstantiatePrefabAt — walking the live count would start them twice.
+            int startCount = _behaviours.Count;
+            for (int i = 0; i < startCount; i++)
             {
                 try { _behaviours[i].Start(); }
                 catch (Exception ex) { LogScriptError("Start", _behaviours[i], ex); }
@@ -174,6 +494,10 @@ namespace Editor.Scripting
                 try { b.Update(dt); }
                 catch (Exception ex) { LogScriptError("UI Update", b, ex); }
             }
+
+            // Coroutines + Invoke timers (#37) advance after behaviours, so a coroutine resumed this
+            // frame sees the world the behaviours just built (and PlayAnimation from it applies below).
+            TickCoroutinesAndInvokes(dt);
 
             // Skeletal animation: advance every Animator AFTER behaviours ran, so a same-frame
             // PlayAnimation() takes effect immediately. This is the one tick all three play drivers share.
@@ -365,9 +689,18 @@ namespace Editor.Scripting
                 try { _behaviours[i].OnDestroy(); } catch { }
             }
             foreach (var b in _uiActions.Values) { if (b != null) try { b.OnDestroy(); } catch { } }
+            // Scripting-wave teardown (#36-#40): undo runtime scene mutations, stop timers/coroutines,
+            // drop event subscriptions, persist pending save data.
+            try { RollbackRuntimeSceneChanges(); } catch { }
+            _coroutines.Clear();
+            _invokes.Clear();
+            try { Vortex.Events.Clear(); } catch { }
+            try { Vortex.Scene.ResetHooks(); } catch { }
+            try { Vortex.Save.Flush(); } catch { }
             _uiActions.Clear();
             _behaviours.Clear();
             _entitiesById.Clear();
+            _handlesByEntity.Clear();
             _behavioursByHandle.Clear();
             _behavioursByEntity.Clear();
             try { Editor.Core.Services.Physics.CollisionService.ResetEvents(); Editor.Core.Services.Physics.CollisionService.ClearCharacters(); } catch { }
@@ -495,6 +828,7 @@ namespace Editor.Scripting
                         long handle = ++_nextHandle;
                         behaviour.EntityId = handle;
                         _entitiesById[handle] = e;
+                        _handlesByEntity[e] = handle;   // the behaviour handle IS the entity's canonical handle
                         _behaviours.Add(behaviour);
                         _behavioursByHandle[handle] = behaviour;
                         _behavioursByEntity[e] = behaviour;

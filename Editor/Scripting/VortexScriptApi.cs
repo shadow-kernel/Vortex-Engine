@@ -3,6 +3,7 @@
 // assembly so behaviours can actually affect the running game (move their entity, read input, etc.).
 // The engine wires the host implementation at runtime; scripts only see the public surface below.
 using System;
+using System.Collections.Generic;
 
 namespace Vortex
 {
@@ -101,6 +102,42 @@ namespace Vortex
         /// <summary>Tag of the other entity (e.g. "Player", "Enemy").</summary>
         public string Tag;
         public TriggerHit(long id, string name, string tag) { EntityId = id; Name = name ?? ""; Tag = tag ?? ""; }
+    }
+
+    /// <summary>Result of <see cref="Physics.Raycast(Vector3, Vector3, float, out RaycastHit, int)"/> —
+    /// where the ray hit, the surface normal, and WHO was hit.</summary>
+    public struct RaycastHit
+    {
+        /// <summary>World-space hit point.</summary>
+        public Vector3 Point;
+        /// <summary>Surface normal at the hit (unit length, faces the ray origin).</summary>
+        public Vector3 Normal;
+        /// <summary>Distance from the ray origin to the hit.</summary>
+        public float Distance;
+        /// <summary>Script handle of the hit entity (usable with Scene.NameOf/TagOf/GetBehaviour etc.).</summary>
+        public long EntityId;
+        /// <summary>Name of the hit entity.</summary>
+        public string Name;
+        /// <summary>Tag of the hit entity.</summary>
+        public string Tag;
+    }
+
+    /// <summary>Coroutine yield instruction: pause the coroutine for the given seconds.
+    /// <c>yield return new WaitForSeconds(2f);</c> — <c>yield return null</c> waits one frame.</summary>
+    public sealed class WaitForSeconds
+    {
+        internal readonly float Seconds;
+        public WaitForSeconds(float seconds) { Seconds = seconds > 0f ? seconds : 0f; }
+    }
+
+    /// <summary>Handle to a running coroutine (returned by <see cref="VortexBehaviour.StartCoroutine"/>).
+    /// Pass it to StopCoroutine to cancel. <see cref="IsRunning"/> tells whether it finished.</summary>
+    public sealed class Coroutine
+    {
+        internal bool Stopped;
+        internal bool Done;
+        /// <summary>True while the coroutine still has work pending.</summary>
+        public bool IsRunning { get { return !Stopped && !Done; } }
     }
 
     /// <summary>
@@ -207,9 +244,53 @@ namespace Vortex
         /// <summary>Current playback time (seconds) of this entity's animation.</summary>
         public float AnimationTime { get { return Host != null ? Host.GetAnimationTime(EntityId) : 0f; } }
 
+        // ---- Coroutines + timers (#37) ----
+
+        /// <summary>Start a coroutine on this behaviour. Inside, <c>yield return new WaitForSeconds(2f)</c>
+        /// pauses for 2 seconds and <c>yield return null</c> waits one frame. Coroutines stop automatically
+        /// when the behaviour's entity is destroyed or play ends. The classic horror sequence tool:
+        /// <c>IEnumerator Scare() { light.Enabled = false; yield return new WaitForSeconds(1.5f); Spawn(); }</c></summary>
+        public Coroutine StartCoroutine(System.Collections.IEnumerator routine)
+            { return Editor.Scripting.ScriptRuntime.Instance.StartCoroutine(this, routine); }
+
+        /// <summary>Cancel a running coroutine started on this behaviour.</summary>
+        public void StopCoroutine(Coroutine routine) { if (routine != null) routine.Stopped = true; }
+
+        /// <summary>Cancel every coroutine started on this behaviour.</summary>
+        public void StopAllCoroutines() { Editor.Scripting.ScriptRuntime.Instance.StopAllCoroutines(this); }
+
+        /// <summary>Run <paramref name="action"/> once after <paramref name="delay"/> seconds.</summary>
+        public void Invoke(Action action, float delay)
+            { Editor.Scripting.ScriptRuntime.Instance.ScheduleInvoke(this, action, delay, 0f); }
+
+        /// <summary>Run <paramref name="action"/> after <paramref name="delay"/> seconds, then again every
+        /// <paramref name="interval"/> seconds until <see cref="CancelInvokes"/> (or play ends).</summary>
+        public void InvokeRepeating(Action action, float delay, float interval)
+            { Editor.Scripting.ScriptRuntime.Instance.ScheduleInvoke(this, action, delay, interval > 0.001f ? interval : 0.001f); }
+
+        /// <summary>Cancel every pending Invoke/InvokeRepeating on this behaviour.</summary>
+        public void CancelInvokes() { Editor.Scripting.ScriptRuntime.Instance.CancelInvokes(this); }
+
+        // ---- Entity messaging (#38) + hierarchy (#39) ----
+
+        /// <summary>Send a message to the behaviour on another entity — its <see cref="OnMessage"/> is called
+        /// this frame. Target entities via <see cref="Scene.Find"/>/<see cref="Scene.FindByTag"/> or a TriggerHit/
+        /// RaycastHit EntityId. <c>SendMessage(door, "open");</c></summary>
+        public void SendMessage(long targetEntity, string message, object arg = null)
+            { Editor.Scripting.ScriptRuntime.Instance.SendEntityMessage(targetEntity, message, arg); }
+
+        /// <summary>Script handle of this entity's parent (0 = none / root).</summary>
+        public long GetParent() { return Scene.Parent(EntityId); }
+
+        /// <summary>Script handles of this entity's direct children.</summary>
+        public long[] GetChildren() { return Scene.Children(EntityId); }
+
         public virtual void Start() { }
         public virtual void Update(float dt) { }
         public virtual void OnDestroy() { }
+
+        /// <summary>Called when another behaviour <see cref="SendMessage"/>s this entity.</summary>
+        public virtual void OnMessage(string message, object arg) { }
 
         /// <summary>Called when the playing clip crosses one of its EVENT markers (authored in the Keyframe
         /// Editor) — e.g. footstep sounds, attack hit frames. The marker's name is passed.</summary>
@@ -514,7 +595,232 @@ namespace Vortex
     public static class Scene
     {
         internal static IScriptHost Host;
-        public static void Load(string name) { if (Host != null) Host.LoadScene(name); }
+
+        /// <summary>Fired right before a requested scene switch is applied — hook it to show a loading
+        /// screen (draw UI / fade out). The actual switch happens at the end of the current tick.</summary>
+        public static event Action<string> Loading;
+
+        public static void Load(string name)
+        {
+            if (Host == null) return;
+            try { Loading?.Invoke(name); } catch { }
+            Host.LoadScene(name);
+        }
+
+        internal static void ResetHooks() { Loading = null; }
+
+        // ---- Entity queries + hierarchy traversal (#39) ----
+        // All queries return SCRIPT HANDLES (long, 0 = not found) — the same ids used by TriggerHit,
+        // RaycastHit and behaviours' EntityId. Handles stay valid for the run (until scene switch/stop).
+
+        /// <summary>Find an entity anywhere in the scene by exact name (first match; 0 = none).</summary>
+        public static long Find(string name) { return Editor.Scripting.ScriptRuntime.Instance.FindEntityHandle(name); }
+
+        /// <summary>Every entity carrying the given Tag (set in the Inspector).</summary>
+        public static long[] FindByTag(string tag) { return Editor.Scripting.ScriptRuntime.Instance.FindEntityHandlesByTag(tag); }
+
+        /// <summary>Parent of an entity (0 = root/none).</summary>
+        public static long Parent(long entity) { return Editor.Scripting.ScriptRuntime.Instance.GetParentHandle(entity); }
+
+        /// <summary>Direct children of an entity.</summary>
+        public static long[] Children(long entity) { return Editor.Scripting.ScriptRuntime.Instance.GetChildHandles(entity); }
+
+        /// <summary>Name of an entity ("" if the handle is stale).</summary>
+        public static string NameOf(long entity) { return Editor.Scripting.ScriptRuntime.Instance.EntityNameOf(entity); }
+
+        /// <summary>Tag of an entity ("" if none).</summary>
+        public static string TagOf(long entity) { return Editor.Scripting.ScriptRuntime.Instance.EntityTagOf(entity); }
+
+        /// <summary>World position of any entity (not just your own).</summary>
+        public static Vector3 PositionOf(long entity) { return Host != null ? Host.GetPosition(entity) : Vector3.Zero; }
+
+        /// <summary>Set the world position of any entity.</summary>
+        public static void SetPositionOf(long entity, Vector3 position) { Host?.SetPosition(entity, position); }
+
+        /// <summary>The behaviour instance running on an entity (null if none / wrong type) — lets scripts
+        /// talk to each other directly: <c>Scene.GetBehaviour&lt;DoorController&gt;(door)?.Open();</c></summary>
+        public static T GetBehaviour<T>(long entity) where T : VortexBehaviour
+            { return Editor.Scripting.ScriptRuntime.Instance.BehaviourOf(entity) as T; }
+
+        /// <summary>The Light component of ANY entity as a script handle (null if none) — drive scene
+        /// lamps from a manager script, not just your own entity's light.</summary>
+        public static Light GetLight(long entity)
+        {
+            var e = Editor.Scripting.ScriptRuntime.Instance.FindEntityByHandle(entity);
+            var c = e != null ? e.GetComponent<Editor.ECS.Components.Lighting.Light>() : null;
+            return c != null ? new Light(c) : null;
+        }
+
+        /// <summary>The AudioSource component of ANY entity as a script handle (null if none).</summary>
+        public static AudioSource GetAudioSource(long entity)
+        {
+            var e = Editor.Scripting.ScriptRuntime.Instance.FindEntityByHandle(entity);
+            var c = e != null ? e.GetComponent<Editor.ECS.Components.Audio.AudioSource>() : null;
+            return c != null ? new AudioSource(c) : null;
+        }
+
+        /// <summary>Show/hide an entity (and its children) at runtime — rendering stops, behaviours keep
+        /// their state. Colliders of a deactivated entity currently stay solid (documented limitation).</summary>
+        public static void SetActive(long entity, bool active) { Editor.Scripting.ScriptRuntime.Instance.SetEntityActive(entity, active); }
+
+        // ---- Runtime prefab instantiation (#36) ----
+
+        /// <summary>Spawn a prefab (.ventity asset, project-relative path like "Assets/Prefabs/Monster.ventity")
+        /// at a world position. Its Script components start immediately (Start() runs this frame), its colliders
+        /// join the collision world, and it renders the same frame. Returns the new entity's handle (0 = failed).
+        /// THE jump-scare primitive: <c>Scene.Instantiate("Assets/Prefabs/Monster.ventity", pos, yaw);</c></summary>
+        public static long Instantiate(string prefabPath, Vector3 position, float yawDegrees = 0f)
+            { return Editor.Scripting.ScriptRuntime.Instance.InstantiatePrefabAt(prefabPath, position, yawDegrees); }
+
+        /// <summary>Remove an entity (spawned or authored) from the running game: behaviours get OnDestroy,
+        /// rendering + colliders are removed. The scene ASSET is untouched — this is runtime-only.</summary>
+        public static void Destroy(long entity) { Editor.Scripting.ScriptRuntime.Instance.DestroyEntity(entity); }
+    }
+
+    /// <summary>
+    /// Typed event bus (#38) — decoupled game-wide messaging. Define an event type in your scripts,
+    /// Subscribe in Start, Publish from anywhere: <c>Events.Publish(new MonsterSpotted { Where = pos });</c>
+    /// Subscriptions are cleared automatically when play stops or the scene switches.
+    /// For DIRECT entity-to-entity calls use <see cref="VortexBehaviour.SendMessage"/> instead.
+    /// </summary>
+    public static class Events
+    {
+        private static readonly Dictionary<Type, List<Delegate>> _subs = new Dictionary<Type, List<Delegate>>();
+
+        /// <summary>Subscribe to every published event of type T.</summary>
+        public static void Subscribe<T>(Action<T> handler)
+        {
+            if (handler == null) return;
+            if (!_subs.TryGetValue(typeof(T), out var list)) { list = new List<Delegate>(); _subs[typeof(T)] = list; }
+            list.Add(handler);
+        }
+
+        /// <summary>Remove a previously subscribed handler.</summary>
+        public static void Unsubscribe<T>(Action<T> handler)
+        {
+            if (handler != null && _subs.TryGetValue(typeof(T), out var list)) list.Remove(handler);
+        }
+
+        /// <summary>Publish an event to every subscriber, immediately. A throwing handler is logged
+        /// and skipped — one broken listener never breaks the others.</summary>
+        public static void Publish<T>(T evt)
+        {
+            if (!_subs.TryGetValue(typeof(T), out var list) || list.Count == 0) return;
+            var snapshot = list.ToArray();   // handlers may (un)subscribe while being invoked
+            for (int i = 0; i < snapshot.Length; i++)
+            {
+                try { ((Action<T>)snapshot[i])(evt); }
+                catch (Exception ex) { Debug.LogError("Events handler for " + typeof(T).Name + " threw: " + ex.Message); }
+            }
+        }
+
+        /// <summary>Drop every subscription (the runtime calls this on play start/stop + scene switch).</summary>
+        public static void Clear() { _subs.Clear(); }
+    }
+
+    /// <summary>
+    /// Persistent save data (#40) — PlayerPrefs-style key/value storage plus save SLOTS, stored per game
+    /// under %APPDATA%\VortexGames\&lt;project&gt;. Works identically in editor play and shipped builds.
+    /// Values auto-flush to disk on scene switch and play end; call <see cref="Flush"/> after a checkpoint
+    /// to be crash-safe. Slots: <c>Save.UseSlot(2)</c> switches the active file (slot 0 is the default).
+    /// </summary>
+    public static class Save
+    {
+        private static Dictionary<string, string> _data;   // typed values as "i:", "f:", "s:" strings
+        private static int _slot;
+        private static bool _dirty;
+
+        public static int CurrentSlot { get { return _slot; } }
+
+        /// <summary>Switch the active save slot (loads that slot's file; creates it on first write).</summary>
+        public static void UseSlot(int slot)
+        {
+            Flush();
+            _slot = slot < 0 ? 0 : slot;
+            _data = null;   // lazy-reload from the new slot's file
+        }
+
+        public static bool SlotExists(int slot) { return System.IO.File.Exists(SlotPath(slot)); }
+
+        public static void DeleteSlot(int slot)
+        {
+            try { System.IO.File.Delete(SlotPath(slot)); } catch { }
+            if (slot == _slot) { _data = new Dictionary<string, string>(); _dirty = false; }
+        }
+
+        public static void SetInt(string key, int value)       { Data()[key] = "i:" + value.ToString(System.Globalization.CultureInfo.InvariantCulture); _dirty = true; }
+        public static void SetFloat(string key, float value)   { Data()[key] = "f:" + value.ToString("R", System.Globalization.CultureInfo.InvariantCulture); _dirty = true; }
+        public static void SetString(string key, string value) { Data()[key] = "s:" + (value ?? ""); _dirty = true; }
+        public static void SetBool(string key, bool value)     { SetInt(key, value ? 1 : 0); }
+
+        public static int GetInt(string key, int def = 0)
+        {
+            return Data().TryGetValue(key, out var v) && v.StartsWith("i:")
+                && int.TryParse(v.Substring(2), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var i) ? i : def;
+        }
+        public static float GetFloat(string key, float def = 0f)
+        {
+            return Data().TryGetValue(key, out var v) && v.StartsWith("f:")
+                && float.TryParse(v.Substring(2), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var f) ? f : def;
+        }
+        public static string GetString(string key, string def = "")
+        {
+            return Data().TryGetValue(key, out var v) && v.StartsWith("s:") ? v.Substring(2) : def;
+        }
+        public static bool GetBool(string key, bool def = false) { return GetInt(key, def ? 1 : 0) != 0; }
+
+        public static bool HasKey(string key) { return Data().ContainsKey(key); }
+        public static void DeleteKey(string key) { if (Data().Remove(key)) _dirty = true; }
+        public static void DeleteAll() { Data().Clear(); _dirty = true; }
+
+        /// <summary>Write pending changes to disk now (checkpoint!). Auto-called on scene switch + play end.</summary>
+        public static void Flush()
+        {
+            if (!_dirty || _data == null) return;
+            try
+            {
+                var path = SlotPath(_slot);
+                System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path));
+                var sb = new System.Text.StringBuilder();
+                foreach (var kv in _data)
+                    sb.Append(Escape(kv.Key)).Append('\t').Append(Escape(kv.Value)).Append('\n');
+                System.IO.File.WriteAllText(path, sb.ToString());
+                _dirty = false;
+            }
+            catch (Exception ex) { Debug.LogError("Save.Flush failed: " + ex.Message); }
+        }
+
+        private static Dictionary<string, string> Data()
+        {
+            if (_data != null) return _data;
+            _data = new Dictionary<string, string>();
+            try
+            {
+                var path = SlotPath(_slot);
+                if (System.IO.File.Exists(path))
+                {
+                    foreach (var line in System.IO.File.ReadAllLines(path))
+                    {
+                        int t = line.IndexOf('\t');
+                        if (t > 0) _data[Unescape(line.Substring(0, t))] = Unescape(line.Substring(t + 1));
+                    }
+                }
+            }
+            catch { }
+            return _data;
+        }
+
+        private static string SlotPath(int slot)
+        {
+            string game = "Game";
+            try { game = Editor.Core.Data.ProjectData.Current?.Name ?? "Game"; } catch { }
+            foreach (var c in System.IO.Path.GetInvalidFileNameChars()) game = game.Replace(c, '_');
+            var root = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            return System.IO.Path.Combine(root, "VortexGames", game, "save_slot" + slot + ".dat");
+        }
+
+        private static string Escape(string s)   { return s.Replace("\\", "\\\\").Replace("\t", "\\t").Replace("\n", "\\n"); }
+        private static string Unescape(string s) { return s.Replace("\\n", "\n").Replace("\\t", "\t").Replace("\\\\", "\\"); }
     }
 
     /// <summary>Mouse mode. Locked = captured + hidden for mouse-look (gameplay). Unlocked = free cursor so
@@ -601,6 +907,35 @@ namespace Vortex
         public static string GroundStepSound(Vector3 from, float maxDist = 3f)
         {
             return Host != null ? (Host.GroundStepSound(from, maxDist) ?? "") : "";
+        }
+
+        /// <summary>General raycast (#35) against the scene's SOLID colliders, any direction. Returns true
+        /// and fills <paramref name="hit"/> with point/normal/distance/entity on the closest hit.
+        /// <paramref name="layerMask"/> filters by entity Layer bit (default: everything). The horror
+        /// workhorse: line-of-sight checks, interaction rays, "what am I looking at".
+        /// <c>if (Physics.Raycast(eye, Forward, 3f, out var h) &amp;&amp; h.Tag == "Door") ...</c></summary>
+        public static bool Raycast(Vector3 origin, Vector3 direction, float maxDist, out RaycastHit hit, int layerMask = ~0)
+        {
+            hit = default(RaycastHit);
+            if (!Editor.Core.Services.Physics.CollisionService.Raycast(
+                    new Editor.ECS.Vector3(origin.X, origin.Y, origin.Z),
+                    new Editor.ECS.Vector3(direction.X, direction.Y, direction.Z),
+                    maxDist, layerMask, out var point, out var normal, out var entity, out float dist))
+                return false;
+            hit.Point = new Vector3(point.X, point.Y, point.Z);
+            hit.Normal = new Vector3(normal.X, normal.Y, normal.Z);
+            hit.Distance = dist;
+            hit.Name = entity != null ? (entity.Name ?? "") : "";
+            hit.Tag = entity != null ? (entity.Tag ?? "") : "";
+            hit.EntityId = entity != null ? Editor.Scripting.ScriptRuntime.Instance.HandleForEntity(entity) : 0;
+            return true;
+        }
+
+        /// <summary>Raycast without hit details — "is something within maxDist in that direction?".</summary>
+        public static bool Raycast(Vector3 origin, Vector3 direction, float maxDist, int layerMask = ~0)
+        {
+            RaycastHit h;
+            return Raycast(origin, direction, maxDist, out h, layerMask);
         }
     }
 
