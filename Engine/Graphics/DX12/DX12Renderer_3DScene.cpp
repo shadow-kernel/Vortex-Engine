@@ -64,6 +64,12 @@ namespace vortex::graphics::dx12
 			m_command_list->SetDescriptorHeaps(1, heaps);
 		}
 
+		// Shadow map at t7 (root param 10): standard.hlsl references it, so it must be bound whenever the
+		// standard PS runs — the descriptor lives in the registry heap bound above. Strength 0 in the
+		// per-frame CB makes it a no-op when no shadow light exists (map is cleared-to-1 anyway).
+		if (m_shadow_srv_gpu.ptr != 0)
+			m_command_list->SetGraphicsRootDescriptorTable(10, m_shadow_srv_gpu);
+
 		auto& reg = ResourceRegistry::instance();
 		
 		// Limit to MAX_RENDER_OBJECTS to prevent buffer overflow
@@ -546,6 +552,9 @@ namespace vortex::graphics::dx12
 		m_command_list->SetGraphicsRootConstantBufferView(0, m_per_frame_cb->GetGPUVirtualAddress());
 		m_command_list->SetGraphicsRootConstantBufferView(2, m_light_cb->GetGPUVirtualAddress());
 		{ auto* sh = ResourceRegistry::instance().srv_heap(); if (sh) { ID3D12DescriptorHeap* hh[] = { sh }; m_command_list->SetDescriptorHeaps(1, hh); } }
+		// Gizmos draw with the standard PS too -> the t7 shadow table must be bound here as well.
+		if (m_shadow_srv_gpu.ptr != 0)
+			m_command_list->SetGraphicsRootDescriptorTable(10, m_shadow_srv_gpu);
 		m_command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
 		auto& reg = ResourceRegistry::instance();

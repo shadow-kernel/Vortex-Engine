@@ -111,9 +111,12 @@ namespace vortex::graphics::dx12
 		// Params 0-7 are the long-standing ABI (every existing SetGraphicsRoot* call keeps its index).
 		// Param 8 is the bone-palette root SRV (t5, vertex-only) for GPU skinning — a root descriptor (raw GPU VA),
 		// so it costs no descriptor-heap slot and rigid draws simply never bind it.
-		// Param 9 is NEW: the HEIGHT/displacement map descriptor table (t6, pixel) for parallax mapping — additive, so
+		// Param 9 is the HEIGHT/displacement map descriptor table (t6, pixel) for parallax mapping — additive, so
 		// every existing SetGraphicsRoot* index is unchanged; a material with no height map simply never binds it.
-		D3D12_ROOT_PARAMETER params[10] = {};
+		// Param 10 is the SHADOW MAP descriptor table (t7, pixel) for spot-light shadows — additive again. Once
+		// standard.hlsl references t7 this param MUST be bound in every pass that uses the standard PS (scene,
+		// gizmo, offscreen previews); the renderer eager-creates the shadow map so a valid descriptor always exists.
+		D3D12_ROOT_PARAMETER params[11] = {};
 
 		params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
 		params[0].Descriptor.ShaderRegister = 0;
@@ -127,7 +130,7 @@ namespace vortex::graphics::dx12
 		params[2].Descriptor.ShaderRegister = 2;
 		params[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
-		static D3D12_DESCRIPTOR_RANGE srv_ranges[6] = {};
+		static D3D12_DESCRIPTOR_RANGE srv_ranges[7] = {};
 		for (int i = 0; i < 5; i++)
 		{
 			srv_ranges[i].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -157,26 +160,54 @@ namespace vortex::graphics::dx12
 		params[9].DescriptorTable.pDescriptorRanges = &srv_ranges[5];
 		params[9].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
-		D3D12_STATIC_SAMPLER_DESC sampler{};
-		sampler.Filter = D3D12_FILTER_ANISOTROPIC;
-		sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
-		sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
-		sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
-		sampler.MipLODBias = 0.0f;
-		sampler.MaxAnisotropy = 16;
-		sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
-		sampler.BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE;
-		sampler.MinLOD = 0.0f;
-		sampler.MaxLOD = D3D12_FLOAT32_MAX;
-		sampler.ShaderRegister = 0;
-		sampler.RegisterSpace = 0;
-		sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+		// Shadow map descriptor table at t7 (pixel) — the spot-light shadow depth (R32_FLOAT SRV over D32).
+		srv_ranges[6].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+		srv_ranges[6].NumDescriptors = 1;
+		srv_ranges[6].BaseShaderRegister = 7;
+		srv_ranges[6].RegisterSpace = 0;
+		srv_ranges[6].OffsetInDescriptorsFromTableStart = 0;
+		params[10].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+		params[10].DescriptorTable.NumDescriptorRanges = 1;
+		params[10].DescriptorTable.pDescriptorRanges = &srv_ranges[6];
+		params[10].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+		D3D12_STATIC_SAMPLER_DESC samplers[2] = {};
+		samplers[0].Filter = D3D12_FILTER_ANISOTROPIC;
+		samplers[0].AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+		samplers[0].AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+		samplers[0].AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+		samplers[0].MipLODBias = 0.0f;
+		samplers[0].MaxAnisotropy = 16;
+		samplers[0].ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+		samplers[0].BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE;
+		samplers[0].MinLOD = 0.0f;
+		samplers[0].MaxLOD = D3D12_FLOAT32_MAX;
+		samplers[0].ShaderRegister = 0;
+		samplers[0].RegisterSpace = 0;
+		samplers[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+		// s1: comparison sampler for shadow-map SampleCmpLevelZero. BORDER + opaque-white border means
+		// samples OUTSIDE the shadow map read "fully lit" — the spot cone gate in the shader masks the
+		// rest, so the shadow frustum edge never shows as a dark rectangle. Static sampler = zero root cost.
+		samplers[1].Filter = D3D12_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
+		samplers[1].AddressU = D3D12_TEXTURE_ADDRESS_MODE_BORDER;
+		samplers[1].AddressV = D3D12_TEXTURE_ADDRESS_MODE_BORDER;
+		samplers[1].AddressW = D3D12_TEXTURE_ADDRESS_MODE_BORDER;
+		samplers[1].MipLODBias = 0.0f;
+		samplers[1].MaxAnisotropy = 1;
+		samplers[1].ComparisonFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+		samplers[1].BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE;
+		samplers[1].MinLOD = 0.0f;
+		samplers[1].MaxLOD = D3D12_FLOAT32_MAX;
+		samplers[1].ShaderRegister = 1;
+		samplers[1].RegisterSpace = 0;
+		samplers[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
 		D3D12_ROOT_SIGNATURE_DESC desc{};
-		desc.NumParameters = 10;
+		desc.NumParameters = 11;
 		desc.pParameters = params;
-		desc.NumStaticSamplers = 1;
-		desc.pStaticSamplers = &sampler;
+		desc.NumStaticSamplers = 2;
+		desc.pStaticSamplers = samplers;
 		desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
 		ComPtr<ID3DBlob> signature;
@@ -338,6 +369,39 @@ namespace vortex::graphics::dx12
 			pso_desc.InputLayout = { skinned_layout, _countof(skinned_layout) };
 			if (FAILED(device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&m_skinned_pso))))
 				OutputDebugStringA("DX12Pipeline3D: skinned PSO creation failed — GPU skinning disabled\n");
+		}
+
+		// SHADOW PSO: depth-only pass that renders the scene from the spot light's point of view into the
+		// shadow map. Reuses the standard VS blob (the shadow pass binds a second 256-byte PerFrame CB region
+		// whose view_projection is the LIGHT's VP at root param 0 — no extra .hlsl file, nothing new to ship)
+		// with NO pixel shader and NO render target. Depth bias fights shadow acne on the receiver side;
+		// slope-scaled handles glancing surfaces (bunker walls lit along their length by the flashlight).
+		{
+			D3D12_RASTERIZER_DESC shadow_raster{};
+			shadow_raster.FillMode = D3D12_FILL_MODE_SOLID;
+			shadow_raster.CullMode = D3D12_CULL_MODE_BACK;
+			shadow_raster.FrontCounterClockwise = FALSE;
+			shadow_raster.DepthBias = 100;
+			shadow_raster.DepthBiasClamp = 0.0f;
+			shadow_raster.SlopeScaledDepthBias = 1.5f;
+			shadow_raster.DepthClipEnable = TRUE;
+
+			D3D12_DEPTH_STENCIL_DESC shadow_ds{};
+			shadow_ds.DepthEnable = TRUE;
+			shadow_ds.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+			shadow_ds.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+			shadow_ds.StencilEnable = FALSE;
+
+			pso_desc.VS = { m_vs_blob->GetBufferPointer(), m_vs_blob->GetBufferSize() };
+			pso_desc.PS = { nullptr, 0 };
+			pso_desc.RasterizerState = shadow_raster;
+			pso_desc.DepthStencilState = shadow_ds;
+			pso_desc.InputLayout = { input_layout, _countof(input_layout) };   // rigid layout -> same instance-VB flow
+			pso_desc.NumRenderTargets = 0;
+			pso_desc.RTVFormats[0] = DXGI_FORMAT_UNKNOWN;
+			pso_desc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+			if (FAILED(device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&m_shadow_pso))))
+				OutputDebugStringA("DX12Pipeline3D: shadow PSO creation failed — spot shadows disabled\n");
 		}
 
 		return true;

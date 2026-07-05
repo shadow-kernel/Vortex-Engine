@@ -79,6 +79,13 @@ namespace vortex::graphics::dx12
 
 		ResourceRegistry::instance().initialize(core.device());
 
+		// Spot shadows (#23): EAGER-create the shadow map so the t7 descriptor always exists — the scene
+		// pass binds the table unconditionally (an unbound-but-referenced table is device-removal
+		// territory), and a cleared-to-1.0 map + shadow_strength 0 is a perfect visual no-op. Failure is
+		// non-fatal: the t7 bind is guarded on the reserved handle and the shader gate stays at 0.
+		if (!ensure_shadow_map(2048))
+			OutputDebugStringA("[shadows] eager shadow-map init failed — spot shadows disabled\n");
+
 		// 2D UI overlay (optional — if D2D/DirectWrite init fails the 3D renderer is unaffected).
 		if (m_ui_overlay.initialize(core.device(), m_command_queue.queue(), DX12Swapchain::MaxBufferCount))
 			OutputDebugStringA("UI overlay OK\n");
@@ -119,6 +126,14 @@ namespace vortex::graphics::dx12
 		m_instance_vb.Reset();
 		if (m_bone_vb && m_bone_vb_mapped) { m_bone_vb->Unmap(0, nullptr); m_bone_vb_mapped = nullptr; }
 		m_bone_vb.Reset();
+		// Spot-shadow resources (#23). The reserved registry SRV slot dies with the registry heap above.
+		if (m_shadow_pass_cb && m_shadow_pass_cb_mapped) { m_shadow_pass_cb->Unmap(0, nullptr); m_shadow_pass_cb_mapped = nullptr; }
+		m_shadow_pass_cb.Reset();
+		if (m_shadow_instance_vb && m_shadow_instance_vb_mapped) { m_shadow_instance_vb->Unmap(0, nullptr); m_shadow_instance_vb_mapped = nullptr; }
+		m_shadow_instance_vb.Reset();
+		m_shadow_map.Reset();
+		m_shadow_dsv_heap.Reset();
+		m_shadow_srv_cpu = {}; m_shadow_srv_gpu = {}; m_shadow_map_size = 0; m_shadow_ready = false;
 		if (m_light_cb && m_light_cb_mapped) { m_light_cb->Unmap(0, nullptr); m_light_cb_mapped = nullptr; }
 		m_light_cb.Reset();
 		if (m_grid_cb && m_grid_cb_mapped) { m_grid_cb->Unmap(0, nullptr); m_grid_cb_mapped = nullptr; }
@@ -536,6 +551,11 @@ namespace vortex::graphics::dx12
 		auto* pso = m_render_queue.empty() ? m_pipeline.pipeline_state() :
 			(m_wireframe_mode ? m_pipeline_3d.wireframe_pso() : m_pipeline_3d.pipeline_state());
 		m_command_list->Reset(m_command_allocators[idx].Get(), pso);
+
+		// Spot-light shadow pass (#23): depth-only render from the flashlight's view, recorded FIRST so
+		// both the scaled and the direct path below sample the same up-to-date map at t7. No-op unless a
+		// shadow-casting spot was submitted this frame (m_shadow_ready from prepare_shadow_pass).
+		render_shadow_pass();
 
 		// Render-scale: when < 1.0 (and the upscale pipeline is ready) render the 3D into a smaller offscreen RT,
 		// then upscale it onto the full-res back buffer (this is also the slot DLSS plugs into). Scale 1.0 takes the

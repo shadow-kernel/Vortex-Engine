@@ -33,13 +33,16 @@ EDITOR_INTERFACE void AddPointLight(
 	graphics::dx12::DX12Renderer::instance().add_point_light(light);
 }
 
-// Add a spot light (max 8 per frame)
+// Add a spot light (max 8 per frame). Shadow params (#23): castShadows != 0 requests THIS spot as the
+// frame's shadow-casting light — the renderer takes the FIRST such spot (one shadow map in v1, the
+// flashlight). Internal ABI: changed in lockstep with the editor's P/Invoke (both live in this repo).
 EDITOR_INTERFACE void AddSpotLight(
 	float posX, float posY, float posZ,
 	float dirX, float dirY, float dirZ,
 	float colorR, float colorG, float colorB,
 	float intensity, float range,
-	float spotAngle, float innerSpotAngle)
+	float spotAngle, float innerSpotAngle,
+	int castShadows, float shadowStrength, float shadowBias, int shadowResolution)
 {
 	graphics::dx12::DX12Renderer::SpotLightData light{};
 	light.position = { posX, posY, posZ };
@@ -49,8 +52,11 @@ EDITOR_INTERFACE void AddSpotLight(
 	light.range = range;
 	light.spot_angle = spotAngle;
 	light.inner_spot_angle = innerSpotAngle;
-	
-	
+	light.cast_shadows = castShadows != 0 ? 1u : 0u;
+	light.shadow_strength = shadowStrength;
+	light.shadow_bias = shadowBias;
+	light.shadow_resolution = shadowResolution > 0 ? (u32)shadowResolution : 2048u;
+
 	graphics::dx12::DX12Renderer::instance().add_spot_light(light);
 }
 

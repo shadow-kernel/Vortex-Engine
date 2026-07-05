@@ -710,7 +710,8 @@ namespace Editor.DllWrapper
             float dirX, float dirY, float dirZ,
             float colorR, float colorG, float colorB,
             float intensity, float range,
-            float spotAngle, float innerSpotAngle);
+            float spotAngle, float innerSpotAngle,
+            int castShadows, float shadowStrength, float shadowBias, int shadowResolution);
 
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void SetAmbientStrength(float strength);
@@ -751,20 +752,25 @@ namespace Editor.DllWrapper
         }
 
         /// <summary>
-        /// Add a spot light to the scene. Maximum 8 per frame.
+        /// Add a spot light to the scene. Maximum 8 per frame. Shadow params (#23): castShadows requests
+        /// this spot as the frame's shadow-casting light — the renderer takes the FIRST such spot (one
+        /// shadow map in v1: the flashlight). Defaults keep every existing caller shadow-free.
         /// </summary>
         public static void SubmitSpotLight(
             float posX, float posY, float posZ,
             float dirX, float dirY, float dirZ,
             float colorR, float colorG, float colorB,
             float intensity, float range,
-            float spotAngle, float innerSpotAngle)
+            float spotAngle, float innerSpotAngle,
+            bool castShadows = false, float shadowStrength = 1.0f,
+            float shadowBias = 0.0015f, int shadowResolution = 2048)
         {
-            try 
-            { 
-                AddSpotLight(posX, posY, posZ, dirX, dirY, dirZ, 
-                    colorR, colorG, colorB, intensity, range, spotAngle, innerSpotAngle); 
-            } 
+            try
+            {
+                AddSpotLight(posX, posY, posZ, dirX, dirY, dirZ,
+                    colorR, colorG, colorB, intensity, range, spotAngle, innerSpotAngle,
+                    castShadows ? 1 : 0, shadowStrength, shadowBias, shadowResolution);
+            }
             catch { }
         }
 

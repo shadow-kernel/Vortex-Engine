@@ -109,6 +109,13 @@ namespace vortex::graphics
 		// Get SRV descriptor heap for rendering
 		ID3D12DescriptorHeap* srv_heap() const { return m_srv_heap.Get(); }
 
+		// Reserve ONE slot of this shared shader-visible heap for an EXTERNAL long-lived descriptor
+		// (e.g. the renderer's shadow map at t7). The scene pass binds THIS heap, and D3D12 allows only
+		// one CBV_SRV_UAV heap bound at a time — so any view sampled mid-scene-pass must live here, not
+		// in a private per-resource heap. The bump allocator never frees: reserve once at init and
+		// re-create the view IN PLACE (same handles) when the underlying resource is recreated/resized.
+		bool reserve_srv_slot(D3D12_CPU_DESCRIPTOR_HANDLE& out_cpu, D3D12_GPU_DESCRIPTOR_HANDLE& out_gpu);
+
 	private:
 		ResourceRegistry() = default;
 

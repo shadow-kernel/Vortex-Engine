@@ -1747,12 +1747,21 @@ namespace Editor.Core.Services
                             break;
 
                         case ECS.Components.Lighting.LightType.Spot:
+                            // Spot shadows (#23): ShadowType != None requests this spot as the frame's
+                            // shadow caster (renderer takes the FIRST such spot; Soft = Hard in v1).
+                            // Bias mapping: the component's ShadowBias serialized with a 0.05 default long
+                            // before shadows existed — scale by 0.03 so that legacy default lands exactly
+                            // on the tuned NDC-depth bias (0.0015) and user tweaks stay proportional.
                             VortexAPI.SubmitSpotLight(
                                 px, py, pz,
                                 dirX, dirY, dirZ,
                                 light.ColorR, light.ColorG, light.ColorB,
                                 light.Intensity, light.Range,
-                                light.SpotAngle, light.InnerSpotAngle);
+                                light.SpotAngle, light.InnerSpotAngle,
+                                light.ShadowType != ECS.Components.Lighting.ShadowType.None,
+                                light.ShadowStrength,
+                                light.ShadowBias * 0.03f,
+                                light.ShadowResolution);
                             break;
                     }
                 }

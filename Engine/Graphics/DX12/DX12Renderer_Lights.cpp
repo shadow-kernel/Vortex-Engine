@@ -34,6 +34,10 @@ namespace vortex::graphics::dx12
 	m_frame_constants.point_light_count = static_cast<u32>(m_point_lights.size());
 	m_frame_constants.spot_light_count = static_cast<u32>(m_spot_lights.size());
 
+	// Spot shadows (#23): select the shadow-casting spot + fill the shadow fields BEFORE the upload
+	// below (also primes the shadow pass's own light-VP b0 clone).
+	prepare_shadow_pass();
+
 	if (m_per_frame_cb_mapped)
 	memcpy(m_per_frame_cb_mapped, &m_frame_constants, sizeof(m_frame_constants));
 			

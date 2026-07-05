@@ -55,6 +55,10 @@ namespace vortex::graphics::dx12
 			(m_wireframe_mode ? m_pipeline_3d.wireframe_pso() : m_pipeline_3d.pipeline_state());
 		m_command_list->Reset(m_game_cmd_allocator.Get(), pso);
 
+		// Spot-light shadow pass (#23) — THIS is the shipped game's render path (the flashlight!).
+		// Recorded first, exactly like render_frame; the window viewport is (re)set below anyway.
+		render_shadow_pass();
+
 		D3D12_RESOURCE_BARRIER barrier{};
 		barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 		barrier.Transition.pResource = m_game_swapchain.current_back_buffer();

@@ -803,6 +803,18 @@ namespace Vortex
         /// <summary>Light color, each channel 0..1.</summary>
         public void SetColor(float r, float g, float b) { _c.ColorR = r; _c.ColorG = g; _c.ColorB = b; Dirty(); }
 
+        /// <summary>Real shadow mapping for a SPOT light (#23 — the flashlight). The renderer draws the
+        /// scene from this light's view each frame; the FIRST shadow-enabled spot wins (one shadow map).
+        /// On by default for new lights: <c>GetLight().CastShadows = false;</c> opts out.</summary>
+        public bool CastShadows
+        {
+            get { return _c.ShadowType != Editor.ECS.Components.Lighting.ShadowType.None; }
+            set { _c.ShadowType = value ? Editor.ECS.Components.Lighting.ShadowType.Hard
+                                        : Editor.ECS.Components.Lighting.ShadowType.None; Dirty(); }
+        }
+        /// <summary>How dark the shadowed area gets: 1 = pitch black (horror default), 0 = shadows off.</summary>
+        public float ShadowStrength { get { return _c.ShadowStrength; } set { _c.ShadowStrength = value; Dirty(); } }
+
         /// <summary>Procedural flicker in [0..1] — multiply into Intensity each Update() for a dying
         /// bulb: <c>light.Intensity = 40f * Light.Flicker(t, 14f);</c>. Two detuned sines, cheap + loopless.</summary>
         public static float Flicker(float time, float speed = 12f)

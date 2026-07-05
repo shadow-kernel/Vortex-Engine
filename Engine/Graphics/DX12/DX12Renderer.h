@@ -173,7 +173,13 @@ namespace vortex::graphics::dx12
 			DirectX::XMFLOAT3 color;
 			float intensity;
 			float inner_spot_angle;
-			float padding[3];
+			// Spot shadows (#23): the FIRST submitted spot with cast_shadows != 0 becomes this frame's
+			// shadow-casting light (ONE shadow map in v1 — the flashlight). CPU-side only; the 64-byte
+			// GPUSpotLight ABI is untouched.
+			u32 cast_shadows{ 0 };
+			float shadow_strength{ 1.0f };   // 0..1 — how dark the occluded area gets
+			float shadow_bias{ 0.0015f };    // receiver-side depth-comparison bias
+			u32 shadow_resolution{ 2048 };   // shadow-map size in texels
 		};
 		
 		void clear_lights();
@@ -395,6 +401,14 @@ namespace vortex::graphics::dx12
 
 		void render_3d_scene();
 		void render_gizmos();   // dedicated always-on-top pass for editor gizmos (depth-disabled PSO)
+		// Spot-light shadows (#23): depth-only pass from the shadow spot's view into m_shadow_map.
+		// prepare_* runs on the CPU before the per-frame CB upload (selects the shadow spot, builds the
+		// light VP, fills the PerFrameConstants shadow fields); render_* records the GPU pass right after
+		// the command-list reset (both the scaled and direct paths then sample the same map at t7).
+		void prepare_shadow_pass();
+		void render_shadow_pass();
+		bool ensure_shadow_map(u32 size);   // lazily (re)creates the R32_TYPELESS map + DSV; SRV lives in a
+											// RESERVED ResourceRegistry heap slot (the scene pass binds that heap)
 		bool capture_backbuffer_to_bmp(const char* path);
 		void render_fallback_triangle();
 		void render_grid();
@@ -491,6 +505,14 @@ namespace vortex::graphics::dx12
 			float fog_height_falloff;  // 0 = pure distance fog; >0 = ground mist below fog_height_y
 			u32 fog_mode;              // reserved (0 today); density gates the effect
 			float fog_padding;
+			// Spot-light shadows (#23) — APPENDED after fog (@160), byte-matched to standard.hlsl.
+			// shadow_strength 0 = shadows off (also the "no shadow light this frame" gate) — with the
+			// eagerly-created, cleared-to-1.0 shadow map always bound at t7, 0 strength is a perfect no-op.
+			DirectX::XMFLOAT4X4 shadow_view_projection;   // light view*proj (row-major, same convention as view_projection)
+			float shadow_strength;
+			float shadow_bias;
+			float shadow_map_texel;    // 1 / shadow-map size (ready for a PCF kernel later)
+			u32 shadow_spot_index;     // which SpotLights[] entry owns the shadow map
 		};
 		
 		// Separate light buffer for GPU
@@ -694,6 +716,21 @@ namespace vortex::graphics::dx12
 		// DLSS targets (lazily (re)created): m_mvec_rt at render res (RG16F), m_dlss_output at display res (R8G8B8A8 + UAV).
 		bool ensure_mvec_rt(u32 width, u32 height);
 		bool ensure_dlss_output(u32 width, u32 height);
+
+		// ---- Spot-light shadow map (#23) ----
+		static constexpr u32 MAX_SHADOW_INSTANCES = 8192;   // packed shadow casters per frame (cone-culled)
+		ComPtr<ID3D12Resource> m_shadow_map;                // R32_TYPELESS: D32_FLOAT DSV + R32_FLOAT SRV
+		ComPtr<ID3D12DescriptorHeap> m_shadow_dsv_heap;
+		D3D12_RESOURCE_STATES m_shadow_map_state{ D3D12_RESOURCE_STATE_DEPTH_WRITE };
+		D3D12_CPU_DESCRIPTOR_HANDLE m_shadow_srv_cpu{};     // RESERVED slot in ResourceRegistry's shared SRV heap
+		D3D12_GPU_DESCRIPTOR_HANDLE m_shadow_srv_gpu{};     // (reserved once; view recreated in place on resize)
+		u32 m_shadow_map_size{ 0 };
+		ComPtr<ID3D12Resource> m_shadow_pass_cb;            // 256B PerFrame clone with the LIGHT's VP (b0 swap trick)
+		void* m_shadow_pass_cb_mapped{ nullptr };
+		ComPtr<ID3D12Resource> m_shadow_instance_vb;        // world matrices of this frame's shadow casters
+		void* m_shadow_instance_vb_mapped{ nullptr };
+		bool m_shadow_ready{ false };                       // prepare found a shadow spot + resources exist
+		DirectX::XMFLOAT4X4 m_shadow_light_vp{};
 
 		// Create SRV descriptor heap for textures
 		bool create_srv_heap();

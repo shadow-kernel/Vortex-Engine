@@ -240,6 +240,10 @@ namespace vortex::graphics::dx12
 				// it, SetGraphicsRootDescriptorTable removes the device (the crash when a textured model's
 				// thumbnail rendered, e.g. opening the Models folder).
 				{ auto* _sh = ResourceRegistry::instance().srv_heap(); if (_sh) { ID3D12DescriptorHeap* _hh[] = { _sh }; m_command_list->SetDescriptorHeaps(1, _hh); } }
+				// standard.hlsl references the t7 shadow map -> the table must be bound in the PREVIEW path
+				// too (same unbound-table rule as the scene pass; the map always exists via eager init).
+				if (m_shadow_srv_gpu.ptr != 0)
+					m_command_list->SetGraphicsRootDescriptorTable(10, m_shadow_srv_gpu);
 				m_command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 			
 			auto& reg = ResourceRegistry::instance();

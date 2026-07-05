@@ -29,6 +29,14 @@ cbuffer PerFrame : register(b0)
     float FogHeightFalloff;
     uint FogMode;
     float FogPadding;
+    // Spot-light shadows (#23) — APPENDED after fog (@160), byte-matched to PerFrameConstants.
+    // ShadowStrength 0 = shadows off (the always-safe default); ShadowSpotIndex picks WHICH spot
+    // the shadow map belongs to (one shadow-casting spot in v1 — the flashlight).
+    row_major float4x4 ShadowViewProjection;
+    float ShadowStrength;
+    float ShadowBias;
+    float ShadowMapTexel;
+    uint ShadowSpotIndex;
 };
 
 // Exp2 distance fog with optional height weighting (ground mist below FogHeightY).
@@ -98,7 +106,25 @@ Texture2D RoughnessTexture : register(t3);
 Texture2D AOTexture        : register(t4);
 // t5 is the vertex-stage bone-palette root SRV (skinning). Height/displacement map lives at t6 (pixel).
 Texture2D HeightTexture    : register(t6);
+// t7: spot-light shadow map (R32_FLOAT depth from the light's view), s1: comparison sampler
+// (LESS_EQUAL, border=white so samples outside the map read "lit" — the cone gate masks the rest).
+Texture2D ShadowMap        : register(t7);
 SamplerState LinearSampler : register(s0);
+SamplerComparisonState ShadowSampler : register(s1);
+
+// 1 = fully lit, 0 = fully shadowed (scaled by ShadowStrength). Hard shadows via a single
+// hardware-PCF comparison tap (SampleCmpLevelZero) — soft/PCF-kernel is a later upgrade
+// (ShadowMapTexel is already plumbed for it).
+float SampleSpotShadow(float3 worldPos)
+{
+    float4 sp = mul(float4(worldPos, 1.0), ShadowViewProjection);
+    if (sp.w <= 0.0) return 1.0;                       // behind the light -> outside the cone anyway
+    float3 ndc = sp.xyz / sp.w;
+    float2 suv = ndc.xy * float2(0.5, -0.5) + 0.5;
+    if (any(saturate(suv) != suv) || ndc.z > 1.0) return 1.0;   // outside the map -> lit
+    float lit = ShadowMap.SampleCmpLevelZero(ShadowSampler, suv, ndc.z - ShadowBias);
+    return lerp(1.0, lit, ShadowStrength);
+}
 
 struct VS_IN
 {
@@ -321,6 +347,10 @@ float4 PSMain(PS_IN input) : SV_TARGET
 
                 float atten = Attenuation(dist, SpotLights[j].range) * spotFade;
                 float3 radiance = SpotLights[j].color * SpotLights[j].intensity * atten;
+
+                // Spot shadow (#23): only the designated shadow-casting spot samples the map.
+                if (j == ShadowSpotIndex && ShadowStrength > 0.0)
+                    radiance *= SampleSpotShadow(input.worldPos);
 
                 float D = D_GGX(NdotH, roughness);
                 float G = G_Smith(NdotV, NdotL, roughness);

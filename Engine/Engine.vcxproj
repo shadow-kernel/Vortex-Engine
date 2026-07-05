@@ -114,6 +114,7 @@
     <ClCompile Include="Graphics\DX12\DX12Renderer_Init.cpp" />
     <ClCompile Include="Graphics\DX12\DX12Renderer_Skybox.cpp" />
     <ClCompile Include="Graphics\DX12\DX12Renderer_Lights.cpp" />
+    <ClCompile Include="Graphics\DX12\DX12Renderer_Shadows.cpp" />
     <ClCompile Include="Graphics\DX12\DX12Renderer_RenderTargets.cpp" />
     <ClCompile Include="Graphics\DX12\UIOverlay.cpp" />
     <ClCompile Include="Graphics\DX12\DX12RenderTarget.cpp" />

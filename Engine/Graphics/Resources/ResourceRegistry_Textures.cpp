@@ -129,6 +129,23 @@ namespace vortex::graphics
 	}
 
 
+	bool ResourceRegistry::reserve_srv_slot(D3D12_CPU_DESCRIPTOR_HANDLE& out_cpu, D3D12_GPU_DESCRIPTOR_HANDLE& out_gpu)
+	{
+		if (!m_srv_heap || !m_device) return false;
+		if (m_next_srv_index >= MAX_SRV_DESCRIPTORS)
+		{
+			OutputDebugStringA("SRV heap full — cannot reserve external slot\n");
+			return false;
+		}
+		out_cpu = m_srv_heap->GetCPUDescriptorHandleForHeapStart();
+		out_cpu.ptr += (SIZE_T)m_next_srv_index * m_srv_descriptor_size;
+		out_gpu = m_srv_heap->GetGPUDescriptorHandleForHeapStart();
+		out_gpu.ptr += (UINT64)m_next_srv_index * m_srv_descriptor_size;
+		m_next_srv_index++;
+		return true;
+	}
+
+
 	void ResourceRegistry::assign_srv_to_texture(Texture* texture)
 	{
 		if (!texture || !m_srv_heap || !m_device) return;

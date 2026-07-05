@@ -159,8 +159,8 @@
                          Style="{StaticResource ValueInput}" Margin="8,0,0,0"/>
             </Grid>
 
-            <!-- Shadows -->
-            <Expander Header="Shadows" Foreground="#FF9A9AA1" Margin="0,10,0,0" IsExpanded="False">
+            <!-- Shadows (#23: real shadow mapping for spot lights — the flashlight) -->
+            <Expander Header="Shadows" Foreground="#FF9A9AA1" Margin="0,10,0,0" IsExpanded="True">
                 <StackPanel Margin="10,5,0,0">
                     <Grid Margin="0,5">
                         <Grid.ColumnDefinitions>
@@ -168,10 +168,60 @@
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="Shadow Type" Style="{StaticResource PropertyLabel}"/>
-                        <ComboBox x:Name="ShadowTypeCombo" Grid.Column="1" Style="{StaticResource ComboBoxStyle}">
+                        <ComboBox x:Name="ShadowTypeCombo" Grid.Column="1" Style="{StaticResource ComboBoxStyle}"
+                                  SelectionChanged="ShadowTypeCombo_SelectionChanged">
                             <ComboBoxItem Content="None"/>
                             <ComboBoxItem Content="Hard"/>
-                            <ComboBoxItem Content="Soft" IsSelected="True"/>
+                            <ComboBoxItem Content="Soft"/>
+                        </ComboBox>
+                    </Grid>
+
+                    <!-- Spot lights render a real shadow map; other types are on the roadmap (#24/#25). -->
+                    <TextBlock x:Name="ShadowHint" Text="Shadow mapping applies to Spot lights (directional/point coming next)"
+                               FontSize="11" Foreground="#FF6E6E76" TextWrapping="Wrap" Margin="0,2,0,2"
+                               Visibility="Collapsed"/>
+
+                    <Grid x:Name="ShadowStrengthRow" Margin="0,5">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="100"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="56"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Strength" Style="{StaticResource PropertyLabel}"/>
+                        <Slider x:Name="ShadowStrengthSlider" Grid.Column="1" Minimum="0" Maximum="1" Value="1"
+                                VerticalAlignment="Center" ValueChanged="ShadowStrengthSlider_ValueChanged"/>
+                        <TextBox x:Name="ShadowStrengthValue" Grid.Column="2" Text="1.00"
+                                 Style="{StaticResource ValueInput}" Margin="8,0,0,0"
+                                 TextChanged="ShadowStrengthValue_TextChanged"/>
+                    </Grid>
+
+                    <Grid x:Name="ShadowBiasRow" Margin="0,5">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="100"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="56"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Bias" Style="{StaticResource PropertyLabel}"
+                                   ToolTip="Higher = less shadow acne, but shadows detach from objects (peter-panning)"/>
+                        <Slider x:Name="ShadowBiasSlider" Grid.Column="1" Minimum="0" Maximum="0.2" Value="0.05"
+                                VerticalAlignment="Center" ValueChanged="ShadowBiasSlider_ValueChanged"/>
+                        <TextBox x:Name="ShadowBiasValue" Grid.Column="2" Text="0.050"
+                                 Style="{StaticResource ValueInput}" Margin="8,0,0,0"
+                                 TextChanged="ShadowBiasValue_TextChanged"/>
+                    </Grid>
+
+                    <Grid x:Name="ShadowResolutionRow" Margin="0,5">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="100"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Resolution" Style="{StaticResource PropertyLabel}"/>
+                        <ComboBox x:Name="ShadowResolutionCombo" Grid.Column="1" Style="{StaticResource ComboBoxStyle}"
+                                  SelectionChanged="ShadowResolutionCombo_SelectionChanged">
+                            <ComboBoxItem Content="512"/>
+                            <ComboBoxItem Content="1024"/>
+                            <ComboBoxItem Content="2048" IsSelected="True"/>
+                            <ComboBoxItem Content="4096"/>
                         </ComboBox>
                     </Grid>
                 </StackPanel>

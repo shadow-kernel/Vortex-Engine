@@ -43,6 +43,11 @@ namespace vortex::graphics::dx12
 		// compile (renderer falls back to the rigid PSO -> bind pose, never a crash).
 		ID3D12PipelineState* skinned_pso() const { return m_skinned_pso.Get(); }
 
+		// Shadow PSO: depth-only (standard VS, no PS, no RTV, D32 DSV + depth bias) — renders casters from
+		// the spot light's view into the shadow map. Rigid input layout, so it draws straight from the
+		// shadow instance VB. nullptr = creation failed (spot shadows silently disabled, never a crash).
+		ID3D12PipelineState* shadow_pso() const { return m_shadow_pso.Get(); }
+
 		// Compile a CUSTOM material shader (.hlsl, VSMain/PSMain) into a PSO that reuses this pipeline's root
 		// signature + input layout + render state — only the shader stages differ, so it stays binding-compatible
 		// with the same PerFrame/PerObject/light/texture setup. Returns nullptr on any compile/create failure (the
@@ -64,6 +69,7 @@ namespace vortex::graphics::dx12
 		ComPtr<ID3D12PipelineState> m_gizmo_pso;   // depth-disabled, cull-none: gizmos always on top
 		ComPtr<ID3D12PipelineState> m_gizmo_wire_pso; // gizmo PSO variant with WIREFRAME fill (fine-net shapes)
 		ComPtr<ID3D12PipelineState> m_skinned_pso; // GPU skinning (skinned.hlsl VS + standard PS)
+		ComPtr<ID3D12PipelineState> m_shadow_pso;  // depth-only shadow-map pass (standard VS, no PS/RTV)
 		ComPtr<ID3DBlob> m_vs_blob;
 		ComPtr<ID3DBlob> m_ps_blob;
 		ComPtr<ID3DBlob> m_skinned_vs_blob;        // optional — skinned PSO skipped if it fails to load
