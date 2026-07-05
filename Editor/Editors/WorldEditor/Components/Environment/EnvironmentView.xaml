@@ -47,8 +47,17 @@
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel Margin="0,10,0,10">
 
-            <TextBlock Text="Scene environment — saved with the scene, previewed live."
+            <TextBlock Text="Scene environment — saved with the scene. Post effects apply to the GAME camera (play window + exported game); the build viewport stays clean."
                        Foreground="#FF73737A" FontSize="11" Margin="14,0,14,10" TextWrapping="Wrap"/>
+
+            <Border Style="{StaticResource SectionCard}">
+                <Grid>
+                    <TextBlock Text="Preview post effects in viewport" Style="{StaticResource PropLabel}"
+                               ToolTip="Temporarily shows vignette/grain/aberration in the editor viewport for tuning. Never saved; off by default so map building stays clean."/>
+                    <CheckBox x:Name="PreviewFx" HorizontalAlignment="Right" VerticalAlignment="Center"
+                              Checked="PreviewFx_Changed" Unchecked="PreviewFx_Changed"/>
+                </Grid>
+            </Border>
 
             <!-- ================= FOG ================= -->
             <Border Style="{StaticResource SectionCard}">

@@ -293,6 +293,9 @@ namespace Editor
                 // it calls GameHostTick (scripts + camera + submit) then renders + presents. Blocks until close.
                 _ghTick = GameHostTick;                                   // keep the delegate alive (GC)
                 DllWrapper.VortexAPI.SetGameTickCallback(_ghTick);
+                // The player's main view IS the game -> scene post-FX applies here. (The editor never
+                // sets this, so its freecam build viewport stays clean.)
+                DllWrapper.VortexAPI.SetPostMainView(true);
                 if (_renderScaleArg > 0f && _renderScaleArg < 0.999f)     // dev: --renderscale=<f> (the scaled path)
                     try { DllWrapper.VortexAPI.SetRenderScale(_renderScaleArg); } catch { }
                 if (_dlssArg > 0)                                          // dev: --dlss=<0..4> (force a DLSS mode)

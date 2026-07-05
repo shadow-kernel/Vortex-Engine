@@ -542,6 +542,14 @@ EDITOR_INTERFACE void SetPostFxDebugInvert(bool enabled)
 	graphics::dx12::DX12Renderer::instance().postfx().params().debug_invert = enabled;
 }
 
+// Main-view gate: post-FX in the PRIMARY swapchain. The GameHost player enables it at boot (there the
+// main view IS the game); the editor leaves it off so the freecam build viewport stays clean (its
+// Environment panel may toggle it for a preview). The play-mode game window always applies effects.
+EDITOR_INTERFACE void SetPostFxMainView(bool enabled)
+{
+	graphics::dx12::DX12Renderer::instance().postfx().set_main_view_enabled(enabled);
+}
+
 // Multithreaded per-instance cull+pack (auto-gates on instance count; the draw recording stays single-threaded).
 EDITOR_INTERFACE void SetMultithreading(bool enabled)
 {

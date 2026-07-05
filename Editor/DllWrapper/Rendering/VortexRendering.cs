@@ -736,6 +736,9 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void SetPostFxDebugInvert([MarshalAs(UnmanagedType.I1)] bool enabled);
 
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetPostFxMainView([MarshalAs(UnmanagedType.I1)] bool enabled);
+
         /// <summary>
         /// Clear all dynamic lights. Call at the beginning of each frame before submitting new lights.
         /// </summary>
@@ -830,6 +833,14 @@ namespace Editor.DllWrapper
         public static void SetPostDebugInvert(bool enabled)
         {
             try { SetPostFxDebugInvert(enabled); } catch { }
+        }
+
+        /// <summary>Post-FX in the PRIMARY swapchain: the GameHost player enables it at boot (there the
+        /// main view IS the game); the editor leaves it off so the freecam build viewport stays clean.
+        /// The play-mode game window always applies effects regardless.</summary>
+        public static void SetPostMainView(bool enabled)
+        {
+            try { SetPostFxMainView(enabled); } catch { }
         }
 
         #endregion

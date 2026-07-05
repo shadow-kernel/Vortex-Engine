@@ -111,6 +111,14 @@ namespace Editor.Editors.WorldEditor.Components.Environment
             if (scene != null) scene.IsDirty = true;
         }
 
+        /// <summary>Editor-only preview: post-FX normally renders in the GAME camera only (play window +
+        /// exported game). This toggle lets the author see it in the build viewport while tuning.</summary>
+        private void PreviewFx_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_loading) return;
+            DllWrapper.VortexAPI.SetPostMainView(PreviewFx.IsChecked == true);
+        }
+
         private void FogColor_Click(object sender, MouseButtonEventArgs e)
         {
             var s = Settings; if (s == null) return;

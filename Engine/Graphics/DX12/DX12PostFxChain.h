@@ -60,6 +60,13 @@ namespace vortex::graphics::dx12
 			return m_pso && (m_params.vignette || m_params.grain || m_params.ca || m_params.debug_invert);
 		}
 
+		// MAIN-VIEW gate: post-FX is a GAME-camera look, not an editor tool — the editor's freecam
+		// build viewport must stay clean. Default OFF; the GameHost player turns it on at boot (the
+		// shipped game IS the main view there), and the editor's Environment panel can opt in for a
+		// preview. The play-mode game window ignores this (it is always game rendering).
+		void set_main_view_enabled(bool enabled) { m_main_view = enabled; }
+		bool main_view_enabled() const { return m_main_view; }
+
 		// The RT the scene/composite renders into while the chain is active, ensured to w x h and left
 		// in RENDER_TARGET state. `slot` 0 = editor viewport, 1 = game window (independent sizes, so
 		// each gets its own ping-pong pair — sharing one would re-create it every frame while both
@@ -95,5 +102,6 @@ namespace vortex::graphics::dx12
 		ID3D12Device* m_device{ nullptr };    // borrowed (DX12Core owns it) — for lazy ping-B creation
 		DXGI_FORMAT m_format{ DXGI_FORMAT_R8G8B8A8_UNORM };
 		Params m_params;
+		bool m_main_view{ false };            // editor viewport clean by default; player enables at boot
 	};
 }

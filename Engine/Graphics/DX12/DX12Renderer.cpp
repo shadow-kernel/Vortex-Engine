@@ -577,7 +577,10 @@ namespace vortex::graphics::dx12
 		bool fg_on = (m_fg_mode > 0) && DX12Streamline::instance().fg_ready() && m_mvec_pipeline.is_initialized();
 		// Post-FX (#28) forces the scaled-RT path too (even at scale 1.0): the 3D must land offscreen so
 		// the chain can read it — the composite then writes the chain's input instead of the back buffer.
-		bool post_on = m_postfx.active() && m_upscale.is_initialized();
+		// main_view gate: this path is the EDITOR's build viewport unless we're the GameHost player —
+		// effects belong to the game camera only (the player enables the gate at boot; the editor's
+		// Environment panel can opt in for a preview).
+		bool post_on = m_postfx.active() && m_postfx.main_view_enabled() && m_upscale.is_initialized();
 		bool use_scale = (m_render_scale < 0.999f || fg_on || post_on) && m_upscale.is_initialized();
 		u32 out_w = m_swapchain.width(), out_h = m_swapchain.height();
 		if (use_scale)
