@@ -1,8 +1,0 @@
-{
-  "name": "Horror Starter",
-  "tagline": "First-person horror kit — flashlight, interaction, jump scare",
-  "description": "A ready-to-play first-person horror foundation: Quake-feel FP controller with pause overlay, battery-drained flashlight that casts real shadows, [E] interaction with a sliding door, material-driven footsteps, and a scripted jump scare (trigger volume + spawned stalker + post-FX panic ramp). Fog, vignette and film grain are authored per scene in the Environment panel — everything gameplay lives in plain project scripts you can read and change.",
-  "preview": "preview.png",
-  "project": ".",
-  "order": 1
-}

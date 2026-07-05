@@ -5,3 +5,6 @@
 [submodule "Templates/Default3D"]
 	path = Templates/Default3D
 	url = https://github.com/shadow-kernel/Vortex-Engine-3D-Template.git
+[submodule "Templates/HorrorStarter"]
+	path = Templates/HorrorStarter
+	url = https://github.com/shadow-kernel/Vortex-Engine-Horror-Template.git
