@@ -1,0 +1,218 @@
+<UserControl x:Class="Editor.Editors.WorldEditor.Components.Environment.EnvironmentView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             mc:Ignorable="d" d:DesignWidth="330" d:DesignHeight="700"
+             Background="#FF1D1D20">
+    <UserControl.Resources>
+        <Style x:Key="SectionCard" TargetType="Border">
+            <Setter Property="Background" Value="#FF232327"/>
+            <Setter Property="CornerRadius" Value="12"/>
+            <Setter Property="Padding" Value="14"/>
+            <Setter Property="Margin" Value="10,0,10,10"/>
+        </Style>
+        <Style x:Key="SectionTitle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="13.5"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="#FFE9E9ED"/>
+        </Style>
+        <Style x:Key="PropLabel" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#FF98989F"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <Style x:Key="ValueBox" TargetType="TextBox">
+            <Setter Property="Background" Value="#FF35353C"/>
+            <Setter Property="Foreground" Value="#FFE9E9ED"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="TextAlignment" Value="Center"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Height" Value="24"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+        <Style x:Key="Swatch" TargetType="Border">
+            <Setter Property="Height" Value="24"/>
+            <Setter Property="CornerRadius" Value="8"/>
+            <Setter Property="BorderBrush" Value="#FF33333A"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+        <!-- Label | Slider | Value row -->
+        <Style x:Key="PropRow" TargetType="Grid">
+            <Setter Property="Margin" Value="0,6,0,0"/>
+        </Style>
+    </UserControl.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="0,10,0,10">
+
+            <TextBlock Text="Scene environment — saved with the scene, previewed live."
+                       Foreground="#FF73737A" FontSize="11" Margin="14,0,14,10" TextWrapping="Wrap"/>
+
+            <!-- ================= FOG ================= -->
+            <Border Style="{StaticResource SectionCard}">
+                <StackPanel>
+                    <Grid>
+                        <TextBlock Text="Fog" Style="{StaticResource SectionTitle}"/>
+                        <CheckBox x:Name="FogOn" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                  Checked="AnyChanged" Unchecked="AnyChanged"/>
+                    </Grid>
+                    <Grid Style="{StaticResource PropRow}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="92"/><ColumnDefinition Width="*"/><ColumnDefinition Width="52"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Density" Style="{StaticResource PropLabel}"/>
+                        <Slider x:Name="FogDensity" Grid.Column="1" Minimum="0" Maximum="0.5"
+                                VerticalAlignment="Center" ValueChanged="AnyChanged"/>
+                        <TextBox x:Name="FogDensityBox" Grid.Column="2" Style="{StaticResource ValueBox}"
+                                 Margin="8,0,0,0" LostFocus="AnyBoxCommit" KeyDown="AnyBoxKey"/>
+                    </Grid>
+                    <Grid Style="{StaticResource PropRow}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="92"/><ColumnDefinition Width="*"/><ColumnDefinition Width="52"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Height Y" Style="{StaticResource PropLabel}"/>
+                        <Slider x:Name="FogHeightY" Grid.Column="1" Minimum="-20" Maximum="20"
+                                VerticalAlignment="Center" ValueChanged="AnyChanged"/>
+                        <TextBox x:Name="FogHeightYBox" Grid.Column="2" Style="{StaticResource ValueBox}"
+                                 Margin="8,0,0,0" LostFocus="AnyBoxCommit" KeyDown="AnyBoxKey"/>
+                    </Grid>
+                    <Grid Style="{StaticResource PropRow}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="92"/><ColumnDefinition Width="*"/><ColumnDefinition Width="52"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Ground Mist" Style="{StaticResource PropLabel}"
+                                   ToolTip="0 = uniform distance fog; higher = mist hugging the ground below Height Y"/>
+                        <Slider x:Name="FogFalloff" Grid.Column="1" Minimum="0" Maximum="2"
+                                VerticalAlignment="Center" ValueChanged="AnyChanged"/>
+                        <TextBox x:Name="FogFalloffBox" Grid.Column="2" Style="{StaticResource ValueBox}"
+                                 Margin="8,0,0,0" LostFocus="AnyBoxCommit" KeyDown="AnyBoxKey"/>
+                    </Grid>
+                    <Grid Style="{StaticResource PropRow}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="92"/><ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Color" Style="{StaticResource PropLabel}"/>
+                        <Border x:Name="FogColorSwatch" Grid.Column="1" Style="{StaticResource Swatch}"
+                                Background="#FF05070A" MouseLeftButtonUp="FogColor_Click"/>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- ================= VIGNETTE ================= -->
+            <Border Style="{StaticResource SectionCard}">
+                <StackPanel>
+                    <Grid>
+                        <TextBlock Text="Vignette" Style="{StaticResource SectionTitle}"/>
+                        <CheckBox x:Name="VigOn" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                  Checked="AnyChanged" Unchecked="AnyChanged"/>
+                    </Grid>
+                    <Grid Style="{StaticResource PropRow}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="92"/><ColumnDefinition Width="*"/><ColumnDefinition Width="52"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Intensity" Style="{StaticResource PropLabel}"/>
+                        <Slider x:Name="VigIntensity" Grid.Column="1" Minimum="0" Maximum="1.5"
+                                VerticalAlignment="Center" ValueChanged="AnyChanged"/>
+                        <TextBox x:Name="VigIntensityBox" Grid.Column="2" Style="{StaticResource ValueBox}"
+                                 Margin="8,0,0,0" LostFocus="AnyBoxCommit" KeyDown="AnyBoxKey"/>
+                    </Grid>
+                    <Grid Style="{StaticResource PropRow}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="92"/><ColumnDefinition Width="*"/><ColumnDefinition Width="52"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Smoothness" Style="{StaticResource PropLabel}"/>
+                        <Slider x:Name="VigSmoothness" Grid.Column="1" Minimum="0.01" Maximum="1"
+                                VerticalAlignment="Center" ValueChanged="AnyChanged"/>
+                        <TextBox x:Name="VigSmoothnessBox" Grid.Column="2" Style="{StaticResource ValueBox}"
+                                 Margin="8,0,0,0" LostFocus="AnyBoxCommit" KeyDown="AnyBoxKey"/>
+                    </Grid>
+                    <Grid Style="{StaticResource PropRow}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="92"/><ColumnDefinition Width="*"/><ColumnDefinition Width="52"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Roundness" Style="{StaticResource PropLabel}"
+                                   ToolTip="1 = circular on any aspect ratio, 0 = follows the screen shape"/>
+                        <Slider x:Name="VigRoundness" Grid.Column="1" Minimum="0" Maximum="1"
+                                VerticalAlignment="Center" ValueChanged="AnyChanged"/>
+                        <TextBox x:Name="VigRoundnessBox" Grid.Column="2" Style="{StaticResource ValueBox}"
+                                 Margin="8,0,0,0" LostFocus="AnyBoxCommit" KeyDown="AnyBoxKey"/>
+                    </Grid>
+                    <Grid Style="{StaticResource PropRow}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="92"/><ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Color" Style="{StaticResource PropLabel}"/>
+                        <Border x:Name="VigColorSwatch" Grid.Column="1" Style="{StaticResource Swatch}"
+                                Background="Black" MouseLeftButtonUp="VigColor_Click"/>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- ================= FILM GRAIN ================= -->
+            <Border Style="{StaticResource SectionCard}">
+                <StackPanel>
+                    <Grid>
+                        <TextBlock Text="Film Grain" Style="{StaticResource SectionTitle}"/>
+                        <CheckBox x:Name="GrainOn" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                  Checked="AnyChanged" Unchecked="AnyChanged"/>
+                    </Grid>
+                    <Grid Style="{StaticResource PropRow}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="92"/><ColumnDefinition Width="*"/><ColumnDefinition Width="52"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Intensity" Style="{StaticResource PropLabel}"/>
+                        <Slider x:Name="GrainIntensity" Grid.Column="1" Minimum="0" Maximum="1"
+                                VerticalAlignment="Center" ValueChanged="AnyChanged"/>
+                        <TextBox x:Name="GrainIntensityBox" Grid.Column="2" Style="{StaticResource ValueBox}"
+                                 Margin="8,0,0,0" LostFocus="AnyBoxCommit" KeyDown="AnyBoxKey"/>
+                    </Grid>
+                    <Grid Style="{StaticResource PropRow}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="92"/><ColumnDefinition Width="*"/><ColumnDefinition Width="52"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Size (px)" Style="{StaticResource PropLabel}"/>
+                        <Slider x:Name="GrainSize" Grid.Column="1" Minimum="1" Maximum="4"
+                                VerticalAlignment="Center" ValueChanged="AnyChanged"/>
+                        <TextBox x:Name="GrainSizeBox" Grid.Column="2" Style="{StaticResource ValueBox}"
+                                 Margin="8,0,0,0" LostFocus="AnyBoxCommit" KeyDown="AnyBoxKey"/>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- ================= CHROMATIC ABERRATION ================= -->
+            <Border Style="{StaticResource SectionCard}">
+                <StackPanel>
+                    <Grid>
+                        <TextBlock Text="Chromatic Aberration" Style="{StaticResource SectionTitle}"/>
+                        <CheckBox x:Name="CaOn" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                  Checked="AnyChanged" Unchecked="AnyChanged"/>
+                    </Grid>
+                    <Grid Style="{StaticResource PropRow}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="92"/><ColumnDefinition Width="*"/><ColumnDefinition Width="52"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Strength" Style="{StaticResource PropLabel}"/>
+                        <Slider x:Name="CaStrength" Grid.Column="1" Minimum="0" Maximum="2"
+                                VerticalAlignment="Center" ValueChanged="AnyChanged"/>
+                        <TextBox x:Name="CaStrengthBox" Grid.Column="2" Style="{StaticResource ValueBox}"
+                                 Margin="8,0,0,0" LostFocus="AnyBoxCommit" KeyDown="AnyBoxKey"/>
+                    </Grid>
+                    <Grid Style="{StaticResource PropRow}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="92"/><ColumnDefinition Width="*"/><ColumnDefinition Width="52"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Falloff" Style="{StaticResource PropLabel}"
+                                   ToolTip="Radial power — higher keeps the center clean and smears only the edges"/>
+                        <Slider x:Name="CaFalloff" Grid.Column="1" Minimum="0.5" Maximum="3"
+                                VerticalAlignment="Center" ValueChanged="AnyChanged"/>
+                        <TextBox x:Name="CaFalloffBox" Grid.Column="2" Style="{StaticResource ValueBox}"
+                                 Margin="8,0,0,0" LostFocus="AnyBoxCommit" KeyDown="AnyBoxKey"/>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

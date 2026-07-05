@@ -83,7 +83,40 @@ namespace vortex::graphics::dx12
 	gpu_light.color = m_spot_lights[i].color;
 	gpu_light.intensity = m_spot_lights[i].intensity;
 	gpu_light.inner_spot_angle = m_spot_lights[i].inner_spot_angle;
+
+	// Spot shadows (#23): map this spot to its atlas tile (prepare_shadow_pass ran just above).
+	// slot -1 = no shadow for this spot; the shader skips the sample entirely.
+	gpu_light.shadow_slot = -1.0f;
+	gpu_light.shadow_strength = 0.0f;
+	gpu_light.shadow_bias = 0.0f;
+	for (u32 t = 0; t < m_shadow_spot_count; ++t)
+	{
+		if (m_shadow_spots[t].spot_index == (int)i)
+		{
+			gpu_light.shadow_slot = (float)t;
+			float st = m_spot_lights[i].shadow_strength;
+			gpu_light.shadow_strength = st < 0.0f ? 0.0f : (st > 1.0f ? 1.0f : st);
+			gpu_light.shadow_bias = m_spot_lights[i].shadow_bias;
+			break;
+		}
+	}
 	memcpy(spot_ptr + i * sizeof(GPUSpotLight), &gpu_light, sizeof(GPUSpotLight));
+	}
+
+	// Shadow atlas VPs (#23): the light buffer tail @1024 (16*32B points + 8*64B spots) carries the
+	// four tile view-projections — the buffer was created 1280 bytes wide, so the tail fits exactly.
+	{
+		u8* vp_ptr = ptr + MAX_POINT_LIGHTS * sizeof(GPUPointLight) + MAX_SPOT_LIGHTS * sizeof(GPUSpotLight);
+		for (u32 t = 0; t < MAX_SHADOW_SPOTS; ++t)
+		{
+			if (t < m_shadow_spot_count)
+				memcpy(vp_ptr + (size_t)t * 64, &m_shadow_spots[t].vp, 64);
+			else
+			{
+				DirectX::XMFLOAT4X4 ident; DirectX::XMStoreFloat4x4(&ident, DirectX::XMMatrixIdentity());
+				memcpy(vp_ptr + (size_t)t * 64, &ident, 64);   // unused tiles: never sampled (slot -1)
+			}
+		}
 	}
 	}
 	}

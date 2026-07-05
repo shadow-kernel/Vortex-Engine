@@ -60,6 +60,18 @@ namespace Editor.Core.Data
         }
 
         /// <summary>
+        /// Per-scene environment (fog + post-FX). Optional in the file: scenes saved before v2.7.0
+        /// deserialize with null and lazily get defaults (everything off). Applied in Activate().
+        /// </summary>
+        private SceneSettings _settings;
+        [DataMember(Name = "settings", Order = 3, IsRequired = false, EmitDefaultValue = false)]
+        public SceneSettings Settings
+        {
+            get => _settings ?? (_settings = new SceneSettings());
+            set => _settings = value;
+        }
+
+        /// <summary>
         /// Referenz zum �bergeordneten Projekt (nicht serialisiert)
         /// </summary>
         [IgnoreDataMember]
@@ -163,6 +175,7 @@ namespace Editor.Core.Data
                 {
                     var loadedScene = Serialization.DataSerializer.LoadFromBinary<Scene>(FilePath);
                     _entities = loadedScene._entities ?? new ObservableCollection<GameEntity>();
+                    _settings = loadedScene._settings;   // per-scene environment (null on pre-v2.7 files -> defaults)
                     
                     // Setze Referenzen
                     foreach (var entity in _entities)
@@ -278,6 +291,10 @@ namespace Editor.Core.Data
                 return;
 
             IsActive = true;
+
+            // Authored environment (fog + post-FX) follows the live scene — editor open, editor play
+            // AND the shipped game all funnel through Activate(). Scripts may override afterwards.
+            Settings.Apply();
 
             // Preload textures and materials for this scene
             Services.SceneRenderService.Instance.PreloadSceneAssets(this);
@@ -404,6 +421,10 @@ namespace Editor.Core.Data
         public void ActivateEntities()
         {
 			IsActive = true;
+
+			// Authored environment (fog + post-FX) — this is the path the GameHost player boots
+			// through (Activate() covers the editor's open-scene path; both are idempotent).
+			Settings.Apply();
 
 			if (!_engineHandle.IsValid)
 			{

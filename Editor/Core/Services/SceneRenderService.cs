@@ -31,6 +31,19 @@ namespace Editor.Core.Services
         /// </summary>
         public static bool RuntimeDirty;
 
+        /// <summary>
+        /// Asset-pipeline diagnostics, opt-in via VORTEX_VERBOSE_LOG=1. With a VS debugger attached EVERY
+        /// Debug.WriteLine is a ~0.5-2ms cross-process round-trip — this service used to log per asset
+        /// during scene load (250+ writes for a real level), which alone added seconds of F5-only stall
+        /// while the same build loaded instantly standalone.
+        /// </summary>
+        private static readonly bool _verboseLog =
+            Environment.GetEnvironmentVariable("VORTEX_VERBOSE_LOG") == "1";
+        private static void Log(string msg)
+        {
+            if (_verboseLog) System.Diagnostics.Debug.WriteLine(msg);
+        }
+
         private readonly Dictionary<Guid, long> _entityMeshes = new Dictionary<Guid, long>();
         private static int _meshDbg; // diagnostic: log first few mesh creations
         private static int _submitN, _ssDbg; // diagnostic: count submits per SubmitScene
@@ -56,7 +69,7 @@ namespace Editor.Core.Services
             if (!string.IsNullOrEmpty(meshPath) && materialId >= 0)
             {
                 _meshPathToMaterialId[meshPath] = materialId;
-                System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Registered material {materialId} for mesh path: {meshPath}");
+                Log($"[SceneRenderService] Registered material {materialId} for mesh path: {meshPath}");
             }
         }
 
@@ -68,7 +81,7 @@ namespace Editor.Core.Services
             if (!string.IsNullOrEmpty(meshPath) && meshId >= 0)
             {
                 _submeshMeshCache[meshPath] = meshId;
-                System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Registered mesh {meshId} for path: {meshPath}");
+                Log($"[SceneRenderService] Registered mesh {meshId} for path: {meshPath}");
             }
         }
 
@@ -145,7 +158,7 @@ namespace Editor.Core.Services
         {
             if (scene == null) return;
 
-            System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Preloading assets for scene: {scene.Name}");
+            Log($"[SceneRenderService] Preloading assets for scene: {scene.Name}");
             var projectPath = Data.ProjectData.Current?.Path ?? "";
 
             PreloadEntitiesRecursive(scene.Entities, projectPath);
@@ -194,7 +207,7 @@ namespace Editor.Core.Services
 
             if (!AssetVfs.Exists(fullTexturePath))
             {
-                System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Texture not found: {fullTexturePath}");
+                Log($"[SceneRenderService] Texture not found: {fullTexturePath}");
                 return;
             }
 
@@ -216,13 +229,13 @@ namespace Editor.Core.Services
                         RegisterMaterialForMeshPath(meshPath, materialId);
                         _entityMaterials[entityId] = materialId;
 
-                        System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Preloaded texture for {meshPath}: {fullTexturePath}");
+                        Log($"[SceneRenderService] Preloaded texture for {meshPath}: {fullTexturePath}");
                     }
                 }
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Error preloading texture: {ex.Message}");
+                Log($"[SceneRenderService] Error preloading texture: {ex.Message}");
             }
         }
 
@@ -929,7 +942,7 @@ namespace Editor.Core.Services
                 // Check submesh cache first (most common path for already-imported models)
                 if (_submeshMeshCache.TryGetValue(meshPath, out long cachedMeshId))
                 {
-                    System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Using cached mesh {cachedMeshId} for {meshPath}");
+                    Log($"[SceneRenderService] Using cached mesh {cachedMeshId} for {meshPath}");
                     return cachedMeshId;
                 }
 
@@ -987,7 +1000,7 @@ namespace Editor.Core.Services
                     }
 
                     // Import with materials (this creates all submeshes at once) — from RAM if packed, else disk.
-                    System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Importing model with materials: {fullPath} (vfs={fromVfs})");
+                    Log($"[SceneRenderService] Importing model with materials: {fullPath} (vfs={fromVfs})");
                     var virtualDir = (System.IO.Path.GetDirectoryName(actualPath) ?? "").Replace('\\', '/');
                     var submeshes = fromVfs
                         ? VortexAPI.ImportModelFromBytes(vfsBytes, extension.TrimStart('.'), virtualDir)
@@ -1024,7 +1037,7 @@ namespace Editor.Core.Services
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Error loading mesh: {ex.Message}");
+                Log($"[SceneRenderService] Error loading mesh: {ex.Message}");
                 return -1;
             }
         }
@@ -1134,14 +1147,14 @@ namespace Editor.Core.Services
                                     RegisterMaterialForMeshPath(meshPath, newMaterialId);
                                 }
                                 
-                                System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Created material with texture for {meshPath}: {fullTexturePath}");
+                                Log($"[SceneRenderService] Created material with texture for {meshPath}: {fullTexturePath}");
                                 return newMaterialId;
                             }
                         }
                     }
                     catch (Exception ex)
                     {
-                        System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Error loading texture: {ex.Message}");
+                        Log($"[SceneRenderService] Error loading texture: {ex.Message}");
                     }
                 }
             }
@@ -1802,7 +1815,7 @@ namespace Editor.Core.Services
             // Check if texture file exists
             if (!AssetVfs.Exists(fullTexturePath))
             {
-                System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Skybox texture not found: {fullTexturePath}");
+                Log($"[SceneRenderService] Skybox texture not found: {fullTexturePath}");
                 return;
             }
 
@@ -1812,7 +1825,7 @@ namespace Editor.Core.Services
                                
             if (needsReload)
             {
-                System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Loading skybox texture: {fullTexturePath} (exposure={exposure})");
+                Log($"[SceneRenderService] Loading skybox texture: {fullTexturePath} (exposure={exposure})");
                 
                 // Create sphere if not exists (only once)
                 if (_skyboxSphereId < 0)
@@ -1831,14 +1844,14 @@ namespace Editor.Core.Services
                     {
                         _skyboxSphereId = VortexAPI.CreateSphereMesh(1.0f);
                     }
-                    System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Created skybox sphere: {_skyboxSphereId}");
+                    Log($"[SceneRenderService] Created skybox sphere: {_skyboxSphereId}");
                 }
 
                 // Load texture
                 long newTextureId = ImportTexturePath(fullTexturePath);
                 if (newTextureId < 0)
                 {
-                    System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Failed to load skybox texture");
+                    Log($"[SceneRenderService] Failed to load skybox texture");
                     return;
                 }
 
@@ -1864,7 +1877,7 @@ namespace Editor.Core.Services
                     _cachedSkyboxTexturePath = fullTexturePath;
                     _cachedSkyboxExposure = exposure;
                     
-                    System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Skybox ready (UNLIT, exposure={exposure}): sphere={_skyboxSphereId}, material={_skyboxMaterialId}, texture={newTextureId}");
+                    Log($"[SceneRenderService] Skybox ready (UNLIT, exposure={exposure}): sphere={_skyboxSphereId}, material={_skyboxMaterialId}, texture={newTextureId}");
                 }
             }
             else if (_skyboxMaterialId >= 0 && Math.Abs(_cachedSkyboxExposure - exposure) > 0.01f)
@@ -1918,7 +1931,7 @@ namespace Editor.Core.Services
             
             if (string.IsNullOrEmpty(meshPath))
             {
-                System.Diagnostics.Debug.WriteLine("[SceneRenderService] Skybox mesh path is empty");
+                Log("[SceneRenderService] Skybox mesh path is empty");
                 return;
             }
             
@@ -1928,13 +1941,13 @@ namespace Editor.Core.Services
                 ? meshPath 
                 : System.IO.Path.Combine(projectPath, meshPath);
 
-            System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Skybox mesh path: {fullMeshPath}");
-            System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Skybox texture path: {texturePath}");
+            Log($"[SceneRenderService] Skybox mesh path: {fullMeshPath}");
+            Log($"[SceneRenderService] Skybox texture path: {texturePath}");
 
             // Check if file exists
             if (!AssetVfs.Exists(fullMeshPath))
             {
-                System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Skybox mesh file not found: {fullMeshPath}");
+                Log($"[SceneRenderService] Skybox mesh file not found: {fullMeshPath}");
                 return;
             }
 
@@ -1944,7 +1957,7 @@ namespace Editor.Core.Services
             // Check if we have a cached mesh
             if (!_skyboxMeshCache.TryGetValue(cacheKey, out var cached))
             {
-                System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Importing skybox mesh...");
+                Log($"[SceneRenderService] Importing skybox mesh...");
                 
                 // Import the mesh
                 var submeshData = VortexAPI.ImportModelWithMaterialsFromFile(fullMeshPath);
@@ -1954,7 +1967,7 @@ namespace Editor.Core.Services
                     long materialId = submeshData[0].MaterialId;
                     long textureId = -1;
 
-                    System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Skybox mesh imported: meshId={meshId}, materialId={materialId}");
+                    Log($"[SceneRenderService] Skybox mesh imported: meshId={meshId}, materialId={materialId}");
 
                     // If we have a texture, load it and apply to material
                     if (!string.IsNullOrEmpty(texturePath))
@@ -1963,7 +1976,7 @@ namespace Editor.Core.Services
                             ? texturePath
                             : System.IO.Path.Combine(projectPath, texturePath);
 
-                        System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Loading skybox texture: {fullTexturePath}");
+                        Log($"[SceneRenderService] Loading skybox texture: {fullTexturePath}");
 
                         if (AssetVfs.Exists(fullTexturePath))
                         {
@@ -1971,27 +1984,27 @@ namespace Editor.Core.Services
                             if (textureId >= 0)
                             {
                                 VortexAPI.SetMaterialAlbedoTexture(materialId, textureId);
-                                System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Skybox texture loaded: textureId={textureId}");
+                                Log($"[SceneRenderService] Skybox texture loaded: textureId={textureId}");
                             }
                             else
                             {
-                                System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Failed to load skybox texture");
+                                Log($"[SceneRenderService] Failed to load skybox texture");
                             }
                         }
                         else
                         {
-                            System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Skybox texture file not found: {fullTexturePath}");
+                            Log($"[SceneRenderService] Skybox texture file not found: {fullTexturePath}");
                         }
                     }
 
                     cached = (meshId, materialId, textureId);
                     _skyboxMeshCache[cacheKey] = cached;
                     
-                    System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Skybox cached: mesh={meshId}, material={materialId}, texture={textureId}");
+                    Log($"[SceneRenderService] Skybox cached: mesh={meshId}, material={materialId}, texture={textureId}");
                 }
                 else
                 {
-                    System.Diagnostics.Debug.WriteLine($"[SceneRenderService] Failed to import skybox mesh: {meshPath}");
+                    Log($"[SceneRenderService] Failed to import skybox mesh: {meshPath}");
                     return;
                 }
             }
@@ -2033,7 +2046,7 @@ namespace Editor.Core.Services
                 _skyboxSphereId = -1;
             }
             
-            System.Diagnostics.Debug.WriteLine("[SceneRenderService] Skybox cache cleared");
+            Log("[SceneRenderService] Skybox cache cleared");
         }
 
         /// <summary>

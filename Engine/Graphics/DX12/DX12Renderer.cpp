@@ -65,6 +65,13 @@ namespace vortex::graphics::dx12
 		else
 			OutputDebugStringA("Upscale pipeline FAILED (render-scale will fall back to native)\n");
 
+		// Post-FX chain (#28/#29). Optional — if it fails (shader missing), post effects simply never
+		// activate and every render path stays untouched.
+		if (m_postfx.initialize(core.device(), DXGI_FORMAT_R8G8B8A8_UNORM, &m_command_queue))
+			OutputDebugStringA("PostFx chain OK\n");
+		else
+			OutputDebugStringA("PostFx chain FAILED (post-processing disabled)\n");
+
 		// Motion-vector pipeline (DLSS input). RG16F. Optional — if it fails, DLSS just can't run (bilinear upscale).
 		if (m_mvec_pipeline.initialize(core.device(), DXGI_FORMAT_R16G16_FLOAT))
 			OutputDebugStringA("Motion-vector pipeline OK\n");
@@ -79,12 +86,13 @@ namespace vortex::graphics::dx12
 
 		ResourceRegistry::instance().initialize(core.device());
 
-		// Spot shadows (#23): EAGER-create the shadow map so the t7 descriptor always exists — the scene
-		// pass binds the table unconditionally (an unbound-but-referenced table is device-removal
-		// territory), and a cleared-to-1.0 map + shadow_strength 0 is a perfect visual no-op. Failure is
-		// non-fatal: the t7 bind is guarded on the reserved handle and the shader gate stays at 0.
-		if (!ensure_shadow_map(2048))
-			OutputDebugStringA("[shadows] eager shadow-map init failed — spot shadows disabled\n");
+		// Spot shadows (#23): EAGER-create the shadow ATLAS (2x2 tiles of SHADOW_TILE_SIZE² — up to 4
+		// shadow-casting spots per frame) so the t7 descriptor always exists — the scene pass binds the
+		// table unconditionally (an unbound-but-referenced table is device-removal territory), and a
+		// cleared-to-1.0 atlas + per-spot slot -1 is a perfect visual no-op. Failure is non-fatal: the
+		// t7 bind is guarded on the reserved handle and no spot ever gets a slot.
+		if (!ensure_shadow_map(2 * SHADOW_TILE_SIZE))
+			OutputDebugStringA("[shadows] eager shadow-atlas init failed — spot shadows disabled\n");
 
 		// 2D UI overlay (optional — if D2D/DirectWrite init fails the 3D renderer is unaffected).
 		if (m_ui_overlay.initialize(core.device(), m_command_queue.queue(), DX12Swapchain::MaxBufferCount))
@@ -101,6 +109,9 @@ namespace vortex::graphics::dx12
 	{
 		if (!m_initialized) return;
 		m_command_queue.flush();
+
+		// Stop the persistent cull workers before tearing down anything a late dispatch could touch.
+		m_cull_pool.shutdown();
 
 		// Release the UI overlay (its wrapped resources alias the back buffers) before any swapchain teardown.
 		m_ui_overlay.shutdown();
@@ -133,7 +144,7 @@ namespace vortex::graphics::dx12
 		m_shadow_instance_vb.Reset();
 		m_shadow_map.Reset();
 		m_shadow_dsv_heap.Reset();
-		m_shadow_srv_cpu = {}; m_shadow_srv_gpu = {}; m_shadow_map_size = 0; m_shadow_ready = false;
+		m_shadow_srv_cpu = {}; m_shadow_srv_gpu = {}; m_shadow_map_size = 0; m_shadow_spot_count = 0;
 		if (m_light_cb && m_light_cb_mapped) { m_light_cb->Unmap(0, nullptr); m_light_cb_mapped = nullptr; }
 		m_light_cb.Reset();
 		if (m_grid_cb && m_grid_cb_mapped) { m_grid_cb->Unmap(0, nullptr); m_grid_cb_mapped = nullptr; }
@@ -148,6 +159,7 @@ namespace vortex::graphics::dx12
 		m_grid_pipeline.shutdown();
 		m_skybox_pipeline.shutdown();
 		m_upscale.shutdown();
+		m_postfx.shutdown();
 		m_pipeline_3d.shutdown();
 		m_pipeline.shutdown();
 		m_command_list.Reset();
@@ -563,7 +575,10 @@ namespace vortex::graphics::dx12
 		// DLSS Frame Generation forces the scaled-RT path on (even at scale 1.0) so the sampleable depth + the
 		// motion-vector pass exist for DLSS-G to interpolate. fg_on also gates the present-time depth/mvec tagging.
 		bool fg_on = (m_fg_mode > 0) && DX12Streamline::instance().fg_ready() && m_mvec_pipeline.is_initialized();
-		bool use_scale = (m_render_scale < 0.999f || fg_on) && m_upscale.is_initialized();
+		// Post-FX (#28) forces the scaled-RT path too (even at scale 1.0): the 3D must land offscreen so
+		// the chain can read it — the composite then writes the chain's input instead of the back buffer.
+		bool post_on = m_postfx.active() && m_upscale.is_initialized();
+		bool use_scale = (m_render_scale < 0.999f || fg_on || post_on) && m_upscale.is_initialized();
 		u32 out_w = m_swapchain.width(), out_h = m_swapchain.height();
 		if (use_scale)
 		{
@@ -677,12 +692,24 @@ namespace vortex::graphics::dx12
 			DX12RenderTarget* blit_src = dlss_done ? &m_dlss_output : &m_scaled_rt;
 			blit_src->transition_to_shader_resource(m_command_list.Get());
 
+			// Post-FX (#28): the composite lands in the chain's input RT instead of the back buffer;
+			// the chain's LAST pass writes the back buffer. Chain off (or RT creation failed) = the
+			// original direct-to-back-buffer composite, byte for byte.
 			auto bbrtv = m_swapchain.current_rtv();
+			DX12RenderTarget* pfx_in = post_on
+				? m_postfx.acquire_input(DX12Core::instance().device(), out_w, out_h, 0) : nullptr;
+			auto comp_rtv = bbrtv;
+			if (pfx_in)
+			{
+				pfx_in->transition_to_render_target(m_command_list.Get());
+				comp_rtv = pfx_in->rtv();
+			}
+
 			D3D12_VIEWPORT fvp{}; fvp.Width = (float)out_w; fvp.Height = (float)out_h; fvp.MaxDepth = 1.0f;
 			D3D12_RECT fsc{}; fsc.right = (LONG)out_w; fsc.bottom = (LONG)out_h;
 			m_command_list->RSSetViewports(1, &fvp);
 			m_command_list->RSSetScissorRects(1, &fsc);
-			m_command_list->OMSetRenderTargets(1, &bbrtv, FALSE, nullptr);   // no depth on the composite
+			m_command_list->OMSetRenderTargets(1, &comp_rtv, FALSE, nullptr);   // no depth on the composite
 
 			m_command_list->SetPipelineState(m_upscale.pipeline_state());
 			m_command_list->SetGraphicsRootSignature(m_upscale.root_signature());
@@ -693,6 +720,9 @@ namespace vortex::graphics::dx12
 			m_command_list->DrawInstanced(3, 1, 0, 0);   // fullscreen triangle
 
 			blit_src->transition_to_render_target(m_command_list.Get());   // leave RT ready for next frame
+
+			if (pfx_in)
+				m_postfx.record(m_command_list.Get(), 0, bbrtv, out_w, out_h, elapsed_seconds());
 
 			barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
 			barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;

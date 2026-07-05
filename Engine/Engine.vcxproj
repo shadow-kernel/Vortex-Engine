@@ -42,6 +42,8 @@
     <ClInclude Include="Graphics\DX12\DX12SkyboxPipeline.h" />
     <ClInclude Include="Graphics\DX12\DX12Streamline.h" />
     <ClInclude Include="Graphics\DX12\DX12UpscalePipeline.h" />
+    <ClInclude Include="Graphics\DX12\DX12PostFxChain.h" />
+    <ClInclude Include="Graphics\DX12\CullWorkerPool.h" />
     <ClInclude Include="Graphics\DX12\UIOverlay.h" />
     <ClInclude Include="Graphics\DX12\DX12Swapchain.h" />
     <ClInclude Include="Graphics\Geometry\ConeGenerator.h" />
@@ -122,6 +124,7 @@
     <ClCompile Include="Graphics\DX12\DX12SkyboxPipeline.cpp" />
     <ClCompile Include="Graphics\DX12\DX12Streamline.cpp" />
     <ClCompile Include="Graphics\DX12\DX12UpscalePipeline.cpp" />
+    <ClCompile Include="Graphics\DX12\DX12PostFxChain.cpp" />
     <ClCompile Include="Graphics\DX12\DX12Swapchain.cpp" />
     <ClCompile Include="Graphics\Geometry\ConeGenerator.cpp" />
     <ClCompile Include="Graphics\Geometry\CubeGenerator.cpp" />
@@ -170,6 +173,7 @@
     <None Include="Shaders\skinned.hlsl" />
     <None Include="Shaders\skybox.hlsl" />
     <None Include="Shaders\standard.hlsl" />
+    <None Include="Shaders\postfx.hlsl" />
     <None Include="Shaders\upscale.hlsl" />
   </ItemGroup>
   <ItemGroup>

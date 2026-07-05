@@ -509,6 +509,39 @@ EDITOR_INTERFACE void SetGeometricLOD(bool enabled, float mid, float farD)
 	graphics::dx12::DX12Renderer::instance().set_geometric_lod(enabled, mid, farD);
 }
 
+// ---- Post-processing (#28 framework / #29 pack 1) ----
+// Params are persistent renderer state (like fog): set once, applies to the editor viewport, the
+// play-mode game window AND shipped games until changed. All effects off = the untouched render path.
+
+EDITOR_INTERFACE void SetPostFxVignette(bool enabled, float intensity, float smoothness, float roundness,
+	float r, float g, float b)
+{
+	auto& p = graphics::dx12::DX12Renderer::instance().postfx().params();
+	p.vignette = enabled;
+	p.vig_intensity = intensity; p.vig_smoothness = smoothness; p.vig_roundness = roundness;
+	p.vig_r = r; p.vig_g = g; p.vig_b = b;
+}
+
+EDITOR_INTERFACE void SetPostFxGrain(bool enabled, float intensity, float size)
+{
+	auto& p = graphics::dx12::DX12Renderer::instance().postfx().params();
+	p.grain = enabled;
+	p.grain_intensity = intensity; p.grain_size = size;
+}
+
+EDITOR_INTERFACE void SetPostFxChromaticAberration(bool enabled, float strength, float falloff)
+{
+	auto& p = graphics::dx12::DX12Renderer::instance().postfx().params();
+	p.ca = enabled;
+	p.ca_strength = strength; p.ca_falloff = falloff;
+}
+
+// Chain-verification pass (#28 AC): a trivial invert as a SECOND pass, proving the ping-pong. Debug only.
+EDITOR_INTERFACE void SetPostFxDebugInvert(bool enabled)
+{
+	graphics::dx12::DX12Renderer::instance().postfx().params().debug_invert = enabled;
+}
+
 // Multithreaded per-instance cull+pack (auto-gates on instance count; the draw recording stays single-threaded).
 EDITOR_INTERFACE void SetMultithreading(bool enabled)
 {

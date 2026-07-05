@@ -10,11 +10,13 @@
 #include "DX12GridPipeline.h"
 #include "DX12SkyboxPipeline.h"
 #include "DX12UpscalePipeline.h"
+#include "DX12PostFxChain.h"
 #include "DX12MotionVectorPipeline.h"
 #include "DX12DepthBuffer.h"
 #include "DX12RenderTarget.h"
 #include "DX12Streamline.h"   // DLSS SR + Frame Generation (inline set_fg_mode/fg_presented_fps below)
 #include "DX12Geometry.h"
+#include "CullWorkerPool.h"
 #include "UIOverlay.h"
 #include "../Resources/Mesh.h"
 #include <d3d12.h>
@@ -190,6 +192,14 @@ namespace vortex::graphics::dx12
 		// Fog (Welle A #27): scene-wide exp2 distance/height fog, written straight into the persistent
 		// PerFrameConstants fields (density <= 0 disables). Colors are linear 0..1.
 		void set_fog(const DirectX::XMFLOAT3& color, float density, float height_y, float height_falloff);
+
+		// Post-FX chain (#28/#29): VortexAPI setters write params(); when active() the frame's
+		// composite is redirected through the chain (editor viewport AND game window paths).
+		DX12PostFxChain& postfx() { return m_postfx; }
+		float elapsed_seconds() const
+		{
+			return std::chrono::duration<float>(std::chrono::steady_clock::now() - m_time_origin).count();
+		}
 
 		// Rendering mode
 		void set_wireframe_mode(bool enabled) { m_wireframe_mode = enabled; }
@@ -444,6 +454,8 @@ namespace vortex::graphics::dx12
 		DX12GridPipeline m_grid_pipeline;  // Grid rendering pipeline
 		DX12SkyboxPipeline m_skybox_pipeline; // Skybox rendering pipeline
 		DX12UpscalePipeline m_upscale;        // Fullscreen upscale (render-scale composite + the DLSS slot)
+		DX12PostFxChain m_postfx;             // Post-processing chain (#28/#29) between composite and UI overlay
+		std::chrono::steady_clock::time_point m_time_origin{ std::chrono::steady_clock::now() };
 		DX12RenderTarget m_scaled_rt;         // Offscreen color+depth the 3D renders into when render-scale < 1
 		DX12MotionVectorPipeline m_mvec_pipeline; // RG16F velocity pass (DLSS input)
 		DX12RenderTarget m_mvec_rt;           // RG16F motion vectors (render res) — DLSS input
@@ -506,13 +518,10 @@ namespace vortex::graphics::dx12
 			u32 fog_mode;              // reserved (0 today); density gates the effect
 			float fog_padding;
 			// Spot-light shadows (#23) — APPENDED after fog (@160), byte-matched to standard.hlsl.
-			// shadow_strength 0 = shadows off (also the "no shadow light this frame" gate) — with the
-			// eagerly-created, cleared-to-1.0 shadow map always bound at t7, 0 strength is a perfect no-op.
-			DirectX::XMFLOAT4X4 shadow_view_projection;   // light view*proj (row-major, same convention as view_projection)
-			float shadow_strength;
-			float shadow_bias;
-			float shadow_map_texel;    // 1 / shadow-map size (ready for a PCF kernel later)
-			u32 shadow_spot_index;     // which SpotLights[] entry owns the shadow map
+			// Per-spot shadow data lives in GPUSpotLight (strength/bias/slot) and the light buffer's
+			// ShadowVP[4] tail; b0 only carries the atlas texel size (all tiles are the same size).
+			float shadow_map_texel;    // 1 / tile size (ready for a PCF kernel later)
+			u32 shadow_padding[3];
 		};
 		
 		// Separate light buffer for GPU
@@ -533,7 +542,12 @@ namespace vortex::graphics::dx12
 			DirectX::XMFLOAT3 color;
 			float intensity;
 			float inner_spot_angle;
-			float padding[3];
+			// Spot shadows (#23): packed into the former padding — the 64-byte ABI is unchanged.
+			// shadow_slot: -1 = no shadow; 0..3 = tile index into the shadow ATLAS (up to 4
+			// shadow-casting spots per frame, e.g. the flashlight AND an authored scene spot).
+			float shadow_strength;
+			float shadow_bias;
+			float shadow_slot;
 		};
 		PerFrameConstants m_frame_constants;
 
@@ -642,6 +656,7 @@ namespace vortex::graphics::dx12
 		bool m_mt_active{ false };            // whether MT was used on the last frame (telemetry)
 		int  m_mt_threshold{ 2048 };          // min instances before parallelizing
 		u32  m_worker_count{ 0 };             // lazily computed = clamp(hw_concurrency-1, 1, 8)
+		CullWorkerPool m_cull_pool;           // persistent workers (NEVER spawn threads per frame — debugger death)
 
 		// Camera
 		DirectX::XMFLOAT3 m_camera_position{ 0.0f, 3.0f, -8.0f };
@@ -717,20 +732,28 @@ namespace vortex::graphics::dx12
 		bool ensure_mvec_rt(u32 width, u32 height);
 		bool ensure_dlss_output(u32 width, u32 height);
 
-		// ---- Spot-light shadow map (#23) ----
-		static constexpr u32 MAX_SHADOW_INSTANCES = 8192;   // packed shadow casters per frame (cone-culled)
+		// ---- Spot-light shadow ATLAS (#23) ----
+		// ONE 2N x 2N depth atlas holds up to FOUR N x N tiles — up to 4 shadow-casting spots per frame
+		// (the flashlight AND authored scene spots), each rendered as its own depth-only sub-pass into
+		// its tile viewport. Per-spot VPs travel in the light buffer's ShadowVP[4] tail (b2).
+		static constexpr u32 MAX_SHADOW_SPOTS = 4;
+		static constexpr u32 SHADOW_TILE_SIZE = 2048;       // per-tile resolution (atlas = 2x2 tiles)
+		static constexpr u32 MAX_SHADOW_INSTANCES = 8192;   // packed shadow casters per frame (all tiles)
 		ComPtr<ID3D12Resource> m_shadow_map;                // R32_TYPELESS: D32_FLOAT DSV + R32_FLOAT SRV
 		ComPtr<ID3D12DescriptorHeap> m_shadow_dsv_heap;
 		D3D12_RESOURCE_STATES m_shadow_map_state{ D3D12_RESOURCE_STATE_DEPTH_WRITE };
 		D3D12_CPU_DESCRIPTOR_HANDLE m_shadow_srv_cpu{};     // RESERVED slot in ResourceRegistry's shared SRV heap
 		D3D12_GPU_DESCRIPTOR_HANDLE m_shadow_srv_gpu{};     // (reserved once; view recreated in place on resize)
-		u32 m_shadow_map_size{ 0 };
-		ComPtr<ID3D12Resource> m_shadow_pass_cb;            // 256B PerFrame clone with the LIGHT's VP (b0 swap trick)
+		u32 m_shadow_map_size{ 0 };                         // atlas edge length (2 * SHADOW_TILE_SIZE)
+		ComPtr<ID3D12Resource> m_shadow_pass_cb;            // MAX_SHADOW_SPOTS x 256B PerFrame clones (light VPs, b0 swap)
 		void* m_shadow_pass_cb_mapped{ nullptr };
 		ComPtr<ID3D12Resource> m_shadow_instance_vb;        // world matrices of this frame's shadow casters
 		void* m_shadow_instance_vb_mapped{ nullptr };
-		bool m_shadow_ready{ false };                       // prepare found a shadow spot + resources exist
-		DirectX::XMFLOAT4X4 m_shadow_light_vp{};
+		// This frame's shadow spots (filled by prepare_shadow_pass, consumed by render_shadow_pass +
+		// the GPUSpotLight copy in update_per_frame_constants).
+		struct ShadowSpot { int spot_index; DirectX::XMFLOAT4X4 vp; };
+		ShadowSpot m_shadow_spots[MAX_SHADOW_SPOTS]{};
+		u32 m_shadow_spot_count{ 0 };
 
 		// Create SRV descriptor heap for textures
 		bool create_srv_heap();

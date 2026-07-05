@@ -30,13 +30,10 @@ cbuffer PerFrame : register(b0)
     uint FogMode;
     float FogPadding;
     // Spot-light shadows (#23) — APPENDED after fog (@160), byte-matched to PerFrameConstants.
-    // ShadowStrength 0 = shadows off (the always-safe default); ShadowSpotIndex picks WHICH spot
-    // the shadow map belongs to (one shadow-casting spot in v1 — the flashlight).
-    row_major float4x4 ShadowViewProjection;
-    float ShadowStrength;
-    float ShadowBias;
+    // Per-spot shadow data lives in SpotLight (strength/bias/slot) + the ShadowVP[4] tail of the
+    // light buffer; b0 only carries the atlas tile texel size (all tiles are the same size).
     float ShadowMapTexel;
-    uint ShadowSpotIndex;
+    uint3 ShadowPadding;
 };
 
 // Exp2 distance fog with optional height weighting (ground mist below FogHeightY).
@@ -90,13 +87,20 @@ struct SpotLight
     float3 color;
     float intensity;
     float innerSpotAngle;
-    float3 spotPadding;
+    // Spot shadows (#23) — packed into the former padding, 64-byte ABI unchanged.
+    // shadowSlot: -1 = no shadow; 0..3 = tile index into the shadow atlas at t7.
+    float shadowStrength;
+    float shadowBias;
+    float shadowSlot;
 };
 
 cbuffer LightBuffer : register(b2)
 {
     PointLight PointLights[MAX_POINT_LIGHTS];
     SpotLight SpotLights[MAX_SPOT_LIGHTS];
+    // Shadow atlas view-projections (#23): one per tile, byte-matched to the C++ light-buffer
+    // tail @1024 (the buffer was always 1280 bytes — the tail fits exactly).
+    row_major float4x4 ShadowVP[4];
 };
 
 Texture2D AlbedoTexture    : register(t0);
@@ -112,18 +116,22 @@ Texture2D ShadowMap        : register(t7);
 SamplerState LinearSampler : register(s0);
 SamplerComparisonState ShadowSampler : register(s1);
 
-// 1 = fully lit, 0 = fully shadowed (scaled by ShadowStrength). Hard shadows via a single
-// hardware-PCF comparison tap (SampleCmpLevelZero) — soft/PCF-kernel is a later upgrade
-// (ShadowMapTexel is already plumbed for it).
-float SampleSpotShadow(float3 worldPos)
+// 1 = fully lit, 0 = fully shadowed (scaled by strength). Hard shadows via a single hardware-PCF
+// comparison tap (SampleCmpLevelZero) — a soft PCF kernel is a later upgrade (ShadowMapTexel is
+// already plumbed for it). `slot` picks the 2x2 atlas tile this spot rendered its depth into.
+float SampleSpotShadow(float3 worldPos, int slot, float strength, float bias)
 {
-    float4 sp = mul(float4(worldPos, 1.0), ShadowViewProjection);
+    float4 sp = mul(float4(worldPos, 1.0), ShadowVP[slot]);
     if (sp.w <= 0.0) return 1.0;                       // behind the light -> outside the cone anyway
     float3 ndc = sp.xyz / sp.w;
     float2 suv = ndc.xy * float2(0.5, -0.5) + 0.5;
-    if (any(saturate(suv) != suv) || ndc.z > 1.0) return 1.0;   // outside the map -> lit
-    float lit = ShadowMap.SampleCmpLevelZero(ShadowSampler, suv, ndc.z - ShadowBias);
-    return lerp(1.0, lit, ShadowStrength);
+    if (any(saturate(suv) != suv) || ndc.z > 1.0) return 1.0;   // outside the tile -> lit
+    // Map into the tile: clamp half a texel inside so the comparison tap can't bleed into a
+    // neighboring tile (the spot-cone gate masks the fringe anyway).
+    suv = clamp(suv, ShadowMapTexel * 0.5, 1.0 - ShadowMapTexel * 0.5) * 0.5;
+    suv += float2((slot & 1) != 0 ? 0.5 : 0.0, (slot & 2) != 0 ? 0.5 : 0.0);
+    float lit = ShadowMap.SampleCmpLevelZero(ShadowSampler, suv, ndc.z - bias);
+    return lerp(1.0, lit, saturate(strength));
 }
 
 struct VS_IN
@@ -348,9 +356,11 @@ float4 PSMain(PS_IN input) : SV_TARGET
                 float atten = Attenuation(dist, SpotLights[j].range) * spotFade;
                 float3 radiance = SpotLights[j].color * SpotLights[j].intensity * atten;
 
-                // Spot shadow (#23): only the designated shadow-casting spot samples the map.
-                if (j == ShadowSpotIndex && ShadowStrength > 0.0)
-                    radiance *= SampleSpotShadow(input.worldPos);
+                // Spot shadow (#23): every spot with an atlas tile samples its own shadow map —
+                // the flashlight AND authored scene spots shadow simultaneously (up to 4).
+                if (SpotLights[j].shadowSlot >= 0.0)
+                    radiance *= SampleSpotShadow(input.worldPos, (int)SpotLights[j].shadowSlot,
+                                                 SpotLights[j].shadowStrength, SpotLights[j].shadowBias);
 
                 float D = D_GGX(NdotH, roughness);
                 float G = G_Smith(NdotV, NdotL, roughness);

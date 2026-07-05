@@ -859,6 +859,39 @@ namespace Vortex
         public static void ClearFog() { Editor.DllWrapper.VortexAPI.SetFog(0f, 0f, 0f, 0f, 0f, 0f); }
     }
 
+    /// <summary>Screen post-effects for game scripts (#28/#29): vignette, animated film grain and
+    /// chromatic aberration — the horror tension package. Settings persist until changed and apply the
+    /// SAME frame, so per-frame ramps work: <c>PostFx.SetGrain(true, Mathf.Lerp(0.1f, 0.6f, panic), 1.6f);</c>
+    /// All effects off = the effect pipeline is completely bypassed (zero GPU cost).</summary>
+    public static class PostFx
+    {
+        /// <summary>Darkened screen edges ("claustrophobia dial"). intensity 0..~1.5 = reach inward,
+        /// smoothness 0.01..1 = falloff hardness, roundness 1 = circular / 0 = follows the screen shape.
+        /// Color is the edge tint (default black).</summary>
+        public static void SetVignette(bool enabled, float intensity = 0.8f, float smoothness = 0.5f,
+                                       float roundness = 1f, float r = 0f, float g = 0f, float b = 0f)
+            { Editor.DllWrapper.VortexAPI.SetPostVignette(enabled, intensity, smoothness, roundness, r, g, b); }
+
+        /// <summary>Animated film grain, luminance-weighted (shadows grain more). intensity 0..1,
+        /// size = grain cell size in output pixels (1–3 is filmic).</summary>
+        public static void SetGrain(bool enabled, float intensity = 0.35f, float size = 1.6f)
+            { Editor.DllWrapper.VortexAPI.SetPostGrain(enabled, intensity, size); }
+
+        /// <summary>Chromatic aberration: RGB fringing that grows towards the screen edges. strength in
+        /// percent-of-half-screen (0.2–0.6 = unease, 2+ = heavy VHS), falloff = radial power.</summary>
+        public static void SetChromaticAberration(bool enabled, float strength = 0.35f, float falloff = 1.2f)
+            { Editor.DllWrapper.VortexAPI.SetPostChromaticAberration(enabled, strength, falloff); }
+
+        /// <summary>Everything off — back to the clean image (and the zero-cost render path).</summary>
+        public static void ClearAll()
+        {
+            Editor.DllWrapper.VortexAPI.SetPostVignette(false, 0f, 0f, 0f, 0f, 0f, 0f);
+            Editor.DllWrapper.VortexAPI.SetPostGrain(false, 0f, 0f);
+            Editor.DllWrapper.VortexAPI.SetPostChromaticAberration(false, 0f, 0f);
+            Editor.DllWrapper.VortexAPI.SetPostDebugInvert(false);
+        }
+    }
+
     /// <summary>Script-driven world geometry — assemble a level/backdrop from meshes without authoring a scene
     /// file. Add(meshPath, x,y,z, yawDeg, scale) places a model; placements persist until Clear(). Render-only
     /// (no collision yet) — perfect for greybox levels + the lobby's creepy motel backdrop.</summary>

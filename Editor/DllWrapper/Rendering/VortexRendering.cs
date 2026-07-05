@@ -721,6 +721,21 @@ namespace Editor.DllWrapper
             float colorR, float colorG, float colorB,
             float density, float heightY, float heightFalloff);
 
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetPostFxVignette([MarshalAs(UnmanagedType.I1)] bool enabled,
+            float intensity, float smoothness, float roundness, float r, float g, float b);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetPostFxGrain([MarshalAs(UnmanagedType.I1)] bool enabled,
+            float intensity, float size);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetPostFxChromaticAberration([MarshalAs(UnmanagedType.I1)] bool enabled,
+            float strength, float falloff);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetPostFxDebugInvert([MarshalAs(UnmanagedType.I1)] bool enabled);
+
         /// <summary>
         /// Clear all dynamic lights. Call at the beginning of each frame before submitting new lights.
         /// </summary>
@@ -787,6 +802,34 @@ namespace Editor.DllWrapper
         public static void SetFog(float r, float g, float b, float density, float heightY, float heightFalloff)
         {
             try { SetFogParams(r, g, b, density, heightY, heightFalloff); } catch { }
+        }
+
+        /// <summary>Post-FX vignette (#29). Persistent renderer state like fog: applies to the editor
+        /// viewport, the play-mode window AND shipped games until changed. All effects off = the
+        /// untouched (zero-cost) render path.</summary>
+        public static void SetPostVignette(bool enabled, float intensity, float smoothness, float roundness,
+            float r, float g, float b)
+        {
+            try { SetPostFxVignette(enabled, intensity, smoothness, roundness, r, g, b); } catch { }
+        }
+
+        /// <summary>Post-FX animated film grain (#29): intensity 0..1, size = cell size in pixels.</summary>
+        public static void SetPostGrain(bool enabled, float intensity, float size)
+        {
+            try { SetPostFxGrain(enabled, intensity, size); } catch { }
+        }
+
+        /// <summary>Post-FX chromatic aberration (#29): strength in percent-of-half-screen at the edge,
+        /// falloff = radial power (higher = cleaner center).</summary>
+        public static void SetPostChromaticAberration(bool enabled, float strength, float falloff)
+        {
+            try { SetPostFxChromaticAberration(enabled, strength, falloff); } catch { }
+        }
+
+        /// <summary>Debug: the #28 chain-verification invert pass (second pass, proves ping-pong).</summary>
+        public static void SetPostDebugInvert(bool enabled)
+        {
+            try { SetPostFxDebugInvert(enabled); } catch { }
         }
 
         #endregion

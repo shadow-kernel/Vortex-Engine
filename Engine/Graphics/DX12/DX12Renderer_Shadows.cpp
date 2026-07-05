@@ -2,21 +2,23 @@
 #include <algorithm>
 #include <unordered_map>
 
-// Spot-light shadow mapping (#23 — "the flashlight").
+// Spot-light shadow ATLAS (#23 — "the flashlight", and every other authored spot).
 //
-//  prepare_shadow_pass()  CPU side. Runs inside update_per_frame_constants BEFORE the per-frame CB
-//                         upload: selects the frame's shadow-casting spot (the FIRST submitted with
-//                         cast_shadows — one shadow map in v1), builds the light view-projection and
-//                         fills the PerFrameConstants shadow fields (strength 0 = everything off).
-//  render_shadow_pass()   GPU side. Records the depth-only pass right after the command-list reset,
-//                         BEFORE the scaled/direct branch — both paths then sample the same map at t7.
-//                         Casters are cone-culled against the light frustum and packed into a dedicated
-//                         instance VB (the scene's own instance packing is main-camera-frustum-keyed and
-//                         happens later — reusing it would drop off-screen casters and pop shadows).
-//                         The standard VS is reused via a second 256-byte b0 region whose
-//                         view_projection is the LIGHT's VP: no extra .hlsl, nothing new to ship.
+// Up to MAX_SHADOW_SPOTS (4) shadow-casting spots per frame share ONE depth atlas (2x2 tiles of
+// SHADOW_TILE_SIZE²). Each shadow spot renders a depth-only sub-pass into its tile viewport; the
+// pixel shader picks the tile via the per-spot shadow_slot packed into GPUSpotLight and the per-tile
+// view-projections in the light buffer's ShadowVP[4] tail (b2 @1024 — the buffer was already 1280
+// bytes wide, the tail fits exactly).
 //
-// State machine: the shadow map has its own DEPTH_WRITE <-> PIXEL_SHADER_RESOURCE round-trip per frame,
+//  prepare_shadow_pass()  CPU side, inside update_per_frame_constants BEFORE the CB uploads:
+//                         collects the first 4 submitted spots with cast_shadows (submit order =
+//                         scene order — deterministic and user-controllable), builds their VPs and
+//                         primes the per-tile b0 clones for the depth passes.
+//  render_shadow_pass()   GPU side, right after the command-list reset: one atlas clear, then per
+//                         shadow spot a cone-culled caster pack + instanced depth-only draws into
+//                         its tile. The atlas then transitions to PSR for every scene pass (t7).
+//
+// State machine: the atlas has its own DEPTH_WRITE <-> PIXEL_SHADER_RESOURCE round-trip per frame,
 // deliberately separate from m_scaled_rt's depth (which Frame Generation leaves in PSR across frames).
 
 namespace vortex::graphics::dx12
@@ -57,19 +59,36 @@ namespace vortex::graphics::dx12
 			}
 			return true;
 		}
+
+		// Spot light view-projection: FOV = the FULL outer cone angle (SpotAngle travels end-to-end in
+		// degrees; the shader gates at cos(angle/2), so the full angle IS the perspective FOV). Far
+		// plane = range (attenuation + the dist<range gate zero the light beyond it anyway).
+		bool build_spot_vp(const DX12Renderer::SpotLightData& s, DirectX::XMFLOAT4X4& out)
+		{
+			using namespace DirectX;
+			XMVECTOR dir = XMVector3Normalize(XMLoadFloat3(&s.direction));
+			if (XMVectorGetX(XMVector3LengthSq(dir)) < 0.5f) return false;   // zero direction
+			XMVECTOR pos = XMLoadFloat3(&s.position);
+			XMVECTOR up = fabsf(XMVectorGetY(dir)) > 0.99f ? XMVectorSet(0, 0, 1, 0) : XMVectorSet(0, 1, 0, 0);
+			float fovY = XMConvertToRadians(s.spot_angle < 1.0f ? 1.0f : (s.spot_angle > 175.0f ? 175.0f : s.spot_angle));
+			float farZ = s.range > 0.1f ? s.range : 0.1f;
+			XMMATRIX view = XMMatrixLookToLH(pos, dir, up);
+			XMMATRIX proj = XMMatrixPerspectiveFovLH(fovY, 1.0f, 0.05f, farZ);
+			XMStoreFloat4x4(&out, view * proj);   // same row-major/no-transpose treatment as view_projection
+			return true;
+		}
 	}
 
 
 	bool DX12Renderer::ensure_shadow_map(u32 size)
 	{
-		if (size < 256) size = 256; else if (size > 8192) size = 8192;
+		if (size < 512) size = 512; else if (size > 16384) size = 16384;
 		if (m_shadow_map && m_shadow_map_size == size) return true;
 
 		auto* dev = DX12Core::instance().device();
 		if (!dev) return false;
 
-		// The map may be referenced by an in-flight frame — idle the GPU before recreating (resolution
-		// changes are rare: authoring-time only, same one-off stall as ensure_scaled_rt).
+		// The map may be referenced by an in-flight frame — idle the GPU before recreating.
 		if (m_shadow_map) m_command_queue.flush();
 
 		// One-time: reserve the SRV slot in ResourceRegistry's SHARED shader-visible heap. The scene pass
@@ -100,7 +119,7 @@ namespace vortex::graphics::dx12
 		if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
 			D3D12_RESOURCE_STATE_DEPTH_WRITE, &cv, IID_PPV_ARGS(&m_shadow_map))))
 		{
-			OutputDebugStringA("[shadows] shadow map creation failed\n");
+			OutputDebugStringA("[shadows] shadow atlas creation failed\n");
 			return false;
 		}
 		m_shadow_map_state = D3D12_RESOURCE_STATE_DEPTH_WRITE;
@@ -126,7 +145,7 @@ namespace vortex::graphics::dx12
 		srv.Texture2D.MipLevels = 1;
 		dev->CreateShaderResourceView(m_shadow_map.Get(), &srv, m_shadow_srv_cpu);
 
-		// Lazily created support buffers (once): the light-VP b0 region + the caster instance VB.
+		// Lazily created support buffers (once): the per-tile light-VP b0 clones + the caster instance VB.
 		if (!m_shadow_pass_cb)
 		{
 			D3D12_HEAP_PROPERTIES up{}; up.Type = D3D12_HEAP_TYPE_UPLOAD;
@@ -135,7 +154,7 @@ namespace vortex::graphics::dx12
 			bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 			D3D12_RANGE none{ 0, 0 };
 
-			bd.Width = 256;
+			bd.Width = (UINT64)256 * MAX_SHADOW_SPOTS;
 			if (FAILED(dev->CreateCommittedResource(&up, D3D12_HEAP_FLAG_NONE, &bd,
 				D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_shadow_pass_cb)))) return false;
 			if (FAILED(m_shadow_pass_cb->Map(0, &none, &m_shadow_pass_cb_mapped))) return false;
@@ -146,7 +165,7 @@ namespace vortex::graphics::dx12
 			if (FAILED(m_shadow_instance_vb->Map(0, &none, &m_shadow_instance_vb_mapped))) return false;
 		}
 
-		OutputDebugStringA("[shadows] shadow map ready\n");
+		OutputDebugStringA("[shadows] shadow atlas ready\n");
 		return true;
 	}
 
@@ -155,112 +174,54 @@ namespace vortex::graphics::dx12
 	{
 		using namespace DirectX;
 
-		m_shadow_ready = false;
-		m_frame_constants.shadow_strength = 0.0f;   // default: shadows off (safe with the always-bound map)
-		m_frame_constants.shadow_spot_index = 0xFFFFFFFFu;
+		m_shadow_spot_count = 0;
+		m_frame_constants.shadow_map_texel = 1.0f / (float)SHADOW_TILE_SIZE;
 
-		if (!m_pipeline_3d.shadow_pso()) return;
+		if (!m_pipeline_3d.shadow_pso() || !m_shadow_map) return;
 
-		// First submitted spot with cast_shadows wins (v1: exactly one shadow map — the flashlight).
-		int shadow_idx = -1;
-		for (size_t i = 0; i < m_spot_lights.size() && i < MAX_SPOT_LIGHTS; ++i)
-			if (m_spot_lights[i].cast_shadows) { shadow_idx = (int)i; break; }
-		if (shadow_idx < 0) return;
-
-		const SpotLightData& s = m_spot_lights[(size_t)shadow_idx];
-		if (!ensure_shadow_map(s.shadow_resolution)) return;
-
-		XMVECTOR pos = XMLoadFloat3(&s.position);
-		XMVECTOR dir = XMVector3Normalize(XMLoadFloat3(&s.direction));
-		if (XMVectorGetX(XMVector3LengthSq(dir)) < 0.5f) return;   // zero direction -> no usable frustum
-		// Avoid the degenerate parallel-up case (flashlight pointing straight up/down).
-		XMVECTOR up = fabsf(XMVectorGetY(dir)) > 0.99f ? XMVectorSet(0, 0, 1, 0) : XMVectorSet(0, 1, 0, 0);
-
-		// FOV = the FULL outer cone angle: SpotAngle travels end-to-end in degrees and the shader gates at
-		// cos(radians(angle * 0.5)) — so the full angle IS the perspective FOV. Far plane = range (the
-		// shader's dist<range gate + attenuation zero the light beyond it — no wasted depth precision).
-		float fovY = XMConvertToRadians(s.spot_angle < 1.0f ? 1.0f : (s.spot_angle > 175.0f ? 175.0f : s.spot_angle));
-		float farZ = s.range > 0.1f ? s.range : 0.1f;
-		XMMATRIX view = XMMatrixLookToLH(pos, dir, up);
-		XMMATRIX proj = XMMatrixPerspectiveFovLH(fovY, 1.0f, 0.05f, farZ);
-		XMStoreFloat4x4(&m_shadow_light_vp, view * proj);
-
-		m_frame_constants.shadow_view_projection = m_shadow_light_vp;
-		m_frame_constants.shadow_strength = s.shadow_strength < 0.0f ? 0.0f : (s.shadow_strength > 1.0f ? 1.0f : s.shadow_strength);
-		m_frame_constants.shadow_bias = s.shadow_bias;
-		m_frame_constants.shadow_map_texel = 1.0f / (float)m_shadow_map_size;
-		m_frame_constants.shadow_spot_index = (u32)shadow_idx;
-
-		// The shadow pass's b0: this frame's constants with the LIGHT's VP swapped in. The standard VS
-		// only reads view_projection from b0, so the rest is just along for the ride.
-		if (m_shadow_pass_cb_mapped)
+		// Debug/support kill switch: VORTEX_NO_SPOT_SHADOWS=1 disables all spot shadows at runtime —
+		// used for A/B verification captures and as an escape hatch if a scene misbehaves.
 		{
-			PerFrameConstants sc = m_frame_constants;
-			sc.view_projection = m_shadow_light_vp;
-			memcpy(m_shadow_pass_cb_mapped, &sc, sizeof(sc));
+			char buf[8];
+			DWORD n = GetEnvironmentVariableA("VORTEX_NO_SPOT_SHADOWS", buf, sizeof(buf));
+			if (n > 0 && n < sizeof(buf) && buf[0] == '1') return;
 		}
 
-		m_shadow_ready = m_frame_constants.shadow_strength > 0.0f;
+		// Collect up to MAX_SHADOW_SPOTS shadow-requesting spots in SUBMIT (= scene) order. Both the
+		// flashlight AND authored scene spots get a tile; extras beyond 4 simply render unshadowed.
+		for (size_t i = 0; i < m_spot_lights.size() && i < MAX_SPOT_LIGHTS && m_shadow_spot_count < MAX_SHADOW_SPOTS; ++i)
+		{
+			const SpotLightData& s = m_spot_lights[i];
+			if (!s.cast_shadows || s.shadow_strength <= 0.0f) continue;
+
+			XMFLOAT4X4 vp;
+			if (!build_spot_vp(s, vp)) continue;
+
+			ShadowSpot& slot = m_shadow_spots[m_shadow_spot_count];
+			slot.spot_index = (int)i;
+			slot.vp = vp;
+
+			// The depth pass's b0 for this tile: this frame's constants with the LIGHT's VP swapped in.
+			// The standard VS only reads view_projection from b0, the rest is along for the ride.
+			if (m_shadow_pass_cb_mapped)
+			{
+				PerFrameConstants sc = m_frame_constants;
+				sc.view_projection = vp;
+				memcpy((u8*)m_shadow_pass_cb_mapped + (size_t)m_shadow_spot_count * 256, &sc, sizeof(sc));
+			}
+			m_shadow_spot_count++;
+		}
 	}
 
 
 	void DX12Renderer::render_shadow_pass()
 	{
 		using namespace DirectX;
-		if (!m_shadow_ready || !m_shadow_map || !m_shadow_instance_vb_mapped) return;
+		if (m_shadow_spot_count == 0 || !m_shadow_map || !m_shadow_instance_vb_mapped) return;
 
-		// ---- cone-cull + pack casters (CPU) ----
-		// Own pack over the render queue: the scene's instance packing is keyed to the MAIN camera frustum
-		// and runs later — the wall BEHIND the player must still cast into the light frustum.
-		ShadowFrustum fr = extract_shadow_frustum(m_shadow_light_vp);
 		auto& reg = ResourceRegistry::instance();
 
-		struct Caster { id::id_type mesh; const DirectX::XMFLOAT4X4* world; };
-		std::vector<Caster> casters;
-		casters.reserve(m_render_queue.size() < 1024 ? m_render_queue.size() : 1024);
-
-		std::unordered_map<id::id_type, XMFLOAT4> bounds;   // mesh -> (local center, radius)
-		bounds.reserve(64);
-
-		for (const auto& item : m_render_queue)
-		{
-			if (item.bone_offset != NO_BONES) continue;   // v1: skinned meshes receive but don't cast
-			XMFLOAT4 bd;
-			auto bit = bounds.find(item.mesh_id);
-			if (bit == bounds.end())
-			{
-				Mesh* mp = reg.get_mesh(item.mesh_id);
-				float mnx = 0, mny = 0, mnz = 0, mxx = 1, mxy = 1, mxz = 1;
-				if (mp && mp->is_valid()) { mp->get_min(mnx, mny, mnz); mp->get_max(mxx, mxy, mxz); }
-				float dx = mxx - mnx, dy = mxy - mny, dz = mxz - mnz;
-				bd = XMFLOAT4((mnx + mxx) * 0.5f, (mny + mxy) * 0.5f, (mnz + mxz) * 0.5f,
-					0.5f * sqrtf(dx * dx + dy * dy + dz * dz));
-				bounds.emplace(item.mesh_id, bd);
-			}
-			else bd = bit->second;
-
-			const XMFLOAT4X4& W = item.world_matrix;
-			XMVECTOR wc = XMVector3TransformCoord(XMVectorSet(bd.x, bd.y, bd.z, 1.f), XMLoadFloat4x4(&W));
-			float sx = sqrtf(W._11 * W._11 + W._12 * W._12 + W._13 * W._13);
-			float sy = sqrtf(W._21 * W._21 + W._22 * W._22 + W._23 * W._23);
-			float sz = sqrtf(W._31 * W._31 + W._32 * W._32 + W._33 * W._33);
-			float ms = sx > sy ? (sx > sz ? sx : sz) : (sy > sz ? sy : sz);
-			if (sphere_in_shadow_frustum(fr, XMVectorGetX(wc), XMVectorGetY(wc), XMVectorGetZ(wc), bd.w * ms + 0.05f))
-			{
-				casters.push_back({ item.mesh_id, &item.world_matrix });
-				if (casters.size() >= MAX_SHADOW_INSTANCES) break;   // hard cap (log-free: cone-culled scenes stay small)
-			}
-		}
-		if (casters.empty()) return;   // nothing in the cone: the cleared map reads fully lit — correct
-
-		// Group by mesh for instanced draws (stable pack into the dedicated VB).
-		std::sort(casters.begin(), casters.end(),
-			[](const Caster& a, const Caster& b) { return a.mesh < b.mesh; });
-		u8* vb = (u8*)m_shadow_instance_vb_mapped;
-		for (size_t i = 0; i < casters.size(); ++i)
-			memcpy(vb + i * 64, casters[i].world, 64);
-
-		// ---- record the depth-only pass (GPU) ----
+		// ---- record the atlas passes ----
 		if (m_shadow_map_state != D3D12_RESOURCE_STATE_DEPTH_WRITE)
 		{
 			D3D12_RESOURCE_BARRIER b{};
@@ -273,53 +234,111 @@ namespace vortex::graphics::dx12
 			m_shadow_map_state = D3D12_RESOURCE_STATE_DEPTH_WRITE;
 		}
 
-		D3D12_VIEWPORT vp{}; vp.Width = (float)m_shadow_map_size; vp.Height = (float)m_shadow_map_size; vp.MaxDepth = 1.0f;
-		D3D12_RECT sc{}; sc.right = (LONG)m_shadow_map_size; sc.bottom = (LONG)m_shadow_map_size;
-		m_command_list->RSSetViewports(1, &vp);
-		m_command_list->RSSetScissorRects(1, &sc);
-
 		auto dsv = m_shadow_dsv_heap->GetCPUDescriptorHandleForHeapStart();
-		m_command_list->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+		m_command_list->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);   // whole atlas once
 		m_command_list->OMSetRenderTargets(0, nullptr, FALSE, &dsv);   // depth-only: no RTV
 
 		m_command_list->SetPipelineState(m_pipeline_3d.shadow_pso());
 		m_command_list->SetGraphicsRootSignature(m_pipeline_3d.root_signature());
-		// b0 = the light-VP clone. The depth-only VS reads nothing else (b1/b2/tables untouched -> legal unbound).
-		m_command_list->SetGraphicsRootConstantBufferView(0, m_shadow_pass_cb->GetGPUVirtualAddress());
 		m_command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-		size_t i = 0;
-		while (i < casters.size())
-		{
-			const id::id_type meshId = casters[i].mesh;
-			size_t j = i + 1;
-			while (j < casters.size() && casters[j].mesh == meshId) ++j;
-			const u32 count = (u32)(j - i);
+		struct Caster { id::id_type mesh; const DirectX::XMFLOAT4X4* world; };
+		std::vector<Caster> casters;
+		std::unordered_map<id::id_type, XMFLOAT4> bounds;   // mesh -> (local center, radius) — shared across tiles
+		bounds.reserve(64);
 
-			Mesh* mesh = reg.get_mesh(meshId);
-			if (mesh && mesh->is_valid())
+		u32 vb_used = 0;   // running offset into the shared shadow instance VB (across all tiles)
+
+		for (u32 t = 0; t < m_shadow_spot_count; ++t)
+		{
+			// ---- cone-cull + pack this light's casters (CPU) ----
+			// Own pack per light: the scene's instance packing is keyed to the MAIN camera frustum and
+			// runs later — the wall BEHIND the player must still cast into the light frustum.
+			ShadowFrustum fr = extract_shadow_frustum(m_shadow_spots[t].vp);
+			casters.clear();
+
+			for (const auto& item : m_render_queue)
 			{
-				D3D12_VERTEX_BUFFER_VIEW vbs[2];
-				vbs[0] = mesh->vertex_buffer_view();
-				vbs[1].BufferLocation = m_shadow_instance_vb->GetGPUVirtualAddress() + (UINT64)i * 64;
-				vbs[1].SizeInBytes = count * 64;
-				vbs[1].StrideInBytes = 64;
-				m_command_list->IASetVertexBuffers(0, 2, vbs);
-				if (mesh->has_indices())
+				if (item.bone_offset != NO_BONES) continue;   // v1: skinned meshes receive but don't cast
+				XMFLOAT4 bd;
+				auto bit = bounds.find(item.mesh_id);
+				if (bit == bounds.end())
 				{
-					m_command_list->IASetIndexBuffer(&mesh->index_buffer_view());
-					m_command_list->DrawIndexedInstanced(mesh->index_count(), count, 0, 0, 0);
+					Mesh* mp = reg.get_mesh(item.mesh_id);
+					float mnx = 0, mny = 0, mnz = 0, mxx = 1, mxy = 1, mxz = 1;
+					if (mp && mp->is_valid()) { mp->get_min(mnx, mny, mnz); mp->get_max(mxx, mxy, mxz); }
+					float dx = mxx - mnx, dy = mxy - mny, dz = mxz - mnz;
+					bd = XMFLOAT4((mnx + mxx) * 0.5f, (mny + mxy) * 0.5f, (mnz + mxz) * 0.5f,
+						0.5f * sqrtf(dx * dx + dy * dy + dz * dz));
+					bounds.emplace(item.mesh_id, bd);
 				}
-				else
+				else bd = bit->second;
+
+				const XMFLOAT4X4& W = item.world_matrix;
+				XMVECTOR wc = XMVector3TransformCoord(XMVectorSet(bd.x, bd.y, bd.z, 1.f), XMLoadFloat4x4(&W));
+				float sx = sqrtf(W._11 * W._11 + W._12 * W._12 + W._13 * W._13);
+				float sy = sqrtf(W._21 * W._21 + W._22 * W._22 + W._23 * W._23);
+				float sz = sqrtf(W._31 * W._31 + W._32 * W._32 + W._33 * W._33);
+				float ms = sx > sy ? (sx > sz ? sx : sz) : (sy > sz ? sy : sz);
+				if (sphere_in_shadow_frustum(fr, XMVectorGetX(wc), XMVectorGetY(wc), XMVectorGetZ(wc), bd.w * ms + 0.05f))
 				{
-					m_command_list->DrawInstanced(mesh->vertex_count(), count, 0, 0);
+					casters.push_back({ item.mesh_id, &item.world_matrix });
+					if (vb_used + casters.size() >= MAX_SHADOW_INSTANCES) break;   // shared hard cap
 				}
-				++m_draw_call_count;
 			}
-			i = j;
+			if (casters.empty()) continue;   // empty tile stays cleared -> fully lit, correct
+
+			// Group by mesh for instanced draws; pack into the shared VB at the running offset.
+			std::sort(casters.begin(), casters.end(),
+				[](const Caster& a, const Caster& b) { return a.mesh < b.mesh; });
+			u8* vb = (u8*)m_shadow_instance_vb_mapped;
+			for (size_t i = 0; i < casters.size(); ++i)
+				memcpy(vb + (size_t)(vb_used + i) * 64, casters[i].world, 64);
+
+			// ---- this tile's viewport + b0 (the light's VP clone) ----
+			const float tile = (float)SHADOW_TILE_SIZE;
+			const LONG tx = (LONG)((t & 1) * SHADOW_TILE_SIZE);
+			const LONG ty = (LONG)(((t >> 1) & 1) * SHADOW_TILE_SIZE);
+			D3D12_VIEWPORT vp{}; vp.TopLeftX = (float)tx; vp.TopLeftY = (float)ty; vp.Width = tile; vp.Height = tile; vp.MaxDepth = 1.0f;
+			D3D12_RECT sc{}; sc.left = tx; sc.top = ty; sc.right = tx + (LONG)SHADOW_TILE_SIZE; sc.bottom = ty + (LONG)SHADOW_TILE_SIZE;
+			m_command_list->RSSetViewports(1, &vp);
+			m_command_list->RSSetScissorRects(1, &sc);
+			m_command_list->SetGraphicsRootConstantBufferView(0, m_shadow_pass_cb->GetGPUVirtualAddress() + (UINT64)t * 256);
+
+			size_t i = 0;
+			while (i < casters.size())
+			{
+				const id::id_type meshId = casters[i].mesh;
+				size_t j = i + 1;
+				while (j < casters.size() && casters[j].mesh == meshId) ++j;
+				const u32 count = (u32)(j - i);
+
+				Mesh* mesh = reg.get_mesh(meshId);
+				if (mesh && mesh->is_valid())
+				{
+					D3D12_VERTEX_BUFFER_VIEW vbs[2];
+					vbs[0] = mesh->vertex_buffer_view();
+					vbs[1].BufferLocation = m_shadow_instance_vb->GetGPUVirtualAddress() + (UINT64)(vb_used + i) * 64;
+					vbs[1].SizeInBytes = count * 64;
+					vbs[1].StrideInBytes = 64;
+					m_command_list->IASetVertexBuffers(0, 2, vbs);
+					if (mesh->has_indices())
+					{
+						m_command_list->IASetIndexBuffer(&mesh->index_buffer_view());
+						m_command_list->DrawIndexedInstanced(mesh->index_count(), count, 0, 0, 0);
+					}
+					else
+					{
+						m_command_list->DrawInstanced(mesh->vertex_count(), count, 0, 0);
+					}
+					++m_draw_call_count;
+				}
+				i = j;
+			}
+			vb_used += (u32)casters.size();
 		}
 
-		// Hand the map to the pixel shaders (t7) for every scene pass this frame.
+		// Hand the atlas to the pixel shaders (t7) for every scene pass this frame.
 		{
 			D3D12_RESOURCE_BARRIER b{};
 			b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;

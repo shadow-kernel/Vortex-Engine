@@ -76,6 +76,12 @@ namespace vortex::graphics::dx12
 		size_t objectCount = (std::min)(m_render_queue.size(), static_cast<size_t>(MAX_RENDER_OBJECTS));
 		if (objectCount == 0) return;
 
+		if (m_worker_count == 0)
+		{
+			unsigned hc = std::thread::hardware_concurrency(); if (hc == 0) hc = 4;
+			m_worker_count = (hc > 9) ? 8u : (hc - 1u); if (m_worker_count < 1) m_worker_count = 1;
+		}
+
 		bool preCullRan = false;   // the pre-cull mutates the queue -> forces a layout rebuild this frame
 		// PRE-CULL for huge instanced scenes: when far more instances are SUBMITTED than can render, the O(n log n)
 		// sort below over ALL of them was the bottleneck (millions of items). Drop frustum-invisible instances FIRST
@@ -118,12 +124,7 @@ namespace vortex::graphics::dx12
 				}
 			};
 			if (m_mt_enabled && m_worker_count > 1)
-			{
-				u32 n = m_worker_count; size_t per = (N + n - 1) / n;
-				std::vector<std::thread> th; th.reserve(n - 1);
-				for (u32 t = 1; t < n; ++t) { size_t a = (size_t)t * per, b = (std::min)(a + per, N); if (a < b) th.emplace_back([&, a, b] { cullRange(a, b); }); }
-				cullRange(0, (std::min)(per, N)); for (auto& t : th) t.join();
-			}
+				m_cull_pool.run(m_worker_count, N, cullRange);
 			else cullRange(0, N);
 			size_t w = 0;
 			for (size_t k = 0; k < N; ++k) if (vis[k]) { if (w != k) m_render_queue[w] = m_render_queue[k]; ++w; }
@@ -229,12 +230,6 @@ namespace vortex::graphics::dx12
 		}
 		const size_t runN = m_draw_runs.size();
 		m_instances_tested += (int)objectCount;
-
-		if (m_worker_count == 0)
-		{
-			unsigned hc = std::thread::hardware_concurrency(); if (hc == 0) hc = 4;
-			m_worker_count = (hc > 9) ? 8u : (hc - 1u); if (m_worker_count < 1) m_worker_count = 1;
-		}
 
 		// Per-run atomic pack counters (visible instances appended into each run's reserved slab).
 		std::unique_ptr<std::atomic<u32>[]> counters(new std::atomic<u32>[runN ? runN : 1]);
@@ -343,12 +338,7 @@ namespace vortex::graphics::dx12
 				}
 			};
 			if (m_mt_active)
-			{
-				u32 n = m_worker_count; size_t per = (objectCount + n - 1) / n;
-				std::vector<std::thread> th; th.reserve(n - 1);
-				for (u32 t = 1; t < n; ++t) { size_t a = (size_t)t * per, b = (std::min)(a + per, objectCount); if (a < b) th.emplace_back([&, a, b] { passA(a, b); }); }
-				passA(0, (std::min)(per, objectCount)); for (auto& t : th) t.join();
-			}
+				m_cull_pool.run(m_worker_count, objectCount, passA);
 			else passA(0, objectCount);
 
 			// Compact prefix sums: each run's base = the running VISIBLE total (not the submitted count); c4[run,LOD]
@@ -385,26 +375,12 @@ namespace vortex::graphics::dx12
 				}
 			};
 			if (m_mt_active)
-			{
-				u32 n = m_worker_count; size_t per = (objectCount + n - 1) / n;
-				std::vector<std::thread> th; th.reserve(n - 1);
-				for (u32 t = 1; t < n; ++t) { size_t a = (size_t)t * per, b = (std::min)(a + per, objectCount); if (a < b) th.emplace_back([&, a, b] { passB(a, b); }); }
-				passB(0, (std::min)(per, objectCount)); for (auto& t : th) t.join();
-			}
+				m_cull_pool.run(m_worker_count, objectCount, passB);
 			else passB(0, objectCount);
 		}
 		else if (m_mt_active)
 		{
-			u32 n = m_worker_count;
-			size_t per = (objectCount + n - 1) / n;
-			std::vector<std::thread> threads; threads.reserve(n - 1);
-			for (u32 t = 1; t < n; ++t)
-			{
-				size_t a = (size_t)t * per, b = (std::min)(a + per, objectCount);
-				if (a < b) threads.emplace_back([&, a, b] { cullPack(a, b); });
-			}
-			cullPack(0, (std::min)(per, objectCount));
-			for (auto& th : threads) th.join();
+			m_cull_pool.run(m_worker_count, objectCount, cullPack);
 		}
 		else
 		{

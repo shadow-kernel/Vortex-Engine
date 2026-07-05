@@ -55,6 +55,17 @@ namespace vortex::graphics::dx12
 			(m_wireframe_mode ? m_pipeline_3d.wireframe_pso() : m_pipeline_3d.pipeline_state());
 		m_command_list->Reset(m_game_cmd_allocator.Get(), pso);
 
+		// Post-FX (#28): this path has no upscale composite, so the 3D itself is redirected into the
+		// chain's input RT (game-window slot 1); the chain's last pass then writes the back buffer.
+		// Chain off (or RT creation failed) = the original direct render, untouched.
+		DX12RenderTarget* pfx_in = m_postfx.active()
+			? m_postfx.acquire_input(DX12Core::instance().device(), m_active_width, m_active_height, 1) : nullptr;
+		if (pfx_in)
+		{
+			pfx_in->transition_to_render_target(m_command_list.Get());
+			m_active_rtv = pfx_in->rtv();   // scene color -> chain input; depth stays the game window's
+		}
+
 		// Spot-light shadow pass (#23) — THIS is the shipped game's render path (the flashlight!).
 		// Recorded first, exactly like render_frame; the window viewport is (re)set below anyway.
 		render_shadow_pass();
@@ -79,6 +90,10 @@ namespace vortex::graphics::dx12
 		if (m_skybox_enabled) render_skybox();
 		if (m_grid_visible) render_grid();
 		if (!m_render_queue.empty()) render_3d_scene();
+
+		if (pfx_in)
+			m_postfx.record(m_command_list.Get(), 1, m_game_swapchain.current_rtv(),
+				m_active_width, m_active_height, elapsed_seconds());
 
 		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
 		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;

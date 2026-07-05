@@ -197,6 +197,7 @@ namespace vortex::graphics::dx12
 			{ "grid",         "vs", "GridVS",  "vs_5_0" }, { "grid",         "ps", "GridPS",  "ps_5_0" },
 			{ "motionvector", "vs", "MvecVS",  "vs_5_0" }, { "motionvector", "ps", "MvecPS",  "ps_5_0" },
 			{ "upscale",      "vs", "VSMain",  "vs_5_0" }, { "upscale",      "ps", "PSMain",  "ps_5_0" },
+			{ "postfx",       "vs", "VSMain",  "vs_5_0" }, { "postfx",       "ps", "PSMain",  "ps_5_0" },
 			{ "basic",        "vs", "BasicVS", "vs_5_0" }, { "basic",        "ps", "BasicPS", "ps_5_0" },
 		};
 

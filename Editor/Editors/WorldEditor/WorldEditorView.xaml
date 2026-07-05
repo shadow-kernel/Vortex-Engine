@@ -10,6 +10,7 @@ xmlns:gamePreview="clr-namespace:Editor.Editors.WorldEditor.Components.GamePrevi
 xmlns:fileExplorer="clr-namespace:Editor.Editors.WorldEditor.Components.FileExplorer"
 xmlns:sceneHierarchy="clr-namespace:Editor.Editors.WorldEditor.Components.SceneHierarchy"
 xmlns:inspector="clr-namespace:Editor.Editors.WorldEditor.Components.Inspector"
+xmlns:environment="clr-namespace:Editor.Editors.WorldEditor.Components.Environment"
 xmlns:historyLog="clr-namespace:Editor.Editors.WorldEditor.Components.HistoryLog"
 xmlns:assetBrowser="clr-namespace:Editor.Editors.WorldEditor.Components.AssetBrowser"
 xmlns:console="clr-namespace:Editor.Editors.WorldEditor.Components.Console"
@@ -97,10 +98,13 @@ d:DesignHeight="720" d:DesignWidth="1280">
                         </avalonDock:LayoutAnchorablePane>
                     </avalonDock:LayoutPanel>
 
-                    <!-- RIGHT: Inspector (full height) -->
+                    <!-- RIGHT: Inspector + scene Environment (fog/post-FX #27-#29) as tabs, full height -->
                     <avalonDock:LayoutAnchorablePane DockWidth="330">
                         <avalonDock:LayoutAnchorable Title="Inspector" CanClose="False" CanFloat="False" CanAutoHide="False">
                             <inspector:DynamicInspectorView/>
+                        </avalonDock:LayoutAnchorable>
+                        <avalonDock:LayoutAnchorable Title="Environment" CanClose="False" CanFloat="False" CanAutoHide="False">
+                            <environment:EnvironmentView/>
                         </avalonDock:LayoutAnchorable>
                     </avalonDock:LayoutAnchorablePane>
 

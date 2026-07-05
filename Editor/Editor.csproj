@@ -176,6 +176,10 @@
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>
+    <Page Include="Editors\WorldEditor\Components\Environment\EnvironmentView.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
     <Page Include="Editors\WorldEditor\Components\Inspector\DynamicInspectorView.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
@@ -264,6 +268,7 @@
     <Compile Include="Core\Data\ProjectManifest.cs" />
     <Compile Include="Core\Data\ProjectRef.cs" />
     <Compile Include="Core\Data\Scene.cs" />
+    <Compile Include="Core\Data\SceneSettings.cs" />
     <Compile Include="Core\Exceptions\DuplicateProjectPathException.cs" />
     <Compile Include="Core\Exceptions\ProjectException.cs" />
     <Compile Include="Core\Exceptions\ProjectIOException.cs" />
@@ -438,6 +443,9 @@
     </Compile>
     <Compile Include="Editors\WorldEditor\Components\Inspector\CameraInspector.xaml.cs">
       <DependentUpon>CameraInspector.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Editors\WorldEditor\Components\Environment\EnvironmentView.xaml.cs">
+      <DependentUpon>EnvironmentView.xaml</DependentUpon>
     </Compile>
     <Compile Include="Editors\WorldEditor\Components\Inspector\DynamicInspectorView.xaml.cs">
       <DependentUpon>DynamicInspectorView.xaml</DependentUpon>

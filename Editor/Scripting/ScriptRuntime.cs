@@ -93,6 +93,10 @@ namespace Editor.Scripting
 
             // Scripted scene-atmosphere state starts clean each run (a previous run's ambient/fog must not leak).
             Editor.Core.Services.SceneRenderService.ScriptAmbientOverride = null;
+            // The authored per-scene environment (fog + post-FX) is the baseline every run starts from —
+            // the End() above wiped ALL post-FX, including what ActivateEntities just applied on boot.
+            // Scripts may override from Start() onwards.
+            try { scene.Settings.Apply(); } catch { }
 
             // Fresh Animator playback states for this run; animation-event markers route to OnAnimationEvent.
             Editor.Core.Animation.AnimationService.Instance.ResetStates();
@@ -142,12 +146,13 @@ namespace Editor.Scripting
         {
             var who = behaviour?.GetType().Name ?? "Script";
             var msg = who + "." + phase + "(): " + (ex?.InnerException?.Message ?? ex?.Message ?? "error");
-            System.Diagnostics.Debug.WriteLine("[ScriptRuntime] " + msg);
             // Throttle a per-frame-repeating exception (a script throwing every Update) so it can't flood the Console
-            // ~60×/sec and freeze the UI: the same message reaches the Console at most once per second.
+            // ~60×/sec and freeze the UI. The Debug.WriteLine sits BEHIND the throttle too: with a VS debugger
+            // attached every write is a ~1ms cross-process round-trip — unthrottled it alone tanked F5 FPS.
             var now = DateTime.UtcNow;
             if (msg == _lastErrKey && (now - _lastErrTime).TotalSeconds < 1.0) return;
             _lastErrKey = msg; _lastErrTime = now;
+            System.Diagnostics.Debug.WriteLine("[ScriptRuntime] " + msg);
             try { Editor.Core.Services.ConsoleService.Instance.LogError(msg); } catch { }
         }
 
@@ -372,6 +377,10 @@ namespace Editor.Scripting
             // EDITOR viewport after leaving play mode (the fog CB is persistent frame state).
             Editor.Core.Services.SceneRenderService.ScriptAmbientOverride = null;
             try { Editor.DllWrapper.VortexAPI.SetFog(0f, 0f, 0f, 0f, 0f, 0f); } catch { }
+            // Post-FX is persistent renderer state too — scripted grain/vignette must not stick to the
+            // editor viewport after play. The scene's AUTHORED environment then re-applies on top.
+            try { Vortex.PostFx.ClearAll(); } catch { }
+            try { _currentScene?.Settings?.Apply(); } catch { }
             _scriptAsm = null;
             _active = false;
         }
