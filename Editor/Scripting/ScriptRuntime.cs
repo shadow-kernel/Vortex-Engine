@@ -242,6 +242,133 @@ namespace Editor.Scripting
             _invokes.RemoveAll(v => v.Cancelled);
         }
 
+        // ---- debug draw + on-screen console (#42) ----
+
+        private sealed class DebugShape
+        {
+            public bool IsSphere;
+            public Vortex.Vector3 A, B;   // line endpoints; A = center for spheres
+            public float Radius;
+            public int ColorKey;
+            public float Until;           // debug-clock deadline (duration 0 = one frame)
+        }
+        private readonly List<DebugShape> _debugShapes = new List<DebugShape>();
+        private float _debugClock;
+        private long _dbgCubeMesh = -1, _dbgSphereMesh = -1;                      // lazy, cached for the process
+        private readonly Dictionary<int, long> _dbgMaterials = new Dictionary<int, long>();
+        private bool _f9Held;
+
+        internal void AddDebugLine(Vortex.Vector3 a, Vortex.Vector3 b, float r, float g, float bl, float duration)
+        {
+            if (!_active) return;
+            _debugShapes.Add(new DebugShape { IsSphere = false, A = a, B = b, ColorKey = PackColor(r, g, bl), Until = _debugClock + duration });
+        }
+
+        internal void AddDebugSphere(Vortex.Vector3 center, float radius, float r, float g, float bl, float duration)
+        {
+            if (!_active) return;
+            _debugShapes.Add(new DebugShape { IsSphere = true, A = center, Radius = radius > 0f ? radius : 0.01f, ColorKey = PackColor(r, g, bl), Until = _debugClock + duration });
+        }
+
+        private static int PackColor(float r, float g, float b)
+        {
+            int q(float v) { return (int)(Math.Max(0f, Math.Min(1f, v)) * 31f + 0.5f); }
+            return (q(r) << 10) | (q(g) << 5) | q(b);
+        }
+
+        private long MaterialForColor(int key)
+        {
+            if (_dbgMaterials.TryGetValue(key, out var id)) return id;
+            id = Editor.DllWrapper.VortexAPI.CreateNewMaterial();
+            Editor.DllWrapper.VortexAPI.SetMaterialBaseColor(id,
+                ((key >> 10) & 31) / 31f, ((key >> 5) & 31) / 31f, (key & 31) / 31f, 1f);
+            _dbgMaterials[key] = id;
+            return id;
+        }
+
+        /// <summary>Re-submit every live debug shape into the wire-gizmo queue (cleared by the renderer
+        /// each frame) and age them out. Wire gizmos draw always-on-top in the viewport, the play window
+        /// AND the shipped player.</summary>
+        private void SubmitDebugShapes(float dt)
+        {
+            _debugClock += dt;
+            if (_debugShapes.Count == 0) return;
+            if (_dbgCubeMesh < 0) _dbgCubeMesh = Editor.DllWrapper.VortexAPI.CreateCubeMesh(1.0f);
+            if (_dbgSphereMesh < 0) _dbgSphereMesh = Editor.DllWrapper.VortexAPI.CreateSphereMesh(0.5f);
+
+            var m = new float[16];
+            for (int i = 0; i < _debugShapes.Count; i++)
+            {
+                var s = _debugShapes[i];
+                long mat = MaterialForColor(s.ColorKey);
+                if (s.IsSphere)
+                {
+                    float sc = s.Radius * 2f;   // mesh radius is 0.5
+                    m[0] = sc; m[1] = 0; m[2] = 0; m[3] = 0;
+                    m[4] = 0; m[5] = sc; m[6] = 0; m[7] = 0;
+                    m[8] = 0; m[9] = 0; m[10] = sc; m[11] = 0;
+                    m[12] = s.A.X; m[13] = s.A.Y; m[14] = s.A.Z; m[15] = 1;
+                    Editor.DllWrapper.VortexAPI.SubmitGizmoWireForRendering(_dbgSphereMesh, mat, m);
+                }
+                else
+                {
+                    // Thin box spanning A -> B: rows = right*T | up*T | dir*len | midpoint.
+                    float dx = s.B.X - s.A.X, dy = s.B.Y - s.A.Y, dz = s.B.Z - s.A.Z;
+                    float len = (float)Math.Sqrt(dx * dx + dy * dy + dz * dz);
+                    if (len < 1e-5f) continue;
+                    float ix = dx / len, iy = dy / len, iz = dz / len;
+                    float ux = 0f, uy = 1f, uz = 0f;
+                    if (Math.Abs(iy) > 0.99f) { uy = 0f; uz = 1f; }
+                    float rx = uy * iz - uz * iy, ry = uz * ix - ux * iz, rz = ux * iy - uy * ix;
+                    float rl = (float)Math.Sqrt(rx * rx + ry * ry + rz * rz);
+                    if (rl < 1e-6f) continue;
+                    rx /= rl; ry /= rl; rz /= rl;
+                    float upx = iy * rz - iz * ry, upy = iz * rx - ix * rz, upz = ix * ry - iy * rx;
+                    const float T = 0.02f;
+                    m[0] = rx * T; m[1] = ry * T; m[2] = rz * T; m[3] = 0;
+                    m[4] = upx * T; m[5] = upy * T; m[6] = upz * T; m[7] = 0;
+                    m[8] = ix * len; m[9] = iy * len; m[10] = iz * len; m[11] = 0;
+                    m[12] = (s.A.X + s.B.X) * 0.5f; m[13] = (s.A.Y + s.B.Y) * 0.5f; m[14] = (s.A.Z + s.B.Z) * 0.5f; m[15] = 1;
+                    Editor.DllWrapper.VortexAPI.SubmitGizmoWireForRendering(_dbgCubeMesh, mat, m);
+                }
+            }
+            _debugShapes.RemoveAll(sh => sh.Until <= _debugClock);
+        }
+
+        /// <summary>The in-game dev console overlay (#42): F9 toggles; draws the newest log lines over the
+        /// game via the same immediate-mode UI the scripts use. Works in play mode AND shipped builds.</summary>
+        private void RenderDebugConsole()
+        {
+            bool f9 = ((Vortex.IScriptHost)this).GetKey("F9");
+            if (f9 && !_f9Held) Vortex.Debug.ConsoleVisible = !Vortex.Debug.ConsoleVisible;
+            _f9Held = f9;
+            if (!Vortex.Debug.ConsoleVisible || _uiW < 10f) return;
+
+            const int maxLines = 14;
+            float w = Math.Min(_uiW * 0.62f, 680f);
+            float lineH = 17f, pad = 8f;
+            int count;
+            Vortex.Debug.ConsoleLine[] lines;
+            lock (Vortex.Debug.Lines)
+            {
+                count = Math.Min(maxLines, Vortex.Debug.Lines.Count);
+                lines = new Vortex.Debug.ConsoleLine[count];
+                for (int i = 0; i < count; i++) lines[i] = Vortex.Debug.Lines[Vortex.Debug.Lines.Count - count + i];
+            }
+            float h = pad * 2f + 18f + count * lineH;
+            var host = (Vortex.IScriptHost)this;
+            host.UIRect(10f, 10f, w, h, 0.05f, 0.05f, 0.07f, 0.82f, 8f);
+            host.UIText(10f + pad, 10f + pad - 2f, w - pad * 2f, 16f, "DEV CONSOLE  [F9]", 11f, 0.55f, 0.55f, 0.6f, 1f, 0, 700);
+            for (int i = 0; i < count; i++)
+            {
+                float r = 0.86f, g = 0.86f, b = 0.88f;
+                if (lines[i].Level == 1) { r = 1f; g = 0.78f; b = 0.35f; }
+                else if (lines[i].Level == 2) { r = 1f; g = 0.42f; b = 0.42f; }
+                host.UIText(10f + pad, 10f + pad + 16f + i * lineH, w - pad * 2f, lineH,
+                    lines[i].Text, 12f, r, g, b, 1f, 0, 400);
+            }
+        }
+
         // ---- runtime instantiate/destroy (#36) + the play-mode restore ledger ----
         // Editor play runs the AUTHORED scene in place — runtime spawns/destroys/SetActive must not leak
         // into the asset. Every mutation is recorded and rolled back in End().
@@ -499,6 +626,10 @@ namespace Editor.Scripting
             // frame sees the world the behaviours just built (and PlayAnimation from it applies below).
             TickCoroutinesAndInvokes(dt);
 
+            // Debug draw + dev console (#42): re-submit live wire shapes, then the console overlay on top.
+            SubmitDebugShapes(dt);
+            RenderDebugConsole();
+
             // Skeletal animation: advance every Animator AFTER behaviours ran, so a same-frame
             // PlayAnimation() takes effect immediately. This is the one tick all three play drivers share.
             try { Editor.Core.Animation.AnimationService.Instance.Step(_currentScene, dt); }
@@ -694,6 +825,9 @@ namespace Editor.Scripting
             try { RollbackRuntimeSceneChanges(); } catch { }
             _coroutines.Clear();
             _invokes.Clear();
+            _debugShapes.Clear();
+            Vortex.Debug.ConsoleVisible = false;
+            try { Vortex.Debug.ClearLines(); } catch { }
             try { Vortex.Events.Clear(); } catch { }
             try { Vortex.Scene.ResetHooks(); } catch { }
             try { Vortex.Save.Flush(); } catch { }

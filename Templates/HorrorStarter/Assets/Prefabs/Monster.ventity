@@ -1,0 +1,71 @@
+{
+  "id": "9d7e2f10-4b3c-4a51-8e62-1f0a9b8c7801",
+  "name": "Monster",
+  "isActive": true,
+  "isStatic": false,
+  "layer": 0,
+  "tag": "Monster",
+  "children": [
+    {
+      "id": "9d7e2f10-4b3c-4a51-8e62-1f0a9b8c7802",
+      "name": "Body",
+      "isActive": true,
+      "isStatic": false,
+      "layer": 0,
+      "tag": "Untagged",
+      "children": [ ],
+      "components": [
+        {
+          "__type": "Transform",
+          "id": "9d7e2f10-4b3c-4a51-8e62-1f0a9b8c7803",
+          "isEnabled": true,
+          "localPosition": { "x": 0, "y": 1.15, "z": 0 },
+          "localRotation": { "x": 0, "y": 0, "z": 0 },
+          "localScale": { "x": 0.85, "y": 2.3, "z": 0.55 }
+        },
+        {
+          "__type": "MeshRenderer",
+          "id": "9d7e2f10-4b3c-4a51-8e62-1f0a9b8c7804",
+          "isEnabled": true,
+          "meshPath": "Primitive:Cube",
+          "materialPath": null,
+          "castShadows": true,
+          "receiveShadows": false,
+          "renderLayer": 0,
+          "colorR": 0.04,
+          "colorG": 0.035,
+          "colorB": 0.05,
+          "colorA": 1,
+          "metallic": 0,
+          "roughness": 1,
+          "normalStrength": 1,
+          "texturePath": null,
+          "shaderPath": null
+        }
+      ],
+      "isFolder": false,
+      "prefabPath": null,
+      "isLockedToParent": false
+    }
+  ],
+  "components": [
+    {
+      "__type": "Transform",
+      "id": "9d7e2f10-4b3c-4a51-8e62-1f0a9b8c7805",
+      "isEnabled": true,
+      "localPosition": { "x": 0, "y": 0, "z": 0 },
+      "localRotation": { "x": 0, "y": 0, "z": 0 },
+      "localScale": { "x": 1, "y": 1, "z": 1 }
+    },
+    {
+      "__type": "Script",
+      "id": "9d7e2f10-4b3c-4a51-8e62-1f0a9b8c7806",
+      "isEnabled": true,
+      "scriptPath": "Assets/Scripts/World/MonsterStalker.cs",
+      "scriptClassName": "MonsterStalker"
+    }
+  ],
+  "isFolder": false,
+  "prefabPath": null,
+  "isLockedToParent": false
+}

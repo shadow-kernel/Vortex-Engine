@@ -90,6 +90,7 @@ namespace vortex::graphics::dx12
 		if (m_skybox_enabled) render_skybox();
 		if (m_grid_visible) render_grid();
 		if (!m_render_queue.empty()) render_3d_scene();
+		render_gizmos();   // script Debug.Draw shapes (#42) — wire gizmos show in the play window too
 
 		if (pfx_in)
 			m_postfx.record(m_command_list.Get(), 1, m_game_swapchain.current_rtv(),

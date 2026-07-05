@@ -356,6 +356,20 @@ Like fog, all three effects are also authorable per scene in the editor's **Envi
 
 ---
 
+## `Debug`
+
+Logging, the in-game dev console, and debug draw (#42) — all work in editor play, the play window AND shipped builds.
+
+▸ `static void Log(object)` / `LogWarning` / `LogError` — to the editor Console panel and the in-game console.
+▸ `static void ShowConsole(bool)` — the on-screen dev console overlay; **F9** toggles it any time. Info/warn/error are color-coded.
+▸ `static void DrawLine(Vector3 a, Vector3 b, float r = 0.2f, float g = 1f, float b = 0.3f, float duration = 0f)` — wire line; `duration 0` = this frame (re-draw per frame), `> 0` = keep alive that many seconds.
+▸ `static void DrawRay(Vector3 origin, Vector3 dir, float length, ...)` — pairs with `Physics.Raycast` to SEE your rays.
+▸ `static void DrawSphere(Vector3 center, float radius, ...)` — hearing ranges, trigger radii, blast zones.
+
+Shapes render always-on-top as wireframes (the gizmo pass), so they're visible through walls — exactly what you want from debug draw.
+
+---
+
 ## `World`
 
 Script-driven world geometry — assemble a level/backdrop from meshes without authoring a scene file. Render-only (no collision yet); placements persist until `Clear()`.

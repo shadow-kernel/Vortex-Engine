@@ -15,6 +15,19 @@ namespace Vortex
         public static Vector3 One => new Vector3(1f, 1f, 1f);
         public static Vector3 Up => new Vector3(0f, 1f, 0f);
         public static Vector3 Forward => new Vector3(0f, 0f, 1f);
+
+        /// <summary>Vector length.</summary>
+        public float Length { get { return (float)Math.Sqrt(X * X + Y * Y + Z * Z); } }
+
+        /// <summary>Unit-length copy (Zero stays Zero).</summary>
+        public Vector3 Normalized
+        {
+            get
+            {
+                float l = Length;
+                return l > 1e-8f ? new Vector3(X / l, Y / l, Z / l) : Zero;
+            }
+        }
     }
 
     /// <summary>A UI color (0..1 channels). Use Rgb/Rgba helpers for 0..255 values.</summary>
@@ -310,10 +323,47 @@ namespace Vortex
     /// timestamps and Info/Warn/Error colours. Unity-style: pass anything, it's ToString()'d.</summary>
     public static class Debug
     {
-        public static void Log(object message) => Editor.Core.Services.ConsoleService.Instance.Log(Str(message));
-        public static void LogWarning(object message) => Editor.Core.Services.ConsoleService.Instance.LogWarning(Str(message));
-        public static void LogError(object message) => Editor.Core.Services.ConsoleService.Instance.LogError(Str(message));
+        public static void Log(object message) { var s = Str(message); Push(0, s); Editor.Core.Services.ConsoleService.Instance.Log(s); }
+        public static void LogWarning(object message) { var s = Str(message); Push(1, s); Editor.Core.Services.ConsoleService.Instance.LogWarning(s); }
+        public static void LogError(object message) { var s = Str(message); Push(2, s); Editor.Core.Services.ConsoleService.Instance.LogError(s); }
         private static string Str(object m) => m?.ToString() ?? "null";
+
+        // ---- On-screen dev console (#42): the last log lines drawn over the GAME view (editor play,
+        // game window AND shipped builds). Toggle with F9 or ShowConsole(); errors auto-show it briefly. ----
+
+        /// <summary>Show/hide the in-game console overlay (F9 toggles it too).</summary>
+        public static void ShowConsole(bool show) { ConsoleVisible = show; }
+        public static bool ConsoleVisible { get; set; }
+
+        internal struct ConsoleLine { public int Level; public string Text; public DateTime At; }
+        internal static readonly List<ConsoleLine> Lines = new List<ConsoleLine>();
+        internal static void Push(int level, string text)
+        {
+            lock (Lines)
+            {
+                Lines.Add(new ConsoleLine { Level = level, Text = text ?? "", At = DateTime.UtcNow });
+                if (Lines.Count > 200) Lines.RemoveRange(0, Lines.Count - 200);
+            }
+        }
+        internal static void ClearLines() { lock (Lines) Lines.Clear(); }
+
+        // ---- Debug draw (#42): wireframe shapes in the 3D view — the classic "see what the AI sees"
+        // tools. duration 0 = this frame only; > 0 keeps the shape alive that many seconds. ----
+
+        /// <summary>Draw a wire line from a to b (default green).</summary>
+        public static void DrawLine(Vector3 a, Vector3 b, float r = 0.2f, float g = 1f, float bl = 0.3f, float duration = 0f)
+            { Editor.Scripting.ScriptRuntime.Instance.AddDebugLine(a, b, r, g, bl, duration); }
+
+        /// <summary>Draw a ray: origin + direction * length. Perfect together with Physics.Raycast.</summary>
+        public static void DrawRay(Vector3 origin, Vector3 direction, float length, float r = 1f, float g = 0.9f, float bl = 0.2f, float duration = 0f)
+        {
+            var d = direction.Normalized;
+            DrawLine(origin, new Vector3(origin.X + d.X * length, origin.Y + d.Y * length, origin.Z + d.Z * length), r, g, bl, duration);
+        }
+
+        /// <summary>Draw a wire sphere (trigger radii, hearing ranges, blast zones).</summary>
+        public static void DrawSphere(Vector3 center, float radius, float r = 0.3f, float g = 0.6f, float bl = 1f, float duration = 0f)
+            { Editor.Scripting.ScriptRuntime.Instance.AddDebugSphere(center, radius, r, g, bl, duration); }
     }
 
     /// <summary>Keyboard + mouse input. Key names match WPF keys, e.g. "W", "Space", "LeftShift".</summary>
@@ -936,6 +986,21 @@ namespace Vortex
         {
             RaycastHit h;
             return Raycast(origin, direction, maxDist, out h, layerMask);
+        }
+
+        /// <summary>Re-bake an entity's colliders at its CURRENT transform. The collision world is built
+        /// once per scene (static level geometry) — call this after a script MOVES a collider-carrying
+        /// entity (sliding door, moving platform) so characters and raycasts see the new position.</summary>
+        public static void RefreshCollider(long entity)
+        {
+            var e = Editor.Scripting.ScriptRuntime.Instance.FindEntityByHandle(entity);
+            if (e == null) return;
+            try
+            {
+                Editor.Core.Services.Physics.CollisionService.RemoveEntityShapes(e);
+                Editor.Core.Services.Physics.CollisionService.AddEntityShapes(e);
+            }
+            catch { }
         }
     }
 
