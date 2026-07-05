@@ -34,6 +34,10 @@ cbuffer PerFrame : register(b0)
     // light buffer; b0 only carries the atlas tile texel size (all tiles are the same size).
     float ShadowMapTexel;
     uint3 ShadowPadding;
+    // SSAO (#32) — APPENDED @176, byte-matched to PerFrameConstants. Screen UV is derived from
+    // SV_POSITION and the AO texture's own dimensions, so no screen size travels here.
+    float SsaoEnabled;
+    float3 SsaoPadding;
 };
 
 // Exp2 distance fog with optional height weighting (ground mist below FogHeightY).
@@ -126,8 +130,11 @@ Texture2D ShadowMap        : register(t7);
 Texture2D CsmShadowMap     : register(t8);
 // t9: the point-light face atlas (#25) — 4x3 grid of 1024² tiles, tile = slot*6 + face.
 Texture2D PointShadowMap   : register(t9);
+// t10: the blurred half-res SSAO texture (#32) — multiplied into the ambient term only.
+Texture2D SsaoTex          : register(t10);
 SamplerState LinearSampler : register(s0);
 SamplerComparisonState ShadowSampler : register(s1);
+SamplerState ScreenSampler : register(s2);   // linear/clamp for screen-space textures (SSAO)
 
 // 1 = fully lit, 0 = fully shadowed (scaled by strength). Hard shadows via a single hardware-PCF
 // comparison tap (SampleCmpLevelZero) — a soft PCF kernel is a later upgrade (ShadowMapTexel is
@@ -499,6 +506,16 @@ float4 PSMain(PS_IN input) : SV_TARGET
     float3 specularAmbient = envColor * envFresnel * ao;
 
     ambient += specularAmbient + rimLight;
+
+    // SSAO (#32): darken ONLY the ambient/indirect sum — direct light, fog and emissive stay
+    // untouched. Screen UV from the pixel position and the half-res AO texture's own dimensions.
+    if (SsaoEnabled > 0.5)
+    {
+        float aoW, aoH;
+        SsaoTex.GetDimensions(aoW, aoH);
+        float2 aoUV = input.pos.xy / float2(aoW * 2.0, aoH * 2.0);
+        ambient *= SsaoTex.Sample(ScreenSampler, aoUV).r;
+    }
 
     float3 color = ambient + Lo;
 

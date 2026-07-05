@@ -140,6 +140,7 @@ namespace vortex::graphics::dx12
 		frame_constants.ambient_strength = m_ambient_strength;
 		frame_constants.point_light_count = static_cast<u32>((std::min)(m_point_lights.size(), static_cast<size_t>(MAX_POINT_LIGHTS)));
 		frame_constants.spot_light_count = static_cast<u32>((std::min)(m_spot_lights.size(), static_cast<size_t>(MAX_SPOT_LIGHTS)));
+		frame_constants.ssao_enabled = 0.0f;   // #32: previews never sample the main view's AO
 		if (m_light_cb_mapped)
 		{
 			u8* lptr = static_cast<u8*>(m_light_cb_mapped);
@@ -262,6 +263,8 @@ namespace vortex::graphics::dx12
 					m_command_list->SetGraphicsRootDescriptorTable(11, m_csm_srv_gpu);   // t8 (#24)
 				if (m_point_srv_gpu.ptr != 0)
 					m_command_list->SetGraphicsRootDescriptorTable(12, m_point_srv_gpu); // t9 (#25)
+				if (m_ssao_current_srv.ptr != 0)
+					m_command_list->SetGraphicsRootDescriptorTable(13, m_ssao_current_srv); // t10 (#32)
 				m_command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 			
 			auto& reg = ResourceRegistry::instance();

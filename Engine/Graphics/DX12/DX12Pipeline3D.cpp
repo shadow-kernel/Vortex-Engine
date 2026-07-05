@@ -124,7 +124,9 @@ namespace vortex::graphics::dx12
 		// the point-light face atlas (t9, #25) — additive like 9/10, so every existing
 		// SetGraphicsRoot* index stays put; the renderer eager-creates both atlases so a valid
 		// descriptor always exists wherever the standard PS runs.
-		D3D12_ROOT_PARAMETER params[13] = {};
+		// Param 13 is the SSAO texture table (t10, #32) — the blurred half-res AO the standard PS
+		// multiplies into the ambient term only (sampled with the s2 linear-clamp sampler).
+		D3D12_ROOT_PARAMETER params[14] = {};
 
 		params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
 		params[0].Descriptor.ShaderRegister = 0;
@@ -138,7 +140,7 @@ namespace vortex::graphics::dx12
 		params[2].Descriptor.ShaderRegister = 2;
 		params[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
-		static D3D12_DESCRIPTOR_RANGE srv_ranges[9] = {};
+		static D3D12_DESCRIPTOR_RANGE srv_ranges[10] = {};
 		for (int i = 0; i < 5; i++)
 		{
 			srv_ranges[i].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -201,7 +203,18 @@ namespace vortex::graphics::dx12
 		params[12].DescriptorTable.pDescriptorRanges = &srv_ranges[8];
 		params[12].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
-		D3D12_STATIC_SAMPLER_DESC samplers[2] = {};
+		// SSAO texture descriptor table at t10 (pixel) — #32.
+		srv_ranges[9].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+		srv_ranges[9].NumDescriptors = 1;
+		srv_ranges[9].BaseShaderRegister = 10;
+		srv_ranges[9].RegisterSpace = 0;
+		srv_ranges[9].OffsetInDescriptorsFromTableStart = 0;
+		params[13].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+		params[13].DescriptorTable.NumDescriptorRanges = 1;
+		params[13].DescriptorTable.pDescriptorRanges = &srv_ranges[9];
+		params[13].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+		D3D12_STATIC_SAMPLER_DESC samplers[3] = {};
 		samplers[0].Filter = D3D12_FILTER_ANISOTROPIC;
 		samplers[0].AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
 		samplers[0].AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
@@ -233,10 +246,25 @@ namespace vortex::graphics::dx12
 		samplers[1].RegisterSpace = 0;
 		samplers[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
+		// s2: linear/clamp for screen-space textures (#32 SSAO) — s0 is ANISOTROPIC/WRAP, which
+		// would wrap the AO texture at the screen edges.
+		samplers[2].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+		samplers[2].AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+		samplers[2].AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+		samplers[2].AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+		samplers[2].MaxAnisotropy = 1;
+		samplers[2].ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+		samplers[2].BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE;
+		samplers[2].MinLOD = 0.0f;
+		samplers[2].MaxLOD = D3D12_FLOAT32_MAX;
+		samplers[2].ShaderRegister = 2;
+		samplers[2].RegisterSpace = 0;
+		samplers[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
 		D3D12_ROOT_SIGNATURE_DESC desc{};
-		desc.NumParameters = 13;
+		desc.NumParameters = 14;
 		desc.pParameters = params;
-		desc.NumStaticSamplers = 2;
+		desc.NumStaticSamplers = 3;
 		desc.pStaticSamplers = samplers;
 		desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
@@ -482,6 +510,15 @@ namespace vortex::graphics::dx12
 			pso_desc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
 			if (FAILED(device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&m_shadow_pso))))
 				OutputDebugStringA("DX12Pipeline3D: shadow PSO creation failed — spot shadows disabled\n");
+
+			// Z-PREPASS PSO (#32 SSAO): the same depth-only pass WITHOUT the shadow depth biases
+			// (those exist to fight shadow acne; in a camera prepass they would shift the AO depth
+			// away from the real scene depth). Renders the half-res AO depth from the camera VP.
+			shadow_raster.DepthBias = 0;
+			shadow_raster.SlopeScaledDepthBias = 0.0f;
+			pso_desc.RasterizerState = shadow_raster;
+			if (FAILED(device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&m_zprepass_pso))))
+				OutputDebugStringA("DX12Pipeline3D: z-prepass PSO creation failed — SSAO disabled\n");
 		}
 
 		return true;

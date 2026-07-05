@@ -48,6 +48,10 @@ namespace vortex::graphics::dx12
 		// shadow instance VB. nullptr = creation failed (spot shadows silently disabled, never a crash).
 		ID3D12PipelineState* shadow_pso() const { return m_shadow_pso.Get(); }
 
+		// Z-prepass PSO (#32): the shadow PSO recipe without depth biases — renders the camera-view
+		// half-res AO depth the SSAO pass reconstructs from. nullptr = SSAO silently disabled.
+		ID3D12PipelineState* zprepass_pso() const { return m_zprepass_pso.Get(); }
+
 		// Transparent PSOs (#33): standard shaders with blending ENABLED and depth WRITE off (test stays
 		// on LESS_EQUAL) — drawn in the sorted back-to-front pass after all opaques. blend_mode 1 = alpha
 		// (SrcAlpha/InvSrcAlpha), 2 = additive (SrcAlpha/One); double_sided mirrors the opaque unlit rule.
@@ -81,6 +85,7 @@ namespace vortex::graphics::dx12
 		ComPtr<ID3D12PipelineState> m_gizmo_wire_pso; // gizmo PSO variant with WIREFRAME fill (fine-net shapes)
 		ComPtr<ID3D12PipelineState> m_skinned_pso; // GPU skinning (skinned.hlsl VS + standard PS)
 		ComPtr<ID3D12PipelineState> m_shadow_pso;  // depth-only shadow-map pass (standard VS, no PS/RTV)
+		ComPtr<ID3D12PipelineState> m_zprepass_pso; // #32: camera-view depth-only pass, no biases
 		ComPtr<ID3D12PipelineState> m_alpha_pso;       // #33: alpha blend, cull back, depth write off
 		ComPtr<ID3D12PipelineState> m_alpha_ds_pso;    // #33: alpha blend, double-sided
 		ComPtr<ID3D12PipelineState> m_additive_pso;    // #33: additive, cull back, depth write off

@@ -61,6 +61,10 @@ namespace Editor.Editors.WorldEditor.Components.Environment
                 SetPair(CaStrength, CaStrengthBox, s.CaStrength);
                 SetPair(CaFalloff, CaFalloffBox, s.CaFalloff);
 
+                AoOn.IsChecked = s.AoEnabled;
+                SetPair(AoRadius, AoRadiusBox, s.AoRadius);
+                SetPair(AoIntensity, AoIntensityBox, s.AoIntensity);
+
                 BloomOn.IsChecked = s.BloomEnabled;
                 SetPair(BloomThreshold, BloomThresholdBox, s.BloomThreshold);
                 SetPair(BloomKnee, BloomKneeBox, s.BloomKnee);
@@ -117,6 +121,10 @@ namespace Editor.Editors.WorldEditor.Components.Environment
             s.CaEnabled = CaOn.IsChecked == true;
             s.CaStrength = (float)CaStrength.Value;
             s.CaFalloff = (float)CaFalloff.Value;
+
+            s.AoEnabled = AoOn.IsChecked == true;
+            s.AoRadius = (float)AoRadius.Value;
+            s.AoIntensity = (float)AoIntensity.Value;
 
             s.BloomEnabled = BloomOn.IsChecked == true;
             s.BloomThreshold = (float)BloomThreshold.Value;
@@ -197,6 +205,8 @@ namespace Editor.Editors.WorldEditor.Components.Environment
             if (box == GrainSizeBox) return GrainSize;
             if (box == CaStrengthBox) return CaStrength;
             if (box == CaFalloffBox) return CaFalloff;
+            if (box == AoRadiusBox) return AoRadius;
+            if (box == AoIntensityBox) return AoIntensity;
             if (box == BloomThresholdBox) return BloomThreshold;
             if (box == BloomKneeBox) return BloomKnee;
             if (box == BloomIntensityBox) return BloomIntensity;
@@ -221,6 +231,8 @@ namespace Editor.Editors.WorldEditor.Components.Environment
             GrainSizeBox.Text = Fmt(GrainSize.Value);
             CaStrengthBox.Text = Fmt(CaStrength.Value);
             CaFalloffBox.Text = Fmt(CaFalloff.Value);
+            AoRadiusBox.Text = Fmt(AoRadius.Value);
+            AoIntensityBox.Text = Fmt(AoIntensity.Value);
             BloomThresholdBox.Text = Fmt(BloomThreshold.Value);
             BloomKneeBox.Text = Fmt(BloomKnee.Value);
             BloomIntensityBox.Text = Fmt(BloomIntensity.Value);

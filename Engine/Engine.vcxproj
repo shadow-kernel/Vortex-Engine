@@ -118,6 +118,7 @@
     <ClCompile Include="Graphics\DX12\DX12Renderer_Skybox.cpp" />
     <ClCompile Include="Graphics\DX12\DX12Renderer_Lights.cpp" />
     <ClCompile Include="Graphics\DX12\DX12Renderer_Shadows.cpp" />
+    <ClCompile Include="Graphics\DX12\DX12Renderer_Ssao.cpp" />
     <ClCompile Include="Graphics\DX12\DX12Renderer_RenderTargets.cpp" />
     <ClCompile Include="Graphics\DX12\UIOverlay.cpp" />
     <ClCompile Include="Graphics\DX12\DX12RenderTarget.cpp" />
@@ -176,6 +177,7 @@
     <None Include="Shaders\skybox.hlsl" />
     <None Include="Shaders\standard.hlsl" />
     <None Include="Shaders\postfx.hlsl" />
+    <None Include="Shaders\ssao.hlsl" />
     <None Include="Shaders\upscale.hlsl" />
   </ItemGroup>
   <ItemGroup>

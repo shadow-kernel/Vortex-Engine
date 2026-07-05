@@ -103,6 +103,13 @@ namespace vortex::graphics::dx12
 		if (!ensure_point_shadow_map())
 			OutputDebugStringA("[shadows] eager point-atlas init failed — point shadows disabled\n");
 
+		// SSAO (#32): eager small targets so BOTH views' reserved t10 descriptors are valid from
+		// frame 1 (content is never sampled while the b0 flag is off; real sizes on first use).
+		if (ensure_ssao_targets(0, 128, 128) && ensure_ssao_targets(1, 128, 128))
+			m_ssao_current_srv = m_ssao_reserved_gpu[0];
+		else
+			OutputDebugStringA("[ssao] eager init failed — SSAO disabled\n");
+
 		// 2D UI overlay (optional — if D2D/DirectWrite init fails the 3D renderer is unaffected).
 		if (m_ui_overlay.initialize(core.device(), m_command_queue.queue(), DX12Swapchain::MaxBufferCount))
 			OutputDebugStringA("UI overlay OK\n");
@@ -162,6 +169,18 @@ namespace vortex::graphics::dx12
 		m_point_shadow_map.Reset();
 		m_point_shadow_dsv_heap.Reset();
 		m_point_srv_cpu = {}; m_point_srv_gpu = {}; m_point_shadow_ready = false; m_shadow_point_count = 0;
+		// SSAO resources (#32).
+		for (int s = 0; s < 2; ++s)
+		{
+			m_ssao_view[s].depth.Reset(); m_ssao_view[s].ao.Reset(); m_ssao_view[s].blur.Reset();
+			m_ssao_view[s].dsv_heap.Reset(); m_ssao_view[s].rtv_heap.Reset(); m_ssao_view[s].srv_heap.Reset();
+			m_ssao_view[s].w = m_ssao_view[s].h = 0;
+			m_ssao_reserved_cpu[s] = {}; m_ssao_reserved_gpu[s] = {};
+		}
+		if (m_ssao_instance_vb && m_ssao_instance_vb_mapped) { m_ssao_instance_vb->Unmap(0, nullptr); m_ssao_instance_vb_mapped = nullptr; }
+		m_ssao_instance_vb.Reset();
+		m_ssao_pso.Reset(); m_ssao_blur_pso.Reset(); m_ssao_root_sig.Reset();
+		m_ssao_current_srv = {};
 		if (m_light_cb && m_light_cb_mapped) { m_light_cb->Unmap(0, nullptr); m_light_cb_mapped = nullptr; }
 		m_light_cb.Reset();
 		if (m_grid_cb && m_grid_cb_mapped) { m_grid_cb->Unmap(0, nullptr); m_grid_cb_mapped = nullptr; }
@@ -606,6 +625,10 @@ namespace vortex::graphics::dx12
 			u32 rh = (u32)((float)out_h * m_render_scale + 0.5f); if (rh < 1) rh = 1;
 			if (!ensure_scaled_rt(rw, rh)) use_scale = false;   // creation failed -> fall back to direct
 		}
+
+		// SSAO (#32): prepass + AO + blur for THIS view, recorded before the color pass. Sized to
+		// the resolution the 3D actually rasterizes at (scaled RT when the scaled path runs).
+		record_ssao(0, use_scale ? m_scaled_rt.width() : out_w, use_scale ? m_scaled_rt.height() : out_h);
 
 		D3D12_RESOURCE_BARRIER barrier{};
 		barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;

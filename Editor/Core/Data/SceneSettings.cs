@@ -55,6 +55,11 @@ namespace Editor.Core.Data
         [DataMember(Name = "bloomIntensity", Order = 53)] public float BloomIntensity { get; set; } = 0.7f;
         [DataMember(Name = "bloomScatter", Order = 54)] public float BloomScatter { get; set; } = 0.65f;
 
+        // ---- SSAO (#32) ----
+        [DataMember(Name = "aoOn", Order = 60)] public bool AoEnabled { get; set; }
+        [DataMember(Name = "aoRadius", Order = 61)] public float AoRadius { get; set; } = 0.6f;
+        [DataMember(Name = "aoIntensity", Order = 62)] public float AoIntensity { get; set; } = 1.0f;
+
         /// <summary>DataContractSerializer builds an UNINITIALIZED object (field initializers never
         /// run), so members missing from an older .vscene would deserialize as 0 — a scene saved
         /// before bloom existed must still open with the neutral bloom defaults, not zeros. Restore
@@ -68,6 +73,7 @@ namespace Editor.Core.Data
             CaStrength = 0.35f; CaFalloff = 1.2f;
             Contrast = 1.0f; Saturation = 1.0f;
             BloomThreshold = 0.75f; BloomKnee = 0.5f; BloomIntensity = 0.7f; BloomScatter = 0.65f;
+            AoRadius = 0.6f; AoIntensity = 1.0f;
         }
 
         /// <summary>Push every setting into the renderer (persistent frame state, same-frame visible).</summary>
@@ -81,6 +87,7 @@ namespace Editor.Core.Data
             DllWrapper.VortexAPI.SetPostChromaticAberration(CaEnabled, CaStrength, CaFalloff);
             DllWrapper.VortexAPI.SetPostColorGrade(GradeEnabled, Exposure, Contrast, Saturation, Temperature, Tint);
             DllWrapper.VortexAPI.SetPostBloom(BloomEnabled, BloomThreshold, BloomKnee, BloomIntensity, BloomScatter);
+            DllWrapper.VortexAPI.SetAmbientOcclusion(AoEnabled, AoRadius, AoIntensity);
         }
 
         /// <summary>Renderer back to a clean image (used when a scene without settings becomes live).</summary>

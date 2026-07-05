@@ -70,6 +70,9 @@ namespace vortex::graphics::dx12
 		// Recorded first, exactly like render_frame; the window viewport is (re)set below anyway.
 		render_shadow_pass();
 
+		// SSAO (#32) for the play window (view slot 1) — before the color pass, like render_frame.
+		record_ssao(1, m_active_width, m_active_height);
+
 		D3D12_RESOURCE_BARRIER barrier{};
 		barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 		barrier.Transition.pResource = m_game_swapchain.current_back_buffer();

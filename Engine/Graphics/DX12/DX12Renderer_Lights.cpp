@@ -33,6 +33,9 @@ namespace vortex::graphics::dx12
 	m_frame_constants.ambient_strength = m_ambient_strength;
 	m_frame_constants.point_light_count = static_cast<u32>(m_point_lights.size());
 	m_frame_constants.spot_light_count = static_cast<u32>(m_spot_lights.size());
+	// SSAO (#32): the standard PS samples t10 only when this is set; if a view's record_ssao
+	// can't run, its reserved t10 slot still holds a valid (stale/neutral) texture.
+	m_frame_constants.ssao_enabled = (m_ssao_enabled && m_ssao_pso) ? 1.0f : 0.0f;
 
 	// Spot shadows (#23): select the shadow-casting spot + fill the shadow fields BEFORE the upload
 	// below (also primes the shadow pass's own light-VP b0 clone).

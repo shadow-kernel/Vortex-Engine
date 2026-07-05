@@ -69,6 +69,15 @@ namespace vortex::graphics::dx12
 		// per-frame CB makes it a no-op when no shadow light exists (map is cleared-to-1 anyway).
 		if (m_shadow_srv_gpu.ptr != 0)
 			m_command_list->SetGraphicsRootDescriptorTable(10, m_shadow_srv_gpu);
+		// CSM atlas at t8 (root param 11, #24) — same always-bound rule.
+		if (m_csm_srv_gpu.ptr != 0)
+			m_command_list->SetGraphicsRootDescriptorTable(11, m_csm_srv_gpu);
+		// Point face atlas at t9 (root param 12, #25).
+		if (m_point_srv_gpu.ptr != 0)
+			m_command_list->SetGraphicsRootDescriptorTable(12, m_point_srv_gpu);
+		// SSAO texture at t10 (root param 13, #32) — the current view's blurred AO.
+		if (m_ssao_current_srv.ptr != 0)
+			m_command_list->SetGraphicsRootDescriptorTable(13, m_ssao_current_srv);
 
 		auto& reg = ResourceRegistry::instance();
 		
@@ -618,6 +627,12 @@ namespace vortex::graphics::dx12
 		// Gizmos draw with the standard PS too -> the t7 shadow table must be bound here as well.
 		if (m_shadow_srv_gpu.ptr != 0)
 			m_command_list->SetGraphicsRootDescriptorTable(10, m_shadow_srv_gpu);
+		if (m_csm_srv_gpu.ptr != 0)
+			m_command_list->SetGraphicsRootDescriptorTable(11, m_csm_srv_gpu);   // t8 (#24)
+		if (m_point_srv_gpu.ptr != 0)
+			m_command_list->SetGraphicsRootDescriptorTable(12, m_point_srv_gpu); // t9 (#25)
+		if (m_ssao_current_srv.ptr != 0)
+			m_command_list->SetGraphicsRootDescriptorTable(13, m_ssao_current_srv); // t10 (#32)
 		m_command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
 		auto& reg = ResourceRegistry::instance();

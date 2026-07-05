@@ -749,6 +749,9 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void SetPostFxMainView([MarshalAs(UnmanagedType.I1)] bool enabled);
 
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetSSAO([MarshalAs(UnmanagedType.I1)] bool enabled, float radius, float intensity);
+
         /// <summary>
         /// Clear all dynamic lights. Call at the beginning of each frame before submitting new lights.
         /// </summary>
@@ -883,6 +886,14 @@ namespace Editor.DllWrapper
         public static void SetPostMainView(bool enabled)
         {
             try { SetPostFxMainView(enabled); } catch { }
+        }
+
+        /// <summary>SSAO (#32): darkens ONLY the ambient/indirect light in crevices and contact areas.
+        /// Scene-look state like fog — shows in the editor viewport too. radius in world units
+        /// (~0.3-1.5), intensity 0..~2 (0 = off).</summary>
+        public static void SetAmbientOcclusion(bool enabled, float radius, float intensity)
+        {
+            try { SetSSAO(enabled, radius, intensity); } catch { }
         }
 
         #endregion

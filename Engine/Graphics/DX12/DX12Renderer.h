@@ -191,6 +191,14 @@ namespace vortex::graphics::dx12
 		};
 		
 		void clear_lights();
+		// SSAO (#32): scene-look state like fog — shows in every view (editor + game). radius in
+		// world units, intensity 0..~2; enabled=false or intensity 0 = the pass never records.
+		void set_ssao(bool enabled, float radius, float intensity)
+		{
+			m_ssao_enabled = enabled && intensity > 0.001f;
+			m_ssao_radius = radius > 0.05f ? radius : 0.05f;
+			m_ssao_intensity = intensity < 0.0f ? 0.0f : intensity;
+		}
 		// #24: the directional light can now cast cascaded shadows. Defaults keep every existing
 		// caller shadow-free; shadow_distance = the far end of the last cascade (world units).
 		void set_directional_light_full(const DirectX::XMFLOAT3& direction, const DirectX::XMFLOAT3& color, float intensity,
@@ -433,6 +441,8 @@ namespace vortex::graphics::dx12
 		void prepare_csm_cascades();        // #24: splits + snapped ortho crops (called by prepare_shadow_pass)
 		bool ensure_point_shadow_map();     // #25: the 6-face point shadow atlas (t9)
 		void prepare_point_shadows();       // #25: select lights + build the 6 face VPs each
+		bool ensure_ssao_targets(int slot, u32 w, u32 h);   // #32: per-view AO depth + AO/blur RTs
+		void record_ssao(int slot, u32 view_w, u32 view_h); // #32: prepass -> AO -> blur (before the color pass)
 		bool capture_backbuffer_to_bmp(const char* path);
 		void render_fallback_triangle();
 		void render_grid();
@@ -536,6 +546,10 @@ namespace vortex::graphics::dx12
 			// ShadowVP[4] tail; b0 only carries the atlas texel size (all tiles are the same size).
 			float shadow_map_texel;    // 1 / tile size (ready for a PCF kernel later)
 			u32 shadow_padding[3];
+			// SSAO (#32) — APPENDED @176. The standard PS samples t10 only when enabled > 0.5;
+			// the UV comes from SV_POSITION / (AO texture dims * 2), so no screen size travels here.
+			float ssao_enabled;
+			float ssao_padding[3];
 		};
 		
 		// Separate light buffer for GPU
@@ -798,6 +812,39 @@ namespace vortex::graphics::dx12
 		static constexpr u32 MAX_SHADOW_POINTS = 2;
 		static constexpr u32 POINT_SHADOW_TILE = 1024;
 		static constexpr u32 POINT_ATLAS_COLS = 4;      // 12 tiles -> 4096 x 3072
+
+		// ---- SSAO (#32) ----
+		// Fully self-contained: a dedicated HALF-RES depth prepass (own R32_TYPELESS target, camera
+		// VP straight from b0) feeds an Alchemy-style AO pass + box blur; the blurred result lands
+		// in a RESERVED registry SRV slot (t10) and the standard PS multiplies it into the ambient
+		// term only. No main-depth plumbing, no PSO depth-func changes — identical on every path.
+		// Two view slots like the postfx chain: 0 = main window/viewport, 1 = editor game window.
+		static constexpr u32 SSAO_MAX_INSTANCES = 16384;
+		struct SsaoView
+		{
+			ComPtr<ID3D12Resource> depth;               // R32_TYPELESS, half view res
+			ComPtr<ID3D12Resource> ao;                  // R8_UNORM raw AO
+			ComPtr<ID3D12Resource> blur;                // R8_UNORM blurred AO (sampled at t10)
+			ComPtr<ID3D12DescriptorHeap> dsv_heap;      // 1 DSV
+			ComPtr<ID3D12DescriptorHeap> rtv_heap;      // 2 RTVs (ao, blur)
+			ComPtr<ID3D12DescriptorHeap> srv_heap;      // 2 shader-visible SRVs (depth, ao) for the gen/blur passes
+			D3D12_RESOURCE_STATES depth_state{ D3D12_RESOURCE_STATE_DEPTH_WRITE };
+			D3D12_RESOURCE_STATES ao_state{ D3D12_RESOURCE_STATE_RENDER_TARGET };
+			D3D12_RESOURCE_STATES blur_state{ D3D12_RESOURCE_STATE_RENDER_TARGET };
+			u32 w{ 0 }, h{ 0 };
+		};
+		SsaoView m_ssao_view[2];
+		ComPtr<ID3D12RootSignature> m_ssao_root_sig;    // t0 table + 24 root constants + s0 point/clamp
+		ComPtr<ID3D12PipelineState> m_ssao_pso;         // ssao.hlsl PSMain (AO generation)
+		ComPtr<ID3D12PipelineState> m_ssao_blur_pso;    // ssao.hlsl PSBlur
+		ComPtr<ID3D12Resource> m_ssao_instance_vb;      // prepass caster world matrices
+		void* m_ssao_instance_vb_mapped{ nullptr };
+		D3D12_CPU_DESCRIPTOR_HANDLE m_ssao_reserved_cpu[2]{};  // registry slots the scene pass samples (t10)
+		D3D12_GPU_DESCRIPTOR_HANDLE m_ssao_reserved_gpu[2]{};
+		D3D12_GPU_DESCRIPTOR_HANDLE m_ssao_current_srv{};      // what render_3d_scene binds this pass
+		bool m_ssao_enabled{ false };
+		float m_ssao_radius{ 0.6f };
+		float m_ssao_intensity{ 1.0f };
 		ComPtr<ID3D12Resource> m_point_shadow_map;
 		ComPtr<ID3D12DescriptorHeap> m_point_shadow_dsv_heap;
 		D3D12_RESOURCE_STATES m_point_shadow_state{ D3D12_RESOURCE_STATE_DEPTH_WRITE };

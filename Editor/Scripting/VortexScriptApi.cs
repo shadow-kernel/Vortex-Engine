@@ -1302,6 +1302,13 @@ namespace Vortex
                                     float intensity = 0.7f, float scatter = 0.65f)
             { Editor.DllWrapper.VortexAPI.SetPostBloom(enabled, threshold, knee, intensity, scatter); }
 
+        /// <summary>SSAO (#32): screen-space ambient occlusion — corners, crevices and contact points
+        /// get naturally darker without extra geometry. Darkens ONLY the ambient/indirect light (the
+        /// flashlight beam stays untouched). radius in world units (~0.3-1.5), intensity 0..~2:
+        /// <c>PostFx.SetAmbientOcclusion(true, 0.6f, 1.2f);</c></summary>
+        public static void SetAmbientOcclusion(bool enabled, float radius = 0.6f, float intensity = 1.0f)
+            { Editor.DllWrapper.VortexAPI.SetAmbientOcclusion(enabled, radius, intensity); }
+
         /// <summary>Everything off — back to the clean image (and the zero-cost render path).</summary>
         public static void ClearAll()
         {
@@ -1310,6 +1317,7 @@ namespace Vortex
             Editor.DllWrapper.VortexAPI.SetPostChromaticAberration(false, 0f, 0f);
             Editor.DllWrapper.VortexAPI.SetPostColorGrade(false, 0f, 1f, 1f, 0f, 0f);
             Editor.DllWrapper.VortexAPI.SetPostBloom(false, 0.75f, 0.5f, 0f, 0.65f);
+            Editor.DllWrapper.VortexAPI.SetAmbientOcclusion(false, 0.6f, 0f);
             Editor.DllWrapper.VortexAPI.SetPostDebugInvert(false);
         }
     }

@@ -190,6 +190,39 @@
                 </StackPanel>
             </Border>
 
+            <!-- ================= AMBIENT OCCLUSION ================= -->
+            <Border Style="{StaticResource SectionCard}">
+                <StackPanel>
+                    <Grid>
+                        <TextBlock Text="Ambient Occlusion" Style="{StaticResource SectionTitle}"
+                                   ToolTip="Darkens crevices and contact areas (indirect light only). Shows in the editor viewport like fog."/>
+                        <CheckBox x:Name="AoOn" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                  Checked="AnyChanged" Unchecked="AnyChanged"/>
+                    </Grid>
+                    <Grid Style="{StaticResource PropRow}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="92"/><ColumnDefinition Width="*"/><ColumnDefinition Width="52"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Radius" Style="{StaticResource PropLabel}"
+                                   ToolTip="Sample radius in world units — how far a surface looks for nearby occluders"/>
+                        <Slider x:Name="AoRadius" Grid.Column="1" Minimum="0.1" Maximum="2"
+                                VerticalAlignment="Center" ValueChanged="AnyChanged"/>
+                        <TextBox x:Name="AoRadiusBox" Grid.Column="2" Style="{StaticResource ValueBox}"
+                                 Margin="8,0,0,0" LostFocus="AnyBoxCommit" KeyDown="AnyBoxKey"/>
+                    </Grid>
+                    <Grid Style="{StaticResource PropRow}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="92"/><ColumnDefinition Width="*"/><ColumnDefinition Width="52"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Intensity" Style="{StaticResource PropLabel}"/>
+                        <Slider x:Name="AoIntensity" Grid.Column="1" Minimum="0" Maximum="2"
+                                VerticalAlignment="Center" ValueChanged="AnyChanged"/>
+                        <TextBox x:Name="AoIntensityBox" Grid.Column="2" Style="{StaticResource ValueBox}"
+                                 Margin="8,0,0,0" LostFocus="AnyBoxCommit" KeyDown="AnyBoxKey"/>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
             <!-- ================= BLOOM ================= -->
             <Border Style="{StaticResource SectionCard}">
                 <StackPanel>

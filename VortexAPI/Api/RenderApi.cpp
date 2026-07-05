@@ -548,6 +548,15 @@ EDITOR_INTERFACE void SetPostFxDebugInvert(bool enabled)
 	graphics::dx12::DX12Renderer::instance().postfx().params().debug_invert = enabled;
 }
 
+// SSAO (#32): screen-space ambient occlusion — darkens ONLY the ambient/indirect term (crevices,
+// contact areas). Like fog it is part of the scene render itself, so it shows in the editor
+// viewport too. radius in world units (~0.3-1.5), intensity 0..~2.
+EDITOR_INTERFACE void SetSSAO(bool enabled, float radius, float intensity)
+{
+	auto& r = graphics::dx12::DX12Renderer::instance();
+	r.set_ssao(enabled, radius, intensity);
+}
+
 // Main-view gate: post-FX in the PRIMARY swapchain. The GameHost player enables it at boot (there the
 // main view IS the game); the editor leaves it off so the freecam build viewport stays clean (its
 // Environment panel may toggle it for a preview). The play-mode game window always applies effects.
