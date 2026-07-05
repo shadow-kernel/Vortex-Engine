@@ -138,10 +138,82 @@ namespace Editor.Scripting
         {
             var e = FindEntityByHandle(id);
             if (e == null) return false;
+            if (e.IsActive == active) return true;   // no-op guard: a re-add would duplicate collision shapes
             if (!_activeChanged.ContainsKey(e)) _activeChanged[e] = e.IsActive;   // restore on play end
             e.IsActive = active;
             try { e.SyncEngineStateRecursive(active); } catch { }
+            // #51: collision + audio follow the active state (previously a documented limitation —
+            // a deactivated door/monster stayed solid and kept emitting).
+            try
+            {
+                if (active) Editor.Core.Services.Physics.CollisionService.AddEntityShapes(e);
+                else Editor.Core.Services.Physics.CollisionService.RemoveEntityShapes(e);
+            }
+            catch { }
+            if (!active)
+            {
+                try { StopAudioRecursive(e); } catch { }
+            }
             Editor.Core.Services.SceneRenderService.RuntimeDirty = true;
+            return true;
+        }
+
+        private static void StopAudioRecursive(Editor.ECS.GameEntity e)
+        {
+            var src = e.GetComponent<Editor.ECS.Components.Audio.AudioSource>();
+            if (src != null) Editor.Core.Services.AudioPlaybackService.Instance.ScriptStop(src);
+            if (e.Children != null)
+                foreach (var c in e.Children) StopAudioRecursive(c);
+        }
+
+        // ---- component-level enable toggles (#51) ----
+
+        internal bool SetRendererEnabled(long id, bool enabled)
+        {
+            var e = FindEntityByHandle(id);
+            var mr = e != null ? e.GetComponent<Editor.ECS.Components.Rendering.MeshRenderer>() : null;
+            if (mr == null) return false;
+            mr.IsEnabled = enabled;   // SubmitScene skips disabled renderers
+            Editor.Core.Services.SceneRenderService.RuntimeDirty = true;
+            return true;
+        }
+
+        internal bool SetColliderEnabled(long id, bool enabled)
+        {
+            var e = FindEntityByHandle(id);
+            if (e == null) return false;
+            // Entity-level shape rebuild: remove this subtree's shapes, then re-add — AddRecursive
+            // honors each collider component's IsEnabled, so flip the flags first.
+            try
+            {
+                SetColliderFlagRecursive(e, enabled);
+                Editor.Core.Services.Physics.CollisionService.RemoveEntityShapes(e);
+                if (enabled && e.IsActive) Editor.Core.Services.Physics.CollisionService.AddEntityShapes(e);
+            }
+            catch { return false; }
+            return true;
+        }
+
+        private static void SetColliderFlagRecursive(Editor.ECS.GameEntity e, bool enabled)
+        {
+            foreach (var comp in e.Components)
+                if (comp is Editor.ECS.Components.Physics.Collider col) col.IsEnabled = enabled;
+            if (e.Children != null)
+                foreach (var c in e.Children) SetColliderFlagRecursive(c, enabled);
+        }
+
+        internal bool IsEntityActive(long id)
+        {
+            var e = FindEntityByHandle(id);
+            return e != null && e.IsActive;
+        }
+
+        internal bool IsEntityActiveInHierarchy(long id)
+        {
+            var e = FindEntityByHandle(id);
+            if (e == null || !e.IsActive) return false;
+            for (var p = e.Parent; p != null; p = p.Parent)
+                if (!p.IsActive) return false;
             return true;
         }
 

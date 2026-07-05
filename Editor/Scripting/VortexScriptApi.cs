@@ -717,9 +717,28 @@ namespace Vortex
             return c != null ? new AudioSource(c) : null;
         }
 
-        /// <summary>Show/hide an entity (and its children) at runtime — rendering stops, behaviours keep
-        /// their state. Colliders of a deactivated entity currently stay solid (documented limitation).</summary>
+        /// <summary>Activate/deactivate an entity and its children (#51) — the staple horror mechanic
+        /// (monster appears behind you, prop swaps between glances, a door unlocks). Deactivating stops
+        /// rendering, REMOVES its colliders from the collision world and stops its audio sources;
+        /// re-activating restores all of it. Behaviours keep their state. No allocation churn — far
+        /// cheaper than Instantiate/Destroy for on/off mechanics.</summary>
         public static void SetActive(long entity, bool active) { Editor.Scripting.ScriptRuntime.Instance.SetEntityActive(entity, active); }
+
+        /// <summary>The entity's OWN active flag (Unity's activeSelf) — true even while hidden because
+        /// a parent is deactivated.</summary>
+        public static bool IsActive(long entity) { return Editor.Scripting.ScriptRuntime.Instance.IsEntityActive(entity); }
+
+        /// <summary>True only when this entity AND every ancestor are active (Unity's activeInHierarchy)
+        /// — i.e. the entity actually renders/collides right now.</summary>
+        public static bool IsActiveInHierarchy(long entity) { return Editor.Scripting.ScriptRuntime.Instance.IsEntityActiveInHierarchy(entity); }
+
+        /// <summary>Enable/disable JUST the entity's MeshRenderer (#51) — the prop stays solid and
+        /// audible, it only stops rendering (invisible wall, blinking pickup).</summary>
+        public static void SetRendererEnabled(long entity, bool enabled) { Editor.Scripting.ScriptRuntime.Instance.SetRendererEnabled(entity, enabled); }
+
+        /// <summary>Enable/disable the entity's colliders (#51), subtree-wide — a locked door opens for
+        /// the player without hiding its mesh. Shapes leave/rejoin the collision world immediately.</summary>
+        public static void SetColliderEnabled(long entity, bool enabled) { Editor.Scripting.ScriptRuntime.Instance.SetColliderEnabled(entity, enabled); }
 
         // ---- Runtime prefab instantiation (#36) ----
 
@@ -1462,6 +1481,18 @@ namespace Vortex
         /// <summary>Glide the fade envelope (0..1, on top of Volume) to a live target —
         /// duck a heartbeat under dialogue, swell a drone. Retargets smoothly mid-fade.</summary>
         public void FadeTo(float target, float seconds) => Editor.Core.Services.AudioPlaybackService.Instance.ScriptFadeTo(_component, target, seconds);
+
+        /// <summary>Component enable toggle (#51): disabling stops playback immediately; the component
+        /// keeps its clip/volume settings for the next Play() after re-enabling.</summary>
+        public bool Enabled
+        {
+            get => _component.IsEnabled;
+            set
+            {
+                _component.IsEnabled = value;
+                if (!value) Editor.Core.Services.AudioPlaybackService.Instance.ScriptStop(_component);
+            }
+        }
 
         /// <summary>Live volume (0..1) — audible immediately while playing.</summary>
         public float Volume { get => _component.Volume; set => _component.Volume = value; }
