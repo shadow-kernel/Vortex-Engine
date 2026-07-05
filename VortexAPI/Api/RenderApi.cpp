@@ -288,6 +288,14 @@ EDITOR_INTERFACE void SetMaterialUVTiling(id::id_type material_id, float u, floa
 	if (mat) mat->set_uv_tiling(u, v);
 }
 
+// Blend mode (#33): 0 = opaque, 1 = alpha blend, 2 = additive. Non-opaque materials draw in the
+// sorted back-to-front transparent pass with depth write off (the .vmat BlendMode finally renders).
+EDITOR_INTERFACE void SetMaterialBlendMode(id::id_type material_id, int mode)
+{
+	auto* mat = graphics::ResourceRegistry::instance().get_material(material_id);
+	if (mat) mat->set_blend_mode(mode < 0 ? 0u : (u32)mode);
+}
+
 EDITOR_INTERFACE void SetMaterialHeightTexture(id::id_type material_id, id::id_type texture_id)
 {
 	auto* mat = graphics::ResourceRegistry::instance().get_material(material_id);

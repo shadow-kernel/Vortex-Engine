@@ -390,7 +390,40 @@ namespace vortex::graphics::dx12
 		if (!m_geo_lod_enabled)
 			for (size_t r = 0; r < runN; ++r) m_draw_runs[r].visible = counters[r].load(std::memory_order_relaxed);
 
+		// Fill the per-run object constants + bind the material's texture tables. Shared by the opaque
+		// loop and the sorted transparent pass (#33) — identical material state, different PSO/order.
+		auto apply_material = [&](Material* mat, PerObjectConstants& obj)
+		{
+			obj.base_color = { 0.85f, 0.85f, 0.88f, 1.0f };
+			obj.metallic = 0.7f; obj.roughness = 0.35f; obj.ao = 1.0f; obj.normal_strength = 1.0f;
+			obj.use_directx_normals = 1;
+			obj.uv_tiling = { 1.0f, 1.0f };
+			if (!mat) return;
+			const auto& props = mat->properties();
+			obj.base_color = props.base_color; obj.metallic = props.metallic; obj.roughness = props.roughness;
+			obj.ao = props.ao; obj.normal_strength = props.normal_strength; obj.use_directx_normals = props.use_directx_normals;
+			obj.is_unlit = props.is_unlit; obj.emissive_strength = props.emissive_strength; // feed the PS's unlit path (was zeroed padding)
+			obj.uv_tiling = props.uv_tiling;   // texture repeat scale -> the PS multiplies UVs by this
+			auto* tex = mat->albedo_texture();
+			if (tex && tex->is_valid() && tex->srv_gpu().ptr != 0) { obj.has_albedo_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(3, tex->srv_gpu()); }
+			auto* normal = mat->normal_texture();
+			if (normal && normal->is_valid() && normal->srv_gpu().ptr != 0) { obj.has_normal_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(4, normal->srv_gpu()); }
+			auto* metallic_tex = mat->metallic_texture();
+			if (metallic_tex && metallic_tex->is_valid() && metallic_tex->srv_gpu().ptr != 0) { obj.has_metallic_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(5, metallic_tex->srv_gpu()); }
+			auto* roughness_tex = mat->roughness_texture();
+			if (roughness_tex && roughness_tex->is_valid() && roughness_tex->srv_gpu().ptr != 0) { obj.has_roughness_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(6, roughness_tex->srv_gpu()); }
+			auto* ao_tex = mat->ao_texture();
+			if (ao_tex && ao_tex->is_valid() && ao_tex->srv_gpu().ptr != 0) { obj.has_ao_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(7, ao_tex->srv_gpu()); }
+			auto* height_tex = mat->height_texture();
+			if (height_tex && height_tex->is_valid() && height_tex->srv_gpu().ptr != 0) { obj.has_height_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(9, height_tex->srv_gpu()); }
+			obj.height_scale = props.height_scale;   // parallax depth (root param 9 = height map at t6)
+		};
+
 		// Record the draws single-threaded: one DrawIndexedInstanced per run with visible instances.
+		// Transparent runs (#33) are deferred: their instances are already culled+packed in the slab,
+		// but they draw AFTER every opaque, sorted back-to-front. Wireframe mode ignores transparency
+		// (debug view shows everything), skinned + custom-shader materials stay opaque in v1.
+		std::vector<u32> transparentRuns;
 		u32 cbSlot = 0;
 		for (size_t r = 0; r < runN; ++r)
 		{
@@ -399,13 +432,16 @@ namespace vortex::graphics::dx12
 			Mesh* mesh = run.meshp;
 			if (!mesh || !mesh->is_valid() || run.visible == 0) continue;
 
-			// Material + PSO + textures: set ONCE for the whole run (shared by all its instances).
-			PerObjectConstants obj{};
-			obj.base_color = { 0.85f, 0.85f, 0.88f, 1.0f };
-			obj.metallic = 0.7f; obj.roughness = 0.35f; obj.ao = 1.0f; obj.normal_strength = 1.0f;
-			obj.use_directx_normals = 1;
-			obj.uv_tiling = { 1.0f, 1.0f };
 			auto* mat = reg.get_material(run.mat);
+			if (!m_wireframe_mode && !run.skinned && mat && mat->blend_mode() != 0
+				&& m_pipeline_3d.transparent_pso(mat->blend_mode(), false)
+				&& m_custom_shaders.find((u32)run.mat) == m_custom_shaders.end())
+			{
+				transparentRuns.push_back((u32)r);
+				continue;
+			}
+
+			// Material + PSO + textures: set ONCE for the whole run (shared by all its instances).
 			// Skinned runs use the skinned PSO + bind their bone palette (root SRV param 8). Custom material
 			// shaders don't apply to skinned meshes in v1 (they'd need a skinned input-layout variant).
 			// A compiled custom per-material shader overrides the built-in PSO; else unlit -> double-sided, else PBR.
@@ -424,27 +460,8 @@ namespace vortex::graphics::dx12
 				else if (mat && mat->properties().is_unlit) m_command_list->SetPipelineState(double_sided_pso);
 				else m_command_list->SetPipelineState(pso);
 			}
-			if (mat)
-			{
-				const auto& props = mat->properties();
-				obj.base_color = props.base_color; obj.metallic = props.metallic; obj.roughness = props.roughness;
-				obj.ao = props.ao; obj.normal_strength = props.normal_strength; obj.use_directx_normals = props.use_directx_normals;
-				obj.is_unlit = props.is_unlit; obj.emissive_strength = props.emissive_strength; // feed the PS's unlit path (was zeroed padding)
-				obj.uv_tiling = props.uv_tiling;   // texture repeat scale -> the PS multiplies UVs by this
-				auto* tex = mat->albedo_texture();
-				if (tex && tex->is_valid() && tex->srv_gpu().ptr != 0) { obj.has_albedo_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(3, tex->srv_gpu()); }
-				auto* normal = mat->normal_texture();
-				if (normal && normal->is_valid() && normal->srv_gpu().ptr != 0) { obj.has_normal_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(4, normal->srv_gpu()); }
-				auto* metallic_tex = mat->metallic_texture();
-				if (metallic_tex && metallic_tex->is_valid() && metallic_tex->srv_gpu().ptr != 0) { obj.has_metallic_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(5, metallic_tex->srv_gpu()); }
-				auto* roughness_tex = mat->roughness_texture();
-				if (roughness_tex && roughness_tex->is_valid() && roughness_tex->srv_gpu().ptr != 0) { obj.has_roughness_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(6, roughness_tex->srv_gpu()); }
-				auto* ao_tex = mat->ao_texture();
-				if (ao_tex && ao_tex->is_valid() && ao_tex->srv_gpu().ptr != 0) { obj.has_ao_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(7, ao_tex->srv_gpu()); }
-				auto* height_tex = mat->height_texture();
-				if (height_tex && height_tex->is_valid() && height_tex->srv_gpu().ptr != 0) { obj.has_height_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(9, height_tex->srv_gpu()); }
-				obj.height_scale = props.height_scale;   // parallax depth (root param 9 = height map at t6)
-			}
+			PerObjectConstants obj{};
+			apply_material(mat, obj);
 			// One CB slot per run; clamp to the CB capacity (runs beyond reuse the last slot — only matters
 			// with thousands of DISTINCT materials, which instancing makes rare).
 			u32 slot = (cbSlot < MAX_DRAW_RUNS) ? cbSlot : (MAX_DRAW_RUNS - 1);
@@ -506,6 +523,76 @@ namespace vortex::graphics::dx12
 				m_vertex_count += mesh->vertex_count() * run.visible;
 			}
 			++m_draw_call_count;
+			}
+		}
+
+		// ---- Sorted transparent pass (#33): every deferred run's packed instances, back-to-front ----
+		// The instances already sit culled+packed in the instance-VB slab (upload heap = CPU-readable);
+		// each item's view depth comes from the world translation at bytes 48..59 of its 64B matrix.
+		// Blend order matters, so items draw ONE BY ONE with depth write off — correct layering beats
+		// instancing here, and horror scenes hold dozens of transparents, not thousands (capped anyway).
+		if (!transparentRuns.empty() && m_instance_vb_mapped)
+		{
+			struct TDraw { u32 run; u32 slot; float d2; };
+			std::vector<TDraw> titems;
+			constexpr size_t MAX_TRANSPARENT_DRAWS = 4096;
+			for (u32 tr : transparentRuns)
+			{
+				const DrawRun& run = m_draw_runs[tr];
+				for (u32 s2 = 0; s2 < run.visible && titems.size() < MAX_TRANSPARENT_DRAWS; ++s2)
+				{
+					const float* t = reinterpret_cast<const float*>(
+						(u8*)m_instance_vb_mapped + (size_t)(run.vbBase + s2) * 64 + 48);
+					float dx = t[0] - eye.x, dy = t[1] - eye.y, dz = t[2] - eye.z;
+					titems.push_back({ tr, s2, dx * dx + dy * dy + dz * dz });
+				}
+			}
+			std::sort(titems.begin(), titems.end(),
+				[](const TDraw& a, const TDraw& b) { return a.d2 > b.d2; });   // farthest first
+
+			u32 lastRun = 0xFFFFFFFF;
+			Mesh* tmesh = nullptr;
+			for (const TDraw& td : titems)
+			{
+				const DrawRun& run = m_draw_runs[td.run];
+				if (td.run != lastRun)
+				{
+					lastRun = td.run;
+					tmesh = run.meshp;   // LOD0 for every distance — transparents are few and LOD pops read badly through glass
+					if (!tmesh || !tmesh->is_valid()) { tmesh = nullptr; continue; }
+					auto* mat = reg.get_material(run.mat);
+					const u32 bm = mat ? mat->blend_mode() : 1u;
+					const bool ds = mat && mat->properties().is_unlit;   // mirror the opaque unlit->double-sided rule
+					auto* tpso = m_pipeline_3d.transparent_pso(bm, ds);
+					if (!tpso) { tmesh = nullptr; continue; }
+					m_command_list->SetPipelineState(tpso);
+					PerObjectConstants obj{};
+					apply_material(mat, obj);
+					u32 slot = (cbSlot < MAX_DRAW_RUNS) ? cbSlot : (MAX_DRAW_RUNS - 1);
+					if (m_per_object_cb_mapped) memcpy((u8*)m_per_object_cb_mapped + (size_t)slot * 256, &obj, sizeof(obj));
+					m_command_list->SetGraphicsRootConstantBufferView(1, m_per_object_cb->GetGPUVirtualAddress() + (size_t)slot * 256);
+					if (cbSlot < MAX_DRAW_RUNS) ++cbSlot;
+					if (tmesh->has_indices())
+						m_command_list->IASetIndexBuffer(&tmesh->index_buffer_view());
+				}
+				if (!tmesh) continue;
+				D3D12_VERTEX_BUFFER_VIEW tv[2];
+				tv[0] = tmesh->vertex_buffer_view();
+				tv[1].BufferLocation = m_instance_vb->GetGPUVirtualAddress() + (UINT64)(run.vbBase + td.slot) * 64;
+				tv[1].SizeInBytes = 64;
+				tv[1].StrideInBytes = 64;
+				m_command_list->IASetVertexBuffers(0, 2, tv);
+				if (tmesh->has_indices())
+				{
+					m_command_list->DrawIndexedInstanced(tmesh->index_count(), 1, 0, 0, 0);
+					m_vertex_count += tmesh->index_count();
+				}
+				else
+				{
+					m_command_list->DrawInstanced(tmesh->vertex_count(), 1, 0, 0);
+					m_vertex_count += tmesh->vertex_count();
+				}
+				++m_draw_call_count;
 			}
 		}
 		}

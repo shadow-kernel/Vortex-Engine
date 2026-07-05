@@ -260,6 +260,12 @@ namespace vortex::graphics::dx12
 			for (const auto& item : m_render_queue)
 			{
 				if (item.bone_offset != NO_BONES) continue;   // v1: skinned meshes receive but don't cast
+				// Transparent materials (#33) don't cast: an alpha-blended ghost/glass pane throwing a
+				// fully SOLID shadow reads as a bug (real tinted-glass shadows need translucent maps — v2).
+				{
+					auto* cmat = reg.get_material(item.material_id);
+					if (cmat && cmat->blend_mode() != 0) continue;
+				}
 				XMFLOAT4 bd;
 				auto bit = bounds.find(item.mesh_id);
 				if (bit == bounds.end())

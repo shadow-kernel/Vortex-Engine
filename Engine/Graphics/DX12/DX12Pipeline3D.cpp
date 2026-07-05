@@ -81,6 +81,10 @@ namespace vortex::graphics::dx12
 
 	void DX12Pipeline3D::shutdown()
 	{
+		m_alpha_pso.Reset();
+		m_alpha_ds_pso.Reset();
+		m_additive_pso.Reset();
+		m_additive_ds_pso.Reset();
 		m_skinned_pso.Reset();
 		m_wireframe_pso.Reset();
 		m_pipeline_state.Reset();
@@ -296,6 +300,56 @@ namespace vortex::graphics::dx12
 		if (FAILED(device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&m_double_sided_pso))))
 		{
 			return false;
+		}
+
+		// TRANSPARENT PSOs (#33): blending ON, depth test kept (LESS_EQUAL) but depth WRITE off — a
+		// transparent surface must not occlude what's drawn behind it later in the sorted pass. Four
+		// variants: {alpha, additive} x {cull back, double-sided}; the renderer picks per material at
+		// draw time. Optional like skinned/shadow: a creation failure only keeps those materials opaque.
+		{
+			D3D12_DEPTH_STENCIL_DESC transp_ds{};
+			transp_ds.DepthEnable = TRUE;
+			transp_ds.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+			transp_ds.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+			transp_ds.StencilEnable = FALSE;
+			pso_desc.DepthStencilState = transp_ds;
+
+			D3D12_BLEND_DESC transp_blend = blend;
+			transp_blend.RenderTarget[0].BlendEnable = TRUE;
+			transp_blend.RenderTarget[0].SrcBlend = D3D12_BLEND_SRC_ALPHA;
+			transp_blend.RenderTarget[0].DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+			transp_blend.RenderTarget[0].BlendOp = D3D12_BLEND_OP_ADD;
+			transp_blend.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_ONE;
+			transp_blend.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
+			transp_blend.RenderTarget[0].BlendOpAlpha = D3D12_BLEND_OP_ADD;
+			pso_desc.BlendState = transp_blend;
+
+			rasterizer.CullMode = D3D12_CULL_MODE_BACK;
+			pso_desc.RasterizerState = rasterizer;
+			if (FAILED(device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&m_alpha_pso))))
+				OutputDebugStringA("DX12Pipeline3D: alpha PSO creation failed — alpha materials render opaque\n");
+			rasterizer.CullMode = D3D12_CULL_MODE_NONE;
+			pso_desc.RasterizerState = rasterizer;
+			if (FAILED(device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&m_alpha_ds_pso))))
+				OutputDebugStringA("DX12Pipeline3D: alpha DS PSO creation failed\n");
+
+			// Additive: SrcAlpha/One — alpha still scales the contribution, black adds nothing.
+			transp_blend.RenderTarget[0].DestBlend = D3D12_BLEND_ONE;
+			transp_blend.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_ONE;
+			pso_desc.BlendState = transp_blend;
+			rasterizer.CullMode = D3D12_CULL_MODE_BACK;
+			pso_desc.RasterizerState = rasterizer;
+			if (FAILED(device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&m_additive_pso))))
+				OutputDebugStringA("DX12Pipeline3D: additive PSO creation failed — additive materials render opaque\n");
+			rasterizer.CullMode = D3D12_CULL_MODE_NONE;
+			pso_desc.RasterizerState = rasterizer;
+			if (FAILED(device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&m_additive_ds_pso))))
+				OutputDebugStringA("DX12Pipeline3D: additive DS PSO creation failed\n");
+
+			// Restore the opaque defaults the following PSO blocks (gizmo/skinned/shadow) inherit.
+			pso_desc.BlendState = blend;
+			pso_desc.DepthStencilState = depth_stencil;
+			// rasterizer stays SOLID + CULL_NONE — exactly what the gizmo block below expects.
 		}
 
 		// Gizmo PSO: no backface culling (already set above) + depth test/write DISABLED so editor transform gizmos

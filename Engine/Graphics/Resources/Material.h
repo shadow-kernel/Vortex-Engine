@@ -67,6 +67,11 @@ namespace vortex::graphics
 		void set_emissive_strength(float strength);
 		void set_uv_tiling(float u, float v);
 		void set_height_scale(float value);
+		// Blend mode (#33): 0 = opaque, 1 = alpha blend, 2 = additive. CPU-side draw-routing state
+		// only (the renderer picks the PSO + pass from it) — deliberately NOT in MaterialProperties,
+		// whose layout is a GPU constant-buffer ABI.
+		void set_blend_mode(u32 mode) { m_blend_mode = (mode <= 2) ? mode : 0; }
+		u32 blend_mode() const { return m_blend_mode; }
 
 		// Texture setters
 		void set_albedo_texture(Texture* texture);
@@ -100,6 +105,7 @@ namespace vortex::graphics
 
 	private:
 		MaterialProperties m_properties;
+		u32 m_blend_mode{ 0 };   // 0 opaque, 1 alpha blend, 2 additive (#33) — not part of the CB
 		ComPtr<ID3D12Resource> m_constant_buffer;
 		void* m_mapped_data{ nullptr };
 		std::string m_name{ "New Material" };

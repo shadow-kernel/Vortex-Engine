@@ -95,6 +95,9 @@ namespace Editor.DllWrapper
         private static extern void SetMaterialHeightScale(long materialId, float scale);
 
         [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetMaterialBlendMode(long materialId, int mode);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
         [return: MarshalAs(UnmanagedType.I1)]
         private static extern bool MaterialHasTexture(long materialId);
 
@@ -138,6 +141,13 @@ namespace Editor.DllWrapper
         /// </summary>
         public static void SetMaterialEmissiveBrightness(long materialId, float strength)
             => SetMaterialEmissiveStrength(materialId, strength);
+
+        /// <summary>Blend mode (#33): 0 = opaque, 1 = alpha blend, 2 = additive. Non-opaque materials
+        /// render in the engine's sorted transparent pass (depth test on, depth write off).</summary>
+        public static void SetMaterialBlendModeValue(long materialId, int mode)
+        {
+            try { SetMaterialBlendMode(materialId, mode); } catch { }
+        }
 
         /// <summary>Texture repeat scale (UV tiling). 1,1 = no tiling; higher repeats the texture across the surface
         /// so a small tiling texture stays crisp on a large mesh instead of being stretched once.</summary>

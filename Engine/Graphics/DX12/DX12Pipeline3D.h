@@ -48,6 +48,17 @@ namespace vortex::graphics::dx12
 		// shadow instance VB. nullptr = creation failed (spot shadows silently disabled, never a crash).
 		ID3D12PipelineState* shadow_pso() const { return m_shadow_pso.Get(); }
 
+		// Transparent PSOs (#33): standard shaders with blending ENABLED and depth WRITE off (test stays
+		// on LESS_EQUAL) — drawn in the sorted back-to-front pass after all opaques. blend_mode 1 = alpha
+		// (SrcAlpha/InvSrcAlpha), 2 = additive (SrcAlpha/One); double_sided mirrors the opaque unlit rule.
+		// Returns nullptr for opaque/unknown modes (callers must route those through the opaque pass).
+		ID3D12PipelineState* transparent_pso(u32 blend_mode, bool double_sided) const
+		{
+			if (blend_mode == 1) return double_sided ? m_alpha_ds_pso.Get() : m_alpha_pso.Get();
+			if (blend_mode == 2) return double_sided ? m_additive_ds_pso.Get() : m_additive_pso.Get();
+			return nullptr;
+		}
+
 		// Compile a CUSTOM material shader (.hlsl, VSMain/PSMain) into a PSO that reuses this pipeline's root
 		// signature + input layout + render state — only the shader stages differ, so it stays binding-compatible
 		// with the same PerFrame/PerObject/light/texture setup. Returns nullptr on any compile/create failure (the
@@ -70,6 +81,10 @@ namespace vortex::graphics::dx12
 		ComPtr<ID3D12PipelineState> m_gizmo_wire_pso; // gizmo PSO variant with WIREFRAME fill (fine-net shapes)
 		ComPtr<ID3D12PipelineState> m_skinned_pso; // GPU skinning (skinned.hlsl VS + standard PS)
 		ComPtr<ID3D12PipelineState> m_shadow_pso;  // depth-only shadow-map pass (standard VS, no PS/RTV)
+		ComPtr<ID3D12PipelineState> m_alpha_pso;       // #33: alpha blend, cull back, depth write off
+		ComPtr<ID3D12PipelineState> m_alpha_ds_pso;    // #33: alpha blend, double-sided
+		ComPtr<ID3D12PipelineState> m_additive_pso;    // #33: additive, cull back, depth write off
+		ComPtr<ID3D12PipelineState> m_additive_ds_pso; // #33: additive, double-sided
 		ComPtr<ID3DBlob> m_vs_blob;
 		ComPtr<ID3DBlob> m_ps_blob;
 		ComPtr<ID3DBlob> m_skinned_vs_blob;        // optional — skinned PSO skipped if it fails to load
