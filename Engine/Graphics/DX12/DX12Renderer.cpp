@@ -94,6 +94,11 @@ namespace vortex::graphics::dx12
 		if (!ensure_shadow_map(2 * SHADOW_TILE_SIZE))
 			OutputDebugStringA("[shadows] eager shadow-atlas init failed — spot shadows disabled\n");
 
+		// Directional cascades (#24): same eager rule for the t8 CSM atlas (2x2 tiles, cascade c
+		// in tile c). Cleared-to-1.0 + cascade count 0 in the light CB = a perfect visual no-op.
+		if (!ensure_csm_map(2 * SHADOW_TILE_SIZE))
+			OutputDebugStringA("[shadows] eager CSM-atlas init failed — directional shadows disabled\n");
+
 		// 2D UI overlay (optional — if D2D/DirectWrite init fails the 3D renderer is unaffected).
 		if (m_ui_overlay.initialize(core.device(), m_command_queue.queue(), DX12Swapchain::MaxBufferCount))
 			OutputDebugStringA("UI overlay OK\n");
@@ -145,6 +150,10 @@ namespace vortex::graphics::dx12
 		m_shadow_map.Reset();
 		m_shadow_dsv_heap.Reset();
 		m_shadow_srv_cpu = {}; m_shadow_srv_gpu = {}; m_shadow_map_size = 0; m_shadow_spot_count = 0;
+		// CSM resources (#24) — same lifecycle as the spot atlas.
+		m_csm_map.Reset();
+		m_csm_dsv_heap.Reset();
+		m_csm_srv_cpu = {}; m_csm_srv_gpu = {}; m_csm_map_size = 0; m_csm_count = 0;
 		if (m_light_cb && m_light_cb_mapped) { m_light_cb->Unmap(0, nullptr); m_light_cb_mapped = nullptr; }
 		m_light_cb.Reset();
 		if (m_grid_cb && m_grid_cb_mapped) { m_grid_cb->Unmap(0, nullptr); m_grid_cb_mapped = nullptr; }

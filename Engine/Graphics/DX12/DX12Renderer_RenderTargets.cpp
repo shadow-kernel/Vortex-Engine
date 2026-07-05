@@ -168,6 +168,15 @@ namespace vortex::graphics::dx12
 				gs.inner_spot_angle = m_spot_lights[i].inner_spot_angle;
 				memcpy(sptr + i * sizeof(GPUSpotLight), &gs, sizeof(GPUSpotLight));
 			}
+			// CSM (#24): the shared light CB's tail still holds the MAIN camera's cascade data — a
+			// preview object could land inside a scene shadow crop and render mysteriously dark. Zero
+			// the cascade count for offscreen renders (the main loop rewrites the tail next frame).
+			{
+				u8* dparams = lptr + MAX_POINT_LIGHTS * sizeof(GPUPointLight) + MAX_SPOT_LIGHTS * sizeof(GPUSpotLight)
+					+ (size_t)MAX_SHADOW_SPOTS * 64 + (size_t)CSM_CASCADES * 64 + 16;
+				float off[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+				memcpy(dparams, off, 16);
+			}
 		}
 
 		if (m_per_frame_cb_mapped)
@@ -245,6 +254,8 @@ namespace vortex::graphics::dx12
 				// too (same unbound-table rule as the scene pass; the map always exists via eager init).
 				if (m_shadow_srv_gpu.ptr != 0)
 					m_command_list->SetGraphicsRootDescriptorTable(10, m_shadow_srv_gpu);
+				if (m_csm_srv_gpu.ptr != 0)
+					m_command_list->SetGraphicsRootDescriptorTable(11, m_csm_srv_gpu);   // t8 (#24)
 				m_command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 			
 			auto& reg = ResourceRegistry::instance();

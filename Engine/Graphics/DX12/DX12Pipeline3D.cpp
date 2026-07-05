@@ -120,7 +120,10 @@ namespace vortex::graphics::dx12
 		// Param 10 is the SHADOW MAP descriptor table (t7, pixel) for spot-light shadows — additive again. Once
 		// standard.hlsl references t7 this param MUST be bound in every pass that uses the standard PS (scene,
 		// gizmo, offscreen previews); the renderer eager-creates the shadow map so a valid descriptor always exists.
-		D3D12_ROOT_PARAMETER params[11] = {};
+		// Param 11 is the CSM cascade atlas table (t8, pixel) for directional shadows (#24) — additive
+		// like 9/10, so every existing SetGraphicsRoot* index stays put; the renderer eager-creates the
+		// CSM atlas so a valid descriptor always exists wherever the standard PS runs.
+		D3D12_ROOT_PARAMETER params[12] = {};
 
 		params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
 		params[0].Descriptor.ShaderRegister = 0;
@@ -134,7 +137,7 @@ namespace vortex::graphics::dx12
 		params[2].Descriptor.ShaderRegister = 2;
 		params[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
-		static D3D12_DESCRIPTOR_RANGE srv_ranges[7] = {};
+		static D3D12_DESCRIPTOR_RANGE srv_ranges[8] = {};
 		for (int i = 0; i < 5; i++)
 		{
 			srv_ranges[i].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -175,6 +178,17 @@ namespace vortex::graphics::dx12
 		params[10].DescriptorTable.pDescriptorRanges = &srv_ranges[6];
 		params[10].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
+		// CSM cascade atlas descriptor table at t8 (pixel) — directional shadows (#24).
+		srv_ranges[7].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+		srv_ranges[7].NumDescriptors = 1;
+		srv_ranges[7].BaseShaderRegister = 8;
+		srv_ranges[7].RegisterSpace = 0;
+		srv_ranges[7].OffsetInDescriptorsFromTableStart = 0;
+		params[11].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+		params[11].DescriptorTable.NumDescriptorRanges = 1;
+		params[11].DescriptorTable.pDescriptorRanges = &srv_ranges[7];
+		params[11].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
 		D3D12_STATIC_SAMPLER_DESC samplers[2] = {};
 		samplers[0].Filter = D3D12_FILTER_ANISOTROPIC;
 		samplers[0].AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
@@ -208,7 +222,7 @@ namespace vortex::graphics::dx12
 		samplers[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
 		D3D12_ROOT_SIGNATURE_DESC desc{};
-		desc.NumParameters = 11;
+		desc.NumParameters = 12;
 		desc.pParameters = params;
 		desc.NumStaticSamplers = 2;
 		desc.pStaticSamplers = samplers;

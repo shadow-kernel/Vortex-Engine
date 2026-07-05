@@ -1238,9 +1238,13 @@ namespace Vortex
             Editor.Core.Services.SceneRenderService.ScriptAmbientOverride = strength;
             Editor.DllWrapper.VortexAPI.SetAmbientLightStrength(strength);
         }
-        /// <summary>The sun/key directional light: direction (dx,dy,dz), color (r,g,b 0..1), and intensity.</summary>
-        public static void SetDirectional(float dx, float dy, float dz, float r, float g, float b, float intensity)
-            { Editor.DllWrapper.VortexAPI.SetDirectionalLightParams(dx, dy, dz, r, g, b, intensity); }
+        /// <summary>The sun/key directional light: direction (dx,dy,dz), color (r,g,b 0..1), and intensity.
+        /// castShadows (#24) renders cascaded shadow maps for the sun — moonlight through a window throws
+        /// real moving shadows; shadowDistance = how far from the camera shadows reach (world units).</summary>
+        public static void SetDirectional(float dx, float dy, float dz, float r, float g, float b, float intensity,
+                                          bool castShadows = false, float shadowStrength = 1f, float shadowDistance = 80f)
+            { Editor.DllWrapper.VortexAPI.SetDirectionalLightParams(dx, dy, dz, r, g, b, intensity,
+                  castShadows, shadowStrength, 0.0008f, shadowDistance); }
         public static void ClearLights() { Editor.DllWrapper.VortexAPI.ClearAllLights(); }
     }
 

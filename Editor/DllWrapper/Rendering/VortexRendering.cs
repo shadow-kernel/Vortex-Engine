@@ -696,7 +696,8 @@ namespace Editor.DllWrapper
         private static extern void SetDirectionalLight(
             float dirX, float dirY, float dirZ,
             float colorR, float colorG, float colorB,
-            float intensity);
+            float intensity,
+            int castShadows, float shadowStrength, float shadowBias, float shadowDistance);
 
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void AddPointLight(
@@ -756,14 +757,23 @@ namespace Editor.DllWrapper
         }
 
         /// <summary>
-        /// Set the primary directional light (sun light).
+        /// Set the primary directional light (sun light). Shadow params (#24): castShadows renders
+        /// cascaded shadow maps for the sun — 3 stabilized ortho cascades out to shadowDistance world
+        /// units. Defaults keep every existing caller shadow-free.
         /// </summary>
         public static void SetDirectionalLightParams(
             float dirX, float dirY, float dirZ,
             float colorR, float colorG, float colorB,
-            float intensity)
+            float intensity,
+            bool castShadows = false, float shadowStrength = 1.0f,
+            float shadowBias = 0.0008f, float shadowDistance = 80.0f)
         {
-            try { SetDirectionalLight(dirX, dirY, dirZ, colorR, colorG, colorB, intensity); } catch { }
+            try
+            {
+                SetDirectionalLight(dirX, dirY, dirZ, colorR, colorG, colorB, intensity,
+                    castShadows ? 1 : 0, shadowStrength, shadowBias, shadowDistance);
+            }
+            catch { }
         }
 
         /// <summary>

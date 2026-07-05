@@ -1746,10 +1746,16 @@ namespace Editor.Core.Services
                     {
                         case ECS.Components.Lighting.LightType.Directional:
                             _hasDirectionalLight = true;
+                            // CSM (#24): ShadowType != None turns on the sun's cascade pass. Bias mapping:
+                            // the component's legacy 0.05 default scales by 0.016 to land on the tuned
+                            // CSM NDC bias (0.0008); user tweaks stay proportional (same idea as spots).
                             VortexAPI.SetDirectionalLightParams(
                                 dirX, dirY, dirZ,
                                 light.ColorR, light.ColorG, light.ColorB,
-                                light.Intensity);
+                                light.Intensity,
+                                light.ShadowType != ECS.Components.Lighting.ShadowType.None,
+                                light.ShadowStrength,
+                                light.ShadowBias * 0.016f);
                             break;
 
                         case ECS.Components.Lighting.LightType.Point:

@@ -185,7 +185,11 @@ namespace vortex::graphics::dx12
 		};
 		
 		void clear_lights();
-		void set_directional_light_full(const DirectX::XMFLOAT3& direction, const DirectX::XMFLOAT3& color, float intensity);
+		// #24: the directional light can now cast cascaded shadows. Defaults keep every existing
+		// caller shadow-free; shadow_distance = the far end of the last cascade (world units).
+		void set_directional_light_full(const DirectX::XMFLOAT3& direction, const DirectX::XMFLOAT3& color, float intensity,
+			bool cast_shadows = false, float shadow_strength = 1.0f, float shadow_bias = 0.0008f,
+			float shadow_distance = 80.0f);
 		void add_point_light(const PointLightData& light);
 		void add_spot_light(const SpotLightData& light);
 
@@ -419,6 +423,8 @@ namespace vortex::graphics::dx12
 		void render_shadow_pass();
 		bool ensure_shadow_map(u32 size);   // lazily (re)creates the R32_TYPELESS map + DSV; SRV lives in a
 											// RESERVED ResourceRegistry heap slot (the scene pass binds that heap)
+		bool ensure_csm_map(u32 size);      // #24: same recipe for the directional cascade atlas (t8)
+		void prepare_csm_cascades();        // #24: splits + snapped ortho crops (called by prepare_shadow_pass)
 		bool capture_backbuffer_to_bmp(const char* path);
 		void render_fallback_triangle();
 		void render_grid();
@@ -754,6 +760,27 @@ namespace vortex::graphics::dx12
 		struct ShadowSpot { int spot_index; DirectX::XMFLOAT4X4 vp; };
 		ShadowSpot m_shadow_spots[MAX_SHADOW_SPOTS]{};
 		u32 m_shadow_spot_count{ 0 };
+
+		// ---- Directional cascaded shadow maps (#24) ----
+		// A SECOND 2x2 atlas (t8, own resource + DSV + reserved SRV slot + state round-trip) holds
+		// CSM_CASCADES snapped ortho crops of the camera frustum along the sun direction. The cascade
+		// VPs + split distances travel in the light buffer's grown tail (@1280); the depth passes are
+		// extra tiles in render_shadow_pass, sharing the caster instance VB with the spot tiles.
+		static constexpr u32 CSM_CASCADES = 3;
+		ComPtr<ID3D12Resource> m_csm_map;                   // R32_TYPELESS: D32_FLOAT DSV + R32_FLOAT SRV
+		ComPtr<ID3D12DescriptorHeap> m_csm_dsv_heap;
+		D3D12_RESOURCE_STATES m_csm_map_state{ D3D12_RESOURCE_STATE_DEPTH_WRITE };
+		D3D12_CPU_DESCRIPTOR_HANDLE m_csm_srv_cpu{};
+		D3D12_GPU_DESCRIPTOR_HANDLE m_csm_srv_gpu{};
+		u32 m_csm_map_size{ 0 };
+		DirectX::XMFLOAT4X4 m_csm_vp[CSM_CASCADES]{};
+		float m_csm_splits[CSM_CASCADES]{};                 // far view-distance of each cascade
+		u32 m_csm_count{ 0 };                               // 0 = no directional shadows this frame
+		// Directional shadow authoring state (set_directional_light_full).
+		bool m_dir_cast_shadows{ false };
+		float m_dir_shadow_strength{ 1.0f };
+		float m_dir_shadow_bias{ 0.0008f };
+		float m_dir_shadow_distance{ 80.0f };
 
 		// Create SRV descriptor heap for textures
 		bool create_srv_heap();

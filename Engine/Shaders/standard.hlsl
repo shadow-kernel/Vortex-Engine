@@ -101,6 +101,11 @@ cbuffer LightBuffer : register(b2)
     // Shadow atlas view-projections (#23): one per tile, byte-matched to the C++ light-buffer
     // tail @1024 (the buffer was always 1280 bytes — the tail fits exactly).
     row_major float4x4 ShadowVP[4];
+    // Cascaded shadow maps for the directional light (#24) — appended tail @1280 (buffer grown
+    // 1280 -> 1536). One ortho crop VP per cascade into the 2x2 CSM atlas at t8 (tile c = slot c).
+    row_major float4x4 CascadeVP[3];
+    float4 CascadeSplits;    // x/y/z = far view-distance of cascade 0/1/2, w = max shadow distance
+    float4 DirShadowParams;  // x strength (0..1), y depth bias (NDC), z cascade count (0 = off), w unused
 };
 
 Texture2D AlbedoTexture    : register(t0);
@@ -113,6 +118,8 @@ Texture2D HeightTexture    : register(t6);
 // t7: spot-light shadow map (R32_FLOAT depth from the light's view), s1: comparison sampler
 // (LESS_EQUAL, border=white so samples outside the map read "lit" — the cone gate masks the rest).
 Texture2D ShadowMap        : register(t7);
+// t8: the directional light's cascade atlas (#24) — 2x2 tiles, cascade c in tile c.
+Texture2D CsmShadowMap     : register(t8);
 SamplerState LinearSampler : register(s0);
 SamplerComparisonState ShadowSampler : register(s1);
 
@@ -132,6 +139,45 @@ float SampleSpotShadow(float3 worldPos, int slot, float strength, float bias)
     suv += float2((slot & 1) != 0 ? 0.5 : 0.0, (slot & 2) != 0 ? 0.5 : 0.0);
     float lit = ShadowMap.SampleCmpLevelZero(ShadowSampler, suv, ndc.z - bias);
     return lerp(1.0, lit, saturate(strength));
+}
+
+// Directional cascade shadow (#24): try cascades near -> far and take the FIRST whose ortho crop
+// contains the point (tight snapped crops make projection-inside more robust than distance-select at
+// the boundaries). 3x3 hardware-PCF kernel; per-cascade bias grows with the coarser world-per-texel.
+float SampleCascadeShadow(float3 worldPos)
+{
+    int count = (int)DirShadowParams.z;
+    if (count <= 0) return 1.0;
+
+    [unroll]
+    for (int c = 0; c < 3; ++c)
+    {
+        if (c >= count) break;
+        float4 sp = mul(float4(worldPos, 1.0), CascadeVP[c]);
+        if (sp.w <= 0.0) continue;
+        float3 ndc = sp.xyz / sp.w;
+        float2 suv = ndc.xy * float2(0.5, -0.5) + 0.5;
+        // 2% inner border: points near the crop edge fall through to the next (larger) cascade so
+        // the PCF kernel never reads a neighboring tile and crop seams stay invisible.
+        if (min(suv.x, suv.y) < 0.02 || max(suv.x, suv.y) > 0.98 || ndc.z > 1.0 || ndc.z < 0.0)
+            continue;
+
+        // Map into tile c of the 2x2 atlas; keep the whole 3x3 kernel inside the tile.
+        suv = clamp(suv, ShadowMapTexel * 1.5, 1.0 - ShadowMapTexel * 1.5) * 0.5;
+        suv += float2((c & 1) != 0 ? 0.5 : 0.0, (c & 2) != 0 ? 0.5 : 0.0);
+
+        float bias = DirShadowParams.y * (1.0 + (float)c);   // coarser cascade -> more world per texel
+        float atlasTexel = ShadowMapTexel * 0.5;             // tile texel -> atlas UV
+        float lit = 0.0;
+        [unroll]
+        for (int y = -1; y <= 1; ++y)
+            [unroll]
+            for (int x = -1; x <= 1; ++x)
+                lit += CsmShadowMap.SampleCmpLevelZero(ShadowSampler,
+                    suv + float2((float)x, (float)y) * atlasTexel, ndc.z - bias);
+        return lerp(1.0, lit / 9.0, saturate(DirShadowParams.x));
+    }
+    return 1.0;   // beyond every cascade -> lit
 }
 
 struct VS_IN
@@ -304,6 +350,10 @@ float4 PSMain(PS_IN input) : SV_TARGET
         float3 kD = (1.0 - F) * (1.0 - metallic);
 
         float3 radiance = LightColor * DirectionalIntensity;
+
+        // Cascaded shadow maps (#24): the sun finally throws real shadows.
+        radiance *= SampleCascadeShadow(input.worldPos);
+
         Lo += (kD * albedo / PI + spec) * radiance * NdotL;
     }
 

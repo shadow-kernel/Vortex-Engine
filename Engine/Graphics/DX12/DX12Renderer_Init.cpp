@@ -53,8 +53,9 @@ namespace vortex::graphics::dx12
 	return false;
 	if (FAILED(m_bone_vb->Map(0, &r, &m_bone_vb_mapped))) return false;
 
-	// Light buffer: Point lights (16 * 32 bytes) + Spot lights (8 * 64 bytes) = 1024 bytes, aligned to 256
-	rd.Width = 1280; // 256-byte aligned
+	// Light buffer: Point lights (16 * 32B) + Spot lights (8 * 64B) = 1024, + ShadowVP[4] tail (#23,
+	// 256B @1024), + CSM tail (#24: CascadeVP[3] 192B + splits 16B + params 16B @1280) = 1504 -> 1536.
+	rd.Width = 1536; // 256-byte aligned
 	if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_light_cb))))
 	return false;
 	if (FAILED(m_light_cb->Map(0, &r, &m_light_cb_mapped))) return false;

@@ -5,16 +5,20 @@ EDITOR_INTERFACE void ClearLights()
 	graphics::dx12::DX12Renderer::instance().clear_lights();
 }
 
-// Set the primary directional light
+// Set the primary directional light. Shadow params (#24): castShadows != 0 renders cascaded shadow
+// maps for the sun (3 snapped ortho cascades out to shadowDistance world units). Internal ABI:
+// changed in lockstep with the editor's P/Invoke (both live in this repo).
 EDITOR_INTERFACE void SetDirectionalLight(
 	float dirX, float dirY, float dirZ,
 	float colorR, float colorG, float colorB,
-	float intensity)
+	float intensity,
+	int castShadows, float shadowStrength, float shadowBias, float shadowDistance)
 {
 	graphics::dx12::DX12Renderer::instance().set_directional_light_full(
 		{ dirX, dirY, dirZ },
 		{ colorR, colorG, colorB },
-		intensity
+		intensity,
+		castShadows != 0, shadowStrength, shadowBias, shadowDistance
 	);
 }
 

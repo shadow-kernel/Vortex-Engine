@@ -117,6 +117,21 @@ namespace vortex::graphics::dx12
 				memcpy(vp_ptr + (size_t)t * 64, &ident, 64);   // unused tiles: never sampled (slot -1)
 			}
 		}
+
+		// CSM tail (#24) @1280 (buffer grown to 1536): CascadeVP[3] + CascadeSplits + DirShadowParams —
+		// byte-matched to standard.hlsl's LightBuffer. Cascade count 0 keeps the shader's sample a no-op.
+		u8* csm_ptr = vp_ptr + (size_t)MAX_SHADOW_SPOTS * 64;
+		DirectX::XMFLOAT4X4 ident; DirectX::XMStoreFloat4x4(&ident, DirectX::XMMatrixIdentity());
+		for (u32 c = 0; c < CSM_CASCADES; ++c)
+			memcpy(csm_ptr + (size_t)c * 64, (c < m_csm_count) ? &m_csm_vp[c] : &ident, 64);
+		float splits[4] = {
+			CSM_CASCADES > 0 ? m_csm_splits[0] : 0.0f,
+			CSM_CASCADES > 1 ? m_csm_splits[1] : 0.0f,
+			CSM_CASCADES > 2 ? m_csm_splits[2] : 0.0f,
+			m_dir_shadow_distance };
+		memcpy(csm_ptr + (size_t)CSM_CASCADES * 64, splits, 16);
+		float params[4] = { m_dir_shadow_strength, m_dir_shadow_bias, (float)m_csm_count, 0.0f };
+		memcpy(csm_ptr + (size_t)CSM_CASCADES * 64 + 16, params, 16);
 	}
 	}
 	}
@@ -140,11 +155,16 @@ namespace vortex::graphics::dx12
 	}
 	
 
-	void DX12Renderer::set_directional_light_full(const DirectX::XMFLOAT3& direction, const DirectX::XMFLOAT3& color, float intensity)
+	void DX12Renderer::set_directional_light_full(const DirectX::XMFLOAT3& direction, const DirectX::XMFLOAT3& color, float intensity,
+		bool cast_shadows, float shadow_strength, float shadow_bias, float shadow_distance)
 	{
 	m_light_direction = direction;
 	m_light_color = color;
 	m_directional_intensity = intensity;
+	m_dir_cast_shadows = cast_shadows;
+	m_dir_shadow_strength = shadow_strength < 0.0f ? 0.0f : (shadow_strength > 1.0f ? 1.0f : shadow_strength);
+	m_dir_shadow_bias = shadow_bias > 0.0f ? shadow_bias : 0.0008f;
+	m_dir_shadow_distance = shadow_distance > 5.0f ? shadow_distance : 5.0f;
 	}
 	
 

@@ -154,7 +154,7 @@ namespace vortex::graphics::dx12
 			bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 			D3D12_RANGE none{ 0, 0 };
 
-			bd.Width = (UINT64)256 * MAX_SHADOW_SPOTS;
+			bd.Width = (UINT64)256 * (MAX_SHADOW_SPOTS + CSM_CASCADES);   // spot tiles + cascade tiles (#24)
 			if (FAILED(dev->CreateCommittedResource(&up, D3D12_HEAP_FLAG_NONE, &bd,
 				D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_shadow_pass_cb)))) return false;
 			if (FAILED(m_shadow_pass_cb->Map(0, &none, &m_shadow_pass_cb_mapped))) return false;
@@ -170,12 +170,184 @@ namespace vortex::graphics::dx12
 	}
 
 
+	// #24: the directional cascade atlas — the exact ensure_shadow_map recipe with its own resource,
+	// DSV heap, reserved SRV slot (t8) and state tracking. 2x2 tiles; cascade c renders into tile c.
+	bool DX12Renderer::ensure_csm_map(u32 size)
+	{
+		if (size < 512) size = 512; else if (size > 16384) size = 16384;
+		if (m_csm_map && m_csm_map_size == size) return true;
+
+		auto* dev = DX12Core::instance().device();
+		if (!dev) return false;
+
+		if (m_csm_map) m_command_queue.flush();
+
+		if (m_csm_srv_cpu.ptr == 0)
+		{
+			if (!ResourceRegistry::instance().reserve_srv_slot(m_csm_srv_cpu, m_csm_srv_gpu))
+				return false;
+		}
+
+		D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+		D3D12_RESOURCE_DESC rd{};
+		rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+		rd.Width = size; rd.Height = size;
+		rd.DepthOrArraySize = 1; rd.MipLevels = 1;
+		rd.Format = DXGI_FORMAT_R32_TYPELESS;
+		rd.SampleDesc.Count = 1;
+		rd.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+		D3D12_CLEAR_VALUE cv{};
+		cv.Format = DXGI_FORMAT_D32_FLOAT;
+		cv.DepthStencil.Depth = 1.0f;
+
+		m_csm_map.Reset();
+		if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
+			D3D12_RESOURCE_STATE_DEPTH_WRITE, &cv, IID_PPV_ARGS(&m_csm_map))))
+		{
+			OutputDebugStringA("[shadows] CSM atlas creation failed\n");
+			return false;
+		}
+		m_csm_map_state = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+		m_csm_map_size = size;
+
+		if (!m_csm_dsv_heap)
+		{
+			D3D12_DESCRIPTOR_HEAP_DESC dh{};
+			dh.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+			dh.NumDescriptors = 1;
+			if (FAILED(dev->CreateDescriptorHeap(&dh, IID_PPV_ARGS(&m_csm_dsv_heap))))
+				return false;
+		}
+		D3D12_DEPTH_STENCIL_VIEW_DESC dsv{};
+		dsv.Format = DXGI_FORMAT_D32_FLOAT;
+		dsv.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+		dev->CreateDepthStencilView(m_csm_map.Get(), &dsv, m_csm_dsv_heap->GetCPUDescriptorHandleForHeapStart());
+
+		D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+		srv.Format = DXGI_FORMAT_R32_FLOAT;
+		srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+		srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+		srv.Texture2D.MipLevels = 1;
+		dev->CreateShaderResourceView(m_csm_map.Get(), &srv, m_csm_srv_cpu);
+
+		OutputDebugStringA("[shadows] CSM atlas ready\n");
+		return true;
+	}
+
+
+	// #24: cascade splits + stable snapped ortho crops. Called from prepare_shadow_pass (so BOTH the
+	// editor frame and the game-window path get it, before the b2 upload that carries the VPs).
+	void DX12Renderer::prepare_csm_cascades()
+	{
+		using namespace DirectX;
+
+		m_csm_count = 0;
+		if (!m_pipeline_3d.shadow_pso() || !m_csm_map) return;
+		if (!m_dir_cast_shadows || m_dir_shadow_strength <= 0.0f || m_directional_intensity <= 0.001f) return;
+
+		// Kill switch for A/B verification captures (mirrors VORTEX_NO_SPOT_SHADOWS).
+		{
+			char buf[8];
+			DWORD n = GetEnvironmentVariableA("VORTEX_NO_DIR_SHADOWS", buf, sizeof(buf));
+			if (n > 0 && n < sizeof(buf) && buf[0] == '1') return;
+		}
+
+		XMVECTOR lightDir = XMLoadFloat3(&m_light_direction);
+		if (XMVectorGetX(XMVector3LengthSq(lightDir)) < 1e-6f) return;
+		lightDir = XMVector3Normalize(lightDir);
+		XMVECTOR lightUp = fabsf(XMVectorGetY(lightDir)) > 0.99f ? XMVectorSet(0, 0, 1, 0) : XMVectorSet(0, 1, 0, 0);
+		// Rotation-only light view (positioned at the origin — the ortho crop supplies the extents).
+		XMMATRIX lightView = XMMatrixLookToLH(XMVectorZero(), lightDir, lightUp);
+
+		// Practical split scheme over [near, shadow distance]: blend of logarithmic (resolution where
+		// it counts, near the camera) and uniform (no absurdly thin far cascades). near/far MUST match
+		// update_per_frame_constants' hardcoded projection (0.1 / 1000) for consistent world distances.
+		const float nearZ = 0.1f;
+		const float farZ = m_dir_shadow_distance;
+		const float lambda = 0.6f;
+		float splitNear = nearZ;
+
+		// Camera basis for slicing the view frustum (same inputs update_per_frame_constants uses).
+		XMVECTOR eye = XMLoadFloat3(&m_camera_position);
+		XMVECTOR fwd = XMVector3Normalize(XMVectorSubtract(XMLoadFloat3(&m_camera_target), eye));
+		if (XMVectorGetX(XMVector3LengthSq(fwd)) < 1e-6f) return;
+		XMVECTOR camUp = XMLoadFloat3(&m_camera_up);
+		XMVECTOR right = XMVector3Normalize(XMVector3Cross(camUp, fwd));
+		XMVECTOR upv = XMVector3Cross(fwd, right);
+		const float aspect = (float)m_swapchain.width() / (float)(m_swapchain.height() ? m_swapchain.height() : 1);
+		const float tanHalfY = tanf(XMConvertToRadians(m_fov_degrees) * 0.5f);
+		const float tanHalfX = tanHalfY * aspect;
+
+		for (u32 c = 0; c < CSM_CASCADES; ++c)
+		{
+			const float f = (float)(c + 1) / (float)CSM_CASCADES;
+			const float logSplit = nearZ * powf(farZ / nearZ, f);
+			const float uniSplit = nearZ + (farZ - nearZ) * f;
+			const float splitFar = uniSplit + lambda * (logSplit - uniSplit);
+
+			// 8 world-space corners of this frustum slice.
+			XMVECTOR corners[8]; int k = 0;
+			for (int d = 0; d < 2; ++d)
+			{
+				const float dist = d == 0 ? splitNear : splitFar;
+				XMVECTOR center = XMVectorAdd(eye, XMVectorScale(fwd, dist));
+				XMVECTOR ex = XMVectorScale(right, dist * tanHalfX);
+				XMVECTOR ey = XMVectorScale(upv, dist * tanHalfY);
+				corners[k++] = XMVectorAdd(XMVectorAdd(center, ex), ey);
+				corners[k++] = XMVectorSubtract(XMVectorAdd(center, ey), ex);
+				corners[k++] = XMVectorAdd(XMVectorSubtract(center, ey), ex);
+				corners[k++] = XMVectorSubtract(XMVectorSubtract(center, ex), ey);
+			}
+
+			// Circumsphere (fixed radius per slice geometry): the ortho crop size then NEVER changes
+			// as the camera rotates — combined with texel snapping below, this kills the shimmer.
+			XMVECTOR centroid = XMVectorZero();
+			for (int i = 0; i < 8; ++i) centroid = XMVectorAdd(centroid, corners[i]);
+			centroid = XMVectorScale(centroid, 1.0f / 8.0f);
+			float radius = 0.0f;
+			for (int i = 0; i < 8; ++i)
+				radius = (std::max)(radius, XMVectorGetX(XMVector3Length(XMVectorSubtract(corners[i], centroid))));
+			radius = ceilf(radius * 16.0f) / 16.0f;   // quantize so FP noise can't wiggle the crop
+
+			// Snap the crop center to whole shadow-map texels in light view space.
+			XMVECTOR cLS = XMVector3TransformCoord(centroid, lightView);
+			const float worldPerTexel = (2.0f * radius) / (float)SHADOW_TILE_SIZE;
+			float cx = floorf(XMVectorGetX(cLS) / worldPerTexel) * worldPerTexel;
+			float cy = floorf(XMVectorGetY(cLS) / worldPerTexel) * worldPerTexel;
+			const float cz = XMVectorGetZ(cLS);
+
+			// Ortho crop; near pulled back toward the light so casters ABOVE/BEHIND the slice
+			// (a roof over the corridor, a tower off-screen) still land in the depth map.
+			XMMATRIX proj = XMMatrixOrthographicOffCenterLH(
+				cx - radius, cx + radius, cy - radius, cy + radius,
+				cz - radius - m_dir_shadow_distance, cz + radius);
+			XMStoreFloat4x4(&m_csm_vp[c], lightView * proj);
+			m_csm_splits[c] = splitFar;
+
+			// The depth pass's b0 clone for this cascade (slots after the spot tiles).
+			if (m_shadow_pass_cb_mapped)
+			{
+				PerFrameConstants sc = m_frame_constants;
+				sc.view_projection = m_csm_vp[c];
+				memcpy((u8*)m_shadow_pass_cb_mapped + (size_t)(MAX_SHADOW_SPOTS + c) * 256, &sc, sizeof(sc));
+			}
+			splitNear = splitFar;
+		}
+		m_csm_count = CSM_CASCADES;
+	}
+
+
 	void DX12Renderer::prepare_shadow_pass()
 	{
 		using namespace DirectX;
 
 		m_shadow_spot_count = 0;
 		m_frame_constants.shadow_map_texel = 1.0f / (float)SHADOW_TILE_SIZE;
+
+		// Directional cascades (#24) — prepared BEFORE the spot early-outs (own kill switch, own
+		// atlas): a missing spot atlas or VORTEX_NO_SPOT_SHADOWS must not leave stale cascade state.
+		prepare_csm_cascades();
 
 		if (!m_pipeline_3d.shadow_pso() || !m_shadow_map) return;
 
@@ -217,26 +389,9 @@ namespace vortex::graphics::dx12
 	void DX12Renderer::render_shadow_pass()
 	{
 		using namespace DirectX;
-		if (m_shadow_spot_count == 0 || !m_shadow_map || !m_shadow_instance_vb_mapped) return;
+		if ((m_shadow_spot_count == 0 && m_csm_count == 0) || !m_shadow_instance_vb_mapped) return;
 
 		auto& reg = ResourceRegistry::instance();
-
-		// ---- record the atlas passes ----
-		if (m_shadow_map_state != D3D12_RESOURCE_STATE_DEPTH_WRITE)
-		{
-			D3D12_RESOURCE_BARRIER b{};
-			b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-			b.Transition.pResource = m_shadow_map.Get();
-			b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-			b.Transition.StateBefore = m_shadow_map_state;
-			b.Transition.StateAfter = D3D12_RESOURCE_STATE_DEPTH_WRITE;
-			m_command_list->ResourceBarrier(1, &b);
-			m_shadow_map_state = D3D12_RESOURCE_STATE_DEPTH_WRITE;
-		}
-
-		auto dsv = m_shadow_dsv_heap->GetCPUDescriptorHandleForHeapStart();
-		m_command_list->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);   // whole atlas once
-		m_command_list->OMSetRenderTargets(0, nullptr, FALSE, &dsv);   // depth-only: no RTV
 
 		m_command_list->SetPipelineState(m_pipeline_3d.shadow_pso());
 		m_command_list->SetGraphicsRootSignature(m_pipeline_3d.root_signature());
@@ -247,16 +402,14 @@ namespace vortex::graphics::dx12
 		std::unordered_map<id::id_type, XMFLOAT4> bounds;   // mesh -> (local center, radius) — shared across tiles
 		bounds.reserve(64);
 
-		u32 vb_used = 0;   // running offset into the shared shadow instance VB (across all tiles)
+		u32 vb_used = 0;   // running offset into the shared shadow instance VB (across ALL tiles, both atlases)
 
-		for (u32 t = 0; t < m_shadow_spot_count; ++t)
+		// ---- cull + collect one tile's casters (shared by spot AND cascade tiles) ----
+		// Own pack per tile: the scene's instance packing is keyed to the MAIN camera frustum and
+		// runs later — the wall BEHIND the player must still cast into the light frustum.
+		auto pack_casters = [&](const ShadowFrustum& fr)
 		{
-			// ---- cone-cull + pack this light's casters (CPU) ----
-			// Own pack per light: the scene's instance packing is keyed to the MAIN camera frustum and
-			// runs later — the wall BEHIND the player must still cast into the light frustum.
-			ShadowFrustum fr = extract_shadow_frustum(m_shadow_spots[t].vp);
 			casters.clear();
-
 			for (const auto& item : m_render_queue)
 			{
 				if (item.bone_offset != NO_BONES) continue;   // v1: skinned meshes receive but don't cast
@@ -292,24 +445,27 @@ namespace vortex::graphics::dx12
 					if (vb_used + casters.size() >= MAX_SHADOW_INSTANCES) break;   // shared hard cap
 				}
 			}
-			if (casters.empty()) continue;   // empty tile stays cleared -> fully lit, correct
+		};
 
-			// Group by mesh for instanced draws; pack into the shared VB at the running offset.
+		// ---- record one tile: pack into the shared VB, tile viewport, b0 clone, instanced draws ----
+		auto draw_tile = [&](u32 tileX, u32 tileY, u32 cbSlot)
+		{
+			if (casters.empty()) return;   // empty tile stays cleared -> fully lit, correct
+
 			std::sort(casters.begin(), casters.end(),
 				[](const Caster& a, const Caster& b) { return a.mesh < b.mesh; });
 			u8* vb = (u8*)m_shadow_instance_vb_mapped;
 			for (size_t i = 0; i < casters.size(); ++i)
 				memcpy(vb + (size_t)(vb_used + i) * 64, casters[i].world, 64);
 
-			// ---- this tile's viewport + b0 (the light's VP clone) ----
 			const float tile = (float)SHADOW_TILE_SIZE;
-			const LONG tx = (LONG)((t & 1) * SHADOW_TILE_SIZE);
-			const LONG ty = (LONG)(((t >> 1) & 1) * SHADOW_TILE_SIZE);
+			const LONG tx = (LONG)(tileX * SHADOW_TILE_SIZE);
+			const LONG ty = (LONG)(tileY * SHADOW_TILE_SIZE);
 			D3D12_VIEWPORT vp{}; vp.TopLeftX = (float)tx; vp.TopLeftY = (float)ty; vp.Width = tile; vp.Height = tile; vp.MaxDepth = 1.0f;
 			D3D12_RECT sc{}; sc.left = tx; sc.top = ty; sc.right = tx + (LONG)SHADOW_TILE_SIZE; sc.bottom = ty + (LONG)SHADOW_TILE_SIZE;
 			m_command_list->RSSetViewports(1, &vp);
 			m_command_list->RSSetScissorRects(1, &sc);
-			m_command_list->SetGraphicsRootConstantBufferView(0, m_shadow_pass_cb->GetGPUVirtualAddress() + (UINT64)t * 256);
+			m_command_list->SetGraphicsRootConstantBufferView(0, m_shadow_pass_cb->GetGPUVirtualAddress() + (UINT64)cbSlot * 256);
 
 			size_t i = 0;
 			while (i < casters.size())
@@ -342,10 +498,34 @@ namespace vortex::graphics::dx12
 				i = j;
 			}
 			vb_used += (u32)casters.size();
-		}
+		};
 
-		// Hand the atlas to the pixel shaders (t7) for every scene pass this frame.
+		// ---- spot atlas (#23): t7 ----
+		if (m_shadow_spot_count > 0 && m_shadow_map)
 		{
+			if (m_shadow_map_state != D3D12_RESOURCE_STATE_DEPTH_WRITE)
+			{
+				D3D12_RESOURCE_BARRIER b{};
+				b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+				b.Transition.pResource = m_shadow_map.Get();
+				b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+				b.Transition.StateBefore = m_shadow_map_state;
+				b.Transition.StateAfter = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+				m_command_list->ResourceBarrier(1, &b);
+				m_shadow_map_state = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+			}
+
+			auto dsv = m_shadow_dsv_heap->GetCPUDescriptorHandleForHeapStart();
+			m_command_list->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);   // whole atlas once
+			m_command_list->OMSetRenderTargets(0, nullptr, FALSE, &dsv);   // depth-only: no RTV
+
+			for (u32 t = 0; t < m_shadow_spot_count; ++t)
+			{
+				pack_casters(extract_shadow_frustum(m_shadow_spots[t].vp));
+				draw_tile(t & 1, (t >> 1) & 1, t);
+			}
+
+			// Hand the atlas to the pixel shaders (t7) for every scene pass this frame.
 			D3D12_RESOURCE_BARRIER b{};
 			b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 			b.Transition.pResource = m_shadow_map.Get();
@@ -354,6 +534,41 @@ namespace vortex::graphics::dx12
 			b.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 			m_command_list->ResourceBarrier(1, &b);
 			m_shadow_map_state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		}
+
+		// ---- directional cascade atlas (#24): t8 — same flow, its own resource + round-trip ----
+		if (m_csm_count > 0 && m_csm_map)
+		{
+			if (m_csm_map_state != D3D12_RESOURCE_STATE_DEPTH_WRITE)
+			{
+				D3D12_RESOURCE_BARRIER b{};
+				b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+				b.Transition.pResource = m_csm_map.Get();
+				b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+				b.Transition.StateBefore = m_csm_map_state;
+				b.Transition.StateAfter = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+				m_command_list->ResourceBarrier(1, &b);
+				m_csm_map_state = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+			}
+
+			auto cdsv = m_csm_dsv_heap->GetCPUDescriptorHandleForHeapStart();
+			m_command_list->ClearDepthStencilView(cdsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+			m_command_list->OMSetRenderTargets(0, nullptr, FALSE, &cdsv);
+
+			for (u32 c = 0; c < m_csm_count; ++c)
+			{
+				pack_casters(extract_shadow_frustum(m_csm_vp[c]));
+				draw_tile(c & 1, (c >> 1) & 1, MAX_SHADOW_SPOTS + c);
+			}
+
+			D3D12_RESOURCE_BARRIER b{};
+			b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+			b.Transition.pResource = m_csm_map.Get();
+			b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+			b.Transition.StateBefore = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+			b.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+			m_command_list->ResourceBarrier(1, &b);
+			m_csm_map_state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		}
 	}
 }
