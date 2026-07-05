@@ -272,11 +272,17 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             }
             else
             {
-                // Edit mode: the editor owns the view FOV. Re-assert it every frame — the game sets the
-                // renderer-global FOV to its own value (player FOV / the in-game slider, up to 120), which
-                // would otherwise LEAK into the editor freecam and distort/clip the view (ground + skybox
-                // vanished at wide angles when looking around). 60 = the editor camera's configured FOV.
-                VortexAPI.SetViewFOV(RaycastService.EditorFovYDegrees); // same FOV the picker assumes (no ray drift)
+                // Edit mode: the editor owns the view FOV. The game may have LEAKED its own FOV (player FOV /
+                // in-game slider, up to 120) into the renderer-global value — re-assert the editor's. Only
+                // P/Invoke when it actually differs from what we last set: a per-frame managed→native call is
+                // cheap standalone but expensive under a VS MIXED-MODE debugger (every transition is trapped),
+                // so skipping the no-op call keeps the F5 editor viewport smoother. _editorFovApplied resets to
+                // NaN whenever play mode ran (it can leak), forcing exactly one re-assert on return to edit.
+                if (_editorFovApplied != RaycastService.EditorFovYDegrees)
+                {
+                    VortexAPI.SetViewFOV(RaycastService.EditorFovYDegrees);
+                    _editorFovApplied = RaycastService.EditorFovYDegrees;
+                }
                 if (_playGridHidden) { VortexAPI.ShowGrid(_savedGrid); _playGridHidden = false; } // restore grid once
             }
 
@@ -940,6 +946,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             // (then the placeholder returns); otherwise restore the editor toolbar.
             ReleaseGameMouse();
             EndPlaySimulation();
+            _editorFovApplied = float.NaN;   // the game leaked its FOV — force one editor-FOV re-assert next tick
             VortexAPI.ShowGrid(true);    // restore editor build aids
             VortexAPI.ShowGizmos(true);
             SetGameViewportLock(_gameViewMode);
@@ -1083,6 +1090,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         private bool _playGridHidden;
         private bool _savedGrid = true;
         private bool _lmbPrevEd;
+        private float _editorFovApplied = float.NaN;   // last FOV pushed to the renderer in edit mode (skip no-op P/Invokes)
         private void FeedEditorUI(float renderW, float renderH)
         {
             float mx = 0f, my = 0f;
