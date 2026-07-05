@@ -110,7 +110,6 @@
     <Reference Include="PresentationCore" />
     <Reference Include="PresentationFramework" />
   </ItemGroup>
-
   <ItemGroup>
     <ApplicationDefinition Include="App.xaml">
       <Generator>MSBuild:Compile</Generator>
@@ -531,7 +530,6 @@
     <Resource Include="Assets\Images\Logo.ico" />
     <Resource Include="Logo.ico" />
   </ItemGroup>
-
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <Import Project="..\packages\System.ValueTuple.4.6.1\build\net471\System.ValueTuple.targets" Condition="Exists('..\packages\System.ValueTuple.4.6.1\build\net471\System.ValueTuple.targets')" />
   <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
@@ -540,17 +538,12 @@
     </PropertyGroup>
     <Error Condition="!Exists('..\packages\System.ValueTuple.4.6.1\build\net471\System.ValueTuple.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\System.ValueTuple.4.6.1\build\net471\System.ValueTuple.targets'))" />
   </Target>
-
   <!-- Ship the project templates (git submodule under ..\Templates) next to the editor exe so the
        "Create New Project" dialog can discover them at runtime via AppDir\Templates. -->
   <Target Name="CopyProjectTemplates" AfterTargets="Build" Condition="Exists('$(SolutionDir)Templates')">
     <ItemGroup>
-      <TemplateFiles Include="$(SolutionDir)Templates\**\*.*"
-                     Exclude="$(SolutionDir)Templates\**\.git\**;$(SolutionDir)Templates\**\bin\**;$(SolutionDir)Templates\**\obj\**;$(SolutionDir)Templates\**\Library\**;$(SolutionDir)Templates\**\Build\**;$(SolutionDir)Templates\**\.vs\**" />
+      <TemplateFiles Include="$(SolutionDir)Templates\**\*.*" Exclude="$(SolutionDir)Templates\**\.git\**;$(SolutionDir)Templates\**\bin\**;$(SolutionDir)Templates\**\obj\**;$(SolutionDir)Templates\**\Library\**;$(SolutionDir)Templates\**\Build\**;$(SolutionDir)Templates\**\.vs\**" />
     </ItemGroup>
-    <Copy SourceFiles="@(TemplateFiles)"
-          DestinationFiles="@(TemplateFiles->'$(OutDir)Templates\%(RecursiveDir)%(Filename)%(Extension)')"
-          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(TemplateFiles)" DestinationFiles="@(TemplateFiles->'$(OutDir)Templates\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>
 </Project>
-
