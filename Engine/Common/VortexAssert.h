@@ -24,49 +24,45 @@ namespace vortex
 		char buffer[2048];
 		if (message)
 		{
-			snprintf(buffer, sizeof(buffer), 
-				"ASSERTION FAILED!\n\nExpression: %s\nMessage: %s\n\nFile: %s\nLine: %d", 
+			snprintf(buffer, sizeof(buffer),
+				"ASSERTION FAILED!\n\nExpression: %s\nMessage: %s\n\nFile: %s\nLine: %d",
 				expression, message, file, line);
 		}
 		else
 		{
-			snprintf(buffer, sizeof(buffer), 
-				"ASSERTION FAILED!\n\nExpression: %s\n\nFile: %s\nLine: %d", 
+			snprintf(buffer, sizeof(buffer),
+				"ASSERTION FAILED!\n\nExpression: %s\n\nFile: %s\nLine: %d",
 				expression, file, line);
 		}
 
+		// LOG-AND-CONTINUE — never a modal box, never a break (unless explicitly requested).
+		//
+		// Engine init runs on the WPF UI thread while the STARTUP SPLASH is Topmost. A modal MessageBox
+		// shown here appears BEHIND the splash (invisible) and the UI thread blocks in the dialog's message
+		// loop forever -> the editor "hangs" at the splash under Visual Studio F5, and VS reports "only
+		// native code is running" (the thread sitting inside the native modal loop). A __debugbreak() likewise
+		// halts F5 in native code with nothing runnable. Standalone/Release always logged-and-continued, which
+		// is exactly why it worked there. So: log to the debugger output AND to %TEMP%\vortex_asserts.log, then
+		// CONTINUE. Set VORTEX_ASSERT_BREAK=1 to break into an attached debugger at the failing assert instead.
 #ifdef _WIN32
 		OutputDebugStringA(buffer);
 		OutputDebugStringA("\n");
-		
-		// Show message box in debug builds
-		#ifdef _DEBUG
-		int result = MessageBoxA(nullptr, buffer, "Vortex Engine - Assertion Failed", 
-			MB_ABORTRETRYIGNORE | MB_ICONERROR | MB_DEFBUTTON2);
-		
-		switch (result)
+
+		char logPath[MAX_PATH]{};
+		DWORD n = GetTempPathA(MAX_PATH, logPath);
+		if (n > 0 && n <= MAX_PATH)
 		{
-		case IDABORT:
-			std::abort();
-			break;
-		case IDRETRY:
-			if (IsDebuggerPresent())
-			{
-				__debugbreak();
-			}
-			break;
-		case IDIGNORE:
-			// Continue execution
-			break;
+			strncat_s(logPath, "vortex_asserts.log", _TRUNCATE);
+			FILE* f = nullptr;
+			if (fopen_s(&f, logPath, "a") == 0 && f) { fputs(buffer, f); fputc('\n', f); fclose(f); }
 		}
-		#else
-		// In release, just log and continue
-		#endif
+
+		char envBuf[8];
+		DWORD en = GetEnvironmentVariableA("VORTEX_ASSERT_BREAK", envBuf, sizeof(envBuf));
+		if (en > 0 && en < sizeof(envBuf) && envBuf[0] == '1' && IsDebuggerPresent())
+			__debugbreak();
 #else
 		fprintf(stderr, "%s\n", buffer);
-		#ifdef _DEBUG
-		std::abort();
-		#endif
 #endif
 	}
 

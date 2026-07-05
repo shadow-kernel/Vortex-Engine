@@ -516,6 +516,9 @@
     </None>
     <None Include="packages.config" />
     <None Include="App.config" />
+    <Content Include="Vortex Engine.exe.mda.config">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
     <Resource Include="Assets\Images\Logo.png" />
     <Resource Include="Assets\Images\Logo.ico" />
     <Resource Include="Logo.ico" />

@@ -275,7 +275,12 @@ namespace Editor.ECS
 				if (!ID.IsValid(_entityId))
 				{
 					EntityId = VortexAPI.CreateGameEntity(this, sceneHandle);
-					Debug.Assert(ID.IsValid(_entityId), "Failed to create GameEntity in engine.");
+					// NO Debug.Assert here: it fires during project load when the native engine is still
+					// warming up (a known, recoverable race — the entity re-syncs once the scene activates),
+					// and under the VS debugger a failed managed assert calls Debugger.Break() — the editor
+					// then "hangs" at the splash in break mode, once per entity. Log instead.
+					if (!ID.IsValid(_entityId))
+						Debug.WriteLine("[GameEntity] engine create failed (engine not ready yet?) for '" + _name + "' — will re-sync on scene activation.");
 				}
 				
 				// Synchronisiere alle MeshRenderer-Komponenten zur Engine

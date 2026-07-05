@@ -141,7 +141,9 @@ namespace Editor.Core.Data
 
         public Scene(ProjectData project, string name) : this()
         {
-            Debug.Assert(project != null, "Project darf nicht null sein.");
+            // No Debug.Assert (a failed managed assert breaks into the debugger / pops a modal
+            // behind the splash) — log; a null project surfaces immediately in normal use anyway.
+            if (project == null) Debug.WriteLine("[Scene] ctor called with null project for '" + name + "'");
             Project = project;
             Name = name;
             IsLoaded = true;

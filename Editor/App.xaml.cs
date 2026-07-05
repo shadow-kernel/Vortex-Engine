@@ -27,6 +27,18 @@ namespace Editor
             if (System.Diagnostics.Debugger.IsAttached)
                 Environment.SetEnvironmentVariable("VORTEX_SKIP_DLSS", "1");
 
+            // A failed MANAGED Debug.Assert must never halt the editor: the DefaultTraceListener calls
+            // Debugger.Break() when a debugger is attached (VS F5 then sits in break mode at the splash —
+            // once per failing assert, e.g. the engine-warmup entity-create race fires it per entity) and
+            // pops a modal dialog BEHIND the Topmost splash when standalone. Route assertion failures to
+            // debug output instead — the managed twin of the native VORTEX_ASSERT log-and-continue policy.
+            try
+            {
+                System.Diagnostics.Trace.Listeners.Clear();
+                System.Diagnostics.Trace.Listeners.Add(new NonBreakingAssertListener());
+            }
+            catch { }
+
             // Standalone PLAYER mode: a 'player.vortex' marker next to the exe (written by Export Game)
             // or a --play arg boots straight into the game (no editor UI).
             string exeDir = AppDomain.CurrentDomain.BaseDirectory;
@@ -732,5 +744,23 @@ namespace Editor
             DllWrapper.VortexAPI.ShutdownEngineRuntime();
             base.OnExit(e);
         }
+    }
+
+    /// <summary>Trace listener that turns failed managed Debug.Assert calls into log lines instead of
+    /// Debugger.Break()/modal dialogs. Installed first thing in App.OnStartup: the DefaultTraceListener's
+    /// break-into-the-debugger behavior made VS F5 sit in break mode at the splash (once per failing
+    /// assert), and its modal assert dialog opens BEHIND the Topmost splash when standalone — both read
+    /// as "the editor hangs on start". Same policy as the native VORTEX_ASSERT: log and continue.</summary>
+    internal sealed class NonBreakingAssertListener : System.Diagnostics.TraceListener
+    {
+        public override void Fail(string message) { Fail(message, null); }
+        public override void Fail(string message, string detailMessage)
+        {
+            var text = "[ASSERT] " + (message ?? "") + (string.IsNullOrEmpty(detailMessage) ? "" : " — " + detailMessage);
+            System.Diagnostics.Debug.WriteLine(text);
+            try { Editor.Core.Services.ConsoleService.Instance?.LogError(text); } catch { }
+        }
+        public override void Write(string message) { System.Diagnostics.Debugger.Log(0, null, message); }
+        public override void WriteLine(string message) { System.Diagnostics.Debugger.Log(0, null, (message ?? "") + Environment.NewLine); }
     }
 }
