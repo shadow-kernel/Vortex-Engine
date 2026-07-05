@@ -21,6 +21,7 @@
   <ItemGroup>
     <ClInclude Include="Common\CommonHeaders.h" />
     <ClInclude Include="Common\PrimitiveTypes.h" />
+    <ClInclude Include="Common\VerboseLog.h" />
     <ClInclude Include="Common\VortexAssert.h" />
     <ClInclude Include="Components\Camera.h" />
     <ClInclude Include="Components\ComponentsCommon.h" />

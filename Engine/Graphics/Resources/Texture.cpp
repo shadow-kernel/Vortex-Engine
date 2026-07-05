@@ -1,5 +1,6 @@
 #include "Texture.h"
 #include "../DX12/DX12Core.h"
+#include "../../Common/VerboseLog.h"
 #include <wrl/client.h>
 #include <cstring>
 
@@ -117,7 +118,7 @@ namespace vortex::graphics
 
 				// Note: The actual GPU copy is deferred - caller must execute copy commands
 				// For now, we'll do an immediate copy using the DX12Core command queue
-				OutputDebugStringA("Texture data uploaded to staging buffer\n");
+				VORTEX_VLOG("Texture data uploaded to staging buffer\n");
 
 				// Create a temporary command list to copy texture data
 				ComPtr<ID3D12CommandAllocator> cmd_alloc;
@@ -168,7 +169,7 @@ namespace vortex::graphics
 						WaitForSingleObject(event, INFINITE);
 						CloseHandle(event);
 
-						OutputDebugStringA("Texture GPU copy completed\n");
+						VORTEX_VLOG("Texture GPU copy completed\n");
 					}
 				}
 			}

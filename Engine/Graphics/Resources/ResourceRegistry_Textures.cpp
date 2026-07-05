@@ -1,3 +1,4 @@
+#include "../../Common/VerboseLog.h"
 #include "ResourceRegistry_Internal.h"
 
 namespace vortex::graphics
@@ -62,7 +63,7 @@ namespace vortex::graphics
 
 	id::id_type ResourceRegistry::create_texture_from_image(ImageData& image_data, const std::string& label)
 	{
-		OutputDebugStringA(("Loaded texture: " + label + " (" +
+		VORTEX_VLOG(("Loaded texture: " + label + " (" +
 			std::to_string(image_data.width) + "x" + std::to_string(image_data.height) + ")\n").c_str());
 
 		std::vector<u8> rgba_pixels;
@@ -117,14 +118,14 @@ namespace vortex::graphics
 
 		if (FAILED(m_device->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&m_srv_heap))))
 		{
-			OutputDebugStringA("Failed to create SRV heap\n");
+			VORTEX_VLOG("Failed to create SRV heap\n");
 			return false;
 		}
 
 		m_srv_descriptor_size = m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 		m_next_srv_index = 0;
 
-		OutputDebugStringA("SRV heap created\n");
+		VORTEX_VLOG("SRV heap created\n");
 		return true;
 	}
 
@@ -134,7 +135,7 @@ namespace vortex::graphics
 		if (!m_srv_heap || !m_device) return false;
 		if (m_next_srv_index >= MAX_SRV_DESCRIPTORS)
 		{
-			OutputDebugStringA("SRV heap full — cannot reserve external slot\n");
+			VORTEX_VLOG("SRV heap full — cannot reserve external slot\n");
 			return false;
 		}
 		out_cpu = m_srv_heap->GetCPUDescriptorHandleForHeapStart();
@@ -151,7 +152,7 @@ namespace vortex::graphics
 		if (!texture || !m_srv_heap || !m_device) return;
 		if (m_next_srv_index >= MAX_SRV_DESCRIPTORS)
 		{
-			OutputDebugStringA("SRV heap full\n");
+			VORTEX_VLOG("SRV heap full\n");
 			return;
 		}
 

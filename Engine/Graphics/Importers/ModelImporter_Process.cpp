@@ -1,3 +1,4 @@
+#include "../../Common/VerboseLog.h"
 #include "ModelImporter_Internal.h"
 
 namespace vortex::graphics
@@ -101,7 +102,7 @@ namespace vortex::graphics
 						for (int k = 0; k < 16; ++k)
 							if (fabsf(a[k] - o[k]) > 0.001f)
 							{
-								OutputDebugStringA(("ModelImporter: bone '" + std::string(bone->mName.C_Str())
+								VORTEX_VLOG(("ModelImporter: bone '" + std::string(bone->mName.C_Str())
 									+ "' has mesh-dependent offset matrices — multi-mesh rig may deform incorrectly\n").c_str());
 								break;
 							}
@@ -110,7 +111,7 @@ namespace vortex::graphics
 				if (known) continue;
 				if (data.bones.size() >= 255)
 				{
-					OutputDebugStringA("ModelImporter: bone palette full (255) — extra bones dropped\n");
+					VORTEX_VLOG("ModelImporter: bone palette full (255) — extra bones dropped\n");
 					break;
 				}
 				SkeletonBoneData bd;
@@ -121,7 +122,7 @@ namespace vortex::graphics
 		}
 
 		if (!data.bones.empty())
-			OutputDebugStringA(("ModelImporter: skeleton — " + std::to_string(data.nodes.size()) + " nodes, "
+			VORTEX_VLOG(("ModelImporter: skeleton — " + std::to_string(data.nodes.size()) + " nodes, "
 				+ std::to_string(data.bones.size()) + " bones\n").c_str());
 	}
 
@@ -173,7 +174,7 @@ namespace vortex::graphics
 		}
 
 		if (!data.animations.empty())
-			OutputDebugStringA(("ModelImporter: " + std::to_string(data.animations.size()) + " animation clip(s)\n").c_str());
+			VORTEX_VLOG(("ModelImporter: " + std::to_string(data.animations.size()) + " animation clip(s)\n").c_str());
 	}
 
 	void ModelImporter::process_node(void* node_ptr, void* scene_ptr, ImportedModelData& data)
@@ -316,7 +317,7 @@ namespace vortex::graphics
 			model_dir = filepath.substr(0, last_slash + 1);
 		}
 
-		OutputDebugStringA(("ModelImporter: Found " + std::to_string(scene->mNumMaterials) + " materials\n").c_str());
+		VORTEX_VLOG(("ModelImporter: Found " + std::to_string(scene->mNumMaterials) + " materials\n").c_str());
 
 		for (u32 i = 0; i < scene->mNumMaterials; i++)
 		{
@@ -338,7 +339,7 @@ namespace vortex::graphics
 			material->Get(AI_MATKEY_METALLIC_FACTOR, mat_metallic);
 			material->Get(AI_MATKEY_ROUGHNESS_FACTOR, mat_roughness);
 
-			OutputDebugStringA(("  Material " + std::to_string(i) + ": " + mat_name + "\n").c_str());
+			VORTEX_VLOG(("  Material " + std::to_string(i) + ": " + mat_name + "\n").c_str());
 
 			// Get diffuse texture path from material
 			std::string diffuse_path;
@@ -348,7 +349,7 @@ namespace vortex::graphics
 			material->GetTexture(aiTextureType_DIFFUSE, 0, &tex_path);
 			diffuse_path = model_dir + tex_path.C_Str();
 			data.texture_paths.push_back(diffuse_path);
-			OutputDebugStringA(("    Diffuse: " + diffuse_path + "\n").c_str());
+			VORTEX_VLOG(("    Diffuse: " + diffuse_path + "\n").c_str());
 			}
 			// Also check for AMBIENT texture (sometimes used as diffuse in OBJ)
 			else if (material->GetTextureCount(aiTextureType_AMBIENT) > 0)
@@ -357,7 +358,7 @@ namespace vortex::graphics
 			material->GetTexture(aiTextureType_AMBIENT, 0, &tex_path);
 			diffuse_path = model_dir + tex_path.C_Str();
 			data.texture_paths.push_back(diffuse_path);
-			OutputDebugStringA(("    Ambient (as diffuse): " + diffuse_path + "\n").c_str());
+			VORTEX_VLOG(("    Ambient (as diffuse): " + diffuse_path + "\n").c_str());
 			}
 			
 			// Get normal map path
@@ -414,7 +415,7 @@ namespace vortex::graphics
 						submesh.name = mat_name;
 					}
 					
-					OutputDebugStringA(("    Assigned to submesh: " + submesh.name + "\n").c_str());
+					VORTEX_VLOG(("    Assigned to submesh: " + submesh.name + "\n").c_str());
 				}
 			}
 		}
@@ -438,7 +439,7 @@ namespace vortex::graphics
 
 			if (data.texture_paths.empty() || !has_valid_texture)
 			{
-			OutputDebugStringA("ModelImporter: No valid textures found, searching directory...\n");
+			VORTEX_VLOG("ModelImporter: No valid textures found, searching directory...\n");
 			search_textures_in_directory(model_dir, data);
 			}
 		}
@@ -475,7 +476,7 @@ namespace vortex::graphics
 				if (is_img && is_col && !is_bad)
 				{
 					color_textures.push_back(dir + fn);
-					OutputDebugStringA(("  Found texture: " + fn + "\n").c_str());
+					VORTEX_VLOG(("  Found texture: " + fn + "\n").c_str());
 				}
 			} while (FindNextFileA(h, &fd));
 			FindClose(h);
@@ -501,7 +502,7 @@ namespace vortex::graphics
 				{
 					submesh.diffuse_texture = tex;
 					found = true;
-					OutputDebugStringA(("  Matched " + submesh.name + " -> " + tex + "\n").c_str());
+					VORTEX_VLOG(("  Matched " + submesh.name + " -> " + tex + "\n").c_str());
 					break;
 				}
 			}
@@ -510,7 +511,7 @@ namespace vortex::graphics
 			if (!found && i < color_textures.size())
 			{
 				submesh.diffuse_texture = color_textures[i];
-				OutputDebugStringA(("  Index match " + submesh.name + " -> " + color_textures[i] + "\n").c_str());
+				VORTEX_VLOG(("  Index match " + submesh.name + " -> " + color_textures[i] + "\n").c_str());
 			}
 		}
 	}

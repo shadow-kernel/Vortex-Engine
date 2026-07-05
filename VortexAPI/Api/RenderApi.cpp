@@ -1,4 +1,5 @@
 #include "../ApiCommon.h"
+#include "..\..\Engine\Common\VerboseLog.h"   // VORTEX_VLOG — chatty per-op logs gated by VORTEX_VERBOSE_LOG=1
 
 EDITOR_INTERFACE bool InitializeRenderViewport(void* hwnd, unsigned int width, unsigned int height)
 {
@@ -188,25 +189,12 @@ EDITOR_INTERFACE void SetMaterialColor(id::id_type material_id, float r, float g
 
 EDITOR_INTERFACE void SetMaterialTexture(id::id_type material_id, id::id_type texture_id)
 {
-	OutputDebugStringA(("SetMaterialTexture called: material=" + std::to_string(material_id) + ", texture=" + std::to_string(texture_id) + "\n").c_str());
 	auto* mat = graphics::ResourceRegistry::instance().get_material(material_id);
 	auto* tex = graphics::ResourceRegistry::instance().get_texture(texture_id);
-	
-	OutputDebugStringA(("  mat_ptr=" + std::to_string((size_t)mat) + ", tex_ptr=" + std::to_string((size_t)tex) + "\n").c_str());
-	
-	if (mat && tex) 
-	{
+	if (mat && tex)
 		mat->set_albedo_texture(tex);
-		// Verify it was set
-		auto* verify = mat->albedo_texture();
-		OutputDebugStringA(("  After set: albedo_texture=" + std::to_string((size_t)verify) + 
-			", tex_valid=" + std::string(tex->is_valid() ? "YES" : "NO") +
-			", srv_ptr=" + std::to_string(tex->srv_gpu().ptr) + "\n").c_str());
-	}
 	else
-	{
-		OutputDebugStringA("  ERROR: mat or tex is null!\n");
-	}
+		VORTEX_VLOG("SetMaterialTexture: mat or tex is null\n");
 }
 
 EDITOR_INTERFACE bool MaterialHasTexture(id::id_type material_id)
@@ -316,19 +304,6 @@ EDITOR_INTERFACE void SetMaterialHeightScale(id::id_type material_id, float scal
 // Render item submission
 EDITOR_INTERFACE void SubmitRenderItem(id::id_type mesh_id, id::id_type material_id, float* world_matrix)
 {
-	// Debug first submission
-	static bool first_submit = true;
-	if (first_submit)
-	{
-		auto* mat = graphics::ResourceRegistry::instance().get_material(material_id);
-		auto* tex = mat ? mat->albedo_texture() : nullptr;
-		OutputDebugStringA(("SUBMIT_FIRST: mesh=" + std::to_string(mesh_id) + 
-			", material=" + std::to_string(material_id) +
-			", mat_ptr=" + std::to_string((size_t)mat) +
-			", has_texture=" + (tex ? "YES" : "NO") + "\n").c_str());
-		first_submit = false;
-	}
-	
 	graphics::dx12::RenderItem item{};
 	item.mesh_id = mesh_id;
 	item.material_id = material_id;

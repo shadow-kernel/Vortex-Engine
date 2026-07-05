@@ -1,3 +1,4 @@
+#include "../../Common/VerboseLog.h"
 #include "ResourceRegistry_Internal.h"
 
 namespace vortex::graphics
@@ -6,20 +7,20 @@ namespace vortex::graphics
 	{
 		if (!m_device) 
 		{
-			OutputDebugStringA("ResourceRegistry::import_model - Device not initialized!\n");
+			VORTEX_VLOG("ResourceRegistry::import_model - Device not initialized!\n");
 			return id::invalid_id;
 		}
 
-		OutputDebugStringA(("ResourceRegistry: Importing model: " + filepath + "\n").c_str());
+		VORTEX_VLOG(("ResourceRegistry: Importing model: " + filepath + "\n").c_str());
 
 		ImportedModelData data = ModelImporter::import_from_file(filepath);
 		if (!data.is_valid())
 		{
-			OutputDebugStringA("ResourceRegistry: ModelImporter returned invalid data!\n");
+			VORTEX_VLOG("ResourceRegistry: ModelImporter returned invalid data!\n");
 			return id::invalid_id;
 		}
 
-		OutputDebugStringA(("ResourceRegistry: Model has " + std::to_string(data.submeshes.size()) + " submeshes\n").c_str());
+		VORTEX_VLOG(("ResourceRegistry: Model has " + std::to_string(data.submeshes.size()) + " submeshes\n").c_str());
 
 		MeshData combined_data;
 		u32 index_offset = 0;
@@ -48,7 +49,7 @@ namespace vortex::graphics
 		ImageData image_data = TextureImporter::import_from_file(filepath);
 		if (!image_data.is_valid())
 		{
-			OutputDebugStringA(("Failed to load texture: " + filepath + "\n").c_str());
+			VORTEX_VLOG(("Failed to load texture: " + filepath + "\n").c_str());
 			return id::invalid_id;
 		}
 		return create_texture_from_image(image_data, filepath);
@@ -62,7 +63,7 @@ namespace vortex::graphics
 		ImageData image_data = TextureImporter::import_from_memory(data, length);
 		if (!image_data.is_valid())
 		{
-			OutputDebugStringA("Failed to load texture from memory\n");
+			VORTEX_VLOG("Failed to load texture from memory\n");
 			return id::invalid_id;
 		}
 		return create_texture_from_image(image_data, name.empty() ? std::string("memtex") : name);
@@ -76,17 +77,17 @@ namespace vortex::graphics
 
 		if (!m_device)
 		{
-			OutputDebugStringA("ResourceRegistry not initialized\n");
+			VORTEX_VLOG("ResourceRegistry not initialized\n");
 			return result;
 		}
 
-		OutputDebugStringA(("=== Multi-Material Import: " + filepath + " ===\n").c_str());
+		VORTEX_VLOG(("=== Multi-Material Import: " + filepath + " ===\n").c_str());
 
 		// Import model - ModelImporter now handles texture assignment
 		ImportedModelData model_data = ModelImporter::import_from_file(filepath);
 		if (!model_data.is_valid())
 		{
-			OutputDebugStringA("Import failed - no valid data\n");
+			VORTEX_VLOG("Import failed - no valid data\n");
 			return result;
 		}
 		return build_model_result(model_data);
@@ -100,15 +101,15 @@ namespace vortex::graphics
 		result.success = false;
 		if (!m_device)
 		{
-			OutputDebugStringA("ResourceRegistry not initialized\n");
+			VORTEX_VLOG("ResourceRegistry not initialized\n");
 			return result;
 		}
 
-		OutputDebugStringA(("=== Multi-Material Import (memory): ." + ext_hint + " ===\n").c_str());
+		VORTEX_VLOG(("=== Multi-Material Import (memory): ." + ext_hint + " ===\n").c_str());
 		ImportedModelData model_data = ModelImporter::import_from_memory(data, length, ext_hint, virtual_dir);
 		if (!model_data.is_valid())
 		{
-			OutputDebugStringA("Import from memory failed - no valid data\n");
+			VORTEX_VLOG("Import from memory failed - no valid data\n");
 			return result;
 		}
 		return build_model_result(model_data);
@@ -121,7 +122,7 @@ namespace vortex::graphics
 		result.success = false;
 
 		result.model_name = model_data.name;
-		OutputDebugStringA(("Model: " + model_data.name + ", " +
+		VORTEX_VLOG(("Model: " + model_data.name + ", " +
 			std::to_string(model_data.submeshes.size()) + " submeshes\n").c_str());
 
 		for (size_t i = 0; i < model_data.submeshes.size(); i++)
@@ -131,7 +132,7 @@ namespace vortex::graphics
 			sub_result.material_index = submesh.material_index;
 			sub_result.name = submesh.name.empty() ? ("Submesh_" + std::to_string(i)) : submesh.name;
 
-			OutputDebugStringA(("Processing: " + sub_result.name + "\n").c_str());
+			VORTEX_VLOG(("Processing: " + sub_result.name + "\n").c_str());
 
 			// Create mesh
 			sub_result.mesh_id = create_mesh_from_submesh(submesh, sub_result.name);
@@ -156,7 +157,7 @@ namespace vortex::graphics
 			// Load texture - ModelImporter already assigned the correct path
 			if (!submesh.diffuse_texture.empty())
 			{
-				OutputDebugStringA(("  Texture: " + submesh.diffuse_texture + "\n").c_str());
+				VORTEX_VLOG(("  Texture: " + submesh.diffuse_texture + "\n").c_str());
 				sub_result.texture_id = import_texture(submesh.diffuse_texture, sub_result.name + "_tex");
 				if (sub_result.texture_id != id::invalid_id && mat)
 				{
@@ -164,20 +165,20 @@ namespace vortex::graphics
 					if (tex)
 					{
 						mat->set_albedo_texture(tex);
-						OutputDebugStringA("  Texture bound OK\n");
+						VORTEX_VLOG("  Texture bound OK\n");
 					}
 				}
 			}
 			else
 			{
-				OutputDebugStringA("  No texture assigned\n");
+				VORTEX_VLOG("  No texture assigned\n");
 			}
 
 			result.submeshes.push_back(sub_result);
 		}
 
 		result.success = !result.submeshes.empty();
-		OutputDebugStringA(("=== Import Complete: " + std::to_string(result.submeshes.size()) + " submeshes ===\n").c_str());
+		VORTEX_VLOG(("=== Import Complete: " + std::to_string(result.submeshes.size()) + " submeshes ===\n").c_str());
 
 		return result;
 	}

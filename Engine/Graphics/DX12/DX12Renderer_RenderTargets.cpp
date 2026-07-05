@@ -1,4 +1,5 @@
 #include "DX12Renderer_Internal.h"
+#include "../../Common/VerboseLog.h"
 
 namespace vortex::graphics::dx12
 {
@@ -16,7 +17,7 @@ namespace vortex::graphics::dx12
 		u32 id = m_next_render_target_id++;
 		m_render_targets[id] = std::move(target);
 		
-		OutputDebugStringA(("Created render target ID " + std::to_string(id) + 
+		VORTEX_VLOG(("Created render target ID " + std::to_string(id) + 
 			" (" + std::to_string(width) + "x" + std::to_string(height) + ")\n").c_str());
 		
 		return id;
@@ -30,7 +31,7 @@ namespace vortex::graphics::dx12
 		{
 			m_command_queue.flush(); // Ensure GPU is done with this target
 			m_render_targets.erase(it);
-			OutputDebugStringA(("Destroyed render target ID " + std::to_string(target_id) + "\n").c_str());
+			VORTEX_VLOG(("Destroyed render target ID " + std::to_string(target_id) + "\n").c_str());
 		}
 	}
 	

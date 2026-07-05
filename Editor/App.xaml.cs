@@ -763,7 +763,32 @@ namespace Editor
             System.Diagnostics.Debug.WriteLine(text);
             try { Editor.Core.Services.ConsoleService.Instance?.LogError(text); } catch { }
         }
-        public override void Write(string message) { System.Diagnostics.Debugger.Log(0, null, message); }
-        public override void WriteLine(string message) { System.Diagnostics.Debugger.Log(0, null, (message ?? "") + Environment.NewLine); }
+        public override void Write(string message) { Emit(message); }
+        public override void WriteLine(string message) { Emit((message ?? "") + Environment.NewLine); }
+
+        // Rate-limited forward to the debugger. With a debugger attached EVERY Debugger.Log is a
+        // cross-process round-trip (~0.5-2ms) — one per-frame trace source (e.g. a WPF binding error
+        // on an element that updates every frame) fires 60+/s and alone turns F5 into a slideshow,
+        // while the identical build runs fast standalone. Budget: the first 40 lines per second pass
+        // (they carry the diagnosis), the rest is dropped with a once-per-second summary.
+        private static DateTime _traceWindow = DateTime.MinValue;
+        private static int _traceBudget;
+        private static int _traceDropped;
+        private static void Emit(string s)
+        {
+            if (!System.Diagnostics.Debugger.IsAttached) return;
+            var now = DateTime.UtcNow;
+            if ((now - _traceWindow).TotalSeconds >= 1.0)
+            {
+                if (_traceDropped > 0)
+                    System.Diagnostics.Debugger.Log(0, null,
+                        "[trace throttled] " + _traceDropped + " line(s) dropped in the last second" + Environment.NewLine);
+                _traceWindow = now;
+                _traceBudget = 40;
+                _traceDropped = 0;
+            }
+            if (_traceBudget > 0) { _traceBudget--; System.Diagnostics.Debugger.Log(0, null, s); }
+            else _traceDropped++;
+        }
     }
 }

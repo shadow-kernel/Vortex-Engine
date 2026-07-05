@@ -1,3 +1,4 @@
+#include "../../Common/VerboseLog.h"
 #include "ModelImporter_Internal.h"
 
 namespace vortex::graphics
@@ -24,7 +25,7 @@ namespace vortex::graphics
 
 		if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode)
 		{
-			OutputDebugStringA(("ModelImporter: Failed to load " + filepath + "\n").c_str());
+			VORTEX_VLOG(("ModelImporter: Failed to load " + filepath + "\n").c_str());
 			return result;
 		}
 
@@ -43,7 +44,7 @@ namespace vortex::graphics
 			result.name = "ImportedModel";
 		}
 
-		OutputDebugStringA(("ModelImporter: Loading " + result.name + "\n").c_str());
+		VORTEX_VLOG(("ModelImporter: Loading " + result.name + "\n").c_str());
 
 		// Skeleton FIRST: process_mesh resolves aiBone node names against the node table.
 		build_skeleton((void*)scene, result);
@@ -60,7 +61,7 @@ namespace vortex::graphics
 		// Calculate bounding box
 		calculate_bounds(result);
 
-		OutputDebugStringA(("ModelImporter: Loaded " + std::to_string(result.submeshes.size()) + " submeshes\n").c_str());
+		VORTEX_VLOG(("ModelImporter: Loaded " + std::to_string(result.submeshes.size()) + " submeshes\n").c_str());
 
 		return result;
 	}
@@ -84,7 +85,7 @@ namespace vortex::graphics
 
 		if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode)
 		{
-			OutputDebugStringA("ModelImporter: Failed to load model from memory\n");
+			VORTEX_VLOG("ModelImporter: Failed to load model from memory\n");
 			return result;
 		}
 

@@ -1,4 +1,5 @@
 #include "Mesh.h"
+#include "../../Common/VerboseLog.h"
 #include <cstring>
 
 namespace vortex::graphics
@@ -47,7 +48,7 @@ namespace vortex::graphics
 	{
 		if (data.vertices.empty()) return false;
 
-		OutputDebugStringA(("Mesh::create - vertices: " + std::to_string(data.vertices.size()) + 
+		VORTEX_VLOG(("Mesh::create - vertices: " + std::to_string(data.vertices.size()) +
 			", indices: " + std::to_string(data.indices.size()) + "\n").c_str());
 
 		return create_from_vertices(device,
