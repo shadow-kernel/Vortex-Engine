@@ -28,6 +28,11 @@ namespace Editor.UI.Vui
         internal VuiElement _focus;
         internal VuiElement _dragTarget; internal int _dragKind;
         internal VuiElement _capturedKeyTarget;
+        internal VuiElement _navFocus;           // #44: gamepad/keyboard navigation focus (per screen)
+
+        internal VuiElement HotElement { get { return _hot; } }        // #45: tooltip source
+        internal VuiElement NavFocus { get { return _navFocus; } }     // #44: highlight target
+        internal VuiElement TextFocus { get { return _focus; } }       // #44: typing focus gate
 
         public bool CursorLockedPref => Root != null && Root.CursorLocked;
         public bool BlocksInput => Root != null && Root.BlocksInput;
@@ -190,10 +195,14 @@ namespace Editor.UI.Vui
             if (Root == null || !Root.RuntimeVisibleEffective) return false;
             _clicked.Clear();
             _fired.Clear();
+            var prevHot = _hot;
             if (_hot != null) { _hot.Hot = false; _hot = null; }
 
             var hit = HitTest(Root, input.Mx, input.My);
             if (hit != null) { hit.Hot = true; _hot = hit; }
+
+            // Hover-enter sound (#45): fires once when the cursor moves ONTO an interactive element.
+            if (hit != null && !ReferenceEquals(hit, prevHot) && IsInteractive(hit.Kind)) PlayHover(hit);
 
             // Press: dispatch by kind + set the capture/focus targets (all tracked by element IDENTITY).
             if (input.Pressed)
@@ -201,6 +210,7 @@ namespace Editor.UI.Vui
                 if (hit == null || hit.Kind != VuiKind.TextField) _focus = null;   // click outside a field blurs it
                 if (hit != null)
                 {
+                    if (IsInteractive(hit.Kind)) PlayClick(hit);   // #45: click sound (element or screen default)
                     switch (hit.Kind)
                     {
                         case VuiKind.Button:
@@ -448,6 +458,119 @@ namespace Editor.UI.Vui
             };
             foreach (var ch in t.Children) c.Children.Add(Clone(ch, c));
             return c;
+        }
+
+        // ===================== FOCUS NAVIGATION (#44) =====================
+
+        /// <summary>All interactive, currently visible elements in tree (= declaration) order.</summary>
+        internal void CollectFocusables(List<VuiElement> outList)
+        {
+            if (Root != null && Root.RuntimeVisibleEffective) CollectFocusablesNode(Root, outList);
+        }
+        private void CollectFocusablesNode(VuiElement e, List<VuiElement> o)
+        {
+            if (!e.RuntimeVisibleEffective) return;
+            if (IsInteractive(e.Kind)) o.Add(e);
+            foreach (var c in ActiveChildren(e)) CollectFocusablesNode(c, o);
+        }
+
+        /// <summary>Directional (spatial) focus move: nearest focusable whose center lies in the pressed
+        /// direction, preferring aligned neighbors (axial distance + weighted lateral offset).</summary>
+        internal void MoveFocus(int dx, int dy, List<VuiElement> focusables)
+        {
+            if (focusables.Count == 0) return;
+            if (_navFocus == null || !_navFocus.RuntimeVisibleEffective || !focusables.Contains(_navFocus))
+            {
+                _navFocus = focusables[0];
+                return;
+            }
+            float cx = _navFocus.Resolved.CenterX, cy = _navFocus.Resolved.CenterY;
+            VuiElement best = null; float bestScore = float.MaxValue;
+            foreach (var e in focusables)
+            {
+                if (ReferenceEquals(e, _navFocus)) continue;
+                float ex = e.Resolved.CenterX - cx, ey = e.Resolved.CenterY - cy;
+                float along = dx != 0 ? ex * dx : ey * dy;
+                float ortho = dx != 0 ? Math.Abs(ey) : Math.Abs(ex);
+                if (along < 1f) continue;                 // must lie in the pressed direction
+                float score = along + ortho * 2.5f;
+                if (score < bestScore) { bestScore = score; best = e; }
+            }
+            if (best != null) { _navFocus = best; PlayHover(best); }
+        }
+
+        /// <summary>Tab: next focusable in declaration order (wraps).</summary>
+        internal void FocusNext(List<VuiElement> focusables)
+        {
+            if (focusables.Count == 0) return;
+            int i = _navFocus != null ? focusables.IndexOf(_navFocus) : -1;
+            _navFocus = focusables[(i + 1) % focusables.Count];
+            PlayHover(_navFocus);
+        }
+
+        /// <summary>A/Enter/Space on the focused element — the exact dispatch a mouse click takes.</summary>
+        internal void ActivateFocused()
+        {
+            var e = _navFocus;
+            if (e == null || !e.RuntimeVisibleEffective) return;
+            PlayClick(e);
+            switch (e.Kind)
+            {
+                case VuiKind.Button:
+                    if (!string.IsNullOrEmpty(e.Id)) _clicked.Add(e.Id);
+                    if (!string.IsNullOrEmpty(e.ClickAction)) _fired.Add(e.ClickAction);
+                    if (e.CapturesKey) _capturedKeyTarget = e;
+                    break;
+                case VuiKind.Toggle: e.On = !e.On; break;
+                case VuiKind.Stepper:
+                    if (e.Options != null && e.Options.Length > 0)
+                        e.OptionIndex = (e.OptionIndex + 1) % e.Options.Length;
+                    break;
+                case VuiKind.TextField: _focus = e; break;
+            }
+        }
+
+        /// <summary>Left/right VALUE adjustment for the focused Slider (1/20 steps) or Stepper (cycle).
+        /// Returns true when consumed (the pulse must then not move focus).</summary>
+        internal bool AdjustFocused(int dir)
+        {
+            var e = _navFocus;
+            if (e == null || !e.RuntimeVisibleEffective) return false;
+            if (e.Kind == VuiKind.Slider)
+            {
+                float step = (e.Max - e.Min) / 20f;
+                if (step <= 0f) step = 0.05f;
+                e.Value += dir * step;
+                if (e.Value < e.Min) e.Value = e.Min; else if (e.Value > e.Max) e.Value = e.Max;
+                return true;
+            }
+            if (e.Kind == VuiKind.Stepper && e.Options != null && e.Options.Length > 0)
+            {
+                e.OptionIndex = (e.OptionIndex + (dir > 0 ? 1 : e.Options.Length - 1)) % e.Options.Length;
+                PlayClick(e);
+                return true;
+            }
+            return false;
+        }
+
+        // ===================== UI SOUNDS (#45) =====================
+        // Element sound wins; else the ROOT's sound acts as the screen-wide theme default.
+        internal void PlayClick(VuiElement e)
+        {
+            string s = e != null && !string.IsNullOrEmpty(e.ClickSound) ? e.ClickSound
+                : (Root != null ? Root.ClickSound : null);
+            PlayUi(s);
+        }
+        internal void PlayHover(VuiElement e)
+        {
+            string s = e != null && !string.IsNullOrEmpty(e.HoverSound) ? e.HoverSound
+                : (Root != null ? Root.HoverSound : null);
+            PlayUi(s);
+        }
+        private static void PlayUi(string clip)
+        {
+            if (string.IsNullOrEmpty(clip)) return;
+            try { Editor.Core.Services.AudioPlaybackService.Instance.PlayOneShot2D(clip, 1f, 1f); } catch { }
         }
 
         public bool WasClicked(string id) => id != null && _clicked.Remove(id);   // true once, then cleared

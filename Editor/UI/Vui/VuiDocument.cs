@@ -80,6 +80,7 @@ namespace Editor.UI.Vui
             e.Value = d.Value; e.Min = d.Min; e.Max = d.Max != 0 || d.Min != 0 ? d.Max : 1f;
             e.On = d.On; e.Options = d.Options; e.OptionIndex = d.OptionIndex; e.TargetSetting = d.TargetSetting;
             e.ClickAction = d.ClickAction;
+            e.Tooltip = d.Tooltip; e.ClickSound = d.ClickSound; e.HoverSound = d.HoverSound;   // #45
             e.CapturesKey = d.CapturesKey; e.MaxChars = d.MaxChars > 0 ? d.MaxChars : 64;
             e.Visible = d.Visible; e.Opacity = d.Opacity <= 0 ? 1f : d.Opacity;
             e.BlocksInput = d.BlocksInput; e.CursorLocked = d.CursorLocked; e.BlocksGameplay = d.BlocksGameplay; e.ClipChildren = d.Clip;
@@ -127,6 +128,9 @@ namespace Editor.UI.Vui
             if (e.On) d.On = true;
             if (e.Options != null) { d.Options = e.Options; d.OptionIndex = e.OptionIndex; }
             if (!string.IsNullOrEmpty(e.ClickAction)) d.ClickAction = e.ClickAction;
+            if (!string.IsNullOrEmpty(e.Tooltip)) d.Tooltip = e.Tooltip;             // #45
+            if (!string.IsNullOrEmpty(e.ClickSound)) d.ClickSound = e.ClickSound;
+            if (!string.IsNullOrEmpty(e.HoverSound)) d.HoverSound = e.HoverSound;
             if (e.CapturesKey) d.CapturesKey = true;
             if (e.MaxChars != 64) d.MaxChars = e.MaxChars;
             if (!e.Visible) d.Visible = false;
@@ -180,6 +184,9 @@ namespace Editor.UI.Vui
         public int OptionIndex { get; set; }
         public string TargetSetting { get; set; }
         public string ClickAction { get; set; }
+        public string Tooltip { get; set; }        // #45
+        public string ClickSound { get; set; }     // #45
+        public string HoverSound { get; set; }     // #45
         public bool CapturesKey { get; set; }
         public int MaxChars { get; set; } = 64;
         public bool Visible { get; set; } = true;

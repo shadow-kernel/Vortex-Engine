@@ -264,7 +264,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                 // scripts mutated slots/screens. Without this the .vui never drew in-editor (only in the GameHost).
                 if (uw > 1 && uh > 1 && Editor.UI.Vui.VuiStack.Instance.HasActiveScreens)
                 {
-                    var vin = new Editor.UI.Vui.VuiInput { Mx = _uiMx, My = _uiMy, Down = _uiDown, Pressed = _uiPressed, Wheel = 0, Chars = _vuiCharsEmpty, CharCount = 0, KeyEvents = _vuiKeysEmpty, KeyCount = 0 };
+                    var vin = new Editor.UI.Vui.VuiInput { Mx = _uiMx, My = _uiMy, Down = _uiDown, Pressed = _uiPressed, Wheel = 0, Chars = _vuiCharsEmpty, CharCount = 0, KeyEvents = _uiKeys, KeyCount = _uiKeyCount };
                     Editor.UI.Vui.VuiStack.Instance.TickAll(uw, uh, vin);
                     var acts = Editor.UI.Vui.VuiStack.Instance.ConsumeFiredActions();
                     if (acts != null) Editor.Scripting.ScriptRuntime.Instance.InvokeUiActions(acts);
@@ -1108,11 +1108,26 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             bool pressed = down && !_lmbPrevEd;
             _lmbPrevEd = down;
             _uiMx = mx; _uiMy = my; _uiDown = down; _uiPressed = pressed;   // stashed for the retained-UI tick
+
+            // Focus navigation keys (#44): edge-detect the 7 nav keys so keyboard menu navigation
+            // works in editor play too (the GameHost path gets them from its native key queue).
+            _uiKeyCount = 0;
+            for (int i = 0; i < _navVks.Length; i++)
+            {
+                bool held = (GetAsyncKeyState(_navVks[i]) & 0x8000) != 0;
+                if (held && !_navPrev[i] && _uiKeyCount < _uiKeys.Length) _uiKeys[_uiKeyCount++] = _navVks[i];
+                _navPrev[i] = held;
+            }
+
             Editor.Scripting.ScriptRuntime.Instance.SetUIFrame(renderW, renderH, mx, my, down, pressed);
         }
         private float _uiMx, _uiMy; private bool _uiDown, _uiPressed;
         private static readonly char[] _vuiCharsEmpty = new char[0];
         private static readonly int[] _vuiKeysEmpty = new int[0];
+        private static readonly int[] _navVks = { 0x25, 0x26, 0x27, 0x28, 0x09, 0x0D, 0x20 };   // arrows, Tab, Enter, Space
+        private readonly bool[] _navPrev = new bool[7];
+        private readonly int[] _uiKeys = new int[8];
+        private int _uiKeyCount;
 
         // --- Play-mode physics simulation (engine-driven) ---
         private bool _simActive;

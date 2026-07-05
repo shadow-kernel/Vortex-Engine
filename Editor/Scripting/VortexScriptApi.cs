@@ -417,6 +417,14 @@ namespace Vortex
         public static float LeftTrigger  { get { return Gated ? 0f : _lt; } }
         public static float RightTrigger { get { return Gated ? 0f : _rt; } }
 
+        // ---- UNGATED reads for the retained UI (#44): menu navigation needs the pad exactly while a
+        // BlocksGameplay screen gates the public getters above. Window focus still applies (PollGamepad
+        // zeroes the raw fields while unfocused). Internal — game scripts keep the gated surface. ----
+        internal static float UiLeftStickX { get { return _lx; } }
+        internal static float UiLeftStickY { get { return _ly; } }
+        internal static bool UiButtonDown(string name)
+        { ushort m = MaskOf(name); return (_buttons & m) != 0 && (_prevButtons & m) == 0; }
+
         /// <summary>Is a controller button held? Names: A B X Y LB RB Back Start LeftStick RightStick
         /// DPadUp DPadDown DPadLeft DPadRight.</summary>
         public static bool GetGamepadButton(string name) { return !Gated && (_buttons & MaskOf(name)) != 0; }
@@ -1125,6 +1133,12 @@ namespace Vortex
         public static VuiHandle Push(string name) { return new VuiHandle(Editor.UI.Vui.VuiStack.Instance.Push(name)); }
         public static void Pop() { Editor.UI.Vui.VuiStack.Instance.Pop(); }
         public static bool HasScreens { get { return Editor.UI.Vui.VuiStack.Instance.HasActiveScreens; } }
+
+        /// <summary>One-call modal yes/no confirmation (#45) — no .vui authoring needed. Blocks input
+        /// and gameplay, frees the cursor, and is gamepad-navigable like any screen:
+        /// <c>Gui.Confirm("Quit?", "Unsaved progress will be lost.", delegate { App.Quit(); }, null);</c></summary>
+        public static void Confirm(string title, string message, System.Action onYes, System.Action onNo)
+            { Editor.UI.Vui.VuiDialogs.Confirm(title, message, onYes, onNo); }
     }
 
     /// <summary>Generic engine settings a script's options menu applies (the UI only surfaces values; the script

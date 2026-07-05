@@ -42,6 +42,11 @@ namespace Editor.UI.Vui
         public int CapturedKey;                 // the last virtual-key captured (0 = none) — read via GetCapturedKey
         public int MaxChars = 64;               // TextField input cap
 
+        // --- polish (#45) ---
+        public string Tooltip;                  // shown after a short hover dwell (topmost, near the cursor)
+        public string ClickSound;               // clip path played on click/activate; on the ROOT = the screen default
+        public string HoverSound;               // clip path played on hover enter;  on the ROOT = the screen default
+
         // --- state / flags ---
         public bool Visible = true;
         public float Opacity = 1f;

@@ -366,6 +366,7 @@
     <Compile Include="UI\Vui\VuiDocument.cs" />
     <Compile Include="UI\Vui\VuiCanvas.cs" />
     <Compile Include="UI\Vui\VuiStack.cs" />
+    <Compile Include="UI\Vui\VuiDialogs.cs" />
     <Compile Include="Editors\UIEditor\VuiPreviewRenderer.cs" />
     <Compile Include="Editors\UIEditor\UIEditorWindow.cs" />
     <Compile Include="Core\Services\WorldService.cs" />
