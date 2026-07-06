@@ -95,6 +95,13 @@ namespace Vortex
         void SetAnimationLayerWeight(long entityId, int layer, float weight);
         void StopLayeredAnimation(long entityId, int layer);
 
+        // Synced playback groups: N entities' clips frame-locked to one master clock (character
+        // reload + weapon reload as one). Returns a group id; 0 = nothing started.
+        int PlaySyncedAnimation(long[] entities, string[] clips, float speed, float fade);
+        void PauseSyncedAnimation(int groupId, bool paused);
+        void SetSyncedAnimationSpeed(int groupId, float speed);
+        void StopSyncedAnimation(int groupId);
+
         // Bone sockets: attach an entity to a skeleton bone at runtime (weapon pickup), detach it
         // (keepWorldPosition true = stays where the hand left it), query a bone's world transform
         // (muzzle raycast origins, VFX spawn points), and list a skeleton's current attachments.
@@ -1122,6 +1129,27 @@ namespace Vortex
         /// <summary>Stop an override layer — the base clip takes its bones back.</summary>
         public static void StopLayer(long entityId, int layer)
             { if (Host != null) Host.StopLayeredAnimation(entityId, layer); }
+
+        // ---- synced playback groups (#174) ----
+
+        /// <summary>Start clips on several entities frame-locked to ONE clock — the reload pair:
+        /// <c>Animation.PlaySynced(new[]{ chr, gun }, new[]{ "reload_char", "reload_weapon" });</c>
+        /// Members share normalized time (drift-free by construction); pause/speed/stop hit the whole
+        /// group atomically. Returns the group id (0 = failed).</summary>
+        public static int PlaySynced(long[] entities, string[] clips, float speed = 1f, float fade = 0f)
+            { return Host != null ? Host.PlaySyncedAnimation(entities, clips, speed, fade) : 0; }
+
+        /// <summary>Pause or resume a synced group as one.</summary>
+        public static void PauseSynced(int groupId, bool paused = true)
+            { if (Host != null) Host.PauseSyncedAnimation(groupId, paused); }
+
+        /// <summary>Change a synced group's speed (all members together).</summary>
+        public static void SetSyncedSpeed(int groupId, float speed)
+            { if (Host != null) Host.SetSyncedAnimationSpeed(groupId, speed); }
+
+        /// <summary>Dissolve a synced group; members freeze on their current pose.</summary>
+        public static void StopSynced(int groupId)
+            { if (Host != null) Host.StopSyncedAnimation(groupId); }
 
         // ---- bone sockets (#170/#171) ----
 

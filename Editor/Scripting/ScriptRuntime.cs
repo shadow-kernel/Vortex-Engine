@@ -1274,6 +1274,26 @@ namespace Editor.Scripting
                 ? Editor.Core.Animation.AnimationService.Instance.GetTime(e) : 0f;
         }
 
+        // --- synced playback groups (#174) ---
+
+        int Vortex.IScriptHost.PlaySyncedAnimation(long[] entities, string[] clips, float speed, float fade)
+        {
+            if (entities == null || clips == null) return 0;
+            var resolved = new ECS.GameEntity[entities.Length];
+            for (int i = 0; i < entities.Length; i++)
+                _entitiesById.TryGetValue(entities[i], out resolved[i]);
+            return Editor.Core.Animation.AnimationService.Instance.PlaySynced(resolved, clips, speed, fade);
+        }
+
+        void Vortex.IScriptHost.PauseSyncedAnimation(int groupId, bool paused)
+            => Editor.Core.Animation.AnimationService.Instance.PauseSynced(groupId, paused);
+
+        void Vortex.IScriptHost.SetSyncedAnimationSpeed(int groupId, float speed)
+            => Editor.Core.Animation.AnimationService.Instance.SetSyncedSpeed(groupId, speed);
+
+        void Vortex.IScriptHost.StopSyncedAnimation(int groupId)
+            => Editor.Core.Animation.AnimationService.Instance.StopSynced(groupId);
+
         // --- bone-masked layers (#173) ---
 
         bool Vortex.IScriptHost.PlayLayeredAnimation(long entityId, string clip, int layer, string mask, float weight, float fade)

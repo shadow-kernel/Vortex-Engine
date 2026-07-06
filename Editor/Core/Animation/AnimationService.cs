@@ -48,7 +48,26 @@ namespace Editor.Core.Animation
             public float[] Palette;               // current pose, flattened (boneCount * 16)
             public Matrix4x4[] NodeWorlds;        // model-space node worlds of the SAME pose (bone sockets read these)
             public List<LayerState> Layers;       // bone-masked override layers (#173); null = single-clip fast path
+            public SyncGroup Group;               // synced playback group (#174); null = independent clock
         }
+
+        /// <summary>Synced playback group (#174): ONE master clock drives N members at the same
+        /// normalized time (member time = norm x its own clip duration) — reload hands + weapon slide
+        /// stay frame-locked through pauses, speed changes and frame drops by construction.</summary>
+        private class SyncGroup
+        {
+            public int Id;
+            public List<AnimatorState> Members = new List<AnimatorState>();
+            public float Norm;                    // 0..1 master clock
+            public float Speed = 1f;
+            public float Duration = 1f;           // reference duration (first member's clip)
+            public bool Paused;
+            public bool Loop;
+            public bool WrappedThisFrame;
+        }
+
+        private readonly List<SyncGroup> _groups = new List<SyncGroup>();
+        private int _nextGroupId = 1;
 
         /// <summary>One bone-masked override layer: its own clip/time/weight, blended over the base pose
         /// in LOCAL space (per node, before hierarchy multiplication) wherever the mask includes a bone.</summary>
@@ -114,6 +133,7 @@ namespace Editor.Core.Animation
         public void ResetStates()
         {
             _states.Clear();
+            _groups.Clear();
             HasActiveAnimators = false;
         }
 
@@ -132,6 +152,21 @@ namespace Editor.Core.Animation
         {
             HasActiveAnimators = false;
             if (scene?.Entities == null) return;
+
+            // Advance sync-group master clocks FIRST — grouped members read Norm during their step.
+            for (int i = 0; i < _groups.Count; i++)
+            {
+                var g = _groups[i];
+                g.WrappedThisFrame = false;
+                if (g.Paused || g.Members.Count == 0) continue;
+                g.Norm += dt * g.Speed / Math.Max(g.Duration, 0.0001f);
+                if (g.Norm >= 1f)
+                {
+                    if (g.Loop) { g.Norm %= 1f; g.WrappedThisFrame = true; }
+                    else g.Norm = 1f;
+                }
+            }
+
             foreach (var e in scene.Entities) StepRecursive(e, dt);
         }
 
@@ -157,7 +192,21 @@ namespace Editor.Core.Animation
             }
 
             bool baseActive = state.Playing && state.Clip != null;
-            if (baseActive)
+            if (baseActive && state.Group != null)
+            {
+                // Grouped member: the master clock owns time — map its normalized position onto this clip.
+                float prevT = state.Time;
+                float durT = Math.Max(state.Clip.DurationSec, 0.0001f);
+                state.Time = state.Group.Norm * durT;
+                FireEvents(entity, state.Clip, prevT, state.Time, state.Group.WrappedThisFrame, state.Group.Speed >= 0f);
+                if (!state.Group.Loop && state.Group.Norm >= 1f) state.Playing = false;
+                if (state.FadeDuration > 0f)
+                {
+                    state.FadeElapsed += dt;
+                    if (state.FadeElapsed >= state.FadeDuration) { state.FadeDuration = 0f; state.FadeT = null; state.FadeR = null; state.FadeS = null; }
+                }
+            }
+            else if (baseActive)
             {
                 float prev = state.Time;
                 float step = dt * state.Speed * animator.Speed;   // signed — negative when playing in reverse
@@ -367,6 +416,9 @@ namespace Editor.Core.Animation
                 state.FadeDuration = 0f; state.FadeT = null; state.FadeR = null; state.FadeS = null;
             }
 
+            // A direct Play() takes the entity back onto its own clock (leaves any sync group).
+            if (state.Group != null) { state.Group.Members.Remove(state); state.Group = null; }
+
             state.Clip = clip;
             state.TrackNodes = ResolveTrackNodes(state.Skeleton, clip);
             state.Time = 0f;
@@ -380,6 +432,60 @@ namespace Editor.Core.Animation
         public void Stop(ECS.GameEntity entity)
         {
             if (entity != null && _states.TryGetValue(entity.Id, out var s)) { s.Playing = false; s.StartHandled = true; }
+        }
+
+        // ------------------------------------------------------------------ synced groups (#174)
+
+        /// <summary>
+        /// Start clips on N entities frame-locked to ONE master clock (character reload + weapon reload
+        /// as one). Members share normalized time; pause/speed/stop apply to the whole group atomically.
+        /// Returns the group id (0 = nothing started). Entities already in a group leave it first.
+        /// </summary>
+        public int PlaySynced(ECS.GameEntity[] entities, string[] clips, float speed, float fade)
+        {
+            if (entities == null || clips == null || entities.Length == 0 || entities.Length != clips.Length) return 0;
+
+            var group = new SyncGroup { Id = _nextGroupId++, Speed = speed <= 0f ? 1f : speed };
+            for (int i = 0; i < entities.Length; i++)
+            {
+                if (entities[i] == null || !Play(entities[i], clips[i], fade)) continue;
+                var state = _states[entities[i].Id];
+                if (state.Group != null) state.Group.Members.Remove(state);
+                state.Group = group;
+                group.Members.Add(state);
+                if (group.Members.Count == 1)
+                {
+                    group.Duration = Math.Max(state.Clip.DurationSec, 0.0001f);   // first member = reference clock
+                    group.Loop = state.Clip.Loop;
+                }
+            }
+            if (group.Members.Count == 0) return 0;
+            _groups.Add(group);
+            return group.Id;
+        }
+
+        /// <summary>Pause/resume the whole group atomically.</summary>
+        public void PauseSynced(int groupId, bool paused)
+        {
+            foreach (var g in _groups) if (g.Id == groupId) { g.Paused = paused; return; }
+        }
+
+        /// <summary>Playback speed of the whole group (1 = authored speed of the reference clip).</summary>
+        public void SetSyncedSpeed(int groupId, float speed)
+        {
+            foreach (var g in _groups) if (g.Id == groupId) { g.Speed = speed; return; }
+        }
+
+        /// <summary>Dissolve the group; members freeze on their current pose.</summary>
+        public void StopSynced(int groupId)
+        {
+            for (int i = 0; i < _groups.Count; i++)
+            {
+                if (_groups[i].Id != groupId) continue;
+                foreach (var m in _groups[i].Members) { m.Group = null; m.Playing = false; }
+                _groups.RemoveAt(i);
+                return;
+            }
         }
 
         // ------------------------------------------------------------------ bone-masked layers (#173)
