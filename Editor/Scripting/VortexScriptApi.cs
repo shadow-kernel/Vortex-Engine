@@ -957,6 +957,17 @@ namespace Vortex
             bool g; var r = Host.MoveCharacter(feet, radius, height, move, out g, characterId); _grounded = g; return r;
         }
 
+        /// <summary>Stair-step + slope tuning (#48) for every MoveCharacter call. <paramref name="stepHeight"/> is
+        /// the tallest ledge auto-climbed (16-20 cm stairs "just work" at the 0.35 default; 0 disables); the same
+        /// distance is also used to SNAP down onto steps when walking downstairs (no bouncing). Surfaces steeper
+        /// than <paramref name="maxSlopeDeg"/> act like walls — slide, no climb. Call once in Start(); resets to
+        /// the defaults on every scene load.</summary>
+        public static void SetCharacterOptions(float stepHeight = 0.35f, float maxSlopeDeg = 50f)
+        {
+            Editor.Core.Services.Physics.CollisionService.CharacterStepHeight = stepHeight < 0f ? 0f : stepHeight;
+            Editor.Core.Services.Physics.CollisionService.CharacterMaxSlopeDeg = maxSlopeDeg;
+        }
+
         /// <summary>Ray straight DOWN from <paramref name="from"/> (up to <paramref name="maxDist"/>) against the world
         /// colliders — returns the <b>Tag</b> of the surface entity you're standing on (its material), or "" if
         /// nothing is below. This is the standard "what am I standing on?" query. Use it for material-based footsteps:

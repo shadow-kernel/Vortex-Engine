@@ -407,6 +407,8 @@ namespace Editor.Core.Services.Physics
             _triggers.Clear();
             _chars.Clear();   // characters re-register on their next MoveCharacter — don't leak across scene switches / replays
             ResetEvents();
+            CharacterStepHeight = 0.35f;   // #48: back to stock — scripts re-apply their tuning in Start()
+            CharacterMaxSlopeDeg = 50f;
             IsBuilt = true;
             if (scene == null || scene.Entities == null) return;
             foreach (var e in scene.Entities) AddRecursive(e);
@@ -555,9 +557,21 @@ namespace Editor.Core.Services.Physics
             => MoveCharacter(feet, radius, height, displacement, out grounded, 0);
 
         /// <summary>Same, but <paramref name="selfId"/> registers this character's capsule so OTHER characters can't
-        /// walk through it (multiplayer). Pass a stable id (e.g. the entity id); 0 = anonymous (no registration).</summary>
-        public static Vector3 MoveCharacter(Vector3 feet, float radius, float height, Vector3 displacement, out bool grounded, long selfId)
+        /// walk through it (multiplayer). Pass a stable id (e.g. the entity id); 0 = anonymous (no registration).
+        /// Stair-step + slope handling (#48): <paramref name="stepHeight"/> is the tallest ledge auto-climbed
+        /// (0 disables); <paramref name="maxSlopeDeg"/> is the steepest walkable slope — steeper surfaces act
+        /// like walls (slide, no climb, never grounded).</summary>
+        /// <summary>Project-tunable character-controller defaults (#48): the tallest auto-climbed ledge
+        /// and the steepest walkable slope. Scripts set them via Physics.SetCharacterOptions in Start();
+        /// reset to the stock values on every scene (re)build so projects can't leak into each other.</summary>
+        public static float CharacterStepHeight = 0.35f;
+        public static float CharacterMaxSlopeDeg = 50f;
+
+        public static Vector3 MoveCharacter(Vector3 feet, float radius, float height, Vector3 displacement, out bool grounded, long selfId,
+            float stepHeight = -1f, float maxSlopeDeg = -1f)
         {
+            if (stepHeight < 0f) stepHeight = CharacterStepHeight;
+            if (maxSlopeDeg < 0f) maxSlopeDeg = CharacterMaxSlopeDeg;
             grounded = false;
             radius = Math.Max(0.05f, radius);
             float segLen = Math.Max(0f, height - 2f * radius);
@@ -567,6 +581,8 @@ namespace Editor.Core.Services.Physics
                 if (selfId != 0) _chars[selfId] = new CharCap { Feet = From(np), R = radius, H = height };
                 return np;
             }
+            if (maxSlopeDeg < 10f) maxSlopeDeg = 10f; else if (maxSlopeDeg > 85f) maxSlopeDeg = 85f;
+            float slopeCos = (float)Math.Cos(maxSlopeDeg * Math.PI / 180.0);
             V3 p = From(feet); V3 disp = From(displacement);
 
             float dlen = disp.Len();
@@ -575,19 +591,97 @@ namespace Editor.Core.Services.Physics
             bool g = false;
             for (int i = 0; i < steps; i++)
             {
+                V3 before = p;
                 p = p + step;
                 for (int iter = 0; iter < 5; iter++)
                 {
-                    if (!Depenetrate(ref p, radius, segLen, ref g, selfId)) break;
+                    if (!Depenetrate(ref p, radius, segLen, ref g, selfId, slopeCos)) break;
+                }
+
+                // ---- stair STEP-UP (#48) ----
+                // If a wall push ate most of this substep's horizontal motion, retry it from a position
+                // lifted by stepHeight and settle back down. A real step (ledge <= stepHeight) lets the
+                // lifted capsule pass and land on top; a tall wall still blocks the lifted try -> reject.
+                float wantH = step.X * step.X + step.Z * step.Z;   // full forward progress == this (dot metric)
+                if (stepHeight > 0.001f && wantH > 1e-8f)
+                {
+                    // SIGNED progress along the intended direction — a backward wall push must read as
+                    // "blocked", not as movement (a squared-distance metric counted it as progress and
+                    // the climb stalled after the first corner frame).
+                    float got = (p.X - before.X) * step.X + (p.Z - before.Z) * step.Z;
+                    if (got < wantH * 0.5f)   // achieved < 50% of the intended forward progress
+                    {
+                        V3 lifted = new V3(before.X + step.X, before.Y + stepHeight + 0.02f, before.Z + step.Z);
+                        bool gLift = false;
+                        for (int iter = 0; iter < 5; iter++)
+                            if (!Depenetrate(ref lifted, radius, segLen, ref gLift, selfId, slopeCos)) break;
+                        float liftGot = (lifted.X - before.X) * step.X + (lifted.Z - before.Z) * step.Z;
+                        if (liftGot > got + 1e-8f && liftGot > wantH * 0.5f)
+                        {
+                            // Settle onto the step surface in tunnel-safe increments — VERTICAL contact
+                            // resolution, so the round capsule bottom can rest on the step's top edge
+                            // mid-climb instead of being ejected off it.
+                            V3 settle = lifted; bool gSet = false;
+                            float drop = stepHeight + 0.04f;
+                            while (drop > 0f && !gSet)
+                            {
+                                float dd = Math.Min(radius * 0.5f, drop);
+                                settle = new V3(settle.X, settle.Y - dd, settle.Z);
+                                drop -= dd;
+                                for (int iter = 0; iter < 5; iter++)
+                                    if (!Depenetrate(ref settle, radius, segLen, ref gSet, selfId, slopeCos, settleVertical: true)) break;
+                            }
+                            // Walkability guard: the surface under the landing must be walkable ground —
+                            // without it, repeated step-ups would slowly climb a slope steeper than the
+                            // limit. Probe down far enough to also cover mid-corner-climb frames.
+                            bool walkable = false;
+                            if (gSet)
+                            {
+                                if (Raycast(To(new V3(settle.X, settle.Y + radius, settle.Z)), new Vector3(0f, -1f, 0f),
+                                        stepHeight + radius + 0.2f, ~0, out _, out Vector3 gn, out _, out _))
+                                    walkable = gn.Y >= slopeCos;
+                            }
+                            if (gSet && walkable && settle.Y <= before.Y + stepHeight + 0.01f && settle.Y >= before.Y - 0.05f)
+                            {
+                                p = settle;
+                                g = true;
+                            }
+                        }
+                    }
                 }
             }
+
+            // ---- ground SNAP (#48) ----
+            // Walking down steps/slopes keeps contact instead of briefly floating (gravity alone takes
+            // several frames per 20 cm step, which reads as bouncing + kills footstep grounding checks).
+            // Only when the caller isn't moving upward (jump ascent must not be glued to the floor).
+            if (!g && stepHeight > 0.001f && disp.Y <= 0.001f && dlen > 1e-6f)
+            {
+                V3 snap = p; bool gSnap = false;
+                float drop = stepHeight;
+                while (drop > 0f && !gSnap)
+                {
+                    float dd = Math.Min(radius * 0.5f, drop);
+                    snap = new V3(snap.X, snap.Y - dd, snap.Z);
+                    drop -= dd;
+                    for (int iter = 0; iter < 5; iter++)
+                        if (!Depenetrate(ref snap, radius, segLen, ref gSnap, selfId, slopeCos)) break;
+                }
+                if (gSnap && snap.Y <= p.Y + 0.001f) { p = snap; g = true; }
+            }
+
             grounded = g;
             if (selfId != 0) _chars[selfId] = new CharCap { Feet = p, R = radius, H = height };
             return To(p);
         }
 
-        // Returns true if any push happened this pass.
-        private static bool Depenetrate(ref V3 feet, float r, float segLen, ref bool grounded, long selfId)
+        // Returns true if any push happened this pass. slopeCos (#48): surfaces whose contact normal
+        // has Y >= slopeCos count as walkable ground; steeper ones act like walls — their push is
+        // flattened to horizontal (slide, no slow depenetration-climb) and never sets grounded.
+        // settleVertical (#48): the step-up SETTLE resolves upward-ish contacts PURELY VERTICALLY —
+        // a capsule's round bottom resting on a step's top EDGE otherwise gets pushed back out
+        // horizontally and the climb never completes (the walkability raycast guards steep ramps).
+        private static bool Depenetrate(ref V3 feet, float r, float segLen, ref bool grounded, long selfId, float slopeCos = 0.5f, bool settleVertical = false)
         {
             // capsule segment: from feet+r to feet+r+segLen (vertical)
             V3 c0 = new V3(feet.X, feet.Y + r, feet.Z);
@@ -648,8 +742,24 @@ namespace Editor.Core.Services.Physics
 
             if (bestDepth > 1e-5f)
             {
+                if (settleVertical && bestNormal.Y > 0.15f)
+                {
+                    // Landing phase of a step-up: resolve the contact straight up so the capsule comes
+                    // to rest ON the step instead of being ejected off its edge.
+                    feet = new V3(feet.X, feet.Y + bestDepth / Math.Max(bestNormal.Y, 0.35f), feet.Z);
+                    grounded = true;
+                    return true;
+                }
+                // Slope limit (#48): a too-steep surface must not be climbable via repeated push-out —
+                // flatten its push to horizontal so the character slides along it like a wall.
+                if (bestNormal.Y > 0.15f && bestNormal.Y < slopeCos)
+                {
+                    V3 flat = new V3(bestNormal.X, 0f, bestNormal.Z);
+                    float fl = flat.Len();
+                    if (fl > 1e-6f) bestNormal = flat * (1f / fl);
+                }
                 feet = feet + bestNormal * bestDepth;
-                if (bestNormal.Y > 0.5f) grounded = true;
+                if (bestNormal.Y >= slopeCos) grounded = true;
                 return true;
             }
             return false;
