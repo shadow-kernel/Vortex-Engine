@@ -89,6 +89,14 @@ namespace Vortex
         bool IsAnimationPlaying(long entityId, string clip);
         float GetAnimationTime(long entityId);
 
+        // Bone sockets: attach an entity to a skeleton bone at runtime (weapon pickup), detach it
+        // (keepWorldPosition true = stays where the hand left it), query a bone's world transform
+        // (muzzle raycast origins, VFX spawn points), and list a skeleton's current attachments.
+        bool AttachEntityToBone(long entityId, long targetId, string bone, Vector3 offsetPos, Vector3 offsetRotEuler);
+        bool DetachEntityFromBone(long entityId, bool keepWorldPosition);
+        bool TryGetBoneTransform(long targetId, string bone, out Vector3 position, out Vector3 rotationEuler);
+        long[] GetAttachedEntities(long targetId);
+
         // 2D UI overlay (immediate mode), coordinates in viewport pixels (top-left origin).
         void UIRect(float x, float y, float w, float h, float r, float g, float b, float a, float radius);
         void UIText(float x, float y, float w, float h, string text, float size, float r, float g, float b, float a, int align, int weight);
@@ -256,6 +264,20 @@ namespace Vortex
 
         /// <summary>Current playback time (seconds) of this entity's animation.</summary>
         public float AnimationTime { get { return Host != null ? Host.GetAnimationTime(EntityId) : 0f; } }
+
+        /// <summary>Attach THIS entity to a bone of an animated entity — it follows the bone through every
+        /// clip from now on (pistol into the hand: <c>AttachTo(character, "Hand_R");</c>). Offsets are in
+        /// bone space. Returns false on unknown bone or attach cycle. Pass target 0 to use the nearest
+        /// ancestor with an Animator.</summary>
+        public bool AttachTo(long targetEntity, string bone) { return AttachTo(targetEntity, bone, Vector3.Zero, Vector3.Zero); }
+        public bool AttachTo(long targetEntity, string bone, Vector3 offsetPos, Vector3 offsetRotEuler)
+            { return Host != null && Host.AttachEntityToBone(EntityId, targetEntity, bone, offsetPos, offsetRotEuler); }
+
+        /// <summary>Detach this entity from its bone. keepWorldPosition=true (default) leaves it exactly
+        /// where the hand released it — no pop; false restores the local transform it had before the
+        /// first AttachTo (holster-to-origin).</summary>
+        public bool Detach(bool keepWorldPosition = true)
+            { return Host != null && Host.DetachEntityFromBone(EntityId, keepWorldPosition); }
 
         // ---- Coroutines + timers (#37) ----
 
@@ -1067,6 +1089,39 @@ namespace Vortex
 
         /// <summary>Current playback time in seconds.</summary>
         public static float Time(long entityId) { return Host != null ? Host.GetAnimationTime(entityId) : 0f; }
+
+        // ---- bone sockets (#170/#171) ----
+
+        /// <summary>Attach an entity to a bone of an animated entity (offsets in bone space). It follows
+        /// the bone through every clip until detached. False on unknown bone or attach cycle.</summary>
+        public static bool Attach(long entityId, long targetEntity, string bone)
+            { return Attach(entityId, targetEntity, bone, Vector3.Zero, Vector3.Zero); }
+        public static bool Attach(long entityId, long targetEntity, string bone, Vector3 offsetPos, Vector3 offsetRotEuler)
+            { return Host != null && Host.AttachEntityToBone(entityId, targetEntity, bone, offsetPos, offsetRotEuler); }
+
+        /// <summary>Detach an entity from its bone. keepWorldPosition=true = no pop (stays where the hand
+        /// left it); false restores its pre-attach local transform.</summary>
+        public static bool Detach(long entityId, bool keepWorldPosition = true)
+            { return Host != null && Host.DetachEntityFromBone(entityId, keepWorldPosition); }
+
+        /// <summary>World transform of a bone THIS frame (animated pose while playing, else bind pose) —
+        /// the muzzle-raycast / VFX-spawn query. Rotation is Euler degrees (engine ZXY order).</summary>
+        public static bool TryGetBoneTransform(long targetEntity, string bone, out Vector3 position, out Vector3 rotationEuler)
+        {
+            position = default(Vector3); rotationEuler = default(Vector3);
+            return Host != null && Host.TryGetBoneTransform(targetEntity, bone, out position, out rotationEuler);
+        }
+
+        /// <summary>World position of a bone (Vector3.Zero when the bone/skeleton can't resolve).</summary>
+        public static Vector3 BonePosition(long targetEntity, string bone)
+        {
+            Vector3 p, r;
+            return Host != null && Host.TryGetBoneTransform(targetEntity, bone, out p, out r) ? p : Vector3.Zero;
+        }
+
+        /// <summary>Script handles of every entity currently socketed to the target's bones.</summary>
+        public static long[] GetAttachedEntities(long targetEntity)
+            { return Host != null ? Host.GetAttachedEntities(targetEntity) : new long[0]; }
     }
 
     /// <summary>

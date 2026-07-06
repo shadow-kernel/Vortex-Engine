@@ -33,6 +33,7 @@ namespace Editor.ECS
     [KnownType(typeof(Components.Audio.AudioListener))]
     [KnownType(typeof(Components.Audio.ReverbZone))]
     [KnownType(typeof(Components.Animation.Animator))]
+    [KnownType(typeof(Components.Animation.BoneAttachment))]
     [KnownType(typeof(Components.Animation.AnimatorClipEntry))]
     [KnownType(typeof(Components.Scripting.Script))]
     public class GameEntity : Core.ViewModelBase, IEngineEntity

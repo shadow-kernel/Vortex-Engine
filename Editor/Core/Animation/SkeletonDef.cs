@@ -34,6 +34,7 @@ namespace Editor.Core.Animation
         public SkeletonBone[] Bones = new SkeletonBone[0];
 
         private float[] _bindPalette;
+        private Matrix4x4[] _bindWorlds;
         private Dictionary<string, int> _nodeByName;
 
         public bool IsValid => Bones != null && Bones.Length > 0 && Nodes != null && Nodes.Length > 0;
@@ -122,6 +123,10 @@ namespace Editor.Core.Animation
             }
             return worlds;
         }
+
+        /// <summary>Cached bind-pose node worlds (bone sockets query these when nothing is playing).
+        /// Callers must NOT mutate the returned array.</summary>
+        public Matrix4x4[] BindNodeWorldsCached() => _bindWorlds ?? (_bindWorlds = BindNodeWorlds());
 
         /// <summary>
         /// The bind-pose palette (inverseBind x bindWorld per bone, flattened row-major). Used when a

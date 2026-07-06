@@ -68,6 +68,7 @@ namespace Editor.Core.Serialization
             // Animation
             typeof(Editor.ECS.Components.Animation.Animator),
             typeof(Editor.ECS.Components.Animation.AnimatorClipEntry),
+            typeof(Editor.ECS.Components.Animation.BoneAttachment),
 
             // Scripting
             typeof(Script),

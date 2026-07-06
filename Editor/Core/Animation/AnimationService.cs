@@ -46,6 +46,7 @@ namespace Editor.Core.Animation
             public Vector3[] FadeT; public Quaternion[] FadeR; public Vector3[] FadeS;
             public float FadeDuration, FadeElapsed;
             public float[] Palette;               // current pose, flattened (boneCount * 16)
+            public Matrix4x4[] NodeWorlds;        // model-space node worlds of the SAME pose (bone sockets read these)
         }
 
         // ------------------------------------------------------------------ caches
@@ -386,7 +387,55 @@ namespace Editor.Core.Animation
                 }
             }
 
-            return skel.FlattenPalette(ComposeWorlds(skel, t, r, s));
+            // Retain the node worlds alongside the palette: bone sockets and GetBoneWorldTransform read
+            // the EXACT pose the skinning used — no second clip sample, no drift.
+            var worlds = ComposeWorlds(skel, t, r, s);
+            state.NodeWorlds = worlds;
+            return skel.FlattenPalette(worlds);
+        }
+
+        /// <summary>
+        /// This frame's model-space node worlds for an Animator owner (bone sockets / bone queries):
+        /// the animated pose while playing, else the cached bind pose. False when no skeleton resolves.
+        /// </summary>
+        public bool TryGetNodeWorlds(ECS.GameEntity animatorOwner, out SkeletonDef skeleton, out Matrix4x4[] worlds)
+        {
+            skeleton = null; worlds = null;
+            if (animatorOwner == null) return false;
+
+            if (_states.TryGetValue(animatorOwner.Id, out var state) && state.Skeleton != null)
+            {
+                skeleton = state.Skeleton;
+                worlds = state.NodeWorlds;
+            }
+            if (skeleton == null) skeleton = ResolveSkeletonFor(animatorOwner);
+            if (skeleton == null || !skeleton.IsValid) return false;
+            if (worlds == null) worlds = skeleton.BindNodeWorldsCached();
+            return true;
+        }
+
+        /// <summary>
+        /// The entity whose skinned mesh actually renders (self or first descendant with a skinned model) —
+        /// its world matrix frames the model-space bone worlds, exactly like the skinning draw.
+        /// </summary>
+        public ECS.GameEntity FindSkinnedMeshEntity(ECS.GameEntity owner)
+        {
+            if (owner == null) return null;
+            var mr = owner.GetComponent<ECS.Components.Rendering.MeshRenderer>();
+            if (mr != null)
+            {
+                var sk = GetSkeleton(mr.MeshPath);
+                if (sk != null && sk.IsValid) return owner;
+            }
+            if (owner.Children != null)
+            {
+                foreach (var c in owner.Children)
+                {
+                    var hit = FindSkinnedMeshEntity(c);
+                    if (hit != null) return hit;
+                }
+            }
+            return null;
         }
 
         /// <summary>Map clip tracks to skeleton node indices (bone NAMES -> node table).</summary>

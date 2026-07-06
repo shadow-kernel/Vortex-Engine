@@ -616,6 +616,7 @@ namespace Editor.Scripting
 
             // Fresh Animator playback states for this run; animation-event markers route to OnAnimationEvent.
             Editor.Core.Animation.AnimationService.Instance.ResetStates();
+            Editor.Core.Animation.BoneSocketService.Instance.ResetRuntime();
             if (!_animEventsHooked)
             {
                 Editor.Core.Animation.AnimationService.Instance.AnimationEvent += OnAnimationServiceEvent;
@@ -704,7 +705,12 @@ namespace Editor.Scripting
 
             // Skeletal animation: advance every Animator AFTER behaviours ran, so a same-frame
             // PlayAnimation() takes effect immediately. This is the one tick all three play drivers share.
-            try { Editor.Core.Animation.AnimationService.Instance.Step(_currentScene, dt); }
+            // Bone sockets apply right after — animation -> sockets -> (submit reads final transforms).
+            try
+            {
+                Editor.Core.Animation.AnimationService.Instance.Step(_currentScene, dt);
+                Editor.Core.Animation.BoneSocketService.Instance.Apply(_currentScene);
+            }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] Animation step error: " + ex.Message); }
 
             // Collision/trigger events fire AFTER everyone moved this tick, so overlaps are tested at final positions.
@@ -911,6 +917,7 @@ namespace Editor.Scripting
             _behavioursByEntity.Clear();
             try { Editor.Core.Services.Physics.CollisionService.ResetEvents(); Editor.Core.Services.Physics.CollisionService.ClearCharacters(); } catch { }
             try { Editor.Core.Animation.AnimationService.Instance.ResetStates(); } catch { }
+            try { Editor.Core.Animation.BoneSocketService.Instance.ResetRuntime(); } catch { }
             // Return the scene atmosphere to editor defaults: scripted ambient stops overriding and any
             // scripted fog is switched off — otherwise the horror scene's darkness/fog sticks to the
             // EDITOR viewport after leaving play mode (the fog CB is persistent frame state).
@@ -1265,6 +1272,45 @@ namespace Editor.Scripting
         {
             return _entitiesById.TryGetValue(entityId, out var e)
                 ? Editor.Core.Animation.AnimationService.Instance.GetTime(e) : 0f;
+        }
+
+        // --- bone sockets (#170/#171: Attach/Detach/GetBoneTransform -> BoneSocketService) ---
+
+        bool Vortex.IScriptHost.AttachEntityToBone(long entityId, long targetId, string bone,
+            Vortex.Vector3 offsetPos, Vortex.Vector3 offsetRotEuler)
+        {
+            if (!_entitiesById.TryGetValue(entityId, out var e)) return false;
+            _entitiesById.TryGetValue(targetId, out var target);   // 0/unknown = nearest ancestor Animator
+            return Editor.Core.Animation.BoneSocketService.Instance.Attach(e, target, bone,
+                new System.Numerics.Vector3(offsetPos.X, offsetPos.Y, offsetPos.Z),
+                new System.Numerics.Vector3(offsetRotEuler.X, offsetRotEuler.Y, offsetRotEuler.Z));
+        }
+
+        bool Vortex.IScriptHost.DetachEntityFromBone(long entityId, bool keepWorldPosition)
+        {
+            return _entitiesById.TryGetValue(entityId, out var e)
+                && Editor.Core.Animation.BoneSocketService.Instance.Detach(e, keepWorldPosition);
+        }
+
+        bool Vortex.IScriptHost.TryGetBoneTransform(long targetId, string bone,
+            out Vortex.Vector3 position, out Vortex.Vector3 rotationEuler)
+        {
+            position = default(Vortex.Vector3); rotationEuler = default(Vortex.Vector3);
+            if (!_entitiesById.TryGetValue(targetId, out var e)) return false;
+            if (!Editor.Core.Animation.BoneSocketService.Instance.TryGetBoneTransform(e, bone, out var p, out var r))
+                return false;
+            position = new Vortex.Vector3(p.X, p.Y, p.Z);
+            rotationEuler = new Vortex.Vector3(r.X, r.Y, r.Z);
+            return true;
+        }
+
+        long[] Vortex.IScriptHost.GetAttachedEntities(long targetId)
+        {
+            if (!_entitiesById.TryGetValue(targetId, out var e)) return new long[0];
+            var list = Editor.Core.Animation.BoneSocketService.Instance.GetAttachedTo(e);
+            var result = new long[list.Count];
+            for (int i = 0; i < list.Count; i++) result[i] = HandleForEntity(list[i]);
+            return result;
         }
 
         [System.Runtime.InteropServices.DllImport("user32.dll")]
