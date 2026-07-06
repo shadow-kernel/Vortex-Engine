@@ -284,6 +284,10 @@ namespace Editor.Core.Services
             if (animator != null && animator.IsEnabled)
                 Core.Animation.AnimationService.Instance.TryGetPalette(animatorOwner, meshRenderer.MeshPath, out bonePalette, out boneCount);
 
+            // Render layer (#175): 0 = world, 1 = first-person viewmodel (second pass, own FOV, depth
+            // cleared, casts no shadows). Travels with every submit variant below.
+            int layer = meshRenderer.RenderLayer;
+
             // Imported models (no explicit .vmat) are multi-submesh with per-submesh colored materials —
             // submit EVERY submesh, not just the first, so e.g. a Kenney tree shows trunk + leaves.
             var ext = System.IO.Path.GetExtension(meshRenderer.MeshPath)?.ToLowerInvariant();
@@ -296,9 +300,9 @@ namespace Editor.Core.Services
                     if (_submeshMeshCache.TryGetValue(sub, out long subMesh) && subMesh >= 0)
                     {
                         if (bonePalette != null && Core.Animation.AnimationService.Instance.IsMeshSkinned(subMesh))
-                            VortexAPI.SubmitSkinnedMesh(subMesh, GetMaterialForMeshPath(sub), worldMatrix, bonePalette, boneCount);
+                            VortexAPI.SubmitSkinnedMesh(subMesh, GetMaterialForMeshPath(sub), worldMatrix, bonePalette, boneCount, layer);
                         else
-                            VortexAPI.SubmitMeshForRendering(subMesh, GetMaterialForMeshPath(sub), worldMatrix);
+                            VortexAPI.SubmitMeshForRenderingLayered(subMesh, GetMaterialForMeshPath(sub), worldMatrix, layer);
                         _submitN++;
                         any = true;
                     }
@@ -310,9 +314,9 @@ namespace Editor.Core.Services
             // Primitive / single mesh / explicitly-assigned .vmat:
             long materialId = GetOrCreateMaterial(entity.Id, meshRenderer);
             if (bonePalette != null && Core.Animation.AnimationService.Instance.IsMeshSkinned(meshId))
-                VortexAPI.SubmitSkinnedMesh(meshId, materialId, worldMatrix, bonePalette, boneCount);
+                VortexAPI.SubmitSkinnedMesh(meshId, materialId, worldMatrix, bonePalette, boneCount, layer);
             else
-                VortexAPI.SubmitMeshForRendering(meshId, materialId, worldMatrix);
+                VortexAPI.SubmitMeshForRenderingLayered(meshId, materialId, worldMatrix, layer);
             _submitN++;
         }
 

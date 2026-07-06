@@ -63,7 +63,17 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
                 ? matPath + "\nDouble-click: open in the Material Editor"
                 : "Drop a .vmat here — double-click to open it in the Material Editor";
 
+            // First-person viewmodel layer (#175): RenderLayer 1 = viewmodel, 0 = world.
+            ViewmodelLayerCheckBox.IsChecked = _meshRenderer.RenderLayer == 1;
+
             _isUpdating = false;
+        }
+
+        private void ViewmodelLayerCheckBox_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_isUpdating || _meshRenderer == null) return;
+            _meshRenderer.RenderLayer = ViewmodelLayerCheckBox.IsChecked == true ? 1 : 0;
+            GamePreview.GamePreviewView.RequestResubmit();
         }
 
         private void MeshComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)

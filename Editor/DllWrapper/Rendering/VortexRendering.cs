@@ -255,6 +255,28 @@ namespace Editor.DllWrapper
         }
 
         [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SubmitMeshInstancesEx(long meshId, long materialId, float[] worldMatrices, int count, int layer);
+
+        /// <summary>Layer-aware submit (#175): layer 0 = world, 1 = first-person VIEWMODEL (second pass
+        /// after a depth clear, own FOV, never clips walls, casts no shadows).</summary>
+        public static void SubmitMeshForRenderingLayered(long meshId, long materialId, float[] worldMatrix, int layer)
+        {
+            if (layer <= 0 || worldMatrix == null) { SubmitRenderItem(meshId, materialId, worldMatrix); return; }
+            try { SubmitMeshInstancesEx(meshId, materialId, worldMatrix, 1, layer); }
+            catch { SubmitRenderItem(meshId, materialId, worldMatrix); /* older VortexAPI.dll */ }
+        }
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetViewmodelFOV(float fovDegrees);
+
+        /// <summary>The first-person layer's own vertical FOV (degrees, default 54) — world FOV never
+        /// distorts the viewmodel.</summary>
+        public static void SetViewmodelFov(float fovDegrees)
+        {
+            try { SetViewmodelFOV(fovDegrees); } catch { }
+        }
+
+        [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void SubmitGizmoItem(long meshId, long materialId, float[] worldMatrix);
 
         /// <summary>Submit an editor gizmo mesh (move/rotate/scale handle or selection outline) — rendered ALWAYS

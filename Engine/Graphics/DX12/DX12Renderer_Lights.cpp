@@ -43,6 +43,17 @@ namespace vortex::graphics::dx12
 
 	if (m_per_frame_cb_mapped)
 	memcpy(m_per_frame_cb_mapped, &m_frame_constants, sizeof(m_frame_constants));
+
+	// Viewmodel b0 clone (#175): identical frame constants with ONLY the projection swapped to the
+	// viewmodel FOV (same view, same near/far, same aspect) — world FOV distortion never reaches the
+	// first-person arms/weapon. Written here (view matrix is local) like the main copy above.
+	if (m_viewmodel_cb_mapped)
+	{
+		PerFrameConstants vm = m_frame_constants;
+		XMMATRIX vmProj = XMMatrixPerspectiveFovLH(XMConvertToRadians(m_viewmodel_fov), aspect, 0.1f, 1000.0f);
+		XMStoreFloat4x4(&vm.view_projection, view * vmProj);
+		memcpy(m_viewmodel_cb_mapped, &vm, sizeof(vm));
+	}
 			
 	// Update light buffer
 	if (m_light_cb_mapped)

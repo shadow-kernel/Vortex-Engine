@@ -110,6 +110,9 @@ namespace vortex::graphics::dx12
 				for (size_t k = a; k < b; ++k)
 				{
 					const auto& it = m_render_queue[k];
+					// Viewmodel items (#175) render with their OWN projection — the main frustum is wrong
+					// for them and they must never be erased here.
+					if (it.layer != 0) { vis[k] = 1; continue; }
 					XMFLOAT4 bd;
 					auto cit = cache.find(it.mesh_id);
 					if (cit == cache.end())
@@ -155,6 +158,9 @@ namespace vortex::graphics::dx12
 			std::sort(m_render_queue.begin(), m_render_queue.end(),
 				[&eye](const RenderItem& a, const RenderItem& b)
 				{
+					// Layer is the PRIMARY key (#175): viewmodel runs cluster at the TAIL so the record
+					// loop can draw [0, vmStart) as the world pass and [vmStart, N) after the depth clear.
+					if (a.layer != b.layer) return a.layer < b.layer;
 					if (a.material_id != b.material_id) return a.material_id < b.material_id;
 					if (a.mesh_id != b.mesh_id) return a.mesh_id < b.mesh_id;
 					float ax = a.world_matrix._41 - eye.x, ay = a.world_matrix._42 - eye.y, az = a.world_matrix._43 - eye.z;
@@ -191,18 +197,22 @@ namespace vortex::graphics::dx12
 			{
 				const auto idMesh = m_render_queue[i].mesh_id;
 				const auto idMat = m_render_queue[i].material_id;
+				const u32 idLayer = m_render_queue[i].layer;
 				const bool skinnedRun = m_render_queue[i].bone_offset != NO_BONES;
 				size_t j = i;
 				if (skinnedRun)
 					j = i + 1;   // each skinned item is its OWN run (needs its own bone palette bound)
 				else
+					// Layer in the break condition (#175): a world item and a viewmodel item sharing
+					// mesh+material must never merge into one run (correct by construction, not just by sort).
 					while (j < objectCount && m_render_queue[j].mesh_id == idMesh && m_render_queue[j].material_id == idMat
-						&& m_render_queue[j].bone_offset == NO_BONES) ++j;
+						&& m_render_queue[j].bone_offset == NO_BONES && m_render_queue[j].layer == idLayer) ++j;
 				u32 cnt = (u32)(j - i);
 				Mesh* meshp = reg.get_mesh(idMesh);
 				float minx = 0, miny = 0, minz = 0, maxx = 1, maxy = 1, maxz = 1;
 				if (meshp && meshp->is_valid()) { meshp->get_min(minx, miny, minz); meshp->get_max(maxx, maxy, maxz); }
 				DrawRun run{};
+				run.layer = idLayer;
 				run.start = i; run.count = cnt; run.mesh = idMesh; run.mat = idMat; run.meshp = meshp;
 				run.defaultBounds = (minx == 0.f && miny == 0.f && minz == 0.f && maxx == 1.f && maxy == 1.f && maxz == 1.f);
 				run.lcx = (minx + maxx) * 0.5f; run.lcy = (miny + maxy) * 0.5f; run.lcz = (minz + maxz) * 0.5f;
@@ -253,7 +263,8 @@ namespace vortex::graphics::dx12
 				const auto& item = m_render_queue[k];
 				bool visible = true;
 					int instLod = 0;   // geometric-LOD level for this instance (0 = full)
-				if (!run.defaultBounds)
+				// Viewmodel runs (#175) bypass frustum/distance culling — their projection differs.
+				if (!run.defaultBounds && run.layer == 0)
 				{
 					const XMFLOAT4X4& W = item.world_matrix;
 					XMVECTOR wc = XMVector3TransformCoord(XMVectorSet(run.lcx, run.lcy, run.lcz, 1.f), XMLoadFloat4x4(&W));
@@ -320,7 +331,7 @@ namespace vortex::graphics::dx12
 					const DrawRun& run = m_draw_runs[ri];
 					const auto& item = m_render_queue[k];
 					bool visible = true; int lod = 0;
-					if (!run.defaultBounds)
+					if (!run.defaultBounds && run.layer == 0)   // #175: viewmodel bypasses the main frustum
 					{
 						const XMFLOAT4X4& W = item.world_matrix;
 						XMVECTOR wc = XMVector3TransformCoord(XMVectorSet(run.lcx, run.lcy, run.lcz, 1.f), XMLoadFloat4x4(&W));
@@ -432,9 +443,15 @@ namespace vortex::graphics::dx12
 		// Transparent runs (#33) are deferred: their instances are already culled+packed in the slab,
 		// but they draw AFTER every opaque, sorted back-to-front. Wireframe mode ignores transparency
 		// (debug view shows everything), skinned + custom-shader materials stay opaque in v1.
-		std::vector<u32> transparentRuns;
+		// #175: the whole record (opaque loop + transparent tail) is a lambda over a RUN RANGE — pass 1
+		// draws the world runs, pass 2 the viewmodel tail after a depth clear + b0 swap. cbSlot is
+		// SHARED across both passes (per-run CB slots must not alias); transparentRuns is per-pass
+		// (world transparents must not re-draw over the cleared depth).
 		u32 cbSlot = 0;
-		for (size_t r = 0; r < runN; ++r)
+		auto record_pass = [&](size_t rBegin, size_t rEnd)
+		{
+		std::vector<u32> transparentRuns;
+		for (size_t r = rBegin; r < rEnd; ++r)
 		{
 			const DrawRun& run = m_draw_runs[r];
 			m_instances_drawn += run.visible;
@@ -603,6 +620,26 @@ namespace vortex::graphics::dx12
 				}
 				++m_draw_call_count;
 			}
+		}
+		};
+
+		// Runs are layer-sorted, so the viewmodel set is a contiguous TAIL. vmStart = its first run.
+		size_t vmStart = runN;
+		for (size_t r = 0; r < runN; ++r) if (m_draw_runs[r].layer != 0) { vmStart = r; break; }
+
+		record_pass(0, vmStart);
+
+		if (vmStart < runN)
+		{
+			// Viewmodel pass (#175): clear depth so the first-person weapon/arms NEVER clip world
+			// geometry, swap b0 to the viewmodel projection (own FOV, identical lighting fields —
+			// lighting is world-space, so only the projection changes), draw the tail runs, then
+			// restore b0 for everything recorded after (wire gizmos, preview restores, later passes).
+			m_command_list->ClearDepthStencilView(m_active_dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+			if (m_viewmodel_cb)
+				m_command_list->SetGraphicsRootConstantBufferView(0, m_viewmodel_cb->GetGPUVirtualAddress());
+			record_pass(vmStart, runN);
+			m_command_list->SetGraphicsRootConstantBufferView(0, m_per_frame_cb->GetGPUVirtualAddress());
 		}
 		}
 

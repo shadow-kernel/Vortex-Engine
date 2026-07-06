@@ -74,6 +74,9 @@ namespace vortex::graphics::dx12
 		// NO_BONES = rigid item (the default; every existing submit path is untouched).
 		u32 bone_offset{ NO_BONES };
 		u32 bone_count{ 0 };
+		// Render layer (#175): 0 = world, 1 = first-person VIEWMODEL — drawn in a second pass after a
+		// depth clear with its own projection, excluded from shadow casting + SSAO + frustum cull.
+		u32 layer{ 0 };
 	};
 	
 	/// <summary>
@@ -137,13 +140,13 @@ namespace vortex::graphics::dx12
 		void submit_gizmo_wire_item(const RenderItem& item);
 		// Submit `count` instances of the SAME mesh+material in ONE call (world_matrices = count * 16 floats,
 		// row-major 4x4 each). Avoids one P/Invoke per instance — the path for spawning large crowds.
-		void submit_mesh_instances(id::id_type mesh, id::id_type material, const float* world_matrices, u32 count);
+		void submit_mesh_instances(id::id_type mesh, id::id_type material, const float* world_matrices, u32 count, u32 layer = 0);
 		// Submit a SKINNED mesh: world matrix + this frame's bone palette (bone_count row-major 4x4s,
 		// each = inverseBind * boneWorld — computed by the managed AnimationService). The palette is staged
 		// CPU-side and uploaded to the GPU bone buffer on the next queue swap. Skinned items must be
 		// re-submitted every frame their pose changes (they are inherently dynamic).
 		void submit_skinned_item(id::id_type mesh, id::id_type material, const float* world_matrix,
-			const float* bone_matrices, u32 bone_count);
+			const float* bone_matrices, u32 bone_count, u32 layer = 0);
 		void clear_render_queue();
 
 		// Camera
@@ -308,6 +311,9 @@ namespace vortex::graphics::dx12
 		// Vertical FOV (degrees) used by the live view camera (editor play + standalone). Settable from the game.
 		void set_field_of_view(float fov_degrees) { if (fov_degrees >= 30.0f && fov_degrees <= 120.0f) m_fov_degrees = fov_degrees; }
 		float field_of_view() const { return m_fov_degrees; }
+		// Viewmodel FOV (#175): the first-person layer's own projection (world FOV distortion never
+		// touches the arms/weapon). Wider clamp than the world FOV — ADS zooms want < 30.
+		void set_viewmodel_fov(float fov_degrees) { if (fov_degrees >= 10.0f && fov_degrees <= 120.0f) m_viewmodel_fov = fov_degrees; }
 		// Generic render-distance cull (world units; 0 = disabled). Set from the game's graphics settings.
 		void set_render_distance(float d) { m_render_distance = d >= 0.0f ? d : 0.0f; }
 		float render_distance() const { return m_render_distance; }
@@ -519,6 +525,11 @@ namespace vortex::graphics::dx12
 		// Per-frame constants (camera, lighting)
 		ComPtr<ID3D12Resource> m_per_frame_cb;
 		void* m_per_frame_cb_mapped{ nullptr };
+		// #175: 256B PerFrameConstants clone with view x viewmodel-projection — bound as b0 only around
+		// the viewmodel draws (the shadow pass's per-tile clone pattern; m_per_frame_cb stays untouched).
+		ComPtr<ID3D12Resource> m_viewmodel_cb;
+		void* m_viewmodel_cb_mapped{ nullptr };
+		float m_viewmodel_fov{ 54.0f };
 
 	struct alignas(256) PerFrameConstants
 		{
@@ -674,6 +685,9 @@ namespace vortex::graphics::dx12
 			bool skinned{ false };
 			u32 boneOffset{ 0 };
 			u32 boneCount{ 0 };
+			// #175: runs are layer-homogeneous (layer is the primary sort key + a run-break condition);
+			// viewmodel runs cluster at the tail and draw in the second (depth-cleared, own-proj) pass.
+			u32 layer{ 0 };
 		};
 		std::vector<DrawRun> m_draw_runs;     // per-frame scratch (reused)
 		std::vector<u32> m_item_run;          // run index per render-queue item (for flat parallel cull)

@@ -220,11 +220,21 @@ namespace Editor.DllWrapper
             catch { return false; }
         }
 
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SubmitSkinnedMeshForRenderingEx(long meshId, long materialId,
+            float[] worldMatrix, float[] boneMatrices, int boneCount, int layer);
+
         /// <summary>Submit a skinned mesh for this frame: row-major world float[16] + bone palette
-        /// (boneCount row-major 4x4s, each = inverseBind * boneWorld). Re-submit every frame the pose changes.</summary>
-        public static void SubmitSkinnedMesh(long meshId, long materialId, float[] world, float[] bonePalette, int boneCount)
+        /// (boneCount row-major 4x4s, each = inverseBind * boneWorld). Re-submit every frame the pose
+        /// changes. layer 1 = first-person viewmodel arms (#175).</summary>
+        public static void SubmitSkinnedMesh(long meshId, long materialId, float[] world, float[] bonePalette, int boneCount, int layer = 0)
         {
             if (world == null || bonePalette == null || boneCount <= 0) return;
+            if (layer > 0)
+            {
+                try { SubmitSkinnedMeshForRenderingEx(meshId, materialId, world, bonePalette, boneCount, layer); return; }
+                catch { /* older VortexAPI.dll — fall through to the unlayered export */ }
+            }
             try { SubmitSkinnedMeshForRendering(meshId, materialId, world, bonePalette, boneCount); }
             catch { /* older VortexAPI.dll without skinning — degrade gracefully */ }
         }

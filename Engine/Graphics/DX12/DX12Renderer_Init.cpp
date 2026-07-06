@@ -34,6 +34,13 @@ namespace vortex::graphics::dx12
 	D3D12_RANGE r{0,0};
 	if (FAILED(m_per_frame_cb->Map(0, &r, &m_per_frame_cb_mapped))) return false;
 
+	// Viewmodel b0 clone (#175): same PerFrameConstants, view x viewmodel-projection — created eagerly
+	// (NOT in the lazy shadow path) so the first-person layer works in shadow-free scenes too.
+	rd.Width = 256;
+	if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_viewmodel_cb))))
+	return false;
+	if (FAILED(m_viewmodel_cb->Map(0, &r, &m_viewmodel_cb_mapped))) return false;
+
 	// Per-object constant buffer: ONE 256-byte slot per DRAW RUN (mesh+material), not per instance.
 	rd.Width = (UINT64)256 * MAX_DRAW_RUNS;
 	if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_per_object_cb))))

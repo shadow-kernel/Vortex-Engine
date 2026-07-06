@@ -126,6 +126,20 @@
                               IsChecked="{Binding ReceiveShadows, Mode=TwoWay}"/>
                 </StackPanel>
             </Grid>
+
+            <!-- First-person viewmodel layer (#175) -->
+            <Grid Margin="0,6,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="80"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Text="Layer" Style="{StaticResource PropertyLabel}"/>
+                <CheckBox x:Name="ViewmodelLayerCheckBox" Grid.Column="1" Content="First-Person (viewmodel)"
+                          Style="{StaticResource PropertyCheckBox}"
+                          ToolTip="Renders after the world with its own FOV and cleared depth: never clips through walls, casts no shadows. For first-person arms/weapons."
+                          Checked="ViewmodelLayerCheckBox_Changed" Unchecked="ViewmodelLayerCheckBox_Changed"/>
+            </Grid>
         </StackPanel>
     </Border>
 </UserControl>

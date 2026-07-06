@@ -359,6 +359,21 @@ EDITOR_INTERFACE void SubmitMeshInstances(id::id_type mesh_id, id::id_type mater
 	graphics::dx12::DX12Renderer::instance().submit_mesh_instances(mesh_id, material_id, world_matrices, static_cast<u32>(count));
 }
 
+// #175: layer-aware variant (0 = world, 1 = first-person viewmodel). Additive export — the old
+// signature stays for P/Invoke compatibility.
+EDITOR_INTERFACE void SubmitMeshInstancesEx(id::id_type mesh_id, id::id_type material_id, const float* world_matrices, int count, int layer)
+{
+	if (!world_matrices || count <= 0) return;
+	graphics::dx12::DX12Renderer::instance().submit_mesh_instances(mesh_id, material_id, world_matrices,
+		static_cast<u32>(count), layer > 0 ? 1u : 0u);
+}
+
+// #175: the first-person layer's own field of view (degrees; world FOV never distorts the viewmodel).
+EDITOR_INTERFACE void SetViewmodelFOV(float fov_degrees)
+{
+	graphics::dx12::DX12Renderer::instance().set_viewmodel_fov(fov_degrees);
+}
+
 // Camera control
 EDITOR_INTERFACE void SetCamera(float pos_x, float pos_y, float pos_z,
 								float target_x, float target_y, float target_z,

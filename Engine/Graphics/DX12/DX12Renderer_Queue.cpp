@@ -160,7 +160,7 @@ namespace vortex::graphics::dx12
 	}
 
 
-	void DX12Renderer::submit_mesh_instances(id::id_type mesh, id::id_type material, const float* world_matrices, u32 count)
+	void DX12Renderer::submit_mesh_instances(id::id_type mesh, id::id_type material, const float* world_matrices, u32 count, u32 layer)
 	{
 		if (!world_matrices || count == 0) return;
 		std::lock_guard<std::mutex> lock(m_queue_mutex);
@@ -170,6 +170,7 @@ namespace vortex::graphics::dx12
 			RenderItem item;
 			item.mesh_id = mesh;
 			item.material_id = material;
+			item.layer = layer;
 			memcpy(&item.world_matrix, world_matrices + (size_t)i * 16, sizeof(DirectX::XMFLOAT4X4));
 			m_submit_queue.push_back(item);
 		}
@@ -177,7 +178,7 @@ namespace vortex::graphics::dx12
 	
 
 	void DX12Renderer::submit_skinned_item(id::id_type mesh, id::id_type material, const float* world_matrix,
-		const float* bone_matrices, u32 bone_count)
+		const float* bone_matrices, u32 bone_count, u32 layer)
 	{
 		if (!world_matrix || !bone_matrices || bone_count == 0) return;
 		std::lock_guard<std::mutex> lock(m_queue_mutex);
@@ -185,6 +186,7 @@ namespace vortex::graphics::dx12
 		RenderItem item;
 		item.mesh_id = mesh;
 		item.material_id = material;
+		item.layer = layer;
 		memcpy(&item.world_matrix, world_matrix, sizeof(DirectX::XMFLOAT4X4));
 
 		// Stage the palette; the offset is in MATRICES (root SRV binds at the active half's VA + offset * 64).
