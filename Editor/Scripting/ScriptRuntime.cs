@@ -1274,6 +1274,26 @@ namespace Editor.Scripting
                 ? Editor.Core.Animation.AnimationService.Instance.GetTime(e) : 0f;
         }
 
+        // --- bone-masked layers (#173) ---
+
+        bool Vortex.IScriptHost.PlayLayeredAnimation(long entityId, string clip, int layer, string mask, float weight, float fade)
+        {
+            return _entitiesById.TryGetValue(entityId, out var e)
+                && Editor.Core.Animation.AnimationService.Instance.PlayLayered(e, clip, layer, mask, weight, fade);
+        }
+
+        void Vortex.IScriptHost.SetAnimationLayerWeight(long entityId, int layer, float weight)
+        {
+            if (_entitiesById.TryGetValue(entityId, out var e))
+                Editor.Core.Animation.AnimationService.Instance.SetLayerWeight(e, layer, weight);
+        }
+
+        void Vortex.IScriptHost.StopLayeredAnimation(long entityId, int layer)
+        {
+            if (_entitiesById.TryGetValue(entityId, out var e))
+                Editor.Core.Animation.AnimationService.Instance.StopLayer(e, layer);
+        }
+
         // --- bone sockets (#170/#171: Attach/Detach/GetBoneTransform -> BoneSocketService) ---
 
         bool Vortex.IScriptHost.AttachEntityToBone(long entityId, long targetId, string bone,

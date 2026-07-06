@@ -89,6 +89,12 @@ namespace Vortex
         bool IsAnimationPlaying(long entityId, string clip);
         float GetAnimationTime(long entityId);
 
+        // Bone-masked animation layers: base clip (full body) + override layers restricted to a bone
+        // mask ("Spine1+") — aim a pistol while the legs keep walking. weight blends the layer.
+        bool PlayLayeredAnimation(long entityId, string clip, int layer, string mask, float weight, float fade);
+        void SetAnimationLayerWeight(long entityId, int layer, float weight);
+        void StopLayeredAnimation(long entityId, int layer);
+
         // Bone sockets: attach an entity to a skeleton bone at runtime (weapon pickup), detach it
         // (keepWorldPosition true = stays where the hand left it), query a bone's world transform
         // (muzzle raycast origins, VFX spawn points), and list a skeleton's current attachments.
@@ -264,6 +270,18 @@ namespace Vortex
 
         /// <summary>Current playback time (seconds) of this entity's animation.</summary>
         public float AnimationTime { get { return Host != null ? Host.GetAnimationTime(EntityId) : 0f; } }
+
+        /// <summary>Play a clip on an override LAYER restricted to a bone mask — walk with the legs while
+        /// the upper body aims: <c>PlayAnimationLayered("aim_pistol", 1, "Spine1+");</c>. mask = comma-
+        /// separated bone names, '+' includes all children. weight blends the layer (0..1).</summary>
+        public bool PlayAnimationLayered(string clip, int layer, string mask, float weight = 1f, float fade = 0f)
+            { return Host != null && Host.PlayLayeredAnimation(EntityId, clip, layer, mask, weight, fade); }
+
+        /// <summary>Blend an animation layer in or out (raise/lower the weapon smoothly).</summary>
+        public void SetAnimationLayerWeight(int layer, float weight) { Host?.SetAnimationLayerWeight(EntityId, layer, weight); }
+
+        /// <summary>Stop an animation layer — the base clip takes its bones back next frame.</summary>
+        public void StopAnimationLayer(int layer) { Host?.StopLayeredAnimation(EntityId, layer); }
 
         /// <summary>Attach THIS entity to a bone of an animated entity — it follows the bone through every
         /// clip from now on (pistol into the hand: <c>AttachTo(character, "Hand_R");</c>). Offsets are in
@@ -1089,6 +1107,21 @@ namespace Vortex
 
         /// <summary>Current playback time in seconds.</summary>
         public static float Time(long entityId) { return Host != null ? Host.GetAnimationTime(entityId) : 0f; }
+
+        // ---- bone-masked layers (#173) ----
+
+        /// <summary>Play a clip on an override layer of another entity, restricted to a bone mask
+        /// ("Spine1+" = spine and everything below it in the hierarchy).</summary>
+        public static bool PlayLayered(long entityId, string clip, int layer, string mask, float weight = 1f, float fade = 0f)
+            { return Host != null && Host.PlayLayeredAnimation(entityId, clip, layer, mask, weight, fade); }
+
+        /// <summary>Blend a layer in/out at runtime (0..1).</summary>
+        public static void SetLayerWeight(long entityId, int layer, float weight)
+            { if (Host != null) Host.SetAnimationLayerWeight(entityId, layer, weight); }
+
+        /// <summary>Stop an override layer — the base clip takes its bones back.</summary>
+        public static void StopLayer(long entityId, int layer)
+            { if (Host != null) Host.StopLayeredAnimation(entityId, layer); }
 
         // ---- bone sockets (#170/#171) ----
 

@@ -47,6 +47,25 @@ namespace Editor.Core.Animation
             public float FadeDuration, FadeElapsed;
             public float[] Palette;               // current pose, flattened (boneCount * 16)
             public Matrix4x4[] NodeWorlds;        // model-space node worlds of the SAME pose (bone sockets read these)
+            public List<LayerState> Layers;       // bone-masked override layers (#173); null = single-clip fast path
+        }
+
+        /// <summary>One bone-masked override layer: its own clip/time/weight, blended over the base pose
+        /// in LOCAL space (per node, before hierarchy multiplication) wherever the mask includes a bone.</summary>
+        private class LayerState
+        {
+            public int Index;                     // >= 1; higher layers composite over lower ones
+            public VortexAnimClip Clip;
+            public int[] TrackNodes;
+            public float[] Mask;                  // per-node 0/1 from the mask spec
+            public string MaskSpec;
+            public float Time;
+            public float Speed = 1f;
+            public float Weight = 1f;
+            public bool Playing;
+            public bool Loop;
+            public Vector3[] FadeT; public Quaternion[] FadeR; public Vector3[] FadeS;
+            public float FadeDuration, FadeElapsed;
         }
 
         // ------------------------------------------------------------------ caches
@@ -137,36 +156,75 @@ namespace Editor.Core.Animation
                     Play(entity, animator.DefaultClip, 0f);
             }
 
-            if (!state.Playing || state.Clip == null) return;
-
-            float prev = state.Time;
-            float step = dt * state.Speed * animator.Speed;   // signed — negative when playing in reverse
-            state.Time += step;
-
-            float dur = Math.Max(state.Clip.DurationSec, 0.0001f);
-            bool loop = state.Loop && state.Clip.Loop;
-            bool wrapped = false;
-            if (state.Time >= dur)
+            bool baseActive = state.Playing && state.Clip != null;
+            if (baseActive)
             {
-                if (loop) { state.Time %= dur; wrapped = true; }   // forward wrap past the end
-                else { state.Time = dur; state.Playing = false; }
+                float prev = state.Time;
+                float step = dt * state.Speed * animator.Speed;   // signed — negative when playing in reverse
+                state.Time += step;
+
+                float dur = Math.Max(state.Clip.DurationSec, 0.0001f);
+                bool loop = state.Loop && state.Clip.Loop;
+                bool wrapped = false;
+                if (state.Time >= dur)
+                {
+                    if (loop) { state.Time %= dur; wrapped = true; }   // forward wrap past the end
+                    else { state.Time = dur; state.Playing = false; }
+                }
+                else if (state.Time < 0f)
+                {
+                    // Reverse playback: clamp/wrap the LOWER bound too, or Time runs unbounded-negative and the event
+                    // crossing test misfires every frame (fixed alongside direction-aware FireEvents below).
+                    if (loop) { state.Time = ((state.Time % dur) + dur) % dur; wrapped = true; }
+                    else { state.Time = 0f; state.Playing = false; }
+                }
+
+                FireEvents(entity, state.Clip, prev, state.Time, wrapped, step >= 0f);
+
+                if (state.FadeDuration > 0f)
+                {
+                    state.FadeElapsed += dt;
+                    if (state.FadeElapsed >= state.FadeDuration) { state.FadeDuration = 0f; state.FadeT = null; state.FadeR = null; state.FadeS = null; }
+                }
             }
-            else if (state.Time < 0f)
+
+            // Override layers advance independently of the base clip (aim while standing still).
+            // Events fire from EVERY layer — a "fire" marker on the aim layer works while walking.
+            bool layersActive = false;
+            if (state.Layers != null)
             {
-                // Reverse playback: clamp/wrap the LOWER bound too, or Time runs unbounded-negative and the event
-                // crossing test misfires every frame (fixed alongside direction-aware FireEvents below).
-                if (loop) { state.Time = ((state.Time % dur) + dur) % dur; wrapped = true; }
-                else { state.Time = 0f; state.Playing = false; }
+                for (int i = 0; i < state.Layers.Count; i++)
+                {
+                    var layer = state.Layers[i];
+                    if (!layer.Playing || layer.Clip == null) continue;
+                    layersActive = true;
+
+                    float prev = layer.Time;
+                    float step = dt * layer.Speed * animator.Speed;
+                    layer.Time += step;
+                    float dur = Math.Max(layer.Clip.DurationSec, 0.0001f);
+                    bool wrapped = false;
+                    if (layer.Time >= dur)
+                    {
+                        if (layer.Loop) { layer.Time %= dur; wrapped = true; }
+                        else { layer.Time = dur; layer.Playing = false; }
+                    }
+                    else if (layer.Time < 0f)
+                    {
+                        if (layer.Loop) { layer.Time = ((layer.Time % dur) + dur) % dur; wrapped = true; }
+                        else { layer.Time = 0f; layer.Playing = false; }
+                    }
+                    FireEvents(entity, layer.Clip, prev, layer.Time, wrapped, step >= 0f);
+
+                    if (layer.FadeDuration > 0f)
+                    {
+                        layer.FadeElapsed += dt;
+                        if (layer.FadeElapsed >= layer.FadeDuration) { layer.FadeDuration = 0f; layer.FadeT = null; layer.FadeR = null; layer.FadeS = null; }
+                    }
+                }
             }
 
-            FireEvents(entity, state.Clip, prev, state.Time, wrapped, step >= 0f);
-
-            if (state.FadeDuration > 0f)
-            {
-                state.FadeElapsed += dt;
-                if (state.FadeElapsed >= state.FadeDuration) { state.FadeDuration = 0f; state.FadeT = null; state.FadeR = null; state.FadeS = null; }
-            }
-
+            if (!baseActive && !layersActive) return;
             state.Palette = EvaluateStatePalette(state);
             HasActiveAnimators = true;
         }
@@ -324,6 +382,117 @@ namespace Editor.Core.Animation
             if (entity != null && _states.TryGetValue(entity.Id, out var s)) { s.Playing = false; s.StartHandled = true; }
         }
 
+        // ------------------------------------------------------------------ bone-masked layers (#173)
+
+        /// <summary>
+        /// Play a clip on an override LAYER restricted to a bone mask — walk (base) + aim (upper body).
+        /// layer >= 1; mask = comma-separated bone names, '+' suffix includes all descendants
+        /// (e.g. "Spine1+" or "Head,Neck+"). weight blends the layer in (0..1), fade crossfades from the
+        /// layer's previous clip. Re-playing on the same layer swaps its clip; masks resolve per skeleton.
+        /// </summary>
+        public bool PlayLayered(ECS.GameEntity entity, string nameOrPath, int layer, string mask, float weight, float fade)
+        {
+            if (entity == null || string.IsNullOrEmpty(nameOrPath) || layer < 1) return false;
+
+            var animator = entity.GetComponent<ECS.Components.Animation.Animator>();
+            if (animator == null || !animator.IsEnabled) return false;
+            var state = GetOrCreateState(entity);
+            if (state?.Skeleton == null) return false;
+
+            string path = animator.ResolveClipPath(nameOrPath) ?? nameOrPath;
+            var clip = GetClip(path);
+            if (clip == null) return false;
+
+            if (state.Layers == null) state.Layers = new List<LayerState>();
+            LayerState L = null;
+            foreach (var existing in state.Layers)
+                if (existing.Index == layer) { L = existing; break; }
+            if (L == null)
+            {
+                L = new LayerState { Index = layer };
+                state.Layers.Add(L);
+                state.Layers.Sort((a, b) => a.Index.CompareTo(b.Index));
+            }
+
+            // Crossfade from the layer's CURRENT clip pose (static snapshot, like the base layer).
+            if (fade > 0f && L.Clip != null && L.Playing)
+            {
+                int n = state.Skeleton.Nodes.Length;
+                L.FadeT = new Vector3[n]; L.FadeR = new Quaternion[n]; L.FadeS = new Vector3[n];
+                EvaluateLocals(state.Skeleton, L.Clip, L.TrackNodes, L.Time, L.FadeT, L.FadeR, L.FadeS);
+                L.FadeDuration = fade;
+                L.FadeElapsed = 0f;
+            }
+            else { L.FadeDuration = 0f; L.FadeT = null; L.FadeR = null; L.FadeS = null; }
+
+            L.Clip = clip;
+            L.TrackNodes = ResolveTrackNodes(state.Skeleton, clip);
+            if (!string.Equals(L.MaskSpec, mask, StringComparison.Ordinal) || L.Mask == null)
+            {
+                L.Mask = BuildMask(state.Skeleton, mask);
+                L.MaskSpec = mask;
+            }
+            L.Time = 0f;
+            L.Loop = clip.Loop;
+            L.Weight = weight < 0f ? 0f : (weight > 1f ? 1f : weight);
+            L.Playing = true;
+            state.StartHandled = true;
+            state.Palette = EvaluateStatePalette(state);
+            return true;
+        }
+
+        /// <summary>Blend a layer in/out at runtime (raise/lower the weapon smoothly).</summary>
+        public void SetLayerWeight(ECS.GameEntity entity, int layer, float weight)
+        {
+            if (entity == null || !_states.TryGetValue(entity.Id, out var s) || s.Layers == null) return;
+            foreach (var L in s.Layers)
+                if (L.Index == layer) { L.Weight = weight < 0f ? 0f : (weight > 1f ? 1f : weight); return; }
+        }
+
+        /// <summary>Stop an override layer (the base pose takes back its bones next frame).</summary>
+        public void StopLayer(ECS.GameEntity entity, int layer)
+        {
+            if (entity == null || !_states.TryGetValue(entity.Id, out var s) || s.Layers == null) return;
+            foreach (var L in s.Layers)
+                if (L.Index == layer) { L.Playing = false; return; }
+        }
+
+        /// <summary>Per-node 0/1 mask from a spec: comma-separated bone names, '+' suffix = include all
+        /// descendants ("Spine1+", "Head,Neck+"). Unknown names are ignored (mask stays partial).</summary>
+        public static float[] BuildMask(SkeletonDef skel, string spec)
+        {
+            int n = skel.Nodes.Length;
+            var mask = new float[n];
+            if (string.IsNullOrEmpty(spec)) return mask;
+
+            var roots = new List<int>();          // '+' entries: include descendants
+            foreach (var raw in spec.Split(','))
+            {
+                var name = raw.Trim();
+                if (name.Length == 0) continue;
+                bool children = name.EndsWith("+", StringComparison.Ordinal);
+                if (children) name = name.Substring(0, name.Length - 1).TrimEnd();
+                int idx = skel.FindNode(name);
+                if (idx < 0) continue;
+                mask[idx] = 1f;
+                if (children) roots.Add(idx);
+            }
+            if (roots.Count > 0)
+            {
+                for (int i = 0; i < n; i++)
+                {
+                    if (mask[i] > 0f) continue;
+                    int p = skel.Nodes[i].Parent;
+                    while (p >= 0)
+                    {
+                        if (roots.Contains(p)) { mask[i] = 1f; break; }
+                        p = skel.Nodes[p].Parent;
+                    }
+                }
+            }
+            return mask;
+        }
+
         public void SetSpeed(ECS.GameEntity entity, float speed)
         {
             if (entity != null && _states.TryGetValue(entity.Id, out var s)) s.Speed = speed;
@@ -384,6 +553,41 @@ namespace Editor.Core.Animation
                     t[i] = Vector3.Lerp(state.FadeT[i], t[i], w);
                     r[i] = Quaternion.Slerp(state.FadeR[i], r[i], w);
                     s[i] = Vector3.Lerp(state.FadeS[i], s[i], w);
+                }
+            }
+
+            // Bone-masked override layers (#173): blend each layer's LOCAL pose over the base wherever
+            // its mask includes the node — BEFORE hierarchy multiplication, so a masked spine rotation
+            // carries the arms naturally. Layers composite lowest index first.
+            if (state.Layers != null)
+            {
+                for (int li = 0; li < state.Layers.Count; li++)
+                {
+                    var layer = state.Layers[li];
+                    if (!layer.Playing || layer.Clip == null || layer.Weight <= 0f || layer.Mask == null) continue;
+
+                    var lt = new Vector3[n]; var lr = new Quaternion[n]; var ls = new Vector3[n];
+                    EvaluateLocals(skel, layer.Clip, layer.TrackNodes, layer.Time, lt, lr, ls);
+
+                    if (layer.FadeDuration > 0f && layer.FadeT != null)
+                    {
+                        float fw = Math.Min(layer.FadeElapsed / layer.FadeDuration, 1f);
+                        for (int i = 0; i < n; i++)
+                        {
+                            lt[i] = Vector3.Lerp(layer.FadeT[i], lt[i], fw);
+                            lr[i] = Quaternion.Slerp(layer.FadeR[i], lr[i], fw);
+                            ls[i] = Vector3.Lerp(layer.FadeS[i], ls[i], fw);
+                        }
+                    }
+
+                    for (int i = 0; i < n; i++)
+                    {
+                        float w = layer.Weight * layer.Mask[i];
+                        if (w <= 0f) continue;
+                        t[i] = Vector3.Lerp(t[i], lt[i], w);
+                        r[i] = Quaternion.Slerp(r[i], lr[i], w);
+                        s[i] = Vector3.Lerp(s[i], ls[i], w);
+                    }
                 }
             }
 
