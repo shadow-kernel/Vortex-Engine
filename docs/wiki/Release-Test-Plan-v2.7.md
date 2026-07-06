@@ -6,7 +6,7 @@ Referenz-Testprojekt: `%USERPROFILE%\VortexEngineProjects\WaveTest` (alle Szenen
 ## Ebene A — Automatisierte Regression (ein Befehl, ~5 Minuten)
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File _baseline\run-release-tests.ps1
+powershell -ExecutionPolicy Bypass -File tools\run-release-tests.ps1
 ```
 
 Startet 8 Headless-Harnesses nacheinander im echten Player und sammelt PASS/FAIL (Stand heute: **82/82 grün**):
