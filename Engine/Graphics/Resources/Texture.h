@@ -48,6 +48,8 @@ namespace vortex::graphics
 
 		u32 width() const { return m_width; }
 		u32 height() const { return m_height; }
+		u32 mip_levels() const { return m_mip_levels; }
+		TextureFormat format() const { return m_format; }
 		bool is_valid() const { return m_resource != nullptr; }
 
 		void set_srv_handles(D3D12_CPU_DESCRIPTOR_HANDLE cpu, D3D12_GPU_DESCRIPTOR_HANDLE gpu);
@@ -61,6 +63,7 @@ namespace vortex::graphics
 		D3D12_GPU_DESCRIPTOR_HANDLE m_srv_gpu{};
 		u32 m_width{ 0 };
 		u32 m_height{ 0 };
+		u32 m_mip_levels{ 1 };
 		TextureFormat m_format{ TextureFormat::RGBA8_UNORM };
 	};
 }

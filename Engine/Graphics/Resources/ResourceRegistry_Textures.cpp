@@ -88,7 +88,8 @@ namespace vortex::graphics
 		TextureDesc desc;
 		desc.width = image_data.width;
 		desc.height = image_data.height;
-		
+		desc.generate_mips = true;
+
 		switch (image_data.format)
 		{
 		case ImageFormat::R8:
@@ -164,9 +165,9 @@ namespace vortex::graphics
 
 		D3D12_SHADER_RESOURCE_VIEW_DESC srv_desc{};
 		srv_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-		srv_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		srv_desc.Format = Texture::to_dxgi_format(texture->format());
 		srv_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-		srv_desc.Texture2D.MipLevels = 1;
+		srv_desc.Texture2D.MipLevels = texture->mip_levels();
 		srv_desc.Texture2D.MostDetailedMip = 0;
 
 		m_device->CreateShaderResourceView(texture->resource(), &srv_desc, cpu_handle);

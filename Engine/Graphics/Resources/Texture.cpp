@@ -3,6 +3,7 @@
 #include "../../Common/VerboseLog.h"
 #include <wrl/client.h>
 #include <cstring>
+#include <vector>
 
 namespace vortex::graphics
 {
@@ -36,12 +37,36 @@ namespace vortex::graphics
 
 		DXGI_FORMAT dxgi_format = to_dxgi_format(desc.format);
 
+		u32 bytes_per_pixel = 4;
+		switch (desc.format)
+		{
+		case TextureFormat::R8_UNORM: bytes_per_pixel = 1; break;
+		case TextureFormat::RG8_UNORM: bytes_per_pixel = 2; break;
+		case TextureFormat::RGBA16_FLOAT: bytes_per_pixel = 8; break;
+		case TextureFormat::RGBA32_FLOAT: bytes_per_pixel = 16; break;
+		default: break;
+		}
+
+		// CPU box-filter mipgen only supports 4-byte UNORM data
+		const bool can_mip =
+			desc.format == TextureFormat::RGBA8_UNORM ||
+			desc.format == TextureFormat::RGBA8_SRGB ||
+			desc.format == TextureFormat::BGRA8_UNORM;
+
+		u32 mip_count = 1;
+		if (desc.generate_mips && data && can_mip && !desc.is_render_target && !desc.is_depth_stencil)
+		{
+			u32 dim = desc.width > desc.height ? desc.width : desc.height;
+			while (dim > 1) { dim >>= 1; ++mip_count; }
+		}
+		m_mip_levels = mip_count;
+
 		D3D12_RESOURCE_DESC res_desc{};
 		res_desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
 		res_desc.Width = desc.width;
 		res_desc.Height = desc.height;
 		res_desc.DepthOrArraySize = 1;
-		res_desc.MipLevels = 1;
+		res_desc.MipLevels = (UINT16)mip_count;
 		res_desc.Format = dxgi_format;
 		res_desc.SampleDesc.Count = 1;
 		res_desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
@@ -70,9 +95,52 @@ namespace vortex::graphics
 
 		if (data && !desc.is_depth_stencil && !desc.is_render_target)
 		{
-			// Create upload buffer
+			// Build the CPU mip chain (2x2 box filter; floor semantics so level sizes
+			// match D3D12's subresource footprints exactly, incl. non-power-of-two)
+			std::vector<std::vector<u8>> mip_pixels;
+			std::vector<const u8*> level_data(mip_count);
+			std::vector<u32> level_w(mip_count), level_h(mip_count);
+			level_data[0] = static_cast<const u8*>(data);
+			level_w[0] = desc.width;
+			level_h[0] = desc.height;
+			for (u32 m = 1; m < mip_count; ++m)
+			{
+				const u32 sw = level_w[m - 1], sh = level_h[m - 1];
+				const u32 dw = sw > 1 ? sw >> 1 : 1;
+				const u32 dh = sh > 1 ? sh >> 1 : 1;
+				std::vector<u8> dst_pixels((size_t)dw * dh * 4);
+				const u8* src_px = level_data[m - 1];
+				for (u32 y = 0; y < dh; ++y)
+				{
+					const u32 sy0 = y * 2;
+					const u32 sy1 = (sy0 + 1 < sh) ? sy0 + 1 : sy0;
+					for (u32 x = 0; x < dw; ++x)
+					{
+						const u32 sx0 = x * 2;
+						const u32 sx1 = (sx0 + 1 < sw) ? sx0 + 1 : sx0;
+						const u8* p00 = src_px + ((size_t)sy0 * sw + sx0) * 4;
+						const u8* p01 = src_px + ((size_t)sy0 * sw + sx1) * 4;
+						const u8* p10 = src_px + ((size_t)sy1 * sw + sx0) * 4;
+						const u8* p11 = src_px + ((size_t)sy1 * sw + sx1) * 4;
+						u8* out = dst_pixels.data() + ((size_t)y * dw + x) * 4;
+						out[0] = (u8)((p00[0] + p01[0] + p10[0] + p11[0] + 2) >> 2);
+						out[1] = (u8)((p00[1] + p01[1] + p10[1] + p11[1] + 2) >> 2);
+						out[2] = (u8)((p00[2] + p01[2] + p10[2] + p11[2] + 2) >> 2);
+						out[3] = (u8)((p00[3] + p01[3] + p10[3] + p11[3] + 2) >> 2);
+					}
+				}
+				level_w[m] = dw;
+				level_h[m] = dh;
+				mip_pixels.push_back(std::move(dst_pixels));
+				level_data[m] = mip_pixels.back().data();
+			}
+
+			std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> footprints(mip_count);
+			std::vector<UINT> num_rows(mip_count);
+			std::vector<UINT64> row_sizes(mip_count);
 			UINT64 upload_size = 0;
-			device->GetCopyableFootprints(&res_desc, 0, 1, 0, nullptr, nullptr, nullptr, &upload_size);
+			device->GetCopyableFootprints(&res_desc, 0, mip_count, 0,
+				footprints.data(), num_rows.data(), row_sizes.data(), &upload_size);
 
 			D3D12_HEAP_PROPERTIES upload_heap{};
 			upload_heap.Type = D3D12_HEAP_TYPE_UPLOAD;
@@ -97,22 +165,17 @@ namespace vortex::graphics
 			D3D12_RANGE range{ 0, 0 };
 			if (SUCCEEDED(m_upload_buffer->Map(0, &range, &mapped)))
 			{
-				// Get the row pitch from the texture layout
-				D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint;
-				UINT num_rows;
-				UINT64 row_size_bytes;
-				device->GetCopyableFootprints(&res_desc, 0, 1, 0, &footprint, &num_rows, &row_size_bytes, nullptr);
-
-				// Copy data row by row (handling pitch differences)
-				u32 src_row_pitch = desc.width * 4; // Source data is tightly packed
-				u8* dst = static_cast<u8*>(mapped);
-				const u8* src = static_cast<const u8*>(data);
-				
-				for (UINT row = 0; row < num_rows; ++row)
+				for (u32 m = 0; m < mip_count; ++m)
 				{
-					std::memcpy(dst + row * footprint.Footprint.RowPitch, 
-					            src + row * src_row_pitch, 
-					            src_row_pitch);
+					const u32 src_row_pitch = level_w[m] * bytes_per_pixel;
+					u8* dst = static_cast<u8*>(mapped) + footprints[m].Offset;
+					const u8* src = level_data[m];
+					for (UINT row = 0; row < num_rows[m]; ++row)
+					{
+						std::memcpy(dst + (size_t)row * footprints[m].Footprint.RowPitch,
+						            src + (size_t)row * src_row_pitch,
+						            src_row_pitch);
+					}
 				}
 				m_upload_buffer->Unmap(0, nullptr);
 
@@ -135,18 +198,21 @@ namespace vortex::graphics
 					if (SUCCEEDED(device->CreateCommandQueue(&queue_desc, IID_PPV_ARGS(&cmd_queue))) &&
 						SUCCEEDED(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence))))
 					{
-						// Copy texture data from upload buffer to GPU texture
-						D3D12_TEXTURE_COPY_LOCATION dst_loc{};
-						dst_loc.pResource = m_resource.Get();
-						dst_loc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-						dst_loc.SubresourceIndex = 0;
+						// Copy every mip from the upload buffer to the GPU texture
+						for (u32 m = 0; m < mip_count; ++m)
+						{
+							D3D12_TEXTURE_COPY_LOCATION dst_loc{};
+							dst_loc.pResource = m_resource.Get();
+							dst_loc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+							dst_loc.SubresourceIndex = m;
 
-						D3D12_TEXTURE_COPY_LOCATION src_loc{};
-						src_loc.pResource = m_upload_buffer.Get();
-						src_loc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-						src_loc.PlacedFootprint = footprint;
+							D3D12_TEXTURE_COPY_LOCATION src_loc{};
+							src_loc.pResource = m_upload_buffer.Get();
+							src_loc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+							src_loc.PlacedFootprint = footprints[m];
 
-						cmd_list->CopyTextureRegion(&dst_loc, 0, 0, 0, &src_loc, nullptr);
+							cmd_list->CopyTextureRegion(&dst_loc, 0, 0, 0, &src_loc, nullptr);
+						}
 
 						// Transition texture to shader resource state
 						D3D12_RESOURCE_BARRIER barrier{};
@@ -168,6 +234,9 @@ namespace vortex::graphics
 						fence->SetEventOnCompletion(1, event);
 						WaitForSingleObject(event, INFINITE);
 						CloseHandle(event);
+
+						// Upload is fully synchronous — the staging buffer is dead weight after this
+						m_upload_buffer.Reset();
 
 						VORTEX_VLOG("Texture GPU copy completed\n");
 					}
@@ -196,6 +265,7 @@ namespace vortex::graphics
 		m_srv_gpu = {};
 		m_width = 0;
 		m_height = 0;
+		m_mip_levels = 1;
 	}
 
 	void Texture::set_srv_handles(D3D12_CPU_DESCRIPTOR_HANDLE cpu, D3D12_GPU_DESCRIPTOR_HANDLE gpu)
