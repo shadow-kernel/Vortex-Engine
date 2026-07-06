@@ -1029,6 +1029,7 @@ namespace Editor.Scripting
                     try
                     {
                         var behaviour = (Vortex.VortexBehaviour)Activator.CreateInstance(type);
+                        ApplySerializedFields(behaviour, script);   // #47: per-instance field overrides, before Start()
                         // Assign a UNIQUE handle and map it to THIS entity — guarantees the behaviour can
                         // only ever read/move its own entity (no engine-EntityId collisions).
                         long handle = ++_nextHandle;
@@ -1055,6 +1056,94 @@ namespace Editor.Scripting
                 if (string.Equals(t.Name, className, StringComparison.Ordinal)) return t;
             }
             return null;
+        }
+
+        // ---- serialized script fields (#47) ----
+
+        /// <summary>Field types the inspector edits + the scene serializes: primitives, enums, Vector3.</summary>
+        public static bool IsInspectableFieldType(Type t)
+            => t == typeof(int) || t == typeof(float) || t == typeof(bool) || t == typeof(string)
+               || t.IsEnum || t == typeof(Vortex.Vector3);
+
+        /// <summary>Invariant-culture round-trip of a field value ("1,2,3" for Vector3; enum by name).</summary>
+        public static string FormatFieldValue(object v)
+        {
+            if (v == null) return "";
+            if (v is float f) return f.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
+            if (v is int i) return i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            if (v is bool b) return b ? "true" : "false";
+            if (v is Vortex.Vector3 v3)
+                return v3.X.ToString("R", System.Globalization.CultureInfo.InvariantCulture) + ","
+                     + v3.Y.ToString("R", System.Globalization.CultureInfo.InvariantCulture) + ","
+                     + v3.Z.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
+            return v.ToString();
+        }
+
+        /// <summary>Parse a stored string back into the REFLECTED field type. Throws on garbage — the
+        /// callers skip-and-log so one bad value can't take a scene down.</summary>
+        public static object ParseFieldValue(Type ft, string v)
+        {
+            var ci = System.Globalization.CultureInfo.InvariantCulture;
+            if (ft == typeof(int)) return int.Parse(v, ci);
+            if (ft == typeof(float)) return float.Parse(v, System.Globalization.NumberStyles.Float, ci);
+            if (ft == typeof(bool)) return string.Equals(v, "true", StringComparison.OrdinalIgnoreCase);
+            if (ft == typeof(string)) return v ?? "";
+            if (ft.IsEnum) return Enum.Parse(ft, v, true);
+            if (ft == typeof(Vortex.Vector3))
+            {
+                var p = (v ?? "").Split(',');
+                return new Vortex.Vector3(
+                    float.Parse(p[0], System.Globalization.NumberStyles.Float, ci),
+                    float.Parse(p[1], System.Globalization.NumberStyles.Float, ci),
+                    float.Parse(p[2], System.Globalization.NumberStyles.Float, ci));
+            }
+            throw new NotSupportedException(ft.Name);
+        }
+
+        /// <summary>Apply the component's stored field overrides onto a fresh behaviour instance —
+        /// runs BEFORE Start() (and again after every hot-reload, which re-instantiates through the
+        /// same path). Unknown/renamed fields and unparsable values are skipped, never fatal.</summary>
+        private static void ApplySerializedFields(Vortex.VortexBehaviour b, Script script)
+        {
+            if (b == null || script == null || script.FieldValues == null) return;
+            var t = b.GetType();
+            foreach (var fv in script.FieldValues)
+            {
+                if (fv == null || string.IsNullOrEmpty(fv.Name)) continue;
+                var f = t.GetField(fv.Name, BindingFlags.Public | BindingFlags.Instance);
+                if (f == null || !IsInspectableFieldType(f.FieldType)) continue;
+                try { f.SetValue(b, ParseFieldValue(f.FieldType, fv.Value)); }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine("[ScriptRuntime] field '" + fv.Name + "' on "
+                        + t.Name + ": " + ex.Message);
+                }
+            }
+        }
+
+        // Edit-mode reflection assembly for the inspector (#47): compiled on demand, cached by the
+        // newest script write time. A running play session's assembly is the freshest truth.
+        private Assembly _reflectAsm;
+        private DateTime _reflectAsmTime = DateTime.MinValue;
+
+        /// <summary>The behaviour TYPE for a script class, usable in EDIT mode (the inspector reflects
+        /// its public fields). Compiles the project scripts on first use / after a script save; returns
+        /// null while the scripts don't compile (the inspector shows a hint instead of rows).</summary>
+        public Type GetScriptTypeForInspector(string className)
+        {
+            if (string.IsNullOrEmpty(className)) return null;
+            try
+            {
+                if (_scriptAsm != null) return FindBehaviourType(_scriptAsm, className);
+                var newest = LatestScriptWrite();
+                if (_reflectAsm == null || newest > _reflectAsmTime)
+                {
+                    _reflectAsm = Compile(out _);
+                    _reflectAsmTime = newest;
+                }
+                return _reflectAsm != null ? FindBehaviourType(_reflectAsm, className) : null;
+            }
+            catch { return null; }
         }
 
         private Assembly Compile(out string log)

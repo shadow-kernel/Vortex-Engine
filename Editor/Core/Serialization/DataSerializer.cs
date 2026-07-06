@@ -70,7 +70,8 @@ namespace Editor.Core.Serialization
             typeof(Editor.ECS.Components.Animation.AnimatorClipEntry),
 
             // Scripting
-            typeof(Script)
+            typeof(Script),
+            typeof(Editor.ECS.Components.Scripting.ScriptFieldValue)   // #47: serialized public fields
         };
 
         /// <summary>
