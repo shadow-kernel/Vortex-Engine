@@ -78,6 +78,9 @@ namespace Vortex
         // Set the player camera's vertical field of view (degrees).
         void SetCameraFov(float fovDegrees);
 
+        // Set the first-person viewmodel layer's own FOV (degrees, default 54) — #175.
+        void SetViewmodelFov(float fovDegrees);
+
         // Set an entity's base color at runtime (e.g. change color when a trigger is touched).
         void SetEntityColor(long entityId, float r, float g, float b);
 
@@ -94,6 +97,15 @@ namespace Vortex
         bool PlayLayeredAnimation(long entityId, string clip, int layer, string mask, float weight, float fade);
         void SetAnimationLayerWeight(long entityId, int layer, float weight);
         void StopLayeredAnimation(long entityId, int layer);
+
+        // Camera/attachment feel primitives: spring-damper impulses + seeded noise channels composed
+        // onto the game camera (transform untouched) and onto socket offsets (weapon kicks in the hand).
+        void CameraFxKick(Vector3 rotationDegrees, Vector3 position);
+        void CameraFxKickEntity(long entityId, Vector3 rotationDegrees, Vector3 position);
+        void CameraFxSway(int slot, float positionAmplitude, float rotationAmplitudeDeg, float frequencyHz);
+        void CameraFxSwayEntity(long entityId, int slot, float positionAmplitude, float rotationAmplitudeDeg, float frequencyHz);
+        void CameraFxSpring(float stiffness, float damping);
+        void CameraFxSeed(int seed);
 
         // Synced playback groups: N entities' clips frame-locked to one master clock (character
         // reload + weapon reload as one). Returns a group id; 0 = nothing started.
@@ -973,6 +985,11 @@ namespace Vortex
         internal static IScriptHost Host;
         /// <summary>Vertical field of view in degrees (clamped 30–120 by the engine).</summary>
         public static void SetFieldOfView(float fovDegrees) { if (Host != null) Host.SetCameraFov(fovDegrees); }
+
+        /// <summary>FOV of the FIRST-PERSON layer (entities with the "First-Person (viewmodel)" flag on
+        /// their Mesh Renderer). Default 54 — the world FOV never distorts the arms/weapon. Clamped
+        /// 10–120 (values below 30 are the ADS-zoom range).</summary>
+        public static void SetViewmodelFieldOfView(float fovDegrees) { if (Host != null) Host.SetViewmodelFov(fovDegrees); }
     }
 
     /// <summary>
@@ -1183,6 +1200,49 @@ namespace Vortex
         /// <summary>Script handles of every entity currently socketed to the target's bones.</summary>
         public static long[] GetAttachedEntities(long targetEntity)
             { return Host != null ? Host.GetAttachedEntities(targetEntity) : new long[0]; }
+    }
+
+    /// <summary>
+    /// Procedural camera/weapon FEEL primitives (#176): recoil kicks, damage flinches, idle sway and
+    /// breathing bob as additive offset channels with spring-damper recovery. Channels stack (a recoil
+    /// impulse rides on top of the sway) and never touch entity transforms — the camera offset is
+    /// composed at render time, attachment offsets inside the bone socket. What a "pistol recoil
+    /// pattern" IS remains game code: scripts decide when and how hard to Kick.
+    /// </summary>
+    public static class CameraFX
+    {
+        internal static IScriptHost Host;
+
+        /// <summary>Impulse on the camera: rotation in Euler degrees (X = pitch up), position in
+        /// camera-relative meters (Z = forward). Spring-damper pulls it back to zero.
+        /// Pistol: <c>CameraFX.Kick(new Vector3(-1.6f, 0, 0), new Vector3(0, 0, -0.03f));</c></summary>
+        public static void Kick(Vector3 rotationDegrees, Vector3 position)
+            { if (Host != null) Host.CameraFxKick(rotationDegrees, position); }
+
+        /// <summary>Impulse on a socket-attached entity, in ITS local axes — the weapon kicks back in
+        /// the hand while staying glued to the bone.</summary>
+        public static void Kick(long entityId, Vector3 rotationDegrees, Vector3 position)
+            { if (Host != null) Host.CameraFxKickEntity(entityId, rotationDegrees, position); }
+
+        /// <summary>Continuous seeded noise on a camera channel (slot 0..3): breathing, idle sway,
+        /// scare rumble. Amplitudes 0 stop the slot. <c>CameraFX.Sway(0, 0.004f, 0.35f, 0.4f);</c></summary>
+        public static void Sway(int slot, float positionAmplitude, float rotationAmplitudeDeg, float frequencyHz)
+            { if (Host != null) Host.CameraFxSway(slot, positionAmplitude, rotationAmplitudeDeg, frequencyHz); }
+
+        /// <summary>Continuous noise on an attached entity's channel (flashlight/weapon sway).</summary>
+        public static void Sway(long entityId, int slot, float positionAmplitude, float rotationAmplitudeDeg, float frequencyHz)
+            { if (Host != null) Host.CameraFxSwayEntity(entityId, slot, positionAmplitude, rotationAmplitudeDeg, frequencyHz); }
+
+        /// <summary>Stop a camera sway slot.</summary>
+        public static void StopSway(int slot) { Sway(slot, 0f, 0f, 1f); }
+        public static void StopSway(long entityId, int slot) { Sway(entityId, slot, 0f, 0f, 1f); }
+
+        /// <summary>Recovery feel: (120, 22) = snappy pistol (default), (60, 10) = heavy shotgun wobble.</summary>
+        public static void SetSpring(float stiffness, float damping)
+            { if (Host != null) Host.CameraFxSpring(stiffness, damping); }
+
+        /// <summary>Noise seed — a fixed seed makes sway replay-stable.</summary>
+        public static void SetSeed(int seed) { if (Host != null) Host.CameraFxSeed(seed); }
     }
 
     /// <summary>

@@ -606,6 +606,7 @@ namespace Editor.Scripting
             Vortex.Camera.Host = this;
             Vortex.Physics.Host = this;
             Vortex.Animation.Host = this;
+            Vortex.CameraFX.Host = this;
 
             // Scripted scene-atmosphere state starts clean each run (a previous run's ambient/fog must not leak).
             Editor.Core.Services.SceneRenderService.ScriptAmbientOverride = null;
@@ -617,6 +618,7 @@ namespace Editor.Scripting
             // Fresh Animator playback states for this run; animation-event markers route to OnAnimationEvent.
             Editor.Core.Animation.AnimationService.Instance.ResetStates();
             Editor.Core.Animation.BoneSocketService.Instance.ResetRuntime();
+            Editor.Core.Services.CameraFXService.Instance.Reset();
             if (!_animEventsHooked)
             {
                 Editor.Core.Animation.AnimationService.Instance.AnimationEvent += OnAnimationServiceEvent;
@@ -708,6 +710,7 @@ namespace Editor.Scripting
             // Bone sockets apply right after — animation -> sockets -> (submit reads final transforms).
             try
             {
+                Editor.Core.Services.CameraFXService.Instance.Step(dt);   // springs/noise BEFORE sockets read them
                 Editor.Core.Animation.AnimationService.Instance.Step(_currentScene, dt);
                 Editor.Core.Animation.BoneSocketService.Instance.Apply(_currentScene);
             }
@@ -918,6 +921,7 @@ namespace Editor.Scripting
             try { Editor.Core.Services.Physics.CollisionService.ResetEvents(); Editor.Core.Services.Physics.CollisionService.ClearCharacters(); } catch { }
             try { Editor.Core.Animation.AnimationService.Instance.ResetStates(); } catch { }
             try { Editor.Core.Animation.BoneSocketService.Instance.ResetRuntime(); } catch { }
+            try { Editor.Core.Services.CameraFXService.Instance.Reset(); } catch { }
             // Return the scene atmosphere to editor defaults: scripted ambient stops overriding and any
             // scripted fog is switched off — otherwise the horror scene's darkness/fog sticks to the
             // EDITOR viewport after leaving play mode (the fog CB is persistent frame state).
@@ -1274,6 +1278,36 @@ namespace Editor.Scripting
                 ? Editor.Core.Animation.AnimationService.Instance.GetTime(e) : 0f;
         }
 
+        // --- camera/attachment feel primitives (#176 -> CameraFXService) ---
+
+        void Vortex.IScriptHost.CameraFxKick(Vortex.Vector3 rotationDegrees, Vortex.Vector3 position)
+            => Editor.Core.Services.CameraFXService.Instance.KickCamera(
+                new System.Numerics.Vector3(rotationDegrees.X, rotationDegrees.Y, rotationDegrees.Z),
+                new System.Numerics.Vector3(position.X, position.Y, position.Z));
+
+        void Vortex.IScriptHost.CameraFxKickEntity(long entityId, Vortex.Vector3 rotationDegrees, Vortex.Vector3 position)
+        {
+            if (_entitiesById.TryGetValue(entityId, out var e))
+                Editor.Core.Services.CameraFXService.Instance.KickEntity(e,
+                    new System.Numerics.Vector3(rotationDegrees.X, rotationDegrees.Y, rotationDegrees.Z),
+                    new System.Numerics.Vector3(position.X, position.Y, position.Z));
+        }
+
+        void Vortex.IScriptHost.CameraFxSway(int slot, float posAmp, float rotAmpDeg, float freq)
+            => Editor.Core.Services.CameraFXService.Instance.SwayCamera(slot, posAmp, rotAmpDeg, freq);
+
+        void Vortex.IScriptHost.CameraFxSwayEntity(long entityId, int slot, float posAmp, float rotAmpDeg, float freq)
+        {
+            if (_entitiesById.TryGetValue(entityId, out var e))
+                Editor.Core.Services.CameraFXService.Instance.SwayEntity(e, slot, posAmp, rotAmpDeg, freq);
+        }
+
+        void Vortex.IScriptHost.CameraFxSpring(float stiffness, float damping)
+            => Editor.Core.Services.CameraFXService.Instance.SetSpring(stiffness, damping);
+
+        void Vortex.IScriptHost.CameraFxSeed(int seed)
+            => Editor.Core.Services.CameraFXService.Instance.SetSeed(seed);
+
         // --- synced playback groups (#174) ---
 
         int Vortex.IScriptHost.PlaySyncedAnimation(long[] entities, string[] clips, float speed, float fade)
@@ -1416,6 +1450,12 @@ namespace Editor.Scripting
         void Vortex.IScriptHost.SetCameraFov(float fovDegrees)
         {
             try { Editor.DllWrapper.VortexAPI.SetViewFOV(fovDegrees); }
+            catch { }
+        }
+
+        void Vortex.IScriptHost.SetViewmodelFov(float fovDegrees)
+        {
+            try { Editor.DllWrapper.VortexAPI.SetViewmodelFov(fovDegrees); }
             catch { }
         }
 

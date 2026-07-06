@@ -378,6 +378,7 @@
     <Compile Include="Core\Animation\SkeletonDef.cs" />
     <Compile Include="Core\Animation\AnimationService.cs" />
     <Compile Include="Core\Animation\BoneSocketService.cs" />
+    <Compile Include="Core\Services\CameraFXService.cs" />
     <Compile Include="ECS\Components\Animation\Animator.cs" />
     <Compile Include="ECS\Components\Animation\BoneAttachment.cs" />
     <Compile Include="Editors\WorldEditor\Components\Inspector\AnimatorInspector.cs" />

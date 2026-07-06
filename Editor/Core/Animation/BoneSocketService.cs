@@ -146,6 +146,16 @@ namespace Editor.Core.Animation
             Matrix4x4 offset = Matrix4x4.CreateScale(scale)
                              * EulerZXY(j.OffsetRotEuler)
                              * Matrix4x4.CreateTranslation(j.OffsetPos);
+
+            // CameraFX channel (#176): composed INNERMOST (right after scale) so a Kick displaces the
+            // entity along its own local axes — the weapon kicks back in the hand and stays glued.
+            if (Editor.Core.Services.CameraFXService.Instance.TryGetEntityOffset(j.Entity, out var fxPos, out var fxRot))
+            {
+                offset = Matrix4x4.CreateScale(scale)
+                       * EulerZXY(fxRot) * Matrix4x4.CreateTranslation(fxPos)
+                       * EulerZXY(j.OffsetRotEuler)
+                       * Matrix4x4.CreateTranslation(j.OffsetPos);
+            }
             WriteWorldToTransform(j.Entity, offset * boneWorld);
             return true;
         }
