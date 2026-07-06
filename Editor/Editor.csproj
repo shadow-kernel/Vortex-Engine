@@ -381,6 +381,7 @@
     <Compile Include="ECS\Components\Animation\Animator.cs" />
     <Compile Include="ECS\Components\Animation\BoneAttachment.cs" />
     <Compile Include="Editors\WorldEditor\Components\Inspector\AnimatorInspector.cs" />
+    <Compile Include="Editors\WorldEditor\Components\Inspector\BoneAttachmentInspector.cs" />
     <Compile Include="Editors\AnimationEditor\AnimationEditorWindow.cs" />
     <Compile Include="Editors\AnimationEditor\AnimationPreviewControl.cs" />
     <Compile Include="Core\Audio\SoundContainer.cs" />

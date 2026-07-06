@@ -79,8 +79,8 @@ namespace Editor.Core.Animation
         /// <summary>Apply ONE entity's authored socket immediately (editor authoring: "Snap to Bone").</summary>
         public bool ApplyOne(Data.Scene scene, ECS.GameEntity entity)
         {
-            if (scene == null || entity == null) return false;
-            if (!ReferenceEquals(scene, _scene)) { _scene = scene; _byId = null; }
+            if (entity == null) return false;
+            if (scene != null && !ReferenceEquals(scene, _scene)) { _scene = scene; _byId = null; }
             var job = JobFor(entity);
             return job != null && ApplyJob(job);
         }
@@ -289,6 +289,65 @@ namespace Editor.Core.Animation
                     result.Add(e);
                 if (e.Children != null) CollectAttachedTo(e.Children, target, result);
             }
+        }
+
+        // ------------------------------------------------------------------ editor authoring (#172)
+
+        /// <summary>The entity this attachment resolves to right now (explicit id or ancestor Animator).
+        /// The ancestor path needs no scene — a null scene only disables the by-id lookup.</summary>
+        public ECS.GameEntity ResolveTargetOf(Data.Scene scene, ECS.GameEntity entity)
+        {
+            if (entity == null) return null;
+            if (scene != null && !ReferenceEquals(scene, _scene)) { _scene = scene; _byId = null; }
+            var comp = entity.GetComponent<ECS.Components.Animation.BoneAttachment>();
+            if (comp != null && !string.IsNullOrEmpty(comp.TargetEntityId) && Guid.TryParse(comp.TargetEntityId, out var gid))
+            {
+                var byId = _scene != null ? FindById(gid) : null;
+                if (byId != null) return byId;
+            }
+            return FindAncestorAnimator(entity);
+        }
+
+        /// <summary>Skeleton bone names of the attachment's resolved target (hierarchy order) — the
+        /// inspector's bone dropdown. Empty when no skeleton resolves.</summary>
+        public string[] GetBoneNamesFor(Data.Scene scene, ECS.GameEntity entity)
+        {
+            var target = ResolveTargetOf(scene, entity);
+            if (target == null) return new string[0];
+            if (!AnimationService.Instance.TryGetNodeWorlds(target, out var skeleton, out _)) return new string[0];
+            var names = new string[skeleton.Nodes.Length];
+            for (int i = 0; i < skeleton.Nodes.Length; i++) names[i] = skeleton.Nodes[i].Name;
+            return names;
+        }
+
+        /// <summary>
+        /// Authoring flow "place visually, then capture": compute the offset that keeps the entity's
+        /// CURRENT world transform when socketed to its configured bone, and write it into the component.
+        /// (offset = entityWorld x inverse(boneWorld)). False when bone/skeleton can't resolve.
+        /// </summary>
+        public bool CaptureOffsetFromCurrentPose(Data.Scene scene, ECS.GameEntity entity)
+        {
+            if (entity == null) return false;
+            if (scene != null && !ReferenceEquals(scene, _scene)) { _scene = scene; _byId = null; }
+            var comp = entity.GetComponent<ECS.Components.Animation.BoneAttachment>();
+            if (comp == null || string.IsNullOrEmpty(comp.BoneName)) return false;
+            var target = ResolveTargetOf(scene, entity);
+            if (target == null) return false;
+            if (!TryGetBoneWorld(target, comp.BoneName, out var boneWorld)) return false;
+            if (!Matrix4x4.Invert(boneWorld, out var inv)) return false;
+
+            Matrix4x4 offset = EntityWorld(entity) * inv;
+            if (!Matrix4x4.Decompose(offset, out var s, out var q, out var t))
+            {
+                t = offset.Translation;
+                q = Quaternion.CreateFromRotationMatrix(NormalizeBasis(offset));
+                s = SysVec.One;
+            }
+            var euler = ToEulerZXY(Matrix4x4.CreateFromQuaternion(q));
+            comp.OffsetPosition = new ECS.Vector3(t.X, t.Y, t.Z);
+            comp.OffsetRotation = new ECS.Vector3(euler.X, euler.Y, euler.Z);
+            comp.OffsetScale = new ECS.Vector3(s.X, s.Y, s.Z);
+            return true;
         }
 
         // ------------------------------------------------------------------ resolution helpers

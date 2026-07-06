@@ -45,6 +45,7 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
                 { typeof(ECS.Components.Physics.CapsuleCollider), comp => CreateColliderInspector((ECS.Components.Physics.Collider)comp) },
                 { typeof(ECS.Components.Physics.MeshCollider), comp => CreateColliderInspector((ECS.Components.Physics.Collider)comp) },
                 { typeof(ECS.Components.Animation.Animator), comp => CreateAnimatorInspector((ECS.Components.Animation.Animator)comp) },
+                { typeof(ECS.Components.Animation.BoneAttachment), comp => CreateBoneAttachmentInspector((ECS.Components.Animation.BoneAttachment)comp) },
                 { typeof(ECS.Components.Audio.AudioSource), comp => CreateAudioSourceInspector((ECS.Components.Audio.AudioSource)comp) },
                 { typeof(ECS.Components.Audio.ReverbZone), comp => CreateReverbZoneInspector((ECS.Components.Audio.ReverbZone)comp) },
             };
@@ -281,6 +282,13 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
         {
             var inspector = new AnimatorInspector(animator);
             inspector.RemoveRequested += (s, e) => RemoveComponentAndRefresh(animator);
+            return inspector;
+        }
+
+        private UserControl CreateBoneAttachmentInspector(ECS.Components.Animation.BoneAttachment attachment)
+        {
+            var inspector = new BoneAttachmentInspector(attachment);
+            inspector.RemoveRequested += (s, e) => RemoveComponentAndRefresh(attachment);
             return inspector;
         }
 
@@ -586,6 +594,7 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
 
             contextMenu.Items.Add(new Separator());
             AddComponentMenuItem(contextMenu, "Animator", () => AddComponent<ECS.Components.Animation.Animator>());
+            AddComponentMenuItem(contextMenu, "Bone Attachment", () => AddComponent<ECS.Components.Animation.BoneAttachment>());
 
             contextMenu.Items.Add(new Separator());
             AddComponentMenuItem(contextMenu, "Rigidbody", () => AddComponent<ECS.Components.Physics.Rigidbody>());
