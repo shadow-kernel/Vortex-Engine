@@ -157,7 +157,7 @@ Methods: `internal void SyncToEngine()` (push to the engine entity; sets `SceneR
 | `MaterialPath` | `string` | `materialPath` / 11 | Material file; setter reloads + syncs. |
 | `CastShadows` | `bool` | `castShadows` / 12 | Default `true`. |
 | `ReceiveShadows` | `bool` | `receiveShadows` / 13 | Default `true`. |
-| `RenderLayer` | `int` | `renderLayer` / 14 | Cull layer. |
+| `RenderLayer` | `int` | `renderLayer` / 14 | `0` world (all cameras), `1` first-person viewmodel (FP overlay pass: own FOV, cleared depth, no shadow cast; hidden in the editor build view — FP toolbar toggle shows it for placement, "FP Preview (In-Game)" view mode shows the real game frame), `2` third-person only (visible in the editor, hidden for the local player while playing). |
 | `ColorR/G/B/A` | `float` | `colorR..colorA` / 15–18 | Base color (RGB default `0.7`, A `1`). |
 | `Metallic` | `float` | `metallic` / 19 | PBR metallic (default `0`). |
 | `Roughness` | `float` | `roughness` / 20 | PBR roughness (default `0.5`). |
@@ -297,6 +297,12 @@ Subclasses add a shape member (Order 20+):
 **`AnimatorClipEntry`** (`[DataContract(Name="AnimatorClip")]`, plain data): `Name` (`name`/0) · `Path` (`path`/1, project-relative `.vanim`).
 
 **`Animator`:** `Clips : List<AnimatorClipEntry>` (`clips`/10) · `DefaultClip : string` (`defaultClip`/11) · `PlayOnStart : bool` (`playOnStart`/12, default `true`) · `Speed : float` (`speed`/13, default `1`). Method `string ResolveClipPath(string nameOrPath)` — resolves a clip-table name to its `.vanim` path (a direct `.vanim` path passes through).
+
+### TwoBoneIk
+
+**`Editor.ECS.Components.Animation`** · DN `"Two-Bone IK"`, purple (#179). Runtime two-bone IK on the entity that carries the Animator: pulls a 3-joint limb (chain derived from the tip: mid = parent, root = grandparent) so the tip bone reaches a target rigidly coupled to ANOTHER bone of the same skeleton — the "support hand grips the weapon" setup. Solved in model space inside the palette evaluation (after clips/layers/bone overrides, before skinning), so submeshes, bone sockets and bone queries all see the IK'd pose. The editor viewport previews the IK'd pose live while tuning (bind pose + IK).
+
+`TipBone : string` (`tipBone`/10, e.g. `mixamorig:LeftHand`) · `TargetBone : string` (`targetBone`/11, e.g. `mixamorig:RightHand`) · `TargetOffsetPosition : Vector3` (`targetOffsetPosition`/12 — grip position in the target bone's local frame, MODEL units; author via the inspector's **Capture From Current Pose**) · `TargetOffsetRotation : Vector3` (`targetOffsetRotation`/13, engine-ZXY Euler degrees) · `Weight : float` (`weight`/14, 0–1, default `1`; blend at runtime via `Animation.SetIkWeight(entity, tipBone, w)`) · `PoleAngle : float` (`poleAngle`/15, degrees around the root→target axis; `0` keeps the animation's bend plane) · `ApplyTipRotation : bool` (`applyTipRotation`/16, default `true` — orient the wrist to the grip).
 
 ### Script
 

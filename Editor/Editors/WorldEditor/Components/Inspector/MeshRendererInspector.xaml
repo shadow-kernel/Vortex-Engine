@@ -127,7 +127,7 @@
                 </StackPanel>
             </Grid>
 
-            <!-- First-person viewmodel layer (#175) -->
+            <!-- Render layer (#175): 0 World / 1 First-Person viewmodel / 2 Third-Person only -->
             <Grid Margin="0,6,0,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="80"/>
@@ -135,10 +135,17 @@
                 </Grid.ColumnDefinitions>
 
                 <TextBlock Text="Layer" Style="{StaticResource PropertyLabel}"/>
-                <CheckBox x:Name="ViewmodelLayerCheckBox" Grid.Column="1" Content="First-Person (viewmodel)"
-                          Style="{StaticResource PropertyCheckBox}"
-                          ToolTip="Renders after the world with its own FOV and cleared depth: never clips through walls, casts no shadows. For first-person arms/weapons."
-                          Checked="ViewmodelLayerCheckBox_Changed" Unchecked="ViewmodelLayerCheckBox_Changed"/>
+                <ComboBox x:Name="RenderLayerComboBox" Grid.Column="1" Height="26"
+                          Background="#FF161618" Foreground="#FFE9E9ED" BorderBrush="#FF33333A"
+                          VerticalContentAlignment="Center" FontSize="12"
+                          SelectionChanged="RenderLayerComboBox_Changed">
+                    <ComboBoxItem Content="World"
+                                  ToolTip="Default: rendered for every camera, casts shadows."/>
+                    <ComboBoxItem Content="First-Person (viewmodel)"
+                                  ToolTip="Renders after the world with its own FOV and cleared depth: never clips through walls, casts no shadows. For first-person arms/weapons. Hidden in the editor build view (use the FP Preview view mode or the FP toolbar toggle to see it)."/>
+                    <ComboBoxItem Content="Third-Person only"
+                                  ToolTip="What OTHERS see: rendered normally in the editor, but hidden for the local player while playing. For the world-body of a first-person character."/>
+                </ComboBox>
             </Grid>
         </StackPanel>
     </Border>

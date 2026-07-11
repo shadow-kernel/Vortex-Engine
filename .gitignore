@@ -370,3 +370,6 @@ FodyWeavers.xsd
 
 # Inno Setup build output
 Installer/Output/
+
+# Streamline SDK build/distribution (1.8 GB, rebuilt locally — see STREAMLINE_INTEGRATION.md)
+ThirdParty/Streamline/

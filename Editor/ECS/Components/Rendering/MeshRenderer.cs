@@ -6,7 +6,7 @@ using Editor.Utilities;
 namespace Editor.ECS.Components.Rendering
 {
     /// <summary>
-    /// MeshRenderer-Komponente für 3D-Mesh-Darstellung.
+    /// MeshRenderer-Komponente fï¿½r 3D-Mesh-Darstellung.
     /// </summary>
     [DataContract(Name = "MeshRenderer", Namespace = "")]
     public class MeshRenderer : Component
@@ -94,7 +94,7 @@ namespace Editor.ECS.Components.Rendering
         }
 
         /// <summary>
-        /// Ob das Mesh Schatten empfängt
+        /// Ob das Mesh Schatten empfï¿½ngt
         /// </summary>
         [DataMember(Name = "receiveShadows", Order = 13)]
         public bool ReceiveShadows
@@ -104,13 +104,20 @@ namespace Editor.ECS.Components.Rendering
         }
 
         /// <summary>
-        /// Render-Layer für Culling
+        /// Render layer (#175): 0 = world (all cameras), 1 = first-person viewmodel (drawn in the FP
+        /// overlay pass â€” own FOV, cleared depth, no shadow casting), 2 = third-person only (what OTHERS
+        /// see: rendered normally in the editor, skipped for the local player while playing).
         /// </summary>
         [DataMember(Name = "renderLayer", Order = 14)]
         public int RenderLayer
         {
             get => _renderLayer;
-            set => SetProperty(ref _renderLayer, value, nameof(RenderLayer));
+            set
+            {
+                if (value < 0 || value > 2) value = 0;    // only 0/1/2 exist â€” sanitize stray values (incl. loaded scenes)
+                if (SetProperty(ref _renderLayer, value, nameof(RenderLayer)))
+                    Entity?.NotifyRenderLayerChanged();   // hierarchy FP/3P chips; Entity is null during deserialization
+            }
         }
 
         /// <summary>
@@ -381,7 +388,7 @@ namespace Editor.ECS.Components.Rendering
 
         /// <summary>
         /// Synchronisiert die MeshRenderer-Daten zur Engine.
-        /// Wird aufgerufen wenn Entity aktiv wird oder Mesh/Material sich ändert.
+        /// Wird aufgerufen wenn Entity aktiv wird oder Mesh/Material sich ï¿½ndert.
         /// </summary>
         internal void SyncToEngine()
         {
@@ -434,7 +441,7 @@ namespace Editor.ECS.Components.Rendering
     }
 
     /// <summary>
-    /// SpriteRenderer-Komponente für 2D-Sprite-Darstellung.
+    /// SpriteRenderer-Komponente fï¿½r 2D-Sprite-Darstellung.
     /// </summary>
     [DataContract(Name = "SpriteRenderer", Namespace = "")]
     public class SpriteRenderer : Component

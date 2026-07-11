@@ -689,8 +689,18 @@ namespace Game
 
         private void OnNewPrefabClick(object sender, RoutedEventArgs e)
         {
-            var newFile = _explorerService.CreateFile("NewPrefab.prefab", GetDefaultPrefabContent());
-            SelectAndRenameNewItem(newFile);
+            // A prefab is a serialized GameEntity template (.ventity). Build a REAL, instantiable one via
+            // PrefabService (lands in Assets/Prefabs) instead of the old hand-rolled ".prefab" JSON stub that
+            // PrefabService.InstantiatePrefab could never read (wrong extension AND wrong schema).
+            try
+            {
+                var path = Editor.Core.Services.PrefabService.Instance.CreateEmptyPrefab("NewPrefab");
+                if (string.IsNullOrEmpty(path)) return;
+                var dir = System.IO.Path.GetDirectoryName(path);
+                if (!string.IsNullOrEmpty(dir)) _explorerService.NavigateToPath(dir);
+                _explorerService.RefreshCurrentFolderContents();
+            }
+            catch { }
         }
 
         private void OnNewMaterialClick(object sender, RoutedEventArgs e)

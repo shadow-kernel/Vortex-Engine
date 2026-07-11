@@ -46,6 +46,7 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
                 { typeof(ECS.Components.Physics.MeshCollider), comp => CreateColliderInspector((ECS.Components.Physics.Collider)comp) },
                 { typeof(ECS.Components.Animation.Animator), comp => CreateAnimatorInspector((ECS.Components.Animation.Animator)comp) },
                 { typeof(ECS.Components.Animation.BoneAttachment), comp => CreateBoneAttachmentInspector((ECS.Components.Animation.BoneAttachment)comp) },
+                { typeof(ECS.Components.Animation.TwoBoneIk), comp => CreateTwoBoneIkInspector((ECS.Components.Animation.TwoBoneIk)comp) },
                 { typeof(ECS.Components.Audio.AudioSource), comp => CreateAudioSourceInspector((ECS.Components.Audio.AudioSource)comp) },
                 { typeof(ECS.Components.Audio.ReverbZone), comp => CreateReverbZoneInspector((ECS.Components.Audio.ReverbZone)comp) },
             };
@@ -76,6 +77,19 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
         {
             _selectedEntity = entity;
             RefreshInspector();
+        }
+
+        /// <summary>The header Active checkbox was inert UI — wire it to GameEntity.IsActive (activeSelf).
+        /// The setter runs SyncEngineStateRecursive itself; the retained render queue additionally needs a
+        /// forced resubmit or nothing changes on screen. Guarded so RefreshInspector's programmatic
+        /// IsChecked assignment doesn't re-write the entity.</summary>
+        private void EntityActiveCheckBox_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_selectedEntity == null || !EntityActiveCheckBox.IsLoaded) return;
+            bool active = EntityActiveCheckBox.IsChecked == true;
+            if (_selectedEntity.IsActive == active) return;
+            _selectedEntity.IsActive = active;
+            GamePreview.GamePreviewView.RequestResubmit();
         }
 
         private void RefreshInspector()
@@ -289,6 +303,13 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
         {
             var inspector = new BoneAttachmentInspector(attachment);
             inspector.RemoveRequested += (s, e) => RemoveComponentAndRefresh(attachment);
+            return inspector;
+        }
+
+        private UserControl CreateTwoBoneIkInspector(ECS.Components.Animation.TwoBoneIk ik)
+        {
+            var inspector = new TwoBoneIkInspector(ik);
+            inspector.RemoveRequested += (s, e) => RemoveComponentAndRefresh(ik);
             return inspector;
         }
 
@@ -595,6 +616,7 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             contextMenu.Items.Add(new Separator());
             AddComponentMenuItem(contextMenu, "Animator", () => AddComponent<ECS.Components.Animation.Animator>());
             AddComponentMenuItem(contextMenu, "Bone Attachment", () => AddComponent<ECS.Components.Animation.BoneAttachment>());
+            AddComponentMenuItem(contextMenu, "Two-Bone IK (support hand)", () => AddComponent<ECS.Components.Animation.TwoBoneIk>());
 
             contextMenu.Items.Add(new Separator());
             AddComponentMenuItem(contextMenu, "Rigidbody", () => AddComponent<ECS.Components.Physics.Rigidbody>());

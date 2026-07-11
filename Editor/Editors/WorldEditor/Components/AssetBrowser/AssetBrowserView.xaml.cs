@@ -1166,6 +1166,15 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                     return;
                 }
 
+                // Animation clip -> open the Keyframe Editor on the STANDALONE clip (no scene character required).
+                if (!string.IsNullOrEmpty(item.Path) && item.Path.EndsWith(".vanim", StringComparison.OrdinalIgnoreCase))
+                {
+                    var proj = ProjectData.Current?.Path ?? "";
+                    var vfull = System.IO.Path.IsPathRooted(item.Path) ? item.Path : System.IO.Path.Combine(proj, item.Path);
+                    try { Editor.Editors.AnimationEditor.AnimationEditorWindow.Open(Window.GetWindow(this), vfull); } catch { }
+                    return;
+                }
+
                 bool isModel = item.Type == AssetType.Meshes || item.Type == AssetType.Models;
                 var mods = System.Windows.Input.Keyboard.Modifiers;
                 if (isModel && !string.IsNullOrEmpty(item.Path) && !item.Path.StartsWith("Primitive:", StringComparison.OrdinalIgnoreCase))
@@ -1229,6 +1238,77 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[StressTest] {ex.Message}"); }
         }
 
+        /// <summary>Turn a model asset into a reusable .ventity prefab WITHOUT dropping a throwaway instance into
+        /// the scene — the entity is built in memory by PrefabService and serialized straight to Assets/Prefabs.</summary>
+        private void CreatePrefabFromModel(AssetItem item)
+        {
+            try
+            {
+                var projectPath = ProjectData.Current?.Path;
+                if (string.IsNullOrEmpty(projectPath)) { MessageBox.Show("Please open a project first.", "Create Prefab", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+                string fullPath = item.Path;
+                if (!string.IsNullOrEmpty(fullPath) && !System.IO.Path.IsPathRooted(fullPath))
+                    fullPath = System.IO.Path.Combine(projectPath, item.Path);
+                if (!System.IO.File.Exists(fullPath)) { MessageBox.Show("Model file not found.", "Create Prefab", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+
+                string prefabName = System.IO.Path.GetFileNameWithoutExtension(item.Name);
+                var prefabPath = Editor.Core.Services.PrefabService.Instance.CreatePrefabFromModel(fullPath, prefabName);
+                if (string.IsNullOrEmpty(prefabPath)) { MessageBox.Show("Could not create the prefab from this model.", "Create Prefab", MessageBoxButton.OK, MessageBoxImage.Error); return; }
+
+                AssetDatabase.Instance.Refresh();
+                RefreshAssets();
+                try { SelectFileInExplorer(prefabPath); } catch { }
+                MessageBox.Show($"Created prefab:\nAssets/Prefabs/{System.IO.Path.GetFileName(prefabPath)}\n\n" +
+                    "Drag it into the scene (or double-click) to place LINKED instances — no throwaway mesh needed. " +
+                    "Add scripts/colliders/doors to the prefab and Apply, and every instance updates.",
+                    "Create Prefab", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex) { MessageBox.Show("Create prefab failed:\n" + ex.Message, "Create Prefab", MessageBoxButton.OK, MessageBoxImage.Error); }
+        }
+
+        /// <summary>Extract every embedded animation clip from a model to standalone .vanim files (animation only,
+        /// no character) via AnimationService — then they're editable in the Keyframe Editor and reusable on any rig.</summary>
+        private void ExtractAnimationsFromModel(AssetItem item)
+        {
+            try
+            {
+                var projectPath = ProjectData.Current?.Path ?? "";
+                string fullPath = item.Path;
+                if (!string.IsNullOrEmpty(fullPath) && !System.IO.Path.IsPathRooted(fullPath))
+                    fullPath = System.IO.Path.Combine(projectPath, item.Path);
+                if (!System.IO.File.Exists(fullPath)) { MessageBox.Show("Model file not found.", "Extract Animations", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+
+                var written = Editor.Core.Animation.AnimationService.ExtractClipsFromModel(fullPath);
+                AssetDatabase.Instance.Refresh();
+                RefreshAssets();
+                if (written == null || written.Count == 0)
+                {
+                    MessageBox.Show("This model has no embedded animation clips to extract.", "Extract Animations", MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+                }
+                var names = new System.Text.StringBuilder();
+                foreach (var w in written) names.AppendLine("• " + System.IO.Path.GetFileName(w));
+                MessageBox.Show($"Extracted {written.Count} animation clip(s) to animations/ (animation only — no character):\n\n{names}\n" +
+                    "Double-click a .vanim to edit it in the Keyframe Editor, or assign it to any model's Animator.",
+                    "Extract Animations", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex) { MessageBox.Show("Extract failed:\n" + ex.Message, "Extract Animations", MessageBoxButton.OK, MessageBoxImage.Error); }
+        }
+
+        /// <summary>Create a blank, INSTANTIABLE prefab (.ventity) in Assets/Prefabs via PrefabService.</summary>
+        private void CreateNewPrefabEmpty()
+        {
+            try
+            {
+                var created = Editor.Core.Services.PrefabService.Instance.CreateEmptyPrefab("NewPrefab");
+                if (string.IsNullOrEmpty(created)) { MessageBox.Show("Please open a project first.", "New Prefab", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+                AssetDatabase.Instance.Refresh();
+                RefreshAssets();
+                try { SelectFileInExplorer(created); } catch { }
+            }
+            catch (Exception ex) { MessageBox.Show("Could not create the prefab:\n" + ex.Message, "New Prefab", MessageBoxButton.OK, MessageBoxImage.Error); }
+        }
+
         private ContextMenu BuildAssetContextMenu(AssetItem item)
         {
             if (item != null && item.IsParentUp) return null;   // the ".." tile has no actions
@@ -1262,6 +1342,17 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
                 if (item.Type == AssetType.Meshes || item.Type == AssetType.Models)
                 {
                     AddMenu(menu, "Add to Scene", () => AddAssetToScene(item), 0xE710, "#FF4EC9B0");
+                    // Make a reusable prefab STRAIGHT from the model — no throwaway instance in the scene tree.
+                    AddMenu(menu, "Create Prefab from Model", () => CreatePrefabFromModel(item), 0xE74C, "#FF2ECC71");
+                    // Pull just the animation clip(s) out to standalone .vanim files (animation only, no character).
+                    AddMenu(menu, "Extract Animations…", () => ExtractAnimationsFromModel(item), 0xE768, "#FFC586C0");
+                    // Visually seat this model on a character bone (weapon in hand, accessory on weapon) + save .vsocket.
+                    AddMenu(menu, "Socket Editor…", () =>
+                    {
+                        var proj = ProjectData.Current?.Path ?? "";
+                        var full = System.IO.Path.IsPathRooted(item.Path) ? item.Path : System.IO.Path.Combine(proj, item.Path ?? "");
+                        Editor.Editors.SocketEditor.SocketEditorWindow.Open(Window.GetWindow(this), full);
+                    }, 0xE71B, "#FF8FD6A6");
                     AddMenu(menu, "Stress Test…", () => StartStress(item), 0xE9D9, "#FFE6B422");
                 }
                 if (!string.IsNullOrEmpty(item.Path) && item.Path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
@@ -1280,6 +1371,7 @@ namespace Editor.Editors.WorldEditor.Components.AssetBrowser
             AddMenu(menu, "New Shader", () => CreateNewShader("VertFrag"), 0xE9F5, "#FF569CD6");
             AddMenu(menu, "New UI Screen", () => CreateNewUiScreen(), 0xE7F4, "#FF4DB6E2");
             AddMenu(menu, "New Animation Clip", () => CreateNewAnimationClip(), 0xE768, "#FFC586C0");
+            AddMenu(menu, "New Prefab", () => CreateNewPrefabEmpty(), 0xE74C, "#FF2ECC71");
             menu.Items.Add(new Separator());
             AddMenu(menu, "Refresh", () => { FileExplorerService.Instance.RefreshCurrentFolderContents(); RefreshAssets(); }, 0xE72C, "#FF9A9AA1");
             return menu;

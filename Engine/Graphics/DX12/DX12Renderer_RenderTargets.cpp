@@ -269,10 +269,23 @@ namespace vortex::graphics::dx12
 			
 			auto& reg = ResourceRegistry::instance();
 			size_t objectCount = (std::min)(m_render_queue.size(), static_cast<size_t>(MAX_RENDER_OBJECTS));
-			
+
+			// Per-object CB slots: the buffer holds MAX_DRAW_RUNS (8192) 256-byte slots and its TAIL is
+			// shared with the gizmo pass (MAX_GIZMO_ITEMS) — but this loop used to index it with the RAW
+			// queue index (up to MAX_RENDER_OBJECTS = 262144), writing far past the mapped allocation in
+			// big scenes. Use a compacted draw-slot counter (skipped items consume nothing) clamped below
+			// the gizmo tail; overflow items share the last slot (wrong constants beat heap corruption).
+			const u32 maxPaneSlot = MAX_DRAW_RUNS - MAX_GIZMO_ITEMS - 1;
+			u32 drawSlot = 0;
+
 			for (size_t i = 0; i < objectCount; ++i)
 			{
 				const auto& item = m_render_queue[i];
+				// #175: the first-person viewmodel layer is "only YOUR camera" — a secondary viewport
+				// (camera pane / PIP) is by definition another camera, so never draw layer!=0 items here.
+				// Without this the FP arms/weapon render interleaved as world geometry with the pane
+				// camera's projection whenever they are in the queue (play mode, FP preview).
+				if (item.layer != 0) continue;
 				auto* mesh = reg.get_mesh(item.mesh_id);
 				if (!mesh) continue;
 				
@@ -337,19 +350,23 @@ namespace vortex::graphics::dx12
 					if (height_tex && height_tex->is_valid() && height_tex->srv_gpu().ptr != 0) { obj_cb.has_height_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(9, height_tex->srv_gpu()); }
 				}
 				
-				void* dest = static_cast<u8*>(m_per_object_cb_mapped) + i * 256;
+				const u32 slot = (drawSlot < maxPaneSlot) ? drawSlot : maxPaneSlot;
+				if (drawSlot < maxPaneSlot) ++drawSlot;
+
+				void* dest = static_cast<u8*>(m_per_object_cb_mapped) + (size_t)slot * 256;
 				memcpy(dest, &obj_cb, sizeof(obj_cb));
-				
-				D3D12_GPU_VIRTUAL_ADDRESS obj_cb_addr = m_per_object_cb->GetGPUVirtualAddress() + i * 256;
+
+				D3D12_GPU_VIRTUAL_ADDRESS obj_cb_addr = m_per_object_cb->GetGPUVirtualAddress() + (UINT64)slot * 256;
 				m_command_list->SetGraphicsRootConstantBufferView(1, obj_cb_addr);
-				
+
 				// The shared 3D PSO now REQUIRES per-instance world data on slot 1 (instancing). The editor
 				// preview draws one instance per object, so stage this world matrix + bind the instance VB.
+				// (Same compacted slot — the instance VB is larger, but one indexing scheme is one bug fewer.)
 				if (m_instance_vb_mapped)
-					memcpy(static_cast<u8*>(m_instance_vb_mapped) + (size_t)i * 64, &item.world_matrix, 64);
+					memcpy(static_cast<u8*>(m_instance_vb_mapped) + (size_t)slot * 64, &item.world_matrix, 64);
 				D3D12_VERTEX_BUFFER_VIEW vbs2[2];
 				vbs2[0] = mesh->vertex_buffer_view();
-				vbs2[1].BufferLocation = m_instance_vb->GetGPUVirtualAddress() + (UINT64)i * 64;
+				vbs2[1].BufferLocation = m_instance_vb->GetGPUVirtualAddress() + (UINT64)slot * 64;
 				vbs2[1].SizeInBytes = 64;
 				vbs2[1].StrideInBytes = 64;
 				m_command_list->IASetVertexBuffers(0, 2, vbs2);

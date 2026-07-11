@@ -436,8 +436,21 @@
         <HierarchicalDataTemplate x:Key="EntityTemplate" ItemsSource="{Binding Children}">
             <Border Background="{Binding IsSelected, Converter={StaticResource EntitySelectedToBackgroundConverter}}"
                     CornerRadius="7" Padding="2,1" Margin="-2,-1">
-                <Grid ContextMenu="{StaticResource EntityContextMenu}"
-                      Opacity="{Binding IsActive, Converter={StaticResource EntityActiveToOpacityConverter}}">
+                <Grid ContextMenu="{StaticResource EntityContextMenu}">
+                    <Grid.Style>
+                        <Style TargetType="Grid">
+                            <Setter Property="Opacity" Value="1.0"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsActive}" Value="False">
+                                    <Setter Property="Opacity" Value="0.5"/>
+                                </DataTrigger>
+                                <!-- Eye toggle: dim the whole row while hidden in the editor viewport -->
+                                <DataTrigger Binding="{Binding IsHiddenInEditor}" Value="True">
+                                    <Setter Property="Opacity" Value="0.45"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Grid.Style>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
@@ -463,6 +476,40 @@
                                 </Style>
                             </TextBlock.Style>
                         </TextBlock>
+                        <!-- FP-viewmodel chip: entity (or a submesh child) is on render layer 1 (#175) -->
+                        <Border CornerRadius="3" Background="#3A2E6E" Padding="3,0" Margin="0,0,5,0"
+                                VerticalAlignment="Center"
+                                ToolTip="First-Person viewmodel (RenderLayer 1) - drawn by the game's FP overlay pass, hidden in the build view">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsViewmodel}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <TextBlock Text="FP" FontSize="9" FontWeight="SemiBold" Foreground="#B4A7F5"
+                                       VerticalAlignment="Center"/>
+                        </Border>
+                        <!-- Third-person-only chip: render layer 2 (hidden for the local player while playing) -->
+                        <Border CornerRadius="3" Background="#24422E" Padding="3,0" Margin="0,0,5,0"
+                                VerticalAlignment="Center"
+                                ToolTip="Third-Person only (RenderLayer 2) - hidden for the local player while playing">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsThirdPersonOnly}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <TextBlock Text="3P" FontSize="9" FontWeight="SemiBold" Foreground="#8FD3A7"
+                                       VerticalAlignment="Center"/>
+                        </Border>
                         <!-- Name: blue for a prefab instance (like Unity), normal light-grey for a plain mesh entity. -->
                         <TextBlock Text="{Binding Name}"
                                    FontFamily="Segoe UI Variable Text, Segoe UI"
@@ -479,10 +526,27 @@
                             </TextBlock.Style>
                         </TextBlock>
                     </StackPanel>
-                    <TextBlock Grid.Column="2" Text="&#xE7B3;" FontFamily="Segoe MDL2 Assets" FontSize="12"
-                               Foreground="#73737A" VerticalAlignment="Center" Margin="8,0,4,0"
-                               Opacity="{Binding IsActive, Converter={StaticResource EntityActiveToOpacityConverter}}"
-                               ToolTip="Visibility"/>
+                    <!-- Eye toggle: hides the entity + subtree from the editor viewport (session only, never saved).
+                         Tag="EyeToggle" exempts these clicks from row drag/selection/double-click handling. -->
+                    <Border Grid.Column="2" Background="Transparent" Padding="6,0,2,0" Cursor="Hand"
+                            Tag="EyeToggle" MouseLeftButtonDown="EyeToggle_MouseLeftButtonDown">
+                        <TextBlock Text="&#xE7B3;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                                   VerticalAlignment="Center" Margin="2,0">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Foreground" Value="#73737A"/>
+                                    <Setter Property="ToolTip" Value="Hide in editor viewport (session only)"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsHiddenInEditor}" Value="True">
+                                            <Setter Property="Foreground" Value="#6C5CE7"/>
+                                            <Setter Property="Opacity" Value="0.6"/>
+                                            <Setter Property="ToolTip" Value="Hidden in editor viewport - click to show"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Border>
                 </Grid>
             </Border>
         </HierarchicalDataTemplate>

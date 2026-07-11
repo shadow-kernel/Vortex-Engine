@@ -55,6 +55,138 @@ namespace Editor.Core.Services
             return file;
         }
 
+        /// <summary>
+        /// Create a prefab (.ventity) DIRECTLY from a model asset (.glb/.fbx/.obj/…) WITHOUT ever placing a
+        /// throwaway instance in the scene. The entity is built IN MEMORY (Scene = null, never synced to the
+        /// native engine, never touches the undo stack), faithfully mirroring the drag-into-scene factory
+        /// (<see cref="Editor.Editors.WorldEditor.DragDrop.ViewportDropHandler"/>): single- vs multi-submesh
+        /// container, per-submesh .vmat binding, the model's default placement scale, and an auto-Animator when
+        /// the model has extracted <c>animations/*.vanim</c> clips. Then it serializes that entity as a prefab
+        /// template. This is the answer to "I don't want to drop a mesh into the scene just to Save-as-Prefab".
+        /// Returns the absolute .ventity path, or null on failure.
+        /// </summary>
+        public string CreatePrefabFromModel(string modelPath, string prefabName = null)
+        {
+            var project = ProjectData.Current;
+            if (string.IsNullOrEmpty(modelPath) || project == null) return null;
+
+            string full = Resolve(modelPath, project);
+            if (!File.Exists(full)) return null;
+            string rel = ToProjectRelative(full, project.Path);
+            string name = string.IsNullOrWhiteSpace(prefabName) ? Path.GetFileNameWithoutExtension(full) : prefabName;
+
+            // Root entity — NO scene (orphan). Serialization never reads Scene ([IgnoreDataMember]); with no
+            // EntityId the MeshRenderer setters' SyncToEngine is a no-op, so nothing hits the native engine.
+            var root = new GameEntity(name);
+
+            // Multi-submesh models become a parent container with one LOCKED child per submesh (exactly like the
+            // drop handler) so materials map 1:1; single-submesh models put the MeshRenderer on the root.
+            int submeshCount = 1;
+            try { submeshCount = Editor.DllWrapper.VortexAPI.GetSubmeshCount(full); } catch { submeshCount = 1; }
+
+            if (submeshCount > 1)
+            {
+                string[] submeshNames = null;
+                try { submeshNames = Editor.DllWrapper.VortexAPI.GetSubmeshNames(full, submeshCount); } catch { }
+                for (int i = 0; i < submeshCount; i++)
+                {
+                    string childName = (submeshNames != null && i < submeshNames.Length && !string.IsNullOrEmpty(submeshNames[i]))
+                        ? submeshNames[i] : ("Submesh_" + i);
+                    var child = new GameEntity(childName) { IsLockedToParent = true };
+                    var childMr = new ECS.Components.Rendering.MeshRenderer(child) { MeshPath = rel + "#submesh" + i };
+                    BindSubmeshVmat(childMr, rel, i, project.Path);
+                    child.AddComponentDirect(childMr);                 // non-undoable, no engine sync
+                    child.Transform.LocalPosition = new ECS.Vector3(0, 0, 0);
+                    // Raw parent/child wiring — AddChild() would push a CollectionAddCommand for a throwaway entity.
+                    child.Parent = root;
+                    root.Children.Add(child);
+                }
+            }
+            else
+            {
+                var mr = new ECS.Components.Rendering.MeshRenderer(root) { MeshPath = rel };
+                BindSubmeshVmat(mr, rel, 0, project.Path);
+                root.AddComponentDirect(mr);
+            }
+
+            // Model's default placement scale (Model Editor -> .vimport sidecar); a no-op (1.0) otherwise.
+            try
+            {
+                float defScale = ModelImportSettings.LoadDefaultScale(full);
+                if (Math.Abs(defScale - 1f) > 0.0001f)
+                    root.Transform.LocalScale = new ECS.Vector3(defScale, defScale, defScale);
+            }
+            catch { }
+
+            // Animated model with extracted animations/*.vanim -> pre-fill an Animator so instances move out of
+            // the box (PlayOnStart defaults true). No-op if the model has no extracted clips yet.
+            TryAddAnimatorForModel(root, rel);
+
+            var dir = Path.Combine(project.Path, "Assets", "Prefabs");
+            Directory.CreateDirectory(dir);
+            var file = UniquePrefabFile(dir, Sanitize(name));
+            WriteTemplate(root, file);   // normalizes asset paths to project-relative + writes JSON template
+            try { Editor.Core.Assets.AssetDatabase.Instance.Refresh(); } catch { }
+            return file;
+        }
+
+        /// <summary>Create a blank prefab (.ventity) — just a named entity with a Transform — in Assets/Prefabs,
+        /// built in memory and serialized as a proper GameEntity template (so it can actually be instantiated,
+        /// unlike a hand-rolled JSON stub). Returns the absolute path, or null if no project is open.</summary>
+        public string CreateEmptyPrefab(string prefabName = null)
+        {
+            var project = ProjectData.Current;
+            if (project == null) return null;
+            var name = string.IsNullOrWhiteSpace(prefabName) ? "NewPrefab" : prefabName;
+            var root = new GameEntity(name);   // just a Transform — a blank reusable template
+            var dir = Path.Combine(project.Path, "Assets", "Prefabs");
+            Directory.CreateDirectory(dir);
+            var file = UniquePrefabFile(dir, Sanitize(name));
+            WriteTemplate(root, file);
+            try { Editor.Core.Assets.AssetDatabase.Instance.Refresh(); } catch { }
+            return file;
+        }
+
+        /// <summary>Bind the per-submesh sidecar .vmat (materials/submesh_N.vmat) if it exists on disk — the
+        /// single source of truth the engine renders from and that Model-Editor saves persist to.</summary>
+        private static void BindSubmeshVmat(ECS.Components.Rendering.MeshRenderer mr, string modelRel, int submeshIndex, string projectPath)
+        {
+            try
+            {
+                string modelDir = Path.GetDirectoryName(modelRel) ?? "";
+                string vmatRel = Path.Combine(modelDir, "materials", "submesh_" + submeshIndex + ".vmat").Replace('\\', '/');
+                if (!string.IsNullOrEmpty(projectPath) && File.Exists(Path.Combine(projectPath, vmatRel)))
+                    mr.MaterialPath = vmatRel;
+            }
+            catch { }
+        }
+
+        /// <summary>Give an in-memory entity a pre-filled Animator IF the model has sibling animations/*.vanim
+        /// clips (mirrors ViewportDropHandler.TryAddAnimatorForModel, but for an orphan prefab-template entity).</summary>
+        private static void TryAddAnimatorForModel(GameEntity entity, string meshRel)
+        {
+            try
+            {
+                if (entity == null || string.IsNullOrEmpty(meshRel) ||
+                    meshRel.StartsWith("Primitive:", StringComparison.OrdinalIgnoreCase))
+                    return;
+                if (entity.GetComponent<ECS.Components.Animation.Animator>() != null) return;
+                var animator = new ECS.Components.Animation.Animator(entity);
+                if (Editor.Core.Animation.AnimationService.TryPopulateClipsFromModel(animator, meshRel))
+                    entity.AddComponentDirect(animator);
+            }
+            catch { }
+        }
+
+        /// <summary>A non-clobbering prefab path: &lt;base&gt;.ventity, then &lt;base&gt;_1.ventity, …</summary>
+        private static string UniquePrefabFile(string dir, string baseName)
+        {
+            string file = Path.Combine(dir, baseName + PrefabExtension);
+            int n = 1;
+            while (File.Exists(file)) file = Path.Combine(dir, baseName + "_" + (n++) + PrefabExtension);
+            return file;
+        }
+
         /// <summary>Load a .ventity and add a fresh LINKED instance to the scene (new ids, synced to the engine so it
         /// renders immediately). Returns the new instance, or null. <paramref name="undoable"/>=true (the default, for
         /// a user placing an instance) records the add on the undo stack; pass FALSE for internal re-instantiation

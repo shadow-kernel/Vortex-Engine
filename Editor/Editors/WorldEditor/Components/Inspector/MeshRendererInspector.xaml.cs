@@ -63,16 +63,19 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
                 ? matPath + "\nDouble-click: open in the Material Editor"
                 : "Drop a .vmat here — double-click to open it in the Material Editor";
 
-            // First-person viewmodel layer (#175): RenderLayer 1 = viewmodel, 0 = world.
-            ViewmodelLayerCheckBox.IsChecked = _meshRenderer.RenderLayer == 1;
+            // Render layer (#175): 0 = world, 1 = first-person viewmodel, 2 = third-person only.
+            int rl = _meshRenderer.RenderLayer;
+            RenderLayerComboBox.SelectedIndex = (rl >= 0 && rl <= 2) ? rl : 0;
 
             _isUpdating = false;
         }
 
-        private void ViewmodelLayerCheckBox_Changed(object sender, RoutedEventArgs e)
+        private void RenderLayerComboBox_Changed(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
         {
             if (_isUpdating || _meshRenderer == null) return;
-            _meshRenderer.RenderLayer = ViewmodelLayerCheckBox.IsChecked == true ? 1 : 0;
+            int idx = RenderLayerComboBox.SelectedIndex;
+            if (idx < 0) return;
+            _meshRenderer.RenderLayer = idx;   // combo order == layer value (0 World / 1 FP / 2 3P)
             GamePreview.GamePreviewView.RequestResubmit();
         }
 

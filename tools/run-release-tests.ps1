@@ -21,6 +21,7 @@ $auto = [ordered]@{
   "StairTest"     = "stairtest_results.txt"     # Treppen/Slope/Ground-Snap (7)
   "FieldTest"     = "fieldtest_results.txt"     # Script-Feld-Serialisierung (8)
   "SocketTest"    = "sockettest_results.txt"    # Bone-Sockets + Attach-API (13)
+  "IkTest"        = "iktest_results.txt"        # Two-Bone-IK Support-Hand (7, #179)
   "LayerTest"     = "layertest_results.txt"     # Bone-Masken-Layer (9)
   "SyncTest"      = "synctest_results.txt"      # Synced-Playback-Gruppen (8)
   "CamFxTest"     = "camfxtest_results.txt"     # CameraFX Kick/Sway/Spring (7)

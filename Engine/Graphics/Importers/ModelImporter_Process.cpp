@@ -1,5 +1,7 @@
 #include "../../Common/VerboseLog.h"
 #include "ModelImporter_Internal.h"
+#include <cctype>
+#include <cstdio>
 
 namespace vortex::graphics
 {
@@ -317,6 +319,47 @@ namespace vortex::graphics
 			model_dir = filepath.substr(0, last_slash + 1);
 		}
 
+		// Unique per-model prefix for extracted embedded textures. Without this, two GLBs sharing a folder
+		// (e.g. the weapon body + its magazine + ejected casings) both write "embedded_0.png" and CLOBBER each
+		// other -> wrong texture bleeds onto the wrong model. Prefixing with the model's file stem isolates them.
+		std::string model_stem;
+		{
+			std::string base = (last_slash != std::string::npos) ? filepath.substr(last_slash + 1) : filepath;
+			size_t dot = base.find_last_of('.');
+			if (dot != std::string::npos) base = base.substr(0, dot);
+			for (size_t i = 0; i < base.size(); ++i)
+				model_stem += isalnum((unsigned char)base[i]) ? (char)base[i] : '_';
+			if (model_stem.empty()) model_stem = "model";
+		}
+
+		// Resolve a texture reference to a real, loadable file path. EMBEDDED glTF/GLB textures come back
+		// from assimp as a marker like "*0" (or a name GetEmbeddedTexture matches); `model_dir + "*0"` is a
+		// bogus path, so the model rendered untextured (WHITE / flat plastic). Extract the embedded blob to a
+		// real file next to the model and return that; loose textures keep the model_dir prefix.
+		auto resolve_tex = [&](const char* raw) -> std::string {
+			if (!raw || !raw[0]) return std::string();
+			const aiTexture* emb = scene->GetEmbeddedTexture(raw);
+			if (emb)
+			{
+				if (!allow_disk_search) return std::string(raw);   // pak/in-memory: keep marker for the managed resolver
+				std::string ext;
+				for (int c = 0; c < 8 && emb->achFormatHint[c]; ++c)
+					if (isalnum((unsigned char)emb->achFormatHint[c])) ext += (char)tolower((unsigned char)emb->achFormatHint[c]);
+				if (ext.empty()) ext = (emb->mHeight == 0) ? "png" : "bin";
+				std::string tag;
+				for (const char* p = raw; *p; ++p) if (isalnum((unsigned char)*p)) tag += *p;
+				if (tag.empty()) tag = "0";
+				std::string full = model_dir + "embedded_" + model_stem + "_" + tag + "." + ext;
+				if (emb->mHeight == 0 && emb->mWidth > 0 && emb->pcData)   // compressed blob (PNG/JPG): mWidth = byte count
+				{
+					FILE* f = nullptr;
+					if (fopen_s(&f, full.c_str(), "wb") == 0 && f) { fwrite(emb->pcData, 1, emb->mWidth, f); fclose(f); }
+				}
+				return full;
+			}
+			return model_dir + raw;   // loose file on disk next to the model
+		};
+
 		VORTEX_VLOG(("ModelImporter: Found " + std::to_string(scene->mNumMaterials) + " materials\n").c_str());
 
 		for (u32 i = 0; i < scene->mNumMaterials; i++)
@@ -347,7 +390,7 @@ namespace vortex::graphics
 			{
 			aiString tex_path;
 			material->GetTexture(aiTextureType_DIFFUSE, 0, &tex_path);
-			diffuse_path = model_dir + tex_path.C_Str();
+			diffuse_path = resolve_tex(tex_path.C_Str());
 			data.texture_paths.push_back(diffuse_path);
 			VORTEX_VLOG(("    Diffuse: " + diffuse_path + "\n").c_str());
 			}
@@ -356,7 +399,7 @@ namespace vortex::graphics
 			{
 			aiString tex_path;
 			material->GetTexture(aiTextureType_AMBIENT, 0, &tex_path);
-			diffuse_path = model_dir + tex_path.C_Str();
+			diffuse_path = resolve_tex(tex_path.C_Str());
 			data.texture_paths.push_back(diffuse_path);
 			VORTEX_VLOG(("    Ambient (as diffuse): " + diffuse_path + "\n").c_str());
 			}
@@ -367,19 +410,19 @@ namespace vortex::graphics
 			{
 				aiString tex_path;
 				material->GetTexture(aiTextureType_NORMALS, 0, &tex_path);
-				normal_path = model_dir + tex_path.C_Str();
+				normal_path = resolve_tex(tex_path.C_Str());
 			}
 			else if (material->GetTextureCount(aiTextureType_HEIGHT) > 0)
 			{
 				aiString tex_path;
 				material->GetTexture(aiTextureType_HEIGHT, 0, &tex_path);
-				normal_path = model_dir + tex_path.C_Str();
+				normal_path = resolve_tex(tex_path.C_Str());
 			}
 
 			// PBR slots — each model is individual, so read whichever the material actually has (empty if none).
 			// The editor builds its slot UI dynamically from these per-material results.
 			auto read_tex = [&](aiTextureType t) -> std::string {
-				if (material->GetTextureCount(t) > 0) { aiString p; material->GetTexture(t, 0, &p); return model_dir + p.C_Str(); }
+				if (material->GetTextureCount(t) > 0) { aiString p; material->GetTexture(t, 0, &p); return resolve_tex(p.C_Str()); }
 				return std::string();
 			};
 			std::string metallic_path = read_tex(aiTextureType_METALNESS);

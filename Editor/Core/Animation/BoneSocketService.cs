@@ -113,6 +113,9 @@ namespace Editor.Core.Animation
 
             var comp = e.GetComponent<ECS.Components.Animation.BoneAttachment>();
             if (comp == null || !comp.IsEnabled || string.IsNullOrEmpty(comp.BoneName)) return null;
+            // A socket DEFINITION (references a prefab to spawn) doesn't drive itself — the spawned prefab follows
+            // the bone via a runtime Attach (see SocketPrefabExpander). Skip so the empty placeholder never moves.
+            if (!string.IsNullOrEmpty(comp.SocketPrefabPath)) return null;
 
             ECS.GameEntity explicitTarget = null;
             if (!string.IsNullOrEmpty(comp.TargetEntityId) && Guid.TryParse(comp.TargetEntityId, out var gid))
@@ -156,7 +159,12 @@ namespace Editor.Core.Animation
                        * EulerZXY(j.OffsetRotEuler)
                        * Matrix4x4.CreateTranslation(j.OffsetPos);
             }
-            WriteWorldToTransform(j.Entity, offset * boneWorld);
+            // Apply the offset in the bone's NORMALIZED frame (strip the character's scale, e.g. 0.01) so the
+            // attachment keeps its OWN size and the offset is in real units — identical to the Socket Editor
+            // preview (BoneSocketService.ComposeBoneLocalMatrix uses the same normalized frame).
+            var boneFrame = NormalizeBasis(boneWorld);
+            boneFrame.Translation = boneWorld.Translation;
+            WriteWorldToTransform(j.Entity, offset * boneFrame);
             return true;
         }
 
@@ -191,7 +199,12 @@ namespace Editor.Core.Animation
             pos = default(SysVec); rotEuler = default(SysVec);
             if (!TryGetBoneWorld(target, bone, out var m)) return false;
             pos = m.Translation;
-            rotEuler = ToEulerZXY(m);
+            // NORMALIZE the basis before extracting the euler: on a cm-authored rig (e.g. Mixamo scale 0.01)
+            // the bone world carries that uniform scale, and ToEulerZXY's X term (asin(-M32)) is NOT
+            // scale-invariant — it would collapse the bone's PITCH ~100x toward 0, so a script composing a
+            // grip offset onto this rotation gets a mis-pitched hand (the weapon rides up toward the head).
+            // The socket component path (ApplyJob) already normalizes; this makes the script API match.
+            rotEuler = ToEulerZXY(NormalizeBasis(m));
             return true;
         }
 
@@ -518,7 +531,22 @@ namespace Editor.Core.Animation
             return new SysVec(x * toDeg, y * toDeg, z * toDeg);
         }
 
-        private static Matrix4x4 NormalizeBasis(Matrix4x4 m)
+        /// <summary>Seat a rigid attachment on a bone from a bone-LOCAL offset. The offset (pos + rot euler + a
+        /// uniform scale) is applied in the bone's normalized local frame — any scale on the bone world is stripped,
+        /// so the offset is in real units and the result ROTATES with the bone (weapon stays glued to the hand
+        /// through every animation). ONE implementation shared by the runtime (WeaponMount → ComposeBoneAttach) and
+        /// the Socket Editor preview, so what you author in the editor is exactly what the game renders.</summary>
+        public static Matrix4x4 ComposeBoneLocalMatrix(Matrix4x4 boneWorld, SysVec offsetPos, SysVec offsetEuler, float scale)
+        {
+            var boneFrame = NormalizeBasis(boneWorld);       // pure rotation, no scale
+            boneFrame.Translation = boneWorld.Translation;   // + the bone's world position
+            var off = Matrix4x4.CreateScale(scale <= 0f ? 1f : scale)
+                    * EulerZXY(offsetEuler)
+                    * Matrix4x4.CreateTranslation(offsetPos);
+            return off * boneFrame;                          // row-vector: offset in bone-local space, then to world
+        }
+
+        internal static Matrix4x4 NormalizeBasis(Matrix4x4 m)
         {
             var r0 = SysVec.Normalize(new SysVec(m.M11, m.M12, m.M13));
             var r1 = SysVec.Normalize(new SysVec(m.M21, m.M22, m.M23));

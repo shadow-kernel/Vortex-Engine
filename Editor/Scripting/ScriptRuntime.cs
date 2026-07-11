@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.CodeDom.Compiler;
 using System.Collections.Generic;
 using System.IO;
@@ -486,6 +486,106 @@ namespace Editor.Scripting
             return handle;
         }
 
+        /// <summary>Big-engine socket system: at play start, every BoneAttachment that REGISTERS a prefab
+        /// (SocketPrefabPath) auto-instantiates that prefab (the weapon) and attaches it to the bone — no per-weapon
+        /// script. Spawns are ledgered in _spawned so they roll back cleanly on play end. Runs BEFORE the behaviour
+        /// pass so the spawned prefab's own scripts (if any) come alive with everything else.</summary>
+        private void ExpandSocketPrefabs(Editor.Core.Data.Scene scene)
+        {
+            if (scene?.Entities == null) return;
+            var sockets = new List<GameEntity>();
+            void Collect(GameEntity e)
+            {
+                if (e == null) return;
+                var att = e.GetComponent<Editor.ECS.Components.Animation.BoneAttachment>();
+                if (att != null && att.IsEnabled && !string.IsNullOrEmpty(att.SocketPrefabPath) && !string.IsNullOrEmpty(att.BoneName))
+                    sockets.Add(e);
+                if (e.Children != null) foreach (var c in e.Children) Collect(c);
+            }
+            foreach (var root in new List<GameEntity>(scene.Entities)) Collect(root);
+
+            foreach (var socketEnt in sockets)
+            {
+                var comp = socketEnt.GetComponent<Editor.ECS.Components.Animation.BoneAttachment>();
+                if (comp == null) continue;
+                GameEntity weapon = null;
+                try { weapon = Editor.Core.Services.PrefabService.Instance.InstantiatePrefab(comp.SocketPrefabPath, scene, socketEnt, false); }
+                catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[socket] spawn failed: " + ex.Message); }
+                if (weapon == null) { try { Editor.Core.Services.ConsoleService.Instance.LogError("Socket: prefab not found: " + comp.SocketPrefabPath); } catch { } continue; }
+                _spawned.Add(weapon);
+                // Socket render-layer override: force the spawned prefab's meshes onto the socket's layer
+                // (e.g. 2 = Third-Person only, so the gun hides together with the body it hangs on).
+                if (comp.SocketRenderLayer >= 0)
+                {
+                    try { ApplyRenderLayerRecursive(weapon, comp.SocketRenderLayer); } catch { }
+                }
+                try { weapon.SyncEngineStateRecursive(true); } catch { }
+                try { Editor.Core.Services.Physics.CollisionService.AddEntityShapes(weapon); } catch { }
+                // Attach the spawned weapon to the bone (target = the socket's resolved skeletal owner). It keeps
+                // its own scale; the socket pass drives it every frame after animation.
+                // Resolve the skeletal target the weapon attaches to. Normally the nearest ancestor with an
+                // Animator (weapon socket parented under the character) or an explicit TargetEntityId. If neither
+                // resolves (e.g. the socket entity isn't under the character), fall back to the ONLY animated
+                // character in the scene so a mis-parented socket still works, and warn — otherwise the weapon
+                // would silently stay at the spawn point (the "weapon doesn't follow the hand" trap).
+                var target = Editor.Core.Animation.BoneSocketService.Instance.ResolveTargetOf(scene, socketEnt);
+                if (target == null)
+                {
+                    target = FindLoneAnimatedEntity(scene);
+                    try
+                    {
+                        if (target != null)
+                            Editor.Core.Services.ConsoleService.Instance.LogWarning("Socket '" + socketEnt.Name +
+                                "' has no animated ancestor — falling back to '" + target.Name + "'. Parent the socket under the character or set its Target for a stable bind.");
+                        else
+                            Editor.Core.Services.ConsoleService.Instance.LogError("Socket '" + socketEnt.Name +
+                                "' can't find a character to attach to: parent it under the animated character, or set the Bone Attachment's Target.");
+                    }
+                    catch { }
+                }
+                try
+                {
+                    Editor.Core.Animation.BoneSocketService.Instance.Attach(weapon, target, comp.BoneName,
+                        new System.Numerics.Vector3(comp.OffsetPosition.X, comp.OffsetPosition.Y, comp.OffsetPosition.Z),
+                        new System.Numerics.Vector3(comp.OffsetRotation.X, comp.OffsetRotation.Y, comp.OffsetRotation.Z));
+                }
+                catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[socket] attach failed: " + ex.Message); }
+            }
+        }
+
+        /// <summary>The scene's single animated character (exactly one entity with an enabled Animator),
+        /// or null when there are zero or several — used as a socket target fallback for a mis-parented
+        /// socket so the weapon still binds instead of silently staying at the spawn point.</summary>
+        private static GameEntity FindLoneAnimatedEntity(Editor.Core.Data.Scene scene)
+        {
+            if (scene?.Entities == null) return null;
+            GameEntity found = null; int count = 0;
+            void Scan(GameEntity e)
+            {
+                if (e == null) return;
+                var a = e.GetComponent<Editor.ECS.Components.Animation.Animator>();
+                if (a != null && a.IsEnabled) { found = e; count++; }
+                if (e.Children != null) foreach (var c in e.Children) Scan(c);
+            }
+            foreach (var root in scene.Entities) Scan(root);
+            return count == 1 ? found : null;
+        }
+
+        /// <summary>Force a render layer onto every MeshRenderer in a spawned prefab subtree
+        /// (socket render-layer override — runtime instances only, authored prefabs stay untouched).</summary>
+        private static void ApplyRenderLayerRecursive(GameEntity e, int layer)
+        {
+            if (e == null) return;
+            var comps = e.Components;
+            for (int i = 0; i < comps.Count; i++)
+            {
+                if (comps[i] is Editor.ECS.Components.Rendering.MeshRenderer mr)
+                    mr.RenderLayer = layer;
+            }
+            if (e.Children != null)
+                foreach (var c in e.Children) ApplyRenderLayerRecursive(c, layer);
+        }
+
         internal bool DestroyEntity(long id)
         {
             var e = FindEntityByHandle(id);
@@ -607,6 +707,7 @@ namespace Editor.Scripting
             Vortex.Physics.Host = this;
             Vortex.Animation.Host = this;
             Vortex.CameraFX.Host = this;
+            Vortex.Assets.Host = this;
 
             // Scripted scene-atmosphere state starts clean each run (a previous run's ambient/fog must not leak).
             Editor.Core.Services.SceneRenderService.ScriptAmbientOverride = null;
@@ -626,6 +727,11 @@ namespace Editor.Scripting
             }
             if (Editor.Core.Services.Physics.CollisionService.MeshTriangleProvider == null)
                 Editor.Core.Services.Physics.CollisionService.MeshTriangleProvider = ResolveMeshTriangles;
+
+            // Socket prefabs: spawn + attach the weapon(s) referenced by any BoneAttachment sockets BEFORE the
+            // behaviour pass, so their scripts (and collision) come alive with the rest of the scene.
+            try { ExpandSocketPrefabs(scene); } catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[socket] expand failed: " + ex); }
+
             try { Editor.Core.Services.Physics.CollisionService.Build(scene); } catch { } // build the collision world for this scene
 
             _entitiesById.Clear();
@@ -695,6 +801,22 @@ namespace Editor.Scripting
                 if (b == null) continue;
                 try { b.Update(dt); }
                 catch (Exception ex) { LogScriptError("UI Update", b, ex); }
+            }
+
+            // LateUpdate pass — runs AFTER every behaviour's Update() this frame. A first-person VIEWMODEL that
+            // follows the camera MUST position itself here, not in Update: otherwise, depending on script
+            // registration order, it can read last-frame's camera state and lag a frame behind → visible jitter
+            // (worst at uncapped FPS where dt varies wildly). Here the camera script has always run first.
+            for (int i = 0; i < _behaviours.Count; i++)
+            {
+                try { _behaviours[i].LateUpdate(dt); }
+                catch (Exception ex) { LogScriptError("LateUpdate", _behaviours[i], ex); }
+            }
+            foreach (var b in _uiActions.Values)
+            {
+                if (b == null) continue;
+                try { b.LateUpdate(dt); }
+                catch (Exception ex) { LogScriptError("UI LateUpdate", b, ex); }
             }
 
             // Coroutines + Invoke timers (#37) advance after behaviours, so a coroutine resumed this
@@ -1053,6 +1175,19 @@ namespace Editor.Scripting
                     }
                     catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] instantiate '" + script.ScriptClassName + "' failed: " + ex.Message); }
                 }
+                else
+                {
+                    // Silent-death guard: the class is abstract, renamed, or not a VortexBehaviour —
+                    // without this the component just never runs and nothing tells the user why.
+                    try
+                    {
+                        Editor.Core.Services.ConsoleService.Instance.LogError(
+                            "Script '" + script.ScriptClassName + "' on entity '" + e.Name + "' resolves to no runnable class. " +
+                            "The class must be CONCRETE (not abstract, e.g. not a Weapon base class), derive from VortexBehaviour, " +
+                            "and match the file name '" + script.ScriptClassName + ".cs'.");
+                    }
+                    catch { }
+                }
             }
             if (e.Children != null)
                 foreach (var c in e.Children) InstantiateRecursive(c, asm);
@@ -1072,11 +1207,18 @@ namespace Editor.Scripting
         // ---- serialized script fields (#47) ----
 
         /// <summary>Field types the inspector edits + the scene serializes: primitives, enums, Vector3.</summary>
+        /// <summary>Separator for ARRAY field elements inside the single stored value string — the
+        /// ASCII unit separator never occurs in paths/names, so string elements round-trip safely.</summary>
+        public const char ArraySeparator = '\u001F';
+
         public static bool IsInspectableFieldType(Type t)
             => t == typeof(int) || t == typeof(float) || t == typeof(bool) || t == typeof(string)
-               || t.IsEnum || t == typeof(Vortex.Vector3);
+               || t.IsEnum || t == typeof(Vortex.Vector3)
+               || (t.IsArray && t.GetArrayRank() == 1 && t.GetElementType() != null
+                   && !t.GetElementType().IsArray && IsInspectableFieldType(t.GetElementType()));
 
-        /// <summary>Invariant-culture round-trip of a field value ("1,2,3" for Vector3; enum by name).</summary>
+        /// <summary>Invariant-culture round-trip of a field value ("1,2,3" for Vector3; enum by name;
+        /// arrays as elements joined with <see cref="ArraySeparator"/> — a WeaponPrefabs list is one string).</summary>
         public static string FormatFieldValue(object v)
         {
             if (v == null) return "";
@@ -1087,11 +1229,22 @@ namespace Editor.Scripting
                 return v3.X.ToString("R", System.Globalization.CultureInfo.InvariantCulture) + ","
                      + v3.Y.ToString("R", System.Globalization.CultureInfo.InvariantCulture) + ","
                      + v3.Z.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
+            if (v is Array arr)
+            {
+                var sb = new System.Text.StringBuilder();
+                for (int k = 0; k < arr.Length; k++)
+                {
+                    if (k > 0) sb.Append(ArraySeparator);
+                    sb.Append(FormatFieldValue(arr.GetValue(k)));
+                }
+                return sb.ToString();
+            }
             return v.ToString();
         }
 
         /// <summary>Parse a stored string back into the REFLECTED field type. Throws on garbage — the
-        /// callers skip-and-log so one bad value can't take a scene down.</summary>
+        /// callers skip-and-log so one bad value can't take a scene down. Arrays: "" = empty array,
+        /// else elements split on <see cref="ArraySeparator"/> and parsed per element type.</summary>
         public static object ParseFieldValue(Type ft, string v)
         {
             var ci = System.Globalization.CultureInfo.InvariantCulture;
@@ -1107,6 +1260,15 @@ namespace Editor.Scripting
                     float.Parse(p[0], System.Globalization.NumberStyles.Float, ci),
                     float.Parse(p[1], System.Globalization.NumberStyles.Float, ci),
                     float.Parse(p[2], System.Globalization.NumberStyles.Float, ci));
+            }
+            if (ft.IsArray && ft.GetArrayRank() == 1)
+            {
+                var et = ft.GetElementType();
+                if (string.IsNullOrEmpty(v)) return Array.CreateInstance(et, 0);
+                var parts = v.Split(ArraySeparator);
+                var result = Array.CreateInstance(et, parts.Length);
+                for (int k = 0; k < parts.Length; k++) result.SetValue(ParseFieldValue(et, parts[k]), k);
+                return result;
             }
             throw new NotSupportedException(ft.Name);
         }
@@ -1240,6 +1402,31 @@ namespace Editor.Scripting
                 e.Transform.LocalRotation = new ECS.Vector3(eulerDegrees.X, eulerDegrees.Y, eulerDegrees.Z);
         }
 
+        /// <summary>WORLD-space pose write, parent-safe: desired = R(euler) + T(pos), converted into the
+        /// entity's local frame against its real parent chain (same math as the bone-socket pass); the
+        /// entity's own LOCAL scale is untouched. This is what makes a camera-locked viewmodel work when
+        /// it lives as a CHILD of the Player entity — SetPosition/SetRotation write LOCAL values there.</summary>
+        void Vortex.IScriptHost.SetEntityWorldPose(long entityId, Vortex.Vector3 position, Vortex.Vector3 rotationEulerDeg)
+        {
+            if (!_entitiesById.TryGetValue(entityId, out var e) || e.Transform == null) return;
+
+            var desired = Editor.Core.Animation.BoneSocketService.EulerZXY(
+                new System.Numerics.Vector3(rotationEulerDeg.X, rotationEulerDeg.Y, rotationEulerDeg.Z));
+            desired.Translation = new System.Numerics.Vector3(position.X, position.Y, position.Z);
+
+            var local = desired;
+            var parentWorld = Editor.Core.Animation.BoneSocketService.EntityWorld(e.Parent);
+            System.Numerics.Matrix4x4 inv;
+            if (System.Numerics.Matrix4x4.Invert(parentWorld, out inv)) local = desired * inv;
+
+            // Rotation from the orthonormalized basis (a scaled parent bakes 1/s into the local matrix).
+            var euler = Editor.Core.Animation.BoneSocketService.ToEulerZXY(
+                Editor.Core.Animation.BoneSocketService.NormalizeBasis(local));
+            var t = e.Transform;
+            t.LocalPosition = new ECS.Vector3(local.Translation.X, local.Translation.Y, local.Translation.Z);
+            t.LocalRotation = new ECS.Vector3(euler.X, euler.Y, euler.Z);
+        }
+
         void Vortex.IScriptHost.SetEntityColor(long entityId, float r, float g, float b)
         {
             if (_entitiesById.TryGetValue(entityId, out var e))
@@ -1348,6 +1535,51 @@ namespace Editor.Scripting
                 Editor.Core.Animation.AnimationService.Instance.StopLayer(e, layer);
         }
 
+        // --- runtime procedural bone control (#178: additive aim-offset / lean / recoil on real bones) ---
+
+        void Vortex.IScriptHost.SetBoneAdditiveRotation(long entityId, string bone, Vortex.Vector3 eulerDeg)
+        {
+            if (_entitiesById.TryGetValue(entityId, out var e))
+                Editor.Core.Animation.AnimationService.Instance.SetBoneAdditiveRotation(e, bone,
+                    new System.Numerics.Vector3(eulerDeg.X, eulerDeg.Y, eulerDeg.Z));
+        }
+
+        void Vortex.IScriptHost.SetBoneScaleOverride(long entityId, string bone, float scale)
+        {
+            if (_entitiesById.TryGetValue(entityId, out var e))
+                Editor.Core.Animation.AnimationService.Instance.SetBoneScaleOverride(e, bone, scale);
+        }
+
+        void Vortex.IScriptHost.ClearBoneOverrides(long entityId)
+        {
+            if (_entitiesById.TryGetValue(entityId, out var e))
+                Editor.Core.Animation.AnimationService.Instance.ClearBoneOverrides(e);
+        }
+
+        void Vortex.IScriptHost.SetRenderLayer(long entityId, int layer)
+        {
+            if (layer < 0 || layer > 2) return;
+            if (!_entitiesById.TryGetValue(entityId, out var e)) return;
+            ApplyRenderLayerRecursive(e, layer);
+            Editor.Core.Services.SceneRenderService.RuntimeDirty = true;   // retained queue -> re-submit
+        }
+
+        void Vortex.IScriptHost.SetIkWeight(long entityId, string tipBone, float weight)
+        {
+            if (!_entitiesById.TryGetValue(entityId, out var e)) return;
+            var comps = e.Components;
+            for (int i = 0; i < comps.Count; i++)
+            {
+                if (comps[i] is Editor.ECS.Components.Animation.TwoBoneIk ik &&
+                    (string.IsNullOrEmpty(tipBone) || string.Equals(ik.TipBone, tipBone, StringComparison.OrdinalIgnoreCase)))
+                {
+                    ik.Weight = weight;   // setter clamps 0..1 + re-poses via AnimationService.RefreshIk
+                }
+            }
+            // In-editor play mutates the authored component, but play end reverts the scene state, so
+            // authored weights survive; the standalone GameHost ends with the process. No ledger needed.
+        }
+
         // --- bone sockets (#170/#171: Attach/Detach/GetBoneTransform -> BoneSocketService) ---
 
         bool Vortex.IScriptHost.AttachEntityToBone(long entityId, long targetId, string bone,
@@ -1376,6 +1608,54 @@ namespace Editor.Scripting
             position = new Vortex.Vector3(p.X, p.Y, p.Z);
             rotationEuler = new Vortex.Vector3(r.X, r.Y, r.Z);
             return true;
+        }
+
+        void Vortex.IScriptHost.ComposeBoneAttach(Vortex.Vector3 bonePos, Vortex.Vector3 boneEuler,
+            Vortex.Vector3 offsetPos, Vortex.Vector3 offsetEuler, out Vortex.Vector3 worldPos, out Vortex.Vector3 worldEuler)
+        {
+            // Bone frame: rotation from the euler + world position (unit scale). Shared composition with the editor.
+            var boneWorld = Editor.Core.Animation.BoneSocketService.EulerZXY(new System.Numerics.Vector3(boneEuler.X, boneEuler.Y, boneEuler.Z));
+            boneWorld.Translation = new System.Numerics.Vector3(bonePos.X, bonePos.Y, bonePos.Z);
+            var world = Editor.Core.Animation.BoneSocketService.ComposeBoneLocalMatrix(
+                boneWorld,
+                new System.Numerics.Vector3(offsetPos.X, offsetPos.Y, offsetPos.Z),
+                new System.Numerics.Vector3(offsetEuler.X, offsetEuler.Y, offsetEuler.Z), 1f);
+            var wp = world.Translation;
+            var we = Editor.Core.Animation.BoneSocketService.ToEulerZXY(world);
+            worldPos = new Vortex.Vector3(wp.X, wp.Y, wp.Z);
+            worldEuler = new Vortex.Vector3(we.X, we.Y, we.Z);
+        }
+
+        string Vortex.IScriptHost.AssetReadText(string relPath)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(relPath)) return null;
+                var proj = Editor.Core.Data.ProjectData.Current != null ? Editor.Core.Data.ProjectData.Current.Path : null;
+                var abs = System.IO.Path.IsPathRooted(relPath) ? relPath : (proj != null ? System.IO.Path.Combine(proj, relPath) : relPath);
+                byte[] bytes;
+                if (Editor.Core.Services.AssetVfs.IsMounted && Editor.Core.Services.AssetVfs.TryGetBytes(abs, out bytes) && bytes != null)
+                    return System.Text.Encoding.UTF8.GetString(bytes);
+                if (System.IO.File.Exists(abs)) return System.IO.File.ReadAllText(abs);
+            }
+            catch { }
+            return null;
+        }
+
+        bool Vortex.IScriptHost.AssetWriteText(string relPath, string text)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(relPath)) return false;
+                if (Editor.Core.Services.AssetVfs.IsMounted) return false;   // shipped pak is read-only
+                var proj = Editor.Core.Data.ProjectData.Current != null ? Editor.Core.Data.ProjectData.Current.Path : null;
+                var abs = System.IO.Path.IsPathRooted(relPath) ? relPath : (proj != null ? System.IO.Path.Combine(proj, relPath) : relPath);
+                var dir = System.IO.Path.GetDirectoryName(abs);
+                if (!string.IsNullOrEmpty(dir) && !System.IO.Directory.Exists(dir)) System.IO.Directory.CreateDirectory(dir);
+                System.IO.File.WriteAllText(abs, text ?? "");
+                return true;
+            }
+            catch { return false; }
         }
 
         long[] Vortex.IScriptHost.GetAttachedEntities(long targetId)
@@ -1513,9 +1793,15 @@ namespace Editor.Scripting
             return Editor.Core.Services.Physics.CollisionService.RaycastDownStepSound(o, maxDist, out hit, out step) ? (step ?? "") : "";
         }
 
+        /// <summary>Debug freecam owns the input: when the engine's debug free-fly camera is flying (editor play,
+        /// debug builds only), gameplay keys are suppressed so WASD flies the camera instead of the player. Holding
+        /// RMB clears it so control passes back to the player while the freecam watches.</summary>
+        public static bool SuppressGameplayInput;
+
         bool Vortex.IScriptHost.GetKey(string key)
         {
             if (string.IsNullOrEmpty(key)) return false;
+            if (SuppressGameplayInput) return false;
             // Freeze gameplay movement keys while a screen that OPTED IN (BlocksGameplay checkbox in the UI editor)
             // is up — e.g. a chest/inventory. A hotbar/HUD leaves it off, so the player keeps moving. (Mouse-look is
             // gated the same way in Vortex.Input.MouseDeltaX/Y.)
@@ -1523,6 +1809,13 @@ namespace Editor.Scripting
             // GetAsyncKeyState reads the GLOBAL key state (needed because focus is on a native swapchain HWND), so it
             // would fire even when our game is in the background — gate it on our window actually being focused.
             if (!Vortex.Input.WindowFocused) return false;
+            // Mouse buttons are NOT in the WPF Key enum, so Enum.TryParse("RButton") fails and Input.GetKey("RButton")
+            // always returned false (ADS/right-click never worked). Map the mouse-button names to Win32 VK codes.
+            int mvk = 0;
+            if (key == "LButton" || key == "Mouse0" || key == "LeftMouse") mvk = 0x01;
+            else if (key == "RButton" || key == "Mouse1" || key == "RightMouse") mvk = 0x02;
+            else if (key == "MButton" || key == "Mouse2" || key == "MiddleMouse") mvk = 0x04;
+            if (mvk != 0) return (GetAsyncKeyState(mvk) & 0x8000) != 0;
             if (!Enum.TryParse(key, true, out Key k)) return false;
             // Use the global physical key state (not WPF Keyboard.IsKeyDown): while playing, focus is on
             // a native swapchain HWND (editor viewport or the standalone game window), where the WPF

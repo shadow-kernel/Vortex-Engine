@@ -52,6 +52,21 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             ViewModel?.SetScene(scene);
         }
 
+        /// <summary>Eye toggle in the entity row: hides the entity + its subtree from the editor viewport
+        /// (session-only <see cref="GameEntity.IsHiddenInEditor"/> — never saved, inert during play). The
+        /// native render queue is retained-until-replaced, so a resubmit must be forced for the change to
+        /// show. Handled=true so the click neither selects the row nor starts an entity drag.</summary>
+        private void EyeToggle_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if ((sender as FrameworkElement)?.DataContext is GameEntity entity)
+            {
+                _draggedEntity = null;   // belt and braces: never start an entity drag from the eye
+                entity.IsHiddenInEditor = !entity.IsHiddenInEditor;
+                GamePreview.GamePreviewView.RequestResubmit();
+                e.Handled = true;
+            }
+        }
+
         #region Keyboard Shortcuts
 
         private void OnPreviewKeyDown(object sender, KeyEventArgs e)
@@ -743,12 +758,34 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             }
         }
 
+        /// <summary>True when the mouse event originated inside the row's eye-toggle Border
+        /// (Tag="EyeToggle") — those clicks belong to the visibility toggle and must not arm a
+        /// drag, change the selection (incl. Ctrl/Shift multi-select) or open the camera PIP.</summary>
+        private static bool IsEyeToggleHit(object originalSource)
+        {
+            var d = originalSource as DependencyObject;
+            while (d != null && !(d is System.Windows.Controls.TreeViewItem))
+            {
+                if (d is FrameworkElement fe && (fe.Tag as string) == "EyeToggle") return true;
+                d = VisualTreeHelper.GetParent(d);
+            }
+            return false;
+        }
+
         private void HierarchyTree_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
             if (ViewModel == null) return;
 
+            // Eye-toggle clicks: don't arm a drag and don't touch selection — let the click bubble
+            // to EyeToggle_MouseLeftButtonDown (which sets Handled itself).
+            if (IsEyeToggleHit(e.OriginalSource))
+            {
+                _draggedEntity = null;
+                return;
+            }
+
             _dragStartPoint = e.GetPosition(HierarchyTree);
-            
+
             // Finde das angeklickte TreeViewItem
             var treeViewItem = GetTreeViewItemFromPoint(e.GetPosition(HierarchyTree));
             if (treeViewItem == null)
@@ -1028,7 +1065,10 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
         private void HierarchyTree_MouseDoubleClick(object sender, MouseButtonEventArgs e)
         {
             if (ViewModel?.SelectedEntity == null) return;
-            
+
+            // Rapid eye-toggle clicks are visibility toggles, not a request for the camera PIP.
+            if (IsEyeToggleHit(e.OriginalSource)) { e.Handled = true; return; }
+
             // Check if double-clicked on a camera entity
             var camera = ViewModel.SelectedEntity.GetComponent<ECS.Components.Rendering.Camera>();
             if (camera != null)

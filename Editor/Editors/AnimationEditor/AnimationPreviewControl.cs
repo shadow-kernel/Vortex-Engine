@@ -33,6 +33,21 @@ namespace Editor.Editors.AnimationEditor
         private string _modelPathCached;
         private SkeletonDef _skeleton;
 
+        // Socket editor: an optional rigid ATTACHMENT (weapon/accessory) drawn on a bone at a live bone-LOCAL offset.
+        private long[] _attMesh, _attMat;
+        private string _attModelPathCached;
+        private string _attBone;
+        private Vec3   _attPos, _attRotEuler;      // bone-local offset (metres, euler degrees)
+        private float  _attScale = 1f;
+        private bool   _hasAtt;
+
+        // Socket editor renders a cm-authored Mixamo character at ~human scale so a real-size weapon is proportional
+        // and the offset can be dialed in metres. Purely visual: the offset math is scale-independent (see
+        // BoneSocketService.ComposeBoneLocalMatrix), so editor placement == in-game placement regardless.
+        private float _modelScale = 1f;
+        private bool  _normalizeToHuman;
+        public bool NormalizeToHuman { get { return _normalizeToHuman; } set { _normalizeToHuman = value; } }
+
         // current pose inputs (window pushes these via SetPose)
         private VortexAnimClip _clip;
         private float _time;
@@ -74,6 +89,10 @@ namespace Editor.Editors.AnimationEditor
 
         public SkeletonDef Skeleton => _skeleton;
         public string SelectedBone => _selectedBone;
+
+        /// <summary>True once the model's meshes are imported (GPU device was ready). False means the render
+        /// device wasn't initialized yet at bind time — the owner can re-bind after a viewport has rendered.</summary>
+        public bool HasMeshes => _meshIds != null && _meshIds.Length > 0;
 
         /// <summary>Raised when a joint is picked (mouse-down within pick radius — also a bone-drag start).</summary>
         public event Action<string> BoneClicked;
@@ -164,6 +183,16 @@ namespace Editor.Editors.AnimationEditor
             catch { _meshIds = null; _matIds = null; }
 
             try { _skeleton = AnimationService.Instance.GetSkeleton(fullModelPath); } catch { _skeleton = null; }
+
+            // Socket editor: normalize a cm-authored character to ~human height so real-size attachments are proportional.
+            _modelScale = 1f;
+            if (_normalizeToHuman && _meshIds != null)
+            {
+                float maxY = 0f;
+                foreach (var m in _meshIds)
+                    if (VortexAPI.GetMeshBounds(m, out float sx, out float sy, out float sz) && sy > maxY) maxY = sy;
+                if (maxY > 0.001f) _modelScale = 1.8f / maxY;   // ~1.8 m tall
+            }
             Redraw();
         }
 
@@ -174,6 +203,36 @@ namespace Editor.Editors.AnimationEditor
             _clip = clip;
             _time = time;
             _boneOverride = boneOverride;
+            Redraw();
+        }
+
+        /// <summary>Load the attachment model's meshes (owned copies). Null/empty clears the attachment.</summary>
+        public void BindAttachment(string fullModelPath)
+        {
+            if (!string.IsNullOrEmpty(fullModelPath) && fullModelPath == _attModelPathCached && _attMesh != null) return;
+            if (_attMesh != null) foreach (var m in _attMesh) { try { if (m >= 0) VortexAPI.DeleteMesh(m); } catch { } }
+            _attMesh = null; _attMat = null; _attModelPathCached = null; _hasAtt = false;
+            if (string.IsNullOrEmpty(fullModelPath) || !System.IO.File.Exists(fullModelPath)) { Redraw(); return; }
+            try
+            {
+                var subs = VortexAPI.ImportModelWithMaterialsFromFile(fullModelPath);
+                if (subs != null && subs.Length > 0)
+                {
+                    _attMesh = new long[subs.Length]; _attMat = new long[subs.Length];
+                    for (int i = 0; i < subs.Length; i++) { _attMesh[i] = subs[i].MeshId; _attMat[i] = subs[i].MaterialId; }
+                    _attModelPathCached = fullModelPath; _hasAtt = true;
+                }
+            }
+            catch { _attMesh = null; _attMat = null; _hasAtt = false; }
+            Redraw();
+        }
+
+        /// <summary>Socket bone + bone-LOCAL offset (pos m, rot euler deg, uniform scale) for the attachment. Live.</summary>
+        public void SetSocket(string bone, Vec3 pos, Vec3 rotEulerDeg, float scale)
+        {
+            _attBone = bone;
+            _attPos = pos; _attRotEuler = rotEulerDeg; _attScale = scale <= 0f ? 1f : scale;
+            _hasRender = false;   // socket changed -> force a re-render
             Redraw();
         }
 
@@ -491,9 +550,26 @@ namespace Editor.Editors.AnimationEditor
                 float[] focusArr = _focus.HasValue ? new[] { _focus.Value.X, _focus.Value.Y, _focus.Value.Z } : null;
                 try
                 {
-                    _img.Source = AssetPreviewRenderer.RenderSkinnedMeshes(
-                        _meshIds, _matIds, palette, boneCount, RenderSize, _yaw, _pitch, _distScale,
-                        renderGizmos: false, focusPoint: focusArr);
+                    // Attachment world: the SAME bone-local composition the game uses (ComposeBoneLocalMatrix), so
+                    // what you dial here is exactly what WeaponMount renders in-game.
+                    long[] attM = null, attMt = null; float[] attW = null;
+                    if (_hasAtt && _attMesh != null && _skeleton != null && _worlds != null && !string.IsNullOrEmpty(_attBone))
+                    {
+                        int an = _skeleton.FindNode(_attBone);
+                        if (an >= 0 && an < _worlds.Length)
+                        {
+                            Mat4 w = Editor.Core.Animation.BoneSocketService.ComposeBoneLocalMatrix(
+                                _worlds[an], _attPos, _attRotEuler, _attScale);
+                            attW = new[] { w.M11, w.M12, w.M13, w.M14, w.M21, w.M22, w.M23, w.M24,
+                                           w.M31, w.M32, w.M33, w.M34, w.M41, w.M42, w.M43, w.M44 };
+                            attM = _attMesh; attMt = _attMat;
+                        }
+                    }
+                    _img.Source = attM != null
+                        ? AssetPreviewRenderer.RenderSkinnedWithAttachment(_meshIds, _matIds, palette, boneCount,
+                            attM, attMt, attW, RenderSize, _yaw, _pitch, _distScale, focusArr, _modelScale)
+                        : AssetPreviewRenderer.RenderSkinnedMeshes(_meshIds, _matIds, palette, boneCount,
+                            RenderSize, _yaw, _pitch, _distScale, renderGizmos: false, focusPoint: focusArr, boundsScale: _modelScale);
                     _hasRender = _img.Source != null;
                 }
                 catch { _img.Source = null; _hasRender = false; }
@@ -524,7 +600,16 @@ namespace Editor.Editors.AnimationEditor
                     if (ov.HasValue) { t[i] = ov.Value.pos; r[i] = ov.Value.rot; s[i] = ov.Value.scale; }
                 }
             }
-            return AnimationService.ComposeWorlds(_skeleton, t, r, s);
+            var worlds = AnimationService.ComposeWorlds(_skeleton, t, r, s);
+            // Socket editor: scale the whole rig about the origin so a cm-authored character renders at ~human size
+            // and a real-size weapon is proportional. Bone sockets read these SAME scaled worlds, so the preview and
+            // the bounds/overlay/camera all stay consistent. (No-op at ModelScale 1 = Keyframe Editor.)
+            if (_modelScale != 1f && _modelScale > 0f)
+            {
+                var sc = Mat4.CreateScale(_modelScale);
+                for (int i = 0; i < worlds.Length; i++) worlds[i] = worlds[i] * sc;
+            }
+            return worlds;
         }
 
         private static bool PaletteEquals(float[] a, float[] b)
@@ -609,6 +694,9 @@ namespace Editor.Editors.AnimationEditor
         {
             if (_meshIds == null || _meshIds.Length == 0) return;
             GetBounds(out float radius, out float cx, out float cy, out float cz);
+            // Match the renderer: the skinned character is scaled by _modelScale (Socket Editor), but mesh bounds
+            // are un-scaled — scale the framing so the overlay joints land on the rendered (scaled) character.
+            if (_modelScale != 1f && _modelScale > 0f) { radius *= _modelScale; cx *= _modelScale; cy *= _modelScale; cz *= _modelScale; }
             // mirror the renderer: focusPoint replaces the TARGET only — radius/dist still come from bounds
             if (_focus.HasValue) { cx = _focus.Value.X; cy = _focus.Value.Y; cz = _focus.Value.Z; }
 

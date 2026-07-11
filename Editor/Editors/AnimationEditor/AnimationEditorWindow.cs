@@ -394,6 +394,16 @@ namespace Editor.Editors.AnimationEditor
             _importBtn.Padding = new Thickness(12, 5, 12, 5);
             left.Children.Add(_importBtn);
 
+            // Standalone clip I/O — "animation only, no character". A .vanim binds to a skeleton by BONE NAME,
+            // so a clip exported here can be dropped onto ANY compatible rig (see AnimatorInspector's clip table).
+            var importFileBtn = ToolButton("Import .vanim", "Load a standalone .vanim clip from disk into this document (animation only — no character)", ImportClipFromFile);
+            importFileBtn.Padding = new Thickness(12, 5, 12, 5);
+            left.Children.Add(importFileBtn);
+
+            var exportFileBtn = ToolButton("Export .vanim", "Save this animation clip to a standalone .vanim file (animation only — reusable on any compatible skeleton)", ExportClipToFile);
+            exportFileBtn.Padding = new Thickness(12, 5, 12, 5);
+            left.Children.Add(exportFileBtn);
+
             bar.Child = dock;
             return bar;
         }
@@ -1225,6 +1235,77 @@ namespace Editor.Editors.AnimationEditor
             UndoRedoManager.Instance.Execute(new ActionCommand("Import clip " + name,
                 () => { clip.Tracks = imported.Tracks; clip.DurationSec = imported.DurationSec; clip.Name = imported.Name; },
                 () => { clip.Tracks = oldTracks; clip.DurationSec = oldDur; clip.Name = oldName; }));
+
+            _time = 0f;
+            RefreshToolbarFromClip();
+            _timeline.SetClip(clip);
+            AfterClipMutation();
+            UpdateTimeText();
+            UpdateTitle();
+        }
+
+        /// <summary>Save the CURRENT clip to a standalone .vanim of the user's choosing — the "export the animation
+        /// only" command. The file is the pure animation (bone-name tracks + events); no character/mesh is embedded,
+        /// so it drops onto any compatible skeleton.</summary>
+        private void ExportClipToFile()
+        {
+            var root = Editor.Core.Data.ProjectData.Current?.Path ?? "";
+            string initDir = root;
+            try { var a = Path.Combine(root, "Assets", "Animations"); if (Directory.Exists(a)) initDir = a; } catch { }
+            string suggested = (string.IsNullOrWhiteSpace(_clip?.Name) ? "clip" : _clip.Name) + ".vanim";
+            string picked = Editor.Core.Util.FilePicker.SaveFile("Vortex Animation|*.vanim", "Export animation clip", suggested, ".vanim", initDir);
+            if (string.IsNullOrEmpty(picked)) return;
+            if (!picked.EndsWith(".vanim", StringComparison.OrdinalIgnoreCase)) picked += ".vanim";
+
+            if (_clip.Save(picked))
+            {
+                try { AnimationService.Instance.InvalidateClip(picked); } catch { }
+                try { Editor.Core.Assets.AssetDatabase.Instance.Refresh(); } catch { }
+                MessageBox.Show("Exported animation to:\n" + picked, "Keyframe Editor", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            else
+            {
+                MessageBox.Show("Export failed — see debug output.", "Keyframe Editor", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        /// <summary>Load a standalone .vanim from disk INTO this document — the "import the animation only" command.
+        /// Mirrors <see cref="ImportEmbedded"/> (undoable, refreshes the timeline/preview) but the source is a .vanim
+        /// file rather than a model's embedded clip.</summary>
+        private void ImportClipFromFile()
+        {
+            var root = Editor.Core.Data.ProjectData.Current?.Path ?? "";
+            string initDir = root;
+            try { var a = Path.Combine(root, "Assets", "Animations"); if (Directory.Exists(a)) initDir = a; } catch { }
+            string picked = Editor.Core.Util.FilePicker.OpenFile("Vortex Animation|*.vanim|All Files|*.*", "Import animation clip", initDir);
+            if (string.IsNullOrEmpty(picked)) return;
+
+            var imported = VortexAnimClip.Load(picked);
+            if (imported == null || imported.Tracks == null || imported.Tracks.Count == 0)
+            {
+                MessageBox.Show("Could not read that .vanim (no animation tracks).", "Import animation", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            // hand-edited JSON can leave lists null — normalize so the editor can assume them (as LoadClip does)
+            if (imported.Events == null) imported.Events = new List<AnimEvent>();
+            foreach (var tr in imported.Tracks)
+            {
+                if (tr.Pos == null) tr.Pos = new List<AnimKeyVec3>();
+                if (tr.Rot == null) tr.Rot = new List<AnimKeyQuat>();
+                if (tr.Scale == null) tr.Scale = new List<AnimKeyVec3>();
+            }
+
+            if (_clip.Tracks.Count > 0 &&
+                MessageBox.Show("Replace the current tracks with \"" + (imported.Name ?? Path.GetFileNameWithoutExtension(picked)) + "\"?",
+                    "Import animation", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+                return;
+
+            var clip = _clip;
+            var oldTracks = clip.Tracks; float oldDur = clip.DurationSec; string oldName = clip.Name;
+            float oldFps = clip.FrameRate; bool oldLoop = clip.Loop; var oldEvents = clip.Events;
+            UndoRedoManager.Instance.Execute(new ActionCommand("Import clip " + (imported.Name ?? ""),
+                () => { clip.Tracks = imported.Tracks; clip.DurationSec = imported.DurationSec; clip.FrameRate = imported.FrameRate; clip.Loop = imported.Loop; clip.Name = imported.Name; clip.Events = imported.Events; },
+                () => { clip.Tracks = oldTracks; clip.DurationSec = oldDur; clip.FrameRate = oldFps; clip.Loop = oldLoop; clip.Name = oldName; clip.Events = oldEvents; }));
 
             _time = 0f;
             RefreshToolbarFromClip();

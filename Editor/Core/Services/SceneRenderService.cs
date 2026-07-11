@@ -31,6 +31,68 @@ namespace Editor.Core.Services
         /// </summary>
         public static bool RuntimeDirty;
 
+        /// <summary>How the EDIT-mode viewport presents non-world render layers (#175: 1 = FP viewmodel,
+        /// 2 = third-person only). Play mode ignores this — while playing the layers always behave like
+        /// the shipped game (1 = FP overlay pass, 2 = skipped for the local player).</summary>
+        public enum ViewmodelPreviewMode
+        {
+            /// <summary>Default build view: FP meshes are NOT rendered (they belong to the game's FP pass),
+            /// third-person-only meshes render as normal world geometry.</summary>
+            Hidden,
+            /// <summary>Placement mode (viewport toolbar toggle): FP meshes render as plain, depth-tested
+            /// world geometry so they can be positioned; no FP overlay pass runs.</summary>
+            AsWorld,
+            /// <summary>"FP Preview (In-Game)" view mode: submit exactly like play mode — layer 1 goes to
+            /// the native FP overlay pass (own FOV, cleared depth), layer 2 is skipped. The viewport shows
+            /// the frame the game would render.</summary>
+            GameView,
+        }
+
+        /// <summary>Edit-mode presentation of the FP/3P layers; set by the viewport (View dropdown +
+        /// toolbar toggle). Static so the GameHost path (which never touches it) keeps the default.</summary>
+        public static ViewmodelPreviewMode EditorViewmodelPreview = ViewmodelPreviewMode.Hidden;
+
+        /// <summary>Set while the in-game DEBUG FREECAM is active (editor play / GameHost debug builds):
+        /// the render view has detached from the player and is looking AT them, so render like another
+        /// camera — third-person body (layer 2) visible, first-person viewmodel (layer 1) hidden.
+        /// Cleared the instant the freecam exits. Never set in a shipped Release.</summary>
+        public static bool DebugThirdPersonView;
+
+        /// <summary>"We are the game, not the editor build view": editor play (viewport/game window)
+        /// sets IsPlaying via PlayModeService.Play(); the standalone player additionally always sets
+        /// NativeGameHostRunning before RunGameHost — belt and braces so a shipped game can NEVER lose
+        /// its viewmodel to the edit-mode layer presentation.</summary>
+        private static bool IsPlayLike =>
+            PlayModeService.Instance.IsPlaying || PlayModeService.Instance.NativeGameHostRunning;
+
+        /// <summary>Whether an entity's SUBTREE is part of the edit-viewport render (eye toggle +
+        /// activeSelf cascade). The pick path (RaycastService) prunes recursion with this so an
+        /// invisible entity never swallows clicks or gizmo drags — pick == render.</summary>
+        public static bool IsEditorSubtreeVisible(GameEntity entity)
+        {
+            if (entity == null || !entity.IsActive) return false;
+            if (entity.IsHiddenInEditor && !IsPlayLike) return false;
+            return true;
+        }
+
+        /// <summary>Whether an entity's OWN mesh is drawn — and therefore pickable — under the current
+        /// layer presentation. Mirrors SubmitEntity's layer branch exactly: layer-1 meshes are hidden in
+        /// the default build view, and in FP Preview / play they draw with the FP overlay projection
+        /// (clicks would misalign), so they are only pickable in the AsWorld placement mode. Non-mesh
+        /// entities stay pickable (icons/gizmos represent them).</summary>
+        public static bool IsEditorMeshPickable(GameEntity entity)
+        {
+            var mr = entity?.GetComponent<MeshRenderer>();
+            if (mr == null) return true;
+            int layer = mr.RenderLayer;
+            if (layer <= 0 || layer > 2) return true;
+            if (IsPlayLike || EditorViewmodelPreview == ViewmodelPreviewMode.GameView)
+                return false;                                        // 2 = not drawn; 1 = FP projection, misaligned
+            if (EditorViewmodelPreview == ViewmodelPreviewMode.Hidden)
+                return layer != 1;                                   // FP meshes aren't drawn -> not pickable
+            return true;                                             // AsWorld: drawn as world geometry
+        }
+
         /// <summary>
         /// Asset-pipeline diagnostics, opt-in via VORTEX_VERBOSE_LOG=1. With a VS debugger attached EVERY
         /// Debug.WriteLine is a ~0.5-2ms cross-process round-trip — this service used to log per asset
@@ -59,6 +121,14 @@ namespace Editor.Core.Services
         // STATIC cache: Map mesh paths to their imported material IDs
         // This survives entity serialization/deserialization
         private static readonly Dictionary<string, long> _meshPathToMaterialId = new Dictionary<string, long>();
+
+        // FAST cache: resolved .vmat MaterialPath -> engine material id. The submit-once render loop calls
+        // GetOrCreateMaterial for EVERY entity EVERY frame whenever any dynamic entity (e.g. the first-person
+        // viewmodel) is moving. Without this, each call did a per-entity filesystem AssetVfs.Exists + Path.Combine
+        // — with ~360 objects that was ~60us x 360 = the CPU bottleneck capping the scene at ~30 FPS. The material
+        // id is stable at runtime (live edits mutate the native material in place, keeping the same id), so caching
+        // by path is safe. Cleared on scene (pre)load.
+        private static readonly Dictionary<string, long> _vmatPathCache = new Dictionary<string, long>();
 
 
         /// <summary>
@@ -158,6 +228,7 @@ namespace Editor.Core.Services
         {
             if (scene == null) return;
 
+            _vmatPathCache.Clear();   // fresh material resolution for the (re)loaded scene
             Log($"[SceneRenderService] Preloading assets for scene: {scene.Name}");
             var projectPath = Data.ProjectData.Current?.Path ?? "";
 
@@ -285,8 +356,37 @@ namespace Editor.Core.Services
                 Core.Animation.AnimationService.Instance.TryGetPalette(animatorOwner, meshRenderer.MeshPath, out bonePalette, out boneCount);
 
             // Render layer (#175): 0 = world, 1 = first-person viewmodel (second pass, own FOV, depth
-            // cleared, casts no shadows). Travels with every submit variant below.
+            // cleared, casts no shadows), 2 = third-person only (hidden for the local player in play).
+            // Travels with every submit variant below. While playing (editor play, game window, GameHost)
+            // the layers always behave like the shipped game; in edit mode the viewport's preview mode
+            // decides how FP/3P meshes are presented (see ViewmodelPreviewMode).
             int layer = meshRenderer.RenderLayer;
+            if (layer < 0 || layer > 2) layer = 0;   // unknown layers = world geometry, in editor AND play
+            if (layer != 0)
+            {
+                if (DebugThirdPersonView)
+                {
+                    // In-game debug freecam: you are now an EXTERNAL camera looking AT the player, so render
+                    // like OTHER cameras see them — show the third-person body (layer 2) as world geometry,
+                    // hide the local first-person viewmodel (layer 1). Takes priority over the play-like FP
+                    // behaviour so flying out shows the character cleanly instead of nothing + floating arms.
+                    if (layer == 1) return;
+                    layer = 0;
+                }
+                else if (IsPlayLike || EditorViewmodelPreview == ViewmodelPreviewMode.GameView)
+                {
+                    if (layer == 2) return;            // third-person only: the local player never sees it
+                }
+                else if (EditorViewmodelPreview == ViewmodelPreviewMode.Hidden)
+                {
+                    if (layer == 1) return;            // FP meshes live in the game's FP pass, not the build view
+                    layer = 0;                          // 3P body: normal world object while editing
+                }
+                else // AsWorld — placement mode: draw FP/3P meshes as plain world geometry
+                {
+                    layer = 0;
+                }
+            }
 
             // Imported models (no explicit .vmat) are multi-submesh with per-submesh colored materials —
             // submit EVERY submesh, not just the first, so e.g. a Kenney tree shows trunk + leaves.
@@ -380,7 +480,7 @@ namespace Editor.Core.Services
 
         private void SubmitColliderGizmosRecursive(GameEntity entity, GameEntity skip)
         {
-            if (entity == null || !entity.IsActive) return;
+            if (entity == null || !entity.IsActive || entity.IsHiddenInEditor) return;
             if (!ReferenceEquals(entity, skip)) SubmitColliderGizmoFor(entity);
             if (entity.Children != null)
                 foreach (var c in entity.Children) SubmitColliderGizmosRecursive(c, skip);
@@ -475,6 +575,7 @@ namespace Editor.Core.Services
 
         private void RenderAudioIconRecursive(GameEntity entity, GameEntity selected, float camX, float camY, float camZ)
         {
+            if (entity == null || !entity.IsActive || entity.IsHiddenInEditor) return;   // eye toggle hides the icon too
             var transform = entity.Transform;
             if (transform != null)
             {
@@ -828,6 +929,7 @@ namespace Editor.Core.Services
         
         private void RenderCameraIconRecursive(GameEntity entity, GameEntity selected)
         {
+            if (entity == null || !entity.IsActive || entity.IsHiddenInEditor) return;   // eye toggle hides the icon too
             // Skip the selected entity (it gets the full frustum gizmo)
             if (entity != selected)
             {
@@ -856,6 +958,16 @@ namespace Editor.Core.Services
 
         private void SubmitEntityRecursive(GameEntity entity)
         {
+            if (entity == null) return;
+
+            // Editor eye toggle: a hidden entity takes its whole subtree out of the render.
+            // Edit-mode only — during play the runtime activeSelf (SetActive) is in charge.
+            if (entity.IsHiddenInEditor && !IsPlayLike) return;
+
+            // activeSelf cascades: an inactive parent hides its children too (ActiveInHierarchy),
+            // matching SubmitEntityLightsRecursive / SubmitColliderGizmosRecursive.
+            if (!entity.IsActive) return;
+
             SubmitEntity(entity);
 
             if (entity.Children != null)
@@ -1098,6 +1210,10 @@ namespace Editor.Core.Services
             // cleanup, which would free a shared material out from under other meshes.
             if (!string.IsNullOrEmpty(renderer.MaterialPath))
             {
+                // Fast path: already resolved this .vmat -> skip the per-frame filesystem check + rebuild.
+                if (_vmatPathCache.TryGetValue(renderer.MaterialPath, out long fastMat) && fastMat >= 0)
+                    return fastMat;
+
                 string vmatPath = renderer.MaterialPath;
                 if (!System.IO.Path.IsPathRooted(vmatPath))
                 {
@@ -1110,7 +1226,10 @@ namespace Editor.Core.Services
                 {
                     long vmatMaterial = MaterialService.Instance.GetOrBuildVortexMaterial(vmatPath);
                     if (vmatMaterial >= 0)
+                    {
+                        _vmatPathCache[renderer.MaterialPath] = vmatMaterial;   // cache for every subsequent frame
                         return vmatMaterial;
+                    }
                 }
             }
 
@@ -1683,6 +1802,9 @@ namespace Editor.Core.Services
         private void SubmitEntityLightsRecursive(GameEntity entity)
         {
             if (entity == null || !entity.IsActive) return;
+            // Eye toggle: a hidden subtree takes its light/skybox contribution out too (edit mode only —
+            // the session flag must stay inert during play/GameHost re-submits).
+            if (entity.IsHiddenInEditor && !IsPlayLike) return;
 
             // Check for Skybox component
             var skybox = entity.GetComponent<Skybox>();
@@ -2105,6 +2227,7 @@ namespace Editor.Core.Services
 
         private void RenderLightIconRecursive(GameEntity entity, GameEntity selected)
         {
+            if (entity == null || !entity.IsActive || entity.IsHiddenInEditor) return;   // eye toggle hides the icon too
             var light = entity.GetComponent<ECS.Components.Lighting.Light>();
             if (light != null)
             {

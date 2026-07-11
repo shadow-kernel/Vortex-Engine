@@ -237,7 +237,12 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                 bool external = Editor.Core.Services.PlayModeService.Instance.IsExternalWindow;
                 // The external game window feeds mouse-look + sets its own camera; otherwise the editor does.
                 if (!external)
+                {
                     UpdateGameMouseLook();                                 // lock/feed mouse delta to scripts; ESC frees
+                    // Debug freecam owns the toggle + mouse BEFORE scripts run: with it active the mouse
+                    // delta is consumed here (and zeroed) so the frozen player never mouse-looks / spins.
+                    PlayDebugCamPreScripts();
+                }
 
                 // Feed the UI frame so scripts can draw the HUD/ESC menu in EDITOR play too — without this
                 // UI.Width is 0 and the script skips all UI (that's why the ESC menu never appeared in-editor).
@@ -257,8 +262,21 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                 Editor.Core.Services.AudioPlaybackService.Instance.Tick(); // sync voices + listener AFTER scripts moved things
                 if (external)
                     Editor.Core.Services.PlayCameraHelper.ApplyPose(_extSnapPos, _extSnapRot); // editor = frozen placeholder
-                else
+                else if (!PlayDebugCamApplyView(deltaTime))               // P = detach into a 3rd-person freecam
                     ApplyMainCameraView();                                 // editor = live game view
+
+                // Discoverability: a small hint at the bottom-left so the freecam is findable while playing.
+                // The debug cam is colour-coded ORANGE (main cameras are purple, scene cameras blue).
+                if (!external && uw > 1 && uh > 1)
+                {
+                    if (_playFreeCam)
+                        VortexAPI.UIText(16, uh - 28, 900, 22,
+                            "DEBUG CAM (3rd person)  ·  WASD/QE fly · Shift faster · mouse look · P to exit",
+                            13, 1.0f, 0.6f, 0.12f, 1f, 0, 600);
+                    else
+                        VortexAPI.UIText(16, uh - 26, 520, 20,
+                            "P = DEBUG CAM (see yourself in 3rd person)", 12, 1.0f, 0.62f, 0.2f, 0.85f, 0, 400);
+                }
 
                 // Retained UI (HUD / lobby menu / ESC) in EDITOR play too — same single UIBegin frame, after the
                 // scripts mutated slots/screens. Without this the .vui never drew in-editor (only in the GameHost).
@@ -944,6 +962,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
 
             // Editing (Stopped): end the sim, free the mouse. Stay clean if we're still on the Game tab
             // (then the placeholder returns); otherwise restore the editor toolbar.
+            ResetPlayDebugCam();   // never leak the freecam / third-person layer view into edit mode
             ReleaseGameMouse();
             EndPlaySimulation();
             _editorFovApplied = float.NaN;   // the game leaked its FOV — force one editor-FOV re-assert next tick
@@ -1084,6 +1103,10 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         [DllImport("user32.dll")] private static extern bool SetCursorPos(int x, int y);
         [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINTW p);
         [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int vKey);
+        [DllImport("user32.dll")] private static extern short GetKeyState(int vKey);
+        /// <summary>CAPS LOCK toggle state — while the debug freecam flies, CAPS ON routes ALL input to the
+        /// player and freezes the cam so you can drive the character and watch its animations from a fixed vantage.</summary>
+        private static bool CapsLockOn() { return (GetKeyState(0x14) & 0x0001) != 0; }
         [StructLayout(LayoutKind.Sequential)] private struct POINTW { public int X; public int Y; }
 
         // Editor-play UI frame: feed viewport size + mouse so scripts draw the HUD/ESC menu in-editor.
@@ -1341,6 +1364,97 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             // Shared with the external game window so both render through the scene's main camera the
             // same way (pitch clamped to avoid a degenerate "langer Strich" look-at).
             Editor.Core.Services.PlayCameraHelper.ApplyMainCamera(_currentScene ?? ProjectData.Current?.ActiveScene);
+        }
+
+        // ---- in-game DEBUG FREECAM (editor viewport play): press P to detach the render view from the
+        // player and fly around in THIRD PERSON (WASD/QE · Shift fast · mouse look). The player freezes and
+        // its world body (RenderLayer 2) becomes visible while the first-person viewmodel (RenderLayer 1)
+        // hides — so you see exactly what other cameras see, rendered cleanly. Editor-only; a shipped game
+        // never reaches this path. ----
+        private bool _playFreeCam, _pfcSeeded, _pKeyPrev, _pfcDrivePlayer;
+        private float _pfcX, _pfcY, _pfcZ, _pfcYaw, _pfcPitch;
+
+        /// <summary>Runs BEFORE the gameplay scripts each play tick: handle the P toggle, freeze the player,
+        /// and consume the mouse delta so the frozen character never mouse-looks/spins while you fly.</summary>
+        private void PlayDebugCamPreScripts()
+        {
+            // P toggles it (rising edge). GetAsyncKeyState reads the physical key regardless of WPF focus,
+            // so it works while the game has the mouse captured — but it fires GLOBALLY, so only honour the
+            // toggle while the editor window is the active one (else pressing P in another app flips it).
+            bool appActive = _mouseCaptured
+                || (System.Windows.Application.Current != null
+                    && System.Windows.Application.Current.MainWindow != null
+                    && System.Windows.Application.Current.MainWindow.IsActive);
+            bool pDown = appActive && (GetAsyncKeyState(0x50) & 0x8000) != 0;
+            if (pDown && !_pKeyPrev)
+            {
+                _playFreeCam = !_playFreeCam;
+                if (_playFreeCam && !_pfcSeeded)
+                {
+                    // Seed at the current game camera so you fly out from where you were looking.
+                    var t = FindMainCameraTransform();
+                    if (t != null)
+                    {
+                        var p = t.LocalPosition; var r = t.LocalRotation;
+                        _pfcX = p.X; _pfcY = p.Y; _pfcZ = p.Z;
+                        _pfcYaw = r.Y * (float)Math.PI / 180f; _pfcPitch = r.X * (float)Math.PI / 180f;
+                    }
+                    _pfcSeeded = true;
+                }
+                SceneRenderService.DebugThirdPersonView = _playFreeCam;   // layer view flips with the freecam
+                SceneRenderService.RuntimeDirty = true;                    // rebuild the retained queue on toggle
+            }
+            _pKeyPrev = pDown;
+
+            // CAPS LOCK while flying = hand ALL input (mouse + keys, incl. RMB=ADS) to the player and freeze the
+            // cam, so you can drive the character and watch its animations from a fixed third-person vantage.
+            _pfcDrivePlayer = _playFreeCam && CapsLockOn();
+            Editor.Scripting.ScriptRuntime.SuppressGameplayInput = _playFreeCam && !_pfcDrivePlayer;
+            if (!_playFreeCam || _pfcDrivePlayer) return;   // player drives: leave the mouse delta for the player, don't move the cam
+
+            // Consume the mouse delta HERE (before scripts) so the frozen player doesn't also mouse-look.
+            _pfcYaw += Vortex.Input.MouseDeltaX * 0.0035f;
+            _pfcPitch += Vortex.Input.MouseDeltaY * 0.0035f;
+            Vortex.Input.MouseDeltaX = 0f; Vortex.Input.MouseDeltaY = 0f;
+            if (_pfcPitch > 1.5f) _pfcPitch = 1.5f; else if (_pfcPitch < -1.5f) _pfcPitch = -1.5f;
+        }
+
+        /// <summary>Runs where the game camera would be applied. Returns true when the freecam owns the view
+        /// (caller skips the game camera): flies with WASD/QE and points the render view.</summary>
+        private bool PlayDebugCamApplyView(float dt)
+        {
+            if (!_playFreeCam) return false;
+
+            double cyp = Math.Cos(_pfcPitch), syp = Math.Sin(_pfcPitch), cya = Math.Cos(_pfcYaw), sya = Math.Sin(_pfcYaw);
+            float fx = (float)(sya * cyp), fy = (float)(-syp), fz = (float)(cya * cyp);
+            float rx = (float)cya, rz = (float)(-sya);
+            if (!_pfcDrivePlayer)   // CAPS LOCK off = fly; on = the cam is frozen and WASD/QE go to the player
+            {
+                float sp = ((GetAsyncKeyState(0x10) & 0x8000) != 0 ? 12f : 4f) * dt;   // Shift = faster
+                if ((GetAsyncKeyState(0x57) & 0x8000) != 0) { _pfcX += fx * sp; _pfcY += fy * sp; _pfcZ += fz * sp; } // W
+                if ((GetAsyncKeyState(0x53) & 0x8000) != 0) { _pfcX -= fx * sp; _pfcY -= fy * sp; _pfcZ -= fz * sp; } // S
+                if ((GetAsyncKeyState(0x44) & 0x8000) != 0) { _pfcX += rx * sp; _pfcZ += rz * sp; }                   // D
+                if ((GetAsyncKeyState(0x41) & 0x8000) != 0) { _pfcX -= rx * sp; _pfcZ -= rz * sp; }                   // A
+                if ((GetAsyncKeyState(0x45) & 0x8000) != 0) _pfcY += sp;                                              // E up
+                if ((GetAsyncKeyState(0x51) & 0x8000) != 0) _pfcY -= sp;                                              // Q down
+            }
+
+            VortexAPI.SetViewCamera(_pfcX, _pfcY, _pfcZ, _pfcX + fx, _pfcY + fy, _pfcZ + fz, 0f, 1f, 0f);
+            SceneRenderService.RuntimeDirty = true;   // the character keeps animating -> keep re-submitting
+            return true;
+        }
+
+        /// <summary>Force-exit the freecam (called on Stop so it never leaks into the next play session).</summary>
+        private void ResetPlayDebugCam()
+        {
+            _playFreeCam = false;
+            _pfcSeeded = false;
+            Editor.Scripting.ScriptRuntime.SuppressGameplayInput = false;
+            if (SceneRenderService.DebugThirdPersonView)
+            {
+                SceneRenderService.DebugThirdPersonView = false;
+                SceneRenderService.RuntimeDirty = true;
+            }
         }
 
         private Editor.ECS.Components.Transform FindMainCameraTransform()
@@ -1670,6 +1784,28 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             }
         }
 
+        /// <summary>"FP" toolbar toggle: show RenderLayer-1 meshes as plain world geometry so they can be
+        /// placed/transformed. Off (default) hides them from the build view — they belong to the game's FP
+        /// overlay pass (#175). The "FP Preview (In-Game)" view mode wins over this toggle.</summary>
+        private void OnFpLayerToggle(object sender, RoutedEventArgs e) => ApplyViewmodelPreviewMode();
+
+        /// <summary>Push the edit-mode FP/3P layer presentation (#175: 1 = FP viewmodel, 2 = third-person
+        /// only) into SceneRenderService and rebuild the retained render queue. Play mode ignores the
+        /// static — while playing the layers always behave like the shipped game.</summary>
+        private void ApplyViewmodelPreviewMode()
+        {
+            var mode = _fpPreviewMode
+                ? SceneRenderService.ViewmodelPreviewMode.GameView
+                : (FpLayerToggleBtn?.IsChecked == true
+                    ? SceneRenderService.ViewmodelPreviewMode.AsWorld
+                    : SceneRenderService.ViewmodelPreviewMode.Hidden);
+            if (SceneRenderService.EditorViewmodelPreview != mode)
+            {
+                SceneRenderService.EditorViewmodelPreview = mode;
+                RequestResubmit();
+            }
+        }
+
         /// <summary>"Show Collision" toggle — shows/hides the green collider wireframe (same pattern as Show Grid).</summary>
         private void OnCollisionToggle(object sender, RoutedEventArgs e)
         {
@@ -1986,20 +2122,73 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         // Flag to indicate we're viewing through a game camera (no movement allowed)
         private bool _isViewingThroughGameCamera;
 
+        /// <summary>Sentinel Tag for the "FP Preview (In-Game)" pseudo-view in the View dropdown — the
+        /// other items carry a GameEntity Tag, this one is a plain string.</summary>
+        private const string FpPreviewTag = "FP_PREVIEW_VIEW";
+        private bool _fpPreviewMode;            // View: FP Preview (In-Game) active (edit mode only)
+        private bool _fpSavedGridVisibility;    // grid state on FP-preview entry (pose is NOT saved — the freecam stays live)
+
+        /// <summary>Leave FP preview: restore the grid, keep the live freecam pose, back to the normal
+        /// edit-mode layer presentation.</summary>
+        private void ExitFpPreview()
+        {
+            _fpPreviewMode = false;
+            EditorViewportService.Instance.IsGridVisible = _fpSavedGridVisibility;
+            ApplyViewmodelPreviewMode();
+        }
+
         private void OnCameraSelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             // Skip if we're just refreshing the list programmatically
             if (_isRefreshingCameraList) return;
-            
+
+            bool cameFromFpPreview = _fpPreviewMode;
+
             if (CameraSelector.SelectedIndex > 0)
             {
+                // "FP Preview (In-Game)" pseudo-view (#175): submit exactly like play mode — layer-1
+                // meshes render in the native FP overlay pass (own FOV, cleared depth) and third-person-
+                // only meshes are hidden. The freecam stays flyable so the user can inspect live.
+                if (CameraSelector.SelectedItem is ComboBoxItem fpItem && (fpItem.Tag as string) == FpPreviewTag)
+                {
+                    if (!_fpPreviewMode)
+                    {
+                        // Coming from a game-camera view: unwind it exactly like selecting Free Camera
+                        // would (pose + grid restore), so FP preview always starts from a live freecam.
+                        if (_isViewingThroughGameCamera)
+                        {
+                            _isViewingThroughGameCamera = false;
+                            if (_hasSavedFreeCamPosition && _cameraController != null)
+                            {
+                                _cameraController.SetPositionAndRotation(
+                                    _savedFreeCamPosX, _savedFreeCamPosY, _savedFreeCamPosZ,
+                                    _savedFreeCamYaw, _savedFreeCamPitch);
+                                EditorViewportService.Instance.IsGridVisible = _savedGridVisibility;
+                            }
+                            CameraPreviewService.Instance.ClosePreview();
+                        }
+                        _fpPreviewMode = true;
+                        _fpSavedGridVisibility = EditorViewportService.Instance.IsGridVisible;   // grid only — no pose save, the freecam stays live
+                        EditorViewportService.Instance.IsGridVisible = false;                     // clean game-like view
+                        // Selection gizmos would misalign with the FP overlay projection — clear, like the game-camera view does.
+                        SelectionService.Instance.ClearSelection();
+                        ApplyViewmodelPreviewMode();
+                    }
+                    return;
+                }
+
+                // Leaving FP preview by picking a real camera: drop back to the normal edit presentation
+                // (grid restored BEFORE the camera branch saves it, so the save captures the true state).
+                if (cameFromFpPreview) ExitFpPreview();
+
                 // User selected a game camera - switch viewport to that camera's view
                 if (CameraSelector.SelectedItem is ComboBoxItem item && item.Tag is ECS.GameEntity cameraEntity)
                 {
                     var camera = cameraEntity.GetComponent<ECS.Components.Rendering.Camera>();
                     if (camera != null)
                     {
-                        // Save current Free Camera position before switching (only if not already viewing through a game camera)
+                        // Save current Free Camera position before switching (only if not already viewing
+                        // through a game camera; after an FP-preview exit the freecam pose is live/current)
                         if (!_isViewingThroughGameCamera && _cameraController != null)
                         {
                             _savedFreeCamPosX = _cameraController.PositionX;
@@ -2044,7 +2233,16 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             {
                 // Free Camera selected - restore saved position and enable movement
                 _isViewingThroughGameCamera = false;
-                
+
+                // Leaving FP preview: grid back, keep the LIVE freecam pose (no teleport — the user
+                // was flying the freecam the whole time), and skip the game-camera pose restore below.
+                if (cameFromFpPreview)
+                {
+                    ExitFpPreview();
+                    CameraPreviewService.Instance.ClosePreview();
+                    return;
+                }
+
                 // Restore saved Free Camera position
                 if (_hasSavedFreeCamPosition && _cameraController != null)
                 {
@@ -2075,15 +2273,26 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             try
             {
                 CameraSelector.Items.Clear();
-                
+
                 // Add free camera option
-                var freeItem = new ComboBoxItem 
-                { 
+                var freeItem = new ComboBoxItem
+                {
                     Content = "Free Camera",
                     Foreground = new SolidColorBrush(Color.FromRgb(128, 128, 128))
                 };
                 CameraSelector.Items.Add(freeItem);
-                
+
+                // "FP Preview (In-Game)" pseudo-view (#175): renders the scene exactly like the running
+                // game — layer-1 meshes via the FP overlay pass, third-person-only meshes hidden.
+                var fpPreviewItem = new ComboBoxItem
+                {
+                    Content = "FP Preview (In-Game)",
+                    Tag = FpPreviewTag,
+                    Foreground = new SolidColorBrush(Color.FromRgb(180, 167, 245)),
+                    ToolTip = "Live in-game look: First-Person meshes render in the FP overlay pass (own FOV, cleared depth), Third-Person-only meshes are hidden."
+                };
+                CameraSelector.Items.Add(fpPreviewItem);
+
                 // Find all cameras in scene
                 var scene = _currentScene ?? ProjectData.Current?.ActiveScene;
                 if (scene?.Entities != null)
@@ -2093,8 +2302,10 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                         AddCamerasFromEntity(entity);
                     }
                 }
-                
-                CameraSelector.SelectedIndex = 0;
+
+                // Keep the FP preview mode alive across the periodic rebuild (camera count changes reset
+                // the list); a previously-selected game camera falls back to Free Camera (pre-existing).
+                CameraSelector.SelectedIndex = _fpPreviewMode ? 1 : 0;
             }
             finally
             {
@@ -2210,8 +2421,28 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         /// <summary>
         /// Handle view selection change in secondary viewport.
         /// </summary>
+        /// <summary>Sentinel Tag for the "Editor Camera (Free)" pane view — follows the freecam live, so a
+        /// split layout can show e.g. main viewport = FP Preview (In-Game) next to a free world view.</summary>
+        private const string EditorCamTag = "EDITOR_FREECAM_VIEW";
+        private bool _secondaryViewEditorCam, _thirdViewEditorCam, _fourthViewEditorCam;
+
         private void OnSecondaryViewCameraChanged(object sender, SelectionChangedEventArgs e)
         {
+            if (SecondaryViewCameraSelector?.SelectedItem is ComboBoxItem ecItem && (ecItem.Tag as string) == EditorCamTag)
+            {
+                _secondaryViewCamera = null;
+                _secondaryViewEditorCam = true;
+                if (SecondaryViewCameraInfo != null) SecondaryViewCameraInfo.Text = "Editor Camera";
+                if (SecondaryViewDetails != null) SecondaryViewDetails.Text = "Follows the freecam live";
+                if (SecondaryViewLabel != null) SecondaryViewLabel.Text = "Editor Camera";
+                if (SecondaryViewportOverlayInfo != null)
+                    SecondaryViewportOverlayInfo.Visibility = Visibility.Collapsed;
+                RenderEditorCamViewportWithGPU(1, SecondaryViewportImage);
+                return;
+            }
+            _secondaryViewEditorCam = false;
+            MultiViewportRenderService.Instance.SetViewportEditorCamera(1, false);
+
             if (SecondaryViewCameraSelector?.SelectedItem is ComboBoxItem item && item.Tag is ECS.GameEntity cameraEntity)
             {
                 _secondaryViewCamera = cameraEntity;
@@ -2251,6 +2482,20 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         /// </summary>
         private void OnThirdViewCameraChanged(object sender, SelectionChangedEventArgs e)
         {
+            if (ThirdViewCameraSelector?.SelectedItem is ComboBoxItem ecItem && (ecItem.Tag as string) == EditorCamTag)
+            {
+                _thirdViewCamera = null;
+                _thirdViewEditorCam = true;
+                if (ThirdViewInfo != null) ThirdViewInfo.Text = "Editor Camera";
+                if (ThirdViewLabel != null) ThirdViewLabel.Text = "Editor Camera";
+                if (ThirdViewportOverlayInfo != null)
+                    ThirdViewportOverlayInfo.Visibility = Visibility.Collapsed;
+                RenderEditorCamViewportWithGPU(2, ThirdViewportImage);
+                return;
+            }
+            _thirdViewEditorCam = false;
+            MultiViewportRenderService.Instance.SetViewportEditorCamera(2, false);
+
             if (ThirdViewCameraSelector?.SelectedItem is ComboBoxItem item && item.Tag is ECS.GameEntity cameraEntity)
             {
                 _thirdViewCamera = cameraEntity;
@@ -2285,6 +2530,20 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         /// </summary>
         private void OnFourthViewCameraChanged(object sender, SelectionChangedEventArgs e)
         {
+            if (FourthViewCameraSelector?.SelectedItem is ComboBoxItem ecItem && (ecItem.Tag as string) == EditorCamTag)
+            {
+                _fourthViewCamera = null;
+                _fourthViewEditorCam = true;
+                if (FourthViewInfo != null) FourthViewInfo.Text = "Editor Camera";
+                if (FourthViewLabel != null) FourthViewLabel.Text = "Editor Camera";
+                if (FourthViewportOverlayInfo != null)
+                    FourthViewportOverlayInfo.Visibility = Visibility.Collapsed;
+                RenderEditorCamViewportWithGPU(3, FourthViewportImage);
+                return;
+            }
+            _fourthViewEditorCam = false;
+            MultiViewportRenderService.Instance.SetViewportEditorCamera(3, false);
+
             if (FourthViewCameraSelector?.SelectedItem is ComboBoxItem item && item.Tag is ECS.GameEntity cameraEntity)
             {
                 _fourthViewCamera = cameraEntity;
@@ -2383,7 +2642,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             if (selector == null) return;
             
             selector.Items.Clear();
-            
+
             // Add placeholder
             var placeholderItem = new ComboBoxItem
             {
@@ -2391,6 +2650,17 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                 Foreground = new SolidColorBrush(Color.FromRgb(128, 128, 128))
             };
             selector.Items.Add(placeholderItem);
+
+            // Editor freecam as a pane view: lets a split layout pair the FP Preview main viewport
+            // with a live free world view (or vice versa).
+            var editorCamItem = new ComboBoxItem
+            {
+                Content = "Editor Camera (Free)",
+                Tag = EditorCamTag,
+                Foreground = new SolidColorBrush(Color.FromRgb(180, 167, 245)),
+                ToolTip = "Follows the editor free camera live."
+            };
+            selector.Items.Add(editorCamItem);
             
             // Add cameras from scene
             var scene = _currentScene ?? ProjectData.Current?.ActiveScene;
@@ -2555,6 +2825,9 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             _secondaryViewCamera = null;
             _thirdViewCamera = null;
             _fourthViewCamera = null;
+            _secondaryViewEditorCam = false;
+            _thirdViewEditorCam = false;
+            _fourthViewEditorCam = false;
         }
         
         /// <summary>
@@ -2579,9 +2852,13 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                     if (SecondaryViewportOverlayInfo != null)
                         SecondaryViewportOverlayInfo.Visibility = Visibility.Collapsed;
                 }
+                else if (_secondaryViewEditorCam && SecondaryViewportImage != null)
+                {
+                    RenderEditorCamViewportWithGPU(1, SecondaryViewportImage);   // follows the freecam live
+                }
                 // No else - placeholder is rendered once in OnSecondaryViewCameraChanged
             }
-            
+
             // Update third viewport (Split Horizontal and Quad) - Index 2
             if (_currentLayout == ViewportLayout.SplitHorizontal || _currentLayout == ViewportLayout.Quad)
             {
@@ -2591,9 +2868,13 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                     if (ThirdViewportOverlayInfo != null)
                         ThirdViewportOverlayInfo.Visibility = Visibility.Collapsed;
                 }
+                else if (_thirdViewEditorCam && ThirdViewportImage != null)
+                {
+                    RenderEditorCamViewportWithGPU(2, ThirdViewportImage);
+                }
                 // No else - placeholder is rendered once in OnThirdViewCameraChanged
             }
-            
+
             // Update fourth viewport (Quad only) - Index 3
             if (_currentLayout == ViewportLayout.Quad)
             {
@@ -2603,7 +2884,34 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                     if (FourthViewportOverlayInfo != null)
                         FourthViewportOverlayInfo.Visibility = Visibility.Collapsed;
                 }
+                else if (_fourthViewEditorCam && FourthViewportImage != null)
+                {
+                    RenderEditorCamViewportWithGPU(3, FourthViewportImage);
+                }
                 // No else - placeholder is rendered once in OnFourthViewCameraChanged
+            }
+        }
+
+        /// <summary>Render a pane from the editor FREECAM (live) via MultiViewportRenderService.</summary>
+        private void RenderEditorCamViewportWithGPU(int viewportIndex, System.Windows.Controls.Image imageControl)
+        {
+            if (imageControl == null) return;
+
+            var service = MultiViewportRenderService.Instance;
+            if (!service.IsViewportReady(viewportIndex))
+            {
+                int width = viewportIndex == 0 ? 480 : 960;
+                int height = viewportIndex == 0 ? 270 : 540;
+                service.InitializeViewport(viewportIndex, width, height);
+            }
+
+            service.SetViewportEditorCamera(viewportIndex, true);
+            service.RenderViewport(viewportIndex);
+
+            var bitmap = service.GetViewportBitmap(viewportIndex);
+            if (bitmap != null && imageControl.Source != bitmap)
+            {
+                imageControl.Source = bitmap;
             }
         }
         

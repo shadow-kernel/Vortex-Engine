@@ -34,6 +34,7 @@ namespace Editor.ECS
     [KnownType(typeof(Components.Audio.ReverbZone))]
     [KnownType(typeof(Components.Animation.Animator))]
     [KnownType(typeof(Components.Animation.BoneAttachment))]
+    [KnownType(typeof(Components.Animation.TwoBoneIk))]
     [KnownType(typeof(Components.Animation.AnimatorClipEntry))]
     [KnownType(typeof(Components.Scripting.Script))]
     public class GameEntity : Core.ViewModelBase, IEngineEntity
@@ -131,18 +132,75 @@ namespace Editor.ECS
         [IgnoreDataMember]
         public bool IsPrefabInstance => !string.IsNullOrEmpty(_prefabPath);
 
+        private bool _isHiddenInEditor;
+
+        /// <summary>Editor-only scene visibility (the eye toggle in the hierarchy): takes this entity and
+        /// its whole subtree out of the editor viewport render. Session-only — never serialized and never
+        /// applied while playing (runtime visibility is SetActive / activeSelf, a separate concept).</summary>
+        [IgnoreDataMember]
+        public bool IsHiddenInEditor
+        {
+            get => _isHiddenInEditor;
+            set => SetProperty(ref _isHiddenInEditor, value, nameof(IsHiddenInEditor));
+        }
+
+        /// <summary>True when this entity (or any child — imported models carry their MeshRenderers on
+        /// locked submesh children) has a MeshRenderer on the first-person viewmodel layer (#175).
+        /// Drives the "FP" chip in the hierarchy.</summary>
+        [IgnoreDataMember]
+        public bool IsViewmodel => HasRenderLayerInSubtree(1);
+
+        /// <summary>True when this entity (or any child) has a MeshRenderer on the third-person-only
+        /// layer (visible in the editor, hidden for the local player while playing).
+        /// Drives the "3P" chip in the hierarchy.</summary>
+        [IgnoreDataMember]
+        public bool IsThirdPersonOnly => HasRenderLayerInSubtree(2);
+
+        private bool HasRenderLayerInSubtree(int layer)
+        {
+            if (_components != null)
+            {
+                foreach (var c in _components)
+                    if (c is Components.Rendering.MeshRenderer mr && mr.RenderLayer == layer) return true;
+            }
+            if (_children != null)
+            {
+                foreach (var ch in _children)
+                    if (ch != null && ch.HasRenderLayerInSubtree(layer)) return true;
+            }
+            return false;
+        }
+
+        /// <summary>Called from MeshRenderer.RenderLayer's setter (and component add/remove) so the
+        /// hierarchy layer chips update live; bubbles up the parent chain because container rows roll
+        /// the flag up from their submesh children (mirrors the IsPrefabInstance notify pattern).</summary>
+        internal void NotifyRenderLayerChanged()
+        {
+            OnPropertyChanged(nameof(IsViewmodel));
+            OnPropertyChanged(nameof(IsThirdPersonOnly));
+            Parent?.NotifyRenderLayerChanged();
+        }
+
         [DataMember(Name = "children", Order = 6)]
         public ObservableCollection<GameEntity> Children
         {
-            get => _children ?? (_children = new ObservableCollection<GameEntity>());
-            set => _children = value ?? new ObservableCollection<GameEntity>();
+            get
+            {
+                if (_children == null) { _children = new ObservableCollection<GameEntity>(); HookLayerChipWatch(); }
+                return _children;
+            }
+            set { _children = value ?? new ObservableCollection<GameEntity>(); HookLayerChipWatch(); }
         }
 
         [DataMember(Name = "components", Order = 7)]
         public ObservableCollection<Component> Components
         {
-            get => _components ?? (_components = new ObservableCollection<Component>());
-            set => _components = value ?? new ObservableCollection<Component>();
+            get
+            {
+                if (_components == null) { _components = new ObservableCollection<Component>(); HookLayerChipWatch(); }
+                return _components;
+            }
+            set { _components = value ?? new ObservableCollection<Component>(); HookLayerChipWatch(); }
         }
 
         #endregion
@@ -337,6 +395,29 @@ namespace Editor.ECS
             _id = Guid.NewGuid();
             _children = new ObservableCollection<GameEntity>();
             _components = new ObservableCollection<Component>();
+            HookLayerChipWatch();
+        }
+
+        /// <summary>Keep the hierarchy FP/3P chips live across STRUCTURAL changes (reparent, delete,
+        /// undo/redo re-adds) — the RenderLayer setter only covers value edits. Unconditional notify is
+        /// cheap (PropertyChanged on two computed bools, bubbled up the parent chain).</summary>
+        private void HookLayerChipWatch()
+        {
+            if (_children != null)
+            {
+                _children.CollectionChanged -= OnStructureChanged;
+                _children.CollectionChanged += OnStructureChanged;
+            }
+            if (_components != null)
+            {
+                _components.CollectionChanged -= OnStructureChanged;
+                _components.CollectionChanged += OnStructureChanged;
+            }
+        }
+
+        private void OnStructureChanged(object sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+        {
+            if (!_isDeserializing) NotifyRenderLayerChanged();
         }
 
         public GameEntity(string name) : this()
@@ -368,6 +449,7 @@ namespace Editor.ECS
             component.Entity = this;
             var command = new CollectionAddCommand<Component>(Components, component, "Components");
             UndoRedoManager.Instance.Execute(command);
+            if (component is Components.Rendering.MeshRenderer) NotifyRenderLayerChanged();
         }
 
         /// <summary>
@@ -380,6 +462,7 @@ namespace Editor.ECS
 
             component.Entity = this;
             Components.Add(component);
+            if (component is Components.Rendering.MeshRenderer) NotifyRenderLayerChanged();
         }
 
         /// <summary>
@@ -400,6 +483,7 @@ namespace Editor.ECS
 
             var command = new CollectionRemoveCommand<Component>(Components, component, "Components");
             UndoRedoManager.Instance.Execute(command);
+            if (component is Components.Rendering.MeshRenderer) NotifyRenderLayerChanged();
         }
 
         /// <summary>
@@ -540,6 +624,8 @@ namespace Editor.ECS
         internal void OnDeserializedMethod(StreamingContext context)
         {
             _isDeserializing = false;
+            // DataContractSerializer bypasses the ctor — re-attach the chip watch on the deserialized collections.
+            HookLayerChipWatch();
             // Setze Parent-Referenzen f�r Kinder
             if (_children != null)
             {

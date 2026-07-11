@@ -129,6 +129,17 @@ namespace Editor
                     main.ContentRendered += (s, ev) =>
                     {
                         try { splash.FadeOutAndClose(); } catch { try { splash.Close(); } catch { } }
+                        // dev hook: auto-open the Socket Editor for capture/verification (VM_SOCKETEDITOR=1)
+                        if (System.Environment.GetEnvironmentVariable("VM_SOCKETEDITOR") == "1")
+                        {
+                            var t = new System.Windows.Threading.DispatcherTimer { Interval = System.TimeSpan.FromSeconds(10) };
+                            t.Tick += (a, b) => { t.Stop(); try {
+                                Editor.Editors.SocketEditor.SocketEditorWindow.Open(main,
+                                    @"C:\Users\Administrator\Documents\GitHub\Vortex-Engine\Templates\HorrorStarter\Assets\Models\Viewmodel\vm_vityaz_body.glb",
+                                    @"C:\Users\Administrator\Documents\GitHub\Vortex-Engine\Templates\HorrorStarter\Assets\Models\Character\tp_character.glb");
+                            } catch (Exception se) { try { System.IO.File.AppendAllText(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "vortex_gamehost.log"), "SOCKETEDITOR ERR: " + se + "\n"); } catch { } } };
+                            t.Start();
+                        }
                     };
                     main.Show(); // -> MainWindow.Loaded loads the last project or opens the project browser
                 }
@@ -508,6 +519,16 @@ namespace Editor
         private static bool _ghF12Prev;
         private static object _ghSubmittedScene;   // submit-once guard: re-submit only when the active scene changes
 
+        // ---- DEBUG free-fly camera (editor play, DEBUG builds only; never in a shipped Release) ----
+        private static bool  _dbgCam, _dbgCamKeyPrev, _dbgCamSeeded;
+        private static float _dcx, _dcy, _dcz, _dcYaw, _dcPitch;
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern short GetKeyState(int vk);
+        /// <summary>CAPS LOCK toggle state: while the debug cam flies, CAPS ON hands ALL input (mouse + keys, incl.
+        /// RMB=ADS) to the player and FREEZES the freecam — so you can drive the character and watch its animations
+        /// from a fixed third-person vantage. CAPS OFF = fly the freecam, player frozen.</summary>
+        private static bool CapsLockOn() { return (GetKeyState(0x14) & 0x0001) != 0; }
+
         private void GameHostTick(float dt)
         {
             if (_stressMode) { StressTick(dt); return; }
@@ -608,6 +629,13 @@ namespace Editor
                 else { Vortex.Input.MouseDeltaX = 0f; Vortex.Input.MouseDeltaY = 0f; }
                 _ghPrevMx = mx; _ghPrevMy = my;
 
+                // Mouse wheel -> scripts (weapon switching). A menu screen consumes the wheel itself via
+                // BuildVuiInput, and BuildVuiInput only runs when HasActiveScreens — mutually exclusive with this
+                // read — so reading the native accumulator here (only when NO screen is up) never double-drains it.
+                // ~120 raw units per notch -> normalize to notches (+1 up / -1 down).
+                Vortex.Input.ScrollDelta = (playing && !Editor.UI.Vui.VuiStack.Instance.HasActiveScreens)
+                    ? DllWrapper.VortexAPI.GameHostMouseWheel() / 120f : 0f;
+
                 sr.SetUIFrame(cw, ch, mx, my, down, pressed);
                 DllWrapper.VortexAPI.UIBegin(cw, ch);
                 if (_ghT0 == DateTime.MinValue) _ghT0 = DateTime.Now;
@@ -638,7 +666,89 @@ namespace Editor
                 DrawHotReloadOverlay(cw, ch);
 
                 var scene = Editor.Core.Data.ProjectData.Current != null ? Editor.Core.Data.ProjectData.Current.ActiveScene : null;
-                Editor.Core.Services.PlayCameraHelper.ApplyMainCamera(scene);
+
+                // ---- DEBUG FREE-FLY CAMERA (editor play + DEBUG build only; stripped from a shipped Release) ----
+                // P toggles it: the render camera detaches and you fly (WASD/QE · mouse · Shift fast). Toggle
+                // CAPS LOCK to hand ALL input (mouse + keys, incl. RMB=ADS) back to the PLAYER while the freecam
+                // FREEZES in place — drive the character and watch its animations from a fixed third-person
+                // vantage. Never available in a Release-exported game.
+                bool dbgAllowed = playing && !Editor.Core.Services.PlayModeService.Instance.IsReleaseMode;
+
+                // DEV capture hook: VM_DBGCAM="x,y,z,yawDeg,pitchDeg" auto-enters the debug cam at a fixed vantage
+                // once at boot (deterministic headless third-person captures). Harmless/absent in normal runs.
+                if (dbgAllowed && !_dbgCamSeeded)
+                {
+                    string seed = Environment.GetEnvironmentVariable("VM_DBGCAM");
+                    if (!string.IsNullOrEmpty(seed))
+                    {
+                        var t = seed.Split(',');
+                        float SF(int i, float d) { float v; return t.Length > i && float.TryParse(t[i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out v) ? v : d; }
+                        _dcx = SF(0, 0f); _dcy = SF(1, 1.5f); _dcz = SF(2, 0f);
+                        _dcYaw = SF(3, 0f) * (float)Math.PI / 180f; _dcPitch = SF(4, 0f) * (float)Math.PI / 180f;
+                        _dbgCam = true; _dbgCamSeeded = true;
+                        Editor.Core.Services.SceneRenderService.DebugThirdPersonView = true;
+                        Editor.Core.Services.SceneRenderService.RuntimeDirty = true;
+                    }
+                }
+
+                bool pKey = dbgAllowed && DllWrapper.VortexAPI.GameHostKeyDown(0x50);   // P
+                if (pKey && !_dbgCamKeyPrev)
+                {
+                    _dbgCam = !_dbgCam;
+                    // Layer view flips with the freecam: detached = third-person (body visible, FP hidden).
+                    Editor.Core.Services.SceneRenderService.DebugThirdPersonView = _dbgCam;
+                    Editor.Core.Services.SceneRenderService.RuntimeDirty = true;   // rebuild the retained queue with the new layer decision
+                    if (_dbgCam && !_dbgCamSeeded)
+                    {
+                        // Seed at the current game camera so you fly out from where you were looking.
+                        var ct = Editor.Core.Services.PlayCameraHelper.FindMainCamera(scene);
+                        if (ct != null) { _dcx = ct.LocalPosition.X; _dcy = ct.LocalPosition.Y; _dcz = ct.LocalPosition.Z;
+                                          _dcYaw = ct.LocalRotation.Y * (float)Math.PI / 180f; _dcPitch = ct.LocalRotation.X * (float)Math.PI / 180f; }
+                        _dbgCamSeeded = true;
+                    }
+                }
+                _dbgCamKeyPrev = pKey;
+                if (!dbgAllowed && _dbgCam) { _dbgCam = false; Editor.Core.Services.SceneRenderService.DebugThirdPersonView = false; Editor.Core.Services.SceneRenderService.RuntimeDirty = true; }
+
+                Editor.Scripting.ScriptRuntime.SuppressGameplayInput = false;
+                if (_dbgCam)
+                {
+                    bool drivePlayer = CapsLockOn();   // CAPS LOCK on = all input to the player, freecam frozen
+                    if (!drivePlayer)
+                    {
+                        // Fly the freecam; the player is frozen (WASD/mouse drive the camera, not the character).
+                        Editor.Scripting.ScriptRuntime.SuppressGameplayInput = true;
+                        Vortex.Input.MouseDeltaX = 0f; Vortex.Input.MouseDeltaY = 0f;
+                        float ddx = DllWrapper.VortexAPI.GameHostMouseDX(), ddy = DllWrapper.VortexAPI.GameHostMouseDY();
+                        if (ddx > 200f) ddx = 200f; else if (ddx < -200f) ddx = -200f;
+                        if (ddy > 200f) ddy = 200f; else if (ddy < -200f) ddy = -200f;
+                        _dcYaw += ddx * 0.0035f; _dcPitch += ddy * 0.0035f;
+                        if (_dcPitch > 1.5f) _dcPitch = 1.5f; else if (_dcPitch < -1.5f) _dcPitch = -1.5f;
+                        double cyp = Math.Cos(_dcPitch), syp = Math.Sin(_dcPitch), cya = Math.Cos(_dcYaw), sya = Math.Sin(_dcYaw);
+                        float fx = (float)(sya * cyp), fy = (float)(-syp), fz = (float)(cya * cyp);
+                        float rx = (float)cya, rz = (float)(-sya);
+                        float sp = (DllWrapper.VortexAPI.GameHostKeyDown(0x10) ? 12f : 4f) * dt;   // Shift = faster
+                        if (DllWrapper.VortexAPI.GameHostKeyDown(0x57)) { _dcx += fx * sp; _dcy += fy * sp; _dcz += fz * sp; } // W
+                        if (DllWrapper.VortexAPI.GameHostKeyDown(0x53)) { _dcx -= fx * sp; _dcy -= fy * sp; _dcz -= fz * sp; } // S
+                        if (DllWrapper.VortexAPI.GameHostKeyDown(0x44)) { _dcx += rx * sp; _dcz += rz * sp; }                   // D
+                        if (DllWrapper.VortexAPI.GameHostKeyDown(0x41)) { _dcx -= rx * sp; _dcz -= rz * sp; }                   // A
+                        if (DllWrapper.VortexAPI.GameHostKeyDown(0x45)) _dcy += sp;                                            // E up
+                        if (DllWrapper.VortexAPI.GameHostKeyDown(0x51)) _dcy -= sp;                                            // Q down
+                    }
+                    // else: drivePlayer -> gameplay input NOT suppressed (line above kept it false), mouse delta NOT
+                    // zeroed (it reaches the player), and the freecam pose is frozen (we don't move _dc*).
+                    double cyp2 = Math.Cos(_dcPitch), syp2 = Math.Sin(_dcPitch), cya2 = Math.Cos(_dcYaw), sya2 = Math.Sin(_dcYaw);
+                    float ffx = (float)(sya2 * cyp2), ffy = (float)(-syp2), ffz = (float)(cya2 * cyp2);
+                    DllWrapper.VortexAPI.SetViewCamera(_dcx, _dcy, _dcz, _dcx + ffx, _dcy + ffy, _dcz + ffz, 0f, 1f, 0f);
+                    string hud = drivePlayer
+                        ? "DEBUG CAM (frozen)  ·  CAPS LOCK ON = driving the PLAYER (mouse+keys) · CAPS off = fly · P to exit"
+                        : "DEBUG CAM (3rd person)  ·  WASD/QE fly · Shift faster · CAPS LOCK = drive the player · P to exit";
+                    DllWrapper.VortexAPI.UIText(16, ch - 30, 1000, 24, hud, 13, 1.0f, 0.6f, 0.12f, 1f, 0, 600);
+                }
+                else
+                {
+                    Editor.Core.Services.PlayCameraHelper.ApplyMainCamera(scene);
+                }
                 // Submit ONCE per scene: the native swap_render_queue reuses last frame's render queue when
                 // nothing new is submitted, so a static scene re-renders every frame with only the camera
                 // changing (camera is set separately, not via instance data). This removes the per-frame

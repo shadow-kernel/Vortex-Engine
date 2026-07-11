@@ -49,6 +49,32 @@ namespace Editor.Core.Animation
             public Matrix4x4[] NodeWorlds;        // model-space node worlds of the SAME pose (bone sockets read these)
             public List<LayerState> Layers;       // bone-masked override layers (#173); null = single-clip fast path
             public SyncGroup Group;               // synced playback group (#174); null = independent clock
+            // Runtime procedural bone control (#178): script-supplied additive LOCAL rotation deltas per node,
+            // composed onto the animated pose each frame BEFORE hierarchy multiplication so a delta carries all
+            // descendants (spine pitch -> chest+arms+weapon rotate as one). null/empty = no override (fast path).
+            public Dictionary<int, Quaternion> BoneAdditive;
+            public Dictionary<int, float> BoneScale;   // runtime per-bone scale multiplier (0 = hide, e.g. FP legs/head)
+            // Runtime two-bone IK (#179): resolved chains from the entity's TwoBoneIk components,
+            // re-synced every Step (and on inspector edits via RefreshIk). null/empty = fast path.
+            public List<IkChainRuntime> IkChains;
+            // Auto-grip (#179): the CAPTURED tip-relative-to-target matrix per tip node, taken from the
+            // animation's natural grip on the first frame and held after. Persists across Steps (the
+            // chain runtime list is rebuilt each Step); cleared by RefreshIk on config edits.
+            public Dictionary<int, Matrix4x4> IkCapturedGrips;
+        }
+
+        /// <summary>Resolved runtime form of one TwoBoneIk component (node indices + quaternion offset).</summary>
+        private class IkChainRuntime
+        {
+            public int Tip, Mid, Root, Target;
+            public Vector3 OffsetPos;          // target-bone-local grip position (model units)
+            public Quaternion OffsetRot;       // target-bone-local grip orientation
+            public float Weight;
+            public float PoleAngleDeg;
+            public bool ApplyTipRotation;
+            public bool AutoGrip;              // capture + hold the natural grip
+            public bool HasCapturedGrip;       // capture available for this Solve
+            public Matrix4x4 CapturedGrip;     // tip-relative-to-target matrix (natural grip)
         }
 
         /// <summary>Synced playback group (#174): ONE master clock drives N members at the same
@@ -273,7 +299,16 @@ namespace Editor.Core.Animation
                 }
             }
 
-            if (!baseActive && !layersActive) return;
+            // #179: refresh the runtime IK chains from the entity's TwoBoneIk components each Step so
+            // inspector edits and script SetIkWeight take effect immediately.
+            SyncIkChains(entity, state);
+
+            // #178: a runtime bone override must re-pose every frame even on a static/held clip (look up/down
+            // while standing still), so it counts as "active" for the re-evaluation gate. Same for IK (#179).
+            bool overridesActive = (state.BoneAdditive != null && state.BoneAdditive.Count > 0)
+                                || (state.BoneScale != null && state.BoneScale.Count > 0)
+                                || (state.IkChains != null && state.IkChains.Count > 0);
+            if (!baseActive && !layersActive && !overridesActive) return;
             state.Palette = EvaluateStatePalette(state);
             HasActiveAnimators = true;
         }
@@ -563,6 +598,283 @@ namespace Editor.Core.Animation
                 if (L.Index == layer) { L.Playing = false; return; }
         }
 
+        // ------------------------------------------------------------------ runtime bone control (#178)
+
+        /// <summary>
+        /// Set a persistent runtime ADDITIVE local-rotation delta (Euler degrees) on one bone. Composed onto the
+        /// animated pose every frame in the bone's local frame, before hierarchy multiplication, so it carries all
+        /// descendants — this is the aim-offset / procedural-lean / recoil primitive. Drives continuous up/down aim
+        /// by pitching the spine so chest+arms+weapon move as one and the gun stays locked in the hands. Passing
+        /// (0,0,0) clears the bone. No native change: the skinning path consumes whatever palette this produces.
+        /// </summary>
+        public void SetBoneAdditiveRotation(ECS.GameEntity entity, string bone, Vector3 eulerDeg)
+        {
+            if (entity == null || string.IsNullOrEmpty(bone)) return;
+            var state = GetOrCreateState(entity);
+            if (state?.Skeleton == null) return;
+            int node = state.Skeleton.FindNode(bone);
+            if (node < 0) return;
+
+            bool identity = eulerDeg.X == 0f && eulerDeg.Y == 0f && eulerDeg.Z == 0f;
+            if (identity)
+            {
+                state.BoneAdditive?.Remove(node);
+            }
+            else
+            {
+                if (state.BoneAdditive == null) state.BoneAdditive = new Dictionary<int, Quaternion>();
+                state.BoneAdditive[node] = EulerToQuat(eulerDeg);
+            }
+            // Re-pose immediately so a set during a behaviour's Update is reflected the SAME frame (Step runs after
+            // behaviours; this also covers the case where the base clip isn't advancing).
+            HasActiveAnimators = true;
+            if (state.Palette != null) state.Palette = EvaluateStatePalette(state);
+        }
+
+        /// <summary>Set a persistent runtime SCALE multiplier on one bone (1 = normal, 0 = hide the bone + its
+        /// descendants). Used to strip the FP viewmodel down to arms+gun — hide the legs and head so looking down
+        /// or up never reveals the player's own body (the CoD viewmodel look). Applied to the local scale before
+        /// hierarchy multiply, so it carries the whole limb.</summary>
+        public void SetBoneScaleOverride(ECS.GameEntity entity, string bone, float scale)
+        {
+            if (entity == null || string.IsNullOrEmpty(bone)) return;
+            var state = GetOrCreateState(entity);
+            if (state?.Skeleton == null) return;
+            int node = state.Skeleton.FindNode(bone);
+            if (node < 0) return;
+            if (scale == 1f) { state.BoneScale?.Remove(node); }
+            else
+            {
+                if (state.BoneScale == null) state.BoneScale = new Dictionary<int, float>();
+                state.BoneScale[node] = scale;
+            }
+            HasActiveAnimators = true;
+            if (state.Palette != null) state.Palette = EvaluateStatePalette(state);
+        }
+
+        /// <summary>Clear every runtime bone-rotation override on an entity's animator (back to the pure clip pose).</summary>
+        public void ClearBoneOverrides(ECS.GameEntity entity)
+        {
+            if (entity != null && _states.TryGetValue(entity.Id, out var s) && s.BoneAdditive != null && s.BoneAdditive.Count > 0)
+            {
+                s.BoneAdditive.Clear();
+                if (s.Palette != null) s.Palette = EvaluateStatePalette(s);
+            }
+        }
+
+        /// <summary>Euler degrees (X=pitch, Y=yaw, Z=roll) -> quaternion, matching the engine's TRS convention.</summary>
+        private static Quaternion EulerToQuat(Vector3 deg)
+        {
+            const float D2R = (float)(Math.PI / 180.0);
+            return Quaternion.CreateFromYawPitchRoll(deg.Y * D2R, deg.X * D2R, deg.Z * D2R);
+        }
+
+        // ------------------------------------------------------------------ runtime two-bone IK (#179)
+
+        /// <summary>Rebuild the state's IK chain list from the entity's TwoBoneIk components. Called per
+        /// Step and from <see cref="RefreshIk"/>, so inspector edits and script SetIkWeight apply the
+        /// same frame. Chains resolve tip -> (mid = parent, root = grandparent); invalid ones drop out.</summary>
+        private static void SyncIkChains(ECS.GameEntity entity, AnimatorState state)
+        {
+            List<IkChainRuntime> chains = null;
+            var skel = state.Skeleton;
+            var comps = entity?.Components;
+            if (skel != null && comps != null)
+            {
+                for (int i = 0; i < comps.Count; i++)
+                {
+                    var ik = comps[i] as ECS.Components.Animation.TwoBoneIk;
+                    if (ik == null || !ik.IsEnabled || ik.Weight <= 0.001f) continue;
+                    if (string.IsNullOrEmpty(ik.TipBone) || string.IsNullOrEmpty(ik.TargetBone)) continue;
+                    int tip = skel.FindNode(ik.TipBone);
+                    int target = skel.FindNode(ik.TargetBone);
+                    if (tip < 0 || target < 0) continue;
+                    int mid = skel.Nodes[tip].Parent;
+                    int root = mid >= 0 ? skel.Nodes[mid].Parent : -1;
+                    if (root < 0) continue;
+
+                    // Offset rotation uses the SAME euler convention as the socket system (engine ZXY),
+                    // so a captured offset round-trips exactly.
+                    var rotM = BoneSocketService.EulerZXY(new Vector3(
+                        ik.TargetOffsetRotation.X, ik.TargetOffsetRotation.Y, ik.TargetOffsetRotation.Z));
+
+                    (chains = chains ?? new List<IkChainRuntime>()).Add(new IkChainRuntime
+                    {
+                        Tip = tip,
+                        Mid = mid,
+                        Root = root,
+                        Target = target,
+                        OffsetPos = new Vector3(ik.TargetOffsetPosition.X, ik.TargetOffsetPosition.Y, ik.TargetOffsetPosition.Z),
+                        OffsetRot = Quaternion.CreateFromRotationMatrix(rotM),
+                        Weight = ik.Weight,
+                        PoleAngleDeg = ik.PoleAngle,
+                        ApplyTipRotation = ik.ApplyTipRotation,
+                        AutoGrip = ik.AutoGrip,
+                    });
+                }
+            }
+            state.IkChains = chains;
+        }
+
+        /// <summary>Edit-mode live preview + runtime weight changes: re-sync and re-pose one entity's
+        /// animator so the IK'd pose is visible immediately (bind pose + IK in edit mode). Safe no-op
+        /// when the entity has no skeleton. The caller/inspector still resubmits the viewport.</summary>
+        public void RefreshIk(ECS.GameEntity entity)
+        {
+            if (entity == null) return;
+            var state = GetOrCreateState(entity);
+            if (state?.Skeleton == null) return;
+            state.IkCapturedGrips = null;   // config changed -> recapture the auto-grip from the fresh pose
+            SyncIkChains(entity, state);
+            HasActiveAnimators = true;
+            state.Palette = EvaluateStatePalette(state);
+            Services.SceneRenderService.RuntimeDirty = true;   // GameHost/submit-once re-submit contract
+        }
+
+        /// <summary>
+        /// The actual two-bone solve — MODEL space, engine row-vector convention (worlds[i] = local *
+        /// worlds[parent], so a WORLD-frame rotation delta D right-multiplies: local' = local * P * D * P?¹,
+        /// i.e. q_local' = qp?¹ * qd * qp * q_local with q_world = qp * q_local).
+        /// Steps: (1) open/close the elbow via law of cosines around the CURRENT bend axis (keeps the
+        /// animation's natural bend plane), (2) swing the root so the tip lands on the root→target ray,
+        /// (3) optional pole swing around root→target, (4) optional tip re-orientation to the grip.
+        /// Mutates r[] only; returns true when the caller must recompose worlds.
+        /// </summary>
+        private static bool SolveTwoBoneIk(SkeletonDef skel, Vector3[] t, Quaternion[] r, Vector3[] s,
+            Matrix4x4[] worlds, IkChainRuntime ik)
+        {
+            float w = ik.Weight;
+            if (w <= 0.001f) return false;
+            int n = skel.Nodes.Length;
+            if (ik.Tip >= n || ik.Mid >= n || ik.Root >= n || ik.Target >= n) return false;
+
+            // Target = grip offset composed in the target bone's RAW local frame (model space) — the
+            // capture flow authors the offset in the same frame, so conventions cancel out.
+            Matrix4x4 offM = Matrix4x4.CreateFromQuaternion(ik.OffsetRot);
+            offM.Translation = ik.OffsetPos;
+            // Auto-grip: the natural captured grip is the BASE (tracks the target bone), the authored
+            // offset fine-tunes on top. Without auto-grip the target is the raw bone + authored offset.
+            Matrix4x4 baseTarget = (ik.AutoGrip && ik.HasCapturedGrip)
+                ? ik.CapturedGrip * worlds[ik.Target]
+                : worlds[ik.Target];
+            Matrix4x4 targetM = offM * baseTarget;
+            Vector3 target = targetM.Translation;
+
+            Vector3 a = worlds[ik.Root].Translation;
+            Vector3 b = worlds[ik.Mid].Translation;
+            Vector3 c = worlds[ik.Tip].Translation;
+
+            float l1 = (b - a).Length(), l2 = (c - b).Length();
+            if (l1 < 1e-5f || l2 < 1e-5f) return false;
+            Vector3 at = target - a;
+            float dist = at.Length();
+            if (dist < 1e-6f) return false;
+            float maxReach = (l1 + l2) * 0.9999f;
+            float minReach = Math.Abs(l1 - l2) * 1.0001f + 1e-4f;
+            float reach = Math.Max(minReach, Math.Min(maxReach, dist));
+
+            // (1) elbow angle via law of cosines. +angle around cross(u,v) moves v TOWARD u (closes the
+            // joint), so the delta from current->wanted interior angle is (angCur - angWant).
+            Vector3 u = Vector3.Normalize(a - b);
+            Vector3 v = Vector3.Normalize(c - b);
+            float cosCur = ClampF(Vector3.Dot(u, v), -1f, 1f);
+            float cosWant = ClampF((l1 * l1 + l2 * l2 - reach * reach) / (2f * l1 * l2), -1f, 1f);
+            float angCur = (float)Math.Acos(cosCur);
+            float angWant = (float)Math.Acos(cosWant);
+            Vector3 bendAxis = Vector3.Cross(u, v);
+            if (bendAxis.LengthSquared() < 1e-8f)
+            {
+                // Straight limb — synthesize a bend axis perpendicular to it (prefer facing the target).
+                bendAxis = Vector3.Cross(c - a, at);
+                if (bendAxis.LengthSquared() < 1e-8f) bendAxis = Vector3.Cross(c - a, Vector3.UnitY);
+                if (bendAxis.LengthSquared() < 1e-8f) bendAxis = Vector3.UnitX;
+            }
+            bendAxis = Vector3.Normalize(bendAxis);
+            float dElbow = (angCur - angWant) * w;
+            if (Math.Abs(dElbow) > 1e-5f)
+            {
+                ApplyWorldRotationDelta(skel, r, worlds, ik.Mid, Quaternion.CreateFromAxisAngle(bendAxis, dElbow));
+                worlds = ComposeWorlds(skel, t, r, s);
+            }
+
+            // (2) root swing: rotate the whole limb so the tip lands on the root->target ray.
+            c = worlds[ik.Tip].Translation;
+            Vector3 v1 = c - a, v2 = target - a;
+            if (v1.LengthSquared() > 1e-10f && v2.LengthSquared() > 1e-10f)
+            {
+                v1 = Vector3.Normalize(v1);
+                v2 = Vector3.Normalize(v2);
+                Vector3 ax = Vector3.Cross(v1, v2);
+                float d = ClampF(Vector3.Dot(v1, v2), -1f, 1f);
+                if (ax.LengthSquared() > 1e-10f)
+                {
+                    float ang = (float)Math.Atan2(ax.Length(), d) * w;
+                    if (Math.Abs(ang) > 1e-5f)
+                    {
+                        ApplyWorldRotationDelta(skel, r, worlds, ik.Root, Quaternion.CreateFromAxisAngle(Vector3.Normalize(ax), ang));
+                        worlds = ComposeWorlds(skel, t, r, s);
+                    }
+                }
+            }
+
+            // (3) pole: swing the elbow around root->target (tip stays planted).
+            if (Math.Abs(ik.PoleAngleDeg) > 0.01f && at.LengthSquared() > 1e-10f)
+            {
+                float ang = ik.PoleAngleDeg * (float)(Math.PI / 180.0) * w;
+                ApplyWorldRotationDelta(skel, r, worlds, ik.Root, Quaternion.CreateFromAxisAngle(Vector3.Normalize(at), ang));
+                worlds = ComposeWorlds(skel, t, r, s);
+            }
+
+            // (4) tip orientation: take the grip rotation (q_world = qp * q_local -> q_local = qp?¹ * qT).
+            if (ik.ApplyTipRotation)
+            {
+                Quaternion qT = Quaternion.CreateFromRotationMatrix(NormalizeBasis(targetM));
+                int par = skel.Nodes[ik.Tip].Parent;
+                Quaternion qp = par >= 0
+                    ? Quaternion.CreateFromRotationMatrix(NormalizeBasis(worlds[par]))
+                    : Quaternion.Identity;
+                Quaternion want = Quaternion.Normalize(Quaternion.Multiply(Quaternion.Inverse(qp), qT));
+                r[ik.Tip] = Quaternion.Slerp(r[ik.Tip], want, w);
+            }
+            return true;
+        }
+
+        /// <summary>Apply a WORLD-frame rotation delta to one node's LOCAL rotation:
+        /// q_local' = qp?¹ * qd * qp * q_local (derivation in SolveTwoBoneIk's summary).</summary>
+        private static void ApplyWorldRotationDelta(SkeletonDef skel, Quaternion[] r, Matrix4x4[] worlds,
+            int node, Quaternion worldDelta)
+        {
+            int par = skel.Nodes[node].Parent;
+            Quaternion qp = par >= 0
+                ? Quaternion.CreateFromRotationMatrix(NormalizeBasis(worlds[par]))
+                : Quaternion.Identity;
+            r[node] = Quaternion.Normalize(Quaternion.Inverse(qp) * worldDelta * qp * r[node]);
+        }
+
+        /// <summary>Orthonormalized rotation part of a (possibly scaled) matrix — for quaternion extraction.</summary>
+        private static Matrix4x4 NormalizeBasis(Matrix4x4 m)
+        {
+            var r0 = Vector3.Normalize(new Vector3(m.M11, m.M12, m.M13));
+            var r1 = Vector3.Normalize(new Vector3(m.M21, m.M22, m.M23));
+            var r2 = Vector3.Normalize(new Vector3(m.M31, m.M32, m.M33));
+            return new Matrix4x4(
+                r0.X, r0.Y, r0.Z, 0f,
+                r1.X, r1.Y, r1.Z, 0f,
+                r2.X, r2.Y, r2.Z, 0f,
+                0f, 0f, 0f, 1f);
+        }
+
+        private static float ClampF(float v, float lo, float hi) => v < lo ? lo : (v > hi ? hi : v);
+
+        /// <summary>NaN/Inf checks for the IK guard — one non-finite value in a palette hides the whole mesh.</summary>
+        private static bool IsFinite(float v) => !float.IsNaN(v) && !float.IsInfinity(v);
+        private static bool IsFinite(Quaternion q) => IsFinite(q.X) && IsFinite(q.Y) && IsFinite(q.Z) && IsFinite(q.W);
+        private static bool IsFinite(Matrix4x4 m) =>
+            IsFinite(m.M11) && IsFinite(m.M12) && IsFinite(m.M13) && IsFinite(m.M14) &&
+            IsFinite(m.M21) && IsFinite(m.M22) && IsFinite(m.M23) && IsFinite(m.M24) &&
+            IsFinite(m.M31) && IsFinite(m.M32) && IsFinite(m.M33) && IsFinite(m.M34) &&
+            IsFinite(m.M41) && IsFinite(m.M42) && IsFinite(m.M43) && IsFinite(m.M44);
+
         /// <summary>Per-node 0/1 mask from a spec: comma-separated bone names, '+' suffix = include all
         /// descendants ("Spine1+", "Head,Neck+"). Unknown names are ignored (mask stays partial).</summary>
         public static float[] BuildMask(SkeletonDef skel, string spec)
@@ -697,11 +1009,126 @@ namespace Editor.Core.Animation
                 }
             }
 
+            // Runtime additive bone rotations (#178: procedural aim-offset / lean / recoil on real bones):
+            // compose the script-supplied LOCAL delta onto the animated local rotation BEFORE hierarchy
+            // multiplication so it carries every descendant — a spine/chest pitch rotates chest+arms+weapon as
+            // ONE rigid unit, which is exactly what keeps the gun locked in the hands at any aim angle.
+            if (state.BoneAdditive != null && state.BoneAdditive.Count > 0)
+            {
+                foreach (var kv in state.BoneAdditive)
+                {
+                    int i = kv.Key;
+                    if (i < 0 || i >= n) continue;
+                    r[i] = Quaternion.Normalize(kv.Value * r[i]);   // delta in the bone's local frame
+                }
+            }
+
+            // Runtime bone scale: values >= 0.01 scale the POSE (children follow, classic behaviour).
+            // The HIDE case (0 = collapse the limb, FP legs/head) is NOT applied here any more — a
+            // zero pose-scale degenerates the node worlds that the IK solver and bone sockets read
+            // (the hide+IK combination rendered the whole mesh invisible). Hidden bones are zeroed on
+            // the FINAL palette instead (below), which only the GPU skinning sees.
+            bool anyHidden = false;
+            if (state.BoneScale != null && state.BoneScale.Count > 0)
+            {
+                foreach (var kv in state.BoneScale)
+                {
+                    int i = kv.Key;
+                    if (i < 0 || i >= n) continue;
+                    if (kv.Value < 0.01f) { anyHidden = true; continue; }   // hide -> palette pass below
+                    s[i] = new Vector3(s[i].X * kv.Value, s[i].Y * kv.Value, s[i].Z * kv.Value);
+                }
+            }
+
             // Retain the node worlds alongside the palette: bone sockets and GetBoneWorldTransform read
             // the EXACT pose the skinning used — no second clip sample, no drift.
             var worlds = ComposeWorlds(skel, t, r, s);
+
+            // Runtime two-bone IK (#179): pull limb chains to intra-skeleton targets (support hand ->
+            // weapon grip). Runs LAST so it corrects the final blended pose; each solve edits local
+            // rotations, so recompose afterwards — sockets and skinning then see the IK'd pose.
+            if (state.IkChains != null)
+            {
+                // Auto-grip: capture each chain's natural tip-relative-to-target from the CLEAN pose
+                // (before any IK moves it), then hold it. This locks the support hand to wherever the
+                // idle/hold animation put it relative to the weapon hand. Captured only once a clip has
+                // actually STEPPED (state.Time > 0) — the very first evaluation can still be the bind
+                // T-pose (hands ~1.4 m apart), and freezing THAT as the grip rips the arm to a far
+                // phantom target forever after (the "stretched spike arm" / invisible-NaN-rig bug).
+                bool poseIsLive = state.Time > 0.0001f;
+                for (int ci = 0; ci < state.IkChains.Count; ci++)
+                {
+                    var ch = state.IkChains[ci];
+                    if (!ch.AutoGrip) continue;
+                    if (state.IkCapturedGrips == null) state.IkCapturedGrips = new Dictionary<int, Matrix4x4>();
+                    Matrix4x4 grip;
+                    if (!state.IkCapturedGrips.TryGetValue(ch.Tip, out grip))
+                    {
+                        if (poseIsLive && ch.Tip < worlds.Length && ch.Target < worlds.Length &&
+                            Matrix4x4.Invert(worlds[ch.Target], out var invTgt))
+                        {
+                            grip = worlds[ch.Tip] * invTgt;   // tip in the target bone's frame
+                            if (IsFinite(grip)) state.IkCapturedGrips[ch.Tip] = grip;
+                        }
+                    }
+                    if (state.IkCapturedGrips.TryGetValue(ch.Tip, out grip))
+                    {
+                        ch.CapturedGrip = grip;
+                        ch.HasCapturedGrip = true;
+                    }
+                }
+
+                // NaN guard: a degenerate solve (zero-scale bones, gimbal edge, bad capture) must NEVER
+                // reach the GPU — one NaN in the palette makes the WHOLE mesh invisible. Snapshot the
+                // local rotations; if any touched chain comes out non-finite, roll back to the un-IK'd pose.
+                Quaternion[] rBackup = null;
+                for (int ci = 0; ci < state.IkChains.Count; ci++)
+                {
+                    var ch = state.IkChains[ci];
+                    if (rBackup == null) { rBackup = new Quaternion[r.Length]; Array.Copy(r, rBackup, r.Length); }
+                    if (SolveTwoBoneIk(skel, t, r, s, worlds, ch))
+                        worlds = ComposeWorlds(skel, t, r, s);
+                    bool bad = ch.Tip < worlds.Length && (!IsFinite(worlds[ch.Tip]) || !IsFinite(r[ch.Tip]) ||
+                               (ch.Mid < r.Length && !IsFinite(r[ch.Mid])) || (ch.Root < r.Length && !IsFinite(r[ch.Root])));
+                    if (bad)
+                    {
+                        Array.Copy(rBackup, r, r.Length);
+                        worlds = ComposeWorlds(skel, t, r, s);
+                        state.IkCapturedGrips?.Remove(ch.Tip);   // a poisoned capture recaptures next live frame
+                        Editor.Core.Services.ConsoleService.Instance?.LogWarning(
+                            "TwoBoneIk: non-finite solve on '" + skel.Nodes[ch.Tip].Name + "' — IK skipped this frame.");
+                    }
+                }
+            }
+
             state.NodeWorlds = worlds;
-            return skel.FlattenPalette(worlds);
+            float[] pal = skel.FlattenPalette(worlds);
+
+            // Hidden bones (SetBoneScaleOverride(bone, 0)): zero the PALETTE entries of the bone and its
+            // whole subtree — the skinned vertices weighted to them collapse (limb invisible) while the
+            // pose/worlds stay healthy for IK, sockets and bone queries.
+            if (anyHidden)
+            {
+                for (int bi = 0; bi < skel.Bones.Length; bi++)
+                {
+                    int node = skel.Bones[bi].NodeIndex;
+                    bool hidden = false;
+                    for (int p = node; p >= 0; p = skel.Nodes[p].Parent)
+                    {
+                        float sv;
+                        if (state.BoneScale.TryGetValue(p, out sv) && sv < 0.01f) { hidden = true; break; }
+                    }
+                    if (hidden)
+                    {
+                        // Collapse the bone's vertices onto its own POSITION: zero only the 3x3 (rows 1-3)
+                        // and KEEP the translation row. All-zero would give w = 0 (raster UB, whole draw can
+                        // vanish); zero+identity-w collapses onto the world ORIGIN, which drags mixed-weight
+                        // vertices into cross-screen streaks. Collapsing onto the bone keeps them in place.
+                        for (int f = 0; f < 12; f++) pal[bi * 16 + f] = 0f;
+                    }
+                }
+            }
+            return pal;
         }
 
         /// <summary>
@@ -899,6 +1326,53 @@ namespace Editor.Core.Animation
                 if (track != null) clip.Tracks.Add(track);
             }
             return clip;
+        }
+
+        /// <summary>
+        /// Extract EVERY embedded animation clip from a model file (.glb/.fbx/…) to standalone .vanim files —
+        /// the "animation only, no character" export. Because clips bind to skeletons by BONE NAME, each written
+        /// .vanim is self-contained and re-usable on any compatible rig. Writes into an "animations" subfolder
+        /// next to the model by default (mirroring the importer), name-keyed and de-duplicated. Returns the list
+        /// of .vanim paths written (empty if the model has no clips). Pure extract — never touches the scene.
+        /// </summary>
+        public static System.Collections.Generic.List<string> ExtractClipsFromModel(string modelPathAbsOrRel, string outDir = null)
+        {
+            var written = new System.Collections.Generic.List<string>();
+            string full = ResolveModelPath(modelPathAbsOrRel);   // strips '#submeshN', resolves project-relative, null for primitives
+            if (full == null || !System.IO.File.Exists(full)) return written;
+
+            int clipCount = DllWrapper.VortexAPI.GetAnimationCount(full);
+            if (clipCount <= 0) return written;
+
+            var nodes = DllWrapper.VortexAPI.GetSkeletonNodes(full);
+            string animDir = string.IsNullOrEmpty(outDir)
+                ? System.IO.Path.Combine(System.IO.Path.GetDirectoryName(full) ?? "", "animations")
+                : outDir;
+            System.IO.Directory.CreateDirectory(animDir);
+
+            // Model reference stored on each clip (for the Keyframe Editor's skeleton-binding preview only).
+            string projectPath = Data.ProjectData.Current?.Path;
+            string rel = full;
+            if (!string.IsNullOrEmpty(projectPath) && rel.StartsWith(projectPath, StringComparison.OrdinalIgnoreCase))
+                rel = rel.Substring(projectPath.Length).TrimStart('\\', '/');
+
+            var usedNames = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            for (int c = 0; c < clipCount; c++)
+            {
+                if (!DllWrapper.VortexAPI.GetAnimationInfo(full, c, out string clipName, out float durationSec)) continue;
+                var flat = DllWrapper.VortexAPI.GetAnimationData(full, c);
+                var clip = ClipFromModelData(clipName, durationSec, flat, nodes);
+                if (clip == null || clip.Tracks.Count == 0) continue;
+
+                clip.Model = rel.Replace('\\', '/');
+                string safe = string.Concat((clipName ?? ("Clip" + c)).Split(System.IO.Path.GetInvalidFileNameChars()));
+                if (string.IsNullOrWhiteSpace(safe)) safe = "Clip" + c;
+                string unique = safe; int suffix = 1;
+                while (!usedNames.Add(unique)) unique = safe + "_" + suffix++;
+                string outPath = System.IO.Path.Combine(animDir, unique + ".vanim");
+                if (clip.Save(outPath)) written.Add(outPath);
+            }
+            return written;
         }
 
         // ------------------------------------------------------------------ clip auto-fill (editor helper)

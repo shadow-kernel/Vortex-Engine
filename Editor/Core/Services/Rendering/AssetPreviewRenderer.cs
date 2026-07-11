@@ -54,8 +54,16 @@ namespace Editor.Core.Services.Rendering
         /// </summary>
         public static ImageSource RenderSkinnedMeshes(long[] meshIds, long[] materialIds,
             float[] bonePalette, int boneCount, int size, float yaw, float pitch, float distScale,
-            bool renderGizmos = false, float[] focusPoint = null)
-            => RenderMeshesCore(meshIds, materialIds, bonePalette, boneCount, size, yaw, pitch, distScale, renderGizmos, focusPoint);
+            bool renderGizmos = false, float[] focusPoint = null, float boundsScale = 1f)
+            => RenderMeshesCore(meshIds, materialIds, bonePalette, boneCount, size, yaw, pitch, distScale, renderGizmos, focusPoint, null, null, null, boundsScale);
+
+        /// <summary>Socket/Attachment editor preview: the posed skinned character PLUS a rigid ATTACHMENT
+        /// (weapon/accessory) drawn at <paramref name="attWorld"/> (16 row-major floats = the target bone's
+        /// model-space node world × the socket offset), so you see the object sitting on the bone live.</summary>
+        public static ImageSource RenderSkinnedWithAttachment(long[] charMesh, long[] charMat,
+            float[] palette, int boneCount, long[] attMesh, long[] attMat, float[] attWorld,
+            int size, float yaw, float pitch, float distScale, float[] focusPoint = null, float boundsScale = 1f)
+            => RenderMeshesCore(charMesh, charMat, palette, boneCount, size, yaw, pitch, distScale, false, focusPoint, attMesh, attMat, attWorld, boundsScale);
 
         /// <summary>Orbit-aware render: yaw/pitch (radians) rotate the camera around the asset, distScale zooms.
         /// <paramref name="renderGizmos"/> also draws the always-on-top GIZMO queue into the target (submit collider
@@ -65,7 +73,8 @@ namespace Editor.Core.Services.Rendering
 
         private static ImageSource RenderMeshesCore(long[] meshIds, long[] materialIds,
             float[] bonePalette, int boneCount, int size, float yaw, float pitch, float distScale,
-            bool renderGizmos, float[] focusPoint)
+            bool renderGizmos, float[] focusPoint,
+            long[] attMesh = null, long[] attMat = null, float[] attWorld = null, float boundsScale = 1f)
         {
             if (meshIds == null || meshIds.Length == 0) return null;
             uint rt = AcquireTarget(size);   // cached + reused (not created/destroyed per render)
@@ -83,6 +92,9 @@ namespace Editor.Core.Services.Rendering
                     if (!gotCenter && VortexAPI.GetMeshBoundsCenter(m, out float bx, out float by, out float bz))
                     { cx = bx; cy = by; cz = bz; gotCenter = true; }
                 }
+                // The Socket Editor scales the skinned character down (a cm-authored model → ~human size) via its
+                // palette; mesh bounds are the UN-scaled size, so frame the SCALED scene or the model is a speck.
+                if (boundsScale != 1f && boundsScale > 0f) { radius *= boundsScale; cx *= boundsScale; cy *= boundsScale; cz *= boundsScale; }
 
                 // BRIGHT, all-around studio lighting so previews are never dark: very high ambient (nothing goes
                 // black) + a key directional for shape + a point light on EVERY side of the model (a light box), so
@@ -139,6 +151,15 @@ namespace Editor.Core.Services.Rendering
                     else
                         VortexAPI.SubmitMeshForRendering(meshIds[i], mat, idm);
                 }
+
+                // Rigid ATTACHMENT (Socket editor): draw the weapon/accessory at bone-world × socket-offset.
+                if (attMesh != null && attWorld != null && attWorld.Length >= 16)
+                    for (int i = 0; i < attMesh.Length; i++)
+                    {
+                        if (attMesh[i] < 0) continue;
+                        long am = (attMat != null && i < attMat.Length && attMat[i] >= 0) ? attMat[i] : -1;
+                        VortexAPI.SubmitMeshForRendering(attMesh[i], am, attWorld);
+                    }
 
                 // Swap our submitted item into the active queue WITHOUT presenting to the main
                 // swapchain (presenting per-render flashed the editor viewport), then render only

@@ -299,6 +299,11 @@ d:DesignHeight="400" d:DesignWidth="600">
                                         ToolTip="2D/3D View"/>
                                 <ToggleButton x:Name="GizmosToggleBtn" Content="&#xE7B3;" Style="{StaticResource ToolToggleButtonStyle}"
                                               ToolTip="Toggle Gizmos" IsChecked="True" Checked="OnGizmosToggle" Unchecked="OnGizmosToggle"/>
+                                <ToggleButton x:Name="FpLayerToggleBtn" Style="{StaticResource ToolToggleButtonStyle}"
+                                              ToolTip="Show First-Person meshes (RenderLayer 1) as plain world geometry for placement. They are hidden in the build view by default - use View: FP Preview (In-Game) to see them as the game renders them."
+                                              Checked="OnFpLayerToggle" Unchecked="OnFpLayerToggle">
+                                    <TextBlock Text="FP" FontSize="10" FontWeight="SemiBold"/>
+                                </ToggleButton>
                             </StackPanel>
                         </Border>
                     </StackPanel>

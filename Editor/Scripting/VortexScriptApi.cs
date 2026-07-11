@@ -47,6 +47,13 @@ namespace Vortex
         void SetPosition(long entityId, Vector3 position);
         Vector3 GetRotation(long entityId);
         void SetRotation(long entityId, Vector3 eulerDegrees);
+        // WORLD-space pose write, parent-safe (converts to the entity's local frame; scale untouched) —
+        // Set/GetPosition/Rotation are LOCAL values, which breaks for children of moved/rotated parents.
+        void SetEntityWorldPose(long entityId, Vector3 position, Vector3 rotationEulerDeg);
+        // Force a render layer (0 world / 1 FP viewmodel / 2 third-person only) onto an entity's
+        // MeshRenderers, recursively over its subtree — e.g. a runtime-spawned weapon copy for the
+        // 3P body (layer 2) vs the FP viewmodel copy (layer 1).
+        void SetRenderLayer(long entityId, int layer);
         bool GetKey(string key);
 
         // Collide-and-slide a character capsule (feet, radius, height) against the scene's colliders.
@@ -98,6 +105,17 @@ namespace Vortex
         void SetAnimationLayerWeight(long entityId, int layer, float weight);
         void StopLayeredAnimation(long entityId, int layer);
 
+        // Runtime procedural bone control (#178): compose an additive LOCAL rotation delta onto one bone every
+        // frame (aim-offset spine pitch, lean, recoil) so it carries all descendants — the gun stays in the hands
+        // at any aim angle. (0,0,0) clears the bone; ClearBoneOverrides drops all of an entity's overrides.
+        void SetBoneAdditiveRotation(long entityId, string bone, Vector3 eulerDeg);
+        void SetBoneScaleOverride(long entityId, string bone, float scale);
+        void ClearBoneOverrides(long entityId);
+
+        // Runtime two-bone IK (#179): blend the TwoBoneIk chain(s) on an entity (0 = animation only,
+        // 1 = full IK). tipBone selects one chain; null/empty hits every chain on the entity.
+        void SetIkWeight(long entityId, string tipBone, float weight);
+
         // Camera/attachment feel primitives: spring-damper impulses + seeded noise channels composed
         // onto the game camera (transform untouched) and onto socket offsets (weapon kicks in the hand).
         void CameraFxKick(Vector3 rotationDegrees, Vector3 position);
@@ -121,6 +139,16 @@ namespace Vortex
         bool DetachEntityFromBone(long entityId, bool keepWorldPosition);
         bool TryGetBoneTransform(long targetId, string bone, out Vector3 position, out Vector3 rotationEuler);
         long[] GetAttachedEntities(long targetId);
+        // Compose a bone-LOCAL offset (pos in the bone's local frame, meters; rot euler deg) onto a bone's WORLD
+        // transform -> the attachment's world pos+rot. Scripts have no matrix math, so the engine does it; the
+        // Socket Editor preview uses the SAME composition so what you author there is what the game shows.
+        void ComposeBoneAttach(Vector3 bonePos, Vector3 boneEuler, Vector3 offsetPos, Vector3 offsetEuler,
+                               out Vector3 worldPos, out Vector3 worldEuler);
+        // Read/write a project asset as UTF-8 text (resolves against the project root in dev, the mounted pak in
+        // release which is read-only). Enables data-driven scripts — e.g. a weapon reading its editor-authored
+        // ".vsocket" hand placement. Read returns null if missing; Write returns false in release / on error.
+        string AssetReadText(string projectRelativePath);
+        bool AssetWriteText(string projectRelativePath, string text);
 
         // 2D UI overlay (immediate mode), coordinates in viewport pixels (top-left origin).
         void UIRect(float x, float y, float w, float h, float r, float g, float b, float a, float radius);
@@ -227,6 +255,12 @@ namespace Vortex
             var r = Rotation; r.X += dPitch; r.Y += dYaw; r.Z += dRoll; Rotation = r;
         }
 
+        /// <summary>Set THIS entity's WORLD position + rotation in one call — correct even when it is a
+        /// CHILD of a moved/rotated parent (Position/Rotation write LOCAL values). The viewmodel-follow
+        /// primitive: <c>SetWorldPose(eyePos, new Vector3(pitch, yaw, 0));</c></summary>
+        public void SetWorldPose(Vector3 position, Vector3 rotationEulerDeg)
+            { Host?.SetEntityWorldPose(EntityId, position, rotationEulerDeg); }
+
         /// <summary>Unit forward vector in world space, derived from this entity's yaw + pitch.</summary>
         public Vector3 Forward
         {
@@ -302,6 +336,21 @@ namespace Vortex
         /// <summary>Stop an animation layer — the base clip takes its bones back next frame.</summary>
         public void StopAnimationLayer(int layer) { Host?.StopLayeredAnimation(EntityId, layer); }
 
+        /// <summary>Add a persistent ADDITIVE local rotation (Euler degrees) to one of THIS entity's animated
+        /// bones every frame — the aim-offset / lean / recoil primitive. A pitch on a spine bone carries
+        /// chest+arms+weapon as one so the gun stays locked in the hands at any aim angle:
+        /// <c>SetBoneAdditiveRotation("mixamorig:Spine1", new Vector3(aimPitch, 0, 0));</c>. (0,0,0) clears
+        /// that bone; <see cref="ClearBoneOverrides"/> clears them all.</summary>
+        public void SetBoneAdditiveRotation(string bone, Vector3 eulerDeg) { Host?.SetBoneAdditiveRotation(EntityId, bone, eulerDeg); }
+        public void SetBoneScaleOverride(string bone, float scale) { Host?.SetBoneScaleOverride(EntityId, bone, scale); }
+
+        /// <summary>Clear every runtime bone-rotation override on this entity (back to the pure clip pose).</summary>
+        public void ClearBoneOverrides() { Host?.ClearBoneOverrides(EntityId); }
+
+        /// <summary>Blend THIS entity's Two-Bone IK chain(s) (#179): 0 = animation only, 1 = full IK.
+        /// tipBone selects one chain (null/empty = all): <c>SetIkWeight("mixamorig:LeftHand", 0f);</c></summary>
+        public void SetIkWeight(string tipBone, float weight) { Host?.SetIkWeight(EntityId, tipBone, weight); }
+
         /// <summary>Attach THIS entity to a bone of an animated entity — it follows the bone through every
         /// clip from now on (pistol into the hand: <c>AttachTo(character, "Hand_R");</c>). Offsets are in
         /// bone space. Returns false on unknown bone or attach cycle. Pass target 0 to use the nearest
@@ -359,6 +408,11 @@ namespace Vortex
 
         public virtual void Start() { }
         public virtual void Update(float dt) { }
+        /// <summary>Runs AFTER every behaviour's Update() this frame (Unity-style). Use it for anything that
+        /// must read the FINAL state the other scripts produced this tick — most importantly a first-person
+        /// VIEWMODEL that follows the camera: positioning it here (not in Update) guarantees the camera script
+        /// already moved this frame, so the weapon can't lag a frame behind and jitter (worst at uncapped FPS).</summary>
+        public virtual void LateUpdate(float dt) { }
         public virtual void OnDestroy() { }
 
         /// <summary>Called when another behaviour <see cref="SendMessage"/>s this entity.</summary>
@@ -437,6 +491,11 @@ namespace Vortex
         public static float MouseDeltaX { get { return (Editor.UI.Vui.VuiStack.Instance.GameplayInputBlocked || !WindowFocused) ? 0f : _mouseDeltaX; } internal set { _mouseDeltaX = value; } }
         public static float MouseDeltaY { get { return (Editor.UI.Vui.VuiStack.Instance.GameplayInputBlocked || !WindowFocused) ? 0f : _mouseDeltaY; } internal set { _mouseDeltaY = value; } }
         private static float _mouseDeltaX, _mouseDeltaY;
+
+        /// <summary>Mouse-wheel movement since the last tick, in NOTCHES: +1 per notch up (away), -1 per notch down.
+        /// 0 when not scrolling, unfocused, or a menu screen consumed the wheel. Use it for weapon switching etc.</summary>
+        public static float ScrollDelta { get { return (Editor.UI.Vui.VuiStack.Instance.GameplayInputBlocked || !WindowFocused) ? 0f : _scrollDelta; } internal set { _scrollDelta = value; } }
+        private static float _scrollDelta;
 
         // ---- Window focus: ALL input (keyboard, mouse, controller) is dead unless OUR window is the foreground
         // window. Works everywhere — in-editor play, the external game window, and an exported debug/release build
@@ -754,6 +813,27 @@ namespace Vortex
         /// <summary>Set the world position of any entity.</summary>
         public static void SetPositionOf(long entity, Vector3 position) { Host?.SetPosition(entity, position); }
 
+        /// <summary>LOCAL rotation (Euler degrees) of any entity — pairs with <see cref="PositionOf"/>.</summary>
+        public static Vector3 RotationOf(long entity) { return Host != null ? Host.GetRotation(entity) : Vector3.Zero; }
+
+        /// <summary>Set the LOCAL rotation (Euler degrees) of any entity — pairs with <see cref="SetPositionOf"/>.</summary>
+        public static void SetRotationOf(long entity, Vector3 rotationEulerDeg) { Host?.SetRotation(entity, rotationEulerDeg); }
+
+        /// <summary>Set an entity's WORLD position + rotation in one call — correct even when the entity
+        /// is a CHILD of a moved/rotated/scaled parent (the engine converts to the local frame; the
+        /// entity's own scale is untouched). THE way to camera-lock a viewmodel that lives under the
+        /// Player entity: <c>Scene.SetWorldPose(EntityId, eyePos, new Vector3(pitch, yaw, 0));</c>
+        /// (Position/Rotation write LOCAL values — for parented entities use this instead.)</summary>
+        public static void SetWorldPose(long entity, Vector3 position, Vector3 rotationEulerDeg)
+            { Host?.SetEntityWorldPose(entity, position, rotationEulerDeg); }
+
+        /// <summary>Force a render layer onto an entity + all children (every MeshRenderer):
+        /// 0 = World, 1 = First-Person viewmodel, 2 = Third-Person only. The weapon-system primitive —
+        /// spawn one prefab copy for your hands and one for your body:
+        /// <c>Scene.SetRenderLayer(fpGun, 1); Scene.SetRenderLayer(bodyGun, 2);</c></summary>
+        public static void SetRenderLayer(long entity, int layer)
+            { Host?.SetRenderLayer(entity, layer); }
+
         /// <summary>The behaviour instance running on an entity (null if none / wrong type) — lets scripts
         /// talk to each other directly: <c>Scene.GetBehaviour&lt;DoorController&gt;(door)?.Open();</c></summary>
         public static T GetBehaviour<T>(long entity) where T : VortexBehaviour
@@ -860,6 +940,20 @@ namespace Vortex
     /// Values auto-flush to disk on scene switch and play end; call <see cref="Flush"/> after a checkpoint
     /// to be crash-safe. Slots: <c>Save.UseSlot(2)</c> switches the active file (slot 0 is the default).
     /// </summary>
+    /// <summary>Project asset text I/O for data-driven scripts (e.g. a weapon reading its ".vsocket" hand
+    /// placement authored in the Socket Editor). Paths are project-relative; dev reads/writes loose files, a
+    /// shipped pak is read-only.</summary>
+    public static class Assets
+    {
+        internal static IScriptHost Host;
+        /// <summary>Read a project asset as text (null if missing).</summary>
+        public static string ReadText(string projectRelativePath)
+            { return Host != null ? Host.AssetReadText(projectRelativePath) : null; }
+        /// <summary>Write text to a project asset (dev only; false in a shipped pak / on error).</summary>
+        public static bool WriteText(string projectRelativePath, string text)
+            { return Host != null && Host.AssetWriteText(projectRelativePath, text); }
+    }
+
     public static class Save
     {
         private static Dictionary<string, string> _data;   // typed values as "i:", "f:", "s:" strings
@@ -1147,6 +1241,30 @@ namespace Vortex
         public static void StopLayer(long entityId, int layer)
             { if (Host != null) Host.StopLayeredAnimation(entityId, layer); }
 
+        // ---- runtime procedural bone control (#178) ----
+
+        /// <summary>Add a persistent additive LOCAL rotation (Euler degrees) to a bone of an animated entity
+        /// each frame — aim-offset / lean / recoil. The delta carries all descendant bones, so a spine pitch
+        /// moves chest+arms+weapon as one and the gun stays in the hands. (0,0,0) clears that bone.</summary>
+        public static void SetBoneAdditiveRotation(long entityId, string bone, Vector3 eulerDeg)
+            { if (Host != null) Host.SetBoneAdditiveRotation(entityId, bone, eulerDeg); }
+
+        /// <summary>Runtime per-bone SCALE (1 = normal, 0 = hide the bone + its descendants) — strip a first-person
+        /// body down to arms+gun by hiding the legs and head so looking up/down never shows the player's own body.</summary>
+        public static void SetBoneScaleOverride(long entityId, string bone, float scale)
+            { if (Host != null) Host.SetBoneScaleOverride(entityId, bone, scale); }
+
+        /// <summary>Clear every runtime bone-rotation override on an entity's animator.</summary>
+        public static void ClearBoneOverrides(long entityId)
+            { if (Host != null) Host.ClearBoneOverrides(entityId); }
+
+        /// <summary>Blend a Two-Bone IK chain at runtime (#179): 0 = animation only, 1 = full IK.
+        /// tipBone selects the chain (the TwoBoneIk component whose TipBone matches); null/empty hits
+        /// every chain on the entity. Release the support hand during a reload:
+        /// <c>Animation.SetIkWeight(chr, "mixamorig:LeftHand", 0f);</c> then back to 1 when done.</summary>
+        public static void SetIkWeight(long entityId, string tipBone, float weight)
+            { if (Host != null) Host.SetIkWeight(entityId, tipBone, weight); }
+
         // ---- synced playback groups (#174) ----
 
         /// <summary>Start clips on several entities frame-locked to ONE clock — the reload pair:
@@ -1200,6 +1318,18 @@ namespace Vortex
         /// <summary>Script handles of every entity currently socketed to the target's bones.</summary>
         public static long[] GetAttachedEntities(long targetEntity)
             { return Host != null ? Host.GetAttachedEntities(targetEntity) : new long[0]; }
+
+        /// <summary>Place a rigid attachment on a bone from a bone-LOCAL offset: given the bone's world transform
+        /// (from TryGetBoneTransform) and a local offset (pos meters + rot euler in the bone's frame), returns the
+        /// attachment's WORLD pos + euler. The offset ROTATES with the bone, so the weapon stays glued to the hand
+        /// through every animation — unlike a world-space add, which drifts off when the hand turns. The Socket
+        /// Editor authors the offset with this exact math, so editor placement == in-game placement.</summary>
+        public static void ComposeBoneAttach(Vector3 bonePos, Vector3 boneEuler, Vector3 offsetPos, Vector3 offsetEuler,
+                                             out Vector3 worldPos, out Vector3 worldEuler)
+        {
+            worldPos = bonePos; worldEuler = boneEuler;
+            if (Host != null) Host.ComposeBoneAttach(bonePos, boneEuler, offsetPos, offsetEuler, out worldPos, out worldEuler);
+        }
     }
 
     /// <summary>

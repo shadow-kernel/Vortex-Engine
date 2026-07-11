@@ -112,7 +112,9 @@
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <CheckBox x:Name="EntityActiveCheckBox" Grid.Column="0" IsChecked="True"
-                                      VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                      VerticalAlignment="Center" Margin="0,0,10,0"
+                                      ToolTip="Active (activeSelf) - an inactive entity is not rendered"
+                                      Checked="EntityActiveCheckBox_Changed" Unchecked="EntityActiveCheckBox_Changed"/>
                             <TextBox x:Name="EntityNameTextBox" Grid.Column="1"
                                      Style="{StaticResource PropertyTextBoxStyle}"
                                      FontSize="13" FontWeight="SemiBold"

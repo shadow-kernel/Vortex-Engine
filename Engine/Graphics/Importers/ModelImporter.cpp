@@ -23,7 +23,10 @@ namespace vortex::graphics
 			aiProcess_SortByPType |
 			aiProcess_LimitBoneWeights);   // max 4 influences per vertex (matches the 52-byte skinned vertex)
 
-		if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode)
+		// Do NOT reject AI_SCENE_FLAGS_INCOMPLETE: animation-only FBX (Mixamo "Without Skin" pack clips) carry
+		// no mesh, so Assimp marks the scene INCOMPLETE — but the skeleton node hierarchy and the animation
+		// curves ARE present, and those are exactly what we extract. Only a null scene / missing root is fatal.
+		if (!scene || !scene->mRootNode)
 		{
 			VORTEX_VLOG(("ModelImporter: Failed to load " + filepath + "\n").c_str());
 			return result;

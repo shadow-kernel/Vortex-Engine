@@ -79,13 +79,17 @@ namespace Editor.Core.Services
 
             foreach (var entity in scene.Entities)
             {
+                // Pick == render: an eye-hidden or inactive subtree is not drawn, so it must not
+                // swallow clicks either (SceneRenderService.SubmitEntityRecursive has the same gate).
+                if (!SceneRenderService.IsEditorSubtreeVisible(entity)) continue;
+
                 var hit = RaycastEntity(ray, entity);
                 if (hit != null && hit.Distance < closestDistance)
                 {
                     closestDistance = hit.Distance;
                     closestHit = hit;
                 }
-                
+
                 // Also check children recursively
                 if (entity.Children != null)
                 {
@@ -103,11 +107,13 @@ namespace Editor.Core.Services
 
             return closestHit?.Entity;
         }
-        
+
         private RaycastHit RaycastEntityRecursive(Ray ray, GameEntity entity)
         {
+            if (!SceneRenderService.IsEditorSubtreeVisible(entity)) return null;   // pick == render
+
             var hit = RaycastEntity(ray, entity);
-            
+
             if (entity.Children != null)
             {
                 foreach (var child in entity.Children)
@@ -119,7 +125,7 @@ namespace Editor.Core.Services
                     }
                 }
             }
-            
+
             return hit;
         }
 
@@ -143,6 +149,8 @@ namespace Editor.Core.Services
 
         private void RaycastEntityRecursive(Ray ray, GameEntity entity, List<RaycastHit> hits)
         {
+            if (!SceneRenderService.IsEditorSubtreeVisible(entity)) return;   // pick == render
+
             var hit = RaycastEntity(ray, entity);
             if (hit != null)
             {
@@ -161,6 +169,9 @@ namespace Editor.Core.Services
         private RaycastHit RaycastEntity(Ray ray, GameEntity entity)
         {
             if (entity == null || !entity.IsActive) return null;
+            // A mesh that isn't drawn under the current layer presentation (hidden FP viewmodel,
+            // third-person-only in game view) must not be clickable either — pick == render.
+            if (!SceneRenderService.IsEditorMeshPickable(entity)) return null;
 
             var transform = entity.GetComponent<Transform>();
             if (transform == null) return null;

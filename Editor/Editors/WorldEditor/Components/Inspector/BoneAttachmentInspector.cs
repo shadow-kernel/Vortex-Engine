@@ -124,6 +124,62 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
             boneRow.Children.Add(boneBox);
             root.Children.Add(boneRow);
 
+            // Socket → PREFAB: which prefab is spawned + attached here at play start (the interlocking system).
+            root.Children.Add(SectionLabel("SOCKET PREFAB (attached at play)"));
+            var prefabRow = new Grid { Margin = new Thickness(0, 2, 0, 2) };
+            prefabRow.ColumnDefinitions.Add(new ColumnDefinition());
+            prefabRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var prefabField = Field(_attachment.SocketPrefabPath);
+            prefabField.IsReadOnly = true;
+            prefabField.ToolTip = "The prefab (.ventity) auto-instantiated + attached to this bone when the scene starts. Empty = this entity IS the attachment.";
+            var browse = SmallButton("Pick Prefab…");
+            browse.Margin = new Thickness(6, 0, 0, 0);
+            browse.Click += (s, e) =>
+            {
+                // MUST use the engine's STA-thread FilePicker — a raw OpenFileDialog here deadlocks the DXGI
+                // apartment and crashes the whole editor.
+                var proj = Editor.Core.Data.ProjectData.Current?.Path;
+                string initDir = !string.IsNullOrEmpty(proj) ? System.IO.Path.Combine(proj, "Assets", "Prefabs") : "";
+                string picked = Editor.Core.Util.FilePicker.OpenFile("Prefab|*.ventity|All Files|*.*", "Attach which prefab at this socket?", initDir);
+                if (!string.IsNullOrEmpty(picked))
+                {
+                    string rel = ToProjectRelative(picked);
+                    _attachment.SocketPrefabPath = rel;
+                    prefabField.Text = rel;
+                }
+            };
+            Grid.SetColumn(prefabField, 0); Grid.SetColumn(browse, 1);
+            prefabRow.Children.Add(prefabField); prefabRow.Children.Add(browse);
+            root.Children.Add(prefabRow);
+
+            // Render-layer override for the SPAWNED prefab: a gun on a Third-Person-only body must be
+            // layer 2 too, or it floats visibly while the body is hidden for the local player.
+            var layerRow = new Grid { Margin = new Thickness(0, 2, 0, 2) };
+            layerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(92) });
+            layerRow.ColumnDefinitions.Add(new ColumnDefinition());
+            layerRow.Children.Add(new TextBlock { Text = "Render Layer", Foreground = LabelFg, FontSize = 11.5, VerticalAlignment = VerticalAlignment.Center });
+            var layerBox = new ComboBox
+            {
+                Background = FieldBg,
+                Foreground = FieldFg,
+                BorderBrush = FieldBorder,
+                FontSize = 11.5,
+                ToolTip = "Forced onto every mesh of the SPAWNED prefab at play start. 'Keep prefab' uses whatever the prefab authored. Match the body: a weapon socketed to a Third-Person-only character needs 'Third-Person only' here."
+            };
+            layerBox.Items.Add("Keep prefab");             // -1
+            layerBox.Items.Add("World");                   //  0
+            layerBox.Items.Add("First-Person (viewmodel)");//  1
+            layerBox.Items.Add("Third-Person only");       //  2
+            layerBox.SelectedIndex = _attachment.SocketRenderLayer + 1;
+            layerBox.SelectionChanged += (s, e) =>
+            {
+                if (layerBox.SelectedIndex >= 0)
+                    _attachment.SocketRenderLayer = layerBox.SelectedIndex - 1;   // item order == layer + 1
+            };
+            Grid.SetColumn(layerBox, 1);
+            layerRow.Children.Add(layerBox);
+            root.Children.Add(layerRow);
+
             // Offsets (bone space)
             root.Children.Add(SectionLabel("OFFSET (BONE SPACE)"));
             root.Children.Add(Vec3Row("Position", () => _attachment.OffsetPosition, v => _attachment.OffsetPosition = v));
@@ -155,6 +211,15 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
                         MessageBoxButton.OK, MessageBoxImage.Information);
             };
             actions.Children.Add(capture);
+            var editor = SmallButton("Open Socket Editor…");
+            editor.Margin = new Thickness(6, 0, 0, 0);
+            editor.ToolTip = "Position this attachment on the bone with a LIVE animated 3D preview + the same nudge controls, then Save — writes bone + offset straight back to this component.";
+            editor.Click += (s, e) =>
+            {
+                Editor.Editors.SocketEditor.SocketEditorWindow.OpenForAttachment(Window.GetWindow(this), _attachment);
+                RefreshOffsets();   // reflect whatever the editor wrote back
+            };
+            actions.Children.Add(editor);
             root.Children.Add(actions);
 
             root.Children.Add(new TextBlock
@@ -181,6 +246,18 @@ namespace Editor.Editors.WorldEditor.Components.Inspector
         private void RefreshOffsets()
         {
             foreach (var r in _offsetRefreshers) r();
+        }
+
+        private static string ToProjectRelative(string full)
+        {
+            try
+            {
+                var proj = Editor.Core.Data.ProjectData.Current?.Path;
+                if (!string.IsNullOrEmpty(proj) && !string.IsNullOrEmpty(full) && full.StartsWith(proj, StringComparison.OrdinalIgnoreCase))
+                    return full.Substring(proj.Length).TrimStart('\\', '/').Replace('\\', '/');
+            }
+            catch { }
+            return full;
         }
 
         private void RefreshTargetInfo()

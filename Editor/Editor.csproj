@@ -381,10 +381,13 @@
     <Compile Include="Core\Services\CameraFXService.cs" />
     <Compile Include="ECS\Components\Animation\Animator.cs" />
     <Compile Include="ECS\Components\Animation\BoneAttachment.cs" />
+    <Compile Include="ECS\Components\Animation\TwoBoneIk.cs" />
     <Compile Include="Editors\WorldEditor\Components\Inspector\AnimatorInspector.cs" />
     <Compile Include="Editors\WorldEditor\Components\Inspector\BoneAttachmentInspector.cs" />
+    <Compile Include="Editors\WorldEditor\Components\Inspector\TwoBoneIkInspector.cs" />
     <Compile Include="Editors\AnimationEditor\AnimationEditorWindow.cs" />
     <Compile Include="Editors\AnimationEditor\AnimationPreviewControl.cs" />
+    <Compile Include="Editors\SocketEditor\SocketEditorWindow.cs" />
     <Compile Include="Core\Audio\SoundContainer.cs" />
     <Compile Include="Editors\AudioEditor\AudioMixerWindow.cs" />
     <Compile Include="Editors\AudioEditor\SoundContainerEditorWindow.cs" />

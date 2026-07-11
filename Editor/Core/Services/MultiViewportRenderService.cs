@@ -95,6 +95,7 @@ namespace Editor.Core.Services
             viewport.Bitmap = null;
             viewport.IsInitialized = false;
             viewport.CameraEntity = null;
+            viewport.UseEditorCamera = false;
         }
         
         /// <summary>
@@ -104,10 +105,25 @@ namespace Editor.Core.Services
         {
             if (viewportIndex < 0 || viewportIndex >= MaxSecondaryViewports)
                 return;
-            
+
             var viewport = _viewports[viewportIndex];
             bool cameraChanged = viewport.CameraEntity != cameraEntity;
             viewport.CameraEntity = cameraEntity;
+            if (cameraEntity != null) viewport.UseEditorCamera = false;
+        }
+
+        /// <summary>
+        /// Let a pane follow the editor FREECAM live instead of a scene camera entity — enables the
+        /// splitscreen combo "main viewport = FP Preview (In-Game), side pane = free world view".
+        /// </summary>
+        public void SetViewportEditorCamera(int viewportIndex, bool useEditorCamera)
+        {
+            if (viewportIndex < 0 || viewportIndex >= MaxSecondaryViewports)
+                return;
+
+            var viewport = _viewports[viewportIndex];
+            viewport.UseEditorCamera = useEditorCamera;
+            if (useEditorCamera) viewport.CameraEntity = null;
         }
         
         /// <summary>
@@ -141,26 +157,47 @@ namespace Editor.Core.Services
                 return;
             
             var viewport = _viewports[viewportIndex];
-            
-            if (!viewport.IsInitialized || viewport.CameraEntity == null || viewport.RenderTargetId == 0)
+
+            if (!viewport.IsInitialized || viewport.RenderTargetId == 0)
                 return;
-            
+            if (!viewport.UseEditorCamera && viewport.CameraEntity == null)
+                return;
+
             // Throttle per-viewport (each viewport renders at ~30 FPS)
             var now = DateTime.Now;
             if ((now - viewport.LastRenderTime).TotalMilliseconds < RenderIntervalMs)
                 return;
-            
+
             viewport.LastRenderTime = now;
-            
-            var cameraEntity = viewport.CameraEntity;
-            var camera = cameraEntity.GetComponent<Camera>();
-            var transform = cameraEntity.Transform;
-            
-            if (camera == null || transform == null)
-                return;
-            
-            // Create camera description for engine
-            var camDesc = CreateCameraDescription(cameraEntity, camera, transform);
+
+            VortexAPI.ViewportCameraDesc camDesc;
+            if (viewport.UseEditorCamera)
+            {
+                // Follow the editor freecam live (degrees; same forward math as EditorCameraController).
+                var ec = EditorCameraController.Instance;
+                float yawRad = ec.Yaw * (float)Math.PI / 180f;
+                float pitchRad = ec.Pitch * (float)Math.PI / 180f;
+                float fx = (float)(Math.Sin(yawRad) * Math.Cos(pitchRad));
+                float fy = (float)(-Math.Sin(pitchRad));
+                float fz = (float)(Math.Cos(yawRad) * Math.Cos(pitchRad));
+                camDesc = VortexAPI.ViewportCameraDesc.CreatePerspective(
+                    ec.PositionX, ec.PositionY, ec.PositionZ,
+                    ec.PositionX + fx, ec.PositionY + fy, ec.PositionZ + fz,
+                    0, 1, 0,
+                    RaycastService.EditorFovYDegrees, 0.1f, 1000f);
+            }
+            else
+            {
+                var cameraEntity = viewport.CameraEntity;
+                var camera = cameraEntity.GetComponent<Camera>();
+                var transform = cameraEntity.Transform;
+
+                if (camera == null || transform == null)
+                    return;
+
+                // Create camera description for engine
+                camDesc = CreateCameraDescription(cameraEntity, camera, transform);
+            }
             
             // Render to the GPU render target (no grid for camera views)
             VortexAPI.RenderToSecondaryTarget(viewport.RenderTargetId, camDesc, renderGrid: false);
@@ -344,6 +381,8 @@ namespace Editor.Core.Services
             public bool IsInitialized { get; set; }
             public WriteableBitmap Bitmap { get; set; }
             public GameEntity CameraEntity { get; set; }
+            /// <summary>Render from the editor freecam (live) instead of a scene camera entity.</summary>
+            public bool UseEditorCamera { get; set; }
             public DateTime LastRenderTime { get; set; } = DateTime.MinValue;
         }
     }
