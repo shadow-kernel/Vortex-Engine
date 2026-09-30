@@ -412,6 +412,7 @@
     <Compile Include="ECS\Components\Audio\AudioSource.cs" />
     <Compile Include="ECS\Components\Lighting\Light.cs" />
     <Compile Include="ECS\Components\Physics\Collider.cs" />
+    <Compile Include="ECS\Components\Physics\Joints.cs" />
     <Compile Include="ECS\Components\Physics\Rigidbody.cs" />
     <Compile Include="ECS\Components\Rendering\Camera.cs" />
     <Compile Include="ECS\Components\Rendering\MeshRenderer.cs" />
