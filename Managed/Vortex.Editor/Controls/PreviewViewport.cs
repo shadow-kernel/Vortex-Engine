@@ -127,8 +127,9 @@ namespace VortexEditor.Controls
             _empty.IsVisible = _scene == null || _scene.Items.Count == 0;
             if (_empty.IsVisible) { _image.Source = null; return; }
             double scale = TopLevel.GetTopLevel(this)?.RenderScaling ?? 1.0;
-            int w = (int)Math.Max(16, Math.Min(1600, Bounds.Width * scale));
-            int h = (int)Math.Max(16, Math.Min(1600, Bounds.Height * scale));
+            double w0 = Bounds.Width * scale, h0 = Bounds.Height * scale;
+            double k = Math.Min(1.0, 1600.0 / Math.Max(1.0, Math.Max(w0, h0)));   // cap the long side, keep the aspect
+            int w = (int)Math.Max(16, w0 * k), h = (int)Math.Max(16, h0 * k);
             try { BeforeRender?.Invoke(); } catch { }
             if (_frame == null) _frame = PreviewRenderer.ComputeFrame(_scene);
             var img = PreviewRenderer.Render(_scene, w, h, _camera);

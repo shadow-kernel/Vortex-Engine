@@ -26,6 +26,7 @@ namespace VortexEditor.Shell
         }
 
         public static void ModelEditor(string fullPath) => ModelEditorWindow.Open(fullPath);
+        public static void MeshEditor(string fullPath) => MeshEditorWindow.Open(fullPath);
         /// <summary>Large interactive preview: models, prefabs, materials, textures, primitives.</summary>
         public static void AssetViewer(string fullPath) => ModelViewerWindow.Open(fullPath);
         public static void TextureEditor(string fullPath) => TextureEditorWindow.Open(fullPath);

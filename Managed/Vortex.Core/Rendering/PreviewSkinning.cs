@@ -9,7 +9,7 @@ using Editor.Core.Data;
 using Editor.Core.Services.Rendering;
 using Editor.DllWrapper;
 
-namespace VortexEditor.Shell.ModelTools
+namespace Editor.Core.Services.Rendering
 {
     /// <summary>
     /// Skinned meshes in a preview: without a bone palette a rigged model is drawn through the static path — lying in
@@ -17,7 +17,7 @@ namespace VortexEditor.Shell.ModelTools
     /// as a static one). This gives every skinned item the model's bind-pose palette — exactly what the scene draws
     /// when no animation plays — and frames the posed content.
     /// </summary>
-    internal static class PreviewSkinning
+    public static class PreviewSkinning
     {
         /// <summary>All items come from one model file.</summary>
         public static int Apply(PreviewScene scene, string modelPath)

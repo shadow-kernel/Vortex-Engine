@@ -71,31 +71,73 @@ namespace VortexEditor.Services
             Task.Run(() => LoadOrQueue(key, fullPath, size, kind));
         }
 
-        /// <summary>Forget a file's thumbnails (memory + disk), e.g. after its .vmat or model changed.</summary>
+        /// <summary>Forget a file's thumbnails (memory + disk), e.g. after its .vmat or model changed. Fires
+        /// <see cref="Invalidated"/> so visible tiles can re-request.</summary>
         public static void Invalidate(string fullPath)
         {
+            if (string.IsNullOrEmpty(fullPath)) return;
             lock (_memory)
             {
                 var drop = new List<string>();
                 foreach (var k in _memory.Keys) if (k.StartsWith(fullPath + "|", StringComparison.OrdinalIgnoreCase)) drop.Add(k);
                 foreach (var k in drop) _memory.Remove(k);
             }
+            try
+            {
+                string proj = ProjectData.Current?.Path;
+                if (!string.IsNullOrEmpty(proj) && Directory.Exists(ThumbDir(proj)))
+                    foreach (var f in Directory.EnumerateFiles(ThumbDir(proj), PathPrefix(fullPath) + "_*.png")) { try { File.Delete(f); } catch { } }
+            }
+            catch { }
+            try { Invalidated?.Invoke(fullPath); } catch { }
         }
+
+        /// <summary>Raised (UI thread or caller thread) after <see cref="Invalidate"/> with the asset path.</summary>
+        public static event Action<string> Invalidated;
 
         public static void ClearMemory() { lock (_memory) _memory.Clear(); }
 
         private static string Key(string path, int size) => path + "|" + size;
 
+        /// <summary>Disk cache file: &lt;sha1(path)&gt;_&lt;sha1(content stamp|size)&gt;.png — the path prefix lets
+        /// <see cref="Invalidate"/> delete every size/version of one asset.</summary>
         private static string DiskPath(string fullPath, int size)
         {
             string proj = ProjectData.Current?.Path;
             if (string.IsNullOrEmpty(proj) || fullPath.StartsWith("Primitive:", StringComparison.OrdinalIgnoreCase)) return null;
+            return Path.Combine(ThumbDir(proj), PathPrefix(fullPath) + "_" + Hash(ContentStamp(fullPath) + "|" + size, 12) + ".png");
+        }
+
+        private static string ThumbDir(string proj) => Path.Combine(proj, ".ve", "thumbs");
+        private static string PathPrefix(string fullPath) => Hash(fullPath.ToLowerInvariant(), 16);
+
+        private static string Hash(string text, int len)
+        {
+            using (var sha = SHA1.Create())
+                return BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(text))).Replace("-", "").Substring(0, len);
+        }
+
+        /// <summary>Newest modification time of the asset AND what its look depends on: a model's sidecar materials
+        /// (materials/*.vmat and *.vmat next to it), a material's textures are covered by the explicit Invalidate
+        /// from the material editor. Editing a sidecar material therefore refreshes the model tile by itself.</summary>
+        private static long ContentStamp(string fullPath)
+        {
             long stamp = 0;
             try { stamp = File.GetLastWriteTimeUtc(fullPath).Ticks; } catch { }
-            string id;
-            using (var sha = SHA1.Create())
-                id = BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(fullPath.ToLowerInvariant() + "|" + stamp + "|" + size))).Replace("-", "").Substring(0, 24);
-            return Path.Combine(proj, ".ve", "thumbs", id + ".png");
+            string ext = Path.GetExtension(fullPath).ToLowerInvariant();
+            if (Array.IndexOf(ModelExtensions, ext) >= 0)
+            {
+                try
+                {
+                    string dir = Path.GetDirectoryName(fullPath);
+                    foreach (var f in Directory.EnumerateFiles(dir, "*.vmat")) stamp = Math.Max(stamp, File.GetLastWriteTimeUtc(f).Ticks);
+                    string mats = Path.Combine(dir, "materials");
+                    if (Directory.Exists(mats))
+                        foreach (var f in Directory.EnumerateFiles(mats, "*.vmat")) stamp = Math.Max(stamp, File.GetLastWriteTimeUtc(f).Ticks);
+                }
+                catch { }
+            }
+            return stamp;
         }
 
         private static void LoadOrQueue(string key, string fullPath, int size, Kind kind)

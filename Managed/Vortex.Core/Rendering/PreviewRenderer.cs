@@ -235,6 +235,7 @@ namespace Editor.Core.Services.Rendering
             {
                 var vm = Editor.Core.Assets.VortexMaterial.Load(vmatPath);
                 if (vm == null) return null;
+                vm.ResolvePathsAbsolute(Path.GetDirectoryName(vmatPath));   // texture paths in a .vmat are relative to it
                 mat = MaterialService.Instance.BuildEngineMaterial(vm);
                 return RenderMaterialSphere(mat, size, size, PreviewCamera.Default);
             }
@@ -286,6 +287,7 @@ namespace Editor.Core.Services.Rendering
         public readonly PreviewScene Scene = new PreviewScene();
         private readonly List<long> _meshes = new List<long>();
         private readonly List<long> _materials = new List<long>();
+        private readonly List<string> _itemModels = new List<string>();   // model file behind each scene item (null = primitive)
         public string SourcePath { get; private set; }
 
         public static PreviewModel Load(string fullPath)
@@ -305,6 +307,8 @@ namespace Editor.Core.Services.Rendering
                     if (mats[i] >= 0) pm._materials.Add(mats[i]);
                     pm.Scene.Items.Add(new PreviewItem { Mesh = subs[i].MeshId, Material = mats[i] });
                 }
+                // rigged models: draw the scene's bind pose (without a palette they lie flat, in cm, shaded black)
+                try { PreviewSkinning.Apply(pm.Scene, fullPath); } catch { }
                 return pm;
             }
             catch { return null; }
@@ -317,6 +321,7 @@ namespace Editor.Core.Services.Rendering
             {
                 var vm = Editor.Core.Assets.VortexMaterial.Load(vmatPath);
                 if (vm == null) return null;
+                vm.ResolvePathsAbsolute(Path.GetDirectoryName(vmatPath));
                 var pm = new PreviewModel { SourcePath = vmatPath };
                 long mat = MaterialService.Instance.BuildEngineMaterial(vm);
                 long sphere = VortexAPI.CreateSphereMesh(0.62f);
@@ -354,6 +359,7 @@ namespace Editor.Core.Services.Rendering
                     var modelCache = new Dictionary<string, VortexAPI.SubmeshImportData[]>(StringComparer.OrdinalIgnoreCase);
                     pm.AddEntity(doc.RootElement, Matrix4x4.Identity, projectRoot ?? Path.GetDirectoryName(ventityPath), modelCache, true);
                     if (pm.Scene.Items.Count == 0) { pm.Dispose(); return null; }
+                    try { PreviewSkinning.Apply(pm.Scene, pm._itemModels); } catch { }
                     return pm;
                 }
             }
@@ -404,7 +410,12 @@ namespace Editor.Core.Services.Rendering
                 try
                 {
                     var vm = Editor.Core.Assets.VortexMaterial.Load(full);
-                    if (vm != null) { material = MaterialService.Instance.BuildEngineMaterial(vm); if (material >= 0) _materials.Add(material); }
+                    if (vm != null)
+                    {
+                        vm.ResolvePathsAbsolute(Path.GetDirectoryName(full));
+                        material = MaterialService.Instance.BuildEngineMaterial(vm);
+                        if (material >= 0) _materials.Add(material);
+                    }
                 }
                 catch { }
             }
@@ -414,6 +425,7 @@ namespace Editor.Core.Services.Rendering
                 if (mesh < 0) return;
                 _meshes.Add(mesh);
                 Scene.Items.Add(new PreviewItem { Mesh = mesh, Material = material, World = w });
+                _itemModels.Add(null);
                 return;
             }
             string file = meshPath; int sub = -1;
@@ -437,6 +449,7 @@ namespace Editor.Core.Services.Rendering
             {
                 if (sub >= 0 && i != sub) continue;
                 Scene.Items.Add(new PreviewItem { Mesh = subs[i].MeshId, Material = material >= 0 ? material : subs[i].MaterialId, World = w });
+                _itemModels.Add(fullModel);
             }
         }
 
