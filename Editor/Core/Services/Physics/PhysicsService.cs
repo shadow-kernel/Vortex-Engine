@@ -65,6 +65,10 @@ namespace Editor.Core.Services.Physics
         /// <summary>Upper bound of physics steps per rendered frame (slow frames drop simulation time instead of spiralling).</summary>
         public const int MaxSubsteps = 4;
 
+        /// <summary>Render dynamic bodies between the last two fixed steps (one step of latency) instead of at the
+        /// last step: with a 120 Hz display and 60 Hz physics they otherwise move in visible 60 Hz jumps.</summary>
+        public static bool Interpolate = true;
+
         // Object layers (native contract).
         public const int LayerStatic = 0, LayerDynamic = 1, LayerCharacter = 2, LayerTrigger = 3, LayerDebris = 4;
         // Motion types (native contract).
@@ -95,6 +99,9 @@ namespace Editor.Core.Services.Physics
             public SysVec Scale;          // entity world scale at creation (readback keeps the entity's own local scale)
             public SysVec LastPos;        // last pose exchanged with the world (creation / push / readback)
             public SysQuat LastRot;
+            public SysVec PrevPos;        // dynamic bodies: pose after the step before LastPos (render interpolation)
+            public SysQuat PrevRot;
+            public bool Moving;           // dynamic bodies: Prev != Last, the rendered pose is still interpolating
         }
 
         private struct ChildShape { public int Type; public SysVec Dims; public SysVec LocalPos; public SysQuat LocalRot; }
@@ -283,7 +290,8 @@ namespace Editor.Core.Services.Physics
             _accumulator += frameDt;
             if (_accumulator < FixedStep)
             {
-                // No step this frame (fast frames): keep the pushes for the next step.
+                // No step this frame (fast frames): keep the pushes for the next step; move the rendered poses on.
+                if (Interpolate) WriteInterpolatedPoses();
                 return;
             }
 
@@ -292,8 +300,12 @@ namespace Editor.Core.Services.Physics
                 if (_jointsDirty) SyncJoints();
                 ApplyCharacterPushes(frameDt > 1e-4f ? frameDt : FixedStep);
                 int steps = 0;
+                bool snapshotted = false;
                 while (_accumulator >= FixedStep && steps < MaxSubsteps)
                 {
+                    // Several steps this frame: interpolate from the pose after the second-to-last one.
+                    bool lastStep = _accumulator - FixedStep < FixedStep || steps + 1 >= MaxSubsteps;
+                    if (lastStep && steps > 0 && Interpolate) { SnapshotPreviousPoses(); snapshotted = true; }
                     PushKinematics();
                     VortexAPI.PhysicsStep(FixedStep, 1);
                     _accumulator -= FixedStep;
@@ -302,7 +314,8 @@ namespace Editor.Core.Services.Physics
                 if (_accumulator > FixedStep) _accumulator = FixedStep;   // drop time we can't catch up with
                 LastStepCount = steps;
 
-                ReadbackDynamics();
+                ReadbackDynamics(snapshotted);
+                if (Interpolate) WriteInterpolatedPoses();
                 PublishDynamicShapes();
                 DispatchContacts();
                 TrackJointForces();
@@ -1021,7 +1034,7 @@ namespace Editor.Core.Services.Physics
             }
             if (id == 0) { Warn(e, "physics body creation failed"); return null; }
 
-            var b = new Body { Id = id, Entity = e, Motion = motion, Layer = layer, IsTrigger = isTrigger, Scale = scale, LastPos = pos, LastRot = rot };
+            var b = new Body { Id = id, Entity = e, Motion = motion, Layer = layer, IsTrigger = isTrigger, Scale = scale, LastPos = pos, LastRot = rot, PrevPos = pos, PrevRot = rot };
             ComputeBounds(children, out b.BoundsCenter, out b.BoundsHalf);
             if (children.Count == 1 && children[0].Type == ShapeSphere && IsCentred(children[0])) b.SphereRadius = children[0].Dims.X;
             return b;
@@ -1058,7 +1071,7 @@ namespace Editor.Core.Services.Physics
             return new Body
             {
                 Id = id, Entity = e, Motion = motion, Layer = layer, IsTrigger = isTrigger, Scale = scale,
-                CenterOffset = center, LastPos = bodyPos, LastRot = rot,
+                CenterOffset = center, LastPos = bodyPos, LastRot = rot, PrevPos = bodyPos, PrevRot = rot,
                 BoundsCenter = (mn + mx) * 0.5f, BoundsHalf = (mx - mn) * 0.5f
             };
         }
@@ -1234,14 +1247,17 @@ namespace Editor.Core.Services.Physics
             }
         }
 
-        /// <summary>Copy every awake dynamic body's pose to its entity (world → local against the parent chain).</summary>
-        private static void ReadbackDynamics()
+        /// <summary>Read every awake dynamic body's pose after the step(s). Without interpolation it is copied to
+        /// the entity right away (world → local against the parent chain); with it, the previous step's pose is kept
+        /// and <see cref="WriteInterpolatedPoses"/> writes the blend.</summary>
+        private static void ReadbackDynamics(bool previousSnapshotted)
         {
             bool any = false;
             for (int i = 0; i < _bodies.Count; i++)
             {
                 var b = _bodies[i];
                 if (b.Motion != MotionDynamic || b.Secondary || b.IsTrigger) continue;
+                if (!previousSnapshotted) { b.PrevPos = b.LastPos; b.PrevRot = b.LastRot; }
                 if (VortexAPI.PhysicsIsActive(b.Id) == 0) continue;   // asleep: pose unchanged
                 if (VortexAPI.PhysicsGetBodyTransform(b.Id, _f3a, _f4) == 0) continue;
                 var pos = new SysVec(_f3a[0], _f3a[1], _f3a[2]);
@@ -1249,7 +1265,43 @@ namespace Editor.Core.Services.Physics
                 if (float.IsNaN(pos.X) || float.IsNaN(rot.W)) continue;
                 if ((pos - b.LastPos).LengthSquared() < 1e-12f && Math.Abs(SysQuat.Dot(rot, b.LastRot)) > 0.99999999f) continue;
                 b.LastPos = pos; b.LastRot = rot;
+                if (Interpolate) { b.Moving = true; continue; }
                 WritePose(b, pos, rot);
+                any = true;
+            }
+            if (any) SceneRenderService.RuntimeDirty = true;
+        }
+
+        /// <summary>Before the last of several steps in one frame: remember the current world poses as "previous".</summary>
+        private static void SnapshotPreviousPoses()
+        {
+            for (int i = 0; i < _bodies.Count; i++)
+            {
+                var b = _bodies[i];
+                if (b.Motion != MotionDynamic || b.Secondary || b.IsTrigger) continue;
+                b.PrevPos = b.LastPos; b.PrevRot = b.LastRot;
+                if (VortexAPI.PhysicsIsActive(b.Id) == 0) continue;
+                if (VortexAPI.PhysicsGetBodyTransform(b.Id, _f3a, _f4) == 0) continue;
+                var pos = new SysVec(_f3a[0], _f3a[1], _f3a[2]);
+                var rot = new SysQuat(_f4[0], _f4[1], _f4[2], _f4[3]);
+                if (float.IsNaN(pos.X) || float.IsNaN(rot.W)) continue;
+                b.PrevPos = pos; b.PrevRot = rot;
+            }
+        }
+
+        /// <summary>Write each moving dynamic body's pose blended between its last two steps by the time the
+        /// accumulator carries into the next step. A body that came to rest is written once at its final pose.</summary>
+        private static void WriteInterpolatedPoses()
+        {
+            float alpha = Math.Max(0f, Math.Min(1f, _accumulator / FixedStep));
+            bool any = false;
+            for (int i = 0; i < _bodies.Count; i++)
+            {
+                var b = _bodies[i];
+                if (!b.Moving || b.Motion != MotionDynamic || b.Secondary || b.IsTrigger) continue;
+                bool still = (b.LastPos - b.PrevPos).LengthSquared() < 1e-12f && Math.Abs(SysQuat.Dot(b.LastRot, b.PrevRot)) > 0.99999999f;
+                if (still) { WritePose(b, b.LastPos, b.LastRot); b.Moving = false; any = true; continue; }
+                WritePose(b, SysVec.Lerp(b.PrevPos, b.LastPos, alpha), SysQuat.Slerp(b.PrevRot, b.LastRot, alpha));
                 any = true;
             }
             if (any) SceneRenderService.RuntimeDirty = true;
