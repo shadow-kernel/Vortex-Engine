@@ -70,11 +70,55 @@ namespace VortexEditor.Shell
                 var console = ConsoleService.Instance;
                 console.EntryAdded += () => { try { if (console.Entries.Count > 0) { var le = console.Entries[console.Entries.Count - 1]; System.Console.WriteLine("[" + le.LevelTag + "] " + le.Message); } } catch { } };
                 DispatcherTimer.RunOnce(SmokeInteract, TimeSpan.FromSeconds(Math.Max(1, o.SmokeSeconds - 4)));
-                DispatcherTimer.RunOnce(() => SmokeCapture(o.CaptureDir), TimeSpan.FromSeconds(o.SmokeSeconds));
+                // the end-to-end play check (VORTEX_SMOKE_PLAYFIRE) compiles scripts + waits for the weapon draw: give it time
+                double captureAt = o.SmokeSeconds + (System.Environment.GetEnvironmentVariable("VORTEX_SMOKE_PLAYFIRE") == "1" ? 30 : 0);
+                DispatcherTimer.RunOnce(() => SmokeCapture(o.CaptureDir), TimeSpan.FromSeconds(captureAt));
             }
         }
 
         /// <summary>Smoke test: select an entity, switch the tool, open the console — so the capture shows real panels.</summary>
+        /// <summary>End-to-end gameplay input check (a project with the Horror Starter player): press Play, hold the LEFT
+        /// mouse button through AppKit's real event path -> the weapon must fire (ammo drops); click the RIGHT button ->
+        /// the player must aim (ADS toggle). Reads PlayerRig from the running script assembly.</summary>
+        private void SmokePlayFire(VortexEditor.Viewport.EngineViewport ev)
+        {
+            var log = ConsoleService.Instance;
+            object Rig(string field)
+            {
+                var t = Editor.Scripting.ScriptRuntime.Instance.ScriptAssembly?.GetType("PlayerRig");
+                var f = t?.GetField(field, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+                return f?.GetValue(null);
+            }
+            try { Activate(); } catch { }
+            EditorCommands.Play();
+            double cx = ev.Bounds.Width / 2, cy = ev.Bounds.Height / 2;
+            int waited = 0;
+            void WaitReady()
+            {
+                bool ready = Rig("Ready") is bool r && r && Rig("Switching") is bool sw && !sw && Rig("ActiveWeapon") != null;
+                if (!ready && waited < 40) { waited++; DispatcherTimer.RunOnce(WaitReady, TimeSpan.FromMilliseconds(500)); return; }
+                if (!ready) { log.LogError("SMOKE FAIL play: the player never became ready (" + waited / 2 + " s)"); EditorCommands.Stop(); return; }
+                int ammo0 = Rig("Ammo") is int a0 ? a0 : -1;
+                VortexEditor.Viewport.MacViewProbe.MouseButton(ev.NativeHandle, cx, cy, false, true);
+                DispatcherTimer.RunOnce(() =>
+                {
+                    VortexEditor.Viewport.MacViewProbe.MouseButton(ev.NativeHandle, cx, cy, false, false);
+                    int ammo1 = Rig("Ammo") is int a1 ? a1 : -1;
+                    VortexEditor.Viewport.MacViewProbe.MouseButton(ev.NativeHandle, cx, cy, true, true);
+                    VortexEditor.Viewport.MacViewProbe.MouseButton(ev.NativeHandle, cx, cy, true, false);
+                    DispatcherTimer.RunOnce(() =>
+                    {
+                        bool ads = Rig("Ads") is bool b && b;
+                        string r = "ammo " + ammo0 + " -> " + ammo1 + ", ADS after right click = " + ads + ", window active = " + IsActive;
+                        if (ammo1 >= 0 && ammo1 < ammo0 && ads) log.Log("SMOKE OK   play: left mouse fires, right mouse aims (" + r + ")");
+                        else log.LogError("SMOKE FAIL play: mouse fire/aim (" + r + ")");
+                        EditorCommands.Stop();
+                    }, TimeSpan.FromMilliseconds(700));
+                }, TimeSpan.FromMilliseconds(700));
+            }
+            DispatcherTimer.RunOnce(WaitReady, TimeSpan.FromMilliseconds(1500));
+        }
+
         private void SmokeInteract()
         {
             try
@@ -104,7 +148,30 @@ namespace VortexEditor.Shell
                     {
                         if (posted && ev.PointerPressCount > presses) log.Log("SMOKE OK   viewport click routed to the toolkit");
                         else log.LogError("SMOKE FAIL viewport click not received (posted=" + posted + ", presses=" + ev.PointerPressCount + ")");
-                        if (System.Environment.GetEnvironmentVariable("VORTEX_SMOKE_FULL") == "1") SmokeFull(scene);
+                        // Mouse buttons must reach the game's key state (Input.GetKey("LButton"/"RButton") = fire / aim).
+                        double cx = ev.Bounds.Width / 2, cy = ev.Bounds.Height / 2;
+                        VortexEditor.Viewport.MacViewProbe.MouseButton(ev.NativeHandle, cx, cy, false, true);
+                        DispatcherTimer.RunOnce(() =>
+                        {
+                            bool lDown = VortexEditor.Viewport.EngineViewport.IsVirtualKeyDown(0x01) && Editor.Core.Input.HostInput.IsKeyDown(0x01);
+                            VortexEditor.Viewport.MacViewProbe.MouseButton(ev.NativeHandle, cx, cy, false, false);
+                            VortexEditor.Viewport.MacViewProbe.MouseButton(ev.NativeHandle, cx, cy, true, true);
+                            DispatcherTimer.RunOnce(() =>
+                            {
+                                bool lUp = !Editor.Core.Input.HostInput.IsKeyDown(0x01);
+                                bool rDown = Editor.Core.Input.HostInput.IsKeyDown(0x02);
+                                VortexEditor.Viewport.MacViewProbe.MouseButton(ev.NativeHandle, cx, cy, true, false);
+                                DispatcherTimer.RunOnce(() =>
+                                {
+                                    bool rUp = !Editor.Core.Input.HostInput.IsKeyDown(0x02);
+                                    string r = "LButton down=" + lDown + " up=" + lUp + ", RButton down=" + rDown + " up=" + rUp;
+                                    if (lDown && lUp && rDown && rUp) log.Log("SMOKE OK   mouse buttons reach Input.GetKey (" + r + ")");
+                                    else log.LogError("SMOKE FAIL mouse buttons do not reach Input.GetKey (" + r + ")");
+                                    if (System.Environment.GetEnvironmentVariable("VORTEX_SMOKE_PLAYFIRE") == "1") SmokePlayFire(ev);
+                                    else if (System.Environment.GetEnvironmentVariable("VORTEX_SMOKE_FULL") == "1") SmokeFull(scene);
+                                }, TimeSpan.FromMilliseconds(200));
+                            }, TimeSpan.FromMilliseconds(200));
+                        }, TimeSpan.FromMilliseconds(200));
                     }, TimeSpan.FromMilliseconds(400));
                 }
                 else if (System.Environment.GetEnvironmentVariable("VORTEX_SMOKE_FULL") == "1") SmokeFull(scene);

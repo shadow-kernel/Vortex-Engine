@@ -171,12 +171,42 @@ namespace VortexEditor.Viewport
             }
         }
 
+        /// <summary>Mouse button index (0 left, 1 right, 2 middle) -> the Windows virtual-key code the gameplay
+        /// scripts query through Input.GetKey("LButton"/"RButton"/"MButton").</summary>
+        private static int ButtonVk(int b) => b == 0 ? 0x01 : (b == 1 ? 0x02 : (b == 2 ? 0x04 : 0));
+
+        // A click shorter than a game frame (trackpad tap, quick Magic Mouse click) would go down AND up between two
+        // ticks and the game would never see it — so every press stays "down" for at least MinHoldMs.
+        private const int MinHoldMs = 60;
+        private static readonly Dictionary<int, long> _pressTick = new Dictionary<int, long>();
+        private static readonly Dictionary<int, int> _pressSeq = new Dictionary<int, int>();
+
+        private static void ButtonDown(int vk)
+        {
+            _keysDown.Add(vk);
+            _pressTick[vk] = Environment.TickCount64;
+            _pressSeq[vk] = (_pressSeq.TryGetValue(vk, out int n) ? n : 0) + 1;
+        }
+
+        private static void ButtonUp(int vk)
+        {
+            long held = _pressTick.TryGetValue(vk, out long t0) ? Environment.TickCount64 - t0 : MinHoldMs;
+            if (held >= MinHoldMs) { _keysDown.Remove(vk); return; }
+            int seq = _pressSeq.TryGetValue(vk, out int n) ? n : 0;
+            DispatcherTimer.RunOnce(() => { if (_pressSeq.TryGetValue(vk, out int now) && now == seq) _keysDown.Remove(vk); },
+                TimeSpan.FromMilliseconds(MinHoldMs - held));
+        }
+
         private void TopLevelPointerPressed(object sender, PointerPressedEventArgs e)
         {
             if (!TryLocalPoint(e, out var p)) { _hasFocus = false; return; }
             var props = e.GetCurrentPoint(this).Properties;
             int b = ButtonIndex(props.PointerUpdateKind);
             if (b < 0) return;
+            // The game reads mouse buttons through the same key-state set as the keyboard (HostInput.KeyDown): without
+            // this, Input.GetKey("LButton") / ("RButton") was always false in editor play — no firing, no aiming.
+            int bvk = ButtonVk(b);
+            if (bvk != 0) ButtonDown(bvk);
             _hasFocus = true;
             PointerPressCount++;
             _lastPointer = p;
@@ -191,8 +221,13 @@ namespace VortexEditor.Viewport
             var p = e.GetPosition(this);
             int b = ButtonIndex(e.GetCurrentPoint(this).Properties.PointerUpdateKind);
             if (b < 0) return;
+            int bvk = ButtonVk(b);
+            if (bvk != 0) ButtonUp(bvk);   // always, even when released outside the viewport (no stuck trigger)
             _session.OnPointerUp(b, p.X, p.Y);
         }
+
+        /// <summary>Diagnostics for the smoke run: is this virtual key (keyboard or mouse button) currently down?</summary>
+        public static bool IsVirtualKeyDown(int vk) => _keysDown.Contains(vk);
 
         private void TopLevelPointerMoved(object sender, PointerEventArgs e)
         {

@@ -101,6 +101,32 @@ namespace VortexEditor.Viewport
             catch (Exception ex) { System.Console.WriteLine("synthetic click failed: " + ex.Message); return false; }
         }
 
+        /// <summary>Post ONE mouse-button event (left/right, down or up) at a point inside the host view through
+        /// [NSApp sendEvent:] — lets the smoke run hold a button down and check the game's input state in between.</summary>
+        public static bool MouseButton(IntPtr hostView, double localX, double localY, bool right, bool down)
+        {
+            if (!OperatingSystem.IsMacOS() || hostView == IntPtr.Zero) return false;
+            try
+            {
+                IntPtr window = MsgId(hostView, S("window"));
+                if (window == IntPtr.Zero) return false;
+                long windowNumber = MsgLong(window, S("windowNumber"));
+                var bounds = MsgRect(hostView, S("bounds"));
+                var frameInWindow = ConvertRectToWindow(hostView, bounds);
+                var p = new CGPoint { X = frameInWindow.X + localX, Y = frameInWindow.Y + (bounds.H - localY) };
+                IntPtr nsEvent = objc_getClass("NSEvent");
+                IntPtr sel = S("mouseEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:clickCount:pressure:");
+                IntPtr app = MsgId(objc_getClass("NSApplication"), S("sharedApplication"));
+                // NSEventType: 1 LeftMouseDown, 2 LeftMouseUp, 3 RightMouseDown, 4 RightMouseUp
+                ulong type = right ? (down ? 3UL : 4UL) : (down ? 1UL : 2UL);
+                IntPtr ev = MsgMouseEvent(nsEvent, sel, type, p, 0, Environment.TickCount64 / 1000.0, windowNumber, IntPtr.Zero, 0, 1, down ? 1f : 0f);
+                if (ev == IntPtr.Zero) return false;
+                MsgVoidId(app, S("sendEvent:"), ev);
+                return true;
+            }
+            catch (Exception ex) { System.Console.WriteLine("synthetic mouse button failed: " + ex.Message); return false; }
+        }
+
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern CGRect MsgRectRectId(IntPtr self, IntPtr sel, CGRect rect, IntPtr view);
         private static CGRect ConvertRectToWindow(IntPtr view, CGRect rect) => MsgRectRectId(view, S("convertRect:toView:"), rect, IntPtr.Zero);
     }
