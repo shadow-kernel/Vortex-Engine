@@ -2,56 +2,224 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:c="clr-namespace:VortexEditor.Controls"
              xmlns:p="clr-namespace:VortexEditor.Panels"
+             xmlns:ab="clr-namespace:VortexEditor.Panels.AssetBrowser"
              x:Class="VortexEditor.Panels.AssetBrowserPanel">
+  <UserControl.Styles>
+    <Style Selector="ListBox#Items">
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Padding" Value="6,4"/>
+    </Style>
+    <Style Selector="ListBox#Items ListBoxItem">
+      <Setter Property="Padding" Value="4,5,4,3"/>
+      <Setter Property="Margin" Value="1"/>
+      <Setter Property="CornerRadius" Value="10"/>
+      <Setter Property="MinHeight" Value="0"/>
+    </Style>
+    <Style Selector="ListBox#Items.list ListBoxItem">
+      <Setter Property="Padding" Value="8,0"/>
+      <Setter Property="Margin" Value="0"/>
+      <Setter Property="CornerRadius" Value="5"/>
+    </Style>
+    <Style Selector="TextBlock.tilename">
+      <Setter Property="FontSize" Value="11"/>
+      <Setter Property="TextAlignment" Value="Center"/>
+      <Setter Property="HorizontalAlignment" Value="Center"/>
+      <Setter Property="TextWrapping" Value="Wrap"/>
+      <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+      <Setter Property="MaxLines" Value="2"/>
+      <Setter Property="Margin" Value="0,5,0,0"/>
+    </Style>
+    <Style Selector="TextBlock.tiletype">
+      <Setter Property="FontSize" Value="10"/>
+      <Setter Property="Foreground" Value="{DynamicResource VxTextTertiaryBrush}"/>
+      <Setter Property="TextAlignment" Value="Center"/>
+      <Setter Property="HorizontalAlignment" Value="Center"/>
+      <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+      <Setter Property="Margin" Value="0,1,0,0"/>
+    </Style>
+    <Style Selector="Border.tilebadge">
+      <Setter Property="Background" Value="#A6000000"/>
+      <Setter Property="CornerRadius" Value="4"/>
+      <Setter Property="Padding" Value="4,0,4,1"/>
+      <Setter Property="IsHitTestVisible" Value="False"/>
+    </Style>
+    <Style Selector="Border.tilebadge TextBlock">
+      <Setter Property="FontSize" Value="8.5"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Foreground" Value="#F2F2F4"/>
+    </Style>
+    <Style Selector="TextBox.rename">
+      <Setter Property="FontSize" Value="11"/>
+      <Setter Property="Padding" Value="4,1"/>
+      <Setter Property="MinHeight" Value="20"/>
+    </Style>
+    <Style Selector="Button.crumb">
+      <Setter Property="Padding" Value="5,1"/>
+      <Setter Property="MinHeight" Value="22"/>
+    </Style>
+    <Style Selector="Button.crumb.droptarget /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource VxAccentSoftBrush}"/>
+    </Style>
+    <Style Selector="Border#TabsBorder RadioButton">
+      <Setter Property="Padding" Value="6,2"/>
+    </Style>
+    <Style Selector="Button.colhead">
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Padding" Value="0"/>
+      <Setter Property="MinHeight" Value="18"/>
+      <Setter Property="HorizontalAlignment" Value="Stretch"/>
+      <Setter Property="HorizontalContentAlignment" Value="Left"/>
+    </Style>
+  </UserControl.Styles>
+
+  <UserControl.Resources>
+    <ItemsPanelTemplate x:Key="GridItemsPanel"><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+    <ItemsPanelTemplate x:Key="ListItemsPanel"><VirtualizingStackPanel/></ItemsPanelTemplate>
+
+    <!-- grid tile: square preview (thumbnail or type icon + extension badge), name, type -->
+    <DataTemplate x:Key="GridTileTemplate" DataType="ab:AssetTile">
+      <Grid Width="{Binding $parent[p:AssetBrowserPanel].TileWidth}" RowDefinitions="Auto,Auto,Auto" Background="Transparent"
+            Opacity="{Binding TileOpacity}" ToolTip.Tip="{Binding ToolTip}" EffectiveViewportChanged="OnTileViewportChanged">
+        <Border Width="{Binding $parent[p:AssetBrowserPanel].TileSize}" Height="{Binding $parent[p:AssetBrowserPanel].TileSize}"
+                CornerRadius="10" Background="{DynamicResource VxFieldBrush}" BorderBrush="{Binding DropBrush}" BorderThickness="2"
+                ClipToBounds="True" HorizontalAlignment="Center">
+          <Panel>
+            <c:VxIcon Icon="{Binding Icon}" Foreground="{Binding IconBrush}" IsVisible="{Binding !HasThumbnail}"
+                      Width="{Binding $parent[p:AssetBrowserPanel].IconSize}" Height="{Binding $parent[p:AssetBrowserPanel].IconSize}"/>
+            <Image Source="{Binding Thumbnail}" Stretch="UniformToFill" IsVisible="{Binding HasThumbnail}"/>
+            <Border Classes="tilebadge" IsVisible="{Binding HasBadge}" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,5,5">
+              <TextBlock Text="{Binding Badge}"/>
+            </Border>
+          </Panel>
+        </Border>
+        <TextBlock Grid.Row="1" Classes="tilename" Text="{Binding Name}" IsVisible="{Binding !IsRenaming}"/>
+        <TextBox Grid.Row="1" Classes="rename" Margin="0,4,0,0" Text="{Binding EditName, Mode=TwoWay}" IsVisible="{Binding IsRenaming}"
+                 KeyDown="OnRenameKeyDown" LostFocus="OnRenameLostFocus"/>
+        <TextBlock Grid.Row="2" Classes="tiletype" Text="{Binding TypeName}"/>
+      </Grid>
+    </DataTemplate>
+
+    <!-- list row: small preview, name (+ folder in search results), type, size, modified -->
+    <DataTemplate x:Key="ListRowTemplate" DataType="ab:AssetTile">
+      <Grid ColumnDefinitions="26,*,150,80,130" Height="24" Background="Transparent" Opacity="{Binding TileOpacity}"
+            ToolTip.Tip="{Binding ToolTip}" EffectiveViewportChanged="OnTileViewportChanged">
+        <Border Width="20" Height="20" CornerRadius="4" ClipToBounds="True" VerticalAlignment="Center" HorizontalAlignment="Left"
+                BorderBrush="{Binding DropBrush}" BorderThickness="1">
+          <Panel>
+            <c:VxIcon Icon="{Binding Icon}" Foreground="{Binding IconBrush}" Width="15" Height="15" IsVisible="{Binding !HasThumbnail}"/>
+            <Image Source="{Binding Thumbnail}" Stretch="UniformToFill" IsVisible="{Binding HasThumbnail}"/>
+          </Panel>
+        </Border>
+        <DockPanel Grid.Column="1" Margin="4,0,10,0" VerticalAlignment="Center">
+          <TextBlock DockPanel.Dock="Right" Text="{Binding Location}" Classes="tertiary small" VerticalAlignment="Center" Margin="8,0,0,0"/>
+          <Panel>
+            <TextBlock Text="{Binding Name}" IsVisible="{Binding !IsRenaming}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+            <TextBox Classes="rename" Text="{Binding EditName, Mode=TwoWay}" IsVisible="{Binding IsRenaming}"
+                     KeyDown="OnRenameKeyDown" LostFocus="OnRenameLostFocus"/>
+          </Panel>
+        </DockPanel>
+        <TextBlock Grid.Column="2" Text="{Binding TypeName}" Classes="secondary small" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+        <TextBlock Grid.Column="3" Text="{Binding SizeText}" Classes="secondary small" VerticalAlignment="Center" TextAlignment="Right" Margin="0,0,14,0"/>
+        <TextBlock Grid.Column="4" Text="{Binding ModifiedText}" Classes="secondary small" VerticalAlignment="Center"/>
+      </Grid>
+    </DataTemplate>
+  </UserControl.Resources>
+
   <DockPanel>
+    <!-- row 1: history + breadcrumb | search, create, import, refresh -->
     <Border DockPanel.Dock="Top" Classes="panelheader" Height="36">
       <DockPanel>
-        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="4">
-          <TextBox x:Name="SearchBox" Classes="search" Watermark="Search" Width="170" TextChanged="OnSearchChanged"/>
-          <Button x:Name="CreateButton" Classes="ghost" Click="OnCreateClick"><StackPanel Orientation="Horizontal" Spacing="5"><c:VxIcon Icon="Plus"/><TextBlock Text="Create"/></StackPanel></Button>
-          <Button Classes="ghost" Click="OnImportClick"><StackPanel Orientation="Horizontal" Spacing="5"><c:VxIcon Icon="Import"/><TextBlock Text="Import"/></StackPanel></Button>
+        <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,4,0">
+          <Button x:Name="BackButton" Classes="icon small" ToolTip.Tip="Back (⌘[)" Click="OnBackClick"><c:VxIcon Icon="ChevronLeft" Width="13" Height="13"/></Button>
+          <Button x:Name="ForwardButton" Classes="icon small" ToolTip.Tip="Forward (⌘])" Click="OnForwardClick"><c:VxIcon Icon="ChevronRight" Width="13" Height="13"/></Button>
+        </StackPanel>
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+          <TextBox x:Name="SearchBox" Classes="search" Watermark="Search assets" Width="180" TextChanged="OnSearchChanged"/>
+          <Button x:Name="CreateButton" Classes="ghost" Click="OnCreateClick" ToolTip.Tip="Create a new asset in this folder">
+            <StackPanel Orientation="Horizontal" Spacing="5"><c:VxIcon Icon="Plus"/><TextBlock Text="Create"/></StackPanel>
+          </Button>
+          <Button x:Name="ImportButton" Classes="ghost" Click="OnImportClick" ToolTip.Tip="Import files into this folder (or drop files from Finder)">
+            <StackPanel Orientation="Horizontal" Spacing="5"><c:VxIcon Icon="Import"/><TextBlock Text="Import"/></StackPanel>
+          </Button>
           <Button Classes="icon" ToolTip.Tip="Refresh" Click="OnRefreshClick"><c:VxIcon Icon="Refresh"/></Button>
         </StackPanel>
-        <StackPanel x:Name="Breadcrumb" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center"/>
+        <ScrollViewer x:Name="BreadcrumbScroll" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled" VerticalAlignment="Center">
+          <StackPanel x:Name="Breadcrumb" Orientation="Horizontal" Spacing="0" VerticalAlignment="Center"/>
+        </ScrollViewer>
       </DockPanel>
     </Border>
-    <Border DockPanel.Dock="Top" Height="32" Padding="8,0" Classes="hairline-bottom">
-      <Border Classes="segmented" HorizontalAlignment="Left" VerticalAlignment="Center">
-        <StackPanel Orientation="Horizontal" x:Name="Tabs">
-          <RadioButton GroupName="assettab" IsChecked="True" Tag="Explorer" Click="OnTabClick">Explorer</RadioButton>
-          <RadioButton GroupName="assettab" Tag="Models" Click="OnTabClick">Models</RadioButton>
-          <RadioButton GroupName="assettab" Tag="Textures" Click="OnTabClick">Textures</RadioButton>
-          <RadioButton GroupName="assettab" Tag="Materials" Click="OnTabClick">Materials</RadioButton>
-          <RadioButton GroupName="assettab" Tag="Scripts" Click="OnTabClick">Scripts</RadioButton>
-          <RadioButton GroupName="assettab" Tag="Audio" Click="OnTabClick">Audio</RadioButton>
-          <RadioButton GroupName="assettab" Tag="Prefabs" Click="OnTabClick">Prefabs</RadioButton>
-          <RadioButton GroupName="assettab" Tag="Scenes" Click="OnTabClick">Scenes</RadioButton>
-        </StackPanel>
-      </Border>
-    </Border>
-    <Grid>
-      <ListBox x:Name="Grid" SelectionMode="Multiple" DoubleTapped="OnDoubleTapped" KeyDown="OnKeyDown">
-        <ListBox.ItemsPanel>
-          <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
-        </ListBox.ItemsPanel>
-        <ListBox.ItemTemplate>
-          <DataTemplate DataType="p:AssetTile">
-            <StackPanel Width="92" Height="96" Margin="2" Background="Transparent" PointerPressed="OnTilePressed" PointerMoved="OnTileMoved" ToolTip.Tip="{Binding Tooltip}">
-              <Border Width="60" Height="60" CornerRadius="10" Background="{DynamicResource VxFieldBrush}" HorizontalAlignment="Center" ClipToBounds="True">
-                <Panel>
-                  <Image Source="{Binding Thumbnail}" Stretch="UniformToFill" IsVisible="{Binding HasThumbnail}"/>
-                  <c:VxIcon Icon="{Binding Icon}" Width="28" Height="28" Foreground="{Binding IconBrush}" IsVisible="{Binding !HasThumbnail}"/>
-                </Panel>
-              </Border>
-              <TextBlock Text="{Binding Name}" TextAlignment="Center" Margin="0,5,0,0" MaxHeight="30" TextWrapping="Wrap" FontSize="11"/>
+
+    <!-- row 2: type tabs | tag filter, sort, grid/list, tile size -->
+    <Border DockPanel.Dock="Top" Height="34" Padding="8,0" Classes="hairline-bottom">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center" Margin="8,0,0,0">
+          <Button x:Name="TagButton" Classes="ghost" Click="OnTagFilterClick" ToolTip.Tip="Show only assets with a tag">
+            <StackPanel Orientation="Horizontal" Spacing="4">
+              <c:VxIcon x:Name="TagIcon" Icon="Tag" Width="13" Height="13"/>
+              <TextBlock x:Name="TagLabel" Text="Tags" VerticalAlignment="Center" MaxWidth="110" TextTrimming="CharacterEllipsis"/>
             </StackPanel>
-          </DataTemplate>
-        </ListBox.ItemTemplate>
-        <ListBox.Styles>
-          <Style Selector="ListBoxItem"><Setter Property="Padding" Value="2"/></Style>
-        </ListBox.Styles>
-      </ListBox>
-      <TextBlock x:Name="EmptyHint" Classes="tertiary" Text="This folder is empty" HorizontalAlignment="Center" VerticalAlignment="Center" IsVisible="False"/>
+          </Button>
+          <Button x:Name="SortButton" Classes="ghost" Click="OnSortClick" ToolTip.Tip="Sort order">
+            <StackPanel Orientation="Horizontal" Spacing="4">
+              <TextBlock x:Name="SortLabel" Text="Name" VerticalAlignment="Center"/>
+              <c:VxIcon x:Name="SortArrow" Icon="ChevronDown" Width="11" Height="11"/>
+            </StackPanel>
+          </Button>
+          <Border Classes="segmented" VerticalAlignment="Center">
+            <StackPanel Orientation="Horizontal">
+              <RadioButton x:Name="GridModeButton" GroupName="abview" Tag="Grid" IsChecked="True" Click="OnViewModeClick" ToolTip.Tip="Grid">
+                <c:VxIcon Icon="Grid" Width="13" Height="13"/>
+              </RadioButton>
+              <RadioButton x:Name="ListModeButton" GroupName="abview" Tag="List" Click="OnViewModeClick" ToolTip.Tip="List">
+                <PathIcon Width="13" Height="13" Data="M3 4.5h18v2.2H3zm0 6.4h18v2.2H3zm0 6.4h18v2.2H3z"/>
+              </RadioButton>
+            </StackPanel>
+          </Border>
+          <Slider x:Name="SizeSlider" Width="70" Minimum="56" Maximum="176" Value="96" VerticalAlignment="Center" ToolTip.Tip="Tile size"
+                  ValueChanged="OnSizeChanged"/>
+        </StackPanel>
+        <ScrollViewer HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled" VerticalAlignment="Center">
+          <Border x:Name="TabsBorder" Classes="segmented" HorizontalAlignment="Left">
+            <StackPanel Orientation="Horizontal" x:Name="Tabs">
+              <RadioButton GroupName="assettab" Tag="Explorer" IsChecked="True" Click="OnTabClick" ToolTip.Tip="Browse the current folder (sub-folders + all files)">Explorer</RadioButton>
+              <RadioButton GroupName="assettab" Tag="Meshes" Click="OnTabClick" ToolTip.Tip="Built-in primitives + every model in the project">Meshes</RadioButton>
+              <RadioButton GroupName="assettab" Tag="Models" Click="OnTabClick" ToolTip.Tip="Every imported model — double-click to add it to the scene">Models</RadioButton>
+              <RadioButton GroupName="assettab" Tag="Textures" Click="OnTabClick">Textures</RadioButton>
+              <RadioButton GroupName="assettab" Tag="Materials" Click="OnTabClick">Materials</RadioButton>
+              <RadioButton GroupName="assettab" Tag="Scripts" Click="OnTabClick">Scripts</RadioButton>
+              <RadioButton GroupName="assettab" Tag="Audio" Click="OnTabClick" ToolTip.Tip="Audio clips — click a tile to audition, drag onto an AudioSource to assign">Audio</RadioButton>
+              <RadioButton GroupName="assettab" Tag="Prefabs" Click="OnTabClick" ToolTip.Tip="All .ventity prefabs — double-click to place, Shift+double-click to edit">Prefabs</RadioButton>
+              <RadioButton GroupName="assettab" Tag="Scenes" Click="OnTabClick">Scenes</RadioButton>
+            </StackPanel>
+          </Border>
+        </ScrollViewer>
+      </DockPanel>
+    </Border>
+
+    <!-- list mode column header (click to sort) -->
+    <Border DockPanel.Dock="Top" x:Name="ListHeader" IsVisible="False" Height="22" Padding="16,0,16,0" Classes="hairline-bottom">
+      <Grid ColumnDefinitions="26,*,150,80,130" VerticalAlignment="Center">
+        <Button Grid.Column="1" Classes="colhead" Tag="Name" Click="OnColumnHeaderClick" Margin="4,0,0,0"><TextBlock Text="Name" Classes="small secondary"/></Button>
+        <Button Grid.Column="2" Classes="colhead" Tag="Type" Click="OnColumnHeaderClick"><TextBlock Text="Type" Classes="small secondary"/></Button>
+        <Button Grid.Column="3" Classes="colhead" Tag="Size" Click="OnColumnHeaderClick" HorizontalContentAlignment="Right"><TextBlock Text="Size" Classes="small secondary" Margin="0,0,14,0"/></Button>
+        <Button Grid.Column="4" Classes="colhead" Tag="Modified" Click="OnColumnHeaderClick"><TextBlock Text="Date Modified" Classes="small secondary"/></Button>
+      </Grid>
+    </Border>
+
+    <Grid x:Name="ItemsHost">
+      <ListBox x:Name="Items" SelectionMode="Multiple" Focusable="True" DoubleTapped="OnItemsDoubleTapped" SelectionChanged="OnItemsSelectionChanged"
+               ContextRequested="OnItemsContextRequested"
+               ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
+      <Canvas x:Name="MarqueeLayer" IsHitTestVisible="False" ClipToBounds="True">
+        <Border x:Name="Marquee" IsVisible="False" BorderThickness="1" CornerRadius="2"
+                BorderBrush="{DynamicResource VxAccentBrush}" Background="{DynamicResource VxAccentSoftBrush}"/>
+      </Canvas>
+      <StackPanel x:Name="EmptyState" IsHitTestVisible="False" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="6" IsVisible="False">
+        <c:VxIcon x:Name="EmptyIcon" Icon="Folder" Width="30" Height="30" Foreground="{DynamicResource VxTextTertiaryBrush}"/>
+        <TextBlock x:Name="EmptyHint" Classes="secondary" HorizontalAlignment="Center" TextAlignment="Center"/>
+        <TextBlock x:Name="EmptySubHint" Classes="tertiary small" HorizontalAlignment="Center" TextAlignment="Center"/>
+      </StackPanel>
     </Grid>
   </DockPanel>
 </UserControl>
