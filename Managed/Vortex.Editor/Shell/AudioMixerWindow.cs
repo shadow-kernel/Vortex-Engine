@@ -14,6 +14,9 @@ namespace VortexEditor.Shell
     /// <summary>Bus volumes / mutes / ducking rules of the project's audio mixer (ProjectSettings/AudioMixer.json).</summary>
     public sealed class AudioMixerWindow : Window
     {
+        /// <summary>Open this window (owned by the main window).</summary>
+        public static void Open() => EditorWindows.Show(new AudioMixerWindow());
+
         private readonly AudioMixerConfig _cfg;
         private readonly string _root = ProjectData.Current?.Path;
 

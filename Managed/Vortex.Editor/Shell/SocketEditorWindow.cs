@@ -22,6 +22,9 @@ namespace VortexEditor.Shell
     /// </summary>
     public sealed class SocketEditorWindow : Window
     {
+        /// <summary>Open this window (owned by the main window).</summary>
+        public static void Open(Editor.ECS.GameEntity entity) => EditorWindows.Show(new SocketEditorWindow(entity));
+
         private readonly GameEntity _entity;
         private readonly BoneAttachment _att;
         private readonly ComboBox _targets = new ComboBox { MinWidth = 220, HorizontalAlignment = HorizontalAlignment.Left };

@@ -53,8 +53,14 @@ namespace VortexEditor.Panels.Inspector
             }
         }
 
+        /// <summary>Custom inspector cards registered from other files (by exact component type) — checked before the
+        /// built-in cards, so a component's card can live next to the feature that owns it:
+        /// <c>[ModuleInitializer] static void Register() =&gt; ComponentEditors.Custom[typeof(LookAtIk)] = (c, e) =&gt; Rows((LookAtIk)c);</c></summary>
+        public static readonly Dictionary<Type, Func<Component, GameEntity, IEnumerable<Control>>> Custom = new Dictionary<Type, Func<Component, GameEntity, IEnumerable<Control>>>();
+
         public static IEnumerable<Control> Build(Component c, GameEntity entity)
         {
+            if (c != null && Custom.TryGetValue(c.GetType(), out var custom)) return custom(c, entity);
             switch (c)
             {
                 case Transform t: return TransformRows(t);

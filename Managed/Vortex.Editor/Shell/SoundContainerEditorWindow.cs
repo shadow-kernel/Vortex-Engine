@@ -16,6 +16,9 @@ namespace VortexEditor.Shell
     /// <summary>Sound container (.vsndc): a weighted bag of clips with pitch/volume randomisation.</summary>
     public sealed class SoundContainerEditorWindow : Window
     {
+        /// <summary>Open this window (owned by the main window).</summary>
+        public static void Open(string fullPath) => EditorWindows.Show(new SoundContainerEditorWindow(fullPath));
+
         private readonly string _path;
         private readonly SoundContainer _sc;
         private readonly StackPanel _list = new StackPanel { Spacing = 4 };

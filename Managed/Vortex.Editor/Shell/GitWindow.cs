@@ -15,6 +15,9 @@ namespace VortexEditor.Shell
     /// <summary>Source control: changes, commit, push/pull/fetch, branches, tags, history.</summary>
     public sealed class GitWindow : Window
     {
+        /// <summary>Open this window (owned by the main window).</summary>
+        public static void Open() => EditorWindows.Show(new GitWindow());
+
         private readonly string _repo = ProjectData.Current?.Path;
         private readonly GitService _git = GitService.Instance;
         private readonly ListBox _changes = new ListBox(), _history = new ListBox(), _tags = new ListBox();

@@ -22,6 +22,9 @@ namespace VortexEditor.Shell
     /// </summary>
     public sealed class UiEditorWindow : Window
     {
+        /// <summary>Open this window (owned by the main window).</summary>
+        public static void Open(string fullPath) => EditorWindows.Show(new UiEditorWindow(fullPath));
+
         private readonly string _path;
         private VuiCanvas _canvas;
         private readonly TreeView _tree = new TreeView();

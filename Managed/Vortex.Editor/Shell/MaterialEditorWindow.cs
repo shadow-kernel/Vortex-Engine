@@ -13,6 +13,9 @@ namespace VortexEditor.Shell
     /// <summary>Edit a .vmat: PBR scalars, colours, texture maps, blend mode. Applies live to the scene on save.</summary>
     public sealed class MaterialEditorWindow : Window
     {
+        /// <summary>Open this window (owned by the main window).</summary>
+        public static void Open(string fullPath) => EditorWindows.Show(new MaterialEditorWindow(fullPath));
+
         private readonly string _path;
         private readonly VortexMaterial _mat;
         private static readonly string[] Tex = { "*.png", "*.jpg", "*.jpeg", "*.tga", "*.bmp", "*.hdr", "*.dds" };

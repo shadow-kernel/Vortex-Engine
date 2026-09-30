@@ -23,6 +23,9 @@ namespace VortexEditor.Shell
     /// </summary>
     public sealed class AnimationEditorWindow : Window
     {
+        /// <summary>Open this window (owned by the main window).</summary>
+        public static void Open(string fullPath) => EditorWindows.Show(new AnimationEditorWindow(fullPath));
+
         private readonly string _path;
         private readonly VortexAnimClip _clip;
         private readonly ListBox _tracks = new ListBox();

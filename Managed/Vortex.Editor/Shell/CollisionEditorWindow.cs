@@ -20,6 +20,9 @@ namespace VortexEditor.Shell
     /// </summary>
     public sealed class CollisionEditorWindow : Window
     {
+        /// <summary>Open this window (owned by the main window).</summary>
+        public static void Open(Editor.ECS.GameEntity entity) => EditorWindows.Show(new CollisionEditorWindow(entity));
+
         private readonly GameEntity _entity;
         private readonly StackPanel _shapes = new StackPanel { Spacing = 8 };
         private readonly bool _prevVisible;

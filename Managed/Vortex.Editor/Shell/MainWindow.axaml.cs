@@ -69,6 +69,7 @@ namespace VortexEditor.Shell
                 // Echo the editor console to stdout so a smoke run is verifiable from a terminal / CI log.
                 var console = ConsoleService.Instance;
                 console.EntryAdded += () => { try { if (console.Entries.Count > 0) { var le = console.Entries[console.Entries.Count - 1]; System.Console.WriteLine("[" + le.LevelTag + "] " + le.Message); } } catch { } };
+                SmokeRegistry.CaptureDir = o.CaptureDir;
                 DispatcherTimer.RunOnce(SmokeInteract, TimeSpan.FromSeconds(Math.Max(1, o.SmokeSeconds - 4)));
                 // the end-to-end play check (VORTEX_SMOKE_PLAYFIRE) compiles scripts + waits for the weapon draw: give it time
                 double captureAt = o.SmokeSeconds + (System.Environment.GetEnvironmentVariable("VORTEX_SMOKE_PLAYFIRE") == "1" ? 30 : 0);
@@ -254,10 +255,14 @@ namespace VortexEditor.Shell
                     return ok;
                 });
             Check("scene switch", () => { var other = Session.Project.Scenes.FirstOrDefault(sc => !ReferenceEquals(sc, scene)); if (other == null) return true; Session.ActivateScene(other); Session.ActivateScene(scene); return ReferenceEquals(Session.Project.ActiveScene, scene); });
+            // self-registered checks of every editor window / panel (SmokeRegistry)
+            _ = SmokeRegistry.RunAll();
         }
 
         private void SmokeCapture(string dir)
         {
+            // registered window checks may still be running (they open windows, render previews): wait for them
+            if (SmokeRegistry.Running) { DispatcherTimer.RunOnce(() => SmokeCapture(dir), TimeSpan.FromMilliseconds(500)); return; }
             try
             {
                 dir = string.IsNullOrEmpty(dir) ? Path.GetTempPath() : dir;
