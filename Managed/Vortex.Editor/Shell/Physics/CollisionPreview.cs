@@ -100,15 +100,39 @@ namespace VortexEditor.Shell.Physics
                 }
             }
             if (_model == null) return;
-            Vector3 mn = new Vector3(float.MaxValue), mx = new Vector3(float.MinValue); bool any = false;
-            foreach (var it in _model.Scene.Items)
+            if (PosedAabb(_model.Scene.Items, out var mn, out var mx)) _meshBounds = new[] { mn.X, mn.Y, mn.Z, mx.X, mx.Y, mx.Z };
+        }
+
+        /// <summary>The matrix an item is drawn with: a rigged mesh through its (bind-pose) palette, then its world matrix
+        /// — the entity-local space the colliders live in.</summary>
+        public static Matrix4x4 ItemMatrix(PreviewItem it)
+        {
+            var m = Matrix4x4.Identity;
+            if (it?.BonePalette != null && it.BonePalette.Length >= 16 && it.BoneCount > 0)
+                m = Editor.Core.Animation.SkeletonDef.ToMatrix(new ArraySegment<float>(it.BonePalette, 0, 16).ToArray());
+            if (it?.World != null && it.World.Length >= 16) m = m * Editor.Core.Animation.SkeletonDef.ToMatrix(it.World);
+            return m;
+        }
+
+        /// <summary>Axis-aligned bounds of the items AS DRAWN (see <see cref="ItemMatrix"/>).</summary>
+        public static bool PosedAabb(IEnumerable<PreviewItem> items, out Vector3 mn, out Vector3 mx)
+        {
+            mn = new Vector3(float.MaxValue); mx = new Vector3(float.MinValue); bool any = false;
+            if (items == null) return false;
+            foreach (var it in items)
             {
-                if (!VortexAPI.GetMeshBounds(it.Mesh, out float sx, out float sy, out float sz)) continue;
+                if (it == null || it.Mesh < 0 || !VortexAPI.GetMeshBounds(it.Mesh, out float sx, out float sy, out float sz)) continue;
                 VortexAPI.GetMeshBoundsCenter(it.Mesh, out float cx, out float cy, out float cz);
                 var he = new Vector3(sx, sy, sz) * 0.5f; var c = new Vector3(cx, cy, cz);
-                mn = Vector3.Min(mn, c - he); mx = Vector3.Max(mx, c + he); any = true;
+                var m = ItemMatrix(it);
+                for (int k = 0; k < 8; k++)
+                {
+                    var p = Vector3.Transform(c + new Vector3((k & 1) != 0 ? he.X : -he.X, (k & 2) != 0 ? he.Y : -he.Y, (k & 4) != 0 ? he.Z : -he.Z), m);
+                    mn = Vector3.Min(mn, p); mx = Vector3.Max(mx, p);
+                }
+                any = true;
             }
-            if (any) _meshBounds = new[] { mn.X, mn.Y, mn.Z, mx.X, mx.Y, mx.Z };
+            return any;
         }
 
         private static string StripSubmesh(string p, out int sub)
@@ -224,7 +248,7 @@ namespace VortexEditor.Shell.Physics
                         // mesh collider: the object's real triangles as the net (the collision mesh IS the render mesh);
                         // base / convex colliders: a box over the mesh bounds
                         if (col is MeshCollider && _model != null)
-                            foreach (var it in _model.Scene.Items) VortexAPI.SubmitGizmoWireForRendering(it.Mesh, mat, it.World);
+                            foreach (var it in _model.Scene.Items) Wire(it.Mesh, mat, ItemMatrix(it));
                         else if (_meshBounds != null)
                         {
                             var mn = new Vector3(_meshBounds[0], _meshBounds[1], _meshBounds[2]); var mx = new Vector3(_meshBounds[3], _meshBounds[4], _meshBounds[5]);

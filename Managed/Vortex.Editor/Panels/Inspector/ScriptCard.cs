@@ -67,7 +67,7 @@ namespace VortexEditor.Panels.Inspector
                     var r = rel;
                     var mi = new MenuItem { Header = Path.GetFileNameWithoutExtension(r) };
                     if (string.Equals(r, sc.ScriptPath, StringComparison.OrdinalIgnoreCase)) mi.IsEnabled = false;
-                    mi.Click += (s, e) => Swap(sc, entity, r);
+                    mi.Click += (s, e) => Swap(sc, entity, r, anchor);
                     m.Items.Add(mi);
                 }
             }
@@ -77,7 +77,7 @@ namespace VortexEditor.Panels.Inspector
             browse.Click += async (s, e) =>
             {
                 var p = await AssetPickerDialog.Pick("Scripts", new[] { "*.cs" });
-                if (!string.IsNullOrEmpty(p)) Swap(sc, entity, ScriptingService.MakeRelative(ProjectData.Current?.Path ?? "", ComponentEditors.ProjectRelativeToAbsolute(p)));
+                if (!string.IsNullOrEmpty(p)) Swap(sc, entity, ScriptingService.MakeRelative(ProjectData.Current?.Path ?? "", ComponentEditors.ProjectRelativeToAbsolute(p)), anchor);
             };
             var nw = new MenuItem { Header = "New Script…" };
             nw.Click += (s, e) =>
@@ -87,7 +87,7 @@ namespace VortexEditor.Panels.Inspector
                     string baseName = entity != null && !string.IsNullOrWhiteSpace(entity.Name) ? new string(entity.Name.Where(char.IsLetterOrDigit).ToArray()) + "Behaviour" : "NewBehaviour";
                     if (baseName.Length == 0 || char.IsDigit(baseName[0])) baseName = "NewBehaviour";
                     var path = ScriptingService.CreateScript(baseName);
-                    Swap(sc, entity, ScriptingService.MakeRelative(ProjectData.Current?.Path ?? "", path));
+                    Swap(sc, entity, ScriptingService.MakeRelative(ProjectData.Current?.Path ?? "", path), anchor);
                     EditorCommands.OpenInIde(path);
                 }
                 catch (Exception ex) { EditorCommands.Fail("New script", ex); }
@@ -97,15 +97,15 @@ namespace VortexEditor.Panels.Inspector
         }
 
         /// <summary>Replace the Script component with one for <paramref name="rel"/> (undoable remove + add, like the Windows editor).</summary>
-        private static void Swap(Script old, GameEntity entity, string rel)
+        private static void Swap(Script old, GameEntity entity, string rel, Control origin)
         {
             var e = entity ?? old.Entity;
             if (e == null || string.IsNullOrEmpty(rel)) return;
             var fresh = new Script(e, rel) { IsEnabled = old.IsEnabled };
-            e.RemoveComponent(old);
-            e.AddComponent(fresh);
+            ComponentEditors.RemoveComponent(e, old);   // undoable in a scene, direct on a prefab template
+            ComponentEditors.AddComponent(e, fresh);
             SceneRenderService.RuntimeDirty = true;
-            ComponentEditors.RefreshInspectorSoon();
+            ComponentEditors.RefreshInspectorSoon(origin);
         }
 
         // ---------------------------------------------------------------- public fields (#47)
@@ -129,7 +129,7 @@ namespace VortexEditor.Panels.Inspector
             var header = new DockPanel { Margin = new Thickness(0, 8, 0, 2) };
             var resetAll = new Button { Content = "Reset all", Classes = { "link" }, FontSize = 11, VerticalAlignment = VerticalAlignment.Center };
             ToolTip.SetTip(resetAll, "Drop every per-instance override — all fields show the script's code defaults");
-            resetAll.Click += (s, e) => { foreach (var f in fields) sc.SetFieldValue(f.Name, null); ctx.MarkDirty(); ComponentEditors.RefreshInspectorSoon(); };
+            resetAll.Click += (s, e) => { foreach (var f in fields) sc.SetFieldValue(f.Name, null); ctx.MarkDirty(); ComponentEditors.RefreshInspectorSoon(resetAll); };
             DockPanel.SetDock(resetAll, Dock.Right);
             header.Children.Add(resetAll);
             header.Children.Add(Section("Fields"));

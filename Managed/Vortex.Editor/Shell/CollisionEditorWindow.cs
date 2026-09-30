@@ -39,7 +39,7 @@ namespace VortexEditor.Shell
         {
             if (_open != null)
             {
-                bool isolated = entity != null && !InActiveScene(entity);
+                bool isolated = entity != null && !Panels.Inspector.ComponentEditors.IsSceneEntity(entity);
                 if (!isolated && !_open._fixed) { _open.SetTarget(entity); _open.Activate(); return; }
                 _open.Close();
             }
@@ -68,7 +68,7 @@ namespace VortexEditor.Shell
         public CollisionEditorWindow(GameEntity entity)
         {
             _ent = entity;
-            _fixed = entity != null && !InActiveScene(entity);
+            _fixed = entity != null && !Panels.Inspector.ComponentEditors.IsSceneEntity(entity);
             Title = "Collision Editor";
             Width = 460; Height = 860; MinWidth = 380; MinHeight = 560;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
@@ -89,7 +89,8 @@ namespace VortexEditor.Shell
             var previewWrap = new Border { Height = 260, BorderBrush = AnimUi.Res("VxHairlineBrush"), BorderThickness = new Thickness(0, 0, 0, 1), Child = _preview };
             DockPanel.SetDock(previewWrap, Dock.Top);
             root.Children.Add(previewWrap);
-            root.Children.Add(new ScrollViewer { Content = _body, Padding = new Thickness(16, 14, 16, 16), HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled });
+            _body.Margin = new Thickness(16, 14, 22, 16);   // right margin clears the overlay scrollbar
+            root.Children.Add(new ScrollViewer { Content = _body, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled });
             Content = root;
 
             if (!_fixed) SelectionService.Instance.SelectionChanged += OnSelectionChanged;
@@ -105,14 +106,6 @@ namespace VortexEditor.Shell
                 EditorCommands.Window?.Inspector?.Refresh();
             };
             Rebuild();
-        }
-
-        private static bool InActiveScene(GameEntity e)
-        {
-            var scene = ProjectData.Current?.ActiveScene;
-            if (scene?.Entities == null || e == null) return false;
-            var root = e; while (root.Parent != null) root = root.Parent;
-            return scene.Entities.Contains(root);
         }
 
         private void OnSelectionChanged(object sender, EventArgs e) => Dispatcher.UIThread.Post(() => SetTarget(SelectionService.Instance.SelectedEntity));
@@ -291,16 +284,8 @@ namespace VortexEditor.Shell
         private static PhysicsMaterial Mat(Collider c) { if (c.Material == null) c.Material = new PhysicsMaterial(); return c.Material; }
 
         // ---- component add / remove honouring the target mode (undoable in the scene, direct on an isolated entity)
-        private void AddComp(Component c)
-        {
-            c.Entity = _ent;
-            if (_fixed) _ent.Components.Add(c); else _ent.AddComponent(c);
-        }
-        private void RemoveComp(Component c)
-        {
-            if (c == null) return;
-            if (_fixed) _ent.Components.Remove(c); else _ent.RemoveComponent(c);
-        }
+        private void AddComp(Component c) => Panels.Inspector.ComponentEditors.AddComponent(_ent, c);
+        private void RemoveComp(Component c) => Panels.Inspector.ComponentEditors.RemoveComponent(_ent, c);
 
         private void SetType<T>() where T : Collider, new()
         {
@@ -336,17 +321,10 @@ namespace VortexEditor.Shell
                     {
                         if (m != null)
                         {
-                            var mn = new System.Numerics.Vector3(float.MaxValue); var mx = new System.Numerics.Vector3(float.MinValue);
                             int sub = -1; int h = mp.LastIndexOf("#submesh", StringComparison.OrdinalIgnoreCase); if (h > 0) int.TryParse(mp.Substring(h + 8), out sub);
-                            for (int i = 0; i < m.Scene.Items.Count; i++)
-                            {
-                                if (sub >= 0 && i != sub) continue;
-                                var it = m.Scene.Items[i];
-                                if (!VortexAPI.GetMeshBounds(it.Mesh, out float sx, out float sy, out float sz)) continue;
-                                VortexAPI.GetMeshBoundsCenter(it.Mesh, out float bx, out float by, out float bz);
-                                var he = new System.Numerics.Vector3(sx, sy, sz) * 0.5f; var ce = new System.Numerics.Vector3(bx, by, bz);
-                                mn = System.Numerics.Vector3.Min(mn, ce - he); mx = System.Numerics.Vector3.Max(mx, ce + he); fitted = true;
-                            }
+                            // measured as drawn (a rigged model through its bind-pose palette), in the entity's local space
+                            var items = sub >= 0 && sub < m.Scene.Items.Count ? new[] { m.Scene.Items[sub] } : m.Scene.Items.ToArray();
+                            fitted = CollisionPreview.PosedAabb(items, out var mn, out var mx);
                             if (fitted)
                             {
                                 var c3 = (mn + mx) * 0.5f; var e3 = (mx - mn) * 0.5f;

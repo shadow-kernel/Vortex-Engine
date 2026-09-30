@@ -87,8 +87,32 @@ namespace VortexEditor.Panels.Inspector
 
         internal static void Dirty() { SceneRenderService.RuntimeDirty = true; }
 
+        /// <summary>True when the entity lives in a scene; false for an isolated prefab template (the Prefab Editor).</summary>
+        public static bool IsSceneEntity(GameEntity e) => e != null && Shell.Prefab.PrefabWorkflow.IsInScene(e);
+
+        /// <summary>Add a component the way the entity's context needs: undoable in a scene, DIRECT on an isolated prefab
+        /// template — its edits must not land in the main scene's undo history.</summary>
+        public static void AddComponent(GameEntity e, Component c)
+        {
+            if (e == null || c == null) return;
+            c.Entity = e;
+            if (IsSceneEntity(e)) e.AddComponent(c); else e.AddComponentDirect(c);
+        }
+
+        /// <summary>Remove counterpart of <see cref="AddComponent"/> (Transform is never removed).</summary>
+        public static void RemoveComponent(GameEntity e, Component c)
+        {
+            if (e == null || c == null || c is Transform) return;
+            if (IsSceneEntity(e)) e.RemoveComponent(c); else e.Components.Remove(c);
+        }
+
         /// <summary>Rebuild the inspector cards after the current event (type switches change titles and rows).</summary>
-        internal static void RefreshInspectorSoon() => Dispatcher.UIThread.Post(() => EditorCommands.Window?.Inspector?.Refresh());
+        internal static void RefreshInspectorSoon(Control origin = null)
+        {
+            // the inspector that hosts the card (the main one, or the Prefab Editor's isolated one)
+            var host = origin != null ? Avalonia.VisualTree.VisualExtensions.FindAncestorOfType<InspectorPanel>(origin) : null;
+            Dispatcher.UIThread.Post(() => { if (host != null) host.Refresh(); else EditorCommands.Window?.Inspector?.Refresh(); });
+        }
 
         // ---------------------------------------------------------------- transform
         private static IEnumerable<Control> TransformRows(Transform t)
@@ -180,7 +204,8 @@ namespace VortexEditor.Panels.Inspector
             warn.IsVisible = false;
             bool editorOnly = c.CameraType == CameraType.EditorCamera;
             var labels = editorOnly ? new[] { "Game camera", "Main camera (player view)", "Editor only" } : new[] { "Game camera", "Main camera (player view)" };
-            rows.Add(Row("Camera type", Choice(() => c.CameraType == CameraType.EditorCamera ? 2 : c.CameraType == CameraType.MainCamera || c.IsMainCamera ? 1 : 0, v =>
+            Control typeChoice = null;
+            rows.Add(Row("Camera type", typeChoice = Choice(() => c.CameraType == CameraType.EditorCamera ? 2 : c.CameraType == CameraType.MainCamera || c.IsMainCamera ? 1 : 0, v =>
             {
                 var type = v == 1 ? CameraType.MainCamera : v == 2 ? CameraType.EditorCamera : CameraType.GameCamera;
                 if (type == CameraType.MainCamera)
@@ -192,7 +217,7 @@ namespace VortexEditor.Panels.Inspector
                 c.CameraType = type;
                 c.IsMainCamera = type == CameraType.MainCamera;
                 Changed();
-                RefreshInspectorSoon();   // header icon colour + the "no main camera" warning
+                RefreshInspectorSoon(typeChoice);   // header icon colour + the "no main camera" warning
             }, labels), "The Main camera is the player's view in play mode and in the built game"));
             rows.Add(warn);
             if (!c.IsMainCamera && c.CameraType != CameraType.MainCamera && !SceneHasMainCamera(entity))
@@ -245,7 +270,8 @@ namespace VortexEditor.Panels.Inspector
             var rows = new List<Control>();
             void D() => Dirty();
             Action updateVis = null;
-            rows.Add(Row("Type", Enum<LightType>(() => l.LightType, v => { l.LightType = v; D(); updateVis?.Invoke(); RefreshInspectorSoon(); })));
+            Control typeBox = null;
+            rows.Add(Row("Type", typeBox = Enum<LightType>(() => l.LightType, v => { l.LightType = v; D(); updateVis?.Invoke(); RefreshInspectorSoon(typeBox); })));
             rows.Add(Row("Color", Color(() => (l.ColorR, l.ColorG, l.ColorB), (r, g, b) => { l.ColorR = r; l.ColorG = g; l.ColorB = b; D(); })));
             rows.Add(Row("Intensity", SliderRow(() => l.Intensity, v => { l.Intensity = v; D(); }, 0, 10, "0.#", 0f, null)));
             var range = Row("Range", SliderRow(() => l.Range, v => { l.Range = v; D(); }, 0.1, 100, "0.#", 0.1f, null), "Distance the light reaches (m)");
@@ -338,7 +364,7 @@ namespace VortexEditor.Panels.Inspector
             yield return Row("Bounciness", SliderRow(() => c.Material != null ? c.Material.Bounciness : 0f, v => { Mat(c).Bounciness = v; Dirty(); }, 0, 1), "0 = no bounce … 1 = perfectly elastic");
             yield return Hint("Switch shapes, auto-fit, add a contact script and preview the collider in the Collision Editor.");
             var open = new Button { Content = "Open Collision Editor…", Classes = { "accent" }, HorizontalAlignment = HorizontalAlignment.Left };
-            open.Click += (s, e) => EditorCommands.Window?.OpenCollisionEditor(owner);
+            open.Click += (s, e) => EditorWindows.CollisionEditor(owner);
             yield return Row("", open);
         }
         private static PhysicsMaterial Mat(Collider c) { if (c.Material == null) c.Material = new PhysicsMaterial(); return c.Material; }

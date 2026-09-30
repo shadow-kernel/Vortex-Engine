@@ -78,8 +78,13 @@ namespace VortexEditor.Shell
         public string BoneName => _bone;
         public GameEntity BoundEntity => _entity;
 
-        /// <summary>Bound mode: edit <paramref name="entity"/>'s Bone Attachment.</summary>
-        public SocketEditorWindow(GameEntity entity) : this(entity, null, null) { }
+        /// <summary>Bound mode: edit <paramref name="entity"/>'s Bone Attachment. An animated CHARACTER without one opens
+        /// as the character of a .vsocket session instead (tune a weapon on it) — it never gets attached to itself.</summary>
+        public SocketEditorWindow(GameEntity entity)
+            : this(IsCharacterOnly(entity) ? null : entity, null, IsCharacterOnly(entity) ? AnimUtil.ModelFile(AnimUtil.FindModelMeshInSubtree(entity)) : null) { }
+
+        private static bool IsCharacterOnly(GameEntity e)
+            => e != null && e.GetComponent<BoneAttachment>() == null && e.GetComponent<Animator>() != null && AnimUtil.FindModelMeshInSubtree(e) != null;
 
         private SocketEditorWindow(GameEntity entity, string attachmentPath, string characterPath)
         {
@@ -424,14 +429,16 @@ namespace VortexEditor.Shell
             if (_entity != null)
             {
                 var att = _entity.GetComponent<BoneAttachment>();
-                if (att == null) { att = new BoneAttachment(_entity); _entity.AddComponent(att); }
+                if (att == null) { att = new BoneAttachment(_entity); Panels.Inspector.ComponentEditors.AddComponent(_entity, att); }
                 if (!string.IsNullOrEmpty(_bone)) att.BoneName = _bone;
                 att.OffsetPosition = new Editor.ECS.Vector3(_pos.X, _pos.Y, _pos.Z);
                 att.OffsetRotation = new Editor.ECS.Vector3(_rot.X, _rot.Y, _rot.Z);
                 att.OffsetScale = new Editor.ECS.Vector3(_scale, _scale, _scale);
                 att.SocketRenderLayer = _layer;
                 bool snapped = false;
-                try { snapped = BoneSocketService.Instance.ApplyOne(_entity.Scene ?? ProjectData.Current?.ActiveScene, _entity); } catch { }
+                // snap the entity onto the bone in the scene (not on an isolated prefab template: no transform edits there)
+                if (Panels.Inspector.ComponentEditors.IsSceneEntity(_entity))
+                    try { snapped = BoneSocketService.Instance.ApplyOne(_entity.Scene ?? ProjectData.Current?.ActiveScene, _entity); } catch { }
                 SceneRenderService.RuntimeDirty = true;
                 EditorCommands.Window?.Inspector?.Refresh();
                 SetStatus("Saved to the Bone Attachment of " + _entity.Name + (snapped ? " — snapped onto the bone." : string.IsNullOrEmpty(att.SocketPrefabPath) ? " (the bone does not resolve in the scene yet — check the target)." : " — the socket prefab spawns here at play."));

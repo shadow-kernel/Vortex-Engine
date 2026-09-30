@@ -35,9 +35,94 @@ namespace VortexEditor.Shell.Animation
             SmokeRegistry.Add("socket editor: posed character + attachment, nudge re-renders, save, capture", SocketEditorCheck);
             SmokeRegistry.Add("collision editor: object + collider wire net, trigger recolours, capture", CollisionEditorCheck);
             SmokeRegistry.Add("inspector cards: every component of the scene + all component types build", InspectorCardsCheck);
+            SmokeRegistry.Add("collision editor: shape switch / trigger / rigidbody on an isolated template (no undo entries)", CollisionIsolatedCheck);
+            SmokeRegistry.Add("socket editor: model asset mode writes a .vsocket", SocketAssetModeCheck);
+        }
+
+        // ------------------------------------------------------------------------------------------ collision: UI flow
+        private static async Task<bool> CollisionIsolatedCheck()
+        {
+            var scene = ProjectData.Current?.ActiveScene;
+            // an entity OUTSIDE the scene (like the Prefab Editor's template): structural edits must stay off the undo stack
+            var ent = new GameEntity(scene, "SmokeTemplate");
+            ent.Components.Add(new MeshRenderer(ent) { MeshPath = "Primitive:Cube" });
+            ent.Components.Add(new BoxCollider(ent));
+            CollisionEditorWindow.Open(ent);
+            bool opened = await WaitFor(() => CollisionEditorWindow.Current != null && CollisionEditorWindow.Current.IsVisible && ReferenceEquals(CollisionEditorWindow.Current.Target, ent));
+            var w = CollisionEditorWindow.Current;
+            if (!opened || w == null) { Log("isolated: window did not open"); return false; }
+            try
+            {
+                await SmokeRegistry.Settle(300);
+                int structural = 0;
+                EventHandler<CommandExecutedEventArgs> count = (s, e) => { if (e.Command?.Name?.IndexOf("Components", StringComparison.OrdinalIgnoreCase) >= 0) structural++; };
+                UndoRedoManager.Instance.CommandExecuted += count;
+                Click(FindButton(w, "Sphere"));
+                bool sphere = ent.GetComponent<Collider>() is SphereCollider sc && sc.Radius > 0.4f;
+                Click(FindButton(w, "Capsule"));
+                var cap = ent.GetComponent<Collider>() as CapsuleCollider;
+                bool capsule = cap != null && cap.Height >= cap.Radius * 2;
+                var trig = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(w).OfType<CheckBox>().FirstOrDefault(c => (c.Content as TextBlock)?.Text?.StartsWith("Is Trigger") == true);
+                if (trig != null) trig.IsChecked = true;
+                bool trigger = cap != null && cap.IsTrigger;
+                Click(FindButton(w, "Add Rigidbody"));
+                bool rb = ent.GetComponent<Rigidbody>() != null;
+                Click(FindButton(w, "Remove Rigidbody"));
+                bool rbGone = ent.GetComponent<Rigidbody>() == null;
+                UndoRedoManager.Instance.CommandExecuted -= count;
+                bool rendered = await WaitFor(() => w.Preview.Viewport.LastImage != null && HasContent(w.Preview.Viewport.LastImage), 2000);
+                Log("isolated template: sphere=" + sphere + " capsule=" + capsule + " trigger=" + trigger + " rigidbody add/remove=" + rb + "/" + rbGone + " structural undo entries=" + structural + " rendered=" + rendered);
+                await SmokeRegistry.Settle(300);
+                SmokeRegistry.Capture(w, "collision_editor_capsule.png");
+                return sphere && capsule && trigger && rb && rbGone && structural == 0 && rendered;
+            }
+            finally { try { w.Close(); } catch { } await SmokeRegistry.Settle(200); }
+        }
+
+        // ------------------------------------------------------------------------------------------ socket: asset mode
+        private static async Task<bool> SocketAssetModeCheck()
+        {
+            string root = ProjectData.Current?.Path;
+            if (string.IsNullOrEmpty(root)) return false;
+            string att = Directory.EnumerateFiles(Path.Combine(root, "Assets"), "*.glb", SearchOption.AllDirectories).FirstOrDefault(f => Path.GetFileName(f).StartsWith("vm_vityaz", StringComparison.OrdinalIgnoreCase))
+                      ?? Directory.EnumerateFiles(Path.Combine(root, "Assets"), "*.glb", SearchOption.AllDirectories).FirstOrDefault();
+            if (att == null) return false;
+            string socketFile = att + ".vsocket";
+            bool existed = File.Exists(socketFile);
+            string backup = existed ? File.ReadAllText(socketFile) : null;
+            SocketEditorWindow.OpenForModel(att);
+            bool opened = await WaitFor(() => SocketEditorWindow.Current != null && SocketEditorWindow.Current.IsVisible && SocketEditorWindow.Current.BoundEntity == null);
+            var w = SocketEditorWindow.Current;
+            if (!opened || w == null) { Log("asset mode: window did not open"); return false; }
+            try
+            {
+                bool rendered = await WaitFor(() => w.Preview.Viewport.LastImage != null && HasContent(w.Preview.Viewport.LastImage));
+                w.Nudge(new System.Numerics.Vector3(0.01f, 0, 0), System.Numerics.Vector3.Zero);
+                bool saved = w.Save() && File.Exists(socketFile);
+                string json = saved ? File.ReadAllText(socketFile) : "";
+                bool ok = rendered && saved && json.Contains("\"bone\"") && json.Contains("\"posX\"");
+                Log("asset mode on " + Path.GetFileName(att) + ": rendered=" + rendered + " saved=" + saved + " bone=" + w.BoneName);
+                return ok;
+            }
+            finally
+            {
+                try { w.Close(); } catch { }
+                try { if (existed) File.WriteAllText(socketFile, backup); else if (File.Exists(socketFile)) File.Delete(socketFile); } catch { }
+                await SmokeRegistry.Settle(200);
+            }
         }
 
         private static void Log(string s) => ConsoleService.Instance.Log("[anim-pkg smoke] " + s);
+
+        // ---- UI drivers: real routed events on the real controls
+        private static void RaiseKey(Window w, Avalonia.Input.Key key, Avalonia.Input.KeyModifiers mods = Avalonia.Input.KeyModifiers.None)
+            => w.RaiseEvent(new Avalonia.Input.KeyEventArgs { RoutedEvent = Avalonia.Input.InputElement.KeyDownEvent, Key = key, KeyModifiers = mods, Source = w });
+
+        private static Button FindButton(Visual root, string text)
+            => Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(root).OfType<Button>()
+                .FirstOrDefault(b => (b.Content as string) == text || (b.Content as TextBlock)?.Text == text);
+
+        private static void Click(Button b) => b.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
 
         private static async Task<bool> WaitFor(Func<bool> cond, int ms = 5000)
         {
@@ -80,27 +165,73 @@ namespace VortexEditor.Shell.Animation
                 Log("playback: " + renders + " renders, playhead " + t.ToString("0.00") + " s, changed pixels " + diff);
                 bool played = renders >= 2 && b != null && !ReferenceEquals(a, b) && diff > 20 && t > 0.3f;
 
-                // keyframe authoring through the undo system
-                string bone = skel.Nodes.Select(n => n.Name).FirstOrDefault(n => n.EndsWith("LeftForeArm", StringComparison.OrdinalIgnoreCase)) ?? w.Document.Tracks[0].Bone;
-                w.SelectBone(bone);
-                w.SetTime(0.5f);
-                var track = w.Document.FindTrack(bone);
-                int before = track?.Rot.Count ?? 0;
-                w.KeyBoneAt(bone, 0.5f, false);
-                track = w.Document.FindTrack(bone);
-                int afterKey = track?.Rot.Count ?? 0;
-                bool dirty = w.IsDirty;
-                UndoRedoManager.Instance.Undo();
-                track = w.Document.FindTrack(bone);
-                int afterUndo = track?.Rot.Count ?? 0;
-                Log("key " + AnimUtil.DisplayBoneName(bone) + ": rot keys " + before + " -> " + afterKey + " -> undo " + afterUndo + ", dirty=" + dirty);
-                bool keyed = dirty && afterUndo == before && (afterKey >= before);
+                // Space toggles playback (window key handling, like the Windows editor)
+                RaiseKey(w, Avalonia.Input.Key.Space);
+                bool spacePlays = w.IsPlaying;
+                RaiseKey(w, Avalonia.Input.Key.Space);
+                bool spaceStops = !w.IsPlaying;
+                Log("space: play=" + spacePlays + " stop=" + spaceStops);
 
-                // pose the selected bone like a joint drag, show the overlay for the capture
+                // pose an UNKEYED bone like a joint drag (30° local), then Key Bone: a new track holding exactly that pose;
+                // Cmd+Z removes the track again
+                string bone = skel.Nodes.Select(n => n.Name).FirstOrDefault(n => n.EndsWith("LeftHandIndex4", StringComparison.OrdinalIgnoreCase) && w.Document.FindTrack(n) == null)
+                           ?? skel.Nodes.Select(n => n.Name).FirstOrDefault(n => !AnimUtil.IsHiddenNode(n) && w.Document.FindTrack(n) == null && skel.Nodes[skel.FindNode(n)].Parent >= 0);
+                bool keyed = false;
+                if (bone != null)
+                {
+                    w.SelectBone(bone);
+                    w.SetTime(0.5f);
+                    await SmokeRegistry.Settle(250);
+                    var beforePose = w.Preview.Viewport.LastImage;
+                    int tracks0 = w.Document.Tracks.Count;
+                    var delta = System.Numerics.Quaternion.CreateFromAxisAngle(System.Numerics.Vector3.UnitZ, (float)(Math.PI / 6));
+                    w.ApplyBoneRotation(bone, delta);
+                    bool overridden = w.HasPoseOverride;
+                    await WaitFor(() => !ReferenceEquals(w.Preview.Viewport.LastImage, beforePose), 2000);
+                    w.KeyBoneAt(bone, 0.5f, useOverride: true);
+                    var tr = w.Document.FindTrack(bone);
+                    var node = skel.Nodes[skel.FindNode(bone)];
+                    var expected = System.Numerics.Quaternion.Normalize(System.Numerics.Quaternion.Concatenate(node.BindRotation, delta));
+                    var k = tr?.Rot.FirstOrDefault();
+                    float dot = k == null ? 0 : Math.Abs(k.X * expected.X + k.Y * expected.Y + k.Z * expected.Z + k.W * expected.W);
+                    bool created = tr != null && w.Document.Tracks.Count == tracks0 + 1 && dot > 0.999f;
+                    RaiseKey(w, Avalonia.Input.Key.Z, Avalonia.Input.KeyModifiers.Meta);   // Cmd+Z
+                    bool undone = w.Document.FindTrack(bone) == null && w.Document.Tracks.Count == tracks0;
+                    Log("pose " + AnimUtil.DisplayBoneName(bone) + ": override=" + overridden + " keyed track=" + created + " (quat dot " + dot.ToString("0.0000") + ") undo=" + undone + " dirty=" + w.IsDirty);
+                    keyed = overridden && created && undone && w.IsDirty;
+                }
+
+                // events: the inspector's "+ Add Event @ Playhead" button, then undo
+                int ev0 = w.Document.Events.Count;
+                var addEvent = FindButton(w, "+ Add Event @ Playhead");
+                if (addEvent != null) Click(addEvent);
+                int ev1 = w.Document.Events.Count;
+                UndoRedoManager.Instance.Undo();
+                bool events = addEvent != null && ev1 == ev0 + 1 && w.Document.Events.Count == ev0;
+                Log("event button: " + ev0 + " -> " + ev1 + " -> undo " + w.Document.Events.Count);
+
+                // import an embedded clip from the bound model (when it has any), then undo restores the tracks
+                bool imported = true;
+                string model = AnimUtil.ToAbsolute(w.Document.Model);
+                int embedded = 0;
+                try { embedded = File.Exists(model) ? Editor.DllWrapper.VortexAPI.GetAnimationCount(model) : 0; } catch { }
+                if (embedded > 0 && Editor.DllWrapper.VortexAPI.GetAnimationInfo(model, 0, out string en, out float ed))
+                {
+                    var oldTracks = w.Document.Tracks;
+                    await w.ImportEmbedded(model, 0, en, ed, confirm: false);
+                    bool replaced = !ReferenceEquals(w.Document.Tracks, oldTracks) && w.Document.Tracks.Count > 0;
+                    UndoRedoManager.Instance.Undo();
+                    imported = replaced && ReferenceEquals(w.Document.Tracks, oldTracks);
+                    Log("import embedded \"" + en + "\" (" + embedded + " in model): replaced=" + replaced + " undo restored=" + ReferenceEquals(w.Document.Tracks, oldTracks));
+                }
+                else Log("bound model has no embedded clips — import skipped");
+
+                // selected bone + overlay for the capture
+                w.SelectBone(skel.Nodes.Select(n => n.Name).FirstOrDefault(n => n.EndsWith("LeftForeArm", StringComparison.OrdinalIgnoreCase)) ?? bone);
                 w.SetTime(w.Document.DurationSec * 0.4f);
                 await SmokeRegistry.Settle(700);
                 SmokeRegistry.Capture(w, "anim_editor.png");
-                return played && keyed;
+                return played && spacePlays && spaceStops && keyed && events && imported;
             }
             finally { try { w.CloseDiscarding(); } catch { } await SmokeRegistry.Settle(300); }
         }
@@ -216,11 +347,10 @@ namespace VortexEditor.Shell.Animation
             foreach (var e in AnimUtil.AllEntities(scene).ToList())
                 foreach (var c in e.Components.ToList())
                 {
-                    try { var rows = ComponentEditors.Build(c, e).ToList(); cards++; types.Add(c.GetType().Name); if (rows.Count == 0) Log("empty card " + c.GetType().Name + " on " + e.Name); }
+                    try { List<Control> rows; using (PropertyRows.CaptureRefreshers(null)) rows = ComponentEditors.Build(c, e).ToList(); cards++; types.Add(c.GetType().Name); if (rows.Count == 0) Log("empty card " + c.GetType().Name + " on " + e.Name); }
                     catch (Exception ex) { failures++; Log("card " + c.GetType().Name + " on " + e.Name + " threw " + ex.GetType().Name + ": " + ex.Message); }
                 }
             Log("scene cards built: " + cards + " (" + string.Join(", ", types.OrderBy(x => x)) + "), failures " + failures);
-            PropertyRows.ClearRefreshers();
 
             // every component type on one isolated entity (not in the scene), hosted in windows so styles + Loaded run
             var target = AnimUtil.AllEntities(scene).FirstOrDefault(x => x.GetComponent<Animator>() != null);
@@ -247,6 +377,7 @@ namespace VortexEditor.Shell.Animation
             foreach (var g in groups)
             {
                 gi++;
+                var windowRefreshers = new List<Action>();
                 var stack = new StackPanel { Spacing = 8, Margin = new Thickness(10) };
                 foreach (var t in g)
                 {
@@ -256,7 +387,7 @@ namespace VortexEditor.Shell.Animation
                     var card = new Border { Classes = { "card" }, Padding = new Thickness(10) };
                     var body = new StackPanel();
                     body.Children.Add(new TextBlock { Text = host.DisplayName + (ReferenceEquals(host.Entity, ent) ? "" : "  (on " + host.Entity?.Name + ")"), FontWeight = Avalonia.Media.FontWeight.SemiBold, Margin = new Thickness(0, 0, 0, 6) });
-                    try { foreach (var row in ComponentEditors.Build(host, host.Entity)) body.Children.Add(row); cards++; types.Add(t.Name); }
+                    try { using (PropertyRows.CaptureRefreshers(windowRefreshers)) foreach (var row in ComponentEditors.Build(host, host.Entity)) body.Children.Add(row); cards++; types.Add(t.Name); }
                     catch (Exception ex) { failures++; Log("synthetic card " + t.Name + " threw " + ex.GetType().Name + ": " + ex.Message); }
                     card.Child = body;
                     stack.Children.Add(card);
@@ -265,16 +396,15 @@ namespace VortexEditor.Shell.Animation
                 EditorWindows.Show(win);
                 await SmokeRegistry.Settle(700);
                 SmokeRegistry.Capture(win, "inspector_cards_" + gi + ".png");
+                foreach (var r in windowRefreshers) { try { r(); } catch { } }   // the cards re-read their values without errors
                 win.Close();
-                PropertyRows.ClearRefreshers();
             }
             // HandPose + the remaining shapes build without a window
             foreach (var c in comps)
             {
-                try { ComponentEditors.Build(c, ent).ToList(); types.Add(c.GetType().Name); }
+                try { using (PropertyRows.CaptureRefreshers(null)) ComponentEditors.Build(c, ent).ToList(); types.Add(c.GetType().Name); }
                 catch (Exception ex) { failures++; Log("synthetic card " + c.GetType().Name + " threw " + ex.GetType().Name + ": " + ex.Message); }
             }
-            PropertyRows.ClearRefreshers();
             try { EditorCommands.Window?.Inspector?.Refresh(); } catch { }
             Log("all cards: " + cards + " windows built, component types " + types.Count + ", failures " + failures);
             return failures == 0 && cards > 0;

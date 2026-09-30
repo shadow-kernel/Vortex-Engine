@@ -499,6 +499,7 @@ namespace VortexEditor.Shell
             {
                 if (!IsVisible) return;
                 RefreshToolbarFromClip();
+                RebindModel();          // "Bind model" is undoable too (a no-op when the model didn't change)
                 _timeline.Refresh();
                 RefreshBoneTree();
                 UpdatePreview();
@@ -650,6 +651,13 @@ namespace VortexEditor.Shell
             UpdatePreview();
             if (!_playing) RefreshInspectorValues();
         }
+
+        /// <summary>The same path a joint drag in the preview takes (tests / scripted posing): compose a LOCAL rotation
+        /// delta onto the selected bone's working pose.</summary>
+        public void ApplyBoneRotation(string bone, Quat localDelta) => OnBoneRotated(bone, localDelta);
+
+        /// <summary>A typed / dragged pose is pending for the selected bone (committed by Key Bone).</summary>
+        public bool HasPoseOverride => _hasOverride;
 
         private void CancelBoneDragAndRestore()
         {
