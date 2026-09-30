@@ -58,6 +58,13 @@ namespace vortex::graphics
 		void set_roughness_texture(Texture* texture);
 		void set_ao_texture(Texture* texture);
 		void set_height_texture(Texture* texture);
+		// Channel a packed map is read from (0 R, 1 G, 2 B, 3 A). Stored in MaterialProperties::has_*_texture as
+		// 1 + channel (0 still means "no texture"), so the shader picks it: glTF / ORM maps keep roughness in G,
+		// metallic in B and occlusion in R.
+		void set_texture_channels(u32 metallic, u32 roughness, u32 ao);
+		u32 metallic_channel() const { return m_metallic_channel; }
+		u32 roughness_channel() const { return m_roughness_channel; }
+		u32 ao_channel() const { return m_ao_channel; }
 
 		// Property getters
 		const MaterialProperties& properties() const { return m_properties; }
@@ -95,5 +102,6 @@ namespace vortex::graphics
 		Texture* m_roughness_texture{ nullptr };
 		Texture* m_ao_texture{ nullptr };
 		Texture* m_height_texture{ nullptr };
+		u32 m_metallic_channel{ 0 }, m_roughness_channel{ 0 }, m_ao_channel{ 0 };
 	};
 }

@@ -209,6 +209,8 @@ if(MSVC)
 else()
 	target_compile_options(VortexEngine PRIVATE -Wall -Wno-unused-parameter -Wno-unused-function -Wno-missing-braces)
 	# Single-header third-party code (miniaudio + stb_vorbis live in AudioEngine.cpp, stb_image in TextureImporter.cpp)
+	# Optimised even in Debug: an unoptimised stb_image needs seconds per 4K PNG, which made a debug editor take
+	# ~20 s to open a scene with PBR materials.
 	set_source_files_properties(Runtime/Systems/AudioEngine.cpp Graphics/Importers/TextureImporter.cpp
-		PROPERTIES COMPILE_OPTIONS "-w")
+		PROPERTIES COMPILE_OPTIONS "-w;-O2")
 endif()

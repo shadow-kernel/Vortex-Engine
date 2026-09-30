@@ -799,6 +799,7 @@ namespace VortexEditor.Shell
                     BindLiveMap(liveId, m.GetTexture(TextureMapType.Metallic), VortexAPI.SetMaterialMetallicMap);
                     BindLiveMap(liveId, m.GetTexture(TextureMapType.Roughness), VortexAPI.SetMaterialRoughnessMap);
                     BindLiveMap(liveId, m.GetTexture(TextureMapType.AmbientOcclusion), VortexAPI.SetMaterialAOMap);
+                    MaterialService.ApplyTextureChannels(liveId, null, m.GetTexture(TextureMapType.Metallic), m.GetTexture(TextureMapType.Roughness));
                 });
             }
         }

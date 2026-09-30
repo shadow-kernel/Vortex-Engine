@@ -13,7 +13,7 @@ namespace vortex::graphics
 
 	// Don't flip here - Assimp already handles UV flipping with aiProcess_FlipUVs
 	// Setting flip_vertically=false by default to avoid double-flip issues
-	stbi_set_flip_vertically_on_load(flip_vertically ? 1 : 0);
+	stbi_set_flip_vertically_on_load_thread(flip_vertically ? 1 : 0);   // per thread: models decode maps in parallel
 
 	int width, height, channels;
 	// Request 4 channels (RGBA) to ensure consistent format for GPU upload
@@ -45,7 +45,7 @@ namespace vortex::graphics
 		ImageData result;
 		if (!data || length == 0) return result;
 
-		stbi_set_flip_vertically_on_load(flip_vertically ? 1 : 0);
+		stbi_set_flip_vertically_on_load_thread(flip_vertically ? 1 : 0);   // per thread: models decode maps in parallel
 
 		int width, height, channels;
 		unsigned char* pixels = stbi_load_from_memory(data, static_cast<int>(length), &width, &height, &channels, 4);

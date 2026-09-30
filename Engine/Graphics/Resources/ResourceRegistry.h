@@ -72,6 +72,9 @@ namespace vortex::graphics
 		// Import management
 		id::id_type import_model(const std::string& filepath);
 		id::id_type import_texture(const std::string& filepath, const std::string& name = "");
+		// Decode the not-yet-cached files among `paths` on worker threads (GPU upload stays on this thread) and
+		// add them to the path cache, so the import_texture calls that follow are hits.
+		void prefetch_textures(const std::vector<std::string>& paths);
 		/// <summary>Import a texture from an in-memory buffer (packed asset pak loaded into RAM).</summary>
 		id::id_type import_texture_from_memory(const u8* data, u64 length, const std::string& name = "");
 		bool export_mesh_to_vmesh(id::id_type mesh_id, const std::string& filepath);
@@ -134,6 +137,7 @@ namespace vortex::graphics
 
 		std::unordered_map<id::id_type, std::unique_ptr<Mesh>> m_meshes;
 		std::unordered_map<id::id_type, std::unique_ptr<Texture>> m_textures;
+		std::unordered_map<std::string, id::id_type> m_texture_path_cache;   // "<path>|<mtime>|<size>" -> texture
 		std::unordered_map<id::id_type, std::unique_ptr<Material>> m_materials;
 
 		id::id_type m_next_mesh_id{ 1 };

@@ -622,16 +622,17 @@ namespace vortex::graphics::sdlgpu
 				obj.ao = props.ao; obj.normal_strength = props.normal_strength; obj.use_directx_normals = props.use_directx_normals;
 				obj.is_unlit = props.is_unlit; obj.emissive_strength = props.emissive_strength;
 				obj.uv_tiling = props.uv_tiling; obj.height_scale = props.height_scale;
-				auto bind = [&](Texture* t, int slot, u32& flag)
+				// flag = 1 + the channel a packed map is read from (see Material::set_texture_channels)
+				auto bind = [&](Texture* t, int slot, u32& flag, u32 packed)
 				{
-					if (t && t->is_valid()) { bindings[slot].texture = t->texture(); flag = 1; }
+					if (t && t->is_valid()) { bindings[slot].texture = t->texture(); flag = packed ? packed : 1; }
 				};
-				bind(mat->albedo_texture(), 0, obj.has_albedo_texture);
-				bind(mat->normal_texture(), 1, obj.has_normal_texture);
-				bind(mat->metallic_texture(), 2, obj.has_metallic_texture);
-				bind(mat->roughness_texture(), 3, obj.has_roughness_texture);
-				bind(mat->ao_texture(), 4, obj.has_ao_texture);
-				bind(mat->height_texture(), 5, obj.has_height_texture);
+				bind(mat->albedo_texture(), 0, obj.has_albedo_texture, 1);
+				bind(mat->normal_texture(), 1, obj.has_normal_texture, 1);
+				bind(mat->metallic_texture(), 2, obj.has_metallic_texture, props.has_metallic_texture);
+				bind(mat->roughness_texture(), 3, obj.has_roughness_texture, props.has_roughness_texture);
+				bind(mat->ao_texture(), 4, obj.has_ao_texture, props.has_ao_texture);
+				bind(mat->height_texture(), 5, obj.has_height_texture, 1);
 			}
 		}
 		SDL_PushGPUFragmentUniformData(cmd, 1, &obj, sizeof(PerObjectConstants));

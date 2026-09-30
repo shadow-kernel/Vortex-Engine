@@ -330,7 +330,7 @@ namespace Editor.UI.Vui
                     break;
                 case VuiKind.Image:
                     if (!string.IsNullOrEmpty(e.ImageAsset))
-                        Api.UIImage(r.X, r.Y, r.W, r.H, e.ImageAsset, e.Fg[0], e.Fg[1], e.Fg[2], e.Fg[3] * a);
+                        Api.UIImage(r.X, r.Y, r.W, r.H, ResolveImage(e.ImageAsset), e.Fg[0], e.Fg[1], e.Fg[2], e.Fg[3] * a);
                     break;
                 case VuiKind.Bar:
                 {
@@ -409,6 +409,15 @@ namespace Editor.UI.Vui
         public void SetText(string id, string t) { var e = Find(id); if (e != null) e.Text = t; }
         public void SetVisible(string id, bool v) { var e = Find(id); if (e != null) e.Visible = v; }
         public void SetColor(string id, float r, float g, float b, float a) { var e = Find(id); if (e != null) e.Fg = new[] { r, g, b, a }; }
+        /// <summary>Image assets are stored project-relative (what the asset picker writes); the overlay loads
+        /// files by path, so resolve them against the open project (editor play and exported player alike).</summary>
+        public static string ResolveImage(string asset)
+        {
+            if (string.IsNullOrEmpty(asset) || System.IO.Path.IsPathRooted(asset)) return asset;
+            string root = Editor.Core.Data.ProjectData.Current?.Path;
+            return string.IsNullOrEmpty(root) ? asset : System.IO.Path.Combine(root, asset.Replace('\\', System.IO.Path.DirectorySeparatorChar));
+        }
+
         public void SetImage(string id, string asset) { var e = Find(id); if (e != null) e.ImageAsset = asset; }
 
         /// <summary>Feed a repeater List: grow/shrink its pooled RowTemplate clones to match rows + bind row.* sub-ids.</summary>

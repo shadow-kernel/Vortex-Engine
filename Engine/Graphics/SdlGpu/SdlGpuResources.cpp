@@ -4,6 +4,10 @@
 #include "../Geometry/MeshDecimator.h"
 #include "../Importers/MeshSerializer.h"
 #include <algorithm>
+#include <filesystem>
+#include <future>
+#include <thread>
+#include <iterator>
 #include <cfloat>
 #include <cmath>
 #include <cstring>
@@ -419,6 +423,8 @@ namespace vortex::graphics
 			if (mat->height_texture() == dying) mat->set_height_texture(nullptr);
 		}
 		m_textures.erase(it);
+		for (auto c = m_texture_path_cache.begin(); c != m_texture_path_cache.end();)
+			c = (c->second == id) ? m_texture_path_cache.erase(c) : std::next(c);
 	}
 
 	std::vector<id::id_type> ResourceRegistry::get_all_texture_ids() const
@@ -474,16 +480,76 @@ namespace vortex::graphics
 		return create_mesh(combined_data, data.name);
 	}
 
+	namespace
+	{
+		// "<path>|<mtime>|<size>" for a texture file on disk (an edited file gets a new key), empty otherwise.
+		std::string texture_cache_key(const std::string& path)
+		{
+			if (path.empty()) return std::string();
+			std::error_code ec;
+			const std::filesystem::path p(path);
+			const auto size = std::filesystem::file_size(p, ec);
+			if (ec) return std::string();
+			const auto time = std::filesystem::last_write_time(p, ec);
+			if (ec) return std::string();
+			return path + "|" + std::to_string((long long)time.time_since_epoch().count()) + "|" + std::to_string((unsigned long long)size);
+		}
+	}
+
 	id::id_type ResourceRegistry::import_texture(const std::string& filepath, const std::string&)
 	{
 		if (!m_device) return id::invalid_id;
+		// Path cache: an unchanged file is uploaded once and shared. Model imports, previews and thumbnails import
+		// the same maps over and over and textures are never freed, so every re-import used to cost VRAM.
+		const std::string key = texture_cache_key(filepath);
+		if (!key.empty())
+		{
+			auto it = m_texture_path_cache.find(key);
+			if (it != m_texture_path_cache.end() && get_texture(it->second)) return it->second;
+		}
 		ImageData image_data = TextureImporter::import_from_file(filepath);
 		if (!image_data.is_valid())
 		{
 			VORTEX_VLOG(("Failed to load texture: " + filepath + "\n").c_str());
 			return id::invalid_id;
 		}
-		return create_texture_from_image(image_data, filepath);
+		const id::id_type id = create_texture_from_image(image_data, filepath);
+		if (!key.empty() && id != id::invalid_id) m_texture_path_cache[key] = id;
+		return id;
+	}
+
+	void ResourceRegistry::prefetch_textures(const std::vector<std::string>& paths)
+	{
+		if (!m_device) return;
+		std::vector<std::pair<std::string, std::string>> todo;   // path, cache key
+		for (const auto& p : paths)
+		{
+			if (p.empty()) continue;
+			std::string key = texture_cache_key(p);
+			if (key.empty()) continue;
+			auto hit = m_texture_path_cache.find(key);
+			if (hit != m_texture_path_cache.end() && get_texture(hit->second)) continue;
+			bool dup = false;
+			for (const auto& t : todo) if (t.second == key) { dup = true; break; }
+			if (!dup) todo.emplace_back(p, std::move(key));
+		}
+		if (todo.size() < 2) return;   // nothing to overlap
+		// Waves of at most `lanes` decodes: a 4K map is 64 MB of RGBA, so a big model must not decode all at once.
+		const size_t lanes = (std::max)(size_t(2), (std::min)(size_t(8), size_t(std::thread::hardware_concurrency())));
+		for (size_t start = 0; start < todo.size(); start += lanes)
+		{
+			const size_t end = (std::min)(todo.size(), start + lanes);
+			std::vector<std::future<ImageData>> jobs;
+			for (size_t i = start; i < end; ++i)
+				jobs.push_back(std::async(std::launch::async, [path = todo[i].first] { return TextureImporter::import_from_file(path); }));
+			for (size_t i = start; i < end; ++i)
+			{
+				ImageData image = jobs[i - start].get();
+				if (!image.is_valid()) continue;
+				const id::id_type id = create_texture_from_image(image, todo[i].first);
+				if (id != id::invalid_id) m_texture_path_cache[todo[i].second] = id;
+			}
+		}
 	}
 
 	id::id_type ResourceRegistry::import_texture_from_memory(const u8* data, u64 length, const std::string& name)
@@ -553,6 +619,17 @@ namespace vortex::graphics
 	{
 		MultiMaterialImportResult result;
 		result.model_name = model_data.name;
+		// Decode every map the model references in parallel up front; the per-submesh binds below hit the cache.
+		{
+			std::vector<std::string> maps;
+			for (const auto& sm : model_data.submeshes)
+			{
+				maps.push_back(sm.diffuse_texture);
+				if (!sm.normal_is_bump) maps.push_back(sm.normal_texture);
+				maps.push_back(sm.metallic_texture); maps.push_back(sm.roughness_texture); maps.push_back(sm.ao_texture);
+			}
+			prefetch_textures(maps);
+		}
 		for (size_t i = 0; i < model_data.submeshes.size(); i++)
 		{
 			const auto& submesh = model_data.submeshes[i];
@@ -577,6 +654,23 @@ namespace vortex::graphics
 				sub_result.texture_id = import_texture(submesh.diffuse_texture, sub_result.name + "_tex");
 				if (sub_result.texture_id != id::invalid_id && mat)
 					if (auto* tex = get_texture(sub_result.texture_id)) mat->set_albedo_texture(tex);
+			}
+			// Every other PBR map the material references. import_texture shares an unchanged file, so a packed
+			// glTF/ORM map used for metallic, roughness AND occlusion is uploaded once; the channels tell the shader
+			// which component to read. Bump maps posing as normal maps (OBJ map_Bump) stay unbound.
+			if (mat)
+			{
+				auto load = [&](const std::string& path, const char* tag) -> Texture* {
+					if (path.empty()) return nullptr;
+					const id::id_type tid = import_texture(path, sub_result.name + tag);
+					return tid != id::invalid_id ? get_texture(tid) : nullptr;
+				};
+				mat->set_texture_channels(submesh.metallic_channel, submesh.roughness_channel, submesh.ao_channel);
+				if (!submesh.normal_is_bump)
+					if (auto* t = load(submesh.normal_texture, "_normal")) { mat->set_normal_texture(t); mat->set_use_directx_normals(!submesh.normal_opengl); }
+				if (auto* t = load(submesh.metallic_texture, "_metallic")) mat->set_metallic_texture(t);
+				if (auto* t = load(submesh.roughness_texture, "_roughness")) mat->set_roughness_texture(t);
+				if (auto* t = load(submesh.ao_texture, "_ao")) mat->set_ao_texture(t);
 			}
 			result.submeshes.push_back(sub_result);
 		}

@@ -272,6 +272,14 @@ EDITOR_INTERFACE void SetMaterialAOTexture(id::id_type material_id, id::id_type 
 	if (mat && tex) mat->set_ao_texture(tex);
 }
 
+// Channel each packed map is read from (0 R, 1 G, 2 B, 3 A): glTF metallicRoughness and ORM/ARM maps store
+// roughness in G, metallic in B and occlusion in R. Applies to maps bound before or after this call.
+EDITOR_INTERFACE void SetMaterialTextureChannels(id::id_type material_id, int metallic, int roughness, int ao)
+{
+	auto* mat = graphics::ResourceRegistry::instance().get_material(material_id);
+	if (mat) mat->set_texture_channels((u32)(metallic < 0 ? 0 : metallic), (u32)(roughness < 0 ? 0 : roughness), (u32)(ao < 0 ? 0 : ao));
+}
+
 EDITOR_INTERFACE void SetMaterialMetallic(id::id_type material_id, float value)
 {
 	auto* mat = graphics::ResourceRegistry::instance().get_material(material_id);

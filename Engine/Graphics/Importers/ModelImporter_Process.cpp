@@ -406,6 +406,7 @@ namespace vortex::graphics
 			
 			// Get normal map path
 			std::string normal_path;
+			bool normal_is_bump = false;
 			if (material->GetTextureCount(aiTextureType_NORMALS) > 0)
 			{
 				aiString tex_path;
@@ -417,6 +418,7 @@ namespace vortex::graphics
 				aiString tex_path;
 				material->GetTexture(aiTextureType_HEIGHT, 0, &tex_path);
 				normal_path = resolve_tex(tex_path.C_Str());
+				normal_is_bump = true;
 			}
 
 			// PBR slots — each model is individual, so read whichever the material actually has (empty if none).
@@ -436,6 +438,9 @@ namespace vortex::graphics
 				std::string mr = read_tex(aiTextureType_UNKNOWN);
 				if (!mr.empty()) { metallic_path = mr; roughness_path = mr; }
 			}
+			// One texture for metallic AND roughness can only be a packed map; every common packing (glTF
+			// metallicRoughness, ORM/ARM) keeps roughness in G and metallic in B. Occlusion stays R (glTF spec).
+			const bool packed_mr = !metallic_path.empty() && metallic_path == roughness_path;
 
 			// Assign textures to all submeshes using this material
 			for (auto& submesh : data.submeshes)
@@ -451,6 +456,11 @@ namespace vortex::graphics
 					submesh.roughness_texture = roughness_path;
 					submesh.ao_texture = ao_path;
 					submesh.emissive_texture = emissive_path;
+					submesh.metallic_channel = packed_mr ? 2 : 0;
+					submesh.roughness_channel = packed_mr ? 1 : 0;
+					submesh.ao_channel = 0;
+					submesh.normal_opengl = data.gltf;
+					submesh.normal_is_bump = normal_is_bump;
 
 					// Use material name if submesh name is empty
 					if (submesh.name.empty())

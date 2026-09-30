@@ -150,9 +150,21 @@ namespace vortex::graphics
 
 		void set_albedo_texture(Texture* texture) { m_albedo_texture = texture; m_properties.has_albedo_texture = (texture && texture->is_valid()) ? 1 : 0; }
 		void set_normal_texture(Texture* texture) { m_normal_texture = texture; m_properties.has_normal_texture = (texture && texture->is_valid()) ? 1 : 0; }
-		void set_metallic_texture(Texture* texture) { m_metallic_texture = texture; m_properties.has_metallic_texture = (texture && texture->is_valid()) ? 1 : 0; }
-		void set_roughness_texture(Texture* texture) { m_roughness_texture = texture; m_properties.has_roughness_texture = (texture && texture->is_valid()) ? 1 : 0; }
-		void set_ao_texture(Texture* texture) { m_ao_texture = texture; m_properties.has_ao_texture = (texture && texture->is_valid()) ? 1 : 0; }
+		void set_metallic_texture(Texture* texture) { m_metallic_texture = texture; m_properties.has_metallic_texture = (texture && texture->is_valid()) ? 1 + m_metallic_channel : 0; }
+		void set_roughness_texture(Texture* texture) { m_roughness_texture = texture; m_properties.has_roughness_texture = (texture && texture->is_valid()) ? 1 + m_roughness_channel : 0; }
+		void set_ao_texture(Texture* texture) { m_ao_texture = texture; m_properties.has_ao_texture = (texture && texture->is_valid()) ? 1 + m_ao_channel : 0; }
+		// Channel a packed map is read from (0 R, 1 G, 2 B, 3 A), stored as has_*_texture = 1 + channel (0 = no
+		// texture) so the shader picks it: glTF / ORM maps keep roughness in G, metallic in B, occlusion in R.
+		void set_texture_channels(u32 metallic, u32 roughness, u32 ao)
+		{
+			m_metallic_channel = metallic & 3u; m_roughness_channel = roughness & 3u; m_ao_channel = ao & 3u;
+			if (m_properties.has_metallic_texture) m_properties.has_metallic_texture = 1 + m_metallic_channel;
+			if (m_properties.has_roughness_texture) m_properties.has_roughness_texture = 1 + m_roughness_channel;
+			if (m_properties.has_ao_texture) m_properties.has_ao_texture = 1 + m_ao_channel;
+		}
+		u32 metallic_channel() const { return m_metallic_channel; }
+		u32 roughness_channel() const { return m_roughness_channel; }
+		u32 ao_channel() const { return m_ao_channel; }
 		void set_height_texture(Texture* texture) { m_height_texture = texture; }
 
 		const MaterialProperties& properties() const { return m_properties; }
@@ -182,6 +194,7 @@ namespace vortex::graphics
 		Texture* m_roughness_texture{ nullptr };
 		Texture* m_ao_texture{ nullptr };
 		Texture* m_height_texture{ nullptr };
+		u32 m_metallic_channel{ 0 }, m_roughness_channel{ 0 }, m_ao_channel{ 0 };
 	};
 
 	/// Central registry for all GPU resources — lifetime + lookup by id. Mirrors the DX12 registry's surface.
@@ -234,6 +247,9 @@ namespace vortex::graphics
 		// Import management
 		id::id_type import_model(const std::string& filepath);
 		id::id_type import_texture(const std::string& filepath, const std::string& name = "");
+		// Decode the not-yet-cached files among `paths` on worker threads (GPU upload stays on this thread) and
+		// add them to the path cache, so the import_texture calls that follow are hits.
+		void prefetch_textures(const std::vector<std::string>& paths);
 		id::id_type import_texture_from_memory(const u8* data, u64 length, const std::string& name = "");
 		bool export_mesh_to_vmesh(id::id_type mesh_id, const std::string& filepath);
 		id::id_type load_vmesh(const std::string& filepath);
@@ -281,6 +297,7 @@ namespace vortex::graphics
 		std::unordered_map<id::id_type, LodChain> m_lod_chains;
 		std::unordered_map<id::id_type, std::unique_ptr<Mesh>> m_meshes;
 		std::unordered_map<id::id_type, std::unique_ptr<Texture>> m_textures;
+		std::unordered_map<std::string, id::id_type> m_texture_path_cache;   // "<path>|<mtime>|<size>" -> texture
 		std::unordered_map<id::id_type, std::unique_ptr<Material>> m_materials;
 
 		id::id_type m_next_mesh_id{ 1 };

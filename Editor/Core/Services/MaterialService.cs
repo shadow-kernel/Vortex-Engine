@@ -423,13 +423,47 @@ namespace Editor.Core.Services
 
             if (!includeTextures) return;   // scalars-only path (thumbnails/previews) — skip texture re-import
 
-            // Texture maps (resolved to absolute paths above)
+            // Texture maps (resolved to absolute paths above). Packed maps (glTF metallicRoughness, ORM) feed the slots
+            // they carry unless a dedicated map is set; the channels tell the shader which component to read.
+            string metallicMap = FirstMap(vmat.MetallicTexture, vmat.OcclusionRoughnessMetallicTexture, vmat.MetallicRoughnessTexture);
+            string roughnessMap = FirstMap(vmat.RoughnessTexture, vmat.OcclusionRoughnessMetallicTexture, vmat.MetallicRoughnessTexture);
+            string aoMap = FirstMap(vmat.AOTexture, vmat.OcclusionRoughnessMetallicTexture, null);
+            ApplyTextureChannels(mat, vmat, metallicMap, roughnessMap);
             BindMap(mat, vmat.AlbedoTexture, VortexAPI.SetMaterialAlbedoTexture);
             BindMap(mat, vmat.NormalTexture, VortexAPI.SetMaterialNormalMap);
-            BindMap(mat, vmat.MetallicTexture, VortexAPI.SetMaterialMetallicMap);
-            BindMap(mat, vmat.RoughnessTexture, VortexAPI.SetMaterialRoughnessMap);
-            BindMap(mat, vmat.AOTexture, VortexAPI.SetMaterialAOMap);
+            BindMap(mat, metallicMap, VortexAPI.SetMaterialMetallicMap);
+            BindMap(mat, roughnessMap, VortexAPI.SetMaterialRoughnessMap);
+            BindMap(mat, aoMap, VortexAPI.SetMaterialAOMap);
             BindMap(mat, vmat.HeightTexture, VortexAPI.SetMaterialHeightMap);
+        }
+
+        private static string FirstMap(string a, string b, string c)
+            => !string.IsNullOrEmpty(a) ? a : !string.IsNullOrEmpty(b) ? b : c;
+
+        /// <summary>Tell the engine which channel each map is read from (explicit .vmat choice, else Auto): a map that
+        /// feeds metallic AND roughness (glTF metallicRoughness, ORM/ARM, or one file in both slots) keeps roughness in
+        /// G and metallic in B; occlusion and separate grayscale maps read R. <paramref name="vmat"/> may be null.</summary>
+        public static void ApplyTextureChannels(long materialId, VortexMaterial vmat, string metallicMap, string roughnessMap)
+        {
+            if (materialId < 0) return;
+            bool packed = !string.IsNullOrEmpty(metallicMap) && string.Equals(metallicMap, roughnessMap, StringComparison.OrdinalIgnoreCase);
+            VortexAPI.SetMaterialTextureChannels(materialId,
+                ChannelIndex(vmat?.MetallicChannel, packed ? 2 : 0),
+                ChannelIndex(vmat?.RoughnessChannel, packed ? 1 : 0),
+                ChannelIndex(vmat?.AOChannel, 0));
+        }
+
+        /// <summary>"R"/"G"/"B"/"A" -> 0..3; anything else (null, "Auto") -> <paramref name="auto"/>.</summary>
+        public static int ChannelIndex(string channel, int auto)
+        {
+            switch ((channel ?? "").Trim().ToUpperInvariant())
+            {
+                case "R": return 0;
+                case "G": return 1;
+                case "B": return 2;
+                case "A": return 3;
+                default: return auto;
+            }
         }
 
         // Texture id cache, keyed by absolute path + last-write time. The native importer has NO path dedup and the

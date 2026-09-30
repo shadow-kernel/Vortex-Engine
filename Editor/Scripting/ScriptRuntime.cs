@@ -1830,7 +1830,7 @@ namespace Editor.Scripting
         void Vortex.IScriptHost.UILine(float x1, float y1, float x2, float y2, float r, float g, float b, float a, float thick)
             => Editor.DllWrapper.VortexAPI.UILine(x1, y1, x2, y2, r, g, b, a, thick);
         void Vortex.IScriptHost.UIImage(float x, float y, float w, float h, string path, float r, float g, float b, float a)
-            => Editor.DllWrapper.VortexAPI.UIImage(x, y, w, h, path, r, g, b, a);
+            => Editor.DllWrapper.VortexAPI.UIImage(x, y, w, h, Editor.UI.Vui.VuiCanvas.ResolveImage(path), r, g, b, a);
         float Vortex.IScriptHost.UIWidth() => _uiW;
         float Vortex.IScriptHost.UIHeight() => _uiH;
         float Vortex.IScriptHost.UIMouseX() => _mouseX;

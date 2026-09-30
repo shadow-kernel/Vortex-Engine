@@ -1,5 +1,6 @@
 #include "../../Common/VerboseLog.h"
 #include "ModelImporter_Internal.h"
+#include <cctype>
 
 namespace vortex::graphics
 {
@@ -45,6 +46,12 @@ namespace vortex::graphics
 		else
 		{
 			result.name = "ImportedModel";
+		}
+
+		{
+			std::string ext = last_dot != std::string::npos ? filepath.substr(last_dot) : std::string();
+			for (auto& c : ext) c = (char)::tolower((unsigned char)c);
+			result.gltf = ext == ".gltf" || ext == ".glb";
 		}
 
 		VORTEX_VLOG(("ModelImporter: Loading " + result.name + "\n").c_str());
@@ -93,6 +100,12 @@ namespace vortex::graphics
 		}
 
 		result.name = "MemoryModel";
+		{
+			std::string ext = ext_hint;
+			for (auto& c : ext) c = (char)::tolower((unsigned char)c);
+			if (!ext.empty() && ext[0] == '.') ext.erase(0, 1);
+			result.gltf = ext == "gltf" || ext == "glb";
+		}
 		build_skeleton((void*)scene, result);
 		process_node(scene->mRootNode, (void*)scene, result);
 		extract_animations((void*)scene, result);
