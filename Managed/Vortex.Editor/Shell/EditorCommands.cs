@@ -448,7 +448,7 @@ namespace VortexEditor.Shell
             var files = await top.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions { Title = "Import Assets", AllowMultiple = true });
             var paths = files.Select(f => f.TryGetLocalPath()).Where(p => !string.IsNullOrEmpty(p)).ToArray();
             if (paths.Length == 0) return;
-            var imported = await EditorWindows.ImportAssets(paths, "Assets");
+            var imported = await EditorWindows.ImportAssets(paths, null);   // null = each file type's default folder
             if (imported != null && imported.Length > 0) { Window?.AssetBrowser?.Refresh(); Toast("Imported " + imported.Length + " asset(s)"); }
         }
 
@@ -618,83 +618,82 @@ namespace VortexEditor.Shell
             AfterSceneEdit();
         }
 
-        /// <summary>Hierarchy / GameObject ▸ Instantiate Prefab…: pick a .ventity and add a linked instance.</summary>
+        /// <summary>Hierarchy / GameObject ▸ Instantiate Prefab…: pick a .ventity and add a linked instance (the active
+        /// scene through PrefabWorkflow.PlaceInScene; another scene / under a parent through PrefabService).</summary>
         public static async Task InstantiatePrefab(Scene scene = null, GameEntity parent = null)
         {
             var sc = TargetScene(scene); if (sc == null) { Toast("Open a project first"); return; }
-            string rel = await AssetPickerDialog.Pick("Prefab", new[] { "*.ventity" });
+            string rel = await AssetPickerDialog.Pick("Prefab", new[] { "*.ventity", "*.vprefab" });
             if (string.IsNullOrEmpty(rel)) return;
             try
             {
-                var ent = PrefabService.Instance.InstantiatePrefab(Path.Combine(ProjectData.Current.Path, rel), sc, parent);
+                string full = Path.Combine(ProjectData.Current.Path, rel);
+                GameEntity ent = ReferenceEquals(sc, ActiveScene) && (parent == null || ReferenceEquals(parent.Scene, sc))
+                    ? Prefab.PrefabWorkflow.PlaceInScene(full, parent)
+                    : PrefabService.Instance.InstantiatePrefab(full, sc, parent);
                 if (ent != null) Focus(ent); else Toast("Could not instantiate the prefab (empty or unreadable)");
             }
             catch (Exception ex) { Fail("Instantiate prefab", ex); }
         }
 
-        private static bool _prefabHelpShown;
-
-        /// <summary>Save every selected (top-level) entity as a .ventity prefab in Assets/Prefabs; each becomes a linked
-        /// instance. One entity asks for the prefab name; an existing file is only replaced after a confirmation.</summary>
+        /// <summary>Save as Prefab / Create Prefab from Selection: one entity goes through the interactive prefab
+        /// workflow (name prompt, replace confirmation, workflow help); several are saved under their own names after
+        /// one confirmation. Each source becomes a linked instance. <paramref name="ask"/> false = no dialogs (smoke / API).</summary>
         public static async Task<List<string>> CreatePrefabFromSelection(IList<GameEntity> entities = null, bool ask = true)
         {
             var result = new List<string>();
             var list = TopLevelOnly(entities ?? SelectedEntities());
             if (list.Count == 0 || ProjectData.Current == null) { Toast("Select an entity first"); return result; }
-            string dir = Path.Combine(ProjectData.Current.Path, "Assets", "Prefabs");
+            if (ask && list.Count == 1)
+            {
+                var p = await Prefab.PrefabWorkflow.SaveAsPrefabInteractive(list[0], ActiveWindow());
+                if (p != null) result.Add(p);
+                return result;
+            }
+            if (ask && !await Dialogs.Confirm("Create " + list.Count + " prefabs?", "Each selected entity is saved to Assets/Prefabs under its own name and becomes a linked instance. Existing prefabs with the same names are replaced.", "Create", "Cancel"))
+                return result;
             foreach (var e in list)
             {
-                string name = e.Name;
-                if (ask && list.Count == 1)
-                {
-                    name = await Dialogs.Prompt("Create Prefab", "Save \"" + e.Name + "\" (with its children) as a reusable prefab in Assets/Prefabs.", e.Name, "Create");
-                    if (string.IsNullOrWhiteSpace(name)) return result;
-                    name = name.Trim();
-                }
-                string file = Path.Combine(dir, SanitizeFileName(name) + PrefabService.PrefabExtension);
-                if (ask && File.Exists(file) && !await Dialogs.Confirm("Replace " + Path.GetFileName(file) + "?", "A prefab with this name already exists.", "Replace", "Cancel", destructive: true)) continue;
-                try
-                {
-                    var path = PrefabService.Instance.SaveAsPrefab(e, name);
-                    if (path != null) result.Add(path);
-                }
+                try { var path = Prefab.PrefabWorkflow.SaveAsPrefab(e); if (path != null) result.Add(path); }
                 catch (Exception ex) { Fail("Save prefab", ex); }
             }
-            if (result.Count > 0)
-            {
-                Window?.AssetBrowser?.Refresh();
-                try { Window?.AssetBrowser?.SelectPath(result[result.Count - 1]); } catch { }
-                Toast(result.Count == 1 ? "Prefab saved — '" + Path.GetFileNameWithoutExtension(result[0]) + "' is now a linked instance" : result.Count + " prefabs saved");
-                if (ask && !_prefabHelpShown)
-                {
-                    _prefabHelpShown = true;
-                    await Dialogs.ShowText("Prefab saved — how prefabs work", PrefabService.WorkflowHelp + "\n\nSaved to:  " + string.Join(", ", result.Select(Path.GetFileName)), 520, 320);
-                }
-            }
+            if (result.Count > 0) Toast(result.Count == 1 ? "Prefab saved — '" + Path.GetFileNameWithoutExtension(result[0]) + "' is now a linked instance" : result.Count + " prefabs saved");
             return result;
         }
 
-        private static string SanitizeFileName(string s)
+        private static GameEntity PrefabRoot(GameEntity e)
         {
-            foreach (var c in Path.GetInvalidFileNameChars()) s = s.Replace(c, '_');
-            return string.IsNullOrWhiteSpace(s) ? "Prefab" : s.Trim();
+            var root = Prefab.PrefabWorkflow.FindInstanceRoot(e ?? Selected);
+            if (root == null) Toast("Select a prefab instance first");
+            return root;
         }
 
-        public static void ApplyToPrefab(GameEntity e = null)
+        /// <summary>Apply Overrides: push the instance's changes into its prefab (asks first, updates every instance).</summary>
+        public static async Task ApplyToPrefab(GameEntity e = null)
         {
-            e = e ?? Selected;
-            if (e == null || !e.IsPrefabInstance) { Toast("Select a prefab instance first"); return; }
-            try { if (PrefabService.Instance.ApplyToPrefab(e)) Toast("Applied to prefab — " + Path.GetFileName(e.PrefabPath)); }
+            e = e ?? Selected; if (PrefabRoot(e) == null) return;
+            try { await Prefab.PrefabWorkflow.ApplyInteractive(e, ActiveWindow()); AfterSceneEdit(); }
             catch (Exception ex) { Fail("Apply to prefab", ex); }
         }
 
-        public static void RevertToPrefab(GameEntity e = null)
+        /// <summary>Revert Overrides: reload the instance from its prefab (keeps its transform).</summary>
+        public static async Task RevertToPrefab(GameEntity e = null)
         {
-            e = e ?? Selected;
-            if (e == null || !e.IsPrefabInstance) { Toast("Select a prefab instance first"); return; }
-            try { var r = PrefabService.Instance.RevertInstance(e); if (r != null) { Focus(r); Toast("Reverted to prefab"); } }
+            e = e ?? Selected; if (PrefabRoot(e) == null) return;
+            try { var r = await Prefab.PrefabWorkflow.RevertInteractive(e, ActiveWindow()); if (r != null) Focus(r); }
             catch (Exception ex) { Fail("Revert instance", ex); }
         }
+
+        /// <summary>Unpack Prefab (completely = nested instances too): the entity becomes a plain one (undoable).</summary>
+        public static void UnpackPrefab(GameEntity e = null, bool completely = false)
+        {
+            e = e ?? Selected; var root = PrefabRoot(e); if (root == null) return;
+            Prefab.PrefabWorkflow.Unpack(e, completely);
+            Toast((completely ? "Unpacked completely: " : "Unpacked: ") + root.Name);
+        }
+
+        public static void OpenPrefab(GameEntity e = null) { var root = PrefabRoot(e); if (root != null) Prefab.PrefabWorkflow.OpenInEditor(root.PrefabPath); }
+        public static void SelectPrefabAsset(GameEntity e = null) { var root = PrefabRoot(e); if (root != null) Prefab.PrefabWorkflow.SelectAsset(root.PrefabPath); }
 
         public static void ToggleActive(GameEntity e = null)
         {

@@ -327,7 +327,7 @@ namespace VortexEditor.Shell
             EditorCommands.SelectMany(new[] { a });
             await SmokeRegistry.Settle(300);
             Main.Hierarchy.BeginRename(a);
-            await SmokeRegistry.Settle(400);
+            for (int i = 0; i < 20 && !Main.Hierarchy.IsRenaming; i++) await SmokeRegistry.Settle(100);
             bool open = Main.Hierarchy.IsRenaming;
             var box = Main.Hierarchy.GetVisualDescendants().OfType<TextBox>().FirstOrDefault(t => t.Classes.Contains("renamebox") && t.IsVisible);
             if (box != null) box.Text = "Renamed Cube";
@@ -349,6 +349,7 @@ namespace VortexEditor.Shell
             var paths = await EditorCommands.CreatePrefabFromSelection(new[] { a }, ask: false);
             bool ok = paths.Count == 1 && File.Exists(paths[0]) && a.IsPrefabInstance && paths[0].EndsWith("SmokePrefabSource.ventity");
             Log("prefab: " + string.Join(", ", paths) + " instance=" + a.IsPrefabInstance);
+            foreach (var p in paths) { try { File.Delete(p); File.Delete(p + ".vmeta"); } catch { } }   // leave no asset behind for later checks
             Cleanup(a);
             return ok;
         }
@@ -452,6 +453,7 @@ namespace VortexEditor.Shell
             bool undone = mrT.MaterialPath == before;
             Log($"material drop: target={target.Name} assigned={assigned} ({mrT.MaterialPath}) undo={undone}");
             if (target.Name == "MaterialDropTarget") Cleanup(target);
+            try { File.Delete(vmat); File.Delete(vmat + ".vmeta"); } catch { }
             return assigned && undone;
         }
 
@@ -635,7 +637,8 @@ namespace VortexEditor.Shell
                 if (entry.IsAsset)
                 {
                     string asset = EditorMenus.FindAssets(entry.Patterns).FirstOrDefault();
-                    if (asset == null && entry.Patterns.Contains("*.vui")) asset = EditorCommands.CreateAsset("ui");
+                    // no screen in the project: use a throw-away one outside it (never leave files for other checks)
+                    if (asset == null && entry.Patterns.Contains("*.vui")) asset = Editor.Core.Assets.AssetActions.CreateUiScreen(Path.Combine(Path.GetTempPath(), "vortex-shell-smoke", "SmokeScreen.vui"));
                     if (asset == null) { results.Add(label + ": no asset of that type in the project (skipped)"); continue; }
                     open = () => { entry.OpenAsset(asset); return Task.CompletedTask; };
                 }
@@ -644,7 +647,7 @@ namespace VortexEditor.Shell
                 {
                     string sample = EditorMenus.FindAssets(new[] { "*.png" }).FirstOrDefault();
                     Task<string[]> pending = null;
-                    open = () => { pending = EditorWindows.ImportAssets(sample != null ? new[] { sample } : new string[0], "Assets/Textures"); return Task.CompletedTask; };
+                    open = () => { pending = EditorWindows.ImportAssets(sample != null ? new[] { sample } : new string[0], null); return Task.CompletedTask; };
                     var w1 = await NewWindowsAfter(open, before);
                     if (w1.Count == 0 && pending != null && pending.IsCompleted) { results.Add(label + ": foundation stub (no dialog yet)"); Note("Import Assets dialog is still the foundation stub"); continue; }
                     foreach (var w in w1) SmokeRegistry.Capture(w, "menu_" + Slug(label) + ".png");

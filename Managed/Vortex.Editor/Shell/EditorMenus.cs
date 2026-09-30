@@ -54,6 +54,7 @@ namespace VortexEditor.Shell
             new EditorEntry { Title = "Material Editor…", AssetKind = "Material", Patterns = new[] { "*.vmat" }, OpenAsset = EditorWindows.MaterialEditor },
             new EditorEntry { Title = "Texture Editor…", AssetKind = "Texture", Patterns = Textures, OpenAsset = EditorWindows.TextureEditor },
             new EditorEntry { Title = "Model Editor…", AssetKind = "Model", Patterns = Models, OpenAsset = EditorWindows.ModelEditor },
+            new EditorEntry { Title = "Mesh Editor…", AssetKind = "Model", Patterns = Models, OpenAsset = EditorWindows.MeshEditor },
             new EditorEntry { Title = "Asset Viewer…", AssetKind = "Asset", Patterns = Models.Concat(Textures).Concat(new[] { "*.vmat", "*.ventity" }).ToArray(), OpenAsset = EditorWindows.AssetViewer },
             new EditorEntry { Title = "Prefab Editor…", AssetKind = "Prefab", Patterns = new[] { "*.ventity" }, OpenAsset = EditorWindows.PrefabEditor },
             new EditorEntry { Title = "Sound Container Editor…", AssetKind = "Sound Container", Patterns = new[] { "*" + Editor.Core.Audio.SoundContainer.FileExtension }, OpenAsset = EditorWindows.SoundContainerEditor },
@@ -86,11 +87,27 @@ namespace VortexEditor.Shell
                 }
                 if (e.IsAsset)
                 {
-                    string path = await PickAsset(e.AssetKind, e.Patterns);
+                    // model tools (Model / Mesh Editor, Stress Test, Asset Viewer) take the selected object's model directly
+                    string path = SelectedModel(e.Patterns) ?? await PickAsset(e.AssetKind, e.Patterns);
                     if (!string.IsNullOrEmpty(path)) e.OpenAsset(path);
                 }
             }
             catch (Exception ex) { EditorCommands.Fail(e.Title.TrimEnd('…'), ex); }
+        }
+
+        /// <summary>The model file of the selected entity (its own MeshRenderer, or the first model part of a container)
+        /// when it matches <paramref name="patterns"/>; null otherwise.</summary>
+        public static string SelectedModel(string[] patterns)
+        {
+            var sel = SelectionService.Instance.SelectedEntity;
+            if (sel == null || patterns == null || !patterns.Any(p => Array.IndexOf(Models, p) >= 0)) return null;
+            string mesh = sel.GetComponent<MeshRenderer>()?.MeshPath;
+            if (string.IsNullOrEmpty(mesh) && sel.Children != null)
+                mesh = sel.Children.Select(c => c.GetComponent<MeshRenderer>()?.MeshPath).FirstOrDefault(m => !string.IsNullOrEmpty(m));
+            if (string.IsNullOrEmpty(mesh) || mesh.StartsWith("Primitive:", StringComparison.OrdinalIgnoreCase)) return null;
+            int hash = mesh.IndexOf('#'); if (hash >= 0) mesh = mesh.Substring(0, hash);
+            string full = Path.IsPathRooted(mesh) ? mesh : Path.Combine(ProjectData.Current?.Path ?? "", mesh);
+            return File.Exists(full) && VortexEditor.Panels.Inspector.PropertyRows.Matches(full, patterns) ? full : null;
         }
 
         /// <summary>Asset chooser for the Window-menu editors: the searchable project picker, or the OS file
@@ -241,8 +258,15 @@ namespace VortexEditor.Shell
                 Sep(),
                 Item("Instantiate Prefab…", null, () => _ = EditorCommands.InstantiatePrefab()),
                 Item("Create Prefab from Selection…", null, () => _ = EditorCommands.CreatePrefabFromSelection()),
-                Item("Apply Instance → Prefab", null, () => EditorCommands.ApplyToPrefab()),
-                Item("Revert Instance ← Prefab", null, () => EditorCommands.RevertToPrefab()),
+                Sub("Prefab",
+                    Item("Open Prefab", null, () => EditorCommands.OpenPrefab()),
+                    Item("Select Prefab Asset", null, () => EditorCommands.SelectPrefabAsset()),
+                    Sep(),
+                    Item("Apply Overrides…", null, () => _ = EditorCommands.ApplyToPrefab()),
+                    Item("Revert Overrides…", null, () => _ = EditorCommands.RevertToPrefab()),
+                    Sep(),
+                    Item("Unpack Prefab", null, () => EditorCommands.UnpackPrefab()),
+                    Item("Unpack Completely", null, () => EditorCommands.UnpackPrefab(completely: true))),
                 Sep(),
                 Item("Toggle Active", null, () => EditorCommands.ToggleActive()),
                 Item("Hide / Show in Scene View", null, () => EditorCommands.ToggleHiddenInEditor()),
@@ -336,9 +360,11 @@ namespace VortexEditor.Shell
                 Item("Play in Standalone Player", null, EditorCommands.PlayInNewWindow),
                 Sep(),
                 Item("Build Settings…", null, EditorCommands.Build),
+                Sub("Editors", Editors.Where(x => x != null).Select(x => (NativeMenuItemBase)Item(x.Title, null, () => _ = Run(x))).ToArray()),
                 Item("Source Control…", null, EditorCommands.GitWindow),
                 Item("Audio Mixer…", null, EditorCommands.AudioMixer),
                 Item("Stress Test…", null, () => _ = Run(Editors.First(x => x != null && x.Title.StartsWith("Stress")))),
+                Item("History…", null, EditorCommands.History),
                 Sep(),
                 Item("Reload Material Shaders", null, EditorCommands.ReloadShaders),
                 Item("Clear Console", null, () => ConsoleService.Instance.Clear()),

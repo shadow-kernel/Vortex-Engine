@@ -455,9 +455,7 @@ namespace VortexEditor.Panels
         /// imported file's path (null = cancelled / failed).</summary>
         public static async Task<string> ImportExternal(string file)
         {
-            string ext = (Path.GetExtension(file) ?? "").ToLowerInvariant();
-            string folder = Editor.Core.Assets.AssetActions.DefaultFolderFor(ext);
-            var imported = await EditorWindows.ImportAssets(new[] { file }, string.IsNullOrEmpty(folder) ? "Assets" : "Assets/" + folder);
+            var imported = await EditorWindows.ImportAssets(new[] { file }, null);   // null = the default folder of the file type
             var first = imported?.FirstOrDefault(i => !string.IsNullOrEmpty(i));
             if (first == null) return null;
             EditorCommands.Window?.AssetBrowser?.Refresh();

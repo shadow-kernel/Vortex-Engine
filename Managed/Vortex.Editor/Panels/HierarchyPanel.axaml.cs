@@ -190,6 +190,38 @@ namespace VortexEditor.Panels
             try { (Tree.TreeContainerFromItem(item) as Control)?.BringIntoView(); } catch { }
         }
 
+        /// <summary>Make sure the row of <paramref name="item"/> exists (the tree virtualises rows): expand the path and
+        /// scroll each level to the next node, from the scene down. Returns the row container (null if not possible).</summary>
+        public async Task<TreeViewItem> RealizeContainer(object item)
+        {
+            var chain = new List<object>();
+            if (item is GameEntity ge)
+            {
+                for (var p = ge; p != null; p = p.Parent) chain.Insert(0, p);
+                if (ge.Scene != null) chain.Insert(0, ge.Scene);
+                ExpandTo(ge);
+            }
+            else if (item != null) chain.Add(item);
+            ItemsControl level = Tree;
+            TreeViewItem container = null;
+            foreach (var node in chain)
+            {
+                container = null;
+                for (int attempt = 0; attempt < 8 && container == null; attempt++)
+                {
+                    try { level.ScrollIntoView(node); } catch { }
+                    await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+                    container = level.ContainerFromItem(node) as TreeViewItem;
+                    if (container == null) await Task.Delay(25);
+                }
+                if (container == null) return null;
+                if (!ReferenceEquals(node, item)) container.IsExpanded = true;
+                level = container;
+            }
+            container?.BringIntoView();
+            return container;
+        }
+
         // ================================================================ search
 
         private void OnSearchChanged(object sender, TextChangedEventArgs e)
@@ -301,13 +333,17 @@ namespace VortexEditor.Panels
             m.Items.Add(Item("Create Child", () => EditorCommands.CreateChild(ent)));
             m.Items.Add(Sub("Create", CreateItems(ent.Scene).ToArray()));
             m.Items.Add(new Separator());
-            m.Items.Add(Item(n > 1 ? "Create Prefabs from Selection (" + n + ")" : "Save as Prefab…", () => _ = EditorCommands.CreatePrefabFromSelection(sel)));
-            if (ent.IsPrefabInstance)
+            m.Items.Add(Item(n > 1 ? "Create Prefabs from Selection (" + n + ")…" : "Save as Prefab…", () => _ = EditorCommands.CreatePrefabFromSelection(sel)));
+            var root = VortexEditor.Shell.Prefab.PrefabWorkflow.FindInstanceRoot(ent);
+            if (root != null)
             {
-                m.Items.Add(Item("Apply Instance → Prefab", () => EditorCommands.ApplyToPrefab(ent)));
-                m.Items.Add(Item("Revert Instance ← Prefab", () => EditorCommands.RevertToPrefab(ent)));
-                m.Items.Add(Item("Select Prefab Asset", () => { var p = Path.Combine(ProjectData.Current?.Path ?? "", ent.PrefabPath ?? ""); EditorCommands.Window?.ShowPanel(MainWindow.PanelProject); try { EditorCommands.Window?.AssetBrowser?.SelectPath(p); } catch { } }));
-                m.Items.Add(Item("Edit Prefab…", () => EditorWindows.PrefabEditor(Path.Combine(ProjectData.Current?.Path ?? "", ent.PrefabPath ?? ""))));
+                // prefab instance (or a part of one): the Windows editor's prefab actions, through the shared workflow
+                m.Items.Add(Item("Open Prefab", () => VortexEditor.Shell.Prefab.PrefabWorkflow.OpenInEditor(root.PrefabPath)));
+                m.Items.Add(Item("Select Prefab Asset", () => VortexEditor.Shell.Prefab.PrefabWorkflow.SelectAsset(root.PrefabPath)));
+                m.Items.Add(Item("Apply Overrides…", async () => { await VortexEditor.Shell.Prefab.PrefabWorkflow.ApplyInteractive(ent); SceneRenderService.RuntimeDirty = true; }));
+                m.Items.Add(Item("Revert Overrides…", async () => { var r = await VortexEditor.Shell.Prefab.PrefabWorkflow.RevertInteractive(ent); if (r != null) SelectEntities(new[] { r }); }));
+                m.Items.Add(Item("Unpack Prefab", () => VortexEditor.Shell.Prefab.PrefabWorkflow.Unpack(ent)));
+                m.Items.Add(Item("Unpack Completely", () => VortexEditor.Shell.Prefab.PrefabWorkflow.Unpack(ent, completely: true)));
             }
             m.Items.Add(new Separator());
             m.Items.Add(Item("Socket Editor…", () => EditorWindows.SocketEditor(ent)));
@@ -496,12 +532,14 @@ namespace VortexEditor.Panels
             if (ent == null) return;
             CancelRename();
             if (!string.IsNullOrEmpty(SearchBox.Text)) SearchBox.Text = "";
-            ExpandTo(ent);
-            await Task.Delay(40);
-            await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
-            var tvi = Tree.TreeContainerFromItem(ent) as TreeViewItem;
-            var box = tvi?.GetVisualDescendants().OfType<TextBox>().FirstOrDefault(t => t.Classes.Contains("renamebox") && ReferenceEquals(t.DataContext, ent));
-            var label = tvi?.GetVisualDescendants().OfType<TextBlock>().FirstOrDefault(t => t.Classes.Contains("entityname") && ReferenceEquals(t.DataContext, ent));
+            var tvi = await RealizeContainer(ent) ?? Tree.TreeContainerFromItem(ent) as TreeViewItem;
+            TextBox box = null; TextBlock label = null;
+            for (int attempt = 0; attempt < 10 && tvi != null && (box == null || label == null); attempt++)
+            {
+                box = tvi.GetVisualDescendants().OfType<TextBox>().FirstOrDefault(t => t.Classes.Contains("renamebox") && ReferenceEquals(t.DataContext, ent));
+                label = tvi.GetVisualDescendants().OfType<TextBlock>().FirstOrDefault(t => t.Classes.Contains("entityname") && ReferenceEquals(t.DataContext, ent));
+                if (box == null || label == null) await Task.Delay(30);   // the row's template is applied on the next layout pass
+            }
             if (box == null || label == null)
             {
                 var n = await Dialogs.Prompt("Rename", "New name for \"" + ent.Name + "\"", ent.Name, "Rename");
