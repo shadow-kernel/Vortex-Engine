@@ -1,14 +1,16 @@
-using System;
+ï»¿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+#if !VORTEX_CORE
 using System.Media;
+#endif
 using System.Runtime.CompilerServices;
 
 namespace Editor.Core.UndoRedo
 {
     /// <summary>
-    /// Zentraler Manager für Undo/Redo Operationen.
-    /// Verwendet das Singleton-Pattern für globalen Zugriff.
+    /// Zentraler Manager fÃ¼r Undo/Redo Operationen.
+    /// Verwendet das Singleton-Pattern fÃ¼r globalen Zugriff.
     /// </summary>
     public class UndoRedoManager : INotifyPropertyChanged
     {
@@ -53,28 +55,28 @@ namespace Editor.Core.UndoRedo
         public int MaxUndoStackSize { get; set; } = 100;
 
         /// <summary>
-        /// Zeitfenster in Millisekunden für das Zusammenführen von Befehlen.
+        /// Zeitfenster in Millisekunden fÃ¼r das ZusammenfÃ¼hren von Befehlen.
         /// Standard: 500ms.
         /// </summary>
         public int MergeTimeWindowMs { get; set; } = 500;
 
         /// <summary>
-        /// Gibt an, ob ein Undo möglich ist.
+        /// Gibt an, ob ein Undo mÃ¶glich ist.
         /// </summary>
         public bool CanUndo => _undoStack.Count > 0;
 
         /// <summary>
-        /// Gibt an, ob ein Redo möglich ist.
+        /// Gibt an, ob ein Redo mÃ¶glich ist.
         /// </summary>
         public bool CanRedo => _redoStack.Count > 0;
 
         /// <summary>
-        /// Gibt den Namen des nächsten Undo-Befehls zurück.
+        /// Gibt den Namen des nÃ¤chsten Undo-Befehls zurÃ¼ck.
         /// </summary>
         public string UndoName => CanUndo ? _undoStack.Peek().Name : string.Empty;
 
         /// <summary>
-        /// Gibt den Namen des nächsten Redo-Befehls zurück.
+        /// Gibt den Namen des nÃ¤chsten Redo-Befehls zurÃ¼ck.
         /// </summary>
         public string RedoName => CanRedo ? _redoStack.Peek().Name : string.Empty;
 
@@ -89,17 +91,17 @@ namespace Editor.Core.UndoRedo
         public int RedoCount => _redoStack.Count;
 
         /// <summary>
-        /// Event wird ausgelöst, wenn sich der Undo/Redo-Status ändert.
+        /// Event wird ausgelÃ¶st, wenn sich der Undo/Redo-Status Ã¤ndert.
         /// </summary>
         public event EventHandler StateChanged;
 
         /// <summary>
-        /// Event wird ausgelöst, wenn ein Befehl ausgeführt wurde.
+        /// Event wird ausgelÃ¶st, wenn ein Befehl ausgefÃ¼hrt wurde.
         /// </summary>
         public event EventHandler<CommandExecutedEventArgs> CommandExecuted;
 
         /// <summary>
-        /// Event wird ausgelöst, wenn Undo/Redo am Limit ist (keine weiteren Aktionen möglich).
+        /// Event wird ausgelÃ¶st, wenn Undo/Redo am Limit ist (keine weiteren Aktionen mÃ¶glich).
         /// </summary>
         public event EventHandler<UndoRedoLimitEventArgs> LimitReached;
 
@@ -108,9 +110,9 @@ namespace Editor.Core.UndoRedo
         private UndoRedoManager() { }
 
         /// <summary>
-        /// Führt einen Befehl aus und fügt ihn zum Undo-Stack hinzu.
+        /// FÃ¼hrt einen Befehl aus und fÃ¼gt ihn zum Undo-Stack hinzu.
         /// </summary>
-        /// <param name="command">Der auszuführende Befehl.</param>
+        /// <param name="command">Der auszufÃ¼hrende Befehl.</param>
         /// <param name="execute">Wenn true, wird Execute() aufgerufen. Standard: true.</param>
         public void Execute(IUndoableCommand command, bool execute = true)
         {
@@ -129,7 +131,7 @@ namespace Editor.Core.UndoRedo
                     command.Execute();
                 }
 
-                // Versuche mit dem letzten Befehl zusammenzuführen
+                // Versuche mit dem letzten Befehl zusammenzufÃ¼hren
                 if (_undoStack.Count > 0)
                 {
                     var lastCommand = _undoStack.Peek();
@@ -142,10 +144,10 @@ namespace Editor.Core.UndoRedo
 
                 _undoStack.Push(command);
 
-                // Redo-Stack leeren, da neue Aktion ausgeführt wurde
+                // Redo-Stack leeren, da neue Aktion ausgefÃ¼hrt wurde
                 _redoStack.Clear();
 
-                // Stack-Größe begrenzen
+                // Stack-GrÃ¶ÃŸe begrenzen
                 TrimUndoStack();
 
                 OnStateChanged();
@@ -158,9 +160,9 @@ namespace Editor.Core.UndoRedo
         }
 
         /// <summary>
-        /// Macht den letzten Befehl rückgängig.
+        /// Macht den letzten Befehl rÃ¼ckgÃ¤ngig.
         /// </summary>
-        /// <returns>True wenn ein Befehl rückgängig gemacht wurde.</returns>
+        /// <returns>True wenn ein Befehl rÃ¼ckgÃ¤ngig gemacht wurde.</returns>
         public bool Undo()
         {
             if (!CanUndo || _isExecuting)
@@ -191,7 +193,7 @@ namespace Editor.Core.UndoRedo
         }
 
         /// <summary>
-        /// Führt den letzten rückgängig gemachten Befehl erneut aus.
+        /// FÃ¼hrt den letzten rÃ¼ckgÃ¤ngig gemachten Befehl erneut aus.
         /// </summary>
         /// <returns>True wenn ein Befehl wiederholt wurde.</returns>
         public bool Redo()
@@ -224,9 +226,9 @@ namespace Editor.Core.UndoRedo
         }
 
         /// <summary>
-        /// Macht mehrere Befehle auf einmal rückgängig.
+        /// Macht mehrere Befehle auf einmal rÃ¼ckgÃ¤ngig.
         /// </summary>
-        /// <param name="count">Anzahl der rückgängig zu machenden Befehle.</param>
+        /// <param name="count">Anzahl der rÃ¼ckgÃ¤ngig zu machenden Befehle.</param>
         public void UndoMultiple(int count)
         {
             for (int i = 0; i < count && CanUndo; i++)
@@ -236,7 +238,7 @@ namespace Editor.Core.UndoRedo
         }
 
         /// <summary>
-        /// Führt mehrere rückgängig gemachte Befehle erneut aus.
+        /// FÃ¼hrt mehrere rÃ¼ckgÃ¤ngig gemachte Befehle erneut aus.
         /// </summary>
         /// <param name="count">Anzahl der wiederherzustellenden Befehle.</param>
         public void RedoMultiple(int count)
@@ -258,7 +260,7 @@ namespace Editor.Core.UndoRedo
         }
 
         /// <summary>
-        /// Gibt eine Liste aller Undo-Befehle zurück (neueste zuerst).
+        /// Gibt eine Liste aller Undo-Befehle zurÃ¼ck (neueste zuerst).
         /// </summary>
         public IReadOnlyList<IUndoableCommand> GetUndoHistory()
         {
@@ -266,7 +268,7 @@ namespace Editor.Core.UndoRedo
         }
 
         /// <summary>
-        /// Gibt eine Liste aller Redo-Befehle zurück (neueste zuerst).
+        /// Gibt eine Liste aller Redo-Befehle zurÃ¼ck (neueste zuerst).
         /// </summary>
         public IReadOnlyList<IUndoableCommand> GetRedoHistory()
         {
@@ -323,8 +325,12 @@ namespace Editor.Core.UndoRedo
 
             try
             {
-                // Windows System-Sound für "Hinweis" - ähnlich wie Windows Explorer bei Limit
+#if VORTEX_CORE
+                Editor.Core.Threading.HostShell.PlayAlertSound();
+#else
+                // Windows System-Sound fÃ¼r "Hinweis" - Ã¤hnlich wie Windows Explorer bei Limit
                 SystemSounds.Exclamation.Play();
+#endif
             }
             catch
             {
@@ -339,7 +345,7 @@ namespace Editor.Core.UndoRedo
     }
 
     /// <summary>
-    /// Typ der Befehlsausführung.
+    /// Typ der BefehlsausfÃ¼hrung.
     /// </summary>
     public enum CommandExecutionType
     {
@@ -349,7 +355,7 @@ namespace Editor.Core.UndoRedo
     }
 
     /// <summary>
-        /// Event-Argumente für ausgeführte Befehle.
+        /// Event-Argumente fÃ¼r ausgefÃ¼hrte Befehle.
         /// </summary>
         public class CommandExecutedEventArgs : EventArgs
         {

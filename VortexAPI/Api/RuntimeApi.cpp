@@ -6,12 +6,14 @@ EDITOR_INTERFACE void InitializeRuntime()
 	runtime::prefab_service::initialize();
 	runtime::systems::initialize_render();
 	runtime::systems::initialize_physics();
+	physics::init();   // Physics v2 (Jolt): idempotent, the managed PhysicsService may call PhysicsInit() again
 	runtime::systems::initialize_audio();
 }
 
 EDITOR_INTERFACE void ShutdownRuntime()
 {
 	runtime::systems::shutdown_audio();
+	physics::shutdown();
 	runtime::systems::shutdown_physics();
 	runtime::systems::shutdown_render();
 	runtime::prefab_service::shutdown();
@@ -22,6 +24,8 @@ EDITOR_INTERFACE void ShutdownRuntime()
 // Call this once per frame while in play mode / from the standalone player,
 // before submitting render items. The editor's idle viewport does NOT call it,
 // which is exactly why entering play mode "comes alive" and exiting it freezes.
+// NOTE: the Jolt world (Physics v2) is NOT stepped here — the managed side drives PhysicsStep with its
+// own fixed-step accumulator so script callbacks and contact events line up with the game loop.
 namespace
 {
 	// Fixed-timestep game clock: the simulation always advances in stable 1/60 s steps regardless of

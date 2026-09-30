@@ -1,5 +1,5 @@
 #include "Skybox.h"
-#include "../Graphics/DX12/DX12Renderer.h"
+#include "../Graphics/Backend.h"
 #include <vector>
 
 namespace vortex::skybox {
@@ -207,15 +207,15 @@ namespace vortex::skybox {
 
 	void component::apply_to_renderer() const {
 		if (!is_valid() || !is_enabled()) {
-			graphics::dx12::DX12Renderer::instance().set_skybox_enabled(false);
+			graphics::Renderer::instance().set_skybox_enabled(false);
 			return;
 		}
 
 		auto& data = get_data(_id);
-		auto& renderer = graphics::dx12::DX12Renderer::instance();
+		auto& renderer = graphics::Renderer::instance();
 
 		renderer.set_skybox_enabled(true);
-		renderer.set_skybox_mode(static_cast<graphics::dx12::DX12Renderer::SkyboxMode>(data.mode));
+		renderer.set_skybox_mode(static_cast<graphics::Renderer::SkyboxMode>(data.mode));
 
 		f32 exp = data.exposure;
 		

@@ -1,0 +1,66 @@
+// Procedural gradient skybox — Metal port of skybox.hlsl (sky/horizon/ground gradient + sun disc + glow).
+#include <metal_stdlib>
+using namespace metal;
+
+struct SkyboxConstants
+{
+    float4x4 inverse_view_projection;
+    packed_float3 camera_position; float padding0;
+    packed_float3 sky_color;       float padding1;
+    packed_float3 horizon_color;   float padding2;
+    packed_float3 ground_color;    float padding3;
+    packed_float3 sun_direction;   float sun_intensity;
+    packed_float3 sun_color;       float padding4;
+};
+
+struct SkyOut
+{
+    float4 pos [[position]];
+    float3 world_dir;
+};
+
+vertex SkyOut SkyVS(uint id [[vertex_id]], constant SkyboxConstants& c [[buffer(0)]])
+{
+    SkyOut o;
+    float2 uv = float2((id << 1) & 2, id & 2);
+    o.pos = float4(uv * 2.0 - 1.0, 1.0, 1.0);
+    o.pos.y = -o.pos.y;
+    float4 clip = float4(uv * 2.0 - 1.0, 1.0, 1.0);
+    clip.y = -clip.y;
+    float4 world = c.inverse_view_projection * clip;
+    o.world_dir = world.xyz / world.w - float3(c.camera_position);
+    return o;
+}
+
+fragment float4 SkyPS(SkyOut in [[stage_in]], constant SkyboxConstants& c [[buffer(0)]])
+{
+    float3 dir = normalize(in.world_dir);
+    float y = dir.y;
+    float3 color;
+    if (y > 0.0)
+    {
+        float t = pow(y, 0.4);
+        color = mix(float3(c.horizon_color), float3(c.sky_color), t);
+    }
+    else
+    {
+        float t = pow(-y, 0.7);
+        color = mix(float3(c.horizon_color), float3(c.ground_color), t);
+    }
+
+    if (c.sun_intensity > 0.001)
+    {
+        float3 sun_dir = normalize(-float3(c.sun_direction));
+        float sun_dot = dot(dir, sun_dir);
+        float sun_disc = smoothstep(0.9995, 0.9999, sun_dot);
+        color += float3(c.sun_color) * sun_disc * c.sun_intensity * 10.0;
+        float sun_glow = pow(max(sun_dot, 0.0), 256.0);
+        color += float3(c.sun_color) * sun_glow * c.sun_intensity * 0.5;
+        float horizon_glow = pow(1.0 - abs(y), 4.0) * pow(max(sun_dot, 0.0), 2.0);
+        color += float3(c.sun_color) * horizon_glow * c.sun_intensity * 0.3;
+    }
+
+    float noise = fract(sin(dot(dir.xz, float2(12.9898, 78.233))) * 43758.5453);
+    color += (noise - 0.5) * 0.01;
+    return float4(color, 1.0);
+}

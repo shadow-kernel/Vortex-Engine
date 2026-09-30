@@ -1,0 +1,10 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    { "label": "native: build (macos-debug)", "type": "shell", "command": "cmake --preset macos-debug && cmake --build --preset macos-debug", "problemMatcher": ["$gcc"], "group": "build" },
+    { "label": "managed: build (Debug)", "type": "shell", "command": "dotnet build Managed/Vortex.Managed.slnx -c Debug -nologo", "options": { "env": { "DOTNET_ROOT": "/opt/homebrew/opt/dotnet/libexec", "PATH": "/opt/homebrew/opt/dotnet/libexec:/opt/homebrew/bin:${env:PATH}" } }, "problemMatcher": "$msCompile", "group": { "kind": "build", "isDefault": true } },
+    { "label": "build all", "dependsOrder": "sequence", "dependsOn": ["native: build (macos-debug)", "managed: build (Debug)"], "problemMatcher": [] },
+    { "label": "app: build + install .app", "type": "shell", "command": "tools/macos/make-app.sh --install", "problemMatcher": [] },
+    { "label": "test: smoke runs", "type": "shell", "command": "tools/macos/dev.sh test", "problemMatcher": [] }
+  ]
+}

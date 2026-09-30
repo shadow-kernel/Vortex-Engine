@@ -1,10 +1,14 @@
 ﻿using System;
+#if !VORTEX_CORE
 using System.CodeDom.Compiler;
+#endif
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+#if !VORTEX_CORE
 using System.Windows.Input;
+#endif
 using Editor.Core.Data;
 using Editor.Core.Services;
 using Editor.ECS;
@@ -150,6 +154,12 @@ namespace Editor.Scripting
                 else Editor.Core.Services.Physics.CollisionService.RemoveEntityShapes(e);
             }
             catch { }
+            try
+            {
+                if (active) Editor.Core.Services.Physics.PhysicsService.AddEntity(e);
+                else Editor.Core.Services.Physics.PhysicsService.RemoveEntity(e);
+            }
+            catch { }
             if (!active)
             {
                 try { StopAudioRecursive(e); } catch { }
@@ -189,6 +199,9 @@ namespace Editor.Scripting
                 SetColliderFlagRecursive(e, enabled);
                 Editor.Core.Services.Physics.CollisionService.RemoveEntityShapes(e);
                 if (enabled && e.IsActive) Editor.Core.Services.Physics.CollisionService.AddEntityShapes(e);
+                // Rigid bodies follow the collider flags too (a disabled collider = no body).
+                Editor.Core.Services.Physics.PhysicsService.RemoveEntity(e);
+                if (enabled && e.IsActive) Editor.Core.Services.Physics.PhysicsService.AddEntity(e);
             }
             catch { return false; }
             return true;
@@ -471,6 +484,7 @@ namespace Editor.Scripting
             try { ent.SyncEngineStateRecursive(true); } catch { }
             Editor.Core.Services.SceneRenderService.RuntimeDirty = true;
             try { Editor.Core.Services.Physics.CollisionService.AddEntityShapes(ent); } catch { }
+            try { Editor.Core.Services.Physics.PhysicsService.AddEntity(ent); } catch { }   // spawned crates/barrels simulate at once
 
             // Its Script components come alive immediately — a spawned monster thinks from THIS frame.
             if (_scriptAsm != null)
@@ -521,6 +535,7 @@ namespace Editor.Scripting
                 }
                 try { weapon.SyncEngineStateRecursive(true); } catch { }
                 try { Editor.Core.Services.Physics.CollisionService.AddEntityShapes(weapon); } catch { }
+                try { Editor.Core.Services.Physics.PhysicsService.AddEntity(weapon); } catch { }
                 // Attach the spawned weapon to the bone (target = the socket's resolved skeletal owner). It keeps
                 // its own scale; the socket pass drives it every frame after animation.
                 // Resolve the skeletal target the weapon attaches to. Normally the nearest ancestor with an
@@ -612,6 +627,7 @@ namespace Editor.Scripting
             }
 
             try { Editor.Core.Services.Physics.CollisionService.RemoveEntityShapes(e); } catch { }
+            try { Editor.Core.Services.Physics.PhysicsService.RemoveEntity(e); } catch { }
             try { e.SyncEngineStateRecursive(false); } catch { }
 
             // Detach from the live tree. Authored entities are LEDGERED and restored on play end;
@@ -733,6 +749,11 @@ namespace Editor.Scripting
             try { ExpandSocketPrefabs(scene); } catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[socket] expand failed: " + ex); }
 
             try { Editor.Core.Services.Physics.CollisionService.Build(scene); } catch { } // build the collision world for this scene
+            // Physics v2 (#100): rigid bodies for every collider/Rigidbody, built AFTER the static world so dynamic
+            // props leave it again; contacts come back through OnPhysicsContact -> the usual script callbacks.
+            Editor.Core.Services.Physics.PhysicsService.ContactHandler = OnPhysicsContact;
+            try { Editor.Core.Services.Physics.PhysicsService.Build(scene); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] physics build failed: " + ex.Message); }
 
             _entitiesById.Clear();
             _behavioursByHandle.Clear();
@@ -803,6 +824,11 @@ namespace Editor.Scripting
                 catch (Exception ex) { LogScriptError("UI Update", b, ex); }
             }
 
+            // Rigid-body physics (#100) steps AFTER the behaviours' Update (forces/impulses/kinematic moves of this
+            // frame are in) and BEFORE LateUpdate/animation, so a viewmodel or camera in LateUpdate reads final poses.
+            try { Editor.Core.Services.Physics.PhysicsService.Step(dt); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] physics step error: " + ex.Message); }
+
             // LateUpdate pass — runs AFTER every behaviour's Update() this frame. A first-person VIEWMODEL that
             // follows the camera MUST position itself here, not in Update: otherwise, depending on script
             // registration order, it can read last-frame's camera state and lag a frame behind → visible jitter
@@ -825,6 +851,7 @@ namespace Editor.Scripting
 
             // Debug draw + dev console (#42): re-submit live wire shapes, then the console overlay on top.
             SubmitDebugShapes(dt);
+            try { Editor.Core.Services.Physics.PhysicsService.SubmitDebugDraw(); } catch { }   // View ▸ Physics Debug (#106)
             RenderDebugConsole();
 
             // Skeletal animation: advance every Animator AFTER behaviours ran, so a same-frame
@@ -893,6 +920,34 @@ namespace Editor.Scripting
                 var hit = new Vortex.TriggerHit(ownerBeh?.EntityId ?? 0, owner.Name, EntityTag(owner));
                 Invoke(charBeh, kind, hit);
             }
+        }
+
+        /// <summary>Physics v2 (#100): a contact between two simulated bodies. Delivered through the SAME callbacks
+        /// the character contacts use — OnCollisionEnter for a solid first touch, OnTriggerEnter/Stay/Exit for
+        /// sensor overlaps — on BOTH entities' behaviours, each seeing the other as the TriggerHit. The player
+        /// character is not a physics body, so nothing here duplicates what CollisionService.StepEvents reports.</summary>
+        private void OnPhysicsContact(Editor.Core.Services.Physics.PhysicsContactEvent c)
+        {
+            if (!_active || c.EntityA == null || c.EntityB == null) return;
+            EvKind kind;
+            if (c.IsTrigger)
+            {
+                switch (c.Kind)
+                {
+                    case Editor.Core.Services.Physics.PhysicsContactKind.Added: kind = EvKind.Enter; break;
+                    case Editor.Core.Services.Physics.PhysicsContactKind.Removed: kind = EvKind.Exit; break;
+                    default: kind = EvKind.Stay; break;
+                }
+            }
+            else
+            {
+                if (c.Kind != Editor.Core.Services.Physics.PhysicsContactKind.Added) return;
+                kind = EvKind.Collision;
+            }
+            _behavioursByEntity.TryGetValue(c.EntityA, out var behA);
+            _behavioursByEntity.TryGetValue(c.EntityB, out var behB);
+            if (behA != null) Invoke(behA, kind, new Vortex.TriggerHit(HandleForEntity(c.EntityB), c.EntityB.Name, EntityTag(c.EntityB)));
+            if (behB != null) Invoke(behB, kind, new Vortex.TriggerHit(HandleForEntity(c.EntityA), c.EntityA.Name, EntityTag(c.EntityA)));
         }
 
         private static string EntityTag(GameEntity e)
@@ -1041,6 +1096,7 @@ namespace Editor.Scripting
             _behavioursByHandle.Clear();
             _behavioursByEntity.Clear();
             try { Editor.Core.Services.Physics.CollisionService.ResetEvents(); Editor.Core.Services.Physics.CollisionService.ClearCharacters(); } catch { }
+            try { Editor.Core.Services.Physics.PhysicsService.Clear(); Editor.Core.Services.Physics.PhysicsService.ContactHandler = null; } catch { }
             try { Editor.Core.Animation.AnimationService.Instance.ResetStates(); } catch { }
             try { Editor.Core.Animation.BoneSocketService.Instance.ResetRuntime(); } catch { }
             try { Editor.Core.Services.CameraFXService.Instance.Reset(); } catch { }
@@ -1331,6 +1387,10 @@ namespace Editor.Scripting
                 .ToArray();
             if (files.Length == 0) return null;
 
+#if VORTEX_CORE
+            // Shared core (modern .NET): Roslyn compiles the scripts in-process into a collectible load context.
+            return Editor.Scripting.RoslynScriptCompiler.Compile(files, out log);
+#else
             try
             {
                 using (var provider = new Microsoft.CSharp.CSharpCodeProvider())
@@ -1365,6 +1425,7 @@ namespace Editor.Scripting
                 log = "Script compile exception: " + ex.Message;
                 return null;
             }
+#endif
         }
 
         // ---- IScriptHost (behaviours act on the live game through these; transforms go through the C#
@@ -1400,6 +1461,22 @@ namespace Editor.Scripting
         {
             if (_entitiesById.TryGetValue(entityId, out var e) && e.Transform != null)
                 e.Transform.LocalRotation = new ECS.Vector3(eulerDegrees.X, eulerDegrees.Y, eulerDegrees.Z);
+        }
+
+        Vortex.Vector3 Vortex.IScriptHost.GetScale(long entityId)
+        {
+            if (_entitiesById.TryGetValue(entityId, out var e) && e.Transform != null)
+            {
+                var s = e.Transform.LocalScale;
+                return new Vortex.Vector3(s.X, s.Y, s.Z);
+            }
+            return Vortex.Vector3.One;
+        }
+
+        void Vortex.IScriptHost.SetScale(long entityId, Vortex.Vector3 scale)
+        {
+            if (_entitiesById.TryGetValue(entityId, out var e) && e.Transform != null)
+                e.Transform.LocalScale = new ECS.Vector3(scale.X, scale.Y, scale.Z);
         }
 
         /// <summary>WORLD-space pose write, parent-safe: desired = R(euler) + T(pos), converted into the
@@ -1556,6 +1633,52 @@ namespace Editor.Scripting
                 Editor.Core.Animation.AnimationService.Instance.ClearBoneOverrides(e);
         }
 
+        void Vortex.IScriptHost.SetBoneHidden(long entityId, string bone, bool hidden, bool includeDescendants)
+        {
+            if (_entitiesById.TryGetValue(entityId, out var e))
+                Editor.Core.Animation.AnimationService.Instance.SetBoneHidden(e, bone, hidden, includeDescendants);
+        }
+
+        void Vortex.IScriptHost.SetIkWorldTarget(long entityId, string tipBone, Vortex.Vector3 worldPos, Vortex.Vector3 worldRotEuler, bool hasRotation)
+        {
+            if (!_entitiesById.TryGetValue(entityId, out var e)) return;
+            System.Numerics.Quaternion? rot = null;
+            if (hasRotation)
+            {
+                var m = Editor.Core.Animation.BoneSocketService.EulerZXY(new System.Numerics.Vector3(worldRotEuler.X, worldRotEuler.Y, worldRotEuler.Z));
+                rot = System.Numerics.Quaternion.CreateFromRotationMatrix(m);
+            }
+            Editor.Core.Animation.AnimationService.Instance.SetIkWorldTarget(e, tipBone,
+                new System.Numerics.Vector3(worldPos.X, worldPos.Y, worldPos.Z), rot);
+        }
+
+        void Vortex.IScriptHost.ClearIkWorldTarget(long entityId, string tipBone)
+        {
+            if (_entitiesById.TryGetValue(entityId, out var e))
+                Editor.Core.Animation.AnimationService.Instance.ClearIkWorldTarget(e, tipBone);
+        }
+
+        void Vortex.IScriptHost.SetIkPoleAngle(long entityId, string tipBone, float degrees)
+        {
+            if (!_entitiesById.TryGetValue(entityId, out var e)) return;
+            var comps = e.Components;
+            for (int i = 0; i < comps.Count; i++)
+                if (comps[i] is Editor.ECS.Components.Animation.TwoBoneIk ik &&
+                    (string.IsNullOrEmpty(tipBone) || string.Equals(ik.TipBone, tipBone, StringComparison.OrdinalIgnoreCase)))
+                    ik.PoleAngle = degrees;   // setter re-syncs the runtime chain via AnimationService.RefreshIk
+        }
+
+        bool Vortex.IScriptHost.TryGetEntityWorldPose(long entityId, out Vortex.Vector3 position, out Vortex.Vector3 rotationEulerDeg)
+        {
+            position = Vortex.Vector3.Zero; rotationEulerDeg = Vortex.Vector3.Zero;
+            if (!_entitiesById.TryGetValue(entityId, out var e) || e.Transform == null) return false;
+            var w = Editor.Core.Animation.BoneSocketService.EntityWorld(e);
+            var euler = Editor.Core.Animation.BoneSocketService.ToEulerZXY(Editor.Core.Animation.BoneSocketService.NormalizeBasis(w));
+            position = new Vortex.Vector3(w.Translation.X, w.Translation.Y, w.Translation.Z);
+            rotationEulerDeg = new Vortex.Vector3(euler.X, euler.Y, euler.Z);
+            return true;
+        }
+
         void Vortex.IScriptHost.SetRenderLayer(long entityId, int layer)
         {
             if (layer < 0 || layer > 2) return;
@@ -1667,8 +1790,10 @@ namespace Editor.Scripting
             return result;
         }
 
+#if !VORTEX_CORE
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         private static extern short GetAsyncKeyState(int vKey);
+#endif
 
         // --- deferred scene-switch request (set by a script via Vortex.Scene.Load; applied by the driver) ---
         private string _pendingScene;
@@ -1793,6 +1918,55 @@ namespace Editor.Scripting
             return Editor.Core.Services.Physics.CollisionService.RaycastDownStepSound(o, maxDist, out hit, out step) ? (step ?? "") : "";
         }
 
+        // ---- Rigid-body physics (#100): script handle -> entity -> PhysicsService (no-ops without Jolt) ----
+
+        private static Editor.ECS.Vector3 E(Vortex.Vector3 v) => new Editor.ECS.Vector3(v.X, v.Y, v.Z);
+        private static Vortex.Vector3 S(Editor.ECS.Vector3 v) => new Vortex.Vector3(v.X, v.Y, v.Z);
+
+        bool Vortex.IScriptHost.PhysicsAddForce(long entityId, Vortex.Vector3 force)
+            => Editor.Core.Services.Physics.PhysicsService.AddForce(FindEntityByHandle(entityId), E(force));
+        bool Vortex.IScriptHost.PhysicsAddForceAtPoint(long entityId, Vortex.Vector3 force, Vortex.Vector3 worldPoint)
+            => Editor.Core.Services.Physics.PhysicsService.AddForceAtPoint(FindEntityByHandle(entityId), E(force), E(worldPoint));
+        bool Vortex.IScriptHost.PhysicsAddImpulse(long entityId, Vortex.Vector3 impulse)
+            => Editor.Core.Services.Physics.PhysicsService.AddImpulse(FindEntityByHandle(entityId), E(impulse));
+        bool Vortex.IScriptHost.PhysicsAddImpulseAtPoint(long entityId, Vortex.Vector3 impulse, Vortex.Vector3 worldPoint)
+            => Editor.Core.Services.Physics.PhysicsService.AddImpulseAtPoint(FindEntityByHandle(entityId), E(impulse), E(worldPoint));
+        bool Vortex.IScriptHost.PhysicsAddTorque(long entityId, Vortex.Vector3 torque)
+            => Editor.Core.Services.Physics.PhysicsService.AddTorque(FindEntityByHandle(entityId), E(torque));
+        bool Vortex.IScriptHost.PhysicsSetVelocity(long entityId, Vortex.Vector3 velocity)
+            => Editor.Core.Services.Physics.PhysicsService.SetVelocity(FindEntityByHandle(entityId), E(velocity));
+        Vortex.Vector3 Vortex.IScriptHost.PhysicsGetVelocity(long entityId)
+            => S(Editor.Core.Services.Physics.PhysicsService.GetVelocity(FindEntityByHandle(entityId)));
+        bool Vortex.IScriptHost.PhysicsSetAngularVelocity(long entityId, Vortex.Vector3 velocity)
+            => Editor.Core.Services.Physics.PhysicsService.SetAngularVelocity(FindEntityByHandle(entityId), E(velocity));
+        Vortex.Vector3 Vortex.IScriptHost.PhysicsGetAngularVelocity(long entityId)
+            => S(Editor.Core.Services.Physics.PhysicsService.GetAngularVelocity(FindEntityByHandle(entityId)));
+        bool Vortex.IScriptHost.PhysicsSetKinematic(long entityId, bool kinematic)
+            => Editor.Core.Services.Physics.PhysicsService.SetKinematic(FindEntityByHandle(entityId), kinematic);
+        bool Vortex.IScriptHost.PhysicsWakeUp(long entityId)
+            => Editor.Core.Services.Physics.PhysicsService.WakeUp(FindEntityByHandle(entityId));
+        bool Vortex.IScriptHost.PhysicsIsSleeping(long entityId)
+            => Editor.Core.Services.Physics.PhysicsService.IsSleeping(FindEntityByHandle(entityId));
+        void Vortex.IScriptHost.PhysicsSetGravity(Vortex.Vector3 gravity)
+            => Editor.Core.Services.Physics.PhysicsService.Gravity = E(gravity);
+        long[] Vortex.IScriptHost.PhysicsOverlapSphere(Vortex.Vector3 center, float radius)
+        {
+            var hits = Editor.Core.Services.Physics.PhysicsService.OverlapSphere(E(center), radius);
+            var result = new long[hits.Count];
+            for (int i = 0; i < hits.Count; i++) result[i] = HandleForEntity(hits[i]);
+            return result;
+        }
+        bool Vortex.IScriptHost.PhysicsHasRigidbody(long entityId)
+        {
+            var e = FindEntityByHandle(entityId);
+            if (e == null) return false;
+            if (Editor.Core.Services.Physics.PhysicsService.IsBuilt) return Editor.Core.Services.Physics.PhysicsService.HasRigidbody(e);
+            var rb = e.GetComponent<Editor.ECS.Components.Physics.Rigidbody>();   // stub build: answer from the component
+            return rb != null && rb.IsEnabled && rb.BodyType != Editor.ECS.Components.Physics.RigidbodyType.Static;
+        }
+        float Vortex.IScriptHost.PhysicsGetMass(long entityId)
+            => Editor.Core.Services.Physics.PhysicsService.GetMass(FindEntityByHandle(entityId));
+
         /// <summary>Debug freecam owns the input: when the engine's debug free-fly camera is flying (editor play,
         /// debug builds only), gameplay keys are suppressed so WASD flies the camera instead of the player. Holding
         /// RMB clears it so control passes back to the player while the freecam watches.</summary>
@@ -1815,6 +1989,14 @@ namespace Editor.Scripting
             if (key == "LButton" || key == "Mouse0" || key == "LeftMouse") mvk = 0x01;
             else if (key == "RButton" || key == "Mouse1" || key == "RightMouse") mvk = 0x02;
             else if (key == "MButton" || key == "Mouse2" || key == "MiddleMouse") mvk = 0x04;
+#if VORTEX_CORE
+            // Shared core: the host (native GameHost / editor shell) answers physical key state; key names are
+            // the WPF Key enum names the scripts were written against, mapped to virtual-key codes.
+            if (mvk != 0) return Editor.Core.Input.HostInput.IsKeyDown(mvk);
+            int vk = Editor.Core.Input.KeyNames.VirtualKeyFromName(key);
+            if (vk == 0) return false;
+            return Editor.Core.Input.HostInput.IsKeyDown(vk);
+#else
             if (mvk != 0) return (GetAsyncKeyState(mvk) & 0x8000) != 0;
             if (!Enum.TryParse(key, true, out Key k)) return false;
             // Use the global physical key state (not WPF Keyboard.IsKeyDown): while playing, focus is on
@@ -1824,6 +2006,7 @@ namespace Editor.Scripting
             int vk = KeyInterop.VirtualKeyFromKey(k);
             if (vk == 0) return false;
             return (GetAsyncKeyState(vk) & 0x8000) != 0;
+#endif
         }
     }
 }

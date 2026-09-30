@@ -19,6 +19,8 @@ namespace vortex::runtime
 
         // Create the window + swapchain and run the loop until the window closes or request_exit(). Blocks.
         static bool run(uint32_t width, uint32_t height, const wchar_t* title);
+        // Same, with a UTF-8 title (the portable entry point; wchar_t is 32-bit on macOS).
+        static bool run_utf8(uint32_t width, uint32_t height, const char* title_utf8);
         static void request_exit();
         static void set_tick_callback(tick_fn fn);
         static void set_vsync(bool enabled);
@@ -38,6 +40,8 @@ namespace vortex::runtime
         static int  mouse_wheel();
         // True ONCE after the game window regains focus (Alt-Tab back) — the host uses it to hot-reload changed scripts.
         static bool consume_focus_gained();
+        // True while the game window is the focused window (all input is gated on it).
+        static bool has_focus();
         static int  next_char();
         static int  next_key_pressed();
 

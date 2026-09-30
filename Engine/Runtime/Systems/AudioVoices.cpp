@@ -10,10 +10,14 @@
 #include <mutex>
 #include <vector>
 
+#ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable: 4244 4245 4456 4457 4701 4267 4100 4189)
+#endif
 #include "../../ThirdParty/miniaudio.h"
+#ifdef _MSC_VER
 #pragma warning(pop)
+#endif
 
 namespace vortex::runtime::audio {
 
@@ -347,9 +351,13 @@ namespace vortex::runtime::audio {
 		}
 		else
 		{
+#if VORTEX_PLATFORM_WINDOWS
 			wchar_t wide[1024];
 			if (!internal_widen_path(path, wide, 1024)) return invalid_voice;
 			result = ma_sound_init_from_file_w(engine, wide, flags, group, nullptr, &target->sound);
+#else
+			result = ma_sound_init_from_file(engine, path, flags, group, nullptr, &target->sound);
+#endif
 		}
 		if (result != MA_SUCCESS)
 		{

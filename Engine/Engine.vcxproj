@@ -20,6 +20,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Common\CommonHeaders.h" />
+    <ClInclude Include="Common\Platform.h" />
     <ClInclude Include="Common\PrimitiveTypes.h" />
     <ClInclude Include="Common\VerboseLog.h" />
     <ClInclude Include="Common\VortexAssert.h" />
@@ -68,6 +69,7 @@
     <ClInclude Include="Graphics\Resources\Texture.h" />
     <ClInclude Include="Input\InputSystem.h" />
     <ClInclude Include="Input\InputTypes.h" />
+    <ClInclude Include="Physics\PhysicsWorld.h" />
     <ClInclude Include="Runtime\AssetDatabase.h" />
     <ClInclude Include="Runtime\AssetManifest.h" />
     <ClInclude Include="Runtime\GameHost.h" />
@@ -97,6 +99,7 @@
     <ClInclude Include="Components\Entity.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="Common\Platform.cpp" />
     <ClCompile Include="Components\Camera.cpp" />
     <ClCompile Include="Components\Entity.cpp" />
     <ClCompile Include="Components\MeshRenderer.cpp" />
@@ -149,6 +152,7 @@
     <ClCompile Include="Graphics\Resources\ResourceRegistry_Lod.cpp" />
     <ClCompile Include="Graphics\Resources\Texture.cpp" />
     <ClCompile Include="Input\InputSystem.cpp" />
+    <ClCompile Include="Physics\PhysicsWorld.cpp" />
     <ClCompile Include="Runtime\AssetDatabase.cpp" />
     <ClCompile Include="Runtime\AssetManifest.cpp" />
     <ClCompile Include="Runtime\GameHost.cpp" />

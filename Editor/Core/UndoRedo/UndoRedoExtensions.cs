@@ -1,20 +1,20 @@
-using System;
+ï»¿using System;
 using Editor.Core.UndoRedo.Commands;
 
 namespace Editor.Core.UndoRedo
 {
     /// <summary>
-    /// Extension-Methoden für einfache Undo/Redo Integration.
+    /// Extension-Methoden fÃ¼r einfache Undo/Redo Integration.
     /// </summary>
     public static class UndoRedoExtensions
     {
         /// <summary>
-        /// Führt eine Aktion mit Undo-Support aus.
+        /// FÃ¼hrt eine Aktion mit Undo-Support aus.
         /// </summary>
         /// <param name="manager">Der UndoRedoManager.</param>
         /// <param name="name">Name der Aktion.</param>
-        /// <param name="doAction">Action für Execute/Redo.</param>
-        /// <param name="undoAction">Action für Undo.</param>
+        /// <param name="doAction">Action fÃ¼r Execute/Redo.</param>
+        /// <param name="undoAction">Action fÃ¼r Undo.</param>
         public static void ExecuteAction(this UndoRedoManager manager, string name, Action doAction, Action undoAction)
         {
             var command = new ActionCommand(name, doAction, undoAction);
@@ -22,7 +22,7 @@ namespace Editor.Core.UndoRedo
         }
 
         /// <summary>
-        /// Ändert eine Property mit Undo-Support.
+        /// Ã„ndert eine Property mit Undo-Support.
         /// </summary>
         /// <typeparam name="T">Typ der Property.</typeparam>
         /// <param name="manager">Der UndoRedoManager.</param>
@@ -42,12 +42,12 @@ namespace Editor.Core.UndoRedo
         }
 
         /// <summary>
-        /// Fügt ein Element zu einer Liste mit Undo-Support hinzu.
+        /// FÃ¼gt ein Element zu einer Liste mit Undo-Support hinzu.
         /// </summary>
         /// <typeparam name="T">Typ des Elements.</typeparam>
         /// <param name="manager">Der UndoRedoManager.</param>
         /// <param name="collection">Die Ziel-Collection.</param>
-        /// <param name="item">Das hinzuzufügende Element.</param>
+        /// <param name="item">Das hinzuzufÃ¼gende Element.</param>
         /// <param name="collectionName">Name der Collection.</param>
         public static void AddToCollection<T>(this UndoRedoManager manager, System.Collections.Generic.IList<T> collection, 
             T item, string collectionName = "Collection")

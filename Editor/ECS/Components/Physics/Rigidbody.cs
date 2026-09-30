@@ -1,4 +1,4 @@
-using System.Runtime.Serialization;
+ï»¿using System.Runtime.Serialization;
 
 namespace Editor.ECS.Components.Physics
 {
@@ -13,7 +13,7 @@ namespace Editor.ECS.Components.Physics
     }
 
     /// <summary>
-    /// Interpolation für Rigidbody
+    /// Interpolation fÃ¼r Rigidbody
     /// </summary>
     public enum RigidbodyInterpolation
     {
@@ -34,7 +34,7 @@ namespace Editor.ECS.Components.Physics
     }
 
     /// <summary>
-    /// Rigidbody-Komponente für Physik-Simulation.
+    /// Rigidbody-Komponente fÃ¼r Physik-Simulation.
     /// </summary>
     [DataContract(Name = "Rigidbody", Namespace = "")]
     public class Rigidbody : Component

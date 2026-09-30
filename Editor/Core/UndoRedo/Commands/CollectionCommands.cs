@@ -1,11 +1,11 @@
-using System;
+ï»¿using System;
 using System.Collections;
 using System.Collections.Generic;
 
 namespace Editor.Core.UndoRedo.Commands
 {
     /// <summary>
-    /// Befehl für das Hinzufügen eines Elements zu einer Collection.
+    /// Befehl fÃ¼r das HinzufÃ¼gen eines Elements zu einer Collection.
     /// </summary>
     /// <typeparam name="T">Typ des Elements.</typeparam>
     public class CollectionAddCommand<T> : UndoableCommandBase
@@ -21,8 +21,8 @@ namespace Editor.Core.UndoRedo.Commands
         /// Erstellt einen neuen CollectionAddCommand.
         /// </summary>
         /// <param name="collection">Die Ziel-Collection.</param>
-        /// <param name="item">Das hinzuzufügende Element.</param>
-        /// <param name="collectionName">Name der Collection für Anzeige.</param>
+        /// <param name="item">Das hinzuzufÃ¼gende Element.</param>
+        /// <param name="collectionName">Name der Collection fÃ¼r Anzeige.</param>
         public CollectionAddCommand(IList<T> collection, T item, string collectionName = "Collection")
         {
             _collection = collection ?? throw new ArgumentNullException(nameof(collection));
@@ -50,7 +50,7 @@ namespace Editor.Core.UndoRedo.Commands
     }
 
     /// <summary>
-    /// Befehl für das Entfernen eines Elements aus einer Collection.
+    /// Befehl fÃ¼r das Entfernen eines Elements aus einer Collection.
     /// </summary>
     /// <typeparam name="T">Typ des Elements.</typeparam>
     public class CollectionRemoveCommand<T> : UndoableCommandBase
@@ -67,7 +67,7 @@ namespace Editor.Core.UndoRedo.Commands
         /// </summary>
         /// <param name="collection">Die Ziel-Collection.</param>
         /// <param name="item">Das zu entfernende Element.</param>
-        /// <param name="collectionName">Name der Collection für Anzeige.</param>
+        /// <param name="collectionName">Name der Collection fÃ¼r Anzeige.</param>
         public CollectionRemoveCommand(IList<T> collection, T item, string collectionName = "Collection")
         {
             _collection = collection ?? throw new ArgumentNullException(nameof(collection));
@@ -98,7 +98,7 @@ namespace Editor.Core.UndoRedo.Commands
     }
 
     /// <summary>
-    /// Befehl für das Verschieben eines Elements in einer Collection.
+    /// Befehl fÃ¼r das Verschieben eines Elements in einer Collection.
     /// </summary>
     /// <typeparam name="T">Typ des Elements.</typeparam>
     public class CollectionMoveCommand<T> : UndoableCommandBase
@@ -116,7 +116,7 @@ namespace Editor.Core.UndoRedo.Commands
         /// <param name="collection">Die Ziel-Collection.</param>
         /// <param name="oldIndex">Alter Index des Elements.</param>
         /// <param name="newIndex">Neuer Index des Elements.</param>
-        /// <param name="collectionName">Name der Collection für Anzeige.</param>
+        /// <param name="collectionName">Name der Collection fÃ¼r Anzeige.</param>
         public CollectionMoveCommand(IList<T> collection, int oldIndex, int newIndex, string collectionName = "Collection")
         {
             _collection = collection ?? throw new ArgumentNullException(nameof(collection));

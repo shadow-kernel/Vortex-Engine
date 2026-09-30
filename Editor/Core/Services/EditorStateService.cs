@@ -1,4 +1,4 @@
-using System;
+ï»¿using System;
 using System.IO;
 using System.Runtime.Serialization;
 using Editor.Core.Serialization;
@@ -6,7 +6,7 @@ using Editor.Core.Serialization;
 namespace Editor.Core.Services
 {
     /// <summary>
-    /// Speichert und lädt den Editor-Zustand aus dem Roaming AppData-Ordner.
+    /// Speichert und lÃ¤dt den Editor-Zustand aus dem Roaming AppData-Ordner.
     /// </summary>
     public sealed class EditorStateService
     {
@@ -19,7 +19,7 @@ namespace Editor.Core.Services
         private EditorStateService()
         {
             var appDataPath = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                Editor.Core.Services.EditorPaths.AppDataRoot(),
                 "VortexEngine"
             );
             
@@ -33,17 +33,17 @@ namespace Editor.Core.Services
         }
 
         /// <summary>
-        /// Gibt den Pfad des zuletzt geöffneten Projekts zurück, oder null wenn keins gespeichert ist.
+        /// Gibt den Pfad des zuletzt geÃ¶ffneten Projekts zurÃ¼ck, oder null wenn keins gespeichert ist.
         /// </summary>
         public string LastProjectPath => _currentState?.LastProjectPath;
 
         /// <summary>
-        /// Gibt die ID des zuletzt geöffneten Projekts zurück.
+        /// Gibt die ID des zuletzt geÃ¶ffneten Projekts zurÃ¼ck.
         /// </summary>
         public Guid? LastProjectId => _currentState?.LastProjectId;
 
         /// <summary>
-        /// Speichert das aktuelle Projekt als letztes geöffnetes Projekt.
+        /// Speichert das aktuelle Projekt als letztes geÃ¶ffnetes Projekt.
         /// </summary>
         public void SetLastProject(Guid projectId, string projectPath)
         {
@@ -56,8 +56,8 @@ namespace Editor.Core.Services
         }
 
         /// <summary>
-        /// Löscht die Information über das letzte Projekt.
-        /// Wird beim Schließen eines Projekts aufgerufen.
+        /// LÃ¶scht die Information Ã¼ber das letzte Projekt.
+        /// Wird beim SchlieÃŸen eines Projekts aufgerufen.
         /// </summary>
         public void ClearLastProject()
         {
@@ -66,7 +66,7 @@ namespace Editor.Core.Services
         }
 
         /// <summary>
-        /// Prüft ob das gespeicherte Projekt noch existiert.
+        /// PrÃ¼ft ob das gespeicherte Projekt noch existiert.
         /// </summary>
         public bool IsLastProjectValid()
         {
@@ -116,7 +116,7 @@ namespace Editor.Core.Services
     }
 
     /// <summary>
-    /// Repräsentiert den persistierten Editor-Zustand.
+    /// ReprÃ¤sentiert den persistierten Editor-Zustand.
     /// </summary>
     [DataContract(Name = "EditorState", Namespace = "")]
     internal class EditorState

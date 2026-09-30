@@ -1,10 +1,10 @@
-using System;
+ï»¿using System;
 
 namespace Editor.Core.UndoRedo.Commands
 {
     /// <summary>
     /// Einfacher Befehl mit Execute und Undo Actions.
-    /// Für schnelle Implementierungen ohne eigene Klasse.
+    /// FÃ¼r schnelle Implementierungen ohne eigene Klasse.
     /// </summary>
     public class ActionCommand : UndoableCommandBase
     {
@@ -18,8 +18,8 @@ namespace Editor.Core.UndoRedo.Commands
         /// Erstellt einen neuen ActionCommand.
         /// </summary>
         /// <param name="name">Anzeigename des Befehls.</param>
-        /// <param name="executeAction">Action für Execute/Redo.</param>
-        /// <param name="undoAction">Action für Undo.</param>
+        /// <param name="executeAction">Action fÃ¼r Execute/Redo.</param>
+        /// <param name="undoAction">Action fÃ¼r Undo.</param>
         public ActionCommand(string name, Action executeAction, Action undoAction)
         {
             _name = name ?? throw new ArgumentNullException(nameof(name));

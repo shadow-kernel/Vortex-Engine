@@ -1,0 +1,31 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:c="clr-namespace:VortexEditor.Controls"
+             xmlns:fx="clr-namespace:Editor.Editors.WorldEditor.Components.FileExplorer.Models;assembly=Vortex.Core"
+             x:Class="VortexEditor.Panels.FileTreePanel">
+  <DockPanel>
+    <Border DockPanel.Dock="Top" Classes="panelheader">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="2">
+          <Button Classes="icon" ToolTip.Tip="New folder" Click="OnNewFolder"><c:VxIcon Icon="Plus"/></Button>
+          <Button Classes="icon" ToolTip.Tip="Reveal in Finder" Click="OnReveal"><c:VxIcon Icon="Folder"/></Button>
+          <Button Classes="icon" ToolTip.Tip="Refresh" Click="OnRefresh"><c:VxIcon Icon="Refresh"/></Button>
+        </StackPanel>
+        <TextBlock Classes="headertitle" Text="Files"/>
+      </DockPanel>
+    </Border>
+    <Grid>
+      <TreeView x:Name="Tree" SelectionChanged="OnSelectionChanged">
+        <TreeView.DataTemplates>
+          <TreeDataTemplate DataType="fx:FileSystemItem" ItemsSource="{Binding Children}">
+            <StackPanel Orientation="Horizontal" Spacing="6" Height="24" Background="Transparent" PointerPressed="OnItemPressed">
+              <c:VxIcon Icon="{Binding Converter={x:Static c:FileIconConverter.Instance}}" Foreground="{Binding Converter={x:Static c:FileIconBrushConverter.Instance}}"/>
+              <TextBlock Text="{Binding Name}" VerticalAlignment="Center"/>
+            </StackPanel>
+          </TreeDataTemplate>
+        </TreeView.DataTemplates>
+      </TreeView>
+      <TextBlock x:Name="EmptyHint" Classes="tertiary" Text="No project open" HorizontalAlignment="Center" VerticalAlignment="Center" IsVisible="False"/>
+    </Grid>
+  </DockPanel>
+</UserControl>

@@ -3,7 +3,7 @@
 EDITOR_INTERFACE void StartRenderLoop()
 {
 	runtime::RenderLoop::instance().start([]() {
-		graphics::dx12::DX12Renderer::instance().render_frame();
+		graphics::Renderer::instance().render_frame();
 	});
 }
 
@@ -30,7 +30,7 @@ EDITOR_INTERFACE int GetTargetFPS()
 EDITOR_INTERFACE void SetRenderLoopVSync(bool enabled)
 {
 	runtime::RenderLoop::instance().set_vsync(enabled);
-	graphics::dx12::DX12Renderer::instance().set_vsync(enabled);
+	graphics::Renderer::instance().set_vsync(enabled);
 }
 
 EDITOR_INTERFACE bool IsRenderLoopVSyncEnabled()

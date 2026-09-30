@@ -185,5 +185,19 @@ namespace Editor.Core.Data
         /// </summary>
         [DataMember(Name = "targetFPS", Order = 6)]
         public int TargetFPS { get; set; } = 60;
+
+        /// <summary>Game version shown to players (bundle version, exe version info). Semver-ish text.</summary>
+        [DataMember(Name = "productVersion", Order = 7)]
+        public string ProductVersion { get; set; } = "1.0.0";
+
+        /// <summary>Project-relative path of the game icon (PNG, square, ideally 1024x1024) used by the exported
+        /// app: macOS .icns, Windows .ico embedded in the exe, Linux .png. Empty = the engine's default logo.</summary>
+        [DataMember(Name = "iconPath", Order = 8)]
+        public string IconPath { get; set; } = "";
+
+        /// <summary>Reverse-DNS identifier for the exported app (macOS CFBundleIdentifier, Linux desktop entry).
+        /// Empty = derived from the company and product names.</summary>
+        [DataMember(Name = "bundleIdentifier", Order = 9)]
+        public string BundleIdentifier { get; set; } = "";
     }
 }

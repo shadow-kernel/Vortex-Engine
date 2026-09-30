@@ -40,6 +40,7 @@
     <ClCompile Include="Api\SkyboxApi.cpp" />
     <ClCompile Include="Api\AnimationApi.cpp" />
     <ClCompile Include="Api\AudioApi.cpp" />
+    <ClCompile Include="Api\PhysicsApi.cpp" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>18.0</VCProjectVersion>

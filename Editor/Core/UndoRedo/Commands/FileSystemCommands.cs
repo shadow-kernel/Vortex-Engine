@@ -1,4 +1,4 @@
-using System;
+ï»¿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -6,8 +6,8 @@ using System.Linq;
 namespace Editor.Core.UndoRedo.Commands
 {
     /// <summary>
-    /// Befehl für das Erstellen einer Datei.
-    /// Löscht die Datei bei Undo.
+    /// Befehl fÃ¼r das Erstellen einer Datei.
+    /// LÃ¶scht die Datei bei Undo.
     /// </summary>
     public class CreateFileCommand : UndoableCommandBase
     {
@@ -20,7 +20,7 @@ namespace Editor.Core.UndoRedo.Commands
         /// <summary>
         /// Erstellt einen neuen CreateFileCommand.
         /// </summary>
-        /// <param name="filePath">Vollständiger Pfad der zu erstellenden Datei.</param>
+        /// <param name="filePath">VollstÃ¤ndiger Pfad der zu erstellenden Datei.</param>
         /// <param name="content">Inhalt der Datei.</param>
         public CreateFileCommand(string filePath, string content = "")
         {
@@ -49,7 +49,7 @@ namespace Editor.Core.UndoRedo.Commands
     }
 
     /// <summary>
-    /// Befehl für das Löschen einer Datei.
+    /// Befehl fÃ¼r das LÃ¶schen einer Datei.
     /// Stellt die Datei bei Undo wieder her.
     /// </summary>
     public class DeleteFileCommand : UndoableCommandBase
@@ -63,7 +63,7 @@ namespace Editor.Core.UndoRedo.Commands
         /// <summary>
         /// Erstellt einen neuen DeleteFileCommand.
         /// </summary>
-        /// <param name="filePath">Vollständiger Pfad der zu löschenden Datei.</param>
+        /// <param name="filePath">VollstÃ¤ndiger Pfad der zu lÃ¶schenden Datei.</param>
         public DeleteFileCommand(string filePath)
         {
             _filePath = filePath ?? throw new ArgumentNullException(nameof(filePath));
@@ -74,7 +74,7 @@ namespace Editor.Core.UndoRedo.Commands
         {
             if (File.Exists(_filePath))
             {
-                // Binäres Backup für alle Dateitypen
+                // BinÃ¤res Backup fÃ¼r alle Dateitypen
                 _backupContent = File.ReadAllBytes(_filePath);
                 File.Delete(_filePath);
             }
@@ -95,8 +95,8 @@ namespace Editor.Core.UndoRedo.Commands
     }
 
     /// <summary>
-    /// Befehl für das Löschen eines Ordners mit allem Inhalt.
-    /// Speichert alle Dateien und Unterordner für Wiederherstellung.
+    /// Befehl fÃ¼r das LÃ¶schen eines Ordners mit allem Inhalt.
+    /// Speichert alle Dateien und Unterordner fÃ¼r Wiederherstellung.
     /// </summary>
     public class DeleteFolderCommand : UndoableCommandBase
     {
@@ -110,7 +110,7 @@ namespace Editor.Core.UndoRedo.Commands
         /// <summary>
         /// Erstellt einen neuen DeleteFolderCommand.
         /// </summary>
-        /// <param name="folderPath">Vollständiger Pfad des zu löschenden Ordners.</param>
+        /// <param name="folderPath">VollstÃ¤ndiger Pfad des zu lÃ¶schenden Ordners.</param>
         public DeleteFolderCommand(string folderPath)
         {
             _folderPath = folderPath ?? throw new ArgumentNullException(nameof(folderPath));
@@ -128,7 +128,7 @@ namespace Editor.Core.UndoRedo.Commands
 
             BackupDirectory(_folderPath);
 
-            // Ordner löschen
+            // Ordner lÃ¶schen
             Directory.Delete(_folderPath, true);
         }
 
@@ -151,11 +151,11 @@ namespace Editor.Core.UndoRedo.Commands
                 }
                 catch
                 {
-                    // Datei konnte nicht gelesen werden - überspringen
+                    // Datei konnte nicht gelesen werden - Ã¼berspringen
                 }
             }
 
-            // Rekursiv für Unterordner
+            // Rekursiv fÃ¼r Unterordner
             foreach (var dir in Directory.GetDirectories(path))
             {
                 BackupDirectory(dir);
@@ -195,7 +195,7 @@ namespace Editor.Core.UndoRedo.Commands
     }
 
     /// <summary>
-    /// Befehl für das Umbenennen einer Datei oder eines Ordners.
+    /// Befehl fÃ¼r das Umbenennen einer Datei oder eines Ordners.
     /// </summary>
     public class RenameFileCommand : UndoableCommandBase
     {
@@ -260,7 +260,7 @@ namespace Editor.Core.UndoRedo.Commands
     }
 
     /// <summary>
-    /// Befehl für das Erstellen eines Ordners.
+    /// Befehl fÃ¼r das Erstellen eines Ordners.
     /// </summary>
     public class CreateFolderCommand : UndoableCommandBase
     {
@@ -272,7 +272,7 @@ namespace Editor.Core.UndoRedo.Commands
         /// <summary>
         /// Erstellt einen neuen CreateFolderCommand.
         /// </summary>
-        /// <param name="folderPath">Vollständiger Pfad des zu erstellenden Ordners.</param>
+        /// <param name="folderPath">VollstÃ¤ndiger Pfad des zu erstellenden Ordners.</param>
         public CreateFolderCommand(string folderPath)
         {
             _folderPath = folderPath ?? throw new ArgumentNullException(nameof(folderPath));
@@ -310,7 +310,7 @@ namespace Editor.Core.UndoRedo.Commands
     }
 
     /// <summary>
-        /// Befehl für das Verschieben einer Datei oder eines Ordners.
+        /// Befehl fÃ¼r das Verschieben einer Datei oder eines Ordners.
         /// </summary>
         public class MoveItemCommand : UndoableCommandBase
         {
@@ -359,8 +359,8 @@ namespace Editor.Core.UndoRedo.Commands
         }
 
         /// <summary>
-        /// Befehl für das Kopieren einer Datei.
-        /// Bei Undo wird die kopierte Datei gelöscht.
+        /// Befehl fÃ¼r das Kopieren einer Datei.
+        /// Bei Undo wird die kopierte Datei gelÃ¶scht.
         /// </summary>
         public class CopyFileCommand : UndoableCommandBase
         {
@@ -374,7 +374,7 @@ namespace Editor.Core.UndoRedo.Commands
             /// Erstellt einen neuen CopyFileCommand.
             /// </summary>
             /// <param name="sourcePath">Quellpfad der zu kopierenden Datei.</param>
-            /// <param name="destPath">Zielpfad für die kopierte Datei.</param>
+            /// <param name="destPath">Zielpfad fÃ¼r die kopierte Datei.</param>
             public CopyFileCommand(string sourcePath, string destPath)
             {
                 _sourcePath = sourcePath ?? throw new ArgumentNullException(nameof(sourcePath));
@@ -405,8 +405,8 @@ namespace Editor.Core.UndoRedo.Commands
         }
 
         /// <summary>
-        /// Befehl für das Kopieren eines Ordners.
-        /// Bei Undo wird der kopierte Ordner gelöscht.
+        /// Befehl fÃ¼r das Kopieren eines Ordners.
+        /// Bei Undo wird der kopierte Ordner gelÃ¶scht.
         /// </summary>
         public class CopyFolderCommand : UndoableCommandBase
         {
@@ -420,7 +420,7 @@ namespace Editor.Core.UndoRedo.Commands
             /// Erstellt einen neuen CopyFolderCommand.
             /// </summary>
             /// <param name="sourcePath">Quellpfad des zu kopierenden Ordners.</param>
-            /// <param name="destPath">Zielpfad für den kopierten Ordner.</param>
+            /// <param name="destPath">Zielpfad fÃ¼r den kopierten Ordner.</param>
             public CopyFolderCommand(string sourcePath, string destPath)
             {
                 _sourcePath = sourcePath ?? throw new ArgumentNullException(nameof(sourcePath));
@@ -463,7 +463,7 @@ namespace Editor.Core.UndoRedo.Commands
         }
 
         /// <summary>
-            /// Composite-Befehl für das Einfügen mehrerer Dateien/Ordner.
+            /// Composite-Befehl fÃ¼r das EinfÃ¼gen mehrerer Dateien/Ordner.
             /// </summary>
             public class PasteItemsCommand : UndoableCommandBase
             {
@@ -478,7 +478,7 @@ namespace Editor.Core.UndoRedo.Commands
                 /// <summary>
                 /// Erstellt einen neuen PasteItemsCommand.
                 /// </summary>
-                /// <param name="commands">Liste der auszuführenden Befehle.</param>
+                /// <param name="commands">Liste der auszufÃ¼hrenden Befehle.</param>
                 /// <param name="isCutOperation">True wenn es sich um eine Ausschneiden-Operation handelt.</param>
                 public PasteItemsCommand(List<IUndoableCommand> commands, bool isCutOperation)
                 {
@@ -497,7 +497,7 @@ namespace Editor.Core.UndoRedo.Commands
 
                 public override void Undo()
                 {
-                    // Rückwärts ausführen
+                    // RÃ¼ckwÃ¤rts ausfÃ¼hren
                     for (int i = _commands.Count - 1; i >= 0; i--)
                     {
                         _commands[i].Undo();
@@ -514,7 +514,7 @@ namespace Editor.Core.UndoRedo.Commands
             }
 
             /// <summary>
-            /// Composite-Befehl für das Löschen mehrerer Dateien/Ordner.
+            /// Composite-Befehl fÃ¼r das LÃ¶schen mehrerer Dateien/Ordner.
             /// </summary>
             public class DeleteItemsCommand : UndoableCommandBase
             {
@@ -527,7 +527,7 @@ namespace Editor.Core.UndoRedo.Commands
                 /// Erstellt einen neuen DeleteItemsCommand.
                 /// </summary>
                 /// <param name="commands">Liste der Delete-Befehle.</param>
-                /// <param name="itemCount">Anzahl der zu löschenden Elemente.</param>
+                /// <param name="itemCount">Anzahl der zu lÃ¶schenden Elemente.</param>
                 public DeleteItemsCommand(List<IUndoableCommand> commands, int itemCount)
                 {
                     _commands = commands ?? throw new ArgumentNullException(nameof(commands));
@@ -544,7 +544,7 @@ namespace Editor.Core.UndoRedo.Commands
 
                 public override void Undo()
                 {
-                    // Rückwärts ausführen (wichtig für Ordnerstruktur)
+                    // RÃ¼ckwÃ¤rts ausfÃ¼hren (wichtig fÃ¼r Ordnerstruktur)
                     for (int i = _commands.Count - 1; i >= 0; i--)
                     {
                         _commands[i].Undo();

@@ -2,8 +2,12 @@ using System;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Text;
+#if VORTEX_CORE
+using Brush = System.String;   // shared core: colours travel as "#AARRGGBB" strings, the UI layer converts
+#else
 using System.Windows;
 using System.Windows.Media;
+#endif
 
 namespace Editor.Core.Services
 {
@@ -133,11 +137,15 @@ namespace Editor.Core.Services
         {
             try
             {
+#if VORTEX_CORE
+                Editor.Core.Threading.UiThread.Post(action);
+#else
                 var app = Application.Current;
                 if (app?.Dispatcher != null && !app.Dispatcher.CheckAccess())
                     app.Dispatcher.BeginInvoke(action);
                 else
                     action();
+#endif
             }
             catch { }
         }
@@ -178,12 +186,16 @@ namespace Editor.Core.Services
             _capturing = false;
         }
 
+#if VORTEX_CORE
+        private static Brush Freeze(string hex) => hex;
+#else
         private static Brush Freeze(string hex)
         {
             var b = (Brush)new BrushConverter().ConvertFromString(hex);
             b.Freeze();
             return b;
         }
+#endif
 
         /// <summary>A TextWriter that both forwards to the original stream (so real stdout still works) AND mirrors
         /// completed lines into the Console panel. Buffers partial writes until a newline.</summary>

@@ -1,0 +1,16 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:c="clr-namespace:VortexEditor.Controls"
+             x:Class="VortexEditor.Panels.EnvironmentPanel">
+  <DockPanel>
+    <Border DockPanel.Dock="Top" Padding="10,8,10,0">
+      <DockPanel>
+        <ToggleButton DockPanel.Dock="Right" x:Name="PreviewFx" ToolTip.Tip="Preview post-processing in the build viewport (it normally renders through the game camera only)" Click="OnPreviewFx" Padding="8,2"><TextBlock Text="Preview in viewport" FontSize="11"/></ToggleButton>
+        <TextBlock Text="Scene fog and post-processing" Classes="small secondary" VerticalAlignment="Center"/>
+      </DockPanel>
+    </Border>
+    <ScrollViewer>
+      <StackPanel x:Name="Sections" Margin="10,8" Spacing="8"/>
+    </ScrollViewer>
+  </DockPanel>
+</UserControl>

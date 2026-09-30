@@ -1,0 +1,7 @@
+<Solution>
+  <!-- The cross-platform managed layer (.NET 10): shared core, standalone player, Avalonia editor.
+       Build: dotnet build Managed/Vortex.Managed.slnx   (needs the native engine from CMake first) -->
+  <Project Path="Vortex.Core/Vortex.Core.csproj" />
+  <Project Path="Vortex.Player/Vortex.Player.csproj" />
+  <Project Path="Vortex.Editor/Vortex.Editor.csproj" />
+</Solution>

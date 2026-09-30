@@ -1,6 +1,10 @@
 using System;
+#if VORTEX_CORE
+using Point = Editor.Core.Input.PointD;
+#else
 using System.Windows;
 using System.Windows.Input;
+#endif
 using Editor.DllWrapper;
 
 namespace Editor.Core.Services
@@ -100,6 +104,7 @@ namespace Editor.Core.Services
             UpdateCamera();
         }
 
+#if !VORTEX_CORE
         public void OnMouseDown(MouseButtonEventArgs e, Point pos)
         {
             _lastMouse = pos;
@@ -117,7 +122,66 @@ namespace Editor.Core.Services
                 _wKey = _sKey = _aKey = _dKey = _qKey = _eKey = _shiftKey = false;
             }
         }
+#endif
 
+        // Framework-neutral input entry points (the Avalonia editor and any other shell drive the camera through
+        // these; the WPF viewport keeps its event-typed overloads above).
+        public void OnMouseDown(bool rightButton, Point pos)
+        {
+            _lastMouse = pos;
+            if (rightButton) _rightMouseDown = true;
+        }
+
+        public void OnMouseUp(bool rightButton)
+        {
+            if (rightButton)
+            {
+                _rightMouseDown = false;
+                _wKey = _sKey = _aKey = _dKey = _qKey = _eKey = _shiftKey = false;
+            }
+        }
+
+        /// <summary>Movement key by Windows virtual-key code (W/A/S/D/Q/E, shift, home). ctrlOrAlt suppresses the
+        /// editor command chords exactly like the WPF path.</summary>
+        public void OnKeyDown(int vk, bool ctrlOrAlt)
+        {
+            if (ctrlOrAlt) return;
+            switch (vk)
+            {
+                case 0x57: _wKey = true; break;
+                case 0x53: _sKey = true; break;
+                case 0x41: _aKey = true; break;
+                case 0x44: _dKey = true; break;
+                case 0x51: _qKey = true; break;
+                case 0x45: _eKey = true; break;
+                case 0x10: case 0xA0: case 0xA1: _shiftKey = true; break;
+                case 0x24: Reset(); break;
+            }
+        }
+
+        public void OnKeyUp(int vk)
+        {
+            switch (vk)
+            {
+                case 0x57: _wKey = false; break;
+                case 0x53: _sKey = false; break;
+                case 0x41: _aKey = false; break;
+                case 0x44: _dKey = false; break;
+                case 0x51: _qKey = false; break;
+                case 0x45: _eKey = false; break;
+                case 0x10: case 0xA0: case 0xA1: _shiftKey = false; break;
+            }
+        }
+
+#if VORTEX_CORE
+        /// <summary>Physical key state from the host shell — true while the key is really held. Used only to
+        /// RELEASE stale movement flags (see Update).</summary>
+        private static bool IsPhysicallyDown(int vk)
+        {
+            try { return Editor.Core.Input.HostInput.IsKeyDown(vk); }
+            catch { return false; }
+        }
+#else
         /// <summary>Physical key state via GetAsyncKeyState — true while the key is really held,
         /// regardless of WPF focus. Used only to RELEASE stale movement flags (see Update).</summary>
         private static bool IsPhysicallyDown(int vk)
@@ -128,6 +192,7 @@ namespace Editor.Core.Services
 
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         private static extern short GetAsyncKeyState(int vKey);
+#endif
 
         public void OnMouseMove(Point pos)
         {
@@ -157,6 +222,7 @@ namespace Editor.Core.Services
             UpdateCamera();
         }
 
+#if !VORTEX_CORE
         public void OnKeyDown(Key key)
         {
             // Ctrl/Alt chords are editor COMMANDS (Ctrl+S save, Ctrl+D duplicate, ...), not movement.
@@ -192,6 +258,7 @@ namespace Editor.Core.Services
                 case Key.LeftShift: case Key.RightShift: _shiftKey = false; break;
             }
         }
+#endif
 
         public void Update(float dt)
         {

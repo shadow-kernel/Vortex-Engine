@@ -1,30 +1,36 @@
 #pragma once
 
+#include "../Engine/Common/Platform.h"
+
+// Every API entry point is an exported extern "C" function: __declspec(dllexport) on Windows,
+// default visibility on macOS/Linux (the shared library is otherwise built with hidden visibility).
 #ifndef EDITOR_INTERFACE
-#define EDITOR_INTERFACE extern "C" __declspec(dllexport)
+#define EDITOR_INTERFACE VORTEX_API_EXPORT
 #endif // !EDITOR_INTERFACE
 
 #include "CommonHeaders.h"
 #include "Id.h"
-#include "..\Engine\Components\Entity.h"
-#include "..\Engine\Components\Transform.h"
-#include "..\Engine\Components\MeshRenderer.h"
-#include "..\Engine\Components\Skybox.h"
-#include "..\Engine\Runtime\SceneManager.h"
-#include "..\Engine\Runtime\ResourceManager.h"
-#include "..\Engine\Runtime\AssetDatabase.h"
-#include "..\Engine\Runtime\PrefabService.h"
-#include "..\Engine\Runtime\RenderLoop.h"
-#include "..\Engine\Runtime\GameHost.h"
-#include "..\Engine\Runtime\Systems\RenderSystem.h"
-#include "..\Engine\Runtime\Systems\RenderSystemDX12.h"
-#include "..\Engine\Runtime\Systems\PhysicsSystem.h"
-#include "..\Engine\Runtime\Systems\AudioSystem.h"
-#include "..\Engine\Graphics\Resources\ResourceRegistry.h"
-#include "..\Engine\Graphics\Importers\ModelImporter.h"
-#include "..\Engine\Graphics\DX12\DX12Renderer.h"
-#include "..\Engine\Input\InputSystem.h"
-#include "..\Engine\Components\Camera.h"
+#include "../Engine/Components/Entity.h"
+#include "../Engine/Components/Transform.h"
+#include "../Engine/Components/MeshRenderer.h"
+#include "../Engine/Components/Skybox.h"
+#include "../Engine/Runtime/SceneManager.h"
+#include "../Engine/Runtime/ResourceManager.h"
+#include "../Engine/Runtime/AssetDatabase.h"
+#include "../Engine/Runtime/PrefabService.h"
+#include "../Engine/Runtime/RenderLoop.h"
+#include "../Engine/Runtime/GameHost.h"
+#include "../Engine/Runtime/Systems/RenderSystem.h"
+#include "../Engine/Runtime/Systems/PhysicsSystem.h"
+#include "../Engine/Physics/PhysicsWorld.h"          // Physics v2 (Jolt) — see Engine/Physics/README.md
+#include "../Engine/Runtime/Systems/AudioSystem.h"
+#include "../Engine/Graphics/Importers/ModelImporter.h"
+#include "../Engine/Input/InputSystem.h"
+// The render backend selected for this platform (DX12 on Windows, SDL GPU / Metal on macOS) plus the
+// portable render-system entry points. API code uses graphics::Renderer / graphics::backend::* only.
+#include "../Engine/Graphics/Backend.h"
+#include "../Engine/Runtime/Systems/RenderBackend.h"
+#include "../Engine/Components/Camera.h"
 
 using namespace vortex;
 
@@ -81,7 +87,7 @@ struct resource_descriptor
 	const char* path;
 };
 
-	game_entity::entity entity_from_id(id::id_type id)
+	inline game_entity::entity entity_from_id(id::id_type id)
 	{
 		return game_entity::entity{ game_entity::entity_id{ id } };
 	}

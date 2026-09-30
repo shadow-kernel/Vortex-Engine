@@ -1,0 +1,57 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:c="clr-namespace:VortexEditor.Controls"
+             xmlns:p="clr-namespace:VortexEditor.Panels"
+             x:Class="VortexEditor.Panels.AssetBrowserPanel">
+  <DockPanel>
+    <Border DockPanel.Dock="Top" Classes="panelheader" Height="36">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="4">
+          <TextBox x:Name="SearchBox" Classes="search" Watermark="Search" Width="170" TextChanged="OnSearchChanged"/>
+          <Button x:Name="CreateButton" Classes="ghost" Click="OnCreateClick"><StackPanel Orientation="Horizontal" Spacing="5"><c:VxIcon Icon="Plus"/><TextBlock Text="Create"/></StackPanel></Button>
+          <Button Classes="ghost" Click="OnImportClick"><StackPanel Orientation="Horizontal" Spacing="5"><c:VxIcon Icon="Import"/><TextBlock Text="Import"/></StackPanel></Button>
+          <Button Classes="icon" ToolTip.Tip="Refresh" Click="OnRefreshClick"><c:VxIcon Icon="Refresh"/></Button>
+        </StackPanel>
+        <StackPanel x:Name="Breadcrumb" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center"/>
+      </DockPanel>
+    </Border>
+    <Border DockPanel.Dock="Top" Height="32" Padding="8,0" Classes="hairline-bottom">
+      <Border Classes="segmented" HorizontalAlignment="Left" VerticalAlignment="Center">
+        <StackPanel Orientation="Horizontal" x:Name="Tabs">
+          <RadioButton GroupName="assettab" IsChecked="True" Tag="Explorer" Click="OnTabClick">Explorer</RadioButton>
+          <RadioButton GroupName="assettab" Tag="Models" Click="OnTabClick">Models</RadioButton>
+          <RadioButton GroupName="assettab" Tag="Textures" Click="OnTabClick">Textures</RadioButton>
+          <RadioButton GroupName="assettab" Tag="Materials" Click="OnTabClick">Materials</RadioButton>
+          <RadioButton GroupName="assettab" Tag="Scripts" Click="OnTabClick">Scripts</RadioButton>
+          <RadioButton GroupName="assettab" Tag="Audio" Click="OnTabClick">Audio</RadioButton>
+          <RadioButton GroupName="assettab" Tag="Prefabs" Click="OnTabClick">Prefabs</RadioButton>
+          <RadioButton GroupName="assettab" Tag="Scenes" Click="OnTabClick">Scenes</RadioButton>
+        </StackPanel>
+      </Border>
+    </Border>
+    <Grid>
+      <ListBox x:Name="Grid" SelectionMode="Multiple" DoubleTapped="OnDoubleTapped" KeyDown="OnKeyDown">
+        <ListBox.ItemsPanel>
+          <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+        </ListBox.ItemsPanel>
+        <ListBox.ItemTemplate>
+          <DataTemplate DataType="p:AssetTile">
+            <StackPanel Width="92" Height="96" Margin="2" Background="Transparent" PointerPressed="OnTilePressed" PointerMoved="OnTileMoved" ToolTip.Tip="{Binding Tooltip}">
+              <Border Width="60" Height="60" CornerRadius="10" Background="{DynamicResource VxFieldBrush}" HorizontalAlignment="Center" ClipToBounds="True">
+                <Panel>
+                  <Image Source="{Binding Thumbnail}" Stretch="UniformToFill" IsVisible="{Binding HasThumbnail}"/>
+                  <c:VxIcon Icon="{Binding Icon}" Width="28" Height="28" Foreground="{Binding IconBrush}" IsVisible="{Binding !HasThumbnail}"/>
+                </Panel>
+              </Border>
+              <TextBlock Text="{Binding Name}" TextAlignment="Center" Margin="0,5,0,0" MaxHeight="30" TextWrapping="Wrap" FontSize="11"/>
+            </StackPanel>
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+        <ListBox.Styles>
+          <Style Selector="ListBoxItem"><Setter Property="Padding" Value="2"/></Style>
+        </ListBox.Styles>
+      </ListBox>
+      <TextBlock x:Name="EmptyHint" Classes="tertiary" Text="This folder is empty" HorizontalAlignment="Center" VerticalAlignment="Center" IsVisible="False"/>
+    </Grid>
+  </DockPanel>
+</UserControl>

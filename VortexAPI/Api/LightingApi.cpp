@@ -2,7 +2,7 @@
 
 EDITOR_INTERFACE void ClearLights()
 {
-	graphics::dx12::DX12Renderer::instance().clear_lights();
+	graphics::Renderer::instance().clear_lights();
 }
 
 // Set the primary directional light. Shadow params (#24): castShadows != 0 renders cascaded shadow
@@ -14,7 +14,7 @@ EDITOR_INTERFACE void SetDirectionalLight(
 	float intensity,
 	int castShadows, float shadowStrength, float shadowBias, float shadowDistance)
 {
-	graphics::dx12::DX12Renderer::instance().set_directional_light_full(
+	graphics::Renderer::instance().set_directional_light_full(
 		{ dirX, dirY, dirZ },
 		{ colorR, colorG, colorB },
 		intensity,
@@ -31,7 +31,7 @@ EDITOR_INTERFACE void AddPointLight(
 	float intensity, float range,
 	int castShadows, float shadowStrength, float shadowBias)
 {
-	graphics::dx12::DX12Renderer::PointLightData light{};
+	graphics::Renderer::PointLightData light{};
 	light.position = { posX, posY, posZ };
 	light.color = { colorR, colorG, colorB };
 	light.intensity = intensity;
@@ -40,7 +40,7 @@ EDITOR_INTERFACE void AddPointLight(
 	light.shadow_strength = shadowStrength;
 	light.shadow_bias = shadowBias;
 
-	graphics::dx12::DX12Renderer::instance().add_point_light(light);
+	graphics::Renderer::instance().add_point_light(light);
 }
 
 // Add a spot light (max 8 per frame). Shadow params (#23): castShadows != 0 requests THIS spot as the
@@ -54,7 +54,7 @@ EDITOR_INTERFACE void AddSpotLight(
 	float spotAngle, float innerSpotAngle,
 	int castShadows, float shadowStrength, float shadowBias, int shadowResolution)
 {
-	graphics::dx12::DX12Renderer::SpotLightData light{};
+	graphics::Renderer::SpotLightData light{};
 	light.position = { posX, posY, posZ };
 	light.direction = { dirX, dirY, dirZ };
 	light.color = { colorR, colorG, colorB };
@@ -67,13 +67,13 @@ EDITOR_INTERFACE void AddSpotLight(
 	light.shadow_bias = shadowBias;
 	light.shadow_resolution = shadowResolution > 0 ? (u32)shadowResolution : 2048u;
 
-	graphics::dx12::DX12Renderer::instance().add_spot_light(light);
+	graphics::Renderer::instance().add_spot_light(light);
 }
 
 // Set ambient light strength
 EDITOR_INTERFACE void SetAmbientStrength(float strength)
 {
-	graphics::dx12::DX12Renderer::instance().set_ambient_strength(strength);
+	graphics::Renderer::instance().set_ambient_strength(strength);
 }
 
 // Scene-wide fog (Welle A #27): exp2 distance fog, optional ground mist below heightY when
@@ -82,7 +82,7 @@ EDITOR_INTERFACE void SetFogParams(
 	float colorR, float colorG, float colorB,
 	float density, float heightY, float heightFalloff)
 {
-	graphics::dx12::DX12Renderer::instance().set_fog({ colorR, colorG, colorB }, density, heightY, heightFalloff);
+	graphics::Renderer::instance().set_fog({ colorR, colorG, colorB }, density, heightY, heightFalloff);
 }
 
 

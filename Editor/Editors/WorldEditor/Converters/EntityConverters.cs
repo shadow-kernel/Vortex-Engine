@@ -1,4 +1,4 @@
-using System;
+ï»¿using System;
 using System.Globalization;
 using System.Linq;
 using System.Windows;
@@ -28,7 +28,7 @@ public class EntityToIconConverter : IValueConverter
             if (entity.IsFolder)
                 return entity.IsExpanded ? "\uE838" : "\uE8B7"; // Open/Closed folder
                 
-            // Priorität: Camera > Light > MeshRenderer > AudioSource > Script > Default
+            // PrioritÃ¤t: Camera > Light > MeshRenderer > AudioSource > Script > Default
             if (entity.HasComponent<Camera>())
                 return "\uE722"; // Camera icon
                 
@@ -152,7 +152,7 @@ public class EntityToIconConverter : IValueConverter
     }
 
     /// <summary>
-    /// Konvertiert IsSelected zu Background-Farbe für Multi-Select Visualisierung
+    /// Konvertiert IsSelected zu Background-Farbe fÃ¼r Multi-Select Visualisierung
     /// </summary>
     public class EntitySelectedToBackgroundConverter : IValueConverter
     {
@@ -172,8 +172,8 @@ public class EntityToIconConverter : IValueConverter
     }
 
     /// <summary>
-    /// Konvertiert eine Szene zu Visibility basierend auf Aktivitätsstatus.
-    /// Gibt Visible zurück wenn die Szene die aktive Szene ist.
+    /// Konvertiert eine Szene zu Visibility basierend auf AktivitÃ¤tsstatus.
+    /// Gibt Visible zurÃ¼ck wenn die Szene die aktive Szene ist.
     /// Mit ConverterParameter="Invert" wird das Ergebnis umgekehrt.
     /// </summary>
 	public class SceneActiveConverter : IValueConverter
@@ -207,8 +207,8 @@ public class EntityToIconConverter : IValueConverter
 	}
 
     /// <summary>
-    /// Konvertiert eine Szene zu einer Farbe basierend auf Aktivitätsstatus.
-    /// Aktive Szene: Grün (#4EC9B0), Inaktive Szene: Gelb/Grau (#DCDCAA / #808080)
+    /// Konvertiert eine Szene zu einer Farbe basierend auf AktivitÃ¤tsstatus.
+    /// Aktive Szene: GrÃ¼n (#4EC9B0), Inaktive Szene: Gelb/Grau (#DCDCAA / #808080)
     /// </summary>
 	public class SceneActiveToIconConverter : IValueConverter
 	{

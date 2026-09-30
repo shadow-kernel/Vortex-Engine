@@ -6,7 +6,6 @@ namespace vortex::math {
 	constexpr f32 pi = 3.1415926535897932384626433832795f;
 	constexpr f32 epsilon = 0e-5f;
 
-#ifdef _WIN64
 	using v2 = DirectX::XMFLOAT2;
 	using v2a = DirectX::XMFLOAT2A;
 	using v3 = DirectX::XMFLOAT3;
@@ -22,7 +21,6 @@ namespace vortex::math {
 	using m3x3 = DirectX::XMFLOAT3X3;
 	using m4x4 = DirectX::XMFLOAT4X4;
 	using m4x4a = DirectX::XMFLOAT4X4A;
-#endif // _WIN64
 
 
 }

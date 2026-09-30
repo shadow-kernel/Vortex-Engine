@@ -17,7 +17,9 @@ namespace Editor.Core.Services
 
         private readonly Dictionary<string, long> _loadedMaterials = new Dictionary<string, long>();
         private readonly Dictionary<string, MaterialInfo> _materialInfos = new Dictionary<string, MaterialInfo>();
+#if !VORTEX_CORE
         private readonly Dictionary<long, UniversalMaterial> _universalMaterials = new Dictionary<long, UniversalMaterial>();
+#endif
 
         // Fully-applied .vmat materials, cached by absolute path and shared across every entity
         // that references the same file. MaterialService owns their lifecycle (see UnloadAll) — do
@@ -185,6 +187,7 @@ namespace Editor.Core.Services
             return handle;
         }
 
+#if !VORTEX_CORE
         /// <summary>
         /// Creates a material from a UniversalMaterial definition.
         /// </summary>
@@ -226,6 +229,7 @@ namespace Editor.Core.Services
             _universalMaterials.TryGetValue(materialId, out var material);
             return material;
         }
+#endif
 
         /// <summary>
         /// Loads a VortexMaterial from a .vmat file and creates engine material.
@@ -245,8 +249,14 @@ namespace Editor.Core.Services
                 var directory = Path.GetDirectoryName(vmatPath);
                 vmat.ResolvePathsAbsolute(directory);
 
+#if VORTEX_CORE
+                // The runtime core has no UniversalMaterial (an editor import model): build the engine material
+                // straight from the .vmat, the same way GetOrBuildVortexMaterial does.
+                return GetOrBuildVortexMaterial(vmatPath);
+#else
                 var universal = vmat.ToUniversalMaterial();
                 return CreateFromUniversalMaterial(universal);
+#endif
             }
             catch
             {

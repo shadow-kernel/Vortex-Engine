@@ -1,0 +1,36 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:c="clr-namespace:VortexEditor.Controls"
+             xmlns:svc="clr-namespace:Editor.Core.Services;assembly=Vortex.Core"
+             x:Class="VortexEditor.Panels.ConsolePanel">
+  <DockPanel>
+    <Border DockPanel.Dock="Top" Classes="panelheader" Height="36">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="4">
+          <TextBox x:Name="Filter" Classes="search" Watermark="Filter" Width="160" TextChanged="OnFilterChanged"/>
+          <ToggleButton x:Name="AutoScroll" IsChecked="True" ToolTip.Tip="Auto-scroll" Classes="icon"><c:VxIcon Icon="ChevronDown"/></ToggleButton>
+          <Button Classes="icon" ToolTip.Tip="Clear" Click="OnClear"><c:VxIcon Icon="Trash"/></Button>
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" Spacing="4">
+          <ToggleButton x:Name="ChipInfo" IsChecked="True" Click="OnChip"><StackPanel Orientation="Horizontal" Spacing="5"><c:VxIcon Icon="Info" Foreground="{DynamicResource VxAccentBrush}"/><TextBlock x:Name="InfoCount" Text="0"/></StackPanel></ToggleButton>
+          <ToggleButton x:Name="ChipWarn" IsChecked="True" Click="OnChip"><StackPanel Orientation="Horizontal" Spacing="5"><c:VxIcon Icon="Warning" Foreground="{DynamicResource VxYellowBrush}"/><TextBlock x:Name="WarnCount" Text="0"/></StackPanel></ToggleButton>
+          <ToggleButton x:Name="ChipError" IsChecked="True" Click="OnChip"><StackPanel Orientation="Horizontal" Spacing="5"><c:VxIcon Icon="Error" Foreground="{DynamicResource VxRedBrush}"/><TextBlock x:Name="ErrorCount" Text="0"/></StackPanel></ToggleButton>
+        </StackPanel>
+      </DockPanel>
+    </Border>
+    <ListBox x:Name="List" Background="{DynamicResource VxFieldBrush}" Padding="6,4">
+      <ListBox.ItemTemplate>
+        <DataTemplate DataType="svc:LogEntry">
+          <Grid ColumnDefinitions="64,52,*" Margin="0,1">
+            <TextBlock Text="{Binding Time}" Classes="mono tertiary"/>
+            <TextBlock Grid.Column="1" Text="{Binding LevelTag}" Classes="mono" FontWeight="SemiBold" Foreground="{Binding Color, Converter={x:Static c:HexBrushConverter.Instance}}"/>
+            <TextBlock Grid.Column="2" Text="{Binding Message}" Classes="mono" TextWrapping="Wrap"/>
+          </Grid>
+        </DataTemplate>
+      </ListBox.ItemTemplate>
+      <ListBox.Styles>
+        <Style Selector="ListBoxItem"><Setter Property="Padding" Value="6,1"/><Setter Property="MinHeight" Value="18"/></Style>
+      </ListBox.Styles>
+    </ListBox>
+  </DockPanel>
+</UserControl>

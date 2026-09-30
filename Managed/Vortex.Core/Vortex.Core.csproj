@@ -1,0 +1,73 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Vortex.Core — the UI-framework-independent runtime + tools core, shared by the standalone player and the
+    Avalonia editor (and, later, the WPF editor). It compiles the framework-free sources that today live under
+    Editor/ (ECS model, scene/asset formats, scripting API + runtime, play-mode services, native interop) as
+    linked files, so both editors and the player run ONE implementation. VORTEX_CORE selects the shared-core
+    branches where a WPF type still leaks into those files.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>Vortex.Core</AssemblyName>
+    <RootNamespace>Editor</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <DefineConstants>$(DefineConstants);VORTEX_CORE</DefineConstants>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <NoWarn>$(NoWarn);CS0618;CS0649;CS0169;CS0414;CS1591;CS8632;CA1416;SYSLIB0011;SYSLIB0050;SYSLIB0051</NoWarn>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
+  </ItemGroup>
+
+  <!-- The host shells are the same trust domain as the WPF editor was (which contained these sources directly). -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Vortex.Player" />
+    <InternalsVisibleTo Include="Vortex.Editor" />
+    <InternalsVisibleTo Include="Vortex.Core.Tests" />
+  </ItemGroup>
+
+  <!-- Own sources: the host abstractions the shared branches rely on. -->
+  <ItemGroup>
+    <Compile Include="**/*.cs" Exclude="obj/**;bin/**" />
+  </ItemGroup>
+
+  <!-- Linked sources from Editor/ (framework-free, or with a VORTEX_CORE branch). -->
+  <ItemGroup>
+    <Compile Include="../../Editor/Common/ViewModelBase.cs" Link="Editor/Common/ViewModelBase.cs" />
+    <Compile Include="../../Editor/Utilities/Utilities.cs" Link="Editor/Utilities/Utilities.cs" />
+    <Compile Include="../../Editor/ECS/**/*.cs" Link="Editor/ECS/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../../Editor/UI/Vui/*.cs" Link="Editor/UI/Vui/%(Filename)%(Extension)" />
+    <Compile Include="../../Editor/DllWrapper/**/*.cs" Link="Editor/DllWrapper/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../../Editor/Scripting/ScriptRuntime.cs" Link="Editor/Scripting/ScriptRuntime.cs" />
+    <!-- Editor-side logic that is already framework-free (view models / services the editor shells share). -->
+    <Compile Include="../../Editor/Editors/WorldEditor/Components/SceneHierarchy/SceneHierarchyViewModel.cs" Link="Editor/Editors/SceneHierarchy/SceneHierarchyViewModel.cs" />
+    <Compile Include="../../Editor/Editors/WorldEditor/Components/FileExplorer/Services/FileExplorerService.cs" Link="Editor/Editors/FileExplorer/FileExplorerService.cs" />
+    <Compile Include="../../Editor/Editors/WorldEditor/Components/FileExplorer/Models/FileSystemItem.cs" Link="Editor/Editors/FileExplorer/FileSystemItem.cs" />
+    <Compile Include="../../Editor/Scripting/VortexScriptApi.cs" Link="Editor/Scripting/VortexScriptApi.cs" />
+    <Compile Include="../../Editor/Core/**/*.cs"
+             Exclude="../../Editor/Core/Assets/AssetSystem.cs;
+                      ../../Editor/Core/Assets/ModelAssetData.cs;
+                      ../../Editor/Core/Assets/UniversalModelData.cs;
+                      ../../Editor/Core/Assets/UniversalModelParser.cs;
+                      ../../Editor/Core/Assets/ModelAssetBuilder.cs;
+                      ../../Editor/Core/Services/InputBindingsService.cs;
+                      ../../Editor/Core/Services/ModelImportService.cs;
+
+                      ../../Editor/Core/Services/MultiViewportRenderService.cs;
+                      ../../Editor/Core/Services/ViewportRenderer.cs;
+                      ../../Editor/Core/Services/Rendering/*.cs;
+                      ../../Editor/Core/Services/Update/*.cs;
+                      ../../Editor/Core/Services/Build/GameExporter.cs;
+                      ../../Editor/Core/Util/FilePicker.cs"
+             Link="Editor/Core/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>

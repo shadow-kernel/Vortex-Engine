@@ -32,7 +32,11 @@ namespace Editor.DllWrapper
             return -1;
         }
 
+#if VORTEX_CORE
+        private const string _dllName = "VortexAPI";        // .NET probes libVortexAPI.dylib / .so / VortexAPI.dll
+#else
         private const string _dllName = "VortexAPI.dll";
+#endif
         private const CallingConvention _cc = CallingConvention.Cdecl;
 
         // Paths marshal as UTF-8 (native side widens UTF-8-first with ANSI fallback),

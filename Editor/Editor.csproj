@@ -259,6 +259,7 @@
     <Compile Include="Core\Assets\ModelAssetBuilder.cs" />
     <Compile Include="Core\Assets\ModelAssetData.cs" />
     <Compile Include="Core\Assets\TextureNamingConventions.cs" />
+    <Compile Include="Core\Assets\TextureMapType.cs" />
     <Compile Include="Core\Assets\UniversalModelData.cs" />
     <Compile Include="Core\Assets\UniversalModelParser.cs" />
     <Compile Include="Core\Assets\VortexMaterial.cs" />
@@ -277,6 +278,7 @@
     <Compile Include="Core\Services\CameraPreviewService.cs" />
     <Compile Include="Core\Services\CameraService.cs" />
     <Compile Include="Core\Services\EditorCameraController.cs" />
+    <Compile Include="Core\Services\EditorPaths.cs" />
     <Compile Include="Core\Services\EditorStateService.cs" />
     <Compile Include="Core\Services\EditorViewportService.cs" />
     <Compile Include="Core\Services\EntityClipboardService.cs" />
@@ -294,6 +296,8 @@
     <Compile Include="Core\Services\PrefabService.cs" />
     <Compile Include="Core\Services\ProjectTemplateService.cs" />
     <Compile Include="Core\Services\Physics\CollisionService.cs" />
+    <Compile Include="Core\Services\Physics\PhysicsService.cs" />
+    <Compile Include="DllWrapper\VortexAPI.Physics.cs" />
     <Compile Include="Editors\PhysicsEditor\CollisionEditorWindow.cs" />
     <Compile Include="Editors\PhysicsEditor\CollisionPreviewControl.cs" />
     <Compile Include="DllWrapper\Gizmos\ColliderGizmo.cs" />
@@ -382,6 +386,7 @@
     <Compile Include="ECS\Components\Animation\Animator.cs" />
     <Compile Include="ECS\Components\Animation\BoneAttachment.cs" />
     <Compile Include="ECS\Components\Animation\TwoBoneIk.cs" />
+    <Compile Include="ECS\Components\Animation\HandPose.cs" />
     <Compile Include="Editors\WorldEditor\Components\Inspector\AnimatorInspector.cs" />
     <Compile Include="Editors\WorldEditor\Components\Inspector\BoneAttachmentInspector.cs" />
     <Compile Include="Editors\WorldEditor\Components\Inspector\TwoBoneIkInspector.cs" />

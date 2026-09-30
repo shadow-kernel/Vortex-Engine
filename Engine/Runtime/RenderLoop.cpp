@@ -1,5 +1,4 @@
 #include "RenderLoop.h"
-#include "../Graphics/DX12/DX12Renderer.h"
 
 namespace vortex::runtime
 {

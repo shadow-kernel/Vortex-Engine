@@ -1,0 +1,28 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:c="clr-namespace:VortexEditor.Controls"
+             x:Class="VortexEditor.Panels.InspectorPanel">
+  <DockPanel>
+    <ScrollViewer>
+      <StackPanel Margin="10,8" Spacing="8">
+        <TextBlock x:Name="NoSelection" Classes="tertiary" Text="Select an entity to edit its properties" HorizontalAlignment="Center" Margin="0,40"/>
+        <Border x:Name="Header" Classes="card" IsVisible="False" Padding="10,8">
+          <StackPanel Spacing="6">
+            <DockPanel>
+              <CheckBox x:Name="ActiveBox" DockPanel.Dock="Left" ToolTip.Tip="Active" IsCheckedChanged="OnActiveChanged" Margin="0,0,6,0"/>
+              <TextBox x:Name="NameBox" FontWeight="SemiBold" LostFocus="OnNameCommit" KeyDown="OnNameKey"/>
+            </DockPanel>
+            <Grid ColumnDefinitions="Auto,Auto,Auto,*">
+              <TextBlock Text="Tag" Classes="label small" Margin="4,0,8,0"/>
+              <ComboBox x:Name="TagBox" Grid.Column="1" MinHeight="22" MinWidth="130" SelectionChanged="OnTagChanged"/>
+              <TextBlock Grid.Column="2" Text="Prefab" Classes="label small" Margin="10,0,8,0"/>
+              <TextBlock x:Name="PrefabText" Grid.Column="3" Classes="small secondary" VerticalAlignment="Center" Text="—"/>
+            </Grid>
+          </StackPanel>
+        </Border>
+        <StackPanel x:Name="Components" Spacing="8"/>
+        <Button x:Name="AddButton" Content="Add Component" HorizontalAlignment="Stretch" IsVisible="False" Click="OnAddComponent"/>
+      </StackPanel>
+    </ScrollViewer>
+  </DockPanel>
+</UserControl>

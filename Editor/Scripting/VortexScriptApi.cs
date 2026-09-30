@@ -28,6 +28,108 @@ namespace Vortex
                 return l > 1e-8f ? new Vector3(X / l, Y / l, Z / l) : Zero;
             }
         }
+
+        public static Vector3 operator +(Vector3 a, Vector3 b) { return new Vector3(a.X + b.X, a.Y + b.Y, a.Z + b.Z); }
+        public static Vector3 operator -(Vector3 a, Vector3 b) { return new Vector3(a.X - b.X, a.Y - b.Y, a.Z - b.Z); }
+        public static Vector3 operator -(Vector3 a) { return new Vector3(-a.X, -a.Y, -a.Z); }
+        public static Vector3 operator *(Vector3 a, float s) { return new Vector3(a.X * s, a.Y * s, a.Z * s); }
+        public static Vector3 operator *(float s, Vector3 a) { return new Vector3(a.X * s, a.Y * s, a.Z * s); }
+        public static float Dot(Vector3 a, Vector3 b) { return a.X * b.X + a.Y * b.Y + a.Z * b.Z; }
+        public static Vector3 Cross(Vector3 a, Vector3 b) { return new Vector3(a.Y * b.Z - a.Z * b.Y, a.Z * b.X - a.X * b.Z, a.X * b.Y - a.Y * b.X); }
+        public static Vector3 Lerp(Vector3 a, Vector3 b, float t) { return new Vector3(a.X + (b.X - a.X) * t, a.Y + (b.Y - a.Y) * t, a.Z + (b.Z - a.Z) * t); }
+        public static float Distance(Vector3 a, Vector3 b) { return (a - b).Length; }
+        public override string ToString() { return "(" + X.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) + ", " + Y.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) + ", " + Z.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) + ")"; }
+    }
+
+    /// <summary>
+    /// A rotation for gameplay math — the same convention the engine uses everywhere (Transform.Rotation, bone
+    /// sockets, SetWorldPose): <see cref="FromEuler"/>/<see cref="ToEuler"/> take engine Euler degrees
+    /// (X = pitch, Y = yaw, Z = roll, applied Z·X·Y). <c>a * b</c> rotates by <c>b</c> FIRST, then by <c>a</c>
+    /// (so <c>parent * child</c> takes a child-local rotation to the parent's frame). <see cref="Rotate"/>
+    /// applies the rotation to a vector. Built on the engine's own matrix math, so results match what renders.
+    /// </summary>
+    public struct Quaternion
+    {
+        public float X, Y, Z, W;
+        public Quaternion(float x, float y, float z, float w) { X = x; Y = y; Z = z; W = w; }
+        public static Quaternion Identity { get { return new Quaternion(0f, 0f, 0f, 1f); } }
+
+        private System.Numerics.Quaternion Sys { get { return new System.Numerics.Quaternion(X, Y, Z, W); } }
+        private static Quaternion From(System.Numerics.Quaternion q) { q = System.Numerics.Quaternion.Normalize(q); return new Quaternion(q.X, q.Y, q.Z, q.W); }
+
+        /// <summary>Rotation from engine Euler degrees (pitch X, yaw Y, roll Z).</summary>
+        public static Quaternion FromEuler(Vector3 eulerDeg)
+        {
+            var m = Editor.Core.Animation.BoneSocketService.EulerZXY(new System.Numerics.Vector3(eulerDeg.X, eulerDeg.Y, eulerDeg.Z));
+            return From(System.Numerics.Quaternion.CreateFromRotationMatrix(m));
+        }
+        public static Quaternion FromEuler(float pitchDeg, float yawDeg, float rollDeg) { return FromEuler(new Vector3(pitchDeg, yawDeg, rollDeg)); }
+
+        /// <summary>Rotation of <paramref name="degrees"/> around an axis.</summary>
+        public static Quaternion FromAxisAngle(Vector3 axis, float degrees)
+        {
+            var a = axis.Normalized;
+            return From(System.Numerics.Quaternion.CreateFromAxisAngle(new System.Numerics.Vector3(a.X, a.Y, a.Z), degrees * (float)(Math.PI / 180.0)));
+        }
+
+        /// <summary>Engine Euler degrees (pitch X, yaw Y, roll Z) of this rotation — feed straight into Rotation / SetWorldPose.</summary>
+        public Vector3 ToEuler()
+        {
+            var m = System.Numerics.Matrix4x4.CreateFromQuaternion(System.Numerics.Quaternion.Normalize(Sys));
+            var e = Editor.Core.Animation.BoneSocketService.ToEulerZXY(m);
+            return new Vector3(e.X, e.Y, e.Z);
+        }
+
+        /// <summary>Apply the rotation to a vector.</summary>
+        public Vector3 Rotate(Vector3 v)
+        {
+            var r = System.Numerics.Vector3.Transform(new System.Numerics.Vector3(v.X, v.Y, v.Z), System.Numerics.Quaternion.Normalize(Sys));
+            return new Vector3(r.X, r.Y, r.Z);
+        }
+
+        /// <summary>The opposite rotation.</summary>
+        public Quaternion Inverse { get { return From(System.Numerics.Quaternion.Inverse(Sys)); } }
+        public Quaternion Normalized { get { return From(Sys); } }
+
+        /// <summary>a * b = rotate by b first, then by a.</summary>
+        public static Quaternion operator *(Quaternion a, Quaternion b)
+        {
+            // System.Numerics' product applies the LEFT operand first; swap so a*b reads like matrices (b, then a).
+            return From(System.Numerics.Quaternion.Concatenate(b.Sys, a.Sys));
+        }
+
+        /// <summary>Spherical interpolation (t 0..1).</summary>
+        public static Quaternion Slerp(Quaternion a, Quaternion b, float t)
+        {
+            if (t <= 0f) return a; if (t >= 1f) return b;
+            return From(System.Numerics.Quaternion.Slerp(a.Sys, b.Sys, t));
+        }
+
+        /// <summary>Angle between two rotations in degrees.</summary>
+        public static float Angle(Quaternion a, Quaternion b)
+        {
+            // Relative rotation, then a numerically stable half-angle (acos of a dot near 1 loses precision).
+            var d = System.Numerics.Quaternion.Normalize(System.Numerics.Quaternion.Concatenate(System.Numerics.Quaternion.Inverse(a.Sys), b.Sys));
+            double s = Math.Sqrt((double)d.X * d.X + (double)d.Y * d.Y + (double)d.Z * d.Z);
+            return (float)(2.0 * Math.Atan2(s, Math.Abs(d.W)) * 180.0 / Math.PI);
+        }
+
+        /// <summary>A rotation whose +Z axis points along <paramref name="forward"/> with <paramref name="up"/> as the up hint.</summary>
+        public static Quaternion LookRotation(Vector3 forward, Vector3 up)
+        {
+            Vector3 f = forward.Normalized; if (f.Length < 1e-6f) return Identity;
+            Vector3 r = Vector3.Cross(up, f).Normalized;
+            if (r.Length < 1e-6f) r = Vector3.Cross(new Vector3(0f, 0f, 1f), f).Normalized;
+            Vector3 u = Vector3.Cross(f, r);
+            // Row-vector basis matrix: rows = the rotated X, Y, Z axes.
+            var m = new System.Numerics.Matrix4x4(r.X, r.Y, r.Z, 0f, u.X, u.Y, u.Z, 0f, f.X, f.Y, f.Z, 0f, 0f, 0f, 0f, 1f);
+            return From(System.Numerics.Quaternion.CreateFromRotationMatrix(m));
+        }
+
+        public Vector3 Forward { get { return Rotate(new Vector3(0f, 0f, 1f)); } }
+        public Vector3 Up { get { return Rotate(new Vector3(0f, 1f, 0f)); } }
+        public Vector3 Right { get { return Rotate(new Vector3(1f, 0f, 0f)); } }
+        public override string ToString() { return ToEuler().ToString(); }
     }
 
     /// <summary>A UI color (0..1 channels). Use Rgb/Rgba helpers for 0..255 values.</summary>
@@ -44,12 +146,15 @@ namespace Vortex
     public interface IScriptHost
     {
         Vector3 GetPosition(long entityId);
+        Vector3 GetScale(long entityId);
+        void SetScale(long entityId, Vector3 scale);
         void SetPosition(long entityId, Vector3 position);
         Vector3 GetRotation(long entityId);
         void SetRotation(long entityId, Vector3 eulerDegrees);
         // WORLD-space pose write, parent-safe (converts to the entity's local frame; scale untouched) —
         // Set/GetPosition/Rotation are LOCAL values, which breaks for children of moved/rotated parents.
         void SetEntityWorldPose(long entityId, Vector3 position, Vector3 rotationEulerDeg);
+        bool TryGetEntityWorldPose(long entityId, out Vector3 position, out Vector3 rotationEulerDeg);
         // Force a render layer (0 world / 1 FP viewmodel / 2 third-person only) onto an entity's
         // MeshRenderers, recursively over its subtree — e.g. a runtime-spawned weapon copy for the
         // 3P body (layer 2) vs the FP viewmodel copy (layer 1).
@@ -71,6 +176,25 @@ namespace Vortex
         // Returns the FOOTSTEP SOUND assigned to the surface's material in the Material Editor (a project-relative
         // clip / .vsndc path), or "" — footsteps authored entirely in the editor, no per-material script dictionary.
         string GroundStepSound(Vector3 origin, float maxDist);
+
+        // Rigid-body physics (#100, Jolt): act on an entity's simulated body (Collider + Rigidbody). Every call
+        // returns false / zero when the entity has no dynamic body or the engine build has no physics.
+        bool PhysicsAddForce(long entityId, Vector3 force);
+        bool PhysicsAddForceAtPoint(long entityId, Vector3 force, Vector3 worldPoint);
+        bool PhysicsAddImpulse(long entityId, Vector3 impulse);
+        bool PhysicsAddImpulseAtPoint(long entityId, Vector3 impulse, Vector3 worldPoint);
+        bool PhysicsAddTorque(long entityId, Vector3 torque);
+        bool PhysicsSetVelocity(long entityId, Vector3 velocity);
+        Vector3 PhysicsGetVelocity(long entityId);
+        bool PhysicsSetAngularVelocity(long entityId, Vector3 velocity);
+        Vector3 PhysicsGetAngularVelocity(long entityId);
+        bool PhysicsSetKinematic(long entityId, bool kinematic);
+        bool PhysicsWakeUp(long entityId);
+        bool PhysicsIsSleeping(long entityId);
+        void PhysicsSetGravity(Vector3 gravity);
+        long[] PhysicsOverlapSphere(Vector3 center, float radius);
+        bool PhysicsHasRigidbody(long entityId);
+        float PhysicsGetMass(long entityId);
 
         // Request switching the active scene by name (deferred — applied by the runtime after this tick).
         void LoadScene(string name);
@@ -110,11 +234,17 @@ namespace Vortex
         // at any aim angle. (0,0,0) clears the bone; ClearBoneOverrides drops all of an entity's overrides.
         void SetBoneAdditiveRotation(long entityId, string bone, Vector3 eulerDeg);
         void SetBoneScaleOverride(long entityId, string bone, float scale);
+        void SetBoneHidden(long entityId, string bone, bool hidden, bool includeDescendants);
         void ClearBoneOverrides(long entityId);
 
         // Runtime two-bone IK (#179): blend the TwoBoneIk chain(s) on an entity (0 = animation only,
         // 1 = full IK). tipBone selects one chain; null/empty hits every chain on the entity.
         void SetIkWeight(long entityId, string tipBone, float weight);
+        // Script world-space IK targets: the chain (selected by tip bone) reaches a WORLD position (optionally
+        // with an orientation) until cleared — the support hand on a mag well, a hand on a handle.
+        void SetIkWorldTarget(long entityId, string tipBone, Vector3 worldPos, Vector3 worldRotEuler, bool hasRotation);
+        void ClearIkWorldTarget(long entityId, string tipBone);
+        void SetIkPoleAngle(long entityId, string tipBone, float degrees);
 
         // Camera/attachment feel primitives: spring-damper impulses + seeded noise channels composed
         // onto the game camera (transform untouched) and onto socket offsets (weapon kicks in the hand).
@@ -255,6 +385,13 @@ namespace Vortex
             var r = Rotation; r.X += dPitch; r.Y += dYaw; r.Z += dRoll; Rotation = r;
         }
 
+        /// <summary>Local scale — read/write.</summary>
+        public Vector3 Scale
+        {
+            get => Host != null ? Host.GetScale(EntityId) : Vector3.One;
+            set { Host?.SetScale(EntityId, value); }
+        }
+
         /// <summary>Set THIS entity's WORLD position + rotation in one call — correct even when it is a
         /// CHILD of a moved/rotated parent (Position/Rotation write LOCAL values). The viewmodel-follow
         /// primitive: <c>SetWorldPose(eyePos, new Vector3(pitch, yaw, 0));</c></summary>
@@ -343,6 +480,8 @@ namespace Vortex
         /// that bone; <see cref="ClearBoneOverrides"/> clears them all.</summary>
         public void SetBoneAdditiveRotation(string bone, Vector3 eulerDeg) { Host?.SetBoneAdditiveRotation(EntityId, bone, eulerDeg); }
         public void SetBoneScaleOverride(string bone, float scale) { Host?.SetBoneScaleOverride(EntityId, bone, scale); }
+        /// <summary>Hide/show a bone (see Animation.SetBoneHidden).</summary>
+        public void SetBoneHidden(string bone, bool hidden, bool includeDescendants = true) { Animation.SetBoneHidden(EntityId, bone, hidden, includeDescendants); }
 
         /// <summary>Clear every runtime bone-rotation override on this entity (back to the pure clip pose).</summary>
         public void ClearBoneOverrides() { Host?.ClearBoneOverrides(EntityId); }
@@ -350,6 +489,13 @@ namespace Vortex
         /// <summary>Blend THIS entity's Two-Bone IK chain(s) (#179): 0 = animation only, 1 = full IK.
         /// tipBone selects one chain (null/empty = all): <c>SetIkWeight("mixamorig:LeftHand", 0f);</c></summary>
         public void SetIkWeight(string tipBone, float weight) { Host?.SetIkWeight(EntityId, tipBone, weight); }
+        /// <summary>Drive this entity's IK chain to a world position (see Animation.SetIkTarget).</summary>
+        public void SetIkTarget(string tipBone, Vector3 worldPosition) { Animation.SetIkTarget(EntityId, tipBone, worldPosition); }
+        public void SetIkTarget(string tipBone, Vector3 worldPosition, Vector3 worldRotationEuler) { Animation.SetIkTarget(EntityId, tipBone, worldPosition, worldRotationEuler); }
+        public void ClearIkTarget(string tipBone) { Animation.ClearIkTarget(EntityId, tipBone); }
+        public void SetIkPoleAngle(string tipBone, float degrees) { Animation.SetIkPoleAngle(EntityId, tipBone, degrees); }
+        /// <summary>This entity's world position + rotation (through every parent).</summary>
+        public bool TryGetWorldPose(out Vector3 position, out Vector3 rotationEulerDeg) { return Scene.TryGetWorldPose(EntityId, out position, out rotationEulerDeg); }
 
         /// <summary>Attach THIS entity to a bone of an animated entity — it follows the bone through every
         /// clip from now on (pistol into the hand: <c>AttachTo(character, "Hand_R");</c>). Offsets are in
@@ -364,6 +510,34 @@ namespace Vortex
         /// first AttachTo (holster-to-origin).</summary>
         public bool Detach(bool keepWorldPosition = true)
             { return Host != null && Host.DetachEntityFromBone(EntityId, keepWorldPosition); }
+
+        // ---- Rigid-body physics (#100) on THIS entity (needs a Collider + Dynamic Rigidbody in the editor) ----
+
+        /// <summary>Continuous push in N for this frame (see Physics.AddForce): <c>AddForce(new Vector3(0, 0, 40f));</c></summary>
+        public void AddForce(Vector3 force) { Physics.AddForce(EntityId, force); }
+
+        /// <summary>Instant kick in N·s (see Physics.AddImpulse): <c>AddImpulse(Vector3.Up * 30f);</c></summary>
+        public void AddImpulse(Vector3 impulse) { Physics.AddImpulse(EntityId, impulse); }
+
+        /// <summary>Spin this body (N·m).</summary>
+        public void AddTorque(Vector3 torque) { Physics.AddTorque(EntityId, torque); }
+
+        /// <summary>Velocity (m/s) of this entity's simulated body — read/write. Zero / ignored without a dynamic Rigidbody.</summary>
+        public Vector3 Velocity
+        {
+            get => Physics.GetVelocity(EntityId);
+            set { Physics.SetVelocity(EntityId, value); }
+        }
+
+        /// <summary>Angular velocity (rad/s) of this entity's simulated body — read/write.</summary>
+        public Vector3 AngularVelocity
+        {
+            get => Physics.GetAngularVelocity(EntityId);
+            set { Physics.SetAngularVelocity(EntityId, value); }
+        }
+
+        /// <summary>True when this entity is simulated as a moving physics body (Dynamic or Kinematic Rigidbody).</summary>
+        public bool HasRigidbody { get { return Physics.HasRigidbody(EntityId); } }
 
         // ---- Coroutines + timers (#37) ----
 
@@ -500,6 +674,11 @@ namespace Vortex
         // ---- Window focus: ALL input (keyboard, mouse, controller) is dead unless OUR window is the foreground
         // window. Works everywhere — in-editor play, the external game window, and an exported debug/release build
         // (they're all in this process) — so an unfocused/alt-tabbed game can't be driven by stray global input. ----
+#if VORTEX_CORE
+        /// <summary>True only while this app's window is the foreground window. Input is ignored otherwise.
+        /// The host (native GameHost / editor shell) reports focus through Editor.Core.Input.HostInput.</summary>
+        public static bool WindowFocused { get { return Editor.Core.Input.HostInput.IsWindowFocused(); } }
+#else
         [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
         [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
         [System.Runtime.InteropServices.DllImport("kernel32.dll")] private static extern uint GetCurrentProcessId();
@@ -514,6 +693,7 @@ namespace Vortex
                 catch { _focusApiMissing = true; return true; }
             }
         }
+#endif
 
         // ---- Gamepad / controller (Windows.Gaming.Input incl. PlayStation, XInput fallback). Polled once per tick.
         // Sticks/triggers are normalized to -1..1 / 0..1 with dead zones; frozen to neutral while a gameplay-blocking
@@ -577,6 +757,14 @@ namespace Vortex
             // No controller input while our window isn't focused.
             if (!WindowFocused) { _padOn = false; _buttons = 0; _lx = _ly = _rx = _ry = _lt = _rt = 0f; return; }
 
+#if VORTEX_CORE
+            // Shared core: the host supplies the controller snapshot (SDL3 gamepads on macOS/Linux).
+            var pad = Editor.Core.Input.HostInput.PollGamepad();
+            _padOn = pad.Connected;
+            _buttons = pad.Buttons;
+            _lx = pad.LeftX; _ly = pad.LeftY; _rx = pad.RightX; _ry = pad.RightY; _lt = pad.LeftTrigger; _rt = pad.RightTrigger;
+            return;
+#else
             if (!_wgiMissing)
             {
                 try { if (PollWgi()) return; }               // Xbox or (Win11) DualSense via Windows.Gaming.Input
@@ -604,8 +792,10 @@ namespace Vortex
 
             // Last resort -> XInput (Xbox, or a DualSense mapped via Steam Input / DS4Windows).
             PollXInput();
+#endif
         }
 
+#if !VORTEX_CORE
         // Windows.Gaming.Input: Gamepad first (normalized), else RawGameController (a PlayStation pad Windows didn't
         // surface as a Gamepad). Returns true only if a controller was actually found + read.
         private static bool PollWgi()
@@ -754,6 +944,7 @@ namespace Vortex
             return f < -1f ? -1f : (f > 1f ? 1f : f);
         }
         private static float Trigger(byte t) { return t <= 30 ? 0f : (t - 30) / (255f - 30f); }
+#endif
     }
 
     /// <summary>Frame timing.</summary>
@@ -818,6 +1009,11 @@ namespace Vortex
 
         /// <summary>Set the LOCAL rotation (Euler degrees) of any entity — pairs with <see cref="SetPositionOf"/>.</summary>
         public static void SetRotationOf(long entity, Vector3 rotationEulerDeg) { Host?.SetRotation(entity, rotationEulerDeg); }
+        /// <summary>An entity's LOCAL scale.</summary>
+        public static Vector3 ScaleOf(long entity) { return Host != null ? Host.GetScale(entity) : Vector3.One; }
+        public static void SetScaleOf(long entity, Vector3 scale) { Host?.SetScale(entity, scale); }
+        /// <summary>Tint another entity's mesh (0..1 per channel) — the same as this behaviour's SetColor, for any entity.</summary>
+        public static void SetColorOf(long entity, float r, float g, float b) { Host?.SetEntityColor(entity, r, g, b); }
 
         /// <summary>Set an entity's WORLD position + rotation in one call — correct even when the entity
         /// is a CHILD of a moved/rotated/scaled parent (the engine converts to the local frame; the
@@ -826,6 +1022,14 @@ namespace Vortex
         /// (Position/Rotation write LOCAL values — for parented entities use this instead.)</summary>
         public static void SetWorldPose(long entity, Vector3 position, Vector3 rotationEulerDeg)
             { Host?.SetEntityWorldPose(entity, position, rotationEulerDeg); }
+
+        /// <summary>An entity's WORLD position + rotation (engine Euler degrees), through every parent — the
+        /// counterpart of <see cref="SetWorldPose"/>. False when the entity is unknown.</summary>
+        public static bool TryGetWorldPose(long entity, out Vector3 position, out Vector3 rotationEulerDeg)
+        {
+            position = Vector3.Zero; rotationEulerDeg = Vector3.Zero;
+            return Host != null && Host.TryGetEntityWorldPose(entity, out position, out rotationEulerDeg);
+        }
 
         /// <summary>Force a render layer onto an entity + all children (every MeshRenderer):
         /// 0 = World, 1 = First-Person viewmodel, 2 = Third-Person only. The weapon-system primitive —
@@ -1087,11 +1291,13 @@ namespace Vortex
     }
 
     /// <summary>
-    /// Collision. <see cref="MoveCharacter"/> resolves a character capsule (feet position, radius, height) against
-    /// the scene's Collider components with collide-and-slide: the ground is solid, you can't walk through
-    /// walls/props/models, and you can't clip through even up close. <see cref="Grounded"/> is true when the last
-    /// move ended resting on a surface (use it to reset jumping/gravity). Add Colliders to your level objects in
-    /// the editor; the character itself needs no collider — you pass its capsule to MoveCharacter each frame.
+    /// Collision + rigid-body physics. <see cref="MoveCharacter"/> resolves a character capsule (feet position,
+    /// radius, height) against the scene's Collider components with collide-and-slide: the ground is solid, you
+    /// can't walk through walls/props/models, and you can't clip through even up close. <see cref="Grounded"/> is
+    /// true when the last move ended resting on a surface (use it to reset jumping/gravity). Add Colliders to your
+    /// level objects in the editor; the character itself needs no collider — you pass its capsule to MoveCharacter
+    /// each frame. Props with a Collider AND a Rigidbody (Dynamic) are simulated by the physics engine (Jolt): they
+    /// fall, stack, roll, get pushed by the character and react to <see cref="AddForce"/> / <see cref="AddImpulse"/>.
     /// </summary>
     public static class Physics
     {
@@ -1163,11 +1369,15 @@ namespace Vortex
         public static bool Raycast(Vector3 origin, Vector3 direction, float maxDist, out RaycastHit hit, int layerMask = ~0)
         {
             hit = default(RaycastHit);
-            if (!Editor.Core.Services.Physics.CollisionService.Raycast(
-                    new Editor.ECS.Vector3(origin.X, origin.Y, origin.Z),
-                    new Editor.ECS.Vector3(direction.X, direction.Y, direction.Z),
-                    maxDist, layerMask, out var point, out var normal, out var entity, out float dist))
-                return false;
+            var o = new Editor.ECS.Vector3(origin.X, origin.Y, origin.Z);
+            var d = new Editor.ECS.Vector3(direction.X, direction.Y, direction.Z);
+            Editor.ECS.Vector3 point, normal; Editor.ECS.GameEntity entity; float dist;
+            // Jolt casts against the live world (static level, simulated props at their CURRENT pose, triggers
+            // excluded). An explicit entity-layer mask keeps the managed cast (entity layers are not physics layers).
+            bool got = Editor.Core.Services.Physics.PhysicsService.IsBuilt && layerMask == ~0
+                ? Editor.Core.Services.Physics.PhysicsService.Raycast(o, d, maxDist, out point, out normal, out entity, out dist)
+                : Editor.Core.Services.Physics.CollisionService.Raycast(o, d, maxDist, layerMask, out point, out normal, out entity, out dist);
+            if (!got) return false;
             hit.Point = new Vector3(point.X, point.Y, point.Z);
             hit.Normal = new Vector3(normal.X, normal.Y, normal.Z);
             hit.Distance = dist;
@@ -1186,7 +1396,8 @@ namespace Vortex
 
         /// <summary>Re-bake an entity's colliders at its CURRENT transform. The collision world is built
         /// once per scene (static level geometry) — call this after a script MOVES a collider-carrying
-        /// entity (sliding door, moving platform) so characters and raycasts see the new position.</summary>
+        /// entity (sliding door, moving platform) so characters and raycasts see the new position. (An entity
+        /// with a KINEMATIC Rigidbody does this automatically every physics step.)</summary>
         public static void RefreshCollider(long entity)
         {
             var e = Editor.Scripting.ScriptRuntime.Instance.FindEntityByHandle(entity);
@@ -1195,9 +1406,78 @@ namespace Vortex
             {
                 Editor.Core.Services.Physics.CollisionService.RemoveEntityShapes(e);
                 Editor.Core.Services.Physics.CollisionService.AddEntityShapes(e);
+                Editor.Core.Services.Physics.PhysicsService.RefreshEntity(e);
             }
             catch { }
         }
+
+        // ---- Rigid-body physics (#100, Jolt) ----
+        // Make a prop physical in the EDITOR: add a Collider (Box/Sphere/Capsule/Mesh) + a Rigidbody (Dynamic),
+        // set its mass, and it falls, stacks, rolls and gets pushed by the player from the moment Play starts.
+        // These calls let scripts act on that body. Without a physics-enabled engine build they are no-ops
+        // (false / zero) — see Simulated.
+
+        /// <summary>True when rigid-body physics is running (a Jolt-enabled engine build, in play). In the stub
+        /// build props stay static and every force/impulse call below returns false.</summary>
+        public static bool Simulated { get { return Editor.Core.Services.Physics.PhysicsService.IsBuilt; } }
+
+        /// <summary>Push with a continuous force (N) for this frame — call every Update for a steady push (fans,
+        /// thrusters, wind): <c>Physics.AddForce(crate, new Vector3(0, 0, 40f));</c>. Returns false when the entity
+        /// has no dynamic Rigidbody.</summary>
+        public static bool AddForce(long entity, Vector3 force) { return Host != null && Host.PhysicsAddForce(entity, force); }
+
+        /// <summary>Force (N) applied at a world point — off-centre pushes make the body spin.</summary>
+        public static bool AddForceAtPoint(long entity, Vector3 force, Vector3 worldPoint) { return Host != null && Host.PhysicsAddForceAtPoint(entity, force, worldPoint); }
+
+        /// <summary>Instant kick (N·s) — bullets, explosions, a thrown bottle: <c>Physics.AddImpulse(hit.EntityId, Forward * 8f);</c>.
+        /// An impulse of mass × Δv changes the velocity by Δv.</summary>
+        public static bool AddImpulse(long entity, Vector3 impulse) { return Host != null && Host.PhysicsAddImpulse(entity, impulse); }
+
+        /// <summary>Instant kick (N·s) at a world point — a shot at a barrel's rim tips it over:
+        /// <c>Physics.AddImpulseAtPoint(hit.EntityId, dir * 6f, hit.Point);</c></summary>
+        public static bool AddImpulseAtPoint(long entity, Vector3 impulse, Vector3 worldPoint) { return Host != null && Host.PhysicsAddImpulseAtPoint(entity, impulse, worldPoint); }
+
+        /// <summary>Spin the body (N·m, accumulated until the next physics step).</summary>
+        public static bool AddTorque(long entity, Vector3 torque) { return Host != null && Host.PhysicsAddTorque(entity, torque); }
+
+        /// <summary>Set a dynamic body's velocity (m/s) directly — launching a projectile prop:
+        /// <c>Physics.SetVelocity(grenade, Forward * 15f + Vector3.Up * 3f);</c></summary>
+        public static bool SetVelocity(long entity, Vector3 velocity) { return Host != null && Host.PhysicsSetVelocity(entity, velocity); }
+
+        /// <summary>Current velocity (m/s) of a simulated body — zero without one.</summary>
+        public static Vector3 GetVelocity(long entity) { return Host != null ? Host.PhysicsGetVelocity(entity) : Vector3.Zero; }
+
+        /// <summary>Set a dynamic body's angular velocity (rad/s).</summary>
+        public static bool SetAngularVelocity(long entity, Vector3 velocity) { return Host != null && Host.PhysicsSetAngularVelocity(entity, velocity); }
+
+        /// <summary>Current angular velocity (rad/s) — zero without a simulated body.</summary>
+        public static Vector3 GetAngularVelocity(long entity) { return Host != null ? Host.PhysicsGetAngularVelocity(entity) : Vector3.Zero; }
+
+        /// <summary>Switch a Rigidbody entity between kinematic (you move it — via Position/SetWorldPose or animation —
+        /// and it pushes everything in its way) and dynamic (the simulation moves it). Picking up a prop:
+        /// <c>Physics.SetKinematic(prop, true);</c> … drop it: <c>Physics.SetKinematic(prop, false);</c></summary>
+        public static bool SetKinematic(long entity, bool kinematic) { return Host != null && Host.PhysicsSetKinematic(entity, kinematic); }
+
+        /// <summary>Wake a resting body (bodies fall asleep when they stop moving; forces and impulses wake them too).</summary>
+        public static bool WakeUp(long entity) { return Host != null && Host.PhysicsWakeUp(entity); }
+
+        /// <summary>True when the body is asleep (at rest) — also true for entities without a simulated body.</summary>
+        public static bool IsSleeping(long entity) { return Host == null || Host.PhysicsIsSleeping(entity); }
+
+        /// <summary>Change the world gravity (m/s², default (0, -9.81, 0)) — a moon level, or zero-g. Resets to the
+        /// default on every scene start.</summary>
+        public static void SetGravity(Vector3 gravity) { if (Host != null) Host.PhysicsSetGravity(gravity); }
+
+        /// <summary>Every entity whose physics body overlaps a sphere — explosions, "what's around me":
+        /// <c>foreach (var id in Physics.OverlapSphere(Position, 4f)) Physics.AddImpulse(id, (Scene.PositionOf(id) - Position).Normalized * 20f);</c>
+        /// Triggers are not included. Empty without a physics-enabled build.</summary>
+        public static long[] OverlapSphere(Vector3 center, float radius) { return Host != null ? (Host.PhysicsOverlapSphere(center, radius) ?? new long[0]) : new long[0]; }
+
+        /// <summary>True when the entity is a moving physics body (a Dynamic or Kinematic Rigidbody).</summary>
+        public static bool HasRigidbody(long entity) { return Host != null && Host.PhysicsHasRigidbody(entity); }
+
+        /// <summary>Mass (kg) of the entity's simulated body — 0 without one.</summary>
+        public static float GetMass(long entity) { return Host != null ? Host.PhysicsGetMass(entity) : 0f; }
     }
 
     /// <summary>
@@ -1254,6 +1534,12 @@ namespace Vortex
         public static void SetBoneScaleOverride(long entityId, string bone, float scale)
             { if (Host != null) Host.SetBoneScaleOverride(entityId, bone, scale); }
 
+        /// <summary>Hide (or show) a bone's vertices. includeDescendants = the whole limb below it, like a 0 scale
+        /// override. false = ONLY that bone: the first-person arms trick — collapse Hips/Spine/Shoulders so the torso
+        /// never shows, while the arm bones hanging off them keep rendering.</summary>
+        public static void SetBoneHidden(long entityId, string bone, bool hidden, bool includeDescendants = true)
+            { if (Host != null) Host.SetBoneHidden(entityId, bone, hidden, includeDescendants); }
+
         /// <summary>Clear every runtime bone-rotation override on an entity's animator.</summary>
         public static void ClearBoneOverrides(long entityId)
             { if (Host != null) Host.ClearBoneOverrides(entityId); }
@@ -1264,6 +1550,27 @@ namespace Vortex
         /// <c>Animation.SetIkWeight(chr, "mixamorig:LeftHand", 0f);</c> then back to 1 when done.</summary>
         public static void SetIkWeight(long entityId, string tipBone, float weight)
             { if (Host != null) Host.SetIkWeight(entityId, tipBone, weight); }
+
+        /// <summary>Pull an IK chain (selected by its tip bone, e.g. "mixamorig:LeftHand") to a WORLD-space
+        /// position every frame until <see cref="ClearIkTarget"/> — the support hand travelling to the mag
+        /// well during a reload, a hand landing on a door handle. The entity's TwoBoneIk component still defines
+        /// the limb and the weight; the animated wrist orientation is kept. Set it in LateUpdate (after the
+        /// camera/rig moved) so the target is exact for this frame.</summary>
+        public static void SetIkTarget(long entityId, string tipBone, Vector3 worldPosition)
+            { if (Host != null) Host.SetIkWorldTarget(entityId, tipBone, worldPosition, Vector3.Zero, false); }
+
+        /// <summary>Same, with the hand's WORLD orientation (engine Euler degrees) — the palm wraps the grip.</summary>
+        public static void SetIkTarget(long entityId, string tipBone, Vector3 worldPosition, Vector3 worldRotationEuler)
+            { if (Host != null) Host.SetIkWorldTarget(entityId, tipBone, worldPosition, worldRotationEuler, true); }
+
+        /// <summary>Back to the component's own (bone-relative / auto-grip) target. null/empty = every chain.</summary>
+        public static void ClearIkTarget(long entityId, string tipBone)
+            { if (Host != null) Host.ClearIkWorldTarget(entityId, tipBone); }
+
+        /// <summary>Swing an IK chain's elbow/knee around the root->target axis (degrees; 0 = the animation's natural
+        /// bend plane) — steer a first-person elbow down and out of the view.</summary>
+        public static void SetIkPoleAngle(long entityId, string tipBone, float degrees)
+            { if (Host != null) Host.SetIkPoleAngle(entityId, tipBone, degrees); }
 
         // ---- synced playback groups (#174) ----
 

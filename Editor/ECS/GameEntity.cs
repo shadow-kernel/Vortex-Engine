@@ -35,6 +35,7 @@ namespace Editor.ECS
     [KnownType(typeof(Components.Animation.Animator))]
     [KnownType(typeof(Components.Animation.BoneAttachment))]
     [KnownType(typeof(Components.Animation.TwoBoneIk))]
+    [KnownType(typeof(Components.Animation.HandPose))]
     [KnownType(typeof(Components.Animation.AnimatorClipEntry))]
     [KnownType(typeof(Components.Scripting.Script))]
     public class GameEntity : Core.ViewModelBase, IEngineEntity

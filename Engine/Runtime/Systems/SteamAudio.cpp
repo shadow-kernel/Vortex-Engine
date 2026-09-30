@@ -9,12 +9,11 @@
 #include <cmath>
 #include <chrono>
 
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
+#include <string>
 
 // phonon.h is included ONLY for the IPL* types/structs/enums. Every entry point is resolved through
-// GetProcAddress (see load_dll) so phonon.dll stays a truly optional runtime dependency — we never take a
-// link-time reference to it.
+// platform::library_symbol (see load_dll) so the Steam Audio runtime (phonon.dll / libphonon.dylib) stays
+// a truly optional runtime dependency — we never take a link-time reference to it.
 #include <phonon.h>                        // resolved via AdditionalIncludeDirectories (ThirdParty/steam-audio/include)
 #include "../../ThirdParty/miniaudio.h"   // ma_node types (no MA_IMPLEMENTATION here)
 
@@ -24,7 +23,7 @@ namespace {
 	// ----------------------------------------------------------------------------------------------------
 	// Dynamically-loaded phonon entry points
 	// ----------------------------------------------------------------------------------------------------
-	HMODULE g_dll = nullptr;
+	platform::library_handle g_dll = nullptr;
 
 	typedef IPLerror (IPLCALL *pfn_iplContextCreate)(IPLContextSettings*, IPLContext*);
 	typedef void     (IPLCALL *pfn_iplContextRelease)(IPLContext*);
@@ -83,9 +82,24 @@ namespace {
 	bool load_dll()
 	{
 		if (g_dll) return true;
-		g_dll = LoadLibraryW(L"phonon.dll");
+		// phonon.dll / libphonon.dylib / libphonon.so: on the loader's search path first, then next to the
+		// executable (dlopen does not look there by itself). The macOS SDK also ships phonon as a bundle.
+		const std::string name = platform::shared_library_name("phonon");
+		const std::string exe_dir = platform::executable_directory();
+		const std::string candidates[] = {
+			name,
+			exe_dir + name,
+#if VORTEX_PLATFORM_APPLE
+			exe_dir + "phonon.bundle/Contents/MacOS/phonon",
+#endif
+		};
+		for (const std::string& candidate : candidates)
+		{
+			g_dll = platform::load_library(candidate.c_str());
+			if (g_dll) break;
+		}
 		if (!g_dll) return false;
-		#define LOAD(field, name) field = (pfn_##name)GetProcAddress(g_dll, #name); if (!field) return false;
+		#define LOAD(field, name) field = (pfn_##name)platform::library_symbol(g_dll, #name); if (!field) return false;
 		LOAD(P_ContextCreate, iplContextCreate); LOAD(P_ContextRelease, iplContextRelease);
 		LOAD(P_HRTFCreate, iplHRTFCreate); LOAD(P_HRTFRelease, iplHRTFRelease);
 		LOAD(P_BinauralCreate, iplBinauralEffectCreate); LOAD(P_BinauralRelease, iplBinauralEffectRelease);

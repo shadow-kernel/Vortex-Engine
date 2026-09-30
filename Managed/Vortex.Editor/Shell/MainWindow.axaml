@@ -1,0 +1,85 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:c="clr-namespace:VortexEditor.Controls"
+        xmlns:p="clr-namespace:VortexEditor.Panels"
+        xmlns:sh="clr-namespace:VortexEditor.Shell"
+        x:Class="VortexEditor.Shell.MainWindow"
+        Title="Vortex Editor" Width="1500" Height="940" MinWidth="1024" MinHeight="640"
+        ExtendClientAreaToDecorationsHint="True" ExtendClientAreaChromeHints="Default" ExtendClientAreaTitleBarHeightHint="52"
+        Background="{DynamicResource VxWindowBrush}">
+  <Grid RowDefinitions="52,*,26">
+    <!-- unified toolbar (traffic lights live at the far left on macOS) -->
+    <Border x:Name="TitleBar" Background="{DynamicResource VxToolbarBrush}" Classes="hairline-bottom">
+      <Grid ColumnDefinitions="Auto,*,Auto,*,Auto" Margin="0,0,12,0">
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="8" Margin="{Binding LeftInset}" x:Name="LeftGroup">
+          <c:VxIcon Icon="Vortex" Width="20" Height="20" Foreground="{DynamicResource VxAccentBrush}" Margin="8,0,0,0"/>
+          <StackPanel VerticalAlignment="Center">
+            <TextBlock x:Name="ProjectTitle" Text="Vortex" FontWeight="SemiBold"/>
+            <TextBlock x:Name="SceneSubtitle" Text="No project" Classes="small secondary"/>
+          </StackPanel>
+          <NativeMenuBar x:Name="MenuBarHost" Margin="12,0,0,0" IsVisible="False"/>
+        </StackPanel>
+        <!-- centre: play controls -->
+        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Spacing="6">
+          <Border Classes="segmented">
+            <StackPanel Orientation="Horizontal">
+              <RadioButton x:Name="TabScene" GroupName="view" IsChecked="True" Click="OnSceneTab" ToolTip.Tip="Build view (free camera)">Scene</RadioButton>
+              <RadioButton x:Name="TabGame" GroupName="view" Click="OnGameTab" ToolTip.Tip="Game view (main camera)">Game</RadioButton>
+            </StackPanel>
+          </Border>
+          <Border Classes="segmented" Margin="8,0,0,0">
+            <StackPanel Orientation="Horizontal">
+              <Button x:Name="PlayButton" Classes="icon" Click="OnPlay" ToolTip.Tip="Play (⌘P)"><c:VxIcon x:Name="PlayIcon" Icon="Play" Foreground="{DynamicResource VxGreenBrush}"/></Button>
+              <Button x:Name="PauseButton" Classes="icon" Click="OnPause" ToolTip.Tip="Pause"><c:VxIcon Icon="Pause"/></Button>
+              <Button x:Name="StopButton" Classes="icon" Click="OnStop" ToolTip.Tip="Stop" IsEnabled="False"><c:VxIcon x:Name="StopIcon" Icon="Stop"/></Button>
+              <Button x:Name="PlayMenuButton" Classes="icon" Click="OnPlayMenu" ToolTip.Tip="Play options" Width="18"><c:VxIcon Icon="ChevronDown" Width="11" Height="11"/></Button>
+            </StackPanel>
+          </Border>
+        </StackPanel>
+        <!-- right: build / git / settings -->
+        <StackPanel Grid.Column="4" Orientation="Horizontal" VerticalAlignment="Center" Spacing="6">
+          <Button Classes="ghost" Click="OnBuildClick" ToolTip.Tip="Build the game (⌘B)"><StackPanel Orientation="Horizontal" Spacing="6"><c:VxIcon Icon="Hammer"/><TextBlock Text="Build"/></StackPanel></Button>
+          <Button Classes="ghost" Click="OnGitClick" ToolTip.Tip="Source control"><StackPanel Orientation="Horizontal" Spacing="6"><c:VxIcon Icon="Git"/><TextBlock Text="Git"/></StackPanel></Button>
+          <Button Classes="icon" Click="OnSettingsClick" ToolTip.Tip="Project settings"><c:VxIcon Icon="Gear"/></Button>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <!-- workspace -->
+    <Grid Grid.Row="1" x:Name="Workspace" ColumnDefinitions="260,5,*,5,330">
+      <Grid x:Name="LeftColumn" RowDefinitions="3*,5,2*">
+        <Border Classes="sidebar hairline-right"><p:HierarchyPanel x:Name="Hierarchy"/></Border>
+        <GridSplitter Grid.Row="1" ResizeDirection="Rows"/>
+        <Border Grid.Row="2" Classes="sidebar hairline-right"><p:FileTreePanel x:Name="FileTree"/></Border>
+      </Grid>
+      <GridSplitter Grid.Column="1" ResizeDirection="Columns"/>
+      <Grid Grid.Column="2" x:Name="CenterColumn" RowDefinitions="*,5,300">
+        <p:ViewportPanel x:Name="ViewportPanel"/>
+        <GridSplitter Grid.Row="1" ResizeDirection="Rows"/>
+        <Border Grid.Row="2" x:Name="BottomDock" Classes="panel hairline-top">
+          <TabControl x:Name="BottomTabs">
+            <TabItem Header="Project"><p:AssetBrowserPanel x:Name="AssetBrowser"/></TabItem>
+            <TabItem Header="Console"><p:ConsolePanel x:Name="ConsoleView"/></TabItem>
+          </TabControl>
+        </Border>
+      </Grid>
+      <GridSplitter Grid.Column="3" ResizeDirection="Columns"/>
+      <Border Grid.Column="4" x:Name="RightColumn" Classes="panel hairline-left">
+        <TabControl x:Name="RightTabs">
+          <TabItem Header="Inspector"><p:InspectorPanel x:Name="Inspector"/></TabItem>
+          <TabItem Header="Environment"><p:EnvironmentPanel x:Name="Environment"/></TabItem>
+        </TabControl>
+      </Border>
+      <sh:ToastHost x:Name="Toast" Grid.ColumnSpan="5"/>
+    </Grid>
+
+    <!-- status bar -->
+    <Border Grid.Row="2" Background="{DynamicResource VxToolbarBrush}" Classes="hairline-top" Padding="12,0">
+      <DockPanel VerticalAlignment="Center">
+        <TextBlock x:Name="ResolutionText" DockPanel.Dock="Right" Classes="small tertiary"/>
+        <TextBlock x:Name="UndoText" DockPanel.Dock="Right" Classes="small tertiary" Margin="0,0,18,0"/>
+        <TextBlock x:Name="StatusText" Classes="small secondary" Text="Ready"/>
+      </DockPanel>
+    </Border>
+  </Grid>
+</Window>

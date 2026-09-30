@@ -1,11 +1,11 @@
 #pragma once
 
-#include "..\Engine\Runtime\ResourceManager.h"
-#include "..\Engine\Runtime\Systems\AudioSystem.h"
-#include "..\Engine\Runtime\Systems\AudioEngine.h"
-#include "..\Engine\Runtime\Systems\AudioMixer.h"
-#include "..\Engine\Runtime\Systems\AudioReverb.h"
-#include "..\Engine\Runtime\Systems\AudioVoices.h"
+#include "../Engine/Runtime/ResourceManager.h"
+#include "../Engine/Runtime/Systems/AudioSystem.h"
+#include "../Engine/Runtime/Systems/AudioEngine.h"
+#include "../Engine/Runtime/Systems/AudioMixer.h"
+#include "../Engine/Runtime/Systems/AudioReverb.h"
+#include "../Engine/Runtime/Systems/AudioVoices.h"
 
 #include "Test.h"
 
@@ -20,8 +20,6 @@
 #include <thread>
 #include <vector>
 
-#include <psapi.h>
-#pragma comment(lib, "psapi.lib")
 
 using namespace vortex;
 
@@ -109,7 +107,7 @@ public:
 
 private:
 	// Plays a scripted sequence of spatial configurations, writing "<phase> <ms>"
-	// (GetTickCount64) lines so the external per-channel peak meter can prove
+	// (platform::tick_count_ms) lines so the external per-channel peak meter can prove
 	// distance attenuation, spatial-blend mixing and stereo panning.
 	void run_spatial_demo_if_requested(const std::string& wav)
 	{
@@ -124,7 +122,7 @@ private:
 		if (fopen_s(&f, out_path.c_str(), "w") != 0 || !f) return;
 		auto mark = [&](const char* phase)
 		{
-			fprintf(f, "%s %llu\n", phase, (unsigned long long)GetTickCount64());
+			fprintf(f, "%s %llu\n", phase, (unsigned long long)platform::tick_count_ms());
 			fflush(f);
 			std::cout << "[spatial] " << phase << "\n";
 		};
@@ -183,9 +181,7 @@ private:
 
 	static size_t working_set()
 	{
-		PROCESS_MEMORY_COUNTERS pmc{};
-		GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc));
-		return pmc.WorkingSetSize;
+		return platform::process_resident_bytes();
 	}
 
 	// Streaming (issue #10): a long clip must NOT hold its full decoded PCM in

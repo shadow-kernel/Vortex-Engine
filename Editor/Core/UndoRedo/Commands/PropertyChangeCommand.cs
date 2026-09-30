@@ -1,9 +1,9 @@
-using System;
+ï»¿using System;
 
 namespace Editor.Core.UndoRedo.Commands
 {
     /// <summary>
-    /// Generischer Befehl für Property-Änderungen.
+    /// Generischer Befehl fÃ¼r Property-Ã„nderungen.
     /// Speichert den alten und neuen Wert einer Eigenschaft.
     /// </summary>
     /// <typeparam name="T">Typ des Property-Werts.</typeparam>
@@ -20,7 +20,7 @@ namespace Editor.Core.UndoRedo.Commands
         /// <summary>
         /// Erstellt einen neuen PropertyChangeCommand.
         /// </summary>
-        /// <param name="target">Das Zielobjekt (für Merge-Vergleich).</param>
+        /// <param name="target">Das Zielobjekt (fÃ¼r Merge-Vergleich).</param>
         /// <param name="propertyName">Name der Eigenschaft.</param>
         /// <param name="setter">Action zum Setzen des Werts.</param>
         /// <param name="oldValue">Alter Wert.</param>
@@ -48,7 +48,7 @@ namespace Editor.Core.UndoRedo.Commands
         {
             if (other is PropertyChangeCommand<T> otherCmd)
             {
-                // Nur zusammenführen wenn gleiches Ziel und gleiche Eigenschaft
+                // Nur zusammenfÃ¼hren wenn gleiches Ziel und gleiche Eigenschaft
                 if (otherCmd._target == _target && otherCmd._propertyName == _propertyName)
                 {
                     // Nur wenn innerhalb des Zeitfensters

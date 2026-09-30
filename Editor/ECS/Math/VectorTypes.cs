@@ -1,10 +1,10 @@
-using System;
+ï»¿using System;
 using System.Runtime.Serialization;
 
 namespace Editor.ECS
 {
     /// <summary>
-    /// 3D-Vektor für Position, Rotation und Skalierung
+    /// 3D-Vektor fÃ¼r Position, Rotation und Skalierung
     /// </summary>
     [DataContract(Name = "Vector3", Namespace = "")]
     public struct Vector3
@@ -97,7 +97,7 @@ namespace Editor.ECS
     }
 
     /// <summary>
-    /// Quaternion für Rotationen
+    /// Quaternion fÃ¼r Rotationen
     /// </summary>
     [DataContract(Name = "Quaternion", Namespace = "")]
     public struct Quaternion

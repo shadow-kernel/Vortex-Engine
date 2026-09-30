@@ -2,7 +2,9 @@ using System;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+#if !VORTEX_CORE
 using System.Windows.Media;
+#endif
 
 namespace Editor.Core.Assets
 {
@@ -119,6 +121,7 @@ namespace Editor.Core.Assets
             }
         }
         
+#if !VORTEX_CORE
         /// <summary>
         /// Creates a material from WPF Color.
         /// </summary>
@@ -145,6 +148,7 @@ namespace Editor.Core.Assets
                 (byte)(BaseColor[2] * 255)
             );
         }
+#endif
         
         /// <summary>
         /// Makes texture paths relative to the material file location.
@@ -188,6 +192,7 @@ namespace Editor.Core.Assets
             OcclusionRoughnessMetallicTexture = ResolveAbsolute(OcclusionRoughnessMetallicTexture, materialDirectory);
         }
         
+#if !VORTEX_CORE
         /// <summary>
         /// Creates a UniversalMaterial from this VortexMaterial.
         /// </summary>
@@ -269,7 +274,11 @@ namespace Editor.Core.Assets
 
             return vmat;
         }
+#endif
         
+        // .vmat files store texture references relative to the material, with backslashes (the format's
+        // canonical separator, so files written on Windows and macOS stay identical). Resolution accepts either
+        // separator and produces the host's native path.
         private string MakeRelative(string absolutePath, string baseDirectory)
         {
             if (string.IsNullOrEmpty(absolutePath))
@@ -277,8 +286,9 @@ namespace Editor.Core.Assets
                 
             try
             {
+                string sep = Path.DirectorySeparatorChar.ToString();
                 Uri pathUri = new Uri(absolutePath);
-                Uri baseUri = new Uri(baseDirectory.EndsWith("\\") ? baseDirectory : baseDirectory + "\\");
+                Uri baseUri = new Uri(baseDirectory.EndsWith(sep) ? baseDirectory : baseDirectory + sep);
                 return Uri.UnescapeDataString(baseUri.MakeRelativeUri(pathUri).ToString().Replace('/', '\\'));
             }
             catch
@@ -291,6 +301,9 @@ namespace Editor.Core.Assets
         {
             if (string.IsNullOrEmpty(relativePath))
                 return null;
+
+            if (Path.DirectorySeparatorChar != '\\')
+                relativePath = relativePath.Replace('\\', '/');
                 
             if (Path.IsPathRooted(relativePath))
                 return relativePath;

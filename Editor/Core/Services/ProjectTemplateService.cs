@@ -43,7 +43,31 @@ namespace Editor.Core.Services
         }
 
         public static string TemplatesRoot()
-            => Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Templates");
+        {
+            var baseDir = AppDomain.CurrentDomain.BaseDirectory;
+            var candidates = new[]
+            {
+                Path.Combine(baseDir, "Templates"),                                  // installed next to the binaries
+                Path.GetFullPath(Path.Combine(baseDir, "..", "Resources", "Templates")), // macOS .app bundle
+                FindRepositoryTemplates(baseDir),                                    // development: repository checkout
+            };
+            foreach (var c in candidates)
+                if (!string.IsNullOrEmpty(c) && Directory.Exists(c)) return c;
+            return candidates[0];
+        }
+
+        private static string FindRepositoryTemplates(string start)
+        {
+            try
+            {
+                var dir = new DirectoryInfo(start);
+                for (int i = 0; i < 8 && dir != null; ++i, dir = dir.Parent)
+                    if (File.Exists(Path.Combine(dir.FullName, "Vortex.slnx")) && Directory.Exists(Path.Combine(dir.FullName, "Templates")))
+                        return Path.Combine(dir.FullName, "Templates");
+            }
+            catch { }
+            return null;
+        }
 
         /// <summary>The Empty template first, then any shipped 3D templates (by their declared order, then name).</summary>
         public static List<ProjectTemplate> Discover()

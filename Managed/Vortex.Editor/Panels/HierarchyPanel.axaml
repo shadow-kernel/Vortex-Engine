@@ -1,0 +1,58 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:c="clr-namespace:VortexEditor.Controls"
+             xmlns:data="clr-namespace:Editor.Core.Data;assembly=Vortex.Core"
+             xmlns:ecs="clr-namespace:Editor.ECS;assembly=Vortex.Core"
+             x:Class="VortexEditor.Panels.HierarchyPanel">
+  <DockPanel>
+    <Border DockPanel.Dock="Top" Classes="panelheader">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="2">
+          <Button Classes="icon" ToolTip.Tip="Locate selection" Click="OnLocateClick"><c:VxIcon Icon="Crosshair"/></Button>
+          <Button Classes="icon" ToolTip.Tip="New scene" Click="OnNewSceneClick"><c:VxIcon Icon="Scene"/></Button>
+          <Button Classes="icon" x:Name="AddButton" ToolTip.Tip="Add entity" Click="OnAddClick"><c:VxIcon Icon="Plus"/></Button>
+        </StackPanel>
+        <TextBlock Classes="headertitle" Text="Scene"/>
+      </DockPanel>
+    </Border>
+    <Border DockPanel.Dock="Top" Padding="8,6" Classes="hairline-bottom">
+      <TextBox x:Name="SearchBox" Classes="search" Watermark="Search entities" TextChanged="OnSearchChanged"/>
+    </Border>
+    <Grid>
+      <TreeView x:Name="Tree" SelectionMode="Multiple" SelectionChanged="OnTreeSelectionChanged" DoubleTapped="OnTreeDoubleTapped" KeyDown="OnTreeKeyDown">
+        <TreeView.DataTemplates>
+          <TreeDataTemplate DataType="data:Scene" ItemsSource="{Binding Entities}">
+            <DockPanel Height="24" Background="Transparent" PointerPressed="OnItemPointerPressed">
+              <c:VxIcon Icon="Scene" Margin="0,0,6,0" Foreground="{DynamicResource VxPurpleBrush}"/>
+              <TextBlock Text="{Binding Name}" FontWeight="SemiBold" VerticalAlignment="Center"/>
+            </DockPanel>
+          </TreeDataTemplate>
+          <TreeDataTemplate DataType="ecs:GameEntity" ItemsSource="{Binding Children}">
+            <DockPanel Height="24" Background="Transparent" PointerPressed="OnItemPointerPressed" PointerMoved="OnItemPointerMoved">
+              <ToggleButton DockPanel.Dock="Right" Classes="icon small" IsChecked="{Binding IsActive}" ToolTip.Tip="Visible / active" Margin="4,0,0,0">
+                <Panel>
+                  <c:VxIcon Icon="Eye" IsVisible="{Binding IsActive}"/>
+                  <c:VxIcon Icon="EyeOff" IsVisible="{Binding !IsActive}" Foreground="{DynamicResource VxTextTertiaryBrush}"/>
+                </Panel>
+              </ToggleButton>
+              <c:VxIcon x:Name="Icon" Icon="{Binding Converter={x:Static c:EntityIconConverter.Instance}}" Foreground="{Binding Converter={x:Static c:EntityIconBrushConverter.Instance}}" Margin="0,0,6,0"/>
+              <TextBlock Text="{Binding Name}" VerticalAlignment="Center" Opacity="{Binding Converter={x:Static c:EntityOpacityConverter.Instance}}"/>
+            </DockPanel>
+          </TreeDataTemplate>
+        </TreeView.DataTemplates>
+      </TreeView>
+      <ListBox x:Name="SearchResults" IsVisible="False" SelectionChanged="OnSearchResultSelected">
+        <ListBox.ItemTemplate>
+          <DataTemplate DataType="ecs:GameEntity">
+            <StackPanel Orientation="Horizontal" Spacing="6">
+              <c:VxIcon Icon="{Binding Converter={x:Static c:EntityIconConverter.Instance}}"/>
+              <TextBlock Text="{Binding Name}"/>
+              <TextBlock Classes="tertiary small" Text="{Binding Path=Scene.Name}" VerticalAlignment="Center"/>
+            </StackPanel>
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+      <TextBlock x:Name="EmptyHint" Classes="tertiary" Text="No project open" HorizontalAlignment="Center" VerticalAlignment="Center" IsVisible="False"/>
+    </Grid>
+  </DockPanel>
+</UserControl>

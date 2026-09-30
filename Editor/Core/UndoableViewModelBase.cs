@@ -1,4 +1,4 @@
-using System;
+ï»¿using System;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Runtime.Serialization;
@@ -9,7 +9,7 @@ namespace Editor.Core
 {
     /// <summary>
     /// ViewModelBase mit integriertem Undo/Redo Support.
-    /// Property-Änderungen werden automatisch im UndoRedoManager registriert.
+    /// Property-Ã„nderungen werden automatisch im UndoRedoManager registriert.
     /// </summary>
     [DataContract]
     public abstract class UndoableViewModelBase : INotifyPropertyChanged
@@ -19,13 +19,13 @@ namespace Editor.Core
         public event PropertyChangedEventHandler PropertyChanged;
 
         /// <summary>
-        /// Gibt an, ob Undo-Tracking für dieses ViewModel aktiviert ist.
+        /// Gibt an, ob Undo-Tracking fÃ¼r dieses ViewModel aktiviert ist.
         /// Standard: true.
         /// </summary>
         protected virtual bool EnableUndoTracking => true;
 
         /// <summary>
-        /// Löst das PropertyChanged-Event aus.
+        /// LÃ¶st das PropertyChanged-Event aus.
         /// </summary>
         protected void OnPropertyChanged([CallerMemberName] string propertyName = null)
         {
@@ -34,7 +34,7 @@ namespace Editor.Core
 
         /// <summary>
         /// Setzt eine Property ohne Undo-Tracking.
-        /// Nützlich für initiale Werte oder interne Updates.
+        /// NÃ¼tzlich fÃ¼r initiale Werte oder interne Updates.
         /// </summary>
         protected bool SetPropertyWithoutUndo<T>(ref T field, T value, [CallerMemberName] string propertyName = null)
         {
@@ -87,7 +87,7 @@ namespace Editor.Core
             field = value;
             OnPropertyChanged(propertyName);
 
-            // Registriere bei UndoRedoManager (ohne erneut auszuführen)
+            // Registriere bei UndoRedoManager (ohne erneut auszufÃ¼hren)
             UndoRedoManager.Instance.Execute(command, execute: false);
 
             return true;
@@ -138,7 +138,7 @@ namespace Editor.Core
         }
 
         /// <summary>
-        /// Führt eine Aktion innerhalb eines Undo-Tracking-freien Bereichs aus.
+        /// FÃ¼hrt eine Aktion innerhalb eines Undo-Tracking-freien Bereichs aus.
         /// </summary>
         protected void SuppressUndo(Action action)
         {
@@ -161,13 +161,13 @@ namespace Editor.Core
         {
             var type = GetType();
             
-            // Versuche _propertyName (z.B. _name für Name)
+            // Versuche _propertyName (z.B. _name fÃ¼r Name)
             var fieldName = "_" + char.ToLower(propertyName[0]) + propertyName.Substring(1);
             var field = type.GetField(fieldName, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
 
             if (field == null)
             {
-                // Versuche propertyName (z.B. name für Name)
+                // Versuche propertyName (z.B. name fÃ¼r Name)
                 fieldName = char.ToLower(propertyName[0]) + propertyName.Substring(1);
                 field = type.GetField(fieldName, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
             }

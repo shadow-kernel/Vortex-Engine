@@ -1,4 +1,4 @@
-using System.Runtime.Serialization;
+ï»¿using System.Runtime.Serialization;
 
 namespace Editor.ECS.Components.Physics
 {
@@ -15,7 +15,7 @@ namespace Editor.ECS.Components.Physics
     }
 
     /// <summary>
-    /// Physik-Material für Collider
+    /// Physik-Material fÃ¼r Collider
     /// </summary>
     [DataContract(Name = "PhysicsMaterial", Namespace = "")]
     public class PhysicsMaterial
@@ -34,7 +34,7 @@ namespace Editor.ECS.Components.Physics
     }
 
     /// <summary>
-    /// Basis-Collider-Komponente für Physik-Kollisionen.
+    /// Basis-Collider-Komponente fÃ¼r Physik-Kollisionen.
     /// </summary>
     [DataContract(Name = "Collider", Namespace = "")]
     public class Collider : Component
@@ -111,7 +111,7 @@ namespace Editor.ECS.Components.Physics
         public override string DisplayName => "Box Collider";
 
         /// <summary>
-        /// Größe der Box
+        /// GrÃ¶ÃŸe der Box
         /// </summary>
         [DataMember(Name = "size", Order = 20)]
         public Vector3 Size
@@ -171,7 +171,7 @@ namespace Editor.ECS.Components.Physics
         }
 
         /// <summary>
-        /// Höhe der Kapsel
+        /// HÃ¶he der Kapsel
         /// </summary>
         [DataMember(Name = "height", Order = 21)]
         public float Height

@@ -1,0 +1,48 @@
+# EngineTest — console harnesses. Main.cpp picks the test through TEST_AUDIO / TEST_ECS / TEST_RENDER / TEST_PHYSICS;
+# each test lives in its own header, so only Main.cpp is compiled per executable.
+add_executable(EngineTest Main.cpp)
+target_include_directories(EngineTest PRIVATE "${CMAKE_SOURCE_DIR}/Engine/Common")
+target_compile_definitions(EngineTest PRIVATE TEST_AUDIO=1)
+target_link_libraries(EngineTest PRIVATE vortex::engine)
+
+# Opens a native window, renders a lit scene through the platform backend and captures a frame.
+add_executable(VortexRenderTest Main.cpp)
+target_include_directories(VortexRenderTest PRIVATE "${CMAKE_SOURCE_DIR}/Engine/Common")
+target_compile_definitions(VortexRenderTest PRIVATE TEST_RENDER=1)
+target_link_libraries(VortexRenderTest PRIVATE vortex::engine)
+
+# Physics v2 smoke test: Jolt world, rigid bodies, raycast, contact events, quaternion convention, character.
+# Without Jolt (VORTEX_ENABLE_JOLT=OFF) it verifies the stub contract instead.
+add_executable(VortexPhysicsTest Main.cpp)
+target_include_directories(VortexPhysicsTest PRIVATE "${CMAKE_SOURCE_DIR}/Engine/Common")
+target_compile_definitions(VortexPhysicsTest PRIVATE TEST_PHYSICS=1)
+target_link_libraries(VortexPhysicsTest PRIVATE vortex::engine)
+
+if(NOT MSVC)
+	target_compile_options(EngineTest PRIVATE -Wall -Wno-unused-parameter)
+	target_compile_options(VortexRenderTest PRIVATE -Wall -Wno-unused-parameter)
+	target_compile_options(VortexPhysicsTest PRIVATE -Wall -Wno-unused-parameter)
+endif()
+
+# Runs the audio smoke test: opens the default output device, or falls back to silent mode on CI.
+add_test(NAME AudioSmokeTest COMMAND EngineTest)
+set_tests_properties(AudioSmokeTest PROPERTIES
+	FAIL_REGULAR_EXPRESSION "FAILURES!"
+	PASS_REGULAR_EXPRESSION "ALL PASSED"
+	TIMEOUT 600)
+
+add_test(NAME PhysicsSmokeTest COMMAND VortexPhysicsTest)
+set_tests_properties(PhysicsSmokeTest PROPERTIES
+	FAIL_REGULAR_EXPRESSION "FAILURES!"
+	PASS_REGULAR_EXPRESSION "ALL PASSED"
+	TIMEOUT 120)
+
+# The render test needs a display (a window server): opt in with -DVORTEX_RENDER_TESTS=ON.
+option(VORTEX_RENDER_TESTS "Register the windowed render smoke test with ctest" OFF)
+if(VORTEX_RENDER_TESTS)
+	add_test(NAME RenderSmokeTest COMMAND VortexRenderTest)
+	set_tests_properties(RenderSmokeTest PROPERTIES
+		FAIL_REGULAR_EXPRESSION "FAILURES!"
+		PASS_REGULAR_EXPRESSION "ALL PASSED"
+		TIMEOUT 120)
+endif()

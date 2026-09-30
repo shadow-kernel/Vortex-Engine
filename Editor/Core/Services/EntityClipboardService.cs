@@ -1,4 +1,4 @@
-using System;
+ï»¿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Editor.Core.Serialization;
@@ -9,8 +9,8 @@ using Editor.ECS;
 namespace Editor.Core.Services
 {
     /// <summary>
-    /// Service für Clipboard-Operationen auf GameEntities.
-    /// Unterstützt Cut, Copy, Paste mit Undo/Redo.
+    /// Service fÃ¼r Clipboard-Operationen auf GameEntities.
+    /// UnterstÃ¼tzt Cut, Copy, Paste mit Undo/Redo.
     /// </summary>
     public class EntityClipboardService
     {
@@ -78,7 +78,7 @@ namespace Editor.Core.Services
         }
 
         /// <summary>
-        /// Schneidet Entities aus (markiert zum späteren Löschen beim Paste)
+        /// Schneidet Entities aus (markiert zum spÃ¤teren LÃ¶schen beim Paste)
         /// </summary>
         public void Cut(IEnumerable<GameEntity> entities)
         {
@@ -99,7 +99,7 @@ namespace Editor.Core.Services
         }
 
         /// <summary>
-        /// Fügt Entities aus dem Clipboard in eine Szene ein (mit Undo/Redo)
+        /// FÃ¼gt Entities aus dem Clipboard in eine Szene ein (mit Undo/Redo)
         /// </summary>
         public List<GameEntity> Paste(Data.Scene targetScene, GameEntity parentEntity = null)
         {
@@ -115,7 +115,7 @@ namespace Editor.Core.Services
 
             UndoRedoManager.Instance.Execute(command);
 
-            // Nach Cut+Paste, lösche die Cut-Markierung
+            // Nach Cut+Paste, lÃ¶sche die Cut-Markierung
             if (_isCutOperation)
             {
                 _isCutOperation = false;
@@ -126,13 +126,13 @@ namespace Editor.Core.Services
         }
 
         /// <summary>
-        /// Serialisiert eine Entity für das Clipboard
+        /// Serialisiert eine Entity fÃ¼r das Clipboard
         /// </summary>
         private EntityClipboardData SerializeEntity(GameEntity entity)
         {
             try
             {
-                // Verwende Binary-Serialisierung für Deep Copy
+                // Verwende Binary-Serialisierung fÃ¼r Deep Copy
                 var bytes = DataSerializer.ToBinary(entity);
                 return new EntityClipboardData
                 {
@@ -181,7 +181,7 @@ namespace Editor.Core.Services
     }
 
     /// <summary>
-    /// Daten für eine Entity im Clipboard
+    /// Daten fÃ¼r eine Entity im Clipboard
     /// </summary>
     public class EntityClipboardData
     {
@@ -191,7 +191,7 @@ namespace Editor.Core.Services
     }
 
     /// <summary>
-    /// Undo/Redo Command für Paste-Operationen
+    /// Undo/Redo Command fÃ¼r Paste-Operationen
     /// </summary>
     public class PasteEntitiesCommand : UndoableCommandBase
     {
@@ -322,7 +322,7 @@ namespace Editor.Core.Services
     }
 
     /// <summary>
-    /// Undo/Redo Command für Delete-Operationen mit mehreren Entities
+    /// Undo/Redo Command fÃ¼r Delete-Operationen mit mehreren Entities
     /// </summary>
     public class DeleteEntitiesCommand : UndoableCommandBase
     {
@@ -361,7 +361,7 @@ namespace Editor.Core.Services
 
         public override void Undo()
         {
-            // Rückwärts wiederherstellen für korrekte Indizes
+            // RÃ¼ckwÃ¤rts wiederherstellen fÃ¼r korrekte Indizes
             for (int i = _deleteInfos.Count - 1; i >= 0; i--)
             {
                 var info = _deleteInfos[i];

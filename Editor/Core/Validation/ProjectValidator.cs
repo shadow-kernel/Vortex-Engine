@@ -1,4 +1,4 @@
-using System;
+ï»¿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -13,7 +13,7 @@ namespace Editor.Core.Validation
     public static class ProjectValidator
     {
         /// <summary>
-        /// Validiert ein Projekt vollständig
+        /// Validiert ein Projekt vollstÃ¤ndig
         /// </summary>
         public static void ValidateProject(ProjectRef project, Dictionary<Guid, ProjectRef> existingProjects)
         {
@@ -47,7 +47,7 @@ namespace Editor.Core.Validation
             {
                 var foundInvalid = invalidChars.Where(c => name.Contains(c));
                 throw new ProjectValidationException(
-                    $"Der Projektname enthält ungültige Zeichen: {string.Join(", ", foundInvalid)}");
+                    $"Der Projektname enthÃ¤lt ungÃ¼ltige Zeichen: {string.Join(", ", foundInvalid)}");
             }
         }
 
@@ -75,12 +75,12 @@ namespace Editor.Core.Validation
                                        ex is NotSupportedException || 
                                        ex is PathTooLongException)
             {
-                throw new ProjectValidationException($"Der Projektpfad '{path}' ist ungültig.", ex.Message, ex);
+                throw new ProjectValidationException($"Der Projektpfad '{path}' ist ungÃ¼ltig.", ex.Message, ex);
             }
         }
 
         /// <summary>
-        /// Prüft ob der Projektpfad eindeutig ist
+        /// PrÃ¼ft ob der Projektpfad eindeutig ist
         /// </summary>
         public static void ValidateProjectPathUniqueness(ProjectRef project, Dictionary<Guid, ProjectRef> existingProjects)
         {
@@ -93,7 +93,7 @@ namespace Editor.Core.Validation
 
             foreach (var existingProject in existingProjects.Values)
             {
-                // Überspringe das Projekt selbst beim Update
+                // Ãœberspringe das Projekt selbst beim Update
                 if (existingProject.Id == project.Id)
                     continue;
 

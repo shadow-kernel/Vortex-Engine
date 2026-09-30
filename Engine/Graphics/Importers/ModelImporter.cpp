@@ -154,7 +154,9 @@ namespace vortex::graphics
 				if (ext.empty()) ext = "bin";
 
 				std::string fname = "embedded_" + std::to_string(i) + "." + ext;
-				std::string full = out_dir + "\\" + fname;
+				std::string full = out_dir;
+				if (!full.empty() && full.back() != '/' && full.back() != '\\') full += '/';   // '/' works on every platform
+				full += fname;
 
 				FILE* f = nullptr;
 				if (fopen_s(&f, full.c_str(), "wb") == 0 && f)
