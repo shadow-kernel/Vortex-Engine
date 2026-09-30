@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -25,6 +26,7 @@ namespace VortexEditor.Shell
         private EditorSession Session => EditorSession.Instance;
         private ProjectHubWindow _hub;
         private bool _closingConfirmed;
+        private int _unseenErrors;
 
         public Thickness LeftInset => OperatingSystem.IsMacOS() ? new Thickness(74, 0, 0, 0) : new Thickness(8, 0, 0, 0);
 
@@ -32,6 +34,7 @@ namespace VortexEditor.Shell
         {
             InitializeComponent();
             DataContext = this;
+            try { ProjectSettingsWindow.ApplyTheme(EditorPreferences.Current.Theme); } catch { }
             EditorCommands.Window = this;
             Dialogs.Owner = this;
             HostShell.NotifyHandler = (cap, text, level) => Dispatcher.UIThread.Post(async () => await Dialogs.Alert(cap, text));
@@ -50,8 +53,12 @@ namespace VortexEditor.Shell
             UndoRedoManager.Instance.StateChanged += (s, e) => Dispatcher.UIThread.Post(SyncUndoText);
             ViewportPanel.StatusChanged += (st, res) => { StatusText.Text = st; ResolutionText.Text = res; };
             ViewportPanel.EngineView.ToastRequested += ShowToast;
+            ConsoleService.Instance.EntryAdded += OnConsoleEntry;
+            BottomTabs.SelectionChanged += (s, e) => { if (IsConsoleShowing) ClearConsoleBadge(); };
             AddHandler(KeyDownEvent, OnGlobalKeyDown, RoutingStrategies.Tunnel);
+            BuildButton.ContextMenu = BuildContextMenu();
             SyncPlayButtons();
+            SyncUndoText();
         }
 
         private void OnOpened(object sender, EventArgs e)
@@ -66,9 +73,11 @@ namespace VortexEditor.Shell
             if (!opened) ShowProjectHub(createTab: false);
             if (o.SmokeSeconds > 0)
             {
-                // Echo the editor console to stdout so a smoke run is verifiable from a terminal / CI log.
+                // Echo the editor console to stdout so a smoke run is verifiable from a terminal / CI log. Write to the
+                // ORIGINAL stdout: during play the console captures Console.Out, and echoing through it would loop.
                 var console = ConsoleService.Instance;
-                console.EntryAdded += () => { try { if (console.Entries.Count > 0) { var le = console.Entries[console.Entries.Count - 1]; System.Console.WriteLine("[" + le.LevelTag + "] " + le.Message); } } catch { } };
+                var stdout = System.Console.Out;
+                console.EntryAdded += () => { try { if (console.Entries.Count > 0) { var le = console.Entries[console.Entries.Count - 1]; stdout.WriteLine("[" + le.LevelTag + "] " + le.Message); stdout.Flush(); } } catch { } };
                 SmokeRegistry.CaptureDir = o.CaptureDir;
                 DispatcherTimer.RunOnce(SmokeInteract, TimeSpan.FromSeconds(Math.Max(1, o.SmokeSeconds - 4)));
                 // the end-to-end play check (VORTEX_SMOKE_PLAYFIRE) compiles scripts + waits for the weapon draw: give it time
@@ -77,7 +86,6 @@ namespace VortexEditor.Shell
             }
         }
 
-        /// <summary>Smoke test: select an entity, switch the tool, open the console — so the capture shows real panels.</summary>
         /// <summary>End-to-end gameplay input check (a project with the Horror Starter player): press Play, hold the LEFT
         /// mouse button through AppKit's real event path -> the weapon must fire (ammo drops); click the RIGHT button ->
         /// the player must aim (ADS toggle). Reads PlayerRig from the running script assembly.</summary>
@@ -120,6 +128,8 @@ namespace VortexEditor.Shell
             DispatcherTimer.RunOnce(WaitReady, TimeSpan.FromMilliseconds(1500));
         }
 
+        /// <summary>Smoke test: select an entity, switch the tool, click into the viewport, check the mouse buttons,
+        /// then run the full check list (VORTEX_SMOKE_FULL) or the play fire/aim check (VORTEX_SMOKE_PLAYFIRE).</summary>
         private void SmokeInteract()
         {
             try
@@ -289,6 +299,12 @@ namespace VortexEditor.Shell
             if (_closingConfirmed) { Session.ShutdownEngine(); return; }
             e.Cancel = true;
             if (Session.HasProject && !await Dialogs.Confirm("Quit Vortex Editor?", "Unsaved changes will be lost.", "Quit", "Cancel", destructive: true)) return;
+            CloseConfirmed();
+        }
+
+        /// <summary>Close the editor without asking again (the caller already confirmed).</summary>
+        public void CloseConfirmed()
+        {
             _closingConfirmed = true;
             Session.ShutdownEngine();
             Close();
@@ -312,161 +328,146 @@ namespace VortexEditor.Shell
         // ---------------------------------------------------------------- menus (macOS menu bar / in-window on other OSes)
         private void BuildMenus()
         {
-            var menu = new NativeMenu();
-            var file = Sub("File",
-                Item("New Project…", "Cmd+Shift+N", () => EditorCommands.NewProject()),
-                Item("Open Project…", "Cmd+O", () => EditorCommands.OpenProject()),
-                Sep(),
-                Item("Save", "Cmd+S", () => EditorCommands.SaveProject()),
-                Item("Save All", "Cmd+Shift+S", () => EditorCommands.SaveAll()),
-                Sep(),
-                Item("Project Settings…", "Cmd+,", () => EditorCommands.ProjectSettings()),
-                Item("Close Project", null, async () => await EditorCommands.CloseProject()),
-                Sep(),
-                Item("Build…", "Cmd+B", () => EditorCommands.Build()),
-                Item("Build and Run", "Cmd+R", () => EditorCommands.BuildAndRun()));
-            var edit = Sub("Edit",
-                Item("Undo", "Cmd+Z", () => EditorCommands.Undo()),
-                Item("Redo", "Cmd+Shift+Z", () => EditorCommands.Redo()),
-                Sep(),
-                Item("Cut", "Cmd+X", () => EditorCommands.Cut()),
-                Item("Copy", "Cmd+C", () => EditorCommands.Copy()),
-                Item("Paste", "Cmd+V", () => EditorCommands.Paste()),
-                Item("Duplicate", "Cmd+D", () => EditorCommands.Duplicate()),
-                Item("Delete", null, () => EditorCommands.Delete()),
-                Item("Rename…", null, () => EditorCommands.Rename()),
-                Sep(),
-                Item("Select All", "Cmd+A", () => EditorCommands.SelectAll()),
-                Item("Find Entity…", "Cmd+F", () => EditorCommands.Find()));
-            var view = Sub("View",
-                Item("Toggle Grid", "G", () => EditorCommands.ToggleGrid()),
-                Item("Snap to Grid", null, () => EditorCommands.ToggleSnap()),
-                Item("Toggle Gizmos", null, () => EditorCommands.ToggleGizmos()),
-                Item("Toggle Colliders", null, () => EditorCommands.ToggleColliders()),
-                Item("Toggle Physics Debug (play)", null, () => EditorCommands.TogglePhysicsDebug()),
-                Sep(),
-                Item("Focus Selection", "F", () => EditorCommands.FocusSelected()),
-                Item("Reset Camera", "Home", () => EditorCommands.ResetCamera()),
-                Sep(),
-                Item("Release Mode (hide play banner)", null, () => EditorCommands.ToggleReleaseMode()));
-            var assets = Sub("Assets",
-                Item("Import Asset…", "Cmd+I", async () => await EditorCommands.ImportAsset()),
-                Item("Export Selected Asset…", null, () => EditorCommands.ExportAsset()),
-                Sep(),
-                Item("Create Material", null, () => EditorCommands.CreateMaterial()),
-                Item("Create Shader", null, () => EditorCommands.CreateShader()),
-                Item("Create Script", null, () => EditorCommands.CreateScript()),
-                Sep(),
-                Item("Open Scripts Project in IDE", null, () => EditorCommands.OpenScriptsProject()));
-            var go = Sub("GameObject",
-                Item("Create Empty", "Cmd+Shift+E", () => EditorCommands.CreateEmpty()),
-                Item("Create Player", null, () => EditorCommands.CreatePlayer()),
-                Sub("3D Object",
-                    Item("Cube", null, () => EditorCommands.CreatePrimitive(PrimitiveType.Cube)),
-                    Item("Sphere", null, () => EditorCommands.CreatePrimitive(PrimitiveType.Sphere)),
-                    Item("Capsule", null, () => EditorCommands.CreatePrimitive(PrimitiveType.Capsule)),
-                    Item("Cylinder", null, () => EditorCommands.CreatePrimitive(PrimitiveType.Cylinder)),
-                    Item("Plane", null, () => EditorCommands.CreatePrimitive(PrimitiveType.Plane)),
-                    Item("Quad", null, () => EditorCommands.CreatePrimitive(PrimitiveType.Quad))),
-                Sub("Light",
-                    Item("Directional Light", null, () => EditorCommands.CreateLight(LightType.Directional)),
-                    Item("Point Light", null, () => EditorCommands.CreateLight(LightType.Point)),
-                    Item("Spot Light", null, () => EditorCommands.CreateLight(LightType.Spot)),
-                    Item("Skybox", null, () => EditorCommands.CreateSkybox())),
-                Item("Camera", null, () => EditorCommands.CreateCamera()),
-                Sub("Audio",
-                    Item("Audio Source", null, () => EditorCommands.CreateAudioSource()),
-                    Item("Reverb Zone", null, () => EditorCommands.CreateReverbZone())),
-                Sub("UI",
-                    Item("Canvas", null, () => EditorCommands.CreateUI("Canvas")),
-                    Item("Text", null, () => EditorCommands.CreateUI("Text")),
-                    Item("Image", null, () => EditorCommands.CreateUI("Image")),
-                    Item("Button", null, () => EditorCommands.CreateUI("Button"))));
-            var component = Sub("Component",
-                Item("Mesh Renderer", null, () => AddComp(e => new Editor.ECS.Components.Rendering.MeshRenderer(e))),
-                Item("Camera", null, () => AddComp(e => new Editor.ECS.Components.Rendering.Camera(e))),
-                Item("Light", null, () => AddComp(e => new Light(e))),
-                Sub("Physics",
-                    Item("Rigidbody", null, () => AddComp(e => new Editor.ECS.Components.Physics.Rigidbody(e))),
-                    Item("Box Collider", null, () => AddComp(e => new Editor.ECS.Components.Physics.BoxCollider(e))),
-                    Item("Sphere Collider", null, () => AddComp(e => new Editor.ECS.Components.Physics.SphereCollider(e))),
-                    Item("Capsule Collider", null, () => AddComp(e => new Editor.ECS.Components.Physics.CapsuleCollider(e)))),
-                Sub("Audio",
-                    Item("Audio Source", null, () => AddComp(e => new Editor.ECS.Components.Audio.AudioSource(e))),
-                    Item("Audio Listener", null, () => AddComp(e => new Editor.ECS.Components.Audio.AudioListener(e)))),
-                Item("New Script…", null, () => { var e = SelectionService.Instance.SelectedEntity; if (e == null) return; var p = ScriptingService.CreateScript("NewBehaviour"); e.AddComponent(new Editor.ECS.Components.Scripting.Script(e, ScriptingService.MakeRelative(ProjectData.Current?.Path ?? "", p))); EditorCommands.OpenInIde(p); Inspector.Refresh(); }));
-            var window = Sub("Window",
-                Item("Scene Hierarchy", "Cmd+1", () => TogglePanel("Hierarchy")),
-                Item("File System", "Cmd+2", () => TogglePanel("Files")),
-                Item("Inspector", "Cmd+3", () => TogglePanel("Inspector")),
-                Item("Project", "Cmd+4", () => { BottomTabs.SelectedIndex = 0; TogglePanel("Bottom", forceShow: true); }),
-                Item("Console", "Cmd+5", () => { BottomTabs.SelectedIndex = 1; TogglePanel("Bottom", forceShow: true); }),
-                Sep(),
-                Item("Audio Mixer…", null, () => EditorCommands.AudioMixer()),
-                Item("Source Control…", null, () => EditorCommands.GitWindow()),
-                Sep(),
-                Item("Reset Layout", null, () => EditorCommands.ResetLayout()));
-            var help = Sub("Help",
-                Item("Documentation", null, () => EditorCommands.Documentation()),
-                Item("Scripting API Reference", null, () => EditorCommands.ApiReference()),
-                Item("Check for Updates…", null, () => EditorCommands.CheckForUpdates()),
-                Sep(),
-                Item("About Vortex Engine", null, () => EditorCommands.About()));
-            foreach (var m in new[] { file, edit, view, assets, go, component, window, help }) menu.Items.Add(m);
-            NativeMenu.SetMenu(this, menu);
-            if (!OperatingSystem.IsMacOS()) { MenuBarHost.IsVisible = true; }
+            NativeMenu.SetMenu(this, EditorMenus.Build(this));
+            if (!OperatingSystem.IsMacOS()) MenuBarHost.IsVisible = true;
         }
 
-        private static NativeMenuItem Sub(string header, params NativeMenuItemBase[] items) { var mi = new NativeMenuItem(header) { Menu = new NativeMenu() }; foreach (var i in items) mi.Menu.Items.Add(i); return mi; }
-        private static NativeMenuItem Item(string header, string gesture, Action action)
+        private ContextMenu BuildContextMenu()
         {
-            var mi = new NativeMenuItem(header);
-            if (!string.IsNullOrEmpty(gesture)) { try { mi.Gesture = KeyGesture.Parse(gesture); } catch { } }
-            mi.Click += (s, e) => action();
-            return mi;
+            var m = new ContextMenu();
+            var a = new MenuItem { Header = "Build (export only)…" }; a.Click += (s, e) => EditorCommands.Build();
+            var b = new MenuItem { Header = "Build & Run…" }; b.Click += (s, e) => EditorCommands.BuildAndRun();
+            var c = new MenuItem { Header = "Build Settings / Target…" }; c.Click += (s, e) => EditorCommands.Build();
+            m.Items.Add(a); m.Items.Add(b); m.Items.Add(new Separator()); m.Items.Add(c);
+            return m;
         }
-        private static NativeMenuItem Item(string header, string gesture, Func<Task> action) => Item(header, gesture, () => { _ = action(); });
-        private static NativeMenuItemSeparator Sep() => new NativeMenuItemSeparator();
-        private void AddComp(Func<GameEntity, Editor.ECS.Component> make) { var e = SelectionService.Instance.SelectedEntity; if (e != null) EditorCommands.AddComponent(make(e)); }
 
-        // ---------------------------------------------------------------- global shortcuts (in-window; the native menu handles most on macOS)
+        // ---------------------------------------------------------------- keyboard
+        /// <summary>Window-level shortcuts. On macOS the ⌘ shortcuts arrive through the native menu (it consumes them
+        /// before this handler), so here: the ⌘/Ctrl shortcuts for the other platforms and the plain-key shortcuts
+        /// (W/E/R/X/G/F/Home, ⌫/Delete, F2, Esc) — never while typing in a text field, flying the camera or playing.</summary>
         private void OnGlobalKeyDown(object sender, KeyEventArgs e)
         {
-            bool cmd = e.KeyModifiers.HasFlag(KeyModifiers.Meta) || e.KeyModifiers.HasFlag(KeyModifiers.Control);
-            bool shift = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
-            if (!cmd) return;
-            switch (e.Key)
+            var m = e.KeyModifiers;
+            bool mac = OperatingSystem.IsMacOS();
+            bool cmd = mac ? m.HasFlag(KeyModifiers.Meta) : m.HasFlag(KeyModifiers.Control);
+            bool shift = m.HasFlag(KeyModifiers.Shift);
+            if (cmd) { if (HandleCommandKey(e.Key, shift)) e.Handled = true; return; }
+            if (m.HasFlag(KeyModifiers.Alt) || m.HasFlag(KeyModifiers.Control) || m.HasFlag(KeyModifiers.Meta)) return;
+            if (HandlePlainKey(e.Key, shift)) e.Handled = true;
+        }
+
+        /// <summary>⌘/Ctrl shortcut (the same table as the menu gestures). Returns true when handled.</summary>
+        internal bool HandleCommandKey(Key key, bool shift)
+        {
+            if (EditorCommands.FocusedTextBox() != null && (key == Key.C || key == Key.V || key == Key.X || key == Key.A || key == Key.Z || key == Key.Y || key == Key.Back || key == Key.Delete || key == Key.D))
+                return false;   // the text field handles its own editing keys natively
+            switch (key)
             {
-                case Key.S: if (shift) EditorCommands.SaveAll(); else EditorCommands.SaveProject(); e.Handled = true; break;
-                case Key.Z: if (shift) EditorCommands.Redo(); else EditorCommands.Undo(); e.Handled = true; break;
-                case Key.Y: EditorCommands.Redo(); e.Handled = true; break;
-                case Key.P: EditorCommands.TogglePlay(); e.Handled = true; break;
-                case Key.B: EditorCommands.Build(); e.Handled = true; break;
-                case Key.D1: TogglePanel("Hierarchy"); e.Handled = true; break;
-                case Key.D2: TogglePanel("Files"); e.Handled = true; break;
-                case Key.D3: TogglePanel("Inspector"); e.Handled = true; break;
-                case Key.D4: BottomTabs.SelectedIndex = 0; TogglePanel("Bottom", forceShow: true); e.Handled = true; break;
-                case Key.D5: BottomTabs.SelectedIndex = 1; TogglePanel("Bottom", forceShow: true); e.Handled = true; break;
+                case Key.S: if (shift) EditorCommands.SaveAll(); else EditorCommands.SaveProject(); return true;
+                case Key.Z: EditorCommands.EditCommand(shift ? EditorCommands.EditAction.Redo : EditorCommands.EditAction.Undo); return true;
+                case Key.Y: EditorCommands.EditCommand(EditorCommands.EditAction.Redo); return true;
+                case Key.X: EditorCommands.EditCommand(EditorCommands.EditAction.Cut); return true;
+                case Key.C: EditorCommands.EditCommand(EditorCommands.EditAction.Copy); return true;
+                case Key.V: EditorCommands.EditCommand(EditorCommands.EditAction.Paste); return true;
+                case Key.D: EditorCommands.EditCommand(EditorCommands.EditAction.Duplicate); return true;
+                case Key.A: EditorCommands.EditCommand(EditorCommands.EditAction.SelectAll); return true;
+                case Key.Back: case Key.Delete: EditorCommands.EditCommand(EditorCommands.EditAction.Delete); return true;
+                case Key.P: if (shift) EditorCommands.Pause(); else EditorCommands.TogglePlay(); return true;
+                case Key.B: EditorCommands.Build(); return true;
+                case Key.R: EditorCommands.BuildAndRun(); return true;
+                case Key.N: if (shift) EditorCommands.CreateEmpty(); else EditorCommands.NewScene(); return true;
+                case Key.O: if (shift) _ = EditorCommands.OpenScene(); else EditorCommands.OpenProject(); return true;
+                case Key.F: EditorCommands.Find(); return true;
+                case Key.I: _ = EditorCommands.ImportAsset(); return true;
+                case Key.H: if (shift) { EditorCommands.History(); return true; } return false;
+                case Key.OemComma: EditorCommands.ProjectSettings(); return true;
+                case Key.D1: TogglePanel(PanelHierarchy); return true;
+                case Key.D2: TogglePanel(PanelFiles); return true;
+                case Key.D3: TogglePanel(PanelInspector); return true;
+                case Key.D4: TogglePanel(PanelProject); return true;
+                case Key.D5: TogglePanel(PanelConsole); return true;
+                case Key.D6: TogglePanel(PanelEnvironment); return true;
             }
+            return false;
+        }
+
+        /// <summary>Plain-key shortcut (no modifier). Returns true when handled.</summary>
+        internal bool HandlePlainKey(Key key, bool shift)
+        {
+            if (!Session.HasProject) return false;
+            if (EditorCommands.FocusedTextBox() != null) return false;                      // typing
+            if (PlayModeService.Instance.IsPlaying) return false;                            // game input
+            var vs = Editor.Core.Viewport.EditorViewportSession.Main;
+            if (vs != null && (vs.IsFlyMode || vs.IsViewingThroughGameCamera)) return false; // WASD/QE fly the camera
+            switch (key)
+            {
+                case Key.W: EditorCommands.MoveTool(); return true;
+                case Key.E: EditorCommands.RotateTool(); return true;
+                case Key.R: EditorCommands.ScaleTool(); return true;
+                case Key.X: EditorCommands.ToggleGizmoSpace(); return true;
+                case Key.G: EditorCommands.ToggleGrid(); return true;
+                case Key.F:
+                    EditorCommands.FocusSelected();
+                    var sel = SelectionService.Instance.SelectedEntity;
+                    if (sel != null) Hierarchy.Reveal(sel);
+                    return true;
+                case Key.Home: EditorCommands.ResetCamera(); return true;
+                case Key.F2: if (SelectionService.Instance.SelectedEntity != null) { EditorCommands.Rename(); return true; } return false;
+                case Key.Back:
+                case Key.Delete:
+                    if (!SceneKeyContext()) return false;
+                    EditorCommands.EditCommand(EditorCommands.EditAction.Delete);
+                    return true;
+                case Key.Escape:
+                    if (!SceneKeyContext()) return false;
+                    Session.Hierarchy.ClearSelection();
+                    SelectionService.Instance.ClearSelection();
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>Delete / Esc act on the scene only while focus is in the hierarchy, the 3D view or nowhere —
+        /// other panels (Asset Browser, lists) keep those keys.</summary>
+        private bool SceneKeyContext()
+        {
+            var f = EditorCommands.FocusedElement();
+            if (f == null || ReferenceEquals(f, this)) return true;
+            if (f is VortexEditor.Viewport.EngineViewport) return true;
+            return EditorCommands.FocusWithin(Hierarchy) || EditorCommands.FocusWithin(ViewportPanel);
         }
 
         // ---------------------------------------------------------------- toolbar
         private void OnSceneTab(object s, RoutedEventArgs e) { if (PlayModeService.Instance.IsPlaying) EditorCommands.Stop(); PlayModeService.Instance.SetGameView(false); }
         private void OnGameTab(object s, RoutedEventArgs e) => PlayModeService.Instance.SetGameView(true);
-        private void OnPlay(object s, RoutedEventArgs e) { if (!Session.HasProject) { ShowToast("Open a project first"); return; } if (PlayModeService.Instance.State == PlayState.Playing) EditorCommands.Stop(); else EditorCommands.Play(); }
-        private void OnPause(object s, RoutedEventArgs e) { var pms = PlayModeService.Instance; if (pms.State == PlayState.Playing) pms.Pause(); else if (pms.State == PlayState.Paused) pms.Resume(); }
+        private void OnScriptClick(object s, RoutedEventArgs e) => EditorCommands.OpenScriptsProject();
+        private void OnPlay(object s, RoutedEventArgs e)
+        {
+            if (!Session.HasProject) { ShowToast("Open a project first"); return; }
+            if (PlayModeService.Instance.State == PlayState.Playing) EditorCommands.Stop();
+            else
+            {
+                // ▶ plays in the viewport and switches to the Game view (WPF parity); ▶ while paused resumes.
+                if (PlayModeService.Instance.State == PlayState.Editing) { PlayModeService.Instance.IsExternalWindow = false; PlayModeService.Instance.SetGameView(true); }
+                EditorCommands.Play();
+            }
+        }
+        private void OnPause(object s, RoutedEventArgs e) => EditorCommands.Pause();
         private void OnStop(object s, RoutedEventArgs e) => EditorCommands.Stop();
         private void OnPlayMenu(object s, RoutedEventArgs e)
         {
             var m = new MenuFlyout();
-            var a = new MenuItem { Header = "Play in Viewport" }; a.Click += (x, y) => EditorCommands.Play();
+            var a = new MenuItem { Header = "Play in Viewport" }; a.Click += (x, y) => { if (PlayModeService.Instance.IsPlaying) EditorCommands.Stop(); PlayModeService.Instance.IsExternalWindow = false; PlayModeService.Instance.SetGameView(true); EditorCommands.Play(); };
             var b = new MenuItem { Header = "Play in Standalone Player" }; b.Click += (x, y) => EditorCommands.PlayInNewWindow();
             var c = new MenuItem { Header = "Game View (without playing)" }; c.Click += (x, y) => PlayModeService.Instance.SetGameView(true);
-            m.Items.Add(a); m.Items.Add(b); m.Items.Add(new Separator()); m.Items.Add(c);
+            var d = new MenuItem { Header = "Release Mode (hide the play banner)", ToggleType = MenuItemToggleType.CheckBox, IsChecked = PlayModeService.Instance.IsReleaseMode }; d.Click += (x, y) => EditorCommands.ToggleReleaseMode();
+            m.Items.Add(a); m.Items.Add(b); m.Items.Add(new Separator()); m.Items.Add(c); m.Items.Add(d);
             m.ShowAt(PlayMenuButton);
         }
         private void OnBuildClick(object s, RoutedEventArgs e) => EditorCommands.Build();
         private void OnGitClick(object s, RoutedEventArgs e) => EditorCommands.GitWindow();
+        private void OnHistoryClick(object s, RoutedEventArgs e) => EditorCommands.History();
         private void OnSettingsClick(object s, RoutedEventArgs e) => EditorCommands.ProjectSettings();
 
         private void SyncPlayButtons()
@@ -474,72 +475,155 @@ namespace VortexEditor.Shell
             var st = PlayModeService.Instance.State;
             PlayIcon.Icon = st == PlayState.Playing ? "Stop" : "Play";
             PlayIcon.Foreground = (Avalonia.Media.IBrush)this.FindResource(st == PlayState.Playing ? "VxRedBrush" : "VxGreenBrush");
+            PauseIcon.Icon = st == PlayState.Paused ? "Play" : "Pause";
+            PauseIcon.Foreground = st == PlayState.Paused ? (Avalonia.Media.IBrush)this.FindResource("VxAccentBrush") : (Avalonia.Media.IBrush)this.FindResource("VxTextBrush");
             StopButton.IsEnabled = st != PlayState.Editing;
             PauseButton.IsEnabled = st != PlayState.Editing;
-            ToolTip.SetTip(PlayButton, st == PlayState.Playing ? "Stop (⌘P)" : "Play (⌘P)");
+            ToolTip.SetTip(PlayButton, st == PlayState.Playing ? "Stop — back to the build view (⌘P)" : "Play (⌘P)");
+            ToolTip.SetTip(PauseButton, st == PlayState.Paused ? "Resume (⇧⌘P)" : "Pause (⇧⌘P)");
         }
 
         private void SyncUndoText()
         {
             var u = UndoRedoManager.Instance;
-            UndoText.Text = u.CanUndo ? "Undo: " + u.UndoName : "";
+            UndoText.Text = u.CanUndo ? "Undo: " + u.UndoName + (u.UndoCount > 1 ? "  (+" + (u.UndoCount - 1) + ")" : "") : "";
+            UndoStatus.IsVisible = u.CanUndo;
         }
 
-        // ---------------------------------------------------------------- panels
-        private bool _hierarchyVisible = true, _filesVisible = true, _inspectorVisible = true, _bottomVisible = true;
-        private void TogglePanel(string name, bool forceShow = false)
+        // ---------------------------------------------------------------- console badge
+        private bool IsConsoleShowing => IsPanelVisible(PanelConsole) && ReferenceEquals(BottomTabs.SelectedItem, ConsoleTab);
+        private void OnConsoleEntry()
         {
+            var c = ConsoleService.Instance;
+            if (c.Entries.Count == 0) { ClearConsoleBadge(); return; }
+            var last = c.Entries[c.Entries.Count - 1];
+            if (last.Level != LogLevel.Error || IsConsoleShowing) return;
+            _unseenErrors++;
+            ConsoleErrorCount.Text = _unseenErrors > 99 ? "99+" : _unseenErrors.ToString();
+            ConsoleErrorBadge.IsVisible = true;
+        }
+        private void ClearConsoleBadge() { _unseenErrors = 0; ConsoleErrorBadge.IsVisible = false; }
+
+        // ---------------------------------------------------------------- panels
+        public const string PanelHierarchy = "Hierarchy", PanelFiles = "Files", PanelInspector = "Inspector", PanelEnvironment = "Environment", PanelProject = "Project", PanelConsole = "Console";
+        private readonly Dictionary<string, bool> _panels = new Dictionary<string, bool>
+        {
+            [PanelHierarchy] = true, [PanelFiles] = true, [PanelInspector] = true, [PanelEnvironment] = true, [PanelProject] = true, [PanelConsole] = true,
+        };
+        private GridLength _leftWidth = new GridLength(260), _rightWidth = new GridLength(330), _bottomHeight = new GridLength(300);
+
+        public bool IsPanelVisible(string name) => _panels.TryGetValue(name, out bool v) && v;
+
+        /// <summary>Window ▸ panel: hidden → show and bring to front; showing but behind another tab → bring to
+        /// front; in front → hide (WPF: the panel check items).</summary>
+        public void TogglePanel(string name, bool forceShow = false)
+        {
+            if (!_panels.ContainsKey(name)) return;
+            bool visible = _panels[name];
+            TabItem tab = TabFor(name, out TabControl tabs);
+            bool inFront = tab == null || ReferenceEquals(tabs.SelectedItem, tab);
+            if (!visible || forceShow) _panels[name] = true;
+            else if (!inFront) { /* just bring it to the front */ }
+            else _panels[name] = false;
+            ApplyLayout();
+            if (_panels[name] && tab != null) tabs.SelectedItem = tab;
+            if (name == PanelConsole && _panels[name]) ClearConsoleBadge();
+            if (name == PanelHierarchy && _panels[name] && forceShow) Hierarchy.FocusTree();
+            EditorMenus.Refresh();
+        }
+
+        public void ShowPanel(string name) => TogglePanel(name, forceShow: true);
+
+        private TabItem TabFor(string name, out TabControl tabs)
+        {
+            tabs = null;
             switch (name)
             {
-                case "Hierarchy": _hierarchyVisible = forceShow || !_hierarchyVisible; break;
-                case "Files": _filesVisible = forceShow || !_filesVisible; break;
-                case "Inspector": _inspectorVisible = forceShow || !_inspectorVisible; break;
-                case "Bottom": _bottomVisible = forceShow || !_bottomVisible; break;
+                case PanelInspector: tabs = RightTabs; return InspectorTab;
+                case PanelEnvironment: tabs = RightTabs; return EnvironmentTab;
+                case PanelProject: tabs = BottomTabs; return ProjectTab;
+                case PanelConsole: tabs = BottomTabs; return ConsoleTab;
             }
-            ApplyLayout();
+            return null;
         }
-        public void ResetLayout() { _hierarchyVisible = _filesVisible = _inspectorVisible = _bottomVisible = true; Workspace.ColumnDefinitions[0].Width = new GridLength(260); Workspace.ColumnDefinitions[4].Width = new GridLength(330); CenterColumn.RowDefinitions[2].Height = new GridLength(300); LeftColumn.RowDefinitions[0].Height = new GridLength(3, GridUnitType.Star); LeftColumn.RowDefinitions[2].Height = new GridLength(2, GridUnitType.Star); ApplyLayout(); }
+
+        public void ResetLayout()
+        {
+            foreach (var k in _panels.Keys.ToList()) _panels[k] = true;
+            _leftWidth = new GridLength(260); _rightWidth = new GridLength(330); _bottomHeight = new GridLength(300);
+            Workspace.ColumnDefinitions[0].Width = _leftWidth; Workspace.ColumnDefinitions[4].Width = _rightWidth; CenterColumn.RowDefinitions[2].Height = _bottomHeight;
+            LeftColumn.RowDefinitions[0].Height = new GridLength(3, GridUnitType.Star); LeftColumn.RowDefinitions[2].Height = new GridLength(2, GridUnitType.Star);
+            ApplyLayout();
+            EditorMenus.Refresh();
+        }
+
         private void ApplyLayout()
         {
-            bool left = _hierarchyVisible || _filesVisible;
-            Workspace.ColumnDefinitions[0].Width = left ? (Workspace.ColumnDefinitions[0].Width.Value > 10 ? Workspace.ColumnDefinitions[0].Width : new GridLength(260)) : new GridLength(0);
+            // remember sizes the user dragged before collapsing a column
+            if (Workspace.ColumnDefinitions[0].Width.Value > 10) _leftWidth = Workspace.ColumnDefinitions[0].Width;
+            if (Workspace.ColumnDefinitions[4].Width.Value > 10) _rightWidth = Workspace.ColumnDefinitions[4].Width;
+            if (CenterColumn.RowDefinitions[2].Height.Value > 10) _bottomHeight = CenterColumn.RowDefinitions[2].Height;
+
+            bool hier = _panels[PanelHierarchy], files = _panels[PanelFiles], left = hier || files;
+            Workspace.ColumnDefinitions[0].Width = left ? _leftWidth : new GridLength(0);
             Workspace.ColumnDefinitions[1].Width = new GridLength(left ? 5 : 0);
-            LeftColumn.RowDefinitions[0].Height = _hierarchyVisible ? new GridLength(3, GridUnitType.Star) : new GridLength(0);
-            LeftColumn.RowDefinitions[1].Height = new GridLength(_hierarchyVisible && _filesVisible ? 5 : 0);
-            LeftColumn.RowDefinitions[2].Height = _filesVisible ? new GridLength(2, GridUnitType.Star) : new GridLength(0);
-            Workspace.ColumnDefinitions[4].Width = _inspectorVisible ? (Workspace.ColumnDefinitions[4].Width.Value > 10 ? Workspace.ColumnDefinitions[4].Width : new GridLength(330)) : new GridLength(0);
-            Workspace.ColumnDefinitions[3].Width = new GridLength(_inspectorVisible ? 5 : 0);
-            CenterColumn.RowDefinitions[2].Height = _bottomVisible ? (CenterColumn.RowDefinitions[2].Height.Value > 10 ? CenterColumn.RowDefinitions[2].Height : new GridLength(300)) : new GridLength(0);
-            CenterColumn.RowDefinitions[1].Height = new GridLength(_bottomVisible ? 5 : 0);
+            LeftColumn.RowDefinitions[0].Height = hier ? new GridLength(3, GridUnitType.Star) : new GridLength(0);
+            LeftColumn.RowDefinitions[1].Height = new GridLength(hier && files ? 5 : 0);
+            LeftColumn.RowDefinitions[2].Height = files ? new GridLength(2, GridUnitType.Star) : new GridLength(0);
+            HierarchyHost.IsVisible = hier; FilesHost.IsVisible = files;
+
+            ApplyTabs(RightTabs, (InspectorTab, _panels[PanelInspector]), (EnvironmentTab, _panels[PanelEnvironment]));
+            bool right = _panels[PanelInspector] || _panels[PanelEnvironment];
+            Workspace.ColumnDefinitions[4].Width = right ? _rightWidth : new GridLength(0);
+            Workspace.ColumnDefinitions[3].Width = new GridLength(right ? 5 : 0);
+            RightColumn.IsVisible = right;
+
+            ApplyTabs(BottomTabs, (ProjectTab, _panels[PanelProject]), (ConsoleTab, _panels[PanelConsole]));
+            bool bottom = _panels[PanelProject] || _panels[PanelConsole];
+            CenterColumn.RowDefinitions[2].Height = bottom ? _bottomHeight : new GridLength(0);
+            CenterColumn.RowDefinitions[1].Height = new GridLength(bottom ? 5 : 0);
+            BottomDock.IsVisible = bottom;
+        }
+
+        private static void ApplyTabs(TabControl tabs, params (TabItem tab, bool visible)[] items)
+        {
+            foreach (var (tab, visible) in items) tab.IsVisible = visible;
+            if (tabs.SelectedItem is TabItem sel && !sel.IsVisible)
+            {
+                var other = items.FirstOrDefault(i => i.visible).tab;
+                if (other != null) tabs.SelectedItem = other;
+            }
         }
 
         // ---------------------------------------------------------------- windows & dialogs
         public void ShowToast(string message) => Toast.Show(message);
-        public void FocusHierarchySearch() => Hierarchy.FocusSearch();
-        public void RenameSelected() { var e = SelectionService.Instance.SelectedEntity; if (e != null) _ = Hierarchy.RenameEntity(e); }
+        public string LastToast => Toast.LastMessage;
+        public void FocusHierarchySearch() { ShowPanel(PanelHierarchy); Hierarchy.FocusSearch(); }
+        public void RenameSelected() { var e = SelectionService.Instance.SelectedEntity; if (e != null) Hierarchy.BeginRename(e); }
 
         public void ShowProjectHub(bool createTab)
         {
             if (_hub != null) { _hub.Activate(); _hub.SelectTab(createTab); return; }
-            if (o_SmokeHubOnly()) { }
             _hub = new ProjectHubWindow(createTab);
             _hub.Closed += (s, e) => { _hub = null; if (!Session.HasProject && !_closingConfirmed) { _closingConfirmed = true; Close(); } };
             _hub.Show(this);
         }
 
-        private static bool o_SmokeHubOnly() => false;
+        /// <summary>The open project hub (smoke checks capture and close it); null when none is showing.</summary>
+        internal ProjectHubWindow Hub => _hub;
 
         public void OpenProjectSettings() { if (Session.HasProject) new ProjectSettingsWindow().ShowDialog(this); else ShowToast("Open a project first"); }
         public void OpenAbout() => new AboutWindow().ShowDialog(this);
-        public void OpenAudioMixer() { if (Session.HasProject) new AudioMixerWindow().Show(this); else ShowToast("Open a project first"); }
-        public void OpenGit() { if (Session.HasProject) new GitWindow().Show(this); else ShowToast("Open a project first"); }
+        public void OpenAudioMixer() { if (Session.HasProject) EditorWindows.AudioMixer(); else ShowToast("Open a project first"); }
+        public void OpenGit() => EditorCommands.GitWindow();
         public void OpenBuildDialog(bool runAfter) { if (Session.HasProject) new BuildWindow(runAfter).ShowDialog(this); else ShowToast("Open a project first"); }
-        public void OpenMaterialEditor(string vmatPath) => new MaterialEditorWindow(vmatPath).Show(this);
-        public void OpenCollisionEditor(GameEntity e) { if (e != null) { SelectionService.Instance.Select(e); new CollisionEditorWindow(e).Show(this); } }
-        public void OpenSocketEditor(GameEntity e) { if (e != null) { SelectionService.Instance.Select(e); new SocketEditorWindow(e).Show(this); } }
-        public void OpenSoundContainerEditor(string path) => new SoundContainerEditorWindow(path).Show(this);
-        public void OpenUiEditor(string path) => new UiEditorWindow(path).Show(this);
-        public void OpenAnimationEditor(string path) => new AnimationEditorWindow(path).Show(this);
+        // Kept for the panels / editors that open these through the main window.
+        public void OpenMaterialEditor(string vmatPath) => EditorWindows.MaterialEditor(vmatPath);
+        public void OpenCollisionEditor(GameEntity e) { if (e != null) { SelectionService.Instance.Select(e); EditorWindows.CollisionEditor(e); } }
+        public void OpenSocketEditor(GameEntity e) { if (e != null) { SelectionService.Instance.Select(e); EditorWindows.SocketEditor(e); } }
+        public void OpenSoundContainerEditor(string path) => EditorWindows.SoundContainerEditor(path);
+        public void OpenUiEditor(string path) => EditorWindows.UiEditor(path);
+        public void OpenAnimationEditor(string path) => EditorWindows.AnimationEditor(path);
 
         /// <summary>Run the current project in the standalone player process (saves first).</summary>
         public void LaunchStandalonePlayer()

@@ -56,10 +56,12 @@
       </ListBox>
       <DockPanel Grid.Row="3" Margin="0,12,0,0">
         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8">
-          <Button Content="Remove from list" Click="OnRemoveProject"/>
-          <Button Content="Open" Classes="accent" MinWidth="90" Click="OnOpenSelected"/>
+          <Button x:Name="ExitButton" Content="Quit" Click="OnExit" ToolTip.Tip="Close the project hub"/>
+          <Button Content="Show in Finder" Click="OnRevealProject"/>
+          <Button Content="Remove from list" Click="OnRemoveProject" ToolTip.Tip="Forget the project here — the files stay on disk"/>
+          <Button Content="Open" Classes="accent" MinWidth="90" Click="OnOpenSelected" IsDefault="True"/>
         </StackPanel>
-        <CheckBox x:Name="AutoOpenBox" Content="Open the last project automatically at start" VerticalAlignment="Center" IsCheckedChanged="OnAutoOpenChanged"/>
+        <CheckBox x:Name="AutoOpenBox" Content="Reopen the last project on start" VerticalAlignment="Center" IsCheckedChanged="OnAutoOpenChanged"/>
       </DockPanel>
     </Grid>
     <!-- create -->
@@ -95,7 +97,8 @@
         </StackPanel>
       </Border>
       <StackPanel Grid.Row="2" Grid.ColumnSpan="2" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" Margin="0,12,0,0">
-        <Button Content="Create" Classes="accent" MinWidth="90" Click="OnCreate"/>
+        <Button x:Name="CancelCreateButton" Content="Quit" Click="OnExit"/>
+        <Button Content="Create Project" Classes="accent" MinWidth="110" Click="OnCreate"/>
       </StackPanel>
     </Grid>
   </Grid>
