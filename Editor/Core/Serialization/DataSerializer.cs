@@ -59,6 +59,7 @@ namespace Editor.Core.Serialization
             typeof(MeshCollider),
             typeof(Rigidbody),
             typeof(PhysicsMaterial),
+            typeof(HingeJoint), typeof(BallJoint), typeof(SliderJoint), typeof(FixedJoint), typeof(DistanceJoint),   // #103
             
             // Audio
             typeof(AudioSource),

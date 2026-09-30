@@ -1,7 +1,8 @@
 # Physics v2 — Jolt Physics module
 
 Native side of the Physics v2 epic (GitHub #100) — issues #101 (vendor Jolt + native bridge), #102 (rigid
-body dynamics + script API), #105 (character controller v2), #106 (debug draw) and #107 (compound colliders).
+body dynamics + script API), #103 (constraints / joints), #105 (character controller v2), #106 (debug draw) and
+#107 (compound colliders).
 
 | Piece | Where |
 |---|---|
@@ -31,7 +32,9 @@ initialisation order to worry about):
   so that the `removed` contact events Jolt raises in the update *after* a body was destroyed still report its
   handle and entity id.
 * A character slot table of `JPH::CharacterVirtual` instances.
-* Shape wireframe extraction for the editor gizmo layer.
+* A constraint (joint) slot table of `JPH::TwoBodyConstraint`s with their body handles, break force, last force and
+  broken flag, plus the queue of joints that broke (see "Joints" below).
+* Shape and joint wireframe extraction for the editor gizmo layer.
 
 `VortexAPI/Api/PhysicsApi.cpp` is a 1:1 pass-through: every `Physics*` export calls the identically named
 `vortex::physics::` function; no logic lives in the API layer. `InitializeRuntime()` / `ShutdownRuntime()`
@@ -75,10 +78,49 @@ All entry points are `extern "C"` + `EDITOR_INTERFACE`, plain C types only. The 
   `stepHeight`). `outVelocity` is the velocity the controller used (desired velocity with components into steep
   slopes cancelled); when `outGrounded` is 1 the game should reset its vertical velocity before the next call.
   The character is moved in `PhysicsCharacterMove`, independent of `PhysicsStep`; call both once per fixed step.
-* **Debug lines**: `PhysicsGetDebugLines` fills `x0 y0 z0 x1 y1 z1` segments of every body's shape (boxes: 12
-  edges; spheres: 3 circles; capsules: rings + edges + cap arcs; cylinders: rings + edges; convex hulls: face
-  edges; meshes and everything else: Jolt's triangle iterator, capped at 20 000 floats per body) plus the
-  character capsules, and returns the number of floats written (whole segments only).
+* **Debug lines**: `PhysicsGetDebugLines` fills `x0 y0 z0 x1 y1 z1` segments of every enabled joint first (see
+  "Joints"), then every body's shape (boxes: 12 edges; spheres: 3 circles; capsules: rings + edges + cap arcs;
+  cylinders: rings + edges; convex hulls: face edges; meshes and everything else: Jolt's triangle iterator, capped at
+  20 000 floats per body) plus the character capsules, and returns the number of floats written (whole segments only).
+
+## Joints (constraints, issue #103)
+
+| Export | Jolt constraint | Notes |
+|---|---|---|
+| `PhysicsCreateHinge(bodyA, bodyB, pivot, axis, normal, minDeg, maxDeg, useLimits, motorTargetVel, motorMaxTorque, breakForce)` | `HingeConstraint` | limits min ∈ [-180, 0], max ∈ [0, 180] (clamped; min == max is widened by 1 mrad); `motorMaxTorque > 0` starts a velocity motor (deg/s, 0 = friction) |
+| `PhysicsCreateBallJoint(bodyA, bodyB, point, twistAxis, swingLimitDeg, twistMinDeg, twistMaxDeg, useLimits, breakForce)` | `PointConstraint` / `SwingTwistConstraint` (with limits) | cone half angle around `twistAxis` (null = from the point towards bodyA's centre of mass) |
+| `PhysicsCreateSlider(bodyA, bodyB, point, axis, minPos, maxPos, useLimits, motorMode, motorTarget, motorMaxForce, springFrequency, springDamping, breakForce)` | `SliderConstraint` | limits in metres relative to the creation pose (min ≤ 0 ≤ max, clamped) |
+| `PhysicsCreateFixed(bodyA, bodyB, point /*null = auto*/, breakForce)` | `FixedConstraint` | keeps the current relative pose |
+| `PhysicsCreateDistance(bodyA, bodyB, pointA, pointB, minDistance, maxDistance, springFrequency, springDamping, breakForce)` | `DistanceConstraint` | negative min / max = the distance at creation; min 0 = a rope that can go slack; spring > 0 = soft limits |
+| `PhysicsDestroyConstraint`, `PhysicsConstraintValid`, `PhysicsSetConstraintEnabled` (1 also repairs a broken joint), `PhysicsGetConstraintEnabled`, `PhysicsGetConstraintCount` | | |
+| `PhysicsSetHingeMotor` / `PhysicsSetSliderMotor(joint, mode, target, maxTorque or maxForce, frequency, damping)` | motor state + `MotorSettings` | mode 0 off / 1 velocity (deg/s, m/s) / 2 position (deg, m; spring frequency ≤ 0 → 2 Hz, damping < 0 → 1); limit ≤ 0 = unlimited |
+| `PhysicsGetHingeAngle` (deg) / `PhysicsGetSliderPosition` (m) / `PhysicsGetConstraintForce` (N, last step) | `GetCurrentAngle` / `GetCurrentPosition` / Lagrange multipliers | |
+| `PhysicsGetBrokenConstraints(uint* joints, float* forces /*may be null*/, maxCount)` | | drains the break queue, returns the count |
+
+* **Bodies / space**: `bodyA` is the jointed body (a valid handle), `bodyB` the connected body or 0 = the world
+  (`Body::sFixedToWorld`). Jolt's body 1 is the CONNECTED body and body 2 the jointed one, so Jolt's "body 2 relative
+  to body 1" angle / position is the jointed body's. Everything is `EConstraintSpace::WorldSpace` with identical
+  frames for both bodies, so **the pose at creation is the rest pose** (hinge angle 0, slider position 0, weld pose).
+  The hinge `normal` only picks where angle 0 is drawn (perpendicularised; null / parallel = any perpendicular).
+* **Angles** are degrees (API-facing, like the inspector), positions metres, forces N, torques N·m. The hinge angle is
+  right-handed about the axis (yaw +90° about +Y turns (1,0,0) to (0,0,-1), as everywhere else).
+* **Breakable joints**: after every `PhysicsStep` the module reads each solved joint's positional Lagrange
+  multipliers (impulse of the last solver sub-step, N·s) and divides by the sub-step length: the pivot force of
+  hinges / ball joints / welds, the perpendicular + limit force of sliders, the axial force of ropes (torques are not
+  included). `breakForce > 0` and a force above it disables the joint, wakes its bodies and queues `{handle, force}`
+  for `PhysicsGetBrokenConstraints`. The handle stays valid; re-enabling repairs (warm start reset so stale
+  multipliers can't re-break it). `PhysicsGetConstraintForce` exposes the same number for tuning.
+* **Connected bodies don't collide**: while a joint between two real bodies is enabled, `OnContactValidate` rejects
+  that pair (reference-counted pair table, written only between steps; contact caches of the pair are invalidated on
+  every change). Disabled / broken joints stop filtering.
+* **Solver iterations**: joints set `mNumVelocityStepsOverride = 30` / `mNumPositionStepsOverride = 10` (Jolt defaults
+  10 / 2) — Jolt raises only the iterations of islands that contain a joint. With the defaults a door slammed against
+  its limit overshot by 2.6°, bounced back ~16° and its pivot opened by 17 mm; now < 0.1° / 0 / 0.4 mm.
+* **Lifetime**: destroying a body destroys its joints first (Jolt keeps raw body pointers); `PhysicsClear` removes all.
+* **Debug draw**: anchor marker (plus a line to bodyA's attachment point when they drift apart — the rope of a distance
+  joint), hinge axis + limit arc + current-angle spoke, slider travel range with limit ticks, swing cone of limited
+  ball joints, weld arms to the centres of mass.
+* **Stub**: every joint export returns 0 / no-ops (checked by `VortexPhysicsTest` in the stub build).
 
 ## Layers
 
@@ -140,7 +182,7 @@ the stub and verifies exactly this contract instead of the simulation.
 ```
 cmake --preset macos-debug && cmake --build --preset macos-debug
 ./build/macos-debug/bin/VortexPhysicsTest          # or: ctest --preset macos-debug -R PhysicsSmokeTest
-nm -gU build/macos-debug/bin/libVortexAPI.dylib | grep -c ' _Physics'   # 41 exports
+nm -gU build/macos-debug/bin/libVortexAPI.dylib | grep -c ' _Physics'   # 57 exports (41 + 16 joint exports)
 ```
 
 ### Enabling Jolt in the Visual Studio build (later)
@@ -174,3 +216,8 @@ handled by `VORTEX_ENABLE_JOLT`.
 * `PhysicsGetDebugLines` walks every body every call; call it only while the gizmo layer is visible.
 * Physics materials (#107) are represented by per-body friction/restitution; per-child materials of compounds are
   not yet exposed.
+* Jolt engages joint limits only once they are exceeded (no speculative limits). Hinge and slider limits are
+  re-evaluated in the position solve, so the extra position iterations correct them within the step; a distance
+  joint caches its points at the start of the step, so a slack rope that snaps taut overshoots by up to one step of
+  motion (v · dt, ~3 cm at 2 m/s) and is back on length the next step (`TestPhysics.h` (j) checks both).
+* Break forces measure linear force only; a separate break torque is not implemented.

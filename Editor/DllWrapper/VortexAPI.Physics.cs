@@ -202,10 +202,94 @@ namespace Editor.DllWrapper
 
         #endregion
 
+        #region Constraints / joints (issue #103)
+
+        // Joint handles are uint (0 = invalid). bodyA = the jointed body, bodyB = the connected body or 0 = the world.
+        // Points / axes are WORLD space at creation; the pose at creation is the rest pose (hinge angle 0, slider
+        // position 0). Angles in degrees, breakForce in N (<= 0 = unbreakable). The two bodies of an enabled joint
+        // never collide with each other; destroying a body destroys its joints.
+
+        /// <summary>Hinge (doors): rotation about <paramref name="axis"/> through <paramref name="pivot"/>;
+        /// <paramref name="normal"/> = reference direction of angle 0 (null = any). Limits: min in [-180, 0], max in
+        /// [0, 180]. motorMaxTorque &gt; 0 starts a velocity motor (motorTargetVel deg/s; 0 = friction).</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern uint PhysicsCreateHinge(uint bodyA, uint bodyB, float[] pivot, float[] axis, float[] normal,
+            float minDeg, float maxDeg, int useLimits, float motorTargetVel, float motorMaxTorque, float breakForce);
+
+        /// <summary>Ball joint at <paramref name="point"/>; with useLimits a swing cone (half angle) around
+        /// <paramref name="twistAxis"/> (null = towards bodyA's centre of mass) plus a twist range.</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern uint PhysicsCreateBallJoint(uint bodyA, uint bodyB, float[] point, float[] twistAxis,
+            float swingLimitDeg, float twistMinDeg, float twistMaxDeg, int useLimits, float breakForce);
+
+        /// <summary>Slider: translation along <paramref name="axis"/> only. Limits (m) relative to the creation pose
+        /// (min &lt;= 0 &lt;= max). motorMode 0 off / 1 velocity (m/s) / 2 position (m, spring frequency + damping);
+        /// motorMaxForce &lt;= 0 = unlimited.</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern uint PhysicsCreateSlider(uint bodyA, uint bodyB, float[] point, float[] axis,
+            float minPos, float maxPos, int useLimits, int motorMode, float motorTarget, float motorMaxForce,
+            float springFrequency, float springDamping, float breakForce);
+
+        /// <summary>Weld: keeps the current relative pose; point = anchor (null = automatic).</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern uint PhysicsCreateFixed(uint bodyA, uint bodyB, float[] point, float breakForce);
+
+        /// <summary>Rope / rod: |pointA - pointB| stays in [minDistance, maxDistance] (negative = the distance at
+        /// creation); springFrequency &gt; 0 = soft limits (bungee).</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern uint PhysicsCreateDistance(uint bodyA, uint bodyB, float[] pointA, float[] pointB,
+            float minDistance, float maxDistance, float springFrequency, float springDamping, float breakForce);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern void PhysicsDestroyConstraint(uint joint);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern int PhysicsConstraintValid(uint joint);
+
+        /// <summary>1 = enable (also repairs a broken joint), 0 = disable.</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern void PhysicsSetConstraintEnabled(uint joint, int enabled);
+
+        /// <summary>0 when disabled or broken.</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern int PhysicsGetConstraintEnabled(uint joint);
+
+        /// <summary>mode 0 off / 1 velocity (target deg/s) / 2 position (target deg); maxTorque &lt;= 0 = unlimited;
+        /// frequency &lt;= 0 = 2 Hz, damping &lt; 0 = 1 (the position spring).</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern void PhysicsSetHingeMotor(uint joint, int mode, float target, float maxTorque, float frequency, float damping);
+
+        /// <summary>mode 0 off / 1 velocity (target m/s) / 2 position (target m); maxForce &lt;= 0 = unlimited.</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern void PhysicsSetSliderMotor(uint joint, int mode, float target, float maxForce, float frequency, float damping);
+
+        /// <summary>Degrees, 0 at creation (bodyA relative to bodyB about the axis, right hand).</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern float PhysicsGetHingeAngle(uint joint);
+
+        /// <summary>Metres along the axis, 0 at creation.</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern float PhysicsGetSliderPosition(uint joint);
+
+        /// <summary>Linear force (N) the joint applied in the last step (hinge / ball / weld pivot, slider
+        /// perpendicular + limit, rope tension).</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern float PhysicsGetConstraintForce(uint joint);
+
+        /// <summary>Joints that broke since the last call (+ the breaking force in N); drains what it writes and
+        /// returns the count.</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern int PhysicsGetBrokenConstraints([In, Out] uint[] outJoints, [In, Out] float[] outForces, int maxCount);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern int PhysicsGetConstraintCount();
+
+        #endregion
+
         #region Debug draw (issue #106)
 
-        /// <summary>World-space wireframe segments of every body (6 floats per segment: x0 y0 z0 x1 y1 z1).
-        /// Fills up to maxFloats and returns the number of floats written.</summary>
+        /// <summary>World-space wireframe segments of every joint gizmo and body (6 floats per segment:
+        /// x0 y0 z0 x1 y1 z1). Fills up to maxFloats and returns the number of floats written.</summary>
         [DllImport(_dllName, CallingConvention = _cc)]
         public static extern int PhysicsGetDebugLines([In, Out] float[] buffer, int maxFloats);
 

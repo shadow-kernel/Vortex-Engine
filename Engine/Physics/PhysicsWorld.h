@@ -2,7 +2,7 @@
 
 // ============================================================================
 // Physics v2 — the Jolt Physics world (GitHub issues #100 epic, #101 native bridge, #102 rigid bodies,
-// #105 character controller, #106 debug draw, #107 compound colliders).
+// #103 constraints, #105 character controller, #106 debug draw, #107 compound colliders).
 //
 // This is the engine-side module behind the extern "C" exports in VortexAPI/Api/PhysicsApi.cpp; the
 // two mirror each other one to one and both follow the shared native ABI contract (see README.md next to
@@ -65,6 +65,19 @@ namespace vortex::physics {
 	inline constexpr s32 contact_added{ 0 };
 	inline constexpr s32 contact_persisted{ 1 };
 	inline constexpr s32 contact_removed{ 2 };
+
+	// Constraint (joint) types, issue #103. A "ball" joint is a Jolt PointConstraint without limits and a
+	// SwingTwistConstraint with limits.
+	inline constexpr s32 constraint_hinge{ 0 };
+	inline constexpr s32 constraint_ball{ 1 };
+	inline constexpr s32 constraint_slider{ 2 };
+	inline constexpr s32 constraint_fixed{ 3 };
+	inline constexpr s32 constraint_distance{ 4 };
+
+	// Motor modes of hinge / slider joints.
+	inline constexpr s32 motor_off{ 0 };
+	inline constexpr s32 motor_velocity{ 1 };   // drive to a target velocity (deg/s or m/s) with a force / torque limit
+	inline constexpr s32 motor_position{ 2 };   // spring to a target angle / position (deg or m): frequency + damping
 
 	// One queued contact event. Layout-identical to the C ABI's PhysicsContact (PhysicsApi.cpp static_asserts it).
 	struct contact_event
@@ -156,8 +169,56 @@ namespace vortex::physics {
 	void character_move(u32 character, const f32* desired_velocity, f32 dt,
 		f32* out_pos, f32* out_velocity, s32* out_grounded, f32* out_ground_normal);
 
+	// ---- Constraints / joints (issue #103) ---------------------------------------------------------------
+	// Handles are u32, 0 = invalid (same scheme as bodies). `body_a` is the jointed body (must be valid), `body_b`
+	// the body it is connected to, or 0 = the static world. Positions and axes are WORLD space and describe the
+	// joint at creation: the pose at creation is the rest pose (hinge angle 0, slider position 0). Angles are
+	// degrees, positions metres, forces N, torques N·m. break_force > 0 makes the joint breakable: when the linear
+	// force the joint applied in a step exceeds it, the joint is disabled and reported by get_broken_constraints().
+	// Bodies connected by an enabled joint do not collide with each other. Destroying a body destroys its joints.
+	//
+	// Hinge: rotation about `axis` through `pivot`. `normal` (perpendicular to the axis; null / parallel = any)
+	// is the reference direction angle 0 is drawn from. Limits [min_deg, max_deg] with min in [-180, 0] and max
+	// in [0, 180] (clamped). motor_max_torque > 0 starts a velocity motor (motor_target_vel in deg/s; a target of
+	// 0 acts as friction). get_hinge_angle() = rotation of body_a relative to body_b about the axis (right hand).
+	u32  create_hinge(u32 body_a, u32 body_b, const f32* pivot /*3*/, const f32* axis /*3*/, const f32* normal /*3*/,
+		f32 min_deg, f32 max_deg, bool use_limits, f32 motor_target_vel, f32 motor_max_torque, f32 break_force);
+	// Ball / socket at `point`. With use_limits: a swing cone of swing_limit_deg (half angle) around `twist_axis`
+	// (null = from the point towards body_a's centre of mass) and a twist range [twist_min_deg, twist_max_deg].
+	u32  create_ball_joint(u32 body_a, u32 body_b, const f32* point /*3*/, const f32* twist_axis /*3*/,
+		f32 swing_limit_deg, f32 twist_min_deg, f32 twist_max_deg, bool use_limits, f32 break_force);
+	// Prismatic joint: translation along `axis` only (no rotation). Limits [min_pos, max_pos] relative to the
+	// creation pose (min <= 0 <= max, clamped). motor_mode: motor_off / motor_velocity (target m/s) /
+	// motor_position (target m, spring of spring_frequency Hz + spring_damping); motor_max_force <= 0 = unlimited.
+	u32  create_slider(u32 body_a, u32 body_b, const f32* point /*3*/, const f32* axis /*3*/,
+		f32 min_pos, f32 max_pos, bool use_limits, s32 motor_mode, f32 motor_target, f32 motor_max_force,
+		f32 spring_frequency, f32 spring_damping, f32 break_force);
+	// Weld: keeps the current relative pose. point = the joint's anchor (null = automatic, between the bodies).
+	u32  create_fixed(u32 body_a, u32 body_b, const f32* point /*3, may be null*/, f32 break_force);
+	// Rope / rod: keeps |point_a - point_b| in [min_distance, max_distance] (negative = the distance at creation).
+	// point_a is attached to body_a, point_b to body_b (or fixed in the world). spring_frequency > 0 = soft limits.
+	u32  create_distance(u32 body_a, u32 body_b, const f32* point_a /*3*/, const f32* point_b /*3*/,
+		f32 min_distance, f32 max_distance, f32 spring_frequency, f32 spring_damping, f32 break_force);
+
+	void destroy_constraint(u32 constraint);
+	bool constraint_valid(u32 constraint);
+	void set_constraint_enabled(u32 constraint, bool enabled);   // re-enabling a broken joint repairs it
+	bool constraint_enabled(u32 constraint);                     // false when disabled or broken
+	// Motors (mode motor_off / motor_velocity / motor_position): target deg/s | deg (hinge), m/s | m (slider);
+	// max torque / force <= 0 = unlimited; frequency <= 0 = 2 Hz, damping < 0 = 1 (position mode spring).
+	void set_hinge_motor(u32 constraint, s32 mode, f32 target, f32 max_torque, f32 frequency, f32 damping);
+	void set_slider_motor(u32 constraint, s32 mode, f32 target, f32 max_force, f32 frequency, f32 damping);
+	f32  get_hinge_angle(u32 constraint);       // degrees, 0 at creation (0 for other joint types)
+	f32  get_slider_position(u32 constraint);   // metres along the axis, 0 at creation (0 for other joint types)
+	f32  get_constraint_force(u32 constraint);  // linear force (N) the joint applied in the last step
+	// Joints that broke since the last call: writes up to max_count handles (+ the force that broke each one when
+	// out_forces is not null), removes them from the queue and returns the count written.
+	s32  get_broken_constraints(u32* out_constraints, f32* out_forces, s32 max_count);
+	s32  constraint_count();
+
 	// ---- Debug (issue #106) -----------------------------------------------------------------------------
-	// World-space wireframe segments of every body's shape (6 floats per segment: x0 y0 z0 x1 y1 z1).
+	// World-space wireframe segments (6 floats per segment: x0 y0 z0 x1 y1 z1): every enabled joint (anchor
+	// marker, axis, limit arc / range, cone) first, then every body's shape and the character capsules.
 	// Fills up to max_floats and returns the number of floats written. Meshes are capped at 20k floats per body.
 	s32  get_debug_lines(f32* buffer, s32 max_floats);
 }

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using Editor.Core.Data;
 using Editor.DllWrapper;
 using Editor.ECS;
@@ -25,6 +26,17 @@ namespace Editor.Core.Services.Physics
         public float Impulse;
     }
 
+    /// <summary>A breakable joint exceeded its Break Force (issue #103): <see cref="Entity"/> owns the
+    /// <see cref="Joint"/> component, <see cref="Connected"/> is the other body's entity (null = the world),
+    /// <see cref="Force"/> the force in N that broke it. The joint is disabled (re-enable it to repair).</summary>
+    public struct PhysicsJointBreakEvent
+    {
+        public GameEntity Entity;
+        public PhysicsJoint Joint;
+        public GameEntity Connected;
+        public float Force;
+    }
+
     /// <summary>
     /// Physics v2 (Jolt, issues #100/#102/#106/#107): the rigid-body world for play mode. Every entity with an
     /// enabled Collider becomes a body — static by default, kinematic or dynamic when it also carries a Rigidbody
@@ -35,6 +47,12 @@ namespace Editor.Core.Services.Physics
     /// publishes the dynamic bodies to <see cref="CollisionService"/> so the character controller collides with (and
     /// pushes) them, and dispatches contact events through <see cref="ContactHandler"/> (the script runtime routes
     /// them to OnCollisionEnter / OnTriggerEnter/Stay/Exit).
+    ///
+    /// Joints (#103): after the bodies, every enabled Hinge / Ball / Slider / Fixed / Distance joint component becomes
+    /// a Jolt constraint between its entity's body and the connected entity's body (or the world), anchored at the
+    /// entity's current world pose (the rest pose). Motor / spring / friction fields and the component's enabled
+    /// flag apply live; breakable joints raise <see cref="JointBroken"/>. Runtime joint state (broken, script
+    /// motors) lives here, never in the components, so play stays non-destructive.
     ///
     /// Without a Jolt-enabled engine (<see cref="PhysicsNative.Available"/> false — the stub build) every call is a
     /// no-op: the static collision world and the character controller keep working exactly as before, and a single
@@ -58,6 +76,10 @@ namespace Editor.Core.Services.Physics
         /// with the world and other props but never block or push the player.</summary>
         public const string DebrisTag = "Debris";
 
+        /// <summary>Most force (N) a walking character shoves a JOINTED body (a door, a lift) with — see
+        /// ApplyCharacterPushes. Free props keep the impulse model.</summary>
+        public const float CharacterPushForceOnJoints = 800f;
+
         private sealed class Body
         {
             public uint Id;
@@ -77,6 +99,22 @@ namespace Editor.Core.Services.Physics
 
         private struct ChildShape { public int Type; public SysVec Dims; public SysVec LocalPos; public SysQuat LocalRot; }
 
+        /// <summary>A joint component's native constraint. Id 0 = detached: its connected entity left the world
+        /// (destroyed / deactivated); it re-attaches when that entity comes back.</summary>
+        private sealed class JointRec
+        {
+            public uint Id;
+            public uint BodyA, BodyB;           // native bodies it holds (BodyB 0 = the world)
+            public GameEntity Entity;
+            public PhysicsJoint Joint;
+            public GameEntity Connected;        // null = the world
+            public bool Enabled;                // state last pushed to the native joint
+            public bool Broken;
+            public float PeakForce;             // highest per-frame force seen (tuning Break Force)
+            public volatile bool EnabledDirty;  // set by the component's PropertyChanged (inspector, UI thread)
+            public volatile bool MotorDirty;
+        }
+
         private static readonly Dictionary<GameEntity, Body> _byEntity = new Dictionary<GameEntity, Body>();
         private static readonly Dictionary<uint, Body> _byId = new Dictionary<uint, Body>();
         private static readonly List<Body> _bodies = new List<Body>();
@@ -89,6 +127,18 @@ namespace Editor.Core.Services.Physics
         private static float _accumulator;
         private static bool _loggedUnavailable;
         private static Vector3 _gravity = new Vector3(0f, -9.81f, 0f);
+
+        // Joints (#103)
+        private static Scene _scene;
+        private static readonly List<PhysicsJoint> _jointComponents = new List<PhysicsJoint>();   // every joint component of the live world
+        private static readonly HashSet<PhysicsJoint> _jointComponentSet = new HashSet<PhysicsJoint>();
+        private static readonly List<JointRec> _joints = new List<JointRec>();
+        private static readonly Dictionary<uint, JointRec> _jointById = new Dictionary<uint, JointRec>();
+        private static readonly Dictionary<PhysicsJoint, JointRec> _jointByComponent = new Dictionary<PhysicsJoint, JointRec>();
+        private static readonly HashSet<PhysicsJoint> _jointWarned = new HashSet<PhysicsJoint>();
+        private static readonly uint[] _brokenIds = new uint[64];
+        private static readonly float[] _brokenForces = new float[64];
+        private static volatile bool _jointsDirty;
 
         /// <summary>True when the Jolt world is available in this engine build (see <see cref="PhysicsNative"/>).</summary>
         public static bool Available => PhysicsNative.Available;
@@ -107,6 +157,13 @@ namespace Editor.Core.Services.Physics
 
         /// <summary>Receives every contact the world reported (set by the script runtime; null = events dropped).</summary>
         public static Action<PhysicsContactEvent> ContactHandler;
+
+        /// <summary>A breakable joint broke (raised from <see cref="Step"/> on the game thread, after the step). The
+        /// script runtime's OnJointBreak callback hooks in here.</summary>
+        public static event Action<PhysicsJointBreakEvent> JointBroken;
+
+        /// <summary>Number of joints in the simulation (attached, including disabled / broken ones).</summary>
+        public static int JointCount { get { int n = 0; foreach (var j in _joints) if (j.Id != 0) n++; return n; } }
 
         /// <summary>World gravity in m/s² (default (0, -9.81, 0)). Reset to the default on every <see cref="Build"/>;
         /// scripts change it via Physics.SetGravity.</summary>
@@ -140,18 +197,26 @@ namespace Editor.Core.Services.Physics
             IsBuilt = true;
             _accumulator = 0f;
             Gravity = new Vector3(0f, -9.81f, 0f);
+            _scene = scene;
             if (scene?.Entities == null) return;
             foreach (var e in scene.Entities) AddRecursive(e);
+            foreach (var e in scene.Entities) CollectJoints(e);
+            CreatePendingJoints(null);
             PublishDynamicShapes();
             int dyn = 0, kin = 0, stat = 0, trig = 0;
             foreach (var b in _bodies) { if (b.IsTrigger) trig++; else if (b.Motion == MotionDynamic) dyn++; else if (b.Motion == MotionKinematic) kin++; else stat++; }
-            Log("[Physics] Jolt world ready: " + _bodies.Count + " bodies (" + dyn + " dynamic, " + kin + " kinematic, " + stat + " static, " + trig + " triggers)");
+            Log("[Physics] Jolt world ready: " + _bodies.Count + " bodies (" + dyn + " dynamic, " + kin + " kinematic, " + stat + " static, " + trig + " triggers)"
+                + (_jointComponents.Count > 0 ? ", " + JointCount + "/" + _jointComponents.Count + " joints" : ""));
         }
 
-        /// <summary>Destroy every body (play stop, scene switch). Safe to call when nothing was built.</summary>
+        /// <summary>Destroy every body and joint (play stop, scene switch). Safe to call when nothing was built.</summary>
         public static void Clear()
         {
             if (IsBuilt) { try { VortexAPI.PhysicsClear(); } catch { } }
+            foreach (var j in _jointComponents) j.PropertyChanged -= OnJointComponentChanged;
+            _jointComponents.Clear(); _jointComponentSet.Clear(); _joints.Clear(); _jointById.Clear(); _jointByComponent.Clear(); _jointWarned.Clear();
+            _jointsDirty = false;
+            _scene = null;
             _byEntity.Clear(); _byId.Clear(); _bodies.Clear(); _publish.Clear(); _pushes.Clear(); _stayThisFrame.Clear();
             _accumulator = 0f;
             LastStepCount = 0;
@@ -159,19 +224,23 @@ namespace Editor.Core.Services.Physics
             try { if (CollisionService.IsBuilt) CollisionService.SetDynamicBodies(null); } catch { }
         }
 
-        /// <summary>Add bodies for a runtime-spawned (or re-activated) entity subtree. Call AFTER
+        /// <summary>Add bodies (and joints) for a runtime-spawned (or re-activated) entity subtree. Call AFTER
         /// <see cref="CollisionService.AddEntityShapes"/> so dynamic entities can be taken out of the static world again.</summary>
         public static void AddEntity(GameEntity root)
         {
             if (!IsBuilt || root == null) return;
             AddRecursive(root);
+            CollectJoints(root);
+            CreatePendingJoints(root);
             PublishDynamicShapes();
         }
 
-        /// <summary>Remove the bodies of an entity subtree (runtime Destroy / SetActive(false)).</summary>
+        /// <summary>Remove the bodies of an entity subtree (runtime Destroy / SetActive(false)). Its joints go with
+        /// it; joints of other entities connected into the subtree detach until it comes back.</summary>
         public static void RemoveEntity(GameEntity root)
         {
             if (!IsBuilt || root == null) return;
+            DetachJoints(root);
             RemoveRecursive(root);
             PublishDynamicShapes();
         }
@@ -220,6 +289,7 @@ namespace Editor.Core.Services.Physics
 
             try
             {
+                if (_jointsDirty) SyncJoints();
                 ApplyCharacterPushes(frameDt > 1e-4f ? frameDt : FixedStep);
                 int steps = 0;
                 while (_accumulator >= FixedStep && steps < MaxSubsteps)
@@ -235,6 +305,8 @@ namespace Editor.Core.Services.Physics
                 ReadbackDynamics();
                 PublishDynamicShapes();
                 DispatchContacts();
+                TrackJointForces();
+                DispatchBrokenJoints();
             }
             catch (Exception ex)
             {
@@ -446,6 +518,341 @@ namespace Editor.Core.Services.Physics
                 if (e != null && !result.Contains(e)) result.Add(e);
             }
             return result;
+        }
+
+        // ------------------------------------------------------------------------------------------ joints (#103)
+        // Script API building blocks (Physics.SetHingeMotor(entity, …), joint queries): they act on the entity's
+        // first joint of the requested kind, or on a specific component. Runtime overrides only — the components
+        // are never written, so play stays non-destructive; an inspector edit of the motor fields re-applies them.
+
+        /// <summary>True when the joint component is simulated (attached to its bodies; it may be disabled / broken).</summary>
+        public static bool HasJoint(PhysicsJoint joint) => TryJoint(joint, out _);
+
+        /// <summary>True when the joint exceeded its Break Force (it stays disabled until re-enabled).</summary>
+        public static bool IsJointBroken(PhysicsJoint joint) => TryJoint(joint, out var r) && r.Broken;
+
+        /// <summary>Enable / disable a joint at runtime; enabling a broken joint repairs it (the bodies are pulled back
+        /// to the joint's rest pose).</summary>
+        public static bool SetJointEnabled(PhysicsJoint joint, bool enabled)
+        {
+            if (!TryJoint(joint, out var r)) return false;
+            try { VortexAPI.PhysicsSetConstraintEnabled(r.Id, enabled ? 1 : 0); } catch { return false; }
+            r.Enabled = enabled;
+            if (enabled) r.Broken = false;
+            return true;
+        }
+
+        /// <summary>Hinge angle in degrees relative to the play-start pose (0 when the entity has no hinge).</summary>
+        public static float GetHingeAngle(GameEntity e) => GetHingeAngle(FirstJoint<HingeJoint>(e));
+        public static float GetHingeAngle(PhysicsJoint joint)
+        {
+            if (!TryJoint(joint, out var r) || !(joint is HingeJoint)) return 0f;
+            try { return VortexAPI.PhysicsGetHingeAngle(r.Id); } catch { return 0f; }
+        }
+
+        /// <summary>Slider position in metres along its axis relative to the play-start pose.</summary>
+        public static float GetSliderPosition(GameEntity e) => GetSliderPosition(FirstJoint<SliderJoint>(e));
+        public static float GetSliderPosition(PhysicsJoint joint)
+        {
+            if (!TryJoint(joint, out var r) || !(joint is SliderJoint)) return 0f;
+            try { return VortexAPI.PhysicsGetSliderPosition(r.Id); } catch { return 0f; }
+        }
+
+        /// <summary>Linear force in N the joint applied in the last physics step (tune Break Force with it).</summary>
+        public static float GetJointForce(PhysicsJoint joint)
+        {
+            if (!TryJoint(joint, out var r)) return 0f;
+            try { return VortexAPI.PhysicsGetConstraintForce(r.Id); } catch { return 0f; }
+        }
+
+        /// <summary>Highest force in N the joint carried since play start (sampled every frame) — a door slamming
+        /// into its stop, a lift starting with its load. Set Break Force above what normal use peaks at.</summary>
+        public static float GetJointPeakForce(PhysicsJoint joint) => TryJoint(joint, out var r) ? r.PeakForce : 0f;
+
+        /// <summary>Drive the entity's hinge: Velocity = <paramref name="target"/> deg/s, Position = spring to
+        /// <paramref name="target"/> deg (frequency Hz + damping ratio), Off = free (no friction). maxTorque in N·m
+        /// (0 = unlimited).</summary>
+        public static bool SetHingeMotor(GameEntity e, JointMotorMode mode, float target, float maxTorque, float frequency = 2f, float damping = 1f)
+        {
+            if (!TryJoint(FirstJoint<HingeJoint>(e), out var r)) return false;
+            try { VortexAPI.PhysicsSetHingeMotor(r.Id, (int)mode, target, maxTorque, frequency, damping); } catch { return false; }
+            return true;
+        }
+
+        /// <summary>Drive the entity's slider: Velocity = <paramref name="target"/> m/s, Position = spring to
+        /// <paramref name="target"/> m. maxForce in N (0 = unlimited).</summary>
+        public static bool SetSliderMotor(GameEntity e, JointMotorMode mode, float target, float maxForce, float frequency = 2f, float damping = 1f)
+        {
+            if (!TryJoint(FirstJoint<SliderJoint>(e), out var r)) return false;
+            try { VortexAPI.PhysicsSetSliderMotor(r.Id, (int)mode, target, maxForce, frequency, damping); } catch { return false; }
+            return true;
+        }
+
+        private static T FirstJoint<T>(GameEntity e) where T : PhysicsJoint
+        {
+            if (e?.Components == null) return null;
+            foreach (var c in e.Components) if (c is T t && _jointByComponent.ContainsKey(t)) return t;
+            return null;
+        }
+
+        private static bool TryJoint(PhysicsJoint joint, out JointRec rec)
+        {
+            rec = null;
+            return IsBuilt && joint != null && _jointByComponent.TryGetValue(joint, out rec) && rec.Id != 0;
+        }
+
+        /// <summary>Remember every joint component of a subtree (active entities) and watch it for live edits.</summary>
+        private static void CollectJoints(GameEntity e)
+        {
+            if (e == null || !e.IsActive) return;
+            if (e.Components != null)
+                foreach (var c in e.Components)
+                    if (c is PhysicsJoint j && _jointComponentSet.Add(j))
+                    {
+                        _jointComponents.Add(j);
+                        j.PropertyChanged += OnJointComponentChanged;
+                    }
+            if (e.Children != null) foreach (var ch in e.Children) CollectJoints(ch);
+        }
+
+        /// <summary>Create every known joint that is not simulated yet. Detached joints (their connected entity went
+        /// away) re-attach when <paramref name="added"/> (a subtree that just came back) contains that entity.</summary>
+        private static void CreatePendingJoints(GameEntity added)
+        {
+            for (int i = 0; i < _jointComponents.Count; i++)
+            {
+                var j = _jointComponents[i];
+                if (_jointByComponent.TryGetValue(j, out var rec))
+                {
+                    if (rec.Id != 0 || added == null) continue;
+                    var c = j.ResolveConnectedEntity(_scene?.Entities, out _);
+                    if (c == null || !IsInSubtree(c, added) || !_byEntity.ContainsKey(c)) continue;
+                    ForgetRec(rec);
+                }
+                try { TryCreateJoint(j); }
+                catch (Exception ex) { WarnJoint(j, "creation failed: " + ex.Message); }
+            }
+        }
+
+        private static bool TryCreateJoint(PhysicsJoint j)
+        {
+            var e = j.Entity;
+            if (e == null || !j.IsEnabled || !ActiveInHierarchy(e)) return false;   // enabling it during play attaches it then
+            if (!_byEntity.TryGetValue(e, out var own))
+            {
+                WarnJoint(j, "needs a Collider on its entity (and a Dynamic Rigidbody to be moved by the joint) - joint skipped");
+                return false;
+            }
+            var connected = j.ResolveConnectedEntity(_scene?.Entities, out bool notFound);
+            if (notFound) { WarnJoint(j, "connected entity '" + j.ConnectedEntity + "' not found - joint skipped"); return false; }
+            if (ReferenceEquals(connected, e)) { WarnJoint(j, "is connected to its own entity - joint skipped"); return false; }
+            // A connected entity without a body is static scenery: the joint holds on to the world at the same spot.
+            uint bodyB = connected != null && _byEntity.TryGetValue(connected, out var other) ? other.Id : 0u;
+
+            var world = Animation.BoneSocketService.EntityWorld(e);
+            var rot = RotationOf(world);
+            var anchor = SysVec.Transform(ToSys(j.Anchor), world);   // local (scaled, like Collider.Center) -> world
+            Fill(_f3a, anchor);
+            uint id = 0;
+            switch (j)
+            {
+                case HingeJoint h:
+                {
+                    // Angle 0 is drawn along the leaf: from the hinge towards the body's centre.
+                    var toBody = own.LastPos + SysVec.Transform(own.BoundsCenter, own.LastRot) - anchor;
+                    Fill(_f3b, WorldDir(rot, h.Axis, SysVec.UnitY)); Fill(_f3c, toBody);
+                    id = VortexAPI.PhysicsCreateHinge(own.Id, bodyB, _f3a, _f3b, _f3c, h.MinAngle, h.MaxAngle, h.UseLimits ? 1 : 0, 0f, 0f, j.BreakForce);
+                    break;
+                }
+                case BallJoint b:
+                    Fill(_f3b, WorldDir(rot, b.Axis, -SysVec.UnitY));
+                    id = VortexAPI.PhysicsCreateBallJoint(own.Id, bodyB, _f3a, _f3b, b.SwingLimit, b.TwistMin, b.TwistMax, b.UseLimits ? 1 : 0, j.BreakForce);
+                    break;
+                case SliderJoint s:
+                    Fill(_f3b, WorldDir(rot, s.Axis, SysVec.UnitX));
+                    id = VortexAPI.PhysicsCreateSlider(own.Id, bodyB, _f3a, _f3b, s.MinPosition, s.MaxPosition, s.UseLimits ? 1 : 0,
+                        0, 0f, 0f, s.SpringFrequency, s.SpringDamping, j.BreakForce);
+                    break;
+                case FixedJoint _:
+                    id = VortexAPI.PhysicsCreateFixed(own.Id, bodyB, _f3a, j.BreakForce);
+                    break;
+                case DistanceJoint d:
+                {
+                    // The other end: local to the connected entity, or a world offset from the anchor for the world.
+                    var end = connected != null
+                        ? SysVec.Transform(ToSys(d.ConnectedAnchor), Animation.BoneSocketService.EntityWorld(connected))
+                        : anchor + ToSys(d.ConnectedAnchor);
+                    Fill(_f3b, end);
+                    id = VortexAPI.PhysicsCreateDistance(own.Id, bodyB, _f3a, _f3b, d.MinDistance, d.MaxDistance, d.SpringFrequency, d.SpringDamping, j.BreakForce);
+                    break;
+                }
+                default:
+                    return false;
+            }
+            if (id == 0) { WarnJoint(j, "the physics world refused the joint"); return false; }
+
+            var rec = new JointRec { Id = id, BodyA = own.Id, BodyB = bodyB, Entity = e, Joint = j, Connected = bodyB != 0 ? connected : null, Enabled = true };
+            _joints.Add(rec);
+            _jointById[id] = rec;
+            _jointByComponent[j] = rec;
+            ApplyMotor(rec);
+            return true;
+        }
+
+        /// <summary>Motor / spring / friction from the component. Friction = a zero-speed velocity motor whose
+        /// torque / force limit is the friction.</summary>
+        private static void ApplyMotor(JointRec rec)
+        {
+            if (rec.Id == 0) return;
+            if (rec.Joint is HingeJoint h)
+            {
+                int mode = (int)h.MotorMode;
+                float target = h.MotorMode == JointMotorMode.Position ? h.TargetAngle : h.TargetVelocity, limit = h.MaxTorque;
+                if (h.MotorMode == JointMotorMode.Off && h.Friction > 0f) { mode = (int)JointMotorMode.Velocity; target = 0f; limit = h.Friction; }
+                VortexAPI.PhysicsSetHingeMotor(rec.Id, mode, target, limit, h.SpringFrequency, h.SpringDamping);
+            }
+            else if (rec.Joint is SliderJoint s)
+            {
+                int mode = (int)s.MotorMode;
+                float target = s.MotorMode == JointMotorMode.Position ? s.TargetPosition : s.TargetVelocity, limit = s.MaxForce;
+                if (s.MotorMode == JointMotorMode.Off && s.Friction > 0f) { mode = (int)JointMotorMode.Velocity; target = 0f; limit = s.Friction; }
+                VortexAPI.PhysicsSetSliderMotor(rec.Id, mode, target, limit, s.SpringFrequency, s.SpringDamping);
+            }
+        }
+
+        /// <summary>Inspector edits during play: the enabled flag and the motor fields apply live (next step); the
+        /// geometry (anchor, axis, limits, connected entity) is fixed at creation.</summary>
+        private static void OnJointComponentChanged(object sender, PropertyChangedEventArgs e)
+        {
+            if (sender is PhysicsJoint j && _jointByComponent.TryGetValue(j, out var rec))
+            {
+                if (e.PropertyName == nameof(PhysicsJoint.IsEnabled)) rec.EnabledDirty = true;
+                else rec.MotorDirty = true;
+            }
+            _jointsDirty = true;   // not simulated yet: enabling it attaches it at the current pose
+        }
+
+        private static void SyncJoints()
+        {
+            _jointsDirty = false;
+            foreach (var rec in _joints)
+            {
+                if (rec.Id == 0) continue;
+                if (rec.EnabledDirty)
+                {
+                    rec.EnabledDirty = false;
+                    bool want = rec.Joint.IsEnabled;
+                    if (want != rec.Enabled) SetJointEnabled(rec.Joint, want);
+                }
+                if (rec.MotorDirty)
+                {
+                    rec.MotorDirty = false;
+                    try { ApplyMotor(rec); } catch { }
+                }
+            }
+            CreatePendingJoints(null);
+        }
+
+        private static void TrackJointForces()
+        {
+            for (int i = 0; i < _joints.Count; i++)
+            {
+                var r = _joints[i];
+                if (r.Id == 0 || !r.Enabled) continue;
+                float f = VortexAPI.PhysicsGetConstraintForce(r.Id);   // before the break check: a breaking force counts too
+                if (f > r.PeakForce) r.PeakForce = f;
+            }
+        }
+
+        private static void DispatchBrokenJoints()
+        {
+            if (_joints.Count == 0) return;
+            int n;
+            do
+            {
+                n = VortexAPI.PhysicsGetBrokenConstraints(_brokenIds, _brokenForces, _brokenIds.Length);
+                for (int i = 0; i < n && i < _brokenIds.Length; i++)
+                {
+                    if (!_jointById.TryGetValue(_brokenIds[i], out var rec)) continue;
+                    rec.Broken = true;
+                    rec.Enabled = false;
+                    if (_brokenForces[i] > rec.PeakForce) rec.PeakForce = _brokenForces[i];
+                    Log("[Physics] " + rec.Joint.DisplayName + " on '" + rec.Entity?.Name + "' broke: "
+                        + _brokenForces[i].ToString("0", System.Globalization.CultureInfo.InvariantCulture) + " N > break force "
+                        + rec.Joint.BreakForce.ToString("0", System.Globalization.CultureInfo.InvariantCulture) + " N");
+                    try
+                    {
+                        JointBroken?.Invoke(new PhysicsJointBreakEvent { Entity = rec.Entity, Joint = rec.Joint, Connected = rec.Connected, Force = _brokenForces[i] });
+                    }
+                    catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Physics] JointBroken handler: " + ex.Message); }
+                }
+            } while (n >= _brokenIds.Length);
+        }
+
+        /// <summary>Before a subtree's bodies are destroyed: its own joints go (and are forgotten until the subtree is
+        /// added again), joints of other entities connected into it detach (Id 0) until it comes back.</summary>
+        private static void DetachJoints(GameEntity root)
+        {
+            for (int i = _joints.Count - 1; i >= 0; i--)
+            {
+                var rec = _joints[i];
+                bool own = IsInSubtree(rec.Entity, root);
+                if (!own && !(rec.Connected != null && IsInSubtree(rec.Connected, root))) continue;
+                if (rec.Id != 0) { try { VortexAPI.PhysicsDestroyConstraint(rec.Id); } catch { } _jointById.Remove(rec.Id); rec.Id = 0; }
+                if (own) ForgetRec(rec);
+            }
+            for (int i = _jointComponents.Count - 1; i >= 0; i--)
+            {
+                var j = _jointComponents[i];
+                if (!IsInSubtree(j.Entity, root)) continue;
+                j.PropertyChanged -= OnJointComponentChanged;
+                _jointComponents.RemoveAt(i);
+                _jointComponentSet.Remove(j);
+                _jointWarned.Remove(j);
+            }
+        }
+
+        private static void ForgetRec(JointRec rec)
+        {
+            if (rec.Id != 0) _jointById.Remove(rec.Id);
+            _joints.Remove(rec);
+            _jointByComponent.Remove(rec.Joint);
+        }
+
+        /// <summary>True when an enabled joint holds the body (doors, lifts, ropes).</summary>
+        private static bool IsJointed(uint bodyId)
+        {
+            for (int i = 0; i < _joints.Count; i++)
+            {
+                var r = _joints[i];
+                if (r.Id != 0 && r.Enabled && (r.BodyA == bodyId || r.BodyB == bodyId)) return true;
+            }
+            return false;
+        }
+
+        private static bool IsInSubtree(GameEntity e, GameEntity root)
+        {
+            for (var p = e; p != null; p = p.Parent) if (ReferenceEquals(p, root)) return true;
+            return false;
+        }
+
+        private static bool ActiveInHierarchy(GameEntity e)
+        {
+            for (var p = e; p != null; p = p.Parent) if (!p.IsActive) return false;
+            return true;
+        }
+
+        private static SysVec WorldDir(SysQuat rot, Vector3 local, SysVec fallback)
+        {
+            var v = ToSys(local);
+            if (v.LengthSquared() < 1e-10f) v = fallback;
+            return SysVec.Normalize(SysVec.Transform(v, rot));
+        }
+
+        private static void WarnJoint(PhysicsJoint j, string msg)
+        {
+            if (j == null || !_jointWarned.Add(j)) return;   // once per component and play session
+            Warn(j.Entity, j.DisplayName + " " + msg);
         }
 
         // ------------------------------------------------------------------------------------------ build helpers
@@ -785,6 +1192,11 @@ namespace Editor.Core.Services.Physics
                 try { mass = VortexAPI.PhysicsGetMass(b.Id); } catch { }
                 float j = Math.Min(60f, 80f * rel * 0.3f);
                 if (mass > 0f) j = Math.Min(j, mass * rel);
+                // A jointed body (a door) may not be able to give way — pressed against its hinge limit it would
+                // soak up the full 60 N·s every frame (~3600 N) and snap a breakable joint just by walking into it.
+                // Cap the shove at what a person pushes with.
+                // (Pushes are applied once per frame that steps, i.e. at most every FixedStep.)
+                if (_joints.Count > 0 && IsJointed(b.Id)) j = Math.Min(j, CharacterPushForceOnJoints * Math.Max(frameDt, FixedStep));
                 if (!_pushes.TryGetValue(b.Id, out var prev) || j > prev.j) _pushes[b.Id] = (into, j);
             }
             contacts.Clear();
