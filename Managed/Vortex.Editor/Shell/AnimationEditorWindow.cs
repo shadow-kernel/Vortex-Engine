@@ -1,276 +1,1035 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Numerics;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.VisualTree;
 using Avalonia.Threading;
 using Editor.Core.Animation;
 using Editor.Core.Data;
-using Editor.Core.Services;
-using Editor.ECS;
-using Editor.ECS.Components.Animation;
+using Editor.Core.UndoRedo;
+using Editor.Core.UndoRedo.Commands;
+using Editor.DllWrapper;
 using VortexEditor.Controls;
-using static VortexEditor.Panels.Inspector.PropertyRows;
+using VortexEditor.Shell.Animation;
+using Vec3 = System.Numerics.Vector3;
+using Quat = System.Numerics.Quaternion;
 
 namespace VortexEditor.Shell
 {
     /// <summary>
-    /// Animation clip editor (.vanim): clip settings, bone tracks with their keys (position / rotation / scale),
-    /// animation events (name, sound, time) and a scrub/play preview on the selected animated entity.
+    /// The Keyframe Editor — authors .vanim clips against a bound model: skinned 3D preview with a bone overlay (drag a
+    /// joint to pose the bone), per-bone pose inspector (position / Euler rotation / scale at the playhead, keyed with
+    /// [Key Bone]), a dope-sheet timeline (scrub, move / delete / add keys) and animation events (script name, sound,
+    /// routing AudioSource). Import embedded clips from the model or a standalone .vanim, export the clip, save.
+    /// Every keyframe / event mutation runs through the global UndoRedoManager. Port of the WPF Keyframe Editor.
     /// </summary>
     public sealed class AnimationEditorWindow : Window
     {
-        /// <summary>Open this window (owned by the main window).</summary>
-        public static void Open(string fullPath) => EditorWindows.Show(new AnimationEditorWindow(fullPath));
+        private static AnimationEditorWindow _open;
 
-        private readonly string _path;
-        private readonly VortexAnimClip _clip;
-        private readonly ListBox _tracks = new ListBox();
-        private readonly StackPanel _keys = new StackPanel { Spacing = 2 };
-        private readonly StackPanel _events = new StackPanel { Spacing = 2 };
-        private readonly Slider _scrub = new Slider { Minimum = 0, Maximum = 1 };
-        private readonly TextBlock _time = new TextBlock { Classes = { "mono", "secondary" }, VerticalAlignment = VerticalAlignment.Center, MinWidth = 90 };
-        private readonly TextBlock _previewStatus = new TextBlock { Classes = { "small", "secondary" } };
-        private readonly DispatcherTimer _timer;
-        private bool _playing;
-        private GameEntity _previewEntity;
-        private AnimTrack _track;
-
-        public AnimationEditorWindow(string path)
+        /// <summary>Open the (single) Keyframe Editor. Already open -> offer to save its edits, load the clip, focus it.</summary>
+        public static void Open(string fullPath)
         {
-            _path = path;
-            _clip = VortexAnimClip.Load(path) ?? new VortexAnimClip { Name = Path.GetFileNameWithoutExtension(path) };
-            Title = "Animation — " + _clip.Name; Width = 960; Height = 680; WindowStartupLocation = WindowStartupLocation.CenterOwner; ShowInTaskbar = false;
-            var root = new DockPanel();
-
-            // ---- transport ----
-            var transport = new DockPanel { Margin = new Thickness(12, 10, 12, 4) };
-            var tl = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-            var play = new Button { Classes = { "icon" }, Content = new VxIcon { Icon = "Play" } }; ToolTip.SetTip(play, "Play / pause preview on the selected entity");
-            play.Click += (s, e) => TogglePlay();
-            var stop = new Button { Classes = { "icon" }, Content = new VxIcon { Icon = "Stop" } }; stop.Click += (s, e) => { _playing = false; _scrub.Value = 0; ApplyPose(); };
-            tl.Children.Add(play); tl.Children.Add(stop); tl.Children.Add(_time);
-            var tr = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, HorizontalAlignment = HorizontalAlignment.Right };
-            var save = new Button { Content = "Save", Classes = { "accent" }, MinWidth = 90 }; save.Click += (s, e) => Save();
-            tr.Children.Add(_previewStatus); tr.Children.Add(save);
-            DockPanel.SetDock(tl, Dock.Left); DockPanel.SetDock(tr, Dock.Right);
-            transport.Children.Add(tl); transport.Children.Add(tr);
-            _scrub.Margin = new Thickness(8, 0); _scrub.ValueChanged += (s, e) => { _time.Text = Fmt((float)_scrub.Value, "0.00") + " s"; if (!_playing) ApplyPose(); };
-            transport.Children.Add(_scrub);
-            DockPanel.SetDock(transport, Dock.Top); root.Children.Add(transport);
-
-            var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("300,5,*"), RowDefinitions = new RowDefinitions("Auto,*"), Margin = new Thickness(12, 4, 12, 12) };
-            // ---- clip settings ----
-            var settings = new Border { Classes = { "card" }, Margin = new Thickness(0, 0, 0, 8) };
-            var sst = new StackPanel { Spacing = 2 };
-            sst.Children.Add(new TextBlock { Text = "Clip", Classes = { "section" }, Margin = new Thickness(0, 0, 0, 4) });
-            var row1 = new Grid { ColumnDefinitions = new ColumnDefinitions("*,*,*"), ColumnSpacing = 12 };
-            row1.Children.Add(Row("Name", Text(() => _clip.Name, v => { _clip.Name = v; Title = "Animation — " + v; })));
-            var c2 = Row("Duration (s)", FloatBox(() => _clip.DurationSec, v => { _clip.DurationSec = Math.Max(0.01f, v); _scrub.Maximum = _clip.DurationSec; }, 0.1, 0.01f)); Grid.SetColumn(c2, 1); row1.Children.Add(c2);
-            var c3 = Row("Frame rate", FloatBox(() => _clip.FrameRate, v => _clip.FrameRate = Math.Max(1, v), 1, 1)); Grid.SetColumn(c3, 2); row1.Children.Add(c3);
-            sst.Children.Add(row1);
-            var row2 = new Grid { ColumnDefinitions = new ColumnDefinitions("2*,*"), ColumnSpacing = 12 };
-            row2.Children.Add(Row("Model", AssetPath(() => _clip.Model, v => _clip.Model = v ?? "", "Model", new[] { "*.fbx", "*.gltf", "*.glb", "*.dae" }, () => AssetPickerDialog.Pick("Models", new[] { "*.fbx", "*.gltf", "*.glb", "*.dae" }))));
-            var l2 = Row("Loop", Bool(() => _clip.Loop, v => _clip.Loop = v)); Grid.SetColumn(l2, 1); row2.Children.Add(l2);
-            sst.Children.Add(row2);
-            settings.Child = sst;
-            Grid.SetColumnSpan(settings, 3); grid.Children.Add(settings);
-
-            // ---- tracks ----
-            var trackCard = new Border { Classes = { "card" }, Padding = new Thickness(6) };
-            var tdock = new DockPanel();
-            var th = new DockPanel { Margin = new Thickness(4, 0, 4, 4) };
-            var addTrack = new Button { Classes = { "icon" }, Content = new VxIcon { Icon = "Plus" } }; ToolTip.SetTip(addTrack, "Add bone track");
-            addTrack.Click += async (s, e) => { var n = await Dialogs.Prompt("New track", "Bone name", "", "Add"); if (!string.IsNullOrWhiteSpace(n)) { _clip.GetOrAddTrack(n.Trim()); RebuildTracks(); } };
-            var delTrack = new Button { Classes = { "icon" }, Content = new VxIcon { Icon = "Minus" } }; delTrack.Click += (s, e) => { if (_track != null) { _clip.Tracks.Remove(_track); _track = null; RebuildTracks(); } };
-            var btns = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 }; btns.Children.Add(addTrack); btns.Children.Add(delTrack);
-            DockPanel.SetDock(btns, Dock.Right); th.Children.Add(btns);
-            th.Children.Add(new TextBlock { Text = "Bone tracks", FontWeight = FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center });
-            DockPanel.SetDock(th, Dock.Top); tdock.Children.Add(th);
-            _tracks.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<AnimTrack>((t, _) => new TextBlock { Text = t.Bone + "   (" + (t.Pos.Count + t.Rot.Count + t.Scale.Count) + " keys)" });
-            _tracks.SelectionChanged += (s, e) => { _track = _tracks.SelectedItem as AnimTrack; RebuildKeys(); };
-            tdock.Children.Add(_tracks);
-            trackCard.Child = tdock;
-            Grid.SetRow(trackCard, 1); grid.Children.Add(trackCard);
-            var split = new GridSplitter { ResizeDirection = GridResizeDirection.Columns }; Grid.SetRow(split, 1); Grid.SetColumn(split, 1); grid.Children.Add(split);
-
-            // ---- keys + events ----
-            var right = new Border { Classes = { "card" }, Padding = new Thickness(10) };
-            var rst = new StackPanel { Spacing = 6 };
-            rst.Children.Add(new TextBlock { Text = "Keys of the selected track", FontWeight = FontWeight.SemiBold });
-            rst.Children.Add(_keys);
-            rst.Children.Add(new TextBlock { Text = "Events", FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 12, 0, 0) });
-            rst.Children.Add(_events);
-            right.Child = new ScrollViewer { Content = rst };
-            Grid.SetRow(right, 1); Grid.SetColumn(right, 2); grid.Children.Add(right);
-            root.Children.Add(grid);
-            Content = root;
-
-            _scrub.Maximum = Math.Max(0.01f, _clip.DurationSec);
-            _time.Text = "0.00 s";
-            RebuildTracks(); RebuildEvents();
-            ResolvePreviewEntity();
-            _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
-            _timer.Tick += (s, e) => { if (_playing) { double t = _scrub.Value + 0.016; if (t > _scrub.Maximum) t = _clip.Loop ? 0 : _scrub.Maximum; _scrub.Value = t; ApplyPose(); } };
-            _timer.Start();
-            Closed += (s, e) => { _timer.Stop(); StopPreview(); };
-        }
-
-        private void RebuildTracks() { _tracks.ItemsSource = null; _tracks.ItemsSource = _clip.Tracks.ToList(); if (_track != null) _tracks.SelectedItem = _clip.Tracks.FirstOrDefault(t => ReferenceEquals(t, _track)); RebuildKeys(); }
-
-        private void RebuildKeys()
-        {
-            _keys.Children.Clear();
-            if (_track == null) { _keys.Children.Add(new TextBlock { Text = "Select a track.", Classes = { "secondary" } }); return; }
-            void Section<TKey>(string title, List<TKey> keys, Func<TKey> make, Func<TKey, Control> editor)
+            if (_open != null)
             {
-                var head = new DockPanel();
-                var add = new Button { Classes = { "icon", "small" }, Content = new VxIcon { Icon = "Plus" } }; add.Click += (s, e) => { keys.Add(make()); keys.Sort((a, b) => KeyTime(a).CompareTo(KeyTime(b))); RebuildKeys(); };
-                DockPanel.SetDock(add, Dock.Right); head.Children.Add(add);
-                head.Children.Add(new TextBlock { Text = title + "  (" + keys.Count + ")", Classes = { "small", "secondary" }, VerticalAlignment = VerticalAlignment.Center });
-                _keys.Children.Add(head);
-                foreach (var k in keys)
+                var w0 = _open;
+                if (string.Equals(w0._path, AnimUtil.ToAbsolute(fullPath), StringComparison.OrdinalIgnoreCase)) { w0.Activate(); return; }
+                Dispatcher.UIThread.Post(async () =>
                 {
-                    var kk = k;
-                    var line = new DockPanel();
-                    var del = new Button { Classes = { "icon", "small" }, Content = new VxIcon { Icon = "Minus" } }; del.Click += (s, e) => { keys.Remove(kk); RebuildKeys(); };
-                    DockPanel.SetDock(del, Dock.Right); line.Children.Add(del);
-                    line.Children.Add(editor(kk));
-                    _keys.Children.Add(line);
-                }
+                    try { if (await w0.ConfirmDiscardOrSave()) w0.LoadClip(fullPath); w0.Activate(); }
+                    catch (Exception ex) { EditorCommands.Fail("Could not open clip", ex); }
+                });
+                return;
             }
-            float T() => (float)_scrub.Value;
-            Section("Position", _track.Pos, () => new AnimKeyVec3 { T = T() }, k => Vec3Key(() => k.T, v => k.T = v, () => k.X, v => k.X = v, () => k.Y, v => k.Y = v, () => k.Z, v => k.Z = v));
-            Section("Rotation (quaternion)", _track.Rot, () => new AnimKeyQuat { T = T() }, k => QuatKey(k));
-            Section("Scale", _track.Scale, () => new AnimKeyVec3 { T = T(), X = 1, Y = 1, Z = 1 }, k => Vec3Key(() => k.T, v => k.T = v, () => k.X, v => k.X = v, () => k.Y, v => k.Y = v, () => k.Z, v => k.Z = v));
+            var w = new AnimationEditorWindow(fullPath);
+            EditorWindows.Show(w);
         }
 
-        private static float KeyTime(object k) => k is AnimKeyVec3 v ? v.T : k is AnimKeyQuat q ? q.T : 0f;
+        /// <summary>The open editor (tests / other windows).</summary>
+        public static AnimationEditorWindow Current => _open;
 
-        private Control Vec3Key(Func<float> gt, Action<float> st, Func<float> gx, Action<float> sx, Func<float> gy, Action<float> sy, Func<float> gz, Action<float> sz)
+        private string _path = "";
+        private VortexAnimClip _clip = new VortexAnimClip();
+
+        private readonly SkinnedPreview _preview = new SkinnedPreview();
+        private readonly TimelineControl _timeline = new TimelineControl();
+        private ListBox _boneList;
+        private TextBox _boneFilter;
+        private StackPanel _inspector;
+        private TextBlock _modelPathText;
+        private TextBox _nameBox, _durBox, _fpsBox;
+        private ToggleButton _snapBtn, _loopBtn;
+        private Button _playBtn, _importBtn;
+        private TextBlock _timeText;
+        private readonly List<Button> _transport = new List<Button>();
+
+        private bool _playing;
+        private float _time;
+        private bool _dirty;
+        private bool _syncingUI;
+        private string _selectedBone;
+        private bool _suppressList;
+        private bool _closingConfirmed;
+
+        // working pose override for the SELECTED bone while the user types or drags a joint; committed by [Key Bone],
+        // discarded on bone switch. Euler kept separately so typing X never wobbles Y/Z through the quaternion round-trip.
+        private bool _hasOverride;
+        private Vec3 _ovPos, _ovScale, _ovEuler;
+        private Quat _ovRot;
+        // snapshot taken when a joint drag starts — Esc mid-drag restores it
+        private string _dragSnapBone;
+        private bool _dragSnapHasOverride;
+        private Vec3 _dragSnapPos, _dragSnapScale, _dragSnapEuler;
+        private Quat _dragSnapRot;
+
+        private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
+        private double _lastSec;
+        private readonly List<Action> _valueRefreshers = new List<Action>();
+        private Button _keyButton;
+
+        private static readonly string[] ModelPatterns = { "*.fbx", "*.obj", "*.gltf", "*.glb", "*.dae" };
+        private static readonly string[] AudioPatterns = { "*.wav", "*.mp3", "*.ogg", "*.flac", "*.vsndc" };
+
+        public string ClipPath => _path;
+        public VortexAnimClip Document => _clip;
+        public SkinnedPreview Preview => _preview;
+        public TimelineControl Timeline => _timeline;
+        public bool IsPlaying => _playing;
+        public bool IsDirty => _dirty;
+        public float PlayheadTime => _time;
+        public string SelectedBone => _selectedBone;
+
+        public AnimationEditorWindow(string path) : this()
         {
-            var sp = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
-            sp.Children.Add(new TextBlock { Text = "t", Classes = { "small", "tertiary" }, VerticalAlignment = VerticalAlignment.Center });
-            sp.Children.Add(FloatBox(gt, v => { st(Math.Max(0, v)); ApplyPose(); }, 0.05, 0));
-            foreach (var (l, g, s) in new[] { ("X", gx, sx), ("Y", gy, sy), ("Z", gz, sz) })
+            try { LoadClip(path); }
+            catch (Exception ex) { EditorCommands.Fail("Could not open clip", ex); }
+        }
+
+        private AnimationEditorWindow()
+        {
+            Title = "Keyframe Editor";
+            Width = 1480; Height = 920; MinWidth = 1100; MinHeight = 660;
+            WindowStartupLocation = WindowStartupLocation.CenterOwner;
+            ShowInTaskbar = false;
+            // render the rig at ~1.8 m whatever its authoring units (cm Mixamo rigs) — purely visual: keys stay in
+            // model units and the joint-drag math is scale-free; the studio lights are tuned for metre content
+            _preview.NormalizeToHuman = true;
+            BuildUI();
+
+            _preview.BeforeFrame += OnFrame;
+            _preview.BoneClicked += bone => { SelectBone(bone); SnapshotDragState(bone); };
+            _preview.BoneRotated += OnBoneRotated;
+            _preview.ModelRebound += () => { RefreshBoneTree(); RefreshInspector(); UpdatePreview(); };
+            UndoRedoManager.Instance.CommandExecuted += OnUndoRedoExecuted;
+            AddHandler(KeyDownEvent, OnWindowKeyDown, RoutingStrategies.Tunnel);
+
+            Opened += (s, e) => { if (_open == null) _open = this; AnimUi.FitToScreen(this); };
+            Closing += OnClosingGuard;
+            Closed += (s, e) =>
             {
-                sp.Children.Add(new TextBlock { Text = l, Classes = { "small", "tertiary" }, VerticalAlignment = VerticalAlignment.Center });
-                sp.Children.Add(FloatBox(g, v => { s(v); ApplyPose(); }, 0.05));
-            }
-            return sp;
+                try { UndoRedoManager.Instance.CommandExecuted -= OnUndoRedoExecuted; } catch { }
+                try { _preview.Viewport.Continuous = false; _preview.Dispose(); } catch { }
+                if (ReferenceEquals(_open, this)) _open = null;
+            };
         }
 
-        private Control QuatKey(AnimKeyQuat k)
+        // ===================================================================== document
+
+        private void LoadClip(string vanimPath)
         {
-            var sp = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
-            sp.Children.Add(new TextBlock { Text = "t", Classes = { "small", "tertiary" }, VerticalAlignment = VerticalAlignment.Center });
-            sp.Children.Add(FloatBox(() => k.T, v => { k.T = Math.Max(0, v); ApplyPose(); }, 0.05, 0));
-            // edit as Euler degrees, stored as quaternion
-            var e = ToEuler(k);
-            float[] eul = { e.X, e.Y, e.Z };
-            for (int i = 0; i < 3; i++)
+            string abs = AnimUtil.ToAbsolute(vanimPath ?? "");
+            _path = abs ?? "";
+            _clip = VortexAnimClip.Load(abs) ?? new VortexAnimClip { Name = Path.GetFileNameWithoutExtension(vanimPath ?? "New Clip") };
+            Normalize(_clip);
+
+            SetPlaying(false);
+            _time = 0f;
+            _selectedBone = null;
+            _hasOverride = false;
+            _dirty = false;
+
+            RefreshToolbarFromClip();
+            RebindModel();
+            _timeline.SetClip(_clip);
+            _timeline.SetSelectedBone(null);
+            _timeline.Time = 0f;
+            _timeline.SnapSeconds = _snapBtn.IsChecked == true ? 1f / Math.Max(1f, _clip.FrameRate) : 0f;
+            RefreshInspector();
+            UpdatePreview();
+            UpdateTimeText();
+            UpdateTitle();
+        }
+
+        /// <summary>Hand-edited JSON can deserialize lists as null — normalize once so the editor can assume them.</summary>
+        private static void Normalize(VortexAnimClip clip)
+        {
+            if (clip.Tracks == null) clip.Tracks = new List<AnimTrack>();
+            if (clip.Events == null) clip.Events = new List<AnimEvent>();
+            foreach (var tr in clip.Tracks)
             {
-                int ii = i;
-                sp.Children.Add(new TextBlock { Text = new[] { "X°", "Y°", "Z°" }[i], Classes = { "small", "tertiary" }, VerticalAlignment = VerticalAlignment.Center });
-                sp.Children.Add(FloatBox(() => eul[ii], v => { eul[ii] = v; FromEuler(k, eul); ApplyPose(); }, 1, null, null, "0.#"));
+                if (tr.Pos == null) tr.Pos = new List<AnimKeyVec3>();
+                if (tr.Rot == null) tr.Rot = new List<AnimKeyQuat>();
+                if (tr.Scale == null) tr.Scale = new List<AnimKeyVec3>();
             }
-            return sp;
         }
 
-        private static System.Numerics.Vector3 ToEuler(AnimKeyQuat k)
+        /// <summary>Write the clip. False (and still dirty) when the file could not be written.</summary>
+        public bool Save()
         {
-            var q = new System.Numerics.Quaternion(k.X, k.Y, k.Z, k.W);
-            float sinr = 2 * (q.W * q.X + q.Y * q.Z), cosr = 1 - 2 * (q.X * q.X + q.Y * q.Y);
-            float roll = MathF.Atan2(sinr, cosr);
-            float sinp = 2 * (q.W * q.Y - q.Z * q.X);
-            float pitch = MathF.Abs(sinp) >= 1 ? MathF.CopySign(MathF.PI / 2, sinp) : MathF.Asin(sinp);
-            float siny = 2 * (q.W * q.Z + q.X * q.Y), cosy = 1 - 2 * (q.Y * q.Y + q.Z * q.Z);
-            float yaw = MathF.Atan2(siny, cosy);
-            const float d = 180f / MathF.PI;
-            return new System.Numerics.Vector3(roll * d, pitch * d, yaw * d);
-        }
-        private static void FromEuler(AnimKeyQuat k, float[] eul)
-        {
-            const float r = MathF.PI / 180f;
-            var q = System.Numerics.Quaternion.CreateFromYawPitchRoll(eul[2] * r, eul[1] * r, eul[0] * r);
-            k.X = q.X; k.Y = q.Y; k.Z = q.Z; k.W = q.W;
-        }
-
-        private void RebuildEvents()
-        {
-            _events.Children.Clear();
-            foreach (var ev in _clip.Events)
+            if (string.IsNullOrEmpty(_path)) return false;
+            if (_clip.Save(_path))
             {
-                var e2 = ev;
-                var line = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-                line.Children.Add(new TextBlock { Text = "t", Classes = { "small", "tertiary" }, VerticalAlignment = VerticalAlignment.Center });
-                line.Children.Add(FloatBox(() => e2.T, v => e2.T = Math.Max(0, v), 0.05, 0));
-                var name = Text(() => e2.Name, v => e2.Name = v, "event name"); name.MinWidth = 120; line.Children.Add(name);
-                var snd = AssetPath(() => e2.Sound, v => e2.Sound = v, "Audio", new[] { "*.wav", "*.mp3", "*.ogg", "*.vsndc" }, () => AssetPickerDialog.Pick("Audio", new[] { "*.wav", "*.mp3", "*.ogg", "*.vsndc" })); snd.MinWidth = 220; line.Children.Add(snd);
-                var del = new Button { Classes = { "icon", "small" }, Content = new VxIcon { Icon = "Minus" } }; del.Click += (s, e) => { _clip.Events.Remove(e2); RebuildEvents(); };
-                line.Children.Add(del);
-                _events.Children.Add(line);
+                try { AnimationService.Instance.InvalidateClip(_path); } catch { }
+                _dirty = false;
+                UpdateTitle();
+                EditorCommands.Toast("Saved " + Path.GetFileName(_path));
+                return true;
             }
-            var add = new Button { Content = "Add event at current time", Classes = { "ghost" }, HorizontalAlignment = HorizontalAlignment.Left };
-            add.Click += (s, e) => { _clip.Events.Add(new AnimEvent { T = (float)_scrub.Value, Name = "Event" }); RebuildEvents(); };
-            _events.Children.Add(add);
+            _ = AnimUi.Alert(this, "Keyframe Editor", "Save failed — the file could not be written:\n" + _path);
+            return false;
         }
 
-        // ---- preview on the selected entity ----
-        private void ResolvePreviewEntity()
+        private void MarkDirty() { if (!_dirty) { _dirty = true; UpdateTitle(); } }
+        private void UpdateTitle() => Title = "Keyframe Editor — " + (_clip?.Name ?? "?") + (_dirty ? " *" : "");
+
+        /// <summary>Unsaved-changes guard (re-open + close). True = proceed (clean, saved or discarded).</summary>
+        private async System.Threading.Tasks.Task<bool> ConfirmDiscardOrSave()
         {
-            var sel = SelectionService.Instance.SelectedEntity;
-            _previewEntity = sel != null && sel.GetComponent<Animator>() != null ? sel : null;
-            _previewStatus.Text = _previewEntity != null ? "Preview on " + _previewEntity.Name : "Select an entity with an Animator to preview";
+            if (!_dirty) return true;
+            var r = await AnimUi.Ask(this, "Save changes to \"" + (_clip?.Name ?? "clip") + "\"?", "Your changes are lost if you don't save them.", new[] { "Save", "Don't Save", "Cancel" });
+            if (r.button == 2) return false;
+            if (r.button == 0) return Save();
+            return true;
         }
 
-        private void TogglePlay()
+        private async void OnClosingGuard(object sender, WindowClosingEventArgs e)
         {
-            ResolvePreviewEntity();
-            if (_previewEntity == null) { EditorCommands.Toast("Select an animated entity in the scene to preview"); return; }
-            _playing = !_playing;
-            if (_playing)
+            if (_closingConfirmed || !_dirty) return;
+            if (e.CloseReason == WindowCloseReason.OwnerWindowClosing || e.CloseReason == WindowCloseReason.ApplicationShutdown || e.CloseReason == WindowCloseReason.OSShutdown)
             {
-                try { AnimationService.Instance.Play(_previewEntity, _path); AnimationService.Instance.SetSpeed(_previewEntity, 0f); } catch (Exception ex) { EditorCommands.Fail("Preview", ex); _playing = false; }
+                WriteRecoveryCopy();   // can't ask while the app goes down: keep the edits next to the project, untouched original
+                return;
             }
+            e.Cancel = true;
+            if (await ConfirmDiscardOrSave()) { _closingConfirmed = true; Close(); }
         }
 
-        private void ApplyPose()
+        private void WriteRecoveryCopy()
         {
-            if (_previewEntity == null) return;
             try
             {
-                // Evaluate the clip at the scrub time and feed the palette through the animation service by
-                // (re)starting the clip and stepping to the requested time.
-                if (!AnimationService.Instance.IsPlaying(_previewEntity, _path)) AnimationService.Instance.Play(_previewEntity, _path);
-                AnimationService.Instance.SetSpeed(_previewEntity, 0f);
-                var scene = ProjectData.Current?.ActiveScene;
-                float target = (float)_scrub.Value, now = AnimationService.Instance.GetTime(_previewEntity);
-                if (scene != null && target != now)
-                {
-                    AnimationService.Instance.SetSpeed(_previewEntity, 1f);
-                    float dt = target - now; if (dt < 0) dt += Math.Max(0.01f, _clip.DurationSec);
-                    AnimationService.Instance.Step(scene, dt);
-                    AnimationService.Instance.SetSpeed(_previewEntity, 0f);
-                }
-                SceneRenderService.RuntimeDirty = true;
+                var root = ProjectData.Current?.Path;
+                string dir = string.IsNullOrEmpty(root) ? Path.GetTempPath() : Path.Combine(root, ".ve", "recovery");
+                Directory.CreateDirectory(dir);
+                string file = Path.Combine(dir, Path.GetFileNameWithoutExtension(_path) + "_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".vanim");
+                if (_clip.Save(file)) Editor.Core.Services.ConsoleService.Instance.LogWarning("Keyframe Editor closed with unsaved changes — they were written to " + file);
             }
             catch { }
         }
 
-        private void StopPreview()
+        /// <summary>Close without the unsaved-changes prompt (tests).</summary>
+        public void CloseDiscarding() { _closingConfirmed = true; Close(); }
+
+        // ===================================================================== shell
+
+        private void BuildUI()
         {
-            if (_previewEntity == null) return;
-            try { AnimationService.Instance.Stop(_previewEntity); AnimationService.Instance.InvalidateClip(_path); SceneRenderService.RuntimeDirty = true; } catch { }
+            var root = new DockPanel();
+            var toolbar = BuildToolbar();
+            DockPanel.SetDock(toolbar, Dock.Top);
+            root.Children.Add(toolbar);
+
+            var body = new Grid { RowDefinitions = new RowDefinitions("*,6,300"), Margin = new Thickness(8, 8, 8, 8) };
+            body.RowDefinitions[0].MinHeight = 240;
+            body.RowDefinitions[2].MinHeight = 140;
+
+            var mid = new Grid { ColumnDefinitions = new ColumnDefinitions("280,6,*,6,330") };
+            mid.ColumnDefinitions[0].MinWidth = 200;
+            mid.ColumnDefinitions[4].MinWidth = 260;
+            mid.Children.Add(BuildLeftPanel());
+            var s1 = new GridSplitter { ResizeDirection = GridResizeDirection.Columns, Background = Brushes.Transparent }; Grid.SetColumn(s1, 1); mid.Children.Add(s1);
+            var well = new Border { CornerRadius = new CornerRadius(8), ClipToBounds = true, BorderBrush = AnimUi.Res("VxHairlineBrush"), BorderThickness = new Thickness(1), Child = _preview };
+            Grid.SetColumn(well, 2); mid.Children.Add(well);
+            var s2 = new GridSplitter { ResizeDirection = GridResizeDirection.Columns, Background = Brushes.Transparent }; Grid.SetColumn(s2, 3); mid.Children.Add(s2);
+            var right = BuildRightPanel(); Grid.SetColumn(right, 4); mid.Children.Add(right);
+            body.Children.Add(mid);
+
+            var rs = new GridSplitter { ResizeDirection = GridResizeDirection.Rows, Background = Brushes.Transparent }; Grid.SetRow(rs, 1); body.Children.Add(rs);
+
+            var tlBorder = new Border { CornerRadius = new CornerRadius(8), ClipToBounds = true, BorderBrush = AnimUi.Res("VxHairlineBrush"), BorderThickness = new Thickness(1), Child = _timeline };
+            Grid.SetRow(tlBorder, 2); body.Children.Add(tlBorder);
+            _timeline.TimeChanged += t =>
+            {
+                _time = t;
+                UpdateTimeText();
+                UpdatePreview();
+                if (!_playing) RefreshInspectorValues();
+            };
+            _timeline.TrackSelected += bone => SelectBone(bone);
+            _timeline.Changed += () =>
+            {
+                MarkDirty();
+                RefreshBoneTree();
+                UpdatePreview();
+                if (!_playing) RefreshInspector();
+            };
+            _timeline.KeyAddRequested += (bone, t) => KeyBoneAt(bone, t, useOverride: false);
+
+            root.Children.Add(body);
+            Content = root;
         }
 
-        private void Save()
+        private Control BuildToolbar()
         {
-            try { AnimationService.Instance.InvalidateClip(_path); _clip.Save(_path); EditorCommands.Toast("Animation saved"); }
-            catch (Exception ex) { EditorCommands.Fail("Save animation", ex); }
+            var bar = new Border { Background = AnimUi.Res("VxToolbarBrush"), BorderBrush = AnimUi.Res("VxHairlineBrush"), BorderThickness = new Thickness(0, 0, 0, 1), Padding = new Thickness(10, 8) };
+            var dock = new DockPanel();
+            var save = new Button { Content = "Save", Classes = { "accent" }, MinWidth = 92, VerticalAlignment = VerticalAlignment.Center };
+            ToolTip.SetTip(save, "Save clip (Cmd+S)");
+            save.Click += (s, e) => Save();
+            DockPanel.SetDock(save, Dock.Right);
+            dock.Children.Add(save);
+
+            var left = new WrapPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            left.Children.Add(AnimUi.ToolLabel("CLIP"));
+            _nameBox = AnimUi.ToolTextBox(150, v => { if (v == _clip.Name) return; _clip.Name = v; MarkDirty(); UpdateTitle(); }, () => _syncingUI);
+            left.Children.Add(_nameBox);
+            left.Children.Add(AnimUi.ToolLabel("DUR"));
+            _durBox = AnimUi.ToolTextBox(62, v =>
+            {
+                if (!PropertyRowsParse(v, out float f)) { RefreshToolbarFromClip(); return; }
+                f = Math.Max(0.01f, f);
+                if (Math.Abs(f - _clip.DurationSec) < 1e-6f) return;
+                _clip.DurationSec = f;
+                _timeline.Duration = f;
+                if (_time > f) SetTime(f);
+                MarkDirty(); UpdateTimeText();
+            }, () => _syncingUI);
+            left.Children.Add(_durBox);
+            left.Children.Add(AnimUi.ToolLabel("FPS"));
+            _fpsBox = AnimUi.ToolTextBox(52, v =>
+            {
+                if (!PropertyRowsParse(v, out float f)) { RefreshToolbarFromClip(); return; }
+                f = Math.Max(1f, Math.Min(240f, f));
+                if (Math.Abs(f - _clip.FrameRate) < 1e-6f) return;
+                _clip.FrameRate = f;
+                if (_snapBtn.IsChecked == true) _timeline.SnapSeconds = 1f / f;
+                MarkDirty();
+            }, () => _syncingUI);
+            left.Children.Add(_fpsBox);
+            _snapBtn = AnimUi.ToolToggle("Snap", true, "Snap timeline edits to the frame grid (1/FPS)", on => _timeline.SnapSeconds = on ? 1f / Math.Max(1f, _clip.FrameRate) : 0f);
+            left.Children.Add(_snapBtn);
+            left.Children.Add(AnimUi.ToolSeparator());
+
+            var toStart = AnimUi.ToolButton(AnimUi.JumpStartIcon, null, "Jump to start (Home)", () => SetTime(0f));
+            var prev = AnimUi.ToolButton(AnimUi.StepBackIcon, null, "Previous frame (←)", () => SetTime(_time - 1f / Math.Max(1f, _clip.FrameRate)));
+            _playBtn = AnimUi.ToolButton("Play", null, "Play / pause (Space)", TogglePlay);
+            var next = AnimUi.ToolButton(AnimUi.StepForwardIcon, null, "Next frame (→)", () => SetTime(_time + 1f / Math.Max(1f, _clip.FrameRate)));
+            var toEnd = AnimUi.ToolButton(AnimUi.JumpEndIcon, null, "Jump to end (End)", () => SetTime(_clip.DurationSec));
+            _transport.AddRange(new[] { toStart, prev, _playBtn, next, toEnd });
+            foreach (var b in _transport) left.Children.Add(b);
+            _loopBtn = AnimUi.ToolToggle("Loop", true, "Loop the clip (saved with it)", on => { if (!_syncingUI && _clip.Loop != on) { _clip.Loop = on; MarkDirty(); } });
+            left.Children.Add(_loopBtn);
+            _timeText = new TextBlock { Text = "0.00 / 1.00 s", Classes = { "mono", "secondary" }, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0), MinWidth = 104 };
+            left.Children.Add(_timeText);
+            left.Children.Add(AnimUi.ToolSeparator());
+            _importBtn = AnimUi.ToolButton("Import", "From model", "Copy a clip embedded in the bound model into this document", ShowImportMenu);
+            left.Children.Add(_importBtn);
+            left.Children.Add(AnimUi.ToolButton("Import", "Import .vanim", "Load a standalone .vanim clip from disk into this document (animation only — no character)", ImportClipFromFile));
+            left.Children.Add(AnimUi.ToolButton("Export", "Export .vanim", "Save this clip to a standalone .vanim file (animation only — reusable on any compatible skeleton)", ExportClipToFile));
+            dock.Children.Add(left);
+            bar.Child = dock;
+            return bar;
+        }
+
+        private static bool PropertyRowsParse(string s, out float f) => Panels.Inspector.PropertyRows.TryParse(s, out f);
+
+        private Control BuildLeftPanel()
+        {
+            var panel = new Border { Classes = { "card" }, Padding = new Thickness(10) };
+            var grid = new Grid { RowDefinitions = new RowDefinitions("Auto,*") };
+            var sec = new StackPanel();
+            sec.Children.Add(AnimUi.MicroHeader("MODEL"));
+            _modelPathText = new TextBlock { Text = "No model bound", Classes = { "small", "secondary" }, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 6) };
+            sec.Children.Add(_modelPathText);
+            var bind = new Button { Content = "Bind / Change…", HorizontalAlignment = HorizontalAlignment.Left };
+            ToolTip.SetTip(bind, "Choose the model (skeleton) this clip is authored against — also accepts a model dropped here");
+            bind.Click += async (s, e) =>
+            {
+                var picked = await AssetPickerDialog.Pick("Models", ModelPatterns);
+                if (!string.IsNullOrEmpty(picked)) BindModelPath(picked);
+            };
+            sec.Children.Add(bind);
+            DragDrop.SetAllowDrop(sec, true);
+            sec.AddHandler(DragDrop.DragOverEvent, (s, e) => { var p = Panels.Inspector.PropertyRows.DroppedPath(e, "vortex/asset"); e.DragEffects = p != null && Panels.Inspector.PropertyRows.Matches(p, ModelPatterns) ? DragDropEffects.Link : DragDropEffects.None; e.Handled = true; });
+            sec.AddHandler(DragDrop.DropEvent, (s, e) => { var p = Panels.Inspector.PropertyRows.DroppedPath(e, "vortex/asset"); if (p != null && Panels.Inspector.PropertyRows.Matches(p, ModelPatterns)) { BindModelPath(p); e.Handled = true; } });
+            sec.Children.Add(AnimUi.MicroHeader("BONES", 14));
+            _boneFilter = new TextBox { Classes = { "search" }, Watermark = "Filter bones…", Margin = new Thickness(0, 0, 0, 6) };
+            _boneFilter.TextChanged += (s, e) => RefreshBoneTree();
+            sec.Children.Add(_boneFilter);
+            grid.Children.Add(sec);
+
+            _boneList = new ListBox { Background = Brushes.Transparent };
+            ScrollViewer.SetHorizontalScrollBarVisibility(_boneList, ScrollBarVisibility.Disabled);
+            _boneList.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<BoneItem>((b, _) =>
+            {
+                if (b == null) return new TextBlock();
+                var tb = new TextBlock
+                {
+                    Text = b.Display, Margin = new Thickness(b.Depth * 11, 0, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis, FontSize = 12,
+                    FontWeight = b.Tracked ? FontWeight.SemiBold : FontWeight.Normal,
+                    Foreground = b.Tracked ? AnimUi.Res("VxAccentBrush") : AnimUi.Res("VxTextBrush")
+                };
+                ToolTip.SetTip(tb, b.Name + (b.Tracked ? "  (has keys)" : ""));
+                return tb;
+            });
+            _boneList.SelectionChanged += (s, e) =>
+            {
+                if (_suppressList) return;
+                if (_boneList.SelectedItem is BoneItem b) SelectBone(b.Name);
+            };
+            Grid.SetRow(_boneList, 1);
+            grid.Children.Add(_boneList);
+            panel.Child = grid;
+            return panel;
+        }
+
+        private sealed class BoneItem
+        {
+            public string Name, Display;
+            public int Depth;
+            public bool Tracked;
+        }
+
+        private Control BuildRightPanel()
+        {
+            var panel = new Border { Classes = { "card" }, Padding = new Thickness(12, 10) };
+            _inspector = new StackPanel();
+            panel.Child = new ScrollViewer { Content = _inspector, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+            return panel;
+        }
+
+        // ===================================================================== playback
+
+        private void OnFrame()
+        {
+            if (!_playing) return;
+            double now = _clock.Elapsed.TotalSeconds;
+            float dt = (float)(now - _lastSec);
+            _lastSec = now;
+            if (dt <= 0f) return;
+            dt = Math.Min(dt, 0.25f);
+            _time += dt;
+            float dur = Math.Max(_clip.DurationSec, 0.0001f);
+            if (_time >= dur)
+            {
+                if (_clip.Loop) _time %= dur;
+                else { _time = dur; Dispatcher.UIThread.Post(() => SetPlaying(false)); }
+            }
+            _timeline.Time = _time;
+            UpdateTimeText();
+            UpdatePreview();
+        }
+
+        public void TogglePlay() => SetPlaying(!_playing);
+
+        public void SetPlaying(bool playing)
+        {
+            if (playing && !HasModel()) playing = false;
+            if (playing && _time >= _clip.DurationSec - 0.0001f) _time = 0f;
+            _playing = playing;
+            if (_playBtn != null) _playBtn.Content = AnimUi.Icon(playing ? "Pause" : "Play");
+            _lastSec = _clock.Elapsed.TotalSeconds;
+            _preview.Viewport.Continuous = playing;
+            if (!playing) { RefreshInspectorValues(); _preview.Invalidate(); }
+        }
+
+        public void SetTime(float t)
+        {
+            _time = Math.Max(0f, Math.Min(_clip.DurationSec, t));
+            _timeline.Time = _time;
+            UpdateTimeText();
+            UpdatePreview();
+            if (!_playing) RefreshInspectorValues();
+        }
+
+        private void UpdateTimeText()
+            => _timeText.Text = _time.ToString("0.00", CultureInfo.InvariantCulture) + " / " + _clip.DurationSec.ToString("0.00", CultureInfo.InvariantCulture) + " s";
+
+        private void OnWindowKeyDown(object sender, KeyEventArgs e)
+        {
+            bool cmd = e.KeyModifiers.HasFlag(KeyModifiers.Meta) || e.KeyModifiers.HasFlag(KeyModifiers.Control);
+            bool shift = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
+            bool inText = e.Source is TextBox || (e.Source as Visual)?.FindAncestorOfType<TextBox>() != null;
+            if (cmd && e.Key == Key.S) { Save(); e.Handled = true; return; }
+            if (inText) return;
+            if (cmd && e.Key == Key.Z) { if (shift) UndoRedoManager.Instance.Redo(); else UndoRedoManager.Instance.Undo(); e.Handled = true; }
+            else if (cmd && e.Key == Key.Y) { UndoRedoManager.Instance.Redo(); e.Handled = true; }
+            else if (e.Key == Key.Space && HasModel()) { TogglePlay(); e.Handled = true; }
+            else if (e.Key == Key.F && !cmd)
+            {
+                // F = focus the selected bone; Shift+F (or F with nothing selected) = reset the view
+                if (shift || string.IsNullOrEmpty(_selectedBone)) _preview.ResetFocus(); else _preview.FocusSelectedBone();
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Escape && _preview.IsBoneDragActive) { CancelBoneDragAndRestore(); e.Handled = true; }
+            else if (e.Key == Key.Home) { SetTime(0f); e.Handled = true; }
+            else if (e.Key == Key.End) { SetTime(_clip.DurationSec); e.Handled = true; }
+            else if ((e.Key == Key.Left || e.Key == Key.Right) && !(e.Source is ListBoxItem) && !(e.Source is ListBox))
+            {
+                SetTime(_time + (e.Key == Key.Left ? -1f : 1f) / Math.Max(1f, _clip.FrameRate));
+                e.Handled = true;
+            }
+        }
+
+        private void OnUndoRedoExecuted(object sender, CommandExecutedEventArgs e)
+        {
+            // refresh after a global undo / redo — our own Execute paths refresh explicitly. NO dirty marking here: this
+            // fires for EVERY command in the editor (scene edits included).
+            if (e.ExecutionType == CommandExecutionType.Execute) return;
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (!IsVisible) return;
+                RefreshToolbarFromClip();
+                _timeline.Refresh();
+                RefreshBoneTree();
+                UpdatePreview();
+                if (!_playing) RefreshInspector();
+                UpdateTitle();
+            });
+        }
+
+        // ===================================================================== model binding
+
+        private bool HasModel()
+        {
+            string full = ResolveModelFullPath();
+            return full != null && File.Exists(full) && _preview.HasMeshes;
+        }
+
+        private string ResolveModelFullPath() => string.IsNullOrEmpty(_clip?.Model) ? null : AnimUtil.ToAbsolute(_clip.Model);
+
+        private void BindModelPath(string picked)
+        {
+            string rel = AnimUtil.ToRelative(picked);
+            if (rel == _clip.Model) return;
+            string old = _clip.Model;
+            var clip = _clip;
+            UndoRedoManager.Instance.Execute(new ActionCommand("Bind model", () => clip.Model = rel, () => clip.Model = old));
+            MarkDirty();
+            RebindModel();
+            RefreshInspector();
+            UpdatePreview();
+        }
+
+        private void RebindModel()
+        {
+            string full = ResolveModelFullPath();
+            bool exists = full != null && File.Exists(full);
+            _modelPathText.Text = string.IsNullOrEmpty(_clip.Model) ? "No model bound" : _clip.Model;
+            ToolTip.SetTip(_modelPathText, full);
+            _preview.SetEmptyHint(string.IsNullOrEmpty(_clip.Model) ? "Bind a model to begin" : !exists ? "Model not found:  " + _clip.Model : "Loading model…");
+            _preview.BindModel(exists ? full : null);
+            foreach (var b in _transport) b.IsEnabled = exists;
+            if (!exists) SetPlaying(false);
+            RefreshBoneTree();
+        }
+
+        // ===================================================================== bone tree
+
+        public void RefreshBoneTree()
+        {
+            var skel = _preview.Skeleton;
+            var items = new List<BoneItem>();
+            if (skel?.Nodes != null && skel.Nodes.Length > 0)
+            {
+                int n = skel.Nodes.Length;
+                string filter = _boneFilter?.Text?.Trim() ?? "";
+                if (filter.Length > 0)
+                {
+                    // FLAT filtered list (case-insensitive substring on the full name)
+                    for (int i = 0; i < n; i++)
+                    {
+                        string name = skel.Nodes[i].Name;
+                        if (AnimUtil.IsHiddenNode(name) || name.IndexOf(filter, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                        items.Add(MakeBoneItem(name, 0));
+                    }
+                }
+                else
+                {
+                    // hierarchy with hidden pivot nodes collapsed onto their nearest visible ancestor, DFS order, indented
+                    var kids = new List<int>[n];
+                    var roots = new List<int>();
+                    for (int i = 0; i < n; i++)
+                    {
+                        if (AnimUtil.IsHiddenNode(skel.Nodes[i].Name)) continue;
+                        int p = skel.Nodes[i].Parent, guard = 0;
+                        while (p >= 0 && p < n && AnimUtil.IsHiddenNode(skel.Nodes[p].Name) && guard++ < n) p = skel.Nodes[p].Parent;
+                        if (p >= 0 && p < n && p != i) (kids[p] = kids[p] ?? new List<int>()).Add(i);
+                        else roots.Add(i);
+                    }
+                    void Add(int idx, int depth)
+                    {
+                        items.Add(MakeBoneItem(skel.Nodes[idx].Name, depth));
+                        if (kids[idx] != null) foreach (int c in kids[idx]) Add(c, depth + 1);
+                    }
+                    foreach (int r in roots) Add(r, 0);
+                }
+            }
+            _suppressList = true;
+            try
+            {
+                _boneList.ItemsSource = items;
+                var sel = items.FirstOrDefault(b => b.Name == _selectedBone);
+                _boneList.SelectedItem = sel;
+                if (sel != null) _boneList.ScrollIntoView(sel);
+            }
+            finally { _suppressList = false; }
+        }
+
+        private BoneItem MakeBoneItem(string name, int depth)
+            => new BoneItem { Name = name, Display = AnimUtil.DisplayBoneName(name), Depth = depth, Tracked = _clip?.FindTrack(name) != null };
+
+        private void SelectBoneInList(string bone)
+        {
+            _suppressList = true;
+            try
+            {
+                if (_boneList.ItemsSource is List<BoneItem> items)
+                {
+                    var it = items.FirstOrDefault(b => b.Name == bone);
+                    _boneList.SelectedItem = it;
+                    if (it != null) _boneList.ScrollIntoView(it);
+                }
+            }
+            finally { _suppressList = false; }
+        }
+
+        // ===================================================================== selection + pose override
+
+        public void SelectBone(string bone)
+        {
+            if (bone == _selectedBone) return;
+            _selectedBone = bone;
+            _hasOverride = false;   // the typed pose belongs to the previous bone
+            _preview.SetSelectedBone(bone);
+            _timeline.SetSelectedBone(bone);
+            _timeline.RevealBone(bone);
+            SelectBoneInList(bone);
+            RefreshInspector();
+            UpdatePreview();
+        }
+
+        private (Vec3 pos, Quat rot, Vec3 scale)? OverrideFor(string bone)
+            => _hasOverride && bone == _selectedBone ? (_ovPos, _ovRot, _ovScale) : ((Vec3, Quat, Vec3)?)null;
+
+        private void SnapshotDragState(string bone)
+        {
+            _dragSnapBone = bone;
+            _dragSnapHasOverride = _hasOverride;
+            _dragSnapPos = _ovPos; _dragSnapRot = _ovRot; _dragSnapScale = _ovScale; _dragSnapEuler = _ovEuler;
+        }
+
+        /// <summary>Joint drag: compose the LOCAL rotation delta onto the working override — the same "modified pose" a
+        /// typed edit produces, so [Key Bone] commits it unchanged.</summary>
+        private void OnBoneRotated(string bone, Quat localDelta)
+        {
+            if (string.IsNullOrEmpty(bone)) return;
+            if (bone != _selectedBone) SelectBone(bone);
+            EnsureOverride();
+            _ovRot = Quat.Normalize(Quat.Concatenate(_ovRot, localDelta));
+            _ovEuler = AnimUtil.ToEulerDeg(_ovRot);
+            UpdatePreview();
+            if (!_playing) RefreshInspectorValues();
+        }
+
+        private void CancelBoneDragAndRestore()
+        {
+            _preview.CancelBoneDrag();
+            if (_dragSnapBone == _selectedBone)
+            {
+                _hasOverride = _dragSnapHasOverride;
+                _ovPos = _dragSnapPos; _ovRot = _dragSnapRot; _ovScale = _dragSnapScale; _ovEuler = _dragSnapEuler;
+            }
+            else _hasOverride = false;
+            UpdatePreview();
+            if (!_playing) RefreshInspectorValues();
+        }
+
+        private void UpdatePreview() => _preview.SetPose(_clip, _time, OverrideFor);
+
+        private void EnsureOverride()
+        {
+            if (_hasOverride) return;
+            SamplePoseAt(_selectedBone, _time, out _ovPos, out _ovRot, out _ovScale);
+            _ovEuler = AnimUtil.ToEulerDeg(_ovRot);
+            _hasOverride = true;
+        }
+
+        /// <summary>Bone's local TRS at `time`: keyed values with per-component bind-pose fallback.</summary>
+        private void SamplePoseAt(string bone, float time, out Vec3 pos, out Quat rot, out Vec3 scale)
+        {
+            pos = Vec3.Zero; rot = Quat.Identity; scale = Vec3.One;
+            var skel = _preview.Skeleton;
+            int node = skel != null ? skel.FindNode(bone) : -1;
+            if (node >= 0) { var n = skel.Nodes[node]; pos = n.BindTranslation; rot = n.BindRotation; scale = n.BindScale; }
+            var track = _clip?.FindTrack(bone);
+            if (track != null)
+            {
+                if (track.Pos != null && track.Pos.Count > 0) pos = AnimationService.SampleVec3(track.Pos, time);
+                if (track.Rot != null && track.Rot.Count > 0) rot = AnimationService.SampleQuat(track.Rot, time);
+                if (track.Scale != null && track.Scale.Count > 0) scale = AnimationService.SampleVec3(track.Scale, time);
+            }
+        }
+
+        private Vec3 CurPos() { if (_hasOverride) return _ovPos; SamplePoseAt(_selectedBone, _time, out var p, out _, out _); return p; }
+        private Vec3 CurScale() { if (_hasOverride) return _ovScale; SamplePoseAt(_selectedBone, _time, out _, out _, out var s); return s; }
+        private Vec3 CurEuler() { if (_hasOverride) return _ovEuler; SamplePoseAt(_selectedBone, _time, out _, out var r, out _); return AnimUtil.ToEulerDeg(r); }
+
+        // ===================================================================== inspector
+
+        public void RefreshInspector()
+        {
+            _inspector.Children.Clear();
+            _valueRefreshers.Clear();
+            _keyButton = null;
+            _inspector.Children.Add(AnimUi.MicroHeader("KEY INSPECTOR"));
+            var skel = _preview.Skeleton;
+            if (skel == null || !skel.IsValid)
+            {
+                _inspector.Children.Add(AnimUi.NoteBox(string.IsNullOrEmpty(_clip?.Model) ? "Bind a model with a skeleton to pose bones (Bind / Change… on the left)." : "Bind a model with a skeleton to pose bones."));
+                BuildEventsSection();
+                return;
+            }
+            if (string.IsNullOrEmpty(_selectedBone))
+            {
+                _inspector.Children.Add(AnimUi.NoteBox("Select a bone — click it in the BONES list or a joint in the preview. Drag a joint to rotate the bone, "
+                    + "Shift+drag or right/middle-drag to pan, wheel to zoom, double-click a joint (or F) to focus it, Shift+F to reset the view. "
+                    + "Double-click a timeline row to key the bone at that time."));
+                BuildEventsSection();
+                return;
+            }
+            var title = new TextBlock { Text = AnimUtil.DisplayBoneName(_selectedBone), FontSize = 14, FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 2, 0, 2), TextTrimming = TextTrimming.CharacterEllipsis };
+            ToolTip.SetTip(title, _selectedBone);
+            _inspector.Children.Add(title);
+            var sub = new TextBlock { Text = _selectedBone, Classes = { "small", "tertiary" }, Margin = new Thickness(0, 0, 0, 10), TextTrimming = TextTrimming.CharacterEllipsis };
+            _inspector.Children.Add(sub);
+
+            _inspector.Children.Add(AnimUi.MicroHeader("POSITION"));
+            _inspector.Children.Add(AnimUi.LiveVec3(CurPos, v => { EnsureOverride(); _ovPos = v; UpdatePreview(); }, 0.01, out var rp));
+            _valueRefreshers.Add(rp);
+            _inspector.Children.Add(AnimUi.MicroHeader("ROTATION  (EULER °)"));
+            _inspector.Children.Add(AnimUi.LiveVec3(CurEuler, v => { EnsureOverride(); _ovEuler = v; _ovRot = AnimUtil.FromEulerDeg(v); UpdatePreview(); }, 1, out var rr));
+            _valueRefreshers.Add(rr);
+            _inspector.Children.Add(AnimUi.MicroHeader("SCALE"));
+            _inspector.Children.Add(AnimUi.LiveVec3(CurScale, v => { EnsureOverride(); _ovScale = v; UpdatePreview(); }, 0.01, out var rs));
+            _valueRefreshers.Add(rs);
+
+            _keyButton = new Button { Classes = { "accent" }, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 6, 0, 0) };
+            ToolTip.SetTip(_keyButton, "Write position, rotation and scale keys for this bone at the playhead (the edited pose, or the pose shown)");
+            _keyButton.Click += (s, e) => KeyBoneAt(_selectedBone, _time, useOverride: true);
+            _inspector.Children.Add(_keyButton);
+            var del = new Button { Content = "Delete Keys @ Time", HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 6, 0, 0) };
+            del.Click += (s, e) => DeleteKeysAtTime(_selectedBone, _time);
+            _inspector.Children.Add(del);
+            var revert = new Button { Content = "Discard Pose Edit", Classes = { "ghost" }, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 2, 0, 0) };
+            ToolTip.SetTip(revert, "Forget the typed / dragged pose and show the keyed pose again");
+            revert.Click += (s, e) => { _hasOverride = false; UpdatePreview(); RefreshInspectorValues(); };
+            _inspector.Children.Add(revert);
+            _valueRefreshers.Add(() => { if (_keyButton != null) _keyButton.Content = "Key Bone @ " + _time.ToString("0.00", CultureInfo.InvariantCulture) + "s" + (_hasOverride ? "  •" : ""); revert.IsEnabled = _hasOverride; });
+            RefreshInspectorValues();
+            BuildEventsSection();
+        }
+
+        /// <summary>Re-read pose values + the key button label without rebuilding (scrub, drag, playback stop).</summary>
+        private void RefreshInspectorValues() { foreach (var r in _valueRefreshers) { try { r(); } catch { } } }
+
+        private void BuildEventsSection()
+        {
+            _inspector.Children.Add(new Border { Height = 14 });
+            _inspector.Children.Add(AnimUi.MicroHeader("EVENTS"));
+            if (_clip?.Events != null && _clip.Events.Count == 0)
+                _inspector.Children.Add(new TextBlock { Text = "No events. Events fire OnAnimationEvent in scripts and can play a sound when the playhead crosses them.", Classes = { "small", "tertiary" }, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 6) });
+            if (_clip?.Events != null)
+                foreach (var ev in _clip.Events.ToList()) _inspector.Children.Add(EventRow(ev));
+            var add = new Button { Content = "+ Add Event @ Playhead", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 4, 0, 0) };
+            add.Click += (s, e) =>
+            {
+                var clip = _clip;
+                var ev = new AnimEvent { T = _time, Name = "Event" };
+                UndoRedoManager.Instance.Execute(new ActionCommand("Add Animation Event",
+                    () => { clip.Events.Add(ev); clip.Events.Sort((a, b) => a.T.CompareTo(b.T)); },
+                    () => clip.Events.Remove(ev)));
+                MarkDirty();
+                _timeline.Refresh();
+                RefreshInspector();
+            };
+            _inspector.Children.Add(add);
+        }
+
+        private Control EventRow(AnimEvent evRef)
+        {
+            var box = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
+            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("60,*,Auto"), Margin = new Thickness(0, 0, 0, 4) };
+            var time = AnimUi.ToolTextBox(60, v =>
+            {
+                if (!PropertyRowsParse(v, out float f)) return;
+                f = Math.Max(0f, Math.Min(_clip.DurationSec, f));
+                if (Math.Abs(f - evRef.T) < 1e-6f) return;
+                evRef.T = f;
+                _clip.Events.Sort((a, b) => a.T.CompareTo(b.T));
+                MarkDirty(); _timeline.Refresh();
+            });
+            time.Width = double.NaN; time.Classes.Add("number");
+            time.Text = evRef.T.ToString("0.###", CultureInfo.InvariantCulture);
+            ToolTip.SetTip(time, "Time (s)");
+            row.Children.Add(time);
+            var name = AnimUi.ToolTextBox(0, v => { if (v == evRef.Name) return; evRef.Name = v; MarkDirty(); _timeline.Refresh(); });
+            name.Width = double.NaN; name.Text = evRef.Name ?? ""; name.Watermark = "event name"; name.Margin = new Thickness(4, 0);
+            ToolTip.SetTip(name, "Name dispatched to scripts (OnAnimationEvent)");
+            Grid.SetColumn(name, 1); row.Children.Add(name);
+            var x = new Button { Classes = { "icon" }, Content = AnimUi.Icon("Close", 12) };
+            ToolTip.SetTip(x, "Delete event");
+            x.Click += (s, e) =>
+            {
+                var clip = _clip;
+                UndoRedoManager.Instance.Execute(new ActionCommand("Delete Animation Event",
+                    () => clip.Events.Remove(evRef),
+                    () => { clip.Events.Add(evRef); clip.Events.Sort((a, b) => a.T.CompareTo(b.T)); }));
+                MarkDirty(); _timeline.Refresh(); RefreshInspector();
+            };
+            Grid.SetColumn(x, 2); row.Children.Add(x);
+            box.Children.Add(row);
+
+            // sound slot: a clip played AUTOMATICALLY when the playhead crosses this event
+            bool hasSound = !string.IsNullOrEmpty(evRef.Sound);
+            var sRow = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+            var sBtn = new Button
+            {
+                HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left,
+                Content = new TextBlock { Text = hasSound ? "♪  " + Path.GetFileName(evRef.Sound) : "+ Add sound…", TextTrimming = TextTrimming.CharacterEllipsis, Foreground = hasSound ? AnimUi.Res("VxPurpleBrush") : AnimUi.Res("VxTextSecondaryBrush") }
+            };
+            ToolTip.SetTip(sBtn, hasSound ? evRef.Sound : "Play a sound automatically when the playhead reaches this event");
+            sBtn.Click += async (s, e) =>
+            {
+                var picked = await AssetPickerDialog.Pick("Audio", AudioPatterns);
+                if (string.IsNullOrEmpty(picked)) return;
+                evRef.Sound = AnimUtil.ToRelative(picked);
+                MarkDirty(); _timeline.Refresh(); RefreshInspector();
+            };
+            DragDrop.SetAllowDrop(sBtn, true);
+            sBtn.AddHandler(DragDrop.DragOverEvent, (s, e) => { var p = Panels.Inspector.PropertyRows.DroppedPath(e, "vortex/asset"); e.DragEffects = p != null && Panels.Inspector.PropertyRows.Matches(p, AudioPatterns) ? DragDropEffects.Link : DragDropEffects.None; e.Handled = true; });
+            sBtn.AddHandler(DragDrop.DropEvent, (s, e) => { var p = Panels.Inspector.PropertyRows.DroppedPath(e, "vortex/asset"); if (p != null && Panels.Inspector.PropertyRows.Matches(p, AudioPatterns)) { evRef.Sound = AnimUtil.ToRelative(p); MarkDirty(); _timeline.Refresh(); RefreshInspector(); e.Handled = true; } });
+            sRow.Children.Add(sBtn);
+            if (hasSound)
+            {
+                var clr = new Button { Classes = { "icon" }, Content = AnimUi.Icon("Close", 12), Margin = new Thickness(4, 0, 0, 0) };
+                ToolTip.SetTip(clr, "Remove sound");
+                clr.Click += (s, e) => { evRef.Sound = null; MarkDirty(); _timeline.Refresh(); RefreshInspector(); };
+                Grid.SetColumn(clr, 1); sRow.Children.Add(clr);
+            }
+            box.Children.Add(sRow);
+            if (hasSound)
+            {
+                // optional: route through a named AudioSource on the entity (its Volume / Pitch / 3D settings shape it)
+                var via = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,56"), Margin = new Thickness(0, 4, 0, 0) };
+                via.Children.Add(new TextBlock { Text = "via source", Classes = { "small", "tertiary" }, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(2, 0, 6, 0) });
+                var viaBox = AnimUi.ToolTextBox(0, v => { string nv = string.IsNullOrWhiteSpace(v) ? null : v.Trim(); if (nv == evRef.AudioSource) return; evRef.AudioSource = nv; MarkDirty(); _timeline.Refresh(); });
+                viaBox.Width = double.NaN; viaBox.Text = evRef.AudioSource ?? ""; viaBox.Watermark = "(plain 2D one-shot)";
+                ToolTip.SetTip(viaBox, "Optional: the NAME of an AudioSource on this entity (or a child) to route through — its Volume / Pitch / 3D settings shape the sound. Empty = a plain 2D one-shot.");
+                Grid.SetColumn(viaBox, 1); via.Children.Add(viaBox);
+                var vl = new TextBlock { Text = "vol", Classes = { "small", "tertiary" }, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 4, 0) };
+                Grid.SetColumn(vl, 2); via.Children.Add(vl);
+                var vol = AnimUi.ToolTextBox(56, v => { if (PropertyRowsParse(v, out float f)) { f = Math.Max(0f, f); if (Math.Abs(f - evRef.Volume) > 1e-6f) { evRef.Volume = f; MarkDirty(); } } });
+                vol.Classes.Add("number"); vol.Text = evRef.Volume.ToString("0.##", CultureInfo.InvariantCulture);
+                ToolTip.SetTip(vol, "Extra volume multiplier on top of the source (1 = unchanged)");
+                Grid.SetColumn(vol, 3); via.Children.Add(vol);
+                box.Children.Add(via);
+            }
+            return box;
+        }
+
+        // ===================================================================== keyframe mutations (undoable)
+
+        /// <summary>Write pos + rot + scale keys for <paramref name="bone"/> at <paramref name="time"/> — the edited pose when
+        /// the inspector asks for it, else the pose sampled from the clip (timeline double-click). Replaces keys within half
+        /// a frame. Undo removes the track again when this created it.</summary>
+        public void KeyBoneAt(string bone, float time, bool useOverride)
+        {
+            if (string.IsNullOrEmpty(bone) || _clip == null) return;
+            Vec3 pos, scale; Quat rot;
+            if (useOverride && _hasOverride && bone == _selectedBone) { pos = _ovPos; rot = _ovRot; scale = _ovScale; }
+            else SamplePoseAt(bone, time, out pos, out rot, out scale);
+
+            var clip = _clip;
+            var existing = clip.FindTrack(bone);
+            var before = existing != null ? TimelineControl.CloneKeys(existing) : null;
+            float tol = 0.5f / Math.Max(1f, clip.FrameRate);
+            float t = time;
+            Vec3 p = pos, sc = scale; Quat r = rot;
+            // redo must re-add the SAME track instance (later commands capture track references)
+            AnimTrack created = null;
+            UndoRedoManager.Instance.Execute(new ActionCommand("Key " + AnimUtil.DisplayBoneName(bone),
+                () =>
+                {
+                    var tr = clip.FindTrack(bone);
+                    if (tr == null) { if (created == null) created = new AnimTrack { Bone = bone }; tr = created; clip.Tracks.Add(tr); }
+                    UpsertVec3(tr.Pos, t, p, tol);
+                    UpsertQuat(tr.Rot, t, r, tol);
+                    UpsertVec3(tr.Scale, t, sc, tol);
+                },
+                () =>
+                {
+                    var tr = clip.FindTrack(bone);
+                    if (tr == null) return;
+                    if (before == null) clip.Tracks.Remove(tr); else TimelineControl.RestoreKeys(tr, before);
+                }));
+            _hasOverride = false;
+            AfterClipMutation();
+        }
+
+        public void DeleteKeysAtTime(string bone, float time)
+        {
+            var track = _clip?.FindTrack(bone);
+            if (track == null) return;
+            float tol = 0.5f / Math.Max(1f, _clip.FrameRate);
+            var before = TimelineControl.CloneKeys(track);
+            int removed = track.Pos.RemoveAll(k => Math.Abs(k.T - time) < tol) + track.Rot.RemoveAll(k => Math.Abs(k.T - time) < tol) + track.Scale.RemoveAll(k => Math.Abs(k.T - time) < tol);
+            if (removed == 0) return;
+            var after = TimelineControl.CloneKeys(track);
+            TimelineControl.RestoreKeys(track, before);   // the command's Execute performs the mutation
+            UndoRedoManager.Instance.Execute(new ActionCommand("Delete Keys " + AnimUtil.DisplayBoneName(bone), () => TimelineControl.RestoreKeys(track, after), () => TimelineControl.RestoreKeys(track, before)));
+            AfterClipMutation();
+        }
+
+        private void AfterClipMutation()
+        {
+            MarkDirty();
+            _timeline.Refresh();
+            RefreshBoneTree();
+            UpdatePreview();
+            if (!_playing) RefreshInspector();
+        }
+
+        private static void UpsertVec3(List<AnimKeyVec3> keys, float t, Vec3 v, float tol)
+        {
+            keys.RemoveAll(k => Math.Abs(k.T - t) < tol);
+            keys.Add(new AnimKeyVec3 { T = t, X = v.X, Y = v.Y, Z = v.Z });
+            keys.Sort((a, b) => a.T.CompareTo(b.T));
+        }
+
+        private static void UpsertQuat(List<AnimKeyQuat> keys, float t, Quat q, float tol)
+        {
+            keys.RemoveAll(k => Math.Abs(k.T - t) < tol);
+            keys.Add(new AnimKeyQuat { T = t, X = q.X, Y = q.Y, Z = q.Z, W = q.W });
+            keys.Sort((a, b) => a.T.CompareTo(b.T));
+        }
+
+        // ===================================================================== import / export
+
+        private void ShowImportMenu()
+        {
+            string full = ResolveModelFullPath();
+            bool has = full != null && File.Exists(full);
+            var menu = new MenuFlyout();
+            int count = 0;
+            try { count = has ? VortexAPI.GetAnimationCount(full) : 0; } catch { }
+            if (count <= 0) menu.Items.Add(new MenuItem { Header = has ? "No embedded clips in the model" : "Bind a model first", IsEnabled = false });
+            for (int i = 0; i < count; i++)
+            {
+                if (!VortexAPI.GetAnimationInfo(full, i, out string name, out float dur)) continue;
+                int idx = i; string nm = name; float d = dur;
+                var mi = new MenuItem { Header = nm + "   (" + d.ToString("0.##", CultureInfo.InvariantCulture) + "s)" };
+                mi.Click += async (s, e) => await ImportEmbedded(full, idx, nm, d);
+                menu.Items.Add(mi);
+            }
+            menu.ShowAt(_importBtn);
+        }
+
+        public async System.Threading.Tasks.Task ImportEmbedded(string full, int index, string name, float durationSec, bool confirm = true)
+        {
+            if (confirm && _clip.Tracks.Count > 0 && !await AnimUi.Confirm(this, "Import from model", "Replace the current tracks with the embedded clip \"" + name + "\"?", "Replace", "Cancel"))
+                return;
+            var data = VortexAPI.GetAnimationData(full, index);
+            var nodes = VortexAPI.GetSkeletonNodes(full);
+            var imported = AnimationService.ClipFromModelData(name, durationSec, data, nodes);
+            if (imported == null || imported.Tracks.Count == 0) { await AnimUi.Alert(this, "Import from model", "Could not read that embedded clip."); return; }
+            var clip = _clip;
+            var oldTracks = clip.Tracks; float oldDur = clip.DurationSec; string oldName = clip.Name;
+            UndoRedoManager.Instance.Execute(new ActionCommand("Import clip " + name,
+                () => { clip.Tracks = imported.Tracks; clip.DurationSec = imported.DurationSec; clip.Name = imported.Name; },
+                () => { clip.Tracks = oldTracks; clip.DurationSec = oldDur; clip.Name = oldName; }));
+            AfterWholeClipChange();
+        }
+
+        private async void ImportClipFromFile()
+        {
+            string picked = await AnimUtil.OpenFile(this, "Import animation clip", AnimUtil.ProjectDir("Assets", "Animations"), "Vortex Animation", "*.vanim");
+            if (string.IsNullOrEmpty(picked)) return;
+            var imported = VortexAnimClip.Load(picked);
+            if (imported == null || imported.Tracks == null || imported.Tracks.Count == 0) { await AnimUi.Alert(this, "Import animation", "Could not read that .vanim (no animation tracks)."); return; }
+            Normalize(imported);
+            if (_clip.Tracks.Count > 0 && !await AnimUi.Confirm(this, "Import animation", "Replace the current tracks with \"" + (imported.Name ?? Path.GetFileNameWithoutExtension(picked)) + "\"?", "Replace", "Cancel"))
+                return;
+            var clip = _clip;
+            var oldTracks = clip.Tracks; float oldDur = clip.DurationSec; string oldName = clip.Name;
+            float oldFps = clip.FrameRate; bool oldLoop = clip.Loop; var oldEvents = clip.Events;
+            UndoRedoManager.Instance.Execute(new ActionCommand("Import clip " + (imported.Name ?? ""),
+                () => { clip.Tracks = imported.Tracks; clip.DurationSec = imported.DurationSec; clip.FrameRate = imported.FrameRate; clip.Loop = imported.Loop; clip.Name = imported.Name; clip.Events = imported.Events; },
+                () => { clip.Tracks = oldTracks; clip.DurationSec = oldDur; clip.FrameRate = oldFps; clip.Loop = oldLoop; clip.Name = oldName; clip.Events = oldEvents; }));
+            AfterWholeClipChange();
+        }
+
+        private void AfterWholeClipChange()
+        {
+            _time = 0f;
+            RefreshToolbarFromClip();
+            _timeline.SetClip(_clip);
+            _timeline.Time = 0f;
+            AfterClipMutation();
+            UpdateTimeText();
+            UpdateTitle();
+        }
+
+        private async void ExportClipToFile()
+        {
+            string suggested = (string.IsNullOrWhiteSpace(_clip?.Name) ? "clip" : _clip.Name) + ".vanim";
+            string picked = await AnimUtil.SaveFile(this, "Export animation clip", AnimUtil.ProjectDir("Assets", "Animations"), suggested, "Vortex Animation", ".vanim");
+            if (string.IsNullOrEmpty(picked)) return;
+            if (!picked.EndsWith(".vanim", StringComparison.OrdinalIgnoreCase)) picked += ".vanim";
+            if (_clip.Save(picked))
+            {
+                try { AnimationService.Instance.InvalidateClip(picked); } catch { }
+                try { Editor.Core.Assets.AssetDatabase.Instance.Refresh(); } catch { }
+                try { EditorCommands.Window?.AssetBrowser?.Refresh(); } catch { }
+                await AnimUi.Alert(this, "Keyframe Editor", "Exported animation to:\n" + picked);
+            }
+            else await AnimUi.Alert(this, "Keyframe Editor", "Export failed — the file could not be written.");
+        }
+
+        // ===================================================================== toolbar sync
+
+        private void RefreshToolbarFromClip()
+        {
+            _syncingUI = true;
+            try
+            {
+                _nameBox.Text = _clip.Name ?? "";
+                _durBox.Text = _clip.DurationSec.ToString("0.###", CultureInfo.InvariantCulture);
+                _fpsBox.Text = _clip.FrameRate.ToString("0.#", CultureInfo.InvariantCulture);
+                _loopBtn.IsChecked = _clip.Loop;
+                _timeline.Duration = _clip.DurationSec;
+                _timeline.SnapSeconds = _snapBtn.IsChecked == true ? 1f / Math.Max(1f, _clip.FrameRate) : 0f;
+            }
+            finally { _syncingUI = false; }
         }
     }
 }
