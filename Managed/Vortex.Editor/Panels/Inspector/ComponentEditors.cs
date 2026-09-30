@@ -48,6 +48,7 @@ namespace VortexEditor.Panels.Inspector
                 case Script _: return ("Script", "VxOrangeBrush");
                 case Collider _: return ("Collider", "VxGreenBrush");
                 case Rigidbody _: return ("Sphere", "VxGreenBrush");
+                case PhysicsJoint _: return ("Link", "VxGreenBrush");
                 case AudioSource _: case AudioListener _: case ReverbZone _: return ("Audio", "VxGreenBrush");
                 case Animator _: case BoneAttachment _: case TwoBoneIk _: case HandPose _: return ("Bone", "VxPinkBrush");
                 default: return ("Gear", "VxTextSecondaryBrush");

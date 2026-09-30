@@ -195,9 +195,10 @@ namespace VortexEditor.Shell.Animation
                 w.Preview.Refresh();
                 bool rerendered = await WaitFor(() => !ReferenceEquals(w.Preview.Viewport.LastImage, img), 2000);
                 var img2 = w.Preview.Viewport.LastImage;
-                int amber = CountColor(img2, (r, g, b) => r > 150 && r > g + 25 && g > b + 25);
+                // thin blended wires: amber reads roughly (186,165,92), green (123,184,150)
+                int amber = CountColor(img2, (r, g, b) => r > 150 && r > g + 8 && g > b + 40);
                 col.IsTrigger = trigBefore;
-                Log("trigger toggle re-rendered=" + rerendered + " amber pixels " + amber);
+                Log("trigger toggle re-rendered=" + rerendered + " amber pixels " + amber + " changed " + DiffPixels(img, img2) + " sample " + ChangedSample(img, img2));
                 bool ok = rendered && green > 30 && rerendered && (trigBefore ? green > 30 : amber > 30);
                 if (ok && trigBefore) ok = CountColor(img2, (r, g, b) => g > 150 && g > r + 50 && g > b + 30) > 30;
                 return ok;
@@ -311,6 +312,17 @@ namespace VortexEditor.Shell.Animation
             for (int i = 0; i + 3 < a.Bgra.Length; i += 4)
                 if (Math.Abs(a.Bgra[i] - b.Bgra[i]) + Math.Abs(a.Bgra[i + 1] - b.Bgra[i + 1]) + Math.Abs(a.Bgra[i + 2] - b.Bgra[i + 2]) > 24) n++;
             return n;
+        }
+
+        private static string ChangedSample(PreviewImage a, PreviewImage b)
+        {
+            if (a == null || b == null || a.Width != b.Width || a.Height != b.Height) return "(size differs)";
+            var sb = new System.Text.StringBuilder();
+            int n = 0;
+            for (int i = 0; i + 3 < a.Bgra.Length && n < 6; i += 4 * 7)
+                if (Math.Abs(a.Bgra[i] - b.Bgra[i]) + Math.Abs(a.Bgra[i + 1] - b.Bgra[i + 1]) + Math.Abs(a.Bgra[i + 2] - b.Bgra[i + 2]) > 40)
+                { sb.Append($"[{a.Bgra[i + 2]},{a.Bgra[i + 1]},{a.Bgra[i]}->{b.Bgra[i + 2]},{b.Bgra[i + 1]},{b.Bgra[i]}] "); n++; }
+            return sb.ToString();
         }
 
         private static int CountColor(PreviewImage img, Func<int, int, int, bool> pred)

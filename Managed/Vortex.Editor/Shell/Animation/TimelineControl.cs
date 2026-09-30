@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Globalization;
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Controls.Documents;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Layout;
@@ -24,13 +23,20 @@ namespace VortexEditor.Shell.Animation
     /// </summary>
     public sealed class TimelineControl : Grid
     {
-        public const double RowH = 28, RulerH = 24, NamesW = 210, KeySize = 11;
+        public const double RowH = 28, RulerH = 24, NamesW = 210, KeySize = 11, LeftPad = 8;
         private const float KeyTol = 0.0005f;
 
         private sealed class Row { public string Bone; public AnimTrack Track; public List<float> Times; }
 
         private readonly Surface _surface;
         private readonly PlayheadLayer _playhead;
+        // text is real TextBlocks (names column, ruler labels, hover tip) on a layer between the shapes and the playhead
+        private readonly Canvas _textLayer = new Canvas { IsHitTestVisible = false, ClipToBounds = true };
+        private readonly StackPanel _namesPanel = new StackPanel();
+        private readonly Border _namesClip = new Border { ClipToBounds = true, Width = NamesW };
+        private readonly Canvas _rulerText = new Canvas { ClipToBounds = true, Height = RulerH };
+        private readonly TextBlock _tipText2 = new TextBlock { FontSize = 11, TextWrapping = TextWrapping.NoWrap };
+        private readonly Border _tip = new Border { CornerRadius = new CornerRadius(5), Padding = new Thickness(7, 4), BorderThickness = new Thickness(1), IsVisible = false };
         private readonly ScrollBar _hbar = new ScrollBar { Orientation = Orientation.Horizontal, Minimum = 0, AllowAutoHide = false };
         private readonly ScrollBar _vbar = new ScrollBar { Orientation = Orientation.Vertical, Minimum = 0, AllowAutoHide = false };
         private readonly List<Row> _rows = new List<Row>();
@@ -79,7 +85,19 @@ namespace VortexEditor.Shell.Animation
             ClipToBounds = true;
             _surface = new Surface(this);
             _playhead = new PlayheadLayer(this);
+            _namesClip.Child = _namesPanel;
+            _namesPanel.RenderTransform = new TranslateTransform(0, 0);
+            Canvas.SetLeft(_namesClip, 0); Canvas.SetTop(_namesClip, RulerH);
+            Canvas.SetLeft(_rulerText, NamesW); Canvas.SetTop(_rulerText, 0);
+            var header = new TextBlock { Text = "TRACKS", FontSize = 10.5, FontWeight = FontWeight.SemiBold, Classes = { "tertiary" } };
+            Canvas.SetLeft(header, 8); Canvas.SetTop(header, 5);
+            _tip.Child = _tipText2;
+            _textLayer.Children.Add(_namesClip);
+            _textLayer.Children.Add(_rulerText);
+            _textLayer.Children.Add(header);
+            _textLayer.Children.Add(_tip);
             Children.Add(_surface);
+            Children.Add(_textLayer);
             Children.Add(_playhead);
             Grid.SetColumn(_vbar, 1);
             Grid.SetRow(_hbar, 1);
@@ -87,8 +105,13 @@ namespace VortexEditor.Shell.Animation
             Children.Add(_hbar);
             _hbar.ValueChanged += (s, e) => { if (_syncBars) return; _scrollX = _hbar.Value; Redraw(); };
             _vbar.ValueChanged += (s, e) => { if (_syncBars) return; _scrollY = _vbar.Value; Redraw(); };
-            _surface.SizeChanged += (s, e) => { UpdateBars(); Redraw(); };
-            _tipTimer.Tick += (s, e) => { _tipTimer.Stop(); _tipText = _tipCandidate; _playhead.InvalidateVisual(); };
+            _surface.SizeChanged += (s, e) =>
+            {
+                _namesClip.Height = Math.Max(0, e.NewSize.Height - RulerH);
+                _rulerText.Width = Math.Max(0, e.NewSize.Width - NamesW);
+                UpdateBars(); Redraw();
+            };
+            _tipTimer.Tick += (s, e) => { _tipTimer.Stop(); _tipText = _tipCandidate; ShowTip(); };
         }
 
         // ================================================================ public API
@@ -112,8 +135,58 @@ namespace VortexEditor.Shell.Animation
             // the selected bone shows a (still empty) row so a double-click can create its first key
             if (!string.IsNullOrEmpty(_selectedBone) && _clip != null && _clip.FindTrack(_selectedBone) == null)
                 _rows.Add(new Row { Bone = _selectedBone, Track = null, Times = new List<float>() });
+            RebuildNames();
             UpdateBars();
             Redraw();
+        }
+
+        /// <summary>Names column: one TextBlock per row (full bone name as tooltip isn't hit-testable here — the hover tip shows it).</summary>
+        private void RebuildNames()
+        {
+            _namesPanel.Children.Clear();
+            foreach (var row in _rows)
+            {
+                bool sel = row.Bone == _selectedBone;
+                var tb = new TextBlock
+                {
+                    Text = AnimUtil.DisplayBoneName(row.Bone) + (row.Track == null ? "  (no keys)" : ""),
+                    FontSize = 11.5, FontWeight = sel ? FontWeight.SemiBold : FontWeight.Normal, TextTrimming = TextTrimming.CharacterEllipsis,
+                    VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 6, 0)
+                };
+                if (sel) tb.Foreground = B("VxAccentBrush");
+                else tb.Classes.Add(row.Track == null ? "tertiary" : "secondary");
+                _namesPanel.Children.Add(new Border { Height = RowH, Child = tb });
+            }
+        }
+
+        /// <summary>Ruler labels + event notes (rebuilt on scroll / zoom / data changes — never per playback frame).</summary>
+        private void RebuildRulerText()
+        {
+            _rulerText.Children.Clear();
+            double w = _surface.Bounds.Width;
+            if (w < 4) return;
+            float major = MajorStep();
+            float t0 = Math.Max(0f, XToTime(NamesW)), t1 = XToTime(w);
+            for (int i = (int)Math.Floor(t0 / major); i <= (int)Math.Ceiling(t1 / major); i++)
+            {
+                float t = i * major;
+                if (t < -0.0001f) continue;
+                double x = TimeToX(t);
+                if (x < NamesW - 2 || x > w + 2) continue;
+                var lbl = new TextBlock { Text = t.ToString(major < 0.5f ? "0.0#" : "0.#", CultureInfo.InvariantCulture), FontSize = 10, Classes = { "secondary" } };
+                Canvas.SetLeft(lbl, x - NamesW + 3); Canvas.SetTop(lbl, 1);
+                _rulerText.Children.Add(lbl);
+            }
+            if (_clip?.Events != null)
+                foreach (var ev in _clip.Events)
+                {
+                    if (string.IsNullOrEmpty(ev.Sound) && string.IsNullOrEmpty(ev.AudioSource)) continue;
+                    double x = TimeToX(ev.T);
+                    if (x < NamesW - 8 || x > w + 8) continue;
+                    var note = new TextBlock { Text = "♪", FontSize = 9, Foreground = SoundBrush };
+                    Canvas.SetLeft(note, x - NamesW + 7); Canvas.SetTop(note, 0);
+                    _rulerText.Children.Add(note);
+                }
         }
 
         /// <summary>Scroll so the selected bone's row is visible.</summary>
@@ -128,14 +201,20 @@ namespace VortexEditor.Shell.Animation
 
         public int RowCount => _rows.Count;
 
-        private void Redraw() { _surface.InvalidateVisual(); _playhead.InvalidateVisual(); }
+        private void Redraw()
+        {
+            _surface.InvalidateVisual();
+            _playhead.InvalidateVisual();
+            if (_namesPanel.RenderTransform is TranslateTransform tt) tt.Y = -_scrollY;
+            RebuildRulerText();
+        }
 
         // ================================================================ geometry
 
         private double TimeAreaWidth => Math.Max(1, _surface.Bounds.Width - NamesW);
         private double RowsViewportHeight => Math.Max(1, _surface.Bounds.Height - RulerH);
-        private double TimeToX(float t) => NamesW + t * _pps - _scrollX;
-        private float XToTime(double x) => (float)((x - NamesW + _scrollX) / _pps);
+        private double TimeToX(float t) => NamesW + LeftPad + t * _pps - _scrollX;
+        private float XToTime(double x) => (float)((x - NamesW - LeftPad + _scrollX) / _pps);
         private int RowAt(double y) { if (y < RulerH) return -1; int r = (int)Math.Floor((y - RulerH + _scrollY) / RowH); return r >= 0 && r < _rows.Count ? r : -1; }
         private double RowTop(int r) => RulerH + r * RowH - _scrollY;
 
@@ -150,7 +229,7 @@ namespace VortexEditor.Shell.Animation
             _syncBars = true;
             try
             {
-                double vw = TimeAreaWidth, content = (_duration + 0.5f) * _pps;   // half a second of tail room
+                double vw = TimeAreaWidth, content = (_duration + 0.5f) * _pps + LeftPad;   // half a second of tail room
                 _hbar.Maximum = Math.Max(0, content - vw);
                 _hbar.ViewportSize = vw; _hbar.LargeChange = vw; _hbar.SmallChange = _pps * 0.1;
                 _scrollX = Math.Max(0, Math.Min(_hbar.Maximum, _scrollX));
@@ -187,14 +266,6 @@ namespace VortexEditor.Shell.Animation
         private IBrush B(string key) => AnimUi.Res(key);
         private static readonly IBrush EventBrush = new SolidColorBrush(Color.FromRgb(0xE0, 0xA5, 0x6C));
         private static readonly IBrush SoundBrush = new SolidColorBrush(Color.FromRgb(0xB5, 0x9C, 0xFF));
-
-        private FormattedText Text(string s, double size, IBrush brush, bool bold = false, double maxWidth = 0)
-        {
-            var ft = new FormattedText(s ?? "", CultureInfo.CurrentUICulture, FlowDirection.LeftToRight,
-                new Typeface(TextElement.GetFontFamily(this), FontStyle.Normal, bold ? FontWeight.SemiBold : FontWeight.Normal), size, brush);
-            if (maxWidth > 0) { ft.MaxTextWidth = maxWidth; ft.MaxLineCount = 1; ft.Trimming = TextTrimming.CharacterEllipsis; }
-            return ft;
-        }
 
         private static StreamGeometry DiamondGeometry(IEnumerable<Point> centers, double size)
         {
@@ -279,9 +350,6 @@ namespace VortexEditor.Shell.Animation
                     bool sel = row.Bone == _selectedBone;
                     if (sel) ctx.FillRectangle(B("VxSelectionBrush"), new Rect(0, y, NamesW, RowH));
                     else if ((i & 1) == 1) ctx.FillRectangle(alt, new Rect(0, y, NamesW, RowH));
-                    string label = AnimUtil.DisplayBoneName(row.Bone) + (row.Track == null ? "  (no keys)" : "");
-                    var ft = Text(label, 11.5, sel ? accent : (row.Track == null ? micro : dim), sel, NamesW - 14);
-                    ctx.DrawText(ft, new Point(8, y + (RowH - ft.Height) * 0.5));
                 }
             }
 
@@ -289,8 +357,6 @@ namespace VortexEditor.Shell.Animation
             using (ctx.PushClip(new Rect(0, 0, w, RulerH)))
             {
                 ctx.FillRectangle(B("VxPanelBrush"), new Rect(0, 0, w, RulerH));
-                var hdr = Text("TRACKS", 10.5, micro, true);
-                ctx.DrawText(hdr, new Point(8, (RulerH - hdr.Height) * 0.5));
                 using (ctx.PushClip(new Rect(NamesW, 0, Math.Max(0, w - NamesW), RulerH)))
                 {
                     float major = MajorStep(), minor = major / 5f;
@@ -302,8 +368,7 @@ namespace VortexEditor.Shell.Animation
                         double x = TimeToX(t);
                         if (x < NamesW - 2 || x > w + 2) continue;
                         bool isMajor = i % 5 == 0;
-                        ctx.DrawLine(gridPen, new Point(x, isMajor ? RulerH - 12 : RulerH - 6), new Point(x, RulerH));
-                        if (isMajor) ctx.DrawText(Text(t.ToString(major < 0.5f ? "0.0#" : "0.#", CultureInfo.InvariantCulture), 10, dim), new Point(x + 3, 1));
+                        ctx.DrawLine(isMajor ? new Pen(dim, 1) : gridPen, new Point(x, isMajor ? RulerH - 12 : RulerH - 6), new Point(x, RulerH));
                     }
                     double xe = TimeToX(_duration);
                     if (xe >= NamesW - 2 && xe <= w + 2) ctx.DrawLine(endPen, new Point(xe, 0), new Point(xe, RulerH));
@@ -323,7 +388,6 @@ namespace VortexEditor.Shell.Animation
                                 s.EndFigure(true);
                             }
                             ctx.DrawGeometry(brush, new Pen(brush, 1), g);
-                            if (isSound) ctx.DrawText(Text("♪", 9, brush), new Point(x + 7, 0));
                         }
                 }
                 ctx.DrawLine(gridPen, new Point(0, RulerH - 0.5), new Point(w, RulerH - 0.5));
@@ -349,15 +413,21 @@ namespace VortexEditor.Shell.Animation
                     ctx.DrawGeometry(accent, null, g);
                 }
             }
-            if (!string.IsNullOrEmpty(_tipText))
-            {
-                var ft = Text(_tipText, 11, B("VxTextBrush"));
-                double tw = ft.Width + 14, th = ft.Height + 8;
-                double tx = Math.Min(Math.Max(4, _tipPos.X + 12), w - tw - 4), ty = _tipPos.Y + 16;
-                if (ty + th > h - 2) ty = _tipPos.Y - th - 6;
-                ctx.DrawRectangle(B("VxPanelRaisedBrush"), new Pen(B("VxSeparatorBrush"), 1), new Rect(tx, ty, tw, th), 5, 5);
-                ctx.DrawText(ft, new Point(tx + 7, ty + 4));
-            }
+        }
+
+        private void ShowTip()
+        {
+            if (string.IsNullOrEmpty(_tipText)) { _tip.IsVisible = false; return; }
+            _tipText2.Text = _tipText;
+            _tip.Background = B("VxPanelRaisedBrush");
+            _tip.BorderBrush = B("VxSeparatorBrush");
+            _tip.IsVisible = true;
+            _tip.Measure(Size.Infinity);
+            double w = _textLayer.Bounds.Width, h = _textLayer.Bounds.Height;
+            double tw = _tip.DesiredSize.Width, th = _tip.DesiredSize.Height;
+            double tx = Math.Min(Math.Max(4, _tipPos.X + 12), Math.Max(4, w - tw - 4)), ty = _tipPos.Y + 16;
+            if (ty + th > h - 2) ty = Math.Max(2, _tipPos.Y - th - 6);
+            Canvas.SetLeft(_tip, tx); Canvas.SetTop(_tip, ty);
         }
 
         // ================================================================ input
@@ -498,7 +568,7 @@ namespace VortexEditor.Shell.Animation
                 float tUnder = XToTime(Math.Max(NamesW, p.X));
                 _pps = Math.Max(40f, Math.Min(600f, _pps * (e.Delta.Y > 0 ? 1.15f : 1f / 1.15f)));
                 UpdateBars();
-                _scrollX = Math.Max(0, Math.Min(_hbar.Maximum, tUnder * _pps - (Math.Max(NamesW, p.X) - NamesW)));
+                _scrollX = Math.Max(0, Math.Min(_hbar.Maximum, tUnder * _pps + LeftPad - (Math.Max(NamesW, p.X) - NamesW)));
                 UpdateBars();
                 Redraw();
             }
@@ -565,13 +635,13 @@ namespace VortexEditor.Shell.Animation
                 var row = HitKeyRow(p, out float t);
                 if (row != null) tip = AnimUtil.DisplayBoneName(row.Bone) + " @ " + t.ToString("0.###", CultureInfo.InvariantCulture) + "s — drag to move, Delete removes";
             }
-            if (tip == _tipCandidate) { if (_tipText != null) { _tipPos = p; _playhead.InvalidateVisual(); } return; }
+            if (tip == _tipCandidate) { if (_tipText != null) { _tipPos = p; ShowTip(); } else _tipPos = p; return; }
             _tipCandidate = tip; _tipPos = p;
             _tipTimer.Stop();
-            if (_tipText != null) { _tipText = null; _playhead.InvalidateVisual(); }
+            if (_tipText != null) { _tipText = null; ShowTip(); }
             if (tip != null) _tipTimer.Start();
         }
-        private void HideTip() { _tipTimer.Stop(); _tipCandidate = null; if (_tipText != null) { _tipText = null; _playhead.InvalidateVisual(); } }
+        private void HideTip() { _tipTimer.Stop(); _tipCandidate = null; if (_tipText != null) { _tipText = null; ShowTip(); } }
 
         // ---- context menus
         private void ShowRulerMenu(Point p)

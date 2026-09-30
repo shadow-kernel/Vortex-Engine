@@ -91,6 +91,7 @@ namespace VortexEditor.Shell
             _preview.NormalizeToHuman = true;
             _preview.AllowBoneRotate = false;
             _preview.ShowSocketAxes = true;
+            _preview.HelpText = "Click a joint: socket bone · Drag: orbit · Right/Shift-drag: pan · Wheel: zoom · F: frame bone · Shift+F: reset view";
             _preview.BoneClicked += b => SetBone(b);
             _preview.BeforeFrame += OnFrame;
             _preview.ModelRebound += () => { Apply(); Refresh(); };
