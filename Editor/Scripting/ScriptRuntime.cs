@@ -703,6 +703,9 @@ namespace Editor.Scripting
         /// instead of compiling source at startup — fast boot + no .cs source shipped with the game.</summary>
         public Assembly PrecompiledAssembly { get; set; }
 
+        /// <summary>The script assembly the running behaviours come from (null outside play) — diagnostics/tests.</summary>
+        public Assembly ScriptAssembly => _scriptAsm;
+
         public void Begin(Scene scene) { Begin(scene, null); }
 
         /// <summary>(Re)start the scripts on <paramref name="scene"/>. <paramref name="overrideAsm"/> lets the dev
