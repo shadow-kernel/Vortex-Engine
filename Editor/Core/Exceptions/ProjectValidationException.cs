@@ -1,9 +1,9 @@
-using System;
+﻿using System;
 
 namespace Editor.Core.Exceptions
 {
     /// <summary>
-    /// Exception f�r Validierungsfehler bei Projektdaten
+    /// Exception für Validierungsfehler bei Projektdaten
     /// </summary>
     public class ProjectValidationException : ProjectException
     {

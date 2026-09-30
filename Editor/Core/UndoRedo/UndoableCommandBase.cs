@@ -1,36 +1,36 @@
-using System;
+ï»¿using System;
 
 namespace Editor.Core.UndoRedo
 {
     /// <summary>
-    /// Abstrakte Basisklasse für Undo/Redo Befehle.
-    /// Bietet Standard-Implementierungen für häufig verwendete Funktionen.
+    /// Abstrakte Basisklasse fÃ¼r Undo/Redo Befehle.
+    /// Bietet Standard-Implementierungen fÃ¼r hÃ¤ufig verwendete Funktionen.
     /// </summary>
     public abstract class UndoableCommandBase : IUndoableCommand
     {
         /// <summary>
-        /// Eindeutiger Name des Befehls für Anzeigezwecke.
+        /// Eindeutiger Name des Befehls fÃ¼r Anzeigezwecke.
         /// </summary>
         public abstract string Name { get; }
 
         /// <summary>
         /// Zeitstempel wann der Befehl erstellt wurde.
-        /// Wird für Merge-Logik verwendet.
+        /// Wird fÃ¼r Merge-Logik verwendet.
         /// </summary>
         public DateTime CreatedAt { get; } = DateTime.Now;
 
         /// <summary>
-        /// Führt den Befehl aus.
+        /// FÃ¼hrt den Befehl aus.
         /// </summary>
         public abstract void Execute();
 
         /// <summary>
-        /// Macht den Befehl rückgängig.
+        /// Macht den Befehl rÃ¼ckgÃ¤ngig.
         /// </summary>
         public abstract void Undo();
 
         /// <summary>
-        /// Führt den Befehl erneut aus.
+        /// FÃ¼hrt den Befehl erneut aus.
         /// Standard-Implementation ruft Execute() auf.
         /// </summary>
         public virtual void Redo()
@@ -39,8 +39,8 @@ namespace Editor.Core.UndoRedo
         }
 
         /// <summary>
-        /// Gibt an, ob dieser Befehl mit dem vorherigen zusammengeführt werden kann.
-        /// Standard: false - keine Zusammenführung.
+        /// Gibt an, ob dieser Befehl mit dem vorherigen zusammengefÃ¼hrt werden kann.
+        /// Standard: false - keine ZusammenfÃ¼hrung.
         /// </summary>
         public virtual bool CanMergeWith(IUndoableCommand other)
         {
@@ -48,8 +48,8 @@ namespace Editor.Core.UndoRedo
         }
 
         /// <summary>
-        /// Führt diesen Befehl mit einem anderen zusammen.
-        /// Standard: Gibt diesen Befehl zurück (keine Zusammenführung).
+        /// FÃ¼hrt diesen Befehl mit einem anderen zusammen.
+        /// Standard: Gibt diesen Befehl zurÃ¼ck (keine ZusammenfÃ¼hrung).
         /// </summary>
         public virtual IUndoableCommand MergeWith(IUndoableCommand other)
         {

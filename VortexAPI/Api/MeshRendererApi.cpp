@@ -44,7 +44,7 @@ EDITOR_INTERFACE void SubmitAllMeshRenderers()
 	
 	u32 count = components::mesh_renderer::get_all_renderers(renderer_ids, MAX_RENDERERS);
 	
-	auto& renderer = graphics::dx12::DX12Renderer::instance();
+	auto& renderer = graphics::Renderer::instance();
 	
 	for (u32 i = 0; i < count; ++i)
 	{
@@ -58,7 +58,7 @@ EDITOR_INTERFACE void SubmitAllMeshRenderers()
 		
 		// Get entity transform - for now use identity matrix
 		// TODO: Get actual transform from entity
-		graphics::dx12::RenderItem item{};
+		graphics::backend::RenderItem item{};
 		item.mesh_id = mesh_id;
 		item.material_id = material_id;
 		DirectX::XMStoreFloat4x4(&item.world_matrix, DirectX::XMMatrixIdentity());

@@ -315,9 +315,13 @@ namespace Editor.ECS.Components.Rendering
                 return;
 
             // Schedule the texture reload for after project is fully loaded
+#if VORTEX_CORE
+            DoReloadTextureAndMaterial();
+#else
             System.Windows.Application.Current?.Dispatcher?.BeginInvoke(
                 System.Windows.Threading.DispatcherPriority.Loaded,
                 new Action(() => DoReloadTextureAndMaterial()));
+#endif
         }
 
         private void DoReloadTextureAndMaterial()

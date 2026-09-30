@@ -11,24 +11,7 @@ namespace Editor.Core.Assets
 {
     #region Enums
 
-    /// <summary>
-    /// Supported texture slot types for PBR materials.
-    /// </summary>
-    public enum TextureMapType
-    {
-        Albedo,         // Diffuse/Base Color
-        Normal,         // Normal Map
-        Metallic,       // Metallic Map
-        Roughness,      // Roughness Map
-        AmbientOcclusion, // AO Map
-        Emissive,       // Emissive/Emission Map
-        Height,         // Height/Displacement Map
-        Opacity,        // Alpha/Opacity Map
-        Specular,       // Specular Map (legacy)
-        MetallicRoughness, // Combined Metallic-Roughness (GLTF style)
-        OcclusionRoughnessMetallic, // Combined ORM Map
-        Custom          // User-defined slot
-    }
+    // TextureMapType lives in TextureMapType.cs (framework-free asset data shared with Vortex.Core).
 
     /// <summary>
     /// Supported 3D model formats.
@@ -208,67 +191,9 @@ namespace Editor.Core.Assets
         }
 
         /// <summary>
-        /// Auto-detect texture type from filename.
+        /// Auto-detect texture type from filename (the heuristic lives in TextureNamingConventions, shared with the runtime core).
         /// </summary>
-        public static TextureMapType DetectTypeFromFileName(string fileName)
-        {
-            if (string.IsNullOrEmpty(fileName)) return TextureMapType.Custom;
-            
-            var lower = fileName.ToLowerInvariant();
-            var nameWithoutExt = Path.GetFileNameWithoutExtension(lower);
-
-            // Check for combined maps first
-            if (ContainsAny(lower, "_orm", "occlusionroughnessmetallic", "_arm"))
-                return TextureMapType.OcclusionRoughnessMetallic;
-            
-            if (ContainsAny(lower, "metallicroughness", "_mr.", "_rm."))
-                return TextureMapType.MetallicRoughness;
-
-            // Normal map - check before albedo because "normal" contains "n"
-            if (ContainsAny(lower, "normal", "_n.", "_nrm", "_nor", "normalmap", "_normal.", "_nmap", "nmap.", 
-                "_norm.", "_norm_", "norm_"))
-                return TextureMapType.Normal;
-
-            // Roughness - check before albedo because some patterns overlap
-            if (ContainsAny(lower, "roughness", "_r.", "_rough.", "_rgh", "_rough_", "rough.", "rough_"))
-                return TextureMapType.Roughness;
-
-            // Albedo/Diffuse
-            if (ContainsAny(lower, "albedo", "diffuse", "basecolor", "_col.", "_color.", "_d.", "_diff", "_alb",
-                "color.", "color_", "_col_", "_bc.", "_bc_", "_base."))
-                return TextureMapType.Albedo;
-
-            // Metallic
-            if (ContainsAny(lower, "metallic", "_m.", "_met.", "metalness", "_metal", "metal.", "metal_"))
-                return TextureMapType.Metallic;
-
-            // AO
-            if (ContainsAny(lower, "_ao.", "occlusion", "ambient", "ambientocclusion", "_ao_", "_ao"))
-                return TextureMapType.AmbientOcclusion;
-
-            // Emissive
-            if (ContainsAny(lower, "emissive", "emission", "_e.", "_emit", "glow", "selfillum"))
-                return TextureMapType.Emissive;
-
-            // Height
-            if (ContainsAny(lower, "height", "displacement", "_h.", "disp", "heightmap"))
-                return TextureMapType.Height;
-
-            // Opacity
-            if (ContainsAny(lower, "opacity", "alpha", "transparency", "_a.", "_opacity", "mask"))
-                return TextureMapType.Opacity;
-
-            // Specular (legacy) - check after roughness
-            if (ContainsAny(lower, "specular", "_s.", "_spec", "spec.", "spec_"))
-                return TextureMapType.Specular;
-
-            return TextureMapType.Custom;
-        }
-
-        private static bool ContainsAny(string source, params string[] values)
-        {
-            return values.Any(v => source.Contains(v));
-        }
+        public static TextureMapType DetectTypeFromFileName(string fileName) => TextureNamingConventions.DetectType(fileName);
 
         public event PropertyChangedEventHandler PropertyChanged;
         protected void OnPropertyChanged(string name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));

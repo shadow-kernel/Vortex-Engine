@@ -43,7 +43,6 @@ namespace Editor.ECS.Components.Lighting
         private float _shadowNormalBias = 0.4f;
         private int _shadowResolution = 2048;
         private int _cullingMask = -1;
-        private bool _isEnabled = true;
 
         public override string DisplayName => $"{_lightType} Light";
         public override string IconCode => "\uE793";
@@ -193,15 +192,9 @@ namespace Editor.ECS.Components.Lighting
             set => SetProperty(ref _cullingMask, value, nameof(CullingMask));
         }
 
-        /// <summary>
-        /// Whether the light is enabled
-        /// </summary>
-        [DataMember(Name = "isEnabled", Order = 24)]
-        public bool IsEnabled
-        {
-            get => _isEnabled;
-            set => SetProperty(ref _isEnabled, value, nameof(IsEnabled));
-        }
+        // NOTE: the light's enabled flag is the base Component.IsEnabled ("isEnabled", Order 1). Light used to
+        // re-declare it as a second "isEnabled" data member, which the JSON serializer rejects as a duplicate in
+        // the type hierarchy - prefabs (.ventity) with a Light could neither be saved nor loaded.
 
         public Light() : base() { }
         public Light(GameEntity entity) : base(entity) { }

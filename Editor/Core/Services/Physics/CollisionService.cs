@@ -48,12 +48,99 @@ namespace Editor.Core.Services.Physics
             public V3[] Tris;             // triangles: flat [v0,v1,v2, v0,v1,v2, ...]
             public V3 Min, Max;           // world AABB (broadphase)
             public GameEntity Owner;      // the entity this shape belongs to (for trigger/collision event dispatch)
+            public uint BodyId;           // physics body handle for DYNAMIC shapes (0 for the static world)
+            public bool Dynamic;          // published per step by PhysicsService (a Jolt rigid body), not baked
         }
 
         private static readonly List<Shape> _world = new List<Shape>();
         // Trigger colliders (IsTrigger): NOT solid — they never block, only report overlap enter/stay/exit.
         private static readonly List<Shape> _triggers = new List<Shape>();
+        // Physics v2 (#100): the CURRENT pose of every simulated rigid body (barrels, crates, ...), refreshed by
+        // PhysicsService after each physics step. Solid for the character exactly like _world (Depenetrate,
+        // Raycast, RaycastDown, StepEvents consult both), but the character records its pushes against them in
+        // CharacterContacts so PhysicsService can shove the body instead of the character bouncing off a ghost.
+        private static readonly List<Shape> _dynamic = new List<Shape>();
         public static bool IsBuilt { get; private set; }
+
+        /// <summary>One simulated rigid body as the character sees it: an oriented box (centre, half extents, unit
+        /// axes) — or a sphere when <see cref="SphereRadius"/> &gt; 0 (a rolling ball gets round contact normals).
+        /// Published every physics step through <see cref="SetDynamicBodies"/>.</summary>
+        public struct DynamicBody
+        {
+            /// <summary>Physics body handle (reported back in <see cref="DynamicContact.BodyId"/>).</summary>
+            public uint BodyId;
+            /// <summary>The entity the body belongs to (collision/trigger event owner, raycast hit entity).</summary>
+            public GameEntity Owner;
+            /// <summary>World-space centre of the shape.</summary>
+            public Vector3 Center;
+            /// <summary>Box half extents along the body's local axes (ignored for spheres).</summary>
+            public Vector3 HalfExtents;
+            /// <summary>Unit axes of the body's rotation (ignored for spheres).</summary>
+            public Vector3 AxisX, AxisY, AxisZ;
+            /// <summary>&gt; 0 = this body is a sphere of that radius instead of a box.</summary>
+            public float SphereRadius;
+        }
+
+        /// <summary>A character push against a simulated rigid body, recorded by <see cref="MoveCharacter"/>:
+        /// the body handle, the contact normal (unit, pointing from the body towards the character), the
+        /// penetration depth that was resolved, the contact point on the body and the character's displacement
+        /// for that move call (its velocity × dt). PhysicsService drains <see cref="CharacterContacts"/> once per
+        /// frame and turns each into an impulse on the body.</summary>
+        public struct DynamicContact
+        {
+            public uint BodyId;
+            public long CharacterId;
+            public Vector3 Normal;
+            public float Depth;
+            public Vector3 Point;
+            public Vector3 Move;
+        }
+
+        /// <summary>Character-vs-rigid-body pushes since the last drain (see <see cref="DynamicContact"/>).
+        /// Cleared by PhysicsService each physics frame and on Build/Clear.</summary>
+        public static readonly List<DynamicContact> CharacterContacts = new List<DynamicContact>();
+
+        // The move currently being resolved (set by MoveCharacter so Depenetrate can stamp it on recorded contacts).
+        private static V3 _curMove;
+        private static long _curCharId;
+
+        /// <summary>Replace the set of DYNAMIC shapes (simulated rigid bodies) with their current poses. Called by
+        /// PhysicsService after every physics step; pass null/empty when there are no bodies. The static world
+        /// (<see cref="Build"/>) is untouched.</summary>
+        public static void SetDynamicBodies(List<DynamicBody> bodies)
+        {
+            _dynamic.Clear();
+            if (bodies == null) return;
+            for (int i = 0; i < bodies.Count; i++)
+            {
+                var b = bodies[i];
+                var c = From(b.Center);
+                Shape s;
+                if (b.SphereRadius > 0f)
+                {
+                    float r = b.SphereRadius;
+                    s = new Shape { Kind = Kind.Sphere, Center = c, Radius = r, Min = c - new V3(r, r, r), Max = c + new V3(r, r, r) };
+                }
+                else
+                {
+                    s = new Shape
+                    {
+                        Kind = Kind.Box, Center = c,
+                        Half = new V3(Math.Abs(b.HalfExtents.X), Math.Abs(b.HalfExtents.Y), Math.Abs(b.HalfExtents.Z)),
+                        AxX = From(b.AxisX).Norm(), AxY = From(b.AxisY).Norm(), AxZ = From(b.AxisZ).Norm()
+                    };
+                    if (s.AxX.Len() < 0.5f) s.AxX = new V3(1, 0, 0);
+                    if (s.AxY.Len() < 0.5f) s.AxY = new V3(0, 1, 0);
+                    if (s.AxZ.Len() < 0.5f) s.AxZ = new V3(0, 0, 1);
+                    Aabb(s);
+                }
+                s.Owner = b.Owner; s.BodyId = b.BodyId; s.Dynamic = true;
+                _dynamic.Add(s);
+            }
+        }
+
+        /// <summary>Number of simulated rigid bodies currently published as dynamic shapes.</summary>
+        public static int DynamicShapeCount => _dynamic.Count;
 
         /// <summary>A trigger/collision contact: a character (by its script handle) touched an entity's collider.</summary>
         public struct Contact { public long CharacterId; public GameEntity Other; }
@@ -75,7 +162,7 @@ namespace Editor.Core.Services.Physics
         /// MeshRenderer MeshPath. Set by the runtime (native mesh export). Null → imported models fall back to a box.</summary>
         public static Func<string, float[]> MeshTriangleProvider;
 
-        public static void Clear() { _world.Clear(); _triggers.Clear(); _chars.Clear(); ResetEvents(); IsBuilt = false; }
+        public static void Clear() { _world.Clear(); _triggers.Clear(); _dynamic.Clear(); CharacterContacts.Clear(); _chars.Clear(); ResetEvents(); IsBuilt = false; }
 
         /// <summary>Steam Audio v2 (#21): flatten the SOLID world colliders into a world-space triangle soup
         /// (vertex xyz array + per-triangle vertex indices) for the acoustic occlusion scene. Mesh colliders emit
@@ -197,17 +284,22 @@ namespace Editor.Core.Services.Physics
         }
 
         // Closest solid shape straight below `o` within maxDist (shared by the tag + material raycasts).
+        // Static world first, then the simulated rigid bodies (standing on a crate counts as ground too).
         private static Shape RaycastDownShape(V3 o, float maxDist, out float bestT)
         {
             bestT = maxDist; Shape best = null;
-            foreach (var s in _world)
+            for (int list = 0; list < 2; list++)
             {
-                if (s == null) continue;
-                float t;
-                bool got = (s.Kind == Kind.Tris && s.Tris != null)
-                    ? RayDownTris(o, s.Tris, bestT, out t)
-                    : RayDownAabb(o, s.Min, s.Max, bestT, out t);
-                if (got && t <= bestT) { bestT = t; best = s; }
+                var shapes = list == 0 ? _world : _dynamic;
+                foreach (var s in shapes)
+                {
+                    if (s == null) continue;
+                    float t;
+                    bool got = (s.Kind == Kind.Tris && s.Tris != null)
+                        ? RayDownTris(o, s.Tris, bestT, out t)
+                        : RayDownAabb(o, s.Min, s.Max, bestT, out t);
+                    if (got && t <= bestT) { bestT = t; best = s; }
+                }
             }
             return best;
         }
@@ -259,17 +351,21 @@ namespace Editor.Core.Services.Physics
             if (d.Len() < 0.5f || maxDist <= 0f) return false;
 
             float bestT = maxDist; Shape best = null; V3 bestN = new V3(0, 1, 0);
-            foreach (var s in _world)
+            for (int list = 0; list < 2; list++)
             {
-                if (s == null) continue;
-                if (s.Owner != null && (layerMask & (1 << (s.Owner.Layer & 31))) == 0) continue;
-                float t; V3 n;
-                bool got;
-                if (s.Kind == Kind.Tris && s.Tris != null) got = RayTris(o, d, s.Tris, bestT, out t, out n);
-                else if (s.Kind == Kind.Box) got = RayObb(o, d, s, bestT, out t, out n);
-                else if (s.Kind == Kind.Sphere) got = RaySphere(o, d, s.Center, s.Radius, bestT, out t, out n);
-                else got = RayAabbGeneric(o, d, s.Min, s.Max, bestT, out t, out n);   // capsule: coarse AABB
-                if (got && t < bestT) { bestT = t; best = s; bestN = n; }
+                var shapes = list == 0 ? _world : _dynamic;   // static level + the simulated rigid bodies
+                foreach (var s in shapes)
+                {
+                    if (s == null) continue;
+                    if (s.Owner != null && (layerMask & (1 << (s.Owner.Layer & 31))) == 0) continue;
+                    float t; V3 n;
+                    bool got;
+                    if (s.Kind == Kind.Tris && s.Tris != null) got = RayTris(o, d, s.Tris, bestT, out t, out n);
+                    else if (s.Kind == Kind.Box) got = RayObb(o, d, s, bestT, out t, out n);
+                    else if (s.Kind == Kind.Sphere) got = RaySphere(o, d, s.Center, s.Radius, bestT, out t, out n);
+                    else got = RayAabbGeneric(o, d, s.Min, s.Max, bestT, out t, out n);   // capsule: coarse AABB
+                    if (got && t < bestT) { bestT = t; best = s; bestN = n; }
+                }
             }
             if (best == null) return false;
 
@@ -384,15 +480,18 @@ namespace Editor.Core.Services.Physics
         /// unlike a full Build() this does NOT reset trigger overlap state, so no phantom Enter events.</summary>
         public static void AddEntityShapes(GameEntity e) { if (IsBuilt && e != null) AddRecursive(e); }
 
-        /// <summary>Remove every collider shape owned by the given entity subtree (runtime Destroy).</summary>
-        public static void RemoveEntityShapes(GameEntity root)
+        /// <summary>Remove every collider shape owned by the given entity subtree (runtime Destroy).
+        /// <paramref name="includeChildren"/> false removes only the entity's OWN shapes (PhysicsService takes a
+        /// simulated dynamic entity out of the static world without touching its children).</summary>
+        public static void RemoveEntityShapes(GameEntity root, bool includeChildren = true)
         {
             if (root == null) return;
             var set = new HashSet<GameEntity>();
-            void Collect(GameEntity e) { if (e == null) return; set.Add(e); if (e.Children != null) foreach (var c in e.Children) Collect(c); }
+            void Collect(GameEntity e) { if (e == null) return; set.Add(e); if (includeChildren && e.Children != null) foreach (var c in e.Children) Collect(c); }
             Collect(root);
             _world.RemoveAll(s => s != null && s.Owner != null && set.Contains(s.Owner));
             _triggers.RemoveAll(s => s != null && s.Owner != null && set.Contains(s.Owner));
+            _dynamic.RemoveAll(s => s != null && s.Owner != null && set.Contains(s.Owner));
         }
 
         /// <summary>Reset the per-frame overlap state (call on Build / scene switch / play end so stale pairs
@@ -405,6 +504,8 @@ namespace Editor.Core.Services.Physics
         {
             _world.Clear();
             _triggers.Clear();
+            _dynamic.Clear();
+            CharacterContacts.Clear();
             _chars.Clear();   // characters re-register on their next MoveCharacter — don't leak across scene switches / replays
             ResetEvents();
             CharacterStepHeight = 0.35f;   // #48: back to stock — scripts re-apply their tuning in Start()
@@ -575,7 +676,7 @@ namespace Editor.Core.Services.Physics
             grounded = false;
             radius = Math.Max(0.05f, radius);
             float segLen = Math.Max(0f, height - 2f * radius);
-            if (!IsBuilt || (_world.Count == 0 && _chars.Count == 0))
+            if (!IsBuilt || (_world.Count == 0 && _chars.Count == 0 && _dynamic.Count == 0))
             {
                 var np = new Vector3(feet.X + displacement.X, feet.Y + displacement.Y, feet.Z + displacement.Z);
                 if (selfId != 0) _chars[selfId] = new CharCap { Feet = From(np), R = radius, H = height };
@@ -584,6 +685,7 @@ namespace Editor.Core.Services.Physics
             if (maxSlopeDeg < 10f) maxSlopeDeg = 10f; else if (maxSlopeDeg > 85f) maxSlopeDeg = 85f;
             float slopeCos = (float)Math.Cos(maxSlopeDeg * Math.PI / 180.0);
             V3 p = From(feet); V3 disp = From(displacement);
+            _curMove = disp; _curCharId = selfId;   // stamped onto pushes against rigid bodies (see DynamicContact)
 
             float dlen = disp.Len();
             int steps = Math.Max(1, (int)Math.Ceiling(dlen / (radius * 0.5f)));
@@ -641,7 +743,10 @@ namespace Editor.Core.Services.Physics
                                         stepHeight + radius + 0.2f, ~0, out _, out Vector3 gn, out _, out _))
                                     walkable = gn.Y >= slopeCos;
                             }
-                            if (gSet && walkable && settle.Y <= before.Y + stepHeight + 0.01f && settle.Y >= before.Y - 0.05f)
+                            // Accept only a REAL step-up: the settle must end higher than the plain (blocked) move
+                            // did — a lifted capsule that slid back down onto the same floor is not a climb, and
+                            // taking its position would also swallow a jump started against the ledge.
+                            if (gSet && walkable && settle.Y <= before.Y + stepHeight + 0.01f && settle.Y >= before.Y - 0.05f && settle.Y > p.Y + 0.02f)
                             {
                                 p = settle;
                                 g = true;
@@ -658,7 +763,10 @@ namespace Editor.Core.Services.Physics
             if (!g && stepHeight > 0.001f && disp.Y <= 0.001f && dlen > 1e-6f)
             {
                 V3 snap = p; bool gSnap = false;
-                float drop = stepHeight;
+                // Snap distance per call scales with the distance moved this call: a 40 cm curb is descended over
+                // a few frames (a glide) instead of in ONE frame — the one-frame drop plus the wall push of the
+                // round capsule bottom sliding past the curb's face read as a teleport.
+                float drop = Math.Min(stepHeight, Math.Max(0.02f, dlen * 1.5f));
                 while (drop > 0f && !gSnap)
                 {
                     float dd = Math.Min(radius * 0.5f, drop);
@@ -692,26 +800,33 @@ namespace Editor.Core.Services.Physics
             V3 capMax = new V3(feet.X + r, feet.Y + r + segLen + r, feet.Z + r);
 
             V3 bestNormal = new V3(0, 0, 0); float bestDepth = 0f;
-            for (int si = 0; si < _world.Count; si++)
+            Shape bestShape = null; V3 bestPoint = new V3(0, 0, 0);
+            // Static world, then the simulated rigid bodies (same math — a crate is as solid as a wall for the
+            // character; the difference is that a push against a rigid body is RECORDED so physics can move it).
+            for (int list = 0; list < 2; list++)
             {
-                var s = _world[si];
-                if (!AabbOverlap(capMin, capMax, s.Min, s.Max)) continue;
-                for (int k = 0; k < samples; k++)
+                var shapes = list == 0 ? _world : _dynamic;
+                for (int si = 0; si < shapes.Count; si++)
                 {
-                    float t = samples == 1 ? 0f : (float)k / (samples - 1);
-                    V3 c = new V3(c0.X + (c1.X - c0.X) * t, c0.Y + (c1.Y - c0.Y) * t, c0.Z + (c1.Z - c0.Z) * t);
-                    V3 q; if (!ClosestOnShape(s, c, out q)) continue;
-                    V3 d = c - q; float dl = d.Len();
-                    float sr = ShapeRadius(s);
-                    if (dl < r + sr && dl > 1e-6f)
+                    var s = shapes[si];
+                    if (!AabbOverlap(capMin, capMax, s.Min, s.Max)) continue;
+                    for (int k = 0; k < samples; k++)
                     {
-                        float depth = (r + sr) - dl;
-                        if (depth > bestDepth) { bestDepth = depth; bestNormal = d * (1f / dl); }
-                    }
-                    else if (dl <= 1e-6f)
-                    {
-                        // dead-center: push straight up (typical for standing on flat ground)
-                        if (r + sr > bestDepth) { bestDepth = r + sr; bestNormal = new V3(0, 1, 0); }
+                        float t = samples == 1 ? 0f : (float)k / (samples - 1);
+                        V3 c = new V3(c0.X + (c1.X - c0.X) * t, c0.Y + (c1.Y - c0.Y) * t, c0.Z + (c1.Z - c0.Z) * t);
+                        V3 q; if (!ClosestOnShape(s, c, out q)) continue;
+                        V3 d = c - q; float dl = d.Len();
+                        float sr = ShapeRadius(s);
+                        if (dl < r + sr && dl > 1e-6f)
+                        {
+                            float depth = (r + sr) - dl;
+                            if (depth > bestDepth) { bestDepth = depth; bestNormal = d * (1f / dl); bestShape = s; bestPoint = q; }
+                        }
+                        else if (dl <= 1e-6f)
+                        {
+                            // dead-center: push straight up (typical for standing on flat ground)
+                            if (r + sr > bestDepth) { bestDepth = r + sr; bestNormal = new V3(0, 1, 0); bestShape = s; bestPoint = q; }
+                        }
                     }
                 }
             }
@@ -742,7 +857,21 @@ namespace Editor.Core.Services.Physics
 
             if (bestDepth > 1e-5f)
             {
-                if (settleVertical && bestNormal.Y > 0.15f)
+                // A push against a simulated rigid body: remember it (body, normal, depth, point, this move) so
+                // PhysicsService can shove the body — the character itself is still resolved below as usual.
+                if (bestShape != null && bestShape.Dynamic)
+                {
+                    CharacterContacts.Add(new DynamicContact
+                    {
+                        BodyId = bestShape.BodyId, CharacterId = _curCharId,
+                        Normal = To(bestNormal), Depth = bestDepth, Point = To(bestPoint), Move = To(_curMove)
+                    });
+                }
+                // A contact on a box's TOP face — including its top edge, which the round capsule bottom hits
+                // with an almost horizontal normal when only a sliver of the step is under it (high frame rates
+                // move a centimetre per call) — counts as "landing on it" during the settle.
+                bool onTopFace = bestShape != null && bestShape.Kind == Kind.Box && bestPoint.Y >= bestShape.Max.Y - 0.002f;
+                if (settleVertical && (bestNormal.Y > 0.15f || onTopFace))
                 {
                     // Landing phase of a step-up: resolve the contact straight up so the capsule comes
                     // to rest ON the step instead of being ejected off its edge.
@@ -758,8 +887,16 @@ namespace Editor.Core.Services.Physics
                     float fl = flat.Len();
                     if (fl > 1e-6f) bestNormal = flat * (1f / fl);
                 }
+                // Walkable contact = GROUND: resolve it straight up. The round capsule bottom hanging over a step
+                // or box edge otherwise gets shoved diagonally (up AND forward/back), which read as a 20-30 cm
+                // teleport when running off curbs and as back-and-forth jitter along low cover.
+                if (bestNormal.Y >= slopeCos)
+                {
+                    feet = new V3(feet.X, feet.Y + bestDepth / bestNormal.Y, feet.Z);
+                    grounded = true;
+                    return true;
+                }
                 feet = feet + bestNormal * bestDepth;
-                if (bestNormal.Y >= slopeCos) grounded = true;
                 return true;
             }
             return false;
@@ -774,7 +911,7 @@ namespace Editor.Core.Services.Physics
             enter?.Clear(); stay?.Clear(); exit?.Clear(); collisionEnter?.Clear();
             _curTrig.Clear(); _curSolid.Clear();
 
-            if (_chars.Count > 0 && (_triggers.Count > 0 || _world.Count > 0))
+            if (_chars.Count > 0 && (_triggers.Count > 0 || _world.Count > 0 || _dynamic.Count > 0))
             {
                 foreach (var kv in _chars)
                 {
@@ -798,6 +935,20 @@ namespace Editor.Core.Services.Physics
                         if (!AabbOverlap(capMin, capMax, s.Min, s.Max)) continue;
                         if (!CapsuleOverlapsShape(cc, s)) continue;
                         var key = (cid, wi);
+                        _curSolid.Add(key);
+                        if (!_prevSolid.Contains(key)) collisionEnter?.Add(new Contact { CharacterId = cid, Other = s.Owner });
+                    }
+
+                    // Simulated rigid bodies: touching a crate fires OnCollisionEnter like touching a wall. Keyed by
+                    // the body handle (negative range, so it can't collide with a _world index) — the list is
+                    // rebuilt every step, so indices would not be stable.
+                    for (int di = 0; di < _dynamic.Count; di++)
+                    {
+                        var s = _dynamic[di];
+                        if (s.Owner == null) continue;
+                        if (!AabbOverlap(capMin, capMax, s.Min, s.Max)) continue;
+                        if (!CapsuleOverlapsShape(cc, s)) continue;
+                        var key = (cid, -1 - (int)(s.BodyId & 0x7FFFFFFF));
                         _curSolid.Add(key);
                         if (!_prevSolid.Contains(key)) collisionEnter?.Add(new Contact { CharacterId = cid, Other = s.Owner });
                     }

@@ -1,11 +1,11 @@
-using System;
+ï»¿using System;
 using System.Collections.Generic;
 
 namespace Editor.Core.UndoRedo.Commands
 {
     /// <summary>
     /// Befehl der mehrere Befehle zu einem zusammenfasst.
-    /// Alle Befehle werden als eine Einheit rückgängig gemacht.
+    /// Alle Befehle werden als eine Einheit rÃ¼ckgÃ¤ngig gemacht.
     /// </summary>
     public class CompositeCommand : UndoableCommandBase
     {
@@ -15,7 +15,7 @@ namespace Editor.Core.UndoRedo.Commands
         public override string Name => _name;
 
         /// <summary>
-        /// Gibt die Anzahl der enthaltenen Befehle zurück.
+        /// Gibt die Anzahl der enthaltenen Befehle zurÃ¼ck.
         /// </summary>
         public int Count => _commands.Count;
 
@@ -41,7 +41,7 @@ namespace Editor.Core.UndoRedo.Commands
         }
 
         /// <summary>
-        /// Fügt einen Befehl hinzu.
+        /// FÃ¼gt einen Befehl hinzu.
         /// </summary>
         public void Add(IUndoableCommand command)
         {
@@ -52,7 +52,7 @@ namespace Editor.Core.UndoRedo.Commands
         }
 
         /// <summary>
-        /// Fügt mehrere Befehle hinzu.
+        /// FÃ¼gt mehrere Befehle hinzu.
         /// </summary>
         public void AddRange(IEnumerable<IUndoableCommand> commands)
         {
@@ -72,7 +72,7 @@ namespace Editor.Core.UndoRedo.Commands
 
         public override void Undo()
         {
-            // In umgekehrter Reihenfolge rückgängig machen
+            // In umgekehrter Reihenfolge rÃ¼ckgÃ¤ngig machen
             for (int i = _commands.Count - 1; i >= 0; i--)
             {
                 _commands[i].Undo();

@@ -1,11 +1,11 @@
-using System;
+ï»¿using System;
 using Editor.Core.UndoRedo.Commands;
 
 namespace Editor.Core.UndoRedo
 {
     /// <summary>
-    /// Ermöglicht das Gruppieren mehrerer Aktionen in einer Undo-Transaktion.
-    /// Verwendung mit using-Statement für automatisches Commit/Rollback.
+    /// ErmÃ¶glicht das Gruppieren mehrerer Aktionen in einer Undo-Transaktion.
+    /// Verwendung mit using-Statement fÃ¼r automatisches Commit/Rollback.
     /// </summary>
     /// <example>
     /// using (var scope = new UndoScope("Complex Operation"))
@@ -41,9 +41,9 @@ namespace Editor.Core.UndoRedo
         }
 
         /// <summary>
-        /// Führt einen Befehl innerhalb dieser Transaktion aus.
+        /// FÃ¼hrt einen Befehl innerhalb dieser Transaktion aus.
         /// </summary>
-        /// <param name="command">Der auszuführende Befehl.</param>
+        /// <param name="command">Der auszufÃ¼hrende Befehl.</param>
         public void Execute(IUndoableCommand command)
         {
             if (_isDisposed)
@@ -59,10 +59,10 @@ namespace Editor.Core.UndoRedo
         }
 
         /// <summary>
-        /// Fügt einen Befehl hinzu ohne ihn auszuführen.
-        /// Nützlich wenn der Befehl bereits ausgeführt wurde.
+        /// FÃ¼gt einen Befehl hinzu ohne ihn auszufÃ¼hren.
+        /// NÃ¼tzlich wenn der Befehl bereits ausgefÃ¼hrt wurde.
         /// </summary>
-        /// <param name="command">Der hinzuzufügende Befehl.</param>
+        /// <param name="command">Der hinzuzufÃ¼gende Befehl.</param>
         public void AddExecuted(IUndoableCommand command)
         {
             if (_isDisposed)
@@ -77,7 +77,7 @@ namespace Editor.Core.UndoRedo
         }
 
         /// <summary>
-        /// Schließt die Transaktion ab und registriert sie beim UndoRedoManager.
+        /// SchlieÃŸt die Transaktion ab und registriert sie beim UndoRedoManager.
         /// </summary>
         public void Commit()
         {
@@ -90,20 +90,20 @@ namespace Editor.Core.UndoRedo
 
             if (_compositeCommand.Count > 0)
             {
-                // Nicht execute aufrufen, da Befehle bereits ausgeführt wurden
+                // Nicht execute aufrufen, da Befehle bereits ausgefÃ¼hrt wurden
                 UndoRedoManager.Instance.Execute(_compositeCommand, execute: false);
             }
         }
 
         /// <summary>
-        /// Macht alle Befehle in dieser Transaktion rückgängig ohne sie zu registrieren.
+        /// Macht alle Befehle in dieser Transaktion rÃ¼ckgÃ¤ngig ohne sie zu registrieren.
         /// </summary>
         public void Rollback()
         {
             if (_isDisposed)
                 throw new ObjectDisposedException(nameof(UndoScope));
             if (_isCommitted)
-                throw new InvalidOperationException("Kann nicht rollback nach commit ausführen.");
+                throw new InvalidOperationException("Kann nicht rollback nach commit ausfÃ¼hren.");
 
             _compositeCommand.Undo();
             _isCommitted = true; // Verhindert erneutes Commit

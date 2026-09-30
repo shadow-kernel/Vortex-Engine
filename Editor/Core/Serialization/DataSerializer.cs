@@ -70,6 +70,7 @@ namespace Editor.Core.Serialization
             typeof(Editor.ECS.Components.Animation.AnimatorClipEntry),
             typeof(Editor.ECS.Components.Animation.BoneAttachment),
             typeof(Editor.ECS.Components.Animation.TwoBoneIk),
+            typeof(Editor.ECS.Components.Animation.HandPose),
 
             // Scripting
             typeof(Script),

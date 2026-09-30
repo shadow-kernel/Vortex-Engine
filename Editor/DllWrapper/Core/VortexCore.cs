@@ -12,7 +12,11 @@ namespace Editor.DllWrapper
     /// </summary>
     public static partial class VortexAPI
     {
+#if VORTEX_CORE
+        private const string _dllName = "VortexAPI";        // .NET probes libVortexAPI.dylib / .so / VortexAPI.dll
+#else
         private const string _dllName = "VortexAPI.dll";
+#endif
         private const CallingConvention _cc = CallingConvention.Cdecl;
 
         #region Runtime

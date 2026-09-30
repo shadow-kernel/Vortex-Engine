@@ -77,7 +77,7 @@ namespace Editor.DllWrapper
         private static extern void SetMaterialAO(long materialId, float value);
 
         [DllImport(_dllName, CallingConvention = _cc)]
-        private static extern void SetMaterialUseDirectXNormals(long materialId, bool useDirectX);
+        private static extern void SetMaterialUseDirectXNormals(long materialId, [MarshalAs(UnmanagedType.I1)] bool useDirectX);
 
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void SetMaterialUnlit(long materialId, [MarshalAs(UnmanagedType.I1)] bool isUnlit);
@@ -235,9 +235,11 @@ namespace Editor.DllWrapper
         private static extern long LoadVMesh([MarshalAs(UnmanagedType.LPStr)] string filepath);
 
         [DllImport(_dllName, CallingConvention = _cc)]
+        [return: MarshalAs(UnmanagedType.I1)]
         private static extern bool ExportMeshToVMesh(long meshId, [MarshalAs(UnmanagedType.LPStr)] string filepath);
 
         [DllImport(_dllName, CallingConvention = _cc)]
+        [return: MarshalAs(UnmanagedType.I1)]
         private static extern bool HasAssimpSupport();
 
         [DllImport(_dllName, CallingConvention = _cc)]
@@ -591,6 +593,7 @@ namespace Editor.DllWrapper
         #region Mesh Bounds
 
         [DllImport(_dllName, CallingConvention = _cc)]
+        [return: MarshalAs(UnmanagedType.I1)]
         private static extern bool QueryMeshBounds(long meshId, out float sizeX, out float sizeY, out float sizeZ);
 
         /// <summary>
@@ -618,6 +621,7 @@ namespace Editor.DllWrapper
         }
 
         [DllImport(_dllName, CallingConvention = _cc)]
+        [return: MarshalAs(UnmanagedType.I1)]
         private static extern bool QueryMeshBoundsCenter(long meshId, out float centerX, out float centerY, out float centerZ);
 
         /// <summary>

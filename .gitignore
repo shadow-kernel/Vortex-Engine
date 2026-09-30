@@ -373,3 +373,14 @@ Installer/Output/
 
 # Streamline SDK build/distribution (1.8 GB, rebuilt locally — see STREAMLINE_INTEGRATION.md)
 ThirdParty/Streamline/
+
+# CMake build trees (macOS / Linux / CMake-on-Windows builds, see ROADMAP_MACOS_PORT.md)
+/build/
+/out/
+CMakeUserPresets.json
+
+# .NET (cross-platform managed layer)
+Managed/**/bin/
+Managed/**/obj/
+Managed/**/*.user
+/dist/

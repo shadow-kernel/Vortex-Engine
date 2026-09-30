@@ -1,4 +1,4 @@
-using System.Runtime.Serialization;
+ï»¿using System.Runtime.Serialization;
 
 namespace Editor.ECS.Components.Rendering
 {
@@ -12,7 +12,7 @@ namespace Editor.ECS.Components.Rendering
     }
 
     /// <summary>
-    /// Clear-Flags für die Kamera
+    /// Clear-Flags fÃ¼r die Kamera
     /// </summary>
     public enum CameraClearFlags
     {
@@ -23,7 +23,7 @@ namespace Editor.ECS.Components.Rendering
     }
 
     /// <summary>
-    /// Kamera-Typ: Bestimmt Priorität und Verhalten
+    /// Kamera-Typ: Bestimmt PrioritÃ¤t und Verhalten
     /// </summary>
     public enum CameraType
     {
@@ -36,7 +36,7 @@ namespace Editor.ECS.Components.Rendering
     }
 
     /// <summary>
-    /// Kamera-Komponente für Rendering-Viewports.
+    /// Kamera-Komponente fÃ¼r Rendering-Viewports.
     /// </summary>
     [DataContract(Name = "Camera", Namespace = "")]
     public class Camera : Component
@@ -59,7 +59,7 @@ namespace Editor.ECS.Components.Rendering
         public override string DisplayName => "Camera";
         public override string IconCode => "\uE722";
         /// <summary>
-        /// Lila für MainCamera, Blau für andere
+        /// Lila fÃ¼r MainCamera, Blau fÃ¼r andere
         /// </summary>
         public override string IconColor => _cameraType == CameraType.MainCamera ? "#9B59B6" : "#569CD6";
 
@@ -84,7 +84,7 @@ namespace Editor.ECS.Components.Rendering
         }
 
         /// <summary>
-        /// Sichtfeld in Grad (für Perspektive)
+        /// Sichtfeld in Grad (fÃ¼r Perspektive)
         /// </summary>
         [DataMember(Name = "fov", Order = 12)]
         public float FieldOfView
@@ -94,7 +94,7 @@ namespace Editor.ECS.Components.Rendering
         }
 
         /// <summary>
-        /// Orthografische Größe (für Orthografisch)
+        /// Orthografische GrÃ¶ÃŸe (fÃ¼r Orthografisch)
         /// </summary>
         [DataMember(Name = "orthoSize", Order = 13)]
         public float OrthographicSize
@@ -155,7 +155,7 @@ namespace Editor.ECS.Components.Rendering
 
 
         /// <summary>
-        /// Hintergrundfarbe Grün
+        /// Hintergrundfarbe GrÃ¼n
         /// </summary>
         [DataMember(Name = "bgG", Order = 19)]
         public float BackgroundG
@@ -175,7 +175,7 @@ namespace Editor.ECS.Components.Rendering
         }
 
         /// <summary>
-        /// Culling-Maske für Layer
+        /// Culling-Maske fÃ¼r Layer
         /// </summary>
         [DataMember(Name = "cullingMask", Order = 21)]
         public int CullingMask

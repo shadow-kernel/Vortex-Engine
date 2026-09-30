@@ -1,0 +1,6 @@
+{
+  "cmake.configureOnOpen": false,
+  "cmake.useCMakePresets": "always",
+  "dotnet.defaultSolution": "Managed/Vortex.Managed.slnx",
+  "files.exclude": { "**/bin": true, "**/obj": true, "build/**": true, "dist/**": true }
+}

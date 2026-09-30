@@ -1,6 +1,8 @@
 #include "../ApiCommon.h"
+#if VORTEX_HAS_DX12
 #include <windows.h>
-#include "..\..\Engine\Graphics\DX12\DX12ShaderCompiler.h"
+#include "../../Engine/Graphics/DX12/DX12ShaderCompiler.h"
+#endif
 
 EDITOR_INTERFACE id::id_type ImportModel(const char* filepath)
 {
@@ -250,12 +252,17 @@ EDITOR_INTERFACE bool ExportMeshToVMesh(id::id_type mesh_id, const char* filepat
 // Returns the number of .cso blobs written (0 = precompiler unavailable -> caller ships loose .hlsl as fallback).
 EDITOR_INTERFACE int PrecompileBuiltinShaders(const char* out_bin_dir_utf8)
 {
+#if VORTEX_HAS_DX12
 	if (!out_bin_dir_utf8 || !*out_bin_dir_utf8) return 0;
 	int n = MultiByteToWideChar(CP_UTF8, 0, out_bin_dir_utf8, -1, nullptr, 0);
 	if (n <= 0) return 0;
 	std::wstring w(static_cast<size_t>(n - 1), L'\0');
 	MultiByteToWideChar(CP_UTF8, 0, out_bin_dir_utf8, -1, &w[0], n);
 	return graphics::dx12::DX12ShaderCompiler::precompile_builtins(w);
+#else
+	(void)out_bin_dir_utf8;
+	return 0;   // Metal shaders ship as MSL source and are compiled by the driver at load — nothing to precompile.
+#endif
 }
 
 EDITOR_INTERFACE bool HasAssimpSupport()

@@ -42,6 +42,14 @@ is **not** bundled in this source repository.
 
 ---
 
+## Fetched at configure time by the CMake build (non-Windows only; not committed here)
+
+### DirectXMath
+- **Use:** the engine's math library on every platform. On Windows it comes with the Windows SDK; the CMake
+  build for macOS/Linux downloads the pinned `may2026` release tarball (`cmake/VortexDependencies.cmake`).
+  `ThirdParty/sal/sal.h` is a Vortex-authored stub of the SAL annotations those headers expect, not third-party code.
+- **License:** MIT. © Microsoft Corporation. Upstream: https://github.com/microsoft/DirectXMath
+
 ## Linked into the editor (restored via NuGet at build; not committed here)
 
 ### Dirkster.AvalonDock

@@ -2,6 +2,7 @@
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <ClInclude Include="Common\CommonHeaders.h" />
+    <ClInclude Include="Common\Platform.h" />
     <ClInclude Include="Common\PrimitiveTypes.h" />
     <ClInclude Include="Components\ComponentsCommon.h" />
     <ClInclude Include="Components\Transform.h" />
@@ -14,6 +15,7 @@
     <ClInclude Include="Runtime\PrefabService.h" />
     <ClInclude Include="Runtime\Systems\RenderSystem.h" />
     <ClInclude Include="Runtime\Systems\PhysicsSystem.h" />
+    <ClInclude Include="Physics\PhysicsWorld.h" />
     <ClInclude Include="Runtime\Systems\AudioSystem.h" />
     <ClInclude Include="Runtime\Systems\RenderSystemDX12.h" />
     <ClInclude Include="Graphics\DX12\DX12Core.h" />
@@ -74,6 +76,7 @@
     <ClCompile Include="Runtime\PrefabService.cpp" />
     <ClCompile Include="Runtime\Systems\RenderSystem.cpp" />
     <ClCompile Include="Runtime\Systems\PhysicsSystem.cpp" />
+    <ClCompile Include="Physics\PhysicsWorld.cpp" />
     <ClCompile Include="Runtime\Systems\AudioSystem.cpp" />
     <ClCompile Include="Runtime\Systems\RenderSystemDX12.cpp" />
     <ClCompile Include="Graphics\DX12\DX12Core.cpp" />
@@ -95,6 +98,7 @@
     <ClCompile Include="Graphics\DX12\DX12Renderer.cpp" />
     <ClCompile Include="Runtime\RenderLoop.cpp" />
     <ClCompile Include="Input\InputSystem.cpp" />
+    <ClCompile Include="Common\Platform.cpp" />
     <ClCompile Include="Components\Camera.cpp" />
     <ClCompile Include="Graphics\DX12\DX12RenderTarget.cpp" />
     <ClCompile Include="Graphics\Importers\TextureImporter.cpp" />

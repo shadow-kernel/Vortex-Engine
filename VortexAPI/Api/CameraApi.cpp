@@ -272,7 +272,7 @@ EDITOR_INTERFACE void RenderCameraGizmo(id::id_type camera_id, float r, float g,
 	f32 far_width = far_height * aspect;
 	
 	// Render using the DX12 renderer's line rendering
-	graphics::dx12::DX12Renderer::instance().render_camera_gizmo(
+	graphics::Renderer::instance().render_camera_gizmo(
 		{ pos.x, pos.y, pos.z },
 		{ fwd.x, fwd.y, fwd.z },
 		{ right.x, right.y, right.z },
@@ -296,14 +296,14 @@ EDITOR_INTERFACE void ApplyCameraToRenderer(id::id_type camera_id)
 	// Calculate look-at target
 	math::v3 target = { pos.x + fwd.x, pos.y + fwd.y, pos.z + fwd.z };
 	
-	graphics::dx12::DX12Renderer::instance().set_camera(
+	graphics::Renderer::instance().set_camera(
 		{ pos.x, pos.y, pos.z },
 		{ target.x, target.y, target.z },
 		{ up.x, up.y, up.z }
 	);
 	
 	// Also set projection parameters
-	graphics::dx12::DX12Renderer::instance().set_projection(
+	graphics::Renderer::instance().set_projection(
 		cam.get_field_of_view(),
 		cam.get_aspect_ratio(),
 		cam.get_near_clip(),

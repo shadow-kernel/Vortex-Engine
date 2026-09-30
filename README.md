@@ -78,7 +78,8 @@ flowchart LR
 
 ### Prerequisites
 
-- **Windows 10/11 (x64)**
+- **Windows 10/11 (x64)** — the full engine + editor
+- **macOS (Apple Silicon)** — native engine, player and editor, see [macOS](#-macos-apple-silicon--native-engine-player-and-editor) below
 - **Visual Studio 2022/2026** with:
   - *Desktop development with **C++*** (MSVC v143/v145 + Windows 10/11 SDK)
   - *.NET desktop development* (.NET Framework 4.8 targeting pack)
@@ -106,7 +107,23 @@ msbuild Vortex.slnx /t:Build /p:Configuration=Release /p:Platform=x64
 
 > 💡 Or just open `Vortex.slnx` in Visual Studio, set the configuration to **Release | x64**, and press **F5**.
 
----
+### 🍎 macOS (Apple Silicon) — native engine, player and editor
+
+The engine, the standalone player and a cross-platform editor run natively on macOS (Metal via SDL GPU, .NET 10 +
+Avalonia). Plan, status and conventions: [`ROADMAP_MACOS_PORT.md`](ROADMAP_MACOS_PORT.md); the managed projects:
+[`Managed/README.md`](Managed/README.md).
+
+```bash
+brew install cmake ninja assimp sdl3 dotnet
+tools/macos/make-app.sh --install     # builds everything and installs "Vortex Editor.app" into /Applications
+open -a "Vortex Editor"               # or double-click it in Launchpad; project.vortex files open with it
+```
+
+Developing on the Mac: `tools/macos/dev.sh build && tools/macos/dev.sh editor` (Rider / VS Code / Xcode setups in
+[`Managed/README.md`](Managed/README.md)). Games export from the Mac editor for macOS, Windows and Linux with the
+project's name, icon and version (File ▸ Build; other platforms via runtime packs, see
+[`Managed/README.md`](Managed/README.md#exporting-games-macos-windows-linux)). Not on Metal yet: DLSS / frame
+generation (NVIDIA-only). The Windows build (DirectX 12 + WPF editor) is unchanged.
 
 ## 🧩 Features
 

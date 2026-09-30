@@ -161,7 +161,7 @@ EDITOR_INTERFACE void SubmitSkinnedMeshForRendering(id::id_type mesh_id, id::id_
 	const float* world_matrix, const float* bone_matrices, int bone_count)
 {
 	if (!world_matrix || !bone_matrices || bone_count <= 0) return;
-	graphics::dx12::DX12Renderer::instance().submit_skinned_item(
+	graphics::Renderer::instance().submit_skinned_item(
 		mesh_id, material_id, world_matrix, bone_matrices, static_cast<u32>(bone_count));
 }
 
@@ -170,6 +170,6 @@ EDITOR_INTERFACE void SubmitSkinnedMeshForRenderingEx(id::id_type mesh_id, id::i
 	const float* world_matrix, const float* bone_matrices, int bone_count, int layer)
 {
 	if (!world_matrix || !bone_matrices || bone_count <= 0) return;
-	graphics::dx12::DX12Renderer::instance().submit_skinned_item(
+	graphics::Renderer::instance().submit_skinned_item(
 		mesh_id, material_id, world_matrix, bone_matrices, static_cast<u32>(bone_count), layer > 0 ? 1u : 0u);
 }

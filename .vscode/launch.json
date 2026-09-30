@@ -1,0 +1,36 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Vortex Editor (Debug)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "managed: build (Debug)",
+      "program": "${workspaceFolder}/Managed/Vortex.Editor/bin/Debug/net10.0/Vortex.Editor.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "env": { "DOTNET_ROOT": "/opt/homebrew/opt/dotnet/libexec" },
+      "console": "internalConsole",
+      "stopAtEntry": false
+    },
+    {
+      "name": "Vortex Player (Default3D)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "managed: build (Debug)",
+      "program": "${workspaceFolder}/Managed/Vortex.Player/bin/Debug/net10.0/Vortex.Player.dll",
+      "args": ["--project=${workspaceFolder}/Templates/Default3D", "--scene=Match"],
+      "cwd": "${workspaceFolder}",
+      "env": { "DOTNET_ROOT": "/opt/homebrew/opt/dotnet/libexec" },
+      "console": "internalConsole"
+    },
+    {
+      "name": "Render test (native, lldb)",
+      "type": "lldb",
+      "request": "launch",
+      "preLaunchTask": "native: build (macos-debug)",
+      "program": "${workspaceFolder}/build/macos-debug/bin/VortexRenderTest",
+      "cwd": "${workspaceFolder}/build/macos-debug/bin"
+    }
+  ]
+}

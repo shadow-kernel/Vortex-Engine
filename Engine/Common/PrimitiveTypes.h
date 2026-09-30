@@ -12,10 +12,10 @@ using s32 = int32_t;
 using s16 = int16_t;
 using s8 = int8_t;
 
-inline constexpr u64 u64_invalid_id{ 0xFFFF'FFFF'FFFF'FFFFui64 };
-inline constexpr u32 u32_invalid_id{ 0xFFFF'FFFFui32 };
-inline constexpr u16 u16_invalid_id{ 0xFFFFui16 };
-inline constexpr u8  u8_invalid_id{ 0xFFui8 };
+inline constexpr u64 u64_invalid_id{ 0xFFFF'FFFF'FFFF'FFFFULL };
+inline constexpr u32 u32_invalid_id{ 0xFFFF'FFFFU };
+inline constexpr u16 u16_invalid_id{ 0xFFFFU };
+inline constexpr u8  u8_invalid_id{ 0xFFU };
 
 using f32 = float;
 using d64 = double;

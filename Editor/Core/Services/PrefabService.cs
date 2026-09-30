@@ -536,7 +536,11 @@ namespace Editor.Core.Services
         /// until an unrelated event (selection, transform, scene switch) dirties it.</summary>
         private static void RequestViewportResubmit()
         {
+#if VORTEX_CORE
+            Editor.Core.Services.SceneRenderService.RuntimeDirty = true;
+#else
             try { Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.RequestResubmit(); } catch { }
+#endif
         }
 
         private static void CollectInstances(IEnumerable<GameEntity> entities, string prefabPath, GameEntity exclude, List<GameEntity> outList)

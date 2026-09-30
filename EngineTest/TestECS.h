@@ -1,7 +1,7 @@
 #pragma once
 
-#include "..\Engine\Components\Entity.h"
-#include "..\Engine\Components\Transform.h"
+#include "../Engine/Components/Entity.h"
+#include "../Engine/Components/Transform.h"
 
 #include "Test.h"
 

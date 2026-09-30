@@ -138,6 +138,7 @@
     <ClInclude Include="Test.h" />
     <ClInclude Include="TestAudio.h" />
     <ClInclude Include="TestECS.h" />
+    <ClInclude Include="TestPhysics.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

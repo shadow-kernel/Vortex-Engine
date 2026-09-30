@@ -1,10 +1,10 @@
-using System.Runtime.Serialization;
+ï»¿using System.Runtime.Serialization;
 using Editor.ECS;
 
 namespace Editor.ECS.Components.Rendering
 {
     /// <summary>
-    /// Skybox-Typen für Umgebungsbeleuchtung
+    /// Skybox-Typen fÃ¼r Umgebungsbeleuchtung
     /// </summary>
     public enum SkyboxType
     {
@@ -15,7 +15,7 @@ namespace Editor.ECS.Components.Rendering
     }
 
     /// <summary>
-    /// Skybox-Komponente für Umgebungsbeleuchtung und Hintergrund.
+    /// Skybox-Komponente fÃ¼r Umgebungsbeleuchtung und Hintergrund.
     /// Simuliert Image-Based Lighting (IBL) durch Ambient/Environment Light.
     /// </summary>
     [DataContract(Name = "Skybox", Namespace = "")]
@@ -25,25 +25,25 @@ namespace Editor.ECS.Components.Rendering
         private float _ambientIntensity = 0.8f;  // Higher default for visible effect
         private bool _isEnabled = true;
 
-        // Solid Color / Top Color für Gradient - brighter defaults
+        // Solid Color / Top Color fÃ¼r Gradient - brighter defaults
         private float _topColorR = 0.7f;
         private float _topColorG = 0.8f;
         private float _topColorB = 1.0f;
 
-        // Bottom Color für Gradient
+        // Bottom Color fÃ¼r Gradient
         private float _bottomColorR = 0.3f;
         private float _bottomColorG = 0.3f;
         private float _bottomColorB = 0.4f;
 
-        // Horizon Color für Gradient
+        // Horizon Color fÃ¼r Gradient
         private float _horizonColorR = 0.8f;
         private float _horizonColorG = 0.85f;
         private float _horizonColorB = 0.95f;
 
-        // Exposure für HDR
+        // Exposure fÃ¼r HDR
         private float _exposure = 1.0f;
 
-        // Cubemap-Pfad (für zukünftige Implementierung)
+        // Cubemap-Pfad (fÃ¼r zukÃ¼nftige Implementierung)
         private string _cubemapPath = "";
 
         public override string DisplayName => "Skybox";
@@ -61,7 +61,7 @@ namespace Editor.ECS.Components.Rendering
         }
 
         /// <summary>
-        /// Ambient/Environment Licht-Intensität (0-2)
+        /// Ambient/Environment Licht-IntensitÃ¤t (0-2)
         /// </summary>
         [DataMember(Name = "ambientIntensity", Order = 11)]
         public float AmbientIntensity
@@ -91,7 +91,7 @@ namespace Editor.ECS.Components.Rendering
         }
 
         /// <summary>
-        /// Obere/Himmel-Farbe Grün
+        /// Obere/Himmel-Farbe GrÃ¼n
         /// </summary>
         [DataMember(Name = "topColorG", Order = 21)]
         public float TopColorG
@@ -121,7 +121,7 @@ namespace Editor.ECS.Components.Rendering
         }
 
         /// <summary>
-        /// Untere/Boden-Farbe Grün
+        /// Untere/Boden-Farbe GrÃ¼n
         /// </summary>
         [DataMember(Name = "bottomColorG", Order = 31)]
         public float BottomColorG
@@ -151,7 +151,7 @@ namespace Editor.ECS.Components.Rendering
         }
 
         /// <summary>
-        /// Horizont-Farbe Grün
+        /// Horizont-Farbe GrÃ¼n
         /// </summary>
         [DataMember(Name = "horizonColorG", Order = 41)]
         public float HorizonColorG
@@ -171,7 +171,7 @@ namespace Editor.ECS.Components.Rendering
         }
 
         /// <summary>
-        /// Belichtung/Exposure für HDR (0.1-4)
+        /// Belichtung/Exposure fÃ¼r HDR (0.1-4)
         /// </summary>
         [DataMember(Name = "exposure", Order = 50)]
         public float Exposure
@@ -227,7 +227,7 @@ namespace Editor.ECS.Components.Rendering
                     return (_topColorR * intensity, _topColorG * intensity, _topColorB * intensity);
                 
                 case SkyboxType.Gradient:
-                    // Durchschnitt der drei Farben für Ambient
+                    // Durchschnitt der drei Farben fÃ¼r Ambient
                     float avgR = (_topColorR + _horizonColorR + _bottomColorR) / 3f * intensity;
                     float avgG = (_topColorG + _horizonColorG + _bottomColorG) / 3f * intensity;
                     float avgB = (_topColorB + _horizonColorB + _bottomColorB) / 3f * intensity;
@@ -235,8 +235,8 @@ namespace Editor.ECS.Components.Rendering
                 
                 case SkyboxType.Cubemap:
                 case SkyboxType.Texture:
-                    // Für Cubemap/Texture nutzen wir die Ambient-Intensität direkt
-                    // Da wir keine IBL haben, verwenden wir eine neutrale Grundfarbe multipliziert mit der Intensität
+                    // FÃ¼r Cubemap/Texture nutzen wir die Ambient-IntensitÃ¤t direkt
+                    // Da wir keine IBL haben, verwenden wir eine neutrale Grundfarbe multipliziert mit der IntensitÃ¤t
                     return (intensity, intensity, intensity);
                 
                 default:

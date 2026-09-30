@@ -1,0 +1,673 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <!--
+    Vortex editor design system. Apple-HIG-flavoured: system font, 13/11 pt type scale, quiet greys with one
+    accent (system blue), 6 px radii on controls, 10 px on cards, hairline separators, no heavy chrome.
+    Every colour is a token with a Light and a Dark value; controls only ever reference tokens.
+  -->
+  <Styles.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Dark">
+          <Color x:Key="VxWindow">#1E1E20</Color>
+          <Color x:Key="VxSidebar">#232325</Color>
+          <Color x:Key="VxPanel">#28282B</Color>
+          <Color x:Key="VxPanelRaised">#2E2E32</Color>
+          <Color x:Key="VxField">#1A1A1C</Color>
+          <Color x:Key="VxToolbar">#2A2A2D</Color>
+          <Color x:Key="VxViewportBg">#161618</Color>
+          <Color x:Key="VxSeparator">#3A3A3E</Color>
+          <Color x:Key="VxHairline">#333336</Color>
+          <Color x:Key="VxText">#F2F2F4</Color>
+          <Color x:Key="VxTextSecondary">#A2A2A8</Color>
+          <Color x:Key="VxTextTertiary">#6E6E74</Color>
+          <Color x:Key="VxTextOnAccent">#FFFFFF</Color>
+          <Color x:Key="VxAccent">#0A84FF</Color>
+          <Color x:Key="VxAccentHover">#2F97FF</Color>
+          <Color x:Key="VxAccentPressed">#0670DB</Color>
+          <Color x:Key="VxAccentSoft">#2A0A84FF</Color>
+          <Color x:Key="VxSelection">#3D0A84FF</Color>
+          <Color x:Key="VxSelectionInactive">#26FFFFFF</Color>
+          <Color x:Key="VxHover">#14FFFFFF</Color>
+          <Color x:Key="VxPressed">#22FFFFFF</Color>
+          <Color x:Key="VxControl">#3A3A3F</Color>
+          <Color x:Key="VxControlHover">#454549</Color>
+          <Color x:Key="VxControlBorder">#1FFFFFFF</Color>
+          <Color x:Key="VxRed">#FF453A</Color>
+          <Color x:Key="VxOrange">#FF9F0A</Color>
+          <Color x:Key="VxYellow">#FFD60A</Color>
+          <Color x:Key="VxGreen">#30D158</Color>
+          <Color x:Key="VxTeal">#40C8E0</Color>
+          <Color x:Key="VxPurple">#BF5AF2</Color>
+          <Color x:Key="VxPink">#FF375F</Color>
+          <Color x:Key="VxAxisX">#FF5F58</Color>
+          <Color x:Key="VxAxisY">#7CD65C</Color>
+          <Color x:Key="VxAxisZ">#5AA9FF</Color>
+          <Color x:Key="VxShadow">#66000000</Color>
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="Light">
+          <Color x:Key="VxWindow">#ECECEE</Color>
+          <Color x:Key="VxSidebar">#E6E6E9</Color>
+          <Color x:Key="VxPanel">#F5F5F7</Color>
+          <Color x:Key="VxPanelRaised">#FFFFFF</Color>
+          <Color x:Key="VxField">#FFFFFF</Color>
+          <Color x:Key="VxToolbar">#F0F0F2</Color>
+          <Color x:Key="VxViewportBg">#D8D8DC</Color>
+          <Color x:Key="VxSeparator">#D1D1D6</Color>
+          <Color x:Key="VxHairline">#DDDDE1</Color>
+          <Color x:Key="VxText">#1D1D1F</Color>
+          <Color x:Key="VxTextSecondary">#6E6E73</Color>
+          <Color x:Key="VxTextTertiary">#A1A1A6</Color>
+          <Color x:Key="VxTextOnAccent">#FFFFFF</Color>
+          <Color x:Key="VxAccent">#007AFF</Color>
+          <Color x:Key="VxAccentHover">#2A8DFF</Color>
+          <Color x:Key="VxAccentPressed">#0064D6</Color>
+          <Color x:Key="VxAccentSoft">#24007AFF</Color>
+          <Color x:Key="VxSelection">#33007AFF</Color>
+          <Color x:Key="VxSelectionInactive">#1F000000</Color>
+          <Color x:Key="VxHover">#0F000000</Color>
+          <Color x:Key="VxPressed">#1A000000</Color>
+          <Color x:Key="VxControl">#FFFFFF</Color>
+          <Color x:Key="VxControlHover">#F3F3F5</Color>
+          <Color x:Key="VxControlBorder">#1F000000</Color>
+          <Color x:Key="VxRed">#FF3B30</Color>
+          <Color x:Key="VxOrange">#FF9500</Color>
+          <Color x:Key="VxYellow">#FFCC00</Color>
+          <Color x:Key="VxGreen">#34C759</Color>
+          <Color x:Key="VxTeal">#30B0C7</Color>
+          <Color x:Key="VxPurple">#AF52DE</Color>
+          <Color x:Key="VxPink">#FF2D55</Color>
+          <Color x:Key="VxAxisX">#E5484D</Color>
+          <Color x:Key="VxAxisY">#46A758</Color>
+          <Color x:Key="VxAxisZ">#0090FF</Color>
+          <Color x:Key="VxShadow">#33000000</Color>
+        </ResourceDictionary>
+      </ResourceDictionary.ThemeDictionaries>
+
+      <FontFamily x:Key="VxFont">.AppleSystemUIFont, fonts:Inter#Inter, Segoe UI, Helvetica Neue, sans-serif</FontFamily>
+      <FontFamily x:Key="VxMono">Menlo, SF Mono, Consolas, Cascadia Mono, monospace</FontFamily>
+      <x:Double x:Key="VxFontSize">13</x:Double>
+      <x:Double x:Key="VxFontSizeSmall">11</x:Double>
+      <x:Double x:Key="VxFontSizeTitle">15</x:Double>
+      <x:Double x:Key="VxFontSizeLarge">20</x:Double>
+      <CornerRadius x:Key="VxRadius">6</CornerRadius>
+      <CornerRadius x:Key="VxRadiusCard">10</CornerRadius>
+      <CornerRadius x:Key="VxRadiusPill">99</CornerRadius>
+      <Thickness x:Key="VxPanelPadding">10</Thickness>
+
+      <SolidColorBrush x:Key="VxWindowBrush" Color="{DynamicResource VxWindow}"/>
+      <SolidColorBrush x:Key="VxSidebarBrush" Color="{DynamicResource VxSidebar}"/>
+      <SolidColorBrush x:Key="VxPanelBrush" Color="{DynamicResource VxPanel}"/>
+      <SolidColorBrush x:Key="VxPanelRaisedBrush" Color="{DynamicResource VxPanelRaised}"/>
+      <SolidColorBrush x:Key="VxFieldBrush" Color="{DynamicResource VxField}"/>
+      <SolidColorBrush x:Key="VxToolbarBrush" Color="{DynamicResource VxToolbar}"/>
+      <SolidColorBrush x:Key="VxViewportBgBrush" Color="{DynamicResource VxViewportBg}"/>
+      <SolidColorBrush x:Key="VxSeparatorBrush" Color="{DynamicResource VxSeparator}"/>
+      <SolidColorBrush x:Key="VxHairlineBrush" Color="{DynamicResource VxHairline}"/>
+      <SolidColorBrush x:Key="VxTextBrush" Color="{DynamicResource VxText}"/>
+      <SolidColorBrush x:Key="VxTextSecondaryBrush" Color="{DynamicResource VxTextSecondary}"/>
+      <SolidColorBrush x:Key="VxTextTertiaryBrush" Color="{DynamicResource VxTextTertiary}"/>
+      <SolidColorBrush x:Key="VxTextOnAccentBrush" Color="{DynamicResource VxTextOnAccent}"/>
+      <SolidColorBrush x:Key="VxAccentBrush" Color="{DynamicResource VxAccent}"/>
+      <SolidColorBrush x:Key="VxAccentHoverBrush" Color="{DynamicResource VxAccentHover}"/>
+      <SolidColorBrush x:Key="VxAccentPressedBrush" Color="{DynamicResource VxAccentPressed}"/>
+      <SolidColorBrush x:Key="VxAccentSoftBrush" Color="{DynamicResource VxAccentSoft}"/>
+      <SolidColorBrush x:Key="VxSelectionBrush" Color="{DynamicResource VxSelection}"/>
+      <SolidColorBrush x:Key="VxSelectionInactiveBrush" Color="{DynamicResource VxSelectionInactive}"/>
+      <SolidColorBrush x:Key="VxHoverBrush" Color="{DynamicResource VxHover}"/>
+      <SolidColorBrush x:Key="VxPressedBrush" Color="{DynamicResource VxPressed}"/>
+      <SolidColorBrush x:Key="VxControlBrush" Color="{DynamicResource VxControl}"/>
+      <SolidColorBrush x:Key="VxControlHoverBrush" Color="{DynamicResource VxControlHover}"/>
+      <SolidColorBrush x:Key="VxControlBorderBrush" Color="{DynamicResource VxControlBorder}"/>
+      <SolidColorBrush x:Key="VxRedBrush" Color="{DynamicResource VxRed}"/>
+      <SolidColorBrush x:Key="VxOrangeBrush" Color="{DynamicResource VxOrange}"/>
+      <SolidColorBrush x:Key="VxYellowBrush" Color="{DynamicResource VxYellow}"/>
+      <SolidColorBrush x:Key="VxGreenBrush" Color="{DynamicResource VxGreen}"/>
+      <SolidColorBrush x:Key="VxTealBrush" Color="{DynamicResource VxTeal}"/>
+      <SolidColorBrush x:Key="VxPurpleBrush" Color="{DynamicResource VxPurple}"/>
+      <SolidColorBrush x:Key="VxPinkBrush" Color="{DynamicResource VxPink}"/>
+      <SolidColorBrush x:Key="VxAxisXBrush" Color="{DynamicResource VxAxisX}"/>
+      <SolidColorBrush x:Key="VxAxisYBrush" Color="{DynamicResource VxAxisY}"/>
+      <SolidColorBrush x:Key="VxAxisZBrush" Color="{DynamicResource VxAxisZ}"/>
+      <SolidColorBrush x:Key="VxShadowBrush" Color="{DynamicResource VxShadow}"/>
+    </ResourceDictionary>
+  </Styles.Resources>
+
+  <!-- ============================================================ base typography -->
+  <Style Selector="Window">
+    <Setter Property="FontFamily" Value="{StaticResource VxFont}"/>
+    <Setter Property="FontSize" Value="{StaticResource VxFontSize}"/>
+    <Setter Property="Foreground" Value="{DynamicResource VxTextBrush}"/>
+    <Setter Property="Background" Value="{DynamicResource VxWindowBrush}"/>
+  </Style>
+  <Style Selector="TextBlock">
+    <Setter Property="Foreground" Value="{DynamicResource VxTextBrush}"/>
+    <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+  </Style>
+  <Style Selector="TextBlock.secondary"><Setter Property="Foreground" Value="{DynamicResource VxTextSecondaryBrush}"/></Style>
+  <Style Selector="TextBlock.tertiary"><Setter Property="Foreground" Value="{DynamicResource VxTextTertiaryBrush}"/></Style>
+  <Style Selector="TextBlock.small"><Setter Property="FontSize" Value="{StaticResource VxFontSizeSmall}"/></Style>
+  <Style Selector="TextBlock.title"><Setter Property="FontSize" Value="{StaticResource VxFontSizeTitle}"/><Setter Property="FontWeight" Value="SemiBold"/></Style>
+  <Style Selector="TextBlock.large"><Setter Property="FontSize" Value="{StaticResource VxFontSizeLarge}"/><Setter Property="FontWeight" Value="SemiBold"/></Style>
+  <Style Selector="TextBlock.mono"><Setter Property="FontFamily" Value="{StaticResource VxMono}"/><Setter Property="FontSize" Value="12"/></Style>
+  <!-- sidebar section header: 11 pt, semibold, secondary, letter-spaced (Finder / Xcode navigators) -->
+  <Style Selector="TextBlock.section">
+    <Setter Property="FontSize" Value="{StaticResource VxFontSizeSmall}"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="Foreground" Value="{DynamicResource VxTextSecondaryBrush}"/>
+    <Setter Property="Margin" Value="10,10,10,4"/>
+  </Style>
+  <Style Selector="TextBlock.label">
+    <Setter Property="Foreground" Value="{DynamicResource VxTextSecondaryBrush}"/>
+    <Setter Property="VerticalAlignment" Value="Center"/>
+  </Style>
+
+  <!-- ============================================================ panels & chrome -->
+  <Style Selector="Border.panel">
+    <Setter Property="Background" Value="{DynamicResource VxPanelBrush}"/>
+  </Style>
+  <Style Selector="Border.sidebar">
+    <Setter Property="Background" Value="{DynamicResource VxSidebarBrush}"/>
+  </Style>
+  <Style Selector="Border.card">
+    <Setter Property="Background" Value="{DynamicResource VxPanelRaisedBrush}"/>
+    <Setter Property="CornerRadius" Value="{StaticResource VxRadiusCard}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource VxHairlineBrush}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="Padding" Value="12"/>
+  </Style>
+  <Style Selector="Border.panelheader">
+    <Setter Property="Height" Value="34"/>
+    <Setter Property="Padding" Value="10,0"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource VxHairlineBrush}"/>
+    <Setter Property="BorderThickness" Value="0,0,0,1"/>
+  </Style>
+  <Style Selector="Border.panelheader TextBlock.headertitle">
+    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="VerticalAlignment" Value="Center"/>
+  </Style>
+  <Style Selector="Border.hairline-top"><Setter Property="BorderBrush" Value="{DynamicResource VxHairlineBrush}"/><Setter Property="BorderThickness" Value="0,1,0,0"/></Style>
+  <Style Selector="Border.hairline-bottom"><Setter Property="BorderBrush" Value="{DynamicResource VxHairlineBrush}"/><Setter Property="BorderThickness" Value="0,0,0,1"/></Style>
+  <Style Selector="Border.hairline-left"><Setter Property="BorderBrush" Value="{DynamicResource VxHairlineBrush}"/><Setter Property="BorderThickness" Value="1,0,0,0"/></Style>
+  <Style Selector="Border.hairline-right"><Setter Property="BorderBrush" Value="{DynamicResource VxHairlineBrush}"/><Setter Property="BorderThickness" Value="0,0,1,0"/></Style>
+
+  <Style Selector="GridSplitter">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="MinWidth" Value="5"/>
+    <Setter Property="MinHeight" Value="5"/>
+  </Style>
+  <Style Selector="GridSplitter:pointerover"><Setter Property="Background" Value="{DynamicResource VxAccentSoftBrush}"/></Style>
+
+  <!-- ============================================================ buttons -->
+  <Style Selector="Button">
+    <Setter Property="Background" Value="{DynamicResource VxControlBrush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource VxTextBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource VxControlBorderBrush}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="{StaticResource VxRadius}"/>
+    <Setter Property="Padding" Value="12,5"/>
+    <Setter Property="MinHeight" Value="26"/>
+    <Setter Property="FontSize" Value="{StaticResource VxFontSize}"/>
+    <Setter Property="HorizontalContentAlignment" Value="Center"/>
+    <Setter Property="VerticalContentAlignment" Value="Center"/>
+  </Style>
+  <Style Selector="Button:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource VxControlHoverBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource VxControlBorderBrush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource VxTextBrush}"/>
+  </Style>
+  <Style Selector="Button:pressed /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource VxPressedBrush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource VxTextBrush}"/>
+  </Style>
+  <Style Selector="Button:disabled /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Opacity" Value="0.45"/>
+  </Style>
+
+  <!-- primary action (macOS default button) -->
+  <Style Selector="Button.accent">
+    <Setter Property="Background" Value="{DynamicResource VxAccentBrush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource VxTextOnAccentBrush}"/>
+    <Setter Property="BorderThickness" Value="0"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+  </Style>
+  <Style Selector="Button.accent:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource VxAccentHoverBrush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource VxTextOnAccentBrush}"/>
+  </Style>
+  <Style Selector="Button.accent:pressed /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource VxAccentPressedBrush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource VxTextOnAccentBrush}"/>
+  </Style>
+  <Style Selector="Button.danger">
+    <Setter Property="Background" Value="{DynamicResource VxRedBrush}"/>
+    <Setter Property="Foreground" Value="White"/>
+    <Setter Property="BorderThickness" Value="0"/>
+  </Style>
+  <Style Selector="Button.danger:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource VxRedBrush}"/>
+    <Setter Property="Opacity" Value="0.9"/>
+  </Style>
+
+  <!-- quiet: no fill until hover (toolbar & panel headers) -->
+  <Style Selector="Button.ghost">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="BorderThickness" Value="0"/>
+    <Setter Property="Padding" Value="8,4"/>
+  </Style>
+  <Style Selector="Button.ghost:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource VxHoverBrush}"/>
+  </Style>
+  <Style Selector="Button.ghost:pressed /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource VxPressedBrush}"/>
+  </Style>
+
+  <!-- square icon button (toolbar) -->
+  <Style Selector="Button.icon">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="BorderThickness" Value="0"/>
+    <Setter Property="Padding" Value="0"/>
+    <Setter Property="Width" Value="28"/>
+    <Setter Property="Height" Value="26"/>
+    <Setter Property="MinHeight" Value="26"/>
+    <Setter Property="Foreground" Value="{DynamicResource VxTextSecondaryBrush}"/>
+  </Style>
+  <Style Selector="Button.icon:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource VxHoverBrush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource VxTextBrush}"/>
+  </Style>
+  <Style Selector="Button.icon:pressed /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource VxPressedBrush}"/>
+  </Style>
+  <Style Selector="Button.icon.small"><Setter Property="Width" Value="22"/><Setter Property="Height" Value="20"/><Setter Property="MinHeight" Value="20"/></Style>
+  <Style Selector="Button.link">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="BorderThickness" Value="0"/>
+    <Setter Property="Padding" Value="2"/>
+    <Setter Property="Foreground" Value="{DynamicResource VxAccentBrush}"/>
+  </Style>
+
+  <!-- ============================================================ toggle buttons (segmented controls, toolbar toggles) -->
+  <Style Selector="ToggleButton">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="Foreground" Value="{DynamicResource VxTextSecondaryBrush}"/>
+    <Setter Property="BorderThickness" Value="0"/>
+    <Setter Property="CornerRadius" Value="5"/>
+    <Setter Property="Padding" Value="8,3"/>
+    <Setter Property="MinHeight" Value="24"/>
+    <Setter Property="HorizontalContentAlignment" Value="Center"/>
+    <Setter Property="VerticalContentAlignment" Value="Center"/>
+  </Style>
+  <Style Selector="ToggleButton:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource VxHoverBrush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource VxTextBrush}"/>
+  </Style>
+  <Style Selector="ToggleButton:checked /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource VxControlBrush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource VxTextBrush}"/>
+  </Style>
+  <Style Selector="ToggleButton:checked:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource VxControlHoverBrush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource VxTextBrush}"/>
+  </Style>
+  <Style Selector="ToggleButton.icon">
+    <Setter Property="Width" Value="28"/>
+    <Setter Property="Height" Value="26"/>
+    <Setter Property="MinHeight" Value="20"/>
+    <Setter Property="Padding" Value="0"/>
+  </Style>
+  <Style Selector="ToggleButton.icon.small"><Setter Property="Width" Value="22"/><Setter Property="Height" Value="20"/><Setter Property="MinHeight" Value="20"/></Style>
+  <Style Selector="ToggleButton.accentcheck:checked /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource VxAccentBrush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource VxTextOnAccentBrush}"/>
+  </Style>
+  <Style Selector="ToggleButton.accentcheck:checked:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource VxAccentHoverBrush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource VxTextOnAccentBrush}"/>
+  </Style>
+  <!-- segmented control container -->
+  <Style Selector="Border.segmented">
+    <Setter Property="Background" Value="{DynamicResource VxFieldBrush}"/>
+    <Setter Property="CornerRadius" Value="7"/>
+    <Setter Property="Padding" Value="2"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource VxControlBorderBrush}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+  </Style>
+  <Style Selector="Border.segmented ToggleButton"><Setter Property="MinHeight" Value="22"/><Setter Property="Padding" Value="10,2"/></Style>
+  <Style Selector="Border.segmented RadioButton">
+    <Setter Property="MinHeight" Value="22"/>
+    <Setter Property="Padding" Value="10,2"/>
+    <Setter Property="Foreground" Value="{DynamicResource VxTextSecondaryBrush}"/>
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="CornerRadius" Value="5"/>
+    <Setter Property="HorizontalContentAlignment" Value="Center"/>
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Name="Bg" Background="{TemplateBinding Background}" CornerRadius="{TemplateBinding CornerRadius}" Padding="{TemplateBinding Padding}">
+          <ContentPresenter Name="PART_ContentPresenter" Content="{TemplateBinding Content}" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{TemplateBinding Foreground}"/>
+        </Border>
+      </ControlTemplate>
+    </Setter>
+  </Style>
+  <Style Selector="Border.segmented RadioButton:pointerover /template/ Border#Bg"><Setter Property="Background" Value="{DynamicResource VxHoverBrush}"/></Style>
+  <Style Selector="Border.segmented RadioButton:checked /template/ Border#Bg"><Setter Property="Background" Value="{DynamicResource VxControlBrush}"/></Style>
+  <Style Selector="Border.segmented RadioButton:checked"><Setter Property="Foreground" Value="{DynamicResource VxTextBrush}"/></Style>
+
+  <!-- ============================================================ text fields -->
+  <Style Selector="TextBox">
+    <Setter Property="Background" Value="{DynamicResource VxFieldBrush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource VxTextBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource VxControlBorderBrush}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="5"/>
+    <Setter Property="Padding" Value="7,3"/>
+    <Setter Property="MinHeight" Value="24"/>
+    <Setter Property="FontSize" Value="{StaticResource VxFontSize}"/>
+    <Setter Property="SelectionBrush" Value="{DynamicResource VxSelectionBrush}"/>
+    <Setter Property="CaretBrush" Value="{DynamicResource VxTextBrush}"/>
+  </Style>
+  <Style Selector="TextBox:pointerover /template/ Border#PART_BorderElement">
+    <Setter Property="Background" Value="{DynamicResource VxFieldBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource VxSeparatorBrush}"/>
+  </Style>
+  <Style Selector="TextBox:focus /template/ Border#PART_BorderElement">
+    <Setter Property="Background" Value="{DynamicResource VxFieldBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource VxAccentBrush}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+  </Style>
+  <Style Selector="TextBox.search">
+    <Setter Property="CornerRadius" Value="{StaticResource VxRadiusPill}"/>
+    <Setter Property="Padding" Value="10,3"/>
+  </Style>
+  <Style Selector="TextBox.number">
+    <Setter Property="TextAlignment" Value="Right"/>
+    <Setter Property="FontFamily" Value="{StaticResource VxMono}"/>
+    <Setter Property="FontSize" Value="12"/>
+    <Setter Property="MinWidth" Value="56"/>
+  </Style>
+
+  <!-- ============================================================ combo box -->
+  <Style Selector="ComboBox">
+    <Setter Property="Background" Value="{DynamicResource VxControlBrush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource VxTextBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource VxControlBorderBrush}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="5"/>
+    <Setter Property="Padding" Value="8,3"/>
+    <Setter Property="MinHeight" Value="24"/>
+    <Setter Property="HorizontalAlignment" Value="Stretch"/>
+  </Style>
+  <Style Selector="ComboBox:pointerover /template/ Border#Background">
+    <Setter Property="Background" Value="{DynamicResource VxControlHoverBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource VxControlBorderBrush}"/>
+  </Style>
+  <Style Selector="ComboBox:focus /template/ Border#Background">
+    <Setter Property="BorderBrush" Value="{DynamicResource VxAccentBrush}"/>
+  </Style>
+  <Style Selector="ComboBoxItem">
+    <Setter Property="Padding" Value="8,4"/>
+    <Setter Property="CornerRadius" Value="4"/>
+    <Setter Property="Foreground" Value="{DynamicResource VxTextBrush}"/>
+  </Style>
+  <Style Selector="ComboBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource VxAccentBrush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource VxTextOnAccentBrush}"/>
+  </Style>
+  <Style Selector="ComboBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource VxSelectionBrush}"/>
+  </Style>
+
+  <!-- ============================================================ check box (row style) -->
+  <Style Selector="CheckBox">
+    <Setter Property="Foreground" Value="{DynamicResource VxTextBrush}"/>
+    <Setter Property="MinHeight" Value="22"/>
+    <Setter Property="Padding" Value="6,0,0,0"/>
+  </Style>
+  <Style Selector="CheckBox /template/ Border#NormalRectangle">
+    <Setter Property="CornerRadius" Value="4"/>
+    <Setter Property="Width" Value="15"/>
+    <Setter Property="Height" Value="15"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource VxSeparatorBrush}"/>
+    <Setter Property="Background" Value="{DynamicResource VxFieldBrush}"/>
+  </Style>
+  <Style Selector="CheckBox:checked /template/ Border#NormalRectangle">
+    <Setter Property="Background" Value="{DynamicResource VxAccentBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource VxAccentBrush}"/>
+  </Style>
+  <Style Selector="CheckBox:checked /template/ Path#CheckGlyph">
+    <Setter Property="Fill" Value="{DynamicResource VxTextOnAccentBrush}"/>
+  </Style>
+
+  <!-- ============================================================ toggle switch (macOS switch) -->
+  <Style Selector="ToggleSwitch">
+    <Setter Property="Foreground" Value="{DynamicResource VxTextBrush}"/>
+    <Setter Property="OnContent" Value=""/>
+    <Setter Property="OffContent" Value=""/>
+    <Setter Property="MinHeight" Value="22"/>
+  </Style>
+  <Style Selector="ToggleSwitch /template/ Border#OuterBorder">
+    <Setter Property="Background" Value="{DynamicResource VxControlBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource VxControlBorderBrush}"/>
+    <Setter Property="CornerRadius" Value="10"/>
+  </Style>
+  <Style Selector="ToggleSwitch:checked /template/ Border#SwitchKnobBounds">
+    <Setter Property="Background" Value="{DynamicResource VxAccentBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource VxAccentBrush}"/>
+    <Setter Property="CornerRadius" Value="10"/>
+  </Style>
+
+  <!-- ============================================================ slider -->
+  <Style Selector="Slider">
+    <Setter Property="Foreground" Value="{DynamicResource VxAccentBrush}"/>
+    <Setter Property="Background" Value="{DynamicResource VxControlBrush}"/>
+    <Setter Property="MinHeight" Value="22"/>
+  </Style>
+  <Style Selector="Slider /template/ Track#PART_Track">
+    <Setter Property="Height" Value="4"/>
+  </Style>
+  <Style Selector="Slider:horizontal /template/ Thumb#thumb">
+    <Setter Property="Width" Value="16"/>
+    <Setter Property="Height" Value="16"/>
+    <Setter Property="Background" Value="White"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource VxControlBorderBrush}"/>
+  </Style>
+
+  <!-- ============================================================ lists & trees -->
+  <Style Selector="ListBox">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="BorderThickness" Value="0"/>
+    <Setter Property="Padding" Value="4"/>
+  </Style>
+  <Style Selector="ListBoxItem">
+    <Setter Property="Padding" Value="8,4"/>
+    <Setter Property="CornerRadius" Value="5"/>
+    <Setter Property="MinHeight" Value="24"/>
+    <Setter Property="Foreground" Value="{DynamicResource VxTextBrush}"/>
+  </Style>
+  <Style Selector="ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource VxHoverBrush}"/>
+  </Style>
+  <Style Selector="ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource VxSelectionBrush}"/>
+  </Style>
+  <Style Selector="ListBoxItem:selected:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource VxSelectionBrush}"/>
+  </Style>
+  <Style Selector="TreeView">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="BorderThickness" Value="0"/>
+  </Style>
+  <Style Selector="TreeViewItem">
+    <Setter Property="Foreground" Value="{DynamicResource VxTextBrush}"/>
+    <Setter Property="Padding" Value="2,0"/>
+    <Setter Property="MinHeight" Value="24"/>
+  </Style>
+  <Style Selector="TreeViewItem /template/ Border#PART_LayoutRoot">
+    <Setter Property="CornerRadius" Value="5"/>
+    <Setter Property="Margin" Value="4,0"/>
+  </Style>
+  <Style Selector="TreeViewItem:pointerover /template/ Border#PART_LayoutRoot">
+    <Setter Property="Background" Value="{DynamicResource VxHoverBrush}"/>
+  </Style>
+  <Style Selector="TreeViewItem:selected /template/ Border#PART_LayoutRoot">
+    <Setter Property="Background" Value="{DynamicResource VxSelectionBrush}"/>
+  </Style>
+  <Style Selector="TreeViewItem:selected:pointerover /template/ Border#PART_LayoutRoot">
+    <Setter Property="Background" Value="{DynamicResource VxSelectionBrush}"/>
+  </Style>
+  <Style Selector="TreeViewItem /template/ ToggleButton#PART_ExpandCollapseChevron">
+    <Setter Property="Foreground" Value="{DynamicResource VxTextTertiaryBrush}"/>
+  </Style>
+
+  <!-- ============================================================ tabs (panel tabs, macOS style pills) -->
+  <Style Selector="TabControl">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="Padding" Value="0"/>
+  </Style>
+  <Style Selector="TabControl /template/ ItemsPresenter#PART_ItemsPresenter">
+    <Setter Property="Margin" Value="6,4"/>
+  </Style>
+  <Style Selector="TabItem">
+    <Setter Property="FontSize" Value="{StaticResource VxFontSize}"/>
+    <Setter Property="FontWeight" Value="Medium"/>
+    <Setter Property="Foreground" Value="{DynamicResource VxTextSecondaryBrush}"/>
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="Padding" Value="10,3"/>
+    <Setter Property="Margin" Value="0,0,2,0"/>
+    <Setter Property="MinHeight" Value="24"/>
+    <Setter Property="Height" Value="24"/>
+    <Setter Property="CornerRadius" Value="5"/>
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Name="PART_LayoutRoot" Background="{TemplateBinding Background}" CornerRadius="{TemplateBinding CornerRadius}" Padding="{TemplateBinding Padding}">
+          <ContentPresenter Name="PART_ContentPresenter" ContentTemplate="{TemplateBinding HeaderTemplate}" Content="{TemplateBinding Header}" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+        </Border>
+      </ControlTemplate>
+    </Setter>
+  </Style>
+  <Style Selector="TabItem:pointerover /template/ Border#PART_LayoutRoot"><Setter Property="Background" Value="{DynamicResource VxHoverBrush}"/></Style>
+  <Style Selector="TabItem:selected"><Setter Property="Foreground" Value="{DynamicResource VxTextBrush}"/></Style>
+  <Style Selector="TabItem:selected /template/ Border#PART_LayoutRoot"><Setter Property="Background" Value="{DynamicResource VxControlBrush}"/></Style>
+
+  <!-- ============================================================ menus -->
+  <Style Selector="Menu">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="Height" Value="28"/>
+  </Style>
+  <Style Selector="Menu > MenuItem">
+    <Setter Property="Padding" Value="9,3"/>
+    <Setter Property="CornerRadius" Value="5"/>
+    <Setter Property="Foreground" Value="{DynamicResource VxTextBrush}"/>
+  </Style>
+  <Style Selector="Menu > MenuItem:pointerover /template/ Border#PART_LayoutRoot"><Setter Property="Background" Value="{DynamicResource VxHoverBrush}"/></Style>
+  <Style Selector="Menu > MenuItem:open /template/ Border#PART_LayoutRoot"><Setter Property="Background" Value="{DynamicResource VxHoverBrush}"/></Style>
+  <Style Selector="MenuItem">
+    <Setter Property="Foreground" Value="{DynamicResource VxTextBrush}"/>
+    <Setter Property="Padding" Value="10,4"/>
+    <Setter Property="CornerRadius" Value="5"/>
+  </Style>
+  <Style Selector="MenuItem:pointerover /template/ Border#PART_LayoutRoot">
+    <Setter Property="Background" Value="{DynamicResource VxAccentBrush}"/>
+  </Style>
+  <Style Selector="MenuItem:pointerover /template/ ContentPresenter#PART_HeaderPresenter">
+    <Setter Property="Foreground" Value="{DynamicResource VxTextOnAccentBrush}"/>
+  </Style>
+  <Style Selector="MenuItem:pointerover /template/ TextBlock#PART_InputGestureText">
+    <Setter Property="Foreground" Value="{DynamicResource VxTextOnAccentBrush}"/>
+  </Style>
+  <Style Selector="MenuItem /template/ TextBlock#PART_InputGestureText">
+    <Setter Property="Foreground" Value="{DynamicResource VxTextTertiaryBrush}"/>
+    <Setter Property="Margin" Value="24,0,0,0"/>
+  </Style>
+  <Style Selector="MenuItem:disabled /template/ ContentPresenter#PART_HeaderPresenter"><Setter Property="Opacity" Value="0.4"/></Style>
+  <Style Selector="MenuFlyoutPresenter, ContextMenu">
+    <Setter Property="Background" Value="{DynamicResource VxPanelRaisedBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource VxSeparatorBrush}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="8"/>
+    <Setter Property="Padding" Value="5"/>
+  </Style>
+  <Style Selector="Separator">
+    <Setter Property="Background" Value="{DynamicResource VxHairlineBrush}"/>
+    <Setter Property="Height" Value="1"/>
+    <Setter Property="Margin" Value="8,4"/>
+  </Style>
+  <Style Selector="MenuItem > Separator"><Setter Property="Margin" Value="6,4"/></Style>
+
+  <!-- ============================================================ tooltips -->
+  <Style Selector="ToolTip">
+    <Setter Property="Background" Value="{DynamicResource VxPanelRaisedBrush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource VxTextBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource VxSeparatorBrush}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="6"/>
+    <Setter Property="Padding" Value="8,4"/>
+    <Setter Property="FontSize" Value="{StaticResource VxFontSizeSmall}"/>
+  </Style>
+
+  <!-- ============================================================ scroll bars (thin overlay) -->
+  <Style Selector="ScrollBar">
+    <Setter Property="AllowAutoHide" Value="True"/>
+  </Style>
+  <Style Selector="ScrollBar:vertical"><Setter Property="Width" Value="10"/></Style>
+  <Style Selector="ScrollBar:horizontal"><Setter Property="Height" Value="10"/></Style>
+  <Style Selector="ScrollBar /template/ Thumb">
+    <Setter Property="Background" Value="{DynamicResource VxTextTertiaryBrush}"/>
+    <Setter Property="Opacity" Value="0.55"/>
+    <Setter Property="CornerRadius" Value="4"/>
+  </Style>
+
+  <!-- ============================================================ expander (inspector sections) -->
+  <Style Selector="Expander">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="BorderThickness" Value="0"/>
+    <Setter Property="Padding" Value="0"/>
+    <Setter Property="MinHeight" Value="0"/>
+    <Setter Property="ContentTransition" Value="{x:Null}"/>
+  </Style>
+  <Style Selector="Expander /template/ ToggleButton#ExpanderHeader">
+    <Setter Property="Padding" Value="8,5"/>
+    <Setter Property="MinHeight" Value="28"/>
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="BorderThickness" Value="0"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+  </Style>
+  <Style Selector="Expander /template/ Border#ExpanderContent">
+    <Setter Property="BorderThickness" Value="0"/>
+    <Setter Property="Padding" Value="8,2,8,10"/>
+    <Setter Property="Background" Value="Transparent"/>
+  </Style>
+
+  <!-- ============================================================ misc -->
+  <Style Selector="ProgressBar">
+    <Setter Property="Foreground" Value="{DynamicResource VxAccentBrush}"/>
+    <Setter Property="Background" Value="{DynamicResource VxControlBrush}"/>
+    <Setter Property="MinHeight" Value="6"/>
+    <Setter Property="CornerRadius" Value="3"/>
+  </Style>
+  <Style Selector="Border.badge">
+    <Setter Property="CornerRadius" Value="{StaticResource VxRadiusPill}"/>
+    <Setter Property="Padding" Value="7,1"/>
+    <Setter Property="Background" Value="{DynamicResource VxControlBrush}"/>
+  </Style>
+  <Style Selector="Border.badge TextBlock"><Setter Property="FontSize" Value="{StaticResource VxFontSizeSmall}"/><Setter Property="FontWeight" Value="SemiBold"/></Style>
+  <Style Selector="Border.toast">
+    <Setter Property="Background" Value="{DynamicResource VxPanelRaisedBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource VxSeparatorBrush}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="10"/>
+    <Setter Property="Padding" Value="14,9"/>
+    <Setter Property="BoxShadow" Value="0 8 24 0 #40000000"/>
+  </Style>
+  <!-- inspector property row: label column + editor column -->
+  <Style Selector="Grid.proprow">
+    <Setter Property="Margin" Value="0,2"/>
+    <Setter Property="MinHeight" Value="24"/>
+  </Style>
+  <Style Selector="PathIcon">
+    <Setter Property="Width" Value="16"/>
+    <Setter Property="Height" Value="16"/>
+    <Setter Property="Foreground" Value="{DynamicResource VxTextSecondaryBrush}"/>
+  </Style>
+</Styles>

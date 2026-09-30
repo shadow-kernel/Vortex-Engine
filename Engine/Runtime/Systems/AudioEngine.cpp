@@ -16,8 +16,10 @@
 // This is the single translation unit that compiles miniaudio and stb_vorbis.
 // Order matters (documented miniaudio pattern): stb_vorbis header first so the
 // miniaudio implementation picks up OGG support, stb_vorbis implementation after.
+#ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable: 4244 4245 4456 4457 4701 4267 4100 4189)
+#endif
 #define STB_VORBIS_HEADER_ONLY
 #include "../../ThirdParty/stb_vorbis.c"
 
@@ -26,7 +28,9 @@
 
 #undef STB_VORBIS_HEADER_ONLY
 #include "../../ThirdParty/stb_vorbis.c"
+#ifdef _MSC_VER
 #pragma warning(pop)
+#endif
 
 namespace vortex::runtime::audio {
 
@@ -74,9 +78,9 @@ namespace vortex::runtime::audio {
 		{
 			char buffer[1024];
 			vsnprintf(buffer, sizeof(buffer), fmt, args);
-			OutputDebugStringA("[VortexAudio] ");
-			OutputDebugStringA(buffer);
-			OutputDebugStringA("\n");
+			platform::debug_output("[VortexAudio] ");
+			platform::debug_output(buffer);
+			platform::debug_output("\n");
 
 			// Opt-in file log (same pattern as the Streamline diagnostics): set
 			// VORTEX_AUDIO_LOG to a file path to capture audio events from outside
@@ -178,6 +182,7 @@ namespace vortex::runtime::audio {
 	bool internal_widen_path(const char* narrow, wchar_t* out, size_t out_chars)
 	{
 		if (!narrow || !out || out_chars == 0) return false;
+#if VORTEX_PLATFORM_WINDOWS
 		// Strict UTF-8 first: ANSI umlaut bytes are invalid UTF-8, so this reliably
 		// separates the UTF-8 (C# bridge) callers from legacy ACP (engine) callers.
 		int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, narrow, -1, out, (int)out_chars);
@@ -186,6 +191,31 @@ namespace vortex::runtime::audio {
 			n = MultiByteToWideChar(CP_ACP, 0, narrow, -1, out, (int)out_chars);
 		}
 		return n != 0;
+#else
+		// POSIX: file paths are UTF-8 and wchar_t is UTF-32, so this is a plain UTF-8 decode. The file
+		// APIs take the UTF-8 string directly (see the call sites); this exists for API symmetry only.
+		size_t written = 0;
+		for (const unsigned char* p = reinterpret_cast<const unsigned char*>(narrow); *p;)
+		{
+			uint32_t code_point;
+			int continuation_bytes;
+			if (*p < 0x80)              { code_point = *p;        continuation_bytes = 0; }
+			else if ((*p & 0xE0) == 0xC0) { code_point = *p & 0x1F; continuation_bytes = 1; }
+			else if ((*p & 0xF0) == 0xE0) { code_point = *p & 0x0F; continuation_bytes = 2; }
+			else if ((*p & 0xF8) == 0xF0) { code_point = *p & 0x07; continuation_bytes = 3; }
+			else return false;
+			++p;
+			for (int i = 0; i < continuation_bytes; ++i, ++p)
+			{
+				if ((*p & 0xC0) != 0x80) return false;
+				code_point = (code_point << 6) | (*p & 0x3F);
+			}
+			if (written + 1 >= out_chars) return false;
+			out[written++] = static_cast<wchar_t>(code_point);
+		}
+		out[written] = L'\0';
+		return true;
+#endif
 	}
 
 	bool initialize()
@@ -304,9 +334,13 @@ namespace vortex::runtime::audio {
 		}
 		else
 		{
+#if VORTEX_PLATFORM_WINDOWS
 			wchar_t wide[1024];
 			if (!internal_widen_path(path, wide, 1024)) return false;
 			result = ma_decoder_init_file_w(wide, nullptr, &probe);
+#else
+			result = ma_decoder_init_file(path, nullptr, &probe);   // POSIX file APIs take UTF-8 as-is
+#endif
 		}
 		if (result != MA_SUCCESS)
 		{
@@ -330,9 +364,13 @@ namespace vortex::runtime::audio {
 			{
 				return ma_decoder_init_memory(bytes, (size_t)size, &config, out) == MA_SUCCESS;
 			}
+#if VORTEX_PLATFORM_WINDOWS
 			wchar_t wide[1024];
 			if (!internal_widen_path(path, wide, 1024)) return false;
 			return ma_decoder_init_file_w(wide, &config, out) == MA_SUCCESS;
+#else
+			return ma_decoder_init_file(path, &config, out) == MA_SUCCESS;
+#endif
 		}
 	}
 
@@ -469,6 +507,7 @@ namespace vortex::runtime::audio {
 		}
 		else
 		{
+#if VORTEX_PLATFORM_WINDOWS
 			wchar_t wide[1024];
 			if (!internal_widen_path(path, wide, 1024))
 			{
@@ -478,6 +517,10 @@ namespace vortex::runtime::audio {
 			}
 			result = ma_sound_init_from_file_w(&g_engine, wide,
 				MA_SOUND_FLAG_DECODE | MA_SOUND_FLAG_NO_SPATIALIZATION, nullptr, nullptr, sound);
+#else
+			result = ma_sound_init_from_file(&g_engine, path,
+				MA_SOUND_FLAG_DECODE | MA_SOUND_FLAG_NO_SPATIALIZATION, nullptr, nullptr, sound);
+#endif
 		}
 		if (result != MA_SUCCESS)
 		{

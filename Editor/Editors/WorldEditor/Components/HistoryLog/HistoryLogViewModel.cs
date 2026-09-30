@@ -1,4 +1,4 @@
-using System;
+ï»¿using System;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Windows.Media;
@@ -7,7 +7,7 @@ using Editor.Core.UndoRedo;
 namespace Editor.Editors.WorldEditor.Components.HistoryLog
 {
     /// <summary>
-    /// ViewModel für das History Log Panel.
+    /// ViewModel fÃ¼r das History Log Panel.
     /// Zeigt die letzten Undo/Redo Aktionen an.
     /// </summary>
     public class HistoryLogViewModel : Core.ViewModelBase
@@ -52,7 +52,7 @@ namespace Editor.Editors.WorldEditor.Components.HistoryLog
             var undoHistory = UndoRedoManager.Instance.GetUndoHistory();
             var redoHistory = UndoRedoManager.Instance.GetRedoHistory();
 
-            // Redo-Stack (zukünftige Aktionen - oben, ausgegraut)
+            // Redo-Stack (zukÃ¼nftige Aktionen - oben, ausgegraut)
             int redoIndex = redoHistory.Count;
             foreach (var command in redoHistory.Reverse())
             {
@@ -86,7 +86,7 @@ namespace Editor.Editors.WorldEditor.Components.HistoryLog
         }
 
         /// <summary>
-        /// Springt zum ausgewählten History-Eintrag
+        /// Springt zum ausgewÃ¤hlten History-Eintrag
         /// </summary>
         public void JumpToSelected()
         {
@@ -94,7 +94,7 @@ namespace Editor.Editors.WorldEditor.Components.HistoryLog
 
             if (_selectedItem.IsRedo)
             {
-                // Redo bis zum ausgewählten Punkt
+                // Redo bis zum ausgewÃ¤hlten Punkt
                 var redoHistory = UndoRedoManager.Instance.GetRedoHistory().ToList();
                 var targetIndex = redoHistory.IndexOf(_selectedItem.Command);
                 if (targetIndex >= 0)
@@ -104,7 +104,7 @@ namespace Editor.Editors.WorldEditor.Components.HistoryLog
             }
             else
             {
-                // Undo bis zum ausgewählten Punkt
+                // Undo bis zum ausgewÃ¤hlten Punkt
                 var undoHistory = UndoRedoManager.Instance.GetUndoHistory().ToList();
                 var targetIndex = undoHistory.IndexOf(_selectedItem.Command);
                 if (targetIndex >= 0)
@@ -138,7 +138,7 @@ namespace Editor.Editors.WorldEditor.Components.HistoryLog
     }
 
     /// <summary>
-    /// Repräsentiert einen Eintrag in der History-Liste
+    /// ReprÃ¤sentiert einen Eintrag in der History-Liste
     /// </summary>
     public class HistoryItem : Core.ViewModelBase
     {

@@ -1,8 +1,8 @@
 #include "../ApiCommon.h"
-#include "..\..\Engine\Runtime\Systems\AudioEngine.h"
-#include "..\..\Engine\Runtime\Systems\AudioMixer.h"
-#include "..\..\Engine\Runtime\Systems\AudioReverb.h"
-#include "..\..\Engine\Runtime\Systems\AudioVoices.h"
+#include "../../Engine/Runtime/Systems/AudioEngine.h"
+#include "../../Engine/Runtime/Systems/AudioMixer.h"
+#include "../../Engine/Runtime/Systems/AudioReverb.h"
+#include "../../Engine/Runtime/Systems/AudioVoices.h"
 
 // Voice-level audio API (issue #7). Handles are opaque u64 values with a
 // generation counter — stale handles (stolen/finished voices) are safely

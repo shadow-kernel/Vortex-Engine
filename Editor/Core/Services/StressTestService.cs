@@ -69,7 +69,11 @@ namespace Editor.Core.Services
         public static void Stop()
         {
             Active = false; _dirty = false; _entries.Clear(); Count = 0;
+#if VORTEX_CORE
+            Editor.Core.Services.SceneRenderService.RuntimeDirty = true;
+#else
             try { Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.RequestResubmit(); } catch { }
+#endif
         }
 
         public static bool Dirty => Active && _dirty;

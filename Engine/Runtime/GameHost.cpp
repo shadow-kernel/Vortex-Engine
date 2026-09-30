@@ -7,6 +7,7 @@
 #include <windowsx.h> // GET_X_LPARAM / GET_Y_LPARAM
 #include <chrono>
 #include <deque>
+#include <string>
 
 namespace vortex::runtime
 {
@@ -165,6 +166,7 @@ namespace vortex::runtime
 
     int  GameHost::mouse_wheel() { int w = g_wheel_accum; g_wheel_accum = 0; return w; }
     bool GameHost::consume_focus_gained() { bool f = g_focus_gained; g_focus_gained = false; return f; } // Alt-Tab back (once)
+    bool GameHost::has_focus() { return g_has_focus; }
     int  GameHost::next_char() { if (g_char_queue.empty()) return -1; int c = g_char_queue.front(); g_char_queue.pop_front(); return c; }
     int  GameHost::next_key_pressed() { if (g_key_queue.empty()) return 0; int k = g_key_queue.front(); g_key_queue.pop_front(); return k; }
 
@@ -298,5 +300,16 @@ namespace vortex::runtime
         systems::dx12::shutdown();
         if (g_hwnd) { DestroyWindow(g_hwnd); g_hwnd = nullptr; }
         return true;
+    }
+
+    bool GameHost::run_utf8(uint32_t width, uint32_t height, const char* title_utf8)
+    {
+        std::wstring title;
+        if (title_utf8 && *title_utf8)
+        {
+            int n = MultiByteToWideChar(CP_UTF8, 0, title_utf8, -1, nullptr, 0);
+            if (n > 1) { title.resize((size_t)n - 1); MultiByteToWideChar(CP_UTF8, 0, title_utf8, -1, &title[0], n); }
+        }
+        return run(width, height, title.empty() ? nullptr : title.c_str());
     }
 }

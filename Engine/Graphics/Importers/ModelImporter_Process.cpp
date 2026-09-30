@@ -471,8 +471,8 @@ namespace vortex::graphics
 			{
 			if (!tex_path.empty())
 			{
-			DWORD attribs = GetFileAttributesA(tex_path.c_str());
-			if (attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY))
+			std::error_code fs_error;
+			if (std::filesystem::is_regular_file(std::filesystem::path(tex_path), fs_error))
 			{
 			has_valid_texture = true;
 			break;
@@ -495,12 +495,11 @@ namespace vortex::graphics
 		// Collect all color textures in directory
 		std::vector<std::string> color_textures;
 		
-		WIN32_FIND_DATAA fd;
-		HANDLE h = FindFirstFileA((dir + "*.*").c_str(), &fd);
-		if (h != INVALID_HANDLE_VALUE)
+		std::error_code fs_error;
+		for (const auto& entry : std::filesystem::directory_iterator(std::filesystem::path(dir), fs_error))
 		{
-			do {
-				std::string fn = fd.cFileName;
+			{
+				std::string fn = entry.path().filename().string();
 				std::string fnl = fn;
 				std::transform(fnl.begin(), fnl.end(), fnl.begin(), ::tolower);
 				
@@ -521,8 +520,7 @@ namespace vortex::graphics
 					color_textures.push_back(dir + fn);
 					VORTEX_VLOG(("  Found texture: " + fn + "\n").c_str());
 				}
-			} while (FindNextFileA(h, &fd));
-			FindClose(h);
+			}
 		}
 		
 		// Assign textures to submeshes

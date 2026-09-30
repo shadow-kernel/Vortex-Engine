@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../../Common/CommonHeaders.h"
-#include "../Resources/Material.h"
+#include "../Resources/MaterialProperties.h"
 #include <string>
 
 namespace vortex::graphics

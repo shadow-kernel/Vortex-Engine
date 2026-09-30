@@ -1,9 +1,9 @@
-using System;
+﻿using System;
 
 namespace Editor.Core.Exceptions
 {
     /// <summary>
-    /// Basis-Exception f�r alle projektbezogenen Fehler
+    /// Basis-Exception für alle projektbezogenen Fehler
     /// </summary>
     public class ProjectException : Exception
     {

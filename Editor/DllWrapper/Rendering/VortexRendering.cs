@@ -83,9 +83,16 @@ namespace Editor.DllWrapper
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         public delegate void GameTickDelegate(float dt);
 
+#if VORTEX_CORE
+        // wchar_t is 32-bit on macOS/Linux: use the UTF-8 twin of the entry point there.
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "RunGameHostUtf8")]
+        [return: MarshalAs(UnmanagedType.I1)]
+        private static extern bool RunGameHostNative(uint width, uint height, [MarshalAs(UnmanagedType.LPUTF8Str)] string title);
+#else
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "RunGameHost", CharSet = CharSet.Unicode)]
         [return: MarshalAs(UnmanagedType.I1)]
         private static extern bool RunGameHostNative(uint width, uint height, string title);
+#endif
 
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SetGameTickCallback")]
         private static extern void SetGameTickCallbackNative(GameTickDelegate fn);
@@ -150,6 +157,12 @@ namespace Editor.DllWrapper
         public static int GameHostMouseWheel() { try { return GameHostMouseWheelNative(); } catch { return 0; } }
         /// <summary>True once after the game window regains focus (Alt-Tab back) — used to trigger script hot-reload.</summary>
         public static bool GameHostConsumeFocusGained() { try { return GameHostConsumeFocusGainedNative(); } catch { return false; } }
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostHasFocus")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool GameHostHasFocusNative();
+        /// <summary>True while the native game window is the focused window (input gating for the managed layer).</summary>
+        public static bool GameHostHasFocus() { try { return GameHostHasFocusNative(); } catch { return true; } }
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SetShaderDirectory")] private static extern void SetShaderDirectoryNative([MarshalAs(UnmanagedType.LPUTF8Str)] string utf8Path);
+        /// <summary>Explicit shader source folder for backends that compile shaders at load (SDL GPU / Metal); no-op on DX12.</summary>
+        public static void SetShaderDirectory(string path) { try { SetShaderDirectoryNative(path ?? ""); } catch { } }
         /// <summary>Next typed character for text fields, or -1 if the queue is empty.</summary>
         public static int GameHostNextChar() { try { return GameHostNextCharNative(); } catch { return -1; } }
         /// <summary>Next edge-pressed virtual-key for keybind capture, or 0 if the queue is empty.</summary>
@@ -190,16 +203,28 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "UIRect")]
         private static extern void UIRectNative(float x, float y, float w, float h, float r, float g, float b, float a, float radius);
 
+#if VORTEX_CORE
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "UITextUtf8")]
+        private static extern void UITextNative(float x, float y, float w, float h,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string text, float size, float r, float g, float b, float a, int align, int weight);
+#else
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "UIText", CharSet = CharSet.Unicode)]
         private static extern void UITextNative(float x, float y, float w, float h,
             [MarshalAs(UnmanagedType.LPWStr)] string text, float size, float r, float g, float b, float a, int align, int weight);
+#endif
 
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "UILine")]
         private static extern void UILineNative(float x1, float y1, float x2, float y2, float r, float g, float b, float a, float thick);
 
+#if VORTEX_CORE
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "UIImageUtf8")]
+        private static extern void UIImageNative(float x, float y, float w, float h,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string path, float r, float g, float b, float a);
+#else
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "UIImage", CharSet = CharSet.Unicode)]
         private static extern void UIImageNative(float x, float y, float w, float h,
             [MarshalAs(UnmanagedType.LPWStr)] string path, float r, float g, float b, float a);
+#endif
 
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "UIPushClip")]
         private static extern void UIPushClipNative(float x, float y, float w, float h);

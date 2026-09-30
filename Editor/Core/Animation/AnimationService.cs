@@ -53,20 +53,37 @@ namespace Editor.Core.Animation
             // composed onto the animated pose each frame BEFORE hierarchy multiplication so a delta carries all
             // descendants (spine pitch -> chest+arms+weapon rotate as one). null/empty = no override (fast path).
             public Dictionary<int, Quaternion> BoneAdditive;
+            public Dictionary<int, Quaternion> ComponentAdditive;   // editor-authored HandPose finger curls (rebuilt every sync)
             public Dictionary<int, float> BoneScale;   // runtime per-bone scale multiplier (0 = hide, e.g. FP legs/head)
+            public HashSet<int> BoneHiddenSelf;        // bones collapsed WITHOUT their descendants (FP torso: spine hidden, arms kept)
             // Runtime two-bone IK (#179): resolved chains from the entity's TwoBoneIk components,
             // re-synced every Step (and on inspector edits via RefreshIk). null/empty = fast path.
             public List<IkChainRuntime> IkChains;
+            // Script-driven WORLD-space IK targets per tip node (Animation.SetIkTarget): the support hand
+            // reaching for a mag well, a hand on a door handle. Converted to model space at solve time
+            // (after the scripts moved the rig this frame). null/empty = component targets only.
+            public Dictionary<int, IkWorldTarget> IkWorldTargets;
             // Auto-grip (#179): the CAPTURED tip-relative-to-target matrix per tip node, taken from the
             // animation's natural grip on the first frame and held after. Persists across Steps (the
             // chain runtime list is rebuilt each Step); cleared by RefreshIk on config edits.
             public Dictionary<int, Matrix4x4> IkCapturedGrips;
         }
 
+        /// <summary>A script-supplied world-space IK target (position, optional orientation).</summary>
+        private class IkWorldTarget
+        {
+            public Vector3 Pos;
+            public Quaternion Rot;
+            public bool HasRot;
+        }
+
         /// <summary>Resolved runtime form of one TwoBoneIk component (node indices + quaternion offset).</summary>
         private class IkChainRuntime
         {
             public int Tip, Mid, Root, Target;
+            public bool HasWorldTarget;        // script target overrides the bone-relative one this Step
+            public bool WorldTargetHasRot;
+            public Matrix4x4 WorldTargetModel; // the script target, already in model space
             public Vector3 OffsetPos;          // target-bone-local grip position (model units)
             public Quaternion OffsetRot;       // target-bone-local grip orientation
             public float Weight;
@@ -302,10 +319,12 @@ namespace Editor.Core.Animation
             // #179: refresh the runtime IK chains from the entity's TwoBoneIk components each Step so
             // inspector edits and script SetIkWeight take effect immediately.
             SyncIkChains(entity, state);
+            SyncHandPoses(entity, state);
 
             // #178: a runtime bone override must re-pose every frame even on a static/held clip (look up/down
             // while standing still), so it counts as "active" for the re-evaluation gate. Same for IK (#179).
             bool overridesActive = (state.BoneAdditive != null && state.BoneAdditive.Count > 0)
+                                || (state.ComponentAdditive != null && state.ComponentAdditive.Count > 0)
                                 || (state.BoneScale != null && state.BoneScale.Count > 0)
                                 || (state.IkChains != null && state.IkChains.Count > 0);
             if (!baseActive && !layersActive && !overridesActive) return;
@@ -653,6 +672,23 @@ namespace Editor.Core.Animation
         }
 
         /// <summary>Clear every runtime bone-rotation override on an entity's animator (back to the pure clip pose).</summary>
+        /// <summary>Hide/show one bone's vertices. includeDescendants = the whole limb below it (same as a 0 scale
+        /// override); false = ONLY this bone — the first-person torso trick: collapse Hips/Spine/Shoulders while the
+        /// arm bones hanging off them keep rendering.</summary>
+        public void SetBoneHidden(ECS.GameEntity entity, string bone, bool hidden, bool includeDescendants)
+        {
+            if (includeDescendants) { SetBoneScaleOverride(entity, bone, hidden ? 0f : 1f); return; }
+            if (entity == null || string.IsNullOrEmpty(bone)) return;
+            var state = GetOrCreateState(entity);
+            if (state?.Skeleton == null) return;
+            int node = state.Skeleton.FindNode(bone);
+            if (node < 0) return;
+            if (hidden) (state.BoneHiddenSelf = state.BoneHiddenSelf ?? new HashSet<int>()).Add(node);
+            else state.BoneHiddenSelf?.Remove(node);
+            HasActiveAnimators = true;
+            if (state.Palette != null) state.Palette = EvaluateStatePalette(state);
+        }
+
         public void ClearBoneOverrides(ECS.GameEntity entity)
         {
             if (entity != null && _states.TryGetValue(entity.Id, out var s) && s.BoneAdditive != null && s.BoneAdditive.Count > 0)
@@ -674,7 +710,46 @@ namespace Editor.Core.Animation
         /// <summary>Rebuild the state's IK chain list from the entity's TwoBoneIk components. Called per
         /// Step and from <see cref="RefreshIk"/>, so inspector edits and script SetIkWeight apply the
         /// same frame. Chains resolve tip -> (mid = parent, root = grandparent); invalid ones drop out.</summary>
-        private static void SyncIkChains(ECS.GameEntity entity, AnimatorState state)
+        /// <summary>Rebuild the finger-curl additives from the entity's HandPose components (editor-authored grips):
+        /// per finger joint an additive rotation around the joint's local curl axis. Runs every Step (and on
+        /// RefreshIk for the edit-mode preview) so inspector edits show immediately.</summary>
+        private void SyncHandPoses(ECS.GameEntity entity, AnimatorState state)
+        {
+            Dictionary<int, Quaternion> add = null;
+            var skel = state.Skeleton;
+            var comps = entity?.Components;
+            if (skel != null && comps != null)
+            {
+                for (int i = 0; i < comps.Count; i++)
+                {
+                    var hp = comps[i] as ECS.Components.Animation.HandPose;
+                    if (hp == null || !hp.IsEnabled || hp.Weight <= 0.0005f) continue;
+                    for (int f = 0; f < ECS.Components.Animation.HandPose.Fingers.Length; f++)
+                    {
+                        var curl = hp.CurlOf(f);
+                        for (int j = 1; j <= 3; j++)
+                        {
+                            int node = skel.FindNode(hp.BoneName(ECS.Components.Animation.HandPose.Fingers[f], j));
+                            if (node < 0) continue;
+                            float deg = (j == 1 ? curl.X : (j == 2 ? curl.Y : curl.Z)) * hp.CurlSign * hp.Weight;
+                            float spread = (j == 1 && f < 4 && hp.Spread != 0f) ? hp.Spread * ((f - 1.5f) / 1.5f) * hp.Weight : 0f;
+                            Vector3 e;
+                            if (hp.CurlAxis == 0) e = new Vector3(deg, 0f, spread);
+                            else if (hp.CurlAxis == 1) e = new Vector3(spread, deg, 0f);
+                            else e = new Vector3(0f, spread, deg);
+                            if (deg == 0f && spread == 0f) continue;
+                            var q = EulerToQuat(e);
+                            if (add == null) add = new Dictionary<int, Quaternion>();
+                            if (add.TryGetValue(node, out var prev)) q = Quaternion.Normalize(q * prev);
+                            add[node] = q;
+                        }
+                    }
+                }
+            }
+            state.ComponentAdditive = add;
+        }
+
+        private void SyncIkChains(ECS.GameEntity entity, AnimatorState state)
         {
             List<IkChainRuntime> chains = null;
             var skel = state.Skeleton;
@@ -713,7 +788,60 @@ namespace Editor.Core.Animation
                     });
                 }
             }
+            // Script world-space targets (Animation.SetIkTarget) ride on the component's chain definition:
+            // convert them into the rig's model space with the entity world of THIS frame.
+            if (chains != null && state.IkWorldTargets != null && state.IkWorldTargets.Count > 0)
+            {
+                Matrix4x4 invWorld = Matrix4x4.Identity;
+                bool haveInv = false;
+                for (int i = 0; i < chains.Count; i++)
+                {
+                    var ch = chains[i];
+                    if (!state.IkWorldTargets.TryGetValue(ch.Tip, out var wt)) continue;
+                    if (!haveInv)
+                    {
+                        var meshEntity = FindSkinnedMeshEntity(entity) ?? entity;
+                        haveInv = Matrix4x4.Invert(BoneSocketService.EntityWorld(meshEntity), out invWorld);
+                        if (!haveInv) break;
+                    }
+                    var worldM = Matrix4x4.CreateFromQuaternion(wt.HasRot ? wt.Rot : Quaternion.Identity);
+                    worldM.Translation = wt.Pos;
+                    ch.WorldTargetModel = worldM * invWorld;
+                    ch.HasWorldTarget = IsFinite(ch.WorldTargetModel);
+                    ch.WorldTargetHasRot = wt.HasRot;
+                    if (_ikDebug && _ikDebugCount < 6)
+                        Services.ConsoleService.Instance?.Log("[IK] sync chain tip=" + ch.Tip + " worldTarget=" + wt.Pos + " modelTarget=" + ch.WorldTargetModel.Translation + " finite=" + ch.HasWorldTarget + " weight=" + ch.Weight);
+                }
+            }
             state.IkChains = chains;
+        }
+
+        /// <summary>Script API: pull a TwoBoneIk chain (selected by its tip bone) to a WORLD-space target
+        /// until cleared — the chain's component still defines the limb and the weight. rot = null keeps
+        /// the animated wrist orientation.</summary>
+        public void SetIkWorldTarget(ECS.GameEntity entity, string tipBone, Vector3 worldPos, Quaternion? worldRot)
+        {
+            if (entity == null || string.IsNullOrEmpty(tipBone)) return;
+            var state = GetOrCreateState(entity);
+            if (state?.Skeleton == null) return;
+            int node = state.Skeleton.FindNode(tipBone);
+            if (node < 0) return;
+            if (state.IkWorldTargets == null) state.IkWorldTargets = new Dictionary<int, IkWorldTarget>();
+            if (!state.IkWorldTargets.TryGetValue(node, out var wt)) state.IkWorldTargets[node] = wt = new IkWorldTarget();
+            wt.Pos = worldPos;
+            wt.HasRot = worldRot.HasValue;
+            wt.Rot = worldRot ?? Quaternion.Identity;
+            HasActiveAnimators = true;
+            if (_ikDebug && _ikDebugCount < 6) Services.ConsoleService.Instance?.Log("[IK] set target on '" + entity.Name + "' node=" + node + " pos=" + worldPos + " chains=" + (state.IkChains != null ? state.IkChains.Count : -1));
+        }
+
+        public void ClearIkWorldTarget(ECS.GameEntity entity, string tipBone)
+        {
+            if (entity == null) return;
+            if (!_states.TryGetValue(entity.Id, out var state) || state.IkWorldTargets == null) return;
+            if (string.IsNullOrEmpty(tipBone)) { state.IkWorldTargets.Clear(); return; }
+            int node = state.Skeleton != null ? state.Skeleton.FindNode(tipBone) : -1;
+            if (node >= 0) state.IkWorldTargets.Remove(node);
         }
 
         /// <summary>Edit-mode live preview + runtime weight changes: re-sync and re-pose one entity's
@@ -726,6 +854,7 @@ namespace Editor.Core.Animation
             if (state?.Skeleton == null) return;
             state.IkCapturedGrips = null;   // config changed -> recapture the auto-grip from the fresh pose
             SyncIkChains(entity, state);
+            SyncHandPoses(entity, state);
             HasActiveAnimators = true;
             state.Palette = EvaluateStatePalette(state);
             Services.SceneRenderService.RuntimeDirty = true;   // GameHost/submit-once re-submit contract
@@ -757,12 +886,17 @@ namespace Editor.Core.Animation
             Matrix4x4 baseTarget = (ik.AutoGrip && ik.HasCapturedGrip)
                 ? ik.CapturedGrip * worlds[ik.Target]
                 : worlds[ik.Target];
-            Matrix4x4 targetM = offM * baseTarget;
+            Matrix4x4 targetM = ik.HasWorldTarget ? ik.WorldTargetModel : offM * baseTarget;
             Vector3 target = targetM.Translation;
 
             Vector3 a = worlds[ik.Root].Translation;
             Vector3 b = worlds[ik.Mid].Translation;
             Vector3 c = worlds[ik.Tip].Translation;
+            if (_ikDebug && ik.HasWorldTarget && _ikDebugCount < 6)
+            {
+                _ikDebugCount++;
+                Services.ConsoleService.Instance?.Log("[IK] solve root=" + a + " mid=" + b + " tip=" + c + " target=" + target + " w=" + w + " autoGrip=" + ik.AutoGrip);
+            }
 
             float l1 = (b - a).Length(), l2 = (c - b).Length();
             if (l1 < 1e-5f || l2 < 1e-5f) return false;
@@ -773,8 +907,10 @@ namespace Editor.Core.Animation
             float minReach = Math.Abs(l1 - l2) * 1.0001f + 1e-4f;
             float reach = Math.Max(minReach, Math.Min(maxReach, dist));
 
-            // (1) elbow angle via law of cosines. +angle around cross(u,v) moves v TOWARD u (closes the
-            // joint), so the delta from current->wanted interior angle is (angCur - angWant).
+            // (1) elbow angle via law of cosines. A right-hand rotation of v around cross(u,v) moves v AWAY
+            // from u (opens the joint), so closing the joint from the current to the wanted interior angle is
+            // the delta (angWant - angCur). (The old (angCur - angWant) opened the joint instead - invisible
+            // with auto-grip targets, where the delta is ~0, but it left script IK targets unreachable.)
             Vector3 u = Vector3.Normalize(a - b);
             Vector3 v = Vector3.Normalize(c - b);
             float cosCur = ClampF(Vector3.Dot(u, v), -1f, 1f);
@@ -790,7 +926,7 @@ namespace Editor.Core.Animation
                 if (bendAxis.LengthSquared() < 1e-8f) bendAxis = Vector3.UnitX;
             }
             bendAxis = Vector3.Normalize(bendAxis);
-            float dElbow = (angCur - angWant) * w;
+            float dElbow = (angWant - angCur) * w;
             if (Math.Abs(dElbow) > 1e-5f)
             {
                 ApplyWorldRotationDelta(skel, r, worlds, ik.Mid, Quaternion.CreateFromAxisAngle(bendAxis, dElbow));
@@ -826,7 +962,7 @@ namespace Editor.Core.Animation
             }
 
             // (4) tip orientation: take the grip rotation (q_world = qp * q_local -> q_local = qp?¹ * qT).
-            if (ik.ApplyTipRotation)
+            if (ik.ApplyTipRotation && (!ik.HasWorldTarget || ik.WorldTargetHasRot))
             {
                 Quaternion qT = Quaternion.CreateFromRotationMatrix(NormalizeBasis(targetM));
                 int par = skel.Nodes[ik.Tip].Parent;
@@ -867,6 +1003,8 @@ namespace Editor.Core.Animation
         private static float ClampF(float v, float lo, float hi) => v < lo ? lo : (v > hi ? hi : v);
 
         /// <summary>NaN/Inf checks for the IK guard — one non-finite value in a palette hides the whole mesh.</summary>
+        private static readonly bool _ikDebug = Environment.GetEnvironmentVariable("VORTEX_IK_DEBUG") == "1";
+        private static int _ikDebugCount;
         private static bool IsFinite(float v) => !float.IsNaN(v) && !float.IsInfinity(v);
         private static bool IsFinite(Quaternion q) => IsFinite(q.X) && IsFinite(q.Y) && IsFinite(q.Z) && IsFinite(q.W);
         private static bool IsFinite(Matrix4x4 m) =>
@@ -1023,12 +1161,24 @@ namespace Editor.Core.Animation
                 }
             }
 
+            // Editor-authored finger curls (HandPose components): the same local additive, composed after the
+            // script deltas so a component and a script can both touch a hand without fighting the base pose.
+            if (state.ComponentAdditive != null && state.ComponentAdditive.Count > 0)
+            {
+                foreach (var kv in state.ComponentAdditive)
+                {
+                    int i = kv.Key;
+                    if (i < 0 || i >= n) continue;
+                    r[i] = Quaternion.Normalize(kv.Value * r[i]);
+                }
+            }
+
             // Runtime bone scale: values >= 0.01 scale the POSE (children follow, classic behaviour).
             // The HIDE case (0 = collapse the limb, FP legs/head) is NOT applied here any more — a
             // zero pose-scale degenerates the node worlds that the IK solver and bone sockets read
             // (the hide+IK combination rendered the whole mesh invisible). Hidden bones are zeroed on
             // the FINAL palette instead (below), which only the GPU skinning sees.
-            bool anyHidden = false;
+            bool anyHidden = state.BoneHiddenSelf != null && state.BoneHiddenSelf.Count > 0;
             if (state.BoneScale != null && state.BoneScale.Count > 0)
             {
                 foreach (var kv in state.BoneScale)
@@ -1086,8 +1236,10 @@ namespace Editor.Core.Animation
                 {
                     var ch = state.IkChains[ci];
                     if (rBackup == null) { rBackup = new Quaternion[r.Length]; Array.Copy(r, rBackup, r.Length); }
-                    if (SolveTwoBoneIk(skel, t, r, s, worlds, ch))
-                        worlds = ComposeWorlds(skel, t, r, s);
+                    bool solved = SolveTwoBoneIk(skel, t, r, s, worlds, ch);
+                    if (solved) worlds = ComposeWorlds(skel, t, r, s);
+                    if (_ikDebug && ch.HasWorldTarget && _ikDebugCount <= 6)
+                        Services.ConsoleService.Instance?.Log("[IK] after solve=" + solved + " tip=" + worlds[ch.Tip].Translation + " target=" + ch.WorldTargetModel.Translation + " dist=" + (worlds[ch.Tip].Translation - ch.WorldTargetModel.Translation).Length());
                     bool bad = ch.Tip < worlds.Length && (!IsFinite(worlds[ch.Tip]) || !IsFinite(r[ch.Tip]) ||
                                (ch.Mid < r.Length && !IsFinite(r[ch.Mid])) || (ch.Root < r.Length && !IsFinite(r[ch.Root])));
                     if (bad)
@@ -1112,12 +1264,13 @@ namespace Editor.Core.Animation
                 for (int bi = 0; bi < skel.Bones.Length; bi++)
                 {
                     int node = skel.Bones[bi].NodeIndex;
-                    bool hidden = false;
-                    for (int p = node; p >= 0; p = skel.Nodes[p].Parent)
-                    {
-                        float sv;
-                        if (state.BoneScale.TryGetValue(p, out sv) && sv < 0.01f) { hidden = true; break; }
-                    }
+                    bool hidden = state.BoneHiddenSelf != null && state.BoneHiddenSelf.Contains(node);
+                    if (!hidden && state.BoneScale != null)
+                        for (int p = node; p >= 0; p = skel.Nodes[p].Parent)
+                        {
+                            float sv;
+                            if (state.BoneScale.TryGetValue(p, out sv) && sv < 0.01f) { hidden = true; break; }
+                        }
                     if (hidden)
                     {
                         // Collapse the bone's vertices onto its own POSITION: zero only the 3x3 (rows 1-3)

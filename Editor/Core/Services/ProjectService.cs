@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
+#if !VORTEX_CORE
 using System.Windows;
 using System.Windows.Media.Imaging;
+#endif
 using Editor.Core.Assets;
 using Editor.Core.Data;
 using Editor.Core.Exceptions;
@@ -40,7 +42,7 @@ namespace Editor.Core.Services
 
         private ProjectService()
         {
-            _appDataPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "VortexEngine");
+            _appDataPath = Path.Combine(Editor.Core.Services.EditorPaths.AppDataRoot(), "VortexEngine");
             _defaultProjectsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "VortexEngineProjects");
             _registryFilePath = Path.Combine(_appDataPath, "projects.json");
 
@@ -52,6 +54,12 @@ namespace Editor.Core.Services
         /// Gibt alle registrierten Projekte zur�ck
         /// </summary>
         public Dictionary<Guid, ProjectRef> GetAllProjects() => _projectRegistry;
+
+        /// <summary>Forget a project in the launcher list (its files stay on disk).</summary>
+        public void UnregisterProject(Guid id)
+        {
+            if (_projectRegistry.Remove(id)) SaveProjectRegistry();
+        }
 
         /// <summary>
         /// L�dt ein Projekt anhand seiner Referenz
@@ -119,13 +127,18 @@ namespace Editor.Core.Services
             // Editor-only compatibility gate: migrate an older-format project (with a backup) or warn on a project
             // saved by a NEWER engine, before it loads. The shipped game's pak is read-only + has no UI, so skip
             // when mounted. Up-to-date projects (the common case) pass through with no dialog.
+#if VORTEX_CORE
+            if (!AssetVfs.IsMounted) CompatibilityGate?.Invoke(projectPath, manifest, manifestPath);
+#else
             if (!AssetVfs.IsMounted)
                 Editor.Dialogs.ProjectMigrationDialog.EnsureCompatible(projectPath, manifest, manifestPath);
+#endif
 
             // Erstelle ProjectData aus Manifest
             var project = new ProjectData(manifest.Id, projectPath, manifest.Name)
             {
                 LastModified = manifest.LastModified,
+                Settings = manifest.Settings ?? new ProjectSettings(),
                 ImagePath = manifest.ThumbnailPath,
                 StartSceneId = manifest.StartSceneId // round-trip the boot scene so editor saves preserve it
             };
@@ -400,6 +413,7 @@ namespace Editor.Core.Services
                     // Stamp the version the project was saved with, so the migration gate can check it on open.
                     EngineVersion = Editor.Core.EngineInfo.VersionString,
                     FormatVersion = Editor.Core.EngineInfo.CurrentProjectFormatVersion,
+                    Settings = project.Settings ?? new ProjectSettings(),
                 };
 
                 // Füge Szenen-Referenzen hinzu
@@ -700,6 +714,26 @@ namespace Editor.Core.Services
             }
         }
 
+#if VORTEX_CORE
+        /// <summary>Editor shells install their migration/compatibility gate here (the player skips it).</summary>
+        public static Action<string, Data.ProjectManifest, string> CompatibilityGate;
+        /// <summary>Editor shells install a PNG writer for the default project icon (resource key, output path).</summary>
+        public static Func<string, string, bool> IconWriter;
+
+        private string SaveIconFromResources(string resourceKey, string projectPath, string fileName = "icon.png")
+        {
+            try
+            {
+                string iconPath = Path.Combine(projectPath, ".ve", fileName);
+                return (IconWriter != null && IconWriter(resourceKey, iconPath)) ? iconPath : null;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Fehler beim Speichern des Icons: {ex.Message}");
+                return null;
+            }
+        }
+#else
         private string SaveIconFromResources(string resourceKey, string projectPath, string fileName = "icon.png")
         {
             try
@@ -725,5 +759,6 @@ namespace Editor.Core.Services
                 return null;
             }
         }
+#endif
     }
 }

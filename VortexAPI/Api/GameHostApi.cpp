@@ -24,6 +24,7 @@ EDITOR_INTERFACE int  GameHostMouseDY() { return runtime::GameHost::mouse_dy(); 
 // Retained-UI input: wheel notches this frame; next typed char (-1 if none); next edge-pressed VK (0 if none).
 EDITOR_INTERFACE int  GameHostMouseWheel() { return runtime::GameHost::mouse_wheel(); }
 EDITOR_INTERFACE bool GameHostConsumeFocusGained() { return runtime::GameHost::consume_focus_gained(); } // Alt-Tab back -> hot-reload
+EDITOR_INTERFACE bool GameHostHasFocus() { return runtime::GameHost::has_focus(); }   // input gating for the managed layer
 EDITOR_INTERFACE int  GameHostNextChar() { return runtime::GameHost::next_char(); }
 EDITOR_INTERFACE int  GameHostNextKeyPressed() { return runtime::GameHost::next_key_pressed(); }
 // Borderless-fullscreen toggle (also F11 natively) for the settings menu.
@@ -31,40 +32,46 @@ EDITOR_INTERFACE void GameHostToggleFullscreen() { runtime::GameHost::toggle_ful
 EDITOR_INTERFACE bool GameHostIsFullscreen() { return runtime::GameHost::is_fullscreen(); }
 // Settings menu: window resolution (windowed only) + render-scale (stored; applied by the scaled-RT upscale pass).
 EDITOR_INTERFACE void GameHostSetResolution(int w, int h) { runtime::GameHost::set_resolution((uint32_t)w, (uint32_t)h); }
-EDITOR_INTERFACE void SetRenderScale(float s) { graphics::dx12::DX12Renderer::instance().set_render_scale(s); }
-EDITOR_INTERFACE float GetRenderScale() { return graphics::dx12::DX12Renderer::instance().render_scale(); }
+EDITOR_INTERFACE void SetRenderScale(float s) { graphics::Renderer::instance().set_render_scale(s); }
+EDITOR_INTERFACE float GetRenderScale() { return graphics::Renderer::instance().render_scale(); }
 
 // DLSS mode: 0=off, 1=Quality, 2=Balanced, 3=Performance, 4=UltraPerformance. Drives the render-scale + the
 // slEvaluateFeature upscale slot. Only visible on DLSS-capable GPUs (else the bilinear render-scale upscale).
-EDITOR_INTERFACE void SetDlssMode(int mode) { graphics::dx12::DX12Renderer::instance().set_dlss_mode(mode); }
-EDITOR_INTERFACE int GetDlssMode() { return graphics::dx12::DX12Renderer::instance().dlss_mode(); }
+EDITOR_INTERFACE void SetDlssMode(int mode) { graphics::Renderer::instance().set_dlss_mode(mode); }
+EDITOR_INTERFACE int GetDlssMode() { return graphics::Renderer::instance().dlss_mode(); }
 
 // DLSS Frame Generation (separate from SR): 0=off, 1=x2, 2=x3, 3=x4 AI frames inserted at Present. Needs Reflex
 // (enabled internally). FrameGenPresentedFps reports DLSSGState.numFramesActuallyPresented for the HUD readout —
 // the engine's own FPS counts only REAL frames, so this is how the generated frames become visible.
-EDITOR_INTERFACE void SetFrameGenMode(int mode) { graphics::dx12::DX12Renderer::instance().set_fg_mode(mode); }
-EDITOR_INTERFACE int GetFrameGenMode() { return graphics::dx12::DX12Renderer::instance().fg_mode(); }
-EDITOR_INTERFACE int FrameGenPresentedFps() { return graphics::dx12::DX12Renderer::instance().fg_presented_fps(); }
+EDITOR_INTERFACE void SetFrameGenMode(int mode) { graphics::Renderer::instance().set_fg_mode(mode); }
+EDITOR_INTERFACE int GetFrameGenMode() { return graphics::Renderer::instance().fg_mode(); }
+EDITOR_INTERFACE int FrameGenPresentedFps() { return graphics::Renderer::instance().fg_presented_fps(); }
 
 // Per-material custom shaders: bind a .hlsl (absolute path) to a material so the 3D pass uses a per-material PSO;
 // empty path clears it (revert to built-in). ReloadMaterialShaders recompiles any whose .hlsl changed on disk
 // (hot-reload; call on window focus or before a material-preview render).
 EDITOR_INTERFACE void SetMaterialShader(int material_id, const char* hlsl_path)
 {
+#if VORTEX_HAS_DX12
 	std::wstring w;
 	if (hlsl_path && *hlsl_path)
 	{
 		int n = MultiByteToWideChar(CP_UTF8, 0, hlsl_path, -1, nullptr, 0);
 		if (n > 1) { w.resize(n - 1); MultiByteToWideChar(CP_UTF8, 0, hlsl_path, -1, &w[0], n); }
 	}
-	graphics::dx12::DX12Renderer::instance().set_material_shader((uint32_t)material_id, w);
+	graphics::Renderer::instance().set_material_shader((uint32_t)material_id, w);
+#else
+	// SDL GPU backend: custom material shaders are .metal (MSL) files on macOS; .hlsl is not compiled there.
+	graphics::Renderer::instance().set_material_shader((uint32_t)material_id, std::string(hlsl_path ? hlsl_path : ""));
+#endif
 }
-EDITOR_INTERFACE int ReloadMaterialShaders() { return graphics::dx12::DX12Renderer::instance().reload_dirty_shaders(); }
+EDITOR_INTERFACE int ReloadMaterialShaders() { return graphics::Renderer::instance().reload_dirty_shaders(); }
 // Cheap no-compile check so the editor only shows the hot-reload overlay when a shader ACTUALLY changed on disk.
-EDITOR_INTERFACE bool AnyMaterialShaderDirty() { return graphics::dx12::DX12Renderer::instance().any_material_shader_dirty(); }
+EDITOR_INTERFACE bool AnyMaterialShaderDirty() { return graphics::Renderer::instance().any_material_shader_dirty(); }
 
 // GPU capability — the DLSS hardware gate. The options UI shows DLSS only when GpuSupportsDlss() is true; on
 // every other machine the render-scale slider is the universal fallback.
+#if VORTEX_HAS_DX12
 EDITOR_INTERFACE int GpuVendorId() { return (int)graphics::dx12::DX12Core::instance().adapter_vendor_id(); }
 EDITOR_INTERFACE bool GpuSupportsDlss() { return graphics::dx12::DX12Core::instance().dlss_capable(); }
 EDITOR_INTERFACE int GpuName(char* buf, int cap)
@@ -75,5 +82,24 @@ EDITOR_INTERFACE int GpuName(char* buf, int cap)
 	if (n < 0) n = 0; if (n > cap - 1) n = cap - 1;
 	buf[n] = '\0';
 	return n;
+}
+#else
+EDITOR_INTERFACE int GpuVendorId() { return (int)graphics::Renderer::instance().gpu_vendor_id(); }
+EDITOR_INTERFACE bool GpuSupportsDlss() { return graphics::Renderer::instance().dlss_capable(); }
+EDITOR_INTERFACE int GpuName(char* buf, int cap)
+{
+	if (!buf || cap <= 0) return 0;
+	const std::string& name = graphics::Renderer::instance().gpu_name();
+	int n = (int)name.size(); if (n > cap - 1) n = cap - 1;
+	memcpy(buf, name.data(), (size_t)n);
+	buf[n] = '\0';
+	return n;
+}
+#endif
+
+// UTF-8 twin of RunGameHost for hosts where wchar_t is not UTF-16 (macOS/Linux .NET). Same semantics.
+EDITOR_INTERFACE bool RunGameHostUtf8(unsigned int width, unsigned int height, const char* title_utf8)
+{
+	return runtime::GameHost::run_utf8(width, height, title_utf8);
 }
 

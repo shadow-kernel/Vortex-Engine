@@ -1,6 +1,6 @@
 #include "Transform.h"
 #include "Entity.h"
-#include "..\Utilities\MathTypes.h"
+#include "../Utilities/MathTypes.h"
 
 namespace vortex::transform {
 	
@@ -9,7 +9,7 @@ namespace vortex::transform {
 	static util::vector<math::v3> scales;
 
 
-	component vortex::transform::create_transform(const init_info& transform_init_info, game_entity::entity entity)
+	component create_transform(const init_info& transform_init_info, game_entity::entity entity)
 	{
 		assert(entity.is_valid());
 		const id::id_type entity_index{ id::index(entity.get_id()) };
@@ -31,7 +31,7 @@ namespace vortex::transform {
 		return component{ transform_id{ (id::id_type) positions.size() - 1 }};
 	}
 
-	void vortex::transform::set_transform(game_entity::entity entity, const init_info& transform_init_info)
+	void set_transform(game_entity::entity entity, const init_info& transform_init_info)
 	{
 		assert(entity.is_valid());
 		const id::id_type entity_index{ id::index(entity.get_id()) };
@@ -46,7 +46,7 @@ namespace vortex::transform {
 		}
 	}
 
-	void vortex::transform::remove_transform(component component)
+	void remove_transform(component component)
 	{
 		assert(component.is_valid());
 	}

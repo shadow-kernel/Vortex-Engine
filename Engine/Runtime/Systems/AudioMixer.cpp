@@ -9,10 +9,14 @@
 #include <mutex>
 #include <vector>
 
+#ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable: 4244 4245 4456 4457 4701 4267 4100 4189)
+#endif
 #include "../../ThirdParty/miniaudio.h"
+#ifdef _MSC_VER
 #pragma warning(pop)
+#endif
 
 namespace vortex::runtime::audio {
 

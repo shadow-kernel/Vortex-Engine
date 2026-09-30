@@ -1,0 +1,102 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:c="clr-namespace:VortexEditor.Controls"
+        x:Class="VortexEditor.Shell.ProjectHubWindow"
+        Title="Vortex" Width="960" Height="640" MinWidth="820" MinHeight="520" WindowStartupLocation="CenterOwner"
+        ExtendClientAreaToDecorationsHint="True" ExtendClientAreaTitleBarHeightHint="44" Background="{DynamicResource VxWindowBrush}">
+  <Grid ColumnDefinitions="220,*">
+    <!-- sidebar -->
+    <Border Classes="sidebar hairline-right">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Top" Margin="16,56,16,20" Spacing="4">
+          <c:VxIcon Icon="Vortex" Width="40" Height="40" Foreground="{DynamicResource VxAccentBrush}" HorizontalAlignment="Left"/>
+          <TextBlock Text="Vortex Engine" Classes="title" Margin="0,8,0,0"/>
+          <TextBlock x:Name="VersionText" Text="" Classes="small tertiary"/>
+        </StackPanel>
+        <ListBox x:Name="Nav" Margin="8,0" SelectionChanged="OnNavChanged">
+          <ListBoxItem><StackPanel Orientation="Horizontal" Spacing="8"><c:VxIcon Icon="Folder"/><TextBlock Text="Open"/></StackPanel></ListBoxItem>
+          <ListBoxItem><StackPanel Orientation="Horizontal" Spacing="8"><c:VxIcon Icon="Sparkle"/><TextBlock Text="Create"/></StackPanel></ListBoxItem>
+        </ListBox>
+      </DockPanel>
+    </Border>
+    <!-- open -->
+    <Grid Grid.Column="1" x:Name="OpenPage" RowDefinitions="Auto,Auto,*,Auto" Margin="28,52,28,20">
+      <TextBlock Text="Open Project" Classes="large"/>
+      <StackPanel Grid.Row="1" Margin="0,14,0,10" Spacing="10">
+        <Border x:Name="LastProjectCard" Classes="card" IsVisible="False" Padding="12,10">
+          <DockPanel>
+            <Button DockPanel.Dock="Right" Content="Continue" Classes="accent" MinWidth="100" Click="OnContinueLast"/>
+            <StackPanel VerticalAlignment="Center">
+              <TextBlock Text="Last project" Classes="small tertiary"/>
+              <TextBlock x:Name="LastProjectName" FontWeight="SemiBold"/>
+              <TextBlock x:Name="LastProjectPath" Classes="small tertiary"/>
+            </StackPanel>
+          </DockPanel>
+        </Border>
+        <DockPanel>
+          <Button DockPanel.Dock="Right" Content="Open Folder…" Click="OnBrowseProject" Margin="8,0,0,0"/>
+          <TextBox x:Name="SearchBox" Classes="search" Watermark="Search projects" TextChanged="OnSearchChanged"/>
+        </DockPanel>
+      </StackPanel>
+      <ListBox x:Name="ProjectList" Grid.Row="2" DoubleTapped="OnProjectDoubleTapped">
+        <ListBox.ItemTemplate>
+          <DataTemplate>
+            <Grid ColumnDefinitions="44,*,Auto" Height="48">
+              <Border Width="36" Height="36" CornerRadius="8" Background="{DynamicResource VxAccentSoftBrush}" VerticalAlignment="Center">
+                <Image Source="{Binding Thumbnail}" Stretch="UniformToFill" IsVisible="{Binding HasThumbnail}"/>
+              </Border>
+              <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="10,0">
+                <TextBlock Text="{Binding Name}" FontWeight="SemiBold"/>
+                <TextBlock Text="{Binding Path}" Classes="small tertiary"/>
+              </StackPanel>
+              <TextBlock Grid.Column="2" Text="{Binding Modified}" Classes="small tertiary" VerticalAlignment="Center"/>
+            </Grid>
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+      <DockPanel Grid.Row="3" Margin="0,12,0,0">
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8">
+          <Button Content="Remove from list" Click="OnRemoveProject"/>
+          <Button Content="Open" Classes="accent" MinWidth="90" Click="OnOpenSelected"/>
+        </StackPanel>
+        <CheckBox x:Name="AutoOpenBox" Content="Open the last project automatically at start" VerticalAlignment="Center" IsCheckedChanged="OnAutoOpenChanged"/>
+      </DockPanel>
+    </Grid>
+    <!-- create -->
+    <Grid Grid.Column="1" x:Name="CreatePage" IsVisible="False" ColumnDefinitions="*,300" RowDefinitions="Auto,*,Auto" Margin="28,52,28,20">
+      <TextBlock Text="Create Project" Classes="large" Grid.ColumnSpan="2"/>
+      <ListBox x:Name="TemplateList" Grid.Row="1" Margin="0,14,14,0" SelectionChanged="OnTemplateChanged">
+        <ListBox.ItemTemplate>
+          <DataTemplate>
+            <StackPanel Margin="2,4">
+              <TextBlock Text="{Binding Name}" FontWeight="SemiBold"/>
+              <TextBlock Text="{Binding Tagline}" Classes="small secondary"/>
+            </StackPanel>
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+      <Border Grid.Row="1" Grid.Column="1" Classes="card" Margin="0,14,0,0">
+        <StackPanel Spacing="10">
+          <Border CornerRadius="8" ClipToBounds="True" Height="150" Background="{DynamicResource VxFieldBrush}">
+            <Panel>
+              <Image x:Name="PreviewImage" Stretch="UniformToFill"/>
+              <c:VxIcon x:Name="PreviewFallback" Icon="Cube" Width="40" Height="40" Foreground="{DynamicResource VxTextTertiaryBrush}"/>
+            </Panel>
+          </Border>
+          <TextBlock x:Name="TemplateName" Classes="title"/>
+          <TextBlock x:Name="TemplateDescription" Classes="secondary small" TextWrapping="Wrap"/>
+          <TextBlock Text="Project name" Classes="label small" Margin="0,8,0,0"/>
+          <TextBox x:Name="NameBox" Text="My Game" TextChanged="OnNameChanged"/>
+          <TextBlock Text="Location" Classes="label small"/>
+          <DockPanel>
+            <Button DockPanel.Dock="Right" Classes="icon" Click="OnBrowseLocation"><c:VxIcon Icon="Folder"/></Button>
+            <TextBox x:Name="LocationBox"/>
+          </DockPanel>
+        </StackPanel>
+      </Border>
+      <StackPanel Grid.Row="2" Grid.ColumnSpan="2" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" Margin="0,12,0,0">
+        <Button Content="Create" Classes="accent" MinWidth="90" Click="OnCreate"/>
+      </StackPanel>
+    </Grid>
+  </Grid>
+</Window>

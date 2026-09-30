@@ -1,7 +1,7 @@
 #pragma once
 
-#include "..\Components\ComponentsCommon.h"
-#include "..\Utilities\MathTypes.h"
+#include "../Components/ComponentsCommon.h"
+#include "../Utilities/MathTypes.h"
 
 namespace vortex::transform {
 

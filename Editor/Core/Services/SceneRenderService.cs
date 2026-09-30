@@ -370,7 +370,9 @@ namespace Editor.Core.Services
                     // like OTHER cameras see them — show the third-person body (layer 2) as world geometry,
                     // hide the local first-person viewmodel (layer 1). Takes priority over the play-like FP
                     // behaviour so flying out shows the character cleanly instead of nothing + floating arms.
-                    if (layer == 1) return;
+                    // DebugShowViewmodel inverts that: the freecam inspects the FIRST-PERSON arms + weapon
+                    // (grip / finger placement) as world geometry and hides the body instead.
+                    if (layer == (DebugShowViewmodel ? 2 : 1)) return;
                     layer = 0;
                 }
                 else if (IsPlayLike || EditorViewmodelPreview == ViewmodelPreviewMode.GameView)
@@ -1745,6 +1747,11 @@ namespace Editor.Core.Services
 
         private bool _hasSceneLights = false;
         private bool _hasDirectionalLight = false;
+        /// <summary>With <see cref="DebugThirdPersonView"/>: render the first-person viewmodel (layer 1) as world
+        /// geometry and hide the third-person body — for inspecting the FP arms + weapon from outside
+        /// (VM_DBGCAM_FP=1 in the standalone player).</summary>
+        public static bool DebugShowViewmodel;
+
         private bool _hasSkybox = false;
 
         /// <summary>Ambient strength a game SCRIPT set via Vortex.Lighting.SetAmbient during play. While set,

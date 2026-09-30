@@ -2,23 +2,23 @@
 
 EDITOR_INTERFACE void SetSkyboxEnabled(bool enabled)
 {
-	graphics::dx12::DX12Renderer::instance().set_skybox_enabled(enabled);
+	graphics::Renderer::instance().set_skybox_enabled(enabled);
 }
 
 EDITOR_INTERFACE bool IsSkyboxEnabled()
 {
-	return graphics::dx12::DX12Renderer::instance().is_skybox_enabled();
+	return graphics::Renderer::instance().is_skybox_enabled();
 }
 
 EDITOR_INTERFACE void SetSkyboxMode(unsigned int mode)
 {
-	graphics::dx12::DX12Renderer::instance().set_skybox_mode(
-		static_cast<graphics::dx12::DX12Renderer::SkyboxMode>(mode));
+	graphics::Renderer::instance().set_skybox_mode(
+		static_cast<graphics::Renderer::SkyboxMode>(mode));
 }
 
 EDITOR_INTERFACE unsigned int GetSkyboxMode()
 {
-	return static_cast<unsigned int>(graphics::dx12::DX12Renderer::instance().get_skybox_mode());
+	return static_cast<unsigned int>(graphics::Renderer::instance().get_skybox_mode());
 }
 
 EDITOR_INTERFACE void SetSkyboxColors(
@@ -26,7 +26,7 @@ EDITOR_INTERFACE void SetSkyboxColors(
 	float horizonR, float horizonG, float horizonB,
 	float groundR, float groundG, float groundB)
 {
-	graphics::dx12::DX12Renderer::instance().set_skybox_colors(
+	graphics::Renderer::instance().set_skybox_colors(
 		{ skyR, skyG, skyB },
 		{ horizonR, horizonG, horizonB },
 		{ groundR, groundG, groundB }
@@ -35,12 +35,12 @@ EDITOR_INTERFACE void SetSkyboxColors(
 
 EDITOR_INTERFACE void SetSkyboxSolidColor(float r, float g, float b)
 {
-	graphics::dx12::DX12Renderer::instance().set_skybox_solid_color({ r, g, b });
+	graphics::Renderer::instance().set_skybox_solid_color({ r, g, b });
 }
 
 EDITOR_INTERFACE void SetSkyboxSun(float dirX, float dirY, float dirZ, float colorR, float colorG, float colorB, float intensity)
 {
-	graphics::dx12::DX12Renderer::instance().set_skybox_sun(
+	graphics::Renderer::instance().set_skybox_sun(
 		{ dirX, dirY, dirZ },
 		{ colorR, colorG, colorB },
 		intensity);

@@ -1241,6 +1241,9 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
         private void RegisterPhysicsRecursive(GameEntity e)
         {
             if (e == null) return;
+            // Physics v2 (#100): with a Jolt-enabled engine PhysicsService (built in ScriptRuntime.Begin) simulates
+            // Collider + Rigidbody entities; the native toy AABB bodies only remain for the stub build.
+            if (Editor.DllWrapper.PhysicsNative.Available) return;
 
             var mr = e.GetComponent<Editor.ECS.Components.Rendering.MeshRenderer>();
             if (mr != null && e.Transform != null)

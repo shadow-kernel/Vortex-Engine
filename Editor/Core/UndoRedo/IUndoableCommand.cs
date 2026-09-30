@@ -1,43 +1,43 @@
-using System;
+ï»¿using System;
 
 namespace Editor.Core.UndoRedo
 {
     /// <summary>
-    /// Interface für alle rückgängig machbaren Befehle im Editor.
-    /// Implementiert das Command Pattern für Undo/Redo Funktionalität.
+    /// Interface fÃ¼r alle rÃ¼ckgÃ¤ngig machbaren Befehle im Editor.
+    /// Implementiert das Command Pattern fÃ¼r Undo/Redo FunktionalitÃ¤t.
     /// </summary>
     public interface IUndoableCommand
     {
         /// <summary>
-        /// Eindeutiger Name des Befehls für Anzeigezwecke.
+        /// Eindeutiger Name des Befehls fÃ¼r Anzeigezwecke.
         /// </summary>
         string Name { get; }
 
         /// <summary>
-        /// Führt den Befehl aus.
+        /// FÃ¼hrt den Befehl aus.
         /// </summary>
         void Execute();
 
         /// <summary>
-        /// Macht den Befehl rückgängig.
+        /// Macht den Befehl rÃ¼ckgÃ¤ngig.
         /// </summary>
         void Undo();
 
         /// <summary>
-        /// Führt den Befehl erneut aus (nach einem Undo).
+        /// FÃ¼hrt den Befehl erneut aus (nach einem Undo).
         /// Standard-Implementation ruft Execute() auf.
         /// </summary>
         void Redo();
 
         /// <summary>
-        /// Gibt an, ob dieser Befehl mit dem vorherigen zusammengeführt werden kann.
-        /// Nützlich für kontinuierliche Änderungen wie Slider-Bewegungen.
+        /// Gibt an, ob dieser Befehl mit dem vorherigen zusammengefÃ¼hrt werden kann.
+        /// NÃ¼tzlich fÃ¼r kontinuierliche Ã„nderungen wie Slider-Bewegungen.
         /// </summary>
         bool CanMergeWith(IUndoableCommand other);
 
         /// <summary>
-        /// Führt diesen Befehl mit einem anderen zusammen.
-        /// Gibt den zusammengeführten Befehl zurück.
+        /// FÃ¼hrt diesen Befehl mit einem anderen zusammen.
+        /// Gibt den zusammengefÃ¼hrten Befehl zurÃ¼ck.
         /// </summary>
         IUndoableCommand MergeWith(IUndoableCommand other);
     }

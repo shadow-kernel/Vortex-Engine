@@ -1,0 +1,773 @@
+#include "SdlGpuRenderer.h"
+#include "../../Common/Platform.h"
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+
+namespace vortex::graphics::sdlgpu
+{
+	namespace
+	{
+		struct FrustumPlanes { float p[6][4]; };
+
+		// Six normalized frustum planes from a row-major view-projection (Gribb-Hartmann); inside when a*x+b*y+c*z+d >= 0.
+		FrustumPlanes extract_frustum(const DirectX::XMFLOAT4X4& m)
+		{
+			FrustumPlanes f = { {
+				{ m._14 + m._11, m._24 + m._21, m._34 + m._31, m._44 + m._41 },
+				{ m._14 - m._11, m._24 - m._21, m._34 - m._31, m._44 - m._41 },
+				{ m._14 + m._12, m._24 + m._22, m._34 + m._32, m._44 + m._42 },
+				{ m._14 - m._12, m._24 - m._22, m._34 - m._32, m._44 - m._42 },
+				{ m._13,         m._23,         m._33,         m._43         },
+				{ m._14 - m._13, m._24 - m._23, m._34 - m._33, m._44 - m._43 },
+			} };
+			for (int i = 0; i < 6; ++i)
+			{
+				float a = f.p[i][0], b = f.p[i][1], c = f.p[i][2];
+				float len = sqrtf(a * a + b * b + c * c);
+				if (len > 1e-6f) { f.p[i][0] /= len; f.p[i][1] /= len; f.p[i][2] /= len; f.p[i][3] /= len; }
+			}
+			return f;
+		}
+
+		bool sphere_in_frustum(const FrustumPlanes& f, float cx, float cy, float cz, float r)
+		{
+			for (int i = 0; i < 6; ++i)
+				if (f.p[i][0] * cx + f.p[i][1] * cy + f.p[i][2] * cz + f.p[i][3] < -r) return false;
+			return true;
+		}
+	}
+
+	// ---------------------------------------------------------------------------------------------
+	// Queue
+	// ---------------------------------------------------------------------------------------------
+	void SdlGpuRenderer::submit_render_item(const RenderItem& item)
+	{
+		std::lock_guard<std::mutex> lock(m_queue_mutex);
+		m_submit_queue.push_back(item);
+	}
+
+	void SdlGpuRenderer::submit_gizmo_item(const RenderItem& item)
+	{
+		std::lock_guard<std::mutex> lock(m_queue_mutex);
+		if (m_gizmo_submit.size() < MAX_GIZMO_ITEMS) m_gizmo_submit.push_back(item);
+	}
+
+	void SdlGpuRenderer::submit_gizmo_wire_item(const RenderItem& item)
+	{
+		std::lock_guard<std::mutex> lock(m_queue_mutex);
+		if (m_gizmo_submit.size() + m_gizmo_wire_submit.size() < MAX_GIZMO_ITEMS) m_gizmo_wire_submit.push_back(item);
+	}
+
+	void SdlGpuRenderer::submit_mesh_instances(id::id_type mesh, id::id_type material, const float* world_matrices, u32 count, u32 layer)
+	{
+		if (!world_matrices || count == 0) return;
+		std::lock_guard<std::mutex> lock(m_queue_mutex);
+		m_submit_queue.reserve(m_submit_queue.size() + count);
+		for (u32 i = 0; i < count; ++i)
+		{
+			RenderItem item;
+			item.mesh_id = mesh; item.material_id = material; item.layer = layer;
+			memcpy(&item.world_matrix, world_matrices + (size_t)i * 16, sizeof(DirectX::XMFLOAT4X4));
+			m_submit_queue.push_back(item);
+		}
+	}
+
+	void SdlGpuRenderer::submit_skinned_item(id::id_type mesh, id::id_type material, const float* world_matrix,
+		const float* bone_matrices, u32 bone_count, u32 layer)
+	{
+		if (!world_matrix || !bone_matrices || bone_count == 0) return;
+		std::lock_guard<std::mutex> lock(m_queue_mutex);
+		RenderItem item;
+		item.mesh_id = mesh; item.material_id = material; item.layer = layer;
+		memcpy(&item.world_matrix, world_matrix, sizeof(DirectX::XMFLOAT4X4));
+		const u32 offset = (u32)(m_bone_submit.size() / 16);
+		if (offset + bone_count > MAX_BONE_MATRICES) { m_submit_queue.push_back(item); return; }   // palette full -> bind pose
+		item.bone_offset = offset;
+		item.bone_count = bone_count;
+		m_bone_submit.insert(m_bone_submit.end(), bone_matrices, bone_matrices + (size_t)bone_count * 16);
+		m_submit_queue.push_back(item);
+	}
+
+	void SdlGpuRenderer::clear_render_queue()
+	{
+		std::lock_guard<std::mutex> lock(m_queue_mutex);
+		m_submit_queue.clear();
+		m_bone_submit.clear();
+	}
+
+	void SdlGpuRenderer::swap_render_queue()
+	{
+		std::lock_guard<std::mutex> lock(m_queue_mutex);
+		// Gizmos are re-submitted every frame by the editor: swap unconditionally (empty = no gizmo).
+		m_gizmo_render.swap(m_gizmo_submit); m_gizmo_submit.clear();
+		m_gizmo_wire_render.swap(m_gizmo_wire_submit); m_gizmo_wire_submit.clear();
+		if (m_submit_queue.empty()) return;   // nothing new -> keep last frame's scene (camera-only frames are free)
+		m_render_queue.swap(m_submit_queue);
+		m_submit_queue.clear();
+		m_queue_dirty = true;
+		m_bone_render.swap(m_bone_submit);
+		m_bone_submit.clear();
+		m_bone_upload_pending = true;
+	}
+
+	// ---------------------------------------------------------------------------------------------
+	// Camera / lights
+	// ---------------------------------------------------------------------------------------------
+	void SdlGpuRenderer::set_camera(const DirectX::XMFLOAT3& pos, const DirectX::XMFLOAT3& target, const DirectX::XMFLOAT3& up)
+	{
+		m_camera_position = pos; m_camera_target = target; m_camera_up = up;
+	}
+
+	void SdlGpuRenderer::set_projection(float fov_degrees, float aspect, float near_clip, float far_clip)
+	{
+		m_fov_degrees = fov_degrees; m_aspect_ratio = aspect; m_near_clip = near_clip; m_far_clip = far_clip;
+	}
+
+	void SdlGpuRenderer::set_directional_light(const DirectX::XMFLOAT3& dir, const DirectX::XMFLOAT3& col) { m_light_direction = dir; m_light_color = col; }
+	void SdlGpuRenderer::set_ambient_strength(float s) { m_ambient_strength = s; }
+	void SdlGpuRenderer::clear_lights() { m_point_lights.clear(); m_spot_lights.clear(); }
+
+	void SdlGpuRenderer::set_directional_light_full(const DirectX::XMFLOAT3& direction, const DirectX::XMFLOAT3& color, float intensity,
+		bool cast_shadows, float shadow_strength, float shadow_bias, float shadow_distance)
+	{
+		m_light_direction = direction; m_light_color = color; m_directional_intensity = intensity;
+		m_dir_cast_shadows = cast_shadows;
+		m_dir_shadow_strength = shadow_strength < 0.0f ? 0.0f : (shadow_strength > 1.0f ? 1.0f : shadow_strength);
+		m_dir_shadow_bias = shadow_bias > 0.0f ? shadow_bias : 0.0008f;
+		m_dir_shadow_distance = shadow_distance > 5.0f ? shadow_distance : 5.0f;
+	}
+
+	void SdlGpuRenderer::add_point_light(const PointLightData& light) { if (m_point_lights.size() < MAX_POINT_LIGHTS) m_point_lights.push_back(light); }
+	void SdlGpuRenderer::add_spot_light(const SpotLightData& light) { if (m_spot_lights.size() < MAX_SPOT_LIGHTS) m_spot_lights.push_back(light); }
+
+	void SdlGpuRenderer::set_fog(const DirectX::XMFLOAT3& color, float density, float height_y, float height_falloff)
+	{
+		m_frame_constants.fog_color = color;
+		m_frame_constants.fog_density = density > 0.0f ? density : 0.0f;
+		m_frame_constants.fog_height_y = height_y;
+		m_frame_constants.fog_height_falloff = height_falloff > 0.0f ? height_falloff : 0.0f;
+		m_frame_constants.fog_mode = 0;
+	}
+
+	void SdlGpuRenderer::fill_light_buffer()
+	{
+		using namespace DirectX;
+		LightBufferData& L = m_light_data;
+		memset(&L, 0, sizeof(L));
+		for (size_t i = 0; i < m_point_lights.size() && i < MAX_POINT_LIGHTS; ++i)
+		{
+			L.point_lights[i].position = m_point_lights[i].position;
+			L.point_lights[i].range = m_point_lights[i].range;
+			L.point_lights[i].color = m_point_lights[i].color;
+			L.point_lights[i].intensity = m_point_lights[i].intensity;
+		}
+		for (size_t i = 0; i < m_spot_lights.size() && i < MAX_SPOT_LIGHTS; ++i)
+		{
+			GPUSpotLight& s = L.spot_lights[i];
+			s.position = m_spot_lights[i].position; s.range = m_spot_lights[i].range;
+			XMFLOAT3 dir = m_spot_lights[i].direction;
+			float len = sqrtf(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+			if (len > 0.0001f) { dir.x /= len; dir.y /= len; dir.z /= len; }
+			s.direction = dir;
+			s.spot_angle = m_spot_lights[i].spot_angle;
+			s.color = m_spot_lights[i].color;
+			s.intensity = m_spot_lights[i].intensity;
+			s.inner_spot_angle = m_spot_lights[i].inner_spot_angle;
+			s.shadow_slot = -1.0f;   // prepare_shadow_pass assigns the atlas tiles after the view is known
+		}
+		XMFLOAT4X4 ident; XMStoreFloat4x4(&ident, XMMatrixIdentity());
+		for (auto& m : L.shadow_vp) m = ident;
+		for (auto& m : L.cascade_vp) m = ident;
+		for (auto& m : L.point_face_vp) m = ident;
+		L.point_shadows[0] = L.point_shadows[1] = { -1.0f, 0.0f, 0.0f, 0.0f };
+		L.dir_shadow_params = { m_dir_shadow_strength, m_dir_shadow_bias, 0.0f, 0.0f };
+		L.cascade_splits = { 0.0f, 0.0f, 0.0f, m_dir_shadow_distance };
+	}
+
+	SdlGpuRenderer::FrameView SdlGpuRenderer::build_main_view(u32 width, u32 height)
+	{
+		using namespace DirectX;
+		FrameView v{};
+		XMVECTOR eye = XMLoadFloat3(&m_camera_position);
+		XMVECTOR at = XMLoadFloat3(&m_camera_target);
+		XMVECTOR up = XMLoadFloat3(&m_camera_up);
+		XMMATRIX view = XMMatrixLookAtLH(eye, at, up);
+		const float aspect = (float)width / (float)(height ? height : 1);
+		XMMATRIX proj = XMMatrixPerspectiveFovLH(XMConvertToRadians(m_fov_degrees), aspect, 0.1f, 1000.0f);
+		XMMATRIX vp = view * proj;
+
+		v.frame = m_frame_constants;   // keeps the persistent fog fields
+		XMStoreFloat4x4(&v.frame.view_projection, vp);
+		v.view_projection = v.frame.view_projection;
+		XMStoreFloat4x4(&v.inverse_view_projection, XMMatrixInverse(nullptr, vp));
+		v.frame.camera_position = m_camera_position;
+		v.frame.light_direction = m_light_direction;
+		v.frame.directional_intensity = m_directional_intensity;
+		v.frame.light_color = m_light_color;
+		v.frame.ambient_strength = m_ambient_strength;
+		v.frame.point_light_count = (u32)(std::min)(m_point_lights.size(), (size_t)MAX_POINT_LIGHTS);
+		v.frame.spot_light_count = (u32)(std::min)(m_spot_lights.size(), (size_t)MAX_SPOT_LIGHTS);
+		v.frame.ssao_enabled = 0.0f;
+		v.frame.shadow_map_texel = 1.0f / (float)SHADOW_TILE_SIZE;
+		v.eye = m_camera_position;
+
+		v.viewmodel = v.frame;
+		XMMATRIX vm_proj = XMMatrixPerspectiveFovLH(XMConvertToRadians(m_viewmodel_fov), aspect, 0.1f, 1000.0f);
+		XMStoreFloat4x4(&v.viewmodel.view_projection, view * vm_proj);
+		fill_light_buffer();
+		return v;
+	}
+
+	SdlGpuRenderer::FrameView SdlGpuRenderer::build_camera_view(const ViewportCamera& camera, u32 width, u32 height)
+	{
+		using namespace DirectX;
+		FrameView v{};
+		XMVECTOR eye = XMLoadFloat3(&camera.position);
+		XMVECTOR at = XMLoadFloat3(&camera.target);
+		XMVECTOR up = XMLoadFloat3(&camera.up);
+		XMMATRIX view = XMMatrixLookAtLH(eye, at, up);
+		const float aspect = (float)width / (float)(height ? height : 1);
+		XMMATRIX proj = camera.orthographic
+			? XMMatrixOrthographicLH(camera.ortho_size * aspect, camera.ortho_size, camera.near_clip, camera.far_clip)
+			: XMMatrixPerspectiveFovLH(XMConvertToRadians(camera.fov_degrees), aspect, camera.near_clip, camera.far_clip);
+		XMMATRIX vp = view * proj;
+
+		v.frame = m_frame_constants;
+		XMStoreFloat4x4(&v.frame.view_projection, vp);
+		v.view_projection = v.frame.view_projection;
+		XMStoreFloat4x4(&v.inverse_view_projection, XMMatrixInverse(nullptr, vp));
+		v.frame.camera_position = camera.position;
+		v.frame.light_direction = m_light_direction;
+		v.frame.directional_intensity = m_directional_intensity;
+		v.frame.light_color = m_light_color;
+		v.frame.ambient_strength = m_ambient_strength;
+		v.frame.point_light_count = (u32)(std::min)(m_point_lights.size(), (size_t)MAX_POINT_LIGHTS);
+		v.frame.spot_light_count = (u32)(std::min)(m_spot_lights.size(), (size_t)MAX_SPOT_LIGHTS);
+		v.frame.ssao_enabled = 0.0f;
+		v.frame.shadow_map_texel = 1.0f / (float)SHADOW_TILE_SIZE;
+		v.eye = camera.position;
+		v.viewmodel = v.frame;
+		fill_light_buffer();
+		return v;
+	}
+
+	// ---------------------------------------------------------------------------------------------
+	// CPU side: sort, build runs, cull + pack instances (main-thread; MT cull is a follow-up here)
+	// ---------------------------------------------------------------------------------------------
+	void SdlGpuRenderer::prepare_scene(const FrameView& view)
+	{
+		using namespace DirectX;
+		auto& reg = ResourceRegistry::instance();
+		m_instance_staging.clear();
+		m_instance_count = 0;
+
+		size_t objectCount = (std::min)(m_render_queue.size(), (size_t)MAX_RENDER_OBJECTS);
+		if (m_render_queue.size() > (size_t)MAX_RENDER_OBJECTS) m_render_queue.resize(MAX_RENDER_OBJECTS);
+		if (objectCount == 0) m_draw_runs.clear();
+		m_mt_active = false;
+
+		const bool needRebuild = m_queue_dirty || (m_draw_runs.empty() && objectCount > 0);
+		if (needRebuild && objectCount > 0)
+		{
+			const XMFLOAT3 eye = view.eye;
+			std::sort(m_render_queue.begin(), m_render_queue.end(), [&eye](const RenderItem& a, const RenderItem& b)
+			{
+				if (a.layer != b.layer) return a.layer < b.layer;
+				if (a.material_id != b.material_id) return a.material_id < b.material_id;
+				if (a.mesh_id != b.mesh_id) return a.mesh_id < b.mesh_id;
+				float ax = a.world_matrix._41 - eye.x, ay = a.world_matrix._42 - eye.y, az = a.world_matrix._43 - eye.z;
+				float bx = b.world_matrix._41 - eye.x, by = b.world_matrix._42 - eye.y, bz = b.world_matrix._43 - eye.z;
+				return (ax * ax + ay * ay + az * az) < (bx * bx + by * by + bz * bz);
+			});
+
+			m_draw_runs.clear();
+			m_item_run.resize(objectCount);
+			size_t i = 0;
+			while (i < objectCount)
+			{
+				const auto idMesh = m_render_queue[i].mesh_id;
+				const auto idMat = m_render_queue[i].material_id;
+				const u32 idLayer = m_render_queue[i].layer;
+				const bool skinnedRun = m_render_queue[i].bone_offset != NO_BONES;
+				size_t j = i;
+				if (skinnedRun) j = i + 1;
+				else while (j < objectCount && m_render_queue[j].mesh_id == idMesh && m_render_queue[j].material_id == idMat
+					&& m_render_queue[j].bone_offset == NO_BONES && m_render_queue[j].layer == idLayer) ++j;
+				Mesh* meshp = reg.get_mesh(idMesh);
+				float minx = 0, miny = 0, minz = 0, maxx = 1, maxy = 1, maxz = 1;
+				if (meshp && meshp->is_valid()) { meshp->get_min(minx, miny, minz); meshp->get_max(maxx, maxy, maxz); }
+				DrawRun run{};
+				run.layer = idLayer;
+				run.start = i; run.count = (u32)(j - i); run.mesh = idMesh; run.mat = idMat; run.meshp = meshp;
+				run.defaultBounds = (minx == 0.f && miny == 0.f && minz == 0.f && maxx == 1.f && maxy == 1.f && maxz == 1.f);
+				run.lcx = (minx + maxx) * 0.5f; run.lcy = (miny + maxy) * 0.5f; run.lcz = (minz + maxz) * 0.5f;
+				float bdx = maxx - minx, bdy = maxy - miny, bdz = maxz - minz;
+				run.localR = 0.5f * sqrtf(bdx * bdx + bdy * bdy + bdz * bdz);
+				if (skinnedRun)
+				{
+					run.skinned = true;
+					run.boneOffset = m_render_queue[i].bone_offset;
+					run.boneCount = m_render_queue[i].bone_count;
+					run.localR *= 2.0f;
+				}
+				if (m_geo_lod_enabled && !skinnedRun)
+				{
+					if (const auto* chain = reg.get_lod_chain(idMesh); chain && chain->lod_count > 1)
+					{
+						run.lodLevels = chain->lod_count;
+						for (u32 L = 0; L < chain->lod_count && L < 4; ++L) run.lodMesh[L] = chain->lods[L];
+						run.lodT1sq = m_lod_mid * m_lod_mid;
+						run.lodT2sq = m_lod_far * m_lod_far;
+						float t3 = m_lod_far * 1.8f; run.lodT3sq = t3 * t3;
+					}
+				}
+				const u32 ri = (u32)m_draw_runs.size();
+				m_draw_runs.push_back(run);
+				for (size_t k = i; k < j; ++k) m_item_run[k] = ri;
+				i = j;
+			}
+			m_queue_dirty = false;
+		}
+
+		const size_t runN = m_draw_runs.size();
+		m_instances_tested += (int)objectCount;
+		const FrustumPlanes frustum = extract_frustum(view.view_projection);
+		const XMFLOAT3 eye = view.eye;
+		const bool useDist = m_render_distance > 0.0f;
+		const float rd2 = m_render_distance * m_render_distance;
+		const bool useLod = m_lod_enabled && m_lod_mid > 0.0f && !m_geo_lod_enabled;
+		const float lodMid2 = m_lod_mid * m_lod_mid, lodFar2 = m_lod_far * m_lod_far;
+
+		// Pass A: visibility + LOD bucket per item (stored in m_item_lod; 0xFF = culled).
+		if (m_item_lod.size() < objectCount) m_item_lod.resize(objectCount);
+		std::vector<u32> counts(runN * 4, 0);
+		for (size_t k = 0; k < objectCount; ++k)
+		{
+			const u32 ri = m_item_run[k];
+			const DrawRun& run = m_draw_runs[ri];
+			const RenderItem& item = m_render_queue[k];
+			bool visible = true; int lod = 0;
+			if (!run.defaultBounds && run.layer == 0)
+			{
+				const XMFLOAT4X4& W = item.world_matrix;
+				XMVECTOR wc = XMVector3TransformCoord(XMVectorSet(run.lcx, run.lcy, run.lcz, 1.f), XMLoadFloat4x4(&W));
+				float cx = XMVectorGetX(wc), cy = XMVectorGetY(wc), cz = XMVectorGetZ(wc);
+				float sx = sqrtf(W._11 * W._11 + W._12 * W._12 + W._13 * W._13);
+				float sy = sqrtf(W._21 * W._21 + W._22 * W._22 + W._23 * W._23);
+				float sz = sqrtf(W._31 * W._31 + W._32 * W._32 + W._33 * W._33);
+				float maxScale = sx > sy ? (sx > sz ? sx : sz) : (sy > sz ? sy : sz);
+				visible = sphere_in_frustum(frustum, cx, cy, cz, run.localR * maxScale + 0.05f);
+				if (visible && (useDist || useLod || run.lodLevels > 1))
+				{
+					float dx = cx - eye.x, dy = cy - eye.y, dz = cz - eye.z;
+					float d2 = dx * dx + dy * dy + dz * dz;
+					if (useDist && d2 > rd2) visible = false;
+					else if (useLod)
+					{
+						if (d2 > lodFar2) { if ((k & 3) != 0) visible = false; }
+						else if (d2 > lodMid2) { if ((k & 1) != 0) visible = false; }
+					}
+					else if (run.lodLevels > 1)
+					{
+						lod = (d2 > run.lodT3sq) ? 3 : (d2 > run.lodT2sq) ? 2 : (d2 > run.lodT1sq) ? 1 : 0;
+						if (lod >= (int)run.lodLevels) lod = (int)run.lodLevels - 1;
+					}
+				}
+			}
+			if (visible) { m_item_lod[k] = (unsigned char)lod; counts[(size_t)ri * 4 + lod]++; }
+			else m_item_lod[k] = 0xFF;
+		}
+
+		// Compact prefix sums: each run gets a contiguous slab, LOD segments contiguous inside it.
+		u32 globalBase = 0;
+		std::vector<u32> cursor(runN * 4, 0);
+		for (size_t r = 0; r < runN; ++r)
+		{
+			m_draw_runs[r].vbBase = globalBase;
+			u32 localBase = 0;
+			for (int L = 0; L < 4; ++L)
+			{
+				u32 cnt = counts[r * 4 + L];
+				const u32 segStart = globalBase + localBase;
+				if (segStart >= MAX_RENDER_OBJECTS) cnt = 0;
+				else if (segStart + cnt > MAX_RENDER_OBJECTS) cnt = MAX_RENDER_OBJECTS - segStart;
+				m_draw_runs[r].lodCount[L] = cnt;
+				cursor[r * 4 + L] = segStart;
+				localBase += cnt;
+			}
+			m_draw_runs[r].visible = localBase;
+			globalBase += localBase;
+		}
+
+		// Pass B: pack the visible world matrices into the staging vector at their slab positions.
+		m_instance_staging.resize((size_t)globalBase * 16);
+		for (size_t k = 0; k < objectCount; ++k)
+		{
+			const unsigned char lod = m_item_lod[k];
+			if (lod == 0xFF) continue;
+			const u32 ri = m_item_run[k];
+			const u32 dst = cursor[(size_t)ri * 4 + lod]++;
+			if (dst < globalBase) memcpy(m_instance_staging.data() + (size_t)dst * 16, &m_render_queue[k].world_matrix, 64);
+		}
+
+		// Gizmo items ride in the same buffer after the scene slabs (solid list first, then wire).
+		m_gizmo_instance_base = globalBase;
+		u32 gizmoCount = 0;
+		auto append_gizmos = [&](const std::vector<RenderItem>& list)
+		{
+			for (const RenderItem& item : list)
+			{
+				if (gizmoCount >= MAX_GIZMO_ITEMS || m_gizmo_instance_base + gizmoCount >= MAX_RENDER_OBJECTS) return;
+				m_instance_staging.insert(m_instance_staging.end(), &item.world_matrix._11, &item.world_matrix._11 + 16);
+				++gizmoCount;
+			}
+		};
+		append_gizmos(m_gizmo_render);
+		append_gizmos(m_gizmo_wire_render);
+		m_instance_count = globalBase + gizmoCount;
+	}
+
+	void SdlGpuRenderer::upload_dynamic(SDL_GPUCommandBuffer* cmd)
+	{
+		const bool upload_instances = m_instance_count > 0;
+		const bool upload_bones = m_bone_upload_pending && !m_bone_render.empty();
+		if (!upload_instances && !upload_bones) return;
+		SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd);
+		if (upload_instances)
+		{
+			const u32 bytes = m_instance_count * 64;
+			void* mapped = SDL_MapGPUTransferBuffer(m_device, m_instance_transfer, true);
+			if (mapped)
+			{
+				memcpy(mapped, m_instance_staging.data(), bytes);
+				SDL_UnmapGPUTransferBuffer(m_device, m_instance_transfer);
+				SDL_GPUTransferBufferLocation src{ m_instance_transfer, 0 };
+				SDL_GPUBufferRegion dst{ m_instance_buffer, 0, bytes };
+				SDL_UploadToGPUBuffer(copy, &src, &dst, true);
+			}
+		}
+		if (upload_bones)
+		{
+			m_bone_upload_pending = false;
+			const size_t floats = (std::min)(m_bone_render.size(), (size_t)MAX_BONE_MATRICES * 16);
+			const u32 bytes = (u32)(floats * sizeof(float));
+			void* mapped = SDL_MapGPUTransferBuffer(m_device, m_bone_transfer, true);
+			if (mapped)
+			{
+				memcpy(mapped, m_bone_render.data(), bytes);
+				SDL_UnmapGPUTransferBuffer(m_device, m_bone_transfer);
+				SDL_GPUTransferBufferLocation src{ m_bone_transfer, 0 };
+				SDL_GPUBufferRegion dst{ m_bone_buffer, 0, bytes };
+				SDL_UploadToGPUBuffer(copy, &src, &dst, true);
+			}
+		}
+		SDL_EndGPUCopyPass(copy);
+	}
+
+	void SdlGpuRenderer::upload_staged_bone_palettes() {}
+
+	// ---------------------------------------------------------------------------------------------
+	// GPU side: the scene passes
+	// ---------------------------------------------------------------------------------------------
+	void SdlGpuRenderer::push_frame_uniforms(SDL_GPUCommandBuffer* cmd, const PerFrameConstants& frame)
+	{
+		SDL_PushGPUVertexUniformData(cmd, 0, &frame, sizeof(PerFrameConstants));
+		SDL_PushGPUFragmentUniformData(cmd, 0, &frame, sizeof(PerFrameConstants));
+		SDL_PushGPUFragmentUniformData(cmd, 2, &m_light_data, sizeof(LightBufferData));
+	}
+
+	void SdlGpuRenderer::record_scene(SDL_GPUCommandBuffer* cmd, GpuTarget& target, const FrameView& view_in,
+		bool draw_skybox_pass, bool draw_grid_pass, bool draw_gizmo_pass)
+	{
+		FrameView view = view_in;
+		const bool ssao_on = m_ssao_enabled && m_post_ready && !draw_gizmo_pass ? true : (m_ssao_enabled && m_post_ready);
+		view.frame.ssao_enabled = ssao_on ? 1.0f : 0.0f;
+		view.frame.ssao_padding[0] = 1.0f / (float)(target.width ? target.width : 1);
+		view.frame.ssao_padding[1] = 1.0f / (float)(target.height ? target.height : 1);
+		view.viewmodel.ssao_enabled = 0.0f;   // the first-person layer has no AO (own projection)
+		prepare_scene(view);
+		prepare_shadow_pass(view);
+		upload_dynamic(cmd);
+		record_shadow_passes(cmd);
+		if (ssao_on) record_ssao(cmd, view, target.width, target.height); else m_ssao_current = nullptr;
+
+		SDL_GPUColorTargetInfo color{};
+		color.texture = target.color;
+		color.clear_color = { m_clear_color[0], m_clear_color[1], m_clear_color[2], m_clear_color[3] };
+		color.load_op = SDL_GPU_LOADOP_CLEAR;
+		color.store_op = SDL_GPU_STOREOP_STORE;
+		SDL_GPUDepthStencilTargetInfo depth{};
+		depth.texture = target.depth;
+		depth.clear_depth = 1.0f;
+		depth.load_op = SDL_GPU_LOADOP_CLEAR;
+		depth.store_op = SDL_GPU_STOREOP_STORE;
+		depth.stencil_load_op = SDL_GPU_LOADOP_DONT_CARE;
+		depth.stencil_store_op = SDL_GPU_STOREOP_DONT_CARE;
+
+		const size_t runN = m_draw_runs.size();
+		size_t vmStart = runN;
+		for (size_t r = 0; r < runN; ++r) if (m_draw_runs[r].layer != 0) { vmStart = r; break; }
+		const bool has_viewmodel = vmStart < runN;
+		const bool gizmos = draw_gizmo_pass && (!m_gizmo_render.empty() || !m_gizmo_wire_render.empty());
+
+		SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &color, 1, &depth);
+		if (!pass) return;
+		SDL_GPUViewport vp{ 0, 0, (float)target.width, (float)target.height, 0.0f, 1.0f };
+		SDL_SetGPUViewport(pass, &vp);
+		if (draw_skybox_pass) draw_skybox(pass, cmd, view);
+		if (draw_grid_pass) draw_grid(pass, cmd, view);
+		// The skybox/grid pushed their own constants into uniform slot 0 — the scene shaders read PerFrame there.
+		push_frame_uniforms(cmd, view.frame);
+		record_runs(pass, cmd, 0, vmStart, view);
+		if (!has_viewmodel && gizmos) draw_gizmos(pass, cmd);
+		SDL_EndGPURenderPass(pass);
+
+		if (has_viewmodel)
+		{
+			// First-person layer: own projection, cleared depth so the arms/weapon never clip the world.
+			color.load_op = SDL_GPU_LOADOP_LOAD;
+			depth.load_op = SDL_GPU_LOADOP_CLEAR;
+			pass = SDL_BeginGPURenderPass(cmd, &color, 1, &depth);
+			if (!pass) return;
+			SDL_SetGPUViewport(pass, &vp);
+			push_frame_uniforms(cmd, view.viewmodel);
+			record_runs(pass, cmd, vmStart, runN, view);
+			push_frame_uniforms(cmd, view.frame);
+			if (gizmos) draw_gizmos(pass, cmd);
+			SDL_EndGPURenderPass(pass);
+		}
+	}
+
+	void SdlGpuRenderer::draw_skybox(SDL_GPURenderPass* pass, SDL_GPUCommandBuffer* cmd, const FrameView& view)
+	{
+		if (!m_pipeline_skybox) return;
+		SkyboxConstants c{};
+		c.inverse_view_projection = view.inverse_view_projection;
+		c.camera_position = view.eye;
+		c.sky_color = m_sky_color; c.horizon_color = m_horizon_color; c.ground_color = m_ground_color;
+		c.sun_direction = m_sun_direction; c.sun_intensity = m_sun_intensity; c.sun_color = m_sun_color;
+		SDL_BindGPUGraphicsPipeline(pass, m_pipeline_skybox);
+		SDL_PushGPUVertexUniformData(cmd, 0, &c, sizeof(c));
+		SDL_PushGPUFragmentUniformData(cmd, 0, &c, sizeof(c));
+		SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+		++m_draw_call_count;
+	}
+
+	void SdlGpuRenderer::draw_grid(SDL_GPURenderPass* pass, SDL_GPUCommandBuffer* cmd, const FrameView& view)
+	{
+		if (!m_pipeline_grid) return;
+		GridConstants c{};
+		c.view_projection = view.view_projection;
+		c.inverse_view_projection = view.inverse_view_projection;
+		c.camera_position = view.eye;
+		c.spacing = m_grid_spacing; c.extent = m_grid_extent; c.major = m_grid_major_interval;
+		SDL_BindGPUGraphicsPipeline(pass, m_pipeline_grid);
+		SDL_PushGPUVertexUniformData(cmd, 0, &c, sizeof(c));
+		SDL_PushGPUFragmentUniformData(cmd, 0, &c, sizeof(c));
+		SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+		++m_draw_call_count;
+	}
+
+	void SdlGpuRenderer::bind_material(SDL_GPURenderPass* pass, SDL_GPUCommandBuffer* cmd, Material* mat, PerObjectConstants& obj, bool gizmo)
+	{
+		auto& reg = ResourceRegistry::instance();
+		Texture* white = reg.white_texture();
+		SDL_GPUTexture* white_tex = white ? white->texture() : nullptr;
+		SDL_GPUTextureSamplerBinding bindings[10];
+		for (auto& b : bindings) { b.texture = white_tex; b.sampler = m_sampler_linear_wrap; }
+		bindings[9] = { m_ssao_current ? m_ssao_current : white_tex, m_sampler_linear_clamp };   // blurred SSAO (slot 9)
+		// Shadow atlases (slots 6..8) with the comparison sampler; the shaders only sample them when a light asks.
+		bindings[6] = { m_shadow_atlas ? m_shadow_atlas : white_tex, m_sampler_shadow ? m_sampler_shadow : m_sampler_linear_clamp };
+		bindings[7] = { m_csm_atlas ? m_csm_atlas : white_tex, m_sampler_shadow ? m_sampler_shadow : m_sampler_linear_clamp };
+		bindings[8] = { m_point_atlas ? m_point_atlas : white_tex, m_sampler_shadow ? m_sampler_shadow : m_sampler_linear_clamp };
+
+		if (gizmo)
+		{
+			obj.base_color = { 0.9f, 0.9f, 0.95f, 1.0f };
+			obj.metallic = 0.0f; obj.roughness = 1.0f; obj.ao = 1.0f; obj.normal_strength = 1.0f;
+			obj.use_directx_normals = 1; obj.emissive_strength = 1.0f; obj.uv_tiling = { 1.0f, 1.0f };
+			if (mat)
+			{
+				const auto& props = mat->properties();
+				obj.base_color = props.base_color;
+				obj.is_unlit = props.is_unlit;
+				obj.emissive_strength = props.emissive_strength;
+			}
+		}
+		else
+		{
+			obj.base_color = { 0.85f, 0.85f, 0.88f, 1.0f };
+			obj.metallic = 0.7f; obj.roughness = 0.35f; obj.ao = 1.0f; obj.normal_strength = 1.0f;
+			obj.use_directx_normals = 1; obj.uv_tiling = { 1.0f, 1.0f };
+			if (mat)
+			{
+				const auto& props = mat->properties();
+				obj.base_color = props.base_color; obj.metallic = props.metallic; obj.roughness = props.roughness;
+				obj.ao = props.ao; obj.normal_strength = props.normal_strength; obj.use_directx_normals = props.use_directx_normals;
+				obj.is_unlit = props.is_unlit; obj.emissive_strength = props.emissive_strength;
+				obj.uv_tiling = props.uv_tiling; obj.height_scale = props.height_scale;
+				auto bind = [&](Texture* t, int slot, u32& flag)
+				{
+					if (t && t->is_valid()) { bindings[slot].texture = t->texture(); flag = 1; }
+				};
+				bind(mat->albedo_texture(), 0, obj.has_albedo_texture);
+				bind(mat->normal_texture(), 1, obj.has_normal_texture);
+				bind(mat->metallic_texture(), 2, obj.has_metallic_texture);
+				bind(mat->roughness_texture(), 3, obj.has_roughness_texture);
+				bind(mat->ao_texture(), 4, obj.has_ao_texture);
+				bind(mat->height_texture(), 5, obj.has_height_texture);
+			}
+		}
+		SDL_PushGPUFragmentUniformData(cmd, 1, &obj, sizeof(PerObjectConstants));
+		SDL_BindGPUFragmentSamplers(pass, 0, bindings, 10);
+	}
+
+	void SdlGpuRenderer::draw_mesh(SDL_GPURenderPass* pass, Mesh* mesh, u32 instance_base, u32 instance_count)
+	{
+		SDL_GPUBufferBinding vbs[2] = { { mesh->vertex_buffer(), 0 }, { m_instance_buffer, instance_base * 64 } };
+		SDL_BindGPUVertexBuffers(pass, 0, vbs, 2);
+		if (mesh->has_indices())
+		{
+			SDL_GPUBufferBinding ib{ mesh->index_buffer(), 0 };
+			SDL_BindGPUIndexBuffer(pass, &ib, SDL_GPU_INDEXELEMENTSIZE_32BIT);
+			SDL_DrawGPUIndexedPrimitives(pass, mesh->index_count(), instance_count, 0, 0, 0);
+			m_vertex_count += (int)(mesh->index_count() * instance_count);
+		}
+		else
+		{
+			SDL_DrawGPUPrimitives(pass, mesh->vertex_count(), instance_count, 0, 0);
+			m_vertex_count += (int)(mesh->vertex_count() * instance_count);
+		}
+		++m_draw_call_count;
+	}
+
+	void SdlGpuRenderer::record_runs(SDL_GPURenderPass* pass, SDL_GPUCommandBuffer* cmd, size_t run_begin, size_t run_end, const FrameView& view)
+	{
+		auto& reg = ResourceRegistry::instance();
+		std::vector<u32> transparentRuns;
+
+		for (size_t r = run_begin; r < run_end; ++r)
+		{
+			const DrawRun& run = m_draw_runs[r];
+			m_instances_drawn += (int)run.visible;
+			Mesh* mesh = run.meshp;
+			if (!mesh || !mesh->is_valid() || run.visible == 0) continue;
+			Material* mat = reg.get_material(run.mat);
+			const PipelineSet& set = pipelines_for(mesh);
+			const bool has_custom = m_custom_shaders.find((u32)run.mat) != m_custom_shaders.end();
+
+			if (!m_wireframe_mode && !run.skinned && mat && mat->blend_mode() != 0 && set.transparent(mat->blend_mode(), false) && !has_custom)
+			{
+				transparentRuns.push_back((u32)r);
+				continue;
+			}
+
+			SDL_GPUGraphicsPipeline* pipeline = m_wireframe_mode ? set.wireframe : set.opaque;
+			bool skinned_draw = false;
+			if (run.skinned && m_pipeline_skinned && mesh->vertex_stride() == 52)
+			{
+				pipeline = m_pipeline_skinned;
+				skinned_draw = true;
+			}
+			else if (has_custom && mesh->vertex_stride() == 32 && m_custom_shaders[(u32)run.mat].pipeline)
+				pipeline = m_custom_shaders[(u32)run.mat].pipeline;
+			else if (mat && mat->properties().is_unlit)
+				pipeline = set.double_sided;
+
+			SDL_BindGPUGraphicsPipeline(pass, pipeline);
+			if (skinned_draw)
+			{
+				SkinParams sp{ run.boneOffset, { 0, 0, 0 } };
+				SDL_PushGPUVertexUniformData(cmd, 1, &sp, sizeof(sp));
+				SDL_GPUBuffer* bones[1] = { m_bone_buffer };
+				SDL_BindGPUVertexStorageBuffers(pass, 0, bones, 1);
+			}
+			PerObjectConstants obj{};
+			bind_material(pass, cmd, mat, obj, false);
+
+			if (run.lodLevels > 1)
+			{
+				u32 segStart = 0;
+				for (u32 L = 0; L < run.lodLevels; ++L)
+				{
+					const u32 c = run.lodCount[L];
+					if (c == 0) continue;
+					Mesh* lm = (L == 0) ? mesh : reg.get_mesh(run.lodMesh[L]);
+					if (!lm || !lm->is_valid() || lm->vertex_stride() != mesh->vertex_stride()) lm = mesh;
+					draw_mesh(pass, lm, run.vbBase + segStart, c);
+					segStart += c;
+				}
+			}
+			else
+			{
+				draw_mesh(pass, mesh, run.vbBase, run.visible);
+			}
+		}
+
+		// Sorted transparent pass: one draw per instance, farthest first, depth write off.
+		if (transparentRuns.empty()) return;
+		struct TDraw { u32 run; u32 slot; float d2; };
+		std::vector<TDraw> titems;
+		constexpr size_t MAX_TRANSPARENT_DRAWS = 4096;
+		for (u32 tr : transparentRuns)
+		{
+			const DrawRun& run = m_draw_runs[tr];
+			for (u32 s = 0; s < run.visible && titems.size() < MAX_TRANSPARENT_DRAWS; ++s)
+			{
+				const float* t = m_instance_staging.data() + (size_t)(run.vbBase + s) * 16 + 12;
+				float dx = t[0] - view.eye.x, dy = t[1] - view.eye.y, dz = t[2] - view.eye.z;
+				titems.push_back({ tr, s, dx * dx + dy * dy + dz * dz });
+			}
+		}
+		std::sort(titems.begin(), titems.end(), [](const TDraw& a, const TDraw& b) { return a.d2 > b.d2; });
+
+		u32 lastRun = 0xFFFFFFFFu;
+		Mesh* tmesh = nullptr;
+		for (const TDraw& td : titems)
+		{
+			const DrawRun& run = m_draw_runs[td.run];
+			if (td.run != lastRun)
+			{
+				lastRun = td.run;
+				tmesh = run.meshp;
+				if (!tmesh || !tmesh->is_valid()) { tmesh = nullptr; continue; }
+				Material* mat = reg.get_material(run.mat);
+				const u32 bm = mat ? mat->blend_mode() : 1u;
+				const bool ds = mat && mat->properties().is_unlit;
+				SDL_GPUGraphicsPipeline* tp = pipelines_for(tmesh).transparent(bm, ds);
+				if (!tp) { tmesh = nullptr; continue; }
+				SDL_BindGPUGraphicsPipeline(pass, tp);
+				PerObjectConstants obj{};
+				bind_material(pass, cmd, mat, obj, false);
+			}
+			if (!tmesh) continue;
+			draw_mesh(pass, tmesh, run.vbBase + td.slot, 1);
+		}
+	}
+
+	void SdlGpuRenderer::draw_gizmos(SDL_GPURenderPass* pass, SDL_GPUCommandBuffer* cmd)
+	{
+		auto& reg = ResourceRegistry::instance();
+		u32 slot = 0;
+		auto draw_list = [&](const std::vector<RenderItem>& list, bool wire)
+		{
+			for (size_t i = 0; i < list.size() && slot < MAX_GIZMO_ITEMS; ++i)
+			{
+				const RenderItem& item = list[i];
+				const u32 instance = m_gizmo_instance_base + slot;
+				++slot;
+				if (instance >= m_instance_count) break;
+				Mesh* mesh = reg.get_mesh(item.mesh_id);
+				if (!mesh || !mesh->is_valid()) continue;
+				const PipelineSet& set = pipelines_for(mesh);
+				SDL_BindGPUGraphicsPipeline(pass, wire ? set.gizmo_wire : set.gizmo);
+				PerObjectConstants obj{};
+				bind_material(pass, cmd, reg.get_material(item.material_id), obj, true);
+				draw_mesh(pass, mesh, instance, 1);
+			}
+		};
+		draw_list(m_gizmo_render, false);
+		draw_list(m_gizmo_wire_render, true);
+	}
+}

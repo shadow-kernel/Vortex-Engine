@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Vortex.Player — the standalone game runtime host on modern .NET. No UI framework: it drives the native
+    GameHost (its own window + swapchain + loop) and runs the gameplay layer from Vortex.Core each tick.
+    Runs an exported game (player.vortex + Assets.vpak next to the executable) or, for development, a loose
+    project folder: Vortex.Player (dash dash)project=PATH [(dash dash)scene=NAME].
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>Vortex.Player</AssemblyName>
+    <RootNamespace>Vortex.Player</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Vortex.Core/Vortex.Core.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,4 +1,4 @@
-using System;
+ï»¿using System;
 using System.Runtime.Serialization;
 
 using Editor.Core.Abstractions;
@@ -6,8 +6,8 @@ using Editor.Core.Abstractions;
 namespace Editor.ECS
 {
     /// <summary>
-    /// Abstrakte Basisklasse für alle Komponenten.
-    /// Dies ist ein reines Daten-Modell für den Editor.
+    /// Abstrakte Basisklasse fÃ¼r alle Komponenten.
+    /// Dies ist ein reines Daten-Modell fÃ¼r den Editor.
     /// Die eigentliche Engine-Logik wird in C++ implementiert.
     /// </summary>
     [DataContract(Name = "Component", Namespace = "")]
@@ -31,19 +31,19 @@ namespace Editor.ECS
         }
 
         /// <summary>
-        /// Referenz zur übergeordneten GameEntity (nicht serialisiert - nur Editor)
+        /// Referenz zur Ã¼bergeordneten GameEntity (nicht serialisiert - nur Editor)
         /// </summary>
         [IgnoreDataMember]
         public GameEntity Entity { get; set; }
 
         /// <summary>
-        /// Name der Komponente für Anzeige im Inspector
+        /// Name der Komponente fÃ¼r Anzeige im Inspector
         /// </summary>
         [IgnoreDataMember]
         public abstract string DisplayName { get; }
 
         /// <summary>
-        /// Icon-Code für die Anzeige (Segoe MDL2 Assets)
+        /// Icon-Code fÃ¼r die Anzeige (Segoe MDL2 Assets)
         /// </summary>
         [IgnoreDataMember]
         public abstract string IconCode { get; }
@@ -65,7 +65,7 @@ namespace Editor.ECS
         }
 
         /// <summary>
-        /// Generiert eine neue ID für diese Komponente.
+        /// Generiert eine neue ID fÃ¼r diese Komponente.
         /// Wird beim Kopieren im Editor verwendet.
         /// </summary>
         public void RegenerateId()
