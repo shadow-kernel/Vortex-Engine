@@ -463,7 +463,7 @@
     <Setter Property="Background" Value="{DynamicResource VxControlBrush}"/>
     <Setter Property="MinHeight" Value="22"/>
   </Style>
-  <Style Selector="Slider /template/ Track#PART_Track">
+  <Style Selector="Slider:horizontal /template/ Track#PART_Track">
     <Setter Property="Height" Value="4"/>
   </Style>
   <Style Selector="Slider:horizontal /template/ Thumb#thumb">

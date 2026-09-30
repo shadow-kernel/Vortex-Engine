@@ -32,6 +32,15 @@ namespace Editor.Core.Services
             var proj = Editor.Core.Data.ProjectData.Current?.Path ?? "";
             string full = Path.IsPathRooted(shaderAsset) ? shaderAsset : Path.Combine(proj, shaderAsset);
 
+            // Metal backend (macOS): the native side compiles MSL, so a material's shader resolves to the .metal file —
+            // either named directly, or the .metal sitting next to the .hlsl / .vshader the material references.
+            if (UsesMetal)
+            {
+                if (full.EndsWith(".metal", StringComparison.OrdinalIgnoreCase)) return MaterializeHlsl(full, proj);
+                var metal = MaterializeHlsl(Path.ChangeExtension(full, ".metal"), proj);
+                if (metal != null) return metal;
+            }
+
             if (full.EndsWith(".hlsl", StringComparison.OrdinalIgnoreCase))
                 return MaterializeHlsl(full, proj);
 
@@ -57,6 +66,19 @@ namespace Editor.Core.Services
         /// Editor's shader dropdown offers. Uses the AssetDatabase index first (it already skips meta/hidden
         /// files), then a direct disk scan tops up anything the database hasn't picked up yet. Empty list
         /// when no project is open.</summary>
+        /// <summary>True when the native renderer is the Metal (SDL GPU) backend: custom shaders are .metal files.</summary>
+        public static bool UsesMetal
+        {
+            get
+            {
+#if VORTEX_CORE
+                return System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.OSX);
+#else
+                return false;
+#endif
+            }
+        }
+
         public static List<string> EnumerateProjectShaders()
         {
             var result = new List<string>();
@@ -69,7 +91,7 @@ namespace Editor.Core.Services
                 foreach (var meta in Editor.Core.Assets.AssetDatabase.Instance.GetAssetsByType(Editor.Core.Assets.AssetType.Shader))
                 {
                     var rel = meta != null ? meta.RelativePath : null;
-                    if (string.IsNullOrEmpty(rel) || !rel.EndsWith(".hlsl", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (string.IsNullOrEmpty(rel) || !(rel.EndsWith(".hlsl", StringComparison.OrdinalIgnoreCase) || (UsesMetal && rel.EndsWith(".metal", StringComparison.OrdinalIgnoreCase)))) continue;
                     rel = rel.Replace('\\', '/');
                     if (seen.Add(rel)) result.Add(rel);
                 }
@@ -81,7 +103,9 @@ namespace Editor.Core.Services
                 var assets = Path.Combine(proj, "Assets");
                 if (Directory.Exists(assets))
                 {
-                    foreach (var f in Directory.EnumerateFiles(assets, "*.hlsl", SearchOption.AllDirectories))
+                    var files = new List<string>(Directory.EnumerateFiles(assets, "*.hlsl", SearchOption.AllDirectories));
+                    if (UsesMetal) files.AddRange(Directory.EnumerateFiles(assets, "*.metal", SearchOption.AllDirectories));
+                    foreach (var f in files)
                     {
                         var rel = ToProjectRelative(f, proj);
                         if (string.IsNullOrEmpty(rel)) continue;
@@ -117,7 +141,7 @@ namespace Editor.Core.Services
             {
                 string dir = Path.Combine(Path.GetTempPath(), "VortexShaders");
                 Directory.CreateDirectory(dir);
-                string tmp = Path.Combine(dir, Sha1Hex(key) + ".hlsl");
+                string tmp = Path.Combine(dir, Sha1Hex(key) + Path.GetExtension(fullPath));
                 if (!File.Exists(tmp)) File.WriteAllBytes(tmp, bytes);   // extract ONCE; pak content never changes
                 _vfsExtracted[key] = tmp;
                 return tmp;

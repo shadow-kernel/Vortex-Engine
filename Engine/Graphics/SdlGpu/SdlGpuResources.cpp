@@ -361,7 +361,7 @@ namespace vortex::graphics
 
 	void ResourceRegistry::destroy_mesh(id::id_type id)
 	{
-		m_meshes.erase(id);
+		if (m_meshes.erase(id) > 0) ++m_mesh_generation;
 		m_lod_chains.erase(id);
 	}
 

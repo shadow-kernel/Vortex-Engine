@@ -205,6 +205,9 @@ namespace vortex::graphics
 		id::id_type create_primitive_cone(float radius = 0.5f, float height = 1.0f, u32 slices = 32);
 		Mesh* get_mesh(id::id_type id);
 		void destroy_mesh(id::id_type id);
+		// Bumped by every destroy_mesh that removed a mesh: the renderer compares it each frame and drops / rebuilds
+		// cached draw runs (raw Mesh pointers) that referenced it instead of touching freed memory.
+		u32 mesh_generation() const { return m_mesh_generation; }
 		std::vector<id::id_type> get_all_mesh_ids() const;
 
 		struct LodChain
@@ -266,6 +269,7 @@ namespace vortex::graphics
 		bool is_initialized() const { return m_device != nullptr; }
 
 	private:
+		u32 m_mesh_generation{ 0 };
 		ResourceRegistry() = default;
 
 		id::id_type create_mesh_from_submesh(const SubMeshData& submesh, const std::string& name);

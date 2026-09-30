@@ -262,6 +262,21 @@ namespace vortex::graphics::sdlgpu
 		m_instance_staging.clear();
 		m_instance_count = 0;
 
+		// A mesh was destroyed since the draw runs were built (preview renders, asset reloads, runtime Destroy):
+		// the cached runs hold raw Mesh pointers and the kept queue may still name the dead mesh — drop those items
+		// and rebuild, instead of drawing through freed memory.
+		if (const u32 gen = reg.mesh_generation(); gen != m_seen_mesh_generation)
+		{
+			m_seen_mesh_generation = gen;
+			m_render_queue.erase(std::remove_if(m_render_queue.begin(), m_render_queue.end(), [&reg](const RenderItem& it)
+			{
+				Mesh* m = reg.get_mesh(it.mesh_id);
+				return m == nullptr || !m->is_valid();
+			}), m_render_queue.end());
+			m_draw_runs.clear();
+			m_queue_dirty = true;
+		}
+
 		size_t objectCount = (std::min)(m_render_queue.size(), (size_t)MAX_RENDER_OBJECTS);
 		if (m_render_queue.size() > (size_t)MAX_RENDER_OBJECTS) m_render_queue.resize(MAX_RENDER_OBJECTS);
 		if (objectCount == 0) m_draw_runs.clear();

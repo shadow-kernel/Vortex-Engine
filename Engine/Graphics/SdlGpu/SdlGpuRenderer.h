@@ -598,6 +598,7 @@ namespace vortex::graphics::sdlgpu
 		std::vector<u32> m_item_run;
 		std::vector<unsigned char> m_item_lod;
 		bool m_queue_dirty{ true };
+		u32 m_seen_mesh_generation{ 0 };   // ResourceRegistry::mesh_generation() the cached draw runs were built against
 		bool m_mt_enabled{ true }, m_mt_force{ false }, m_mt_active{ false };
 		u32 m_gizmo_instance_base{ 0 };
 
