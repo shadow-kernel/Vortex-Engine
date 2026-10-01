@@ -18,7 +18,14 @@ target_include_directories(VortexPhysicsTest PRIVATE "${CMAKE_SOURCE_DIR}/Engine
 target_compile_definitions(VortexPhysicsTest PRIVATE TEST_PHYSICS=1)
 target_link_libraries(VortexPhysicsTest PRIVATE vortex::engine)
 
+# VFX (#116): particle simulation, emission, bursts, lifetime, determinism, JSON, beams, collision (headless).
+add_executable(VortexParticleTest Main.cpp)
+target_include_directories(VortexParticleTest PRIVATE "${CMAKE_SOURCE_DIR}/Engine/Common")
+target_compile_definitions(VortexParticleTest PRIVATE TEST_PARTICLES=1)
+target_link_libraries(VortexParticleTest PRIVATE vortex::engine)
+
 if(NOT MSVC)
+	target_compile_options(VortexParticleTest PRIVATE -Wall -Wno-unused-parameter)
 	target_compile_options(EngineTest PRIVATE -Wall -Wno-unused-parameter)
 	target_compile_options(VortexRenderTest PRIVATE -Wall -Wno-unused-parameter)
 	target_compile_options(VortexPhysicsTest PRIVATE -Wall -Wno-unused-parameter)
@@ -30,6 +37,12 @@ set_tests_properties(AudioSmokeTest PROPERTIES
 	FAIL_REGULAR_EXPRESSION "FAILURES!"
 	PASS_REGULAR_EXPRESSION "ALL PASSED"
 	TIMEOUT 600)
+
+add_test(NAME ParticleSmokeTest COMMAND VortexParticleTest)
+set_tests_properties(ParticleSmokeTest PROPERTIES
+	FAIL_REGULAR_EXPRESSION "FAILURES!"
+	PASS_REGULAR_EXPRESSION "ALL PASSED"
+	TIMEOUT 120)
 
 add_test(NAME PhysicsSmokeTest COMMAND VortexPhysicsTest)
 set_tests_properties(PhysicsSmokeTest PROPERTIES

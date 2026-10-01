@@ -23,6 +23,8 @@ set(VORTEX_ENGINE_CORE_SOURCES
 	Graphics/Importers/ModelImporter.cpp
 	Graphics/Importers/ModelImporter_Process.cpp
 	Graphics/Importers/TextureImporter.cpp
+	Graphics/Particles/ParticleJson.cpp
+	Graphics/Particles/ParticleSystem.cpp
 	Input/InputSystem.cpp
 	Physics/PhysicsWorld.cpp
 	Runtime/AssetDatabase.cpp
@@ -45,6 +47,7 @@ set(VORTEX_ENGINE_CORE_SOURCES
 # The SDL GPU backend: Metal on macOS (MSL shaders compiled by the driver at load), Vulkan on Linux later.
 set(VORTEX_ENGINE_SDLGPU_SOURCES
 	Graphics/SdlGpu/SdlGpuOverlay.cpp
+	Graphics/SdlGpu/SdlGpuParticles.cpp
 	Graphics/SdlGpu/SdlGpuRenderer.cpp
 	Graphics/SdlGpu/SdlGpuRenderer_Scene.cpp
 	Graphics/SdlGpu/SdlGpuRenderer_Shadows.cpp
@@ -213,4 +216,8 @@ else()
 	# ~20 s to open a scene with PBR materials.
 	set_source_files_properties(Runtime/Systems/AudioEngine.cpp Graphics/Importers/TextureImporter.cpp
 		PROPERTIES COMPILE_OPTIONS "-w;-O2")
+	# The particle simulation is a hot loop over up to 10^5-10^6 particles per frame: keep it optimised in Debug
+	# builds too (an -O0 build is ~8x slower there), like a physics engine that is always built optimised.
+	set_source_files_properties(Graphics/Particles/ParticleSystem.cpp
+		PROPERTIES COMPILE_OPTIONS "$<$<CONFIG:Debug>:-O2>")
 endif()

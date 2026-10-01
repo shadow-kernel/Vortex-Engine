@@ -6,8 +6,9 @@
 // Pick exactly one test. TEST_AUDIO is the non-interactive smoke test and the
 // default; TEST_ECS is the original interactive ECS stress test; TEST_RENDER opens
 // a native window, renders a lit scene and captures it (CMake builds it as VortexRenderTest);
-// TEST_PHYSICS is the non-interactive Jolt smoke test (CMake builds it as VortexPhysicsTest).
-#if !defined(TEST_AUDIO) && !defined(TEST_ECS) && !defined(TEST_RENDER) && !defined(TEST_PHYSICS)
+// TEST_PHYSICS is the non-interactive Jolt smoke test (CMake builds it as VortexPhysicsTest);
+// TEST_PARTICLES is the non-interactive particle (VFX) test (CMake builds it as VortexParticleTest).
+#if !defined(TEST_AUDIO) && !defined(TEST_ECS) && !defined(TEST_RENDER) && !defined(TEST_PHYSICS) && !defined(TEST_PARTICLES)
 #define TEST_AUDIO 1
 #endif
 #ifndef TEST_AUDIO
@@ -22,6 +23,9 @@
 #ifndef TEST_PHYSICS
 #define TEST_PHYSICS 0
 #endif
+#ifndef TEST_PARTICLES
+#define TEST_PARTICLES 0
+#endif
 
 #if TEST_AUDIO
 #include "TestAudio.h"
@@ -31,6 +35,8 @@
 #include "TestRender.h"
 #elif TEST_PHYSICS
 #include "TestPhysics.h"
+#elif TEST_PARTICLES
+#include "TestParticles.h"
 #else
 #error "No test defined"
 #endif

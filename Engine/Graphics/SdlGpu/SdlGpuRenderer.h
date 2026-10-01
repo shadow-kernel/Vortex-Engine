@@ -8,8 +8,9 @@
 // Frame flow:
 //   swap queues -> CPU sort/cull/pack -> upload instance + bone data (copy pass)
 //   -> scene pass into an offscreen BGRA8 target at render scale (skybox, grid,
-//      opaque runs, sorted transparents; a second pass with cleared depth for
-//      the first-person viewmodel layer; always-on-top gizmos)
+//      opaque runs, sorted transparents; particles of the world layer; a second
+//      pass with cleared depth for the first-person viewmodel layer + its
+//      particles; always-on-top gizmos)
 //   -> blit / post-FX pass into the present target at window resolution
 //   -> 2D overlay pass -> optional capture -> blit to the swapchain.
 // ============================================================================
@@ -17,6 +18,7 @@
 #include "../../Common/Id.h"
 #include "SdlGpuResources.h"
 #include "SdlGpuOverlay.h"
+#include "SdlGpuParticles.h"
 #include <SDL3/SDL.h>
 #include <chrono>
 #include <memory>
@@ -299,6 +301,10 @@ namespace vortex::graphics::sdlgpu
 		void release_render_target_pixels(u32 target_id);
 		bool has_render_target(u32 target_id) const { return m_render_targets.find(target_id) != m_render_targets.end(); }
 
+		// Particles (VFX, Graphics/Particles): the scene views draw world 0; ParticleSetNextTargetWorld picks the
+		// world of the next render_to_target (SdlGpuParticles.h).
+		SdlGpuParticles& particles() { return m_particles; }
+
 		// GPU info (the DX12 backend exposes these through DX12Core)
 		u32 gpu_vendor_id() const { return 0; }
 		const std::string& gpu_name() const { return m_gpu_name; }
@@ -408,6 +414,11 @@ namespace vortex::graphics::sdlgpu
 			DirectX::XMFLOAT4X4 inverse_view_projection;
 			DirectX::XMFLOAT3 eye;
 			bool has_viewmodel{ false };
+			// camera basis + projection parameters (particles: billboards, soft depth, collision snapshot)
+			DirectX::XMFLOAT3 right{ 1, 0, 0 }, up{ 0, 1, 0 }, forward{ 0, 0, 1 };
+			float near_clip{ 0.1f }, far_clip{ 1000.0f };
+			bool ortho{ false };
+			float tan_half_x{ 1.0f }, tan_half_y{ 1.0f };
 		};
 		void prepare_shadow_pass(const FrameView& view);   // SdlGpuRenderer_Shadows.cpp
 		// Screen-space effects (SdlGpuRenderer_PostFx.cpp)
@@ -524,7 +535,10 @@ namespace vortex::graphics::sdlgpu
 		void upload_staged_bone_palettes();
 		void prepare_scene(const FrameView& view);   // sort + cull + pack (CPU) into the staging vectors
 		void upload_dynamic(SDL_GPUCommandBuffer* cmd);
-		void record_scene(SDL_GPUCommandBuffer* cmd, GpuTarget& target, const FrameView& view, bool draw_skybox, bool draw_grid, bool draw_gizmos);
+		void record_scene(SDL_GPUCommandBuffer* cmd, GpuTarget& target, const FrameView& view, bool draw_skybox, bool draw_grid, bool draw_gizmos,
+			int particle_world = -1, bool particle_depth_capture = false);
+		SdlGpuParticles::View particle_view(const FrameView& view) const;
+		SdlGpuParticles::Environment particle_environment(const FrameView& view) const;
 		void draw_skybox(SDL_GPURenderPass* pass, SDL_GPUCommandBuffer* cmd, const FrameView& view);
 		void draw_grid(SDL_GPURenderPass* pass, SDL_GPUCommandBuffer* cmd, const FrameView& view);
 		void record_runs(SDL_GPURenderPass* pass, SDL_GPUCommandBuffer* cmd, size_t run_begin, size_t run_end, const FrameView& view);
@@ -672,8 +686,9 @@ namespace vortex::graphics::sdlgpu
 		float m_lod_mid{ 0.0f }, m_lod_far{ 0.0f };
 		float m_clear_color[4]{ 0.18f, 0.18f, 0.20f, 1.0f };
 
-		// overlay + capture + stats
+		// overlay + particles + capture + stats
 		SdlGpuOverlay m_overlay;
+		SdlGpuParticles m_particles;
 		bool m_capture_requested{ false };
 		std::string m_capture_path;
 		int m_current_fps{ 0 }, m_frame_count{ 0 };
