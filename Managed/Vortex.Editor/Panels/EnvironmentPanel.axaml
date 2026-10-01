@@ -2,15 +2,19 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:c="clr-namespace:VortexEditor.Controls"
              x:Class="VortexEditor.Panels.EnvironmentPanel">
-  <DockPanel>
-    <Border DockPanel.Dock="Top" Padding="10,8,10,0">
-      <DockPanel>
-        <ToggleButton DockPanel.Dock="Right" x:Name="PreviewFx" ToolTip.Tip="Preview post-processing in the build viewport (it normally renders through the game camera only)" Click="OnPreviewFx" Padding="8,2"><TextBlock Text="Preview in viewport" FontSize="11"/></ToggleButton>
-        <TextBlock Text="Scene fog and post-processing" Classes="small secondary" VerticalAlignment="Center"/>
-      </DockPanel>
-    </Border>
-    <ScrollViewer>
-      <StackPanel x:Name="Sections" Margin="10,8" Spacing="8"/>
-    </ScrollViewer>
-  </DockPanel>
+  <ScrollViewer x:Name="Scroller" HorizontalScrollBarVisibility="Disabled">
+    <StackPanel Margin="10,10,10,12" Spacing="8">
+      <TextBlock Classes="small tertiary" TextWrapping="Wrap" Margin="4,0,4,2"
+                 Text="Scene environment — saved with the scene. Post effects apply to the GAME camera (play window + exported game); the build viewport stays clean."/>
+      <Border Classes="card" Padding="10,6">
+        <DockPanel>
+          <ToggleSwitch x:Name="PreviewFx" DockPanel.Dock="Right" OnContent="" OffContent="" IsCheckedChanged="OnPreviewFx"
+                        ToolTip.Tip="Temporarily shows the post effects (vignette, grain, aberration, bloom, grading) in the editor viewport for tuning. Never saved; off by default so map building stays clean."/>
+          <TextBlock Text="Preview post effects in viewport" Classes="label" VerticalAlignment="Center"/>
+        </DockPanel>
+      </Border>
+      <StackPanel x:Name="Sections" Spacing="8"/>
+      <TextBlock x:Name="NoScene" Classes="tertiary" Text="Open a project to edit its scene environment." HorizontalAlignment="Center" Margin="0,20" IsVisible="False"/>
+    </StackPanel>
+  </ScrollViewer>
 </UserControl>

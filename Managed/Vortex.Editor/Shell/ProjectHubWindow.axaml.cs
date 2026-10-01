@@ -41,8 +41,32 @@ namespace VortexEditor.Shell
             TemplateList.ItemsSource = _templates;
             TemplateList.SelectedItem = _templates.FirstOrDefault(t => !t.IsEmpty) ?? _templates.FirstOrDefault();
             LocationBox.Text = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "VortexEngineProjects", NameBox.Text);
-            SelectTab(createTab);
+            // WPF: returning users land on their recent projects, brand-new users straight on the template chooser
+            SelectTab(createTab || _all.Count == 0);
+            bool hasProject = EditorSession.Instance.HasProject;
+            ExitButton.Content = hasProject ? "Cancel" : "Quit";
+            CancelCreateButton.Content = hasProject ? "Cancel" : "Quit";
+            ProjectList.ContextMenu = RowMenu();
+            ProjectList.KeyDown += (s, e) => { if (e.Key == Avalonia.Input.Key.Return) { OpenSelected(); e.Handled = true; } };
+            KeyDown += (s, e) => { if (e.Key == Avalonia.Input.Key.Escape && EditorSession.Instance.HasProject) Close(); };
         }
+
+        private ContextMenu RowMenu()
+        {
+            var m = new ContextMenu();
+            var open = new MenuItem { Header = "Open" }; open.Click += (s, e) => OpenSelected();
+            var reveal = new MenuItem { Header = "Show in Finder" }; reveal.Click += (s, e) => OnRevealProject(null, null);
+            var remove = new MenuItem { Header = "Remove from List…" }; remove.Click += (s, e) => OnRemoveProject(null, null);
+            m.Items.Add(open); m.Items.Add(reveal); m.Items.Add(new Separator()); m.Items.Add(remove);
+            return m;
+        }
+
+        private void OnExit(object s, RoutedEventArgs e) => Close();
+        private void OnRevealProject(object s, RoutedEventArgs e) { if (ProjectList.SelectedItem is ProjectRow row && Directory.Exists(row.Path)) EditorCommands.RevealInFinder(row.Path); }
+
+        /// <summary>Which page is showing (smoke checks).</summary>
+        public bool IsCreatePage => CreatePage.IsVisible;
+        public int ProjectCount => _all.Count;
 
         private static string SafeVersion() { try { return Editor.Core.EngineInfo.VersionString; } catch { return ""; } }
 

@@ -10,33 +10,36 @@
         <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
           <Border Classes="segmented">
             <StackPanel Orientation="Horizontal">
-              <RadioButton x:Name="ToolMove" GroupName="tool" ToolTip.Tip="Move (W)" Click="OnToolMove"><c:VxIcon Icon="Move"/></RadioButton>
-              <RadioButton x:Name="ToolRotate" GroupName="tool" ToolTip.Tip="Rotate (E)" Click="OnToolRotate"><c:VxIcon Icon="Rotate"/></RadioButton>
-              <RadioButton x:Name="ToolScale" GroupName="tool" ToolTip.Tip="Scale (R)" Click="OnToolScale"><c:VxIcon Icon="Scale"/></RadioButton>
+              <RadioButton x:Name="ToolMove" GroupName="tool" ToolTip.Tip="Move tool (W)" Click="OnToolMove"><c:VxIcon Icon="Move"/></RadioButton>
+              <RadioButton x:Name="ToolRotate" GroupName="tool" ToolTip.Tip="Rotate tool (E)" Click="OnToolRotate"><c:VxIcon Icon="Rotate"/></RadioButton>
+              <RadioButton x:Name="ToolScale" GroupName="tool" ToolTip.Tip="Scale tool (R)" Click="OnToolScale"><c:VxIcon Icon="Scale"/></RadioButton>
             </StackPanel>
           </Border>
           <ToggleButton x:Name="SpaceToggle" ToolTip.Tip="Local / World space (X)" Click="OnSpaceToggle" Padding="8,2" MinWidth="52"><TextBlock x:Name="SpaceText" Text="World" FontSize="11"/></ToggleButton>
           <Rectangle Width="1" Height="18" Fill="{DynamicResource VxSeparatorBrush}" Margin="4,0"/>
           <ToggleButton x:Name="GridToggle" Classes="icon" ToolTip.Tip="Grid (G)" Click="OnGridToggle"><c:VxIcon Icon="Grid"/></ToggleButton>
-          <ToggleButton x:Name="SnapToggle" Classes="icon" ToolTip.Tip="Snap to grid" Click="OnSnapToggle"><c:VxIcon Icon="Snap"/></ToggleButton>
+          <ToggleButton x:Name="SnapToggle" Classes="icon" ToolTip.Tip="Snap to grid — right-click: snap size" Click="OnSnapToggle" PointerPressed="OnSnapPressed"><c:VxIcon Icon="Snap"/></ToggleButton>
           <ToggleButton x:Name="GizmoToggle" Classes="icon" ToolTip.Tip="Gizmos" Click="OnGizmoToggle"><c:VxIcon Icon="Gizmo"/></ToggleButton>
-          <ToggleButton x:Name="ColliderToggle" Classes="icon" ToolTip.Tip="Colliders (right-click: all)" Click="OnColliderToggle" PointerPressed="OnColliderPressed"><c:VxIcon Icon="Collider"/></ToggleButton>
-          <ToggleButton x:Name="FpToggle" Classes="icon" ToolTip.Tip="First-person viewmodel preview" Click="OnFpToggle"><c:VxIcon Icon="Crosshair"/></ToggleButton>
+          <ToggleButton x:Name="ColliderToggle" Classes="icon" ToolTip.Tip="Show collision (green net = solid, amber = trigger) — right-click: all colliders" Click="OnColliderToggle" PointerPressed="OnColliderPressed"><c:VxIcon Icon="Collider"/></ToggleButton>
+          <ToggleButton x:Name="FpToggle" Classes="icon" ToolTip.Tip="First-person layer (render layer 1): hidden / in the world / as the game shows it" Click="OnFpToggle"><c:VxIcon Icon="Crosshair"/></ToggleButton>
+          <Button x:Name="ViewOptionsButton" Classes="icon" ToolTip.Tip="View options — shading, snap size, camera speed" Click="OnViewOptions"><c:VxIcon Icon="More"/></Button>
         </StackPanel>
         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center" VerticalAlignment="Center">
           <Border Classes="segmented">
             <StackPanel Orientation="Horizontal">
               <RadioButton x:Name="LayoutSingle" GroupName="layout" IsChecked="True" ToolTip.Tip="Single view" Click="OnLayoutClick" Tag="1"><c:VxIcon Icon="LayoutSingle"/></RadioButton>
-              <RadioButton x:Name="LayoutSplitV" GroupName="layout" ToolTip.Tip="Split vertical" Click="OnLayoutClick" Tag="2"><c:VxIcon Icon="LayoutSplitV"/></RadioButton>
-              <RadioButton x:Name="LayoutSplitH" GroupName="layout" ToolTip.Tip="Split horizontal" Click="OnLayoutClick" Tag="3"><c:VxIcon Icon="LayoutSplitH"/></RadioButton>
-              <RadioButton x:Name="LayoutQuad" GroupName="layout" ToolTip.Tip="Quad view" Click="OnLayoutClick" Tag="4"><c:VxIcon Icon="LayoutQuad"/></RadioButton>
+              <RadioButton x:Name="LayoutSplitV" GroupName="layout" ToolTip.Tip="Split vertical (left / right)" Click="OnLayoutClick" Tag="2"><c:VxIcon Icon="LayoutSplitV"/></RadioButton>
+              <RadioButton x:Name="LayoutSplitH" GroupName="layout" ToolTip.Tip="Split horizontal (top / bottom)" Click="OnLayoutClick" Tag="3"><c:VxIcon Icon="LayoutSplitH"/></RadioButton>
+              <RadioButton x:Name="LayoutQuad" GroupName="layout" ToolTip.Tip="Quad view (2 × 2)" Click="OnLayoutClick" Tag="4"><c:VxIcon Icon="LayoutQuad"/></RadioButton>
             </StackPanel>
           </Border>
-          <ComboBox x:Name="CameraSelector" MinWidth="150" SelectionChanged="OnCameraSelected" ToolTip.Tip="Viewport camera"/>
+          <ComboBox x:Name="CameraSelector" MinWidth="150" SelectionChanged="OnCameraSelected" ToolTip.Tip="View: free camera, a scene camera or the in-game first-person preview"/>
           <ToggleButton x:Name="PipToggle" Classes="icon" ToolTip.Tip="Camera preview (picture in picture)" Click="OnPipToggle"><c:VxIcon Icon="Pip"/></ToggleButton>
         </StackPanel>
         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-          <Border x:Name="FlyBadge" Classes="badge" IsVisible="False" Background="{DynamicResource VxAccentSoftBrush}"><TextBlock Text="FLY" Foreground="{DynamicResource VxAccentBrush}"/></Border>
+          <Border x:Name="WireBadge" Classes="badge" IsVisible="False" Background="{DynamicResource VxControlBrush}"><TextBlock Text="WIREFRAME"/></Border>
+          <Border x:Name="GameViewBadge" Classes="badge" IsVisible="False" Background="{DynamicResource VxPanelRaisedBrush}"><TextBlock Text="GAME VIEW · press ▶" Foreground="{DynamicResource VxTextSecondaryBrush}"/></Border>
+          <Border x:Name="FlyBadge" Classes="badge" IsVisible="False" Background="{DynamicResource VxAccentSoftBrush}"><TextBlock x:Name="FlyText" Text="FLY" Foreground="{DynamicResource VxAccentBrush}"/></Border>
           <Border x:Name="PlayBadge" Classes="badge" IsVisible="False" Background="{DynamicResource VxGreenBrush}"><TextBlock Text="PLAY MODE" Foreground="White"/></Border>
           <Border x:Name="ExternalBadge" Classes="badge" IsVisible="False" Background="{DynamicResource VxOrangeBrush}"><TextBlock Text="RUNS IN PLAYER WINDOW" Foreground="White"/></Border>
         </StackPanel>
@@ -48,9 +51,6 @@
       <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="0"/></Grid.RowDefinitions>
       <Grid x:Name="MainCell">
         <vp:EngineViewport x:Name="Engine"/>
-        <Border x:Name="GamePlaceholder" IsVisible="False" IsHitTestVisible="False" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,18" Classes="badge" Background="{DynamicResource VxPanelRaisedBrush}" Padding="12,5">
-          <TextBlock Text="Game view  ·  press Play to start" Classes="secondary"/>
-        </Border>
       </Grid>
       <Border x:Name="Cell2" Grid.Column="1" Classes="hairline-left" IsVisible="False"><ContentControl x:Name="Secondary1"/></Border>
       <Border x:Name="Cell3" Grid.Row="1" Classes="hairline-top" IsVisible="False"><ContentControl x:Name="Secondary2"/></Border>

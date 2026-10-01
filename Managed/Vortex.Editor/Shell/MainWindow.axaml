@@ -19,28 +19,30 @@
           </StackPanel>
           <NativeMenuBar x:Name="MenuBarHost" Margin="12,0,0,0" IsVisible="False"/>
         </StackPanel>
-        <!-- centre: play controls -->
+        <!-- centre: view tabs + play controls -->
         <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Spacing="6">
           <Border Classes="segmented">
             <StackPanel Orientation="Horizontal">
-              <RadioButton x:Name="TabScene" GroupName="view" IsChecked="True" Click="OnSceneTab" ToolTip.Tip="Build view (free camera)">Scene</RadioButton>
-              <RadioButton x:Name="TabGame" GroupName="view" Click="OnGameTab" ToolTip.Tip="Game view (main camera)">Game</RadioButton>
+              <RadioButton x:Name="TabScene" GroupName="view" IsChecked="True" Click="OnSceneTab" ToolTip.Tip="Build view (edit / fly camera)">Scene</RadioButton>
+              <RadioButton x:Name="TabGame" GroupName="view" Click="OnGameTab" ToolTip.Tip="Game view (through the main camera)">Game</RadioButton>
             </StackPanel>
           </Border>
-          <Border Classes="segmented" Margin="8,0,0,0">
+          <Button x:Name="ScriptButton" Classes="ghost" Click="OnScriptClick" ToolTip.Tip="Open the scripts project in your IDE"><StackPanel Orientation="Horizontal" Spacing="5"><c:VxIcon Icon="Script"/><TextBlock Text="Script"/></StackPanel></Button>
+          <Border Classes="segmented" Margin="6,0,0,0">
             <StackPanel Orientation="Horizontal">
               <Button x:Name="PlayButton" Classes="icon" Click="OnPlay" ToolTip.Tip="Play (⌘P)"><c:VxIcon x:Name="PlayIcon" Icon="Play" Foreground="{DynamicResource VxGreenBrush}"/></Button>
-              <Button x:Name="PauseButton" Classes="icon" Click="OnPause" ToolTip.Tip="Pause"><c:VxIcon Icon="Pause"/></Button>
+              <Button x:Name="PauseButton" Classes="icon" Click="OnPause" ToolTip.Tip="Pause / Resume (⇧⌘P)"><c:VxIcon x:Name="PauseIcon" Icon="Pause"/></Button>
               <Button x:Name="StopButton" Classes="icon" Click="OnStop" ToolTip.Tip="Stop" IsEnabled="False"><c:VxIcon x:Name="StopIcon" Icon="Stop"/></Button>
-              <Button x:Name="PlayMenuButton" Classes="icon" Click="OnPlayMenu" ToolTip.Tip="Play options" Width="18"><c:VxIcon Icon="ChevronDown" Width="11" Height="11"/></Button>
+              <Button x:Name="PlayMenuButton" Classes="icon" Click="OnPlayMenu" ToolTip.Tip="Play options (viewport / standalone player)" Width="18"><c:VxIcon Icon="ChevronDown" Width="11" Height="11"/></Button>
             </StackPanel>
           </Border>
         </StackPanel>
         <!-- right: build / git / settings -->
         <StackPanel Grid.Column="4" Orientation="Horizontal" VerticalAlignment="Center" Spacing="6">
-          <Button Classes="ghost" Click="OnBuildClick" ToolTip.Tip="Build the game (⌘B)"><StackPanel Orientation="Horizontal" Spacing="6"><c:VxIcon Icon="Hammer"/><TextBlock Text="Build"/></StackPanel></Button>
-          <Button Classes="ghost" Click="OnGitClick" ToolTip.Tip="Source control"><StackPanel Orientation="Horizontal" Spacing="6"><c:VxIcon Icon="Git"/><TextBlock Text="Git"/></StackPanel></Button>
-          <Button Classes="icon" Click="OnSettingsClick" ToolTip.Tip="Project settings"><c:VxIcon Icon="Gear"/></Button>
+          <Button x:Name="BuildButton" Classes="ghost" Click="OnBuildClick" ToolTip.Tip="Build the game (⌘B) — right-click for Build &amp; Run / settings"><StackPanel Orientation="Horizontal" Spacing="6"><c:VxIcon Icon="Hammer"/><TextBlock Text="Build"/></StackPanel></Button>
+          <Button Classes="ghost" Click="OnGitClick" ToolTip.Tip="Source control (Git)"><StackPanel Orientation="Horizontal" Spacing="6"><c:VxIcon Icon="Git"/><TextBlock Text="Git"/></StackPanel></Button>
+          <Button Classes="icon" Click="OnHistoryClick" ToolTip.Tip="History — undo list (⇧⌘H)"><c:VxIcon Icon="Undo"/></Button>
+          <Button Classes="icon" Click="OnSettingsClick" ToolTip.Tip="Project settings (⌘,)"><c:VxIcon Icon="Gear"/></Button>
         </StackPanel>
       </Grid>
     </Border>
@@ -48,9 +50,9 @@
     <!-- workspace -->
     <Grid Grid.Row="1" x:Name="Workspace" ColumnDefinitions="260,5,*,5,330">
       <Grid x:Name="LeftColumn" RowDefinitions="3*,5,2*">
-        <Border Classes="sidebar hairline-right"><p:HierarchyPanel x:Name="Hierarchy"/></Border>
+        <Border x:Name="HierarchyHost" Classes="sidebar hairline-right"><p:HierarchyPanel x:Name="Hierarchy"/></Border>
         <GridSplitter Grid.Row="1" ResizeDirection="Rows"/>
-        <Border Grid.Row="2" Classes="sidebar hairline-right"><p:FileTreePanel x:Name="FileTree"/></Border>
+        <Border x:Name="FilesHost" Grid.Row="2" Classes="sidebar hairline-right"><p:FileTreePanel x:Name="FileTree"/></Border>
       </Grid>
       <GridSplitter Grid.Column="1" ResizeDirection="Columns"/>
       <Grid Grid.Column="2" x:Name="CenterColumn" RowDefinitions="*,5,300">
@@ -58,16 +60,26 @@
         <GridSplitter Grid.Row="1" ResizeDirection="Rows"/>
         <Border Grid.Row="2" x:Name="BottomDock" Classes="panel hairline-top">
           <TabControl x:Name="BottomTabs">
-            <TabItem Header="Project"><p:AssetBrowserPanel x:Name="AssetBrowser"/></TabItem>
-            <TabItem Header="Console"><p:ConsolePanel x:Name="ConsoleView"/></TabItem>
+            <TabItem x:Name="ProjectTab" Header="Project"><p:AssetBrowserPanel x:Name="AssetBrowser"/></TabItem>
+            <TabItem x:Name="ConsoleTab">
+              <TabItem.Header>
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                  <TextBlock Text="Console" VerticalAlignment="Center"/>
+                  <Border x:Name="ConsoleErrorBadge" Classes="badge" Background="{DynamicResource VxRedBrush}" IsVisible="False" VerticalAlignment="Center">
+                    <TextBlock x:Name="ConsoleErrorCount" Text="0" Foreground="White"/>
+                  </Border>
+                </StackPanel>
+              </TabItem.Header>
+              <p:ConsolePanel x:Name="ConsoleView"/>
+            </TabItem>
           </TabControl>
         </Border>
       </Grid>
       <GridSplitter Grid.Column="3" ResizeDirection="Columns"/>
       <Border Grid.Column="4" x:Name="RightColumn" Classes="panel hairline-left">
         <TabControl x:Name="RightTabs">
-          <TabItem Header="Inspector"><p:InspectorPanel x:Name="Inspector"/></TabItem>
-          <TabItem Header="Environment"><p:EnvironmentPanel x:Name="Environment"/></TabItem>
+          <TabItem x:Name="InspectorTab" Header="Inspector"><p:InspectorPanel x:Name="Inspector"/></TabItem>
+          <TabItem x:Name="EnvironmentTab" Header="Environment"><p:EnvironmentPanel x:Name="Environment"/></TabItem>
         </TabControl>
       </Border>
       <sh:ToastHost x:Name="Toast" Grid.ColumnSpan="5"/>
@@ -77,7 +89,9 @@
     <Border Grid.Row="2" Background="{DynamicResource VxToolbarBrush}" Classes="hairline-top" Padding="12,0">
       <DockPanel VerticalAlignment="Center">
         <TextBlock x:Name="ResolutionText" DockPanel.Dock="Right" Classes="small tertiary"/>
-        <TextBlock x:Name="UndoText" DockPanel.Dock="Right" Classes="small tertiary" Margin="0,0,18,0"/>
+        <Button x:Name="UndoStatus" DockPanel.Dock="Right" Classes="link" Padding="0" Margin="0,0,18,0" Click="OnHistoryClick" ToolTip.Tip="Open the History (undo list)" IsVisible="False">
+          <TextBlock x:Name="UndoText" Classes="small tertiary"/>
+        </Button>
         <TextBlock x:Name="StatusText" Classes="small secondary" Text="Ready"/>
       </DockPanel>
     </Border>
