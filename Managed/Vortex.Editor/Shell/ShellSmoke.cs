@@ -35,6 +35,12 @@ namespace VortexEditor.Shell
         [ModuleInitializer]
         internal static void Register()
         {
+            // VORTEX_TRACE_UNDO=1: log every change of the global undo stack with its caller (finds stray pushes)
+            if (Environment.GetEnvironmentVariable("VORTEX_TRACE_UNDO") == "1")
+            {
+                var um = UndoRedoManager.Instance;
+                um.CommandExecuted += (s, e) => System.Console.Error.WriteLine("[undo] " + e.ExecutionType + " '" + e.Command?.Name + "' undo=" + um.UndoCount + " redo=" + um.RedoCount + "\n" + Environment.StackTrace);
+            }
             SmokeRegistry.Add("shell: menu bar has every menu, the ⌘ gestures and every editor", () => Task.FromResult(CheckMenus()));
             SmokeRegistry.Add("shell: keyboard shortcuts (real key events: W/E/R, G, ⌘Z/⇧⌘Z, ⌘D, ⌫, typing guard)", CheckShortcuts);
             SmokeRegistry.Add("shell: panel toggles (Window ▸ ⌘1…⌘6) + reset layout", () => Task.FromResult(CheckPanels()));
@@ -138,8 +144,21 @@ namespace VortexEditor.Shell
             {
                 if (MacKeys.IsAppActive())
                 {
-                    var bar = MacKeys.DumpMainMenu(1).Where(d => !d.Path.Contains(" ▸ ")).Select(d => d.Title).ToList();
+                    var dump = MacKeys.DumpMainMenu(1);
+                    var bar = dump.Where(d => !d.Path.Contains(" ▸ ")).Select(d => d.Title).ToList();
                     Log("macOS menu bar: " + string.Join(" | ", bar));
+                    // what AppKit really matches: key equivalent + modifier mask of the key items
+                    string K(string prefix)
+                    {
+                        var d = dump.FirstOrDefault(x => x.Path.StartsWith(prefix));
+                        if (d == null) return prefix + "=MISSING";
+                        string key = d.Key.Length == 1 && d.Key[0] < 32 ? "\\x" + ((int)d.Key[0]).ToString("x2") : d.Key == "\u007f" ? "⌫" : d.Key;
+                        return prefix.Split('▸').Last().Trim() + "=" + MacKeys.MaskText(d.Mask) + key;
+                    }
+                    var keys = new[] { K("Edit ▸ Undo"), K("Edit ▸ Redo"), K("Edit ▸ Duplicate"), K("Edit ▸ Delete"), K("Edit ▸ Select All"), K("File ▸ Save All"), K("File ▸ Project Settings"), K("Window ▸ Scene Hierarchy"), K("Window ▸ Console"), K("Tools ▸ Play"), K("GameObject ▸ Create Empty") };
+                    Log("macOS key equivalents: " + string.Join("  ", keys));
+                    bool ok = keys[0].EndsWith("⌘z") && (keys[1].EndsWith("⇧⌘z") || keys[1].EndsWith("⌘Z")) && keys[2].EndsWith("⌘d") && keys[7].EndsWith("⌘1") && keys[8].EndsWith("⌘5") && keys[6].EndsWith("⌘,");
+                    if (!ok) { Log("macOS key equivalents do not match the gestures"); missing.Add("key equivalents"); }
                 }
                 else Note("menus: the editor is not the active app in this run, so AppKit's menu bar is not installed — checked the NativeMenu model instead");
             }

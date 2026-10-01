@@ -316,7 +316,7 @@ namespace VortexEditor.Shell
             SyncHierarchySelection();
             if (Vm.SelectedScene == null) Vm.SelectedScene = ActiveScene;
             Vm.SelectAllCommand.Execute(null);
-            Window?.Hierarchy?.SelectEntities(Vm.SelectedEntities.ToList());
+            Window?.Hierarchy?.SelectEntities(Vm.SelectedEntities.ToList(), reveal: false);
         }
 
         public static void Rename()

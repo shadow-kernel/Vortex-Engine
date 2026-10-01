@@ -143,6 +143,11 @@ namespace VortexEditor.Shell
                 ConsoleService.Instance.Log("Smoke test: selected " + (pick?.Name ?? "nothing"));
                 if (OperatingSystem.IsMacOS())
                 {
+                    // Smoke runs often start while the user works in another app: AppKit then spends the first click
+                    // on activating the editor instead of delivering it. Activate first; the click below is posted
+                    // once the activation has settled.
+                    try { Activate(); } catch { }
+                    MacKeys.ActivateApp();
                     // The 3D view must live inside the viewport panel (not cover the window) and clicks over it must
                     // still reach the toolkit: inspect the native view and post a click through AppKit's event path.
                     var ev = ViewportPanel.EngineView;
@@ -151,14 +156,34 @@ namespace VortexEditor.Shell
                     var tv = tl != null ? ev.TransformToVisual(tl) : null;
                     desc += $" | control {ev.Bounds.Width:0}x{ev.Bounds.Height:0} at {(tv.HasValue ? new Point(0, 0).Transform(tv.Value).ToString() : "?")}, visible={ev.IsEffectivelyVisible}, panel {ViewportPanel.Bounds.Width:0}x{ViewportPanel.Bounds.Height:0}";
                     if (embedOk) log.Log("SMOKE OK   viewport embedding: " + desc); else log.LogError("SMOKE FAIL viewport embedding: " + desc);
-                    // Give the toolkit a moment to process the synthetic click before the heavier checks below keep
-                    // the UI thread busy. (No Activate() here: an activation in flight makes AppKit drop the event.)
-                    int presses = ev.PointerPressCount;
-                    bool posted = VortexEditor.Viewport.MacViewProbe.Click(ev.NativeHandle, ev.Bounds.Width / 2, ev.Bounds.Height / 2);
-                    DispatcherTimer.RunOnce(() =>
+                    if (MacKeys.IsScreenLocked())
                     {
-                        if (posted && ev.PointerPressCount > presses) log.Log("SMOKE OK   viewport click routed to the toolkit");
-                        else log.LogError("SMOKE FAIL viewport click not received (posted=" + posted + ", presses=" + ev.PointerPressCount + ")");
+                        // A locked session composites no windows: Avalonia's hit test finds nothing under a synthetic
+                        // click and starts a window drag instead (the run would stall). Say so and run the rest.
+                        log.LogError("SMOKE FAIL viewport click / mouse buttons: the macOS screen is locked — synthetic clicks cannot be routed to an uncomposited window (unlock the Mac and re-run)");
+                        if (System.Environment.GetEnvironmentVariable("VORTEX_SMOKE_PLAYFIRE") == "1") log.LogError("SMOKE FAIL play: mouse fire/aim needs an unlocked screen");
+                        else if (System.Environment.GetEnvironmentVariable("VORTEX_SMOKE_FULL") == "1") SmokeFull(scene);
+                        return;
+                    }
+                    // An activation in flight makes AppKit drop the event: wait for it, then post the click and give the
+                    // toolkit a moment to process it before the heavier checks below keep the UI thread busy. A click
+                    // that was only spent on activating the app gets one retry before the check fails.
+                    void ProbeClick(int attempt)
+                    {
+                        int presses = ev.PointerPressCount;
+                        bool posted = VortexEditor.Viewport.MacViewProbe.Click(ev.NativeHandle, ev.Bounds.Width / 2, ev.Bounds.Height / 2);
+                        DispatcherTimer.RunOnce(() =>
+                        {
+                            bool received = posted && ev.PointerPressCount > presses;
+                            if (!received && attempt == 1) { ProbeClick(2); return; }
+                            if (received) log.Log("SMOKE OK   viewport click routed to the toolkit" + (attempt > 1 ? " (on the retry click)" : ""));
+                            else log.LogError("SMOKE FAIL viewport click not received (posted=" + posted + ", presses=" + ev.PointerPressCount + ", attempts=" + attempt + ", app active=" + MacKeys.IsAppActive() + ")");
+                            ProbeMouseButtons();
+                        }, TimeSpan.FromMilliseconds(400));
+                    }
+                    DispatcherTimer.RunOnce(() => ProbeClick(1), TimeSpan.FromMilliseconds(500));
+                    void ProbeMouseButtons()
+                    {
                         // Mouse buttons must reach the game's key state (Input.GetKey("LButton"/"RButton") = fire / aim).
                         double cx = ev.Bounds.Width / 2, cy = ev.Bounds.Height / 2;
                         VortexEditor.Viewport.MacViewProbe.MouseButton(ev.NativeHandle, cx, cy, false, true);
@@ -183,7 +208,7 @@ namespace VortexEditor.Shell
                                 }, TimeSpan.FromMilliseconds(200));
                             }, TimeSpan.FromMilliseconds(200));
                         }, TimeSpan.FromMilliseconds(200));
-                    }, TimeSpan.FromMilliseconds(400));
+                    }
                 }
                 else if (System.Environment.GetEnvironmentVariable("VORTEX_SMOKE_FULL") == "1") SmokeFull(scene);
                 if (System.Environment.GetEnvironmentVariable("VORTEX_SMOKE_FX") == "1" && scene?.Settings != null)

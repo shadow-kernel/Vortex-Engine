@@ -102,7 +102,9 @@ namespace VortexEditor.Shell
                 if (code == 0xFFFF) return false;
                 long windowNumber = MsgLong(nsWindow, S("windowNumber"));
                 IntPtr nsString = objc_getClass("NSString");
-                string chars = c == '\b' ? "\u007f" : c.ToString().ToLowerInvariant();
+                // like a real key press: charactersIgnoringModifiers keeps Shift ("Z" for ⇧⌘Z) — AppKit matches menu key
+                // equivalents against it
+                string chars = c == '\b' ? "\u007f" : (modifiers & Shift) != 0 ? c.ToString().ToUpperInvariant() : c.ToString().ToLowerInvariant();
                 IntPtr ch = MsgStr(nsString, S("stringWithUTF8String:"), chars);
                 IntPtr app = MsgId(objc_getClass("NSApplication"), S("sharedApplication"));
                 IntPtr sel = S("keyEventWithType:location:modifierFlags:timestamp:windowNumber:context:characters:charactersIgnoringModifiers:isARepeat:keyCode:");
@@ -168,6 +170,30 @@ namespace VortexEditor.Shell
         public static string MaskText(ulong m) => ((m & Control) != 0 ? "⌃" : "") + ((m & Option) != 0 ? "⌥" : "") + ((m & Shift) != 0 ? "⇧" : "") + ((m & Cmd) != 0 ? "⌘" : "");
 
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void MsgVoidBool(IntPtr self, IntPtr sel, [MarshalAs(UnmanagedType.I1)] bool arg);
+
+        private const string CoreGraphics = "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
+        [DllImport(CoreGraphics)] private static extern IntPtr CGSessionCopyCurrentDictionary();
+        [DllImport(CoreFoundation)] private static extern IntPtr CFDictionaryGetValue(IntPtr dict, IntPtr key);
+        [DllImport(CoreFoundation)] private static extern IntPtr CFStringCreateWithCString(IntPtr alloc, [MarshalAs(UnmanagedType.LPUTF8Str)] string s, uint encoding);
+        [DllImport(CoreFoundation)] [return: MarshalAs(UnmanagedType.I1)] private static extern bool CFBooleanGetValue(IntPtr b);
+
+        /// <summary>True while the macOS login session's screen is locked: windows are not composited then, so
+        /// synthetic mouse input cannot hit-test (a click would start a window drag) — smoke runs report that clearly.</summary>
+        public static bool IsScreenLocked()
+        {
+            if (!OperatingSystem.IsMacOS()) return false;
+            try
+            {
+                IntPtr dict = CGSessionCopyCurrentDictionary();
+                if (dict == IntPtr.Zero) return false;
+                IntPtr key = CFStringCreateWithCString(IntPtr.Zero, "CGSSessionScreenIsLocked", 0x08000100);
+                IntPtr v = CFDictionaryGetValue(dict, key);
+                bool locked = v != IntPtr.Zero && CFBooleanGetValue(v);
+                CFRelease(key); CFRelease(dict);
+                return locked;
+            }
+            catch { return false; }
+        }
 
         /// <summary>Make the editor the active application (menu-bar key equivalents only apply to the active app).</summary>
         public static void ActivateApp()

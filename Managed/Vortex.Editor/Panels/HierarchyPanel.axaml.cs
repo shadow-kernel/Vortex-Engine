@@ -105,15 +105,17 @@ namespace VortexEditor.Panels
         }
 
         /// <summary>Select these entities in the tree (reveals them) and in the view model; the last one is primary.</summary>
-        public void SelectEntities(IList<GameEntity> entities)
+        /// <param name="reveal">expand the parents and scroll to the last entity (off for Select All, which would
+        /// otherwise unfold the whole tree)</param>
+        public void SelectEntities(IList<GameEntity> entities, bool reveal = true)
         {
             if (entities == null) return;
-            foreach (var e in entities) ExpandTo(e);
+            if (reveal) foreach (var e in entities) ExpandTo(e);
             // containers of freshly expanded parents are realised on the next layout pass
             Dispatcher.UIThread.Post(() =>
             {
                 SetTreeSelection(entities.Cast<object>().ToList());
-                if (entities.Count > 0) BringIntoView(entities[entities.Count - 1]);
+                if (reveal && entities.Count > 0) _ = RealizeContainer(entities[entities.Count - 1]);   // scroll the (virtualised) row into view
             }, DispatcherPriority.Background);
         }
 
