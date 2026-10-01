@@ -32,8 +32,10 @@ namespace VortexEditor.Shell.Animation
         private readonly PlayheadLayer _playhead;
         // text is real TextBlocks (names column, ruler labels, hover tip) on a layer between the shapes and the playhead
         private readonly Canvas _textLayer = new Canvas { IsHitTestVisible = false, ClipToBounds = true };
-        private readonly StackPanel _namesPanel = new StackPanel();
-        private readonly Border _namesClip = new Border { ClipToBounds = true, Width = NamesW };
+        private readonly StackPanel _namesPanel = new StackPanel { Width = NamesW };
+        // a clipping Canvas (not a Border + RenderTransform): the Canvas lets the StackPanel keep its FULL height, so
+        // rows below the first viewport aren't culled once the list is scrolled
+        private readonly Canvas _namesClip = new Canvas { ClipToBounds = true, Width = NamesW };
         private readonly Canvas _rulerText = new Canvas { ClipToBounds = true, Height = RulerH };
         private readonly TextBlock _tipText2 = new TextBlock { FontSize = 11, TextWrapping = TextWrapping.NoWrap };
         private readonly Border _tip = new Border { CornerRadius = new CornerRadius(5), Padding = new Thickness(7, 4), BorderThickness = new Thickness(1), IsVisible = false };
@@ -85,8 +87,8 @@ namespace VortexEditor.Shell.Animation
             ClipToBounds = true;
             _surface = new Surface(this);
             _playhead = new PlayheadLayer(this);
-            _namesClip.Child = _namesPanel;
-            _namesPanel.RenderTransform = new TranslateTransform(0, 0);
+            _namesClip.Children.Add(_namesPanel);
+            Canvas.SetLeft(_namesPanel, 0); Canvas.SetTop(_namesPanel, 0);
             Canvas.SetLeft(_namesClip, 0); Canvas.SetTop(_namesClip, RulerH);
             Canvas.SetLeft(_rulerText, NamesW); Canvas.SetTop(_rulerText, 0);
             var header = new TextBlock { Text = "TRACKS", FontSize = 10.5, FontWeight = FontWeight.SemiBold, Classes = { "tertiary" } };
@@ -205,7 +207,7 @@ namespace VortexEditor.Shell.Animation
         {
             _surface.InvalidateVisual();
             _playhead.InvalidateVisual();
-            if (_namesPanel.RenderTransform is TranslateTransform tt) tt.Y = -_scrollY;
+            Canvas.SetTop(_namesPanel, -Math.Round(_scrollY));
             RebuildRulerText();
         }
 

@@ -408,7 +408,18 @@ namespace VortexEditor.Panels.Inspector
         }
 
         // ---------------------------------------------------------------- misc helpers
-        public static string Fmt(float v, string format = "0.###") => v.ToString(format, CultureInfo.InvariantCulture);
+        public static string Fmt(float v, string format = "0.###")
+        {
+            string s = v.ToString(format, CultureInfo.InvariantCulture);
+            // a negative zero / tiny negative rounded away prints "-0" ("-0.00") — reads like a sign bug, drop the sign
+            if (s.Length > 1 && s[0] == '-')
+            {
+                bool zero = true;
+                for (int i = 1; i < s.Length && zero; i++) zero = s[i] == '0' || s[i] == '.';
+                if (zero) s = s.Substring(1);
+            }
+            return s;
+        }
         public static bool TryParse(string s, out float v)
             => float.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out v) && !float.IsNaN(v) && !float.IsInfinity(v);
         public static byte B(float v) => (byte)Math.Max(0, Math.Min(255, (int)(v * 255f + 0.5f)));

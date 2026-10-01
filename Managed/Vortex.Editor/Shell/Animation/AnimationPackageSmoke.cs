@@ -149,8 +149,8 @@ namespace VortexEditor.Shell.Animation
                 var skel = w.Preview.Skeleton;
                 bool skeletonOk = skel != null && skel.IsValid;
                 int rows = w.Timeline.RowCount;
-                Log("opened " + Path.GetFileName(clip) + ": rendered=" + rendered + " skeleton=" + (skel?.Nodes?.Length ?? 0) + " nodes, tracks=" + w.Document.Tracks.Count + " timeline rows=" + rows);
-                if (!rendered || !skeletonOk || rows == 0) return false;
+                Log("opened " + Path.GetFileName(clip) + ": rendered=" + rendered + " skeleton=" + (skel?.Nodes?.Length ?? 0) + " nodes, tracks=" + w.Document.Tracks.Count + " timeline rows=" + rows + " clip list=" + w.ClipListCount);
+                if (!rendered || !skeletonOk || rows == 0 || w.ClipListCount < 1) return false;
 
                 // play a few frames: the pose must change the rendered pixels
                 var a = w.Preview.Viewport.LastImage;

@@ -63,6 +63,8 @@ namespace VortexEditor.Shell
         private readonly SkinnedPreview _preview = new SkinnedPreview();
         private readonly TimelineControl _timeline = new TimelineControl();
         private ListBox _boneList;
+        private ListBox _clipList;
+        private bool _suppressClipList;
         private TextBox _boneFilter;
         private StackPanel _inspector;
         private TextBlock _modelPathText;
@@ -107,6 +109,8 @@ namespace VortexEditor.Shell
         public bool IsDirty => _dirty;
         public float PlayheadTime => _time;
         public string SelectedBone => _selectedBone;
+        /// <summary>Clip documents listed in the CLIPS panel (this one + its siblings).</summary>
+        public int ClipListCount => (_clipList?.ItemsSource as List<string>)?.Count ?? 0;
 
         public AnimationEditorWindow(string path) : this()
         {
@@ -167,6 +171,61 @@ namespace VortexEditor.Shell
             UpdatePreview();
             UpdateTimeText();
             UpdateTitle();
+            RefreshClipList();
+        }
+
+        /// <summary>The .vanim documents next to this one (the CLIPS list).</summary>
+        private void RefreshClipList()
+        {
+            if (_clipList == null) return;
+            _suppressClipList = true;
+            try
+            {
+                var files = new List<string>();
+                try
+                {
+                    string dir = Path.GetDirectoryName(_path);
+                    if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir)) files.AddRange(Directory.GetFiles(dir, "*.vanim").OrderBy(f => f, StringComparer.OrdinalIgnoreCase));
+                }
+                catch { }
+                if (!string.IsNullOrEmpty(_path) && !files.Any(f => string.Equals(f, _path, StringComparison.OrdinalIgnoreCase))) files.Insert(0, _path);
+                _clipList.ItemsSource = files;
+                var cur = files.FirstOrDefault(f => string.Equals(f, _path, StringComparison.OrdinalIgnoreCase));
+                _clipList.SelectedItem = cur;
+                if (cur != null) _clipList.ScrollIntoView(cur);
+            }
+            finally { _suppressClipList = false; }
+        }
+
+        /// <summary>New empty clip (bound to this clip's model) or a duplicate of this one, next to it; then switch to it.</summary>
+        private async System.Threading.Tasks.Task CreateClip(bool duplicate)
+        {
+            string dir = Path.GetDirectoryName(_path);
+            if (string.IsNullOrEmpty(dir)) dir = AnimUtil.ProjectDir("Assets", "Animations");
+            if (string.IsNullOrEmpty(dir)) return;
+            string suggestion = duplicate ? (_clip?.Name ?? "clip") + "_copy" : "new_clip";
+            var name = await AnimUi.Prompt(this, duplicate ? "Duplicate clip" : "New clip", "Clip name (the .vanim file is created in " + AnimUtil.ToRelative(dir) + ")", suggestion, duplicate ? "Duplicate" : "Create");
+            if (string.IsNullOrWhiteSpace(name)) return;
+            string safe = string.Concat(name.Trim().Split(Path.GetInvalidFileNameChars()));
+            if (safe.Length == 0) return;
+            string file = Path.Combine(dir, safe + ".vanim");
+            for (int n = 2; File.Exists(file); n++) file = Path.Combine(dir, safe + "_" + n + ".vanim");
+            if (!await ConfirmDiscardOrSave()) return;
+            VortexAnimClip doc;
+            if (duplicate)
+            {
+                // a deep copy through the serializer (tracks / keys / events are reference types)
+                string tmp = Path.Combine(Path.GetTempPath(), "vortex_clip_" + Guid.NewGuid().ToString("N") + ".vanim");
+                _clip.Save(tmp);
+                doc = VortexAnimClip.Load(tmp) ?? new VortexAnimClip();
+                try { File.Delete(tmp); } catch { }
+                doc.Name = safe;
+            }
+            else doc = new VortexAnimClip { Name = safe, Model = _clip?.Model ?? "", FrameRate = _clip?.FrameRate ?? 30f, DurationSec = 1f, Loop = true };
+            if (!doc.Save(file)) { await AnimUi.Alert(this, "Keyframe Editor", "Could not create " + file); return; }
+            try { Editor.Core.Assets.AssetDatabase.Instance.Refresh(); } catch { }
+            try { EditorCommands.Window?.AssetBrowser?.Refresh(); } catch { }
+            LoadClip(file);
         }
 
         /// <summary>Hand-edited JSON can deserialize lists as null — normalize once so the editor can assume them.</summary>
@@ -371,7 +430,38 @@ namespace VortexEditor.Shell
             DragDrop.SetAllowDrop(sec, true);
             sec.AddHandler(DragDrop.DragOverEvent, (s, e) => { var p = Panels.Inspector.PropertyRows.DroppedPath(e, "vortex/asset"); e.DragEffects = p != null && Panels.Inspector.PropertyRows.Matches(p, ModelPatterns) ? DragDropEffects.Link : DragDropEffects.None; e.Handled = true; });
             sec.AddHandler(DragDrop.DropEvent, (s, e) => { var p = Panels.Inspector.PropertyRows.DroppedPath(e, "vortex/asset"); if (p != null && Panels.Inspector.PropertyRows.Matches(p, ModelPatterns)) { BindModelPath(p); e.Handled = true; } });
-            sec.Children.Add(AnimUi.MicroHeader("BONES", 14));
+
+            // CLIPS: the clip documents next to this one (switch with the unsaved-changes guard), new / duplicate
+            var clipsHead = new DockPanel { Margin = new Thickness(0, 14, 0, 0) };
+            var clipBtns = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
+            var newClip = new Button { Classes = { "icon", "small" }, Content = AnimUi.Icon("Plus", 12) };
+            ToolTip.SetTip(newClip, "New clip in this folder (bound to the same model)");
+            newClip.Click += async (s, e) => await CreateClip(duplicate: false);
+            var dupClip = new Button { Classes = { "icon", "small" }, Content = AnimUi.Icon("Layers", 12) };
+            ToolTip.SetTip(dupClip, "Duplicate this clip (with its current, unsaved edits)");
+            dupClip.Click += async (s, e) => await CreateClip(duplicate: true);
+            clipBtns.Children.Add(newClip); clipBtns.Children.Add(dupClip);
+            DockPanel.SetDock(clipBtns, Dock.Right);
+            clipsHead.Children.Add(clipBtns);
+            clipsHead.Children.Add(AnimUi.MicroHeader("CLIPS", 2));
+            sec.Children.Add(clipsHead);
+            _clipList = new ListBox { MaxHeight = 150, Background = Brushes.Transparent, Margin = new Thickness(0, 0, 0, 4) };
+            ScrollViewer.SetHorizontalScrollBarVisibility(_clipList, ScrollBarVisibility.Disabled);
+            _clipList.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<string>((p, _) =>
+            {
+                bool cur = string.Equals(p, _path, StringComparison.OrdinalIgnoreCase);
+                var tb = new TextBlock { Text = Path.GetFileNameWithoutExtension(p), FontSize = 12, TextTrimming = TextTrimming.CharacterEllipsis, FontWeight = cur ? FontWeight.SemiBold : FontWeight.Normal };
+                ToolTip.SetTip(tb, AnimUtil.ToRelative(p));
+                return tb;
+            });
+            _clipList.SelectionChanged += async (s, e) =>
+            {
+                if (_suppressClipList || !(_clipList.SelectedItem is string p) || string.Equals(p, _path, StringComparison.OrdinalIgnoreCase)) return;
+                if (await ConfirmDiscardOrSave()) LoadClip(p); else RefreshClipList();
+            };
+            sec.Children.Add(_clipList);
+
+            sec.Children.Add(AnimUi.MicroHeader("BONES", 10));
             _boneFilter = new TextBox { Classes = { "search" }, Watermark = "Filter bones…", Margin = new Thickness(0, 0, 0, 6) };
             _boneFilter.TextChanged += (s, e) => RefreshBoneTree();
             sec.Children.Add(_boneFilter);
