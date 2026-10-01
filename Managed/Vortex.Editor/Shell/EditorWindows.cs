@@ -36,6 +36,7 @@ namespace VortexEditor.Shell
         public static void UiEditor(string fullPath) => UiEditorWindow.Open(fullPath);
         public static void AnimationEditor(string fullPath) => AnimationEditorWindow.Open(fullPath);
         public static void VfxEditor(string fullPath) => VfxEditorWindow.Open(fullPath);
+        public static void Navigation() => NavigationWindow.Open();
         public static void SocketEditor(GameEntity e) => SocketEditorWindow.Open(e);
         public static void CollisionEditor(GameEntity e) => CollisionEditorWindow.Open(e);
         public static void AudioMixer() => AudioMixerWindow.Open();

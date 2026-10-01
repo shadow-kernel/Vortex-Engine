@@ -736,6 +736,10 @@ namespace VortexEditor.Panels
             C<BoneAttachment>("Animation", "Bone Attachment", "Bone", "VxPinkBrush", x => new BoneAttachment(x), "bone socket attachment weapon hand");
             C<TwoBoneIk>("Animation", "Two-Bone IK", "Bone", "VxPinkBrush", x => new TwoBoneIk(x), "ik inverse kinematics arm hand", "support hand");
             C<HandPose>("Animation", "Hand Pose", "Bone", "VxPinkBrush", x => new HandPose(x), "hand pose fingers grip");
+            C<Editor.ECS.Components.AI.NavAgent>("AI", "Nav Agent", "Crosshair", "VxTealBrush", x => new Editor.ECS.Components.AI.NavAgent(x), "ai navigation navmesh agent pathfinding walk follow chase move", "walks the navmesh");
+            C<Editor.ECS.Components.AI.AIPerception>("AI", "AI Perception", "Eye", "VxTealBrush", x => new Editor.ECS.Components.AI.AIPerception(x), "ai perception sight vision hearing senses detect player", "sight + hearing");
+            C<Editor.ECS.Components.AI.PatrolPath>("AI", "Patrol Path", "Link", "VxTealBrush", x => new Editor.ECS.Components.AI.PatrolPath(x), "ai patrol path waypoints route guard", "waypoints");
+            list.Add(new CatalogEntry { Category = "AI", Name = "Bake NavMesh…", Icon = "Grid", BrushKey = "VxTealBrush", Keywords = "navigation navmesh bake walkable ai", Run = x => EditorWindows.Navigation() });
             C<LookAtIk>("Animation", "Look-At IK", "Bone", "VxPinkBrush", x => new LookAtIk(x), "look at head aim gaze ik target", "head + spine");
             C<FootIk>("Animation", "Foot IK", "Bone", "VxPinkBrush", x => new FootIk(x), "foot ik ground stairs slope feet legs", "feet on the ground");
             List<string> scripts = null;
