@@ -71,6 +71,8 @@ namespace VortexEditor.Shell
             if (opened && !string.IsNullOrEmpty(o.SceneName) && Session.Project?.Scenes != null)
                 foreach (var s in Session.Project.Scenes) if (s != null && string.Equals(s.Name, o.SceneName, StringComparison.OrdinalIgnoreCase)) { Session.ActivateScene(s); break; }
             if (!opened) ShowProjectHub(createTab: false);
+            // dev: README showcase recording (VORTEX_SHOWCASE=<dir>) — scripted editor tour, then quit
+            if (opened && ShowcaseRecorder.Enabled) DispatcherTimer.RunOnce(() => { _ = ShowcaseRecorder.Run(this); }, TimeSpan.FromSeconds(3));
             if (o.SmokeSeconds > 0)
             {
                 // Echo the editor console to stdout so a smoke run is verifiable from a terminal / CI log. Write to the
