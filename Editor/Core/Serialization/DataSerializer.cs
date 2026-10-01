@@ -47,6 +47,7 @@ namespace Editor.Core.Serialization
             typeof(SpriteRenderer),
             typeof(Camera),
             typeof(Skybox),
+            typeof(ParticleSystem),   // VFX #116
             
             // Lighting
             typeof(Light),

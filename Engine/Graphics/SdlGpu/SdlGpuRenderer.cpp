@@ -97,6 +97,8 @@ namespace vortex::graphics::sdlgpu
 		ResourceRegistry::instance().initialize(m_device);
 		if (!m_overlay.initialize(m_device, m_shader_dir, m_present_format))
 			log("UI overlay unavailable (continuing without it)");
+		if (!m_particles.initialize(m_device, m_shader_dir, m_scene_format, m_sampler_linear_wrap, m_sampler_linear_clamp))
+			log("particles unavailable (continuing without them)");
 
 		m_initialized = true;
 		log("initialized (" + m_gpu_name + ")");
@@ -505,7 +507,8 @@ namespace vortex::graphics::sdlgpu
 		if (with_depth)
 		{
 			tci.format = m_depth_format;
-			tci.usage = SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET;
+			// sampled by the particle passes (depth test + soft particles) and the collision snapshot
+			tci.usage = SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
 			target.depth = SDL_CreateGPUTexture(m_device, &tci);
 		}
 		if (readback)
@@ -557,6 +560,8 @@ namespace vortex::graphics::sdlgpu
 		destroy_postfx_resources();
 		destroy_shadow_resources();
 		m_overlay.shutdown();
+		m_particles.shutdown();
+		::vortex::particles::on_renderer_shutdown();   // the engine texture ids the emitters hold die with the registry
 		destroy_game_window();
 		for (auto& [id, target] : m_render_targets) release_target(*target);
 		m_render_targets.clear();
@@ -613,6 +618,10 @@ namespace vortex::graphics::sdlgpu
 	void SdlGpuRenderer::render_frame()
 	{
 		if (!m_initialized) return;
+		// Particles: hand finished collision readbacks to the simulation, then let the frame driver (the managed
+		// ParticleService callback, or the automatic world-0 update) step it before anything is gathered.
+		m_particles.begin_frame();
+		::vortex::particles::begin_frame();
 		swap_render_queue();
 
 		m_frame_count++;
@@ -661,7 +670,7 @@ namespace vortex::graphics::sdlgpu
 
 		FrameView view = build_main_view(rw, rh);
 		if (slot == 0) m_frame_constants = view.frame;
-		record_scene(cmd, surface.scene, view, m_skybox_enabled, m_grid_visible, true);
+		record_scene(cmd, surface.scene, view, m_skybox_enabled, m_grid_visible, true, 0, true);
 
 		// Composite the scene into the present target (render-scale upscale), through the post chain if active.
 		if (post_on && ensure_target(surface.postfx, w, h, false, false))
@@ -1001,7 +1010,7 @@ namespace vortex::graphics::sdlgpu
 		SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(m_device);
 		if (!cmd) return;
 		FrameView view = build_camera_view(camera, target.width, target.height);
-		record_scene(cmd, target, view, true, render_grid, render_gizmos);
+		record_scene(cmd, target, view, true, render_grid, render_gizmos, m_particles.consume_target_world(), false);
 		SDL_SubmitGPUCommandBuffer(cmd);
 	}
 
