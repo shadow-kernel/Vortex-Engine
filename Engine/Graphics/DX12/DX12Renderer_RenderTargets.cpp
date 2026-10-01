@@ -141,6 +141,9 @@ namespace vortex::graphics::dx12
 		frame_constants.point_light_count = static_cast<u32>((std::min)(m_point_lights.size(), static_cast<size_t>(MAX_POINT_LIGHTS)));
 		frame_constants.spot_light_count = static_cast<u32>((std::min)(m_spot_lights.size(), static_cast<size_t>(MAX_SPOT_LIGHTS)));
 		frame_constants.ssao_enabled = 0.0f;   // #32: previews never sample the main view's AO
+		frame_constants.env_sky = DirectX::XMFLOAT4(m_env_sky.x, m_env_sky.y, m_env_sky.z, (m_skybox_enabled && m_skybox_mode == SkyboxMode::Gradient) ? 1.0f : 0.0f);
+		frame_constants.env_horizon = DirectX::XMFLOAT4(m_env_horizon.x, m_env_horizon.y, m_env_horizon.z, 0.0f);
+		frame_constants.env_ground = DirectX::XMFLOAT4(m_env_ground.x, m_env_ground.y, m_env_ground.z, 0.0f);
 		if (m_light_cb_mapped)
 		{
 			u8* lptr = static_cast<u8*>(m_light_cb_mapped);
@@ -338,11 +341,11 @@ namespace vortex::graphics::dx12
 					auto* normal = mat->normal_texture();
 					if (normal && normal->is_valid() && normal->srv_gpu().ptr != 0) { obj_cb.has_normal_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(4, normal->srv_gpu()); }
 					auto* metallic_tex = mat->metallic_texture();
-					if (metallic_tex && metallic_tex->is_valid() && metallic_tex->srv_gpu().ptr != 0) { obj_cb.has_metallic_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(5, metallic_tex->srv_gpu()); }
+					if (metallic_tex && metallic_tex->is_valid() && metallic_tex->srv_gpu().ptr != 0) { obj_cb.has_metallic_texture = props.has_metallic_texture ? props.has_metallic_texture : 1; m_command_list->SetGraphicsRootDescriptorTable(5, metallic_tex->srv_gpu()); }
 					auto* roughness_tex = mat->roughness_texture();
-					if (roughness_tex && roughness_tex->is_valid() && roughness_tex->srv_gpu().ptr != 0) { obj_cb.has_roughness_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(6, roughness_tex->srv_gpu()); }
+					if (roughness_tex && roughness_tex->is_valid() && roughness_tex->srv_gpu().ptr != 0) { obj_cb.has_roughness_texture = props.has_roughness_texture ? props.has_roughness_texture : 1; m_command_list->SetGraphicsRootDescriptorTable(6, roughness_tex->srv_gpu()); }
 					auto* ao_tex = mat->ao_texture();
-					if (ao_tex && ao_tex->is_valid() && ao_tex->srv_gpu().ptr != 0) { obj_cb.has_ao_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(7, ao_tex->srv_gpu()); }
+					if (ao_tex && ao_tex->is_valid() && ao_tex->srv_gpu().ptr != 0) { obj_cb.has_ao_texture = props.has_ao_texture ? props.has_ao_texture : 1; m_command_list->SetGraphicsRootDescriptorTable(7, ao_tex->srv_gpu()); }
 					// UV tiling + height/parallax — so previews/thumbnails/game-window match the scene viewport.
 					obj_cb.uv_tiling = props.uv_tiling;
 					obj_cb.height_scale = props.height_scale;

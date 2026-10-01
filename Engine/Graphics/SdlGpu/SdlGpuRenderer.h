@@ -8,8 +8,9 @@
 // Frame flow:
 //   swap queues -> CPU sort/cull/pack -> upload instance + bone data (copy pass)
 //   -> scene pass into an offscreen BGRA8 target at render scale (skybox, grid,
-//      opaque runs, sorted transparents; a second pass with cleared depth for
-//      the first-person viewmodel layer; always-on-top gizmos)
+//      opaque runs, sorted transparents; particles of the world layer; a second
+//      pass with cleared depth for the first-person viewmodel layer + its
+//      particles; always-on-top gizmos)
 //   -> blit / post-FX pass into the present target at window resolution
 //   -> 2D overlay pass -> optional capture -> blit to the swapchain.
 // ============================================================================
@@ -17,6 +18,7 @@
 #include "../../Common/Id.h"
 #include "SdlGpuResources.h"
 #include "SdlGpuOverlay.h"
+#include "SdlGpuParticles.h"
 #include <SDL3/SDL.h>
 #include <chrono>
 #include <memory>
@@ -299,6 +301,10 @@ namespace vortex::graphics::sdlgpu
 		void release_render_target_pixels(u32 target_id);
 		bool has_render_target(u32 target_id) const { return m_render_targets.find(target_id) != m_render_targets.end(); }
 
+		// Particles (VFX, Graphics/Particles): the scene views draw world 0; ParticleSetNextTargetWorld picks the
+		// world of the next render_to_target (SdlGpuParticles.h).
+		SdlGpuParticles& particles() { return m_particles; }
+
 		// GPU info (the DX12 backend exposes these through DX12Core)
 		u32 gpu_vendor_id() const { return 0; }
 		const std::string& gpu_name() const { return m_gpu_name; }
@@ -338,8 +344,10 @@ namespace vortex::graphics::sdlgpu
 			float fog_height_y; float fog_height_falloff; u32 fog_mode; float fog_padding;
 			float shadow_map_texel; u32 shadow_padding[3];
 			float ssao_enabled; float ssao_padding[3];
+			// scene sky gradient for specular reflections (w = 1 when a gradient sky is active)
+			DirectX::XMFLOAT4 env_sky; DirectX::XMFLOAT4 env_horizon; DirectX::XMFLOAT4 env_ground;
 		};
-		static_assert(sizeof(PerFrameConstants) == 192, "PerFrameConstants must byte-match standard.metal");
+		static_assert(sizeof(PerFrameConstants) == 240, "PerFrameConstants must byte-match standard.metal");
 
 		struct PerObjectConstants
 		{
@@ -408,6 +416,11 @@ namespace vortex::graphics::sdlgpu
 			DirectX::XMFLOAT4X4 inverse_view_projection;
 			DirectX::XMFLOAT3 eye;
 			bool has_viewmodel{ false };
+			// camera basis + projection parameters (particles: billboards, soft depth, collision snapshot)
+			DirectX::XMFLOAT3 right{ 1, 0, 0 }, up{ 0, 1, 0 }, forward{ 0, 0, 1 };
+			float near_clip{ 0.1f }, far_clip{ 1000.0f };
+			bool ortho{ false };
+			float tan_half_x{ 1.0f }, tan_half_y{ 1.0f };
 		};
 		void prepare_shadow_pass(const FrameView& view);   // SdlGpuRenderer_Shadows.cpp
 		// Screen-space effects (SdlGpuRenderer_PostFx.cpp)
@@ -524,8 +537,19 @@ namespace vortex::graphics::sdlgpu
 		void upload_staged_bone_palettes();
 		void prepare_scene(const FrameView& view);   // sort + cull + pack (CPU) into the staging vectors
 		void upload_dynamic(SDL_GPUCommandBuffer* cmd);
-		void record_scene(SDL_GPUCommandBuffer* cmd, GpuTarget& target, const FrameView& view, bool draw_skybox, bool draw_grid, bool draw_gizmos);
+		void record_scene(SDL_GPUCommandBuffer* cmd, GpuTarget& target, const FrameView& view, bool draw_skybox, bool draw_grid, bool draw_gizmos,
+			int particle_world = -1, bool particle_depth_capture = false);
+		SdlGpuParticles::View particle_view(const FrameView& view) const;
+		SdlGpuParticles::Environment particle_environment(const FrameView& view) const;
 		void draw_skybox(SDL_GPURenderPass* pass, SDL_GPUCommandBuffer* cmd, const FrameView& view);
+		// sky gradient -> PerFrame env colours (specular reflections of metals); w = 0 falls back to the neutral env
+		void fill_environment(PerFrameConstants& f) const
+		{
+			const float on = (m_skybox_enabled && m_skybox_mode == SkyboxMode::Gradient) ? 1.0f : 0.0f;
+			f.env_sky = { m_sky_color.x, m_sky_color.y, m_sky_color.z, on };
+			f.env_horizon = { m_horizon_color.x, m_horizon_color.y, m_horizon_color.z, 0.0f };
+			f.env_ground = { m_ground_color.x, m_ground_color.y, m_ground_color.z, 0.0f };
+		}
 		void draw_grid(SDL_GPURenderPass* pass, SDL_GPUCommandBuffer* cmd, const FrameView& view);
 		void record_runs(SDL_GPURenderPass* pass, SDL_GPUCommandBuffer* cmd, size_t run_begin, size_t run_end, const FrameView& view);
 		void draw_gizmos(SDL_GPURenderPass* pass, SDL_GPUCommandBuffer* cmd);
@@ -598,6 +622,7 @@ namespace vortex::graphics::sdlgpu
 		std::vector<u32> m_item_run;
 		std::vector<unsigned char> m_item_lod;
 		bool m_queue_dirty{ true };
+		u32 m_seen_mesh_generation{ 0 };   // ResourceRegistry::mesh_generation() the cached draw runs were built against
 		bool m_mt_enabled{ true }, m_mt_force{ false }, m_mt_active{ false };
 		u32 m_gizmo_instance_base{ 0 };
 
@@ -610,6 +635,10 @@ namespace vortex::graphics::sdlgpu
 		float m_near_clip{ 0.1f };
 		float m_far_clip{ 1000.0f };
 		float m_viewmodel_fov{ 54.0f };
+		// Viewmodel depth range: first-person weapons sit 2-5 cm in front of the eye when aiming (rear sight, optics),
+		// so the layer-1 pass needs a much closer near plane than the world (its depth buffer is cleared separately).
+		static constexpr float VIEWMODEL_NEAR = 0.01f;
+		static constexpr float VIEWMODEL_FAR = 200.0f;
 		DirectX::XMFLOAT3 m_light_direction{ 0.3f, -1.0f, 0.5f };
 		DirectX::XMFLOAT3 m_light_color{ 1.0f, 0.98f, 0.95f };
 		float m_directional_intensity{ 1.0f };
@@ -671,8 +700,9 @@ namespace vortex::graphics::sdlgpu
 		float m_lod_mid{ 0.0f }, m_lod_far{ 0.0f };
 		float m_clear_color[4]{ 0.18f, 0.18f, 0.20f, 1.0f };
 
-		// overlay + capture + stats
+		// overlay + particles + capture + stats
 		SdlGpuOverlay m_overlay;
+		SdlGpuParticles m_particles;
 		bool m_capture_requested{ false };
 		std::string m_capture_path;
 		int m_current_fps{ 0 }, m_frame_count{ 0 };

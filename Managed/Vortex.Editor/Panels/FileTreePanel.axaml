@@ -1,13 +1,21 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:c="clr-namespace:VortexEditor.Controls"
-             xmlns:fx="clr-namespace:Editor.Editors.WorldEditor.Components.FileExplorer.Models;assembly=Vortex.Core"
+             xmlns:ab="clr-namespace:VortexEditor.Panels.AssetBrowser"
              x:Class="VortexEditor.Panels.FileTreePanel">
+  <UserControl.Styles>
+    <Style Selector="TextBox.rename">
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="Padding" Value="4,1"/>
+      <Setter Property="MinHeight" Value="20"/>
+    </Style>
+  </UserControl.Styles>
   <DockPanel>
     <Border DockPanel.Dock="Top" Classes="panelheader">
       <DockPanel>
         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="2">
-          <Button Classes="icon" ToolTip.Tip="New folder" Click="OnNewFolder"><c:VxIcon Icon="Plus"/></Button>
+          <Button Classes="icon" ToolTip.Tip="New folder in the selected folder" Click="OnNewFolder"><c:VxIcon Icon="Plus"/></Button>
+          <Button Classes="icon" ToolTip.Tip="Collapse all" Click="OnCollapseAll"><c:VxIcon Icon="Minus"/></Button>
           <Button Classes="icon" ToolTip.Tip="Reveal in Finder" Click="OnReveal"><c:VxIcon Icon="Folder"/></Button>
           <Button Classes="icon" ToolTip.Tip="Refresh" Click="OnRefresh"><c:VxIcon Icon="Refresh"/></Button>
         </StackPanel>
@@ -15,13 +23,22 @@
       </DockPanel>
     </Border>
     <Grid>
-      <TreeView x:Name="Tree" SelectionChanged="OnSelectionChanged">
+      <TreeView x:Name="Tree" SelectionChanged="OnSelectionChanged" ContextRequested="OnContextRequested">
+        <TreeView.Styles>
+          <Style Selector="TreeViewItem">
+            <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}"/>
+          </Style>
+        </TreeView.Styles>
         <TreeView.DataTemplates>
-          <TreeDataTemplate DataType="fx:FileSystemItem" ItemsSource="{Binding Children}">
-            <StackPanel Orientation="Horizontal" Spacing="6" Height="24" Background="Transparent" PointerPressed="OnItemPressed">
-              <c:VxIcon Icon="{Binding Converter={x:Static c:FileIconConverter.Instance}}" Foreground="{Binding Converter={x:Static c:FileIconBrushConverter.Instance}}"/>
-              <TextBlock Text="{Binding Name}" VerticalAlignment="Center"/>
-            </StackPanel>
+          <TreeDataTemplate DataType="ab:FolderNode" ItemsSource="{Binding Children}">
+            <Border Background="{Binding DropBrush}" CornerRadius="4" Padding="0,0,6,0" ToolTip.Tip="{Binding FullPath}">
+              <StackPanel Orientation="Horizontal" Spacing="6" Height="24">
+                <c:VxIcon Icon="{Binding IconName}" Foreground="{DynamicResource VxAccentBrush}" VerticalAlignment="Center"/>
+                <TextBlock Text="{Binding Name}" VerticalAlignment="Center" IsVisible="{Binding !IsRenaming}"/>
+                <TextBox Classes="rename" Text="{Binding EditName, Mode=TwoWay}" IsVisible="{Binding IsRenaming}" MinWidth="130" VerticalAlignment="Center"
+                         KeyDown="OnRenameKeyDown" LostFocus="OnRenameLostFocus"/>
+              </StackPanel>
+            </Border>
           </TreeDataTemplate>
         </TreeView.DataTemplates>
       </TreeView>

@@ -26,6 +26,13 @@ namespace vortex::graphics
 	std::string roughness_texture; // Roughness map
 	std::string ao_texture;        // Ambient Occlusion map
 	std::string emissive_texture;  // Emissive map
+	// Channel each PBR map is read from (0 R, 1 G, 2 B, 3 A). A texture used for metallic AND roughness is a packed
+	// map (glTF metallicRoughness, ORM/ARM): roughness in G, metallic in B, occlusion (often the same file) in R.
+	u8 metallic_channel{ 0 };
+	u8 roughness_channel{ 0 };
+	u8 ao_channel{ 0 };
+	bool normal_opengl{ false };   // normal map uses the OpenGL (+Y) convention — glTF's convention
+	bool normal_is_bump{ false };  // "normal" came from a HEIGHT/bump slot (OBJ map_Bump): may be grayscale
 	};
 
 	// ---- Skeletal animation data (green-field; see ANIMATION_SYSTEM_DESIGN.md) ----
@@ -72,6 +79,7 @@ namespace vortex::graphics
 		DirectX::XMFLOAT3 bounds_min{ 0.0f, 0.0f, 0.0f };
 		DirectX::XMFLOAT3 bounds_max{ 0.0f, 0.0f, 0.0f };
 		std::string name;
+		bool gltf{ false };   // source was glTF (.gltf/.glb): OpenGL-convention normal maps
 		// Skeleton + clips (empty for static models).
 		std::vector<SkeletonNodeData> nodes;
 		std::vector<SkeletonBoneData> bones;

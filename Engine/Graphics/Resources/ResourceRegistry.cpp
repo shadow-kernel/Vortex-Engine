@@ -167,6 +167,7 @@ namespace vortex::graphics
 		if (it != m_meshes.end())
 		{
 			m_meshes.erase(it);
+			++m_mesh_generation;
 		}
 	}
 

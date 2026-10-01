@@ -15,7 +15,8 @@
 // Conventions: metres/kg/s, quaternions {x, y, z, w}, body handles u32 (0 = invalid), entity ids
 // u64, motion 0 static / 1 kinematic / 2 dynamic, shape 0 box / 1 sphere / 2 capsule / 3 cylinder,
 // layers 0 STATIC / 1 DYNAMIC / 2 CHARACTER / 3 TRIGGER / 4 DEBRIS, lock flags bit0..2 position
-// xyz + bit3..5 rotation xyz.
+// xyz + bit3..5 rotation xyz. Joints (#103): handles u32 (0 = invalid), angles in degrees, motor
+// mode 0 off / 1 velocity / 2 position.
 // ============================================================================================
 
 namespace phys = vortex::physics;
@@ -147,7 +148,85 @@ EDITOR_INTERFACE void PhysicsCharacterMove(uint32_t c, const float* desiredVeloc
 	phys::character_move(c, desiredVelocity, dt, outPos, outVelocity, outGrounded, outGroundNormal);
 }
 
-// ---- Debug (issue #106): world-space line segments of every body's shape wireframe ----
+// ---- Constraints / joints (issue #103) ----
+// bodyA = the jointed body (valid handle), bodyB = the connected body or 0 = the world. Points / axes are WORLD
+// space at creation; the pose at creation is the rest pose (hinge angle 0, slider position 0). breakForce (N) > 0
+// = breakable: a joint whose linear force exceeds it is disabled and reported by PhysicsGetBrokenConstraints.
+// The two bodies of an enabled joint never collide with each other. Destroying a body destroys its joints.
+
+// Hinge (doors): rotation about `axis` through `pivot`; `normal` = reference direction of angle 0 (null / parallel
+// = any). Limits in degrees, min in [-180, 0], max in [0, 180]. motorMaxTorque > 0 starts a velocity motor
+// (motorTargetVel deg/s; 0 acts as friction).
+EDITOR_INTERFACE uint32_t PhysicsCreateHinge(uint32_t bodyA, uint32_t bodyB, const float* pivot /*3*/, const float* axis /*3*/,
+	const float* normal /*3*/, float minDeg, float maxDeg, int32_t useLimits, float motorTargetVel, float motorMaxTorque, float breakForce)
+{
+	return phys::create_hinge(bodyA, bodyB, pivot, axis, normal, minDeg, maxDeg, useLimits != 0, motorTargetVel, motorMaxTorque, breakForce);
+}
+
+// Ball / socket at `point` (Jolt PointConstraint); with useLimits a swing cone (half angle swingLimitDeg) around
+// twistAxis (null = from the point towards bodyA's centre of mass) + twist range (Jolt SwingTwistConstraint).
+EDITOR_INTERFACE uint32_t PhysicsCreateBallJoint(uint32_t bodyA, uint32_t bodyB, const float* point /*3*/, const float* twistAxis /*3*/,
+	float swingLimitDeg, float twistMinDeg, float twistMaxDeg, int32_t useLimits, float breakForce)
+{
+	return phys::create_ball_joint(bodyA, bodyB, point, twistAxis, swingLimitDeg, twistMinDeg, twistMaxDeg, useLimits != 0, breakForce);
+}
+
+// Slider (platforms, drawers): translation along `axis` only. Limits in metres relative to the creation pose
+// (min <= 0 <= max). motorMode 0 off / 1 velocity (motorTarget m/s) / 2 position (motorTarget m, spring
+// springFrequency Hz + springDamping); motorMaxForce <= 0 = unlimited.
+EDITOR_INTERFACE uint32_t PhysicsCreateSlider(uint32_t bodyA, uint32_t bodyB, const float* point /*3*/, const float* axis /*3*/,
+	float minPos, float maxPos, int32_t useLimits, int32_t motorMode, float motorTarget, float motorMaxForce,
+	float springFrequency, float springDamping, float breakForce)
+{
+	return phys::create_slider(bodyA, bodyB, point, axis, minPos, maxPos, useLimits != 0, motorMode, motorTarget, motorMaxForce,
+		springFrequency, springDamping, breakForce);
+}
+
+// Weld: keeps the current relative pose. point = anchor (null = automatic).
+EDITOR_INTERFACE uint32_t PhysicsCreateFixed(uint32_t bodyA, uint32_t bodyB, const float* point /*3 or null*/, float breakForce)
+{
+	return phys::create_fixed(bodyA, bodyB, point, breakForce);
+}
+
+// Rope / rod: keeps |pointA - pointB| in [minDistance, maxDistance] (negative = the distance at creation);
+// springFrequency > 0 makes the limits soft (a bungee).
+EDITOR_INTERFACE uint32_t PhysicsCreateDistance(uint32_t bodyA, uint32_t bodyB, const float* pointA /*3*/, const float* pointB /*3*/,
+	float minDistance, float maxDistance, float springFrequency, float springDamping, float breakForce)
+{
+	return phys::create_distance(bodyA, bodyB, pointA, pointB, minDistance, maxDistance, springFrequency, springDamping, breakForce);
+}
+
+EDITOR_INTERFACE void    PhysicsDestroyConstraint(uint32_t joint)                    { phys::destroy_constraint(joint); }
+EDITOR_INTERFACE int32_t PhysicsConstraintValid(uint32_t joint)                      { return phys::constraint_valid(joint) ? 1 : 0; }
+EDITOR_INTERFACE void    PhysicsSetConstraintEnabled(uint32_t joint, int32_t enabled) { phys::set_constraint_enabled(joint, enabled != 0); }   // 1 also repairs a broken joint
+EDITOR_INTERFACE int32_t PhysicsGetConstraintEnabled(uint32_t joint)                 { return phys::constraint_enabled(joint) ? 1 : 0; }     // 0 = disabled or broken
+
+// Motors: mode 0 off / 1 velocity / 2 position; target deg/s | deg (hinge), m/s | m (slider); maxTorque / maxForce
+// <= 0 = unlimited; frequency <= 0 = 2 Hz, damping < 0 = 1 (the position-mode spring).
+EDITOR_INTERFACE void PhysicsSetHingeMotor(uint32_t joint, int32_t mode, float target, float maxTorque, float frequency, float damping)
+{
+	phys::set_hinge_motor(joint, mode, target, maxTorque, frequency, damping);
+}
+
+EDITOR_INTERFACE void PhysicsSetSliderMotor(uint32_t joint, int32_t mode, float target, float maxForce, float frequency, float damping)
+{
+	phys::set_slider_motor(joint, mode, target, maxForce, frequency, damping);
+}
+
+EDITOR_INTERFACE float   PhysicsGetHingeAngle(uint32_t joint)      { return phys::get_hinge_angle(joint); }        // degrees, 0 at creation
+EDITOR_INTERFACE float   PhysicsGetSliderPosition(uint32_t joint)  { return phys::get_slider_position(joint); }    // metres, 0 at creation
+EDITOR_INTERFACE float   PhysicsGetConstraintForce(uint32_t joint) { return phys::get_constraint_force(joint); }   // N, last step
+
+// Joints that broke since the last call: up to maxCount handles (+ the breaking force in N when outForces is not
+// null); removes the written ones from the queue and returns the count.
+EDITOR_INTERFACE int32_t PhysicsGetBrokenConstraints(uint32_t* outJoints, float* outForces, int32_t maxCount)
+{
+	return phys::get_broken_constraints(outJoints, outForces, maxCount);
+}
+
+EDITOR_INTERFACE int32_t PhysicsGetConstraintCount(void) { return phys::constraint_count(); }
+
+// ---- Debug (issue #106): world-space line segments of every joint gizmo and body shape wireframe ----
 // Fills up to maxFloats (6 floats per segment: x0 y0 z0 x1 y1 z1); returns the number of floats written.
 EDITOR_INTERFACE int32_t PhysicsGetDebugLines(float* buffer, int32_t maxFloats)
 {

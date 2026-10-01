@@ -214,6 +214,8 @@ namespace Vortex
 
         // Set an entity's base color at runtime (e.g. change color when a trigger is touched).
         void SetEntityColor(long entityId, float r, float g, float b);
+        void SetEntityMaterial(long entityId, string materialPath);
+        string GetEntityMaterial(long entityId);
 
         // Skeletal animation: play a clip on an entity's Animator (clip = table name or .vanim path);
         // fade > 0 crossfades from the current pose. State machines are game logic — build them in scripts.
@@ -245,6 +247,18 @@ namespace Vortex
         void SetIkWorldTarget(long entityId, string tipBone, Vector3 worldPos, Vector3 worldRotEuler, bool hasRotation);
         void ClearIkWorldTarget(long entityId, string tipBone);
         void SetIkPoleAngle(long entityId, string tipBone, float degrees);
+
+        // Rig-aware procedural layers (#147) — any skeleton, bones auto-detected: runtime finger poses (preset name or
+        // explicit curls, blended in), look-at targets (world point or another entity) + weight, foot-IK weight.
+        bool SetHandPose(long entityId, string side, string preset, float weight, float blendSeconds);
+        bool SetHandPoseCurls(long entityId, string side, Vector3 index, Vector3 middle, Vector3 ring, Vector3 pinky, Vector3 thumb,
+                              float spread, float weight, float blendSeconds);
+        void ClearHandPose(long entityId, string side);
+        void SetLookAtPoint(long entityId, Vector3 worldPoint);
+        void SetLookAtEntity(long entityId, long targetEntityId);
+        void ClearLookAtTarget(long entityId);
+        void SetLookAtWeight(long entityId, float weight);
+        void SetFootIkWeight(long entityId, float weight);
 
         // Camera/attachment feel primitives: spring-damper impulses + seeded noise channels composed
         // onto the game camera (transform untouched) and onto socket offsets (weapon kicks in the hand).
@@ -494,6 +508,21 @@ namespace Vortex
         public void SetIkTarget(string tipBone, Vector3 worldPosition, Vector3 worldRotationEuler) { Animation.SetIkTarget(EntityId, tipBone, worldPosition, worldRotationEuler); }
         public void ClearIkTarget(string tipBone) { Animation.ClearIkTarget(EntityId, tipBone); }
         public void SetIkPoleAngle(string tipBone, float degrees) { Animation.SetIkPoleAngle(EntityId, tipBone, degrees); }
+
+        /// <summary>Pose one of THIS character's hands from a preset (see <see cref="Animation.SetHandPose(long, string, string, float, float)"/>):
+        /// <c>SetHandPose("Right", "Fist");</c></summary>
+        public bool SetHandPose(string side, string preset, float weight = 1f, float blendSeconds = 0.15f)
+            { return Animation.SetHandPose(EntityId, side, preset, weight, blendSeconds); }
+        /// <summary>Back to the authored Hand Pose of that side (null = both hands).</summary>
+        public void ClearHandPose(string side = null) { Animation.ClearHandPose(EntityId, side); }
+        /// <summary>Turn THIS character's head toward a world point (see Animation.SetLookAtTarget).</summary>
+        public void SetLookAtTarget(Vector3 worldPoint) { Animation.SetLookAtTarget(EntityId, worldPoint); }
+        /// <summary>Turn THIS character's head toward another entity, tracked every frame (its head when it is a character).</summary>
+        public void SetLookAtTarget(long targetEntity) { Animation.SetLookAtTarget(EntityId, targetEntity); }
+        public void ClearLookAtTarget() { Animation.ClearLookAtTarget(EntityId); }
+        public void SetLookAtWeight(float weight) { Animation.SetLookAtWeight(EntityId, weight); }
+        /// <summary>Blend THIS character's foot IK (0 = off, 1 = feet planted on the ground).</summary>
+        public void SetFootIkWeight(float weight) { Animation.SetFootIkWeight(EntityId, weight); }
         /// <summary>This entity's world position + rotation (through every parent).</summary>
         public bool TryGetWorldPose(out Vector3 position, out Vector3 rotationEulerDeg) { return Scene.TryGetWorldPose(EntityId, out position, out rotationEulerDeg); }
 
@@ -1014,6 +1043,11 @@ namespace Vortex
         public static void SetScaleOf(long entity, Vector3 scale) { Host?.SetScale(entity, scale); }
         /// <summary>Tint another entity's mesh (0..1 per channel) — the same as this behaviour's SetColor, for any entity.</summary>
         public static void SetColorOf(long entity, float r, float g, float b) { Host?.SetEntityColor(entity, r, g, b); }
+        /// <summary>Swap an entity's material at runtime (a project .vmat, e.g. a weapon camo); null or "" restores the
+        /// model's own imported material. Takes effect on the next frame.</summary>
+        public static void SetMaterialOf(long entity, string materialPath) { Host?.SetEntityMaterial(entity, materialPath); }
+        /// <summary>The .vmat currently assigned to an entity's mesh ("" = the model's own material).</summary>
+        public static string MaterialOf(long entity) { return Host != null ? Host.GetEntityMaterial(entity) : ""; }
 
         /// <summary>Set an entity's WORLD position + rotation in one call — correct even when the entity
         /// is a CHILD of a moved/rotated/scaled parent (the engine converts to the local frame; the
@@ -1571,6 +1605,57 @@ namespace Vortex
         /// bend plane) — steer a first-person elbow down and out of the view.</summary>
         public static void SetIkPoleAngle(long entityId, string tipBone, float degrees)
             { if (Host != null) Host.SetIkPoleAngle(entityId, tipBone, degrees); }
+
+        // ---- hand poses / look-at / foot IK (#147) — work on ANY skeleton, the bones are detected ----
+
+        /// <summary>Pose a hand from a preset, blended in over <paramref name="blendSeconds"/>. side = "Left", "Right" or
+        /// "Both"; preset = "Open", "Relaxed", "Fist", "Trigger", "Grip" or "Point". Works on any character — the hand and
+        /// finger bones are detected (Mixamo, Unreal, Rigify, Unity, Biped …); a Hand Pose component on that side supplies
+        /// its rig settings. The authored pose comes back with <see cref="ClearHandPose"/>. False when the entity has no
+        /// skeleton or the side/preset is unknown.
+        /// <code>Animation.SetHandPose(bot, "Right", "Fist", 1f, 0.2f);</code></summary>
+        public static bool SetHandPose(long entityId, string side, string preset, float weight = 1f, float blendSeconds = 0.15f)
+            { return Host != null && Host.SetHandPose(entityId, side, preset, weight, blendSeconds); }
+
+        /// <summary>Pose a hand with explicit curls — degrees per joint (knuckle, middle, tip); positive closes the hand.
+        /// <code>Animation.SetHandPose(bot, "Left", new Vector3(20f, 30f, 10f), new Vector3(70f, 85f, 45f),
+        ///     new Vector3(70f, 85f, 45f), new Vector3(70f, 85f, 45f), new Vector3(30f, 30f, 20f), 1f, 0.2f);</code></summary>
+        public static bool SetHandPose(long entityId, string side, Vector3 index, Vector3 middle, Vector3 ring, Vector3 pinky, Vector3 thumb,
+                                       float weight = 1f, float blendSeconds = 0.15f)
+            { return Host != null && Host.SetHandPoseCurls(entityId, side, index, middle, ring, pinky, thumb, 0f, weight, blendSeconds); }
+
+        /// <summary>Drop the script hand pose — the Hand Pose component's authored pose applies again. side null = both.
+        /// <code>Animation.ClearHandPose(bot, "Right");</code></summary>
+        public static void ClearHandPose(long entityId, string side = null)
+            { if (Host != null) Host.ClearHandPose(entityId, side); }
+
+        /// <summary>Turn a character's head (neck, upper spine) toward a WORLD point until cleared — within the Look-At IK
+        /// component's limits, or default limits (70° yaw / 40° pitch) on a character without one.
+        /// <code>Animation.SetLookAtTarget(bot, Scene.PositionOf(player));</code></summary>
+        public static void SetLookAtTarget(long entityId, Vector3 worldPoint)
+            { if (Host != null) Host.SetLookAtPoint(entityId, worldPoint); }
+
+        /// <summary>Turn a character's head toward ANOTHER entity, tracked every frame (its head bone when it is an
+        /// animated character, else its origin + the component's target offset).
+        /// <code>Animation.SetLookAtTarget(bot, Scene.Find("Player"));</code></summary>
+        public static void SetLookAtTarget(long entityId, long targetEntity)
+            { if (Host != null) Host.SetLookAtEntity(entityId, targetEntity); }
+
+        /// <summary>Stop a script look target (the Look-At IK component's own target entity applies again).
+        /// <code>Animation.ClearLookAtTarget(bot);</code></summary>
+        public static void ClearLookAtTarget(long entityId)
+            { if (Host != null) Host.ClearLookAtTarget(entityId); }
+
+        /// <summary>Blend look-at in/out (0..1, smoothed by the component's smoothing time); a negative value returns to the
+        /// component's own weight. <code>Animation.SetLookAtWeight(bot, 0f);</code></summary>
+        public static void SetLookAtWeight(long entityId, float weight)
+            { if (Host != null) Host.SetLookAtWeight(entityId, weight); }
+
+        /// <summary>Blend foot IK (feet planted on uneven ground): 0 = animation only, 1 = full. Enables foot IK with detected
+        /// legs on a character without a Foot IK component; a negative value returns to the component's own weight.
+        /// <code>Animation.SetFootIkWeight(bot, 1f);</code></summary>
+        public static void SetFootIkWeight(long entityId, float weight)
+            { if (Host != null) Host.SetFootIkWeight(entityId, weight); }
 
         // ---- synced playback groups (#174) ----
 

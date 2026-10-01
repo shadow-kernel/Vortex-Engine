@@ -1,5 +1,6 @@
 #include "../../Common/VerboseLog.h"
 #include "ResourceRegistry_Internal.h"
+#include <iterator>
 
 namespace vortex::graphics
 {
@@ -45,6 +46,8 @@ namespace vortex::graphics
 		if (it != m_textures.end())
 		{
 			m_textures.erase(it);
+			for (auto c = m_texture_path_cache.begin(); c != m_texture_path_cache.end();)
+				c = (c->second == id) ? m_texture_path_cache.erase(c) : std::next(c);
 		}
 	}
 

@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:c="clr-namespace:VortexEditor.Controls"
+             xmlns:p="clr-namespace:VortexEditor.Panels"
              xmlns:data="clr-namespace:Editor.Core.Data;assembly=Vortex.Core"
              xmlns:ecs="clr-namespace:Editor.ECS;assembly=Vortex.Core"
              x:Class="VortexEditor.Panels.HierarchyPanel">
@@ -8,51 +9,90 @@
     <Border DockPanel.Dock="Top" Classes="panelheader">
       <DockPanel>
         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="2">
-          <Button Classes="icon" ToolTip.Tip="Locate selection" Click="OnLocateClick"><c:VxIcon Icon="Crosshair"/></Button>
-          <Button Classes="icon" ToolTip.Tip="New scene" Click="OnNewSceneClick"><c:VxIcon Icon="Scene"/></Button>
+          <Button Classes="icon" ToolTip.Tip="Locate the selection — reveal it in the tree (F)" Click="OnLocateClick"><c:VxIcon Icon="Crosshair"/></Button>
+          <Button Classes="icon" x:Name="SceneButton" ToolTip.Tip="Scenes — new / load (⌘N, ⇧⌘O)" Click="OnSceneMenuClick"><c:VxIcon Icon="Scene"/></Button>
           <Button Classes="icon" x:Name="AddButton" ToolTip.Tip="Add entity" Click="OnAddClick"><c:VxIcon Icon="Plus"/></Button>
         </StackPanel>
         <TextBlock Classes="headertitle" Text="Scene"/>
       </DockPanel>
     </Border>
     <Border DockPanel.Dock="Top" Padding="8,6" Classes="hairline-bottom">
-      <TextBox x:Name="SearchBox" Classes="search" Watermark="Search entities" TextChanged="OnSearchChanged"/>
+      <TextBox x:Name="SearchBox" Classes="search" Watermark="Search entities (⌘F)" TextChanged="OnSearchChanged"/>
     </Border>
-    <Grid>
-      <TreeView x:Name="Tree" SelectionMode="Multiple" SelectionChanged="OnTreeSelectionChanged" DoubleTapped="OnTreeDoubleTapped" KeyDown="OnTreeKeyDown">
+    <Grid x:Name="TreeHost">
+      <TreeView x:Name="Tree" SelectionMode="Multiple" Background="Transparent">
+        <TreeView.Styles>
+          <Style Selector="TreeViewItem">
+            <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}"/>
+          </Style>
+          <Style Selector="TextBox.renamebox">
+            <Setter Property="MinHeight" Value="20"/>
+            <Setter Property="Padding" Value="4,0"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+          </Style>
+        </TreeView.Styles>
         <TreeView.DataTemplates>
           <TreeDataTemplate DataType="data:Scene" ItemsSource="{Binding Entities}">
-            <DockPanel Height="24" Background="Transparent" PointerPressed="OnItemPointerPressed">
-              <c:VxIcon Icon="Scene" Margin="0,0,6,0" Foreground="{DynamicResource VxPurpleBrush}"/>
-              <TextBlock Text="{Binding Name}" FontWeight="SemiBold" VerticalAlignment="Center"/>
+            <DockPanel Height="24" Background="Transparent" Classes="scenerow">
+              <Ellipse Width="7" Height="7" Margin="0,0,7,0" VerticalAlignment="Center" Fill="{Binding IsActive, Converter={x:Static p:HierarchyConverters.SceneDot}}" ToolTip.Tip="Active scene (green) / inactive"/>
+              <c:VxIcon Icon="Scene" Margin="0,0,6,0" Foreground="{Binding IsActive, Converter={x:Static p:HierarchyConverters.SceneIconBrush}}"/>
+              <TextBlock Text="{Binding Name}" FontWeight="SemiBold" VerticalAlignment="Center" Opacity="{Binding IsActive, Converter={x:Static p:HierarchyConverters.SceneOpacity}}"/>
+              <TextBlock Text="inactive" Classes="small tertiary" VerticalAlignment="Center" Margin="8,0,0,0" IsVisible="{Binding !IsActive}"/>
             </DockPanel>
           </TreeDataTemplate>
           <TreeDataTemplate DataType="ecs:GameEntity" ItemsSource="{Binding Children}">
-            <DockPanel Height="24" Background="Transparent" PointerPressed="OnItemPointerPressed" PointerMoved="OnItemPointerMoved">
-              <ToggleButton DockPanel.Dock="Right" Classes="icon small" IsChecked="{Binding IsActive}" ToolTip.Tip="Visible / active" Margin="4,0,0,0">
+            <DockPanel Height="24" Background="Transparent" Classes="entityrow">
+              <DockPanel.Opacity>
+                <MultiBinding Converter="{x:Static p:HierarchyConverters.RowOpacity}">
+                  <Binding Path="IsActive"/>
+                  <Binding Path="IsHiddenInEditor"/>
+                </MultiBinding>
+              </DockPanel.Opacity>
+              <Button DockPanel.Dock="Right" Classes="icon small eyetoggle" Margin="4,0,2,0" Click="OnEyeClick" ToolTip.Tip="Hide / show in the scene view (editor only, never saved)">
                 <Panel>
-                  <c:VxIcon Icon="Eye" IsVisible="{Binding IsActive}"/>
-                  <c:VxIcon Icon="EyeOff" IsVisible="{Binding !IsActive}" Foreground="{DynamicResource VxTextTertiaryBrush}"/>
+                  <c:VxIcon Icon="Eye" Width="14" Height="14" IsVisible="{Binding !IsHiddenInEditor}" Foreground="{DynamicResource VxTextTertiaryBrush}"/>
+                  <c:VxIcon Icon="EyeOff" Width="14" Height="14" IsVisible="{Binding IsHiddenInEditor}" Foreground="{DynamicResource VxAccentBrush}"/>
                 </Panel>
-              </ToggleButton>
-              <c:VxIcon x:Name="Icon" Icon="{Binding Converter={x:Static c:EntityIconConverter.Instance}}" Foreground="{Binding Converter={x:Static c:EntityIconBrushConverter.Instance}}" Margin="0,0,6,0"/>
-              <TextBlock Text="{Binding Name}" VerticalAlignment="Center" Opacity="{Binding Converter={x:Static c:EntityOpacityConverter.Instance}}"/>
+              </Button>
+              <c:VxIcon DockPanel.Dock="Right" Icon="Link" Width="12" Height="12" Margin="4,0,0,0" IsVisible="{Binding IsLockedToParent}" Foreground="{DynamicResource VxTextTertiaryBrush}" ToolTip.Tip="Part of its parent (locked — moves and selects with the parent)"/>
+              <c:VxIcon Icon="{Binding Converter={x:Static p:HierarchyConverters.Icon}}" Foreground="{Binding Converter={x:Static p:HierarchyConverters.IconBrush}}" Margin="0,0,6,0"/>
+              <c:VxIcon Icon="Prefab" Width="11" Height="11" Margin="0,0,5,0" IsVisible="{Binding IsPrefabInstance}" Foreground="#6FB0FF" ToolTip.Tip="{Binding PrefabPath, StringFormat='Prefab instance — {0}'}"/>
+              <Border CornerRadius="3" Background="#3A2E6E" Padding="3,0" Margin="0,0,5,0" VerticalAlignment="Center" IsVisible="{Binding IsViewmodel}" ToolTip.Tip="First-person viewmodel (render layer 1) — drawn by the game's FP overlay pass, hidden in the build view">
+                <TextBlock Text="FP" FontSize="9" FontWeight="SemiBold" Foreground="#B4A7F5"/>
+              </Border>
+              <Border CornerRadius="3" Background="#24422E" Padding="3,0" Margin="0,0,5,0" VerticalAlignment="Center" IsVisible="{Binding IsThirdPersonOnly}" ToolTip.Tip="Third-person only (render layer 2) — hidden for the local player while playing">
+                <TextBlock Text="3P" FontSize="9" FontWeight="SemiBold" Foreground="#8FD3A7"/>
+              </Border>
+              <Panel>
+                <TextBlock Classes="entityname" Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Foreground="{Binding IsPrefabInstance, Converter={x:Static p:HierarchyConverters.NameBrush}}"/>
+                <TextBox Classes="renamebox" IsVisible="False"/>
+              </Panel>
             </DockPanel>
           </TreeDataTemplate>
         </TreeView.DataTemplates>
       </TreeView>
-      <ListBox x:Name="SearchResults" IsVisible="False" SelectionChanged="OnSearchResultSelected">
+      <ListBox x:Name="SearchResults" IsVisible="False">
         <ListBox.ItemTemplate>
           <DataTemplate DataType="ecs:GameEntity">
-            <StackPanel Orientation="Horizontal" Spacing="6">
-              <c:VxIcon Icon="{Binding Converter={x:Static c:EntityIconConverter.Instance}}"/>
-              <TextBlock Text="{Binding Name}"/>
-              <TextBlock Classes="tertiary small" Text="{Binding Path=Scene.Name}" VerticalAlignment="Center"/>
-            </StackPanel>
+            <DockPanel>
+              <TextBlock DockPanel.Dock="Right" Classes="tertiary small" Text="{Binding Path=Scene.Name}" VerticalAlignment="Center" Margin="8,0,0,0"/>
+              <StackPanel Orientation="Horizontal" Spacing="6">
+                <c:VxIcon Icon="{Binding Converter={x:Static p:HierarchyConverters.Icon}}" Foreground="{Binding Converter={x:Static p:HierarchyConverters.IconBrush}}"/>
+                <TextBlock Text="{Binding Name}" VerticalAlignment="Center"/>
+                <TextBlock Text="{Binding Converter={x:Static p:HierarchyConverters.ParentPath}}" Classes="tertiary small" VerticalAlignment="Center"/>
+              </StackPanel>
+            </DockPanel>
           </DataTemplate>
         </ListBox.ItemTemplate>
       </ListBox>
-      <TextBlock x:Name="EmptyHint" Classes="tertiary" Text="No project open" HorizontalAlignment="Center" VerticalAlignment="Center" IsVisible="False"/>
+      <!-- drop feedback: a line (insert before / after) or a frame (make child) -->
+      <Canvas x:Name="DropLayer" IsHitTestVisible="False">
+        <Border x:Name="DropLine" Height="2" CornerRadius="1" Background="{DynamicResource VxAccentBrush}" IsVisible="False"/>
+        <Border x:Name="DropFrame" CornerRadius="6" BorderThickness="1.5" BorderBrush="{DynamicResource VxAccentBrush}" Background="{DynamicResource VxAccentSoftBrush}" IsVisible="False"/>
+      </Canvas>
+      <StackPanel x:Name="EmptyHint" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="4" IsVisible="False">
+        <TextBlock Classes="tertiary" Text="No project open" HorizontalAlignment="Center"/>
+      </StackPanel>
     </Grid>
   </DockPanel>
 </UserControl>

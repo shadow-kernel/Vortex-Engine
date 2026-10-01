@@ -127,21 +127,30 @@ namespace vortex::graphics
 	void Material::set_metallic_texture(Texture* texture)
 	{
 		m_metallic_texture = texture;
-		m_properties.has_metallic_texture = (texture && texture->is_valid()) ? 1 : 0;
+		m_properties.has_metallic_texture = (texture && texture->is_valid()) ? 1 + m_metallic_channel : 0;
 		update_gpu_data();
 	}
 
 	void Material::set_roughness_texture(Texture* texture)
 	{
 		m_roughness_texture = texture;
-		m_properties.has_roughness_texture = (texture && texture->is_valid()) ? 1 : 0;
+		m_properties.has_roughness_texture = (texture && texture->is_valid()) ? 1 + m_roughness_channel : 0;
 		update_gpu_data();
 	}
 
 	void Material::set_ao_texture(Texture* texture)
 	{
 		m_ao_texture = texture;
-		m_properties.has_ao_texture = (texture && texture->is_valid()) ? 1 : 0;
+		m_properties.has_ao_texture = (texture && texture->is_valid()) ? 1 + m_ao_channel : 0;
+		update_gpu_data();
+	}
+
+	void Material::set_texture_channels(u32 metallic, u32 roughness, u32 ao)
+	{
+		m_metallic_channel = metallic & 3u; m_roughness_channel = roughness & 3u; m_ao_channel = ao & 3u;
+		if (m_properties.has_metallic_texture) m_properties.has_metallic_texture = 1 + m_metallic_channel;
+		if (m_properties.has_roughness_texture) m_properties.has_roughness_texture = 1 + m_roughness_channel;
+		if (m_properties.has_ao_texture) m_properties.has_ao_texture = 1 + m_ao_channel;
 		update_gpu_data();
 	}
 

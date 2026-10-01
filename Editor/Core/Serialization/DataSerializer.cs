@@ -47,6 +47,7 @@ namespace Editor.Core.Serialization
             typeof(SpriteRenderer),
             typeof(Camera),
             typeof(Skybox),
+            typeof(ParticleSystem),   // VFX #116
             
             // Lighting
             typeof(Light),
@@ -59,6 +60,10 @@ namespace Editor.Core.Serialization
             typeof(MeshCollider),
             typeof(Rigidbody),
             typeof(PhysicsMaterial),
+            typeof(HingeJoint), typeof(BallJoint), typeof(SliderJoint), typeof(FixedJoint), typeof(DistanceJoint),   // #103
+
+            // AI & Navigation (#110 / #112 / #114)
+            typeof(Editor.ECS.Components.AI.NavAgent), typeof(Editor.ECS.Components.AI.AIPerception), typeof(Editor.ECS.Components.AI.PatrolPath),
             
             // Audio
             typeof(AudioSource),
@@ -71,6 +76,8 @@ namespace Editor.Core.Serialization
             typeof(Editor.ECS.Components.Animation.BoneAttachment),
             typeof(Editor.ECS.Components.Animation.TwoBoneIk),
             typeof(Editor.ECS.Components.Animation.HandPose),
+            typeof(Editor.ECS.Components.Animation.LookAtIk),
+            typeof(Editor.ECS.Components.Animation.FootIk),
 
             // Scripting
             typeof(Script),

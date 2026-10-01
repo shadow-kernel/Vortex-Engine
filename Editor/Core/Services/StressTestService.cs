@@ -68,7 +68,18 @@ namespace Editor.Core.Services
 
         public static void Stop()
         {
-            Active = false; _dirty = false; _entries.Clear(); Count = 0;
+            bool had = _entries.Count > 0;
+            Active = false; _dirty = false; Count = 0;
+            // Every Start imports its own copy of the model — release those meshes/materials, otherwise each
+            // run leaks its GPU buffers until the editor closes. The renderer drops queue entries that point at
+            // destroyed meshes (mesh generation check), and the resubmit below rebuilds the queue without them.
+            foreach (var e in _entries)
+            {
+                if (e.Mesh != null) foreach (var m in e.Mesh) { try { if (m != 0) VortexAPI.DeleteMesh(m); } catch { } }
+                if (e.Mat != null) foreach (var m in e.Mat) { try { if (m != 0) VortexAPI.DeleteMaterial(m); } catch { } }
+            }
+            _entries.Clear();
+            if (!had) return;
 #if VORTEX_CORE
             Editor.Core.Services.SceneRenderService.RuntimeDirty = true;
 #else

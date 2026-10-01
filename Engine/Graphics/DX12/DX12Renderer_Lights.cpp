@@ -36,6 +36,12 @@ namespace vortex::graphics::dx12
 	// SSAO (#32): the standard PS samples t10 only when this is set; if a view's record_ssao
 	// can't run, its reserved t10 slot still holds a valid (stale/neutral) texture.
 	m_frame_constants.ssao_enabled = (m_ssao_enabled && m_ssao_pso) ? 1.0f : 0.0f;
+	{
+		const float env_on = (m_skybox_enabled && m_skybox_mode == SkyboxMode::Gradient) ? 1.0f : 0.0f;
+		m_frame_constants.env_sky = XMFLOAT4(m_env_sky.x, m_env_sky.y, m_env_sky.z, env_on);
+		m_frame_constants.env_horizon = XMFLOAT4(m_env_horizon.x, m_env_horizon.y, m_env_horizon.z, 0.0f);
+		m_frame_constants.env_ground = XMFLOAT4(m_env_ground.x, m_env_ground.y, m_env_ground.z, 0.0f);
+	}
 
 	// Spot shadows (#23): select the shadow-casting spot + fill the shadow fields BEFORE the upload
 	// below (also primes the shadow pass's own light-VP b0 clone).
@@ -50,7 +56,7 @@ namespace vortex::graphics::dx12
 	if (m_viewmodel_cb_mapped)
 	{
 		PerFrameConstants vm = m_frame_constants;
-		XMMATRIX vmProj = XMMatrixPerspectiveFovLH(XMConvertToRadians(m_viewmodel_fov), aspect, 0.1f, 1000.0f);
+		XMMATRIX vmProj = XMMatrixPerspectiveFovLH(XMConvertToRadians(m_viewmodel_fov), aspect, VIEWMODEL_NEAR, VIEWMODEL_FAR);
 		XMStoreFloat4x4(&vm.view_projection, view * vmProj);
 		memcpy(m_viewmodel_cb_mapped, &vm, sizeof(vm));
 	}

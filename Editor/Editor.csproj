@@ -263,6 +263,7 @@
     <Compile Include="Core\Assets\UniversalModelData.cs" />
     <Compile Include="Core\Assets\UniversalModelParser.cs" />
     <Compile Include="Core\Assets\VortexMaterial.cs" />
+    <Compile Include="Core\Assets\VfxAsset.cs" />
     <Compile Include="Core\Assets\VortexShader.cs" />
     <Compile Include="Core\Data\Project.cs" />
     <Compile Include="Core\Data\ProjectManifest.cs" />
@@ -297,7 +298,14 @@
     <Compile Include="Core\Services\ProjectTemplateService.cs" />
     <Compile Include="Core\Services\Physics\CollisionService.cs" />
     <Compile Include="Core\Services\Physics\PhysicsService.cs" />
+    <Compile Include="Core\Services\Particles\ParticleService.cs" />
     <Compile Include="DllWrapper\VortexAPI.Physics.cs" />
+    <Compile Include="DllWrapper\VortexAPI.Particles.cs" />
+    <Compile Include="Core\Services\AI\AiRuntime.cs" />
+    <Compile Include="Core\Services\AI\NavigationService.cs" />
+    <Compile Include="Core\Services\AI\PatrolPathService.cs" />
+    <Compile Include="Core\Services\AI\PerceptionService.cs" />
+    <Compile Include="DllWrapper\VortexAPI.Navigation.cs" />
     <Compile Include="Editors\PhysicsEditor\CollisionEditorWindow.cs" />
     <Compile Include="Editors\PhysicsEditor\CollisionPreviewControl.cs" />
     <Compile Include="DllWrapper\Gizmos\ColliderGizmo.cs" />
@@ -382,14 +390,18 @@
     <Compile Include="Core\Animation\SkeletonDef.cs" />
     <Compile Include="Core\Animation\AnimationService.cs" />
     <Compile Include="Core\Animation\BoneSocketService.cs" />
+    <Compile Include="Core\Animation\RigMap.cs" />
     <Compile Include="Core\Services\CameraFXService.cs" />
     <Compile Include="ECS\Components\Animation\Animator.cs" />
     <Compile Include="ECS\Components\Animation\BoneAttachment.cs" />
     <Compile Include="ECS\Components\Animation\TwoBoneIk.cs" />
     <Compile Include="ECS\Components\Animation\HandPose.cs" />
+    <Compile Include="ECS\Components\Animation\LookAtIk.cs" />
+    <Compile Include="ECS\Components\Animation\FootIk.cs" />
     <Compile Include="Editors\WorldEditor\Components\Inspector\AnimatorInspector.cs" />
     <Compile Include="Editors\WorldEditor\Components\Inspector\BoneAttachmentInspector.cs" />
     <Compile Include="Editors\WorldEditor\Components\Inspector\TwoBoneIkInspector.cs" />
+    <Compile Include="Editors\WorldEditor\Components\Inspector\RigInspectorCards.cs" />
     <Compile Include="Editors\AnimationEditor\AnimationEditorWindow.cs" />
     <Compile Include="Editors\AnimationEditor\AnimationPreviewControl.cs" />
     <Compile Include="Editors\SocketEditor\SocketEditorWindow.cs" />
@@ -412,9 +424,14 @@
     <Compile Include="ECS\Components\Audio\AudioSource.cs" />
     <Compile Include="ECS\Components\Lighting\Light.cs" />
     <Compile Include="ECS\Components\Physics\Collider.cs" />
+    <Compile Include="ECS\Components\Physics\Joints.cs" />
+    <Compile Include="ECS\Components\AI\AIPerception.cs" />
+    <Compile Include="ECS\Components\AI\NavAgent.cs" />
+    <Compile Include="ECS\Components\AI\PatrolPath.cs" />
     <Compile Include="ECS\Components\Physics\Rigidbody.cs" />
     <Compile Include="ECS\Components\Rendering\Camera.cs" />
     <Compile Include="ECS\Components\Rendering\MeshRenderer.cs" />
+    <Compile Include="ECS\Components\Rendering\ParticleSystem.cs" />
     <Compile Include="ECS\Components\Rendering\Skybox.cs" />
     <Compile Include="ECS\Components\Scripting\Script.cs" />
     <Compile Include="ECS\Components\Transform.cs" />
@@ -525,6 +542,8 @@
     </Compile>
     <Compile Include="Scripting\ScriptRuntime.cs" />
     <Compile Include="Scripting\VortexScriptApi.cs" />
+    <Compile Include="Scripting\VortexScriptApi.Vfx.cs" />
+    <Compile Include="Scripting\VortexScriptApi.Ai.cs" />
     <Compile Include="Utilities\Utilities.cs" />
     <EmbeddedResource Include="Properties\Resources.resx">
       <Generator>ResXFileCodeGenerator</Generator>

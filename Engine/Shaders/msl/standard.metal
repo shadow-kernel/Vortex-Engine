@@ -35,6 +35,9 @@ struct PerFrame
     uint shadow_padding[3];
     float ssao_enabled;                // @176
     float ssao_padding[3];
+    float4 env_sky;                    // @192  scene sky gradient for reflections (rgb); w = 1 when a sky is set
+    float4 env_horizon;                // @208
+    float4 env_ground;                 // @224
 };
 
 struct PerObject
@@ -319,6 +322,33 @@ static inline float sample_point_shadow(constant LightBuffer& lights, depth2d<fl
     return 1.0;
 }
 
+// Packed PBR maps: PerObject::has_*_texture is 1 + the channel to read (1 R, 2 G, 3 B, 4 A) — glTF / ORM maps
+// keep roughness in G, metallic in B and occlusion in R.
+static inline float pick_channel(float4 v, uint flag)
+{
+    return flag == 2u ? v.g : (flag == 3u ? v.b : (flag == 4u ? v.a : v.r));
+}
+
+// Per-pixel tangent frame from screen-space derivatives (Schueler, "Normal Mapping Without Precomputed Tangents"):
+// meshes carry no tangents, and a frame derived from the normal alone ignores the UV layout, so normal/parallax
+// maps on arbitrary UV islands were lit from the wrong side. T follows +u, B follows +v (image-down: the importer
+// flips V), so DirectX-convention normal maps apply as-is and OpenGL ones flip green. The determinant's sign keeps
+// it independent of the screen's y axis and of mirrored UVs. Leaves T/B untouched where the UVs have no gradient.
+static inline void cotangent_frame(float3 N, float3 p, float2 uv, thread float3& T, thread float3& B)
+{
+    float3 dp1 = dfdx(p), dp2 = dfdy(p);
+    float2 duv1 = dfdx(uv), duv2 = dfdy(uv);
+    float3 dp2perp = cross(dp2, N), dp1perp = cross(N, dp1);
+    float3 t = dp2perp * duv1.x + dp1perp * duv2.x;
+    float3 b = dp2perp * duv1.y + dp1perp * duv2.y;
+    float det = dot(dp1, dp2perp);
+    float m = max(dot(t, t), dot(b, b));
+    if (m < 1e-30 || abs(det) < 1e-30) return;
+    float k = rsqrt(m) * (det < 0.0 ? -1.0 : 1.0);
+    T = t * k;
+    B = b * k;
+}
+
 fragment float4 PSMain(VSOut in [[stage_in]],
                        constant PerFrame& frame [[buffer(0)]],
                        constant PerObject& obj [[buffer(1)]],
@@ -339,10 +369,14 @@ fragment float4 PSMain(VSOut in [[stage_in]],
 
     float3 cam_pos = float3(frame.camera_position);
 
+    float3 Ng = normalize(in.norm);
+    float3 T = normalize(in.tangent), B = normalize(in.bitangent);
+    cotangent_frame(Ng, in.world_pos, uv, T, B);   // outside any branch: it needs derivatives
+
     if (obj.has_height_texture != 0 && obj.height_scale > 0.0)
     {
         float3 Vw = normalize(cam_pos - in.world_pos);
-        float3x3 TBN = float3x3(normalize(in.tangent), normalize(in.bitangent), normalize(in.norm));
+        float3x3 TBN = float3x3(normalize(T), normalize(B), Ng);
         // HLSL mul(TBN, V) with TBN rows = T,B,N  ->  dot each row with V
         float3 Vt = float3(dot(TBN[0], Vw), dot(TBN[1], Vw), dot(TBN[2], Vw));
         float h = height_tex.sample(height_smp, uv).r;
@@ -368,22 +402,20 @@ fragment float4 PSMain(VSOut in [[stage_in]],
     }
 
     float metallic = obj.metallic;
-    if (obj.has_metallic_texture != 0) metallic = metallic_tex.sample(metallic_smp, uv).r;
+    if (obj.has_metallic_texture != 0) metallic = pick_channel(metallic_tex.sample(metallic_smp, uv), obj.has_metallic_texture);
 
     float roughness = max(obj.roughness, 0.04);
-    if (obj.has_roughness_texture != 0) roughness = max(roughness_tex.sample(roughness_smp, uv).r, 0.04);
+    if (obj.has_roughness_texture != 0) roughness = max(pick_channel(roughness_tex.sample(roughness_smp, uv), obj.has_roughness_texture), 0.04);
 
     float ao = obj.ao;
-    if (obj.has_ao_texture != 0) ao = ao_tex.sample(ao_smp, uv).r;
+    if (obj.has_ao_texture != 0) ao = pick_channel(ao_tex.sample(ao_smp, uv), obj.has_ao_texture);
 
-    float3 N = normalize(in.norm);
+    float3 N = Ng;
     if (obj.has_normal_texture != 0)
     {
         float3 nm = normal_tex.sample(normal_smp, uv).rgb * 2.0 - 1.0;
         if (obj.use_directx_normals == 0) nm.y = -nm.y;
         nm.xy *= obj.normal_strength;
-        float3 T = normalize(in.tangent), B = normalize(in.bitangent);
-        // HLSL mul(nm, TBN) with TBN rows = T,B,N  ->  nm.x*T + nm.y*B + nm.z*N
         N = normalize(nm.x * T + nm.y * B + nm.z * N);
     }
 
@@ -483,11 +515,23 @@ fragment float4 PSMain(VSOut in [[stage_in]],
     float3 rim_light = rim_fresnel * F0 * 0.1 * ao * metallic;
 
     float3 R = reflect(-V, N);
-    float up_factor = R.y * 0.5 + 0.5;
-    float3 env_color = mix(float3(0.01, 0.01, 0.02), float3(0.08, 0.10, 0.15), up_factor);
-    float env_roughness = roughness * roughness;
-    env_color = mix(env_color, env_color * 0.2, env_roughness);
-    float3 env_fresnel = F0 + (1.0 - F0) * pow(1.0 - NdotV, 5.0);
+    float3 env_color;
+    if (frame.env_sky.w > 0.5)
+    {
+        // Reflections of the scene's own sky gradient (zenith / horizon / ground), blurred toward its average with
+        // roughness — metals (weapons!) pick up the sky instead of turning black. Scaled like the diffuse ambient.
+        float3 sky_dir = R.y >= 0.0 ? mix(frame.env_horizon.rgb, frame.env_sky.rgb, pow(saturate(R.y), 0.6))
+                                    : mix(frame.env_horizon.rgb, frame.env_ground.rgb, pow(saturate(-R.y), 0.6));
+        float3 sky_avg = (frame.env_sky.rgb + 2.0 * frame.env_horizon.rgb + frame.env_ground.rgb) * 0.25;
+        env_color = mix(sky_dir, sky_avg, saturate(roughness * roughness * 1.5)) * frame.ambient_strength;
+    }
+    else
+    {
+        float up_factor = R.y * 0.5 + 0.5;
+        env_color = mix(float3(0.01, 0.01, 0.02), float3(0.08, 0.10, 0.15), up_factor);
+        env_color = mix(env_color, env_color * 0.2, roughness * roughness);
+    }
+    float3 env_fresnel = F0 + (max(float3(1.0 - roughness), F0) - F0) * pow(1.0 - NdotV, 5.0);
     float3 specular_ambient = env_color * env_fresnel * ao;
     ambient += specular_ambient + rim_light;
 

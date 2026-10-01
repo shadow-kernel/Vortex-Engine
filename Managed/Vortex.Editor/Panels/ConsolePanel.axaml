@@ -1,30 +1,36 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:c="clr-namespace:VortexEditor.Controls"
-             xmlns:svc="clr-namespace:Editor.Core.Services;assembly=Vortex.Core"
+             xmlns:p="clr-namespace:VortexEditor.Panels"
              x:Class="VortexEditor.Panels.ConsolePanel">
   <DockPanel>
     <Border DockPanel.Dock="Top" Classes="panelheader" Height="36">
       <DockPanel>
-        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="4">
-          <TextBox x:Name="Filter" Classes="search" Watermark="Filter" Width="160" TextChanged="OnFilterChanged"/>
-          <ToggleButton x:Name="AutoScroll" IsChecked="True" ToolTip.Tip="Auto-scroll" Classes="icon"><c:VxIcon Icon="ChevronDown"/></ToggleButton>
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+          <TextBox x:Name="Filter" Classes="search" Watermark="Search" Width="170" TextChanged="OnFilterChanged"/>
+          <ToggleButton x:Name="CollapseToggle" Classes="accentcheck" Padding="8,2" ToolTip.Tip="Collapse identical messages into one line with a count" Click="OnCollapse"><TextBlock Text="Collapse" FontSize="11"/></ToggleButton>
+          <ToggleButton x:Name="AutoScroll" IsChecked="True" ToolTip.Tip="Auto-scroll to the newest line" Classes="icon"><c:VxIcon Icon="ChevronDown"/></ToggleButton>
+          <Button Padding="8,2" ToolTip.Tip="Copy the selected lines (⌘C) — all visible lines when nothing is selected" Click="OnCopy"><TextBlock Text="Copy" FontSize="11"/></Button>
           <Button Classes="icon" ToolTip.Tip="Clear" Click="OnClear"><c:VxIcon Icon="Trash"/></Button>
         </StackPanel>
-        <StackPanel Orientation="Horizontal" Spacing="4">
-          <ToggleButton x:Name="ChipInfo" IsChecked="True" Click="OnChip"><StackPanel Orientation="Horizontal" Spacing="5"><c:VxIcon Icon="Info" Foreground="{DynamicResource VxAccentBrush}"/><TextBlock x:Name="InfoCount" Text="0"/></StackPanel></ToggleButton>
-          <ToggleButton x:Name="ChipWarn" IsChecked="True" Click="OnChip"><StackPanel Orientation="Horizontal" Spacing="5"><c:VxIcon Icon="Warning" Foreground="{DynamicResource VxYellowBrush}"/><TextBlock x:Name="WarnCount" Text="0"/></StackPanel></ToggleButton>
-          <ToggleButton x:Name="ChipError" IsChecked="True" Click="OnChip"><StackPanel Orientation="Horizontal" Spacing="5"><c:VxIcon Icon="Error" Foreground="{DynamicResource VxRedBrush}"/><TextBlock x:Name="ErrorCount" Text="0"/></StackPanel></ToggleButton>
+        <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+          <ToggleButton x:Name="ChipInfo" IsChecked="True" Click="OnChip" ToolTip.Tip="Show info lines"><StackPanel Orientation="Horizontal" Spacing="5"><c:VxIcon Icon="Info" Foreground="{DynamicResource VxAccentBrush}"/><TextBlock x:Name="InfoCount" Text="0"/></StackPanel></ToggleButton>
+          <ToggleButton x:Name="ChipWarn" IsChecked="True" Click="OnChip" ToolTip.Tip="Show warnings"><StackPanel Orientation="Horizontal" Spacing="5"><c:VxIcon Icon="Warning" Foreground="{DynamicResource VxYellowBrush}"/><TextBlock x:Name="WarnCount" Text="0"/></StackPanel></ToggleButton>
+          <ToggleButton x:Name="ChipError" IsChecked="True" Click="OnChip" ToolTip.Tip="Show errors"><StackPanel Orientation="Horizontal" Spacing="5"><c:VxIcon Icon="Error" Foreground="{DynamicResource VxRedBrush}"/><TextBlock x:Name="ErrorCount" Text="0"/></StackPanel></ToggleButton>
         </StackPanel>
       </DockPanel>
     </Border>
-    <ListBox x:Name="List" Background="{DynamicResource VxFieldBrush}" Padding="6,4">
+    <ListBox x:Name="List" Background="{DynamicResource VxFieldBrush}" Padding="6,4" SelectionMode="Multiple">
       <ListBox.ItemTemplate>
-        <DataTemplate DataType="svc:LogEntry">
-          <Grid ColumnDefinitions="64,52,*" Margin="0,1">
+        <DataTemplate DataType="p:ConsoleRow">
+          <Grid ColumnDefinitions="64,52,*,Auto" Margin="0,1" Background="Transparent" ToolTip.Tip="{Binding SourceHint}">
             <TextBlock Text="{Binding Time}" Classes="mono tertiary"/>
-            <TextBlock Grid.Column="1" Text="{Binding LevelTag}" Classes="mono" FontWeight="SemiBold" Foreground="{Binding Color, Converter={x:Static c:HexBrushConverter.Instance}}"/>
-            <TextBlock Grid.Column="2" Text="{Binding Message}" Classes="mono" TextWrapping="Wrap"/>
+            <TextBlock Grid.Column="1" Text="{Binding LevelTag}" Classes="mono" FontWeight="SemiBold" Foreground="{Binding Brush}"/>
+            <TextBlock Grid.Column="2" Text="{Binding Message}" Classes="mono" TextWrapping="Wrap" Foreground="{Binding MessageBrush}"/>
+            <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="4" Margin="8,0,2,0" VerticalAlignment="Top">
+              <c:VxIcon Icon="Link" Width="11" Height="11" IsVisible="{Binding HasSource}" Foreground="{DynamicResource VxAccentBrush}"/>
+              <Border Classes="badge" IsVisible="{Binding HasCount}"><TextBlock Text="{Binding CountText}"/></Border>
+            </StackPanel>
           </Grid>
         </DataTemplate>
       </ListBox.ItemTemplate>

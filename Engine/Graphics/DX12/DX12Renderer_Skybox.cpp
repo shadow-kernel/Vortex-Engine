@@ -68,6 +68,7 @@ namespace vortex::graphics::dx12
 		const DirectX::XMFLOAT3& ground_color)
 	{
 		m_skybox_pipeline.set_colors(sky_color, horizon_color, ground_color);
+		m_env_sky = sky_color; m_env_horizon = horizon_color; m_env_ground = ground_color;
 	}
 
 
@@ -75,6 +76,7 @@ namespace vortex::graphics::dx12
 	{
 		// For solid color, set all three colors to the same value
 		m_skybox_pipeline.set_colors(color, color, color);
+		m_env_sky = m_env_horizon = m_env_ground = color;
 	}
 
 

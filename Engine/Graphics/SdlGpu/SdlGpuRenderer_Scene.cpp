@@ -36,6 +36,17 @@ namespace vortex::graphics::sdlgpu
 				if (f.p[i][0] * cx + f.p[i][1] * cy + f.p[i][2] * cz + f.p[i][3] < -r) return false;
 			return true;
 		}
+
+		// The XMMatrixLookAtLH basis (forward = at - eye, right = up x forward, up = forward x right).
+		void camera_basis(const DirectX::XMFLOAT3& eye, const DirectX::XMFLOAT3& at, const DirectX::XMFLOAT3& up_hint,
+			DirectX::XMFLOAT3& right, DirectX::XMFLOAT3& up, DirectX::XMFLOAT3& forward)
+		{
+			using namespace DirectX;
+			XMVECTOR f = XMVector3Normalize(XMVectorSubtract(XMLoadFloat3(&at), XMLoadFloat3(&eye)));
+			XMVECTOR r = XMVector3Normalize(XMVector3Cross(XMLoadFloat3(&up_hint), f));
+			XMVECTOR u = XMVector3Cross(f, r);
+			XMStoreFloat3(&forward, f); XMStoreFloat3(&right, r); XMStoreFloat3(&up, u);
+		}
 	}
 
 	// ---------------------------------------------------------------------------------------------
@@ -209,12 +220,17 @@ namespace vortex::graphics::sdlgpu
 		v.frame.point_light_count = (u32)(std::min)(m_point_lights.size(), (size_t)MAX_POINT_LIGHTS);
 		v.frame.spot_light_count = (u32)(std::min)(m_spot_lights.size(), (size_t)MAX_SPOT_LIGHTS);
 		v.frame.ssao_enabled = 0.0f;
+		fill_environment(v.frame);
 		v.frame.shadow_map_texel = 1.0f / (float)SHADOW_TILE_SIZE;
 		v.eye = m_camera_position;
 
 		v.viewmodel = v.frame;
-		XMMATRIX vm_proj = XMMatrixPerspectiveFovLH(XMConvertToRadians(m_viewmodel_fov), aspect, 0.1f, 1000.0f);
+		XMMATRIX vm_proj = XMMatrixPerspectiveFovLH(XMConvertToRadians(m_viewmodel_fov), aspect, VIEWMODEL_NEAR, VIEWMODEL_FAR);
 		XMStoreFloat4x4(&v.viewmodel.view_projection, view * vm_proj);
+		camera_basis(m_camera_position, m_camera_target, m_camera_up, v.right, v.up, v.forward);
+		v.near_clip = 0.1f; v.far_clip = 1000.0f; v.ortho = false;
+		v.tan_half_y = tanf(XMConvertToRadians(m_fov_degrees) * 0.5f);
+		v.tan_half_x = v.tan_half_y * aspect;
 		fill_light_buffer();
 		return v;
 	}
@@ -245,9 +261,14 @@ namespace vortex::graphics::sdlgpu
 		v.frame.point_light_count = (u32)(std::min)(m_point_lights.size(), (size_t)MAX_POINT_LIGHTS);
 		v.frame.spot_light_count = (u32)(std::min)(m_spot_lights.size(), (size_t)MAX_SPOT_LIGHTS);
 		v.frame.ssao_enabled = 0.0f;
+		fill_environment(v.frame);
 		v.frame.shadow_map_texel = 1.0f / (float)SHADOW_TILE_SIZE;
 		v.eye = camera.position;
 		v.viewmodel = v.frame;
+		camera_basis(camera.position, camera.target, camera.up, v.right, v.up, v.forward);
+		v.near_clip = camera.near_clip; v.far_clip = camera.far_clip; v.ortho = camera.orthographic;
+		if (camera.orthographic) { v.tan_half_y = camera.ortho_size * 0.5f; v.tan_half_x = v.tan_half_y * aspect; }
+		else { v.tan_half_y = tanf(XMConvertToRadians(camera.fov_degrees) * 0.5f); v.tan_half_x = v.tan_half_y * aspect; }
 		fill_light_buffer();
 		return v;
 	}
@@ -261,6 +282,21 @@ namespace vortex::graphics::sdlgpu
 		auto& reg = ResourceRegistry::instance();
 		m_instance_staging.clear();
 		m_instance_count = 0;
+
+		// A mesh was destroyed since the draw runs were built (preview renders, asset reloads, runtime Destroy):
+		// the cached runs hold raw Mesh pointers and the kept queue may still name the dead mesh — drop those items
+		// and rebuild, instead of drawing through freed memory.
+		if (const u32 gen = reg.mesh_generation(); gen != m_seen_mesh_generation)
+		{
+			m_seen_mesh_generation = gen;
+			m_render_queue.erase(std::remove_if(m_render_queue.begin(), m_render_queue.end(), [&reg](const RenderItem& it)
+			{
+				Mesh* m = reg.get_mesh(it.mesh_id);
+				return m == nullptr || !m->is_valid();
+			}), m_render_queue.end());
+			m_draw_runs.clear();
+			m_queue_dirty = true;
+		}
 
 		size_t objectCount = (std::min)(m_render_queue.size(), (size_t)MAX_RENDER_OBJECTS);
 		if (m_render_queue.size() > (size_t)MAX_RENDER_OBJECTS) m_render_queue.resize(MAX_RENDER_OBJECTS);
@@ -477,8 +513,34 @@ namespace vortex::graphics::sdlgpu
 		SDL_PushGPUFragmentUniformData(cmd, 2, &m_light_data, sizeof(LightBufferData));
 	}
 
+	SdlGpuParticles::View SdlGpuRenderer::particle_view(const FrameView& view) const
+	{
+		SdlGpuParticles::View p{};
+		p.view_projection = view.view_projection;
+		p.viewmodel_projection = view.viewmodel.view_projection;
+		p.eye = view.eye; p.right = view.right; p.up = view.up; p.forward = view.forward;
+		p.near_clip = view.near_clip; p.far_clip = view.far_clip; p.ortho = view.ortho;
+		p.vm_near_clip = VIEWMODEL_NEAR; p.vm_far_clip = VIEWMODEL_FAR;
+		p.tan_half_x = view.tan_half_x; p.tan_half_y = view.tan_half_y;
+		return p;
+	}
+
+	SdlGpuParticles::Environment SdlGpuRenderer::particle_environment(const FrameView& view) const
+	{
+		SdlGpuParticles::Environment e{};
+		const PerFrameConstants& f = view.frame;
+		e.fog_color = f.fog_color; e.fog_density = f.fog_density;
+		e.fog_height_y = f.fog_height_y; e.fog_height_falloff = f.fog_height_falloff;
+		e.sun_direction = f.light_direction; e.sun_intensity = f.directional_intensity;
+		e.sun_color = f.light_color; e.ambient = f.ambient_strength;
+		e.point_lights = f.point_light_count; e.spot_lights = f.spot_light_count;
+		static_assert(sizeof(GPUPointLight) * MAX_POINT_LIGHTS + sizeof(GPUSpotLight) * MAX_SPOT_LIGHTS == 1024, "particle light block");
+		e.lights = &m_light_data;   // point + spot lights lead the struct (the 1024 bytes particles.metal reads)
+		return e;
+	}
+
 	void SdlGpuRenderer::record_scene(SDL_GPUCommandBuffer* cmd, GpuTarget& target, const FrameView& view_in,
-		bool draw_skybox_pass, bool draw_grid_pass, bool draw_gizmo_pass)
+		bool draw_skybox_pass, bool draw_grid_pass, bool draw_gizmo_pass, int particle_world, bool particle_depth_capture)
 	{
 		FrameView view = view_in;
 		const bool ssao_on = m_ssao_enabled && m_post_ready && !draw_gizmo_pass ? true : (m_ssao_enabled && m_post_ready);
@@ -491,6 +553,12 @@ namespace vortex::graphics::sdlgpu
 		upload_dynamic(cmd);
 		record_shadow_passes(cmd);
 		if (ssao_on) record_ssao(cmd, view, target.width, target.height); else m_ssao_current = nullptr;
+		// Particles (VFX): gather + upload before the scene pass; each layer draws right after its meshes.
+		const SdlGpuParticles::View pview = particle_view(view);
+		const bool fx = particle_world >= 0 && m_particles.prepare(cmd, pview, (u32)particle_world);
+		const bool fx0 = fx && m_particles.has_layer(0);
+		const bool fx1 = fx && m_particles.has_layer(1);
+		const SdlGpuParticles::Environment penv = fx ? particle_environment(view) : SdlGpuParticles::Environment{};
 
 		SDL_GPUColorTargetInfo color{};
 		color.texture = target.color;
@@ -509,7 +577,23 @@ namespace vortex::graphics::sdlgpu
 		size_t vmStart = runN;
 		for (size_t r = 0; r < runN; ++r) if (m_draw_runs[r].layer != 0) { vmStart = r; break; }
 		const bool has_viewmodel = vmStart < runN;
+		const bool vm_pass = has_viewmodel || fx1;   // viewmodel particles need the cleared (viewmodel-only) depth too
 		const bool gizmos = draw_gizmo_pass && (!m_gizmo_render.empty() || !m_gizmo_wire_render.empty());
+		// Always-on-top gizmos go last; after a particle pass they need a pass of their own (depth LOAD).
+		auto gizmo_pass = [&]()
+		{
+			SDL_GPUColorTargetInfo gc = color;
+			gc.load_op = SDL_GPU_LOADOP_LOAD;
+			SDL_GPUDepthStencilTargetInfo gd = depth;
+			gd.load_op = SDL_GPU_LOADOP_LOAD;
+			SDL_GPURenderPass* gp = SDL_BeginGPURenderPass(cmd, &gc, 1, &gd);
+			if (!gp) return;
+			SDL_GPUViewport gv{ 0, 0, (float)target.width, (float)target.height, 0.0f, 1.0f };
+			SDL_SetGPUViewport(gp, &gv);
+			push_frame_uniforms(cmd, view.frame);   // the particle pass left its own uniforms in the slots
+			draw_gizmos(gp, cmd);
+			SDL_EndGPURenderPass(gp);
+		};
 
 		SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &color, 1, &depth);
 		if (!pass) return;
@@ -520,10 +604,16 @@ namespace vortex::graphics::sdlgpu
 		// The skybox/grid pushed their own constants into uniform slot 0 — the scene shaders read PerFrame there.
 		push_frame_uniforms(cmd, view.frame);
 		record_runs(pass, cmd, 0, vmStart, view);
-		if (!has_viewmodel && gizmos) draw_gizmos(pass, cmd);
+		if (!vm_pass && gizmos && !fx0) draw_gizmos(pass, cmd);
 		SDL_EndGPURenderPass(pass);
 
-		if (has_viewmodel)
+		// World-layer particles: after the opaque + transparent meshes, depth-tested against the world depth.
+		if (fx0) m_particles.draw_layer(cmd, target.color, target.depth, target.width, target.height, 0, pview, penv);
+		// Collision snapshot of the world depth (before the viewmodel pass clears it).
+		if (particle_depth_capture && particle_world == 0) m_particles.capture_depth(cmd, target.depth, target.width, target.height, pview);
+		if (!vm_pass && gizmos && fx0) gizmo_pass();
+
+		if (vm_pass)
 		{
 			// First-person layer: own projection, cleared depth so the arms/weapon never clip the world.
 			color.load_op = SDL_GPU_LOADOP_LOAD;
@@ -534,8 +624,14 @@ namespace vortex::graphics::sdlgpu
 			push_frame_uniforms(cmd, view.viewmodel);
 			record_runs(pass, cmd, vmStart, runN, view);
 			push_frame_uniforms(cmd, view.frame);
-			if (gizmos) draw_gizmos(pass, cmd);
+			if (gizmos && !fx1) draw_gizmos(pass, cmd);
 			SDL_EndGPURenderPass(pass);
+			// Viewmodel-layer particles (muzzle flash on the weapon): viewmodel projection, viewmodel depth only.
+			if (fx1)
+			{
+				m_particles.draw_layer(cmd, target.color, target.depth, target.width, target.height, 1, pview, penv);
+				if (gizmos) gizmo_pass();
+			}
 		}
 	}
 
@@ -607,16 +703,17 @@ namespace vortex::graphics::sdlgpu
 				obj.ao = props.ao; obj.normal_strength = props.normal_strength; obj.use_directx_normals = props.use_directx_normals;
 				obj.is_unlit = props.is_unlit; obj.emissive_strength = props.emissive_strength;
 				obj.uv_tiling = props.uv_tiling; obj.height_scale = props.height_scale;
-				auto bind = [&](Texture* t, int slot, u32& flag)
+				// flag = 1 + the channel a packed map is read from (see Material::set_texture_channels)
+				auto bind = [&](Texture* t, int slot, u32& flag, u32 packed)
 				{
-					if (t && t->is_valid()) { bindings[slot].texture = t->texture(); flag = 1; }
+					if (t && t->is_valid()) { bindings[slot].texture = t->texture(); flag = packed ? packed : 1; }
 				};
-				bind(mat->albedo_texture(), 0, obj.has_albedo_texture);
-				bind(mat->normal_texture(), 1, obj.has_normal_texture);
-				bind(mat->metallic_texture(), 2, obj.has_metallic_texture);
-				bind(mat->roughness_texture(), 3, obj.has_roughness_texture);
-				bind(mat->ao_texture(), 4, obj.has_ao_texture);
-				bind(mat->height_texture(), 5, obj.has_height_texture);
+				bind(mat->albedo_texture(), 0, obj.has_albedo_texture, 1);
+				bind(mat->normal_texture(), 1, obj.has_normal_texture, 1);
+				bind(mat->metallic_texture(), 2, obj.has_metallic_texture, props.has_metallic_texture);
+				bind(mat->roughness_texture(), 3, obj.has_roughness_texture, props.has_roughness_texture);
+				bind(mat->ao_texture(), 4, obj.has_ao_texture, props.has_ao_texture);
+				bind(mat->height_texture(), 5, obj.has_height_texture, 1);
 			}
 		}
 		SDL_PushGPUFragmentUniformData(cmd, 1, &obj, sizeof(PerObjectConstants));

@@ -50,6 +50,16 @@ is **not** bundled in this source repository.
   `ThirdParty/sal/sal.h` is a Vortex-authored stub of the SAL annotations those headers expect, not third-party code.
 - **License:** MIT. © Microsoft Corporation. Upstream: https://github.com/microsoft/DirectXMath
 
+### Recast & Detour (recastnavigation)
+- **Use:** AI & Navigation (issues #108-#110) — navmesh baking (Recast), the tiled navmesh with path / point / raycast
+  queries (Detour) and agent steering with local avoidance (DetourCrowd), statically linked into the engine
+  (`Engine/Navigation`). The CMake build fetches the pinned `v1.6.0` tag (`Engine/CMakeLists.txt`,
+  `VORTEX_ENABLE_RECAST`); the Visual Studio projects build the no-navigation stub until they link it too.
+- **License:** zlib. © 2009 Mikko Mononen (memon@inside.org). Vendorable into this MIT repo; the zlib license only
+  requires that the notice is kept in source distributions and that altered versions are marked as such (none are).
+- **Text:** `License.txt` in the fetched source (`build/<preset>/_deps/recastnavigation-src/License.txt`) · upstream:
+  https://github.com/recastnavigation/recastnavigation
+
 ## Linked into the editor (restored via NuGet at build; not committed here)
 
 ### Dirkster.AvalonDock

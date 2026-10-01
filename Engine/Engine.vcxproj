@@ -69,7 +69,10 @@
     <ClInclude Include="Graphics\Resources\Texture.h" />
     <ClInclude Include="Input\InputSystem.h" />
     <ClInclude Include="Input\InputTypes.h" />
+    <ClInclude Include="Navigation\NavigationFormat.h" />
+    <ClInclude Include="Navigation\NavigationWorld.h" />
     <ClInclude Include="Physics\PhysicsWorld.h" />
+    <ClInclude Include="Graphics\Particles\ParticleSystem.h" />
     <ClInclude Include="Runtime\AssetDatabase.h" />
     <ClInclude Include="Runtime\AssetManifest.h" />
     <ClInclude Include="Runtime\GameHost.h" />
@@ -152,7 +155,11 @@
     <ClCompile Include="Graphics\Resources\ResourceRegistry_Lod.cpp" />
     <ClCompile Include="Graphics\Resources\Texture.cpp" />
     <ClCompile Include="Input\InputSystem.cpp" />
+    <ClCompile Include="Navigation\NavigationBake.cpp" />
+    <ClCompile Include="Navigation\NavigationWorld.cpp" />
     <ClCompile Include="Physics\PhysicsWorld.cpp" />
+    <ClCompile Include="Graphics\Particles\ParticleJson.cpp" />
+    <ClCompile Include="Graphics\Particles\ParticleSystem.cpp" />
     <ClCompile Include="Runtime\AssetDatabase.cpp" />
     <ClCompile Include="Runtime\AssetManifest.cpp" />
     <ClCompile Include="Runtime\GameHost.cpp" />

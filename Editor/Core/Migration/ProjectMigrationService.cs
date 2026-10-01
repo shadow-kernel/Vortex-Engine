@@ -144,7 +144,9 @@ namespace Editor.Core.Migration
         // opt into long-path handling on .NET 4.6.2+ regardless of the OS LongPathsEnabled policy.
         private static string Long(string path)
         {
-            if (string.IsNullOrEmpty(path) || path.StartsWith(@"\\")) return path;
+            // The \\?\ long-path prefix exists on Windows only — elsewhere it became a literal folder name, so the
+            // migration backup landed in "./\\?\/..." relative to the working directory.
+            if (string.IsNullOrEmpty(path) || Path.DirectorySeparatorChar != '\\' || path.StartsWith(@"\\")) return path;
             return Path.IsPathRooted(path) ? @"\\?\" + path : path;
         }
 

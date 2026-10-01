@@ -38,6 +38,10 @@ cbuffer PerFrame : register(b0)
     // SV_POSITION and the AO texture's own dimensions, so no screen size travels here.
     float SsaoEnabled;
     float3 SsaoPadding;
+    // Sky gradient for specular reflections — APPENDED @192, byte-matched to PerFrameConstants.
+    float4 EnvSky;       // rgb zenith, w = 1 when a gradient sky is active
+    float4 EnvHorizon;
+    float4 EnvGround;
 };
 
 // Exp2 distance fog with optional height weighting (ground mist below FogHeightY).
@@ -320,6 +324,36 @@ float Attenuation(float distance, float range)
     return atten * atten / (distance * distance + 0.01);
 }
 
+// Packed PBR maps: Has*Texture is 1 + the channel to read (1 R, 2 G, 3 B, 4 A) — glTF / ORM maps keep roughness
+// in G, metallic in B and occlusion in R.
+float PickChannel(float4 v, uint flag)
+{
+    return flag == 2 ? v.g : (flag == 3 ? v.b : (flag == 4 ? v.a : v.r));
+}
+
+// Per-pixel tangent frame from screen-space derivatives (Schueler, "Normal Mapping Without Precomputed Tangents"):
+// meshes carry no tangents, and a frame derived from the normal alone ignores the UV layout, so normal/parallax
+// maps on arbitrary UV islands were lit from the wrong side. T follows +u, B follows +v (image-down: the importer
+// flips V), so DirectX-convention normal maps apply as-is and OpenGL ones flip green. The determinant's sign keeps
+// it independent of the screen's y axis and of mirrored UVs. Leaves T/B untouched where the UVs have no gradient.
+void CotangentFrame(float3 N, float3 p, float2 uv, inout float3 T, inout float3 B)
+{
+    float3 dp1 = ddx(p);
+    float3 dp2 = ddy(p);
+    float2 duv1 = ddx(uv);
+    float2 duv2 = ddy(uv);
+    float3 dp2perp = cross(dp2, N);
+    float3 dp1perp = cross(N, dp1);
+    float3 t = dp2perp * duv1.x + dp1perp * duv2.x;
+    float3 b = dp2perp * duv1.y + dp1perp * duv2.y;
+    float det = dot(dp1, dp2perp);
+    float m = max(dot(t, t), dot(b, b));
+    if (m < 1e-30 || abs(det) < 1e-30) return;
+    float k = rsqrt(m) * (det < 0.0 ? -1.0 : 1.0);
+    T = t * k;
+    B = b * k;
+}
+
 float4 PSMain(PS_IN input) : SV_TARGET
 {
     // Texture repeat scale: multiply UVs so a small tiling texture repeats across a large surface instead of being
@@ -327,12 +361,18 @@ float4 PSMain(PS_IN input) : SV_TARGET
     float2 tiling = (UVTiling.x > 0.0 && UVTiling.y > 0.0) ? UVTiling : float2(1.0, 1.0);
     float2 uv = input.uv * tiling;
 
+    // Tangent frame for parallax + normal mapping (computed outside any branch: it needs derivatives).
+    float3 Ng = normalize(input.norm);
+    float3 T = normalize(input.tangent);
+    float3 B = normalize(input.bitangent);
+    CotangentFrame(Ng, input.worldPos, uv, T, B);
+
     // Parallax mapping: shift the UVs along the tangent-space view direction by the height map, so a "texture with
     // depth" reads as real relief (stones stand out) instead of a flat decal. Guarded: no height map / zero scale
     // leaves UVs untouched. max(Vt.z,..) tames swimming at grazing angles.
     if (HasHeightTexture != 0 && HeightScale > 0.0) {
         float3 Vw = normalize(CameraPosition - input.worldPos);
-        float3x3 TBN = float3x3(normalize(input.tangent), normalize(input.bitangent), normalize(input.norm));
+        float3x3 TBN = float3x3(normalize(T), normalize(B), Ng);
         float3 Vt = mul(TBN, Vw);
         float h = HeightTexture.Sample(LinearSampler, uv).r;
         uv -= (Vt.xy / max(Vt.z, 0.15)) * ((1.0 - h) * HeightScale);
@@ -360,26 +400,26 @@ float4 PSMain(PS_IN input) : SV_TARGET
 
     float metallic = Metallic;
     if (HasMetallicTexture != 0) {
-        metallic = MetallicTexture.Sample(LinearSampler, uv).r;
+        metallic = PickChannel(MetallicTexture.Sample(LinearSampler, uv), HasMetallicTexture);
     }
 
     float roughness = max(Roughness, 0.04);
     if (HasRoughnessTexture != 0) {
-        roughness = max(RoughnessTexture.Sample(LinearSampler, uv).r, 0.04);
+        roughness = max(PickChannel(RoughnessTexture.Sample(LinearSampler, uv), HasRoughnessTexture), 0.04);
     }
 
     float ao = AO;
     if (HasAOTexture != 0) {
-        ao = AOTexture.Sample(LinearSampler, uv).r;
+        ao = PickChannel(AOTexture.Sample(LinearSampler, uv), HasAOTexture);
     }
 
-    float3 N = normalize(input.norm);
+    float3 N = Ng;
     if (HasNormalTexture != 0) {
         float3 normalMap = NormalTexture.Sample(LinearSampler, uv).rgb;
         normalMap = normalMap * 2.0 - 1.0;
         if (UseDirectXNormals == 0) normalMap.y = -normalMap.y;
         normalMap.xy *= NormalStrength;
-        float3x3 TBN = float3x3(normalize(input.tangent), normalize(input.bitangent), N);
+        float3x3 TBN = float3x3(T, B, N);
         N = normalize(mul(normalMap, TBN));
     }
 
@@ -495,14 +535,25 @@ float4 PSMain(PS_IN input) : SV_TARGET
     float rimFresnel = pow(saturate(1.0 - NdotV), 5.0);
     float3 rimLight = rimFresnel * F0 * 0.1 * ao * metallic;
 
-    // Environment reflection for metals
+    // Environment reflection: the scene's own sky gradient (blurred toward its average with roughness) so metals
+    // pick up the sky instead of turning black; neutral dark gradient when no gradient sky is set.
     float3 R = reflect(-V, N);
-    float upFactor = R.y * 0.5 + 0.5;
-    float3 envColor = lerp(float3(0.01, 0.01, 0.02), float3(0.08, 0.10, 0.15), upFactor);
-    float envRoughness = roughness * roughness;
-    envColor = lerp(envColor, envColor * 0.2, envRoughness);
+    float3 envColor;
+    if (EnvSky.w > 0.5)
+    {
+        float3 skyDir = R.y >= 0.0 ? lerp(EnvHorizon.rgb, EnvSky.rgb, pow(saturate(R.y), 0.6))
+                                   : lerp(EnvHorizon.rgb, EnvGround.rgb, pow(saturate(-R.y), 0.6));
+        float3 skyAvg = (EnvSky.rgb + 2.0 * EnvHorizon.rgb + EnvGround.rgb) * 0.25;
+        envColor = lerp(skyDir, skyAvg, saturate(roughness * roughness * 1.5)) * AmbientStrength;
+    }
+    else
+    {
+        float upFactor = R.y * 0.5 + 0.5;
+        envColor = lerp(float3(0.01, 0.01, 0.02), float3(0.08, 0.10, 0.15), upFactor);
+        envColor = lerp(envColor, envColor * 0.2, roughness * roughness);
+    }
 
-    float3 envFresnel = F0 + (1.0 - F0) * pow(1.0 - NdotV, 5.0);
+    float3 envFresnel = F0 + (max(float3(1.0 - roughness, 1.0 - roughness, 1.0 - roughness), F0) - F0) * pow(1.0 - NdotV, 5.0);
     float3 specularAmbient = envColor * envFresnel * ao;
 
     ambient += specularAmbient + rimLight;

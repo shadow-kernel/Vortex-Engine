@@ -131,6 +131,11 @@ namespace Editor.Core.Services
         private static readonly Dictionary<string, long> _vmatPathCache = new Dictionary<string, long>();
 
 
+        /// <summary>Built-in primitives ("Primitive:Cube", ...) share one mesh path across every entity that uses them, so
+        /// they must never get a path-wide material — each entity keeps its own.</summary>
+        public static bool IsPrimitivePath(string meshPath)
+            => !string.IsNullOrEmpty(meshPath) && meshPath.StartsWith("Primitive:", StringComparison.OrdinalIgnoreCase);
+
         /// <summary>
         /// Register a material for a mesh path (called during import)
         /// </summary>
@@ -296,8 +301,8 @@ namespace Editor.Core.Services
                             meshRenderer.ColorR, meshRenderer.ColorG, meshRenderer.ColorB, meshRenderer.ColorA);
                         VortexAPI.SetMaterialAlbedoTexture(materialId, textureId);
 
-                        // Cache the material
-                        RegisterMaterialForMeshPath(meshPath, materialId);
+                        // Cache the material (per model path; a primitive's texture belongs to this entity only)
+                        if (!IsPrimitivePath(meshPath)) RegisterMaterialForMeshPath(meshPath, materialId);
                         _entityMaterials[entityId] = materialId;
 
                         Log($"[SceneRenderService] Preloaded texture for {meshPath}: {fullTexturePath}");
@@ -1235,9 +1240,11 @@ namespace Editor.Core.Services
                 }
             }
 
-            // First, check if we have a cached material for this mesh path
+            // First, check if we have a cached material for this mesh path. Never for primitives: "Primitive:Cube"
+            // is shared by every box in the scene, so a material registered under it would recolour all of them.
             string meshPath = renderer.MeshPath;
-            long cachedMaterial = GetMaterialForMeshPath(meshPath);
+            bool primitive = IsPrimitivePath(meshPath);
+            long cachedMaterial = primitive ? -1 : GetMaterialForMeshPath(meshPath);
             
             if (cachedMaterial >= 0)
             {
@@ -1249,15 +1256,17 @@ namespace Editor.Core.Services
                 return cachedMaterial;
             }
 
-            // Fallback: Check if the renderer has an imported material directly
-            if (renderer.HasImportedMaterial)
+            // Fallback: Check if the renderer has an imported material directly. Not when a .vmat is assigned: then
+            // MaterialHandle is the resource manager's handle for that file (LoadMaterialResource), NOT a graphics
+            // material id — an unresolvable .vmat used to send that number to the renderer (a random other material).
+            if (renderer.HasImportedMaterial && string.IsNullOrEmpty(renderer.MaterialPath))
             {
                 if (!_entityMaterials.ContainsKey(entityId))
                 {
                     _entityMaterials[entityId] = renderer.MaterialHandle;
                 }
                 // Register in cache for future lookups
-                if (!string.IsNullOrEmpty(meshPath))
+                if (!string.IsNullOrEmpty(meshPath) && !primitive)
                 {
                     RegisterMaterialForMeshPath(meshPath, renderer.MaterialHandle);
                 }
@@ -1292,8 +1301,8 @@ namespace Editor.Core.Services
                                 VortexAPI.SetMaterialAlbedoTexture(newMaterialId, textureId);
                                 _entityMaterials[entityId] = newMaterialId;
                                 
-                                // Register in cache for future lookups
-                                if (!string.IsNullOrEmpty(meshPath))
+                                // Register in cache for future lookups (models only — see IsPrimitivePath)
+                                if (!string.IsNullOrEmpty(meshPath) && !primitive)
                                 {
                                     RegisterMaterialForMeshPath(meshPath, newMaterialId);
                                 }

@@ -64,6 +64,9 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void SetMaterialAOTexture(long materialId, long textureId);
 
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SetMaterialTextureChannels")]
+        private static extern void SetMaterialTextureChannelsNative(long materialId, int metallic, int roughness, int ao);
+
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void SetMaterialMetallic(long materialId, float value);
 
@@ -127,6 +130,13 @@ namespace Editor.DllWrapper
             => SetMaterialAO(materialId, value);
         public static void SetMaterialNormalFormat(long materialId, bool useDirectX)
             => SetMaterialUseDirectXNormals(materialId, useDirectX);
+
+        /// <summary>Channel the metallic / roughness / AO maps are read from (0 R, 1 G, 2 B, 3 A). glTF metallicRoughness
+        /// and ORM/ARM maps keep roughness in G, metallic in B and occlusion in R; separate grayscale maps use R.</summary>
+        public static void SetMaterialTextureChannels(long materialId, int metallic, int roughness, int ao)
+        {
+            try { SetMaterialTextureChannelsNative(materialId, metallic, roughness, ao); } catch (EntryPointNotFoundException) { }
+        }
         
         /// <summary>
         /// Set material to unlit mode (no lighting, just texture/color * emissive strength).

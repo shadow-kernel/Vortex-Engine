@@ -44,6 +44,14 @@ namespace Editor.Core.Assets
         // Combined texture maps (for packed textures)
         public string MetallicRoughnessTexture { get; set; }  // GLTF style
         public string OcclusionRoughnessMetallicTexture { get; set; }  // ORM maps
+
+        /// <summary>Channel the metallic / roughness / AO maps are read from: null or "Auto" (default), "R", "G", "B",
+        /// "A". Auto reads packed maps correctly — MetallicRoughnessTexture (glTF), OcclusionRoughnessMetallicTexture
+        /// (ORM/ARM) or ONE file assigned to both metallic and roughness keep roughness in G and metallic in B,
+        /// occlusion in R; separate grayscale maps read R.</summary>
+        public string MetallicChannel { get; set; }
+        public string RoughnessChannel { get; set; }
+        public string AOChannel { get; set; }
         
         // Emissive properties
         public float EmissiveStrength { get; set; } = 0f;

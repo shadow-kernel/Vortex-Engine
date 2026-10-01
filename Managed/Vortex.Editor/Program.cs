@@ -15,7 +15,9 @@ namespace VortexEditor
             Options = LaunchOptions.Parse(args);
             if (Options.SmokeSeconds > 0 && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("VORTEX_APPDATA_DIR")))
                 Environment.SetEnvironmentVariable("VORTEX_APPDATA_DIR", System.IO.Path.Combine(System.IO.Path.GetTempPath(), "vortex-smoke-appdata"));
-            return BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+            // An exception in a pointer/key/window handler must not take the editor (and unsaved work) down.
+            Shell.CrashGuard.Install();
+            return Shell.CrashGuard.Run(BuildAvaloniaApp(), args);
         }
 
         public static AppBuilder BuildAvaloniaApp()

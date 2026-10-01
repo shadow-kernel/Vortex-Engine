@@ -41,6 +41,8 @@
     <ClCompile Include="Api\AnimationApi.cpp" />
     <ClCompile Include="Api\AudioApi.cpp" />
     <ClCompile Include="Api\PhysicsApi.cpp" />
+    <ClCompile Include="Api\ParticleApi.cpp" />
+    <ClCompile Include="Api\NavigationApi.cpp" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>18.0</VCProjectVersion>

@@ -8,5 +8,7 @@
     <ClInclude Include="Test.h" />
     <ClInclude Include="TestECS.h" />
     <ClInclude Include="TestPhysics.h" />
+    <ClInclude Include="TestParticles.h" />
+    <ClInclude Include="TestNavigation.h" />
   </ItemGroup>
 </Project>

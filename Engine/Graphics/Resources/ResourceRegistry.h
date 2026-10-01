@@ -42,6 +42,9 @@ namespace vortex::graphics
 		Mesh* get_mesh(id::id_type id);
 		void destroy_mesh(id::id_type id);
 		std::vector<id::id_type> get_all_mesh_ids() const;
+		// Bumped by every destroy_mesh: renderers that cache raw Mesh pointers (draw runs) compare it each frame and
+		// drop / rebuild what referenced a destroyed mesh instead of touching freed memory.
+		u32 mesh_generation() const { return m_mesh_generation; }
 
 		// Geometric LOD: each imported base mesh gets a chain of decimated lower-poly meshes for distant
 		// rendering. lods[0] = the full-res base (unchanged id, so existing scenes keep working).
@@ -69,6 +72,9 @@ namespace vortex::graphics
 		// Import management
 		id::id_type import_model(const std::string& filepath);
 		id::id_type import_texture(const std::string& filepath, const std::string& name = "");
+		// Decode the not-yet-cached files among `paths` on worker threads (GPU upload stays on this thread) and
+		// add them to the path cache, so the import_texture calls that follow are hits.
+		void prefetch_textures(const std::vector<std::string>& paths);
 		/// <summary>Import a texture from an in-memory buffer (packed asset pak loaded into RAM).</summary>
 		id::id_type import_texture_from_memory(const u8* data, u64 length, const std::string& name = "");
 		bool export_mesh_to_vmesh(id::id_type mesh_id, const std::string& filepath);
@@ -117,6 +123,7 @@ namespace vortex::graphics
 		bool reserve_srv_slot(D3D12_CPU_DESCRIPTOR_HANDLE& out_cpu, D3D12_GPU_DESCRIPTOR_HANDLE& out_gpu);
 
 	private:
+		u32 m_mesh_generation{ 0 };
 		ResourceRegistry() = default;
 
 		id::id_type create_mesh_from_submesh(const SubMeshData& submesh, const std::string& name);
@@ -130,6 +137,7 @@ namespace vortex::graphics
 
 		std::unordered_map<id::id_type, std::unique_ptr<Mesh>> m_meshes;
 		std::unordered_map<id::id_type, std::unique_ptr<Texture>> m_textures;
+		std::unordered_map<std::string, id::id_type> m_texture_path_cache;   // "<path>|<mtime>|<size>" -> texture
 		std::unordered_map<id::id_type, std::unique_ptr<Material>> m_materials;
 
 		id::id_type m_next_mesh_id{ 1 };

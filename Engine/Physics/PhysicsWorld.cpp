@@ -43,6 +43,12 @@ JPH_SUPPRESS_WARNINGS
 #include <Jolt/Physics/Collision/Shape/ScaledShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
+#include <Jolt/Physics/Constraints/DistanceConstraint.h>
+#include <Jolt/Physics/Constraints/FixedConstraint.h>
+#include <Jolt/Physics/Constraints/HingeConstraint.h>
+#include <Jolt/Physics/Constraints/PointConstraint.h>
+#include <Jolt/Physics/Constraints/SliderConstraint.h>
+#include <Jolt/Physics/Constraints/SwingTwistConstraint.h>
 
 #include <algorithm>
 #include <cmath>
@@ -111,6 +117,12 @@ namespace vortex::physics {
 		constexpr int k_circle_segments{ 24 };
 		constexpr f32 k_pi{ 3.14159265358979f };
 		constexpr f32 k_two_pi{ 2.0f * k_pi };
+		constexpr f32 k_deg_to_rad{ k_pi / 180.0f };
+		constexpr f32 k_rad_to_deg{ 180.0f / k_pi };
+		constexpr f32 k_min_limit_range{ 1.0e-3f };                // hinge (rad) / slider (m) limits closer than this are widened (Jolt asserts on min == max)
+		constexpr f32 k_joint_draw_radius{ 0.3f };                 // debug draw: hinge limit arc / ball cone size (m)
+		constexpr JPH::uint k_joint_velocity_steps{ 30 };          // solver iterations of islands with a joint (Jolt default 10)
+		constexpr JPH::uint k_joint_position_steps{ 10 };          // (Jolt default 2)
 
 		// ---- layers -------------------------------------------------------------------------------------
 		constexpr JPH::BroadPhaseLayer k_bp_non_moving{ 0 };
@@ -212,9 +224,39 @@ namespace vortex::physics {
 			s32 is_trigger{ 0 };   // -1 = unknown yet (removed events carry body ids only)
 		};
 
+		// Order-independent key of a body pair (joint-connected pairs that must not collide).
+		u64 body_pair_key(const JPH::BodyID& a, const JPH::BodyID& b)
+		{
+			u32 x = a.GetIndexAndSequenceNumber(), y = b.GetIndexAndSequenceNumber();
+			if (x > y) std::swap(x, y);
+			return (u64(x) << 32) | u64(y);
+		}
+
 		class contact_listener final : public JPH::ContactListener
 		{
 		public:
+			// Bodies connected by an enabled joint never collide with each other (a door and its frame, the links of
+			// a chain). The pair table is only written by the game thread between steps (joint create / enable /
+			// break / destroy) and only read here while Update runs, so it needs no lock.
+			JPH::ValidateResult OnContactValidate(const JPH::Body& a, const JPH::Body& b, JPH::RVec3Arg, const JPH::CollideShapeResult&) override
+			{
+				if (_ignored_pairs.empty()) return JPH::ValidateResult::AcceptAllContactsForThisBodyPair;
+				return _ignored_pairs.count(body_pair_key(a.GetID(), b.GetID())) != 0
+					? JPH::ValidateResult::RejectAllContactsForThisBodyPair
+					: JPH::ValidateResult::AcceptAllContactsForThisBodyPair;
+			}
+
+			// Reference-counted: two joints between the same pair keep it ignored until both are gone / disabled.
+			void ignore_pair(const JPH::BodyID& a, const JPH::BodyID& b, bool ignore)
+			{
+				const u64 key = body_pair_key(a, b);
+				if (ignore) { ++_ignored_pairs[key]; return; }
+				const auto it = _ignored_pairs.find(key);
+				if (it != _ignored_pairs.end() && --it->second == 0) _ignored_pairs.erase(it);
+			}
+
+			void clear_ignored_pairs() { _ignored_pairs.clear(); }
+
 			void OnContactAdded(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold& manifold, JPH::ContactSettings&) override
 			{
 				push(a, b, manifold, contact_added);
@@ -302,6 +344,7 @@ namespace vortex::physics {
 
 			std::mutex _mutex;
 			std::vector<queued_contact> _queue;
+			std::unordered_map<u64, u32> _ignored_pairs;   // body_pair_key -> number of enabled joints between the pair
 		};
 
 		// ---- handle tables ------------------------------------------------------------------------------
@@ -324,6 +367,28 @@ namespace vortex::physics {
 			f32 step_height{ 0.3f };
 			u16 generation{ 1 };
 			bool used{ false };
+		};
+
+		// A joint. Jolt body 1 is the CONNECTED body (body_b, or Body::sFixedToWorld), Jolt body 2 the jointed body
+		// (body_a), so Jolt's "body 2 relative to body 1" angle / position is the jointed body's.
+		struct constraint_slot
+		{
+			JPH::Ref<JPH::TwoBodyConstraint> constraint;
+			s32 type{ constraint_hinge };
+			u32 body_a{ 0 };               // jointed body handle
+			u32 body_b{ 0 };               // connected body handle, 0 = world
+			f32 break_force{ 0.0f };       // N, <= 0 = unbreakable
+			f32 last_force{ 0.0f };        // N, linear force of the last step
+			u16 generation{ 1 };
+			bool broken{ false };
+			bool pair_ignored{ false };    // this joint currently holds a collision-ignore reference for (a, b)
+			bool used{ false };
+		};
+
+		struct broken_joint
+		{
+			u32 handle;
+			f32 force;
 		};
 
 		// A destroyed body stays resolvable for a couple of steps so the 'removed' contact events Jolt raises
@@ -408,10 +473,16 @@ namespace vortex::physics {
 			std::vector<character_slot> characters;        // after `system`: CharacterVirtual's destructor talks to it
 			std::vector<u32> free_characters;
 
+			std::vector<constraint_slot> constraints;      // after `system`: removed from it in clear() before it dies
+			std::vector<u32> free_constraints;
+			s32 live_constraints{ 0 };
+			std::vector<broken_joint> broken;              // joints that broke, not yet handed out
+
 			std::vector<queued_contact> pending;           // drained events not yet handed out
 			size_t pending_cursor{ 0 };
 
 			u64 step_index{ 0 };
+			f32 last_substep_dt{ 1.0f / 60.0f };           // lambda (N·s) of the last solver sub-step / this = force (N)
 			bool static_bodies_added{ false };             // OptimizeBroadPhase before the next step
 			bool update_error_logged{ false };
 
@@ -663,6 +734,187 @@ namespace vortex::physics {
 			return slot && slot->character ? slot : nullptr;
 		}
 
+		// ---- constraints ------------------------------------------------------------------------------------
+		constraint_slot* find_constraint(u32 handle)
+		{
+			if (!g_world) return nullptr;
+			constraint_slot* slot = resolve_slot(g_world->constraints, handle);
+			return slot && slot->constraint ? slot : nullptr;
+		}
+
+		// The two bodies of a joint must not collide while the joint is enabled (world joints: nothing to filter).
+		void update_pair_ignore(world& w, constraint_slot& s)
+		{
+			const bool want = s.body_b != 0 && s.constraint && s.constraint->GetEnabled();
+			if (want == s.pair_ignored) return;
+			const JPH::BodyID a = s.constraint->GetBody2()->GetID();
+			const JPH::BodyID b = s.constraint->GetBody1()->GetID();
+			w.listener.ignore_pair(a, b, want);
+			s.pair_ignored = want;
+			// Cached contacts of the pair would survive the filter change: rebuild them next step.
+			JPH::BodyInterface& bodies = w.system.GetBodyInterface();
+			bodies.InvalidateContactCache(a);
+			bodies.InvalidateContactCache(b);
+		}
+
+		// Linear force (N) a joint applied in the last step = its positional Lagrange multipliers (the impulse of the
+		// last solver sub-step, N·s) divided by the sub-step length: the pivot force of hinges / ball joints / welds,
+		// the perpendicular + limit force of a slider, the axial force of a rope. Torques are not included.
+		f32 linear_force(const world& w, const constraint_slot& s)
+		{
+			const JPH::TwoBodyConstraint* c = s.constraint.GetPtr();
+			if (!c) return 0.0f;
+			f32 impulse = 0.0f;
+			switch (c->GetSubType())
+			{
+			case JPH::EConstraintSubType::Hinge:
+				impulse = static_cast<const JPH::HingeConstraint*>(c)->GetTotalLambdaPosition().Length();
+				break;
+			case JPH::EConstraintSubType::Point:
+				impulse = static_cast<const JPH::PointConstraint*>(c)->GetTotalLambdaPosition().Length();
+				break;
+			case JPH::EConstraintSubType::SwingTwist:
+				impulse = static_cast<const JPH::SwingTwistConstraint*>(c)->GetTotalLambdaPosition().Length();
+				break;
+			case JPH::EConstraintSubType::Slider:
+			{
+				const auto* slider = static_cast<const JPH::SliderConstraint*>(c);
+				const f32 limit = slider->GetTotalLambdaPositionLimits();
+				impulse = std::sqrt(slider->GetTotalLambdaPosition().LengthSq() + limit * limit);
+				break;
+			}
+			case JPH::EConstraintSubType::Fixed:
+				impulse = static_cast<const JPH::FixedConstraint*>(c)->GetTotalLambdaPosition().Length();
+				break;
+			case JPH::EConstraintSubType::Distance:
+				impulse = std::fabs(static_cast<const JPH::DistanceConstraint*>(c)->GetTotalLambdaPosition());
+				break;
+			default:
+				break;
+			}
+			return w.last_substep_dt > 0.0f ? impulse / w.last_substep_dt : 0.0f;
+		}
+
+		// Takes a joint out of the simulation and frees its slot. Wakes the bodies it held, so e.g. a door whose
+		// hinge is destroyed starts falling instead of hanging asleep in mid-air.
+		void release_constraint(world& w, u32 index)
+		{
+			constraint_slot& s = w.constraints[index];
+			const u32 handle = make_handle(index, s.generation);
+			if (s.constraint)
+			{
+				s.constraint->SetEnabled(false);
+				update_pair_ignore(w, s);
+				w.system.GetBodyInterface().ActivateConstraint(s.constraint.GetPtr());
+				w.system.RemoveConstraint(s.constraint.GetPtr());
+			}
+			// A break report the caller has not collected yet refers to a dead handle now.
+			w.broken.erase(std::remove_if(w.broken.begin(), w.broken.end(),
+				[handle](const broken_joint& b) { return b.handle == handle; }), w.broken.end());
+			release_slot(w.constraints, w.free_constraints, index);
+			--w.live_constraints;
+		}
+
+		// Jolt keeps raw body pointers in its constraints: every joint of a body goes before the body does.
+		void release_constraints_of_body(world& w, u32 body_handle)
+		{
+			for (u32 i = 0; i < u32(w.constraints.size()); ++i)
+			{
+				const constraint_slot& s = w.constraints[i];
+				if (s.used && (s.body_a == body_handle || s.body_b == body_handle)) release_constraint(w, i);
+			}
+		}
+
+		// Common tail of the create_* functions: resolves the bodies, creates the Jolt constraint with body 1 = the
+		// connected body (or the world) and body 2 = the jointed body, adds it and fills a slot.
+		u32 add_constraint(world& w, JPH::TwoBodyConstraintSettings& settings, s32 type, u32 body_a, u32 body_b,
+			f32 break_force, JPH::Ref<JPH::TwoBodyConstraint>* out_constraint = nullptr)
+		{
+			// Stiff joints: with Jolt's defaults (10 / 2) a slammed door overshoots its limit, bounces back ~15 deg and
+			// its pivot opens by ~2 cm; 30 / 10 converge (TestPhysics: < 0.1 deg past the limit, < 0.5 mm pivot error).
+			// The override raises the iterations of the joint's island only.
+			settings.mNumVelocityStepsOverride = k_joint_velocity_steps;
+			settings.mNumPositionStepsOverride = k_joint_position_steps;
+			const body_slot* a = resolve_slot(w.bodies, body_a);
+			if (!a) { log("joint: body A %u is not a valid body", body_a); return 0; }
+			JPH::BodyID id_b;   // invalid = Body::sFixedToWorld
+			if (body_b != 0)
+			{
+				const body_slot* b = resolve_slot(w.bodies, body_b);
+				if (!b) { log("joint: body B %u is not a valid body (use 0 for the world)", body_b); return 0; }
+				if (b == a) { log("joint: body A and body B are the same body (%u)", body_a); return 0; }
+				id_b = b->id;
+			}
+
+			JPH::Ref<JPH::TwoBodyConstraint> constraint = w.system.GetBodyInterface().CreateConstraint(&settings, id_b, a->id);
+			if (!constraint) { log("joint: Jolt refused to create the constraint"); return 0; }
+
+			constraint_slot* slot = nullptr;
+			const u32 handle = allocate_slot(w.constraints, w.free_constraints, slot);
+			if (!slot) { log("joint: constraint handle table exhausted"); return 0; }
+
+			w.system.AddConstraint(constraint.GetPtr());
+			slot->constraint = constraint;
+			slot->type = type;
+			slot->body_a = body_a;
+			slot->body_b = body_b;
+			slot->break_force = finite(break_force) && break_force > 0.0f ? break_force : 0.0f;
+			++w.live_constraints;
+			update_pair_ignore(w, *slot);
+			w.system.GetBodyInterface().ActivateConstraint(constraint.GetPtr());
+			if (out_constraint) *out_constraint = constraint;
+			return handle;
+		}
+
+		JPH::Vec3 unit_or(const f32* v, JPH::Vec3Arg fallback)
+		{
+			const JPH::Vec3 d = to_vec3(v, JPH::Vec3::sZero());
+			const f32 length = d.Length();
+			return length > 1.0e-6f ? d / length : fallback;
+		}
+
+		// A unit vector perpendicular to `axis`: `hint` made perpendicular, or any perpendicular when the hint is
+		// missing or (nearly) parallel to the axis.
+		JPH::Vec3 perpendicular(JPH::Vec3Arg axis, const f32* hint)
+		{
+			const JPH::Vec3 h = to_vec3(hint, JPH::Vec3::sZero());
+			const JPH::Vec3 p = h - axis * axis.Dot(h);
+			const f32 length = p.Length();
+			return length > 1.0e-4f ? p / length : axis.GetNormalizedPerpendicular();
+		}
+
+		JPH::Vec3 body_position(world& w, u32 body)
+		{
+			const body_slot* slot = resolve_slot(w.bodies, body);
+			return slot ? JPH::Vec3(w.system.GetBodyInterface().GetPosition(slot->id)) : JPH::Vec3::sZero();
+		}
+
+		JPH::Vec3 body_center_of_mass(world& w, u32 body)
+		{
+			const body_slot* slot = resolve_slot(w.bodies, body);
+			return slot ? JPH::Vec3(w.system.GetBodyInterface().GetCenterOfMassPosition(slot->id)) : JPH::Vec3::sZero();
+		}
+
+		void configure_motor(JPH::MotorSettings& motor, f32 max_force_or_torque, bool angular, f32 frequency, f32 damping)
+		{
+			const f32 limit = finite(max_force_or_torque) && max_force_or_torque > 0.0f ? max_force_or_torque : FLT_MAX;
+			if (angular) motor.SetTorqueLimit(limit);
+			else motor.SetForceLimit(limit);
+			motor.mSpringSettings.mMode = JPH::ESpringMode::FrequencyAndDamping;
+			motor.mSpringSettings.mFrequency = finite(frequency) && frequency > 0.0f ? frequency : 2.0f;
+			motor.mSpringSettings.mDamping = finite(damping) && damping >= 0.0f ? damping : 1.0f;
+		}
+
+		JPH::EMotorState to_motor_state(s32 mode)
+		{
+			switch (mode)
+			{
+			case motor_velocity: return JPH::EMotorState::Velocity;
+			case motor_position: return JPH::EMotorState::Position;
+			default:             return JPH::EMotorState::Off;
+			}
+		}
+
 		// ---- debug wireframes ---------------------------------------------------------------------------------
 		struct line_sink
 		{
@@ -849,6 +1101,90 @@ namespace vortex::physics {
 				break;
 			}
 		}
+
+		void draw_marker(line_sink& sink, JPH::Vec3Arg p, f32 size)
+		{
+			sink.add(p - JPH::Vec3(size, 0.0f, 0.0f), p + JPH::Vec3(size, 0.0f, 0.0f));
+			sink.add(p - JPH::Vec3(0.0f, size, 0.0f), p + JPH::Vec3(0.0f, size, 0.0f));
+			sink.add(p - JPH::Vec3(0.0f, 0.0f, size), p + JPH::Vec3(0.0f, 0.0f, size));
+		}
+
+		// Joint gizmo (#103): anchor marker (+ a line to body A's attachment point when the two drift apart - the
+		// rope of a distance joint), hinge axis + limit arc + current angle, slider travel range, ball swing cone,
+		// weld arms. Frames come from Jolt (constraint space -> body centre-of-mass space -> world), so the gizmo
+		// follows the bodies. Constraint space: X = hinge / slider / twist axis, Y = the reference normal.
+		void draw_constraint(line_sink& sink, const constraint_slot& s)
+		{
+			const JPH::TwoBodyConstraint& c = *s.constraint;
+			const JPH::Mat44 frame1 = JPH::Mat44(c.GetBody1()->GetCenterOfMassTransform()) * c.GetConstraintToBody1Matrix();
+			const JPH::Mat44 frame2 = JPH::Mat44(c.GetBody2()->GetCenterOfMassTransform()) * c.GetConstraintToBody2Matrix();
+			const JPH::Vec3 p1 = frame1.GetTranslation(), p2 = frame2.GetTranslation();
+			const JPH::Vec3 ax = JPH::Vec3::sAxisX(), ay = JPH::Vec3::sAxisY(), az = JPH::Vec3::sAxisZ();
+			const f32 r = k_joint_draw_radius;
+
+			draw_marker(sink, p1, 0.08f);
+			if ((p2 - p1).LengthSq() > 1.0e-6f)
+			{
+				draw_marker(sink, p2, 0.04f);
+				sink.add(p1, p2);
+			}
+
+			switch (s.type)
+			{
+			case constraint_hinge:
+			{
+				const auto& hinge = static_cast<const JPH::HingeConstraint&>(c);
+				const JPH::Vec3 axis = frame1.GetAxisX();
+				sink.add(p1 - axis * r, p1 + axis * r);
+				if (hinge.HasLimits())
+				{
+					const f32 lo = hinge.GetLimitsMin(), hi = hinge.GetLimitsMax();
+					draw_arc(sink, frame1, JPH::Vec3::sZero(), ay, az, r, lo, hi, k_circle_segments);
+					sink.add(p1, frame1 * (r * (ay * std::cos(lo) + az * std::sin(lo))));
+					sink.add(p1, frame1 * (r * (ay * std::cos(hi) + az * std::sin(hi))));
+				}
+				else draw_arc(sink, frame1, JPH::Vec3::sZero(), ay, az, r, 0.0f, k_two_pi, k_circle_segments);
+				sink.add(p1, p1 + frame2.GetAxisY() * (1.3f * r));   // current angle (body A's reference normal)
+				break;
+			}
+			case constraint_slider:
+			{
+				const auto& slider = static_cast<const JPH::SliderConstraint&>(c);
+				const JPH::Vec3 axis = frame1.GetAxisX(), tick = frame1.GetAxisY() * 0.08f;
+				const f32 lo = slider.HasLimits() ? std::max(slider.GetLimitsMin(), -50.0f) : -1.0f;
+				const f32 hi = slider.HasLimits() ? std::min(slider.GetLimitsMax(), 50.0f) : 1.0f;
+				const JPH::Vec3 a = p1 + axis * lo, b = p1 + axis * hi;
+				sink.add(a, b);
+				if (slider.HasLimits())
+				{
+					sink.add(a - tick, a + tick);
+					sink.add(b - tick, b + tick);
+				}
+				break;
+			}
+			case constraint_ball:
+				if (c.GetSubType() == JPH::EConstraintSubType::SwingTwist)
+				{
+					const auto& swing_twist = static_cast<const JPH::SwingTwistConstraint&>(c);
+					const f32 swing = std::min(swing_twist.GetNormalHalfConeAngle(), k_pi);
+					const f32 along = r * std::cos(swing), across = r * std::sin(swing);
+					draw_arc(sink, frame1, ax * along, ay, az, across, 0.0f, k_two_pi, k_circle_segments);
+					for (int k = 0; k < 4; ++k)
+					{
+						const f32 phi = f32(k) * 0.5f * k_pi;
+						sink.add(p1, frame1 * (ax * along + ay * (across * std::cos(phi)) + az * (across * std::sin(phi))));
+					}
+					sink.add(p1, p1 + frame2.GetAxisX() * (1.3f * r));   // body A's twist axis now
+				}
+				break;
+			case constraint_fixed:
+				sink.add(p1, JPH::Vec3(c.GetBody2()->GetCenterOfMassPosition()));
+				if (c.GetBody1() != &JPH::Body::sFixedToWorld) sink.add(p1, JPH::Vec3(c.GetBody1()->GetCenterOfMassPosition()));
+				break;
+			default:
+				break;   // distance: the rope is the p1 -> p2 line above
+			}
+		}
 	}
 
 	// =====================================================================================================
@@ -889,7 +1225,16 @@ namespace vortex::physics {
 		world* w = g_world;
 		if (!w) return;
 
-		// Characters first: their inner bodies live in the same body manager.
+		// Joints first (they hold raw pointers to the bodies), then characters (their inner bodies live in the
+		// same body manager), then the bodies.
+		for (constraint_slot& slot : w->constraints)
+			if (slot.used && slot.constraint) w->system.RemoveConstraint(slot.constraint.GetPtr());
+		w->constraints.clear();
+		w->free_constraints.clear();
+		w->live_constraints = 0;
+		w->broken.clear();
+		w->listener.clear_ignored_pairs();
+
 		for (character_slot& slot : w->characters) slot.character = nullptr;
 		w->characters.clear();
 		w->free_characters.clear();
@@ -938,6 +1283,28 @@ namespace vortex::physics {
 		{
 			log("Jolt update reported error flags 0x%X (contact / body pair buffers full - some contacts were dropped)", u32(error));
 			w->update_error_logged = true;
+		}
+
+		// Joint forces + breakable joints (#103). Only joints Jolt actually solved this step have fresh multipliers
+		// (IsActive: enabled, a dynamic body, an awake body); sleeping joints keep their last force.
+		w->last_substep_dt = dt / f32(collision_steps);
+		for (u32 i = 0; i < u32(w->constraints.size()); ++i)
+		{
+			constraint_slot& s = w->constraints[i];
+			if (!s.used || !s.constraint) continue;
+			if (!s.constraint->GetEnabled()) { s.last_force = 0.0f; continue; }
+			if (!s.constraint->IsActive()) continue;
+			s.last_force = linear_force(*w, s);
+			if (s.break_force > 0.0f && s.last_force > s.break_force)
+			{
+				s.constraint->SetEnabled(false);
+				s.broken = true;
+				update_pair_ignore(*w, s);
+				w->system.GetBodyInterface().ActivateConstraint(s.constraint.GetPtr());
+				const u32 handle = make_handle(i, s.generation);
+				w->broken.push_back(broken_joint{ handle, s.last_force });
+				log("joint %u broke: %.0f N > break force %.0f N", handle, s.last_force, s.break_force);
+			}
 		}
 
 		// Forget destroyed bodies once Jolt can no longer raise contact events for them.
@@ -1048,6 +1415,7 @@ namespace vortex::physics {
 	{
 		body_slot* slot = find_body(body);
 		if (!slot) return;
+		release_constraints_of_body(*g_world, body);   // before the body: Jolt constraints keep raw body pointers
 		remove_body(*g_world, body, *slot);
 	}
 
@@ -1422,6 +1790,249 @@ namespace vortex::physics {
 	}
 
 	// =====================================================================================================
+	// Constraints / joints (issue #103)
+	// =====================================================================================================
+
+	namespace {
+		void apply_hinge_motor(JPH::HingeConstraint& hinge, s32 mode, f32 target)
+		{
+			const JPH::EMotorState state = to_motor_state(mode);
+			if (state == JPH::EMotorState::Velocity) hinge.SetTargetAngularVelocity(sane(target, 0.0f) * k_deg_to_rad);
+			else if (state == JPH::EMotorState::Position) hinge.SetTargetAngle(sane(target, 0.0f) * k_deg_to_rad);   // clamped to the limits
+			hinge.SetMotorState(state);
+		}
+
+		void apply_slider_motor(JPH::SliderConstraint& slider, s32 mode, f32 target)
+		{
+			const JPH::EMotorState state = to_motor_state(mode);
+			if (state == JPH::EMotorState::Velocity) slider.SetTargetVelocity(sane(target, 0.0f));
+			else if (state == JPH::EMotorState::Position) slider.SetTargetPosition(sane(target, 0.0f));          // clamped to the limits
+			slider.SetMotorState(state);
+		}
+	}
+
+	u32 create_hinge(u32 body_a, u32 body_b, const f32* pivot, const f32* axis, const f32* normal,
+		f32 min_deg, f32 max_deg, bool use_limits, f32 motor_target_vel, f32 motor_max_torque, f32 break_force)
+	{
+		world* w = g_world;
+		if (!w) return 0;
+
+		const JPH::Vec3 hinge_axis = unit_or(axis, JPH::Vec3::sAxisY());
+		JPH::HingeConstraintSettings settings;
+		settings.mSpace = JPH::EConstraintSpace::WorldSpace;
+		settings.mPoint1 = settings.mPoint2 = JPH::RVec3(to_vec3(pivot, body_position(*w, body_a)));
+		settings.mHingeAxis1 = settings.mHingeAxis2 = hinge_axis;
+		// Identical normals for both bodies: the pose at creation is angle 0 whatever the normal is.
+		settings.mNormalAxis1 = settings.mNormalAxis2 = perpendicular(hinge_axis, normal);
+		if (use_limits)
+		{
+			f32 lo = std::clamp(sane(min_deg, -180.0f), -180.0f, 0.0f) * k_deg_to_rad;
+			f32 hi = std::clamp(sane(max_deg, 180.0f), 0.0f, 180.0f) * k_deg_to_rad;
+			if (hi - lo < k_min_limit_range)
+			{
+				lo = std::max(lo - k_min_limit_range, -k_pi);
+				hi = std::min(hi + k_min_limit_range, k_pi);
+			}
+			settings.mLimitsMin = lo;
+			settings.mLimitsMax = hi;
+		}
+		const bool motor = finite(motor_max_torque) && motor_max_torque > 0.0f;
+		if (motor) configure_motor(settings.mMotorSettings, motor_max_torque, true, 0.0f, -1.0f);
+
+		JPH::Ref<JPH::TwoBodyConstraint> constraint;
+		const u32 handle = add_constraint(*w, settings, constraint_hinge, body_a, body_b, break_force, &constraint);
+		if (handle && motor) apply_hinge_motor(*static_cast<JPH::HingeConstraint*>(constraint.GetPtr()), motor_velocity, motor_target_vel);
+		return handle;
+	}
+
+	u32 create_ball_joint(u32 body_a, u32 body_b, const f32* point, const f32* twist_axis,
+		f32 swing_limit_deg, f32 twist_min_deg, f32 twist_max_deg, bool use_limits, f32 break_force)
+	{
+		world* w = g_world;
+		if (!w) return 0;
+
+		const JPH::Vec3 anchor = to_vec3(point, body_position(*w, body_a));
+		if (!use_limits)
+		{
+			JPH::PointConstraintSettings settings;
+			settings.mSpace = JPH::EConstraintSpace::WorldSpace;
+			settings.mPoint1 = settings.mPoint2 = JPH::RVec3(anchor);
+			return add_constraint(*w, settings, constraint_ball, body_a, body_b, break_force);
+		}
+
+		// Cone axis: given, else from the joint towards body A's centre of mass (a hanging lamp: straight down).
+		const JPH::Vec3 toward = body_center_of_mass(*w, body_a) - anchor;
+		const JPH::Vec3 twist = unit_or(twist_axis, toward.Length() > 1.0e-4f ? toward.Normalized() : -JPH::Vec3::sAxisY());
+		JPH::SwingTwistConstraintSettings settings;
+		settings.mSpace = JPH::EConstraintSpace::WorldSpace;
+		settings.mPosition1 = settings.mPosition2 = JPH::RVec3(anchor);
+		settings.mTwistAxis1 = settings.mTwistAxis2 = twist;
+		settings.mPlaneAxis1 = settings.mPlaneAxis2 = twist.GetNormalizedPerpendicular();
+		settings.mNormalHalfConeAngle = settings.mPlaneHalfConeAngle = std::clamp(sane(swing_limit_deg, 45.0f), 0.0f, 180.0f) * k_deg_to_rad;
+		f32 t0 = std::clamp(sane(twist_min_deg, 0.0f), -180.0f, 180.0f) * k_deg_to_rad;
+		f32 t1 = std::clamp(sane(twist_max_deg, 0.0f), -180.0f, 180.0f) * k_deg_to_rad;
+		if (t0 > t1) std::swap(t0, t1);
+		settings.mTwistMinAngle = t0;
+		settings.mTwistMaxAngle = t1;
+		return add_constraint(*w, settings, constraint_ball, body_a, body_b, break_force);
+	}
+
+	u32 create_slider(u32 body_a, u32 body_b, const f32* point, const f32* axis,
+		f32 min_pos, f32 max_pos, bool use_limits, s32 motor_mode, f32 motor_target, f32 motor_max_force,
+		f32 spring_frequency, f32 spring_damping, f32 break_force)
+	{
+		world* w = g_world;
+		if (!w) return 0;
+
+		JPH::SliderConstraintSettings settings;
+		settings.mSpace = JPH::EConstraintSpace::WorldSpace;
+		settings.mAutoDetectPoint = false;
+		settings.mPoint1 = settings.mPoint2 = JPH::RVec3(to_vec3(point, body_position(*w, body_a)));
+		settings.SetSliderAxis(unit_or(axis, JPH::Vec3::sAxisX()));
+		if (use_limits)
+		{
+			// Jolt measures the position from the creation pose: the limits must bracket it.
+			f32 lo = std::min(sane(min_pos, 0.0f), 0.0f);
+			f32 hi = std::max(sane(max_pos, 0.0f), 0.0f);
+			if (hi - lo < k_min_limit_range) { lo -= k_min_limit_range; hi += k_min_limit_range; }
+			settings.mLimitsMin = lo;
+			settings.mLimitsMax = hi;
+		}
+		configure_motor(settings.mMotorSettings, motor_max_force, false, spring_frequency, spring_damping);
+
+		JPH::Ref<JPH::TwoBodyConstraint> constraint;
+		const u32 handle = add_constraint(*w, settings, constraint_slider, body_a, body_b, break_force, &constraint);
+		if (handle) apply_slider_motor(*static_cast<JPH::SliderConstraint*>(constraint.GetPtr()), motor_mode, motor_target);
+		return handle;
+	}
+
+	u32 create_fixed(u32 body_a, u32 body_b, const f32* point, f32 break_force)
+	{
+		world* w = g_world;
+		if (!w) return 0;
+
+		JPH::FixedConstraintSettings settings;   // identical axes for both bodies: the current relative rotation is kept
+		settings.mSpace = JPH::EConstraintSpace::WorldSpace;
+		settings.mAutoDetectPoint = point == nullptr;
+		if (point) settings.mPoint1 = settings.mPoint2 = JPH::RVec3(to_vec3(point, body_position(*w, body_a)));
+		return add_constraint(*w, settings, constraint_fixed, body_a, body_b, break_force);
+	}
+
+	u32 create_distance(u32 body_a, u32 body_b, const f32* point_a, const f32* point_b,
+		f32 min_distance, f32 max_distance, f32 spring_frequency, f32 spring_damping, f32 break_force)
+	{
+		world* w = g_world;
+		if (!w) return 0;
+
+		const JPH::Vec3 pa = to_vec3(point_a, body_position(*w, body_a));
+		const JPH::Vec3 pb = to_vec3(point_b, body_b != 0 ? body_position(*w, body_b) : pa);
+		const f32 current = (pa - pb).Length();
+		f32 lo = finite(min_distance) && min_distance >= 0.0f ? min_distance : current;
+		f32 hi = finite(max_distance) && max_distance >= 0.0f ? max_distance : current;
+		if (lo > hi) std::swap(lo, hi);
+
+		JPH::DistanceConstraintSettings settings;
+		settings.mSpace = JPH::EConstraintSpace::WorldSpace;
+		settings.mPoint1 = JPH::RVec3(pb);   // body 1 = the connected body / the world
+		settings.mPoint2 = JPH::RVec3(pa);   // body 2 = the jointed body
+		settings.mMinDistance = lo;
+		settings.mMaxDistance = hi;
+		if (finite(spring_frequency) && spring_frequency > 0.0f)
+		{
+			settings.mLimitsSpringSettings.mMode = JPH::ESpringMode::FrequencyAndDamping;
+			settings.mLimitsSpringSettings.mFrequency = spring_frequency;
+			settings.mLimitsSpringSettings.mDamping = std::max(sane(spring_damping, 0.0f), 0.0f);
+		}
+		return add_constraint(*w, settings, constraint_distance, body_a, body_b, break_force);
+	}
+
+	void destroy_constraint(u32 constraint)
+	{
+		if (!find_constraint(constraint)) return;
+		release_constraint(*g_world, handle_index(constraint));
+	}
+
+	bool constraint_valid(u32 constraint) { return find_constraint(constraint) != nullptr; }
+
+	void set_constraint_enabled(u32 constraint, bool enabled)
+	{
+		constraint_slot* slot = find_constraint(constraint);
+		if (!slot) return;
+		JPH::TwoBodyConstraint& c = *slot->constraint;
+		if (enabled && !c.GetEnabled())
+		{
+			c.ResetWarmStart();     // no stale multipliers: a repaired joint must not "break" again on old forces
+			slot->broken = false;
+		}
+		c.SetEnabled(enabled);
+		if (!enabled) slot->last_force = 0.0f;
+		update_pair_ignore(*g_world, *slot);
+		g_world->system.GetBodyInterface().ActivateConstraint(&c);
+	}
+
+	bool constraint_enabled(u32 constraint)
+	{
+		const constraint_slot* slot = find_constraint(constraint);
+		return slot && slot->constraint->GetEnabled();
+	}
+
+	void set_hinge_motor(u32 constraint, s32 mode, f32 target, f32 max_torque, f32 frequency, f32 damping)
+	{
+		constraint_slot* slot = find_constraint(constraint);
+		if (!slot || slot->type != constraint_hinge) return;
+		auto& hinge = *static_cast<JPH::HingeConstraint*>(slot->constraint.GetPtr());
+		configure_motor(hinge.GetMotorSettings(), max_torque, true, frequency, damping);
+		apply_hinge_motor(hinge, mode, target);
+		g_world->system.GetBodyInterface().ActivateConstraint(&hinge);
+	}
+
+	void set_slider_motor(u32 constraint, s32 mode, f32 target, f32 max_force, f32 frequency, f32 damping)
+	{
+		constraint_slot* slot = find_constraint(constraint);
+		if (!slot || slot->type != constraint_slider) return;
+		auto& slider = *static_cast<JPH::SliderConstraint*>(slot->constraint.GetPtr());
+		configure_motor(slider.GetMotorSettings(), max_force, false, frequency, damping);
+		apply_slider_motor(slider, mode, target);
+		g_world->system.GetBodyInterface().ActivateConstraint(&slider);
+	}
+
+	f32 get_hinge_angle(u32 constraint)
+	{
+		const constraint_slot* slot = find_constraint(constraint);
+		if (!slot || slot->type != constraint_hinge) return 0.0f;
+		return static_cast<const JPH::HingeConstraint*>(slot->constraint.GetPtr())->GetCurrentAngle() * k_rad_to_deg;
+	}
+
+	f32 get_slider_position(u32 constraint)
+	{
+		const constraint_slot* slot = find_constraint(constraint);
+		if (!slot || slot->type != constraint_slider) return 0.0f;
+		return static_cast<const JPH::SliderConstraint*>(slot->constraint.GetPtr())->GetCurrentPosition();
+	}
+
+	f32 get_constraint_force(u32 constraint)
+	{
+		const constraint_slot* slot = find_constraint(constraint);
+		return slot ? slot->last_force : 0.0f;
+	}
+
+	s32 get_broken_constraints(u32* out_constraints, f32* out_forces, s32 max_count)
+	{
+		world* w = g_world;
+		if (!w || !out_constraints || max_count <= 0 || w->broken.empty()) return 0;
+		const s32 count = std::min(max_count, s32(w->broken.size()));
+		for (s32 i = 0; i < count; ++i)
+		{
+			out_constraints[i] = w->broken[size_t(i)].handle;
+			if (out_forces) out_forces[i] = w->broken[size_t(i)].force;
+		}
+		w->broken.erase(w->broken.begin(), w->broken.begin() + count);
+		return count;
+	}
+
+	s32 constraint_count() { return g_world ? g_world->live_constraints : 0; }
+
+	// =====================================================================================================
 	// Debug
 	// =====================================================================================================
 
@@ -1431,6 +2042,13 @@ namespace vortex::physics {
 		if (!w || !buffer || max_floats < 6) return 0;
 
 		line_sink sink{ buffer, max_floats };
+		// Joints first: a handful of segments each, and exactly what one looks at while tuning them.
+		for (const constraint_slot& slot : w->constraints)
+		{
+			if (!slot.used || !slot.constraint || !slot.constraint->GetEnabled()) continue;
+			draw_constraint(sink, slot);
+			if (sink.full()) return sink.written;
+		}
 		const JPH::BodyLockInterface& lock_interface = w->system.GetBodyLockInterface();
 		for (const body_slot& slot : w->bodies)
 		{
@@ -1511,6 +2129,23 @@ namespace vortex::physics {
 	void character_destroy(u32) {}
 	void character_set_position(u32, const f32*) {}
 	void character_move(u32, const f32*, f32, f32*, f32*, s32*, f32*) {}
+
+	u32  create_hinge(u32, u32, const f32*, const f32*, const f32*, f32, f32, bool, f32, f32, f32) { return 0; }
+	u32  create_ball_joint(u32, u32, const f32*, const f32*, f32, f32, f32, bool, f32) { return 0; }
+	u32  create_slider(u32, u32, const f32*, const f32*, f32, f32, bool, s32, f32, f32, f32, f32, f32) { return 0; }
+	u32  create_fixed(u32, u32, const f32*, f32) { return 0; }
+	u32  create_distance(u32, u32, const f32*, const f32*, f32, f32, f32, f32, f32) { return 0; }
+	void destroy_constraint(u32) {}
+	bool constraint_valid(u32) { return false; }
+	void set_constraint_enabled(u32, bool) {}
+	bool constraint_enabled(u32) { return false; }
+	void set_hinge_motor(u32, s32, f32, f32, f32, f32) {}
+	void set_slider_motor(u32, s32, f32, f32, f32, f32) {}
+	f32  get_hinge_angle(u32) { return 0.0f; }
+	f32  get_slider_position(u32) { return 0.0f; }
+	f32  get_constraint_force(u32) { return 0.0f; }
+	s32  get_broken_constraints(u32*, f32*, s32) { return 0; }
+	s32  constraint_count() { return 0; }
 
 	s32  get_debug_lines(f32*, s32) { return 0; }
 }

@@ -8,3 +8,6 @@
 [submodule "Templates/HorrorStarter"]
 	path = Templates/HorrorStarter
 	url = https://github.com/shadow-kernel/Vortex-Engine-Horror-Template.git
+[submodule "Templates/TacticalShooter"]
+	path = Templates/TacticalShooter
+	url = https://github.com/shadow-kernel/Vortex-Engine-Tactical-Template.git

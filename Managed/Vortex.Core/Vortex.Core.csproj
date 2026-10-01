@@ -52,6 +52,8 @@
     <Compile Include="../../Editor/Editors/WorldEditor/Components/FileExplorer/Services/FileExplorerService.cs" Link="Editor/Editors/FileExplorer/FileExplorerService.cs" />
     <Compile Include="../../Editor/Editors/WorldEditor/Components/FileExplorer/Models/FileSystemItem.cs" Link="Editor/Editors/FileExplorer/FileSystemItem.cs" />
     <Compile Include="../../Editor/Scripting/VortexScriptApi.cs" Link="Editor/Scripting/VortexScriptApi.cs" />
+    <Compile Include="../../Editor/Scripting/VortexScriptApi.Vfx.cs" Link="Editor/Scripting/VortexScriptApi.Vfx.cs" />
+    <Compile Include="../../Editor/Scripting/VortexScriptApi.Ai.cs" Link="Editor/Scripting/VortexScriptApi.Ai.cs" />
     <Compile Include="../../Editor/Core/**/*.cs"
              Exclude="../../Editor/Core/Assets/AssetSystem.cs;
                       ../../Editor/Core/Assets/ModelAssetData.cs;

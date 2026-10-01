@@ -16,6 +16,8 @@ set(VORTEX_API_SOURCES
 	Api/InputApi.cpp
 	Api/LightingApi.cpp
 	Api/MeshRendererApi.cpp
+	Api/ParticleApi.cpp
+	Api/NavigationApi.cpp
 	Api/PhysicsApi.cpp
 	Api/RenderApi.cpp
 	Api/RenderLoopApi.cpp
