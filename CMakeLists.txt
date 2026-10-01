@@ -59,6 +59,11 @@ endif()
 # Studio projects build today. See Engine/Physics/README.md.
 option(VORTEX_ENABLE_JOLT "Build the Jolt Physics backend (Physics v2); OFF builds the no-op physics stub" ON)
 
+# AI & Navigation (issues #108-#115): Recast/Detour (recastnavigation) is fetched from GitHub and linked into the
+# engine. OFF builds the no-navigation stub of Engine/Navigation/NavigationWorld.cpp (NavInit() returns 0), which is
+# also what the Visual Studio projects build today. See Engine/Navigation/NavigationWorld.h.
+option(VORTEX_ENABLE_RECAST "Build the Recast/Detour navigation backend (navmesh + crowd); OFF builds the no-op navigation stub" ON)
+
 include(VortexDependencies)
 
 add_subdirectory(Engine)
@@ -70,4 +75,4 @@ if(VORTEX_BUILD_TESTS)
 	add_subdirectory(EngineTest)
 endif()
 
-message(STATUS "Vortex: platform=${CMAKE_SYSTEM_NAME} arch=${CMAKE_SYSTEM_PROCESSOR} dx12=${VORTEX_ENABLE_DX12} jolt=${VORTEX_ENABLE_JOLT} api=${VORTEX_BUILD_API} tests=${VORTEX_BUILD_TESTS}")
+message(STATUS "Vortex: platform=${CMAKE_SYSTEM_NAME} arch=${CMAKE_SYSTEM_PROCESSOR} dx12=${VORTEX_ENABLE_DX12} jolt=${VORTEX_ENABLE_JOLT} recast=${VORTEX_ENABLE_RECAST} api=${VORTEX_BUILD_API} tests=${VORTEX_BUILD_TESTS}")

@@ -26,6 +26,8 @@ set(VORTEX_ENGINE_CORE_SOURCES
 	Graphics/Particles/ParticleJson.cpp
 	Graphics/Particles/ParticleSystem.cpp
 	Input/InputSystem.cpp
+	Navigation/NavigationBake.cpp
+	Navigation/NavigationWorld.cpp
 	Physics/PhysicsWorld.cpp
 	Runtime/AssetDatabase.cpp
 	Runtime/AssetManifest.cpp
@@ -192,6 +194,49 @@ if(VORTEX_ENABLE_JOLT)
 	target_link_libraries(VortexEngine PUBLIC Jolt)
 	target_compile_definitions(VortexEngine PUBLIC VORTEX_HAS_JOLT=1)
 	message(STATUS "Vortex: Jolt Physics v5.3.0 enabled (${joltphysics_SOURCE_DIR})")
+endif()
+
+# ---- Recast/Detour (AI & Navigation, issues #108-#110) ---------------------------------------------------
+# recastnavigation (zlib licence, THIRD-PARTY-NOTICES.md) vendored with FetchContent at a pinned tag. Only the
+# libraries are built: Recast (voxelisation -> polygon mesh), Detour (tiled navmesh + queries) and DetourCrowd
+# (steering + local avoidance). The demo / tests / examples are switched off BEFORE the subdirectory is added.
+# Its CMakeLists still declares cmake_minimum_required(3.1), which CMake >= 4 refuses without a policy floor:
+# CMAKE_POLICY_VERSION_MINIMUM is set for the duration of the add only. 32-bit poly refs (default) — the ABI
+# (VortexAPI/Api/NavigationApi.cpp) never exposes a dtPolyRef, so this can change without touching managed code.
+# Without it (-DVORTEX_ENABLE_RECAST=OFF, the .vcxproj build) Engine/Navigation compiles the no-op stub.
+if(VORTEX_ENABLE_RECAST)
+	include(FetchContent)
+	FetchContent_Declare(recastnavigation
+		GIT_REPOSITORY https://github.com/recastnavigation/recastnavigation.git
+		GIT_TAG        v1.6.0
+		GIT_SHALLOW    TRUE)
+
+	foreach(_opt RECASTNAVIGATION_DEMO RECASTNAVIGATION_TESTS RECASTNAVIGATION_EXAMPLES
+			RECASTNAVIGATION_DT_POLYREF64 RECASTNAVIGATION_DT_VIRTUAL_QUERYFILTER)
+		set(${_opt} OFF CACHE BOOL "recastnavigation: set by Vortex (Engine/CMakeLists.txt)" FORCE)
+	endforeach()
+	set(_vortex_saved_policy_min "${CMAKE_POLICY_VERSION_MINIMUM}")
+	set(_vortex_saved_warn_deprecated "${CMAKE_WARN_DEPRECATED}")
+	set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+	set(CMAKE_WARN_DEPRECATED OFF)
+	FetchContent_MakeAvailable(recastnavigation)
+	set(CMAKE_POLICY_VERSION_MINIMUM "${_vortex_saved_policy_min}")
+	set(CMAKE_WARN_DEPRECATED "${_vortex_saved_warn_deprecated}")
+
+	# Third-party code: no warnings from it in our build log.
+	foreach(_rc_target Recast Detour DetourCrowd)
+		if(TARGET ${_rc_target})
+			if(MSVC)
+				target_compile_options(${_rc_target} PRIVATE /w)
+			else()
+				target_compile_options(${_rc_target} PRIVATE -w)
+			endif()
+		endif()
+	endforeach()
+
+	target_link_libraries(VortexEngine PUBLIC Recast Detour DetourCrowd)
+	target_compile_definitions(VortexEngine PUBLIC VORTEX_HAS_RECAST=1)
+	message(STATUS "Vortex: Recast/Detour v1.6.0 enabled (${recastnavigation_SOURCE_DIR})")
 endif()
 
 # The Metal shaders are loaded from Shaders/msl next to the binaries at run time (the DX12 backend loads its

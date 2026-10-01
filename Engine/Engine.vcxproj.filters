@@ -17,6 +17,8 @@
     <ClInclude Include="Runtime\Systems\PhysicsSystem.h" />
     <ClInclude Include="Physics\PhysicsWorld.h" />
     <ClInclude Include="Graphics\Particles\ParticleSystem.h" />
+    <ClInclude Include="Navigation\NavigationWorld.h" />
+    <ClInclude Include="Navigation\NavigationFormat.h" />
     <ClInclude Include="Runtime\Systems\AudioSystem.h" />
     <ClInclude Include="Runtime\Systems\RenderSystemDX12.h" />
     <ClInclude Include="Graphics\DX12\DX12Core.h" />
@@ -80,6 +82,8 @@
     <ClCompile Include="Physics\PhysicsWorld.cpp" />
     <ClCompile Include="Graphics\Particles\ParticleJson.cpp" />
     <ClCompile Include="Graphics\Particles\ParticleSystem.cpp" />
+    <ClCompile Include="Navigation\NavigationBake.cpp" />
+    <ClCompile Include="Navigation\NavigationWorld.cpp" />
     <ClCompile Include="Runtime\Systems\AudioSystem.cpp" />
     <ClCompile Include="Runtime\Systems\RenderSystemDX12.cpp" />
     <ClCompile Include="Graphics\DX12\DX12Core.cpp" />
