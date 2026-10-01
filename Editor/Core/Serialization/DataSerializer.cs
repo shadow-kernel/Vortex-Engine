@@ -60,6 +60,9 @@ namespace Editor.Core.Serialization
             typeof(Rigidbody),
             typeof(PhysicsMaterial),
             typeof(HingeJoint), typeof(BallJoint), typeof(SliderJoint), typeof(FixedJoint), typeof(DistanceJoint),   // #103
+
+            // AI & Navigation (#110 / #112 / #114)
+            typeof(Editor.ECS.Components.AI.NavAgent), typeof(Editor.ECS.Components.AI.AIPerception), typeof(Editor.ECS.Components.AI.PatrolPath),
             
             // Audio
             typeof(AudioSource),

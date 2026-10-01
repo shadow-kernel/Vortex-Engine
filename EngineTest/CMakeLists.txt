@@ -1,4 +1,5 @@
-# EngineTest — console harnesses. Main.cpp picks the test through TEST_AUDIO / TEST_ECS / TEST_RENDER / TEST_PHYSICS;
+# EngineTest — console harnesses. Main.cpp picks the test through TEST_AUDIO / TEST_ECS / TEST_RENDER / TEST_PHYSICS /
+# TEST_NAVIGATION;
 # each test lives in its own header, so only Main.cpp is compiled per executable.
 add_executable(EngineTest Main.cpp)
 target_include_directories(EngineTest PRIVATE "${CMAKE_SOURCE_DIR}/Engine/Common")
@@ -18,10 +19,18 @@ target_include_directories(VortexPhysicsTest PRIVATE "${CMAKE_SOURCE_DIR}/Engine
 target_compile_definitions(VortexPhysicsTest PRIVATE TEST_PHYSICS=1)
 target_link_libraries(VortexPhysicsTest PRIVATE vortex::engine)
 
+# AI & Navigation smoke test (#109/#110): Recast bake (triangles + solid boxes, tiled), paths around obstacles and up a
+# ramp, queries, .vnav round trip, DetourCrowd agents. Without Recast (VORTEX_ENABLE_RECAST=OFF) the stub contract.
+add_executable(VortexNavigationTest Main.cpp)
+target_include_directories(VortexNavigationTest PRIVATE "${CMAKE_SOURCE_DIR}/Engine/Common")
+target_compile_definitions(VortexNavigationTest PRIVATE TEST_NAVIGATION=1)
+target_link_libraries(VortexNavigationTest PRIVATE vortex::engine)
+
 if(NOT MSVC)
 	target_compile_options(EngineTest PRIVATE -Wall -Wno-unused-parameter)
 	target_compile_options(VortexRenderTest PRIVATE -Wall -Wno-unused-parameter)
 	target_compile_options(VortexPhysicsTest PRIVATE -Wall -Wno-unused-parameter)
+	target_compile_options(VortexNavigationTest PRIVATE -Wall -Wno-unused-parameter)
 endif()
 
 # Runs the audio smoke test: opens the default output device, or falls back to silent mode on CI.
@@ -33,6 +42,12 @@ set_tests_properties(AudioSmokeTest PROPERTIES
 
 add_test(NAME PhysicsSmokeTest COMMAND VortexPhysicsTest)
 set_tests_properties(PhysicsSmokeTest PROPERTIES
+	FAIL_REGULAR_EXPRESSION "FAILURES!"
+	PASS_REGULAR_EXPRESSION "ALL PASSED"
+	TIMEOUT 120)
+
+add_test(NAME NavigationSmokeTest COMMAND VortexNavigationTest)
+set_tests_properties(NavigationSmokeTest PROPERTIES
 	FAIL_REGULAR_EXPRESSION "FAILURES!"
 	PASS_REGULAR_EXPRESSION "ALL PASSED"
 	TIMEOUT 120)

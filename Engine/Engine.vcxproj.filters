@@ -16,6 +16,8 @@
     <ClInclude Include="Runtime\Systems\RenderSystem.h" />
     <ClInclude Include="Runtime\Systems\PhysicsSystem.h" />
     <ClInclude Include="Physics\PhysicsWorld.h" />
+    <ClInclude Include="Navigation\NavigationWorld.h" />
+    <ClInclude Include="Navigation\NavigationFormat.h" />
     <ClInclude Include="Runtime\Systems\AudioSystem.h" />
     <ClInclude Include="Runtime\Systems\RenderSystemDX12.h" />
     <ClInclude Include="Graphics\DX12\DX12Core.h" />
@@ -77,6 +79,8 @@
     <ClCompile Include="Runtime\Systems\RenderSystem.cpp" />
     <ClCompile Include="Runtime\Systems\PhysicsSystem.cpp" />
     <ClCompile Include="Physics\PhysicsWorld.cpp" />
+    <ClCompile Include="Navigation\NavigationBake.cpp" />
+    <ClCompile Include="Navigation\NavigationWorld.cpp" />
     <ClCompile Include="Runtime\Systems\AudioSystem.cpp" />
     <ClCompile Include="Runtime\Systems\RenderSystemDX12.cpp" />
     <ClCompile Include="Graphics\DX12\DX12Core.cpp" />

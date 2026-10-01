@@ -5,6 +5,7 @@
     <ClCompile Include="VortexAPI.cpp" />
     <ClCompile Include="MultiViewportAPI.cpp" />
     <ClCompile Include="Api\PhysicsApi.cpp" />
+    <ClCompile Include="Api\NavigationApi.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
