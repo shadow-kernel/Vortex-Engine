@@ -376,8 +376,9 @@ namespace Editor.ECS.Components.Rendering
                 // Bind texture to material
                 VortexAPI.SetMaterialAlbedoTexture(_materialHandle, textureId);
                 
-                // Register in SceneRenderService cache for consistent rendering
-                if (!string.IsNullOrEmpty(_meshPath))
+                // Register in SceneRenderService cache for consistent rendering (models only: a primitive path is
+                // shared by every box/sphere in the scene, a registration there would retexture all of them)
+                if (!string.IsNullOrEmpty(_meshPath) && !Core.Services.SceneRenderService.IsPrimitivePath(_meshPath))
                 {
                     Core.Services.SceneRenderService.RegisterMaterialForMeshPath(_meshPath, _materialHandle);
                 }

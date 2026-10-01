@@ -214,6 +214,8 @@ namespace Vortex
 
         // Set an entity's base color at runtime (e.g. change color when a trigger is touched).
         void SetEntityColor(long entityId, float r, float g, float b);
+        void SetEntityMaterial(long entityId, string materialPath);
+        string GetEntityMaterial(long entityId);
 
         // Skeletal animation: play a clip on an entity's Animator (clip = table name or .vanim path);
         // fade > 0 crossfades from the current pose. State machines are game logic — build them in scripts.
@@ -1041,6 +1043,11 @@ namespace Vortex
         public static void SetScaleOf(long entity, Vector3 scale) { Host?.SetScale(entity, scale); }
         /// <summary>Tint another entity's mesh (0..1 per channel) — the same as this behaviour's SetColor, for any entity.</summary>
         public static void SetColorOf(long entity, float r, float g, float b) { Host?.SetEntityColor(entity, r, g, b); }
+        /// <summary>Swap an entity's material at runtime (a project .vmat, e.g. a weapon camo); null or "" restores the
+        /// model's own imported material. Takes effect on the next frame.</summary>
+        public static void SetMaterialOf(long entity, string materialPath) { Host?.SetEntityMaterial(entity, materialPath); }
+        /// <summary>The .vmat currently assigned to an entity's mesh ("" = the model's own material).</summary>
+        public static string MaterialOf(long entity) { return Host != null ? Host.GetEntityMaterial(entity) : ""; }
 
         /// <summary>Set an entity's WORLD position + rotation in one call — correct even when the entity
         /// is a CHILD of a moved/rotated/scaled parent (the engine converts to the local frame; the

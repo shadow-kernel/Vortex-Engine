@@ -344,8 +344,10 @@ namespace vortex::graphics::sdlgpu
 			float fog_height_y; float fog_height_falloff; u32 fog_mode; float fog_padding;
 			float shadow_map_texel; u32 shadow_padding[3];
 			float ssao_enabled; float ssao_padding[3];
+			// scene sky gradient for specular reflections (w = 1 when a gradient sky is active)
+			DirectX::XMFLOAT4 env_sky; DirectX::XMFLOAT4 env_horizon; DirectX::XMFLOAT4 env_ground;
 		};
-		static_assert(sizeof(PerFrameConstants) == 192, "PerFrameConstants must byte-match standard.metal");
+		static_assert(sizeof(PerFrameConstants) == 240, "PerFrameConstants must byte-match standard.metal");
 
 		struct PerObjectConstants
 		{
@@ -540,6 +542,14 @@ namespace vortex::graphics::sdlgpu
 		SdlGpuParticles::View particle_view(const FrameView& view) const;
 		SdlGpuParticles::Environment particle_environment(const FrameView& view) const;
 		void draw_skybox(SDL_GPURenderPass* pass, SDL_GPUCommandBuffer* cmd, const FrameView& view);
+		// sky gradient -> PerFrame env colours (specular reflections of metals); w = 0 falls back to the neutral env
+		void fill_environment(PerFrameConstants& f) const
+		{
+			const float on = (m_skybox_enabled && m_skybox_mode == SkyboxMode::Gradient) ? 1.0f : 0.0f;
+			f.env_sky = { m_sky_color.x, m_sky_color.y, m_sky_color.z, on };
+			f.env_horizon = { m_horizon_color.x, m_horizon_color.y, m_horizon_color.z, 0.0f };
+			f.env_ground = { m_ground_color.x, m_ground_color.y, m_ground_color.z, 0.0f };
+		}
 		void draw_grid(SDL_GPURenderPass* pass, SDL_GPUCommandBuffer* cmd, const FrameView& view);
 		void record_runs(SDL_GPURenderPass* pass, SDL_GPUCommandBuffer* cmd, size_t run_begin, size_t run_end, const FrameView& view);
 		void draw_gizmos(SDL_GPURenderPass* pass, SDL_GPUCommandBuffer* cmd);
@@ -625,6 +635,10 @@ namespace vortex::graphics::sdlgpu
 		float m_near_clip{ 0.1f };
 		float m_far_clip{ 1000.0f };
 		float m_viewmodel_fov{ 54.0f };
+		// Viewmodel depth range: first-person weapons sit 2-5 cm in front of the eye when aiming (rear sight, optics),
+		// so the layer-1 pass needs a much closer near plane than the world (its depth buffer is cleared separately).
+		static constexpr float VIEWMODEL_NEAR = 0.01f;
+		static constexpr float VIEWMODEL_FAR = 200.0f;
 		DirectX::XMFLOAT3 m_light_direction{ 0.3f, -1.0f, 0.5f };
 		DirectX::XMFLOAT3 m_light_color{ 1.0f, 0.98f, 0.95f };
 		float m_directional_intensity{ 1.0f };

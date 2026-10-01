@@ -141,6 +141,9 @@ namespace vortex::graphics::dx12
 		frame_constants.point_light_count = static_cast<u32>((std::min)(m_point_lights.size(), static_cast<size_t>(MAX_POINT_LIGHTS)));
 		frame_constants.spot_light_count = static_cast<u32>((std::min)(m_spot_lights.size(), static_cast<size_t>(MAX_SPOT_LIGHTS)));
 		frame_constants.ssao_enabled = 0.0f;   // #32: previews never sample the main view's AO
+		frame_constants.env_sky = DirectX::XMFLOAT4(m_env_sky.x, m_env_sky.y, m_env_sky.z, (m_skybox_enabled && m_skybox_mode == SkyboxMode::Gradient) ? 1.0f : 0.0f);
+		frame_constants.env_horizon = DirectX::XMFLOAT4(m_env_horizon.x, m_env_horizon.y, m_env_horizon.z, 0.0f);
+		frame_constants.env_ground = DirectX::XMFLOAT4(m_env_ground.x, m_env_ground.y, m_env_ground.z, 0.0f);
 		if (m_light_cb_mapped)
 		{
 			u8* lptr = static_cast<u8*>(m_light_cb_mapped);

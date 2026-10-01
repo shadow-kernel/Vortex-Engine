@@ -35,6 +35,9 @@ struct PerFrame
     uint shadow_padding[3];
     float ssao_enabled;                // @176
     float ssao_padding[3];
+    float4 env_sky;                    // @192  scene sky gradient for reflections (rgb); w = 1 when a sky is set
+    float4 env_horizon;                // @208
+    float4 env_ground;                 // @224
 };
 
 struct PerObject
@@ -512,11 +515,23 @@ fragment float4 PSMain(VSOut in [[stage_in]],
     float3 rim_light = rim_fresnel * F0 * 0.1 * ao * metallic;
 
     float3 R = reflect(-V, N);
-    float up_factor = R.y * 0.5 + 0.5;
-    float3 env_color = mix(float3(0.01, 0.01, 0.02), float3(0.08, 0.10, 0.15), up_factor);
-    float env_roughness = roughness * roughness;
-    env_color = mix(env_color, env_color * 0.2, env_roughness);
-    float3 env_fresnel = F0 + (1.0 - F0) * pow(1.0 - NdotV, 5.0);
+    float3 env_color;
+    if (frame.env_sky.w > 0.5)
+    {
+        // Reflections of the scene's own sky gradient (zenith / horizon / ground), blurred toward its average with
+        // roughness — metals (weapons!) pick up the sky instead of turning black. Scaled like the diffuse ambient.
+        float3 sky_dir = R.y >= 0.0 ? mix(frame.env_horizon.rgb, frame.env_sky.rgb, pow(saturate(R.y), 0.6))
+                                    : mix(frame.env_horizon.rgb, frame.env_ground.rgb, pow(saturate(-R.y), 0.6));
+        float3 sky_avg = (frame.env_sky.rgb + 2.0 * frame.env_horizon.rgb + frame.env_ground.rgb) * 0.25;
+        env_color = mix(sky_dir, sky_avg, saturate(roughness * roughness * 1.5)) * frame.ambient_strength;
+    }
+    else
+    {
+        float up_factor = R.y * 0.5 + 0.5;
+        env_color = mix(float3(0.01, 0.01, 0.02), float3(0.08, 0.10, 0.15), up_factor);
+        env_color = mix(env_color, env_color * 0.2, roughness * roughness);
+    }
+    float3 env_fresnel = F0 + (max(float3(1.0 - roughness), F0) - F0) * pow(1.0 - NdotV, 5.0);
     float3 specular_ambient = env_color * env_fresnel * ao;
     ambient += specular_ambient + rim_light;
 

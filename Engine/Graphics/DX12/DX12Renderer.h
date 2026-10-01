@@ -530,6 +530,9 @@ namespace vortex::graphics::dx12
 		ComPtr<ID3D12Resource> m_viewmodel_cb;
 		void* m_viewmodel_cb_mapped{ nullptr };
 		float m_viewmodel_fov{ 54.0f };
+		// first-person weapons sit 2-5 cm in front of the eye when aiming: the viewmodel pass needs a close near plane
+		static constexpr float VIEWMODEL_NEAR = 0.01f;
+		static constexpr float VIEWMODEL_FAR = 200.0f;
 
 	struct alignas(256) PerFrameConstants
 		{
@@ -561,6 +564,11 @@ namespace vortex::graphics::dx12
 			// the UV comes from SV_POSITION / (AO texture dims * 2), so no screen size travels here.
 			float ssao_enabled;
 			float ssao_padding[3];
+			// Sky gradient for specular reflections (#metal-env) — APPENDED @192, byte-matched to standard.hlsl.
+			// w of env_sky = 1 when a gradient sky is active (0 = the shader's neutral fallback environment).
+			DirectX::XMFLOAT4 env_sky;
+			DirectX::XMFLOAT4 env_horizon;
+			DirectX::XMFLOAT4 env_ground;
 		};
 		
 		// Separate light buffer for GPU
@@ -733,6 +741,10 @@ namespace vortex::graphics::dx12
 		bool m_gizmos_visible{ true };
 		bool m_skybox_enabled{ false };
 		SkyboxMode m_skybox_mode{ SkyboxMode::Gradient };
+		// last gradient colours (the skybox pipeline keeps its own copy) -> PerFrame env for metal reflections
+		DirectX::XMFLOAT3 m_env_sky{ 0.3f, 0.5f, 0.85f };
+		DirectX::XMFLOAT3 m_env_horizon{ 0.7f, 0.8f, 0.9f };
+		DirectX::XMFLOAT3 m_env_ground{ 0.25f, 0.25f, 0.28f };
 		float m_grid_spacing{ 1.0f };
 		float m_grid_major_interval{ 10.0f };
 		float m_grid_extent{ 200.0f };

@@ -220,11 +220,12 @@ namespace vortex::graphics::sdlgpu
 		v.frame.point_light_count = (u32)(std::min)(m_point_lights.size(), (size_t)MAX_POINT_LIGHTS);
 		v.frame.spot_light_count = (u32)(std::min)(m_spot_lights.size(), (size_t)MAX_SPOT_LIGHTS);
 		v.frame.ssao_enabled = 0.0f;
+		fill_environment(v.frame);
 		v.frame.shadow_map_texel = 1.0f / (float)SHADOW_TILE_SIZE;
 		v.eye = m_camera_position;
 
 		v.viewmodel = v.frame;
-		XMMATRIX vm_proj = XMMatrixPerspectiveFovLH(XMConvertToRadians(m_viewmodel_fov), aspect, 0.1f, 1000.0f);
+		XMMATRIX vm_proj = XMMatrixPerspectiveFovLH(XMConvertToRadians(m_viewmodel_fov), aspect, VIEWMODEL_NEAR, VIEWMODEL_FAR);
 		XMStoreFloat4x4(&v.viewmodel.view_projection, view * vm_proj);
 		camera_basis(m_camera_position, m_camera_target, m_camera_up, v.right, v.up, v.forward);
 		v.near_clip = 0.1f; v.far_clip = 1000.0f; v.ortho = false;
@@ -260,6 +261,7 @@ namespace vortex::graphics::sdlgpu
 		v.frame.point_light_count = (u32)(std::min)(m_point_lights.size(), (size_t)MAX_POINT_LIGHTS);
 		v.frame.spot_light_count = (u32)(std::min)(m_spot_lights.size(), (size_t)MAX_SPOT_LIGHTS);
 		v.frame.ssao_enabled = 0.0f;
+		fill_environment(v.frame);
 		v.frame.shadow_map_texel = 1.0f / (float)SHADOW_TILE_SIZE;
 		v.eye = camera.position;
 		v.viewmodel = v.frame;
@@ -518,6 +520,7 @@ namespace vortex::graphics::sdlgpu
 		p.viewmodel_projection = view.viewmodel.view_projection;
 		p.eye = view.eye; p.right = view.right; p.up = view.up; p.forward = view.forward;
 		p.near_clip = view.near_clip; p.far_clip = view.far_clip; p.ortho = view.ortho;
+		p.vm_near_clip = VIEWMODEL_NEAR; p.vm_far_clip = VIEWMODEL_FAR;
 		p.tan_half_x = view.tan_half_x; p.tan_half_y = view.tan_half_y;
 		return p;
 	}

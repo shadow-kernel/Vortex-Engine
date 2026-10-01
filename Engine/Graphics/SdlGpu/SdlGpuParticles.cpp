@@ -281,7 +281,8 @@ namespace vortex::graphics::sdlgpu
 		f.cam_up[0] = view.up.x; f.cam_up[1] = view.up.y; f.cam_up[2] = view.up.z;
 		f.cam_forward[0] = view.forward.x; f.cam_forward[1] = view.forward.y; f.cam_forward[2] = view.forward.z;
 		f.eye[0] = view.eye.x; f.eye[1] = view.eye.y; f.eye[2] = view.eye.z; f.eye[3] = 1.0f;
-		f.depth_params[0] = view.near_clip; f.depth_params[1] = view.far_clip; f.depth_params[2] = view.ortho ? 1.0f : 0.0f;
+		f.depth_params[0] = layer == 0 ? view.near_clip : view.vm_near_clip; f.depth_params[1] = layer == 0 ? view.far_clip : view.vm_far_clip;
+		f.depth_params[2] = (layer == 0 && view.ortho) ? 1.0f : 0.0f;
 		f.fog[0] = env.fog_color.x; f.fog[1] = env.fog_color.y; f.fog[2] = env.fog_color.z; f.fog[3] = env.fog_density;
 		f.fog2[0] = env.fog_height_y; f.fog2[1] = env.fog_height_falloff;
 		f.sun_dir[0] = env.sun_direction.x; f.sun_dir[1] = env.sun_direction.y; f.sun_dir[2] = env.sun_direction.z; f.sun_dir[3] = env.sun_intensity;

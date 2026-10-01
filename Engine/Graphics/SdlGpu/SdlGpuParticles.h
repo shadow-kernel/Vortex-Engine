@@ -29,6 +29,7 @@ namespace vortex::graphics::sdlgpu
 			DirectX::XMFLOAT4X4 viewmodel_projection;    // layer 1
 			DirectX::XMFLOAT3 eye, right, up, forward;
 			float near_clip{ 0.1f }, far_clip{ 1000.0f };
+			float vm_near_clip{ 0.01f }, vm_far_clip{ 200.0f };   // layer 1 (viewmodel projection) depth range
 			bool ortho{ false };
 			float tan_half_x{ 1.0f }, tan_half_y{ 1.0f };   // perspective: tan(fov/2)*aspect, tan(fov/2); ortho: half extents
 		};

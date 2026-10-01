@@ -38,6 +38,10 @@ cbuffer PerFrame : register(b0)
     // SV_POSITION and the AO texture's own dimensions, so no screen size travels here.
     float SsaoEnabled;
     float3 SsaoPadding;
+    // Sky gradient for specular reflections — APPENDED @192, byte-matched to PerFrameConstants.
+    float4 EnvSky;       // rgb zenith, w = 1 when a gradient sky is active
+    float4 EnvHorizon;
+    float4 EnvGround;
 };
 
 // Exp2 distance fog with optional height weighting (ground mist below FogHeightY).
@@ -531,14 +535,25 @@ float4 PSMain(PS_IN input) : SV_TARGET
     float rimFresnel = pow(saturate(1.0 - NdotV), 5.0);
     float3 rimLight = rimFresnel * F0 * 0.1 * ao * metallic;
 
-    // Environment reflection for metals
+    // Environment reflection: the scene's own sky gradient (blurred toward its average with roughness) so metals
+    // pick up the sky instead of turning black; neutral dark gradient when no gradient sky is set.
     float3 R = reflect(-V, N);
-    float upFactor = R.y * 0.5 + 0.5;
-    float3 envColor = lerp(float3(0.01, 0.01, 0.02), float3(0.08, 0.10, 0.15), upFactor);
-    float envRoughness = roughness * roughness;
-    envColor = lerp(envColor, envColor * 0.2, envRoughness);
+    float3 envColor;
+    if (EnvSky.w > 0.5)
+    {
+        float3 skyDir = R.y >= 0.0 ? lerp(EnvHorizon.rgb, EnvSky.rgb, pow(saturate(R.y), 0.6))
+                                   : lerp(EnvHorizon.rgb, EnvGround.rgb, pow(saturate(-R.y), 0.6));
+        float3 skyAvg = (EnvSky.rgb + 2.0 * EnvHorizon.rgb + EnvGround.rgb) * 0.25;
+        envColor = lerp(skyDir, skyAvg, saturate(roughness * roughness * 1.5)) * AmbientStrength;
+    }
+    else
+    {
+        float upFactor = R.y * 0.5 + 0.5;
+        envColor = lerp(float3(0.01, 0.01, 0.02), float3(0.08, 0.10, 0.15), upFactor);
+        envColor = lerp(envColor, envColor * 0.2, roughness * roughness);
+    }
 
-    float3 envFresnel = F0 + (1.0 - F0) * pow(1.0 - NdotV, 5.0);
+    float3 envFresnel = F0 + (max(float3(1.0 - roughness, 1.0 - roughness, 1.0 - roughness), F0) - F0) * pow(1.0 - NdotV, 5.0);
     float3 specularAmbient = envColor * envFresnel * ao;
 
     ambient += specularAmbient + rimLight;

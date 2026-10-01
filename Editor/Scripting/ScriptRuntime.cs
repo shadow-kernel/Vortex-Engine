@@ -1513,6 +1513,23 @@ namespace Editor.Scripting
                 Editor.Core.Services.SceneRenderService.Instance.SetEntityColor(e, r, g, b, 1f);
         }
 
+        // Runtime material swap (weapon camos, damage states): the render loop resolves MeshRenderer.MaterialPath per
+        // frame (cached per .vmat path), so assigning the path is all it takes; null/"" falls back to the imported material.
+        void Vortex.IScriptHost.SetEntityMaterial(long entityId, string materialPath)
+        {
+            if (!_entitiesById.TryGetValue(entityId, out var e)) return;
+            var mr = e.GetComponent<Editor.ECS.Components.Rendering.MeshRenderer>();
+            if (mr == null) return;
+            mr.MaterialPath = string.IsNullOrEmpty(materialPath) ? null : materialPath.Replace('\\', '/');
+        }
+
+        string Vortex.IScriptHost.GetEntityMaterial(long entityId)
+        {
+            if (!_entitiesById.TryGetValue(entityId, out var e)) return "";
+            var mr = e.GetComponent<Editor.ECS.Components.Rendering.MeshRenderer>();
+            return mr?.MaterialPath ?? "";
+        }
+
         // --- skeletal animation (Vortex.Animation / VortexBehaviour sugar -> AnimationService) ---
 
         bool Vortex.IScriptHost.PlayAnimation(long entityId, string clip, float fade)
