@@ -176,6 +176,7 @@ namespace VortexEditor.Panels.AssetBrowser
                 var history = UndoRedoManager.Instance.GetUndoHistory();
                 bool oneStep = history.Count > 0 && !ReferenceEquals(history[0], top0) && (history.Count < 2 || ReferenceEquals(history[1], top0) || top0 == null || UndoRedoManager.Instance.UndoCount >= UndoRedoManager.Instance.MaxUndoStackSize);
                 bool selected = ReferenceEquals(SelectionService.Instance.SelectedEntity, e);
+                if (!selected) Log("  selection after AddToScene(" + Path.GetFileName(path) + "): " + (SelectionService.Instance.SelectedEntity?.Name ?? "none") + "");
                 var p = e?.Transform.LocalPosition ?? default;
                 double yaw = cam.Yaw * Math.PI / 180, pitch = cam.Pitch * Math.PI / 180;
                 double fx = Math.Sin(yaw) * Math.Cos(pitch), fy = -Math.Sin(pitch), fz = Math.Cos(yaw) * Math.Cos(pitch);

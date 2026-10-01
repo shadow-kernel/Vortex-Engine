@@ -104,6 +104,9 @@ namespace VortexEditor.Panels
             Items.AddHandler(PointerCaptureLostEvent, (s, e) => { if (_marquee) EndMarquee(); });
             AddHandler(KeyDownEvent, OnPanelKeyDown, RoutingStrategies.Tunnel);
             SearchBox.AddHandler(KeyDownEvent, OnSearchKeyDown, RoutingStrategies.Tunnel);
+            // On macOS ⌘D / ⌘⌫ / ⌘A / ⌘C arrive as menu commands (AppKit consumes a menu key equivalent before the
+            // window sees the key): while the item list has focus they act on the selected assets, not the scene.
+            EditorCommands.RegisterEditHandler(Items, OnEditCommand);
 
             DragDrop.SetAllowDrop(Items, true);
             Items.AddHandler(DragDrop.DragOverEvent, OnItemsDragOver);
@@ -1190,6 +1193,27 @@ namespace VortexEditor.Panels
                     break;
                 case Key.Escape:
                     e.Handled = true; Items.Selection.Clear(); Actions.StopAudition(); break;
+            }
+        }
+
+        /// <summary>Edit-menu command while the item list has focus (see <see cref="EditorCommands.RegisterEditHandler"/>).
+        /// Undo/Redo stay global: file operations are on the editor's undo stack.</summary>
+        private bool OnEditCommand(EditorCommands.EditAction a)
+        {
+            var primary = PrimaryTile();
+            switch (a)
+            {
+                case EditorCommands.EditAction.Duplicate: DuplicateSelected(); return true;
+                case EditorCommands.EditAction.Delete: _ = DeleteSelectedAsync(); return true;
+                case EditorCommands.EditAction.SelectAll: SelectAll(); return true;
+                case EditorCommands.EditAction.Rename: if (primary != null) BeginRename(primary); return true;
+                case EditorCommands.EditAction.Copy:
+                {
+                    var rel = SelectedTiles.Where(t => t.IsFileSystemItem).Select(t => t.RelPath).ToList();
+                    if (rel.Count > 0) _ = CopyText(string.Join("\n", rel));   // project-relative paths, for scripts
+                    return true;
+                }
+                default: return false;
             }
         }
 

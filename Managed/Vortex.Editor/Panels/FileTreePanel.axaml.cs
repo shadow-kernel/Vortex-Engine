@@ -47,6 +47,22 @@ namespace VortexEditor.Panels
             Tree.AddHandler(PointerMovedEvent, OnTreePointerMoved, RoutingStrategies.Tunnel);
             Tree.AddHandler(PointerReleasedEvent, (s, e) => { _dragArmed = false; _pressNode = null; }, RoutingStrategies.Tunnel);
             Tree.AddHandler(KeyDownEvent, OnTreeKeyDown, RoutingStrategies.Tunnel);
+            // Edit-menu commands (⌘⌫ / Rename arrive through the macOS menu) act on the selected folder while the tree has focus.
+            EditorCommands.RegisterEditHandler(Tree, a =>
+            {
+                var node = SelectedNode;
+                if (node == null) return false;
+                switch (a)
+                {
+                    case EditorCommands.EditAction.Delete: _ = DeleteFolderAsync(node); return true;
+                    case EditorCommands.EditAction.Rename: BeginRename(node); return true;
+                    case EditorCommands.EditAction.Duplicate:
+                    case EditorCommands.EditAction.SelectAll:
+                    case EditorCommands.EditAction.Cut:
+                    case EditorCommands.EditAction.Paste: return true;   // no folder equivalent: never fall through to the scene
+                    default: return false;
+                }
+            });
             DragDrop.SetAllowDrop(Tree, true);
             Tree.AddHandler(DragDrop.DragOverEvent, OnDragOver);
             Tree.AddHandler(DragDrop.DragLeaveEvent, (s, e) => SetDropHighlight(null));

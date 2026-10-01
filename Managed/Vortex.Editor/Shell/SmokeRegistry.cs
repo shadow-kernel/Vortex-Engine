@@ -33,6 +33,13 @@ namespace VortexEditor.Shell
         {
             var log = ConsoleService.Instance;
             Entry[] list; lock (_checks) list = _checks.ToArray();
+            // VORTEX_SMOKE_ONLY="asset actions,prefab editor": run just the checks whose name contains one of the parts
+            string only = Environment.GetEnvironmentVariable("VORTEX_SMOKE_ONLY");
+            if (!string.IsNullOrWhiteSpace(only))
+            {
+                var parts = only.Split(',');
+                list = Array.FindAll(list, c => Array.Exists(parts, p => p.Trim().Length > 0 && c.Name.IndexOf(p.Trim(), StringComparison.OrdinalIgnoreCase) >= 0));
+            }
             Running = true;
             try
             {
