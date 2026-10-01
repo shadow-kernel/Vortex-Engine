@@ -21,6 +21,12 @@
 
 <br/>
 
+<img src="docs/showcase/vortex-engine-showcase.webp" width="100%" alt="Vortex Engine in 30 seconds: the scene editor, play mode inside the editor, the Tactical Shooter template (movement and first-person weapons), then the VFX, animation, material, model, prefab, collision, audio, build, Git and project-hub windows"/>
+
+<sub><b>Vortex in 30 seconds</b> — scene editor · play in the editor · the <a href="https://github.com/shadow-kernel/Vortex-Engine-Tactical-Template">Tactical Shooter</a> template · VFX, animation, material, model, prefab, collision, audio, build and Git tools (recorded on macOS)</sub>
+
+<br/><br/>
+
 **Build worlds. Import anything. Press ▶ Play.**
 
 **Free and open source (MIT) — free to use for anything, including commercial games.** A two-part engine: a fast native **runtime** that compiles straight into your shipped games, and a separate **editor** for authoring scenes, assets and gameplay — wired together through a single thin C interop layer. Contributions welcome. 🌀
@@ -43,6 +49,21 @@
 | 🔥 **Live hot-reload** | Edit a gameplay **script** or a **custom `.hlsl` shader** in Visual Studio, Alt-Tab back to the editor/game, and the change is in — live in the viewport, the external window, and Debug builds. |
 | 🕹️ **Input** | Unified keyboard, mouse and gamepad layer with cursor lock — ready for first/third-person controllers. |
 | 🚀 **Ships with your game** | The engine is a static library; your exported game links it directly. Export a packed **Release** build or a source-linked **Debug** build with hot-reload. |
+
+---
+
+## 🎮 Project Templates
+
+New projects start from a template (the project hub ▸ **Create**). Every template is a complete, playable project, and
+all of its gameplay is plain project scripts you can read and change:
+
+| Template | What you get |
+|---|---|
+| **[3D Starter](https://github.com/shadow-kernel/Vortex-Engine-3D-Template)** | a start screen and a playable first-person mini-world |
+| **[Horror Starter](https://github.com/shadow-kernel/Vortex-Engine-Horror-Template)** | a CoD-feel night shooter: an open industrial yard plus a lit brick cellar |
+| **[Tactical Shooter](https://github.com/shadow-kernel/Vortex-Engine-Tactical-Template)** | a Call-of-Duty-style gun range: two animated first-person weapons with iron-sight ADS and recoil, pop-up targets, a kill house, and CoD movement (sprint · slide · mantle) |
+
+The templates are git submodules under `Templates/` (clone with `--recurse-submodules`).
 
 ---
 
@@ -87,7 +108,7 @@ flowchart LR
 ### Build & Run
 
 ```bash
-# 1. Clone WITH submodules (the NVIDIA Streamline SDK + the default 3D template are submodules)
+# 1. Clone WITH submodules (the NVIDIA Streamline SDK + the project templates are submodules)
 git clone --recurse-submodules https://github.com/shadow-kernel/Vortex-Engine.git
 cd Vortex-Engine
 # (already cloned without submodules? run:)
