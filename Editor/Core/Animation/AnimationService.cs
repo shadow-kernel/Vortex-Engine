@@ -67,6 +67,101 @@ namespace Editor.Core.Animation
             // animation's natural grip on the first frame and held after. Persists across Steps (the
             // chain runtime list is rebuilt each Step); cleared by RefreshIk on config edits.
             public Dictionary<int, Matrix4x4> IkCapturedGrips;
+
+            // ---- rig-aware procedural layers (#147): hand poses, look-at, foot IK ----
+            public int StepCount;                 // > 0 once the game/preview clock stepped this animator (play)
+            public int LastStepTick;              // Environment.TickCount of the last Step (clock running = stepped recently)
+            public float SmoothDt;                // dt of the Step being evaluated (0 = evaluate without advancing smoothing)
+            public bool SnapSmoothing;            // edit-mode preview: jump straight to the target
+            public ScriptHandPose[] ScriptHands;  // Animation.SetHandPose overrides: [0] left, [1] right
+            public ECS.Components.Animation.HandPose[] DefaultHands;   // rig config for script poses on hands without a component
+            public ECS.Components.Animation.LookAtIk LookCfg;          // active look-at config (component or script default)
+            public ECS.Components.Animation.LookAtIk DefaultLook;
+            public LookAtRig LookRig;
+            public LookSmoothState LookSmooth;
+            public bool HasLookPoint;             // Animation.SetLookAtTarget(entity, point)
+            public Vector3 LookPoint;             // world space
+            public ECS.GameEntity LookEntity;     // Animation.SetLookAtTarget(entity, otherEntity)
+            public float LookWeightOverride = -1f;   // Animation.SetLookAtWeight (-1 = the component's weight)
+            public string LookRefName;               // cached resolution of LookAtIk.TargetEntity (name / id)
+            public ECS.GameEntity LookRefEntity;
+            public int LookRefTtl;
+            public ECS.Components.Animation.FootIk FootCfg;
+            public ECS.Components.Animation.FootIk DefaultFoot;
+            public FootIkRig FootRig;
+            public FootSmoothState FootSmooth;
+            public float FootWeightOverride = -1f;   // Animation.SetFootIkWeight (-1 = the component's weight)
+        }
+
+        /// <summary>A script-driven finger pose for one hand (Animation.SetHandPose), blended in over <see cref="Duration"/>.</summary>
+        private sealed class ScriptHandPose
+        {
+            public Vector3[] To = new Vector3[5];
+            public Vector3[] From = new Vector3[5];
+            public float ToSpread, FromSpread, ToWeight, FromWeight;
+            public float T, Duration;
+            public float Blend => Duration <= 0f ? 1f : Math.Min(1f, T / Duration);
+            public Vector3 Curl(int f) => Vector3.Lerp(From[f], To[f], Blend);
+            public float Spread => FromSpread + (ToSpread - FromSpread) * Blend;
+            public float Weight => FromWeight + (ToWeight - FromWeight) * Blend;
+        }
+
+        /// <summary>Resolved hand of one HandPose: curl joints per finger with their bind-pose axes (parent frame).</summary>
+        private sealed class HandPoseRig
+        {
+            public int Hand = -1;
+            public int[][] Joints = new int[5][];
+            public Vector3[][] Axis = new Vector3[5][];   // automatic curl axis per joint, in the joint's PARENT frame
+            public Vector3[] SpreadAxis = new Vector3[5];
+            public string[] Source = new string[5];
+            public RigMap.HandFrame Frame;
+            public RigReport Report = new RigReport();
+        }
+
+        /// <summary>Resolved look-at chain.</summary>
+        private sealed class LookAtRig
+        {
+            public int Head = -1;
+            public int[] Chain = new int[0];      // lowest first … head
+            public float[] Share = new float[0];  // normalised share of the turn per chain bone
+            public int Ref = -1;                  // torso reference (parent of the lowest turning bone)
+            public Vector3 FwdHeadLocal, FwdRefLocal, UpRefLocal;
+            public RigReport Report = new RigReport();
+        }
+
+        private sealed class LookSmoothState { public bool Init; public float Yaw, Pitch, W; }
+
+        /// <summary>Resolved legs for foot IK: [0] left, [1] right.</summary>
+        private sealed class FootIkRig
+        {
+            public int[] Foot = { -1, -1 }, Knee = { -1, -1 }, Hip = { -1, -1 };
+            public int Pelvis = -1;
+            public float[] AnkleHeight = new float[2];   // model units along the bind up axis
+            public float[] SoleUp = new float[2];        // model-space height of the sole plane along the bind up axis
+            public Vector3 UpBind = Vector3.UnitY;
+            public RigReport Report = new RigReport();
+        }
+
+        private sealed class FootSmoothState { public bool Init; public float[] Offset = new float[2]; public float Pelvis; public Vector3[] Normal = { Vector3.UnitY, Vector3.UnitY }; }
+
+        /// <summary>What a rig-aware component resolved on its skeleton — shown by the inspector cards, read by tests.</summary>
+        public sealed class RigReport
+        {
+            /// <summary>True when the component found everything it needs to act.</summary>
+            public bool Ok;
+            /// <summary>Human-readable lines ("Hand: mixamorig:LeftHand", "Index: … (names)").</summary>
+            public readonly List<string> Lines = new List<string>();
+            /// <summary>Detection notes / problems.</summary>
+            public readonly List<string> Notes = new List<string>();
+            /// <summary>Resolved bones by role ("Hand", "Index", …, "Head", "Neck", "LeftFoot", …).</summary>
+            public readonly Dictionary<string, string[]> Bones = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+            public override string ToString()
+            {
+                var sb = new System.Text.StringBuilder();
+                foreach (var l in Lines) sb.AppendLine(l);
+                foreach (var n in Notes) sb.AppendLine("• " + n);
+                return sb.ToString().TrimEnd();
+            }
         }
 
         /// <summary>A script-supplied world-space IK target (position, optional orientation).</summary>
@@ -316,19 +411,32 @@ namespace Editor.Core.Animation
                 }
             }
 
+            // Script hand poses blend in over their own duration (Animation.SetHandPose).
+            if (state.ScriptHands != null)
+                for (int h = 0; h < 2; h++)
+                    if (state.ScriptHands[h] != null) state.ScriptHands[h].T += dt;
+            state.StepCount++;
+            state.LastStepTick = Environment.TickCount;
+
             // #179: refresh the runtime IK chains from the entity's TwoBoneIk components each Step so
             // inspector edits and script SetIkWeight take effect immediately.
             SyncIkChains(entity, state);
             SyncHandPoses(entity, state);
+            SyncLookAtAndFootIk(entity, state);
 
             // #178: a runtime bone override must re-pose every frame even on a static/held clip (look up/down
-            // while standing still), so it counts as "active" for the re-evaluation gate. Same for IK (#179).
+            // while standing still), so it counts as "active" for the re-evaluation gate. Same for IK (#179),
+            // look-at (the target moves) and foot IK (the ground under the character changes).
             bool overridesActive = (state.BoneAdditive != null && state.BoneAdditive.Count > 0)
                                 || (state.ComponentAdditive != null && state.ComponentAdditive.Count > 0)
                                 || (state.BoneScale != null && state.BoneScale.Count > 0)
-                                || (state.IkChains != null && state.IkChains.Count > 0);
+                                || (state.IkChains != null && state.IkChains.Count > 0)
+                                || (state.LookCfg != null && state.LookRig != null)
+                                || (state.FootCfg != null && state.FootRig != null);
             if (!baseActive && !layersActive && !overridesActive) return;
-            state.Palette = EvaluateStatePalette(state);
+            state.SmoothDt = dt;
+            try { state.Palette = EvaluateStatePalette(state); }
+            finally { state.SmoothDt = 0f; }
             HasActiveAnimators = true;
         }
 
@@ -707,12 +815,12 @@ namespace Editor.Core.Animation
 
         // ------------------------------------------------------------------ runtime two-bone IK (#179)
 
-        /// <summary>Rebuild the state's IK chain list from the entity's TwoBoneIk components. Called per
-        /// Step and from <see cref="RefreshIk"/>, so inspector edits and script SetIkWeight apply the
-        /// same frame. Chains resolve tip -> (mid = parent, root = grandparent); invalid ones drop out.</summary>
-        /// <summary>Rebuild the finger-curl additives from the entity's HandPose components (editor-authored grips):
-        /// per finger joint an additive rotation around the joint's local curl axis. Runs every Step (and on
-        /// RefreshIk for the edit-mode preview) so inspector edits show immediately.</summary>
+        // ------------------------------------------------------------------ hand poses (#147, rig-generic)
+
+        /// <summary>Rebuild the finger-curl additives from the entity's HandPose components (editor-authored grips) and
+        /// the script overrides (Animation.SetHandPose): per finger joint an additive rotation composed onto the animated
+        /// local rotation. Runs every Step (and on RefreshIk for the edit-mode preview) so inspector edits show
+        /// immediately. The bone/axis analysis is cached per component + configuration.</summary>
         private void SyncHandPoses(ECS.GameEntity entity, AnimatorState state)
         {
             Dictionary<int, Quaternion> add = null;
@@ -720,33 +828,689 @@ namespace Editor.Core.Animation
             var comps = entity?.Components;
             if (skel != null && comps != null)
             {
+                bool leftDone = false, rightDone = false;
                 for (int i = 0; i < comps.Count; i++)
                 {
                     var hp = comps[i] as ECS.Components.Animation.HandPose;
-                    if (hp == null || !hp.IsEnabled || hp.Weight <= 0.0005f) continue;
-                    for (int f = 0; f < ECS.Components.Animation.HandPose.Fingers.Length; f++)
+                    if (hp == null || !hp.IsEnabled) continue;
+                    int sideIdx = hp.Side == ECS.Components.Animation.HandSide.Left ? 0 : 1;
+                    if (sideIdx == 0) leftDone = true; else rightDone = true;
+                    var script = state.ScriptHands != null ? state.ScriptHands[sideIdx] : null;
+                    ApplyHandPose(skel, hp, script, ref add);
+                }
+                // Script poses on a hand WITHOUT a HandPose component: auto-detected rig, default settings.
+                if (state.ScriptHands != null)
+                {
+                    for (int s = 0; s < 2; s++)
                     {
-                        var curl = hp.CurlOf(f);
-                        for (int j = 1; j <= 3; j++)
-                        {
-                            int node = skel.FindNode(hp.BoneName(ECS.Components.Animation.HandPose.Fingers[f], j));
-                            if (node < 0) continue;
-                            float deg = (j == 1 ? curl.X : (j == 2 ? curl.Y : curl.Z)) * hp.CurlSign * hp.Weight;
-                            float spread = (j == 1 && f < 4 && hp.Spread != 0f) ? hp.Spread * ((f - 1.5f) / 1.5f) * hp.Weight : 0f;
-                            Vector3 e;
-                            if (hp.CurlAxis == 0) e = new Vector3(deg, 0f, spread);
-                            else if (hp.CurlAxis == 1) e = new Vector3(spread, deg, 0f);
-                            else e = new Vector3(0f, spread, deg);
-                            if (deg == 0f && spread == 0f) continue;
-                            var q = EulerToQuat(e);
-                            if (add == null) add = new Dictionary<int, Quaternion>();
-                            if (add.TryGetValue(node, out var prev)) q = Quaternion.Normalize(q * prev);
-                            add[node] = q;
-                        }
+                        if (state.ScriptHands[s] == null || (s == 0 ? leftDone : rightDone)) continue;
+                        ApplyHandPose(skel, DefaultHandConfig(state, s), state.ScriptHands[s], ref add);
                     }
                 }
             }
             state.ComponentAdditive = add;
+        }
+
+        private static ECS.Components.Animation.HandPose DefaultHandConfig(AnimatorState state, int sideIdx)
+        {
+            if (state.DefaultHands == null) state.DefaultHands = new ECS.Components.Animation.HandPose[2];
+            if (state.DefaultHands[sideIdx] == null)
+                state.DefaultHands[sideIdx] = new ECS.Components.Animation.HandPose
+                {
+                    Side = sideIdx == 0 ? ECS.Components.Animation.HandSide.Left : ECS.Components.Animation.HandSide.Right
+                };
+            return state.DefaultHands[sideIdx];
+        }
+
+        private static readonly float[] SpreadShare = { 1f, 1f / 3f, -1f / 3f, -1f };   // index … pinky, + = toward the thumb
+
+        private void ApplyHandPose(SkeletonDef skel, ECS.Components.Animation.HandPose hp, ScriptHandPose script,
+            ref Dictionary<int, Quaternion> add)
+        {
+            float weight = script != null ? script.Weight : hp.Weight;
+            if (weight <= 0.0005f) return;
+            float spread = script != null ? script.Spread : hp.Spread;
+
+            if (hp.IsLegacyConfiguration && string.IsNullOrWhiteSpace(hp.HandBone) && !HasExplicitChains(hp))
+            {
+                ApplyHandPoseLegacy(skel, hp, script, weight, spread, ref add);
+                return;
+            }
+
+            var rig = GetHandRig(skel, hp);
+            if (rig == null) return;
+            bool auto = hp.CurlAxis < 0;
+            const float D2R = (float)(Math.PI / 180.0);
+            for (int f = 0; f < 5; f++)
+            {
+                var joints = rig.Joints[f];
+                if (joints == null || joints.Length == 0) continue;
+                var c = script != null ? script.Curl(f) : ToNum(hp.CurlOf(f));
+                int n = joints.Length;
+                for (int j = 0; j < n; j++)
+                {
+                    int node = joints[j];
+                    float deg = MapCurl(c, n, j) * weight;
+                    Quaternion q;
+                    if (auto)
+                    {
+                        float sp = (j == 0 && f < 4 && spread != 0f) ? spread * SpreadShare[f] * weight : 0f;
+                        if (deg == 0f && sp == 0f) continue;
+                        q = Quaternion.CreateFromAxisAngle(rig.Axis[f][j], deg * D2R);
+                        if (sp != 0f && rig.SpreadAxis[f].LengthSquared() > 0.5f)
+                            q = Quaternion.CreateFromAxisAngle(rig.SpreadAxis[f], sp * D2R) * q;   // curl, then splay
+                    }
+                    else
+                    {
+                        // Manual axis override: the legacy Euler construction around the joint's local axis.
+                        float d = deg * hp.CurlSign;
+                        float sp = (j == 0 && f < 4 && spread != 0f) ? spread * ((f - 1.5f) / 1.5f) * weight : 0f;
+                        if (d == 0f && sp == 0f) continue;
+                        Vector3 e;
+                        if (hp.CurlAxis == 0) e = new Vector3(d, 0f, sp);
+                        else if (hp.CurlAxis == 1) e = new Vector3(sp, d, 0f);
+                        else e = new Vector3(0f, sp, d);
+                        q = EulerToQuat(e);
+                    }
+                    if (add == null) add = new Dictionary<int, Quaternion>();
+                    Quaternion prev;
+                    if (add.TryGetValue(node, out prev)) q = Quaternion.Normalize(q * prev);
+                    add[node] = q;
+                }
+            }
+        }
+
+        /// <summary>The pre-#147 behaviour, verbatim, for untouched legacy components (Mixamo pattern + manual axis):
+        /// joints 1..3 by name, Euler around the local curl axis. Only addition: when the component's own prefix resolves
+        /// no finger at all (a "mixamorig1:" skeleton), the prefix the skeleton uses is detected instead of silently doing
+        /// nothing — configurations that worked before are untouched.</summary>
+        private static void ApplyHandPoseLegacy(SkeletonDef skel, ECS.Components.Animation.HandPose hp, ScriptHandPose script,
+            float weight, float spread, ref Dictionary<int, Quaternion> add)
+        {
+            string prefix = LegacyPrefix(skel, hp);
+            for (int f = 0; f < ECS.Components.Animation.HandPose.Fingers.Length; f++)
+            {
+                var curl = script != null ? script.Curl(f) : ToNum(hp.CurlOf(f));
+                for (int j = 1; j <= 3; j++)
+                {
+                    int node = skel.FindNode(hp.BoneName(prefix, ECS.Components.Animation.HandPose.Fingers[f], j));
+                    if (node < 0) continue;
+                    float deg = (j == 1 ? curl.X : (j == 2 ? curl.Y : curl.Z)) * hp.CurlSign * weight;
+                    float sp = (j == 1 && f < 4 && spread != 0f) ? spread * ((f - 1.5f) / 1.5f) * weight : 0f;
+                    Vector3 e;
+                    if (hp.CurlAxis == 0) e = new Vector3(deg, 0f, sp);
+                    else if (hp.CurlAxis == 1) e = new Vector3(sp, deg, 0f);
+                    else e = new Vector3(0f, sp, deg);
+                    if (deg == 0f && sp == 0f) continue;
+                    var q = EulerToQuat(e);
+                    if (add == null) add = new Dictionary<int, Quaternion>();
+                    Quaternion prev;
+                    if (add.TryGetValue(node, out prev)) q = Quaternion.Normalize(q * prev);
+                    add[node] = q;
+                }
+            }
+        }
+
+        /// <summary>Prefix for the legacy name pattern: the component's own unless it resolves no finger at all.</summary>
+        private static string LegacyPrefix(SkeletonDef skel, ECS.Components.Animation.HandPose hp)
+        {
+            string prefix = hp.BonePrefix ?? "";
+            if (skel.FindNode(hp.BoneName(prefix, "Index", 1)) >= 0 || skel.FindNode(hp.BoneName(prefix, "Middle", 1)) >= 0) return prefix;
+            return MixamoPrefix(skel, hp);
+        }
+
+        private static bool HasExplicitChains(ECS.Components.Animation.HandPose hp)
+        {
+            for (int f = 0; f < 5; f++) if (!string.IsNullOrWhiteSpace(hp.ExplicitBones(f))) return true;
+            return false;
+        }
+
+        private static Vector3 ToNum(ECS.Vector3 v) => new Vector3(v.X, v.Y, v.Z);
+
+        /// <summary>Distribute the three authored curl values (knuckle, middle, tip joint) over the joints a finger
+        /// actually has, so the fingertip ends up where a three-joint finger would put it: one joint takes the chord of
+        /// all three (X + 2Y/3 + Z/3), two joints fold the tip bend into the second (X, Y + Z/2), longer chains repeat
+        /// the tip value.</summary>
+        private static float MapCurl(Vector3 c, int n, int j)
+        {
+            if (n <= 1) return c.X + c.Y * (2f / 3f) + c.Z * (1f / 3f);
+            if (n == 2) return j == 0 ? c.X : c.Y + c.Z * 0.5f;
+            return j == 0 ? c.X : (j == 1 ? c.Y : c.Z);
+        }
+
+        /// <summary>The Mixamo prefix to use: the component's own when its hand bone exists, else the prefix the skeleton
+        /// actually uses in front of "LeftHand"/"RightHand" (mixamorig1:, mixamorig_, none …).</summary>
+        private static string MixamoPrefix(SkeletonDef skel, ECS.Components.Animation.HandPose hp)
+        {
+            string side = hp.Side == ECS.Components.Animation.HandSide.Left ? "Left" : "Right";
+            string prefix = hp.BonePrefix ?? "";
+            if (skel.FindNode(prefix + side + "Hand") >= 0) return prefix;
+            string suffix = side + "Hand";
+            for (int i = 0; i < skel.Nodes.Length; i++)
+            {
+                string nm = skel.Nodes[i].Name ?? "";
+                if (nm.EndsWith(suffix, StringComparison.Ordinal)) return nm.Substring(0, nm.Length - suffix.Length);
+            }
+            return prefix;
+        }
+
+        /// <summary>One cached rig analysis of a component: rebuilt when the component raises PropertyChanged (any edit,
+        /// undo included) or when it is evaluated against another skeleton — no per-frame work or allocation.</summary>
+        private sealed class RigCacheEntry<TRig> where TRig : class
+        {
+            public TRig Rig;
+            public SkeletonDef Skel;
+            public bool Dirty = true;
+        }
+
+        private static TRig CachedRig<TComp, TRig>(System.Runtime.CompilerServices.ConditionalWeakTable<TComp, RigCacheEntry<TRig>> table,
+            TComp comp, SkeletonDef skel, Func<SkeletonDef, TComp, TRig> build)
+            where TComp : ECS.Component where TRig : class
+        {
+            RigCacheEntry<TRig> entry;
+            if (!table.TryGetValue(comp, out entry))
+            {
+                entry = new RigCacheEntry<TRig>();
+                table.Add(comp, entry);
+                var e = entry;
+                comp.PropertyChanged += (s, a) => e.Dirty = true;
+            }
+            if (entry.Dirty || entry.Rig == null || !ReferenceEquals(entry.Skel, skel))
+            {
+                entry.Rig = build(skel, comp);
+                entry.Skel = skel;
+                entry.Dirty = false;
+            }
+            return entry.Rig;
+        }
+
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<ECS.Components.Animation.HandPose, RigCacheEntry<HandPoseRig>> _handRigs =
+            new System.Runtime.CompilerServices.ConditionalWeakTable<ECS.Components.Animation.HandPose, RigCacheEntry<HandPoseRig>>();
+
+        private static readonly Func<SkeletonDef, ECS.Components.Animation.HandPose, HandPoseRig> _buildHandRig = BuildHandRig;
+        private HandPoseRig GetHandRig(SkeletonDef skel, ECS.Components.Animation.HandPose hp) => CachedRig(_handRigs, hp, skel, _buildHandRig);
+
+        /// <summary>
+        /// Resolve a HandPose on a skeleton: hand bone (explicit → preset names → detection by side), finger joints
+        /// (Custom: explicit lists only; presets: their naming pattern; Auto / preset names missing: tree walk +
+        /// name keywords + palm geometry; explicit lists override per finger), then the automatic curl axes from the
+        /// bind pose — fingers bend around (finger direction × palm normal), the thumb swings toward the index/middle
+        /// roots on the palmar side, spread turns around the palm normal. Axes are stored in each joint's PARENT frame
+        /// (the frame the additive is composed in), so they follow every animation.
+        /// </summary>
+        private static HandPoseRig BuildHandRig(SkeletonDef skel, ECS.Components.Animation.HandPose hp)
+        {
+            var rig = new HandPoseRig();
+            var rep = rig.Report;
+            var si = RigMap.Info(skel);
+            if (si == null) { rep.Notes.Add("no skeleton"); return rig; }
+            int side = hp.Side == ECS.Components.Animation.HandSide.Left ? -1 : 1;
+            var notes = rep.Notes;
+            var preset = hp.Rig;
+            string how = "detected";
+
+            // ---- hand bone
+            int hand = -1;
+            if (!string.IsNullOrWhiteSpace(hp.HandBone))
+            {
+                hand = RigMap.Find(skel, hp.HandBone);
+                if (hand >= 0) how = "explicit";
+                else notes.Add("hand bone '" + hp.HandBone.Trim() + "' not found — detecting");
+            }
+            if (hand < 0 && preset != ECS.Components.Animation.RigPreset.Auto && preset != ECS.Components.Animation.RigPreset.Custom)
+            {
+                hand = PresetHand(skel, hp, side);
+                if (hand >= 0) how = preset + " names";
+            }
+            if (hand < 0) { hand = RigMap.FindHand(si, side, notes); how = "detected"; }
+
+            // ---- fingers
+            var raw = new List<int>[5];
+            var joints = new int[5][];
+            if (preset != ECS.Components.Animation.RigPreset.Custom)
+            {
+                int found = 0;
+                if (preset != ECS.Components.Animation.RigPreset.Auto)
+                    found = PresetFingers(si, hp, side, hand, raw, joints, rig.Source);
+                if (found < 2 && hand >= 0)
+                {
+                    if (preset != ECS.Components.Animation.RigPreset.Auto)
+                        notes.Add(preset + " finger names not found — fingers auto-detected");
+                    for (int f = 0; f < 5; f++) { raw[f] = null; joints[f] = null; rig.Source[f] = null; }
+                    var hc = RigMap.DetectFingers(si, hand, side, notes);
+                    Vector3 wrist = RigMap.Pos(si, hand);
+                    for (int f = 0; f < 5; f++)
+                    {
+                        if (hc.Raw[f] == null) continue;
+                        raw[f] = hc.Raw[f];
+                        joints[f] = RigMap.CurlJoints(si, hc.Raw[f], f == RigMap.Thumb, wrist);
+                        rig.Source[f] = hc.Source[f];
+                    }
+                }
+            }
+            for (int f = 0; f < 5; f++)
+            {
+                string list = hp.ExplicitBones(f);
+                if (string.IsNullOrWhiteSpace(list)) continue;
+                var js = RigMap.FindList(skel, list, notes, RigMap.FingerNames[f]);
+                if (js.Length == 0) continue;
+                joints[f] = js;
+                var chain = RigMap.ChainFrom(si, js[js.Length - 1]);
+                var r = new List<int>(js);
+                for (int k = 1; k < chain.Count; k++) r.Add(chain[k]);   // continue to the tip for the direction
+                raw[f] = r;
+                rig.Source[f] = "explicit";
+            }
+            if (hand < 0)
+            {
+                // Custom rig without a hand bone: the bone the listed fingers hang from.
+                for (int f = 0; f < 5 && hand < 0; f++)
+                    if (joints[f] != null && joints[f].Length > 0) hand = RigMap.Parent(si, joints[f][0]);
+                if (hand >= 0) how = "parent of the listed fingers";
+            }
+            rig.Hand = hand;
+            rig.Joints = joints;
+
+            rep.Lines.Add("Hand: " + (hand >= 0 ? RigMap.NameOf(si, hand) + " (" + how + ")" : "not found"));
+            if (hand >= 0) rep.Bones["Hand"] = new[] { RigMap.NameOf(si, hand) };
+            int fingerCount = 0;
+            for (int f = 0; f < 5; f++)
+            {
+                if (joints[f] == null || joints[f].Length == 0) { rep.Lines.Add(RigMap.FingerNames[f] + ": -"); continue; }
+                fingerCount++;
+                var names = new string[joints[f].Length];
+                for (int k = 0; k < names.Length; k++) names[k] = RigMap.NameOf(si, joints[f][k]);
+                rep.Bones[RigMap.FingerNames[f]] = names;
+                rep.Lines.Add(RigMap.FingerNames[f] + ": " + string.Join(", ", names) + " (" + (rig.Source[f] ?? "?") + ")");
+            }
+            if (hand < 0 || fingerCount == 0)
+            {
+                if (hand < 0) notes.Add("no " + (side < 0 ? "left" : "right") + " hand found — set Hand bone or the finger lists");
+                else notes.Add("no finger joints found under the hand");
+                return rig;
+            }
+
+            // ---- palm frame + automatic axes
+            var frame = RigMap.ComputeHandFrame(si, hand, raw, joints, side, notes);
+            rig.Frame = frame;
+            for (int f = 0; f < 5; f++)
+            {
+                var js = joints[f];
+                if (js == null || js.Length == 0) continue;
+                rig.Axis[f] = new Vector3[js.Length];
+                if (f < 4)
+                {
+                    // Finger direction from its curl joints (knuckle → last joint), falling back to the chain tip for a
+                    // one-joint finger — end bones never influence the axis.
+                    Vector3 b = RigMap.Pos(si, js[0]);
+                    Vector3 tip = js.Length >= 2 ? RigMap.Pos(si, js[js.Length - 1])
+                                : (raw[f] != null && raw[f].Count > 1 ? RigMap.Pos(si, raw[f][raw[f].Count - 1]) : b + frame.Dir);
+                    Vector3 fdir = tip - b;
+                    fdir = fdir.LengthSquared() > 1e-12f ? Vector3.Normalize(fdir) : frame.Dir;
+                    Vector3 axis = Vector3.Cross(fdir, frame.Palmar);
+                    if (axis.LengthSquared() < 1e-8f) axis = Vector3.Cross(frame.Dir, frame.Palmar);
+                    axis = Vector3.Normalize(axis);
+                    for (int k = 0; k < js.Length; k++) rig.Axis[f][k] = ToParentFrame(si, js[k], axis);
+                    Vector3 lat = RigMap.Perp(frame.Lateral, fdir);
+                    Vector3 sAxis = lat.LengthSquared() > 1e-8f ? Vector3.Cross(fdir, Vector3.Normalize(lat)) : Vector3.Zero;
+                    rig.SpreadAxis[f] = sAxis.LengthSquared() > 1e-8f ? ToParentFrame(si, js[0], Vector3.Normalize(sAxis)) : Vector3.Zero;
+                }
+                else
+                {
+                    for (int k = 0; k < js.Length; k++)
+                    {
+                        Vector3 p = RigMap.Pos(si, js[k]);
+                        int next = k + 1 < js.Length ? js[k + 1] : RigMap.MainChild(si, js[k]);
+                        Vector3 dir = next >= 0 ? RigMap.Pos(si, next) - p : p - RigMap.Pos(si, RigMap.Parent(si, js[k]));
+                        dir = dir.LengthSquared() > 1e-12f ? Vector3.Normalize(dir) : frame.Dir;
+                        Vector3 toward = RigMap.Perp(frame.ThumbTarget - p, dir);
+                        if (toward.LengthSquared() < 1e-10f) toward = RigMap.Perp(frame.Palmar, dir);
+                        Vector3 axis = Vector3.Cross(dir, Vector3.Normalize(toward));
+                        if (axis.LengthSquared() < 1e-8f) axis = Vector3.Cross(dir, frame.Palmar);
+                        rig.Axis[f][k] = ToParentFrame(si, js[k], Vector3.Normalize(axis));
+                    }
+                }
+            }
+            rep.Lines.Add("Palm normal (model): " + Fmt(frame.Palmar) + (frame.PalmFromThumb ? " (from the thumb)" : ""));
+            rep.Ok = true;
+            return rig;
+        }
+
+        /// <summary>Model-space direction → the given node's PARENT frame at bind pose (the frame additive deltas use).</summary>
+        private static Vector3 ToParentFrame(RigMap.SkelInfo si, int node, Vector3 modelDir)
+        {
+            int p = RigMap.Parent(si, node);
+            if (p < 0) return modelDir;
+            var q = Quaternion.Normalize(Quaternion.CreateFromRotationMatrix(NormalizeBasis(si.Bind[p])));
+            var v = Vector3.Transform(modelDir, Quaternion.Inverse(q));
+            return v.LengthSquared() > 1e-12f ? Vector3.Normalize(v) : modelDir;
+        }
+
+        private static string Fmt(Vector3 v)
+            => "(" + v.X.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + ", " +
+               v.Y.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + ", " +
+               v.Z.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + ")";
+
+        private static string SideWord(int side) => side < 0 ? "Left" : "Right";
+
+        /// <summary>Hand bone by the preset's naming convention (-1 when the names are not in the skeleton).</summary>
+        private static int PresetHand(SkeletonDef skel, ECS.Components.Animation.HandPose hp, int side)
+        {
+            string L = side < 0 ? "L" : "R", l = side < 0 ? "l" : "r", Side = SideWord(side);
+            switch (hp.Rig)
+            {
+                case ECS.Components.Animation.RigPreset.Mixamo:
+                    return skel.FindNode(MixamoPrefix(skel, hp) + Side + "Hand");
+                case ECS.Components.Animation.RigPreset.Unreal:
+                    return FirstFound(skel, "hand_" + l);
+                case ECS.Components.Animation.RigPreset.Rigify:
+                    return FirstFound(skel, "DEF-hand." + L, "hand." + L, "ORG-hand." + L);
+                case ECS.Components.Animation.RigPreset.UnityGeneric:
+                    return FirstFound(skel, Side + "Hand", Side + " Hand", Side + "_Hand", "Hand_" + L, "Hand." + L, L + "_Hand",
+                        "J_Bip_" + L + "_Hand", "Bip01 " + L + " Hand", "CC_Base_" + L + "_Hand", l + "Hand", "Hand_" + Side);
+            }
+            return -1;
+        }
+
+        private static int FirstFound(SkeletonDef skel, params string[] names)
+        {
+            foreach (var n in names) { int i = RigMap.Find(skel, n); if (i >= 0) return i; }
+            return -1;
+        }
+
+        /// <summary>Finger joints by the preset's naming convention. Returns the number of fingers found.</summary>
+        private static int PresetFingers(RigMap.SkelInfo si, ECS.Components.Animation.HandPose hp, int side, int hand,
+            List<int>[] raw, int[][] joints, string[] source)
+        {
+            var skel = si.Skel;
+            string L = side < 0 ? "L" : "R", l = side < 0 ? "l" : "r", Side = SideWord(side);
+            string[] unrealF = { "index", "middle", "ring", "pinky", "thumb" };
+            string[] unityF = { "Index", "Middle", "Ring", "Little", "Thumb" };
+            string mixPrefix = MixamoPrefix(skel, hp);
+            int found = 0;
+            for (int f = 0; f < 5; f++)
+            {
+                var named = new List<int>();
+                for (int j = 1; j <= 3; j++)
+                {
+                    int node = -1;
+                    switch (hp.Rig)
+                    {
+                        case ECS.Components.Animation.RigPreset.Mixamo:
+                            node = skel.FindNode(hp.BoneName(mixPrefix, ECS.Components.Animation.HandPose.Fingers[f], j));
+                            break;
+                        case ECS.Components.Animation.RigPreset.Unreal:
+                            node = RigMap.Find(skel, unrealF[f] + "_0" + j + "_" + l);
+                            break;
+                        case ECS.Components.Animation.RigPreset.Rigify:
+                            string rn = f == RigMap.Thumb ? "thumb.0" + j + "." + L : "f_" + unrealF[f] + ".0" + j + "." + L;
+                            node = FirstFound(skel, "DEF-" + rn, rn, "ORG-" + rn);
+                            break;
+                        case ECS.Components.Animation.RigPreset.UnityGeneric:
+                            string[] phal = { "Proximal", "Intermediate", "Distal" };
+                            node = FirstFound(skel, Side + unityF[f] + phal[j - 1], Side + " " + unityF[f] + " " + phal[j - 1],
+                                Side + "Hand" + ECS.Components.Animation.HandPose.Fingers[f] + j, "J_Bip_" + L + "_" + unityF[f] + j,
+                                "CC_Base_" + L + "_" + (f == RigMap.Middle ? "Mid" : (f == RigMap.Pinky ? "Pinky" : unityF[f])) + j);
+                            break;
+                    }
+                    if (node >= 0) named.Add(node);
+                }
+                if (named.Count == 0) continue;
+                var eff = named.FindAll(x => si.Effective[x]);
+                if (eff.Count == 0) continue;
+                joints[f] = eff.ToArray();
+                var chain = RigMap.ChainFrom(si, named[named.Count - 1]);
+                var r = new List<int>(named);
+                for (int k = 1; k < chain.Count; k++) r.Add(chain[k]);
+                raw[f] = r;
+                source[f] = hp.Rig + " names";
+                found++;
+            }
+            return found;
+        }
+
+        // ------------------------------------------------------------------ look-at + foot IK config (#147)
+
+        /// <summary>Pick the active LookAtIk / FootIk configuration (first enabled component; a default one when only a
+        /// script drives it) and resolve its rig (cached per component + configuration).</summary>
+        private void SyncLookAtAndFootIk(ECS.GameEntity entity, AnimatorState state)
+        {
+            var skel = state.Skeleton;
+            ECS.Components.Animation.LookAtIk look = null;
+            ECS.Components.Animation.FootIk foot = null;
+            var comps = entity?.Components;
+            if (comps != null)
+            {
+                for (int i = 0; i < comps.Count; i++)
+                {
+                    if (look == null && comps[i] is ECS.Components.Animation.LookAtIk la && la.IsEnabled) look = la;
+                    if (foot == null && comps[i] is ECS.Components.Animation.FootIk fi && fi.IsEnabled) foot = fi;
+                }
+            }
+            if (look == null && (state.HasLookPoint || state.LookEntity != null))
+                look = state.DefaultLook ?? (state.DefaultLook = new ECS.Components.Animation.LookAtIk());
+            if (foot == null && state.FootWeightOverride > 0f)
+                foot = state.DefaultFoot ?? (state.DefaultFoot = new ECS.Components.Animation.FootIk());
+            state.LookCfg = look;
+            state.LookRig = look != null && skel != null ? GetLookRig(skel, look) : null;
+            state.FootCfg = foot;
+            state.FootRig = foot != null && skel != null ? GetFootRig(skel, foot) : null;
+            if (state.LookRig != null && !state.LookRig.Report.Ok) state.LookRig = null;
+            if (state.FootRig != null && !state.FootRig.Report.Ok) state.FootRig = null;
+        }
+
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<ECS.Components.Animation.LookAtIk, RigCacheEntry<LookAtRig>> _lookRigs =
+            new System.Runtime.CompilerServices.ConditionalWeakTable<ECS.Components.Animation.LookAtIk, RigCacheEntry<LookAtRig>>();
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<ECS.Components.Animation.FootIk, RigCacheEntry<FootIkRig>> _footRigs =
+            new System.Runtime.CompilerServices.ConditionalWeakTable<ECS.Components.Animation.FootIk, RigCacheEntry<FootIkRig>>();
+
+        private static readonly Func<SkeletonDef, ECS.Components.Animation.LookAtIk, LookAtRig> _buildLookRig = BuildLookRig;
+        private static readonly Func<SkeletonDef, ECS.Components.Animation.FootIk, FootIkRig> _buildFootRig = BuildFootRig;
+        private static LookAtRig GetLookRig(SkeletonDef skel, ECS.Components.Animation.LookAtIk la) => CachedRig(_lookRigs, la, skel, _buildLookRig);
+
+        private static FootIkRig GetFootRig(SkeletonDef skel, ECS.Components.Animation.FootIk fi) => CachedRig(_footRigs, fi, skel, _buildFootRig);
+
+        /// <summary>Head bone by preset naming (-1 when absent).</summary>
+        private static int PresetHead(SkeletonDef skel, ECS.Components.Animation.RigPreset preset)
+        {
+            switch (preset)
+            {
+                case ECS.Components.Animation.RigPreset.Mixamo:
+                    for (int i = 0; i < skel.Nodes.Length; i++)
+                    {
+                        string nm = skel.Nodes[i].Name ?? "";
+                        if (nm.EndsWith(":Head", StringComparison.Ordinal) || nm == "Head" || nm.EndsWith("_Head", StringComparison.Ordinal)) return i;
+                    }
+                    return -1;
+                case ECS.Components.Animation.RigPreset.Unreal: return FirstFound(skel, "head");
+                case ECS.Components.Animation.RigPreset.Rigify: return FirstFound(skel, "DEF-spine.006", "spine.006", "ORG-spine.006", "DEF-head", "head");
+                case ECS.Components.Animation.RigPreset.UnityGeneric: return FirstFound(skel, "Head", "J_Bip_C_Head", "Bip01 Head", "CC_Base_Head");
+            }
+            return -1;
+        }
+
+        private static LookAtRig BuildLookRig(SkeletonDef skel, ECS.Components.Animation.LookAtIk la)
+        {
+            var rig = new LookAtRig();
+            var rep = rig.Report;
+            var si = RigMap.Info(skel);
+            if (si == null) { rep.Notes.Add("no skeleton"); return rig; }
+            string how = "detected";
+            int head = -1;
+            if (!string.IsNullOrWhiteSpace(la.HeadBone))
+            {
+                head = RigMap.Find(skel, la.HeadBone);
+                if (head >= 0) how = "explicit"; else rep.Notes.Add("head bone '" + la.HeadBone.Trim() + "' not found — detecting");
+            }
+            if (head < 0 && la.Rig != ECS.Components.Animation.RigPreset.Auto && la.Rig != ECS.Components.Animation.RigPreset.Custom)
+            {
+                head = PresetHead(skel, la.Rig);
+                if (head >= 0) how = la.Rig + " names";
+            }
+            if (head < 0 && la.Rig != ECS.Components.Animation.RigPreset.Custom) { head = RigMap.FindHead(si, rep.Notes); how = "detected"; }
+            rig.Head = head;
+            if (head < 0)
+            {
+                rep.Lines.Add("Head: not found");
+                rep.Notes.Add("no head bone found — set Head bone");
+                return rig;
+            }
+
+            var neck = new List<int>();
+            var spine = new List<int>();
+            bool explicitNeck = !string.IsNullOrWhiteSpace(la.NeckBones), explicitSpine = !string.IsNullOrWhiteSpace(la.SpineBones);
+            if (explicitNeck) neck.AddRange(RigMap.FindList(skel, la.NeckBones, rep.Notes, "Neck"));
+            if (explicitSpine) spine.AddRange(RigMap.FindList(skel, la.SpineBones, rep.Notes, "Spine"));
+            if ((!explicitNeck || !explicitSpine) && la.Rig != ECS.Components.Animation.RigPreset.Custom)
+            {
+                var dn = new List<int>(); var ds = new List<int>();
+                RigMap.FindNeckAndSpine(si, head, dn, ds);
+                if (!explicitNeck) neck.AddRange(dn);
+                if (!explicitSpine) { ds.Reverse(); spine.AddRange(ds); }   // lowest first
+            }
+            // Chain lowest → head with shares; bones must be ancestors of the head to carry it.
+            var chain = new List<int>();
+            float sw = spine.Count > 0 ? la.SpineWeight / spine.Count : 0f, nw = neck.Count > 0 ? la.NeckWeight / neck.Count : 0f;
+            foreach (int b in spine) if (b != head && RigMap.IsAncestor(si, b, head) && !chain.Contains(b)) chain.Add(b);
+            foreach (int b in neck) if (b != head && RigMap.IsAncestor(si, b, head) && !chain.Contains(b)) chain.Add(b);
+            chain.Sort((a, b) => si.Depth[a].CompareTo(si.Depth[b]));
+            var shareSorted = new List<float>();
+            foreach (int b in chain) shareSorted.Add(spine.Contains(b) ? sw : nw);
+            chain.Add(head); shareSorted.Add(la.HeadWeight);
+            float total = 0f; foreach (var x in shareSorted) total += x;
+            if (total <= 1e-5f) { for (int i = 0; i < shareSorted.Count; i++) shareSorted[i] = 0f; shareSorted[shareSorted.Count - 1] = 1f; total = 1f; }
+            for (int i = 0; i < shareSorted.Count; i++) shareSorted[i] /= total;
+            // drop zero-share bones from the chain
+            var fc = new List<int>(); var fs = new List<float>();
+            for (int i = 0; i < chain.Count; i++) if (shareSorted[i] > 1e-5f) { fc.Add(chain[i]); fs.Add(shareSorted[i]); }
+            rig.Chain = fc.ToArray();
+            rig.Share = fs.ToArray();
+            rig.Ref = RigMap.Parent(si, rig.Chain[0]);
+
+            var frame = RigMap.ModelFrame(si);
+            Vector3 fwd = frame.Forward, up = frame.Up;
+            string fwdSrc = frame.Source;
+            switch (la.ForwardAxis)
+            {
+                case 1: fwd = Vector3.UnitZ; fwdSrc = "+Z (override)"; break;
+                case 2: fwd = -Vector3.UnitZ; fwdSrc = "-Z (override)"; break;
+                case 3: fwd = Vector3.UnitX; fwdSrc = "+X (override)"; break;
+                case 4: fwd = -Vector3.UnitX; fwdSrc = "-X (override)"; break;
+            }
+            fwd = RigMap.Perp(fwd, up);
+            fwd = fwd.LengthSquared() > 1e-8f ? Vector3.Normalize(fwd) : frame.Forward;
+            rig.FwdHeadLocal = ToLocalFrame(si, head, fwd);
+            rig.FwdRefLocal = rig.Ref >= 0 ? ToLocalFrame(si, rig.Ref, fwd) : fwd;
+            rig.UpRefLocal = rig.Ref >= 0 ? ToLocalFrame(si, rig.Ref, up) : up;
+
+            rep.Lines.Add("Head: " + RigMap.NameOf(si, head) + " (" + how + ")");
+            rep.Bones["Head"] = new[] { RigMap.NameOf(si, head) };
+            var neckNames = new List<string>(); var spineNames = new List<string>();
+            for (int i = 0; i < rig.Chain.Length - 1; i++)
+            {
+                string nm = RigMap.NameOf(si, rig.Chain[i]) + " " + (rig.Share[i] * 100f).ToString("0", System.Globalization.CultureInfo.InvariantCulture) + "%";
+                if (spine.Contains(rig.Chain[i])) spineNames.Add(RigMap.NameOf(si, rig.Chain[i])); else neckNames.Add(RigMap.NameOf(si, rig.Chain[i]));
+                rep.Lines.Add((spine.Contains(rig.Chain[i]) ? "Spine: " : "Neck: ") + nm);
+            }
+            rep.Bones["Neck"] = neckNames.ToArray();
+            rep.Bones["Spine"] = spineNames.ToArray();
+            rep.Lines.Add("Head share: " + (rig.Share[rig.Share.Length - 1] * 100f).ToString("0", System.Globalization.CultureInfo.InvariantCulture) + "%");
+            rep.Lines.Add("Face forward (model): " + Fmt(fwd) + " — " + fwdSrc);
+            rep.Ok = true;
+            return rig;
+        }
+
+        /// <summary>Model-space direction → a node's OWN local frame at bind pose.</summary>
+        private static Vector3 ToLocalFrame(RigMap.SkelInfo si, int node, Vector3 modelDir)
+        {
+            var q = Quaternion.Normalize(Quaternion.CreateFromRotationMatrix(NormalizeBasis(si.Bind[node])));
+            var v = Vector3.Transform(modelDir, Quaternion.Inverse(q));
+            return v.LengthSquared() > 1e-12f ? Vector3.Normalize(v) : modelDir;
+        }
+
+        private static int PresetFoot(SkeletonDef skel, ECS.Components.Animation.RigPreset preset, int side)
+        {
+            string L = side < 0 ? "L" : "R", l = side < 0 ? "l" : "r", Side = SideWord(side);
+            switch (preset)
+            {
+                case ECS.Components.Animation.RigPreset.Mixamo:
+                    for (int i = 0; i < skel.Nodes.Length; i++)
+                    {
+                        string nm = skel.Nodes[i].Name ?? "";
+                        if (nm.EndsWith(Side + "Foot", StringComparison.Ordinal)) return i;
+                    }
+                    return -1;
+                case ECS.Components.Animation.RigPreset.Unreal: return FirstFound(skel, "foot_" + l);
+                case ECS.Components.Animation.RigPreset.Rigify: return FirstFound(skel, "DEF-foot." + L, "foot." + L, "ORG-foot." + L);
+                case ECS.Components.Animation.RigPreset.UnityGeneric:
+                    return FirstFound(skel, Side + "Foot", Side + " Foot", Side + "_Foot", "Foot_" + L, "Foot." + L, "J_Bip_" + L + "_Foot",
+                        "Bip01 " + L + " Foot", "CC_Base_" + L + "_Foot", l + "Foot");
+            }
+            return -1;
+        }
+
+        private static FootIkRig BuildFootRig(SkeletonDef skel, ECS.Components.Animation.FootIk fi)
+        {
+            var rig = new FootIkRig();
+            var rep = rig.Report;
+            var si = RigMap.Info(skel);
+            if (si == null) { rep.Notes.Add("no skeleton"); return rig; }
+            var frame = RigMap.ModelFrame(si);
+            rig.UpBind = frame.Up;
+            string[] explicitNames = { fi.LeftFoot, fi.RightFoot };
+            for (int k = 0; k < 2; k++)
+            {
+                int side = k == 0 ? -1 : 1;
+                string how = "detected";
+                int foot = -1;
+                if (!string.IsNullOrWhiteSpace(explicitNames[k]))
+                {
+                    foot = RigMap.Find(skel, explicitNames[k]);
+                    if (foot >= 0) how = "explicit"; else rep.Notes.Add(SideWord(side) + " foot '" + explicitNames[k].Trim() + "' not found — detecting");
+                }
+                if (foot < 0 && fi.Rig != ECS.Components.Animation.RigPreset.Auto && fi.Rig != ECS.Components.Animation.RigPreset.Custom)
+                {
+                    foot = PresetFoot(skel, fi.Rig, side);
+                    if (foot >= 0) how = fi.Rig + " names";
+                }
+                if (foot < 0 && fi.Rig != ECS.Components.Animation.RigPreset.Custom) foot = RigMap.FindFoot(si, side);
+                int mid, root;
+                if (foot >= 0 && RigMap.ResolveLimb(si, foot, out mid, out root))
+                {
+                    rig.Foot[k] = foot; rig.Knee[k] = mid; rig.Hip[k] = root;
+                    // The floor the animation assumes: the model origin plane when the feet stand on it (the usual
+                    // export — toe JOINTS sit a little above the sole mesh, so the lowest joint is not the floor), else
+                    // the lowest joint of the foot (models whose origin is elsewhere, e.g. at the hips).
+                    float ankleUp = Vector3.Dot(RigMap.Pos(si, foot), frame.Up);
+                    float lowest = ankleUp - RigMap.FootHeight(si, foot, frame.Up);
+                    float legLen = Vector3.Distance(RigMap.Pos(si, root), RigMap.Pos(si, mid)) + Vector3.Distance(RigMap.Pos(si, mid), RigMap.Pos(si, foot));
+                    rig.SoleUp[k] = (lowest >= -0.05f * legLen && lowest <= 0.25f * legLen) ? Math.Min(lowest, 0f) : lowest;
+                    rig.AnkleHeight[k] = ankleUp - rig.SoleUp[k];
+                    rep.Lines.Add(SideWord(side) + " leg: " + RigMap.NameOf(si, root) + " → " + RigMap.NameOf(si, mid) + " → " +
+                                  RigMap.NameOf(si, foot) + " (" + how + ")");
+                    rep.Bones[SideWord(side) + "Foot"] = new[] { RigMap.NameOf(si, foot) };
+                    rep.Bones[SideWord(side) + "Knee"] = new[] { RigMap.NameOf(si, mid) };
+                    rep.Bones[SideWord(side) + "Hip"] = new[] { RigMap.NameOf(si, root) };
+                }
+                else rep.Lines.Add(SideWord(side) + " leg: not found");
+            }
+            int pelvis = -1;
+            if (!string.IsNullOrWhiteSpace(fi.PelvisBone))
+            {
+                pelvis = RigMap.Find(skel, fi.PelvisBone);
+                if (pelvis < 0) rep.Notes.Add("pelvis '" + fi.PelvisBone.Trim() + "' not found — detecting");
+            }
+            if (pelvis < 0 && rig.Hip[0] >= 0 && rig.Hip[1] >= 0) pelvis = RigMap.Lca(si, rig.Hip[0], rig.Hip[1]);
+            rig.Pelvis = pelvis;
+            if (pelvis >= 0) { rep.Lines.Add("Pelvis: " + RigMap.NameOf(si, pelvis)); rep.Bones["Pelvis"] = new[] { RigMap.NameOf(si, pelvis) }; }
+            if (rig.Foot[0] >= 0 || rig.Foot[1] >= 0)
+            {
+                float h = Math.Max(rig.AnkleHeight[0], rig.AnkleHeight[1]);
+                rep.Lines.Add("Ankle height (model units): " + h.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
+                rep.Ok = true;
+            }
+            else rep.Notes.Add("no feet found — set Left/Right foot");
+            return rig;
         }
 
         private void SyncIkChains(ECS.GameEntity entity, AnimatorState state)
@@ -761,12 +1525,13 @@ namespace Editor.Core.Animation
                     var ik = comps[i] as ECS.Components.Animation.TwoBoneIk;
                     if (ik == null || !ik.IsEnabled || ik.Weight <= 0.001f) continue;
                     if (string.IsNullOrEmpty(ik.TipBone) || string.IsNullOrEmpty(ik.TargetBone)) continue;
-                    int tip = skel.FindNode(ik.TipBone);
-                    int target = skel.FindNode(ik.TargetBone);
+                    int tip = FindBone(skel, ik.TipBone);
+                    int target = FindBone(skel, ik.TargetBone);
                     if (tip < 0 || target < 0) continue;
-                    int mid = skel.Nodes[tip].Parent;
-                    int root = mid >= 0 ? skel.Nodes[mid].Parent : -1;
-                    if (root < 0) continue;
+                    // mid = the joint above the tip, root = the joint above that (parent / grandparent on plain rigs;
+                    // in-chain twist helpers and split segments like Rigify "forearm.L.001" are skipped).
+                    int mid, root;
+                    if (!RigMap.ResolveLimb(RigMap.Info(skel), tip, out mid, out root)) continue;
 
                     // Offset rotation uses the SAME euler convention as the socket system (engine ZXY),
                     // so a captured offset round-trips exactly.
@@ -824,7 +1589,7 @@ namespace Editor.Core.Animation
             if (entity == null || string.IsNullOrEmpty(tipBone)) return;
             var state = GetOrCreateState(entity);
             if (state?.Skeleton == null) return;
-            int node = state.Skeleton.FindNode(tipBone);
+            int node = FindBone(state.Skeleton, tipBone);
             if (node < 0) return;
             if (state.IkWorldTargets == null) state.IkWorldTargets = new Dictionary<int, IkWorldTarget>();
             if (!state.IkWorldTargets.TryGetValue(node, out var wt)) state.IkWorldTargets[node] = wt = new IkWorldTarget();
@@ -840,8 +1605,17 @@ namespace Editor.Core.Animation
             if (entity == null) return;
             if (!_states.TryGetValue(entity.Id, out var state) || state.IkWorldTargets == null) return;
             if (string.IsNullOrEmpty(tipBone)) { state.IkWorldTargets.Clear(); return; }
-            int node = state.Skeleton != null ? state.Skeleton.FindNode(tipBone) : -1;
+            int node = state.Skeleton != null ? FindBone(state.Skeleton, tipBone) : -1;
             if (node >= 0) state.IkWorldTargets.Remove(node);
+        }
+
+        /// <summary>Bone lookup of the IK APIs: exact name first, then case- and namespace-insensitive
+        /// ("LeftHand" finds "mixamorig:LeftHand").</summary>
+        private static int FindBone(SkeletonDef skel, string name)
+        {
+            if (skel == null || string.IsNullOrEmpty(name)) return -1;
+            int i = skel.FindNode(name);
+            return i >= 0 ? i : RigMap.Find(skel, name);
         }
 
         /// <summary>Edit-mode live preview + runtime weight changes: re-sync and re-pose one entity's
@@ -855,9 +1629,201 @@ namespace Editor.Core.Animation
             state.IkCapturedGrips = null;   // config changed -> recapture the auto-grip from the fresh pose
             SyncIkChains(entity, state);
             SyncHandPoses(entity, state);
+            SyncLookAtAndFootIk(entity, state);
             HasActiveAnimators = true;
-            state.Palette = EvaluateStatePalette(state);
+            // Edit-mode preview (nothing steps the clock): smoothed look-at jumps straight to its target.
+            state.SnapSmoothing = !ClockRunning(state);
+            try { state.Palette = EvaluateStatePalette(state); }
+            finally { state.SnapSmoothing = false; }
             Services.SceneRenderService.RuntimeDirty = true;   // GameHost/submit-once re-submit contract
+        }
+
+        /// <summary>Inspector preview: re-pose an entity whose animator is NOT being stepped by a running clock (edit mode),
+        /// so a card can show the authored pose as soon as it opens — without resetting live IK state (auto-grip capture,
+        /// smoothing) of an entity that is selected during Play.</summary>
+        public void RefreshPreview(ECS.GameEntity entity)
+        {
+            if (entity == null) return;
+            AnimatorState st;
+            if (_states.TryGetValue(entity.Id, out st) && ClockRunning(st)) return;
+            RefreshIk(entity);
+        }
+
+        /// <summary>True while a game / preview clock is stepping this animator (stepped within the last half second).</summary>
+        private static bool ClockRunning(AnimatorState st)
+            => st != null && st.StepCount > 0 && unchecked(Environment.TickCount - st.LastStepTick) < 500;
+
+        // ------------------------------------------------------------------ script API: hand poses / look-at / foot IK (#147)
+
+        /// <summary>Script: pose a hand from a preset ("Open", "Relaxed", "Fist", "Trigger", "Grip", "Point"), blended in
+        /// over <paramref name="blendSeconds"/>. Overrides the curls/weight of that hand's HandPose component at runtime
+        /// (the authored component is untouched); works without a component too (auto-detected rig). False when the
+        /// entity has no skeleton or the preset name is unknown.</summary>
+        public bool SetHandPosePreset(ECS.GameEntity entity, ECS.Components.Animation.HandSide side, string preset, float weight, float blendSeconds)
+        {
+            ECS.Components.Animation.HandPosePreset p;
+            if (!TryParsePreset(preset, out p)) return false;
+            ECS.Vector3 i, m, r, k, t; float s;
+            ECS.Components.Animation.HandPose.GetPreset(p, out i, out m, out r, out k, out t, out s);
+            return SetHandPoseCurls(entity, side, new[] { i, m, r, k, t }, s, weight, blendSeconds);
+        }
+
+        /// <summary>Script: pose a hand with explicit curls (degrees per joint: index, middle, ring, pinky, thumb).</summary>
+        public bool SetHandPoseCurls(ECS.GameEntity entity, ECS.Components.Animation.HandSide side, ECS.Vector3[] curls, float spread, float weight, float blendSeconds)
+        {
+            if (entity == null || curls == null || curls.Length < 5) return false;
+            var state = GetOrCreateState(entity);
+            if (state?.Skeleton == null) return false;
+            int si = side == ECS.Components.Animation.HandSide.Left ? 0 : 1;
+            if (state.ScriptHands == null) state.ScriptHands = new ScriptHandPose[2];
+            var cur = state.ScriptHands[si];
+            var next = new ScriptHandPose();
+            // Blend from what the hand shows NOW: the running script pose, else the component's authored pose.
+            ECS.Components.Animation.HandPose comp = null;
+            foreach (var c in entity.Components) { var h = c as ECS.Components.Animation.HandPose; if (h != null && h.IsEnabled && h.Side == side) { comp = h; break; } }
+            for (int f = 0; f < 5; f++)
+            {
+                next.To[f] = ToNum(curls[f]);
+                next.From[f] = cur != null ? cur.Curl(f) : (comp != null ? ToNum(comp.CurlOf(f)) : next.To[f]);
+            }
+            next.ToSpread = spread;
+            next.FromSpread = cur != null ? cur.Spread : (comp != null ? comp.Spread : spread);
+            next.ToWeight = weight < 0f ? 0f : (weight > 1f ? 1f : weight);
+            next.FromWeight = cur != null ? cur.Weight : (comp != null ? comp.Weight : 0f);
+            next.Duration = blendSeconds > 0f ? blendSeconds : 0f;
+            state.ScriptHands[si] = next;
+            SyncHandPoses(entity, state);
+            HasActiveAnimators = true;
+            if (state.Palette != null || state.ComponentAdditive != null) state.Palette = EvaluateStatePalette(state);
+            return true;
+        }
+
+        /// <summary>Script: drop the runtime hand pose (null side = both) — the HandPose component's authored pose applies again.</summary>
+        public void ClearHandPose(ECS.GameEntity entity, ECS.Components.Animation.HandSide? side)
+        {
+            if (entity == null || !_states.TryGetValue(entity.Id, out var state) || state.ScriptHands == null) return;
+            if (side == null) { state.ScriptHands[0] = state.ScriptHands[1] = null; }
+            else state.ScriptHands[side == ECS.Components.Animation.HandSide.Left ? 0 : 1] = null;
+            SyncHandPoses(entity, state);
+            HasActiveAnimators = true;
+            if (state.Palette != null) state.Palette = EvaluateStatePalette(state);
+        }
+
+        public static bool TryParsePreset(string name, out ECS.Components.Animation.HandPosePreset preset)
+        {
+            preset = ECS.Components.Animation.HandPosePreset.Relaxed;
+            if (string.IsNullOrWhiteSpace(name)) return false;
+            return Enum.TryParse(name.Trim(), true, out preset) && Enum.IsDefined(typeof(ECS.Components.Animation.HandPosePreset), preset);
+        }
+
+        /// <summary>Script: look at a WORLD point until cleared (overrides the LookAtIk component's target entity;
+        /// works without a component with default limits).</summary>
+        public void SetLookAtPoint(ECS.GameEntity entity, Vector3 worldPoint)
+        {
+            if (entity == null) return;
+            var state = GetOrCreateState(entity);
+            if (state?.Skeleton == null) return;
+            state.HasLookPoint = true; state.LookPoint = worldPoint; state.LookEntity = null;
+            SyncLookAtAndFootIk(entity, state);
+            HasActiveAnimators = true;
+        }
+
+        /// <summary>Script: look at another entity (its head bone when it has a skeleton, else its origin), tracked every frame.</summary>
+        public void SetLookAtEntity(ECS.GameEntity entity, ECS.GameEntity target)
+        {
+            if (entity == null) return;
+            var state = GetOrCreateState(entity);
+            if (state?.Skeleton == null) return;
+            state.HasLookPoint = false; state.LookEntity = target;
+            SyncLookAtAndFootIk(entity, state);
+            HasActiveAnimators = true;
+        }
+
+        /// <summary>Script: back to the component's own target (or no look-at without a component).</summary>
+        public void ClearLookAtTarget(ECS.GameEntity entity)
+        {
+            if (entity == null || !_states.TryGetValue(entity.Id, out var state)) return;
+            state.HasLookPoint = false; state.LookEntity = null;
+            SyncLookAtAndFootIk(entity, state);
+        }
+
+        /// <summary>Script: runtime look-at weight (0..1, smoothed); negative = back to the component's weight.</summary>
+        public void SetLookAtWeight(ECS.GameEntity entity, float weight)
+        {
+            if (entity == null) return;
+            var state = GetOrCreateState(entity);
+            if (state == null) return;
+            state.LookWeightOverride = weight < 0f ? -1f : (weight > 1f ? 1f : weight);
+            HasActiveAnimators = true;
+        }
+
+        /// <summary>Script: runtime foot-IK weight (0..1); negative = back to the component's weight. Enables foot IK with
+        /// auto-detected legs on a character without a FootIk component.</summary>
+        public void SetFootIkWeight(ECS.GameEntity entity, float weight)
+        {
+            if (entity == null) return;
+            var state = GetOrCreateState(entity);
+            if (state?.Skeleton == null) return;
+            state.FootWeightOverride = weight < 0f ? -1f : (weight > 1f ? 1f : weight);
+            SyncLookAtAndFootIk(entity, state);
+            HasActiveAnimators = true;
+        }
+
+        // ------------------------------------------------------------------ inspector / test API (#147)
+
+        /// <summary>What a HandPose resolves to on the entity's skeleton (hand, finger joints, palm normal, notes).</summary>
+        public RigReport DescribeHandPose(ECS.GameEntity entity, ECS.Components.Animation.HandPose hp)
+        {
+            var skel = SkeletonOf(entity);
+            if (skel == null || hp == null) return NoSkeleton();
+            if (hp.IsLegacyConfiguration && string.IsNullOrWhiteSpace(hp.HandBone) && !HasExplicitChains(hp))
+            {
+                // Legacy components pose by the Mixamo pattern; report what that pattern finds.
+                var rep = new RigReport();
+                string prefix = LegacyPrefix(skel, hp);
+                int found = 0;
+                for (int f = 0; f < 5; f++)
+                {
+                    var names = new List<string>();
+                    for (int j = 1; j <= 3; j++) { string n = hp.BoneName(prefix, ECS.Components.Animation.HandPose.Fingers[f], j); if (skel.FindNode(n) >= 0) names.Add(n); }
+                    if (names.Count > 0) { found++; rep.Bones[RigMap.FingerNames[f]] = names.ToArray(); }
+                    rep.Lines.Add(RigMap.FingerNames[f] + ": " + (names.Count > 0 ? string.Join(", ", names.ToArray()) : "-") + " (Mixamo pattern)");
+                }
+                rep.Lines.Insert(0, "Legacy mode: Mixamo pattern + manual axis " + "XYZ"[Math.Max(0, Math.Min(2, hp.CurlAxis))] + " (sign " + hp.CurlSign.ToString("0", System.Globalization.CultureInfo.InvariantCulture) + ")");
+                rep.Ok = found > 0;
+                if (!rep.Ok) rep.Notes.Add("the Mixamo pattern finds no bones on this skeleton — switch Rig to Auto");
+                return rep;
+            }
+            return GetHandRig(skel, hp).Report;
+        }
+
+        /// <summary>What a LookAtIk resolves to on the entity's skeleton.</summary>
+        public RigReport DescribeLookAt(ECS.GameEntity entity, ECS.Components.Animation.LookAtIk la)
+        {
+            var skel = SkeletonOf(entity);
+            return skel == null || la == null ? NoSkeleton() : GetLookRig(skel, la).Report;
+        }
+
+        /// <summary>What a FootIk resolves to on the entity's skeleton.</summary>
+        public RigReport DescribeFootIk(ECS.GameEntity entity, ECS.Components.Animation.FootIk fi)
+        {
+            var skel = SkeletonOf(entity);
+            return skel == null || fi == null ? NoSkeleton() : GetFootRig(skel, fi).Report;
+        }
+
+        private static RigReport NoSkeleton()
+        {
+            var r = new RigReport();
+            r.Notes.Add("no skinned model on this entity (or its children) — the component needs an animated skeleton");
+            return r;
+        }
+
+        /// <summary>The skeleton an Animator owner animates (its own model or the first skinned descendant).</summary>
+        public SkeletonDef SkeletonOf(ECS.GameEntity entity)
+        {
+            if (entity == null) return null;
+            if (_states.TryGetValue(entity.Id, out var st) && st.Skeleton != null) return st.Skeleton;
+            return ResolveSkeletonFor(entity);
         }
 
         /// <summary>
@@ -1194,6 +2160,14 @@ namespace Editor.Core.Animation
             // the EXACT pose the skinning used — no second clip sample, no drift.
             var worlds = ComposeWorlds(skel, t, r, s);
 
+            // Rig-aware procedural layers (#147), in dependency order: the feet plant on the ground (legs + pelvis),
+            // the head/neck/spine turn to the look target, THEN the arm IK below solves the hands on that final torso.
+            // Foot IK only while the clock runs (play): it needs the gameplay collision world.
+            if (state.FootCfg != null && state.FootRig != null && state.StepCount > 0)
+                worlds = GuardedLayer(skel, t, r, s, worlds, "Foot IK", w => ApplyFootIk(state, skel, t, r, s, w));
+            if (state.LookCfg != null && state.LookRig != null)
+                worlds = GuardedLayer(skel, t, r, s, worlds, "Look-At IK", w => ApplyLookAt(state, skel, t, r, s, w));
+
             // Runtime two-bone IK (#179): pull limb chains to intra-skeleton targets (support hand ->
             // weapon grip). Runs LAST so it corrects the final blended pose; each solve edits local
             // rotations, so recompose afterwards — sockets and skinning then see the IK'd pose.
@@ -1282,6 +2256,358 @@ namespace Editor.Core.Animation
                 }
             }
             return pal;
+        }
+
+        // ------------------------------------------------------------------ look-at + foot IK solvers (#147)
+
+        private static bool _layerWarned;
+
+        /// <summary>Run one procedural layer with a rollback guard: a throw or a non-finite rotation/translation restores
+        /// the pose from before the layer (one NaN in a palette hides the whole mesh).</summary>
+        private static Matrix4x4[] GuardedLayer(SkeletonDef skel, Vector3[] t, Quaternion[] r, Vector3[] s, Matrix4x4[] worlds,
+            string what, Func<Matrix4x4[], Matrix4x4[]> layer)
+        {
+            var tb = (Vector3[])t.Clone();
+            var rb = (Quaternion[])r.Clone();
+            Matrix4x4[] result = null;
+            string error = null;
+            try { result = layer(worlds) ?? worlds; }
+            catch (Exception ex) { error = ex.Message; }
+            bool bad = result == null;
+            if (!bad)
+                for (int i = 0; i < r.Length; i++)
+                    if (!IsFinite(r[i]) || !IsFinite(t[i].X) || !IsFinite(t[i].Y) || !IsFinite(t[i].Z)) { bad = true; break; }
+            if (!bad) return result;
+            Array.Copy(tb, t, t.Length);
+            Array.Copy(rb, r, r.Length);
+            if (!_layerWarned)
+            {
+                _layerWarned = true;
+                Services.ConsoleService.Instance?.LogWarning(what + ": " + (error ?? "non-finite solve") + " — layer skipped this frame.");
+            }
+            return ComposeWorlds(skel, t, r, s);
+        }
+
+        private const float D2Rf = (float)(Math.PI / 180.0);
+
+        private static Quaternion QuatOfWorld(Matrix4x4 m) => Quaternion.Normalize(Quaternion.CreateFromRotationMatrix(NormalizeBasis(m)));
+
+        private static float WrapPi(float a)
+        {
+            const float TwoPi = (float)(Math.PI * 2.0);
+            while (a > Math.PI) a -= TwoPi;
+            while (a < -Math.PI) a += TwoPi;
+            return a;
+        }
+
+        /// <summary>Rotation that turns the direction (yaw0, pitch0) into (yaw1, pitch1) in the frame F (forward), L (left),
+        /// U (up): pitch back to the horizon, yaw around U, pitch up again — never adds roll to the head.</summary>
+        private static Quaternion YawPitchDelta(Vector3 F, Vector3 L, Vector3 U, float yaw0, float pitch0, float yaw1, float pitch1)
+        {
+            Vector3 h0 = F * (float)Math.Cos(yaw0) + L * (float)Math.Sin(yaw0);
+            Vector3 h1 = F * (float)Math.Cos(yaw1) + L * (float)Math.Sin(yaw1);
+            Vector3 a0 = Vector3.Cross(h0, U), a1 = Vector3.Cross(h1, U);
+            if (a0.LengthSquared() < 1e-10f || a1.LengthSquared() < 1e-10f) return Quaternion.Identity;
+            var qa = Quaternion.CreateFromAxisAngle(Vector3.Normalize(a0), -pitch0);
+            var qb = Quaternion.CreateFromAxisAngle(U, yaw1 - yaw0);
+            var qc = Quaternion.CreateFromAxisAngle(Vector3.Normalize(a1), pitch1);
+            return Quaternion.Normalize(qc * qb * qa);   // qa first, then qb, then qc
+        }
+
+        /// <summary>
+        /// Look-at: the target direction is measured against the TORSO (the parent of the lowest turning bone) as yaw/pitch,
+        /// clamped to the limits and smoothed; the rotation from the animated head direction to it (blended by the weight)
+        /// is shared out over spine → neck → head, each bone turning its share around the same axis, so the head ends up
+        /// facing the target while the animation's own motion stays underneath.
+        /// </summary>
+        private Matrix4x4[] ApplyLookAt(AnimatorState state, SkeletonDef skel, Vector3[] t, Quaternion[] r, Vector3[] s, Matrix4x4[] worlds)
+        {
+            var cfg = state.LookCfg; var rig = state.LookRig;
+            int n = skel.Nodes.Length;
+            if (rig.Head < 0 || rig.Head >= n || rig.Chain.Length == 0) return worlds;
+
+            Vector3 targetModel;
+            bool have = TryLookTargetModel(state, cfg, out targetModel);
+            float baseW = state.LookWeightOverride >= 0f ? state.LookWeightOverride : cfg.Weight;
+
+            Quaternion qRef = rig.Ref >= 0 && rig.Ref < n ? QuatOfWorld(worlds[rig.Ref]) : Quaternion.Identity;
+            Vector3 F = Vector3.Transform(rig.FwdRefLocal, qRef), U = Vector3.Transform(rig.UpRefLocal, qRef);
+            Vector3 L = Vector3.Cross(U, F);
+            if (L.LengthSquared() < 1e-8f) return worlds;
+            L = Vector3.Normalize(L); U = Vector3.Normalize(U); F = Vector3.Normalize(Vector3.Cross(L, U));
+
+            Vector3 headPos = worlds[rig.Head].Translation;
+            float yawT = 0f, pitchT = 0f;
+            if (have)
+            {
+                Vector3 d = targetModel - headPos;
+                if (d.LengthSquared() > 1e-10f)
+                {
+                    d = Vector3.Normalize(d);
+                    yawT = (float)Math.Atan2(Vector3.Dot(d, L), Vector3.Dot(d, F));
+                    pitchT = (float)Math.Asin(ClampF(Vector3.Dot(d, U), -1f, 1f));
+                    float my = cfg.MaxYaw * D2Rf, mp = cfg.MaxPitch * D2Rf;
+                    yawT = ClampF(yawT, -my, my);
+                    pitchT = ClampF(pitchT, -mp, mp);
+                }
+                else have = false;
+            }
+            float wantW = have ? baseW : 0f;
+
+            var sm = state.LookSmooth ?? (state.LookSmooth = new LookSmoothState());
+            if (!sm.Init || state.SnapSmoothing)
+            {
+                if (have || !sm.Init) { sm.Yaw = yawT; sm.Pitch = pitchT; }
+                sm.W = wantW;
+                sm.Init = true;
+            }
+            else if (state.SmoothDt > 0f)
+            {
+                float a = cfg.Smoothing <= 1e-4f ? 1f : 1f - (float)Math.Exp(-state.SmoothDt / cfg.Smoothing);
+                if (have) { sm.Yaw += (yawT - sm.Yaw) * a; sm.Pitch += (pitchT - sm.Pitch) * a; }
+                sm.W += (wantW - sm.W) * a;
+            }
+            float w = sm.W;
+            if (w <= 0.001f) return worlds;
+
+            Vector3 fh = Vector3.Transform(rig.FwdHeadLocal, QuatOfWorld(worlds[rig.Head]));
+            float yaw0 = (float)Math.Atan2(Vector3.Dot(fh, L), Vector3.Dot(fh, F));
+            float pitch0 = (float)Math.Asin(ClampF(Vector3.Dot(fh, U), -1f, 1f));
+            float yaw1 = yaw0 + WrapPi(sm.Yaw - yaw0) * w;
+            float pitch1 = pitch0 + (sm.Pitch - pitch0) * w;
+            var q = YawPitchDelta(F, L, U, yaw0, pitch0, yaw1, pitch1);
+            if (!IsFinite(q)) return worlds;
+            for (int k = 0; k < rig.Chain.Length; k++)
+            {
+                int b = rig.Chain[k];
+                if (b < 0 || b >= n || rig.Share[k] <= 0f) continue;
+                ApplyWorldRotationDelta(skel, r, worlds, b, Quaternion.Slerp(Quaternion.Identity, q, rig.Share[k]));
+                worlds = ComposeWorlds(skel, t, r, s);
+            }
+            return worlds;
+        }
+
+        /// <summary>The look target in the rig's MODEL space: a script point, a script entity, or the component's target
+        /// entity (by name or id). Entities with a skeleton are looked at on their head bone.</summary>
+        private bool TryLookTargetModel(AnimatorState state, ECS.Components.Animation.LookAtIk cfg, out Vector3 model)
+        {
+            model = Vector3.Zero;
+            Vector3 world;
+            if (state.HasLookPoint) world = state.LookPoint;
+            else
+            {
+                var target = state.LookEntity;
+                if (target == null && !string.IsNullOrWhiteSpace(cfg.TargetEntity)) target = ResolveEntityRef(state, cfg.TargetEntity);
+                if (target == null || target == state.Entity) return false;
+                world = EntityLookPoint(target) + new Vector3(cfg.TargetOffset.X, cfg.TargetOffset.Y, cfg.TargetOffset.Z);
+            }
+            var meshEntity = FindSkinnedMeshEntity(state.Entity) ?? state.Entity;
+            Matrix4x4 inv;
+            if (!Matrix4x4.Invert(BoneSocketService.EntityWorld(meshEntity), out inv)) return false;
+            model = Vector3.Transform(world, inv);
+            return IsFinite(model.X) && IsFinite(model.Y) && IsFinite(model.Z);
+        }
+
+        /// <summary>World point to look at on an entity: its head bone when it is an animated character, else its origin.</summary>
+        private Vector3 EntityLookPoint(ECS.GameEntity target)
+        {
+            SkeletonDef tsk; Matrix4x4[] tw;
+            var owner = target;
+            // The Animator may sit on the entity or an ancestor (submesh children); look for it upward and downward.
+            if (owner.GetComponent<ECS.Components.Animation.Animator>() == null)
+            {
+                for (var p = target.Parent; p != null; p = p.Parent)
+                    if (p.GetComponent<ECS.Components.Animation.Animator>() != null) { owner = p; break; }
+            }
+            if (owner.GetComponent<ECS.Components.Animation.Animator>() != null && TryGetNodeWorlds(owner, out tsk, out tw))
+            {
+                int head = RigMap.HeadOf(RigMap.Info(tsk));
+                if (head >= 0 && head < tw.Length)
+                {
+                    var meshEntity = FindSkinnedMeshEntity(owner) ?? owner;
+                    return Vector3.Transform(tw[head].Translation, BoneSocketService.EntityWorld(meshEntity));
+                }
+            }
+            return BoneSocketService.EntityWorld(target).Translation;
+        }
+
+        /// <summary>Resolve a component's entity reference (id or name) in the entity's scene; cached per state.</summary>
+        private ECS.GameEntity ResolveEntityRef(AnimatorState state, string reference)
+        {
+            if (state.LookRefName == reference && state.LookRefEntity != null && --state.LookRefTtl > 0) return state.LookRefEntity;
+            state.LookRefName = reference;
+            state.LookRefTtl = 60;
+            state.LookRefEntity = null;
+            var root = state.Entity;
+            while (root != null && root.Parent != null) root = root.Parent;
+            var scene = (root != null ? root.Scene : null) ?? state.Entity.Scene ?? Data.ProjectData.Current?.ActiveScene;
+            Guid id;
+            bool byId = Guid.TryParse(reference.Trim(), out id);
+            string name = reference.Trim();
+            ECS.GameEntity found = null;
+            Action<ECS.GameEntity> walk = null;
+            walk = e =>
+            {
+                if (found != null || e == null) return;
+                if (byId ? e.Id == id : string.Equals(e.Name, name, StringComparison.Ordinal)) { found = e; return; }
+                if (e.Children != null) foreach (var c in e.Children) walk(c);
+            };
+            if (scene?.Entities != null) foreach (var e in scene.Entities) { walk(e); if (found != null) break; }
+            if (found == null && root != null) walk(root);
+            state.LookRefEntity = found;
+            return found;
+        }
+
+        /// <summary>
+        /// Foot IK: per foot a ray straight down through the gameplay collision world (the character's own colliders
+        /// skipped) finds the ground; its height relative to the floor the animation assumes under that foot moves the
+        /// foot target up/down (keeping the animated lift), the pelvis drops by the lowest (negative) offset so that foot
+        /// can reach, each leg is solved with the two-bone solver (the animation's knee plane kept), and a planted foot
+        /// tilts to the ground normal. Offsets are smoothed; airborne characters (both feet high) fade it out.
+        /// </summary>
+        private Matrix4x4[] ApplyFootIk(AnimatorState state, SkeletonDef skel, Vector3[] t, Quaternion[] r, Vector3[] s, Matrix4x4[] worlds)
+        {
+            var cfg = state.FootCfg; var rig = state.FootRig;
+            float w = state.FootWeightOverride >= 0f ? state.FootWeightOverride : cfg.Weight;
+            if (w <= 0.001f || !Services.Physics.CollisionService.IsBuilt) return worlds;
+            int n = skel.Nodes.Length;
+            var meshEntity = FindSkinnedMeshEntity(state.Entity) ?? state.Entity;
+            Matrix4x4 meshWorld = BoneSocketService.EntityWorld(meshEntity), inv;
+            if (!Matrix4x4.Invert(meshWorld, out inv)) return worlds;
+            Vector3 upW = Vector3.UnitY;
+            Vector3 upRaw = Vector3.TransformNormal(upW, inv);
+            float modelPerMeter = upRaw.Length();
+            if (modelPerMeter < 1e-8f) return worlds;
+            Vector3 upM = upRaw / modelPerMeter;
+            float maxStep = cfg.MaxStep;
+
+            var desired = new float[2]; var normals = new Vector3[2]; var have = new bool[2];
+            var ankleW = new Vector3[2]; var lift = new float[2];
+            float minLift = float.MaxValue;
+            for (int k = 0; k < 2; k++)
+            {
+                int foot = rig.Foot[k];
+                if (foot < 0 || foot >= n) continue;
+                Vector3 aM = worlds[foot].Translation;
+                Vector3 aW = Vector3.Transform(aM, meshWorld);
+                float fh = cfg.FootHeight >= 0f ? cfg.FootHeight : rig.AnkleHeight[k] / modelPerMeter;
+                Vector3 soleM = aM - rig.UpBind * (Vector3.Dot(aM, rig.UpBind) - rig.SoleUp[k]);   // floor under the foot
+                float g0 = Vector3.Transform(soleM, meshWorld).Y;
+                lift[k] = aW.Y - fh - g0;
+                minLift = Math.Min(minLift, lift[k]);
+                ankleW[k] = aW;
+                Vector3 origin = new Vector3(aW.X, Math.Max(aW.Y, g0 + fh) + cfg.RayHeight, aW.Z);
+                float maxDist = origin.Y - (g0 - maxStep);
+                Vector3 hp, hn;
+                if (GroundRay(state.Entity, origin, maxDist, cfg.GroundLayers, out hp, out hn))
+                {
+                    desired[k] = ClampF(hp.Y - g0, -maxStep, maxStep);
+                    normals[k] = hn;
+                    have[k] = true;
+                }
+            }
+            // Airborne (both feet well above their floor): no planting.
+            float grounded = minLift == float.MaxValue ? 0f : 1f - ClampF((minLift - 0.1f) / 0.2f, 0f, 1f);
+
+            float pelvisWant = 0f;
+            if (cfg.AdjustPelvis)
+                for (int k = 0; k < 2; k++) if (have[k]) pelvisWant = Math.Min(pelvisWant, desired[k]);
+
+            var sm = state.FootSmooth ?? (state.FootSmooth = new FootSmoothState());
+            float a = (!sm.Init || state.SnapSmoothing) ? 1f
+                    : (state.SmoothDt > 0f ? (cfg.Smoothing <= 1e-4f ? 1f : 1f - (float)Math.Exp(-state.SmoothDt / cfg.Smoothing)) : 0f);
+            for (int k = 0; k < 2; k++)
+            {
+                sm.Offset[k] += ((have[k] ? desired[k] : 0f) - sm.Offset[k]) * a;
+                Vector3 nt = have[k] ? normals[k] : upW;
+                var nn = Vector3.Lerp(sm.Normal[k], nt, a);
+                sm.Normal[k] = nn.LengthSquared() > 1e-8f ? Vector3.Normalize(nn) : upW;
+            }
+            sm.Pelvis += (pelvisWant - sm.Pelvis) * a;
+            sm.Init = true;
+
+            float wEff = w * grounded;
+            if (wEff <= 0.001f) return worlds;
+
+            // Pelvis down (model-space displacement → the pelvis parent's local frame).
+            if (rig.Pelvis >= 0 && rig.Pelvis < n && Math.Abs(sm.Pelvis) > 1e-5f)
+            {
+                Vector3 deltaM = upM * (sm.Pelvis * wEff * modelPerMeter);
+                int pp = skel.Nodes[rig.Pelvis].Parent;
+                Vector3 local = deltaM;
+                Matrix4x4 pinv;
+                if (pp >= 0 && Matrix4x4.Invert(worlds[pp], out pinv)) local = Vector3.TransformNormal(deltaM, pinv);
+                t[rig.Pelvis] += local;
+                worlds = ComposeWorlds(skel, t, r, s);
+            }
+
+            for (int k = 0; k < 2; k++)
+            {
+                int foot = rig.Foot[k], knee = rig.Knee[k], hip = rig.Hip[k];
+                if (foot < 0 || knee < 0 || hip < 0 || foot >= n || knee >= n || hip >= n) continue;
+                Vector3 targetW = ankleW[k] + upW * sm.Offset[k];   // the animated ankle, moved by the ground under it
+                var ch = new IkChainRuntime
+                {
+                    Tip = foot, Mid = knee, Root = hip, Target = foot,
+                    HasWorldTarget = true, WorldTargetHasRot = false,
+                    WorldTargetModel = Matrix4x4.CreateTranslation(Vector3.Transform(targetW, inv)),
+                    Weight = wEff, ApplyTipRotation = false, AutoGrip = false,
+                };
+                if (SolveTwoBoneIk(skel, t, r, s, worlds, ch)) worlds = ComposeWorlds(skel, t, r, s);
+
+                if (cfg.AlignToGround && have[k])
+                {
+                    float plant = 1f - ClampF((lift[k] - 0.05f) / 0.2f, 0f, 1f);
+                    Vector3 nM = Vector3.TransformNormal(sm.Normal[k], inv);
+                    if (plant > 0f && nM.LengthSquared() > 1e-12f)
+                    {
+                        nM = Vector3.Normalize(nM);
+                        Vector3 axis = Vector3.Cross(upM, nM);
+                        float ang = (float)Math.Atan2(axis.Length(), Vector3.Dot(upM, nM));
+                        ang = Math.Min(ang, cfg.MaxFootAngle * D2Rf) * wEff * plant;
+                        if (ang > 1e-4f && axis.LengthSquared() > 1e-12f)
+                        {
+                            ApplyWorldRotationDelta(skel, r, worlds, foot, Quaternion.CreateFromAxisAngle(Vector3.Normalize(axis), ang));
+                            worlds = ComposeWorlds(skel, t, r, s);
+                        }
+                    }
+                }
+            }
+            return worlds;
+        }
+
+        /// <summary>Ray straight down against the gameplay collision world, skipping the character's own colliders (the
+        /// entity itself, its ancestors — e.g. a player capsule — and its descendants).</summary>
+        private static bool GroundRay(ECS.GameEntity self, Vector3 origin, float maxDist, int mask, out Vector3 hit, out Vector3 normal)
+        {
+            hit = origin; normal = Vector3.UnitY;
+            var o = new ECS.Vector3(origin.X, origin.Y, origin.Z);
+            var down = new ECS.Vector3(0f, -1f, 0f);
+            float remaining = maxDist;
+            for (int i = 0; i < 6 && remaining > 1e-3f; i++)
+            {
+                ECS.Vector3 hp, hn; ECS.GameEntity he; float hd;
+                if (!Services.Physics.CollisionService.Raycast(o, down, remaining, mask, out hp, out hn, out he, out hd)) return false;
+                if (he != null && IsRelated(he, self))
+                {
+                    float step = hd + 0.02f;
+                    o = new ECS.Vector3(o.X, o.Y - step, o.Z);
+                    remaining -= step;
+                    continue;
+                }
+                hit = new Vector3(hp.X, hp.Y, hp.Z);
+                normal = new Vector3(hn.X, hn.Y, hn.Z);
+                if (normal.Y < 0f) normal = -normal;
+                return true;
+            }
+            return false;
+        }
+
+        private static bool IsRelated(ECS.GameEntity hit, ECS.GameEntity self)
+        {
+            for (var p = self; p != null; p = p.Parent) if (p == hit) return true;
+            for (var p = hit.Parent; p != null; p = p.Parent) if (p == self) return true;
+            return false;
         }
 
         /// <summary>

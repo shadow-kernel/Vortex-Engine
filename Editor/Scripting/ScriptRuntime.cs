@@ -1706,6 +1706,101 @@ namespace Editor.Scripting
             // authored weights survive; the standalone GameHost ends with the process. No ledger needed.
         }
 
+        // --- rig-aware procedural layers (#147: hand poses / look-at / foot IK -> AnimationService) ---
+        // Runtime overrides live in the animation state, never in the authored components.
+
+        /// <summary>"Left"/"L", "Right"/"R" or "Both" (both = null side). False for anything else.</summary>
+        private static bool ParseHandSide(string side, out Editor.ECS.Components.Animation.HandSide? result)
+        {
+            result = null;
+            string s = (side ?? "").Trim().ToLowerInvariant();
+            if (s == "left" || s == "l") { result = Editor.ECS.Components.Animation.HandSide.Left; return true; }
+            if (s == "right" || s == "r") { result = Editor.ECS.Components.Animation.HandSide.Right; return true; }
+            return s == "both" || s == "";
+        }
+
+        private bool _handPoseWarned;
+
+        bool Vortex.IScriptHost.SetHandPose(long entityId, string side, string preset, float weight, float blendSeconds)
+        {
+            if (!_entitiesById.TryGetValue(entityId, out var e)) return false;
+            Editor.ECS.Components.Animation.HandSide? s;
+            Editor.ECS.Components.Animation.HandPosePreset p;
+            if (!ParseHandSide(side, out s) || !Editor.Core.Animation.AnimationService.TryParsePreset(preset, out p))
+            {
+                if (!_handPoseWarned)
+                {
+                    _handPoseWarned = true;
+                    Editor.Core.Services.ConsoleService.Instance?.LogWarning("Animation.SetHandPose: side must be Left/Right/Both and preset one of " +
+                        string.Join(", ", Enum.GetNames(typeof(Editor.ECS.Components.Animation.HandPosePreset))) + " (got '" + side + "', '" + preset + "').");
+                }
+                return false;
+            }
+            var svc = Editor.Core.Animation.AnimationService.Instance;
+            if (s.HasValue) return svc.SetHandPosePreset(e, s.Value, preset, weight, blendSeconds);
+            bool l = svc.SetHandPosePreset(e, Editor.ECS.Components.Animation.HandSide.Left, preset, weight, blendSeconds);
+            bool r = svc.SetHandPosePreset(e, Editor.ECS.Components.Animation.HandSide.Right, preset, weight, blendSeconds);
+            return l || r;
+        }
+
+        bool Vortex.IScriptHost.SetHandPoseCurls(long entityId, string side, Vortex.Vector3 index, Vortex.Vector3 middle, Vortex.Vector3 ring,
+            Vortex.Vector3 pinky, Vortex.Vector3 thumb, float spread, float weight, float blendSeconds)
+        {
+            if (!_entitiesById.TryGetValue(entityId, out var e)) return false;
+            Editor.ECS.Components.Animation.HandSide? s;
+            if (!ParseHandSide(side, out s)) return false;
+            var curls = new[]
+            {
+                new ECS.Vector3(index.X, index.Y, index.Z), new ECS.Vector3(middle.X, middle.Y, middle.Z), new ECS.Vector3(ring.X, ring.Y, ring.Z),
+                new ECS.Vector3(pinky.X, pinky.Y, pinky.Z), new ECS.Vector3(thumb.X, thumb.Y, thumb.Z)
+            };
+            var svc = Editor.Core.Animation.AnimationService.Instance;
+            if (s.HasValue) return svc.SetHandPoseCurls(e, s.Value, curls, spread, weight, blendSeconds);
+            bool l = svc.SetHandPoseCurls(e, Editor.ECS.Components.Animation.HandSide.Left, curls, spread, weight, blendSeconds);
+            bool r = svc.SetHandPoseCurls(e, Editor.ECS.Components.Animation.HandSide.Right, curls, spread, weight, blendSeconds);
+            return l || r;
+        }
+
+        void Vortex.IScriptHost.ClearHandPose(long entityId, string side)
+        {
+            if (!_entitiesById.TryGetValue(entityId, out var e)) return;
+            Editor.ECS.Components.Animation.HandSide? s;
+            if (!ParseHandSide(side, out s)) return;
+            Editor.Core.Animation.AnimationService.Instance.ClearHandPose(e, s);
+        }
+
+        void Vortex.IScriptHost.SetLookAtPoint(long entityId, Vortex.Vector3 worldPoint)
+        {
+            if (_entitiesById.TryGetValue(entityId, out var e))
+                Editor.Core.Animation.AnimationService.Instance.SetLookAtPoint(e, new System.Numerics.Vector3(worldPoint.X, worldPoint.Y, worldPoint.Z));
+        }
+
+        void Vortex.IScriptHost.SetLookAtEntity(long entityId, long targetEntityId)
+        {
+            if (!_entitiesById.TryGetValue(entityId, out var e)) return;
+            _entitiesById.TryGetValue(targetEntityId, out var target);
+            if (target == null) { Editor.Core.Animation.AnimationService.Instance.ClearLookAtTarget(e); return; }
+            Editor.Core.Animation.AnimationService.Instance.SetLookAtEntity(e, target);
+        }
+
+        void Vortex.IScriptHost.ClearLookAtTarget(long entityId)
+        {
+            if (_entitiesById.TryGetValue(entityId, out var e))
+                Editor.Core.Animation.AnimationService.Instance.ClearLookAtTarget(e);
+        }
+
+        void Vortex.IScriptHost.SetLookAtWeight(long entityId, float weight)
+        {
+            if (_entitiesById.TryGetValue(entityId, out var e))
+                Editor.Core.Animation.AnimationService.Instance.SetLookAtWeight(e, weight);
+        }
+
+        void Vortex.IScriptHost.SetFootIkWeight(long entityId, float weight)
+        {
+            if (_entitiesById.TryGetValue(entityId, out var e))
+                Editor.Core.Animation.AnimationService.Instance.SetFootIkWeight(e, weight);
+        }
+
         // --- bone sockets (#170/#171: Attach/Detach/GetBoneTransform -> BoneSocketService) ---
 
         bool Vortex.IScriptHost.AttachEntityToBone(long entityId, long targetId, string bone,

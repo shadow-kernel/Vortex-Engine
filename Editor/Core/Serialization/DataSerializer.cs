@@ -72,6 +72,8 @@ namespace Editor.Core.Serialization
             typeof(Editor.ECS.Components.Animation.BoneAttachment),
             typeof(Editor.ECS.Components.Animation.TwoBoneIk),
             typeof(Editor.ECS.Components.Animation.HandPose),
+            typeof(Editor.ECS.Components.Animation.LookAtIk),
+            typeof(Editor.ECS.Components.Animation.FootIk),
 
             // Scripting
             typeof(Script),
