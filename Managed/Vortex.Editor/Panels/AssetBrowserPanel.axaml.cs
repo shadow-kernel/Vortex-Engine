@@ -1612,6 +1612,7 @@ namespace VortexEditor.Panels
             yield return Mi("New UI Screen…", () => _ = CreateUiScreenAsync(), "LayoutSingle");
             yield return Mi("New Animation Clip…", () => _ = CreateAnimationClipAsync(), "Play");
             yield return Mi("New Sound Container", () => CreateSoundContainer(), "Layers");
+            yield return Mi("New Visual Effect", () => CreateVfx(), "Sparkle");
         }
 
         /// <summary>New folder in the browsed folder (undoable), then rename it inline.</summary>
@@ -1702,6 +1703,21 @@ namespace VortexEditor.Panels
         }
 
         /// <summary>New sound container in the browsed folder (else Assets/Audio), opened in its editor.</summary>
+        /// <summary>New .vfx (one soft emitter) in the browsed folder or Assets/VFX, opened in the VFX editor.</summary>
+        public string CreateVfx(bool open = true)
+        {
+            if (ProjectRoot == null) return null;
+            try
+            {
+                string folder = CreateFolderFor("Assets/VFX");
+                string path = VfxEditorWindow.CreateNew(folder, "NewEffect");
+                Created(path, "Visual effect created");
+                if (open) EditorWindows.VfxEditor(path);
+                return path;
+            }
+            catch (Exception ex) { EditorCommands.Fail("Create visual effect", ex); return null; }
+        }
+
         public string CreateSoundContainer(bool open = true)
         {
             if (ProjectRoot == null) return null;
@@ -1825,6 +1841,10 @@ namespace VortexEditor.Panels
                         break;
                     case AssetKind.UiScreen:
                         m.Items.Add(Mi("Open in UI Editor", () => EditorWindows.UiEditor(p), "LayoutSingle"));
+                        break;
+                    case AssetKind.Vfx:
+                        m.Items.Add(Mi("Add to Scene", () => AddToScene(p), "Plus"));
+                        m.Items.Add(Mi("Open in VFX Editor", () => EditorWindows.VfxEditor(p), "Sparkle", gestureText: "⇧ double-click"));
                         break;
                     case AssetKind.Shader:
                         m.Items.Add(Mi("Open in Code Editor", () => EditorCommands.OpenInIde(p), "Sparkle"));

@@ -608,5 +608,130 @@ namespace Editor.Core.Services.Particles
         }
 
         private static float[] ToArray(Matrix4x4 m) => new[] { m.M11, m.M12, m.M13, m.M14, m.M21, m.M22, m.M23, m.M24, m.M31, m.M32, m.M33, m.M34, m.M41, m.M42, m.M43, m.M44 };
+
+        // --------------------------------------------------------------------------------------------- previews
+        private static readonly Stack<uint> _freePreviewWorlds = new Stack<uint>();
+
+        /// <summary>
+        /// An isolated particle world for editor previews (VFX editor, thumbnails, asset viewer): the effect only
+        /// simulates when <see cref="Step"/> is called and only draws into the render target that follows
+        /// <see cref="BindForNextRender"/>. Worlds are pooled (the native module has no destroy-world call).
+        /// </summary>
+        public sealed class Preview : IDisposable
+        {
+            private readonly List<uint> _emitters = new List<uint>();
+            private uint _beam;
+            private VfxBeam _beamDesc;
+            private string _beamPath;
+
+            public uint World { get; private set; } = uint.MaxValue;
+            public bool IsValid => World != uint.MaxValue;
+            /// <summary>Seconds simulated since the last <see cref="Load"/> / restart.</summary>
+            public float Time { get; private set; }
+            /// <summary>Beam preview segment (the effect's beam runs from here to <see cref="BeamTo"/>).</summary>
+            public Vector3 BeamFrom = new Vector3(0f, 0f, 0f), BeamTo = new Vector3(0f, 0f, 6f);
+            private Matrix4x4 _transform = Matrix4x4.Identity;
+
+            /// <summary>Pose of the effect (its +Z is the emission axis): applied to every emitter now and on Load.</summary>
+            public void SetTransform(Matrix4x4 world)
+            {
+                _transform = world;
+                var m = ToArray(world);
+                foreach (var h in _emitters) { try { VortexAPI.ParticleSetTransform(h, m); VortexAPI.ParticleResetMotion(h); } catch { } }
+            }
+
+            public Preview()
+            {
+                EnsureRegistered();
+                if (!_available) return;
+                World = _freePreviewWorlds.Count > 0 ? _freePreviewWorlds.Pop() : VortexAPI.ParticleCreateWorld();
+            }
+
+            /// <summary>Instantiate every enabled emitter of <paramref name="asset"/> (and its beam) at the origin,
+            /// +Z forward. <paramref name="loop"/> forces looping so one-shot effects replay.</summary>
+            public void Load(VfxAsset asset, string vfxPath, bool loop)
+            {
+                Clear();
+                if (!IsValid || asset == null) return;
+                for (int i = 0; i < asset.Emitters.Count; i++)
+                {
+                    var src = asset.Emitters[i];
+                    if (src == null || !src.Enabled) continue;
+                    var em = CloneEmitter(src);
+                    if (loop) em.Looping = true;
+                    uint h = VortexAPI.ParticleCreateEmitter(VfxAsset.EmitterJson(em), World);
+                    if (h == 0) continue;
+                    ApplyTextures(h, em, vfxPath);
+                    VortexAPI.ParticleSetTransform(h, ToArray(_transform));
+                    VortexAPI.ParticleResetMotion(h);
+                    VortexAPI.ParticlePlay(h);
+                    _emitters.Add(h);
+                }
+                _beamDesc = asset.Beam; _beamPath = vfxPath;
+                SpawnBeam();
+                Time = 0f;
+            }
+
+            private void SpawnBeam()
+            {
+                if (_beam != 0) { try { VortexAPI.ParticleDestroyBeam(_beam); } catch { } _beam = 0; }
+                if (_beamDesc == null || !IsValid) return;
+                var b = System.Text.Json.JsonSerializer.Deserialize<VfxBeam>(System.Text.Json.JsonSerializer.Serialize(_beamDesc, VfxAsset.JsonOptions), VfxAsset.JsonOptions);
+                if (b.Speed > 0f && b.Duration <= 0f) b.Duration = (Vector3.Distance(BeamFrom, BeamTo) + b.Length) / b.Speed + b.FadeOut;
+                _beam = VortexAPI.ParticleCreateBeam(VfxAsset.BeamJson(b, 0), World);
+                if (_beam == 0) return;
+                VortexAPI.ParticleSetBeamTexture(_beam, TextureId(VfxAsset.ResolveTexture(b.Texture, _beamPath, ProjectData.Current?.Path)));
+                VortexAPI.ParticleSetBeamPoints(_beam, new[] { BeamFrom.X, BeamFrom.Y, BeamFrom.Z }, new[] { BeamTo.X, BeamTo.Y, BeamTo.Z });
+            }
+
+            /// <summary>Advance the simulation; a finished beam is fired again (looping preview).</summary>
+            public void Step(float dt)
+            {
+                if (!IsValid) return;
+                VortexAPI.ParticleUpdate(World, dt);
+                Time += dt;
+                if (_beamDesc != null && (_beam == 0 || VortexAPI.ParticleBeamValid(_beam) == 0)) SpawnBeam();
+            }
+
+            /// <summary>Simulate <paramref name="seconds"/> in fixed steps (thumbnails: show the effect mid-flight).</summary>
+            public void Warm(float seconds, float step = 1f / 60f)
+            {
+                for (float t = 0f; t < seconds; t += step) Step(step);
+            }
+
+            public void Restart()
+            {
+                foreach (var h in _emitters) { try { VortexAPI.ParticleRestart(h); } catch { } }
+                SpawnBeam();
+                Time = 0f;
+            }
+
+            public void SetPaused(bool paused) { foreach (var h in _emitters) { try { VortexAPI.ParticlePause(h, paused ? 1 : 0); } catch { } } }
+
+            /// <summary>Call right before rendering the preview target: that render draws this world's particles.</summary>
+            public void BindForNextRender() { if (IsValid) VortexAPI.ParticleSetNextTargetWorld((int)World); }
+
+            public int AliveCount
+            {
+                get { int n = 0; foreach (var h in _emitters) { try { n += VortexAPI.ParticleGetAliveCount(h); } catch { } } return n; }
+            }
+
+            public void Clear()
+            {
+                foreach (var h in _emitters) { try { VortexAPI.ParticleDestroyEmitter(h); } catch { } }
+                _emitters.Clear();
+                if (_beam != 0) { try { VortexAPI.ParticleDestroyBeam(_beam); } catch { } _beam = 0; }
+                if (IsValid) { try { VortexAPI.ParticleClear(World); } catch { } }
+                Time = 0f;
+            }
+
+            public void Dispose()
+            {
+                if (!IsValid) return;
+                Clear();
+                _freePreviewWorlds.Push(World);
+                World = uint.MaxValue;
+            }
+        }
     }
 }

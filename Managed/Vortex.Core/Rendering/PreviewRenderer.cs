@@ -49,6 +49,11 @@ namespace Editor.Core.Services.Rendering
         public bool RenderGizmos;
         public float BoundsScale = 1f;
         public bool StudioLights = true;
+        /// <summary>Render even without mesh items (a VFX preview: particles only). Frame it with <see cref="Bounds"/>.</summary>
+        public bool AllowEmpty;
+        /// <summary>Called right before the offscreen render (after the meshes are queued): bind a particle preview
+        /// world here (ParticleService.Preview.BindForNextRender) so this target draws its particles.</summary>
+        public Action BeforeTargetRender;
         /// <summary>Optional explicit framing (centre xyz + radius); null = derived from the mesh bounds.</summary>
         public float[] Bounds;
     }
@@ -82,7 +87,7 @@ namespace Editor.Core.Services.Rendering
         /// <summary>Render a preview scene into a w×h image. Returns null when the renderer is not ready.</summary>
         public static PreviewImage Render(PreviewScene scene, int w, int h, PreviewCamera cam)
         {
-            if (scene == null || scene.Items.Count == 0 || w < 8 || h < 8) return null;
+            if (scene == null || (scene.Items.Count == 0 && !scene.AllowEmpty) || w < 8 || h < 8) return null;
             w = Math.Min(w, 4096); h = Math.Min(h, 4096);
             uint rt = AcquireTarget(w, h);
             if (rt == 0) return null;
@@ -140,6 +145,7 @@ namespace Editor.Core.Services.Rendering
                 if (scene.SubmitGizmos != null) { try { scene.SubmitGizmos(); } catch { } }
 
                 VortexAPI.SwapRenderQueue();
+                if (scene.BeforeTargetRender != null) { try { scene.BeforeTargetRender(); } catch { } }
                 VortexAPI.RenderToSecondaryTarget(rt, desc, false, scene.RenderGizmos);
                 if (!VortexAPI.PrepareSecondaryRenderTargetReadback(rt)) return null;
                 return ReadBack(rt);

@@ -124,7 +124,7 @@ namespace VortexEditor.Controls
         /// <summary>Render immediately (tests / "save image").</summary>
         public void RenderNow()
         {
-            _empty.IsVisible = _scene == null || _scene.Items.Count == 0;
+            _empty.IsVisible = _scene == null || (_scene.Items.Count == 0 && !_scene.AllowEmpty);
             if (_empty.IsVisible) { _image.Source = null; return; }
             double scale = TopLevel.GetTopLevel(this)?.RenderScaling ?? 1.0;
             double w0 = Bounds.Width * scale, h0 = Bounds.Height * scale;

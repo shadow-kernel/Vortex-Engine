@@ -7,7 +7,7 @@ namespace VortexEditor.Panels.AssetBrowser
     public enum AssetKind
     {
         Folder, ParentFolder, Primitive, Model, Texture, Material, Shader, Script, Scene, Prefab,
-        AudioClip, SoundContainer, AnimationClip, UiScreen, Font, Text, BuiltInMaterial, BuiltInTexture, Other
+        AudioClip, SoundContainer, AnimationClip, UiScreen, Font, Text, BuiltInMaterial, BuiltInTexture, Vfx, Other
     }
 
     /// <summary>
@@ -53,6 +53,7 @@ namespace VortexEditor.Panels.AssetBrowser
                 case ".vsndc": return AssetKind.SoundContainer;
                 case ".vanim": return AssetKind.AnimationClip;
                 case ".vui": return AssetKind.UiScreen;
+                case ".vfx": return AssetKind.Vfx;
             }
             return AssetKind.Other;
         }
@@ -78,6 +79,7 @@ namespace VortexEditor.Panels.AssetBrowser
                 case AssetKind.AnimationClip: return "Animation Clip";
                 case AssetKind.UiScreen: return "UI Screen";
                 case AssetKind.Font: return "Font";
+                case AssetKind.Vfx: return "Visual Effect";
                 case AssetKind.BuiltInMaterial: return "Built-in Material";
                 case AssetKind.BuiltInTexture: return "Built-in Texture";
                 default: return string.IsNullOrEmpty(e) ? "File" : e + " File";
@@ -103,6 +105,7 @@ namespace VortexEditor.Panels.AssetBrowser
                 case AssetKind.SoundContainer: return "Layers";
                 case AssetKind.AnimationClip: return "Play";
                 case AssetKind.UiScreen: return "LayoutSingle";
+                case AssetKind.Vfx: return "Sparkle";
                 default: return "File";
             }
         }
@@ -123,6 +126,7 @@ namespace VortexEditor.Panels.AssetBrowser
                 case AssetKind.Prefab: return "VxPinkBrush";
                 case AssetKind.AudioClip: case AssetKind.SoundContainer: return "VxRedBrush";
                 case AssetKind.UiScreen: return "VxTealBrush";
+                case AssetKind.Vfx: return "VxOrangeBrush";
                 default: return "VxTextSecondaryBrush";
             }
         }
@@ -143,7 +147,7 @@ namespace VortexEditor.Panels.AssetBrowser
         }
 
         /// <summary>Kinds that a plain double-click drops into the scene.</summary>
-        public static bool IsPlaceable(AssetKind kind) => kind == AssetKind.Model || kind == AssetKind.Prefab || kind == AssetKind.Primitive;
+        public static bool IsPlaceable(AssetKind kind) => kind == AssetKind.Model || kind == AssetKind.Prefab || kind == AssetKind.Primitive || kind == AssetKind.Vfx;
 
         public static string FormatSize(long bytes)
         {

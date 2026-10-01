@@ -41,7 +41,7 @@ namespace VortexEditor.Services
             if (path.StartsWith("Primitive:", StringComparison.OrdinalIgnoreCase)) return Kind.Render;
             string ext = Path.GetExtension(path).ToLowerInvariant();
             if (Array.IndexOf(ImageExtensions, ext) >= 0) return Kind.Image;
-            if (Array.IndexOf(ModelExtensions, ext) >= 0 || ext == ".vmat" || ext == ".ventity" || ext == ".vprefab") return Kind.Render;
+            if (Array.IndexOf(ModelExtensions, ext) >= 0 || ext == ".vmat" || ext == ".ventity" || ext == ".vprefab" || ext == ".vfx") return Kind.Render;
             return Kind.None;
         }
 
@@ -180,6 +180,7 @@ namespace VortexEditor.Services
                 if (job.Path.StartsWith("Primitive:", StringComparison.OrdinalIgnoreCase)) img = PreviewRenderer.RenderPrimitive(job.Path, job.Size);
                 else if (ext == ".vmat") img = PreviewRenderer.RenderMaterialFile(job.Path, job.Size);
                 else if (ext == ".ventity" || ext == ".vprefab") img = PreviewRenderer.RenderPrefabFile(job.Path, ProjectData.Current?.Path, job.Size);
+                else if (ext == ".vfx") img = RenderVfx(job.Path, job.Size);
                 else img = PreviewRenderer.RenderModelFile(job.Path, job.Size);
                 if (img != null)
                 {
@@ -191,6 +192,29 @@ namespace VortexEditor.Services
             }
             catch { bmp = null; }
             Complete(Key(job.Path, job.Size), bmp);
+        }
+
+        /// <summary>A frame of the effect (+Z up, looping) simulated a quarter of its typical particle lifetime in, so
+        /// bursts are mid-flight and short flashes still show.</summary>
+        private static PreviewImage RenderVfx(string path, int size)
+        {
+            var asset = Editor.Core.Assets.VfxAsset.Load(path);
+            if (asset == null) return null;
+            using (var pv = new Editor.Core.Services.Particles.ParticleService.Preview())
+            {
+                if (!pv.IsValid) return null;
+                pv.BeamFrom = new System.Numerics.Vector3(-1.2f, 0.6f, 0f);
+                pv.BeamTo = new System.Numerics.Vector3(1.2f, 0.6f, 0f);
+                pv.SetTransform(System.Numerics.Matrix4x4.CreateRotationX(-MathF.PI / 2f));
+                pv.Load(asset, path, loop: true);
+                var lives = new List<float>();
+                foreach (var e in asset.Emitters) if (e != null && e.Enabled && e.Lifetime != null && e.Lifetime.Length > 1) lives.Add(e.Lifetime[1]);
+                lives.Sort();
+                float median = lives.Count > 0 ? lives[lives.Count / 2] : 0.4f;
+                pv.Warm(Math.Max(0.02f, Math.Min(0.5f, median * 0.25f)));
+                var scene = new PreviewScene { AllowEmpty = true, Bounds = new[] { 0f, 0.45f, 0f, 0.9f }, BeforeTargetRender = pv.BindForNextRender };
+                return PreviewRenderer.Render(scene, size, size, new PreviewCamera { Yaw = 0.6f, Pitch = 0.32f, DistScale = 1f, FovDeg = 40f });
+            }
         }
 
         /// <summary>Convert rendered BGRA pixels to an Avalonia bitmap.</summary>

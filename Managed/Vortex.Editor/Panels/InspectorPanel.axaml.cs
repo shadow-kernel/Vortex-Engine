@@ -711,6 +711,7 @@ namespace VortexEditor.Panels
             C<SpriteRenderer>("Rendering", "Sprite Renderer", "Image", "VxPinkBrush", x => new SpriteRenderer(x), "sprite 2d image");
             C<Camera>("Rendering", "Camera", "Camera", "VxPurpleBrush", x => new Camera(x), "camera view render");
             C<Skybox>("Rendering", "Skybox", "World", "VxTealBrush", x => new Skybox(x), "sky environment background");
+            C<Editor.ECS.Components.Rendering.ParticleSystem>("Effects", "Particle System", "Sparkle", "VxOrangeBrush", x => new Editor.ECS.Components.Rendering.ParticleSystem(x) { PreviewInEditor = true }, "particles vfx effect fire smoke sparks muzzle flash impact explosion dust");
             C<Light>("Lighting", "Directional Light", "Sun", "VxYellowBrush", x => new Light(x, LightType.Directional), "light sun directional");
             C<Light>("Lighting", "Point Light", "Light", "VxYellowBrush", x => new Light(x, LightType.Point), "light point lamp bulb");
             C<Light>("Lighting", "Spot Light", "Light", "VxYellowBrush", x => new Light(x, LightType.Spot), "light spot torch flashlight");
@@ -735,6 +736,8 @@ namespace VortexEditor.Panels
             C<BoneAttachment>("Animation", "Bone Attachment", "Bone", "VxPinkBrush", x => new BoneAttachment(x), "bone socket attachment weapon hand");
             C<TwoBoneIk>("Animation", "Two-Bone IK", "Bone", "VxPinkBrush", x => new TwoBoneIk(x), "ik inverse kinematics arm hand", "support hand");
             C<HandPose>("Animation", "Hand Pose", "Bone", "VxPinkBrush", x => new HandPose(x), "hand pose fingers grip");
+            C<LookAtIk>("Animation", "Look-At IK", "Bone", "VxPinkBrush", x => new LookAtIk(x), "look at head aim gaze ik target", "head + spine");
+            C<FootIk>("Animation", "Foot IK", "Bone", "VxPinkBrush", x => new FootIk(x), "foot ik ground stairs slope feet legs", "feet on the ground");
             List<string> scripts = null;
             try { scripts = ScriptingService.EnumerateScripts(); } catch { }
             foreach (var rel in scripts ?? new List<string>())

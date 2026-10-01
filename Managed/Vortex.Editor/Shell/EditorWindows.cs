@@ -35,6 +35,7 @@ namespace VortexEditor.Shell
         public static void SoundContainerEditor(string fullPath) => SoundContainerEditorWindow.Open(fullPath);
         public static void UiEditor(string fullPath) => UiEditorWindow.Open(fullPath);
         public static void AnimationEditor(string fullPath) => AnimationEditorWindow.Open(fullPath);
+        public static void VfxEditor(string fullPath) => VfxEditorWindow.Open(fullPath);
         public static void SocketEditor(GameEntity e) => SocketEditorWindow.Open(e);
         public static void CollisionEditor(GameEntity e) => CollisionEditorWindow.Open(e);
         public static void AudioMixer() => AudioMixerWindow.Open();
@@ -64,6 +65,7 @@ namespace VortexEditor.Shell
                 case ".vsndc": SoundContainerEditor(fullPath); return true;
                 case ".vui": UiEditor(fullPath); return true;
                 case ".vanim": AnimationEditor(fullPath); return true;
+                case ".vfx": VfxEditor(fullPath); return true;
             }
             return false;
         }
@@ -75,6 +77,7 @@ namespace VortexEditor.Shell
             string ext = Path.GetExtension(fullPath).ToLowerInvariant();
             if (fullPath.StartsWith("Primitive:", StringComparison.OrdinalIgnoreCase) || Is(ext, Models) || Is(ext, Textures)
                 || ext == ".vmat" || ext == ".ventity" || ext == ".vprefab") { AssetViewer(fullPath); return true; }
+            if (ext == ".vfx") { VfxEditor(fullPath); return true; }   // the editor IS the large live preview
             return false;
         }
     }

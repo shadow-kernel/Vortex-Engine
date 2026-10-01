@@ -31,6 +31,7 @@ namespace VortexEditor.Services
         public static string ProjectRoot => ProjectData.Current?.Path;
 
         public static bool IsPrimitive(string path) => path != null && path.StartsWith("Primitive:", StringComparison.OrdinalIgnoreCase);
+        public static bool IsVfx(string path) => !string.IsNullOrEmpty(path) && path.EndsWith(".vfx", StringComparison.OrdinalIgnoreCase);
         public static bool IsModel(string path) => !string.IsNullOrEmpty(path) && !IsPrimitive(path) && Array.IndexOf(ModelExt, Path.GetExtension(path).ToLowerInvariant()) >= 0;
         public static bool IsPrefab(string path)
         {
@@ -79,6 +80,7 @@ namespace VortexEditor.Services
                     radius = 1.5f;
                 }
                 else if (IsModel(path)) root = BuildModel(scene, path, out radius);
+                else if (IsVfx(path)) root = BuildVfx(scene, path);
                 else return null;
                 if (root == null) return null;
 
@@ -105,6 +107,18 @@ namespace VortexEditor.Services
                 return root;
             }
             catch (Exception ex) { EditorCommands.Fail("Add to scene", ex); return null; }
+        }
+
+        /// <summary>An entity that plays the effect: Particle System with the .vfx, playing on start and previewed in the
+        /// editor viewport (one-shot effects replay on demand from the inspector card).</summary>
+        private static GameEntity BuildVfx(Scene scene, string full)
+        {
+            var e = new GameEntity(scene, Path.GetFileNameWithoutExtension(full));
+            e.AddComponentDirect(new Editor.ECS.Components.Rendering.ParticleSystem(e)
+            {
+                VfxPath = AssetFileOps.ToRelative(full).Replace('\\', '/'), PlayOnStart = true, PreviewInEditor = true
+            });
+            return e;
         }
 
         private static GameEntity BuildPrimitive(Scene scene, string prim)
