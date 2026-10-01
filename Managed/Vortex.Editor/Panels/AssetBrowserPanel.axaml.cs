@@ -648,14 +648,14 @@ namespace VortexEditor.Panels
         private static AssetTile PrimitiveTile(string prim, int order) => new AssetTile
         {
             Name = prim, FullPath = "Primitive:" + prim, RelPath = "Primitive:" + prim, Kind = AssetKind.Primitive, TypeName = "Primitive",
-            Icon = AssetKinds.Icon(AssetKind.Primitive, prim), IconBrush = Brush(AssetKinds.BrushKey(AssetKind.Primitive)), Size = order,
+            Icon = AssetKinds.Icon(AssetKind.Primitive, prim), IconBrush = Brush(AssetKinds.BrushKey(AssetKind.Primitive)), Order = order,
             ToolTip = "Built-in " + prim.ToLowerInvariant() + "\nDouble-click or drag into the scene to add it"
         };
 
         private static AssetTile BuiltInTile(string path, string name, string label, AssetKind kind, int order) => new AssetTile
         {
             Name = name, FullPath = path, RelPath = path, Kind = kind, TypeName = label, Icon = AssetKinds.Icon(kind),
-            IconBrush = Brush(AssetKinds.BrushKey(kind)), Size = order, ToolTip = "Built-in " + label.ToLowerInvariant() + " (read-only)"
+            IconBrush = Brush(AssetKinds.BrushKey(kind)), Order = order, ToolTip = "Built-in " + label.ToLowerInvariant() + " (read-only)"
         };
 
         /// <summary>Folders first (".." on top, built-ins before files), then the chosen key.</summary>
@@ -667,7 +667,7 @@ namespace VortexEditor.Panels
             {
                 int r = Rank(a).CompareTo(Rank(b));
                 if (r != 0) return r;
-                if (Rank(a) == 1) return a.Size.CompareTo(b.Size);   // built-ins keep their declared order
+                if (Rank(a) == 1) return a.Order.CompareTo(b.Order);   // built-ins keep their declared order
                 int c;
                 switch (by)
                 {
@@ -761,6 +761,9 @@ namespace VortexEditor.Panels
 
             if (_pendingSelect != null && _pendingSelect.Count > 0) { selectedPaths = _pendingSelect; _pendingSelect = null; }
             RestoreSelection(selectedPaths, scroll: true);
+            // the auditioned clip is no longer the (single) selection — e.g. the browser moved to another folder
+            var now = SelectedTiles.Take(2).ToList();
+            if (!(now.Count == 1 && (now[0].Kind == AssetKind.AudioClip || now[0].Kind == AssetKind.SoundContainer))) Actions.StopAudition();
             if (_pendingRename != null)
             {
                 var t = _tiles.FirstOrDefault(x => AssetFileOps.PathsEqual(x.FullPath, _pendingRename));
@@ -907,14 +910,16 @@ namespace VortexEditor.Panels
             if (ThumbnailService.KindOf(t.FullPath) == ThumbnailService.Kind.None) return;
             var hit = ThumbnailService.TryGet(t.FullPath, size);
             if (hit != null) { t.Thumbnail = hit; return; }
+            // a bigger render already in memory serves a small tile / list row as well (no second render)
+            var bigger = size < 256 ? ThumbnailService.TryGet(t.FullPath, 256) : null;
+            if (bigger != null) { t.Thumbnail = bigger; return; }
             ThumbnailService.Request(t.FullPath, size, bmp => { if (bmp != null) t.Thumbnail = bmp; });
         }
 
         // ================================================================ file-system changes
         private void OnAssetsChanged(AssetChanges ch)
         {
-            foreach (var t in _tiles)
-                if (ch.Invalidated.Contains(t.FullPath) && t.Thumbnail != null) EnsureThumbnail(t, force: true);
+            // (changed files were invalidated in ThumbnailService -> OnThumbnailInvalidated re-requests visible tiles)
             if (_tab != "Explorer" || IsFiltering || _folder == null || ch.Touches(_folder)) ScheduleRefresh();
             if (ch.Structural) ScheduleDatabaseRefresh();
         }
@@ -1338,9 +1343,7 @@ namespace VortexEditor.Panels
             }
             foreach (var f in files)
             {
-                // a new modification stamp re-keys the thumbnail disk cache, so the preview is rendered again
-                try { File.SetLastWriteTimeUtc(f, DateTime.UtcNow); } catch { }
-                ThumbnailService.Invalidate(f);
+                ThumbnailService.Invalidate(f);   // memory + disk cache -> the preview is rendered again
                 string ext = Ext(f);
                 try
                 {
@@ -1357,10 +1360,45 @@ namespace VortexEditor.Panels
             RefreshDatabase();
             SceneRenderService.RuntimeDirty = true;
             Editor.Core.Viewport.EditorViewportSession.RequestResubmit();
-            foreach (var t in _tiles) t.RequestedSize = 0;
             RefreshNow(resetScroll: false);
             EditorCommands.Toast("Reimported " + files.Count + (files.Count == 1 ? " asset" : " assets"));
         }
+
+        /// <summary>A thumbnail was invalidated (asset changed, reimport, material edit): tiles of that asset that are
+        /// on screen load it again; off-screen ones reload when they scroll into view.</summary>
+        private void OnThumbnailInvalidated(string fullPath)
+        {
+            if (!Dispatcher.UIThread.CheckAccess()) { Dispatcher.UIThread.Post(() => OnThumbnailInvalidated(fullPath)); return; }
+            foreach (var t in _tiles)
+            {
+                if (!AssetFileOps.PathsEqual(t.FullPath, fullPath)) continue;
+                t.RequestedSize = 0;
+                var c = Items.ContainerFromItem(t) as Control;
+                if (c != null && c.IsEffectivelyVisible) EnsureThumbnail(t, force: true);
+            }
+        }
+
+        protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+        {
+            base.OnAttachedToVisualTree(e);
+            ThumbnailService.Invalidated -= OnThumbnailInvalidated;
+            ThumbnailService.Invalidated += OnThumbnailInvalidated;
+            if (_wasDetached)
+            {
+                // hidden behind another bottom tab meanwhile: invalidations were missed, so every tile checks the
+                // thumbnail cache again when it is laid out (unchanged previews are memory hits; stale ones re-render)
+                _wasDetached = false;
+                foreach (var t in _tiles) t.RequestedSize = 0;
+            }
+        }
+
+        protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+        {
+            ThumbnailService.Invalidated -= OnThumbnailInvalidated;
+            _wasDetached = true;
+            base.OnDetachedFromVisualTree(e);
+        }
+        private bool _wasDetached;
 
         // ================================================================ drop targets
         /// <summary>Where a drop on <paramref name="tile"/> lands: a folder tile / "..", else the listed folder.</summary>
@@ -1713,12 +1751,13 @@ namespace VortexEditor.Panels
                         break;
                     case AssetKind.Prefab:
                         m.Items.Add(Mi("Add to Scene (Instance)", () => AddToScene(p), "Plus"));
-                        m.Items.Add(Mi("Open Prefab (Edit)", () => EditorWindows.OpenEditorFor(p), "Prefab", gestureText: "⇧ double-click"));
+                        m.Items.Add(Mi("Open Prefab (Edit)", () => EditorWindows.PrefabEditor(p), "Prefab", gestureText: "⇧ double-click"));
                         m.Items.Add(Mi("Large Preview", () => EditorWindows.OpenLargePreview(p), "Eye", gestureText: "⌘ double-click"));
                         break;
                     case AssetKind.Model:
                         m.Items.Add(Mi("Add to Scene", () => AddToScene(p), "Plus"));
-                        m.Items.Add(Mi("Open in Model Editor", () => EditorWindows.OpenEditorFor(p), "Cube", gestureText: "⇧ double-click"));
+                        m.Items.Add(Mi("Open in Model Editor", () => EditorWindows.ModelEditor(p), "Cube", gestureText: "⇧ double-click"));
+                        m.Items.Add(Mi("Mesh Editor", () => EditorWindows.MeshEditor(p), "Grid"));
                         m.Items.Add(Mi("Large Preview", () => EditorWindows.OpenLargePreview(p), "Eye", gestureText: "⌘ double-click"));
                         m.Items.Add(new Separator());
                         m.Items.Add(Mi("Create Prefab from Model", () => _ = CreatePrefabFromModelAsync(p), "Prefab"));
@@ -1835,7 +1874,7 @@ namespace VortexEditor.Panels
         private static void AddToScene(string path)
         {
             var e = Actions.AddToScene(path);
-            if (e != null) EditorCommands.Toast("Added " + e.Name + " to the scene");
+            if (e != null && !Actions.IsPrefab(path)) EditorCommands.Toast("Added " + e.Name + " to the scene");   // prefabs toast in the prefab workflow
         }
 
         private async Task CreatePrefabFromModelAsync(string modelPath)

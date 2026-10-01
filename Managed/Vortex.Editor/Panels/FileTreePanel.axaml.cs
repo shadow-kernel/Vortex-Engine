@@ -42,9 +42,6 @@ namespace VortexEditor.Panels
         {
             InitializeComponent();
             Tree.ItemsSource = _roots;
-            AssetNavigation.Changed += path => SelectFolder(path);
-            AssetWatcher.Changed += ch => { if (ch.Structural || ch.Overflow) ScheduleResync(); };
-            FileExplorerService.Instance.TreeStructureChanged += (s, e) => Dispatcher.UIThread.Post(ScheduleResync);
 
             Tree.AddHandler(PointerPressedEvent, OnTreePointerPressed, RoutingStrategies.Tunnel);
             Tree.AddHandler(PointerMovedEvent, OnTreePointerMoved, RoutingStrategies.Tunnel);
@@ -55,6 +52,32 @@ namespace VortexEditor.Panels
             Tree.AddHandler(DragDrop.DragLeaveEvent, (s, e) => SetDropHighlight(null));
             Tree.AddHandler(DragDrop.DropEvent, OnDrop);
             Reload();
+        }
+
+        // static services outlive the panel: listen only while it is on screen, catch up when it comes back
+        private void OnNavigated(string path) => SelectFolder(path);
+        private void OnAssetsChanged(AssetChanges ch) { if (ch.Structural || ch.Overflow) ScheduleResync(); }
+        private void OnTreeStructureChanged(object sender, EventArgs e) => Dispatcher.UIThread.Post(ScheduleResync);
+        private bool _wasDetached;
+
+        protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+        {
+            base.OnAttachedToVisualTree(e);
+            AssetNavigation.Changed -= OnNavigated; AssetNavigation.Changed += OnNavigated;
+            AssetWatcher.Changed -= OnAssetsChanged; AssetWatcher.Changed += OnAssetsChanged;
+            FileExplorerService.Instance.TreeStructureChanged -= OnTreeStructureChanged;
+            FileExplorerService.Instance.TreeStructureChanged += OnTreeStructureChanged;
+            if (_wasDetached) { _wasDetached = false; Resync(); }
+            SelectFolder(AssetNavigation.CurrentFolder);
+        }
+
+        protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+        {
+            AssetNavigation.Changed -= OnNavigated;
+            AssetWatcher.Changed -= OnAssetsChanged;
+            FileExplorerService.Instance.TreeStructureChanged -= OnTreeStructureChanged;
+            _wasDetached = true;
+            base.OnDetachedFromVisualTree(e);
         }
 
         public FolderNode RootNode => _root;

@@ -34,6 +34,8 @@ namespace VortexEditor.Panels.AssetBrowser
         public bool HasBadge => !string.IsNullOrEmpty(Badge);
         public long Size { get; set; } = -1;
         public DateTime Modified { get; set; }
+        /// <summary>Declared order of built-in tiles (primitives, built-in materials/textures).</summary>
+        internal int Order;
         /// <summary>Folder shown in search results that span sub-folders (empty when the tile is in the listed folder).</summary>
         public string Location { get; set; } = "";
 
@@ -44,7 +46,7 @@ namespace VortexEditor.Panels.AssetBrowser
         /// <summary>A real file or folder the file operations may touch (not "..", not virtual).</summary>
         public bool IsFileSystemItem => !IsParentLink && !IsVirtual;
         public double TileOpacity => IsParentLink ? 0.5 : 1.0;
-        public string SizeText => IsFolder || Size < 0 ? "" : AssetKinds.FormatSize(Size);
+        public string SizeText => IsFolder || IsVirtual || Size < 0 ? "" : AssetKinds.FormatSize(Size);
         public string ModifiedText => Modified == default ? "" : Modified.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
 
         private Bitmap _thumbnail;

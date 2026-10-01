@@ -30,25 +30,47 @@ namespace VortexEditor.Panels.AssetBrowser
         [ModuleInitializer]
         internal static void Register()
         {
-            SmokeRegistry.Add("asset browser: lists the project's Assets folder", ListsAssets);
-            SmokeRegistry.Add("asset browser: thumbnails arrive (model, image, material, prefab)", Thumbnails);
-            SmokeRegistry.Add("asset actions: AddToScene model/primitive/prefab = one undo step each", AddToSceneUndo);
-            SmokeRegistry.Add("asset actions: multi-submesh model -> container + locked parts, parent-local placement", AddToSceneContainer);
-            SmokeRegistry.Add("asset browser: double-click routing (plain / Shift editor / Cmd+Ctrl preview)", DoubleClickRouting);
-            SmokeRegistry.Add("asset browser: create / rename / move (+.vmeta) / duplicate / delete, all undoable", FileOps);
-            SmokeRegistry.Add("asset browser: search + type tabs + primitives + sort + list view", FiltersAndViews);
-            SmokeRegistry.Add("file tree: synced with the browser both ways", TreeSync);
-            SmokeRegistry.Add("asset watcher: external file changes refresh the browser", Watcher);
-            SmokeRegistry.Add("asset browser: real Cmd+D key duplicates the asset (not the entity)", KeyboardDuplicate);
-            SmokeRegistry.Add("asset browser: real keys (F2 / Enter rename, Esc, Enter opens folder, Backspace up, Cmd+Backspace deletes)", RealKeys);
-            SmokeRegistry.Add("asset browser: real mouse double-clicks (plain / Shift / Cmd / Ctrl)", RealDoubleClicks);
-            SmokeRegistry.Add("asset browser: context menus carry every action (+ Edit Tags / Stress Test windows)", ContextMenus);
-            SmokeRegistry.Add("asset browser: create folder / material / shader / script / UI screen / clip / sound container / prefab / scene", CreateAssets);
-            SmokeRegistry.Add("asset browser: tag filter", TagFilter);
-            SmokeRegistry.Add("asset browser: drag over / drop onto a folder tile moves (undoable)", DropOnFolder);
-            SmokeRegistry.Add("asset browser: audition on select, back/forward, breadcrumb, tile size, reimport", Misc);
-            SmokeRegistry.Add("file tree: inline rename, drop onto a folder, drag a folder, delete + undo", TreeOps);
-            SmokeRegistry.Add("asset browser: screenshots with thumbnails", Screenshots);
+            Add("asset browser: lists the project's Assets folder", ListsAssets);
+            Add("asset browser: thumbnails arrive (model, image, material, prefab)", Thumbnails);
+            Add("asset actions: AddToScene model/primitive/prefab = one undo step each", AddToSceneUndo);
+            Add("asset actions: multi-submesh model -> container + locked parts, parent-local placement", AddToSceneContainer);
+            Add("asset browser: double-click routing (plain / Shift editor / Cmd+Ctrl preview)", DoubleClickRouting);
+            Add("asset browser: create / rename / move (+.vmeta) / duplicate / delete, all undoable", FileOps);
+            Add("asset browser: search + type tabs + primitives + sort + list view", FiltersAndViews);
+            Add("file tree: synced with the browser both ways", TreeSync);
+            Add("asset watcher: external file changes refresh the browser", Watcher);
+            Add("asset browser: real Cmd+D key duplicates the asset (not the entity)", KeyboardDuplicate);
+            Add("asset browser: real keys (F2 / Enter rename, Esc, Enter opens folder, Backspace up, Cmd+Backspace deletes)", RealKeys);
+            Add("asset browser: real mouse double-clicks (plain / Shift / Cmd / Ctrl)", RealDoubleClicks);
+            Add("asset browser: context menus carry every action (+ Edit Tags / Stress Test windows)", ContextMenus);
+            Add("asset browser: create folder / material / shader / script / UI screen / clip / sound container / prefab / scene", CreateAssets);
+            Add("asset browser: tag filter", TagFilter);
+            Add("asset browser: drag over / drop onto a folder tile moves (undoable)", DropOnFolder);
+            Add("asset browser: audition on select, back/forward, breadcrumb, tile size, reimport", Misc);
+            Add("asset browser: Finder drop -> import dialog -> imported file shown + selected", OsDropImports);
+            Add("asset browser: real Cmd-click / Shift-click selection, rubber band, arrow keys", RealSelection);
+            Add("file tree: inline rename, drop onto a folder, drag a folder, delete + undo", TreeOps);
+            Add("asset browser: screenshots with thumbnails", Screenshots);
+        }
+
+        private static int _diag;
+
+        /// <summary>Register a check; VORTEX_AB_DIAG=1 also captures the main window after it (diag_NN.png),
+        /// VORTEX_AB_ONLY=RealKeys,TreeOps runs just those checks of this package.</summary>
+        private static void Add(string name, Func<Task<bool>> check)
+        {
+            string only = Environment.GetEnvironmentVariable("VORTEX_AB_ONLY");
+            if (!string.IsNullOrWhiteSpace(only) && !only.Split(',').Any(o => string.Equals(o.Trim(), check.Method.Name, StringComparison.OrdinalIgnoreCase))) return;
+            SmokeRegistry.Add(name, async () =>
+            {
+                bool ok = await check();
+                if (Environment.GetEnvironmentVariable("VORTEX_AB_DIAG") == "1")
+                {
+                    await SmokeRegistry.Settle(400);
+                    SmokeRegistry.Capture(EditorCommands.Window, "diag_" + (++_diag).ToString("00") + ".png");
+                }
+                return ok;
+            });
         }
 
         // ------------------------------------------------------------------ helpers
@@ -144,12 +166,15 @@ namespace VortexEditor.Panels.AssetBrowser
             foreach (var path in new[] { FirstModel(), "Primitive:Cube", AssetFiles(f => Ext(f) == ".ventity").FirstOrDefault() })
             {
                 if (path == null) continue;
-                int count = scene.Entities.Count, undo = UndoRedoManager.Instance.UndoCount;
+                int count = scene.Entities.Count;
+                var top0 = UndoRedoManager.Instance.GetUndoHistory().FirstOrDefault();
                 var cam = Editor.Core.Viewport.EditorViewportSession.Main?.Camera ?? EditorCameraController.Instance;
                 var e = AssetActions.AddToScene(path);
                 await SmokeRegistry.Settle(150);
                 bool added = e != null && scene.Entities.Contains(e) && scene.Entities.Count == count + 1;
-                bool oneStep = UndoRedoManager.Instance.UndoCount == undo + 1;
+                // one new undo step on top (a single Undo below must remove the whole placement)
+                var history = UndoRedoManager.Instance.GetUndoHistory();
+                bool oneStep = history.Count > 0 && !ReferenceEquals(history[0], top0) && (history.Count < 2 || ReferenceEquals(history[1], top0) || top0 == null || UndoRedoManager.Instance.UndoCount >= UndoRedoManager.Instance.MaxUndoStackSize);
                 bool selected = ReferenceEquals(SelectionService.Instance.SelectedEntity, e);
                 var p = e?.Transform.LocalPosition ?? default;
                 double yaw = cam.Yaw * Math.PI / 180, pitch = cam.Pitch * Math.PI / 180;
@@ -477,28 +502,39 @@ namespace VortexEditor.Panels.AssetBrowser
             string file = Path.Combine(Assets, "smoke_key_" + Guid.NewGuid().ToString("N").Substring(0, 6) + ".txt");
             File.WriteAllText(file, "key");
             string copy = AssetFileOps.UniqueCopy(file, false);
+            var win = EditorCommands.Window;
+            var keys = new List<string>();
+            EventHandler<KeyEventArgs> rec = (s, e) => { if (e.Key == Key.D) keys.Add(e.KeyModifiers.ToString()); };
+            win?.AddHandler(InputElement.KeyDownEvent, rec, Avalonia.Interactivity.RoutingStrategies.Tunnel, handledEventsToo: true);
             try
             {
                 var t = await RevealTile(file);
                 if (t == null) return false;
+                // an entity is selected too: if the Edit menu's ⌘D (entity Duplicate) grabbed the key, it shows
+                var ent = scene?.Entities.FirstOrDefault(e => e.Parent == null);
+                if (ent != null) SelectionService.Instance.Select(ent);
                 B.SelectOnly(t);
-                var win = EditorCommands.Window;
                 win?.Activate();
                 await SmokeRegistry.Settle(200);
                 (B.Items.ContainerFromItem(t) as Control)?.Focus();
                 await SmokeRegistry.Settle(150);
                 int entities = scene?.Entities.Count ?? 0;
                 bool focus = B.HasItemFocus;
+                string state = MacKeys.State(win);
                 bool sent = MacKeys.Send(0x02, "d", MacKeys.Command, win);   // kVK_ANSI_D
                 bool duplicated = await WaitFor(() => File.Exists(copy), 2000);
                 int after = scene?.Entities.Count ?? 0;
                 if (after > entities) EditorCommands.Undo();   // the menu duplicated the selected entity instead
-                Log("Cmd+D sent=" + sent + (MacKeys.LastError != null ? " (" + MacKeys.LastError + ")" : "") + " (list focused=" + focus + "): asset duplicated = " + duplicated + ", entity count " + entities + " -> " + after);
+                Log("Cmd+D sent=" + sent + (MacKeys.LastError != null ? " (" + MacKeys.LastError + ")" : "") + " (" + state + ", list focused=" + focus
+                    + ", key reached the window: " + (keys.Count > 0 ? string.Join("/", keys) : "no") + "): asset duplicated = " + duplicated + ", entity count " + entities + " -> " + after
+                    + (after > entities ? " — the Edit menu's ⌘D (EditorCommands.Duplicate) took the key: it must route to the asset browser while the browser has focus" : ""));
                 if (duplicated) EditorCommands.Undo();
                 return sent && duplicated && after == entities;
             }
             finally
             {
+                win?.RemoveHandler(InputElement.KeyDownEvent, rec);
+                SelectionService.Instance.ClearSelection();
                 foreach (var f in new[] { file, copy, file + ".vmeta", copy + ".vmeta" }) { try { if (File.Exists(f)) File.Delete(f); } catch { } }
                 B.Refresh();
             }
@@ -662,7 +698,7 @@ namespace VortexEditor.Panels.AssetBrowser
             var common = new[] { "Rename", "Duplicate", "Delete…", "Reveal in Finder", "Copy Path", "Copy Full Path", "Reimport", "New Folder", "New Script…", "New Material", "New Shader", "New Prefab", "New Scene…", "New UI Screen…", "New Animation Clip…", "New Sound Container", "Import…", "Refresh" };
             var expect = new List<(string path, string[] items)>
             {
-                (FirstModel(), new[] { "Add to Scene", "Open in Model Editor", "Large Preview", "Create Prefab from Model", "Extract Animations…", "Stress Test…", "Edit Tags…", "Open With Default App" }),
+                (FirstModel(), new[] { "Add to Scene", "Open in Model Editor", "Mesh Editor", "Large Preview", "Create Prefab from Model", "Extract Animations…", "Stress Test…", "Edit Tags…", "Open With Default App" }),
                 (AssetFiles(f => Ext(f) == ".ventity").FirstOrDefault(), new[] { "Add to Scene (Instance)", "Open Prefab (Edit)", "Large Preview", "Edit Tags…" }),
                 (AssetFiles(f => Ext(f) == ".vmat").FirstOrDefault(), new[] { "Open in Material Editor", "Large Preview", "Assign to Selected Entity" }),
                 (AssetFiles(f => Ext(f) == ".cs").FirstOrDefault(), new[] { "Open in Code Editor", "Assign to Selected Entity" }),
@@ -855,18 +891,131 @@ namespace VortexEditor.Panels.AssetBrowser
             B.SizeSlider.Value = 150;
             bool sized = Math.Abs(B.TileSize - 150) < 0.5 && Math.Abs(B.TileWidth - 164) < 0.5;
             B.SizeSlider.Value = size0;
-            // reimport: fresh modification stamp (re-keys the thumbnail cache)
+            // reimport: the thumbnail is invalidated (memory + disk) and the visible tile renders it again
             string mat = AssetFiles(f => Ext(f) == ".vmat").FirstOrDefault();
-            bool reimported = true;
+            bool reimported = true, caughtUp = true;
             if (mat != null)
             {
-                var before = File.GetLastWriteTimeUtc(mat);
-                await Task.Delay(20);
-                B.Reimport(new[] { mat });
-                reimported = File.GetLastWriteTimeUtc(mat) > before;
+                var t = await RevealTile(mat);
+                await WaitFor(() => t?.Thumbnail != null, 20000);
+                var old = t?.Thumbnail;
+                string seen = null;
+                Action<string> h = p => { if (AssetFileOps.PathsEqual(p, mat)) seen = p; };
+                ThumbnailService.Invalidated += h;
+                try
+                {
+                    B.Reimport(new[] { mat });
+                    var t2 = TileOf(mat);
+                    reimported = seen != null && await WaitFor(() => t2?.Thumbnail != null && !ReferenceEquals(t2.Thumbnail, old), 20000);
+                }
+                finally { ThumbnailService.Invalidated -= h; }
+                // the asset changes while the browser hides behind the Console tab: the tile catches up when it returns
+                var tabs = B.FindAncestorOfType<TabControl>();
+                if (tabs != null && tabs.ItemCount > 1)
+                {
+                    int idx = tabs.SelectedIndex;
+                    var t3 = TileOf(mat);
+                    var before = t3?.Thumbnail;
+                    tabs.SelectedIndex = idx == 0 ? 1 : 0;
+                    await SmokeRegistry.Settle(250);
+                    bool hidden = B.GetVisualRoot() == null;
+                    ThumbnailService.Invalidate(mat);
+                    await SmokeRegistry.Settle(250);
+                    tabs.SelectedIndex = idx;
+                    caughtUp = await WaitFor(() => t3?.Thumbnail != null && !ReferenceEquals(t3.Thumbnail, before), 20000);
+                    Log("changed while hidden behind another tab (detached=" + hidden + "): tile re-renders on return=" + caughtUp);
+                }
             }
-            Log("tile size slider -> TileSize=" + sized + ", reimport touches the asset=" + reimported);
-            return ok && sized && reimported;
+            Log("tile size slider -> TileSize=" + sized + ", reimport invalidates + re-renders the thumbnail=" + reimported);
+            return ok && sized && reimported && caughtUp;
+        }
+
+        private static async Task<bool> OsDropImports()
+        {
+            if (B == null) return false;
+            string image = FirstImage();
+            if (image == null) return true;
+            string src = Path.Combine(Path.GetTempPath(), "vortex_ab_drop_" + Guid.NewGuid().ToString("N").Substring(0, 6) + Path.GetExtension(image));
+            File.Copy(image, src);
+            var (dir, file, sub) = await TempFolder("SmokeImport");
+            string imported = Path.Combine(dir, Path.GetFileName(src));
+            try
+            {
+                var top = TopLevel.GetTopLevel(B);
+                var item = await top.StorageProvider.TryGetFileFromPathAsync(new Uri(src));
+                if (item == null) { Log("could not wrap the Finder file"); return false; }
+#pragma warning disable CS0618
+                var data = new DataObject();
+                data.Set(DataFormats.Files, new Avalonia.Platform.Storage.IStorageItem[] { item });
+#pragma warning restore CS0618
+                var over = new DragEventArgs(DragDrop.DragOverEvent, data, B.Items, new Point(20, 20), KeyModifiers.None);
+                B.Items.RaiseEvent(over);
+                bool copyEffect = over.DragEffects == DragDropEffects.Copy;
+                var before = Windows.ToList();
+                B.Items.RaiseEvent(new DragEventArgs(DragDrop.DropEvent, data, B.Items, new Point(20, 20), KeyModifiers.None));
+                Window dlg = null;
+                await WaitFor(() => (dlg = Windows.FirstOrDefault(w => !before.Contains(w))) != null, 4000);
+                if (dlg is AssetImportDialog aid)
+                {
+                    await aid.ImportAsync(confirm: false);
+                    await SmokeRegistry.Settle(200);
+                    aid.Close();
+                }
+                bool shown = await WaitFor(() => TileOf(imported) != null && B.SelectedAssets.Any(t => AssetFileOps.PathsEqual(t.FullPath, imported)), 5000);
+                Log("Finder drag over -> Copy=" + copyEffect + ", drop opened " + Describe(dlg) + ", imported into the browsed folder=" + File.Exists(imported) + ", shown + selected=" + shown);
+                return copyEffect && dlg is AssetImportDialog && File.Exists(imported) && shown;
+            }
+            finally { Cleanup(dir, src); }
+        }
+
+        private static async Task<bool> RealSelection()
+        {
+            if (B == null || !OperatingSystem.IsMacOS()) return B != null;
+            var win = EditorCommands.Window;
+            var (dir, file, sub) = await TempFolder("SmokeSelect");
+            var files = new List<string> { file };
+            for (int i = 0; i < 3; i++) { string f = Path.Combine(dir, "f" + i + ".txt"); File.WriteAllText(f, "x"); files.Add(f); }
+            var presses = new List<string>();
+            EventHandler<PointerPressedEventArgs> rec = (s, e) => presses.Add(e.KeyModifiers + "#" + e.ClickCount + (e.Handled ? "(handled)" : ""));
+            B.Items.AddHandler(InputElement.PointerPressedEvent, rec, Avalonia.Interactivity.RoutingStrategies.Tunnel, handledEventsToo: true);
+            try
+            {
+                B.Refresh();
+                await WaitFor(() => files.All(f => TileOf(f) != null), 3000);
+                await SmokeRegistry.Settle(400);   // let the watcher's refresh for the new files pass first
+                Control Box(string p) => B.Items.ContainerFromItem(TileOf(p)) as Control;
+                // plain click selects one, Cmd-click adds, Shift-click extends the range
+                string state = MacKeys.State(win);
+                MacMouse.Click(win, Box(files[0]), 0);
+                await SmokeRegistry.Settle(250);
+                int afterPlain = B.SelectedAssets.Count;
+                MacMouse.Click(win, Box(files[2]), MacKeys.Command);
+                await SmokeRegistry.Settle(250);
+                bool cmdAdds = B.SelectedAssets.Count == 2;
+                Log("clicks (" + state + "): plain -> " + afterPlain + " selected, Cmd-click -> " + B.SelectedAssets.Count + " selected; presses seen: " + string.Join(", ", presses));
+                MacMouse.Click(win, Box(files[1]), 0);
+                await SmokeRegistry.Settle(250);
+                MacMouse.Click(win, Box(files[3]), MacKeys.Shift);
+                await SmokeRegistry.Settle(250);
+                int range = B.SelectedAssets.Count;
+                // arrow keys move the selection
+                MacMouse.Click(win, Box(files[0]), 0);
+                await SmokeRegistry.Settle(250);
+                var start = B.SelectedAssets.FirstOrDefault();
+                MacKeys.Send(0x7C, "", 0, win);   // Right
+                await SmokeRegistry.Settle(250);
+                var next = B.SelectedAssets.FirstOrDefault();
+                bool arrow = start != null && next != null && !ReferenceEquals(start, next) && B.SelectedAssets.Count == 1;
+                // rubber band from empty space over every tile
+                var items = B.Items;
+                bool dragged = MacMouse.Drag(win, items, new Point(items.Bounds.Width - 40, items.Bounds.Height - 20), new Point(8, 8));
+                await SmokeRegistry.Settle(300);
+                int banded = B.SelectedAssets.Count;
+                int expected = B.Tiles.Count(t => !t.IsParentLink);
+                Log("Cmd-click adds=" + cmdAdds + ", Shift-click range selects " + range + " (3 expected), Right arrow moves selection=" + arrow + ", rubber band (sent=" + dragged + ") selects " + banded + "/" + expected);
+                return cmdAdds && range == 3 && arrow && banded == expected;
+            }
+            finally { B.Items.RemoveHandler(InputElement.PointerPressedEvent, rec); Cleanup(dir); }
         }
 
         private static async Task<bool> TreeOps()
@@ -922,7 +1071,7 @@ namespace VortexEditor.Panels.AssetBrowser
                 await tree.DeleteFolderAsync(destNode2, confirm: false);
                 bool deleted = !Directory.Exists(dest);
                 EditorCommands.Undo();
-                bool restored = Directory.Exists(Path.Combine(dest, "sub2", "a.txt"));
+                bool restored = File.Exists(Path.Combine(dest, "sub2", "a.txt"));
                 Log("tree: rename box=" + editing + ", renamed=" + renamed + ", drag over folder=Move " + overOk + ", tile dropped on folder moved=" + dropped + ", folder dragged onto folder moved=" + folderMoved + ", delete=" + deleted + ", undo restores=" + restored);
                 return editing && renamed && overOk && dropped && folderMoved && deleted && restored;
             }
@@ -994,6 +1143,20 @@ namespace VortexEditor.Panels.AssetBrowser
 
             public static string LastError;
 
+            [DllImport(ObjC, EntryPoint = "objc_msgSend")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool MsgBool(IntPtr self, IntPtr sel);
+
+            /// <summary>"app active=…, key window=…" — synthetic events behave differently when the editor isn't frontmost.</summary>
+            public static string State(TopLevel top)
+            {
+                try
+                {
+                    IntPtr app = MsgId(objc_getClass("NSApplication"), sel_registerName("sharedApplication"));
+                    IntPtr w = NSWindowOf(top);
+                    return "app active=" + MsgBool(app, sel_registerName("isActive")) + ", key window=" + (w != IntPtr.Zero && MsgBool(w, sel_registerName("isKeyWindow")));
+                }
+                catch (Exception ex) { return "state: " + ex.Message; }
+            }
+
             /// <summary>NSWindow of an Avalonia window (its platform handle is the content NSView).</summary>
             public static IntPtr NSWindowOf(TopLevel top)
             {
@@ -1051,6 +1214,66 @@ namespace VortexEditor.Panels.AssetBrowser
                 long windowNumber, IntPtr context, long eventNumber, long clickCount, float pressure);
 
             public static string LastError;
+
+            /// <summary>Window coordinates (AppKit, bottom-left origin) of a point in <paramref name="target"/>.</summary>
+            private static bool Locate(TopLevel top, Control target, Point local, out IntPtr window, out CGPoint loc, out long number)
+            {
+                window = MacKeys.NSWindowOf(top); loc = default; number = 0;
+                if (window == IntPtr.Zero || target == null) { LastError = "no NSWindow / target"; return false; }
+                IntPtr content = MsgId(window, sel_registerName("contentView"));
+                var frame = MsgRect(content, sel_registerName("frame"));
+                var p = target.TranslatePoint(local, top);
+                if (!p.HasValue) { LastError = "target not in window"; return false; }
+                loc = new CGPoint { X = frame.X + p.Value.X, Y = frame.Y + frame.H - p.Value.Y };
+                number = MsgLong(window, sel_registerName("windowNumber"));
+                MsgVoidPtr(window, sel_registerName("makeKeyAndOrderFront:"), IntPtr.Zero);
+                return true;
+            }
+
+            private static void Post(ulong type, CGPoint loc, ulong mods, double t, long number, long clicks, float pressure)
+            {
+                IntPtr app = MsgId(objc_getClass("NSApplication"), sel_registerName("sharedApplication"));
+                IntPtr sel = sel_registerName("mouseEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:clickCount:pressure:");
+                IntPtr ev = MsgMouseEvent(objc_getClass("NSEvent"), sel, type, loc, mods, t, number, IntPtr.Zero, 0, clicks, pressure);
+                if (ev != IntPtr.Zero) MsgVoidPtr(app, sel_registerName("sendEvent:"), ev);
+            }
+
+            /// <summary>One left click (optionally with modifiers) at the centre of a control.</summary>
+            public static bool Click(TopLevel top, Control target, ulong modifiers)
+            {
+                LastError = null;
+                try
+                {
+                    if (!Locate(top, target, new Point(target.Bounds.Width / 2, Math.Min(target.Bounds.Height / 2, 40)), out _, out var loc, out long number)) return false;
+                    double t = Environment.TickCount64 / 1000.0 + 1.0;   // well apart from any earlier click (no double-click)
+                    Post(1, loc, modifiers, t, number, 1, 1f);
+                    Post(2, loc, modifiers, t + 0.02, number, 1, 0f);
+                    return true;
+                }
+                catch (Exception ex) { LastError = ex.Message; return false; }
+            }
+
+            /// <summary>Press at <paramref name="from"/>, drag in steps to <paramref name="to"/> (both in the control's
+            /// coordinates) and release — a rubber band on empty space, or a drag.</summary>
+            public static bool Drag(TopLevel top, Control target, Point from, Point to)
+            {
+                LastError = null;
+                try
+                {
+                    if (!Locate(top, target, from, out _, out var a, out long number)) return false;
+                    if (!Locate(top, target, to, out _, out var b, out _)) return false;
+                    double t = Environment.TickCount64 / 1000.0 + 2.0;
+                    Post(1, a, 0, t, number, 1, 1f);
+                    for (int i = 1; i <= 8; i++)
+                    {
+                        var p = new CGPoint { X = a.X + (b.X - a.X) * i / 8.0, Y = a.Y + (b.Y - a.Y) * i / 8.0 };
+                        Post(6, p, 0, t + 0.02 * i, number, 1, 1f);   // NSEventTypeLeftMouseDragged
+                    }
+                    Post(2, b, 0, t + 0.2, number, 1, 0f);
+                    return true;
+                }
+                catch (Exception ex) { LastError = ex.Message; return false; }
+            }
 
             public static bool DoubleClick(TopLevel top, Control target, ulong modifiers)
             {

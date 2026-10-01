@@ -14,6 +14,7 @@ using Editor.ECS;
 using Editor.ECS.Components.Rendering;
 using VortexEditor.Panels.AssetBrowser;
 using VortexEditor.Shell;
+using VortexEditor.Shell.Prefab;
 using CoreAssetActions = Editor.Core.Assets.AssetActions;
 
 namespace VortexEditor.Services
@@ -69,10 +70,11 @@ namespace VortexEditor.Services
                 else if (!File.Exists(path)) return null;
                 else if (IsPrefab(path))
                 {
-                    // PrefabService builds the linked instance (new ids, scene refs, engine sync); the raw add is recorded
-                    // as our own undo step below so the whole placement is one Ctrl/Cmd+Z.
-                    root = PrefabService.Instance.InstantiatePrefab(path, scene, parent, undoable: false);
-                    if (root == null) { EditorCommands.Toast("The prefab is empty or unreadable"); return null; }
+                    // the prefab workflow builds + places the linked instance (new ids, engine sync, selection, toast);
+                    // at the scene root that add is already an undo step, under a parent the prefab service adds raw
+                    root = PrefabWorkflow.PlaceInScene(path, parent, select: true);
+                    if (root == null) return null;
+                    scene = root.Scene ?? scene;
                     attached = true;
                     radius = 1.5f;
                 }
@@ -84,7 +86,11 @@ namespace VortexEditor.Services
                 root.Transform.LocalPosition = parent != null ? WorldToLocal(parent, world) : world;
 
                 var cmd = new AddEntityCommand(scene, parent, root, "Add " + root.Name);
-                if (attached) UndoRedoManager.Instance.Execute(cmd, execute: false);
+                if (attached)
+                {
+                    // exactly one undo step per placement: record the raw add under a parent ourselves
+                    if (parent != null) UndoRedoManager.Instance.Execute(cmd, execute: false);
+                }
                 else
                 {
                     UndoRedoManager.Instance.Execute(cmd);
@@ -341,7 +347,8 @@ namespace VortexEditor.Services
                     return true;
                 }
                 if (!File.Exists(full)) return false;
-                if (IsModel(full) || IsPrefab(full)) return Placed(AddToScene(full));
+                if (IsPrefab(full)) return AddToScene(full) != null;   // the prefab workflow toasts itself
+                if (IsModel(full)) return Placed(AddToScene(full));
                 string ext = Path.GetExtension(full).ToLowerInvariant();
                 switch (ext)
                 {
