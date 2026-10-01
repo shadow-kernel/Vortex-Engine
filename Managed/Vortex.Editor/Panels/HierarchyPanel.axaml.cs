@@ -111,12 +111,28 @@ namespace VortexEditor.Panels
         {
             if (entities == null) return;
             if (reveal) foreach (var e in entities) ExpandTo(e);
+            int stamp = ++_selectStamp;
             // containers of freshly expanded parents are realised on the next layout pass
             Dispatcher.UIThread.Post(() =>
             {
+                // Only the newest request applies, and only to entities still in a scene: an Undo between the request
+                // and this pass (or a newer selection) must not bring back a removed entity.
+                if (stamp != _selectStamp) return;
+                entities = entities.Where(IsInLoadedScene).ToList();
                 SetTreeSelection(entities.Cast<object>().ToList());
                 if (reveal && entities.Count > 0) _ = RealizeContainer(entities[entities.Count - 1]);   // scroll the (virtualised) row into view
             }, DispatcherPriority.Background);
+        }
+
+        private int _selectStamp;
+
+        private static bool IsInLoadedScene(GameEntity e)
+        {
+            if (e == null) return false;
+            var root = e;
+            while (root.Parent != null) root = root.Parent;
+            var scene = root.Scene;
+            return scene != null && scene.Entities.Contains(root);
         }
 
         private void SetTreeSelection(IList<object> items)

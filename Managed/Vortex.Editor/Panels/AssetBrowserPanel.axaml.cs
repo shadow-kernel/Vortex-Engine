@@ -428,6 +428,9 @@ namespace VortexEditor.Panels
         private void RefreshNow(bool resetScroll)
         {
             _refreshTimer?.Stop();
+            // A file change (watcher, another window saving) while a tile is being renamed would replace that tile and
+            // take the inline editor + its focus with it: wait until the rename is committed or cancelled.
+            if (!resetScroll && _tiles.Any(t => t.IsRenaming)) { ScheduleRefresh(); return; }
             bool hadFocus = Items.IsKeyboardFocusWithin && !(TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() is TextBox);
             string root = ProjectRoot;
             List<AssetTile> list;
