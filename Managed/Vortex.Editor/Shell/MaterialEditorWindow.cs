@@ -60,7 +60,7 @@ namespace VortexEditor.Shell
         // ================================================================= state
         private static readonly string[] ShaderTypeValues = { "StandardPBR", "Unlit", "Transparent" };
         private static readonly string[] BlendValues = { "Opaque", "AlphaTest", "AlphaBlend", "Additive" };
-        private static readonly string[] ShaderPatterns = { "*.hlsl", "*.metal", "*.vshader" };
+        private static readonly string[] ShaderPatterns = { "*.hlsl", "*.metal", "*.glsl", "*.vshader" };
         private static readonly string[] AudioPatterns = { "*.wav", "*.mp3", "*.ogg", "*.flac", "*.vsndc" };
         private static readonly JsonSerializerOptions SnapOptions = new JsonSerializerOptions { WriteIndented = false };
 
@@ -670,12 +670,12 @@ namespace VortexEditor.Shell
             ToolTip.SetTip(_revertButton, "Discard the changes and reload the saved file");
             _revertButton.Click += (s, e) => Revert();
             var saveAs = new Button { Content = "Save As…", MinWidth = 90 };
-            ToolTip.SetTip(saveAs, "Save a copy under a new name (⇧⌘S)");
+            ToolTip.SetTip(saveAs, "Save a copy under a new name (" + Keys.Chord("S", shift: true) + ")");
             saveAs.Click += (s, e) => _ = SaveAs();
             var close = new Button { Content = "Close", MinWidth = 80 };
             close.Click += (s, e) => Close();
             var save = new Button { Content = "Save", MinWidth = 96, Classes = { "accent" } };
-            ToolTip.SetTip(save, "Save the .vmat and apply it to the scene (⌘S)");
+            ToolTip.SetTip(save, "Save the .vmat and apply it to the scene (" + Keys.Chord("S") + ")");
             save.Click += (s, e) => Save();
             buttons.Children.Add(newBtn); buttons.Children.Add(_revertButton); buttons.Children.Add(saveAs); buttons.Children.Add(close); buttons.Children.Add(save);
             Grid.SetColumn(buttons, 2);

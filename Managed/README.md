@@ -85,7 +85,7 @@ Managed/Vortex.Editor/bin/Debug/net10.0/Vortex.Editor [--project=/path/to/Projec
 Managed/Vortex.Player/bin/Debug/net10.0/Vortex.Player --project=/path/to/Project [--scene=Name] [--width=1280 --height=720]
 ```
 
-The native library (`libVortexAPI.dylib` + `Shaders/msl`) is found automatically: next to the binaries, in an `.app` bundle's `Contents/MacOS`, in `$VORTEX_NATIVE_DIR`, or — for development — in the newest `build/<preset>/bin` of the repository.
+The native library (`libVortexAPI.dylib` / `libVortexAPI.so` / `VortexAPI.dll`) and its shader folder (`Shaders/msl` on macOS, `Shaders/spirv` on Linux, `Shaders` on Windows) are found automatically: next to the binaries, in an `.app` bundle's `Contents/MacOS`, in `$VORTEX_NATIVE_DIR`, or — for development — in the newest `build/<preset>/bin` of the repository.
 
 ## Smoke tests (no mouse needed)
 

@@ -64,11 +64,12 @@ namespace vortex::graphics::sdlgpu
 		void begin_frame();
 
 	private:
-		SDL_GPUShader* create_shader(const std::string& src, const char* entry, SDL_GPUShaderStage stage, u32 samplers, u32 storage, u32 uniforms);
+		SDL_GPUShader* create_shader(const char* entry, SDL_GPUShaderStage stage, u32 samplers, u32 storage, u32 uniforms);
 		SDL_GPUGraphicsPipeline* create_pipeline(SDL_GPUShader* vs, SDL_GPUShader* fs, bool ribbon, u32 blend);
 		bool ensure_buffers(u32 instance_bytes, u32 vertex_bytes, u32 index_bytes);
 
 		SDL_GPUDevice* m_device{ nullptr };
+		std::string m_shader_dir;          // Engine/Shaders/<msl|spirv>, from the renderer
 		bool m_ready{ false };
 		SDL_GPUTextureFormat m_color_format{ SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM };
 		SDL_GPUSampler* m_linear_wrap{ nullptr };

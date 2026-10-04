@@ -1,4 +1,5 @@
 #include "SdlGpuOverlay.h"
+#include "SdlGpuShaderFormat.h"
 #include "../../Common/Platform.h"
 #include "../../Common/VerboseLog.h"
 #include "../../ThirdParty/stb_truetype.h"
@@ -6,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <cstdio>
 #include <fstream>
 
 namespace vortex::graphics::sdlgpu
@@ -23,6 +25,27 @@ namespace vortex::graphics::sdlgpu
 			f.read(reinterpret_cast<char*>(out.data()), n);
 			return true;
 		}
+
+#if VORTEX_PLATFORM_LINUX
+		// Linux has no fixed system-font path: every distribution lays /usr/share/fonts out differently
+		// (Arch keeps Liberation/Noto in their own folders, Debian uses truetype/<family>, ...). fontconfig
+		// is the one thing they all agree on, so the UI font is resolved with it and the hard-coded list
+		// below is only the fallback for a system without fc-match.
+		std::string font_from_fontconfig(const char* pattern)
+		{
+			std::string cmd = "fc-match -f '%{file}' '";
+			cmd += pattern;
+			cmd += "' 2>/dev/null";
+			FILE* pipe = popen(cmd.c_str(), "r");
+			if (!pipe) return {};
+			char buffer[1024];
+			std::string out;
+			while (fgets(buffer, sizeof(buffer), pipe)) out += buffer;
+			if (pclose(pipe) != 0) return {};
+			while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) out.pop_back();
+			return out;
+		}
+#endif
 
 		bool read_text(const std::string& path, std::string& out)
 		{
@@ -58,19 +81,24 @@ namespace vortex::graphics::sdlgpu
 		m_device = device;
 		if (!device) return false;
 
-		std::string source;
-		if (!read_text(shader_dir + "/overlay.metal", source))
-		{
-			platform::debug_output("[overlay] overlay.metal not found — UI overlay disabled\n");
-			return false;
-		}
+		// `entry` of the "overlay" shader set: an entrypoint inside overlay.metal on Metal, or its own
+		// overlay.<Entry>.spv module on Vulkan (SdlGpuShaderFormat.h).
 		auto make_shader = [&](const char* entry, SDL_GPUShaderStage stage, u32 samplers, u32 uniforms) -> SDL_GPUShader*
 		{
+			const std::string file = shaderfmt::module_file("overlay", entry);
+			std::vector<unsigned char> code;
+			if (!read_file(shader_dir + "/" + file, code))
+			{
+				platform::debug_output(("[overlay] " + file + " not found — UI overlay disabled\n").c_str());
+				return nullptr;
+			}
+			if (shaderfmt::is_text) code.push_back('\0');
+
 			SDL_GPUShaderCreateInfo ci{};
-			ci.code = reinterpret_cast<const Uint8*>(source.c_str());
-			ci.code_size = source.size() + 1;
-			ci.entrypoint = entry;
-			ci.format = SDL_GPU_SHADERFORMAT_MSL;
+			ci.code = code.data();
+			ci.code_size = code.size();
+			ci.entrypoint = shaderfmt::entrypoint(entry);
+			ci.format = shaderfmt::format;
 			ci.stage = stage;
 			ci.num_samplers = samplers;
 			ci.num_uniform_buffers = uniforms;
@@ -134,20 +162,33 @@ namespace vortex::graphics::sdlgpu
 		const u32 white = 0xFFFFFFFFu;
 		m_white = create_texture(&white, 1, 1, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, 4);
 
-		// System UI fonts: SF (macOS), Helvetica bold for the heavier weights; DejaVu on Linux; env overrides.
-		std::vector<std::string> regular = {
-			platform::env_string("VORTEX_UI_FONT"),
-			"/System/Library/Fonts/SFNS.ttf",
-			"/System/Library/Fonts/Helvetica.ttc",
-			"/System/Library/Fonts/Supplemental/Arial.ttf",
-			"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-			"/usr/share/fonts/dejavu/DejaVuSans.ttf" };
-		std::vector<std::string> bold = {
-			platform::env_string("VORTEX_UI_FONT_BOLD"),
-			"/System/Library/Fonts/Helvetica.ttc",
-			"/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-			"/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-			"/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf" };
+		// System UI fonts: SF (macOS), Helvetica bold for the heavier weights; whatever fontconfig picks on
+		// Linux, with the common distribution paths as a fallback; env overrides win everywhere.
+		std::vector<std::string> regular = { platform::env_string("VORTEX_UI_FONT") };
+		std::vector<std::string> bold = { platform::env_string("VORTEX_UI_FONT_BOLD") };
+#if VORTEX_PLATFORM_LINUX
+		regular.push_back(font_from_fontconfig("sans-serif"));
+		bold.push_back(font_from_fontconfig("sans-serif:bold"));
+#endif
+		for (const char* p : { "/System/Library/Fonts/SFNS.ttf",
+		                       "/System/Library/Fonts/Helvetica.ttc",
+		                       "/System/Library/Fonts/Supplemental/Arial.ttf",
+		                       "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",   // Debian / Ubuntu
+		                       "/usr/share/fonts/dejavu/DejaVuSans.ttf",            // Fedora
+		                       "/usr/share/fonts/TTF/DejaVuSans.ttf",               // Arch
+		                       "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
+		                       "/usr/share/fonts/TTF/LiberationSans-Regular.ttf",
+		                       "/usr/share/fonts/noto/NotoSans-Regular.ttf" })
+			regular.push_back(p);
+		for (const char* p : { "/System/Library/Fonts/Helvetica.ttc",
+		                       "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+		                       "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+		                       "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+		                       "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+		                       "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
+		                       "/usr/share/fonts/TTF/LiberationSans-Bold.ttf",
+		                       "/usr/share/fonts/noto/NotoSans-Bold.ttf" })
+			bold.push_back(p);
 		load_font(m_font_regular, regular, false);
 		if (!load_font(m_font_bold, bold, true) && m_font_regular.ok)
 		{

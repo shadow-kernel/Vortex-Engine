@@ -316,6 +316,10 @@ namespace vortex::graphics::sdlgpu
 		// Shadow maps — spot atlas (2x2 tiles), directional cascades (2x2 tiles), point cube faces (4x3 tiles).
 		// Same tile layout, light-buffer tails and sampling rules as the DX12 backend (SdlGpuRenderer_Shadows.cpp).
 		bool ensure_shadow_resources();
+		// The comparison sampler + the 1x1 depth texture that stand in for a missing shadow atlas. Created once
+		// with the device (not with the atlases), because the shadow slots must hold a legal comparison-sampled
+		// depth binding on every frame, including before/without ensure_shadow_resources().
+		bool create_shadow_fallback();
 		void destroy_shadow_resources();
 		void record_shadow_passes(SDL_GPUCommandBuffer* cmd);
 		static constexpr u32 MAX_SHADOW_SPOTS = 4;
@@ -503,11 +507,25 @@ namespace vortex::graphics::sdlgpu
 		SDL_Window* create_or_wrap_window(void* native, bool is_sdl_window, u32 w, u32 h);
 		bool claim_window(SDL_Window* window);
 		void attach_metal_view_to_host();
-		void sync_host_metal_view();
+		// X11: give the window's input masks back to the toolkit that owns this window (see the .cpp).
+		void release_host_input(SDL_Window* window);
+		// Keeps SDL's surface the size of the toolkit's host view/window (macOS: the Metal layer's
+		// frame; Linux: SDL's idea of the wrapped X11 window's size, which drives the swapchain).
+		void sync_host_surface();
 		void apply_swapchain_params(SDL_Window* window);
 		bool load_shaders();
-		SDL_GPUShader* create_shader(const std::string& source, const char* entry, SDL_GPUShaderStage stage,
+		// Creates the shader `entry` of the shader set `base` ("standard", "grid", ...). The backend's shader
+		// format decides whether that is an entrypoint inside one MSL source or its own SPIR-V module
+		// (SdlGpuShaderFormat.h); the raw code is cached in m_shader_blobs either way.
+		SDL_GPUShader* create_shader(const std::string& base, const char* entry, SDL_GPUShaderStage stage,
 			u32 samplers, u32 storage_buffers, u32 uniform_buffers);
+		// Shader code as SDL consumes it, read once per file: NUL-terminated MSL text or a SPIR-V binary.
+		const std::vector<unsigned char>* shader_blob(const std::string& file);
+		// The primitive behind both create_shader() and the custom-material path.
+		SDL_GPUShader* create_shader_from_code(const std::vector<unsigned char>& code, const char* entry,
+			const std::string& origin, SDL_GPUShaderStage stage, u32 samplers, u32 storage_buffers, u32 uniform_buffers);
+		// A project's own material shader: reads the .metal text, or compiles the .glsl to SPIR-V with glslc.
+		bool load_material_shader(const std::string& path, SDL_GPUShaderStage stage, std::vector<unsigned char>& out);
 		bool create_pipelines();
 		bool create_pipeline_set(PipelineSet& set, u32 stride, bool skinned_layout);
 		SDL_GPUGraphicsPipeline* create_scene_pipeline(SDL_GPUShader* vs, SDL_GPUShader* fs, u32 stride, bool skinned_layout,
@@ -569,16 +587,24 @@ namespace vortex::graphics::sdlgpu
 		WindowSurface m_main;
 		WindowSurface m_game;
 		u32 m_width{ 0 }, m_height{ 0 };
-		// Editor-embedded main surface (macOS): the host NSView, SDL's Metal view re-parented into it, and the
+		// Editor-embedded main surface: the toolkit's native view/window the engine renders into — an NSView
+		// on macOS, an X11 Window id (XID) on Linux. The remaining members are the macOS re-parenting dance:
+		// SDL's Metal view moved into the host view, and the
 		// toolkit's responder chain that SDL replaces while wrapping the view (restored in claim_window).
 		void* m_host_view{ nullptr };
 		void* m_host_metal_view{ nullptr };
 		void* m_host_content_view{ nullptr };
 		void* m_host_content_prev_responder{ nullptr };
 		void* m_host_window_prev_responder{ nullptr };
+		// X11 only: Xlib loaded on demand to hand the embedded window's input masks back to the toolkit.
+		SDL_SharedObject* m_x11_lib{ nullptr };
+		SDL_FunctionPointer m_x11_select_input{ nullptr };
+		SDL_FunctionPointer m_x11_flush{ nullptr };
+		SDL_SharedObject* m_xi2_lib{ nullptr };
+		SDL_FunctionPointer m_xi2_select_events{ nullptr };
 		std::string m_shader_dir;
 		std::string m_shader_dir_override;
-		std::unordered_map<std::string, std::string> m_shader_sources;
+		std::unordered_map<std::string, std::vector<unsigned char>> m_shader_blobs;
 
 		SDL_GPUShader* m_vs_standard{ nullptr };
 		SDL_GPUShader* m_vs_skinned{ nullptr };
@@ -655,6 +681,11 @@ namespace vortex::graphics::sdlgpu
 		SDL_GPUTexture* m_csm_atlas{ nullptr };           // cascade tiles, 2*SHADOW_TILE_SIZE square
 		SDL_GPUTexture* m_point_atlas{ nullptr };         // POINT_ATLAS_COLS x 3 tiles of POINT_SHADOW_TILE
 		SDL_GPUSampler* m_sampler_shadow{ nullptr };      // comparison sampler (LESS_OR_EQUAL, clamp)
+		// 1x1 D32 depth texture cleared to 1.0 ("nothing occludes"), bound to the shadow slots whenever an
+		// atlas is missing (shadows off, or before ensure_shadow_resources() has run). The shadow slots are
+		// declared as comparison-sampled depth textures (sampler2DShadow / depth2d), so a colour texture with
+		// a non-comparison sampler is not a legal binding for them under Vulkan.
+		SDL_GPUTexture* m_shadow_dummy{ nullptr };
 		SDL_GPUShader* m_vs_shadow{ nullptr };
 		SDL_GPUShader* m_vs_shadow_skinned_layout{ nullptr };
 		SDL_GPUShader* m_fs_shadow{ nullptr };

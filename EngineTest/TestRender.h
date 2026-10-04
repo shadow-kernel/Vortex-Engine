@@ -153,9 +153,23 @@ private:
 		const float cw = (float)runtime::GameHost::client_width(), ch = (float)runtime::GameHost::client_height();
 		r.ui_begin(cw, ch);
 		r.ui_rect(24.0f, 24.0f, 360.0f, 92.0f, 0.05f, 0.05f, 0.07f, 0.72f, 14.0f);
-		r.ui_text_utf8(40.0f, 32.0f, 330.0f, 36.0f, "Vortex Engine · macOS", 22.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0, 700);
+		// The platform and the GPU API this build actually renders with (Metal on macOS, Vulkan elsewhere).
+#if VORTEX_PLATFORM_MACOS
+		const char* platform_name = "macOS";
+		const char* gpu_api = "Metal";
+#elif VORTEX_PLATFORM_LINUX
+		const char* platform_name = "Linux";
+		const char* gpu_api = "Vulkan";
+#else
+		const char* platform_name = "Windows";
+		const char* gpu_api = "D3D12";
+#endif
+		char title[96];
+		snprintf(title, sizeof(title), "Vortex Engine · %s", platform_name);
+		r.ui_text_utf8(40.0f, 32.0f, 330.0f, 36.0f, title, 22.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0, 700);
 		char line[128];
-		snprintf(line, sizeof(line), "SDL GPU / Metal · %d fps · %d draws · Ärger-frei ✓", r.get_current_fps(), r.get_draw_call_count());
+		snprintf(line, sizeof(line), "SDL GPU / %s · %d fps · %d draws · Ärger-frei ✓", gpu_api,
+			r.get_current_fps(), r.get_draw_call_count());
 		r.ui_text_utf8(40.0f, 68.0f, 330.0f, 30.0f, line, 15.0f, 0.75f, 0.85f, 1.0f, 1.0f, 0, 400);
 		r.ui_line(40.0f, 64.0f, 360.0f, 64.0f, 0.4f, 0.6f, 1.0f, 0.9f, 1.5f);
 

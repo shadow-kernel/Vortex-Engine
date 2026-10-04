@@ -41,6 +41,8 @@ namespace VortexEditor.Shell
             HostShell.RevealInFileBrowser = EditorCommands.RevealInFinder;
             HostShell.AlertSound = () => { };
             BuildMenus();
+            // The XAML spells shortcut hints with the macOS glyphs; rewrite them for this platform (no-op on macOS).
+            Opened += (s, e) => Keys.LocalizeHints(this);
             Opened += OnOpened;
             Activated += (s, e) => Session.OnWindowActivated();
             Closing += OnClosing;
@@ -506,8 +508,8 @@ namespace VortexEditor.Shell
             PauseIcon.Foreground = st == PlayState.Paused ? (Avalonia.Media.IBrush)this.FindResource("VxAccentBrush") : (Avalonia.Media.IBrush)this.FindResource("VxTextBrush");
             StopButton.IsEnabled = st != PlayState.Editing;
             PauseButton.IsEnabled = st != PlayState.Editing;
-            ToolTip.SetTip(PlayButton, st == PlayState.Playing ? "Stop — back to the build view (⌘P)" : "Play (⌘P)");
-            ToolTip.SetTip(PauseButton, st == PlayState.Paused ? "Resume (⇧⌘P)" : "Pause (⇧⌘P)");
+            ToolTip.SetTip(PlayButton, st == PlayState.Playing ? "Stop \u2014 back to the build view (" + Keys.Chord("P") + ")" : "Play (" + Keys.Chord("P") + ")");
+            ToolTip.SetTip(PauseButton, st == PlayState.Paused ? "Resume (" + Keys.Chord("P", shift: true) + ")" : "Pause (" + Keys.Chord("P", shift: true) + ")");
         }
 
         private void SyncUndoText()

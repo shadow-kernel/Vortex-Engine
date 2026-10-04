@@ -56,9 +56,12 @@ namespace Editor.Core.Services.Build
 
         public static string PlayerExecutableName(ExportPlatform p) => IsWindows(p) ? "Vortex.Player.exe" : "Vortex.Player";
         public static string NativeLibraryName(ExportPlatform p) => IsWindows(p) ? "VortexAPI.dll" : IsMac(p) ? "libVortexAPI.dylib" : "libVortexAPI.so";
-        /// <summary>Shader folder inside a runtime pack / shipped game, relative to the executable: Metal sources live
-        /// in Shaders/msl on macOS; the DirectX engine reads a flat Shaders/*.hlsl folder on Windows (and Linux).</summary>
-        public static string ShaderRelativeDir(ExportPlatform p) => IsMac(p) ? Path.Combine("Shaders", "msl") : "Shaders";
+        /// <summary>Shader folder inside a runtime pack / shipped game, relative to the executable, matching what
+        /// that platform's backend loads: Metal sources in Shaders/msl on macOS, compiled SPIR-V modules in
+        /// Shaders/spirv on Linux (SDL GPU / Vulkan), and the flat Shaders/*.hlsl folder the DirectX engine reads
+        /// on Windows. Mirrors Engine/Graphics/SdlGpu/SdlGpuShaderFormat.h.</summary>
+        public static string ShaderRelativeDir(ExportPlatform p) =>
+            IsMac(p) ? Path.Combine("Shaders", "msl") : IsLinux(p) ? Path.Combine("Shaders", "spirv") : "Shaders";
 
         public static IEnumerable<ExportPlatform> All()
         {
@@ -84,7 +87,7 @@ namespace Editor.Core.Services.Build
         public string ManagedDir;
         /// <summary>Folder holding the native engine library and its sibling libraries.</summary>
         public string NativeDir;
-        /// <summary>Folder holding the shader sources (…/Shaders/msl or …/Shaders/hlsl).</summary>
+        /// <summary>Folder holding the shaders this platform loads (…/Shaders/msl, …/Shaders/spirv or …/Shaders).</summary>
         public string ShaderDir;
         public string Source;   // where it was found (for the UI)
         public readonly List<string> Problems = new List<string>();

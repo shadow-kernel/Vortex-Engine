@@ -63,7 +63,8 @@ phase; each phase is merged only once it builds **and** its verification step pa
 3. **Editor sub-tools**: the Avalonia tool windows are simpler than their WPF twins (no drag-on-canvas UI
    layout, no graphical animation timeline) — extend them as needed.
 4. **Packaging**: Developer-ID signing + notarization (today: ad-hoc signed `.app` + DMG from
-   `tools/macos/make-app.sh`), GitHub release job, Linux build (SDL GPU Vulkan + SPIR-V).
+   `tools/macos/make-app.sh`), GitHub release job. ~~Linux build (SDL GPU Vulkan + SPIR-V)~~ ✅ done — see
+   **Linux** below; a distributable bundle (AppImage / Flatpak) is still open.
 5. **Windows on the new stack**: build `Vortex.Editor` (Avalonia) on Windows with an HWND viewport, so both
    platforms share one editor; keep the WPF editor until parity.
 
@@ -102,6 +103,62 @@ Windows exists (`windows-x64`) but has not been verified yet — keep using the 
 
 Optional Steam Audio on macOS: drop `libphonon.dylib` (or `phonon.bundle`) from the Steam Audio SDK next to
 `EngineTest` / `libVortexAPI.dylib`; it is loaded on demand like `phonon.dll` on Windows.
+
+---
+
+## Linux (SDL GPU / Vulkan)
+
+The Linux port is the same stack as the macOS one — the whole native engine, `libVortexAPI.so`, the .NET 10
+player and the Avalonia editor — with **Vulkan** in place of Metal. Nothing in the engine core, the physics,
+navigation, audio or managed layers needed changing; the work was the renderer's shader format, the editor's
+viewport embedding and a handful of platform services.
+
+```bash
+# Arch Linux (other distributions in README.md and Scripts/linux-dev.sh)
+sudo pacman -S --needed cmake ninja shaderc sdl3 assimp dotnet-sdk vulkan-icd-loader
+Scripts/linux-dev.sh --release --editor
+```
+
+**What differs from the Metal backend**
+
+| | macOS / Metal | Linux / Vulkan |
+|---|---|---|
+| Shader format | MSL source, compiled by the driver at load | SPIR-V, compiled by `glslc` at **build** time |
+| Shader set | `Engine/Shaders/msl/*.metal`, one file per group | `Engine/Shaders/glsl/<base>.<Entry>.{vert,frag}`, one file per entrypoint (a SPIR-V module has a single `main`) |
+| Loaded from | `Shaders/msl` | `Shaders/spirv` |
+| Custom material shader | `.metal`, VSMain/PSMain | `.glsl`, one file compiled once per stage (`VORTEX_VERTEX_STAGE` / `VORTEX_FRAGMENT_STAGE`) by `glslc` on load — same hot reload |
+| Editor viewport | SDL's Metal layer re-parented into the host `NSView` | SDL wraps the toolkit's X11 window (`SDL_PROP_WINDOW_CREATE_X11_WINDOW_NUMBER`) |
+| Viewport input | SDL's event listener removed from the responder chain | SDL's `XSelectInput` mask handed back (`release_host_input`) |
+| Pointer warp / Caps Lock | CoreGraphics | libX11 (`XWarpPointer` / `XQueryPointer`) |
+| Trash | `NSFileManager trashItemAtURL:` | freedesktop.org Trash spec |
+| UI font | SF / Helvetica | fontconfig (`fc-match`), with distribution paths as fallback |
+
+`Engine/Graphics/SdlGpu/SdlGpuShaderFormat.h` is the single place that decides the format, the folder and the
+entrypoint naming; every call site names a shader set plus an entrypoint and is backend-agnostic.
+
+SDL GPU normalises the coordinate system across backends ("SDL will automatically convert the coordinate system
+behind the scenes" — `SDL_gpu.h`), so the GLSL set is a **math-identical** port of the MSL set: no clip-space Y
+flip and no winding change. The uniform blocks are byte-matched to the same C++ structs the DX12 cbuffers use —
+the one trap is that std140 gives a scalar array a 16-byte stride, so MSL's tightly packed `float pad[3]` is
+spelled out as individual scalars (see `Engine/Shaders/glsl/include/standard_common.glsl`).
+
+**Verified on this machine** (Arch, kernel 7.2, RTX 5070, Vulkan 1.4, SDL 3.4.16, .NET 10): `ctest` 4/4 incl.
+audio 51/51, `VortexRenderTest` renders and captures a frame on "NVIDIA GeForce RTX 5070 (vulkan)", the player
+runs `Templates/Default3D` at ~3000 FPS, and the editor runs with the native viewport embedded in its window.
+
+**Viewport input** is the one thing both backends have to undo. SDL grabs the input of the window it wraps —
+on macOS by making itself the next responder, on X11 by selecting the full event mask, and `ButtonPress` can be
+selected by only ONE X11 client per window. The editor never pumps SDL's event loop, so everything SDL grabbed
+was dropped: clicks in the viewport did nothing and right-drag never started the fly camera. `claim_window()`
+therefore hands the input back (`release_host_input`, re-applied after a resize because SDL re-selects its mask
+on some window operations), and X11 then delivers those events to the toolkit's own window.
+
+Set `VORTEX_INPUT_TRACE=1` to print every pointer and key event the viewport control receives, with the
+control's screen rect — the first question when viewport input misbehaves is always whether the toolkit saw
+the event at all.
+
+**Open on Linux**: Wayland without XWayland (the editor's embedded viewport needs an X11 window; the standalone
+player runs natively on Wayland), DLSS / frame generation (NVIDIA + Windows only), and a distributable bundle.
 
 ---
 

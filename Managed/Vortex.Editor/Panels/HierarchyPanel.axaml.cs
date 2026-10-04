@@ -401,7 +401,7 @@ namespace VortexEditor.Panels
             m.Items.Add(Item("Delete Scene…", async () =>
             {
                 if (ProjectData.Current?.Scenes?.Count <= 1) { await Dialogs.Alert("Delete Scene", "Cannot delete the only scene in the project."); return; }
-                if (await Dialogs.Confirm("Delete scene \"" + sc.Name + "\"?", "The scene is removed from the project (undo with ⌘Z).", "Delete", "Cancel", destructive: true))
+                if (await Dialogs.Confirm("Delete scene \"" + sc.Name + "\"?", "The scene is removed from the project (undo with " + VortexEditor.Shell.Keys.Chord("Z") + ").", "Delete", "Cancel", destructive: true))
                 { Vm.SelectedScene = sc; Vm.DeleteSceneCommand.Execute(null); }
             }));
             m.Items.Add(new Separator());

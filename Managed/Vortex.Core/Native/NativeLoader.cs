@@ -51,26 +51,45 @@ namespace Editor.Core.Native
             return IntPtr.Zero;   // fall back to the default probing (and its error message)
         }
 
+        /// <summary>
+        /// The shader folder of the backend this build renders with: MSL source for Metal, compiled SPIR-V
+        /// modules for Vulkan (see Engine/Graphics/SdlGpu/SdlGpuShaderFormat.h, which does the same lookup
+        /// natively). Windows/DX12 loads .hlsl from the Shaders root.
+        /// </summary>
+        public static string ShaderFormatDirectory =>
+            RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "msl" : "spirv";
+
+        /// <summary>
+        /// Source extension of a project's OWN material shader on this platform's backend: .hlsl for DX12,
+        /// .metal for Metal, .glsl for Vulkan. Mirrors shaderfmt::material_suffix in
+        /// Engine/Graphics/SdlGpu/SdlGpuShaderFormat.h, which is what actually compiles the file.
+        /// </summary>
+        public static string MaterialShaderExtension =>
+            RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ".hlsl"
+            : RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? ".metal" : ".glsl";
+
         /// <summary>Where the engine's shader sources live for this process (used by SetShaderDirectory).</summary>
         public static string FindShaderDirectory()
         {
             string env = Environment.GetEnvironmentVariable("VORTEX_SHADER_DIR");
             if (!string.IsNullOrEmpty(env) && Directory.Exists(env)) return env;
+            string leaf = ShaderFormatDirectory;
             // The shaders that belong to the library we actually loaded come first.
             if (!string.IsNullOrEmpty(ResolvedLibraryPath))
             {
-                string beside = Path.Combine(Path.GetDirectoryName(ResolvedLibraryPath) ?? "", "Shaders", "msl");
+                string beside = Path.Combine(Path.GetDirectoryName(ResolvedLibraryPath) ?? "", "Shaders", leaf);
                 if (Directory.Exists(beside)) return beside;
             }
             foreach (string dir in CandidateDirectories())
             {
-                string a = Path.Combine(dir, "Shaders", "msl");
+                string a = Path.Combine(dir, "Shaders", leaf);
                 if (Directory.Exists(a)) return a;
             }
             string repo = FindRepositoryRoot();
             if (repo != null)
             {
-                string src = Path.Combine(repo, "Engine", "Shaders", "msl");
+                // The source tree only has the MSL set; the SPIR-V modules are a build product.
+                string src = Path.Combine(repo, "Engine", "Shaders", leaf);
                 if (Directory.Exists(src)) return src;
             }
             return null;

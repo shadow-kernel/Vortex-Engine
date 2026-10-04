@@ -645,7 +645,7 @@ namespace VortexEditor.Panels
         {
             string head = Path.GetFileName(t.FullPath);
             string info = t.TypeName + (t.Size >= 0 ? " · " + t.SizeText : "") + (t.Modified != default ? " · " + t.ModifiedText : "");
-            string hint = AssetKinds.IsPlaceable(t.Kind) ? "\nDouble-click: add to scene · ⇧ editor · ⌘ preview" : "";
+            string hint = AssetKinds.IsPlaceable(t.Kind) ? "\nDouble-click: add to scene \u00b7 " + VortexEditor.Shell.Keys.Shift + " editor \u00b7 " + VortexEditor.Shell.Keys.Cmd + " preview" : "";
             string tags = "";
             try { var list = AssetTagEditorDialog.GetTags(t.FullPath); if (list.Count > 0) tags = "\nTags: " + string.Join(", ", list); } catch { }
             return head + "\n" + info + "\n" + t.RelPath + tags + hint;
@@ -1302,7 +1302,7 @@ namespace VortexEditor.Panels
             if (confirm)
             {
                 string title = sel.Count == 1 ? "Delete “" + Path.GetFileName(sel[0].FullPath) + "”?" : "Delete " + sel.Count + " items?";
-                string msg = (MacTrash.IsSupported ? "The items are moved to the Trash." : "The items are deleted.") + " Undo (⌘Z) restores them.";
+                string msg = (SystemTrash.IsSupported ? "The items are moved to the Trash." : "The items are deleted.") + " Undo (" + VortexEditor.Shell.Keys.Chord("Z") + ") restores them.";
                 if (sel.Any(t => t.Kind == AssetKind.Prefab || t.IsFolder)) msg += " Scene instances of deleted prefabs are removed too.";
                 if (!await Dialogs.Confirm(title, msg, "Delete", "Cancel", destructive: true)) return;
             }
@@ -1674,7 +1674,7 @@ namespace VortexEditor.Panels
 
         public Task<string> CreateMaterialAsync(string type, string name = null) => CreateNamed(type + " Material", "New" + type + "Material", ".vmat", "Assets/Materials", p => CoreAssetActions.CreateMaterial(p, type), null, name);
         public void CreateMaterial(string type) => _ = CreateMaterialAsync(type);
-        public Task<string> CreateShaderAsync(string type, string name = null, bool openInEditor = true) => CreateNamed(type + " Shader", type == "Unlit" ? "NewUnlitShader" : "NewShader", OperatingSystem.IsWindows() ? ".hlsl" : ".metal", "Assets/Shaders",
+        public Task<string> CreateShaderAsync(string type, string name = null, bool openInEditor = true) => CreateNamed(type + " Shader", type == "Unlit" ? "NewUnlitShader" : "NewShader", Editor.Core.Native.NativeLoader.MaterialShaderExtension, "Assets/Shaders",
             p => CoreAssetActions.CreateShader(p, type), p => { if (openInEditor) EditorCommands.OpenInIde(p); }, name);
         public void CreateShader(string type) => _ = CreateShaderAsync(type);
         public Task<string> CreateUiScreenAsync(string name = null, bool open = true) => CreateNamed("UI Screen", "NewScreen", ".vui", "Assets/UI", p => CoreAssetActions.CreateUiScreen(p), p => { if (open) EditorWindows.UiEditor(p); }, name);
@@ -1794,14 +1794,14 @@ namespace VortexEditor.Panels
                         break;
                     case AssetKind.Prefab:
                         m.Items.Add(Mi("Add to Scene (Instance)", () => AddToScene(p), "Plus"));
-                        m.Items.Add(Mi("Open Prefab (Edit)", () => EditorWindows.PrefabEditor(p), "Prefab", gestureText: "⇧ double-click"));
-                        m.Items.Add(Mi("Large Preview", () => EditorWindows.OpenLargePreview(p), "Eye", gestureText: "⌘ double-click"));
+                        m.Items.Add(Mi("Open Prefab (Edit)", () => EditorWindows.PrefabEditor(p), "Prefab", gestureText: VortexEditor.Shell.Keys.Shift + " double-click"));
+                        m.Items.Add(Mi("Large Preview", () => EditorWindows.OpenLargePreview(p), "Eye", gestureText: VortexEditor.Shell.Keys.Cmd + " double-click"));
                         break;
                     case AssetKind.Model:
                         m.Items.Add(Mi("Add to Scene", () => AddToScene(p), "Plus"));
-                        m.Items.Add(Mi("Open in Model Editor", () => EditorWindows.ModelEditor(p), "Cube", gestureText: "⇧ double-click"));
+                        m.Items.Add(Mi("Open in Model Editor", () => EditorWindows.ModelEditor(p), "Cube", gestureText: VortexEditor.Shell.Keys.Shift + " double-click"));
                         m.Items.Add(Mi("Mesh Editor", () => EditorWindows.MeshEditor(p), "Grid"));
-                        m.Items.Add(Mi("Large Preview", () => EditorWindows.OpenLargePreview(p), "Eye", gestureText: "⌘ double-click"));
+                        m.Items.Add(Mi("Large Preview", () => EditorWindows.OpenLargePreview(p), "Eye", gestureText: VortexEditor.Shell.Keys.Cmd + " double-click"));
                         m.Items.Add(new Separator());
                         m.Items.Add(Mi("Create Prefab from Model", () => _ = CreatePrefabFromModelAsync(p), "Prefab"));
                         m.Items.Add(Mi("Extract Animations…", () => _ = ExtractAnimationsAsync(p), "Play"));
@@ -1809,7 +1809,7 @@ namespace VortexEditor.Panels
                         break;
                     case AssetKind.Primitive:
                         m.Items.Add(Mi("Add to Scene", () => AddToScene(p), "Plus"));
-                        m.Items.Add(Mi("Large Preview", () => EditorWindows.OpenLargePreview(p), "Eye", gestureText: "⌘ double-click"));
+                        m.Items.Add(Mi("Large Preview", () => EditorWindows.OpenLargePreview(p), "Eye", gestureText: VortexEditor.Shell.Keys.Cmd + " double-click"));
                         break;
                     case AssetKind.Scene:
                         m.Items.Add(Mi("Open Scene", () => _ = Actions.OpenDefault(p), "Scene"));
@@ -1820,12 +1820,12 @@ namespace VortexEditor.Panels
                         break;
                     case AssetKind.Material:
                         m.Items.Add(Mi("Open in Material Editor", () => EditorWindows.MaterialEditor(p), "Material"));
-                        m.Items.Add(Mi("Large Preview", () => EditorWindows.OpenLargePreview(p), "Eye", gestureText: "⌘ double-click"));
+                        m.Items.Add(Mi("Large Preview", () => EditorWindows.OpenLargePreview(p), "Eye", gestureText: VortexEditor.Shell.Keys.Cmd + " double-click"));
                         m.Items.Add(Mi("Assign to Selected Entity", () => AssignMaterial(p), "Link", enabled: SelectionService.Instance.SelectedEntity != null));
                         break;
                     case AssetKind.Texture:
                         m.Items.Add(Mi("Open in Texture Editor", () => EditorWindows.TextureEditor(p), "Image"));
-                        m.Items.Add(Mi("Large Preview", () => EditorWindows.OpenLargePreview(p), "Eye", gestureText: "⌘ double-click"));
+                        m.Items.Add(Mi("Large Preview", () => EditorWindows.OpenLargePreview(p), "Eye", gestureText: VortexEditor.Shell.Keys.Cmd + " double-click"));
                         break;
                     case AssetKind.AudioClip:
                         m.Items.Add(Mi("Play", () => Actions.Audition(p), "Play"));
@@ -1844,7 +1844,7 @@ namespace VortexEditor.Panels
                         break;
                     case AssetKind.Vfx:
                         m.Items.Add(Mi("Add to Scene", () => AddToScene(p), "Plus"));
-                        m.Items.Add(Mi("Open in VFX Editor", () => EditorWindows.VfxEditor(p), "Sparkle", gestureText: "⇧ double-click"));
+                        m.Items.Add(Mi("Open in VFX Editor", () => EditorWindows.VfxEditor(p), "Sparkle", gestureText: VortexEditor.Shell.Keys.Shift + " double-click"));
                         break;
                     case AssetKind.Shader:
                         m.Items.Add(Mi("Open in Code Editor", () => EditorCommands.OpenInIde(p), "Sparkle"));

@@ -139,7 +139,7 @@ namespace VortexEditor.Shell
             bar.Children.Add(new VxIcon { Icon = "Sparkle", Width = 18, Height = 18, Margin = new Thickness(0, 0, 4, 0) });
             bar.Children.Add(_title);
             bar.Children.Add(new Border { Width = 18 });
-            bar.Children.Add(Tool("Save", () => Save(), "Save the effect (⌘S)", "Save"));
+            bar.Children.Add(Tool("Save", () => Save(), "Save the effect (" + Keys.Chord("S") + ")", "Save"));
             bar.Children.Add(Tool("Revert", Revert, "Discard the changes since the last save", "Undo"));
             bar.Children.Add(new Border { Width = 12 });
             _playButton = Tool("Pause", TogglePause, "Pause / resume the preview (Space)", "Pause");

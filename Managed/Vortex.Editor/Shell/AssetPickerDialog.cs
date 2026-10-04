@@ -113,6 +113,7 @@ namespace VortexEditor.Shell
                 case ".vmat": return "Materials";
                 case ".hlsl": return "HLSL";
                 case ".metal": return "Metal";
+                case ".glsl": return "GLSL";
                 case ".vshader": return "Shader assets";
                 case ".cs": return "Scripts";
                 case ".ventity": case ".vprefab": return "Prefabs";

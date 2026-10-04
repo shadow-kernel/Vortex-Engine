@@ -122,7 +122,7 @@ namespace VortexEditor.Shell
             _resolution.SelectionChanged += (s, e) => ApplyResolution();
             ToolTip.SetTip(_resolution, "Preview resolution — the runtime layout scales the design to it");
             var zoomOut = IconBtn("Minus", "Zoom out", () => { _design.SetZoom(_design.ViewScale / 1.25); UpdateZoomText(); });
-            var zoomIn = IconBtn("Plus", "Zoom in (⌘ + wheel over the canvas)", () => { _design.SetZoom(_design.ViewScale * 1.25); UpdateZoomText(); });
+            var zoomIn = IconBtn("Plus", "Zoom in (" + Keys.Cmd + " wheel over the canvas)", () => { _design.SetZoom(_design.ViewScale * 1.25); UpdateZoomText(); });
             var fit = new Button { Content = "Fit", Classes = { "ghost" }, Padding = new Thickness(8, 2) };
             ToolTip.SetTip(fit, "Fit the screen into the view (double-click empty space)");
             fit.Click += (s, e) => { _design.Fit(); UpdateZoomText(); };
@@ -134,11 +134,11 @@ namespace VortexEditor.Shell
             _enginePreview = new ToggleButton { Content = Label("Eye", "Preview in viewport") };
             ToolTip.SetTip(_enginePreview, "Draw this screen through the engine over the main viewport — exactly what the game renders");
             _enginePreview.IsCheckedChanged += (s, e) => PushEnginePreview();
-            _undoButton = IconBtn("Undo", "Undo (⌘Z)", Undo);
-            _redoButton = IconBtn("Redo", "Redo (⇧⌘Z)", Redo);
-            var delete = IconBtn("Trash", "Delete the selected element (⌫)", DeleteSelected);
+            _undoButton = IconBtn("Undo", "Undo (" + Keys.Chord("Z") + ")", Undo);
+            _redoButton = IconBtn("Redo", "Redo (" + Keys.Chord("Z", shift: true) + ")", Redo);
+            var delete = IconBtn("Trash", "Delete the selected element (" + Keys.Delete + ")", DeleteSelected);
             var save = new Button { Content = Label("Save", "Save"), Classes = { "accent" } };
-            ToolTip.SetTip(save, "Save the screen (⌘S)");
+            ToolTip.SetTip(save, "Save the screen (" + Keys.Chord("S") + ")");
             save.Click += (s, e) => Save();
 
             var left = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, VerticalAlignment = VerticalAlignment.Center };
@@ -748,7 +748,7 @@ namespace VortexEditor.Shell
             }
             if (!isRoot && !arranged && !template)
             {
-                _props.Children.Add(Row("Anchor", AnchorPicker(el), "Where the element hangs in its parent. Click: anchor there (keeps the margin) · ⌥-click: keep the element where it is"));
+                _props.Children.Add(Row("Anchor", AnchorPicker(el), "Where the element hangs in its parent. Click: anchor there (keeps the margin) \u00b7 " + Keys.Alt + "click: keep the element where it is"));
                 _props.Children.Add(Row("Stretch", Pair2(() => el.StretchX, v => Set("sx", () => el.StretchX = v, false, rebuild: true), () => el.StretchY, v => Set("sy", () => el.StretchY = v, false, rebuild: true)), "Stretch to the parent: X / W (Y / H) become margins"));
                 if (el.StretchX) _props.Children.Add(Row("Left · Right", Pair(() => el.OffX, v => Set("x", () => el.OffX = v), () => -el.W, v => Set("w", () => el.W = -v)), "Margins from the parent's left and right edge"));
                 else _props.Children.Add(Row("X · Width", Pair(() => el.OffX, v => Set("x", () => el.OffX = v), () => el.W, v => Set("w", () => el.W = v)), "Offset from the anchor and width (design pixels)"));

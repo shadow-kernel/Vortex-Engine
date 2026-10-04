@@ -78,7 +78,7 @@ namespace VortexEditor.Shell
             var clearIcon = new Button { Content = "Use engine logo", Classes = { "ghost" }, VerticalAlignment = VerticalAlignment.Center }; clearIcon.Click += (s, e) => { _clearIcon = true; _pendingIconSource = null; ShowIcon(null); };
             iconRow.Children.Add(iconFrame); iconRow.Children.Add(chooseIcon); iconRow.Children.Add(clearIcon); iconRow.Children.Add(_iconInfo);
             build.Children.Add(Row("Icon", iconRow, "A square PNG (1024×1024 recommended). Becomes the macOS .icns, the Windows exe icon and the Linux icon on export."));
-            build.Children.Add(Note("Build the game from File ▸ Build (⌘B) for macOS, Windows or Linux. Other platforms need a runtime pack (see Managed/README.md)."));
+            build.Children.Add(Note("Build the game from File \u25b8 Build (" + Keys.Chord("B") + ") for macOS, Windows or Linux. Other platforms need a runtime pack (see Managed/README.md)."));
             tabs.Items.Add(new TabItem { Header = "Build", Content = Scroll(build) });
 
             var git = Page();

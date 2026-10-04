@@ -160,7 +160,7 @@ namespace VortexEditor.Shell
             var g = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
             g.Children.Add(_status);
             var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-            _apply = Ui.Button("Apply", Apply, "Save the import settings to the texture's .vmeta (⌘S)", "accent", 80);
+            _apply = Ui.Button("Apply", Apply, "Save the import settings to the texture's .vmeta (" + Keys.Chord("S") + ")", "accent", 80);
             buttons.Children.Add(_apply);
             buttons.Children.Add(Ui.Button("Revert", () => _ = RevertAsync(), "Reload the texture and its saved settings", null, 80));
             buttons.Children.Add(Ui.Button("Close", Close, null, null, 80));

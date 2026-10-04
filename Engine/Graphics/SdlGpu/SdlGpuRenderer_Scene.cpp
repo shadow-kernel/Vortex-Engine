@@ -673,10 +673,13 @@ namespace vortex::graphics::sdlgpu
 		SDL_GPUTextureSamplerBinding bindings[10];
 		for (auto& b : bindings) { b.texture = white_tex; b.sampler = m_sampler_linear_wrap; }
 		bindings[9] = { m_ssao_current ? m_ssao_current : white_tex, m_sampler_linear_clamp };   // blurred SSAO (slot 9)
-		// Shadow atlases (slots 6..8) with the comparison sampler; the shaders only sample them when a light asks.
-		bindings[6] = { m_shadow_atlas ? m_shadow_atlas : white_tex, m_sampler_shadow ? m_sampler_shadow : m_sampler_linear_clamp };
-		bindings[7] = { m_csm_atlas ? m_csm_atlas : white_tex, m_sampler_shadow ? m_sampler_shadow : m_sampler_linear_clamp };
-		bindings[8] = { m_point_atlas ? m_point_atlas : white_tex, m_sampler_shadow ? m_sampler_shadow : m_sampler_linear_clamp };
+		// Shadow atlases (slots 6..8) with the comparison sampler; the shaders only sample them when a light
+		// asks. A missing atlas falls back to the 1x1 depth texture, NOT to white_tex: these slots are declared
+		// as comparison-sampled depth textures, and a colour texture with a plain sampler is not a legal
+		// binding for them under Vulkan.
+		bindings[6] = { m_shadow_atlas ? m_shadow_atlas : m_shadow_dummy, m_sampler_shadow };
+		bindings[7] = { m_csm_atlas ? m_csm_atlas : m_shadow_dummy, m_sampler_shadow };
+		bindings[8] = { m_point_atlas ? m_point_atlas : m_shadow_dummy, m_sampler_shadow };
 
 		if (gizmo)
 		{

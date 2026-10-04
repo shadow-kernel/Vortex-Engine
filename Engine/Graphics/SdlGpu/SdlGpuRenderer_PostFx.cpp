@@ -106,16 +106,13 @@ namespace vortex::graphics::sdlgpu
 	{
 		if (m_post_ready) return true;
 		if (!m_device || !m_pipeline_shadow) return false;
-		auto si = m_shader_sources.find("ssao.metal");
-		auto bi = m_shader_sources.find("bloom.metal");
-		if (si == m_shader_sources.end() || bi == m_shader_sources.end()) return false;
-		m_vs_ssao = create_shader(si->second, "SsaoVS", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 0);
-		m_fs_ssao = create_shader(si->second, "SsaoPS", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0, 1);
-		m_fs_ssao_blur = create_shader(si->second, "SsaoBlurPS", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0, 1);
-		m_vs_bloom = create_shader(bi->second, "BloomVS", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 0);
-		m_fs_bloom_prefilter = create_shader(bi->second, "BloomPrefilterPS", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0, 1);
-		m_fs_bloom_down = create_shader(bi->second, "BloomDownsamplePS", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0, 1);
-		m_fs_bloom_up = create_shader(bi->second, "BloomUpsamplePS", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0, 1);
+		m_vs_ssao = create_shader("ssao", "SsaoVS", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 0);
+		m_fs_ssao = create_shader("ssao", "SsaoPS", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0, 1);
+		m_fs_ssao_blur = create_shader("ssao", "SsaoBlurPS", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0, 1);
+		m_vs_bloom = create_shader("bloom", "BloomVS", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 0);
+		m_fs_bloom_prefilter = create_shader("bloom", "BloomPrefilterPS", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0, 1);
+		m_fs_bloom_down = create_shader("bloom", "BloomDownsamplePS", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0, 1);
+		m_fs_bloom_up = create_shader("bloom", "BloomUpsamplePS", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0, 1);
 		if (!m_vs_ssao || !m_fs_ssao || !m_fs_ssao_blur || !m_vs_bloom || !m_fs_bloom_prefilter || !m_fs_bloom_down || !m_fs_bloom_up) { destroy_postfx_resources(); return false; }
 		m_pipeline_ssao = create_post_pipeline(m_vs_ssao, m_fs_ssao, SDL_GPU_TEXTUREFORMAT_R8_UNORM, false);
 		m_pipeline_ssao_blur = create_post_pipeline(m_vs_ssao, m_fs_ssao_blur, SDL_GPU_TEXTUREFORMAT_R8_UNORM, false);

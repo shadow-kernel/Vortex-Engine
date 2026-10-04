@@ -207,7 +207,7 @@ namespace VortexEditor.Shell
             var g = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
             g.Children.Add(_status);
             var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-            buttons.Children.Add(Ui.Button("Save Materials", () => _ = SaveMaterialsInteractive(), "Write materials/submesh_N.vmat and update placed instances (⌘S)", "accent", 120));
+            buttons.Children.Add(Ui.Button("Save Materials", () => _ = SaveMaterialsInteractive(), "Write materials/submesh_N.vmat and update placed instances (" + Keys.Chord("S") + ")", "accent", 120));
             buttons.Children.Add(Ui.Button("Close", Close, null, null, 80));
             Grid.SetColumn(buttons, 1); g.Children.Add(buttons);
             return new Border { Background = Ui.Brush("VxToolbarBrush"), BorderBrush = Ui.Brush("VxHairlineBrush"), BorderThickness = new Thickness(0, 1, 0, 0), Padding = new Thickness(14, 8), Child = g };

@@ -321,7 +321,7 @@ namespace VortexEditor.Panels.AssetBrowser
                 {
                     it.Trashed = null; it.Fallback = null;
                     if (!Exists(it.Path)) continue;
-                    if (MacTrash.IsSupported) it.Trashed = MacTrash.Trash(it.Path);
+                    if (SystemTrash.IsSupported) it.Trashed = SystemTrash.Trash(it.Path);
                     if (it.Trashed == null)
                     {
                         it.Fallback = it.IsDir ? (IUndoableCommand)new DeleteFolderCommand(it.Path) : new DeleteFileCommand(it.Path);

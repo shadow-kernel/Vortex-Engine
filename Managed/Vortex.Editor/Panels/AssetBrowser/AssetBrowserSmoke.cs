@@ -374,7 +374,7 @@ namespace VortexEditor.Panels.AssetBrowser
                 bool delOk = deleted.Count == 1 && !Directory.Exists(temp) && TileOf(temp) == null;
                 EditorCommands.Undo();
                 bool delUndo = Directory.Exists(temp) && File.Exists(dst) && File.Exists(dst + ".vmeta");
-                Log("delete folder = " + delOk + " (" + (MacTrash.IsSupported ? "Trash" : "in-memory") + "), undo restores it = " + delUndo);
+                Log("delete folder = " + delOk + " (" + (SystemTrash.IsSupported ? "Trash" : "in-memory") + "), undo restores it = " + delUndo);
                 ok &= delOk && delUndo;
             }
             finally

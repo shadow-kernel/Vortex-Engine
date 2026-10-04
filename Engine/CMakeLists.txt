@@ -46,7 +46,8 @@ set(VORTEX_ENGINE_CORE_SOURCES
 	Runtime/Systems/SteamAudio.cpp
 )
 
-# The SDL GPU backend: Metal on macOS (MSL shaders compiled by the driver at load), Vulkan on Linux later.
+# The SDL GPU backend: Metal on macOS (MSL compiled by the driver at load), Vulkan on Linux (SPIR-V
+# modules compiled from Engine/Shaders/glsl by glslc below).
 set(VORTEX_ENGINE_SDLGPU_SOURCES
 	Graphics/SdlGpu/SdlGpuOverlay.cpp
 	Graphics/SdlGpu/SdlGpuParticles.cpp
@@ -136,6 +137,10 @@ else()
 	target_sources(VortexEngine PRIVATE ${VORTEX_ENGINE_SDLGPU_SOURCES})
 	target_compile_definitions(VortexEngine PUBLIC VORTEX_NO_DX12 VORTEX_HAS_SDLGPU=1)
 	target_link_libraries(VortexEngine PUBLIC SDL3::SDL3)
+	# Metal takes MSL source at load time; every other SDL GPU driver (Vulkan here) needs compiled SPIR-V.
+	if(NOT APPLE)
+		set(VORTEX_HAS_SDLGPU_SPIRV ON)
+	endif()
 	if(NOT MSVC)
 		set_source_files_properties(Graphics/SdlGpu/StbTrueType.cpp PROPERTIES COMPILE_OPTIONS "-w")
 	endif()
@@ -239,11 +244,82 @@ if(VORTEX_ENABLE_RECAST)
 	message(STATUS "Vortex: Recast/Detour v1.6.0 enabled (${recastnavigation_SOURCE_DIR})")
 endif()
 
-# The Metal shaders are loaded from Shaders/msl next to the binaries at run time (the DX12 backend loads its
+# The shaders are loaded from Shaders/<format> next to the binaries at run time (the DX12 backend loads its
 # .hlsl the same way on Windows): mirror the source tree's Shaders folder into the output folder.
 add_custom_command(TARGET VortexEngine POST_BUILD
 	COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/Shaders" "${CMAKE_BINARY_DIR}/bin/Shaders"
 	COMMENT "Copying shaders next to the binaries")
+
+# ---- GLSL -> SPIR-V (the Vulkan backend's shader set) ---------------------------------------------------
+# Metal compiles the .metal sources at load time, so on Apple the copy above is all that is needed. Vulkan
+# consumes SPIR-V, and a SPIR-V module carries exactly one entrypoint called `main` — so every entrypoint is
+# its own GLSL file (Engine/Shaders/glsl/<base>.<Entry>.<vert|frag>) and is compiled here to the file name the
+# backend looks up at run time: Shaders/spirv/<base>.<Entry>.spv (SdlGpuShaderFormat.h).
+if(VORTEX_HAS_SDLGPU_SPIRV)
+	find_program(VORTEX_GLSLC NAMES glslc HINTS ENV VULKAN_SDK PATH_SUFFIXES bin)
+	if(NOT VORTEX_GLSLC)
+		message(FATAL_ERROR
+			"glslc is required to compile the Vulkan shader set but was not found.\n"
+			"  Arch Linux:    sudo pacman -S shaderc\n"
+			"  Debian/Ubuntu: sudo apt install glslc    (or install the Vulkan SDK and set VULKAN_SDK)")
+	endif()
+
+	set(_vortex_glsl_dir "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/glsl")
+	set(_vortex_spirv_dir "${CMAKE_BINARY_DIR}/bin/Shaders/spirv")
+	file(GLOB _vortex_glsl_sources "${_vortex_glsl_dir}/*.vert" "${_vortex_glsl_dir}/*.frag")
+	file(GLOB _vortex_glsl_headers "${_vortex_glsl_dir}/include/*.glsl")
+	if(NOT _vortex_glsl_sources)
+		message(FATAL_ERROR "No GLSL shaders found in ${_vortex_glsl_dir}")
+	endif()
+
+	set(_vortex_spirv_outputs "")
+	foreach(_src IN LISTS _vortex_glsl_sources)
+		# standard.PSMain.frag -> standard.PSMain.spv (the stage lives in the source extension only)
+		get_filename_component(_stem "${_src}" NAME_WLE)
+		set(_out "${_vortex_spirv_dir}/${_stem}.spv")
+		add_custom_command(OUTPUT "${_out}"
+			COMMAND ${CMAKE_COMMAND} -E make_directory "${_vortex_spirv_dir}"
+			COMMAND "${VORTEX_GLSLC}" --target-env=vulkan1.0 -I "${_vortex_glsl_dir}/include"
+			        -o "${_out}" "${_src}"
+			DEPENDS "${_src}" ${_vortex_glsl_headers}
+			COMMENT "glslc ${_stem}.spv"
+			VERBATIM)
+		list(APPEND _vortex_spirv_outputs "${_out}")
+	endforeach()
+
+	# Shipped next to the compiled shaders so a project's own .glsl material shader can #include the engine's
+	# uniform blocks; the run-time glslc call in SdlGpuRenderer::load_material_shader passes it as -I.
+	add_custom_command(OUTPUT "${CMAKE_BINARY_DIR}/bin/Shaders/glsl-include.stamp"
+		COMMAND ${CMAKE_COMMAND} -E copy_directory "${_vortex_glsl_dir}/include" "${CMAKE_BINARY_DIR}/bin/Shaders/glsl-include"
+		COMMAND ${CMAKE_COMMAND} -E touch "${CMAKE_BINARY_DIR}/bin/Shaders/glsl-include.stamp"
+		DEPENDS ${_vortex_glsl_headers}
+		COMMENT "Copying the GLSL include folder next to the binaries"
+		VERBATIM)
+
+	# The starting point the editor copies when a project creates a custom .glsl material shader. It is
+	# compiled here for both stages exactly as load_material_shader() will, so a broken template is a build
+	# error rather than a surprise in the editor.
+	set(_vortex_material_template "${_vortex_glsl_dir}/material_template.glsl")
+	add_custom_command(OUTPUT "${CMAKE_BINARY_DIR}/bin/Shaders/material_template.glsl"
+		COMMAND "${VORTEX_GLSLC}" --target-env=vulkan1.0 -fshader-stage=vert -DVORTEX_VERTEX_STAGE
+		        -I "${_vortex_glsl_dir}/include" -o "${CMAKE_CURRENT_BINARY_DIR}/material_template.vert.spv" "${_vortex_material_template}"
+		COMMAND "${VORTEX_GLSLC}" --target-env=vulkan1.0 -fshader-stage=frag -DVORTEX_FRAGMENT_STAGE
+		        -I "${_vortex_glsl_dir}/include" -o "${CMAKE_CURRENT_BINARY_DIR}/material_template.frag.spv" "${_vortex_material_template}"
+		COMMAND ${CMAKE_COMMAND} -E copy "${_vortex_material_template}" "${CMAKE_BINARY_DIR}/bin/Shaders/material_template.glsl"
+		DEPENDS "${_vortex_material_template}" ${_vortex_glsl_headers}
+		COMMENT "Validating and copying the custom material shader template"
+		VERBATIM)
+
+	add_custom_target(VortexShaders ALL
+		DEPENDS ${_vortex_spirv_outputs}
+		        "${CMAKE_BINARY_DIR}/bin/Shaders/glsl-include.stamp"
+		        "${CMAKE_BINARY_DIR}/bin/Shaders/material_template.glsl")
+	# The POST_BUILD copy_directory above merges into bin/Shaders, so order the two so a fresh build tree
+	# always ends up with both the copied sources and the compiled modules.
+	add_dependencies(VortexShaders VortexEngine)
+	list(LENGTH _vortex_spirv_outputs _vortex_spirv_count)
+	message(STATUS "Vortex: ${_vortex_spirv_count} SPIR-V shader modules via ${VORTEX_GLSLC}")
+endif()
 
 if(APPLE)
 	# miniaudio's Core Audio backend (it dlopen's the frameworks itself, linking them is belt and braces)

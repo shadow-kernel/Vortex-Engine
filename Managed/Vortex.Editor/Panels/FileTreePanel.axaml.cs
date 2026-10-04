@@ -223,7 +223,7 @@ namespace VortexEditor.Panels
         {
             if (node == null || node.IsRoot || node.IsPlaceholder) return;
             if (AssetFileOps.PathsEqual(node.FullPath, Path.Combine(ProjectRoot ?? "", "Assets"))) { EditorCommands.Toast("The Assets folder can't be deleted"); return; }
-            if (confirm && !await Dialogs.Confirm("Delete “" + node.Name + "”?", (MacTrash.IsSupported ? "The folder and everything in it is moved to the Trash." : "The folder and everything in it is deleted.") + " Undo (⌘Z) restores it.", "Delete", "Cancel", destructive: true)) return;
+            if (confirm && !await Dialogs.Confirm("Delete “" + node.Name + "”?", (SystemTrash.IsSupported ? "The folder and everything in it is moved to the Trash." : "The folder and everything in it is deleted.") + " Undo (" + Keys.Chord("Z") + ") restores it.", "Delete", "Cancel", destructive: true)) return;
             string cur = AssetNavigation.CurrentFolder;
             string parent = Path.GetDirectoryName(node.FullPath);
             List<string> deleted;

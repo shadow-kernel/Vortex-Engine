@@ -65,7 +65,7 @@ namespace VortexEditor.Shell
             head.Children.Add(_summary);
             var hint = new TextBlock { Text = "Click a step to jump there — −n undoes n steps, +n redoes them.", Classes = { "small", "tertiary" }, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(14, 0, 14, 8) };
             var bar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(14, 8, 14, 12) };
-            ToolTip.SetTip(_undo, "Undo (⌘Z)"); ToolTip.SetTip(_redo, "Redo (⇧⌘Z)"); ToolTip.SetTip(_clear, "Forget every undo / redo step");
+            ToolTip.SetTip(_undo, "Undo (" + Keys.Chord("Z") + ")"); ToolTip.SetTip(_redo, "Redo (" + Keys.Chord("Z", shift: true) + ")"); ToolTip.SetTip(_clear, "Forget every undo / redo step");
             _undo.Click += (s, e) => { EditorCommands.Undo(); };
             _redo.Click += (s, e) => { EditorCommands.Redo(); };
             _clear.Click += async (s, e) => { if (await Dialogs.Confirm("Clear the history?", "Every undo / redo step is forgotten. The scene itself does not change.", "Clear", "Cancel", destructive: true)) UndoRedoManager.Instance.Clear(); };

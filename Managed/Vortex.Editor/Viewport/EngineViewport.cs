@@ -13,7 +13,8 @@ using Editor.Core.Viewport;
 namespace VortexEditor.Viewport
 {
     /// <summary>
-    /// Hosts the native engine render surface inside the Avalonia tree (an NSView on macOS, an HWND on Windows),
+    /// Hosts the native engine render surface inside the Avalonia tree (an NSView on macOS, an X11 window
+    /// on Linux, an HWND on Windows),
     /// drives the <see cref="EditorViewportSession"/> once per composited frame and translates Avalonia input
     /// into the session's neutral pointer/key calls. Also maintains the physical key table for HostInput.
     /// </summary>
@@ -35,7 +36,7 @@ namespace VortexEditor.Viewport
 
         public EditorViewportSession Session => _session;
         public event Action<string> ToastRequested;
-        /// <summary>The native child view/window handle the engine renders into (NSView* on macOS).</summary>
+        /// <summary>The native child view/window handle the engine renders into (NSView* on macOS, XID on X11).</summary>
         public IntPtr NativeHandle => _handle != null ? _handle.Handle : IntPtr.Zero;
         /// <summary>Pointer presses that reached this control (diagnostics for the smoke run).</summary>
         public int PointerPressCount { get; private set; }
@@ -45,7 +46,7 @@ namespace VortexEditor.Viewport
             Focusable = true;
             ClipToBounds = true;
             HostInput.KeyDown = vk => _keysDown.Contains(vk);
-            HostInput.CapsLock = MacCursor.CapsLockOn;
+            HostInput.CapsLock = ViewportCursor.CapsLockOn;
             HostInput.WindowFocused = () => _topLevel is Window w ? w.IsActive : true;
         }
 
@@ -95,6 +96,15 @@ namespace VortexEditor.Viewport
             if (_frameLoopRunning) return;
             _frameLoopRunning = true;
             _topLevel = TopLevel.GetTopLevel(this);
+            if (_trace)
+            {
+                try
+                {
+                    var origin = this.PointToScreen(new Point(0, 0));
+                    Trace($"viewport rect on screen: {origin.X},{origin.Y} {Bounds.Width:0}x{Bounds.Height:0} (scaling {Scaling})");
+                }
+                catch (Exception ex) { Trace("viewport rect unavailable: " + ex.Message); }
+            }
             RequestFrame();
         }
 
@@ -108,9 +118,19 @@ namespace VortexEditor.Viewport
             else DispatcherTimer.RunOnce(() => OnFrame(TimeSpan.Zero), TimeSpan.FromMilliseconds(16), DispatcherPriority.Render);
         }
 
+        private int _rectTraceTick;
         private void OnFrame(TimeSpan _)
         {
             if (!_frameLoopRunning) return;
+            if (_trace && (_rectTraceTick++ % 120) == 0)
+            {
+                try
+                {
+                    var o = this.PointToScreen(new Point(0, 0));
+                    Trace($"viewport rect on screen: {o.X},{o.Y} {Bounds.Width:0}x{Bounds.Height:0} (scaling {Scaling})");
+                }
+                catch { }
+            }
             try { _session.Tick(); }
             catch (Exception ex) { Editor.Core.Services.ConsoleService.Instance.LogError("Viewport tick: " + ex.Message); }
             RequestFrame();
@@ -152,6 +172,16 @@ namespace VortexEditor.Viewport
         private void OnWindowDeactivated(object sender, EventArgs e)
         {
             _keysDown.Clear();
+        }
+
+        // VORTEX_INPUT_TRACE=1 prints every pointer/key event the viewport sees. The native child surface sits
+        // above the Avalonia tree, so "did the toolkit get this event at all" is the first question whenever
+        // viewport input misbehaves on a platform.
+        private static readonly bool _trace =
+            Environment.GetEnvironmentVariable("VORTEX_INPUT_TRACE") == "1";
+        private static void Trace(string msg)
+        {
+            if (_trace) Console.WriteLine("[input] " + msg);
         }
 
         private bool TryLocalPoint(PointerEventArgs e, out Point p)
@@ -199,7 +229,12 @@ namespace VortexEditor.Viewport
 
         private void TopLevelPointerPressed(object sender, PointerPressedEventArgs e)
         {
-            if (!TryLocalPoint(e, out var p)) { _hasFocus = false; return; }
+            if (_trace)
+            {
+                var raw = e.GetPosition(this);
+                Trace($"pressed kind={e.GetCurrentPoint(this).Properties.PointerUpdateKind} local=({raw.X:0},{raw.Y:0}) bounds={Bounds.Width:0}x{Bounds.Height:0}");
+            }
+            if (!TryLocalPoint(e, out var p)) { _hasFocus = false; Trace("  -> outside bounds, ignored"); return; }
             var props = e.GetCurrentPoint(this).Properties;
             int b = ButtonIndex(props.PointerUpdateKind);
             if (b < 0) return;
@@ -212,6 +247,7 @@ namespace VortexEditor.Viewport
             _lastPointer = p;
             RememberScreenPointer(e);
             var m = e.KeyModifiers;
+            Trace($"  -> session.OnPointerDown(button={b})");
             _session.OnPointerDown(b, p.X, p.Y, m.HasFlag(KeyModifiers.Alt), m.HasFlag(KeyModifiers.Control) || m.HasFlag(KeyModifiers.Meta), m.HasFlag(KeyModifiers.Shift));
             e.Handled = true;
         }
@@ -233,6 +269,7 @@ namespace VortexEditor.Viewport
         {
             var p = e.GetPosition(this);
             bool inside = p.X >= 0 && p.Y >= 0 && p.X < Bounds.Width && p.Y < Bounds.Height;
+            if (_trace) Trace($"moved local=({p.X:0},{p.Y:0}) inside={inside} fly={_session.IsFlyMode}");
             _pointerInside = inside;
             if (!inside && !_session.IsFlyMode && !_session.IsMouseCaptured) return;
             _lastPointer = p;
@@ -257,6 +294,7 @@ namespace VortexEditor.Viewport
         private void TopLevelKeyDown(object sender, KeyEventArgs e)
         {
             int vk = VkFromKey(e.Key);
+            Trace($"keydown {e.Key} vk=0x{vk:X} hasFocus={_hasFocus}");
             if (vk != 0) _keysDown.Add(vk);
             if (!_hasFocus || vk == 0) return;
             if (_topLevel?.FocusManager?.GetFocusedElement() is TextBox) return;   // typing in a text field
@@ -282,18 +320,19 @@ namespace VortexEditor.Viewport
 
         public void SetCursorHidden(bool hidden)
         {
-            if (MacCursor.IsMac) MacCursor.SetHidden(hidden);
+            ViewportCursor.SetHidden(hidden);
             Cursor = hidden ? new Cursor(StandardCursorType.None) : Cursor.Default;
         }
 
         public void WarpCursorToCenter()
         {
-            if (!MacCursor.IsMac) return;
+            if (!ViewportCursor.CanWarp) return;
             try
             {
-                if (!_warpCalibrated && MacCursor.TryGetPosition(out double cx, out double cy) && _lastScreenPointer != default)
+                if (!_warpCalibrated && ViewportCursor.TryGetPosition(out double cx, out double cy) && _lastScreenPointer != default)
                 {
-                    // Avalonia reports screen positions in device pixels on some backends and points on others.
+                    // Avalonia reports screen positions in device pixels on some backends and points on others
+                    // (X11 is pixels, macOS is points): pick whichever matches the platform's own reading.
                     double dx1 = Math.Abs(cx - _lastScreenPointer.X) + Math.Abs(cy - _lastScreenPointer.Y);
                     double s = Scaling;
                     double dx2 = Math.Abs(cx - _lastScreenPointer.X / s) + Math.Abs(cy - _lastScreenPointer.Y / s);
@@ -301,7 +340,7 @@ namespace VortexEditor.Viewport
                     _warpCalibrated = true;
                 }
                 var center = this.PointToScreen(new Point(Bounds.Width / 2, Bounds.Height / 2));
-                MacCursor.Warp(center.X * _warpScale, center.Y * _warpScale);
+                ViewportCursor.Warp(center.X * _warpScale, center.Y * _warpScale);
                 _lastPointer = new Point(Bounds.Width / 2, Bounds.Height / 2);
             }
             catch { }

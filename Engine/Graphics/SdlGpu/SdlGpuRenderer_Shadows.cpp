@@ -81,18 +81,57 @@ namespace vortex::graphics::sdlgpu
 		}
 	}
 
+	bool SdlGpuRenderer::create_shadow_fallback()
+	{
+		if (!m_device) return false;
+		if (m_sampler_shadow && m_shadow_dummy) return true;
+
+		if (!m_sampler_shadow)
+		{
+			SDL_GPUSamplerCreateInfo sci{};
+			sci.min_filter = SDL_GPU_FILTER_LINEAR;
+			sci.mag_filter = SDL_GPU_FILTER_LINEAR;
+			sci.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;
+			sci.address_mode_u = sci.address_mode_v = sci.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+			sci.enable_compare = true;
+			sci.compare_op = SDL_GPU_COMPAREOP_LESS_OR_EQUAL;
+			m_sampler_shadow = SDL_CreateGPUSampler(m_device, &sci);
+			if (!m_sampler_shadow) { log(std::string("shadow sampler creation failed: ") + SDL_GetError()); return false; }
+		}
+
+		if (!m_shadow_dummy)
+		{
+			m_shadow_dummy = create_depth_atlas(m_device, 1, 1, m_depth_format);
+			if (!m_shadow_dummy) { log(std::string("shadow fallback texture creation failed: ") + SDL_GetError()); return false; }
+			// Clear it to the far plane ("nothing occludes"). The shaders only sample a shadow slot when a
+			// light actually asks for shadows, so this is belt and braces — but an image that was never
+			// written to is undefined to sample, and a cleared depth target is not.
+			if (SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(m_device))
+			{
+				SDL_GPUDepthStencilTargetInfo dsi{};
+				dsi.texture = m_shadow_dummy;
+				dsi.clear_depth = 1.0f;
+				dsi.load_op = SDL_GPU_LOADOP_CLEAR;
+				dsi.store_op = SDL_GPU_STOREOP_STORE;
+				dsi.stencil_load_op = SDL_GPU_LOADOP_DONT_CARE;
+				dsi.stencil_store_op = SDL_GPU_STOREOP_DONT_CARE;
+				if (SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, nullptr, 0, &dsi))
+					SDL_EndGPURenderPass(pass);
+				SDL_SubmitGPUCommandBuffer(cmd);
+			}
+		}
+		return true;
+	}
+
 	bool SdlGpuRenderer::ensure_shadow_resources()
 	{
 		if (m_shadows_ready) return true;
 		if (!m_device || !m_vs_standard) return false;
 		if (platform::env_flag("VORTEX_NO_SHADOWS")) return false;
 
-		auto it = m_shader_sources.find("standard.metal");
-		if (it == m_shader_sources.end()) return false;
-		const std::string& src = it->second;
-		m_vs_shadow = create_shader(src, "ShadowVS", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 1);
-		m_vs_shadow_skinned_layout = create_shader(src, "ShadowVSSkinnedLayout", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 1);
-		m_fs_shadow = create_shader(src, "ShadowPS", SDL_GPU_SHADERSTAGE_FRAGMENT, 0, 0, 0);
+		m_vs_shadow = create_shader("standard", "ShadowVS", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 1);
+		m_vs_shadow_skinned_layout = create_shader("standard", "ShadowVSSkinnedLayout", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 1);
+		m_fs_shadow = create_shader("standard", "ShadowPS", SDL_GPU_SHADERSTAGE_FRAGMENT, 0, 0, 0);
 		if (!m_vs_shadow || !m_vs_shadow_skinned_layout || !m_fs_shadow) { destroy_shadow_resources(); return false; }
 
 		auto make_pipeline = [&](SDL_GPUShader* vs, u32 stride, bool skinned_layout) -> SDL_GPUGraphicsPipeline*
@@ -140,15 +179,7 @@ namespace vortex::graphics::sdlgpu
 		m_pipeline_shadow_52 = make_pipeline(m_vs_shadow_skinned_layout, 52, true);
 		if (!m_pipeline_shadow) { destroy_shadow_resources(); return false; }
 
-		SDL_GPUSamplerCreateInfo sci{};
-		sci.min_filter = SDL_GPU_FILTER_LINEAR;
-		sci.mag_filter = SDL_GPU_FILTER_LINEAR;
-		sci.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;
-		sci.address_mode_u = sci.address_mode_v = sci.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
-		sci.enable_compare = true;
-		sci.compare_op = SDL_GPU_COMPAREOP_LESS_OR_EQUAL;
-		m_sampler_shadow = SDL_CreateGPUSampler(m_device, &sci);
-		if (!m_sampler_shadow) { destroy_shadow_resources(); return false; }
+		if (!create_shadow_fallback()) { destroy_shadow_resources(); return false; }
 
 		const u32 atlas = 2 * SHADOW_TILE_SIZE;
 		m_shadow_atlas = create_depth_atlas(m_device, atlas, atlas, m_depth_format);
@@ -177,7 +208,6 @@ namespace vortex::graphics::sdlgpu
 		if (!m_device) return;
 		auto rel_tex = [&](SDL_GPUTexture*& t) { if (t) { SDL_ReleaseGPUTexture(m_device, t); t = nullptr; } };
 		rel_tex(m_shadow_atlas); rel_tex(m_csm_atlas); rel_tex(m_point_atlas);
-		if (m_sampler_shadow) { SDL_ReleaseGPUSampler(m_device, m_sampler_shadow); m_sampler_shadow = nullptr; }
 		if (m_pipeline_shadow) { SDL_ReleaseGPUGraphicsPipeline(m_device, m_pipeline_shadow); m_pipeline_shadow = nullptr; }
 		if (m_pipeline_shadow_52) { SDL_ReleaseGPUGraphicsPipeline(m_device, m_pipeline_shadow_52); m_pipeline_shadow_52 = nullptr; }
 		auto rel_sh = [&](SDL_GPUShader*& s) { if (s) { SDL_ReleaseGPUShader(m_device, s); s = nullptr; } };

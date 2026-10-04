@@ -819,8 +819,8 @@ namespace VortexEditor.Shell
 
         public static Task KeyboardShortcuts()
         {
-            string m = OperatingSystem.IsMacOS() ? "⌘" : "Ctrl+";
-            string sh = OperatingSystem.IsMacOS() ? "⇧" : "Shift+";
+            string m = Keys.Cmd;
+            string sh = Keys.Shift;
             var sb = new System.Text.StringBuilder();
             void Head(string h) { if (sb.Length > 0) sb.Append('\n'); sb.Append(h).Append('\n'); }
             void K(string keys, string what) => sb.Append("  ").Append(keys.PadRight(22)).Append(what).Append('\n');
@@ -837,7 +837,7 @@ namespace VortexEditor.Shell
             K(m + "X  " + m + "C  " + m + "V", "Cut / Copy / Paste entities");
             K("", "(in a text field: the text)");
             K(m + "D", "Duplicate");
-            K("⌫  /  " + m + "⌫", "Delete");
+            K(Keys.Delete + "  /  " + m + Keys.Delete, "Delete");
             K(m + "A", "Select all");
             K(m + "F", "Find entity (hierarchy search)");
             K("F2  /  ↩", "Rename (hierarchy)");

@@ -1,4 +1,5 @@
 #include "SdlGpuRenderer.h"
+#include "SdlGpuShaderFormat.h"
 #include "../../Common/Platform.h"
 #include "../../Common/VerboseLog.h"
 #if VORTEX_PLATFORM_APPLE
@@ -25,24 +26,38 @@ namespace vortex::graphics::sdlgpu
 			return true;
 		}
 
+		// Shader code exactly as SDL_CreateGPUShader wants it: MSL is a NUL-terminated string, SPIR-V a blob.
+		bool read_shader_file(const std::string& path, std::vector<unsigned char>& out)
+		{
+			std::ifstream f(path, std::ios::binary);
+			if (!f) return false;
+			out.assign((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+			if (out.empty()) return false;
+			if (shaderfmt::is_text) out.push_back('\0');
+			return true;
+		}
+
 		// The shaders directory: next to the executable (shipped), the CMake build tree, or the source tree.
+		// The leaf folder and the file that proves it is the right one depend on the backend's shader format
+		// (Shaders/msl/standard.metal on Metal, Shaders/spirv/standard.PSMain.spv on Vulkan).
 		std::string find_shader_dir(const std::string& override_dir)
 		{
 			const std::string env = platform::env_string("VORTEX_SHADER_DIR");
+			const std::string leaf = std::string("Shaders/") + shaderfmt::directory;
 			std::vector<std::string> candidates;
 			if (!override_dir.empty()) candidates.push_back(override_dir);
 			if (!env.empty()) candidates.push_back(env);
 			const std::string exe = platform::executable_directory();
-			candidates.push_back(exe + "Shaders/msl");
-			candidates.push_back(exe + "../Shaders/msl");
-			candidates.push_back(exe + "../Resources/Shaders/msl");   // inside a .app bundle
-			candidates.push_back(exe + "../../Engine/Shaders/msl");
-			candidates.push_back(exe + "../../../Engine/Shaders/msl");
-			candidates.push_back("Engine/Shaders/msl");
+			candidates.push_back(exe + leaf);
+			candidates.push_back(exe + "../" + leaf);
+			candidates.push_back(exe + "../Resources/" + leaf);   // inside a .app bundle
+			candidates.push_back(exe + "../../Engine/" + leaf);
+			candidates.push_back(exe + "../../../Engine/" + leaf);
+			candidates.push_back("Engine/" + leaf);
 			for (const std::string& c : candidates)
 			{
 				std::error_code ec;
-				if (std::filesystem::is_regular_file(std::filesystem::path(c) / "standard.metal", ec))
+				if (std::filesystem::is_regular_file(std::filesystem::path(c) / shaderfmt::probe, ec))
 					return std::filesystem::absolute(c, ec).string();
 			}
 			return {};
@@ -65,6 +80,13 @@ namespace vortex::graphics::sdlgpu
 
 		if (!SDL_WasInit(SDL_INIT_VIDEO))
 		{
+#if VORTEX_PLATFORM_LINUX
+			// Embedding into a toolkit window means wrapping its X11 window, which only the x11 video driver
+			// can do — on a Wayland session SDL would otherwise pick its wayland driver and ignore the handle.
+			// A standalone window (the player) keeps SDL's own choice, so it runs natively on Wayland.
+			if (desc.native_window && !desc.native_is_sdl_window && !platform::env_string("SDL_VIDEO_DRIVER").size())
+				SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "x11");
+#endif
 			if (!SDL_Init(SDL_INIT_VIDEO)) { log(std::string("SDL_Init failed: ") + SDL_GetError()); return false; }
 			m_sdl_video_inited_here = true;
 		}
@@ -78,7 +100,11 @@ namespace vortex::graphics::sdlgpu
 		m_present_format = SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM;   // present targets are ours; the swapchain blit converts
 
 		m_shader_dir = find_shader_dir(m_shader_dir_override);
-		if (m_shader_dir.empty()) { log("shader directory not found (Engine/Shaders/msl)"); shutdown(); return false; }
+		if (m_shader_dir.empty())
+		{
+			log(std::string("shader directory not found (Engine/Shaders/") + shaderfmt::directory + ")");
+			shutdown(); return false;
+		}
 		log("shaders: " + m_shader_dir);
 		if (!load_shaders() || !create_pipelines() || !create_dynamic_buffers()) { shutdown(); return false; }
 
@@ -93,6 +119,9 @@ namespace vortex::graphics::sdlgpu
 		sci.enable_anisotropy = false; sci.max_anisotropy = 1.0f;
 		m_sampler_linear_clamp = SDL_CreateGPUSampler(m_device, &sci);
 		if (!m_sampler_linear_wrap || !m_sampler_linear_clamp) { log("sampler creation failed"); shutdown(); return false; }
+		// The shadow slots are comparison-sampled depth textures in every scene pipeline, so their sampler and
+		// a stand-in depth texture must exist before the first frame, with or without shadow atlases.
+		if (!create_shadow_fallback()) { shutdown(); return false; }
 
 		ResourceRegistry::instance().initialize(m_device);
 		if (!m_overlay.initialize(m_device, m_shader_dir, m_present_format))
@@ -108,7 +137,7 @@ namespace vortex::graphics::sdlgpu
 	bool SdlGpuRenderer::create_device()
 	{
 		const bool debug = platform::env_flag("VORTEX_GPU_DEBUG");
-		m_device = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_MSL, debug, nullptr);
+		m_device = SDL_CreateGPUDevice(shaderfmt::format, debug, nullptr);
 		if (!m_device) { log(std::string("SDL_CreateGPUDevice failed: ") + SDL_GetError()); return false; }
 		const char* driver = SDL_GetGPUDeviceDriver(m_device);
 		m_gpu_name = driver ? driver : "gpu";
@@ -180,7 +209,13 @@ namespace vortex::graphics::sdlgpu
 		if (is_sdl_window) return static_cast<SDL_Window*>(native);
 		// Editor-embedded viewport: wrap the host's NSView so SDL attaches its Metal layer to it.
 		SDL_PropertiesID props = SDL_CreateProperties();
-#if VORTEX_PLATFORM_APPLE
+#if VORTEX_PLATFORM_LINUX
+		// Editor-embedded viewport: wrap the toolkit's X11 window so SDL puts its Vulkan surface on it.
+		// Avalonia's NativeControlHost hands out an X11 Window id (XID) on its X11 backend; SDL must therefore
+		// be on its x11 video driver, which initialize() pins before SDL_Init for exactly this case.
+		m_host_view = native;
+		SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_X11_WINDOW_NUMBER, (Sint64)(uintptr_t)native);
+#elif VORTEX_PLATFORM_APPLE
 		// UI toolkits (Avalonia, WPF-like shells) keep their NSWindow non-opaque so they can offer window
 		// transparency. SDL mirrors [NSWindow isOpaque] into SDL_WINDOW_TRANSPARENT and the GPU API refuses to
 		// claim a transparent window - the editor viewport is always opaque, so mark the host window opaque first.
@@ -220,8 +255,96 @@ namespace vortex::graphics::sdlgpu
 			return false;
 		}
 		apply_swapchain_params(window);
-		if (window == m_main.window && m_host_view) attach_metal_view_to_host();
+		if (window == m_main.window && m_host_view)
+		{
+			attach_metal_view_to_host();
+			release_host_input(window);
+		}
 		return true;
+	}
+
+	// Editor-embedded viewport only, X11. SDL selects the full input mask on the window it wraps
+	// (ButtonPress, KeyPress, PointerMotion, ...). ButtonPress in particular can be selected by only ONE
+	// client per window, so from that moment the button and key events over the viewport belong to SDL's
+	// display connection — and the editor never pumps SDL's event loop, so they are simply dropped: clicking
+	// in the viewport did nothing, and right-drag never started the fly camera.
+	//
+	// The toolkit owns input on this window, so SDL's connection gives the input masks back and keeps only
+	// what it needs to track the surface. X11 then delivers those events to the next window up that has them
+	// selected — the toolkit's own window. This is the X11 twin of restoring the responder chain on macOS
+	// (see attach_metal_view_to_host).
+	//
+	// Xlib is loaded on demand: the engine links only SDL, and a build on a machine without X11 must keep
+	// working (a standalone player on Wayland never comes through here).
+	void SdlGpuRenderer::release_host_input(SDL_Window* window)
+	{
+#if VORTEX_PLATFORM_LINUX
+		const SDL_PropertiesID props = SDL_GetWindowProperties(window);
+		if (!props) return;
+		void* display = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_X11_DISPLAY_POINTER, nullptr);
+		const Sint64 xwindow = SDL_GetNumberProperty(props, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0);
+		if (!display || !xwindow) return;   // not the X11 backend (e.g. a native Wayland window)
+
+		// Resolved once and kept: this is re-applied whenever the surface is re-sized, because SDL re-selects
+		// its own mask on some window operations and the toolkit must not lose the input again.
+		if (!m_x11_select_input)
+		{
+			SDL_SharedObject* xlib = SDL_LoadObject("libX11.so.6");
+			if (!xlib) xlib = SDL_LoadObject("libX11.so");
+			if (!xlib) { log("viewport: libX11 not loadable — input stays with SDL"); return; }
+			m_x11_select_input = SDL_LoadFunction(xlib, "XSelectInput");
+			m_x11_flush = SDL_LoadFunction(xlib, "XFlush");
+			if (!m_x11_select_input || !m_x11_flush)
+			{
+				log("viewport: XSelectInput unavailable — input stays with SDL");
+				SDL_UnloadObject(xlib);
+				m_x11_select_input = m_x11_flush = nullptr;
+				return;
+			}
+			m_x11_lib = xlib;
+
+			// libXi is optional: without it only the core mask is handed back, which is enough for a toolkit
+			// that still uses core pointer events.
+			SDL_SharedObject* xi = SDL_LoadObject("libXi.so.6");
+			if (!xi) xi = SDL_LoadObject("libXi.so");
+			if (xi)
+			{
+				m_xi2_select_events = SDL_LoadFunction(xi, "XISelectEvents");
+				if (m_xi2_select_events) m_xi2_lib = xi;
+				else SDL_UnloadObject(xi);
+			}
+			log(std::string("viewport: input returned to the host toolkit (core mask")
+				+ (m_xi2_select_events ? " + XInput2)" : " only — libXi missing)"));
+		}
+
+		using select_input_fn = int (*)(void*, unsigned long, long);
+		using flush_fn = int (*)(void*);
+		// Keep only what SDL needs to notice the surface changing; hand back every core input mask.
+		constexpr long ExposureMask = 1L << 15;
+		constexpr long StructureNotifyMask = 1L << 17;
+		reinterpret_cast<select_input_fn>(m_x11_select_input)(display, (unsigned long)xwindow,
+			ExposureMask | StructureNotifyMask);
+
+		// The core mask is only half of it. Modern toolkits — Avalonia among them — take pointer input through
+		// XInput2, and SDL does too, so the pointer events live in a SEPARATE selection that XSelectInput does
+		// not touch: with only the core mask handed back, the toolkit still saw nothing over the viewport.
+		// Clearing SDL's XI2 selection on its surface lets the server walk up to the toolkit's own window.
+		if (m_xi2_select_events)
+		{
+			struct XIEventMask { int deviceid; int mask_len; unsigned char* mask; };
+			using xi_select_fn = int (*)(void*, unsigned long, XIEventMask*, int);
+			unsigned char empty[4] = { 0, 0, 0, 0 };
+			constexpr int XIAllDevices = 0, XIAllMasterDevices = 1;
+			XIEventMask clear[2] = {
+				{ XIAllDevices,       (int)sizeof(empty), empty },
+				{ XIAllMasterDevices, (int)sizeof(empty), empty },
+			};
+			reinterpret_cast<xi_select_fn>(m_xi2_select_events)(display, (unsigned long)xwindow, clear, 2);
+		}
+		reinterpret_cast<flush_fn>(m_x11_flush)(display);
+#else
+		(void)window;
+#endif
 	}
 
 	// Editor-embedded viewport only. SDL (3.x) always parents the Metal layer it creates for a wrapped view to the
@@ -253,7 +376,7 @@ namespace vortex::graphics::sdlgpu
 		{
 			const objc::Rect b = objc::msg_rect(host, "bounds");
 			objc::msg_void(metal, "removeFromSuperview");
-			objc::msg_void_ulong(metal, "setAutoresizingMask:", 0);   // sized explicitly by sync_host_metal_view()
+			objc::msg_void_ulong(metal, "setAutoresizingMask:", 0);   // sized explicitly by sync_host_surface()
 			objc::msg_set_rect(metal, "setFrame:", objc::Rect{ 0.0, 0.0, b.w, b.h });
 			objc::msg_void_id(host, "addSubview:", metal);
 			objc::msg_void(metal, "updateDrawableSize");
@@ -272,9 +395,23 @@ namespace vortex::graphics::sdlgpu
 	// Keep the Metal layer exactly the size of the host view (the viewport panel). Called every frame and on
 	// resize: the toolkit re-frames the host view during layout, and SDL only refreshes the drawable size on
 	// whole-window size events, so a panel-only resize (splitter drag) would otherwise stretch the old drawable.
-	void SdlGpuRenderer::sync_host_metal_view()
+	void SdlGpuRenderer::sync_host_surface()
 	{
-#if VORTEX_PLATFORM_APPLE
+#if VORTEX_PLATFORM_LINUX
+		// The toolkit resizes the embedded X11 window itself, but SDL only learns a window's new size from the
+		// event loop — which the editor never pumps (it owns input on this window). Tell SDL the size the
+		// editor just reported, so the next acquired swapchain texture matches the panel.
+		if (m_host_view && m_main.window && m_width && m_height)
+		{
+			int w = 0, h = 0;
+			SDL_GetWindowSize(m_main.window, &w, &h);
+			if ((u32)w != m_width || (u32)h != m_height)
+			{
+				SDL_SetWindowSize(m_main.window, (int)m_width, (int)m_height);
+				release_host_input(m_main.window);   // SDL re-selects its mask on some window operations
+			}
+		}
+#elif VORTEX_PLATFORM_APPLE
 		if (!m_host_view || !m_host_metal_view) return;
 		const objc::Rect b = objc::msg_rect(m_host_view, "bounds");
 		const objc::Rect f = objc::msg_rect(m_host_metal_view, "frame");
@@ -297,43 +434,53 @@ namespace vortex::graphics::sdlgpu
 		SDL_SetGPUSwapchainParameters(m_device, window, SDL_GPU_SWAPCHAINCOMPOSITION_SDR, mode);
 	}
 
-	SDL_GPUShader* SdlGpuRenderer::create_shader(const std::string& source, const char* entry, SDL_GPUShaderStage stage,
-		u32 samplers, u32 storage_buffers, u32 uniform_buffers)
+	const std::vector<unsigned char>* SdlGpuRenderer::shader_blob(const std::string& file)
+	{
+		auto it = m_shader_blobs.find(file);
+		if (it != m_shader_blobs.end()) return &it->second;
+		std::vector<unsigned char> code;
+		if (!read_shader_file(m_shader_dir + "/" + file, code)) return nullptr;
+		return &m_shader_blobs.emplace(file, std::move(code)).first->second;
+	}
+
+	SDL_GPUShader* SdlGpuRenderer::create_shader_from_code(const std::vector<unsigned char>& code, const char* entry,
+		const std::string& origin, SDL_GPUShaderStage stage, u32 samplers, u32 storage_buffers, u32 uniform_buffers)
 	{
 		SDL_GPUShaderCreateInfo ci{};
-		ci.code = reinterpret_cast<const Uint8*>(source.c_str());
-		ci.code_size = source.size() + 1;
-		ci.entrypoint = entry;
-		ci.format = SDL_GPU_SHADERFORMAT_MSL;
+		ci.code = code.data();
+		ci.code_size = code.size();
+		ci.entrypoint = shaderfmt::entrypoint(entry);
+		ci.format = shaderfmt::format;
 		ci.stage = stage;
 		ci.num_samplers = samplers;
 		ci.num_storage_buffers = storage_buffers;
 		ci.num_uniform_buffers = uniform_buffers;
 		SDL_GPUShader* sh = SDL_CreateGPUShader(m_device, &ci);
-		if (!sh) log(std::string("shader '") + entry + "' failed: " + SDL_GetError());
+		if (!sh) log(std::string("shader '") + entry + "' (" + origin + ") failed: " + SDL_GetError());
 		return sh;
+	}
+
+	SDL_GPUShader* SdlGpuRenderer::create_shader(const std::string& base, const char* entry, SDL_GPUShaderStage stage,
+		u32 samplers, u32 storage_buffers, u32 uniform_buffers)
+	{
+		const std::string file = shaderfmt::module_file(base, entry);
+		const std::vector<unsigned char>* code = shader_blob(file);
+		if (!code) { log("missing shader " + file); return nullptr; }
+		return create_shader_from_code(*code, entry, file, stage, samplers, storage_buffers, uniform_buffers);
 	}
 
 	bool SdlGpuRenderer::load_shaders()
 	{
-		const char* files[] = { "standard.metal", "grid.metal", "skybox.metal", "postfx.metal", "ssao.metal", "bloom.metal" };
-		for (const char* f : files)
-		{
-			std::string src;
-			if (!read_text_file(m_shader_dir + "/" + f, src)) { log(std::string("missing shader ") + f); return false; }
-			m_shader_sources[f] = std::move(src);
-		}
-		const std::string& standard = m_shader_sources["standard.metal"];
-		m_vs_standard = create_shader(standard, "VSMain", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 1);
-		m_vs_skinned = create_shader(standard, "VSSkinned", SDL_GPU_SHADERSTAGE_VERTEX, 0, 1, 2);
-		m_fs_standard = create_shader(standard, "PSMain", SDL_GPU_SHADERSTAGE_FRAGMENT, 10, 0, 3);
-		m_vs_grid = create_shader(m_shader_sources["grid.metal"], "GridVS", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 1);
-		m_fs_grid = create_shader(m_shader_sources["grid.metal"], "GridPS", SDL_GPU_SHADERSTAGE_FRAGMENT, 0, 0, 1);
-		m_vs_sky = create_shader(m_shader_sources["skybox.metal"], "SkyVS", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 1);
-		m_fs_sky = create_shader(m_shader_sources["skybox.metal"], "SkyPS", SDL_GPU_SHADERSTAGE_FRAGMENT, 0, 0, 1);
-		m_vs_blit = create_shader(m_shader_sources["postfx.metal"], "BlitVS", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 0);
-		m_fs_blit = create_shader(m_shader_sources["postfx.metal"], "BlitPS", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0, 0);
-		m_fs_postfx = create_shader(m_shader_sources["postfx.metal"], "PostFxPS", SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 0, 1);
+		m_vs_standard = create_shader("standard", "VSMain", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 1);
+		m_vs_skinned = create_shader("standard", "VSSkinned", SDL_GPU_SHADERSTAGE_VERTEX, 0, 1, 2);
+		m_fs_standard = create_shader("standard", "PSMain", SDL_GPU_SHADERSTAGE_FRAGMENT, 10, 0, 3);
+		m_vs_grid = create_shader("grid", "GridVS", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 1);
+		m_fs_grid = create_shader("grid", "GridPS", SDL_GPU_SHADERSTAGE_FRAGMENT, 0, 0, 1);
+		m_vs_sky = create_shader("skybox", "SkyVS", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 1);
+		m_fs_sky = create_shader("skybox", "SkyPS", SDL_GPU_SHADERSTAGE_FRAGMENT, 0, 0, 1);
+		m_vs_blit = create_shader("postfx", "BlitVS", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 0);
+		m_fs_blit = create_shader("postfx", "BlitPS", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0, 0);
+		m_fs_postfx = create_shader("postfx", "PostFxPS", SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 0, 1);
 		return m_vs_standard && m_fs_standard && m_vs_grid && m_fs_grid && m_vs_sky && m_fs_sky && m_vs_blit && m_fs_blit && m_fs_postfx;
 	}
 
@@ -600,7 +747,12 @@ namespace vortex::graphics::sdlgpu
 		m_host_content_prev_responder = nullptr; m_host_window_prev_responder = nullptr;
 		SDL_DestroyGPUDevice(m_device);
 		m_device = nullptr;
-		m_shader_sources.clear();
+		if (m_xi2_lib) { SDL_UnloadObject(m_xi2_lib); m_xi2_lib = nullptr; }
+		if (m_x11_lib) { SDL_UnloadObject(m_x11_lib); m_x11_lib = nullptr; }
+		m_x11_select_input = m_x11_flush = m_xi2_select_events = nullptr;
+		if (m_shadow_dummy) { SDL_ReleaseGPUTexture(m_device, m_shadow_dummy); m_shadow_dummy = nullptr; }
+		if (m_sampler_shadow) { SDL_ReleaseGPUSampler(m_device, m_sampler_shadow); m_sampler_shadow = nullptr; }
+		m_shader_blobs.clear();
 		m_initialized = false;
 		if (m_sdl_video_inited_here) { SDL_QuitSubSystem(SDL_INIT_VIDEO); m_sdl_video_inited_here = false; }
 	}
@@ -609,7 +761,7 @@ namespace vortex::graphics::sdlgpu
 	{
 		if (!m_initialized || w == 0 || h == 0) return;
 		m_width = w; m_height = h;   // the swapchain follows the host view / window; targets are re-sized on the next frame
-		sync_host_metal_view();
+		sync_host_surface();
 	}
 
 	// ---------------------------------------------------------------------------------------------
@@ -636,7 +788,7 @@ namespace vortex::graphics::sdlgpu
 		m_draw_call_count = 0; m_vertex_count = 0; m_instances_tested = 0; m_instances_drawn = 0;
 
 		if (m_vsync_dirty) { m_vsync_dirty = false; apply_swapchain_params(m_main.window); if (m_game.window) apply_swapchain_params(m_game.window); }
-		sync_host_metal_view();
+		sync_host_surface();
 		render_surface(m_main, 0);
 	}
 
@@ -855,8 +1007,53 @@ namespace vortex::graphics::sdlgpu
 	}
 
 	// ---------------------------------------------------------------------------------------------
-	// Custom material shaders (.metal, VSMain/PSMain with the standard bindings)
+	// Custom material shaders — VSMain/PSMain with the standard bindings.
+	//   Metal: a .metal file, compiled from source by the driver at load time.
+	//   Vulkan: a .glsl file, compiled to SPIR-V by glslc at load time (the twin of the DX12 backend's
+	//           run-time DXC compile, so "edit the shader, alt-tab back, it is in" still holds). One file
+	//           serves both stages: it is compiled twice, with VORTEX_VERTEX_STAGE / VORTEX_FRAGMENT_STAGE
+	//           defined, and `main` guarded on them. Shaders/glsl-include sits next to the compiled shaders,
+	//           so a material shader can #include "standard_common.glsl" and reuse the engine's blocks.
 	// ---------------------------------------------------------------------------------------------
+	bool SdlGpuRenderer::load_material_shader(const std::string& path, SDL_GPUShaderStage stage,
+		std::vector<unsigned char>& out)
+	{
+		const char* ext = shaderfmt::material_suffix;
+		const size_t n = std::strlen(ext);
+		if (path.size() <= n || path.compare(path.size() - n, n, ext) != 0) return false;
+
+		if (!shaderfmt::per_entrypoint)                       // Metal: hand the source to the driver
+			return read_shader_file(path, out);
+
+		// Vulkan: compile with glslc. The paths come from the project's own material assets; a quote in one
+		// would break the shell quoting below, so those are refused rather than escaped.
+		if (path.find('\'') != std::string::npos) { log("material shader path contains a quote: " + path); return false; }
+		const bool vertex = (stage == SDL_GPU_SHADERSTAGE_VERTEX);
+		std::string glslc = platform::env_string("VORTEX_GLSLC");
+		if (glslc.empty()) glslc = "glslc";
+
+		std::error_code ec;
+		const std::filesystem::path spv =
+			std::filesystem::temp_directory_path(ec) /
+			("vortex_" + std::to_string(file_mtime(path)) + (vertex ? ".vert.spv" : ".frag.spv"));
+		if (ec) { log("no temp directory for shader compilation"); return false; }
+
+		const std::string include_dir = m_shader_dir + "/../glsl-include";
+		const std::string cmd = "'" + glslc + "' --target-env=vulkan1.0"
+			+ (vertex ? " -fshader-stage=vert -DVORTEX_VERTEX_STAGE" : " -fshader-stage=frag -DVORTEX_FRAGMENT_STAGE")
+			+ " -I '" + include_dir + "' -o '" + spv.string() + "' '" + path + "'";
+		if (std::system(cmd.c_str()) != 0)
+		{
+			log("glslc failed for '" + path + "' (set VORTEX_GLSLC if it is not on PATH)");
+			std::filesystem::remove(spv, ec);
+			return false;
+		}
+		const bool ok = read_shader_file(spv.string(), out);
+		std::filesystem::remove(spv, ec);
+		if (!ok) log("could not read the compiled shader for '" + path + "'");
+		return ok;
+	}
+
 	unsigned long long SdlGpuRenderer::file_mtime(const std::string& path) const
 	{
 		std::error_code ec;
@@ -872,12 +1069,13 @@ namespace vortex::graphics::sdlgpu
 		auto it = m_pipeline_cache.find(path);
 		if (it != m_pipeline_cache.end() && it->second.pipeline && it->second.mtime == mt) return it->second.pipeline;
 
-		std::string source;
 		SDL_GPUGraphicsPipeline* pipeline = nullptr;
-		if (path.size() > 6 && path.compare(path.size() - 6, 6, ".metal") == 0 && read_text_file(path, source))
+		std::vector<unsigned char> vs_code, fs_code;
+		if (load_material_shader(path, SDL_GPU_SHADERSTAGE_VERTEX, vs_code) &&
+			load_material_shader(path, SDL_GPU_SHADERSTAGE_FRAGMENT, fs_code))
 		{
-			SDL_GPUShader* vs = create_shader(source, "VSMain", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 1);
-			SDL_GPUShader* fs = create_shader(source, "PSMain", SDL_GPU_SHADERSTAGE_FRAGMENT, 10, 0, 3);
+			SDL_GPUShader* vs = create_shader_from_code(vs_code, "VSMain", path, SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 1);
+			SDL_GPUShader* fs = create_shader_from_code(fs_code, "PSMain", path, SDL_GPU_SHADERSTAGE_FRAGMENT, 10, 0, 3);
 			if (vs && fs)
 			{
 				wait_idle();
@@ -888,7 +1086,8 @@ namespace vortex::graphics::sdlgpu
 		}
 		else if (it == m_pipeline_cache.end())
 		{
-			log("custom material shader '" + path + "' is not a .metal file — the built-in PBR shader stays active on this backend");
+			log("custom material shader '" + path + "' is not a " + shaderfmt::material_suffix
+				+ " file (or it failed to compile) — the built-in PBR shader stays active on this backend");
 		}
 		auto& e = m_pipeline_cache[path];
 		e.mtime = mt;

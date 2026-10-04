@@ -61,7 +61,23 @@ namespace Editor.Core.Assets
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path));
             string ext = Path.GetExtension(path).ToLowerInvariant();
-            if (ext == ".metal")
+            if (ext == ".glsl")
+            {
+                // The Vulkan backend compiles a material shader from ONE .glsl file, once per stage
+                // (VORTEX_VERTEX_STAGE / VORTEX_FRAGMENT_STAGE). Start from the template that ships next to
+                // the shaders, which already declares the standard bindings and compiles as-is.
+                string src = null;
+                try
+                {
+                    var dir = Editor.Core.Native.NativeLoader.ShaderDirectory;
+                    var tpl = dir != null ? Path.Combine(Path.GetDirectoryName(dir) ?? "", "material_template.glsl") : null;
+                    if (tpl != null && File.Exists(tpl)) src = File.ReadAllText(tpl);
+                }
+                catch { }
+                if (src == null) src = "#version 450\n// Custom material shader — copy Engine/Shaders/glsl/material_template.glsl as the starting point.\n";
+                File.WriteAllText(path, "// " + Path.GetFileName(path) + " — custom " + type + " material shader (GLSL/Vulkan). Edit the fragment stage to change the look.\n" + src);
+            }
+            else if (ext == ".metal")
             {
                 // The Metal backend compiles a material shader from its VSMain/PSMain with the standard bindings:
                 // start from the engine's own PBR shader so every binding is already right.

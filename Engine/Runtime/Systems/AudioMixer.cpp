@@ -32,7 +32,16 @@ namespace vortex::runtime::audio {
 			std::atomic<f32>	peak{ 0.0f };
 			std::atomic<f32>	rms{ 0.0f };
 			u32					channels{ 2 };
+			u32					sample_rate{ 48000 };	// to turn a buffer length into seconds (see meter_process)
 		};
+
+		// Meter ballistics as TIME constants. The decay must not be a fixed per-callback factor: the device
+		// period differs by an order of magnitude between platforms and drivers (a few hundred frames on
+		// CoreAudio, often several thousand on ALSA/PipeWire), so a per-buffer coefficient makes the meters
+		// fall many times slower on one machine than on another — and anything reading them back, from the
+		// mixer window to the audio tests, sees a different decay.
+		constexpr f32 METER_PEAK_TAU = 0.18f;   // seconds
+		constexpr f32 METER_RMS_TAU = 0.133f;
 
 		void meter_process(ma_node* node, const float** frames_in, ma_uint32* frame_count_in,
 			float** frames_out, ma_uint32* frame_count_out)
@@ -55,11 +64,15 @@ namespace vortex::runtime::audio {
 			}
 			const f32 rms = samples > 0 ? sqrtf(sum_sq / samples) : 0.0f;
 
-			// Fast attack, slow decay — meters snap up and fall smoothly.
+			// Fast attack, slow decay — meters snap up and fall smoothly, at the same rate per SECOND on
+			// every device (this callback's length varies with the driver's period).
+			const f32 dt = meter->sample_rate > 0 ? (f32)frames / (f32)meter->sample_rate : 0.0f;
+			const f32 peak_decay = expf(-dt / METER_PEAK_TAU);
+			const f32 rms_decay = expf(-dt / METER_RMS_TAU);
 			const f32 old_peak = meter->peak.load(std::memory_order_relaxed);
-			meter->peak.store(peak > old_peak ? peak : old_peak * 0.94f + peak * 0.06f, std::memory_order_relaxed);
+			meter->peak.store(peak > old_peak ? peak : old_peak * peak_decay + peak * (1.0f - peak_decay), std::memory_order_relaxed);
 			const f32 old_rms = meter->rms.load(std::memory_order_relaxed);
-			meter->rms.store(rms > old_rms ? rms : old_rms * 0.92f + rms * 0.08f, std::memory_order_relaxed);
+			meter->rms.store(rms > old_rms ? rms : old_rms * rms_decay + rms * (1.0f - rms_decay), std::memory_order_relaxed);
 
 			*frame_count_in = frames;
 			*frame_count_out = frames;
@@ -128,6 +141,7 @@ namespace vortex::runtime::audio {
 
 			// Metering node between the group and whatever it was attached to.
 			state.meter.channels = channels;
+			state.meter.sample_rate = ma_engine_get_sample_rate(engine);
 			state.meter.peak.store(0.0f);
 			state.meter.rms.store(0.0f);
 			ma_node_config node_config = ma_node_config_init();

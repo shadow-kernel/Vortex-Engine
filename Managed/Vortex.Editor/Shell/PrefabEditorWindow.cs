@@ -110,7 +110,7 @@ namespace VortexEditor.Shell
             }
 
             // ------------------------------------------------------------ toolbar
-            _save = ToolButton("Save", "Save", "Write the prefab (⌘S) — every placed instance is reloaded from it", () => Save(), accent: true);
+            _save = ToolButton("Save", "Save", "Write the prefab (" + Keys.Chord("S") + ") \u2014 every placed instance is reloaded from it", () => Save(), accent: true);
             _revert = ToolButton("Undo", "Revert", "Discard unsaved changes and reload the prefab from disk", async () => await RevertInteractive());
             var place = ToolButton("Plus", "Place in Scene", "Drop a linked instance of this prefab into the active scene", async () => await PlaceInteractive());
             var large = ToolButton("Fullscreen", null, "Large preview", () => { if (_dirty) EditorCommands.Toast("The large preview shows the saved prefab"); EditorWindows.AssetViewer(_path); });
@@ -153,7 +153,7 @@ namespace VortexEditor.Shell
             DragDrop.SetAllowDrop(_tree, true);
             _tree.AddHandler(DragDrop.DragOverEvent, OnTreeDragOver);
             _tree.AddHandler(DragDrop.DropEvent, OnTreeDrop);
-            ToolTip.SetTip(_tree, "Drag to re-parent (⇧ after / ⌥ before the target) · drop scripts, models or prefabs from the Project panel");
+            ToolTip.SetTip(_tree, "Drag to re-parent (" + Keys.Shift + " after / " + Keys.Alt + " before the target) \u00b7 drop scripts, models or prefabs from the Project panel");
 
             _solid.Content = new TextBlock { Text = "Solid — blocks the player", Classes = { "small" } };
             ToolTip.SetTip(_solid, "Adds an exact-shape Mesh Collider (Is Trigger off) to every mesh entity of this prefab; unticking removes those. Save to update the placed instances.");

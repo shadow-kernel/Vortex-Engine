@@ -1,4 +1,5 @@
 #include "SdlGpuParticles.h"
+#include "SdlGpuShaderFormat.h"
 #include "SdlGpuResources.h"
 #include "../../Common/Platform.h"
 #include <algorithm>
@@ -48,13 +49,24 @@ namespace vortex::graphics::sdlgpu
 		}
 	}
 
-	SDL_GPUShader* SdlGpuParticles::create_shader(const std::string& src, const char* entry, SDL_GPUShaderStage stage, u32 samplers, u32 storage, u32 uniforms)
+	// `entry` of the "particles" shader set: an entrypoint inside particles.metal on Metal, or its own
+	// particles.<Entry>.spv module on Vulkan (SdlGpuShaderFormat.h).
+	SDL_GPUShader* SdlGpuParticles::create_shader(const char* entry, SDL_GPUShaderStage stage, u32 samplers, u32 storage, u32 uniforms)
 	{
+		const std::string file = shaderfmt::module_file("particles", entry);
+		std::vector<unsigned char> code;
+		{
+			std::ifstream f(m_shader_dir + "/" + file, std::ios::binary);
+			if (!f) { log("missing shader " + file); return nullptr; }
+			code.assign((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+			if (code.empty()) { log("empty shader " + file); return nullptr; }
+			if (shaderfmt::is_text) code.push_back('\0');
+		}
 		SDL_GPUShaderCreateInfo ci{};
-		ci.code = reinterpret_cast<const Uint8*>(src.c_str());
-		ci.code_size = src.size() + 1;
-		ci.entrypoint = entry;
-		ci.format = SDL_GPU_SHADERFORMAT_MSL;
+		ci.code = code.data();
+		ci.code_size = code.size();
+		ci.entrypoint = shaderfmt::entrypoint(entry);
+		ci.format = shaderfmt::format;
 		ci.stage = stage;
 		ci.num_samplers = samplers;
 		ci.num_storage_buffers = storage;
@@ -128,15 +140,13 @@ namespace vortex::graphics::sdlgpu
 		m_color_format = color_format;
 		m_linear_wrap = linear_wrap;
 		m_linear_clamp = linear_clamp;
-		std::ifstream f(shader_dir + "/particles.metal", std::ios::binary);
-		if (!f) { log("particles.metal not found in " + shader_dir + " - particles are not drawn"); return false; }
-		std::string src((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+		m_shader_dir = shader_dir;
 
-		m_vs_particle = create_shader(src, "ParticleVS", SDL_GPU_SHADERSTAGE_VERTEX, 0, 1, 3);
-		m_vs_ribbon = create_shader(src, "RibbonVS", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 3);
-		m_fs_particle = create_shader(src, "ParticlePS", SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 0, 2);
-		m_vs_snap = create_shader(src, "SnapVS", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 0);
-		m_fs_snap = create_shader(src, "SnapPS", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0, 1);
+		m_vs_particle = create_shader("ParticleVS", SDL_GPU_SHADERSTAGE_VERTEX, 0, 1, 3);
+		m_vs_ribbon = create_shader("RibbonVS", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 3);
+		m_fs_particle = create_shader("ParticlePS", SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 0, 2);
+		m_vs_snap = create_shader("SnapVS", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 0);
+		m_fs_snap = create_shader("SnapPS", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0, 1);
 		if (!m_vs_particle || !m_vs_ribbon || !m_fs_particle || !m_vs_snap || !m_fs_snap) { shutdown(); return false; }
 		for (u32 b = 0; b < 3; ++b)
 		{

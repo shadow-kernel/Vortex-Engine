@@ -21,26 +21,28 @@ namespace VortexEditor.Shell.Material
         private static readonly Regex SidecarName = new Regex(@"^submesh_(\d+)\.vmat$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
         /// <summary>
-        /// The custom-shader file THIS backend compiles for a material's ShaderAsset: the .hlsl on Windows (DX12), the
-        /// .metal on macOS (the Metal backend ignores .hlsl) — an assigned X.hlsl uses a sibling X.metal when there is one.
+        /// The custom-shader file THIS backend compiles for a material's ShaderAsset: the .hlsl on Windows (DX12),
+        /// the .metal on macOS (Metal) and the .glsl on Linux (Vulkan) — the SDL GPU backends ignore .hlsl, so an
+        /// assigned X.hlsl uses a sibling X.metal / X.glsl when there is one.
         /// Null = the built-in shader renders.
         /// </summary>
         public static string ResolveShaderFile(string shaderAsset)
         {
             if (string.IsNullOrEmpty(shaderAsset)) return null;
             if (OperatingSystem.IsWindows()) return ShaderAssetService.ResolveShaderHlsl(shaderAsset);
+            string ext = Editor.Core.Native.NativeLoader.MaterialShaderExtension;
             string full = EditorKit.ToAbsolute(shaderAsset);
             try
             {
-                if (full.EndsWith(".metal", StringComparison.OrdinalIgnoreCase)) return File.Exists(full) ? full : null;
-                string metal = Path.ChangeExtension(full, ".metal");
-                if (File.Exists(metal)) return metal;
+                if (full.EndsWith(ext, StringComparison.OrdinalIgnoreCase)) return File.Exists(full) ? full : null;
+                string sibling = Path.ChangeExtension(full, ext);
+                if (File.Exists(sibling)) return sibling;
                 if (full.EndsWith(".vshader", StringComparison.OrdinalIgnoreCase))
                 {
                     var vs = VortexShader.Load(full);
                     if (vs != null && !string.IsNullOrEmpty(vs.PixelShaderPath))
                     {
-                        string m = Path.ChangeExtension(EditorKit.ToAbsolute(vs.PixelShaderPath), ".metal");
+                        string m = Path.ChangeExtension(EditorKit.ToAbsolute(vs.PixelShaderPath), ext);
                         if (File.Exists(m)) return m;
                     }
                 }
@@ -49,8 +51,8 @@ namespace VortexEditor.Shell.Material
             return null;
         }
 
-        /// <summary>MaterialService binds only .hlsl shader assets; on the Metal backend bind the .metal instead (or clear
-        /// the binding so the built-in shader renders). No-op on Windows.</summary>
+        /// <summary>MaterialService binds only .hlsl shader assets; on an SDL GPU backend bind that platform's own
+        /// shader file instead (or clear the binding so the built-in shader renders). No-op on Windows.</summary>
         public static void BindPlatformShader(long material, string shaderAsset)
         {
             if (material < 0 || OperatingSystem.IsWindows() || string.IsNullOrEmpty(shaderAsset)) return;

@@ -11,8 +11,8 @@
 <br/>
 
 [![Build](https://img.shields.io/github/actions/workflow/status/shadow-kernel/Vortex-Engine/build-release.yml?style=for-the-badge&logo=githubactions&logoColor=white&label=BUILD&color=6C5CE7)](../../actions)
-[![Platform](https://img.shields.io/badge/PLATFORM-Windows%20x64-0078D6?style=for-the-badge&logo=windows&logoColor=white)](#-getting-started)
-[![Graphics](https://img.shields.io/badge/GRAPHICS-DirectX%2012-00A6FB?style=for-the-badge&logo=microsoft&logoColor=white)](#-architecture)
+[![Platform](https://img.shields.io/badge/PLATFORM-Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-0078D6?style=for-the-badge&logo=windows&logoColor=white)](#-getting-started)
+[![Graphics](https://img.shields.io/badge/GRAPHICS-DirectX%2012%20%C2%B7%20Metal%20%C2%B7%20Vulkan-00A6FB?style=for-the-badge&logo=microsoft&logoColor=white)](#-architecture)
 [![C++](https://img.shields.io/badge/ENGINE-C%2B%2B20-00599C?style=for-the-badge&logo=cplusplus&logoColor=white)](#-architecture)
 [![C#](https://img.shields.io/badge/EDITOR-.NET%204.8%20WPF-512BD4?style=for-the-badge&logo=dotnet&logoColor=white)](#-architecture)
 [![Status](https://img.shields.io/badge/STATUS-Active%20Alpha-FF6B6B?style=for-the-badge)](#-roadmap)
@@ -63,7 +63,10 @@ all of its gameplay is plain project scripts you can read and change:
 | **[Horror Starter](https://github.com/shadow-kernel/Vortex-Engine-Horror-Template)** | a CoD-feel night shooter: an open industrial yard plus a lit brick cellar |
 | **[Tactical Shooter](https://github.com/shadow-kernel/Vortex-Engine-Tactical-Template)** | a Call-of-Duty-style gun range: two animated first-person weapons with iron-sight ADS and recoil, pop-up targets, a kill house, and CoD movement (sprint · slide · mantle) |
 
-The templates are git submodules under `Templates/` (clone with `--recurse-submodules`).
+The templates are git submodules under `Templates/` (clone with `--recurse-submodules`). Their scenes, models,
+textures and audio live in **Git LFS** — without it you get ~130-byte pointer files, and a project created from
+such a template opens with an empty hierarchy and an empty viewport. Fix an existing clone with
+`git lfs install && git submodule foreach 'git lfs pull'`.
 
 ---
 
@@ -101,6 +104,7 @@ flowchart LR
 
 - **Windows 10/11 (x64)** — the full engine + editor
 - **macOS (Apple Silicon)** — native engine, player and editor, see [macOS](#-macos-apple-silicon--native-engine-player-and-editor) below
+- **Linux (x64)** — native engine, player and editor, see [Linux](#-linux-x64--native-engine-player-and-editor) below
 - **Visual Studio 2022/2026** with:
   - *Desktop development with **C++*** (MSVC v143/v145 + Windows 10/11 SDK)
   - *.NET desktop development* (.NET Framework 4.8 targeting pack)
@@ -108,11 +112,14 @@ flowchart LR
 ### Build & Run
 
 ```bash
-# 1. Clone WITH submodules (the NVIDIA Streamline SDK + the project templates are submodules)
+# 1. Clone WITH submodules AND Git LFS (the NVIDIA Streamline SDK + the project templates are submodules;
+#    the templates keep their scenes, models, textures and audio in LFS)
+git lfs install
 git clone --recurse-submodules https://github.com/shadow-kernel/Vortex-Engine.git
 cd Vortex-Engine
-# (already cloned without submodules? run:)
+# (already cloned without submodules / without LFS? run:)
 git submodule update --init --recursive
+git submodule foreach 'git lfs pull'
 
 # 2. Restore native + managed NuGet packages
 nuget restore Engine/packages.config    -SolutionDirectory .
@@ -145,6 +152,39 @@ Developing on the Mac: `tools/macos/dev.sh build && tools/macos/dev.sh editor` (
 project's name, icon and version (File ▸ Build; other platforms via runtime packs, see
 [`Managed/README.md`](Managed/README.md#exporting-games-macos-windows-linux)). Not on Metal yet: DLSS / frame
 generation (NVIDIA-only). The Windows build (DirectX 12 + WPF editor) is unchanged.
+
+### 🐧 Linux (x64) — native engine, player and editor
+
+The same cross-platform stack as the macOS port, with **Vulkan** instead of Metal: the SDL GPU backend renders
+through SPIR-V modules compiled from [`Engine/Shaders/glsl`](Engine/Shaders/glsl) at build time, and the editor is
+the same .NET 10 + Avalonia shell.
+
+```bash
+# Toolchain (one-time)
+sudo pacman -S --needed cmake ninja shaderc sdl3 assimp dotnet-sdk vulkan-icd-loader   # Arch
+# Debian/Ubuntu: sudo apt install cmake ninja-build glslc libsdl3-dev libassimp-dev dotnet-sdk-10.0 libvulkan1
+# Fedora:        sudo dnf install cmake ninja-build glslc SDL3-devel assimp-devel dotnet-sdk-10.0 vulkan-loader
+
+Scripts/linux-dev.sh --release --editor    # builds the engine + the .NET layer, then starts the editor
+```
+
+`dev.sh` wraps the two builds; run them directly if you prefer:
+
+```bash
+cmake --preset linux-release && cmake --build --preset linux-release -j$(nproc)
+dotnet build Managed/Vortex.Managed.slnx -c Release
+
+Managed/Vortex.Editor/bin/Release/net10.0/Vortex.Editor
+Managed/Vortex.Player/bin/Release/net10.0/Vortex.Player --project=Templates/Default3D --scene=Match
+```
+
+`ctest --preset linux-release` runs the audio, particle, physics and navigation smoke tests; the windowed render
+test is opt-in (`-DVORTEX_RENDER_TESTS=ON`) because it needs a display. A GPU with a Vulkan 1.0 driver is required
+(`vulkaninfo --summary` must list your card). Custom per-material shaders are `.glsl` here — one file with a
+vertex and a fragment stage, compiled by `glslc` on load and hot-reloaded on save; start from
+`Engine/Shaders/glsl/material_template.glsl`, which the editor copies for you. The editor embeds its viewport in
+an X11 window, so it runs on X11 and, through XWayland, on Wayland sessions. Not on Vulkan: DLSS / frame
+generation (NVIDIA + Windows only; the render-scale fallback works).
 
 ## 🧩 Features
 
