@@ -29,6 +29,8 @@ Listener). So platzierst du Klangquellen präzise; die Kugeln aktualisieren sich
 ## 2. Sounds per Skript abspielen (VortexBehaviour)
 
 ```csharp
+using Vortex;
+
 public class ScareTrigger : VortexBehaviour
 {
     public override void OnTriggerEnter(TriggerHit hit)

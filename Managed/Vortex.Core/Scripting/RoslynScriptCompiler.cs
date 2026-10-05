@@ -80,13 +80,32 @@ namespace Editor.Scripting
 
         /// <summary>The one compilation every path uses (play, export, the tools' check): same language version,
         /// options and references, so a check that passes means Play compiles.</summary>
-        private static CSharpCompilation CreateCompilation(string[] files, OptimizationLevel level, string name)
+        private static CSharpCompilation CreateCompilation(string[] files, OptimizationLevel level, string name) =>
+            CreateCompilation(files.Select(f => (f, File.ReadAllText(f))), LanguageVersion.Latest, level, name);
+
+        private static CSharpCompilation CreateCompilation(IEnumerable<(string path, string code)> sources, LanguageVersion version, OptimizationLevel level, string name)
         {
-            var parseOptions = new CSharpParseOptions(LanguageVersion.Latest);
-            var trees = files.Select(f => CSharpSyntaxTree.ParseText(File.ReadAllText(f), parseOptions, path: f)).ToList();
+            var parseOptions = new CSharpParseOptions(version);
+            var trees = sources.Select(s => CSharpSyntaxTree.ParseText(s.code, parseOptions, path: s.path)).ToList();
             var options = new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary,
                 optimizationLevel: level, allowUnsafe: true, nullableContextOptions: NullableContextOptions.Disable);
             return CSharpCompilation.Create(name, trees, References(), options);
+        }
+
+        /// <summary>Errors of in-memory sources against the gameplay API (the docs' code samples). With
+        /// <paramref name="csharp5"/> they must also be C# 5 — what the Windows editor's CodeDOM compiler accepts.</summary>
+        public static List<ScriptDiagnostic> CheckSources(IEnumerable<(string path, string code)> sources, bool csharp5)
+        {
+            var compilation = CreateCompilation(sources, csharp5 ? LanguageVersion.CSharp5 : LanguageVersion.Latest, OptimizationLevel.Debug, "Samples_Check");
+            return compilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).Select(d =>
+            {
+                var span = d.Location.GetLineSpan();
+                return new ScriptDiagnostic
+                {
+                    File = span.Path, Line = span.StartLinePosition.Line + 1, Column = span.StartLinePosition.Character + 1,
+                    Id = d.Id, IsError = true, Message = d.GetMessage(),
+                };
+            }).ToList();
         }
 
         /// <summary>A compiler message with its place (1-based line and column).</summary>

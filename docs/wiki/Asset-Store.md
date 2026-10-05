@@ -15,7 +15,7 @@ The **Asset Store** tab in the bottom dock (next to Project, Library and Console
 | **Mixamo** | rigged characters + animations | your free Adobe account | royalty-free in games, no re-sharing |
 | **Sonniss GDC** | professional sound libraries | none (download in your browser) | royalty-free, no attribution, no re-sharing |
 
-Keys stay on your machine (`store-keys.json` next to the editor settings, readable only by you). The editor never ships a shared key. Add them with **API Key…** in the Store's top bar, the gear button, or the prompt that appears when a source needs one — downloading from a keyed source without a key opens that prompt too. Where to get them: Sketchfab → *Settings → Password & API* on sketchfab.com, Freesound → *freesound.org/apiv2/apply*, poly.pizza → *Settings → API* on poly.pizza.
+Keys stay on your machine in `store-keys.json` next to the editor settings — on Windows encrypted for your Windows account (DPAPI), on macOS and Linux readable only by you (file mode 600). The editor never ships a shared key; the Claude panel's Anthropic key is stored the same way. Add them with **API Key…** in the Store's top bar, the gear button, or the prompt that appears when a source needs one — downloading from a keyed source without a key opens that prompt too. Where to get them: Sketchfab → *Settings → Password & API* on sketchfab.com, Freesound → *freesound.org/apiv2/apply*, poly.pizza → *Settings → API* on poly.pizza.
 
 The source list ends with **Sound Studio** (*CREATE*): a page that explains how sound generation works, shows which backends are ready, and opens the [[Sound-Studio]].
 

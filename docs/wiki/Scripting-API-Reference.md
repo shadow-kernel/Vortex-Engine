@@ -23,6 +23,7 @@ Convention below: `▸ member` — signature — description.
 
 A 3-component float vector (`X`, `Y`, `Z`). Used for positions, rotations (Euler degrees) and directions.
 
+<!-- no-compile -->
 ```csharp
 public struct Vector3
 {
@@ -40,6 +41,7 @@ public struct Vector3
 
 An RGBA color with channels in `0..1`. Use the `Rgb`/`Rgba` helpers to build one from `0..255` values.
 
+<!-- no-compile -->
 ```csharp
 public struct Color
 {
@@ -56,6 +58,7 @@ public struct Color
 
 Passed to the collision/trigger callbacks. Identifies the **other** entity involved (who entered your trigger, or the surface you hit).
 
+<!-- no-compile -->
 ```csharp
 public struct TriggerHit
 {
@@ -182,9 +185,27 @@ Typed event bus (#38) — decoupled game-wide messaging. Define an event class i
 ▸ `static void Publish<T>(T evt)` — delivered immediately; a throwing handler is logged and skipped.
 
 ```csharp
+using Vortex;
+
 public class MonsterSpotted { public Vector3 Where; }
-// in the monster:   Events.Publish(new MonsterSpotted { Where = Position });
-// in the music AI:  Events.Subscribe<MonsterSpotted>(OnSpotted);
+
+// on the monster: tell everyone who cares
+public class Monster : VortexBehaviour
+{
+    public void Spotted() { Events.Publish(new MonsterSpotted { Where = Position }); }
+}
+
+// on the music director: react, and stop listening when removed
+public class MusicDirector : VortexBehaviour
+{
+    public override void Start() { Events.Subscribe<MonsterSpotted>(OnSpotted); }
+    public override void OnDestroy() { Events.Unsubscribe<MonsterSpotted>(OnSpotted); }
+
+    void OnSpotted(MonsterSpotted e)
+    {
+        Audio.Music.CrossFade("Assets/Audio/chase.ogg", 1.5f);
+    }
+}
 ```
 
 For DIRECT entity-to-entity calls use `SendMessage(targetEntity, "open")` on the behaviour — the target's `OnMessage(string, object)` runs the same frame.
@@ -247,6 +268,7 @@ Character collision. `MoveCharacter` resolves a capsule (feet position, radius, 
 ▸ `static bool Raycast(Vector3 origin, Vector3 direction, float maxDist, int layerMask = ~0)` — just "did I hit something?".
 
 ```csharp
+Vector3 eyePos = Position + Vector3.Up * 1.6f;   // eye height of a standing player
 RaycastHit hit;
 if (Physics.Raycast(eyePos, Forward, 2.5f, out hit) && hit.Tag == "Door")
     SendMessage(hit.EntityId, "interact");
@@ -284,6 +306,8 @@ Physics ragdolls for animated characters (#104). Give the character a **Ragdoll*
 ▸ `static Vector3 Position(long entity)` — where the body lies (the pelvis).
 
 ```csharp
+public float Health = 100f;
+
 public override void OnMessage(string message, object arg)
 {
     if (message == "damage" && arg is float && Health > 0f)
@@ -366,12 +390,22 @@ Screen post-effects (#28/#29): vignette, animated film grain, chromatic aberrati
 The signature use: ramp the dread as the monster closes in —
 
 ```csharp
+using Vortex;
+
 public class PanicFx : VortexBehaviour
 {
     float panic;                       // 0 = calm, 1 = it's right behind you
+
+    bool MonsterNearby()               // any entity tagged "Monster" within 8 m
+    {
+        foreach (long monster in Scene.FindByTag("Monster"))
+            if (Vector3.Distance(Scene.PositionOf(monster), Position) < 8f) return true;
+        return false;
+    }
+
     public override void Update(float dt)
     {
-        float target = MonsterNearby() ? 1f : 0f;               // your game's proximity check
+        float target = MonsterNearby() ? 1f : 0f;
         panic += (target - panic) * System.Math.Min(1f, dt * 0.5f);   // ~2 s ramp
         PostFx.SetGrain(true, 0.1f + 0.5f * panic, 1.6f);
         PostFx.SetVignette(true, 0.6f + 0.6f * panic, 0.45f);
@@ -515,6 +549,7 @@ Script-side handle to an entity's [AudioSource](Entities-and-Components#audiosou
 
 `IScriptHost` is the interface the engine (`ScriptRuntime`) implements to let behaviours touch the live game — it is what backs every facade above (`GetPosition`, `MoveCharacter`, `PlayAnimation`, `UIRect`, …). **You normally never use it directly**; call the friendly facades instead. It is documented here because it is public API and defines the exact host contract:
 
+<!-- no-compile -->
 ```csharp
 public interface IScriptHost
 {
