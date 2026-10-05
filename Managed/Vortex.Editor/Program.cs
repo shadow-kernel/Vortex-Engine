@@ -32,8 +32,25 @@ namespace VortexEditor
             Shell.CrashGuard.Install();
             int code = Shell.CrashGuard.Run(BuildAvaloniaApp(), args);
             Stage("the UI ended (exit code " + code + ")");
+            if (OperatingSystem.IsWindows()) EndProcessNow(code);
             return code;
         }
+
+        /// <summary>
+        /// Windows: end the process here. The editor has saved its state and shut the engine down; what follows Main
+        /// is the native teardown, which Windows runs after it has already ended every other thread — there it hung
+        /// (the CI smoke reached "process exit" and then sat for minutes). A lingering editor would also keep the
+        /// installer's AppMutex, so a silent update would think it is still running. TerminateProcess skips that teardown.
+        /// </summary>
+        private static void EndProcessNow(int code)
+        {
+            Stage("ending the process");
+            try { Console.Out.Flush(); Console.Error.Flush(); } catch { }
+            TerminateProcess(GetCurrentProcess(), (uint)code);
+        }
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll")] private static extern IntPtr GetCurrentProcess();
+        [System.Runtime.InteropServices.DllImport("kernel32.dll")] private static extern bool TerminateProcess(IntPtr process, uint exitCode);
 
         private static System.Threading.Mutex _installerMutex;
 
