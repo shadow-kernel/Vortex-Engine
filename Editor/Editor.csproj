@@ -74,6 +74,7 @@
     </Reference>
     <Reference Include="System.Data" />
     <Reference Include="System.IO.Compression" />
+    <Reference Include="System.IO.Compression.FileSystem" />
     <Reference Include="System.IO.Pipelines, Version=10.0.0.2, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51, processorArchitecture=MSIL">
       <HintPath>..\packages\System.IO.Pipelines.10.0.2\lib\net462\System.IO.Pipelines.dll</HintPath>
     </Reference>
@@ -309,6 +310,7 @@
     <Compile Include="Core\Services\PrefabService.cs" />
     <Compile Include="Core\Services\ProjectTemplateService.cs" />
     <Compile Include="Core\Services\TemplatePacks.cs" />
+    <Compile Include="Core\Services\TemplateUpdateService.cs" />
     <Compile Include="Core\Services\Physics\CollisionService.cs" />
     <Compile Include="Core\Services\Physics\PhysicsService.cs" />
     <Compile Include="Core\Services\Physics\RagdollService.cs" />

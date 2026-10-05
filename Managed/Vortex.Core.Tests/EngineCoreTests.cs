@@ -245,6 +245,55 @@ namespace VortexTests
             finally { TemplatePacks.Handler = null; }
         }
 
+        [Test]
+        public static void TemplateUpdatePlansBacksUpAndMerges(TestContext t)
+        {
+            // template v2: a changed script, a new prefab, a new scene; the project: an old script + its own script
+            t.Write("tpl/project.vortex", "{\"name\":\"Tpl\",\"scenes\":[{\"name\":\"Yard\",\"path\":\"Yard.vscene\"},{\"name\":\"Cellar\",\"path\":\"Cellar.vscene\"},{\"name\":\"Ghost\",\"path\":\"Ghost.vscene\"}]}");
+            t.Write("tpl/Assets/Scripts/PlayerRig.cs", "// v2 rig");
+            t.Write("tpl/Assets/Scripts/Same.cs", "// same");
+            t.Write("tpl/Assets/Prefabs/Door.ventity", "{door}");
+            t.Write("tpl/Assets/Scenes/Cellar.vscene", "cellar");
+            t.Write("tpl/WEAPONS_GUIDE.md", "# guide");
+            t.Write("game/project.vortex", "\uFEFF{\"name\":\"My Game\",\"lastModified\":\"\\/Date(1782919188475+0200)\\/\",\"scenes\":[{\"name\":\"Yard\",\"path\":\"Yard.vscene\"}]}");
+            t.Write("game/Assets/Scripts/PlayerRig.cs", "// v1 rig");
+            t.Write("game/Assets/Scripts/Same.cs", "// same");
+            t.Write("game/Assets/Scripts/Mine.cs", "// my own");
+            string tpl = t.Path("tpl"), game = t.Path("game");
+
+            var plan = TemplateUpdateService.Plan(game, tpl);
+            t.Equal(1, plan.Overwrites, "one changed file");
+            t.Equal(3, plan.Additions, "prefab, scene, guide are new");
+            t.Equal(1, plan.Unchanged, "identical file skipped");
+            t.Equal("Cellar", string.Join(",", plan.NewScenes), "new scene listed (a listed scene without a file is not)");
+            t.True(plan.Changes.Any(c => c.Path == "Assets/Scripts/PlayerRig.cs" && !c.IsNew && c.Group == "Scripts"), "overwrite grouped by folder");
+
+            // first without the scenes: the scene list must not gain an entry whose file was not copied
+            var partial = TemplateUpdateService.Apply(plan, plan.Changes.Where(c => c.Group != "Scenes"));
+            t.Equal(0, partial.ScenesAdded.Count, "deselected scene not registered");
+            t.False(File.ReadAllText(Path.Combine(game, "project.vortex")).Contains("Cellar"), "manifest untouched without the scene");
+
+            var rest = TemplateUpdateService.Plan(game, tpl);
+            t.Equal(1, rest.Changes.Count, "only the scene is left");
+            var result = TemplateUpdateService.Apply(rest);
+            t.Equal("Cellar", string.Join(",", result.ScenesAdded), "scene registered once its file is there");
+            string backup = partial.BackupDir;
+            t.Equal("// v2 rig", File.ReadAllText(Path.Combine(game, "Assets", "Scripts", "PlayerRig.cs")), "script updated");
+            t.Equal("// v1 rig", File.ReadAllText(Path.Combine(backup, "Assets", "Scripts", "PlayerRig.cs")), "old script backed up");
+            t.Equal("// my own", File.ReadAllText(Path.Combine(game, "Assets", "Scripts", "Mine.cs")), "own files untouched");
+            t.True(File.Exists(Path.Combine(game, "Assets", "Prefabs", "Door.ventity")), "new prefab copied");
+            t.True(File.Exists(Path.Combine(backup, "project.vortex")), "manifest backed up");
+            string manifest = File.ReadAllText(Path.Combine(game, "project.vortex"));
+            t.True(manifest.Contains("Cellar.vscene") && manifest.Contains("\"My Game\"") && !manifest.Contains("Ghost"), "scene list merged, the rest kept");
+            t.True(File.ReadAllBytes(Path.Combine(game, "project.vortex")).Take(3).SequenceEqual(new byte[] { 0xEF, 0xBB, 0xBF }), "BOM kept");
+            var loaded = Editor.Core.Serialization.DataSerializer.FromJson<Editor.Core.Data.ProjectManifest>(manifest.TrimStart('\uFEFF'));
+            t.Equal(2026, loaded.LastModified.Year, "the editor still reads the merged manifest (dates included)");
+            t.Equal(2, loaded.Scenes.Count, "both scenes listed");
+            var again = TemplateUpdateService.Plan(game, tpl);
+            t.Equal(0, again.Changes.Count, "nothing left to update");
+            t.Equal(0, again.NewScenes.Count, "no scene left to add");
+        }
+
         private sealed class SyncProgress : IProgress<double>
         {
             private readonly Action<double> _a;

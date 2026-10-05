@@ -57,7 +57,10 @@ namespace VortexEditor.Shell
             var open = new MenuItem { Header = "Open" }; open.Click += (s, e) => OpenSelected();
             var reveal = new MenuItem { Header = "Show in Finder" }; reveal.Click += (s, e) => OnRevealProject(null, null);
             var remove = new MenuItem { Header = "Remove from List…" }; remove.Click += (s, e) => OnRemoveProject(null, null);
-            m.Items.Add(open); m.Items.Add(reveal); m.Items.Add(new Separator()); m.Items.Add(remove);
+            var update = new MenuItem { Header = "Update from Template…" };
+            update.Click += (s, e) => { if (ProjectList.SelectedItem is ProjectRow row && Directory.Exists(row.Path)) _ = TemplateUpdateDialog.Run(row.Path, row.Name); };
+            ToolTip.SetTip(update, "Bring the project up to the current version of its template (with a preview and a backup)");
+            m.Items.Add(open); m.Items.Add(reveal); m.Items.Add(update); m.Items.Add(new Separator()); m.Items.Add(remove);
             return m;
         }
 

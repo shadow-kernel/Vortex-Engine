@@ -25,6 +25,26 @@ cache — they are full copies.
 
 A source checkout with `git lfs pull` in the template submodules uses its own files and downloads nothing.
 
+## Updating a project from its template
+
+Templates improve between releases (fixed scripts, new prefabs, better materials). A game created from an older
+template gets those fixes with **Project Hub ▸ right-click the project ▸ Update from Template…**:
+
+- The dialog guesses the template the project came from (its scripts project or scenes) — change it if needed — and
+  downloads the template's pack first when its content is not installed.
+- It compares content, not dates: every file the template has under `Assets/` (Scripts, Prefabs, Materials, Textures,
+  Models, Audio, Scenes, Shaders, Animations, UI, Fonts) plus the guides in the project root. Files only the project
+  has are never touched.
+- Per folder you choose what to take; selecting a file shows a line diff of your version against the template's.
+- **Replacing scenes the project already has is off by default** — the template's scene would discard your level
+  edits. New template scenes are copied and added to the scene list.
+- **Back Up and Update** first copies your version of every file it overwrites, and `project.vortex`, to
+  `.ve/backups/template-update-<time>/` (with a README). Copy files back from there to undo.
+
+The Windows (WPF) Project Hub has the same entry with a compact preview; it never replaces existing scenes. From a
+terminal, `tools/upgrade-project-from-template.sh <project>` does a plain copy without the preview. Code:
+`Editor/Core/Services/TemplateUpdateService.cs` (plan, backup, scene-list merge).
+
 ## For maintainers: publishing the packs
 
 Each release needs the packs of its version. On a machine with the LFS content:
