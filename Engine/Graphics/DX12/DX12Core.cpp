@@ -99,6 +99,22 @@ namespace vortex::graphics::dx12
 			adapter.Reset();
 		}
 
+		// CI / headless test machines have no GPU: VORTEX_DX12_WARP=1 falls back to the WARP software rasterizer
+		// (slow, but complete D3D12) instead of failing. Never automatic — a player without a D3D12 GPU should get
+		// the clear error, not a slide show.
+		if (!adapter)
+		{
+			char warp_env[8]{};
+			size_t warp_len = 0;
+			if (getenv_s(&warp_len, warp_env, sizeof(warp_env), "VORTEX_DX12_WARP") == 0 && warp_len > 0 && warp_env[0] == '1')
+			{
+				ComPtr<IDXGIAdapter1> warp;
+				if (SUCCEEDED(m_factory->EnumWarpAdapter(IID_PPV_ARGS(&warp)))
+					&& SUCCEEDED(fn(warp.Get(), D3D_FEATURE_LEVEL_11_0, _uuidof(ID3D12Device), nullptr)))
+					adapter = warp;
+			}
+		}
+
 		if (!adapter) return false;
 
 		// Capture adapter identity for the DLSS hardware gate (NVIDIA RTX -> DLSS; else render-scale fallback).
