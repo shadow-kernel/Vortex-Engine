@@ -1,6 +1,6 @@
 # The Asset Store
 
-The **Store** tab of the Asset Browser (third tab, after Explorer and Library) brings free, legally clean assets into the editor. Everything you download lands in your [[Asset-Library]] — stored once, with its source, author and license — and, if you want, straight in the open project. Design: [[Design-Asset-Store-Integrations]].
+The **Asset Store** tab in the bottom dock (next to Project, Library and Console — *Window → Asset Store*, ⌘/Ctrl+8) brings free, legally clean assets into the editor. Everything you download lands in your [[Asset-Library]] — stored once, with its source, author and license — and, if you want, straight in the open project. Design: [[Design-Asset-Store-Integrations]].
 
 ## Sources
 
@@ -15,11 +15,15 @@ The **Store** tab of the Asset Browser (third tab, after Explorer and Library) b
 | **Mixamo** | rigged characters + animations | your free Adobe account | royalty-free in games, no re-sharing |
 | **Sonniss GDC** | professional sound libraries | none (download in your browser) | royalty-free, no attribution, no re-sharing |
 
-Keys stay on your machine (`store-keys.json` next to the editor settings, readable only by you). The editor never ships a shared key. Add them with **API Key…** in the Store's top bar, the gear button, or the prompt that appears when a source needs one.
+Keys stay on your machine (`store-keys.json` next to the editor settings, readable only by you). The editor never ships a shared key. Add them with **API Key…** in the Store's top bar, the gear button, or the prompt that appears when a source needs one — downloading from a keyed source without a key opens that prompt too. Where to get them: Sketchfab → *Settings → Password & API* on sketchfab.com, Freesound → *freesound.org/apiv2/apply*, poly.pizza → *Settings → API* on poly.pizza.
+
+The source list ends with **Sound Studio** (*CREATE*): a page that explains how sound generation works, shows which backends are ready, and opens the [[Sound-Studio]].
+
+Nothing is requested from the internet until you open the tab.
 
 ## Searching
 
-Pick a source on the left, type in the Asset Browser's search box, choose a kind (Models / Materials / HDRIs …) and a category. Each tile shows the license as a coloured badge:
+Pick a source on the left, type in the search box at the top of the tab, choose a kind (Models / Materials / HDRIs …) and a category. Each tile shows the license as a coloured badge:
 
 - **green** — CC0 / public domain
 - **blue** — attribution required (credited automatically on export)

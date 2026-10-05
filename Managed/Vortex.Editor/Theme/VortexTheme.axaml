@@ -177,6 +177,36 @@
     <Setter Property="BorderThickness" Value="1"/>
     <Setter Property="Padding" Value="12"/>
   </Style>
+  <!-- asset tiles (Asset Browser, Library, Store): name, type line, corner badge -->
+  <Style Selector="TextBlock.tilename">
+    <Setter Property="FontSize" Value="11"/>
+    <Setter Property="TextAlignment" Value="Center"/>
+    <Setter Property="HorizontalAlignment" Value="Center"/>
+    <Setter Property="TextWrapping" Value="Wrap"/>
+    <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+    <Setter Property="MaxLines" Value="2"/>
+    <Setter Property="Margin" Value="0,5,0,0"/>
+  </Style>
+  <Style Selector="TextBlock.tiletype">
+    <Setter Property="FontSize" Value="10"/>
+    <Setter Property="Foreground" Value="{DynamicResource VxTextTertiaryBrush}"/>
+    <Setter Property="TextAlignment" Value="Center"/>
+    <Setter Property="HorizontalAlignment" Value="Center"/>
+    <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+    <Setter Property="Margin" Value="0,1,0,0"/>
+  </Style>
+  <Style Selector="Border.tilebadge">
+    <Setter Property="Background" Value="#A6000000"/>
+    <Setter Property="CornerRadius" Value="4"/>
+    <Setter Property="Padding" Value="4,0,4,1"/>
+    <Setter Property="IsHitTestVisible" Value="False"/>
+  </Style>
+  <Style Selector="Border.tilebadge TextBlock">
+    <Setter Property="FontSize" Value="8.5"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="Foreground" Value="#F2F2F4"/>
+  </Style>
+
   <Style Selector="Border.panelheader">
     <Setter Property="Height" Value="34"/>
     <Setter Property="Padding" Value="10,0"/>

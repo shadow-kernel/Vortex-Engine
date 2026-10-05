@@ -204,6 +204,33 @@ namespace VortexTests
         }
 
         [Test]
+        public static void PreviewLaysOutCompanionsWithoutTouchingBlobs(TestContext t)
+        {
+            var lib = NewLib(t);
+            var model = MakeModel(t, "src");
+            var shared = t.Write("src/shared/grime.png", new byte[] { 7, 7, 7 });
+            var comps = LibraryCompanions.Detect(model);
+            comps[Path.GetFullPath(shared)] = "../shared/grime.png";   // a companion above the model's folder
+            var r = lib.Register(model, new RegisterOptions { Explicit = true, Companions = comps });
+            t.True(r.Success, "registered: " + r.Error);
+            var e = lib.Get(r.Entry.Id);
+            string main = LibraryPreview.Materialize(lib, e);
+            t.True(main.StartsWith(Path.GetFullPath(lib.TempDir), StringComparison.Ordinal), "preview lives in the library's temp folder: " + main);
+            t.Equal(ContentHash.OfFile(model), ContentHash.OfFile(main), "main file byte-identical");
+            string dir = Path.GetDirectoryName(main);
+            t.True(File.Exists(Path.Combine(dir, "textures", "crate_albedo.png")), "companion at its relative path");
+            t.True(File.Exists(Path.GetFullPath(Path.Combine(dir, "..", "shared", "grime.png"))), "companion above the model folder is laid out too");
+            t.True(Path.GetFullPath(Path.Combine(dir, "..")).StartsWith(Path.GetFullPath(Path.Combine(lib.TempDir, "preview")), StringComparison.Ordinal), "… and stays inside the preview folder");
+            // a viewer that writes to the preview copy can't change the content-addressed blob
+            File.WriteAllText(main, "changed by a viewer");
+            t.Equal(r.Hash, ContentHash.OfFile(lib.BlobPath(r.Hash)), "blob untouched");
+            string again = LibraryPreview.Materialize(lib, e);
+            t.Equal(main, again, "same place on the second preview");
+            t.Equal(0, LibraryPreview.LeadingUps("textures/a.png"), "no ups");
+            t.Equal(2, LibraryPreview.LeadingUps("../../a.png"), "two ups");
+        }
+
+        [Test]
         public static void DeleteCollectsUnreferencedBlobs(TestContext t)
         {
             var lib = NewLib(t);

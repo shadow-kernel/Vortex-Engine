@@ -255,6 +255,7 @@
     <Compile Include="Core\Assets\Library\LicenseAudit.cs" />
     <Compile Include="Core\Assets\Library\LibraryCompanions.cs" />
     <Compile Include="Core\Assets\Library\LibraryModels.cs" />
+    <Compile Include="Core\Assets\Library\LibraryPreview.cs" />
     <Compile Include="Core\Assets\Library\LibraryProjects.cs" />
     <Compile Include="Core\Assets\Library\LibrarySettings.cs" />
     <Compile Include="Core\Assets\Library\Sqlite.cs" />

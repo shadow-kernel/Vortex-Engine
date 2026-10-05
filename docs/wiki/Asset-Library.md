@@ -4,11 +4,11 @@ Every asset you import into any Vortex project also lands in your machine-wide *
 
 ## The Library tab
 
-Open the **Library** tab in the Asset Browser (second tab, next to Explorer).
+The **Library** tab sits in the bottom dock next to **Project**, **Asset Store** and **Console** (*Window → Library*, ⌘/Ctrl+7).
 
-- **Search** with the browser's search box — it matches names, file names and tags.
+- **Search** with the tab's search box — it matches names, file names and tags.
 - **Type chips** (All, Models, Textures, Materials, Audio, Animations, Prefabs, Other) narrow the grid.
-- **Tags:** the browser's tag button filters by library tags (every checked tag must match).
+- **Tags:** the tag button filters by library tags (every checked tag must match).
 - **Sort:** Name, Type, Date Added or Size.
 - **Saved filters** (bookmark button): save the current search + type + tags under a name and recall it later.
 - The badge on a tile shows where the asset came from (the project it was imported into, *Added*, a store provider, …).
@@ -17,9 +17,13 @@ Select an asset to see its details on the right: a preview, size and format fact
 
 Audio tiles play when you click them (or press Space); Esc stops the preview. No project needs to be open to listen.
 
+## Looking at an asset without adding it
+
+**Shift-** or **⌘/Ctrl-double-click** a model, texture or material (or press **Space**, or use **Preview** in the details pane or the context menu) to open it in the viewer — the Model Viewer for models, the texture and material previews for the others — straight from the library. Nothing is copied into the project: the file and the files that travel with it (buffers, textures) are cloned into the library's temporary folder for the viewer, and the window title says *(Library)*.
+
 ## Adding an asset to your project
 
-- **Double-click** a tile, press **Enter**, or use **Add to Project** in the details pane or the context menu — the asset is copied into the type's default folder (`Assets/Models`, `Assets/Textures`, `Assets/Audio`, …). **Add to Project in Folder…** lets you pick the folder.
+- **Double-click** a tile (without Shift / ⌘), press **Enter**, or use **Add to Project** in the details pane or the context menu — the asset is copied into the type's default folder (`Assets/Models`, `Assets/Textures`, `Assets/Audio`, …). **Add to Project in Folder…** lets you pick the folder.
 - **Drag** a tile into the viewport, onto an inspector slot (e.g. an Audio Source's clip) or onto a folder in the file tree — the asset is added first, then dropped.
 - **Add to Scene** (models and prefabs) adds the asset and places it in front of the camera.
 
@@ -38,7 +42,7 @@ With several files, each known file has an *import as new* switch in the file li
 
 **Library tools (⋯) → Index Existing Projects…** lists the projects from the Project Hub (add any other project folder with *Add Folder…*). Indexing stores every asset once — the same texture in three projects becomes one entry used by three projects — carries the tags of `.vmeta` files over and writes the content hash into existing `.vmeta` files. Nothing else in your projects changes. You can stop it at any time and run it again later; it continues where it stopped.
 
-**Add Files to Library…** (or the Import button while the Library tab is open, or dropping files from Finder/Explorer onto the tab) adds loose files without any project.
+**Add Files** in the Library tab's header (or dropping files from Finder/Explorer onto the tab) adds loose files without any project. **Asset Store** in the same header opens the free asset sources — everything downloaded there lands in the library too.
 
 ## Tags
 

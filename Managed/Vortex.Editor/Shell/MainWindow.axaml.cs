@@ -56,7 +56,13 @@ namespace VortexEditor.Shell
             ViewportPanel.StatusChanged += (st, res) => { StatusText.Text = st; ResolutionText.Text = res; };
             ViewportPanel.EngineView.ToastRequested += ShowToast;
             ConsoleService.Instance.EntryAdded += OnConsoleEntry;
-            BottomTabs.SelectionChanged += (s, e) => { if (IsConsoleShowing) ClearConsoleBadge(); };
+            BottomTabs.SelectionChanged += (s, e) =>
+            {
+                if (!ReferenceEquals(e.Source, BottomTabs)) return;   // selection events bubbling up from lists inside the tabs
+                if (IsConsoleShowing) ClearConsoleBadge();
+                if (ReferenceEquals(BottomTabs.SelectedItem, LibraryTab)) LibraryPanel.OnShown();
+                else if (ReferenceEquals(BottomTabs.SelectedItem, StoreTab)) StorePanel.OnShown();
+            };
             AddHandler(KeyDownEvent, OnGlobalKeyDown, RoutingStrategies.Tunnel);
             BuildButton.ContextMenu = BuildContextMenu();
             SyncPlayButtons();
@@ -417,6 +423,8 @@ namespace VortexEditor.Shell
                 case Key.D4: TogglePanel(PanelProject); return true;
                 case Key.D5: TogglePanel(PanelConsole); return true;
                 case Key.D6: TogglePanel(PanelEnvironment); return true;
+                case Key.D7: TogglePanel(PanelLibrary); return true;
+                case Key.D8: TogglePanel(PanelStore); return true;
             }
             return false;
         }
@@ -534,10 +542,12 @@ namespace VortexEditor.Shell
         private void ClearConsoleBadge() { _unseenErrors = 0; ConsoleErrorBadge.IsVisible = false; }
 
         // ---------------------------------------------------------------- panels
-        public const string PanelHierarchy = "Hierarchy", PanelFiles = "Files", PanelInspector = "Inspector", PanelEnvironment = "Environment", PanelProject = "Project", PanelConsole = "Console";
+        public const string PanelHierarchy = "Hierarchy", PanelFiles = "Files", PanelInspector = "Inspector", PanelEnvironment = "Environment", PanelProject = "Project", PanelConsole = "Console",
+                            PanelLibrary = "Library", PanelStore = "Store";
         private readonly Dictionary<string, bool> _panels = new Dictionary<string, bool>
         {
             [PanelHierarchy] = true, [PanelFiles] = true, [PanelInspector] = true, [PanelEnvironment] = true, [PanelProject] = true, [PanelConsole] = true,
+            [PanelLibrary] = true, [PanelStore] = true,
         };
         private GridLength _leftWidth = new GridLength(260), _rightWidth = new GridLength(330), _bottomHeight = new GridLength(300);
 
@@ -571,6 +581,8 @@ namespace VortexEditor.Shell
                 case PanelInspector: tabs = RightTabs; return InspectorTab;
                 case PanelEnvironment: tabs = RightTabs; return EnvironmentTab;
                 case PanelProject: tabs = BottomTabs; return ProjectTab;
+                case PanelLibrary: tabs = BottomTabs; return LibraryTab;
+                case PanelStore: tabs = BottomTabs; return StoreTab;
                 case PanelConsole: tabs = BottomTabs; return ConsoleTab;
             }
             return null;
@@ -607,8 +619,8 @@ namespace VortexEditor.Shell
             Workspace.ColumnDefinitions[3].Width = new GridLength(right ? 5 : 0);
             RightColumn.IsVisible = right;
 
-            ApplyTabs(BottomTabs, (ProjectTab, _panels[PanelProject]), (ConsoleTab, _panels[PanelConsole]));
-            bool bottom = _panels[PanelProject] || _panels[PanelConsole];
+            ApplyTabs(BottomTabs, (ProjectTab, _panels[PanelProject]), (LibraryTab, _panels[PanelLibrary]), (StoreTab, _panels[PanelStore]), (ConsoleTab, _panels[PanelConsole]));
+            bool bottom = _panels[PanelProject] || _panels[PanelLibrary] || _panels[PanelStore] || _panels[PanelConsole];
             CenterColumn.RowDefinitions[2].Height = bottom ? _bottomHeight : new GridLength(0);
             CenterColumn.RowDefinitions[1].Height = new GridLength(bottom ? 5 : 0);
             BottomDock.IsVisible = bottom;

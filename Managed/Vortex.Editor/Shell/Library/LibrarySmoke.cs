@@ -29,9 +29,8 @@ namespace VortexEditor.Shell.Library
             bool Fail(string why) { log.LogError("library smoke: " + why); return false; }
             var lib = GlobalAssetDatabase.Instance;
             if (!lib.IsAvailable) return Fail("library unavailable: " + lib.LastError);
-            var panel = AssetBrowserPanel.Current;
             var view = LibraryView.Current;
-            if (panel == null || view == null) return Fail("no asset browser");
+            if (VortexEditor.Panels.LibraryPanel.Current == null || view == null) return Fail("no Library tab");
             string project = ProjectData.Current?.Path;
             if (project == null) return Fail("no project open");
 
@@ -45,9 +44,9 @@ namespace VortexEditor.Shell.Library
             int added = await view.AddFilesToLibrary(new[] { png, wav });
             if (added != 2) return Fail("expected 2 registrations, got " + added);
 
-            panel.SetTab("Library");
-            panel.SetSearch("smoke_");
+            EditorCommands.ShowLibrary("smoke_");
             await SmokeRegistry.Settle(900);
+            if (!EditorCommands.Window.IsPanelVisible(MainWindow.PanelLibrary)) return Fail("the Library tab is not showing");
             if (view.ResultCount < 2) return Fail("Library tab lists " + view.ResultCount + " result(s) for “smoke_”");
             var texTile = view.Tiles.FirstOrDefault(t => t.Entry.Type == AssetType.Texture && t.Entry.Name == "smoke_checker");
             if (texTile == null) return Fail("texture tile missing");
@@ -80,8 +79,8 @@ namespace VortexEditor.Shell.Library
             // clean up: the project copy, the library entries
             try { File.Delete(paths[0]); File.Delete(paths[0] + AssetDatabase.MetaFileExtension); } catch { }
             lib.Delete(view.Tiles.Where(t => t.Name.StartsWith("smoke_", StringComparison.Ordinal)).Select(t => t.Id).ToList(), out _);
-            panel.SetSearch("");
-            panel.SetTab("Explorer");
+            EditorCommands.ShowLibrary("");
+            EditorCommands.Window.ShowPanel(MainWindow.PanelProject);
             try { Directory.Delete(dir, true); } catch { }
             log.Log("library smoke: OK");
             return true;

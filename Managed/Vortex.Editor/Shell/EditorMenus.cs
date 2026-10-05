@@ -345,7 +345,10 @@ namespace VortexEditor.Shell
                 Item("Open Scripts Project in IDE", null, EditorCommands.OpenScriptsProject),
                 Sep(),
                 Sub("Asset Library",
-                    Item("Show Library", null, () => { if (!w.IsPanelVisible(MainWindow.PanelProject)) w.TogglePanel(MainWindow.PanelProject); w.AssetBrowser?.SetTab("Library"); }),
+                    Item("Show Library", null, () => EditorCommands.ShowLibrary()),
+                    Item("Asset Store", null, () => EditorCommands.ShowStore()),
+                    Item("Sound Studio…", null, () => Audio.SoundStudioWindow.Open()),
+                    Sep(),
                     Item("Add Files to Library…", null, () => _ = Panels.AssetBrowser.LibraryView.Current?.PickFilesToLibrary()),
                     Item("Index Existing Projects…", null, () => _ = Library.LibraryIndexDialog.Run()),
                     Item("Import Library Bundle…", null, () => _ = Panels.AssetBrowser.LibraryView.Current?.ImportBundle()),
@@ -364,6 +367,8 @@ namespace VortexEditor.Shell
                 Check("Project", "Cmd+D4", () => w.TogglePanel(MainWindow.PanelProject), () => w.IsPanelVisible(MainWindow.PanelProject)),
                 Check("Console", "Cmd+D5", () => w.TogglePanel(MainWindow.PanelConsole), () => w.IsPanelVisible(MainWindow.PanelConsole)),
                 Check("Environment", "Cmd+D6", () => w.TogglePanel(MainWindow.PanelEnvironment), () => w.IsPanelVisible(MainWindow.PanelEnvironment)),
+                Check("Library", "Cmd+D7", () => w.TogglePanel(MainWindow.PanelLibrary), () => w.IsPanelVisible(MainWindow.PanelLibrary)),
+                Check("Asset Store", "Cmd+D8", () => w.TogglePanel(MainWindow.PanelStore), () => w.IsPanelVisible(MainWindow.PanelStore)),
                 Sep(),
             };
             foreach (var e in Editors)

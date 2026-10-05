@@ -109,8 +109,8 @@ namespace VortexEditor.Shell.Library
         {
             var log = ConsoleService.Instance;
             bool Fail(string why) { log.LogError("store material smoke: " + why); return false; }
-            var panel = AssetBrowserPanel.Current;
-            if (panel == null || ProjectData.Current == null) return Fail("no asset browser / project");
+            var panel = StorePanel.Current;
+            if (panel == null || ProjectData.Current == null) return Fail("no Asset Store tab / project");
             bool live = Environment.GetEnvironmentVariable("VORTEX_STORE_LIVE") == "1";
             var oldHandler = StoreHttp.Handler;
             if (!live)
@@ -134,10 +134,9 @@ namespace VortexEditor.Shell.Library
             string folder = null;
             try
             {
-                panel.SetTab("Store");
+                EditorCommands.ShowStore("ambientcg");
                 var store = StoreView.Current;
                 if (store == null) return Fail("no store view");
-                store.SelectProvider("ambientcg");
                 panel.SetSearch(live ? "planks" : "smoke planks");
                 for (int i = 0; i < 80 && (store.Loading || store.Tiles.Count == 0); i++) await Task.Delay(100);
                 if (store.Tiles.Count == 0) return Fail("no results (" + store.LastError + ")");
@@ -175,7 +174,7 @@ namespace VortexEditor.Shell.Library
                 editor?.Close();
                 if (folder != null) try { Directory.Delete(folder, true); } catch { }
                 panel.SetSearch("");
-                panel.SetTab("Explorer");
+                EditorCommands.Window.ShowPanel(MainWindow.PanelProject);
                 if (!live) { StoreHttp.Handler = oldHandler; StoreHttp.ClearResponses("ambientcg"); }
             }
         }
@@ -184,8 +183,8 @@ namespace VortexEditor.Shell.Library
         {
             var log = ConsoleService.Instance;
             bool Fail(string why) { log.LogError("store smoke: " + why); return false; }
-            var panel = AssetBrowserPanel.Current;
-            if (panel == null || ProjectData.Current == null) return Fail("no asset browser / project");
+            var panel = StorePanel.Current;
+            if (panel == null || ProjectData.Current == null) return Fail("no Asset Store tab / project");
             bool live = Environment.GetEnvironmentVariable("VORTEX_STORE_LIVE") == "1";
             var oldHandler = StoreHttp.Handler;
             if (!live)
@@ -210,10 +209,10 @@ namespace VortexEditor.Shell.Library
             }
             try
             {
-                panel.SetTab("Store");
+                EditorCommands.ShowStore("polyhaven");
                 var store = StoreView.Current;
                 if (store == null) return Fail("no store view");
-                store.SelectProvider("polyhaven");
+                if (!EditorCommands.Window.IsPanelVisible(MainWindow.PanelStore)) return Fail("the Asset Store tab is not showing");
                 panel.SetSearch(live ? "armchair" : "chair");
                 for (int i = 0; i < 80 && (store.Loading || store.Tiles.Count == 0); i++) await Task.Delay(100);
                 if (store.Tiles.Count == 0) return Fail("no results (" + store.LastError + ")");
@@ -239,7 +238,7 @@ namespace VortexEditor.Shell.Library
                 // leave the project as it was
                 try { Directory.Delete(Path.GetDirectoryName(job.ProjectPaths[0]), true); } catch { }
                 panel.SetSearch("");
-                panel.SetTab("Explorer");
+                EditorCommands.Window.ShowPanel(MainWindow.PanelProject);
                 return true;
             }
             finally { if (!live) { StoreHttp.Handler = oldHandler; StoreHttp.ClearResponses("polyhaven"); } }

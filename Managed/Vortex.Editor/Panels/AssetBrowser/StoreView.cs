@@ -20,6 +20,7 @@ using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Editor.Core.Assets.Library;
 using Editor.Core.Assets.Store;
+using Editor.Core.Audio.SoundStudio;
 using Editor.Core.Data;
 using Editor.Core.Services;
 using VortexEditor.Controls;
@@ -133,9 +134,20 @@ namespace VortexEditor.Panels.AssetBrowser
 
         public IReadOnlyList<StoreTile> Tiles => _tiles;
         public IAssetProvider WebProvider => _provider as IAssetProvider;
-        public string ProviderId => (_provider as IAssetProvider)?.Id ?? (_provider as IGuidedProvider)?.Id;
+        public string ProviderId => (_provider as IAssetProvider)?.Id ?? (_provider as IGuidedProvider)?.Id ?? (ReferenceEquals(_provider, SoundStudioEntry) ? "soundstudio" : null);
+
+        /// <summary>The Sound Studio row of the source list ("CREATE"): a page that explains it and opens the window.</summary>
+        private static readonly object SoundStudioEntry = new object();
+
+        /// <summary>A source was selected (the search box shows <see cref="SearchHint"/>).</summary>
+        public event Action ProviderChanged;
+
+        /// <summary>Watermark for the search box: what the current source searches.</summary>
+        public string SearchHint => WebProvider != null ? "Search " + WebProvider.Name : "Pick a source on the left";
         public bool Loading { get; private set; }
         public string LastError { get; private set; }
+        /// <summary>The source needs the user's key and the grid shows the key prompt.</summary>
+        public bool ShowsKeyPrompt { get; private set; }
 
         public StoreView()
         {
@@ -145,6 +157,8 @@ namespace VortexEditor.Panels.AssetBrowser
             foreach (var p in StoreProviders.Web) provItems.Add(ProviderRow(p.Id, p.Name, p.Tagline, p.Access == ProviderAccess.Anonymous ? "free" : StoreKeys.Has(p.Id) ? "key ✓" : "key", p));
             provItems.Add(new TextBlock { Text = "GUIDED", Classes = { "small", "tertiary" }, Margin = new Thickness(8, 10, 0, 2), IsHitTestVisible = false });
             foreach (var g in StoreProviders.Guided) provItems.Add(ProviderRow(g.Id, g.Name, g.Tagline, "guided", g));
+            provItems.Add(new TextBlock { Text = "CREATE", Classes = { "small", "tertiary" }, Margin = new Thickness(8, 10, 0, 2), IsHitTestVisible = false });
+            provItems.Add(ProviderRow("soundstudio", "Sound Studio", "Generate sound effects, ambience and music from a description", "AI", SoundStudioEntry));
             _providers.ItemsSource = provItems;
             _providers.SelectionChanged += (s, e) =>
             {
@@ -242,7 +256,12 @@ namespace VortexEditor.Panels.AssetBrowser
             DragDrop.SetAllowDrop(this, true);
             AddHandler(DragDrop.DragOverEvent, (s, e) => { e.DragEffects = _provider is IGuidedProvider && AssetDragData.OsFiles(e.Data) != null ? DragDropEffects.Copy : DragDropEffects.None; e.Handled = true; });
             AddHandler(DragDrop.DropEvent, (s, e) => { var f = AssetDragData.OsFiles(e.Data); if (f != null && _provider is IGuidedProvider g) _ = GuidedImport(g, f); e.Handled = true; });
-            _providers.SelectedIndex = 0;
+        }
+
+        /// <summary>The Store tab came to the front: the first time, open the first source (no request before that).</summary>
+        public void OnShown()
+        {
+            if (_provider == null) _providers.SelectedIndex = 0;
         }
 
         private static Control ProviderRow(string id, string name, string tagline, string badge, object tag)
@@ -254,7 +273,7 @@ namespace VortexEditor.Panels.AssetBrowser
             g.Children.Add(text);
             var b = new Border
             {
-                Background = EditorKit.Brush(badge == "free" ? "VxGreenBrush" : badge == "guided" ? "VxOrangeBrush" : "VxAccentBrush"), CornerRadius = new CornerRadius(4),
+                Background = EditorKit.Brush(badge == "free" ? "VxGreenBrush" : badge == "guided" ? "VxOrangeBrush" : badge == "AI" ? "VxPurpleBrush" : "VxAccentBrush"), CornerRadius = new CornerRadius(4),
                 Padding = new Thickness(5, 0, 5, 1), VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(4, 2, 0, 0),
                 Child = new TextBlock { Text = badge, FontSize = 9.5, Foreground = Brushes.White, FontWeight = FontWeight.SemiBold },
             };
@@ -269,11 +288,12 @@ namespace VortexEditor.Panels.AssetBrowser
             _provider = p;
             _selected = null; _details_current = null;
             AssetActions.StopAudition();
-            if (p is IGuidedProvider guided)
+            ProviderChanged?.Invoke();
+            if (p is IGuidedProvider guided || ReferenceEquals(p, SoundStudioEntry))
             {
                 _main.Children[0].IsVisible = false;
                 _guidedHost.IsVisible = true;
-                _guidedHost.Child = BuildGuided(guided);
+                _guidedHost.Child = p is IGuidedProvider g ? BuildGuided(g) : BuildSoundStudioPage();
                 return;
             }
             _main.Children[0].IsVisible = true;
@@ -300,7 +320,7 @@ namespace VortexEditor.Panels.AssetBrowser
 
         public void SelectProvider(string id)
         {
-            object p = (object)StoreProviders.Get(id) ?? StoreProviders.Guided.FirstOrDefault(g => g.Id == id);
+            object p = id == "soundstudio" ? SoundStudioEntry : (object)StoreProviders.Get(id) ?? StoreProviders.Guided.FirstOrDefault(g => g.Id == id);
             if (p == null) return;
             foreach (var item in _providers.ItemsSource.Cast<object>())
                 if (item is Control c && ReferenceEquals(c.Tag, p)) { _providers.SelectedItem = item; return; }
@@ -353,6 +373,7 @@ namespace VortexEditor.Panels.AssetBrowser
             catch (Exception ex) { page = new StorePage { Error = ex.Message }; }
             if (cts.IsCancellationRequested || !ReferenceEquals(web, WebProvider)) return;
             Loading = false;
+            ShowsKeyPrompt = page.NeedsKey;
             if (page.NeedsKey) { _status.Text = ""; ShowNeedsKey(web); return; }
             if (page.Error != null)
             {
@@ -558,6 +579,12 @@ namespace VortexEditor.Panels.AssetBrowser
             var web = WebProvider;
             var t = _selected;
             if (web == null || t == null) return null;
+            if (web.Access == ProviderAccess.ApiKey && !StoreKeys.Has(web.Id))
+            {
+                // downloading needs the user's own key: ask for it right here instead of failing in the queue
+                await StoreKeysDialog.Run(web.Id);
+                if (!StoreKeys.Has(web.Id)) { EditorCommands.Toast(web.Name + " downloads need your " + web.KeyName + " — nothing was downloaded"); return null; }
+            }
             var variant = _details_variants?.SelectedItem as StoreVariant;
             if (variant == null)
             {
@@ -638,10 +665,8 @@ namespace VortexEditor.Panels.AssetBrowser
             show.Click += (s, e) =>
             {
                 if (!(g.DataContext is StoreJobRow r) || r.Job.Entries.Count == 0) return;
-                var panel = AssetBrowserPanel.Current;
-                if (r.Job.ProjectPaths.Count > 0) { panel?.SetTab("Explorer"); panel?.Reveal(r.Job.ProjectPaths[0]); return; }
-                panel?.SetTab("Library");
-                panel?.SetSearch(r.Job.Entries[0].Name);
+                if (r.Job.ProjectPaths.Count > 0) { EditorCommands.RevealInProject(r.Job.ProjectPaths[0]); return; }
+                EditorCommands.ShowLibrary(r.Job.Entries[0].Name);
             };
             return g;
         }
@@ -727,6 +752,68 @@ namespace VortexEditor.Panels.AssetBrowser
                 BorderBrush = EditorKit.Brush("VxHairlineBrush"), Background = EditorKit.Brush("VxFieldBrush"),
                 Child = new TextBlock { Text = "Drop " + string.Join(" / ", g.FilePatterns) + " files here", Classes = { "tertiary" }, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center },
             });
+            return new ScrollViewer { Content = stack };
+        }
+
+        /// <summary>The "Sound Studio" source: what it does, which backends are ready (keys), and the way into the window.</summary>
+        private Control BuildSoundStudioPage()
+        {
+            var stack = new StackPanel { Margin = new Thickness(24, 18, 24, 18), Spacing = 8, MaxWidth = 680, HorizontalAlignment = HorizontalAlignment.Left };
+            stack.Children.Add(new StackPanel
+            {
+                Orientation = Orientation.Horizontal, Spacing = 8,
+                Children =
+                {
+                    new VxIcon { Icon = "Sparkle", Width = 18, Height = 18, Foreground = EditorKit.Brush("VxPurpleBrush"), VerticalAlignment = VerticalAlignment.Center },
+                    new TextBlock { Text = "Sound Studio", FontSize = 18, FontWeight = FontWeight.SemiBold },
+                },
+            });
+            stack.Children.Add(new TextBlock { Text = "Make the sound you need instead of searching for it: describe it, listen to the takes, keep the best one. Saved sounds go into your library — and, if you like, straight into the project's Assets/Audio.", Classes = { "secondary" }, TextWrapping = TextWrapping.Wrap });
+
+            stack.Children.Add(new TextBlock { Text = "How it works", FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 8, 0, 0) });
+            int n = 1;
+            foreach (var step in new[]
+            {
+                "Open the Sound Studio (button below, or Window → Sound Studio…).",
+                "Describe the sound — “wet footsteps on basement concrete, slow” — or click a preset (Door Creak, Heartbeat, Gunshot Distant …). Set the length, or leave it on auto.",
+                "Generate: every take appears as a card with its waveform. Click a card to hear it, click another to compare.",
+                "Save puts the take into your library; Save + Add also copies it into the project. Each sound keeps its recipe, so you can reopen it later and make a variation.",
+                "Optional: switch on “Claude designs the prompts” — Claude turns a short idea (in any language) into detailed prompts, makes distinct takes and refines them when you answer “dumpfer, mehr Hall, kürzer”.",
+            })
+                stack.Children.Add(new TextBlock { Text = (n++) + ".  " + step, TextWrapping = TextWrapping.Wrap, FontSize = 12 });
+
+            stack.Children.Add(new TextBlock { Text = "Backends", FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 8, 0, 0) });
+            void Backend(string name, string what, string keyId)
+            {
+                bool ready = keyId == null || StoreKeys.Has(keyId);
+                var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Margin = new Thickness(0, 2, 0, 0) };
+                var text = new StackPanel();
+                text.Children.Add(new TextBlock { Text = name, FontSize = 12, FontWeight = FontWeight.SemiBold });
+                text.Children.Add(new TextBlock { Text = what, Classes = { "small", "tertiary" }, TextWrapping = TextWrapping.Wrap });
+                row.Children.Add(text);
+                var badge = new Border
+                {
+                    Background = EditorKit.Brush(ready ? "VxGreenBrush" : "VxFieldBrush"), CornerRadius = new CornerRadius(4), Padding = new Thickness(6, 1, 6, 2),
+                    VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0),
+                    Child = new TextBlock { Text = keyId == null ? "ready — free" : ready ? "key ✓" : "needs your key", FontSize = 10.5, FontWeight = FontWeight.SemiBold, Foreground = ready ? Brushes.White : EditorKit.Brush("VxTextSecondaryBrush") },
+                };
+                Grid.SetColumn(badge, 1);
+                row.Children.Add(badge);
+                stack.Children.Add(row);
+            }
+            Backend("Procedural (offline)", "UI clicks, beeps, whooshes, impacts, explosions, gunshot placeholders, heartbeats, risers, wind, drones — made on this machine, no account.", null);
+            Backend("ElevenLabs Sound Effects", "Realistic sound effects up to 30 s, seamless loops for ambience. Paid plans: commercial use in games.", "elevenlabs");
+            Backend("fal.ai — CassetteAI SFX, Stable Audio Open", "Sound effects, music beds and ambience up to 47 s, billed per run.", "fal");
+            Backend("Stability AI — Stable Audio 2.5 / 3", "Music and long ambience up to 3:10 min (2.5) or 6:20 min (3), one price per take.", "stability");
+            Backend("Claude (Anthropic) designs the prompts", "Optional: writes and refines the prompts for any of the backends above.", "anthropic");
+            stack.Children.Add(new TextBlock { Text = "Keys are your own and stay on this machine — the editor never ships a shared key.", Classes = { "small", "tertiary" }, TextWrapping = TextWrapping.Wrap });
+
+            var buttons = new WrapPanel { Margin = new Thickness(0, 10, 0, 0) };
+            void B(string text, Action a, string cls = null) { var b = Ui.Button(text, a, null, cls); b.Margin = new Thickness(0, 0, 8, 8); buttons.Children.Add(b); }
+            B("Open Sound Studio", () => VortexEditor.Shell.Audio.SoundStudioWindow.Open(), "accent");
+            B("API Keys…", async () => { await StoreKeysDialog.Run(null); if (ReferenceEquals(_provider, SoundStudioEntry)) _guidedHost.Child = BuildSoundStudioPage(); });
+            B("Guide", () => Open("https://github.com/shadow-kernel/Vortex-Engine/blob/main/docs/wiki/Sound-Studio.md"));
+            stack.Children.Add(buttons);
             return new ScrollViewer { Content = stack };
         }
 

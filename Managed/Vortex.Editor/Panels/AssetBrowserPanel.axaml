@@ -20,34 +20,6 @@
       <Setter Property="Margin" Value="0"/>
       <Setter Property="CornerRadius" Value="5"/>
     </Style>
-    <Style Selector="TextBlock.tilename">
-      <Setter Property="FontSize" Value="11"/>
-      <Setter Property="TextAlignment" Value="Center"/>
-      <Setter Property="HorizontalAlignment" Value="Center"/>
-      <Setter Property="TextWrapping" Value="Wrap"/>
-      <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
-      <Setter Property="MaxLines" Value="2"/>
-      <Setter Property="Margin" Value="0,5,0,0"/>
-    </Style>
-    <Style Selector="TextBlock.tiletype">
-      <Setter Property="FontSize" Value="10"/>
-      <Setter Property="Foreground" Value="{DynamicResource VxTextTertiaryBrush}"/>
-      <Setter Property="TextAlignment" Value="Center"/>
-      <Setter Property="HorizontalAlignment" Value="Center"/>
-      <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
-      <Setter Property="Margin" Value="0,1,0,0"/>
-    </Style>
-    <Style Selector="Border.tilebadge">
-      <Setter Property="Background" Value="#A6000000"/>
-      <Setter Property="CornerRadius" Value="4"/>
-      <Setter Property="Padding" Value="4,0,4,1"/>
-      <Setter Property="IsHitTestVisible" Value="False"/>
-    </Style>
-    <Style Selector="Border.tilebadge TextBlock">
-      <Setter Property="FontSize" Value="8.5"/>
-      <Setter Property="FontWeight" Value="SemiBold"/>
-      <Setter Property="Foreground" Value="#F2F2F4"/>
-    </Style>
     <Style Selector="TextBox.rename">
       <Setter Property="FontSize" Value="11"/>
       <Setter Property="Padding" Value="4,1"/>
@@ -183,18 +155,6 @@
           <Border x:Name="TabsBorder" Classes="segmented" HorizontalAlignment="Left">
             <StackPanel Orientation="Horizontal" x:Name="Tabs">
               <RadioButton GroupName="assettab" Tag="Explorer" IsChecked="True" Click="OnTabClick" ToolTip.Tip="Browse the current folder (sub-folders + all files)">Explorer</RadioButton>
-              <RadioButton GroupName="assettab" Tag="Library" Click="OnTabClick" ToolTip.Tip="The global asset library: every asset imported on this machine, from every project — double-click or drag to add one to this project">
-                <StackPanel Orientation="Horizontal" Spacing="4">
-                  <c:VxIcon Icon="Library" Width="12" Height="12" VerticalAlignment="Center"/>
-                  <TextBlock Text="Library" VerticalAlignment="Center"/>
-                </StackPanel>
-              </RadioButton>
-              <RadioButton GroupName="assettab" Tag="Store" Click="OnTabClick" ToolTip.Tip="Free asset sources (Poly Haven, ambientCG, Kenney, Freesound, Sketchfab, …) — download into the library and the project">
-                <StackPanel Orientation="Horizontal" Spacing="4">
-                  <c:VxIcon Icon="World" Width="12" Height="12" VerticalAlignment="Center"/>
-                  <TextBlock Text="Store" VerticalAlignment="Center"/>
-                </StackPanel>
-              </RadioButton>
               <RadioButton GroupName="assettab" Tag="Meshes" Click="OnTabClick" ToolTip.Tip="Built-in primitives + every model in the project">Meshes</RadioButton>
               <RadioButton GroupName="assettab" Tag="Models" Click="OnTabClick" ToolTip.Tip="Every imported model — double-click to add it to the scene">Models</RadioButton>
               <RadioButton GroupName="assettab" Tag="Textures" Click="OnTabClick">Textures</RadioButton>
@@ -232,8 +192,6 @@
         <TextBlock x:Name="EmptyHint" Classes="secondary" HorizontalAlignment="Center" TextAlignment="Center"/>
         <TextBlock x:Name="EmptySubHint" Classes="tertiary small" HorizontalAlignment="Center" TextAlignment="Center"/>
       </StackPanel>
-      <ab:LibraryView x:Name="Library" IsVisible="False"/>
-      <ab:StoreView x:Name="Store" IsVisible="False"/>
     </Grid>
   </DockPanel>
 </UserControl>
