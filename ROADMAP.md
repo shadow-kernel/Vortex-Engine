@@ -17,7 +17,7 @@ Status legend: ✅ shipped on `main` · 🟡 partial · ⬜ open. Issue numbers 
 | v2.8.0 | Windows · macOS · Linux — released 2026-10-04 | ✅ | macOS (Metal) + Linux (Vulkan) ports, Physics v2 (Jolt), editor-first hands |
 | v2.9.0 | Global Asset Database — released 2026-10-05 | ✅ | machine-wide SHA-256 asset library, Library tab, Add to Project, duplicate-aware import, project indexer, maintenance, bundles, settings (#52–#65) |
 | v2.10.0 | Asset Store & Claude Sound Studio — released 2026-10-05 | ✅ | Poly Haven / ambientCG / poly.pizza / Freesound / Kenney / Sketchfab providers feeding the library, Mixamo + Sonniss guided flows, license check + CREDITS.md, Claude Sound Studio with ElevenLabs / fal.ai / Stability backends and recipes (#66–#83) |
-| v3.0.0 | Claude-Native Engine (release) — due 2026-12-19 | 🟡 on `main`, not released | ✅ MCP server + 67 tools, Claude panel, safety (#84–#94, #99), CI gate (#161) + macOS app/DMG CI (#184), template packs (#299) + Update from Template (#186), docs sweep (#98), hardening (#95), the cross-platform editor in the Windows installer (#183); ⬜ a real Claude Code session end to end, a real-GPU Windows check, signing (#96), crash reporting (#97), the release itself + template-pack upload, asset source outreach (#290) |
+| v3.0.0 | Claude-Native Engine — released 2026-10-05 | ✅ | MCP server + 67 tools (68 in v3.0.1), Claude panel, safety (#84–#94, #99) — checked end to end with real Claude Code sessions; the cross-platform editor on Windows too (#183) with self-update and gamepads, the macOS DMG (#184), template packs (#299) + Update from Template (#186), docs sweep (#98), hardening + an installer test that plays an in-app update (#95), CI gate (#161), the v3.0 trailer and homepage |
 | v3.1.0 | Physics v2 | 🟡 | ✅ Jolt, joints (#103), ragdolls (#104), render interpolation; ⬜ player on CharacterVirtual (#105, #187), Jolt in the Visual Studio build (#182), debug draw (#106), compound colliders (#107) |
 | v3.2.0 | AI & Navigation | 🟡 | navmesh, agents, perception merged as work in progress; behaviour trees (#111), root motion (#113), Tactical Shooter combat bots (#193) |
 | v3.3.0 | VFX | 🟡 | particle system + VFX editor merged as work in progress; volumetric fog (#119), decals (#120), weapon VFX (#178) for every camera (#194) |
@@ -40,17 +40,40 @@ original-quality downloads (#289).
 "v2.8.0 – Global Asset Database" is v2.9.0 and the Asset Store moved to v2.10.0.
 
 ## Now
-1. **Release v3.0.0** — everything is merged (#303): the MCP server and its tool sets, the Claude panel, the PR gate on
-   Windows + macOS, the macOS DMG, the cross-platform editor in the Windows installer (which brings the Library, Store,
-   Sound Studio and Claude to Windows), template packs + Update from Template, the docs sweep (Getting Started, Horror
-   Essentials, Audio; every wiki code sample compiles in CI) and a hardening pass. Before the tag: a real Claude Code
-   session against the editor, a run of the cross-platform editor on a real Windows GPU, and the decisions on signing
-   (#96) and crash reporting (#97). At the tag: version bump, release notes, `tools/make-template-packs.sh 3.0.0 --upload`.
-2. **After v3.0.0** — the gaps the docs pass found: shadow settings (#304), the DLSS runtime in release builds (#305),
-   Linux CI (#306), `Lighting.SetDirectional` (#307), the Steam Audio runtime (#308); then v3.1.0 (Jolt in the Visual
-   Studio build, #182).
+1. **v3.0.1** (#313) — what the real Claude Code sessions found: `create_sound_container`, one Light / Camera / Rigidbody per
+   entity, play mode over MCP in CI; plus the v3.0 trailer. Then the checks on a real Windows PC (#315): the in-app update
+   from v2.10, the editor on a DX12 GPU, an exported game.
+2. **Follow-ups** — the in-app update's elevated restart (#312), shadow settings (#304), the DLSS runtime in release builds
+   (#305), Linux CI (#306), `Lighting.SetDirectional` (#307), the Steam Audio runtime (#308), a Kenney manifest (#314).
+3. **v3.1.0 — Physics v2** — Jolt in the Visual Studio build (#182), the player on CharacterVirtual (#105, #187), debug
+   draw (#106), compound colliders (#107); the classic WPF editor retires (#311).
 
 ## Shipped
+
+### v3.0.0 — Claude-Native Engine (released 2026-10-05)
+- ✅ **Vortex MCP server** in the editor (`127.0.0.1` only) with 67 tools (68 in v3.0.1): scenes, entities, materials, custom shaders
+  with the real compiler errors, scripts with line-accurate errors, prefabs, model import, grid / scatter / snap, audio,
+  the mixer and generated sounds, play mode, screenshots and the console. Every call is one undo step, changing tools
+  offer a dry run, and *Tools ▸ Claude ▸ Operations…* shows each call's file diffs and reverts any of them.
+  *Connect Claude Code / Desktop…* writes the project's `.mcp.json` or gives the one command. Checked with real Claude
+  Code sessions: one prompt builds and sounds a horror corridor in under three minutes
+  ([trailer](docs/showcase/vortex-3.0-claude.webp)). Docs:
+  [Claude Integration](docs/wiki/Claude-Integration.md), [Claude Tools](docs/wiki/Claude-Tools.md).
+- ✅ **Claude panel** in the editor with the user's own Anthropic key: it sees the viewport and asks before it changes
+  things.
+- ✅ **One editor on Windows, macOS and Linux** (#183): the installer's *Vortex Engine* is the cross-platform editor
+  (self-contained .NET 10, DX12 viewport in a child window) with self-update, gamepads (DualSense / DualShock HID and
+  XInput on Windows, SDL3 elsewhere) and the same window header everywhere. The WPF editor stays one release as
+  *Vortex Engine (Classic)*; #311 retires it.
+- ✅ **macOS DMG** on every release (#184); the app and the games it exports carry their own libraries.
+- ✅ **Template packs** (#299): the Horror Starter and Tactical Shooter content downloads once per engine version.
+  *Update from Template…* (#186) shows line diffs, backs up what it overwrites, and replacing scenes is opt-in.
+- ✅ **Hardening** (#95): audio follows parent transforms, spawned and destroyed sounds behave, HRTF fades with distance,
+  `Settings.SetMasterVolume` works, lights come back after Stop, Toggle Active is kept, Windows games flush their saves
+  on quit. Before anything is published, the release workflow installs the previous release, updates it, plays an
+  in-app update through and smokes the installed editor.
+- ✅ **Docs** (#98): Getting Started, Horror Essentials, Audio; every wiki code sample compiles in CI; the Feature Status
+  Matrix was re-checked against the code.
 
 ### v2.10.0 — Asset Store & Claude Sound Studio (released 2026-10-05)
 - ✅ **Store tab** in the Asset Browser (`Managed/Vortex.Core/Store/`): Poly Haven (models, PBR sets, HDRIs, MD5-checked),
