@@ -388,7 +388,7 @@ namespace VortexEditor.Shell
             return set.Where(e => { for (var p = e.Parent; p != null; p = p.Parent) if (set.Contains(p)) return false; return true; }).ToList();
         }
 
-        private static void AfterSceneEdit()
+        internal static void AfterSceneEdit()
         {
             SceneRenderService.RuntimeDirty = true;
             Editor.Core.Viewport.EditorViewportSession.RequestResubmit();

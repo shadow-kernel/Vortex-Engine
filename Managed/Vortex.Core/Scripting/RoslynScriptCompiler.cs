@@ -25,11 +25,7 @@ namespace Editor.Scripting
             if (files == null || files.Length == 0) return null;
             try
             {
-                var parseOptions = new CSharpParseOptions(LanguageVersion.Latest);
-                var trees = files.Select(f => CSharpSyntaxTree.ParseText(File.ReadAllText(f), parseOptions, path: f)).ToList();
-                var options = new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary,
-                    optimizationLevel: OptimizationLevel.Debug, allowUnsafe: true, nullableContextOptions: NullableContextOptions.Disable);
-                var compilation = CSharpCompilation.Create("GameScripts_" + Guid.NewGuid().ToString("N"), trees, References(), options);
+                var compilation = CreateCompilation(files, OptimizationLevel.Debug, "GameScripts_" + Guid.NewGuid().ToString("N"));
 
                 using var ms = new MemoryStream();
                 var result = compilation.Emit(ms);
@@ -67,10 +63,7 @@ namespace Editor.Scripting
             log = null;
             try
             {
-                var parseOptions = new CSharpParseOptions(LanguageVersion.Latest);
-                var trees = files.Select(f => CSharpSyntaxTree.ParseText(File.ReadAllText(f), parseOptions, path: f)).ToList();
-                var options = new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, optimizationLevel: OptimizationLevel.Release, allowUnsafe: true, nullableContextOptions: NullableContextOptions.Disable);
-                var compilation = CSharpCompilation.Create("GameScripts", trees, References(), options);
+                var compilation = CreateCompilation(files, OptimizationLevel.Release, "GameScripts");
                 var result = compilation.Emit(outDll);
                 if (result.Success) return true;
                 var sb = new System.Text.StringBuilder();
@@ -83,6 +76,53 @@ namespace Editor.Scripting
                 return false;
             }
             catch (Exception ex) { log = ex.Message; return false; }
+        }
+
+        /// <summary>The one compilation every path uses (play, export, the tools' check): same language version,
+        /// options and references, so a check that passes means Play compiles.</summary>
+        private static CSharpCompilation CreateCompilation(string[] files, OptimizationLevel level, string name)
+        {
+            var parseOptions = new CSharpParseOptions(LanguageVersion.Latest);
+            var trees = files.Select(f => CSharpSyntaxTree.ParseText(File.ReadAllText(f), parseOptions, path: f)).ToList();
+            var options = new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary,
+                optimizationLevel: level, allowUnsafe: true, nullableContextOptions: NullableContextOptions.Disable);
+            return CSharpCompilation.Create(name, trees, References(), options);
+        }
+
+        /// <summary>A compiler message with its place (1-based line and column).</summary>
+        public sealed class ScriptDiagnostic
+        {
+            public string File;
+            public int Line, Column;
+            public string Id;
+            public bool IsError;
+            public string Message;
+            public override string ToString() => System.IO.Path.GetFileName(File) + "(" + Line + "," + Column + "): " + (IsError ? "error " : "warning ") + Id + ": " + Message;
+        }
+
+        /// <summary>Errors (and optionally warnings) of the script files without loading anything — the same
+        /// compilation Play uses (Claude's compile check, #91).</summary>
+        public static List<ScriptDiagnostic> Check(string[] files, bool includeWarnings = false)
+        {
+            var list = new List<ScriptDiagnostic>();
+            if (files == null || files.Length == 0) return list;
+            var compilation = CreateCompilation(files, OptimizationLevel.Debug, "GameScripts_Check");
+            foreach (var d in compilation.GetDiagnostics())
+            {
+                bool error = d.Severity == DiagnosticSeverity.Error;
+                if (!error && !(includeWarnings && d.Severity == DiagnosticSeverity.Warning)) continue;
+                var span = d.Location.GetLineSpan();
+                list.Add(new ScriptDiagnostic
+                {
+                    File = span.Path,
+                    Line = span.StartLinePosition.Line + 1,
+                    Column = span.StartLinePosition.Character + 1,
+                    Id = d.Id,
+                    IsError = error,
+                    Message = d.GetMessage(),
+                });
+            }
+            return list;
         }
 
         private static IEnumerable<MetadataReference> References()

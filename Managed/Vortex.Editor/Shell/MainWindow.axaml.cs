@@ -8,6 +8,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Media;
 using Avalonia.Threading;
 using Editor.Core.Data;
 using Editor.Core.Editing;
@@ -53,6 +54,8 @@ namespace VortexEditor.Shell
             PlayModeService.Instance.StateChanged += (s, st) => Dispatcher.UIThread.Post(SyncPlayButtons);
             PlayModeService.Instance.GameViewChanged += g => Dispatcher.UIThread.Post(() => { TabGame.IsChecked = g; TabScene.IsChecked = !g; });
             UndoRedoManager.Instance.StateChanged += (s, e) => Dispatcher.UIThread.Post(SyncUndoText);
+            Claude.McpHost.StatusChanged += SyncClaudeStatus;
+            Claude.OperationLog.Added += op => Dispatcher.UIThread.Post(() => ShowClaudeOperation(op));
             ViewportPanel.StatusChanged += (st, res) => { StatusText.Text = st; ResolutionText.Text = res; };
             ViewportPanel.EngineView.ToastRequested += ShowToast;
             ConsoleService.Instance.EntryAdded += OnConsoleEntry;
@@ -67,12 +70,14 @@ namespace VortexEditor.Shell
             BuildButton.ContextMenu = BuildContextMenu();
             SyncPlayButtons();
             SyncUndoText();
+            SyncClaudeStatus();
         }
 
         private void OnOpened(object sender, EventArgs e)
         {
             var o = Program.Options;
             Session.EnsureEngine();
+            Claude.McpHost.AutoStart();
             bool opened = false;
             if (!string.IsNullOrEmpty(o.ProjectPath)) opened = Session.OpenProject(o.ProjectPath);
             else if (EditorPreferences.Current.OpenLastProjectOnStart && Session.LastProjectPath != null) opened = Session.OpenProject(Session.LastProjectPath);
@@ -331,7 +336,7 @@ namespace VortexEditor.Shell
 
         private async void OnClosing(object sender, WindowClosingEventArgs e)
         {
-            if (_closingConfirmed) { Session.ShutdownEngine(); return; }
+            if (_closingConfirmed) { _ = Claude.McpHost.StopAsync(); Session.ShutdownEngine(); return; }
             e.Cancel = true;
             if (Session.HasProject && !await Dialogs.Confirm("Quit Vortex Editor?", "Unsaved changes will be lost.", "Quit", "Cancel", destructive: true)) return;
             CloseConfirmed();
@@ -341,6 +346,7 @@ namespace VortexEditor.Shell
         public void CloseConfirmed()
         {
             _closingConfirmed = true;
+            _ = Claude.McpHost.StopAsync();
             Session.ShutdownEngine();
             Close();
         }
@@ -505,6 +511,36 @@ namespace VortexEditor.Shell
         private void OnBuildClick(object s, RoutedEventArgs e) => EditorCommands.Build();
         private void OnGitClick(object s, RoutedEventArgs e) => EditorCommands.GitWindow();
         private void OnHistoryClick(object s, RoutedEventArgs e) => EditorCommands.History();
+
+        // ---------------------------------------------------------------- Claude (MCP server) indicator
+        private DispatcherTimer _claudeOpTimer;
+
+        private void OnClaudeStatusClick(object s, RoutedEventArgs e) => _ = Claude.ClaudeConnectDialog.Run();
+
+        private void SyncClaudeStatus()
+        {
+            var st = Claude.McpHost.State;
+            ClaudeDot.Fill = st == Claude.McpServerState.Running ? new SolidColorBrush(Color.FromRgb(0x3f, 0xb9, 0x50))
+                           : st == Claude.McpServerState.Failed ? new SolidColorBrush(Color.FromRgb(0xe5, 0x48, 0x4d))
+                           : st == Claude.McpServerState.Starting ? new SolidColorBrush(Color.FromRgb(0xd8, 0xa1, 0x2b))
+                           : (IBrush)(this.TryFindResource("VxTextTertiaryBrush", ActualThemeVariant, out var b) ? b : Brushes.Gray);
+            if (_claudeOpTimer?.IsEnabled != true) ClaudeText.Text = st == Claude.McpServerState.Running ? "Claude :" + Claude.McpHost.Port : "Claude";
+            ToolTip.SetTip(ClaudeStatus, st == Claude.McpServerState.Running ? "Claude MCP server running on " + Claude.McpHost.Url + " — click to connect Claude Code / Desktop"
+                                       : st == Claude.McpServerState.Failed ? "Claude MCP server not running: " + Claude.McpHost.LastError
+                                       : "Claude MCP server is off — click to connect Claude Code / Desktop");
+        }
+
+        /// <summary>A tool call landed: show it in the status bar for a few seconds.</summary>
+        private void ShowClaudeOperation(Claude.ToolOperation op)
+        {
+            ClaudeText.Text = (op.IsError ? "Claude ✗ " : "Claude: ") + (op.UndoStep?.Name?.Replace("Claude: ", "") ?? op.Tool);
+            if (_claudeOpTimer == null)
+            {
+                _claudeOpTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
+                _claudeOpTimer.Tick += (s, e) => { _claudeOpTimer.Stop(); SyncClaudeStatus(); };
+            }
+            _claudeOpTimer.Stop(); _claudeOpTimer.Start();
+        }
         private void OnSettingsClick(object s, RoutedEventArgs e) => EditorCommands.ProjectSettings();
 
         private void SyncPlayButtons()

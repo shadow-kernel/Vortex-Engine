@@ -110,6 +110,12 @@
         <Button x:Name="UndoStatus" DockPanel.Dock="Right" Classes="link" Padding="0" Margin="0,0,18,0" Click="OnHistoryClick" ToolTip.Tip="Open the History (undo list)" IsVisible="False">
           <TextBlock x:Name="UndoText" Classes="small tertiary"/>
         </Button>
+        <Button x:Name="ClaudeStatus" DockPanel.Dock="Right" Classes="link" Padding="0" Margin="0,0,18,0" Click="OnClaudeStatusClick">
+          <StackPanel Orientation="Horizontal" Spacing="5">
+            <Ellipse x:Name="ClaudeDot" Width="7" Height="7" VerticalAlignment="Center"/>
+            <TextBlock x:Name="ClaudeText" Classes="small tertiary" Text="Claude"/>
+          </StackPanel>
+        </Button>
         <TextBlock x:Name="StatusText" Classes="small secondary" Text="Ready"/>
       </DockPanel>
     </Border>

@@ -501,6 +501,7 @@ namespace Editor.Core.Services
         public void SubmitOverlays(Data.Scene scene)
         {
             if (scene == null || scene.Entities == null) return;
+            if (HideEditorOverlays) return;
 
             var selected = SelectionService.Instance.SelectedEntity;
             RenderAllCameraIcons(scene, selected);
@@ -784,6 +785,20 @@ namespace Editor.Core.Services
         {
             public ECS.Vector3 Size;
             public ECS.Vector3 Center;
+        }
+
+        /// <summary>While true, no editor overlays (selection outline, transform gizmo, light / camera / audio icons,
+        /// collider nets) are submitted — a clean frame of the scene, e.g. for a viewport capture Claude looks at.</summary>
+        public static bool HideEditorOverlays { get; set; }
+
+        /// <summary>Size and center of a mesh's local bounding box (primitives: their unit box). False when the mesh
+        /// cannot be loaded — size is then 1×1×1.</summary>
+        public bool TryGetMeshBounds(string meshPath, out ECS.Vector3 size, out ECS.Vector3 center)
+        {
+            var info = GetMeshBoundsAndCenter(meshPath);
+            size = info.Size;
+            center = info.Center;
+            return !string.IsNullOrEmpty(meshPath) && _meshBoundsCache.ContainsKey(meshPath);
         }
 
         /// <summary>
