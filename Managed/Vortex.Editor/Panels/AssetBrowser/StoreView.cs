@@ -911,7 +911,7 @@ namespace VortexEditor.Panels.AssetBrowser
                 ("elevenlabs", "ElevenLabs — API key (sound effects)", "https://elevenlabs.io/app/settings/api-keys"),
                 ("fal", "fal.ai — API key (Stable Audio Open, CassetteAI)", "https://fal.ai/dashboard/keys"),
                 ("stability", "Stability AI — API key (Stable Audio 2.5 / 3)", "https://platform.stability.ai/account/keys"),
-                ("anthropic", "Anthropic — API key (Claude designs the prompts)", "https://console.anthropic.com/settings/keys"),
+                ("anthropic", "Anthropic — API key (the Claude panel; Claude designs Sound Studio prompts)", "https://console.anthropic.com/settings/keys"),
             })
             {
                 string link = url;
@@ -925,6 +925,7 @@ namespace VortexEditor.Panels.AssetBrowser
                 Grid.SetColumn(get, 1);
                 row.Children.Add(get);
                 stack.Children.Add(row);
+                if (id == focus) Opened += (s, e) => box.Focus();
             }
             var cancel = Ui.Button("Cancel", Close, null, null, 84);
             var save = Ui.Button("Save", () => { foreach (var kv in _boxes) StoreKeys.Set(kv.Key, kv.Value.Text); _saved = true; Close(); }, null, "accent", 90);

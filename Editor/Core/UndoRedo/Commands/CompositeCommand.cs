@@ -20,6 +20,11 @@ namespace Editor.Core.UndoRedo.Commands
         public int Count => _commands.Count;
 
         /// <summary>
+        /// Die enthaltenen Befehle in Ausführungsreihenfolge (z. B. für einen Dry-Run-Plan).
+        /// </summary>
+        public IReadOnlyList<IUndoableCommand> Commands => _commands;
+
+        /// <summary>
         /// Erstellt einen neuen CompositeCommand.
         /// </summary>
         /// <param name="name">Anzeigename des zusammengesetzten Befehls.</param>

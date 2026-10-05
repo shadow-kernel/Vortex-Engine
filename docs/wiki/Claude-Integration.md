@@ -59,7 +59,33 @@ instead: Claude Desktop ▸ **Settings ▸ Developer ▸ Edit Config** opens `cl
 `mcp-remote` (an npm package; needs [Node.js](https://nodejs.org)) speaks stdio to Claude Desktop and HTTP to the
 editor. **Quit Claude Desktop completely and start it again** — it reads the file only at start-up.
 
-## 4. How Claude works in the editor
+## 4. The Claude panel (inside the editor)
+
+The **Claude** tab next to Inspector and Environment (**Window ▸ Claude**, ⌘/Ctrl+9) is a chat with the same tools —
+no terminal needed. It uses **your own Anthropic API key** (the gear button in the panel, or Asset Store ▸ API Keys…;
+billed per token by Anthropic). The key is stored only on this computer (owner-only file on macOS/Linux, encrypted for
+your Windows account with DPAPI) and is sent nowhere but `api.anthropic.com`. The panel works with the MCP server off.
+
+- Pick the model in the header (Opus 5.5 most capable, Sonnet 5.5 faster and cheaper, Haiku 4.5 fastest). The line
+  under the input shows the tokens used; the tool definitions are prompt-cached, so long conversations stay cheap.
+- Answers stream in; every tool call is a card — click it for the input, the result and, for `capture_viewport`, the image.
+- **Approval:** tools that only read run immediately. A tool that changes something asks first: **Allow**, **Always
+  allow** (for this project — kept in your app data, not in the project) or **Deny** (Claude is told and asks instead).
+  *… ▸ Reset “Always allow”* asks again.
+- **Stop** (or Esc) ends the turn; finished tool calls stay done and stay undoable.
+
+## 5. Operations, dry runs, reverting
+
+**Tools ▸ Claude ▸ Operations…** lists every tool call of the session — from the panel and from Claude Code — with
+time, client, input and result. **Revert** takes one back: the newest like Undo, an older one out of order (a warning
+lists later operations that touched the same entities or files first). **Diff** shows what a call changed in a file
+(scripts, materials).
+
+Every tool that changes the project accepts **`dry_run: true`**: the call runs, reports what it *would* create, remove,
+change and write — and is rolled back completely (scene, undo history and files). Claude uses it to show a plan before a
+big change; you can ask for it too ("show me the plan first").
+
+## 6. How Claude works in the editor
 
 | | |
 |---|---|
@@ -75,7 +101,7 @@ Entities are addressed by their short **id** (8 hex digits, in every result), by
 or by a **unique name**. Positions are metres with Y up; rotations are Euler angles in degrees; a primitive cube is
 1 m.
 
-## 5. Troubleshooting
+## 7. Troubleshooting
 
 | Problem | Fix |
 |---|---|
@@ -84,5 +110,7 @@ or by a **unique name**. Positions are metres with Y up; rotations are Euler ang
 | Claude says no project is open | The tools work on the project open in the editor — open one first. |
 | `capture_viewport` times out | The editor window is minimised or a preview window pauses the main viewport — restore the window. |
 | A firewall asks about Vortex | Not needed: the server listens on loopback only; you can deny network access. |
+| Panel: "the Anthropic API key was rejected" | Re-enter the key (gear button); keys start with `sk-ant-`. |
+| Panel: "rate limited" / "overloaded" | Wait a moment and send again; long tool loops can hit your organisation's rate limit. |
 
 Every tool with its parameters: [[Claude-Tools]] (generated from the code).

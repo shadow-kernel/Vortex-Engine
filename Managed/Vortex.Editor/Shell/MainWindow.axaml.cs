@@ -431,6 +431,7 @@ namespace VortexEditor.Shell
                 case Key.D6: TogglePanel(PanelEnvironment); return true;
                 case Key.D7: TogglePanel(PanelLibrary); return true;
                 case Key.D8: TogglePanel(PanelStore); return true;
+                case Key.D9: TogglePanel(PanelClaude); return true;
             }
             return false;
         }
@@ -579,11 +580,11 @@ namespace VortexEditor.Shell
 
         // ---------------------------------------------------------------- panels
         public const string PanelHierarchy = "Hierarchy", PanelFiles = "Files", PanelInspector = "Inspector", PanelEnvironment = "Environment", PanelProject = "Project", PanelConsole = "Console",
-                            PanelLibrary = "Library", PanelStore = "Store";
+                            PanelLibrary = "Library", PanelStore = "Store", PanelClaude = "Claude";
         private readonly Dictionary<string, bool> _panels = new Dictionary<string, bool>
         {
             [PanelHierarchy] = true, [PanelFiles] = true, [PanelInspector] = true, [PanelEnvironment] = true, [PanelProject] = true, [PanelConsole] = true,
-            [PanelLibrary] = true, [PanelStore] = true,
+            [PanelLibrary] = true, [PanelStore] = true, [PanelClaude] = true,
         };
         private GridLength _leftWidth = new GridLength(260), _rightWidth = new GridLength(330), _bottomHeight = new GridLength(300);
 
@@ -616,6 +617,7 @@ namespace VortexEditor.Shell
             {
                 case PanelInspector: tabs = RightTabs; return InspectorTab;
                 case PanelEnvironment: tabs = RightTabs; return EnvironmentTab;
+                case PanelClaude: tabs = RightTabs; return ClaudeTab;
                 case PanelProject: tabs = BottomTabs; return ProjectTab;
                 case PanelLibrary: tabs = BottomTabs; return LibraryTab;
                 case PanelStore: tabs = BottomTabs; return StoreTab;
@@ -649,8 +651,8 @@ namespace VortexEditor.Shell
             LeftColumn.RowDefinitions[2].Height = files ? new GridLength(2, GridUnitType.Star) : new GridLength(0);
             HierarchyHost.IsVisible = hier; FilesHost.IsVisible = files;
 
-            ApplyTabs(RightTabs, (InspectorTab, _panels[PanelInspector]), (EnvironmentTab, _panels[PanelEnvironment]));
-            bool right = _panels[PanelInspector] || _panels[PanelEnvironment];
+            ApplyTabs(RightTabs, (InspectorTab, _panels[PanelInspector]), (EnvironmentTab, _panels[PanelEnvironment]), (ClaudeTab, _panels[PanelClaude]));
+            bool right = _panels[PanelInspector] || _panels[PanelEnvironment] || _panels[PanelClaude];
             Workspace.ColumnDefinitions[4].Width = right ? _rightWidth : new GridLength(0);
             Workspace.ColumnDefinitions[3].Width = new GridLength(right ? 5 : 0);
             RightColumn.IsVisible = right;

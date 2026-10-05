@@ -3,6 +3,7 @@
         xmlns:c="clr-namespace:VortexEditor.Controls"
         xmlns:p="clr-namespace:VortexEditor.Panels"
         xmlns:sh="clr-namespace:VortexEditor.Shell"
+        xmlns:cl="clr-namespace:VortexEditor.Claude"
         x:Class="VortexEditor.Shell.MainWindow"
         Title="Vortex Editor" Width="1500" Height="940" MinWidth="1024" MinHeight="640"
         ExtendClientAreaToDecorationsHint="True" ExtendClientAreaChromeHints="Default" ExtendClientAreaTitleBarHeightHint="52"
@@ -98,6 +99,15 @@
         <TabControl x:Name="RightTabs">
           <TabItem x:Name="InspectorTab" Header="Inspector"><p:InspectorPanel x:Name="Inspector"/></TabItem>
           <TabItem x:Name="EnvironmentTab" Header="Environment"><p:EnvironmentPanel x:Name="Environment"/></TabItem>
+          <TabItem x:Name="ClaudeTab" ToolTip.Tip="Claude — build and change the scene by asking (⌘9)">
+            <TabItem.Header>
+              <StackPanel Orientation="Horizontal" Spacing="5">
+                <c:VxIcon Icon="Sparkle" Width="12" Height="12" VerticalAlignment="Center"/>
+                <TextBlock Text="Claude" VerticalAlignment="Center"/>
+              </StackPanel>
+            </TabItem.Header>
+            <cl:ClaudePanel x:Name="ClaudePanel"/>
+          </TabItem>
         </TabControl>
       </Border>
       <sh:ToastHost x:Name="Toast" Grid.ColumnSpan="5"/>

@@ -103,7 +103,8 @@ is **not** bundled in this source repository.
 ### ASP.NET Core (Kestrel) and Microsoft.Extensions
 - **Use:** the HTTP host of the MCP server (framework reference `Microsoft.AspNetCore.App`, bundled by the self-contained
   publish) and its dependencies `Microsoft.Extensions.AI.Abstractions`, `Microsoft.Extensions.Hosting.Abstractions`,
-  `Microsoft.Extensions.Logging.Abstractions`, `Microsoft.Extensions.Caching.Abstractions`.
+  `Microsoft.Extensions.Logging.Abstractions`, `Microsoft.Extensions.Caching.Abstractions`; also
+  `System.Security.Cryptography.ProtectedData` (DPAPI encryption of the user's API keys on Windows).
 - **License:** MIT. © .NET Foundation and Contributors / © Microsoft Corporation.
   Upstream: https://github.com/dotnet/aspnetcore · https://github.com/dotnet/extensions
 

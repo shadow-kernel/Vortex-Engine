@@ -44,7 +44,7 @@ namespace VortexEditor.Claude.Tools
             }).ToArray();
         }
 
-        [McpServerTool(Name = "open_scene")]
+        [McpServerTool(Name = "open_scene"), NoDryRun]
         [Description("Makes a scene the active (edited) scene — by name, or by .vscene path relative to the project (loaded into the project if needed).")]
         public static object OpenScene([Description("Scene name or project-relative .vscene path")] string scene)
         {
@@ -61,7 +61,7 @@ namespace VortexEditor.Claude.Tools
             return new { active = hit.Name, entities = SceneModel.All(hit).Count() };
         }
 
-        [McpServerTool(Name = "save_scene", Idempotent = true)]
+        [McpServerTool(Name = "save_scene", Idempotent = true), NoDryRun]
         [Description("Saves a scene to its .vscene file (default: the active scene). Tool edits live in memory until saved.")]
         public static object SaveScene([Description("Scene name (default: the active scene)")] string scene = null)
         {
