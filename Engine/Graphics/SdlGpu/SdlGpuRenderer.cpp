@@ -1128,6 +1128,83 @@ namespace vortex::graphics::sdlgpu
 		return changed;
 	}
 
+	namespace
+	{
+		// SDL reports a shader compiler's output (e.g. Metal's "program_source:12:5: error: …") through its log, not
+		// SDL_GetError: validate_material_shader listens to the log while it compiles.
+		struct SdlLogCapture
+		{
+			std::string text;
+			SDL_LogOutputFunction prev_fn = nullptr;
+			void* prev_ud = nullptr;
+		};
+
+		void SDLCALL capture_sdl_log(void* userdata, int category, SDL_LogPriority priority, const char* message)
+		{
+			auto* c = static_cast<SdlLogCapture*>(userdata);
+			if (message && priority >= SDL_LOG_PRIORITY_WARN) { c->text += message; c->text += "\n"; }
+			if (c->prev_fn) c->prev_fn(c->prev_ud, category, priority, message);
+		}
+
+		std::string stage_error(const SdlLogCapture& cap)
+		{
+			const char* e = SDL_GetError();
+			std::string s = (e && *e) ? std::string(e) : std::string();
+			if (!cap.text.empty()) s += (s.empty() ? "" : "\n") + cap.text;
+			return s.empty() ? std::string("compile failed (no compiler output)") : s;
+		}
+	}
+
+	bool SdlGpuRenderer::validate_material_shader(const std::string& path, std::string& errors)
+	{
+		errors.clear();
+		if (!m_initialized) { errors = "the renderer is not running"; return false; }
+		const char* ext = shaderfmt::material_suffix;
+		const size_t n = std::strlen(ext);
+		if (path.size() <= n || path.compare(path.size() - n, n, ext) != 0)
+		{
+			errors = std::string("this backend compiles ") + ext + " material shaders";
+			return false;
+		}
+		std::vector<unsigned char> vs_code, fs_code;
+		if (!load_material_shader(path, SDL_GPU_SHADERSTAGE_VERTEX, vs_code) || !load_material_shader(path, SDL_GPU_SHADERSTAGE_FRAGMENT, fs_code))
+		{
+			errors = shaderfmt::per_entrypoint ? "glslc could not compile the shader (run glslc on it for the details; VORTEX_GLSLC selects the compiler)"
+											   : "the shader file could not be read";
+			return false;
+		}
+		SdlLogCapture cap;
+		SDL_GetLogOutputFunction(&cap.prev_fn, &cap.prev_ud);
+		SDL_SetLogOutputFunction(capture_sdl_log, &cap);
+		SDL_ClearError();
+		SDL_GPUShader* vs = create_shader_from_code(vs_code, "VSMain", path, SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 1);
+		if (!vs) errors += "VSMain: " + stage_error(cap) + "\n";
+		std::string vs_text = cap.text;
+		cap.text.clear();
+		SDL_ClearError();
+		SDL_GPUShader* fs = create_shader_from_code(fs_code, "PSMain", path, SDL_GPU_SHADERSTAGE_FRAGMENT, 10, 0, 3);
+		// Metal compiles the whole source for each stage: report the same diagnostics once
+		if (!fs) errors += (!vs && cap.text == vs_text) ? std::string("PSMain: the same errors\n") : "PSMain: " + stage_error(cap) + "\n";
+		cap.text.clear();
+		bool ok = vs && fs;
+		if (ok)
+		{
+			SDL_ClearError();
+			SDL_GPUGraphicsPipeline* p = create_scene_pipeline(vs, fs, 32, false, SDL_GPU_FILLMODE_FILL, SDL_GPU_CULLMODE_BACK, true, true, SDL_GPU_COMPAREOP_LESS, 0);
+			if (p) SDL_ReleaseGPUGraphicsPipeline(m_device, p);
+			else
+			{
+				ok = false;
+				errors = "Both stages compile, but no pipeline could be built with them (" + stage_error(cap)
+					+ "): they do not match the engine's vertex layout or bindings (start from the Standard shader template).";
+			}
+		}
+		SDL_SetLogOutputFunction(cap.prev_fn, cap.prev_ud);
+		if (vs) SDL_ReleaseGPUShader(m_device, vs);
+		if (fs) SDL_ReleaseGPUShader(m_device, fs);
+		return ok;
+	}
+
 	bool SdlGpuRenderer::any_material_shader_dirty() const
 	{
 		for (auto& kv : m_pipeline_cache)

@@ -26,8 +26,10 @@ namespace vortex::graphics::dx12
 		static ComPtr<ID3DBlob> load_shader(const std::string& name, const std::string& stage,
 											const std::string& entry, const std::string& target);
 
-		// Compile an .hlsl file from disk, with #include rooted at the shaders dir. Logs + returns nullptr on failure.
-		static ComPtr<ID3DBlob> compile_from_file(const std::wstring& path, const std::string& entry, const std::string& target);
+		// Compile an .hlsl file from disk, with #include rooted at the shaders dir. Logs + returns nullptr on failure;
+		// errors (optional) receives the compiler output.
+		static ComPtr<ID3DBlob> compile_from_file(const std::wstring& path, const std::string& entry, const std::string& target,
+												  std::string* errors = nullptr);
 
 		// Load a precompiled .cso blob from disk. Returns nullptr if missing/unreadable.
 		static ComPtr<ID3DBlob> load_cso(const std::wstring& path);

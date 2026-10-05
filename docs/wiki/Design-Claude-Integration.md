@@ -7,7 +7,8 @@ Design doc for **[milestone 5 — v3.0.0 Claude-Native Engine](https://github.co
 > audio, viewport, play mode, undo), the embedded Claude panel (`ClaudePanel` on `Managed/Vortex.Core/Claude/ClaudeChat.cs`),
 > the Operations window (revert, diffs) and dry runs; docs: [[Claude-Integration]], [[Claude-Tools]]. The WPF editor
 > (.NET Framework 4.8) cannot host ASP.NET Core in-process and gets neither; it is retired by the Avalonia editor on
-> Windows (#183). Shader writing/validation (#87) is still open.
+> Windows (#183). Custom shaders: get_shader_template / write_shader / validate_shader compile through the renderer
+> (`ValidateMaterialShader` export: Metal via SDL GPU, HLSL via D3DCompile) and return the compiler output verbatim.
 
 ## Architecture: two halves, one tool layer
 

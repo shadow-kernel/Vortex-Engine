@@ -139,13 +139,19 @@ namespace vortex::graphics::dx12
 		return blob;
 	}
 
-	ComPtr<ID3DBlob> DX12ShaderCompiler::compile_from_file(const std::wstring& path, const std::string& entry, const std::string& target)
+	ComPtr<ID3DBlob> DX12ShaderCompiler::compile_from_file(const std::wstring& path, const std::string& entry, const std::string& target,
+														   std::string* errors)
 	{
 		auto compile = get_d3d_compile();
-		if (!compile) { sh_log("d3dcompiler not available"); return nullptr; }
+		if (!compile) { sh_log("d3dcompiler not available"); if (errors) *errors = "d3dcompiler not available"; return nullptr; }
 
 		std::vector<char> src;
-		if (!read_file(path, src) || src.empty()) { sh_log("missing/empty shader file: " + narrow(path)); return nullptr; }
+		if (!read_file(path, src) || src.empty())
+		{
+			sh_log("missing/empty shader file: " + narrow(path));
+			if (errors) *errors = "missing or empty shader file: " + narrow(path);
+			return nullptr;
+		}
 
 		UINT flags = 0;
 #ifdef _DEBUG
@@ -162,6 +168,7 @@ namespace vortex::graphics::dx12
 		{
 			if (error) sh_log(std::string("compile failed: ") + static_cast<const char*>(error->GetBufferPointer()));
 			else sh_log("compile failed (no error blob): " + srcName);
+			if (errors) *errors = error ? std::string(static_cast<const char*>(error->GetBufferPointer()), error->GetBufferSize()) : "compile failed: " + srcName;
 			return nullptr;
 		}
 		return blob;

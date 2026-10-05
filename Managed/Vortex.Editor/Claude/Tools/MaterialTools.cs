@@ -90,7 +90,8 @@ namespace VortexEditor.Claude.Tools
                      "roughness, ambient_occlusion, normal_strength, height_scale, emissive_color, emissive_strength, alpha_cutoff, blend_mode " +
                      "(Opaque|AlphaBlend|AlphaTest|Additive), shader_type (StandardPBR|Unlit|Subsurface), two_sided, cast_shadows, receive_shadows, " +
                      "uv_tiling [u,v], uv_offset [u,v], real_world_size [w,h] metres, textures as project paths (albedo_texture, normal_texture, " +
-                     "roughness_texture, metallic_texture, ao_texture, emissive_texture, height_texture, opacity_texture; \"\" removes), shader_asset, footstep_sound.")]
+                     "roughness_texture, metallic_texture, ao_texture, emissive_texture, height_texture, opacity_texture; \"\" removes), shader_asset " +
+                     "(a custom shader from write_shader; \"\" = the built-in PBR shader), footstep_sound.")]
         public static object SetMaterialProperties(
             [Description("Project path of the .vmat")] string material,
             [Description("Properties {\"name\": value}")] JsonElement properties)
