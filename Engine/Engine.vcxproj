@@ -88,6 +88,7 @@
     <ClInclude Include="Runtime\Systems\AudioVoices.h" />
     <ClInclude Include="Runtime\Systems\SteamAudio.h" />
     <ClInclude Include="Runtime\Systems\PhysicsSystem.h" />
+    <ClInclude Include="Runtime\Systems\RenderBackend.h" />
     <ClInclude Include="Runtime\Systems\RenderSystem.h" />
     <ClInclude Include="Runtime\Systems\RenderSystemDX12.h" />
     <ClInclude Include="ThirdParty\miniaudio.h" />
@@ -174,6 +175,7 @@
     <ClCompile Include="Runtime\Systems\AudioVoices.cpp" />
     <ClCompile Include="Runtime\Systems\SteamAudio.cpp" />
     <ClCompile Include="Runtime\Systems\PhysicsSystem.cpp" />
+    <ClCompile Include="Runtime\Systems\RenderBackend.cpp" />
     <ClCompile Include="Runtime\Systems\RenderSystem.cpp" />
     <ClCompile Include="Runtime\Systems\RenderSystemDX12.cpp" />
   </ItemGroup>
