@@ -235,6 +235,39 @@ jobs:
         if (Select-String -Path "$tmp\smoke.log" -Pattern "SMOKE FAIL" -Quiet) { exit 1 }
         foreach ($c in @("mcp tools", "title bar")) { if (-not (Select-String -Path "$tmp\smoke.log" -Pattern "SMOKE OK   $c" -Quiet)) { Write-Host "::error::smoke check '$c' did not pass"; exit 1 } }
 
+    - name: In-app update (the editor hands over to the installer and comes back)
+      shell: pwsh
+      env:
+        VORTEX_DX12_WARP: '1'
+        VORTEX_SMOKE_FULL: '1'
+        VORTEX_SMOKE_ONLY: 'update install'
+      run: |
+        $app = "$env:ProgramFiles\Vortex Engine"
+        $tmp = $env:RUNNER_TEMP
+        $env:VORTEX_SMOKE_UPDATE_SETUP = (Get-ChildItem installer\*.exe | Select-Object -First 1).FullName
+        $env:VORTEX_APPDATA_DIR = "$tmp\appdata-update"
+        Copy-Item -Recurse "$app\Templates\Default3D" "$tmp\update-project"
+        Remove-Item "$env:TEMP\VortexUpdate.log" -ErrorAction SilentlyContinue
+        $p = Start-Process "$app\Editor\Vortex.Editor.exe" -ArgumentList "--project=$tmp\update-project", "--smoke=25" -PassThru -NoNewWindow `
+               -RedirectStandardOutput "$tmp\update.log" -RedirectStandardError "$tmp\update.err"
+        if (-not $p.WaitForExit(300000)) { $p.Kill(); Get-Content "$tmp\update.log" -Tail 30; throw "the editor did not hand over to the installer" }
+        Select-String -Path "$tmp\update.log" -Pattern "update install|SMOKE FAIL" | ForEach-Object { $_.Line }
+        if (-not (Select-String -Path "$tmp\update.log" -Pattern "update install: handing over" -Quiet)) { throw "the update check did not run" }
+        # the relay runs the installer, whose last step starts the editor again
+        $deadline = (Get-Date).AddMinutes(4)
+        while ((Get-Date) -lt $deadline -and -not (Get-Process -Name 'Vortex.Editor' -ErrorAction SilentlyContinue)) { Start-Sleep -Seconds 3 }
+        Get-Content "$env:TEMP\VortexUpdate.log" -Tail 12 -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 20
+        $editors = @(Get-Process -Name 'Vortex.Editor' -ErrorAction SilentlyContinue).Count
+        $classic = @(Get-Process -Name 'Vortex Engine' -ErrorAction SilentlyContinue).Count
+        Write-Host "after the in-app update: $editors editor(s), $classic classic"
+        if ($editors -ne 1 -or $classic -ne 0) { throw "the in-app update must leave exactly one editor running" }
+        # the relay is done: closing the editor must not start it again
+        Get-Process -Name 'Vortex.Editor' | Stop-Process -Force
+        Start-Sleep -Seconds 12
+        if (Get-Process -Name 'Vortex.Editor','Vortex Engine' -ErrorAction SilentlyContinue) { throw "closing the editor after the update started it again" }
+        Write-Host "in-app update: the editor came back once, and stays closed when closed"
+
     - name: Upload the installed-editor capture
       if: always()
       uses: actions/upload-artifact@v4

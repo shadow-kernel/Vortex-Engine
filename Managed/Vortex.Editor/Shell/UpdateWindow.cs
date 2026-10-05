@@ -112,7 +112,26 @@ namespace VortexEditor.Shell
         // ------------------------------------------------------------------ smoke check "update window"
 
         [ModuleInitializer]
-        internal static void RegisterSmoke() => SmokeRegistry.Add("update window", SmokeAsync);
+        internal static void RegisterSmoke()
+        {
+            SmokeRegistry.Add("update window", SmokeAsync);
+            // the installer test (CI): a real in-app update — hand over to the given installer, which updates the
+            // install this editor runs from and starts the editor again; the workflow checks what comes back
+            if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("VORTEX_SMOKE_UPDATE_SETUP"))) SmokeRegistry.Add("update install", InstallSmoke);
+        }
+
+        private static bool InstallSmoke()
+        {
+            string setup = Environment.GetEnvironmentVariable("VORTEX_SMOKE_UPDATE_SETUP");
+            if (!OperatingSystem.IsWindows() || !System.IO.File.Exists(setup) || !UpdateService.IsInstalledBuild())
+            {
+                Editor.Core.Services.ConsoleService.Instance.LogError("update install: needs an installed Windows build and the setup at " + setup);
+                return false;
+            }
+            Editor.Core.Services.ConsoleService.Instance.Log("update install: handing over to " + setup);
+            UpdateService.InstallAndRestart(setup);   // ends the process once the relay runs
+            return false;   // still here: the relay could not be started
+        }
 
         private static async Task<bool> SmokeAsync()
         {

@@ -237,7 +237,10 @@ namespace Editor.Core.Services.Update
                     "Start-Sleep -Milliseconds 500\n" +   // let the OS release file handles/mutex fully
                     "$p = Start-Process -FilePath '" + setupPath.Replace("'", "''") + "' " +
                         "-ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CLOSEAPPLICATIONS','/FORCECLOSEAPPLICATIONS','/NOCANCEL','/SP-','/LOG=\"" + log.Replace("'", "''") + "\"' " +
-                        "-Verb RunAs -PassThru -Wait\n" +
+                        "-Verb RunAs -PassThru\n" +
+                    // WaitForExit, not -Wait: -Wait also waits for the editor the setup starts at the end (an elevated
+                    // relay can put the setup in a job), and would then start it again once the user closes it
+                    "if ($p) { $p.WaitForExit() }\n" +
                     "Start-Sleep -Seconds 3\n" +
                     "if (-not (Get-Process -Name 'Vortex.Editor','Vortex Engine' -ErrorAction SilentlyContinue)) {\n" +
                     "  $exe = '" + relaunch.Replace("'", "''") + "'\n" +
