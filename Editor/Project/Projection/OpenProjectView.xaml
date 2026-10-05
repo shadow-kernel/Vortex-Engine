@@ -302,6 +302,12 @@ Background="Transparent">
                                 </Grid>
                             </DataTemplate>
                         </ListView.ItemTemplate>
+                        <ListView.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="Update from Template…" Click="UpdateFromTemplate_Click"
+                                          ToolTip="Bring the project up to the current version of its template (with a preview and a backup)"/>
+                            </ContextMenu>
+                        </ListView.ContextMenu>
                     </ListView>
                 </Border>
 

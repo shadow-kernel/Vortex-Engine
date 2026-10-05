@@ -412,7 +412,31 @@ namespace Vortex
         public void SetWorldPose(Vector3 position, Vector3 rotationEulerDeg)
             { Host?.SetEntityWorldPose(EntityId, position, rotationEulerDeg); }
 
-        /// <summary>Unit forward vector in world space, derived from this entity's yaw + pitch.</summary>
+        /// <summary>This entity's position in the world, through every parent. <see cref="Position"/> is relative to
+        /// the parent — the same for a top-level entity, but not for a camera, flashlight or weapon under the player.</summary>
+        public Vector3 WorldPosition
+        {
+            get { Vector3 p, r; return TryGetWorldPose(out p, out r) ? p : Position; }
+        }
+
+        /// <summary>Unit forward vector in the world, through every parent (where a child camera or flashlight looks).
+        /// <see cref="Forward"/> uses this entity's own yaw + pitch only.</summary>
+        public Vector3 WorldForward
+        {
+            get
+            {
+                Vector3 p, r;
+                if (!TryGetWorldPose(out p, out r)) return Forward;
+                double yaw = r.Y * Math.PI / 180.0, pitch = r.X * Math.PI / 180.0;   // roll does not move the forward axis
+                return new Vector3(
+                    (float)(Math.Sin(yaw) * Math.Cos(pitch)),
+                    (float)(-Math.Sin(pitch)),
+                    (float)(Math.Cos(yaw) * Math.Cos(pitch)));
+            }
+        }
+
+        /// <summary>Unit forward vector from this entity's own yaw + pitch — the world forward for a top-level entity;
+        /// under a rotated parent use <see cref="WorldForward"/>.</summary>
         public Vector3 Forward
         {
             get
@@ -1926,9 +1950,10 @@ namespace Vortex
         /// at the rendered rate (the generated frames show up in <see cref="FrameGenPresentedFps"/>, not here).</summary>
         public static int CurrentFps { get { return Editor.DllWrapper.VortexAPI.CurrentFPS; } }
 
-        /// <summary>Master volume 0..1. Stored here until the (XAudio2) sound engine reads it — audio is still a stub.</summary>
-        public static float MasterVolume { get; private set; } = 1f;
-        public static void SetMasterVolume(float v) { MasterVolume = v < 0f ? 0f : (v > 1f ? 1f : v); }
+        /// <summary>Master volume 0..1: the mixer's Master bus — the same as Audio.SetBusVolume("Master", v), so a
+        /// shipped game keeps the player's choice across restarts. (It used to be stored and never applied.)</summary>
+        public static float MasterVolume { get { return Audio.GetBusVolume("Master"); } }
+        public static void SetMasterVolume(float v) { Audio.SetBusVolume("Master", v < 0f ? 0f : (v > 1f ? 1f : v)); }
 
         /// <summary>The selected GPU's name (e.g. "NVIDIA GeForce RTX 5070").</summary>
         public static string GpuName { get { return Editor.DllWrapper.VortexAPI.GpuName(); } }

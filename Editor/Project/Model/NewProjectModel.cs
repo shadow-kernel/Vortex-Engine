@@ -101,6 +101,25 @@ namespace Editor.Project.Model
             set => SetProperty(ref _path, value, nameof(Path));
         }
 
+        /// <summary>Create the project; a template whose content is a release download (#299) is downloaded first.</summary>
+        public async System.Threading.Tasks.Task<bool> CreateProjectAsync(System.IProgress<double> progress = null)
+        {
+            if (_selectedTemplate != null && _selectedTemplate.NeedsDownload)
+            {
+                try
+                {
+                    string dir = await TemplatePacks.EnsureAsync(_selectedTemplate, progress);
+                    _selectedTemplate = new ProjectTemplate { Id = _selectedTemplate.Id, Name = _selectedTemplate.Name, ProjectDir = dir, Description = _selectedTemplate.Description };
+                }
+                catch (System.Exception ex)
+                {
+                    MessageBox.Show(ex.Message, "Template download failed", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return false;
+                }
+            }
+            return CreateProject();
+        }
+
         public bool CreateProject()
         {
             try

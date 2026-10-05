@@ -49,6 +49,7 @@ namespace Editor.Core.Viewport
         private readonly List<(GameEntity ent, Vector3 start)> _physicsEntities = new List<(GameEntity, Vector3)>();
         private readonly List<(GameEntity ent, Vector3 pos, Vector3 rot, Vector3 scale)> _transformSnapshot = new List<(GameEntity, Vector3, Vector3, Vector3)>();
         private readonly List<(GameEntity ent, float r, float g, float b, float a)> _colorSnapshot = new List<(GameEntity, float, float, float, float)>();
+        private PlaySnapshot _componentSnapshot;   // lights a script changed (flicker, flashlight)
         private float _snapCamX, _snapCamY, _snapCamZ, _snapCamYaw, _snapCamPitch, _snapCamRoll;
         private bool _hasCamSnap;
         private Vector3 _extSnapPos, _extSnapRot;
@@ -783,6 +784,7 @@ namespace Editor.Core.Viewport
             _transformSnapshot.Clear();
             _colorSnapshot.Clear();
             var scene = _currentScene ?? ProjectData.Current?.ActiveScene;
+            _componentSnapshot = PlaySnapshot.Take(scene);
             if (scene?.Entities != null)
                 foreach (var e in scene.Entities) SnapshotTransformRecursive(e);
         }
@@ -805,6 +807,8 @@ namespace Editor.Core.Viewport
             AudioPlaybackService.Instance.EndPlay();
             ScriptRuntime.Instance.End();
             VortexAPI.ClearAllRigidbodies();
+            _componentSnapshot?.Restore();   // after OnDestroy: lights scripts changed
+            _componentSnapshot = null;
             foreach (var s in _transformSnapshot)
             {
                 if (s.ent?.Transform == null) continue;

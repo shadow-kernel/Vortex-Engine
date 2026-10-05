@@ -87,6 +87,7 @@
           </Border>
           <TextBlock x:Name="TemplateName" Classes="title"/>
           <TextBlock x:Name="TemplateDescription" Classes="secondary small" TextWrapping="Wrap"/>
+          <TextBlock x:Name="TemplateDownload" Classes="small tertiary" TextWrapping="Wrap" IsVisible="False"/>
           <TextBlock Text="Project name" Classes="label small" Margin="0,8,0,0"/>
           <TextBox x:Name="NameBox" Text="My Game" TextChanged="OnNameChanged"/>
           <TextBlock Text="Location" Classes="label small"/>
@@ -98,7 +99,7 @@
       </Border>
       <StackPanel Grid.Row="2" Grid.ColumnSpan="2" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" Margin="0,12,0,0">
         <Button x:Name="CancelCreateButton" Content="Quit" Click="OnExit"/>
-        <Button Content="Create Project" Classes="accent" MinWidth="110" Click="OnCreate"/>
+        <Button x:Name="CreateButton" Content="Create Project" Classes="accent" MinWidth="110" Click="OnCreate"/>
       </StackPanel>
     </Grid>
   </Grid>

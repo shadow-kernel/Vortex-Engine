@@ -485,6 +485,7 @@ namespace Editor.Scripting
             Editor.Core.Services.SceneRenderService.RuntimeDirty = true;
             try { Editor.Core.Services.Physics.CollisionService.AddEntityShapes(ent); } catch { }
             try { Editor.Core.Services.Physics.PhysicsService.AddEntity(ent); } catch { }   // spawned crates/barrels simulate at once
+            try { Editor.Core.Services.AudioPlaybackService.Instance.AddEntity(ent); } catch { }   // its sounds play (Play On Awake next tick)
 
             // Its Script components come alive immediately — a spawned monster thinks from THIS frame.
             if (_scriptAsm != null)
@@ -536,6 +537,7 @@ namespace Editor.Scripting
                 try { weapon.SyncEngineStateRecursive(true); } catch { }
                 try { Editor.Core.Services.Physics.CollisionService.AddEntityShapes(weapon); } catch { }
                 try { Editor.Core.Services.Physics.PhysicsService.AddEntity(weapon); } catch { }
+                try { Editor.Core.Services.AudioPlaybackService.Instance.AddEntity(weapon); } catch { }   // audio began before the sockets
                 // Attach the spawned weapon to the bone (target = the socket's resolved skeletal owner). It keeps
                 // its own scale; the socket pass drives it every frame after animation.
                 // Resolve the skeletal target the weapon attaches to. Normally the nearest ancestor with an
@@ -628,6 +630,7 @@ namespace Editor.Scripting
 
             try { Editor.Core.Services.Physics.CollisionService.RemoveEntityShapes(e); } catch { }
             try { Editor.Core.Services.Physics.PhysicsService.RemoveEntity(e); } catch { }
+            try { Editor.Core.Services.AudioPlaybackService.Instance.RemoveEntity(e); } catch { }   // its sounds stop with it
             try { e.SyncEngineStateRecursive(false); } catch { }
 
             // Detach from the live tree. Authored entities are LEDGERED and restored on play end;

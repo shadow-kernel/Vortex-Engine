@@ -1,5 +1,11 @@
 **[[Home]]**
 
+**Start here**
+- [[Getting-Started]]
+- [[Project-Templates]]
+- [[Horror-Essentials]]
+- [[Audio]]
+
 **Overview**
 - [[Roadmap]]
 - [[Architecture]]
@@ -25,6 +31,8 @@
 **Design Docs**
 - [[Design-Audio-Engine]]
 - [[Design-Steam-Audio-Integration]]
+- [[Design-Welle-A-Horror-Essentials]]
+- [[Design-Spot-Shadows-23]]
 - [[Design-Global-Asset-Database]]
 - [[Design-Asset-Store-Integrations]]
 - [[Design-Claude-Integration]]

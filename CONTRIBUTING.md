@@ -55,8 +55,13 @@ Three layers (see the [README](README.md) for the full diagram):
 1. Fork the repo and create a branch: `git checkout -b my-change`.
 2. Make your change; match the surrounding code style (indentation, naming, comment density).
 3. Build `Release | x64` green and test in the editor.
-4. Commit with a clear message describing the *why*.
-5. Open a PR against `main` with a short description and screenshots/GIFs for UI changes.
+4. **New logic comes with a test**: managed logic in `Managed/Vortex.Core.Tests` (`dotnet run --project
+   Managed/Vortex.Core.Tests`), native logic as a headless `EngineTest` harness registered with CTest, editor
+   behaviour as a self-registering smoke check (`SmokeRegistry.Add` — see `Managed/Vortex.Editor/Claude/McpSmoke.cs`).
+5. Commit with a clear message describing the *why*.
+6. Open a PR against `main` with a short description and screenshots/GIFs for UI changes. The **PR tests** workflow
+   builds Windows (DX12 + both editors) and macOS (Metal + Avalonia editor) and runs the native and managed tests;
+   it has to be green.
 
 ## Reporting bugs / requesting features
 

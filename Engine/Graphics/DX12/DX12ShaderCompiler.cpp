@@ -58,6 +58,21 @@ namespace vortex::graphics::dx12
 			return slash == std::wstring::npos ? L"." : p.substr(0, slash);
 		}
 
+		// The folder of the module this code is linked into: VortexAPI.dll for the editors, the game exe for shipped
+		// games. The cross-platform editor runs from its own folder ({app}\Editor) and loads {app}\VortexAPI.dll.
+		std::wstring module_dir()
+		{
+			HMODULE self = nullptr;
+			if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+			                        reinterpret_cast<LPCWSTR>(&module_dir), &self))
+				return std::wstring();
+			wchar_t buf[MAX_PATH]{};
+			GetModuleFileNameW(self, buf, MAX_PATH);
+			std::wstring p(buf);
+			auto slash = p.find_last_of(L"\\/");
+			return slash == std::wstring::npos ? std::wstring() : p.substr(0, slash);
+		}
+
 		bool dir_exists(const std::wstring& d)
 		{
 			DWORD a = GetFileAttributesW(d.c_str());
@@ -113,6 +128,8 @@ namespace vortex::graphics::dx12
 		static std::wstring dir = []() -> std::wstring {
 			std::wstring exe = exe_dir();
 			if (dir_exists(exe + L"\\Shaders")) return exe + L"\\Shaders";           // shipped layout
+			std::wstring mod = module_dir();
+			if (!mod.empty() && dir_exists(mod + L"\\Shaders")) return mod + L"\\Shaders";   // installed: next to VortexAPI.dll
 			std::wstring p = exe;
 			for (int i = 0; i < 7; ++i)                                              // dev: walk up to the repo
 			{
@@ -139,13 +156,19 @@ namespace vortex::graphics::dx12
 		return blob;
 	}
 
-	ComPtr<ID3DBlob> DX12ShaderCompiler::compile_from_file(const std::wstring& path, const std::string& entry, const std::string& target)
+	ComPtr<ID3DBlob> DX12ShaderCompiler::compile_from_file(const std::wstring& path, const std::string& entry, const std::string& target,
+														   std::string* errors)
 	{
 		auto compile = get_d3d_compile();
-		if (!compile) { sh_log("d3dcompiler not available"); return nullptr; }
+		if (!compile) { sh_log("d3dcompiler not available"); if (errors) *errors = "d3dcompiler not available"; return nullptr; }
 
 		std::vector<char> src;
-		if (!read_file(path, src) || src.empty()) { sh_log("missing/empty shader file: " + narrow(path)); return nullptr; }
+		if (!read_file(path, src) || src.empty())
+		{
+			sh_log("missing/empty shader file: " + narrow(path));
+			if (errors) *errors = "missing or empty shader file: " + narrow(path);
+			return nullptr;
+		}
 
 		UINT flags = 0;
 #ifdef _DEBUG
@@ -162,6 +185,7 @@ namespace vortex::graphics::dx12
 		{
 			if (error) sh_log(std::string("compile failed: ") + static_cast<const char*>(error->GetBufferPointer()));
 			else sh_log("compile failed (no error blob): " + srcName);
+			if (errors) *errors = error ? std::string(static_cast<const char*>(error->GetBufferPointer()), error->GetBufferSize()) : "compile failed: " + srcName;
 			return nullptr;
 		}
 		return blob;

@@ -37,6 +37,8 @@ rm -rf "$OUT"; mkdir -p "$OUT"
 dotnet publish Managed/Vortex.Player/Vortex.Player.csproj -c "$CONFIG" -r "$RID" --self-contained true -o "$OUT" -nologo -v q
 cp "$NATIVE/$LIB" "$OUT/"
 for lib in "$NATIVE"/lib*.dylib "$NATIVE"/lib*.so*; do [ -f "$lib" ] && cp "$lib" "$OUT/" || true; done
+# macOS: Homebrew's SDL3 / assimp travel with the pack, so exported games run without Homebrew
+if [ "$(uname -s)" = "Darwin" ]; then "$ROOT/tools/macos/bundle-dylibs.sh" "$OUT"; fi
 mkdir -p "$OUT/Shaders"; cp -R "$NATIVE/Shaders/." "$OUT/Shaders/"
 [ -d "$OUT/Shaders/$SHADERS" ] || { echo "shaders missing: $OUT/Shaders/$SHADERS"; exit 1; }
 find "$OUT" -name "*.pdb" -delete

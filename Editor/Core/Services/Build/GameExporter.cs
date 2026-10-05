@@ -397,13 +397,8 @@ namespace Editor.Core.Services.Build
         /// ~50 MB phonon.dll runtime is shipped with the exported game.</summary>
         private static bool ProjectUsesSteamAudio(string projectRoot)
         {
-            try
-            {
-                var f = Path.Combine(projectRoot, "ProjectSettings", "AudioMixer.json");
-                if (!File.Exists(f)) return false;
-                var json = File.ReadAllText(f).Replace(" ", "").Replace("\t", "");
-                return json.Contains("\"steamAudioEnabled\":true");
-            }
+            // the same reader the game uses (a text search depended on how the JSON was laid out)
+            try { return AudioMixerConfig.Load(projectRoot).SteamAudioEnabled; }
             catch { return false; }
         }
 

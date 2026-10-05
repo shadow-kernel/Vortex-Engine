@@ -1,4 +1,5 @@
 #include "DX12Renderer_Internal.h"
+#include "DX12ShaderCompiler.h"   // validate_material_shader compiles custom shaders with their errors
 
 namespace vortex::graphics::dx12
 {
@@ -538,6 +539,24 @@ namespace vortex::graphics::dx12
 			if (it != m_pso_cache.end()) { kv.second.pso = it->second.pso; kv.second.mtime = it->second.mtime; }
 		}
 		return changed;
+	}
+
+	bool DX12Renderer::validate_material_shader(const std::wstring& hlsl_path, std::string& errors)
+	{
+		errors.clear();
+		if (hlsl_path.empty()) { errors = "no shader file"; return false; }
+		std::string vs_errors, ps_errors;
+		auto vs = DX12ShaderCompiler::compile_from_file(hlsl_path, "VSMain", "vs_5_0", &vs_errors);
+		auto ps = DX12ShaderCompiler::compile_from_file(hlsl_path, "PSMain", "ps_5_0", &ps_errors);
+		if (!vs) errors += "VSMain: " + vs_errors + "\n";
+		if (!ps) errors += "PSMain: " + ps_errors + "\n";
+		if (!vs || !ps) return false;
+		if (!m_pipeline_3d.create_custom_pso(DX12Core::instance().device(), hlsl_path))
+		{
+			errors = "Both stages compile, but no pipeline could be built with them: they do not match the engine's vertex layout or root signature (start from the Standard shader template).";
+			return false;
+		}
+		return true;
 	}
 
 	bool DX12Renderer::any_material_shader_dirty() const

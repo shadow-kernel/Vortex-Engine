@@ -262,47 +262,66 @@ namespace Editor.ECS.Components.Rendering
             ReloadShaderHandle();
         }
 
+        /// <summary>Set once the native engine library turned out to be absent (headless tools and tests): resource
+        /// handles then stay invalid instead of every mesh / material assignment throwing.</summary>
+        private static bool s_noNative;
+
         private void ReloadMeshHandle()
         {
-            if (_meshHandle != ID.INVALID_ID)
+            if (s_noNative) return;
+            try
             {
-                VortexAPI.UnloadResourceHandle(_meshHandle);
-                _meshHandle = ID.INVALID_ID;
-            }
+                if (_meshHandle != ID.INVALID_ID)
+                {
+                    VortexAPI.UnloadResourceHandle(_meshHandle);
+                    _meshHandle = ID.INVALID_ID;
+                }
 
-            if (!string.IsNullOrEmpty(_meshPath))
-            {
-                _meshHandle = VortexAPI.LoadMeshResource(_meshPath);
+                if (!string.IsNullOrEmpty(_meshPath))
+                {
+                    _meshHandle = VortexAPI.LoadMeshResource(_meshPath);
+                }
             }
+            catch (DllNotFoundException) { s_noNative = true; }
         }
 
         private void ReloadShaderHandle()
         {
-            if (_shaderHandle != ID.INVALID_ID)
+            if (s_noNative) return;
+            try
             {
-                VortexAPI.UnloadResourceHandle(_shaderHandle);
-                _shaderHandle = ID.INVALID_ID;
-            }
+                if (_shaderHandle != ID.INVALID_ID)
+                {
+                    VortexAPI.UnloadResourceHandle(_shaderHandle);
+                    _shaderHandle = ID.INVALID_ID;
+                }
 
-            if (!string.IsNullOrEmpty(_shaderPath))
-            {
-                _shaderHandle = VortexAPI.LoadShaderResource(_shaderPath);
+                if (!string.IsNullOrEmpty(_shaderPath))
+                {
+                    _shaderHandle = VortexAPI.LoadShaderResource(_shaderPath);
+                }
             }
+            catch (DllNotFoundException) { s_noNative = true; }
         }
 
 
         private void ReloadMaterialHandle()
         {
-            if (_materialHandle != ID.INVALID_ID)
+            if (s_noNative) return;
+            try
             {
-                VortexAPI.UnloadResourceHandle(_materialHandle);
-                _materialHandle = ID.INVALID_ID;
-            }
+                if (_materialHandle != ID.INVALID_ID)
+                {
+                    VortexAPI.UnloadResourceHandle(_materialHandle);
+                    _materialHandle = ID.INVALID_ID;
+                }
 
-            if (!string.IsNullOrEmpty(_materialPath))
-            {
-                _materialHandle = VortexAPI.LoadMaterialResource(_materialPath);
+                if (!string.IsNullOrEmpty(_materialPath))
+                {
+                    _materialHandle = VortexAPI.LoadMaterialResource(_materialPath);
+                }
             }
+            catch (DllNotFoundException) { s_noNative = true; }
         }
 
         /// <summary>

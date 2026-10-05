@@ -222,6 +222,9 @@ namespace vortex::graphics::sdlgpu
 		void set_material_shader(u32 material_id, const std::string& shader_path);
 		int reload_dirty_shaders();
 		bool any_material_shader_dirty() const;
+		// Compile a custom material shader without binding it (the editor's shader check): both stages and a pipeline
+		// with the engine's vertex layout and bindings. False = errors holds the compiler output.
+		bool validate_material_shader(const std::string& shader_path, std::string& errors);
 
 		void set_grid_visible(bool visible) { m_grid_visible = visible; }
 		bool is_grid_visible() const { return m_grid_visible; }

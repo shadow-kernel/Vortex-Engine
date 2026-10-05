@@ -28,6 +28,9 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "CaptureFrame")]
         private static extern void CaptureFrameNative([MarshalAs(UnmanagedType.LPStr)] string path);
 
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "ValidateMaterialShader")]
+        private static extern int ValidateMaterialShaderNative([MarshalAs(UnmanagedType.LPUTF8Str)] string path, byte[] errors, int cap);
+
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void ShutdownRenderViewport();
 
@@ -44,6 +47,16 @@ namespace Editor.DllWrapper
         public static void OnSceneSwitch() => OnSceneSwitchNative();
         /// <summary>Write the next presented back buffer to a 32-bit BMP — reliable verification of the flip-model swapchain.</summary>
         public static void CaptureFrame(string path) => CaptureFrameNative(path);
+        /// <summary>Compile a custom material shader without binding it: true = both stages compile and build a pipeline
+        /// with the engine's layout; otherwise <paramref name="errors"/> holds the compiler output.</summary>
+        public static bool ValidateMaterialShader(string path, out string errors)
+        {
+            var buf = new byte[16384];
+            bool ok = ValidateMaterialShaderNative(path, buf, buf.Length) != 0;
+            int len = System.Array.IndexOf(buf, (byte)0);
+            errors = System.Text.Encoding.UTF8.GetString(buf, 0, len < 0 ? buf.Length : len);
+            return ok;
+        }
         public static void ShutdownRender() => ShutdownRenderViewport();
 
         #endregion

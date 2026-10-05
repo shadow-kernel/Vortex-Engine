@@ -63,7 +63,7 @@ public class NewBehaviour : VortexBehaviour
 
 Inside a behaviour you already have, for free, on `this`:
 
-- `Position` / `Rotation` — read/write your entity's transform (world position, Euler degrees).
+- `Position` / `Rotation` — read/write your entity's transform (relative to its parent; Euler degrees). `WorldPosition` / `WorldForward` give the world pose of an entity under a parent, such as a camera or flashlight on the player.
 - `Translate(dx,dy,dz)` / `Rotate(dP,dY,dR)` — relative moves.
 - `Forward` / `Right` — unit vectors derived from your rotation (great for movement).
 - `PlayAnimation("Walk", fade)`, `StopAnimation()`, `SetColor(r,g,b)`, `GetAudioSource()`.
@@ -271,9 +271,11 @@ Scene.Load("MainMenu");
 
 **Draw an immediate-mode HUD:**
 ```csharp
+int _hp = 100;
+
 public override void Update(float dt)
 {
-    UI.Text($"HP {_hp}", 24, 24, 200, 40, 28, Color.Rgb(255, 80, 80));
+    UI.Text("HP " + _hp, 24, 24, 200, 40, 28, Color.Rgb(255, 80, 80));
     if (UI.Button(UI.Width - 140, 24, 120, 44, "Quit", Color.Rgb(40,40,48), Color.Rgb(255,255,255), 20, 8))
         Application.Quit();
 }

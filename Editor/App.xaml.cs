@@ -314,6 +314,10 @@ namespace Editor
                 Editor.Core.Services.PlayModeService.Instance.NativeGameHostRunning = true; // this thread is now in the native loop
                 DllWrapper.VortexAPI.RunGameHost(1280, 720, "Vortex");    // BLOCKS — runs the game
                 Editor.Core.Services.PlayModeService.Instance.NativeGameHostRunning = false;
+                // The game ends like play does in the editor and in the macOS/Linux player: every script's OnDestroy,
+                // the save data flushed to disk, the sound stopped — a quit used to drop unflushed saves.
+                try { Editor.Scripting.ScriptRuntime.Instance.End(); } catch (Exception ex) { LogPlayerError(exeDir, "ScriptRuntime.End", ex); }
+                try { Editor.Core.Services.AudioPlaybackService.Instance.EndPlay(); } catch { }
                 Shutdown();                                                // window closed (or QuitGame->RequestGameHostExit) -> exit
             }
             catch (Exception ex)

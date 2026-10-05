@@ -57,7 +57,10 @@ namespace VortexEditor.Shell
             var open = new MenuItem { Header = "Open" }; open.Click += (s, e) => OpenSelected();
             var reveal = new MenuItem { Header = "Show in Finder" }; reveal.Click += (s, e) => OnRevealProject(null, null);
             var remove = new MenuItem { Header = "Remove from List…" }; remove.Click += (s, e) => OnRemoveProject(null, null);
-            m.Items.Add(open); m.Items.Add(reveal); m.Items.Add(new Separator()); m.Items.Add(remove);
+            var update = new MenuItem { Header = "Update from Template…" };
+            update.Click += (s, e) => { if (ProjectList.SelectedItem is ProjectRow row && Directory.Exists(row.Path)) _ = TemplateUpdateDialog.Run(row.Path, row.Name); };
+            ToolTip.SetTip(update, "Bring the project up to the current version of its template (with a preview and a backup)");
+            m.Items.Add(open); m.Items.Add(reveal); m.Items.Add(update); m.Items.Add(new Separator()); m.Items.Add(remove);
             return m;
         }
 
@@ -149,6 +152,24 @@ namespace VortexEditor.Shell
             PreviewImage.Source = null;
             try { if (!string.IsNullOrEmpty(t?.PreviewImagePath) && File.Exists(t.PreviewImagePath)) PreviewImage.Source = new Bitmap(t.PreviewImagePath); } catch { }
             PreviewFallback.IsVisible = PreviewImage.Source == null;
+            _ = ShowDownloadNote(t);
+        }
+
+        /// <summary>A template whose content is a release download (#299): say so, with the size.</summary>
+        private async System.Threading.Tasks.Task ShowDownloadNote(ProjectTemplate t)
+        {
+            TemplateDownload.IsVisible = t?.NeedsDownload == true;
+            if (t?.NeedsDownload != true) return;
+            TemplateDownload.Text = "Its models, textures and sounds are downloaded the first time you create a project from it.";
+            try
+            {
+                var pack = await TemplatePacks.FindAsync(t.Id);
+                if (!ReferenceEquals(TemplateList.SelectedItem, t)) return;
+                TemplateDownload.Text = pack != null
+                    ? "Its models, textures and sounds are downloaded the first time (" + TemplatePacks.FormatSize(pack.Size) + ", kept for later projects)."
+                    : "Its content is not installed, and no download was found for Vortex " + Editor.Core.EngineInfo.VersionString + ".";
+            }
+            catch { }
         }
 
         private void OnNameChanged(object s, TextChangedEventArgs e)
@@ -169,12 +190,27 @@ namespace VortexEditor.Shell
             string path = (LocationBox.Text ?? "").Trim();
             if (string.IsNullOrEmpty(name)) { await Dialogs.Alert("Name required", "Give the project a name."); return; }
             if (string.IsNullOrEmpty(path)) { await Dialogs.Alert("Location required", "Choose where the project folder is created."); return; }
+            var template = TemplateList.SelectedItem as ProjectTemplate;
             try
             {
-                var project = EditorSession.Instance.CreateProject(name, path, TemplateList.SelectedItem as ProjectTemplate);
+                if (template?.NeedsDownload == true)
+                {
+                    // the template's content comes from the release (#299): download once, then create from the cache
+                    CreateButton.IsEnabled = false;
+                    var progress = new Progress<double>(f => CreateButton.Content = "Downloading " + (int)(f * 100) + " %");
+                    string dir = await TemplatePacks.EnsureAsync(template, progress);
+                    template = new ProjectTemplate { Id = template.Id, Name = template.Name, ProjectDir = dir };
+                    CreateButton.Content = "Creating…";
+                }
+                var project = EditorSession.Instance.CreateProject(name, path, template);
                 if (project != null && EditorSession.Instance.OpenProject(project)) Close();
             }
             catch (Exception ex) { await Dialogs.Alert("Could not create the project", ex.Message); }
+            finally
+            {
+                CreateButton.IsEnabled = true;
+                CreateButton.Content = "Create Project";
+            }
         }
     }
 }

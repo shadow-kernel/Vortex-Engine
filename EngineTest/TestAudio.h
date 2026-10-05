@@ -353,7 +353,9 @@ private:
 		voice_handle v = voice_play(wav.c_str(), p);
 		tick_seconds(0.3f);
 		voice_stop(v);
-		tick_seconds(0.35f);
+		// measure once the master METER's own ~0.4 s history has drained: the dry case is then silent, while a
+		// reverb tail still rings (measuring earlier compared the tail with the meter's afterglow — fragile on CI)
+		tick_seconds(0.6f);
 		f32 dry_after = 0;
 		mixer_get_bus_levels(bus::master, nullptr, &dry_after);
 
@@ -362,10 +364,11 @@ private:
 		voice_set_reverb_send(v, 1.0f);
 		tick_seconds(0.4f);
 		voice_stop(v);
-		tick_seconds(0.35f);
+		tick_seconds(0.6f);
 		f32 wet_after = 0;
 		mixer_get_bus_levels(bus::master, nullptr, &wet_after);
-		check("reverb tail rings after the voice stops", wet_after > dry_after * 2.0f && wet_after > 0.004f);
+		std::printf("[info] reverb tail: master rms %.4f after a dry stop, %.4f after a full-send stop (0.6 s later)\n", dry_after, wet_after);
+		check("reverb tail rings after the voice stops", wet_after > dry_after * 3.0f && wet_after > 0.002f);
 
 		// Wet 0 shuts the reverb up even at full send (allow the master METER's own
 		// display decay to drain — it holds ~0.4 s of history after the dry stop).
@@ -547,13 +550,21 @@ private:
 
 	// Simulates the game loop: update_audio + realtime sleep so the device thread
 	// (or the silent-mode pump) actually advances playback.
+	// Advance by WALL-CLOCK time: a loaded CI machine oversleeps the 16 ms naps, and a fixed tick count would then
+	// measure meters and tails at a later moment than the test intends.
 	void tick_seconds(float seconds)
 	{
-		const float dt = 1.0f / 60.0f;
-		for (float t = 0.0f; t < seconds; t += dt)
+		using clock = std::chrono::steady_clock;
+		const auto start = clock::now();
+		auto last = start;
+		for (;;)
 		{
-			runtime::systems::update_audio(dt);
 			std::this_thread::sleep_for(std::chrono::milliseconds(16));
+			const auto now = clock::now();
+			const float dt = std::chrono::duration<float>(now - last).count();
+			last = now;
+			runtime::systems::update_audio(dt);
+			if (std::chrono::duration<float>(now - start).count() >= seconds) break;
 		}
 	}
 

@@ -95,9 +95,12 @@ Issues without a milestone are backlog; they get pulled into a milestone during 
 
 A PR is mergeable when:
 
-1. **Editor smoke test** — editor launches, project opens, the touched feature works, no new console errors.
-2. **F12 capture for visual changes** — any rendering/UI-visible change includes an in-game F12 native back-buffer screenshot as evidence (the native game window cannot be GDI-captured; F12 is the supported path).
-3. **Changelog entry** — the change is noted for the next release's changelog.
+1. **PR tests green** — the `PR tests` workflow (Windows: Vortex.slnx + managed layer + core tests; macOS: CMake engine +
+   CTest native tests + managed layer + core tests). New logic brings its test (core test, CTest harness or editor smoke check).
+2. **Editor smoke test** — editor launches, project opens, the touched feature works, no new console errors (the full
+   suite: `VORTEX_SMOKE_FULL=1 Vortex.Editor --project=<copy> --smoke=30`).
+3. **F12 capture for visual changes** — any rendering/UI-visible change includes an in-game F12 native back-buffer screenshot as evidence (the native game window cannot be GDI-captured; F12 is the supported path).
+4. **Changelog entry** — the change is noted for the next release's changelog.
 
 ## How to build
 

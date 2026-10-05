@@ -1,13 +1,13 @@
 using System;
-using Editor.ECS;
 using Editor.ECS.Components;
 
-namespace VortexEditor.Claude
+namespace Editor.ECS
 {
     /// <summary>
-    /// World-space math for the tools, matching the renderer (SceneRenderService): row-major 4×4 matrices for row
-    /// vectors (p' = p · M), local = Scale · Rz · Rx · Ry · Translation with Euler angles in degrees, and
-    /// world = local · parentWorld.
+    /// World-space math matching the renderer (SceneRenderService): row-major 4×4 matrices for row vectors
+    /// (p' = p · M), local = Scale · Rz · Rx · Ry · Translation with Euler angles in degrees, and
+    /// world = local · parentWorld. Used by audio (sources, zones and the listener on child entities) and the Claude
+    /// tools. Row 1 of a matrix is the entity's up axis, row 2 its forward axis.
     /// </summary>
     public static class TransformMath
     {
@@ -49,6 +49,14 @@ namespace VortexEditor.Claude
             p.X * m[0] + p.Y * m[4] + p.Z * m[8] + m[12],
             p.X * m[1] + p.Y * m[5] + p.Z * m[9] + m[13],
             p.X * m[2] + p.Y * m[6] + p.Z * m[10] + m[14]);
+
+        /// <summary>A matrix row as a unit vector: row 1 = the entity's up, row 2 = its forward (scale removed).</summary>
+        public static Vector3 Axis(float[] m, int row)
+        {
+            float x = m[row * 4], y = m[row * 4 + 1], z = m[row * 4 + 2];
+            float len = Len(x, y, z);
+            return len < 1e-12f ? new Vector3(0, row == 1 ? 1 : 0, row == 2 ? 1 : 0) : new Vector3(x / len, y / len, z / len);
+        }
 
         public static float[] Identity() => new float[] { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
 

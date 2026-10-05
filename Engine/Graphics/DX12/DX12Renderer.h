@@ -276,6 +276,9 @@ namespace vortex::graphics::dx12
 		// Cheap (no-compile) check: does any assigned .hlsl differ on disk from what we last compiled? Used so the
 		// hot-reload overlay only appears on a REAL change (never a spurious "already up to date").
 		bool any_material_shader_dirty() const;
+		// Compile a custom material shader without binding it (the editor's shader check): both stages and a PSO with
+		// the engine's input layout / root signature. False = errors holds the compiler output.
+		bool validate_material_shader(const std::wstring& hlsl_path, std::string& errors);
 
 		// Grid rendering
 		void set_grid_visible(bool visible) { m_grid_visible = visible; }

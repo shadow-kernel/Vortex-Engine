@@ -89,6 +89,10 @@ namespace Editor.ECS
             set => SetProperty(ref _name, value, nameof(Name));
         }
 
+        /// <summary>Set the active flag without touching the engine — for a caller that syncs the whole scene
+        /// right after (Scene.EnsureAuthoredActiveFlags).</summary>
+        internal void SetActiveFlagOnly(bool active) => SetProperty(ref _isActive, active, nameof(IsActive));
+
         [DataMember(Name = "isActive", Order = 2)]
         public bool IsActive
         {

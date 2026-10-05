@@ -4,7 +4,7 @@
 
 # Vortex Engine
 
-### A modern, lightweight game engine — native **DirectX 12** core, clean **WPF** editor.
+### A modern, lightweight game engine — native **DirectX 12 · Metal · Vulkan** core, a cross-platform editor, and **Claude** built in.
 
 ### 🌐 **[engine.vortexstudio.dev](https://engine.vortexstudio.dev)**
 
@@ -14,7 +14,8 @@
 [![Platform](https://img.shields.io/badge/PLATFORM-Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-0078D6?style=for-the-badge&logo=windows&logoColor=white)](#-getting-started)
 [![Graphics](https://img.shields.io/badge/GRAPHICS-DirectX%2012%20%C2%B7%20Metal%20%C2%B7%20Vulkan-00A6FB?style=for-the-badge&logo=microsoft&logoColor=white)](#-architecture)
 [![C++](https://img.shields.io/badge/ENGINE-C%2B%2B20-00599C?style=for-the-badge&logo=cplusplus&logoColor=white)](#-architecture)
-[![C#](https://img.shields.io/badge/EDITOR-.NET%204.8%20WPF-512BD4?style=for-the-badge&logo=dotnet&logoColor=white)](#-architecture)
+[![C#](https://img.shields.io/badge/EDITOR-.NET%2010%20Avalonia%20%C2%B7%20WPF-512BD4?style=for-the-badge&logo=dotnet&logoColor=white)](#-architecture)
+[![Claude](https://img.shields.io/badge/CLAUDE-MCP%20server%20%2B%20panel-D97757?style=for-the-badge&logo=anthropic&logoColor=white)](docs/wiki/Claude-Integration.md)
 [![Status](https://img.shields.io/badge/STATUS-Active%20Alpha-FF6B6B?style=for-the-badge)](#-roadmap)
 [![License](https://img.shields.io/badge/LICENSE-MIT-3DA639?style=for-the-badge&logo=opensourceinitiative&logoColor=white)](LICENSE)
 [![Free](https://img.shields.io/badge/100%25%20FREE-incl.%20commercial-00B894?style=for-the-badge)](#-license)
@@ -41,14 +42,14 @@
 
 | | |
 |---|---|
-| 🎨 **DirectX 12 renderer** | Forward PBR pipeline, dynamic lights (directional · point · spot), procedural skybox, editor grid & gizmos, wireframe and VSync toggles. |
-| 🧩 **Entity Component System** | Data-oriented entities with Transform, MeshRenderer, Camera and Skybox components — the same model in the editor and the runtime. |
-| 📦 **Import anything** | Models via **Assimp** (FBX, OBJ, glTF, …), textures via **stb_image**, full PBR materials (albedo · normal · metallic · roughness · AO · emissive). |
-| 🌍 **World building** | Scene hierarchy, **prefabs** (save entities as `.ventity` assets, instantiate, Apply/Revert), always-on-top transform gizmos, multi-viewport editing, drag-&-drop asset placement, and full **Undo/Redo**. |
-| ⚡ **DLSS 4** | NVIDIA **Super-Resolution + Frame Generation** (x2/x3/x4) via Streamline, plus a universal render-scale fallback — with a Real/Shown FPS readout. |
-| 🔥 **Live hot-reload** | Edit a gameplay **script** or a **custom `.hlsl` shader** in Visual Studio, Alt-Tab back to the editor/game, and the change is in — live in the viewport, the external window, and Debug builds. |
-| 🕹️ **Input** | Unified keyboard, mouse and gamepad layer with cursor lock — ready for first/third-person controllers. |
-| 🚀 **Ships with your game** | The engine is a static library; your exported game links it directly. Export a packed **Release** build or a source-linked **Debug** build with hot-reload. |
+| 🤖 **Claude, built in** | The editor runs an **MCP server**: Claude Code or Claude Desktop builds scenes, materials, shaders, scripts, sound and whole worlds through 67 tools, play-tests and looks at the result — every change one undo step, with dry runs and an operations log. Or chat in the editor's own **Claude panel**. |
+| 🖥️ **Windows · macOS · Linux** | **Direct3D 12**, **Metal** and **Vulkan** renderers; a cross-platform .NET 10 editor (plus the WPF editor on Windows); games build for all three from any of them. |
+| 🎨 **Renderer** | Physically-based shading, shadow maps for directional, point and spot lights, height fog, SSAO, bloom, vignette, film grain, colour grading, custom per-material shaders, GPU instancing + LOD, **DLSS 4** on NVIDIA. |
+| 🔊 **Audio** | 3D sound sources, sound containers with variation, reverb zones, a mixer with buses, ducking and meters — and the **Sound Studio**, which generates sounds from a description. |
+| 📚 **Asset library & store** | Every asset on your machine in one deduplicated library shared by all projects, and an in-editor **Asset Store** (Poly Haven, ambientCG, Kenney, Freesound, Sketchfab …) that tracks licenses into your build. |
+| 🧩 **Scenes & gameplay** | Entities and components, prefabs, full undo/redo; gameplay as C# `VortexBehaviour` scripts with hot reload — triggers, raycasts, coroutines, save slots, UI. Physics and ragdolls on **Jolt** (macOS / Linux; the Visual Studio build follows in v3.1). |
+| 🎮 **Templates** | Start from a playable 3D, horror or tactical-shooter project; template content downloads on demand, and games update when their template improves. |
+| 🚀 **Ships with your game** | **Build Game** packs a branded Release build (or a hot-reloadable Debug build) for Windows, macOS or Linux, with credits and a license check. |
 
 ---
 
@@ -63,44 +64,61 @@ all of its gameplay is plain project scripts you can read and change:
 | **[Horror Starter](https://github.com/shadow-kernel/Vortex-Engine-Horror-Template)** | a CoD-feel night shooter: an open industrial yard plus a lit brick cellar |
 | **[Tactical Shooter](https://github.com/shadow-kernel/Vortex-Engine-Tactical-Template)** | a Call-of-Duty-style gun range: two animated first-person weapons with iron-sight ADS and recoil, pop-up targets, a kill house, and CoD movement (sprint · slide · mantle) |
 
-The templates are git submodules under `Templates/` (clone with `--recurse-submodules`). Their scenes, models,
-textures and audio live in **Git LFS** — without it you get ~130-byte pointer files, and a project created from
-such a template opens with an empty hierarchy and an empty viewport. Fix an existing clone with
-`git lfs install && git submodule foreach 'git lfs pull'`.
+The templates are git submodules under `Templates/` (clone with `--recurse-submodules`). Their models, textures
+and audio live in **Git LFS**. Installed editors don't carry that content: the first project from such a template
+downloads the template pack of your Vortex version from the release and keeps it for later projects
+([Project Templates](docs/wiki/Project-Templates.md)). A source checkout uses its own files after
+`git lfs install && git submodule foreach 'git lfs pull'`; without LFS it downloads the packs like an installed editor.
+Games made from an older template update with **Project Hub ▸ right-click ▸ Update from Template…**.
 
 ---
 
 ## 🏗️ Architecture
 
-Vortex is intentionally split into **three layers** so the heavy native engine can be reused both by the editor *and* by every game you export:
+Vortex is intentionally split into **three layers** so the heavy native engine can be reused both by the editors *and* by every game you export:
 
 ```mermaid
 flowchart LR
-    subgraph Native["🟦 Native (C++20 / DirectX 12)"]
-        ENG["⚙️ Engine.lib<br/><sub>ECS · DX12 renderer · importers · runtime</sub>"]
-        API["🔌 VortexAPI.dll<br/><sub>extern C interop shim</sub>"]
+    subgraph Native["🟦 Native (C++20)"]
+        ENG["⚙️ Engine<br/><sub>ECS · DX12 / Metal / Vulkan renderers · audio · physics · importers</sub>"]
+        API["🔌 VortexAPI<br/><sub>extern C interop shim</sub>"]
         ENG --> API
     end
-    subgraph Managed["🟪 Managed (C# / WPF)"]
-        ED["🖥️ Vortex Engine.exe<br/><sub>editor UI · scenes · assets · gizmos</sub>"]
+    subgraph Managed["🟪 Managed (C#)"]
+        CORE["📦 Vortex.Core<br/><sub>scenes · assets · scripting · services (shared)</sub>"]
+        AV["🖥️ Vortex.Editor<br/><sub>.NET 10 + Avalonia · MCP server · Claude panel</sub>"]
+        WPF["🪟 Vortex Engine.exe<br/><sub>.NET 4.8 WPF editor (Windows)</sub>"]
+        CORE --> AV
+        CORE --> WPF
     end
-    API -- "P/Invoke (163 entry points)" --> ED
-    ENG -. "statically linked into" .-> GAME["🎮 Your exported game"]
+    API -- "P/Invoke" --> CORE
+    CORE -. "Vortex.Player" .-> GAME["🎮 Your exported game"]
+    CLAUDE["🤖 Claude Code / Desktop"] -- "MCP (localhost)" --> AV
 ```
 
 | Layer | Project | Output | Role |
 |-------|---------|--------|------|
-| **Engine** | `Engine/` | `Engine.lib` | Core runtime: ECS, DX12 renderer, asset importers, scene/resource managers. Links into shipped games. |
-| **Interop** | `VortexAPI/` | `VortexAPI.dll` | A thin `extern "C"` bridge (`EDITOR_INTERFACE`) exposing the engine to the editor. |
-| **Editor** | `Editor/` | `Vortex Engine.exe` | WPF authoring tool: viewports, inspector, hierarchy, asset browser, material/texture editors. |
+| **Engine** | `Engine/` | `Engine.lib` / `libVortexEngine` | Core runtime: ECS, renderers (Direct3D 12 on Windows, SDL GPU on Metal and Vulkan), audio, physics, importers. |
+| **Interop** | `VortexAPI/` | `VortexAPI.dll` / `.dylib` / `.so` | A thin `extern "C"` bridge (`EDITOR_INTERFACE`) exposing the engine to managed code. |
+| **Shared core** | `Editor/` (sources) | in both editors + `Managed/Vortex.Core` | Scenes, components, assets, the scripting runtime and every editor service — compiled for .NET Framework 4.8 and .NET 10. |
+| **Editors** | `Managed/Vortex.Editor`, `Editor/` | `Vortex.Editor`, `Vortex Engine.exe` | The cross-platform Avalonia editor (with the MCP server and the Claude panel) and the Windows WPF editor. |
+| **Player** | `Managed/Vortex.Player` | `Vortex.Player` | The standalone game host: what the cross-platform editor exports for Windows, macOS and Linux (via runtime packs). |
 
-> The editor loads `VortexAPI.dll` at runtime from the shared `x64/Release/` output folder — build the solution once and everything is co-located and ready to run.
+> On Windows the WPF editor loads `VortexAPI.dll` from the shared `x64/Release/` output folder; the .NET 10 tools find the native library next to them, in an app bundle's `Frameworks`, or in the CMake build tree.
 
 ---
 
 ## 🚀 Getting Started
 
-### Prerequisites
+### Install
+
+- **Windows:** `VortexEngine-Setup-<version>.exe` from the [latest release](../../releases/latest).
+- **macOS (Apple Silicon):** `Vortex-Editor-<version>.dmg` from the release (from v3.0; not notarised yet — the first time, right-click ▸ **Open**).
+- **Linux:** build from source, see [Linux](#-linux-x64--native-engine-player-and-editor).
+
+Then follow **[Getting Started](docs/wiki/Getting-Started.md)**: a game from the Horror Starter, your first scare and a build in about an hour.
+
+### Build from source — prerequisites
 
 - **Windows 10/11 (x64)** — the full engine + editor
 - **macOS (Apple Silicon)** — native engine, player and editor, see [macOS](#-macos-apple-silicon--native-engine-player-and-editor) below
@@ -189,47 +207,61 @@ generation (NVIDIA + Windows only; the render-scale fallback works).
 ## 🧩 Features
 
 <details open>
+<summary><b>🤖 Claude</b></summary>
+
+- **MCP server inside the editor** (Streamable HTTP on `127.0.0.1` — only programs on this computer can connect) — hook up Claude Code or Claude Desktop with *Tools ▸ Claude ▸ Connect Claude Code / Desktop…*
+- **67 tools**: entities and components, materials and custom shaders (with real compiler errors), scripts (with line-accurate compile errors), prefabs, asset import, world macros (grid, scatter, snap), audio and the mixer, sound generation, play mode, screenshots and the console
+- **Safe by design**: every tool call is one undo step, mutating tools take a dry run, the Operations window shows each change (file diffs included) and reverts it — even out of order
+- **Claude panel**: chat in the editor with your own Anthropic key; it sees the viewport and asks before it changes things
+- Guides: [Claude Integration](docs/wiki/Claude-Integration.md) · [Claude Tools](docs/wiki/Claude-Tools.md)
+</details>
+
+<details>
 <summary><b>🎨 Rendering</b></summary>
 
-- DirectX 12 forward renderer with a physically-based shading model
+- Physically-based forward renderer on **Direct3D 12** (Windows), **Metal** (macOS) and **Vulkan** (Linux)
+- Shadow maps for directional, point and spot lights; height fog; SSAO, bloom, vignette, film grain, colour grading, chromatic aberration
 - GPU instancing, geometric LOD + multi-threaded frustum culling for large scenes
-- **NVIDIA DLSS 4** Super-Resolution + Frame Generation (x2/x3/x4) + a universal render-scale slider
-- **Custom per-material `.hlsl` shaders** — live in the scene and every material preview, with hot-reload
-- Directional, point and spot lights (with ambient control) + procedural skybox
-- Always-on-top transform/rotation/scale gizmos + selection outline
-- Wireframe mode, VSync, live Real/Shown FPS · draw-call · vertex stats
+- **NVIDIA DLSS 4** Super-Resolution + Frame Generation (x2/x3/x4) on Windows + a universal render-scale slider
+- **Custom per-material shaders** (`.hlsl` / `.metal` / `.glsl`) — live in the scene and every material preview, with hot-reload
+- Always-on-top transform/rotation/scale gizmos + selection outline; wireframe, VSync, live FPS · draw-call · vertex stats
 </details>
 
 <details>
-<summary><b>🔥 Iteration & shipping</b></summary>
+<summary><b>🔊 Audio</b></summary>
 
-- **Live hot-reload** of gameplay scripts + shaders — edit in VS, Alt-Tab back, changes are in (viewport play, external window, and Debug builds)
-- **Build Game** dialog: a packed, obfuscated **Release** build, or a source-linked **Debug** build that references your original project so hot-reload edits the same files
+- 3D audio sources and listener, sound containers (`.vsndc`) with weighted variation and pitch/volume ranges, reverb zones
+- Mixer with buses, solo/mute, ducking and meters; music with fades and cross-fades; `Vortex.Audio` scripting API
+- **Sound Studio**: describe a sound, audition takes, save the best — procedural offline or ElevenLabs / fal.ai / Stability with your own key
+- Guide: [Audio](docs/wiki/Audio.md)
 </details>
 
 <details>
-<summary><b>🧱 Scenes & Entities</b></summary>
+<summary><b>🧱 Scenes, gameplay & physics</b></summary>
 
-- Entity Component System (Transform, MeshRenderer, Camera, Skybox)
-- Scene hierarchy with parenting, prefabs, and clipboard
-- Full multi-step Undo/Redo across the whole editor
-- Multi-viewport editing with per-camera previews
+- Entities and components, scene hierarchy with parenting, prefabs (Apply/Revert), full multi-step undo/redo
+- C# `VortexBehaviour` gameplay scripts with hot reload: input (keyboard, mouse, gamepads incl. DualSense), triggers, raycasts, `Instantiate`/`Destroy`, coroutines, save slots, scene loading, immediate-mode and retained UI
+- Collide-and-slide character movement; rigid bodies, joints and ragdolls on **Jolt** (macOS / Linux builds; the Visual Studio build follows in v3.1)
+- Skeletal animation with an Animator, IK (two-bone, look-at, foot) and hand poses
+- Guides: [Horror Essentials](docs/wiki/Horror-Essentials.md) · [Scripting](docs/wiki/Scripting-Getting-Started.md) · [API reference](docs/wiki/Scripting-API-Reference.md)
 </details>
 
 <details>
 <summary><b>📦 Assets</b></summary>
 
-- Model import via Assimp (FBX · OBJ · glTF · and more) → `.vmesh`
-- Texture import via stb_image with naming-convention detection
-- PBR material editor (albedo · normal · metallic · roughness · AO · emissive)
+- Model import via Assimp (FBX · OBJ · glTF · and more), textures with naming-convention detection, PBR material editor
+- **Asset Library**: every asset on your machine stored once (SHA-256), shared by all projects, with tags and previews — [guide](docs/wiki/Asset-Library.md)
+- **Asset Store**: Poly Haven, ambientCG, Kenney, poly.pizza, Freesound, Sketchfab, Mixamo, Sonniss — licenses recorded, credited in builds, checked before shipping — [guide](docs/wiki/Asset-Store.md)
 - Asset browser, file explorer, GUID metadata & dependency tracking
 </details>
 
 <details>
-<summary><b>🕹️ Input</b></summary>
+<summary><b>🔥 Iteration & shipping</b></summary>
 
-- Keyboard, mouse and gamepad state with press/hold/release queries
-- Mouse delta + scroll, cursor lock & visibility — controller-ready
+- **Live hot-reload** of gameplay scripts + shaders — edit, switch back to the editor, changes are in (viewport play, external window, and Debug builds)
+- **Build Game**: a packed, obfuscated **Release** build or a source-linked **Debug** build, for Windows, macOS or Linux from any of them (runtime packs), with your game's name, icon and version, `CREDITS.md` and a license check
+- **Project templates** (3D Starter, Horror Starter, Tactical Shooter) with content packs and *Update from Template…*
+- CI on every pull request: Windows and macOS builds, native and managed tests, editor smoke checks
 </details>
 
 ---
@@ -330,7 +362,7 @@ asset pack. Every contribution, big or small, gets us there. 🙏
 
 <div align="center">
 
-### 🌀 Built with passion. Powered by DirectX 12.
+### 🌀 Built with passion. Powered by DirectX 12 · Metal · Vulkan.
 
 <sub>Vortex Engine is free & open source (MIT) — in active alpha, expect rapid change. PRs welcome.</sub>
 

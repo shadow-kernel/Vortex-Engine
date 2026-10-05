@@ -66,6 +66,32 @@ EDITOR_INTERFACE void SetMaterialShader(int material_id, const char* hlsl_path)
 #endif
 }
 EDITOR_INTERFACE int ReloadMaterialShaders() { return graphics::Renderer::instance().reload_dirty_shaders(); }
+// Compile a custom material shader without binding it (Claude's validate_shader / write_shader): 1 = both stages
+// compile and build a pipeline with the engine's layout, 0 = not — the compiler output goes to errors (UTF-8,
+// NUL-terminated, truncated to cap).
+EDITOR_INTERFACE int ValidateMaterialShader(const char* path, char* errors, int cap)
+{
+	std::string err;
+	bool ok;
+#if VORTEX_HAS_DX12
+	std::wstring w;
+	if (path && *path)
+	{
+		int n = MultiByteToWideChar(CP_UTF8, 0, path, -1, nullptr, 0);
+		if (n > 1) { w.resize(n - 1); MultiByteToWideChar(CP_UTF8, 0, path, -1, &w[0], n); }
+	}
+	ok = graphics::Renderer::instance().validate_material_shader(w, err);
+#else
+	ok = graphics::Renderer::instance().validate_material_shader(std::string(path ? path : ""), err);
+#endif
+	if (errors && cap > 0)
+	{
+		size_t len = err.size() < (size_t)(cap - 1) ? err.size() : (size_t)(cap - 1);
+		for (size_t i = 0; i < len; ++i) errors[i] = err[i];
+		errors[len] = 0;
+	}
+	return ok ? 1 : 0;
+}
 // Cheap no-compile check so the editor only shows the hot-reload overlay when a shader ACTUALLY changed on disk.
 EDITOR_INTERFACE bool AnyMaterialShaderDirty() { return graphics::Renderer::instance().any_material_shader_dirty(); }
 
