@@ -252,6 +252,7 @@
     <Compile Include="Core\Assets\Library\GlobalAssetDatabase.cs" />
     <Compile Include="Core\Assets\Library\ImageInfo.cs" />
     <Compile Include="Core\Assets\Library\LibraryBundle.cs" />
+    <Compile Include="Core\Assets\Library\LicenseAudit.cs" />
     <Compile Include="Core\Assets\Library\LibraryCompanions.cs" />
     <Compile Include="Core\Assets\Library\LibraryModels.cs" />
     <Compile Include="Core\Assets\Library\LibraryProjects.cs" />

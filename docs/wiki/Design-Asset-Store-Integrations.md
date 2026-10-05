@@ -1,6 +1,8 @@
 # Design: Asset Store Integrations
 
-**Status:** Design / planned for [v2.9.0 – Asset Store & Claude Sound Studio](https://github.com/shadow-kernel/Vortex-Engine/milestone/4) — builds on the [v2.8.0 Global Asset Database](https://github.com/shadow-kernel/Vortex-Engine/milestone/3)
+**Status:** Implemented in [v2.10.0 – Asset Store & Claude Sound Studio](https://github.com/shadow-kernel/Vortex-Engine/milestone/4) (Store tab) — builds on the [v2.9.0 Global Asset Database](https://github.com/shadow-kernel/Vortex-Engine/milestone/3). User guide: [[Asset-Store]].
+
+> **Implementation notes (2026-10-05, re-verified live):** `Managed/Vortex.Core/Store/` — `IAssetProvider` / `IGuidedProvider`, `StoreHttp` (one client, redirects, unique User-Agent, per-provider request spacing, disk cache for responses and thumbnails, HTTP-range resume), `StoreDownloads` (queue, retry with back-off, MD5/SHA-256 verification, import into the library with source/author/license and a store key so an item is never downloaded twice), `MaterialBuilder` (PBR maps → `.vmat`), `StoreKeys` (the user's own keys in `<appdata>/store-keys.json`, owner-only permissions). Poly Haven `/files` publishes **MD5** per file (not SHA-256) — downloads are verified against it and hashed with SHA-256 for the library. ambientCG v3 needs `include=title,tags,thumbnails,downloads`. Kenney preview images come from the page's `og:image`. Mixamo: Avalonia has no embedded browser, so the guided flow (open mixamo.com, drop FBX files or watch the Downloads folder) replaces the WebView2 embed on every platform. UI: the **Store** tab of the Asset Browser (`StoreView.cs`).
 **Related:** [[Design-Global-Asset-Database]] (every download lands there first)
 **Issues:** [`area:asset-store`](https://github.com/shadow-kernel/Vortex-Engine/issues?q=is%3Aissue+label%3Aarea%3Aasset-store)
 

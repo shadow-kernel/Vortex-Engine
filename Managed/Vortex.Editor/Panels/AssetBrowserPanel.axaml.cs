@@ -55,7 +55,7 @@ namespace VortexEditor.Panels
         /// <summary>The live browser (static callers: "locate asset" from the inspector / hierarchy).</summary>
         public static AssetBrowserPanel Current { get; private set; }
 
-        public static readonly string[] TabNames = { "Explorer", "Library", "Meshes", "Models", "Textures", "Materials", "Scripts", "Audio", "Prefabs", "Scenes" };
+        public static readonly string[] TabNames = { "Explorer", "Library", "Store", "Meshes", "Models", "Textures", "Materials", "Scripts", "Audio", "Prefabs", "Scenes" };
 
         private readonly ObservableCollection<AssetTile> _tiles = new ObservableCollection<AssetTile>();
         private readonly BrowserSettings _settings;
@@ -123,18 +123,25 @@ namespace VortexEditor.Panels
         /// <summary>The Library tab is showing (the global asset library instead of the project).</summary>
         public bool IsLibraryTab => _tab == "Library";
 
+        /// <summary>The Store tab is showing (free asset sources).</summary>
+        public bool IsStoreTab => _tab == "Store";
+
         private void ApplyLibraryMode()
         {
-            bool lib = _tab == "Library";
+            bool lib = _tab == "Library", store = _tab == "Store", special = lib || store;
             Library.IsVisible = lib;
-            Items.IsVisible = !lib;
-            MarqueeLayer.IsVisible = !lib;
-            ListHeader.IsVisible = !lib && _listMode;
-            if (lib) EmptyState.IsVisible = false;
-            CreateButton.IsVisible = !lib;
-            GridModeButton.IsEnabled = ListModeButton.IsEnabled = !lib;
-            SizeSlider.IsEnabled = lib || !_listMode;
+            Store.IsVisible = store;
+            Items.IsVisible = !special;
+            MarqueeLayer.IsVisible = !special;
+            ListHeader.IsVisible = !special && _listMode;
+            if (special) EmptyState.IsVisible = false;
+            CreateButton.IsVisible = !special;
+            ImportButton.IsVisible = !store;
+            TagButton.IsVisible = SortButton.IsVisible = !store;
+            GridModeButton.IsEnabled = ListModeButton.IsEnabled = !special;
+            SizeSlider.IsEnabled = special || !_listMode;
             ToolTip.SetTip(ImportButton, lib ? "Add files to the asset library (no project needed)" : "Import files into this folder (or drop files from Finder)");
+            SearchBox.Watermark = store ? "Search the store" : lib ? "Search the library" : "Search assets";
             UpdateNavButtons();
         }
 
@@ -239,8 +246,8 @@ namespace VortexEditor.Panels
 
         private void UpdateNavButtons()
         {
-            BackButton.IsEnabled = _tab != "Library" && _back.Count > 0;
-            ForwardButton.IsEnabled = _tab != "Library" && _forward.Count > 0;
+            BackButton.IsEnabled = _tab != "Library" && _tab != "Store" && _back.Count > 0;
+            ForwardButton.IsEnabled = _tab != "Library" && _tab != "Store" && _forward.Count > 0;
         }
 
         /// <summary>Navigate to a file's folder and select it (WPF SelectFileInExplorer).</summary>
@@ -459,6 +466,7 @@ namespace VortexEditor.Panels
             TileWidth = size + 14;
             IconSize = Math.Round(size * 0.36);
             Library?.SetTileSize(size);
+            Store?.SetTileSize(size);
             if (!save) return;
             _settings.TileSize = size;
             if (_saveTimer == null)
@@ -486,6 +494,13 @@ namespace VortexEditor.Panels
         private void RefreshNow(bool resetScroll)
         {
             _refreshTimer?.Stop();
+            if (_tab == "Store")
+            {
+                UpdateBreadcrumb();
+                Store.SetTileSize(TileSize);
+                Store.SetSearch(_search);
+                return;
+            }
             if (_tab == "Library")
             {
                 UpdateBreadcrumb();
@@ -893,6 +908,13 @@ namespace VortexEditor.Panels
         private void UpdateBreadcrumb()
         {
             Breadcrumb.Children.Clear();
+            if (_tab == "Store")
+            {
+                Breadcrumb.Children.Add(new VxIcon { Icon = "World", Width = 13, Height = 13, VerticalAlignment = VerticalAlignment.Center, Foreground = Brush("VxAccentBrush"), Margin = new Thickness(6, 0, 4, 0) });
+                Breadcrumb.Children.Add(new TextBlock { Text = "Asset Store", FontWeight = FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center });
+                Breadcrumb.Children.Add(new TextBlock { Text = "· free sources → your library", Classes = { "tertiary" }, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(5, 0) });
+                return;
+            }
             if (_tab == "Library")
             {
                 Breadcrumb.Children.Add(new VxIcon { Icon = "Library", Width = 13, Height = 13, VerticalAlignment = VerticalAlignment.Center, Foreground = Brush("VxAccentBrush"), Margin = new Thickness(6, 0, 4, 0) });

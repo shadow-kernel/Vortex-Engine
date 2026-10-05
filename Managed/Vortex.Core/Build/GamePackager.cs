@@ -140,6 +140,14 @@ namespace Editor.Core.Services.Build
                 }
                 try { if (File.Exists(tmpDll)) File.Delete(tmpDll); } catch { }
 
+                // 4b) CREDITS.md for the third-party assets the asset library recorded (#77)
+                try
+                {
+                    string credits = Editor.Core.Assets.Library.LicenseAudit.WriteCredits(req.ProjectRoot, mac ? resDir : appRoot, req.ProductName, out int credited);
+                    if (credits != null) sb.AppendLine("• CREDITS.md: " + credited + " attribution-required asset(s) credited");
+                }
+                catch (Exception ex) { sb.AppendLine("• CREDITS.md could not be written: " + ex.Message); }
+
                 // 5) Branding: executable name, icon, version metadata, launcher.
                 P(0.90, "Branding…");
                 string playerExe = Path.Combine(binDir, ExportPlatforms.PlayerExecutableName(platform));

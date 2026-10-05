@@ -16,6 +16,7 @@
 
 **Guides**
 - [[Asset-Library]]
+- [[Asset-Store]]
 - [[Audio-Anleitung-DE]]
 
 **Design Docs**

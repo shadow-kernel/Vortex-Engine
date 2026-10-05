@@ -89,6 +89,23 @@ namespace Editor.Core.Assets
         [DataMember(Order = 12, EmitDefaultValue = false)]
         public long ContentHashFileTime { get; set; }
 
+        /// <summary>License id (SPDX style: "CC0-1.0", "CC-BY-4.0", or "Mixamo", "Sonniss-GDC" …) of an asset that came from
+        /// the asset store / library; null for own work. Game exports credit CC-BY assets in CREDITS.md (#77).</summary>
+        [DataMember(Order = 13, EmitDefaultValue = false)]
+        public string License { get; set; }
+
+        /// <summary>Author / creator to credit.</summary>
+        [DataMember(Order = 14, EmitDefaultValue = false)]
+        public string Author { get; set; }
+
+        /// <summary>Where the asset came from (store page URL).</summary>
+        [DataMember(Order = 15, EmitDefaultValue = false)]
+        public string SourceUrl { get; set; }
+
+        /// <summary>The provider or project it came from ("Poly Haven", "Freesound" …).</summary>
+        [DataMember(Order = 16, EmitDefaultValue = false)]
+        public string Source { get; set; }
+
         /// <summary>True when <see cref="ContentHash"/> was computed from the file as it is now.</summary>
         public bool HasFreshContentHash(string fullPath)
         {

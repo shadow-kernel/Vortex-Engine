@@ -38,15 +38,19 @@ namespace Editor.Core.Assets.Library
         public int? Width;
         public int? Height;
         public string Notes;
+        /// <summary>The asset store item this entry was downloaded from ("provider:id:variant"), or null.</summary>
+        public string StoreKey;
         public List<string> Tags = new List<string>();
         public List<LibraryCompanion> Companions = new List<LibraryCompanion>();
 
         public string Extension => System.IO.Path.GetExtension(FileName ?? "").ToLowerInvariant();
-        /// <summary>Badge text for a tile: the project/provider it came from.</summary>
+        /// <summary>Badge text for a tile: the project/provider it came from (+ the license for store assets).</summary>
         public string SourceLabel
         {
             get
             {
+                if (SourceKind == LibrarySource.Store && !string.IsNullOrEmpty(License))
+                    return (SourceName ?? "Store") + " · " + ShortLicense(License);
                 if (!string.IsNullOrEmpty(SourceName)) return SourceName;
                 switch (SourceKind)
                 {
@@ -57,6 +61,19 @@ namespace Editor.Core.Assets.Library
                     default: return null;
                 }
             }
+        }
+
+        /// <summary>"CC0", "CC BY-NC", "Mixamo" …</summary>
+        public static string ShortLicense(string id)
+        {
+            if (string.IsNullOrEmpty(id)) return "";
+            if (id.StartsWith("CC0", StringComparison.OrdinalIgnoreCase)) return "CC0";
+            if (id.StartsWith("CC-", StringComparison.OrdinalIgnoreCase))
+            {
+                var parts = id.Split('-');
+                return "CC " + string.Join("-", parts, 1, Math.Max(1, parts.Length - 2));
+            }
+            return id.Split('-')[0];
         }
 
         /// <summary>"from project Range", "added by hand", "from Poly Haven" …</summary>
@@ -194,6 +211,8 @@ namespace Editor.Core.Assets.Library
         public Dictionary<string, string> Companions;
         /// <summary>Hashes already computed for companions (absolute path → hash).</summary>
         public Dictionary<string, string> CompanionHashes;
+        /// <summary>Asset store item key ("provider:id:variant") — a second download of the same item is skipped.</summary>
+        public string StoreKey;
     }
 
     public enum AddToProjectStatus { Added, AlreadyInProject, Failed }

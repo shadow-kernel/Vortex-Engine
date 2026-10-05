@@ -166,6 +166,12 @@ namespace VortexEditor.Shell
         {
             var p = ProjectData.Current; if (p == null || _running) return;
             string outDir = (_out.Text ?? "").Trim(); if (string.IsNullOrEmpty(outDir)) return;
+            // license check (#77): NonCommercial / NoDerivatives / ShareAlike / unknown assets need a decision first
+            var audit = await Task.Run(() => Editor.Core.Assets.Library.LicenseAudit.Scan(p.Path));
+            if (audit.HasWarnings && !await Dialogs.Confirm("License check",
+                    "Some assets in this build have licenses that need your attention:\n\n" + Editor.Core.Assets.Library.LicenseAudit.Warnings(audit) +
+                    "\n\nCC-BY assets are credited automatically in CREDITS.md.", "Build Anyway", "Cancel"))
+                return;
             _running = true; _build.IsEnabled = false; _log.Text = ""; _bar.Value = 0;
             var req = new ExportRequest
             {
