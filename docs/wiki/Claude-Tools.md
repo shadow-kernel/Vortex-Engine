@@ -71,6 +71,7 @@ Places a project asset in the active scene: an imported model (.glb/.gltf/.fbx/.
 | `scale` | number[] | Scale [x, y, z] (or [s]) |
 | `parent` | string | Parent entity. |
 | `name` | string | Name of the new entity. |
+| `dry_run` | boolean | Only report what this call would create, remove, change and write — nothing is changed. Default: `false`. |
 
 ### `search_library` · read-only
 
@@ -116,6 +117,7 @@ Sets up an entity's AudioSource (added when missing): clip (project path), volum
 |---|---|---|
 | `entity` **(required)** | string | Entity id, path or name. |
 | `properties` **(required)** | any JSON | Properties {"clip": "Assets/Audio/hum.wav", "loop": true, "spatial": true, "max_distance": 12, "bus": "Ambience"}. |
+| `dry_run` | boolean | Only report what this call would create, remove, change and write — nothing is changed. Default: `false`. |
 
 ### `generate_sound` · internet
 
@@ -154,6 +156,7 @@ Sets a mixer bus volume in dB (0 = unchanged level, −6 = half, −80 = silent)
 | `bus` **(required)** | string | Master, Music, SFX, Ambience or UI. |
 | `db` | number | Volume in dB (−80 … +6) |
 | `mute` | boolean | Mute the bus. |
+| `dry_run` | boolean | Only report what this call would create, remove, change and write — nothing is changed. Default: `false`. |
 
 ### `stop_audition` · read-only
 
@@ -215,6 +218,7 @@ Creates a material (.vmat) in the project — by default in Assets/Materials —
 | `properties` | any JSON | Properties, e.g. {"base_color": "#8a3b2a", "roughness": 0.8, "metallic": 0.2}. |
 | `folder` | string | Folder relative to the project. Default: `"Assets/Materials"`. |
 | `assign_to` | string[] | Entities to assign it to. |
+| `dry_run` | boolean | Only report what this call would create, remove, change and write — nothing is changed. Default: `false`. |
 
 ### `get_material` · read-only
 
@@ -241,6 +245,7 @@ Edits a material file — every entity that uses it changes. Properties: base_co
 |---|---|---|
 | `material` **(required)** | string | Project path of the .vmat. |
 | `properties` **(required)** | any JSON | Properties {"name": value}. |
+| `dry_run` | boolean | Only report what this call would create, remove, change and write — nothing is changed. Default: `false`. |
 
 ## Scenes
 
@@ -253,6 +258,7 @@ Adds a component to an entity, optionally with properties, e.g. type 'Light' pro
 | `entity` **(required)** | string | Entity id, path or name. |
 | `type` **(required)** | string | Component type, e.g. Light, BoxCollider, Rigidbody, AudioSource, MeshRenderer. |
 | `properties` | any JSON | Property values {"name": value}. |
+| `dry_run` | boolean | Only report what this call would create, remove, change and write — nothing is changed. Default: `false`. |
 
 ### `create_entity`
 
@@ -267,6 +273,7 @@ Creates an entity in the active scene and returns it. kind: empty, folder, cube,
 | `rotation` | number[] | Local rotation [x, y, z] in degrees. |
 | `scale` | number[] | Local scale [x, y, z] (or [s] for uniform) |
 | `components` | any JSON | Extra components: [{"type": "…", "properties": {…}}]. |
+| `dry_run` | boolean | Only report what this call would create, remove, change and write — nothing is changed. Default: `false`. |
 
 ### `delete_entities`
 
@@ -285,6 +292,7 @@ Duplicates entities (deep copy with children, new ids) next to the originals, op
 |---|---|---|
 | `entities` **(required)** | string[] | Entity ids, paths or names. |
 | `offset` | number[] | Move each copy by [x, y, z] metres. |
+| `dry_run` | boolean | Only report what this call would create, remove, change and write — nothing is changed. Default: `false`. |
 
 ### `find_entities` · read-only
 
@@ -341,6 +349,7 @@ Moves an entity under a new parent. keep_world (default) keeps it where it is in
 | `entity` **(required)** | string | Entity to move. |
 | `parent` **(required)** | string | New parent. |
 | `keep_world` | boolean | Keep the world position/rotation/scale. Default: `true`. |
+| `dry_run` | boolean | Only report what this call would create, remove, change and write — nothing is changed. Default: `false`. |
 
 ### `remove_component`
 
@@ -351,6 +360,7 @@ Removes a component from an entity (the Transform cannot be removed).
 | `entity` **(required)** | string | Entity id, path or name. |
 | `type` **(required)** | string | Component type. |
 | `index` | integer | Which one when the entity has several of that type (0 = first) Default: `0`. |
+| `dry_run` | boolean | Only report what this call would create, remove, change and write — nothing is changed. Default: `false`. |
 
 ### `save_scene`
 
@@ -388,6 +398,7 @@ Sets properties of an entity's component: {"intensity": 2.5, "light_type": "Spot
 | `component` **(required)** | string | Component type, e.g. Light. |
 | `properties` **(required)** | any JSON | Property values {"name": value}. |
 | `index` | integer | Which component when the entity has several of that type (0 = first) Default: `0`. |
+| `dry_run` | boolean | Only report what this call would create, remove, change and write — nothing is changed. Default: `false`. |
 
 ### `set_entity`
 
@@ -400,6 +411,7 @@ Renames an entity and/or sets its tag, active state (inactive = hidden and not s
 | `tag` | string | Tag, e.g. Player, Enemy, Pickup. |
 | `active` | boolean | Active in the scene. |
 | `static` | boolean | Static (never moves; batched) |
+| `dry_run` | boolean | Only report what this call would create, remove, change and write — nothing is changed. Default: `false`. |
 
 ### `set_transform`
 
@@ -412,6 +424,7 @@ Sets an entity's position (metres), rotation (Euler degrees) and/or scale; omitt
 | `rotation` | number[] | Rotation [x, y, z] in degrees. |
 | `scale` | number[] | Scale [x, y, z] (or [s]) |
 | `space` | string | 'local' (relative to the parent, default) or 'world'. Default: `"local"`. |
+| `dry_run` | boolean | Only report what this call would create, remove, change and write — nothing is changed. Default: `false`. |
 
 ### `unparent_entity`
 
@@ -421,6 +434,7 @@ Moves an entity to the scene root. keep_world (default) keeps it where it is in 
 |---|---|---|
 | `entity` **(required)** | string | Entity to move. |
 | `keep_world` | boolean | Keep the world position/rotation/scale. Default: `true`. |
+| `dry_run` | boolean | Only report what this call would create, remove, change and write — nothing is changed. Default: `false`. |
 
 ## Scripts
 
@@ -433,6 +447,7 @@ Adds a script to an entity (its behaviour runs in play mode) and sets public fie
 | `entity` **(required)** | string | Entity id, path or name. |
 | `script` **(required)** | string | Script name or path. |
 | `fields` | any JSON | Public field values {"Field": value}. |
+| `dry_run` | boolean | Only report what this call would create, remove, change and write — nothing is changed. Default: `false`. |
 
 ### `compile_scripts` · read-only
 
@@ -452,6 +467,7 @@ Replaces an exact piece of text in a script (it must occur exactly once unless r
 | `old_text` **(required)** | string | Exact text to replace (include enough context to be unique) |
 | `new_text` **(required)** | string | Replacement text. |
 | `replace_all` | boolean | Replace every occurrence. Default: `false`. |
+| `dry_run` | boolean | Only report what this call would create, remove, change and write — nothing is changed. Default: `false`. |
 
 ### `get_scripting_api` · read-only
 
@@ -483,6 +499,7 @@ Creates or replaces a script in Assets/Scripts with the given C# source, then co
 |---|---|---|
 | `script` **(required)** | string | Script name or path, e.g. FlickerLight or AI/Guard.cs. |
 | `code` **(required)** | string | The complete C# source. |
+| `dry_run` | boolean | Only report what this call would create, remove, change and write — nothing is changed. Default: `false`. |
 
 ## Viewport
 
@@ -555,6 +572,7 @@ Aligns entities on one world axis: 'min' / 'center' / 'max' line up their bounds
 | `entities` **(required)** | string[] | Entities (at least 2) |
 | `axis` **(required)** | string | x, y or z. |
 | `mode` | string | min, center, max or distribute. Default: `"center"`. |
+| `dry_run` | boolean | Only report what this call would create, remove, change and write — nothing is changed. Default: `false`. |
 
 ### `bulk_set_properties`
 
@@ -632,4 +650,5 @@ Rounds entities' world positions to a grid (cell size in metres) on the given ax
 | `entities` **(required)** | string[] | Entities. |
 | `cell` | number | Cell size in metres. Default: `1`. |
 | `axes` | string | Axes to snap, e.g. "xz" or "xyz". Default: `"xyz"`. |
+| `dry_run` | boolean | Only report what this call would create, remove, change and write — nothing is changed. Default: `false`. |
 

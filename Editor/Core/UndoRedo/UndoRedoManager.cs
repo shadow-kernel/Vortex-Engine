@@ -282,6 +282,9 @@ namespace Editor.Core.UndoRedo
         /// <summary>True while <see cref="BeginGroup"/> collects commands into one undo step.</summary>
         public bool IsGrouping => _groupDepth > 0;
 
+        /// <summary>The open group (its commands so far), or null.</summary>
+        public Commands.CompositeCommand CurrentGroup => _group;
+
         /// <summary>
         /// Collects every command executed until the matching <see cref="EndGroup"/> into ONE undo step named
         /// <paramref name="name"/> — a Claude tool call or a macro that creates hundreds of entities reverts with a
@@ -342,6 +345,43 @@ namespace Editor.Core.UndoRedo
             OnStateChanged();
             OnCommandExecuted(group, CommandExecutionType.Execute);
             return group;
+        }
+
+        /// <summary>True while <paramref name="command"/> can still be undone (it is on the undo stack).</summary>
+        public bool IsOnUndoStack(IUndoableCommand command)
+        {
+            return command != null && _undoStack.Contains(command);
+        }
+
+        /// <summary>
+        /// Undoes one specific step from the history — the newest one like <see cref="Undo"/>, an older one out of order
+        /// (it is undone and dropped from the stack; the redo stack is cleared because history no longer matches it).
+        /// The caller warns the user when later steps depend on it. Returns false when the step is not on the stack.
+        /// </summary>
+        public bool Revert(IUndoableCommand command)
+        {
+            if (command == null || _isExecuting || _groupDepth > 0 || !_undoStack.Contains(command))
+                return false;
+            if (ReferenceEquals(_undoStack.Peek(), command))
+                return Undo();
+            try
+            {
+                _isExecuting = true;
+                command.Undo();
+                var keep = new List<IUndoableCommand>(_undoStack);   // newest first
+                keep.Remove(command);
+                _undoStack.Clear();
+                for (int i = keep.Count - 1; i >= 0; i--)
+                    _undoStack.Push(keep[i]);
+                _redoStack.Clear();
+            }
+            finally
+            {
+                _isExecuting = false;
+            }
+            OnStateChanged();
+            OnCommandExecuted(command, CommandExecutionType.Undo);
+            return true;
         }
 
         /// <summary>

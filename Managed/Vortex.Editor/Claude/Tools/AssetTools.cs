@@ -106,7 +106,7 @@ namespace VortexEditor.Claude.Tools
             };
         }
 
-        [McpServerTool(Name = "create_prefab")]
+        [McpServerTool(Name = "create_prefab"), NoDryRun]
         [Description("Saves an entity (with its children) as a prefab, Assets/Prefabs/<name>.ventity; the entity becomes a linked instance. " +
                      "place_asset puts more instances in the scene.")]
         public static object CreatePrefab(
@@ -174,7 +174,7 @@ namespace VortexEditor.Claude.Tools
             }
         }
 
-        [McpServerTool(Name = "add_library_asset", Destructive = false)]
+        [McpServerTool(Name = "add_library_asset", Destructive = false), NoDryRun]
         [Description("Copies an asset library entry (search_library id) into the open project (a model brings its textures; the default folder " +
                      "per type) and optionally places a model/prefab in the scene. Content the project already has is reused, not copied twice.")]
         public static async Task<object> AddLibraryAsset(

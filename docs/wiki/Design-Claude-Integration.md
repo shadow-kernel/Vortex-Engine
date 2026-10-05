@@ -2,10 +2,12 @@
 
 Design doc for **[milestone 5 — v3.0.0 Claude-Native Engine](https://github.com/shadow-kernel/Vortex-Engine/milestone/5)**. Goal: Claude can operate the entire editor — build worlds, edit entities/materials/shaders, write scripts, control play mode, and *see* the result. Track work under the [`area:claude` label](https://github.com/shadow-kernel/Vortex-Engine/issues?q=is%3Aissue+label%3Aarea%3Aclaude). The Claude Sound Studio (prompt-driven SFX generation, [milestone 4](https://github.com/shadow-kernel/Vortex-Engine/milestone/4)) is a separate feature — **implemented** (`Managed/Vortex.Core/SoundStudio/`, user guide [[Sound-Studio]]): its `SoundDesigner` talks to the Messages API over plain HTTP (streamed SSE, tool-use loop with a `generate_sound` tool, the user's own key) — the same tool-layer pattern the MCP server will reuse, without an SDK dependency in the shared core.
 
-> **Status (v3.0 work):** Half A is implemented in the cross-platform (Avalonia, .NET 10) editor —
-> `Managed/Vortex.Editor/Claude/`: the MCP server, scene/entity tools, viewport capture, play mode, console, undo,
-> the Connect dialog and the docs ([[Claude-Integration]], [[Claude-Tools]]). The WPF editor (.NET Framework 4.8)
-> cannot host ASP.NET Core in-process and gets no server; it is retired by the Avalonia editor on Windows (#183).
+> **Status (v3.0 work):** both halves are implemented in the cross-platform (Avalonia, .NET 10) editor —
+> `Managed/Vortex.Editor/Claude/`: the MCP server with 64 tools (scenes, materials, assets, world macros, scripts,
+> audio, viewport, play mode, undo), the embedded Claude panel (`ClaudePanel` on `Managed/Vortex.Core/Claude/ClaudeChat.cs`),
+> the Operations window (revert, diffs) and dry runs; docs: [[Claude-Integration]], [[Claude-Tools]]. The WPF editor
+> (.NET Framework 4.8) cannot host ASP.NET Core in-process and gets neither; it is retired by the Avalonia editor on
+> Windows (#183). Shader writing/validation (#87) is still open.
 
 ## Architecture: two halves, one tool layer
 
@@ -57,13 +59,21 @@ claude mcp add --transport http vortex http://127.0.0.1:<port>/mcp
 
 Claude Desktop's custom connectors are brokered through Anthropic's cloud and cannot reach `127.0.0.1`; it connects through a local stdio bridge in `claude_desktop_config.json` (`npx -y mcp-remote http://127.0.0.1:<port>/mcp`) — full app restart required after config edits (see [[Claude-Integration]]).
 
-## Half B — Embedded chat panel
+## Half B — Embedded chat panel (implemented)
 
-**Package:** official **`Anthropic`** NuGet (≥v12; v12.32.0 current, .NET 8+/.NET Standard 2.0+). This is the official Anthropic C# SDK — do **not** confuse it with the unofficial community package `Anthropic.SDK` (tghamm).
+**Client:** `ClaudeChat` (Vortex.Core) speaks the Messages API over plain HTTP with streamed SSE — the same approach as the
+Sound Studio's `SoundDesigner`, no SDK dependency in the shared core (the official `Anthropic` NuGet stays an option).
+It runs the tool-use loop itself: stream a turn, run the requested tools, send `tool_result` blocks (text + base64
+images), repeat until `end_turn` (max 40 rounds). The system prompt, the tool definitions and a rolling point on the
+newest user turn are marked `cache_control: ephemeral`, so the ~60 tool schemas are cached after the first turn. A
+stop between a tool request and its results answers the open calls ("stopped by the user") so the conversation stays valid.
 
-- Dockable chat panel; streaming responses; model picker (default `claude-opus-4-8`, configurable); API key stored in settings.
-- Tool-use loop via `client.Beta.Messages` + **`BetaToolRunner`** (automatic tool-execution loop), whose handlers call the *same* C# tool services directly in-process — no MCP hop, no Node dependency.
-- Per-tool permission prompts (ask / allow-always).
+- Right-column tab **Claude**; streaming text; tool calls as cards (input, result, image); model picker (Opus 5.5
+  default, Sonnet 5.5, Haiku 4.5); token usage with cache share.
+- Tools are the *same* `ToolCatalog` definitions, run through `ToolHost` — same undo steps, same safety, no MCP hop.
+- Per-tool approval for tools that change something: Allow / Always allow (per project, stored in the user's app data) /
+  Deny (Claude is told). Read-only tools run without asking.
+- The user's Anthropic key comes from `StoreKeys` (owner-only file on macOS/Linux, DPAPI on Windows).
 - Future option (noted, not planned): Claude Agent SDK sidecar (Node subprocess, no C# version exists) pointed at the editor's own MCP endpoint with `allowedTools: ['mcp__vortex__*']` for the full Claude-Code-grade agent loop.
 
 ## Tool-set catalog
@@ -82,8 +92,12 @@ Each set is one issue in [milestone 5](https://github.com/shadow-kernel/Vortex-E
 ## Safety model
 
 - **Undo grouping (implemented):** every mutating call is one undoable operation ("Claude: create Lamp 3" = one Ctrl+Z), via `UndoRedoManager.BeginGroup/EndGroup`; failed calls roll back. The undo depth is 300 steps. Tools record their own undo commands (the Avalonia inspector's direct property edits are not undoable yet — the tools never rely on them).
-- **Dry-run mode:** a flag that returns planned changes without applying them.
-- **Operation log:** an Operations panel logs every tool call with revert buttons.
+- **Dry run (implemented):** every changing tool takes `dry_run: true`; macros plan natively, all others run inside the
+  undo group, report created / removed / changed entities, files and edits, and are rolled back (`EndGroup(commit: false)`).
+  Tools with effects outside the undo stack (save scene, save prefab, library copy, material fit copy) don't offer it.
+- **Operation log (implemented):** `OperationLog` records every call with the entities and files it touched; the
+  Operations window reverts one (newest = Undo, older = `UndoRedoManager.Revert` out of order after a dependency
+  warning) and shows file diffs.
 
 ## Build order
 

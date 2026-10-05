@@ -62,7 +62,9 @@ namespace VortexEditor.Claude
         public static void Write(string full, string content, Action<string> after = null)
         {
             if (!Inside(full)) throw new ToolError("'" + full + "' is outside the project's Assets folder.");
-            UndoRedoManager.Instance.Execute(new WriteFileCommand(full, content, after));
+            var cmd = new WriteFileCommand(full, content, after);
+            ToolContext.FileWritten(new FileChange { Path = full, Created = cmd.Created, Before = cmd.OldText, After = content });
+            UndoRedoManager.Instance.Execute(cmd);
         }
 
         /// <summary>Undoable text-file write: remembers the previous bytes (or that there was no file).</summary>

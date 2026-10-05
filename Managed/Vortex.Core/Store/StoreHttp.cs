@@ -300,8 +300,9 @@ namespace Editor.Core.Assets.Store
     }
 
     /// <summary>
-    /// The user's own provider keys (poly.pizza, Freesound, Sketchfab …) in <c>&lt;VortexAppData&gt;/store-keys.json</c>
-    /// (owner-only file permissions on macOS/Linux). The editor never ships a shared key.
+    /// The user's own provider keys (poly.pizza, Freesound, Sketchfab, Anthropic …) in
+    /// <c>&lt;VortexAppData&gt;/store-keys.json</c>: owner-only file permissions on macOS/Linux, DPAPI-encrypted for the
+    /// Windows user ("dpapi:" values — unreadable for other accounts and other machines). The editor never ships a shared key.
     /// </summary>
     public static class StoreKeys
     {
@@ -324,7 +325,35 @@ namespace Editor.Core.Assets.Store
         {
             var env = Environment.GetEnvironmentVariable("VORTEX_STORE_KEY_" + providerId.ToUpperInvariant().Replace('-', '_'));
             if (!string.IsNullOrEmpty(env)) return env;
-            lock (Gate) return Keys.TryGetValue(providerId, out var k) ? k : null;
+            lock (Gate) return Keys.TryGetValue(providerId, out var k) ? Reveal(k) : null;
+        }
+
+        private const string DpapiPrefix = "dpapi:";
+
+        /// <summary>A stored value as the key (Windows: decrypt "dpapi:" values; anything else is stored as-is).</summary>
+        private static string Reveal(string stored)
+        {
+            if (stored == null || !stored.StartsWith(DpapiPrefix, StringComparison.Ordinal)) return stored;
+            if (!OperatingSystem.IsWindows()) return null;   // a Windows-encrypted file copied to another OS
+            try
+            {
+                var bytes = System.Security.Cryptography.ProtectedData.Unprotect(Convert.FromBase64String(stored.Substring(DpapiPrefix.Length)), null,
+                                                                                  System.Security.Cryptography.DataProtectionScope.CurrentUser);
+                return System.Text.Encoding.UTF8.GetString(bytes);
+            }
+            catch { return null; }   // another user's / machine's key
+        }
+
+        private static string Protect(string key)
+        {
+            if (!OperatingSystem.IsWindows()) return key;
+            try
+            {
+                var bytes = System.Security.Cryptography.ProtectedData.Protect(System.Text.Encoding.UTF8.GetBytes(key), null,
+                                                                                System.Security.Cryptography.DataProtectionScope.CurrentUser);
+                return DpapiPrefix + Convert.ToBase64String(bytes);
+            }
+            catch { return key; }
         }
 
         public static bool Has(string providerId) => !string.IsNullOrWhiteSpace(Get(providerId));
@@ -333,7 +362,7 @@ namespace Editor.Core.Assets.Store
         {
             lock (Gate)
             {
-                if (string.IsNullOrWhiteSpace(key)) Keys.Remove(providerId); else Keys[providerId] = key.Trim();
+                if (string.IsNullOrWhiteSpace(key)) Keys.Remove(providerId); else Keys[providerId] = Protect(key.Trim());
                 Directory.CreateDirectory(Path.GetDirectoryName(FilePath));
                 File.WriteAllText(FilePath, JsonSerializer.Serialize(Keys, new JsonSerializerOptions { WriteIndented = true }));
                 if (!OperatingSystem.IsWindows())

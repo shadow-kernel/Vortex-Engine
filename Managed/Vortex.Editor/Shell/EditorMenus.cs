@@ -342,7 +342,9 @@ namespace VortexEditor.Shell
                 Sep(),
                 Item("Refresh", null, EditorCommands.RefreshAssets),
                 Sub("Claude",
+                    Item("Claude Panel", null, () => w.ShowPanel(MainWindow.PanelClaude)),
                     Item("Connect Claude Code / Desktop…", null, () => _ = Claude.ClaudeConnectDialog.Run()),
+                    Item("Operations…", null, () => Claude.ClaudeOperationsWindow.Open()),
                     Check("MCP Server", null, () => _ = Claude.McpHost.SetEnabledAsync(!Claude.McpHost.IsRunning), () => Claude.McpHost.IsRunning)),
                 Sep(),
                 Item("Reload Material Shaders", null, EditorCommands.ReloadShaders),
@@ -373,6 +375,7 @@ namespace VortexEditor.Shell
                 Check("Environment", "Cmd+D6", () => w.TogglePanel(MainWindow.PanelEnvironment), () => w.IsPanelVisible(MainWindow.PanelEnvironment)),
                 Check("Library", "Cmd+D7", () => w.TogglePanel(MainWindow.PanelLibrary), () => w.IsPanelVisible(MainWindow.PanelLibrary)),
                 Check("Asset Store", "Cmd+D8", () => w.TogglePanel(MainWindow.PanelStore), () => w.IsPanelVisible(MainWindow.PanelStore)),
+                Check("Claude", "Cmd+D9", () => w.TogglePanel(MainWindow.PanelClaude), () => w.IsPanelVisible(MainWindow.PanelClaude)),
                 Sep(),
             };
             foreach (var e in Editors)

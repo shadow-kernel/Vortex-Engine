@@ -61,6 +61,13 @@ namespace VortexEditor.Claude
 
         public static GameEntity Resolve(string reference)
         {
+            var e = ResolveCore(reference);
+            ToolContext.Touch(e);
+            return e;
+        }
+
+        private static GameEntity ResolveCore(string reference)
+        {
             if (string.IsNullOrWhiteSpace(reference)) throw new ToolError("An entity reference is required (id, path or name).");
             string r = reference.Trim();
             var scenes = SearchScenes().ToList();
@@ -134,7 +141,13 @@ namespace VortexEditor.Claude
         }
 
         /// <summary>One line of facts about an entity: id, name, path, component types.</summary>
-        public static object Brief(GameEntity e) => new
+        public static object Brief(GameEntity e)
+        {
+            ToolContext.Touch(e);
+            return BriefCore(e);
+        }
+
+        private static object BriefCore(GameEntity e) => new
         {
             id = ShortId(e),
             name = e.Name,

@@ -15,6 +15,11 @@ namespace VortexEditor.Claude
     [AttributeUsage(AttributeTargets.Method)]
     public sealed class ManagesUndoAttribute : Attribute { }
 
+    /// <summary>A changing tool whose effects are not all undoable (it writes files outside the undo stack): it gets no
+    /// generic dry_run.</summary>
+    [AttributeUsage(AttributeTargets.Method)]
+    public sealed class NoDryRunAttribute : Attribute { }
+
     /// <summary>A tool that reaches beyond the editor (internet sources, generation services) — the MCP openWorldHint.
     /// Everything else works on the open project only.</summary>
     [AttributeUsage(AttributeTargets.Method)]
@@ -34,6 +39,8 @@ namespace VortexEditor.Claude
         public bool Idempotent { get; init; }
         public bool OpenWorld { get; init; }
         public bool ManagesUndo { get; init; }
+        /// <summary>dry_run is handled by the host (run, describe, roll back) — the tool has no dry_run of its own.</summary>
+        public bool GenericDryRun { get; init; }
         internal AIFunction Function { get; init; }
     }
 
@@ -95,24 +102,44 @@ namespace VortexEditor.Claude
                         SerializerOptions = options.SerializerOptions,
                         MarshalResult = options.MarshalResult,
                     });
+                    bool manages = m.GetCustomAttribute<ManagesUndoAttribute>() != null;
+                    bool openWorld = m.GetCustomAttribute<OpenWorldAttribute>() != null;
+                    bool generic = !attr.ReadOnly && !manages && !openWorld && m.GetCustomAttribute<NoDryRunAttribute>() == null
+                                   && !m.GetParameters().Any(p => p.Name == "dry_run");
                     list.Add(new ToolDef
                     {
                         Name = name,
                         Title = attr.Title ?? Humanize(name),
                         Description = desc,
                         Category = category,
-                        InputSchema = fn.JsonSchema,
+                        InputSchema = generic ? WithDryRun(fn.JsonSchema) : fn.JsonSchema,
+                        GenericDryRun = generic,
                         ReadOnly = attr.ReadOnly,
                         Destructive = attr.Destructive,
                         Idempotent = attr.Idempotent,
                         // the SDK attribute defaults OpenWorld to true; ours is explicit
-                        OpenWorld = m.GetCustomAttribute<OpenWorldAttribute>() != null,
-                        ManagesUndo = m.GetCustomAttribute<ManagesUndoAttribute>() != null,
+                        OpenWorld = openWorld,
+                        ManagesUndo = manages,
                         Function = fn,
                     });
                 }
             }
             return list.OrderBy(t => t.Category, StringComparer.Ordinal).ThenBy(t => t.Name, StringComparer.Ordinal).ToList();
+        }
+
+        /// <summary>The schema plus the host-provided dry_run flag.</summary>
+        private static JsonElement WithDryRun(JsonElement schema)
+        {
+            var node = System.Text.Json.Nodes.JsonNode.Parse(schema.GetRawText()) as System.Text.Json.Nodes.JsonObject;
+            if (node == null) return schema;
+            if (!(node["properties"] is System.Text.Json.Nodes.JsonObject props)) node["properties"] = props = new System.Text.Json.Nodes.JsonObject();
+            props["dry_run"] = new System.Text.Json.Nodes.JsonObject
+            {
+                ["type"] = "boolean",
+                ["description"] = "Only report what this call would create, remove, change and write — nothing is changed.",
+                ["default"] = false,
+            };
+            return JsonDocument.Parse(node.ToJsonString()).RootElement.Clone();
         }
 
         /// <summary>CreateEntity → create_entity.</summary>

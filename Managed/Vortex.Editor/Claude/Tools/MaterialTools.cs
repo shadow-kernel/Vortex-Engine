@@ -106,7 +106,7 @@ namespace VortexEditor.Claude.Tools
             return new { path = ProjectFiles.Rel(full), set = done, used_by_in_scene = users };
         }
 
-        [McpServerTool(Name = "assign_material")]
+        [McpServerTool(Name = "assign_material"), NoDryRun]
         [Description("Gives entities a material. For an imported model, all its submeshes get it unless submesh picks one (0-based). " +
                      "A store material that knows its real-world size, put on a cube/plane floor or wall, is tiled for the object's size " +
                      "(a copy named <material>_<W>x<H>m.vmat).")]
