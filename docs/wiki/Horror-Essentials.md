@@ -18,10 +18,10 @@ examples, by their path inside a Horror Starter project.
 - Save each class as `Assets/Scripts/<ClassName>.cs` and attach it with a **Script** component. One Script component
   runs per entity, so put a second behaviour on a child entity.
 - Public fields appear on the Script component in the Inspector; the values in the code are only the defaults.
-- The samples recognise the player by its **Tag** `Player`. Set it on the entity whose script moves the player with
-  `Physics.MoveCharacter` — the Horror Starter's `Player` entity ships as `Untagged`.
+- The samples recognise the player by its **Tag** `Player`, as every template's `Player` entity is tagged. In your own
+  game, tag the entity whose script moves the player with `Physics.MoveCharacter`.
 - `Position`, `Rotation` and `Forward` are relative to the entity's parent. For a child entity (a flashlight or an
-  interaction ray under the player) the samples read the world pose with `TryGetWorldPose`.
+  interaction ray under the player) use `WorldPosition` / `WorldForward`, or `TryGetWorldPose` for the rotation too.
 - Stopping play puts back positions, rotations, scales, mesh colours and the Light settings scripts changed. A scene
   switch or `Scene.Destroy` during play does not, so the samples that change lights also put them back in
   `OnDestroy()`, which runs in all three cases.
@@ -1023,8 +1023,9 @@ Player                the player controller (Tag "Player")
 └─ Interactor         Script: LookInteractor — no offset of its own, so it looks where the player looks
 ```
 
-In the Horror Starter, `Player` carries the view (its script places it at eye height and turns it), so
-`LookInteractor` goes on its `Interactor` child in place of `Interactor.cs`.
+In the Horror Starter, `Player` carries the view (its script places it at eye height and turns it), and its
+`Interactor` child already runs `Interactor.cs`, which works the same way — the door below opens with it as it is.
+`LookInteractor` shows how such a script is built.
 
 ```csharp
 using Vortex;

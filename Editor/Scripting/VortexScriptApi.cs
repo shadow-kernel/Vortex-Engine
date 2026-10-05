@@ -412,7 +412,31 @@ namespace Vortex
         public void SetWorldPose(Vector3 position, Vector3 rotationEulerDeg)
             { Host?.SetEntityWorldPose(EntityId, position, rotationEulerDeg); }
 
-        /// <summary>Unit forward vector in world space, derived from this entity's yaw + pitch.</summary>
+        /// <summary>This entity's position in the world, through every parent. <see cref="Position"/> is relative to
+        /// the parent — the same for a top-level entity, but not for a camera, flashlight or weapon under the player.</summary>
+        public Vector3 WorldPosition
+        {
+            get { Vector3 p, r; return TryGetWorldPose(out p, out r) ? p : Position; }
+        }
+
+        /// <summary>Unit forward vector in the world, through every parent (where a child camera or flashlight looks).
+        /// <see cref="Forward"/> uses this entity's own yaw + pitch only.</summary>
+        public Vector3 WorldForward
+        {
+            get
+            {
+                Vector3 p, r;
+                if (!TryGetWorldPose(out p, out r)) return Forward;
+                double yaw = r.Y * Math.PI / 180.0, pitch = r.X * Math.PI / 180.0;   // roll does not move the forward axis
+                return new Vector3(
+                    (float)(Math.Sin(yaw) * Math.Cos(pitch)),
+                    (float)(-Math.Sin(pitch)),
+                    (float)(Math.Cos(yaw) * Math.Cos(pitch)));
+            }
+        }
+
+        /// <summary>Unit forward vector from this entity's own yaw + pitch — the world forward for a top-level entity;
+        /// under a rotated parent use <see cref="WorldForward"/>.</summary>
         public Vector3 Forward
         {
             get

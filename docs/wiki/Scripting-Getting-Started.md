@@ -63,7 +63,7 @@ public class NewBehaviour : VortexBehaviour
 
 Inside a behaviour you already have, for free, on `this`:
 
-- `Position` / `Rotation` — read/write your entity's transform (world position, Euler degrees).
+- `Position` / `Rotation` — read/write your entity's transform (relative to its parent; Euler degrees). `WorldPosition` / `WorldForward` give the world pose of an entity under a parent, such as a camera or flashlight on the player.
 - `Translate(dx,dy,dz)` / `Rotate(dP,dY,dR)` — relative moves.
 - `Forward` / `Right` — unit vectors derived from your rotation (great for movement).
 - `PlayAnimation("Walk", fade)`, `StopAnimation()`, `SetColor(r,g,b)`, `GetAudioSource()`.

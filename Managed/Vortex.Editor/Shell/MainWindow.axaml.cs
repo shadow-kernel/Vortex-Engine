@@ -308,7 +308,17 @@ namespace VortexEditor.Shell
             Check("save all", () => { Session.SaveAll(); return true; });
             Check("toggle grid", () => { EditorCommands.ToggleGrid(); EditorCommands.ToggleGrid(); return true; });
             Check("split view", () => { ViewportPanel.SetLayout(2); return true; });
-            Check("play + stop", () => { EditorCommands.Play(); bool playing = PlayModeService.Instance.State == PlayState.Playing; EditorCommands.Stop(); return playing && PlayModeService.Instance.State == PlayState.Editing; });
+            Check("play + stop", () =>
+            {
+                EditorCommands.Play();
+                bool playing = PlayModeService.Instance.State == PlayState.Playing;
+                // the project's scripts must compile (a template whose scripts break on an API change failed silently)
+                string build = Editor.Scripting.ScriptRuntime.Instance.LastBuildLog ?? "";
+                bool compiled = build.IndexOf("compile failed", StringComparison.OrdinalIgnoreCase) < 0;
+                if (!compiled) log.LogError("play + stop: the project's scripts do not compile:\n" + build);
+                EditorCommands.Stop();
+                return playing && compiled && PlayModeService.Instance.State == PlayState.Editing;
+            });
             Check("export (release, branded)", () =>
             {
                 // The full path of the Build dialog: icons from the project (or the engine logo), product name /

@@ -80,11 +80,14 @@ The base class for all gameplay behaviours (Vortex's `MonoBehaviour`). Derive fr
 
 ### Transform
 
-▸ `Vector3 Position { get; set; }` — world position of this entity (read/write).
-▸ `Vector3 Rotation { get; set; }` — Euler rotation in **degrees** (`X`=pitch, `Y`=yaw, `Z`=roll).
+▸ `Vector3 Position { get; set; }` — position of this entity **relative to its parent** (read/write) — the world position for a top-level entity.
+▸ `Vector3 Rotation { get; set; }` — Euler rotation in **degrees** (`X`=pitch, `Y`=yaw, `Z`=roll), relative to the parent.
+▸ `Vector3 WorldPosition { get; }` — where the entity is in the world, through every parent: what a camera, flashlight, weapon or interaction ray under the player needs.
+▸ `Vector3 WorldForward { get; }` — unit forward vector in the world, through every parent (where a child camera or flashlight looks).
+▸ `bool TryGetWorldPose(out Vector3 position, out Vector3 rotationEulerDeg)` / `void SetWorldPose(Vector3 position, Vector3 rotationEulerDeg)` — read or place the entity in world space, whatever its parent.
 ▸ `void Translate(float dx, float dy, float dz)` — move by a delta.
 ▸ `void Rotate(float dPitch, float dYaw, float dRoll)` — rotate by a delta (degrees).
-▸ `Vector3 Forward { get; }` — unit forward vector in world space, from this entity's yaw + pitch.
+▸ `Vector3 Forward { get; }` — unit forward vector from this entity's own yaw + pitch (the world forward for a top-level entity; use `WorldForward` under a rotated parent).
 ▸ `Vector3 Right { get; }` — unit right vector (horizontal), from this entity's yaw.
 
 ### Appearance
