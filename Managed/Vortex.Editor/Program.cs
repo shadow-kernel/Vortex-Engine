@@ -42,7 +42,7 @@ namespace VortexEditor
         /// (the CI smoke reached "process exit" and then sat for minutes). A lingering editor would also keep the
         /// installer's AppMutex, so a silent update would think it is still running. TerminateProcess skips that teardown.
         /// </summary>
-        private static void EndProcessNow(int code)
+        internal static void EndProcessNow(int code)
         {
             Stage("ending the process");
             try { Console.Out.Flush(); Console.Error.Flush(); } catch { }

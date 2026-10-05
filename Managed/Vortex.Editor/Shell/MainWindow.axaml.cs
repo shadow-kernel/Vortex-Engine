@@ -78,6 +78,9 @@ namespace VortexEditor.Shell
             var o = Program.Options;
             Session.EnsureEngine();
             Claude.McpHost.AutoStart();
+            // installed Windows builds: the updater (download, install, start again) — never in a smoke run
+            UpdateWindow.InstallHooks();
+            if (VortexEditor.Program.Options.SmokeSeconds <= 0) _ = UpdateWindow.CheckAtStartupAsync();
             // a smoke run is unattended: answer the project-upgrade question with "Upgrade" (it backs the project up first)
             if (o.SmokeSeconds > 0 && ProjectCompatibility.TestAnswer == null) ProjectCompatibility.TestAnswer = () => 0;
             bool opened = false;

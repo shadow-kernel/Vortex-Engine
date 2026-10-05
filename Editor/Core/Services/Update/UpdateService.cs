@@ -37,16 +37,32 @@ namespace Editor.Core.Services.Update
             return c;
         }
 
-        /// <summary>True only for a build installed by the Inno Setup installer (has an uninstaller next to it).</summary>
-        public static bool IsInstalledBuild()
+        /// <summary>Host hooks. <see cref="BeforeExit"/> runs right before the installer takes over (the WPF editor stops
+        /// its DX12 render loop and releases the AppMutex); <see cref="ExitProcess"/> ends the process (the cross-platform
+        /// editor ends it without the native teardown, which can hang and keep files locked).</summary>
+        public static Action BeforeExit;
+        public static Action ExitProcess = () => Environment.Exit(0);
+
+        /// <summary>The install folder (the one with the uninstaller): the exe's own folder for the WPF editor, its
+        /// parent for the cross-platform editor in {app}\Editor. Null for a dev run or a shipped game.</summary>
+        public static string InstallRoot
         {
-            try
+            get
             {
-                var dir = AppDomain.CurrentDomain.BaseDirectory;
-                return File.Exists(Path.Combine(dir, "unins000.exe"));
+                try
+                {
+                    var dir = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\', '/');
+                    if (File.Exists(Path.Combine(dir, "unins000.exe"))) return dir;
+                    var parent = Path.GetDirectoryName(dir);
+                    if (!string.IsNullOrEmpty(parent) && File.Exists(Path.Combine(parent, "unins000.exe"))) return parent;
+                }
+                catch { }
+                return null;
             }
-            catch { return false; }
         }
+
+        /// <summary>True only for a build installed by the Inno Setup installer (has an uninstaller next to it).</summary>
+        public static bool IsInstalledBuild() { return InstallRoot != null; }
 
         /// <summary>
         /// Query the GitHub releases. Returns null on error / no update / not newer. Notes aggregate the
@@ -205,6 +221,10 @@ namespace Editor.Core.Services.Update
             {
                 int pid = System.Diagnostics.Process.GetCurrentProcess().Id;
                 string log = Path.Combine(Path.GetTempPath(), "VortexUpdate.log");
+                // Fallback relaunch: the default editor of the install (the cross-platform one since v3.0).
+                string root = InstallRoot ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Vortex Engine");
+                string relaunch = Path.Combine(root, "Editor", "Vortex.Editor.exe");
+                if (!File.Exists(relaunch)) relaunch = Path.Combine(root, "Vortex Engine.exe");
                 string script = Path.Combine(Path.GetTempPath(), "VortexUpdateRelay.ps1");
 
                 // The relay waits up to 30s for us to die, then installs. -Verb RunAs = the single UAC consent.
@@ -219,8 +239,8 @@ namespace Editor.Core.Services.Update
                         "-ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CLOSEAPPLICATIONS','/FORCECLOSEAPPLICATIONS','/NOCANCEL','/SP-','/LOG=\"" + log.Replace("'", "''") + "\"' " +
                         "-Verb RunAs -PassThru -Wait\n" +
                     "Start-Sleep -Seconds 3\n" +
-                    "if (-not (Get-Process -Name 'Vortex Engine' -ErrorAction SilentlyContinue)) {\n" +
-                    "  $exe = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'Vortex Engine\\Vortex Engine.exe'\n" +
+                    "if (-not (Get-Process -Name 'Vortex.Editor','Vortex Engine' -ErrorAction SilentlyContinue)) {\n" +
+                    "  $exe = '" + relaunch.Replace("'", "''") + "'\n" +
                     "  if (Test-Path $exe) { explorer.exe \"$exe\" }\n" +   // explorer relaunch = de-elevated
                     "}\n");
 
@@ -240,18 +260,12 @@ namespace Editor.Core.Services.Update
                 return; // stay on the current version
             }
 
-            // The relay is now running and WILL take over — so it is finally safe to quiesce the live DX12 render
-            // loop. Doing this ONLY here (not earlier) means an aborted install above returns with rendering intact.
-            // With a project open, CompositionTarget.Rendering calls the native renderer every frame; Environment.Exit
-            // out from under that live loop is what painted the viewport white and crashed the in-app "Check for
-            // Updates" (the startup check dodged it only because the loop is idle with no scene loaded). Stop the tick,
-            // then exit cleanly.
-            try { Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.SuspendRendering(); } catch { }
-
-            // Release the single-instance mutex explicitly, then exit NOW (skip the blocking native engine
-            // teardown in OnExit, which could hang and keep DLLs locked). The relay takes over from here.
-            Editor.App.ReleaseSingleInstanceMutex();
-            Environment.Exit(0);
+            // The relay is now running and WILL take over — so it is finally safe to quiesce the host (the WPF editor
+            // stops its live DX12 render loop: exiting out from under it painted the viewport white and crashed the
+            // in-app "Check for Updates"; and releases the AppMutex). Doing this ONLY here means an aborted install
+            // above returns with the editor intact. Then exit NOW — the relay takes over from here.
+            try { BeforeExit?.Invoke(); } catch { }
+            ExitProcess();
         }
     }
 }

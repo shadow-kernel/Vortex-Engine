@@ -18,6 +18,14 @@ namespace Editor
         {
             base.OnStartup(e);
 
+            // Updater hook: right before the installer takes over, stop the live DX12 render loop (exiting out from
+            // under it painted the viewport white) and release the AppMutex so the silent install doesn't wait on us.
+            Editor.Core.Services.Update.UpdateService.BeforeExit = () =>
+            {
+                try { Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.SuspendRendering(); } catch { }
+                ReleaseSingleInstanceMutex();
+            };
+
             // VS F5 debugs this C# app with the MANAGED debugger, which does NOT reliably set the native
             // BeingDebugged flag — so the native IsDebuggerPresent() gate that skips DLSS/Streamline under a
             // debugger (NGX hangs inside LoadLibrary("sl.interposer.dll") when debugged, freezing startup at

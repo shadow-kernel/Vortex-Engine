@@ -70,7 +70,6 @@
                       ../../Editor/Core/Services/MultiViewportRenderService.cs;
                       ../../Editor/Core/Services/ViewportRenderer.cs;
                       ../../Editor/Core/Services/Rendering/*.cs;
-                      ../../Editor/Core/Services/Update/*.cs;
                       ../../Editor/Core/Services/Build/GameExporter.cs;
                       ../../Editor/Core/Util/FilePicker.cs"
              Link="Editor/Core/%(RecursiveDir)%(Filename)%(Extension)" />
