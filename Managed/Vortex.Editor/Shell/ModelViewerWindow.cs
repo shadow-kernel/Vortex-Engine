@@ -51,6 +51,8 @@ namespace VortexEditor.Shell
 
         public Task<bool> WhenReady => _ready.Task;
         public ViewKind Kind => _kind;
+        /// <summary>The file this window shows.</summary>
+        public string AssetPath => _path;
         public PreviewViewport Preview => _preview;
         public TextureViewer TextureViewer => _texture;
 

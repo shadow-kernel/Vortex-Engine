@@ -55,7 +55,7 @@ namespace VortexEditor.Panels
         /// <summary>The live browser (static callers: "locate asset" from the inspector / hierarchy).</summary>
         public static AssetBrowserPanel Current { get; private set; }
 
-        public static readonly string[] TabNames = { "Explorer", "Library", "Store", "Meshes", "Models", "Textures", "Materials", "Scripts", "Audio", "Prefabs", "Scenes" };
+        public static readonly string[] TabNames = { "Explorer", "Meshes", "Models", "Textures", "Materials", "Scripts", "Audio", "Prefabs", "Scenes" };
 
         private readonly ObservableCollection<AssetTile> _tiles = new ObservableCollection<AssetTile>();
         private readonly BrowserSettings _settings;
@@ -112,36 +112,6 @@ namespace VortexEditor.Panels
             Items.AddHandler(DragDrop.DragOverEvent, OnItemsDragOver);
             Items.AddHandler(DragDrop.DragLeaveEvent, (s, e) => SetDropHighlight(null));
             Items.AddHandler(DragDrop.DropEvent, OnItemsDrop);
-            UpdateNavButtons();
-
-            // the global asset library tab (#58) shares the search box, tag button, sort and tile size
-            Library.SearchApplied += text => { _searchTimer?.Stop(); _search = text ?? ""; if ((SearchBox.Text ?? "") != _search) SearchBox.Text = _search; };
-            Library.FiltersChanged += () => { UpdateTagButton(); if (_tab == "Library") UpdateBreadcrumb(); };
-            Library.SetTileSize(TileSize);
-        }
-
-        /// <summary>The Library tab is showing (the global asset library instead of the project).</summary>
-        public bool IsLibraryTab => _tab == "Library";
-
-        /// <summary>The Store tab is showing (free asset sources).</summary>
-        public bool IsStoreTab => _tab == "Store";
-
-        private void ApplyLibraryMode()
-        {
-            bool lib = _tab == "Library", store = _tab == "Store", special = lib || store;
-            Library.IsVisible = lib;
-            Store.IsVisible = store;
-            Items.IsVisible = !special;
-            MarqueeLayer.IsVisible = !special;
-            ListHeader.IsVisible = !special && _listMode;
-            if (special) EmptyState.IsVisible = false;
-            CreateButton.IsVisible = !special;
-            ImportButton.IsVisible = !store;
-            TagButton.IsVisible = SortButton.IsVisible = !store;
-            GridModeButton.IsEnabled = ListModeButton.IsEnabled = !special;
-            SizeSlider.IsEnabled = special || !_listMode;
-            ToolTip.SetTip(ImportButton, lib ? "Add files to the asset library (no project needed)" : "Import files into this folder (or drop files from Finder)");
-            SearchBox.Watermark = store ? "Search the store" : lib ? "Search the library" : "Search assets";
             UpdateNavButtons();
         }
 
@@ -246,8 +216,8 @@ namespace VortexEditor.Panels
 
         private void UpdateNavButtons()
         {
-            BackButton.IsEnabled = _tab != "Library" && _tab != "Store" && _back.Count > 0;
-            ForwardButton.IsEnabled = _tab != "Library" && _tab != "Store" && _forward.Count > 0;
+            BackButton.IsEnabled = _back.Count > 0;
+            ForwardButton.IsEnabled = _forward.Count > 0;
         }
 
         /// <summary>Navigate to a file's folder and select it (WPF SelectFileInExplorer).</summary>
@@ -283,11 +253,9 @@ namespace VortexEditor.Panels
             if (Array.IndexOf(TabNames, tab) < 0) tab = "Explorer";
             _tab = tab;
             foreach (var child in Tabs.Children) if (child is RadioButton rb && (rb.Tag as string) == tab) rb.IsChecked = true;
-            ApplyLibraryMode();
             Actions.StopAudition();   // leaving (or re-entering) a tab silences the preview (WPF)
             CancelRename();
             if (refresh) RefreshNow(resetScroll: true);
-            if (tab == "Library") Library.OnShown();
         }
 
         private void OnTabClick(object sender, RoutedEventArgs e) => SetTab((sender as RadioButton)?.Tag as string ?? "Explorer");
@@ -339,7 +307,6 @@ namespace VortexEditor.Panels
 
         private void OnTagFilterClick(object sender, RoutedEventArgs e)
         {
-            if (_tab == "Library") { Library.ShowTagMenu(TagButton); return; }
             var m = new MenuFlyout();
             m.Items.Add(Check("All tags", _tagFilter == null, () => SetTagFilter(null)));
             var tags = AllTags();
@@ -350,15 +317,6 @@ namespace VortexEditor.Panels
 
         private void UpdateTagButton()
         {
-            if (_tab == "Library")
-            {
-                var lt = Library.TagFilter;
-                TagLabel.Text = lt.Count == 0 ? "" : string.Join(" + ", lt);
-                TagLabel.IsVisible = lt.Count > 0;
-                if (lt.Count > 0) TagIcon.Foreground = Brush("VxAccentBrush"); else TagIcon.ClearValue(ForegroundProperty);
-                ToolTip.SetTip(TagButton, lt.Count > 0 ? "Library assets tagged " + string.Join(" and ", lt) + " — click to change" : "Show only library assets with tags");
-                return;
-            }
             TagLabel.Text = _tagFilter ?? "";
             TagLabel.IsVisible = _tagFilter != null;   // icon only until a tag filter is active (keeps the type tabs visible)
             if (_tagFilter != null) TagIcon.Foreground = Brush("VxAccentBrush"); else TagIcon.ClearValue(ForegroundProperty);
@@ -383,7 +341,6 @@ namespace VortexEditor.Panels
 
         private void OnSortClick(object sender, RoutedEventArgs e)
         {
-            if (_tab == "Library") { ShowLibrarySortMenu(); return; }
             var m = new MenuFlyout();
             foreach (var (key, label) in new[] { ("Name", "Name"), ("Type", "Type"), ("Modified", "Date Modified"), ("Size", "Size") })
             {
@@ -410,29 +367,8 @@ namespace VortexEditor.Panels
             RefreshNow(resetScroll: false);
         }
 
-        private void ShowLibrarySortMenu()
-        {
-            var m = new MenuFlyout();
-            foreach (var (key, label) in new[] { (Editor.Core.Assets.Library.LibrarySort.Name, "Name"), (Editor.Core.Assets.Library.LibrarySort.Type, "Type"),
-                                                 (Editor.Core.Assets.Library.LibrarySort.Added, "Date Added"), (Editor.Core.Assets.Library.LibrarySort.Size, "Size") })
-            {
-                var k = key;
-                m.Items.Add(Check(label, Library.Sort == k, () => { Library.SetSort(k, Library.Descending); UpdateSortLabel(); }));
-            }
-            m.Items.Add(new Separator());
-            m.Items.Add(Check("Ascending", !Library.Descending, () => { Library.SetSort(Library.Sort, false); UpdateSortLabel(); }));
-            m.Items.Add(Check("Descending", Library.Descending, () => { Library.SetSort(Library.Sort, true); UpdateSortLabel(); }));
-            m.ShowAt(SortButton);
-        }
-
         private void UpdateSortLabel()
         {
-            if (_tab == "Library")
-            {
-                SortLabel.Text = Library.Sort == Editor.Core.Assets.Library.LibrarySort.Added ? "Date" : Library.Sort.ToString();
-                SortArrow.RenderTransform = Library.Descending ? new RotateTransform(180) : null;
-                return;
-            }
             SortLabel.Text = _settings.SortBy == "Modified" ? "Date" : _settings.SortBy;
             SortArrow.RenderTransform = _settings.SortDescending ? new RotateTransform(180) : null;
         }
@@ -465,8 +401,6 @@ namespace VortexEditor.Panels
             TileSize = size;
             TileWidth = size + 14;
             IconSize = Math.Round(size * 0.36);
-            Library?.SetTileSize(size);
-            Store?.SetTileSize(size);
             if (!save) return;
             _settings.TileSize = size;
             if (_saveTimer == null)
@@ -494,23 +428,6 @@ namespace VortexEditor.Panels
         private void RefreshNow(bool resetScroll)
         {
             _refreshTimer?.Stop();
-            if (_tab == "Store")
-            {
-                UpdateBreadcrumb();
-                Store.SetTileSize(TileSize);
-                Store.SetSearch(_search);
-                return;
-            }
-            if (_tab == "Library")
-            {
-                UpdateBreadcrumb();
-                UpdateSortLabel();
-                UpdateTagButton();
-                Library.SetTileSize(TileSize);
-                Library.SetSearch(_search);
-                Library.Refresh();
-                return;
-            }
             // A file change (watcher, another window saving) while a tile is being renamed would replace that tile and
             // take the inline editor + its focus with it: wait until the rename is committed or cancelled.
             if (!resetScroll && _tiles.Any(t => t.IsRenaming)) { ScheduleRefresh(); return; }
@@ -908,20 +825,6 @@ namespace VortexEditor.Panels
         private void UpdateBreadcrumb()
         {
             Breadcrumb.Children.Clear();
-            if (_tab == "Store")
-            {
-                Breadcrumb.Children.Add(new VxIcon { Icon = "World", Width = 13, Height = 13, VerticalAlignment = VerticalAlignment.Center, Foreground = Brush("VxAccentBrush"), Margin = new Thickness(6, 0, 4, 0) });
-                Breadcrumb.Children.Add(new TextBlock { Text = "Asset Store", FontWeight = FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center });
-                Breadcrumb.Children.Add(new TextBlock { Text = "· free sources → your library", Classes = { "tertiary" }, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(5, 0) });
-                return;
-            }
-            if (_tab == "Library")
-            {
-                Breadcrumb.Children.Add(new VxIcon { Icon = "Library", Width = 13, Height = 13, VerticalAlignment = VerticalAlignment.Center, Foreground = Brush("VxAccentBrush"), Margin = new Thickness(6, 0, 4, 0) });
-                Breadcrumb.Children.Add(new TextBlock { Text = "Asset Library", FontWeight = FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center });
-                Breadcrumb.Children.Add(new TextBlock { Text = "· all projects on this machine", Classes = { "tertiary" }, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(5, 0) });
-                return;
-            }
             string root = ProjectRoot;
             if (root == null) { Breadcrumb.Children.Add(new TextBlock { Text = "No project", Classes = { "secondary" }, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0) }); return; }
             var segs = new List<(string label, string path)> { (ProjectData.Current?.Name ?? Path.GetFileName(root.TrimEnd('/', '\\')), root) };
@@ -1044,11 +947,7 @@ namespace VortexEditor.Panels
         private void OnBackClick(object sender, RoutedEventArgs e) => GoBack();
         private void OnForwardClick(object sender, RoutedEventArgs e) => GoForward();
         private void OnRefreshClick(object sender, RoutedEventArgs e) { RefreshDatabase(); RefreshNow(false); }
-        private async void OnImportClick(object sender, RoutedEventArgs e)
-        {
-            if (_tab == "Library") { await Library.PickFilesToLibrary(); return; }
-            await ImportViaPicker();
-        }
+        private async void OnImportClick(object sender, RoutedEventArgs e) => await ImportViaPicker();
         private void OnCreateClick(object sender, RoutedEventArgs e)
         {
             var m = new MenuFlyout();

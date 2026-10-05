@@ -890,6 +890,32 @@ namespace VortexEditor.Shell
 
         // ============================================================ helpers
         public static void Toast(string message) => Window?.ShowToast(message);
+
+        // ============================================================ asset library / store tabs
+
+        /// <summary>Bring the Library tab to the front, optionally searching for <paramref name="search"/>.</summary>
+        public static void ShowLibrary(string search = null)
+        {
+            Window?.ShowPanel(MainWindow.PanelLibrary);
+            if (search != null) Panels.LibraryPanel.Current?.SetSearch(search);
+        }
+
+        /// <summary>Bring the Asset Store tab to the front, optionally on one source ("polyhaven", "sketchfab",
+        /// "soundstudio" …).</summary>
+        public static void ShowStore(string providerId = null)
+        {
+            // pick the source first: showing the tab would otherwise open the first source (and search it) on the way
+            if (providerId != null) Panels.StorePanel.Current?.View.SelectProvider(providerId);
+            Window?.ShowPanel(MainWindow.PanelStore);
+        }
+
+        /// <summary>Show a project file in the Project tab (selected in its folder).</summary>
+        public static void RevealInProject(string fullPath)
+        {
+            Window?.ShowPanel(MainWindow.PanelProject);
+            Panels.AssetBrowserPanel.Current?.SetTab("Explorer");
+            Panels.AssetBrowserPanel.Current?.Reveal(fullPath);
+        }
         public static void Fail(string what, Exception ex)
         {
             ConsoleService.Instance.LogError(what + ": " + ex.Message);

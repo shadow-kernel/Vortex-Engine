@@ -513,8 +513,15 @@ namespace VortexEditor.Panels.AssetBrowser
             var p = e.GetCurrentPoint(this);
             if (p.Properties.IsRightButtonPressed) { if (!_selected.Contains(tile.Id)) SelectOnly(tile); return; }
             if (!p.Properties.IsLeftButtonPressed) return;
-            if (e.ClickCount >= 2) { _ = AddToProject(SelectedOr(tile), null, place: false); e.Handled = true; return; }
             var mods = e.KeyModifiers;
+            if (e.ClickCount >= 2)
+            {
+                // Shift / ⌘ / Ctrl = look at it straight from the library (Model Viewer …); plain = add to the project
+                if (mods.HasFlag(KeyModifiers.Shift) || mods.HasFlag(KeyModifiers.Meta) || mods.HasFlag(KeyModifiers.Control)) { SelectOnly(tile); Preview(tile.Entry); }
+                else _ = AddToProject(SelectedOr(tile), null, place: false);
+                e.Handled = true;
+                return;
+            }
             bool toggle = mods.HasFlag(KeyModifiers.Meta) || mods.HasFlag(KeyModifiers.Control);
             _selectOnRelease = false;
             if (mods.HasFlag(KeyModifiers.Shift) && _anchorId != 0)
@@ -570,7 +577,7 @@ namespace VortexEditor.Panels.AssetBrowser
             else if (cmd && e.Key == Key.A) { SelectAll(); e.Handled = true; }
             else if ((e.Key == Key.Delete || e.Key == Key.Back) && _selected.Count > 0) { _ = DeleteSelected(); e.Handled = true; }
             else if (e.Key == Key.Enter && _selected.Count > 0) { _ = AddToProject(SelectedEntries.ToList(), null, place: false); e.Handled = true; }
-            else if (e.Key == Key.Space && _selected.Count == 1) { LibraryThumbs.Audition(SelectedEntries[0]); e.Handled = true; }
+            else if (e.Key == Key.Space && _selected.Count == 1) { Preview(SelectedEntries[0]); e.Handled = true; }
         }
 
         // ================================================================== context menu
@@ -583,6 +590,7 @@ namespace VortexEditor.Panels.AssetBrowser
             bool one = sel.Count == 1;
             var m = new ContextMenu();
             bool hasProject = ProjectRoot != null;
+            if (one && CanPreview(sel[0])) { m.Items.Add(Mi("Preview", () => Preview(sel[0]), "Eye")); m.Items.Add(new Separator()); }
             m.Items.Add(Mi(one ? "Add to Project" : "Add " + sel.Count + " to Project", () => _ = AddToProject(sel, null, false), "Import", hasProject));
             m.Items.Add(Mi("Add to Project in Folder…", () => _ = AddToProjectInFolder(sel), "Folder", hasProject));
             if (sel.Any(x => x.Type == AssetType.Mesh || x.Type == AssetType.Prefab))
@@ -763,6 +771,9 @@ namespace VortexEditor.Panels.AssetBrowser
             m.Items.Add(Mi("Index Existing Projects…", () => _ = LibraryIndexDialog.Run(), "Refresh"));
             m.Items.Add(Mi("Import Bundle…", () => _ = ImportBundle(), "Import"));
             m.Items.Add(Mi("Export Results to Bundle…", () => _ = ExportBundle(_tiles.Select(t => t.Id).ToList()), "Export", _tiles.Count > 0));
+            m.Items.Add(new Separator());
+            m.Items.Add(Mi("Get Free Assets (Asset Store)", () => EditorCommands.ShowStore(), "World"));
+            m.Items.Add(Mi("Generate a Sound (Sound Studio)…", () => VortexEditor.Shell.Audio.SoundStudioWindow.Open(), "Sparkle"));
             m.Items.Add(new Separator());
             m.Items.Add(Mi("Tag Manager…", () => _ = LibraryTagManager.Run(), "Tag"));
             m.Items.Add(Mi("Maintenance…", () => LibraryMaintenanceWindow.Open(), "Hammer"));
@@ -993,6 +1004,7 @@ namespace VortexEditor.Panels.AssetBrowser
             add.Margin = new Thickness(0, 0, 6, 6);
             actions.Children.Add(add);
             if (e.Type == AssetType.Audio) { var play = Ui.Button("Play", () => LibraryThumbs.Audition(e), "Audition from the library"); play.Margin = new Thickness(0, 0, 6, 6); actions.Children.Add(play); }
+            if (CanPreview(e)) { var look = Ui.Button("Preview", () => Preview(e), "Open it in the viewer straight from the library — nothing is copied into the project (Shift- or ⌘-double-click, Space)"); look.Margin = new Thickness(0, 0, 6, 6); actions.Children.Add(look); }
             if (e.Type == AssetType.Mesh || e.Type == AssetType.Prefab)
             {
                 var place = Ui.Button("Add to Scene", () => _ = AddToProject(new List<LibraryEntry> { e }, null, true), "Add to the project and place it in the scene");
@@ -1165,6 +1177,38 @@ namespace VortexEditor.Panels.AssetBrowser
         {
             base.OnAttachedToVisualTree(e);
             if (_dirty && IsEffectivelyVisible) Refresh();
+        }
+
+        // ================================================================== preview (no project copy)
+        /// <summary>Types the viewer shows straight from the library (audio plays instead).</summary>
+        public static bool CanPreview(LibraryEntry e)
+            => e != null && e.Stored && (e.Type == AssetType.Mesh || e.Type == AssetType.Texture || e.Type == AssetType.Material);
+
+        /// <summary>The path of the last preview (smoke checks).</summary>
+        internal static string LastPreviewPath;
+
+        /// <summary>
+        /// Shift- / ⌘-double-click, Space, the context menu and the details pane: open the asset in the viewer (Model
+        /// Viewer for models, texture and material previews) straight from the library — its file and companions are
+        /// cloned into the library's temp folder; nothing is copied into the project. Audio plays instead.
+        /// </summary>
+        public static void Preview(LibraryEntry e)
+        {
+            if (e == null) return;
+            if (e.Type == AssetType.Audio) { LibraryThumbs.Audition(e); return; }
+            if (!CanPreview(e))
+            {
+                EditorCommands.Toast(e.Stored ? "No preview for " + TypeLabel(e.Type).ToLowerInvariant() + " assets — add it to the project to open it" : "The library lost this file's bytes — import the original again");
+                return;
+            }
+            string path;
+            try { path = LibraryPreview.Materialize(Lib, Lib.Get(e.Id) ?? e); }
+            catch (Exception ex) { EditorCommands.Fail("Preview", ex); return; }
+            LastPreviewPath = path;
+            if (!EditorWindows.OpenLargePreview(path)) { EditorCommands.Toast("No preview for " + e.FileName); return; }
+            // say where it comes from: the file sits in the library's temp folder, not in the project
+            var w = EditorKit.OpenWindows<ModelViewerWindow>().LastOrDefault(x => string.Equals(x.AssetPath, path, StringComparison.Ordinal));
+            if (w != null && !w.Title.EndsWith("(Library)", StringComparison.Ordinal)) w.Title += "  (Library)";
         }
 
         // ================================================================== smoke

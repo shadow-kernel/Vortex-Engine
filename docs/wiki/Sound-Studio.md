@@ -1,6 +1,6 @@
 # Sound Studio
 
-**Window → Sound Studio…** turns a description into sound effects: describe the sound, audition the takes, refine them, and save the one you like into your [[Asset-Library]] — and straight into the project. Every saved take remembers how it was made, so you can reopen it later and make a sibling.
+**Window → Sound Studio…** (also *Assets → Asset Library → Sound Studio…* and the **Sound Studio** entry at the bottom of the Asset Store's source list) turns a description into sound effects: describe the sound, audition the takes, refine them, and save the one you like into your [[Asset-Library]] — and straight into the project. Every saved take remembers how it was made, so you can reopen it later and make a sibling.
 
 ## Backends
 
