@@ -1,5 +1,7 @@
 # Roadmap
 
+> **Update 2026-10-05:** the plan now runs to **v5.0.0 — a 16+ player Battle Royale at Call of Duty: Black Ops quality** (texture streaming, world partition, netcode, online services, shooter framework, AAA rendering). The [GitHub milestones](https://github.com/shadow-kernel/Vortex-Engine/milestones) are the source of truth and [ROADMAP.md](https://github.com/shadow-kernel/Vortex-Engine/blob/main/ROADMAP.md) summarises them; issues the Battle Royale needs carry [`br-blocker`](https://github.com/shadow-kernel/Vortex-Engine/issues?q=is%3Aissue+is%3Aopen+label%3Abr-blocker). The Global Asset Database is **v2.9.0** (v2.8.0 became the Windows/macOS/Linux release) and the Asset Store is **v2.10.0**. The sections below describe the original horror-first plan.
+
 Vortex Engine's roadmap is **horror-game-first**: every milestone up to v3.0.0 is ordered by what a first-person horror game needs *next*, not by what looks impressive on a feature matrix. Two fixed points define the sequence:
 
 - **"Game-Dev Ready" = end of v2.7.0.** When the [Horror Essentials milestone](https://github.com/shadow-kernel/Vortex-Engine/milestone/2) closes, development of the first horror game officially starts on the engine. Everything in v2.6.0 and v2.7.0 is gated by that goal — audio first (a silent horror game is not a horror game), then shadows, fog, post-FX, triggers, save/load, and a first-person starter template.

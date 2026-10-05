@@ -15,6 +15,7 @@
 - [[Managed-Interop-Bindings]]
 
 **Guides**
+- [[Asset-Library]]
 - [[Audio-Anleitung-DE]]
 
 **Design Docs**
