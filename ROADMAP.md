@@ -15,9 +15,9 @@ Status legend: ✅ shipped on `main` · 🟡 partial · ⬜ open. Issue numbers 
 | Version | Milestone | Status | What it delivers |
 |---|---|---|---|
 | v2.8.0 | Windows · macOS · Linux — released 2026-10-04 | ✅ | macOS (Metal) + Linux (Vulkan) ports, Physics v2 (Jolt), editor-first hands |
-| v2.9.0 | Global Asset Database — due 2026-10-14 | ✅ on main | machine-wide SHA-256 asset library, Library tab, Add to Project, duplicate-aware import, project indexer, maintenance, bundles, settings (#52–#65) |
-| v2.10.0 | Asset Store & Claude Sound Studio — due 2026-11-14 | ✅ on main | Poly Haven / ambientCG / poly.pizza / Freesound / Kenney / Sketchfab providers feeding the library, Mixamo + Sonniss guided flows, license check + CREDITS.md, Claude Sound Studio with ElevenLabs / fal.ai / Stability backends and recipes (#66–#83) |
-| v3.0.0 | Claude-Native Engine (release) — due 2026-12-19 | ⬜ next | MCP server + tool sets, embedded Claude panel (#84–#94, #99); Avalonia editor on Windows (#183), CI test gate (#161), macOS CI (#184), signing (#96), crash reporting (#97), project upgrades (#186), v3.0 hardening (#95, #98), asset source outreach (#290) |
+| v2.9.0 | Global Asset Database — released 2026-10-05 | ✅ | machine-wide SHA-256 asset library, Library tab, Add to Project, duplicate-aware import, project indexer, maintenance, bundles, settings (#52–#65) |
+| v2.10.0 | Asset Store & Claude Sound Studio — released 2026-10-05 | ✅ | Poly Haven / ambientCG / poly.pizza / Freesound / Kenney / Sketchfab providers feeding the library, Mixamo + Sonniss guided flows, license check + CREDITS.md, Claude Sound Studio with ElevenLabs / fal.ai / Stability backends and recipes (#66–#83) |
+| v3.0.0 | Claude-Native Engine (release) — due 2026-12-19 | ⬜ next | MCP server + tool sets, embedded Claude panel (#84–#94, #99); Avalonia editor on Windows (#183), CI test gate (#161), macOS CI (#184), signing (#96), crash reporting (#97), project upgrades (#186), v3.0 hardening (#95, #98), asset source outreach (#290), template packs for installed editors (#299) |
 | v3.1.0 | Physics v2 | 🟡 | ✅ Jolt, joints (#103), ragdolls (#104), render interpolation; ⬜ player on CharacterVirtual (#105, #187), Jolt in the Visual Studio build (#182), debug draw (#106), compound colliders (#107) |
 | v3.2.0 | AI & Navigation | 🟡 | navmesh, agents, perception merged as work in progress; behaviour trees (#111), root motion (#113), Tactical Shooter combat bots (#193) |
 | v3.3.0 | VFX | 🟡 | particle system + VFX editor merged as work in progress; volumetric fog (#119), decals (#120), weapon VFX (#178) for every camera (#194) |
@@ -40,16 +40,16 @@ original-quality downloads (#289).
 "v2.8.0 – Global Asset Database" is v2.9.0 and the Asset Store moved to v2.10.0.
 
 ## Now
-1. **Releases v2.9.0 + v2.10.0** — both milestones are complete on `main`; tagging them runs the release build.
-2. **v3.0.0 Claude-Native Engine** — the MCP server and its tool sets (#84–#94, #99) on the plain-HTTP Claude client the
+1. **v3.0.0 Claude-Native Engine** — the MCP server and its tool sets (#84–#94, #99) on the plain-HTTP Claude client the
    Sound Studio already uses; the Avalonia editor on Windows (#183, which also brings the Library, Store and Sound Studio
-   to Windows), the CI test gate (#161) and macOS CI (#184).
-3. **Release hardening for v3.0.0** — signing (#96), crash reporting (#97), project upgrades (#186), asset source
-   outreach (#290).
+   to Windows), the CI test gate (#161) and macOS CI (#184) — a Windows build on every PR would have caught the broken
+   v2.8.0 installer build.
+2. **Release hardening for v3.0.0** — signing (#96), crash reporting (#97), project upgrades (#186), asset source
+   outreach (#290), template packs so installed editors get the templates' LFS assets (#299).
 
 ## Shipped
 
-### v2.10.0 — Asset Store & Claude Sound Studio (on main, 2026-10-05)
+### v2.10.0 — Asset Store & Claude Sound Studio (released 2026-10-05)
 - ✅ **Store tab** in the Asset Browser (`Managed/Vortex.Core/Store/`): Poly Haven (models, PBR sets, HDRIs, MD5-checked),
   ambientCG (zip → wired `.vmat`, renders in the Material Editor), Kenney (curated packs), poly.pizza, Freesound
   (audition, 2,000/day budget), Sketchfab (NC/ND hidden by default) — the user's own keys only. Mixamo (Downloads
@@ -63,8 +63,13 @@ original-quality downloads (#289).
   Open) and Stability AI (Stable Audio 2.5 up to 3:10 min, Stable Audio 3 up to 6:20 min) backends; Claude designs the
   prompts in a streamed tool loop and refines them from feedback; takes saved with their recipe ("Open in Sound Studio"
   makes a sibling). Docs: [Asset Store](docs/wiki/Asset-Store.md), [Sound Studio](docs/wiki/Sound-Studio.md).
+- ✅ **Library and Asset Store tabs** next to Project and Console (⌘/Ctrl+7, ⌘/Ctrl+8); Shift/⌘-double-click previews a
+  library model, texture or material in the viewer without copying it into the project.
+- ✅ **Store materials at their true scale**: real-world size from the provider, a tiled copy when dropped on a floor or
+  wall primitive, *Fit to Selected Object* in the Material Editor; spheres, cylinders and cones were lit inside-out on
+  every backend (fixed, guarded by `VortexGeometryTest`).
 
-### v2.9.0 — Global Asset Database (on main, 2026-10-05)
+### v2.9.0 — Global Asset Database (released 2026-10-05)
 - ✅ **Machine-wide library** (`Editor/Core/Assets/Library/`): SQLite catalog through the OS SQLite (no new dependency),
   content-addressed blob store (`blobs/ab/<sha256>`), thumbnails per hash, WAL so several editors share it. Every import
   is hashed into its `.vmeta` (`ContentHash`) and registered in the background; models keep their folder as companions.
@@ -76,6 +81,9 @@ original-quality downloads (#289).
 - ✅ `Managed/Vortex.Core.Tests` — headless core tests (`dotnet run --project Managed/Vortex.Core.Tests`), plus the editor
   smoke check `VORTEX_SMOKE_ONLY=library`. Docs: [Asset Library](docs/wiki/Asset-Library.md),
   [design](docs/wiki/Design-Global-Asset-Database.md).
+- ✅ **Windows installer back**: the v2.8.0 release build had failed (DX12 lacked the UTF-8 overlay calls; the Visual
+  Studio engine project lacked `RenderBackend.cpp`) and the Inno Setup download link now returns HTML (installed via
+  Chocolatey now), so v2.8.0 shipped without an installer — all fixed; v2.9.0 and v2.10.0 ship installers.
 
 ### Since 2.8 (on main)
 - ✅ **Linux port**: Vulkan backend via SDL GPU (GLSL → SPIR-V at build time), the editor and the player on X11
