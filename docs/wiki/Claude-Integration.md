@@ -5,8 +5,23 @@ components, look at the viewport, run the game and read the console. The editor 
 (MCP) server**; Claude Code and Claude Desktop connect to it and use its [tools](Claude-Tools). Your own Claude
 subscription does the thinking — the editor needs no API key for this.
 
-> Milestone [v3.0.0 – Claude-Native Engine](https://github.com/shadow-kernel/Vortex-Engine/milestone/5).
-> Architecture and decisions: [[Design-Claude-Integration]].
+<img src="https://raw.githubusercontent.com/shadow-kernel/Vortex-Engine/main/docs/showcase/vortex-3.0-claude.webp" width="100%" alt="Claude Code builds and sounds a horror corridor in the Vortex editor through the MCP server: one prompt, 85 tool calls in 2.7 minutes, sped up"/>
+
+*One prompt in Claude Code: "build a short horror corridor and fully sound it". The editor's MCP server did the rest:
+85 tool calls in 2.7 minutes, recorded and sped up. In short:*
+
+1. In the editor: **Tools ▸ Claude ▸ Connect Claude Code / Desktop…**, then **Start**.
+2. Copy the one command it shows (`claude mcp add --transport http vortex http://127.0.0.1:<port>/mcp`), or press
+   **Write .mcp.json to Project**.
+3. Ask Claude Code for what you want. It builds, compiles scripts, looks at the viewport and play-tests.
+4. Every call is **one undo step**. *Tools ▸ Claude ▸ Operations…* lists them with their file diffs and reverts any of
+   them.
+
+The sections below cover each step in detail.
+
+> Shipped in [v3.0.0](https://github.com/shadow-kernel/Vortex-Engine/releases/tag/v3.0.0) and checked end to end with
+> real Claude Code sessions ([Release Process](Release-Process#claude-end-to-end)). Architecture and decisions:
+> [[Design-Claude-Integration]].
 
 ## 1. Turn on the MCP server
 

@@ -22,7 +22,7 @@
 **Direct3D 12**, **Metal** and **Vulkan** renderers, gameplay written as C# scripts (`VortexBehaviour`, never hardcoded
 in the engine), and an editor that **Claude** can operate — through the built-in MCP server from Claude Code or Claude
 Desktop, or in the editor's own Claude panel. The first game target is **first-person horror**; the long-term goal is a
-16+ player Battle Royale at Black Ops quality. Releases: [GitHub Releases](https://github.com/shadow-kernel/Vortex-Engine/releases).
+16+ player Battle Royale at Black Ops quality. Releases: [GitHub Releases](https://github.com/shadow-kernel/Vortex-Engine/releases) ([how they are made](Release-Process)).
 
 ## What works today
 
@@ -89,6 +89,7 @@ Full details per milestone: [[Roadmap]].
 
 **Developer documentation** — how to program the engine
 - [[Developer-Guide]] — the entry point: how the layers fit and where everything is documented
+- [[Release-Process]] — from a pull request to a release: the CI gates, the installer test, template packs, milestones
 - [[Scripting-Getting-Started]] — write your first `VortexBehaviour`, the lifecycle, compile & hot-reload
 - [[Scripting-API-Reference]] — every type/method in the `Vortex` namespace (Input, Physics, Audio, UI, …)
 - [[Entities-and-Components]] — the `GameEntity` / `Component` model and every component type
