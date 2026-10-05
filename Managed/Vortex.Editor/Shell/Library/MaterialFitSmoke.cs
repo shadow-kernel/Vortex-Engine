@@ -113,6 +113,21 @@ namespace VortexEditor.Shell.Library
                 UndoRedoManager.Instance.Undo();
                 UndoRedoManager.Instance.Undo();
                 if (mr.MaterialPath != before) return Fail("Undo did not restore " + before + " (now " + mr.MaterialPath + ")");
+
+                // Material Editor → UV → Fit to Selected Object: the same tiling on the material itself
+                Editor.Core.Services.SelectionService.Instance.Select(floor);
+                MaterialEditorWindow.Open(vmat);
+                var ed = MaterialEditorWindow.Find(vmat);
+                if (ed == null) return Fail("no material editor");
+                try
+                {
+                    await SmokeRegistry.Settle(400);
+                    string msg = ed.FitToSelection();
+                    var tl = ed.Working.UVTiling;
+                    if (Math.Abs(tl[0] - 1.6f) > 0.001f || Math.Abs(tl[1] - 6.13f) > 0.001f) return Fail("Fit to Selected Object gave " + tl[0] + " × " + tl[1] + " (" + msg + ")");
+                    ed.Undo();
+                }
+                finally { ed.Close(); }
                 log.Log("material fit: OK → " + Path.GetFileName(expected) + " tiled 1.6 × 6.13");
                 return true;
             }
