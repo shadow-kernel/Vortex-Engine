@@ -54,6 +54,7 @@ namespace Editor.Core.Services
         /// permanent for the session, never retried per frame.</summary>
         private readonly HashSet<string> _failedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private GameEntity _listenerEntity;
+        private bool _occlusionPending;
         private bool _active;
         private bool _paused;
         private bool _tickFaulted;
@@ -81,14 +82,11 @@ namespace Editor.Core.Services
                 mixer.Apply();
                 GameAudioSettings.Instance.LoadAndApply();
 
-                // Steam Audio (#21): once the master switch is on, feed the level's collision geometry to the
-                // occlusion scene so an opted-in source behind a wall is muffled. HRTF works without this; occlusion
-                // needs it. Best-effort — if collision isn't built yet, occlusion simply has no geometry.
-                if (mixer.SteamAudioEnabled &&
-                    Physics.CollisionService.ExportOcclusionGeometry(out var occVerts, out var occIdx))
-                {
-                    VortexAudio.SteamSetGeometry(occVerts, occIdx);
-                }
+                // Steam Audio (#21): once the master switch is on, the level's collision geometry feeds the occlusion
+                // scene so an opted-in source behind a wall is muffled. HRTF works without it; occlusion needs it.
+                // Taken on the first tick: BeginPlay runs before the script runtime builds this scene's collision
+                // world, and reading it here gave the first run nothing and later runs the previous scene's walls.
+                _occlusionPending = mixer.SteamAudioEnabled;
             }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Audio] mixer config apply failed: " + ex.Message); }
 
@@ -122,6 +120,12 @@ namespace Editor.Core.Services
 
             try
             {
+                if (_occlusionPending)
+                {
+                    _occlusionPending = false;
+                    if (Physics.CollisionService.ExportOcclusionGeometry(out var occVerts, out var occIdx))
+                        VortexAudio.SteamSetGeometry(occVerts, occIdx);
+                }
                 UpdateListener();
                 UpdateReverbZones(_listenerPos);
                 TickMusic();
@@ -245,6 +249,45 @@ namespace Editor.Core.Services
             catch { /* component may be mid-teardown on scene switch */ }
         }
 
+        /// <summary>An entity that joined the running game (Scene.Instantiate, socket prefabs): its Audio Sources
+        /// and Reverb Zones take part from the next tick — Play On Awake ones start then, like at play start.</summary>
+        public void AddEntity(GameEntity e)
+        {
+            if (!_active || e == null) return;
+            try
+            {
+                int before = _bindings.Count;
+                bool warned = true;   // a second listener in a spawned prefab is ignored quietly
+                CollectRecursive(e, ref warned);
+                for (int i = before; i < _bindings.Count; i++) _bindings[i].WantsPlay = _bindings[i].Source.PlayOnAwake;
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Audio] AddEntity failed: " + ex.Message); }
+        }
+
+        /// <summary>An entity that left the running game (Scene.Destroy): its sounds stop and its sources and zones
+        /// are released (authored entities get their pre-play values back — play stays non-destructive).</summary>
+        public void RemoveEntity(GameEntity e)
+        {
+            if (e == null) return;
+            try
+            {
+                var gone = new HashSet<GameEntity>();
+                void Collect(GameEntity x) { if (x == null) return; gone.Add(x); if (x.Children != null) foreach (var c in x.Children) Collect(c); }
+                Collect(e);
+                for (int i = _bindings.Count - 1; i >= 0; i--)
+                {
+                    var b = _bindings[i];
+                    if (!gone.Contains(b.Entity)) continue;
+                    VortexAudio.StopVoice(b.Handle);
+                    RestoreBinding(b);
+                    _bindings.RemoveAt(i);
+                }
+                _zones.RemoveAll(z => gone.Contains(z.Entity));
+                if (_listenerEntity != null && gone.Contains(_listenerEntity)) _listenerEntity = null;
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Audio] RemoveEntity failed: " + ex.Message); }
+        }
+
         // ---- script surface (Vortex.Audio, issue #11) --------------------------------
 
         private SourceBinding FindBinding(AudioSource source)
@@ -305,6 +348,14 @@ namespace Editor.Core.Services
             if (b == null) return;
             b.ScriptPaused = false;
             if (!_paused) VortexAudio.ResumeVoice(b.Handle);
+        }
+
+        /// <summary>Diagnostics (smoke checks): the running game manages this source and means to play it.</summary>
+        public bool IsTracked(AudioSource source, out bool wantsPlay)
+        {
+            var b = FindBinding(source);
+            wantsPlay = b != null && b.WantsPlay;
+            return b != null;
         }
 
         public bool ScriptIsPlaying(AudioSource source)
@@ -637,7 +688,7 @@ namespace Editor.Core.Services
             foreach (var zb in _zones)
             {
                 if (zb.Zone == null || !zb.Zone.IsEnabled || zb.Entity == null || !zb.Entity.IsActive) continue;
-                var center = zb.Entity.Transform != null ? zb.Entity.Transform.LocalPosition : new ECS.Vector3(0, 0, 0);
+                var center = ReadWorldPosition(zb.Entity);
                 float w = ZoneWeight(zb.Zone, center, listenerPos);
                 if (w <= 0f) continue;
                 totalWeight += w;
@@ -704,18 +755,15 @@ namespace Editor.Core.Services
                 t = PlayCameraHelper.FindMainCamera(ProjectData.Current?.ActiveScene);
             if (t == null) return;
 
-            var pos = t.LocalPosition;
+            // The ears' world pose — a listener on the player's camera usually sits under the player rig. The
+            // matrix rows are the renderer's: row 2 forward (sin yaw·cos pitch, −sin pitch, cos yaw·cos pitch for a
+            // top-level entity, as in PlayCameraHelper.ApplyPose), row 1 up.
+            var world = t.Entity != null ? ECS.TransformMath.World(t.Entity) : ECS.TransformMath.Local(t);
+            var pos = new ECS.Vector3(world[12], world[13], world[14]);
             _listenerPos = pos;
-            // Same yaw/pitch convention as PlayCameraHelper.ApplyPose — ears follow the eyes.
-            float pitchDeg = t.LocalRotation.X;
-            if (pitchDeg > 89f) pitchDeg = 89f; else if (pitchDeg < -89f) pitchDeg = -89f;
-            double yaw = t.LocalRotation.Y * Math.PI / 180.0;
-            double pitch = pitchDeg * Math.PI / 180.0;
-            float fx = (float)(Math.Sin(yaw) * Math.Cos(pitch));
-            float fy = (float)(-Math.Sin(pitch));
-            float fz = (float)(Math.Cos(yaw) * Math.Cos(pitch));
-
-            VortexAudio.SetListener(pos.X, pos.Y, pos.Z, fx, fy, fz, 0f, 1f, 0f);
+            var f = ECS.TransformMath.Axis(world, 2);
+            var u = ECS.TransformMath.Axis(world, 1);
+            VortexAudio.SetListener(pos.X, pos.Y, pos.Z, f.X, f.Y, f.Z, u.X, u.Y, u.Z);
         }
 
         private ECS.Vector3 ReadWorldPosition(GameEntity e)
@@ -727,7 +775,8 @@ namespace Editor.Core.Services
             // entity #0 (typically the camera), which pinned every sound to the
             // listener (measured: zero attenuation). Rigidbody-driven sources in the
             // standalone player can revisit this once physics mirroring exists there.
-            return e.Transform != null ? e.Transform.LocalPosition : new ECS.Vector3(0, 0, 0);
+            // Parents count: a source on a child of a moved entity plays where the child is.
+            return e.Transform != null ? ECS.TransformMath.WorldPosition(e) : new ECS.Vector3(0, 0, 0);
         }
 
         /// <summary>Clips already handed to the native engine as in-memory blobs.</summary>
