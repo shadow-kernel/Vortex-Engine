@@ -84,6 +84,15 @@ namespace Editor
             if (!string.IsNullOrEmpty(_projectArg)) playerMode = true;
             _stressMode = !string.IsNullOrEmpty(_stressModelArg) || !string.IsNullOrEmpty(_benchmarkDirArg);
 
+            // v2.x's in-app updater ends by starting "Vortex Engine.exe" again, but the v3 installer it ran has already
+            // started the new editor (Editor\Vortex.Editor.exe, #183). That start is the old updater's, not the user's:
+            // without this, both editors open after the update.
+            if (!playerMode && !_stressMode && IsOldUpdaterRelaunch(exeDir, e.Args))
+            {
+                Shutdown();
+                return;
+            }
+
             // Show the branded splash immediately. It's topmost, so it covers the (blocking) engine init,
             // the empty editor shell, and the project browser opening underneath — then fades to reveal them.
             var splash = new SplashWindow();
@@ -170,6 +179,22 @@ namespace Editor
         }
 
         private static System.Threading.Mutex _singleInstanceMutex;
+
+        /// <summary>True when this start is v2.x's updater relaunching this exe right after it installed v3: no
+        /// arguments, the install happened minutes ago (Inno Setup rewrites unins000.dat on every install) and the
+        /// new editor of this install is already running.</summary>
+        private static bool IsOldUpdaterRelaunch(string exeDir, string[] args)
+        {
+            try
+            {
+                if (args != null && args.Length > 0) return false;
+                string log = System.IO.Path.Combine(exeDir, "unins000.dat");
+                if (!System.IO.File.Exists(log) || DateTime.UtcNow - System.IO.File.GetLastWriteTimeUtc(log) > TimeSpan.FromMinutes(2)) return false;
+                if (!System.IO.File.Exists(System.IO.Path.Combine(exeDir, "Editor", "Vortex.Editor.exe"))) return false;
+                return System.Diagnostics.Process.GetProcessesByName("Vortex.Editor").Length > 0;
+            }
+            catch { return false; }
+        }
 
         /// <summary>Release the single-instance mutex early (auto-update handoff: the silent installer's
         /// AppMutex check must see it free BEFORE this process finishes dying).</summary>

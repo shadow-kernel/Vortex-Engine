@@ -192,8 +192,20 @@ jobs:
         $p.WaitForExit()
         Write-Host "setup exit code: $($p.ExitCode)"
         Start-Sleep -Seconds 5
-        Get-Process -Name 'Vortex Engine','Vortex.Editor' -ErrorAction SilentlyContinue | Stop-Process -Force
         $app = "$env:ProgramFiles\Vortex Engine"
+        # a silent install is the in-app update: it starts the new editor again
+        if (-not (Get-Process -Name 'Vortex.Editor' -ErrorAction SilentlyContinue)) { throw "the silent update did not start the editor" }
+        # v2.x's updater then starts its own "Vortex Engine.exe": the classic editor must leave at once, or both open
+        $c = Start-Process "$app\Vortex Engine.exe" -PassThru
+        if (-not $c.WaitForExit(30000)) { $c.Kill(); throw "after an update from v2.x the classic editor opens next to the new one" }
+        Write-Host "the classic editor started by the old updater left again"
+        Get-Process -Name 'Vortex Engine','Vortex.Editor' -ErrorAction SilentlyContinue | Stop-Process -Force
+        Start-Sleep -Seconds 2
+        # started on its own, the classic editor stays (WARP: the runner has no GPU)
+        $env:VORTEX_DX12_WARP = '1'
+        $c = Start-Process "$app\Vortex Engine.exe" -PassThru
+        if ($c.WaitForExit(10000)) { throw "the classic editor does not start on its own (exit code $($c.ExitCode))" }
+        Get-Process -Name 'Vortex Engine','Vortex.Editor' -ErrorAction SilentlyContinue | Stop-Process -Force
         $missing = @('unins000.exe','VortexAPI.dll','Vortex Engine.exe','Editor\Vortex.Editor.exe','Editor\player\Vortex.Player.exe','Shaders\standard.hlsl','Templates\Default3D\project.vortex') |
           Where-Object { -not (Test-Path (Join-Path $app $_)) }
         if ($missing) { Get-Content install.log -Tail 40; throw "missing after the update: $($missing -join ', ')" }
