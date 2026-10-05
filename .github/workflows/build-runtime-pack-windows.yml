@@ -1,0 +1,41 @@
+name: Runtime pack (Windows)
+
+# Builds the Windows runtime pack that the editor's Build dialog needs to export games for Windows from another
+# platform (macOS/Linux): the native DirectX 12 engine (VortexAPI.dll), the self-contained standalone player and
+# the HLSL shaders. Download the artifact and install it with Build ▸ "Install runtime pack…".
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  windows-runtime-pack:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout (submodules: Streamline headers)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v2
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build the runtime pack
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File tools\windows\make-runtime-pack.ps1 -Configuration Release -Zip
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: vortex-runtime-win-x64
+          path: dist/runtimes/vortex-runtime-win-x64.zip
+          if-no-files-found: error

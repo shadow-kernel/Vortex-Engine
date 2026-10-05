@@ -65,6 +65,12 @@ set_tests_properties(PhysicsSmokeTest PROPERTIES
 	PASS_REGULAR_EXPRESSION "ALL PASSED"
 	TIMEOUT 120)
 
+add_test(NAME GeometryTest COMMAND VortexGeometryTest)
+set_tests_properties(GeometryTest PROPERTIES
+	FAIL_REGULAR_EXPRESSION "FAILURES!"
+	PASS_REGULAR_EXPRESSION "ALL PASSED"
+	TIMEOUT 60)
+
 add_test(NAME NavigationSmokeTest COMMAND VortexNavigationTest)
 set_tests_properties(NavigationSmokeTest PROPERTIES
 	FAIL_REGULAR_EXPRESSION "FAILURES!"

@@ -132,8 +132,10 @@ namespace VortexEditor.Claude
 
                 // ================= assets
                 var models = await C("list_assets", new JsonObject { ["kind"] = "model", ["filter"] = "wooden_crate" });
-                string crate = (string)models["assets"]?[0];
-                if (crate == null) return Fail("list_assets found no crate model: " + models.ToJsonString());
+                if ((models["assets"] as JsonArray)?.Count == 0) models = await C("list_assets", new JsonObject { ["kind"] = "model" });
+                var modelList = models["assets"] as JsonArray;
+                // a project without models (a bare template): place a primitive instead
+                string crate = modelList != null && modelList.Count > 0 ? (string)modelList[0] : "Primitive:Cube";
                 var placed = await C("place_asset", new JsonObject { ["asset"] = crate, ["position"] = new JsonArray(205, 0, 205), ["name"] = "Mcp Crate" });
                 if ((string)placed["entity"]["name"] != "Mcp Crate" || (double)placed["bounds"]["size"][1] < 0.1) return Fail("place_asset: " + placed.ToJsonString());
                 var pf = await C("create_prefab", new JsonObject { ["entity"] = (string)placed["entity"]["id"], ["name"] = "Mcp Crate Prefab" });
@@ -143,8 +145,13 @@ namespace VortexEditor.Claude
                 if ((bool?)again["isError"] != true) return Fail("an existing prefab must not be replaced without overwrite");
 
                 // ================= audio
+                var gen = await C("generate_sound", new JsonObject { ["prompt"] = "short metallic clank", ["duration"] = 0.6, ["backend"] = "procedural", ["name"] = "Mcp Clank" });
+                string genPath = (string)gen["path"];
+                if (genPath == null || !File.Exists(Path.Combine(project.Path, genPath))) return Fail("generate_sound: " + gen.ToJsonString());
+                cleanup.Add(Path.Combine(project.Path, genPath));
                 var sa = await C("search_audio", new JsonObject { ["query"] = "step concrete" });
-                string step = (string)sa["project"]?[0]?["path"];
+                if ((sa["project"] as JsonArray)?.Count == 0) sa = await C("search_audio", new JsonObject { ["query"] = "Mcp Clank" });
+                string step = (string)(sa["project"] as JsonArray)?.FirstOrDefault()?["path"];
                 if (step == null || (double?)sa["project"][0]["duration_s"] is not double dur || dur <= 0) return Fail("search_audio: " + sa.ToJsonString());
                 var cfg = await C("configure_audio_source", new JsonObject { ["entity"] = cubeId, ["properties"] = new JsonObject { ["clip"] = step, ["loop"] = true, ["spatial"] = true, ["max_distance"] = 12, ["bus"] = "Ambience" } });
                 var src = cubeEntity.GetComponent<AudioSource>();
@@ -156,14 +163,10 @@ namespace VortexEditor.Claude
                 if (Math.Abs((double)sv["volume_db"] + 6) > 0.1 || Math.Abs(AudioMixerConfig.Load(project.Path).BusVolumes[2] - 0.501f) > 0.01f) return Fail("set_bus_volume: " + sv.ToJsonString());
                 await C("undo", new JsonObject());
                 if (Math.Abs(AudioMixerConfig.Load(project.Path).BusVolumes[2] - sfxBefore) > 0.001f) return Fail("undo did not restore the bus volume");
-                var gen = await C("generate_sound", new JsonObject { ["prompt"] = "short metallic clank", ["duration"] = 0.6, ["backend"] = "procedural", ["name"] = "Mcp Clank" });
-                string genPath = (string)gen["path"];
-                if (genPath == null || !File.Exists(Path.Combine(project.Path, genPath))) return Fail("generate_sound: " + gen.ToJsonString());
-                cleanup.Add(Path.Combine(project.Path, genPath));
                 var aud = await C("audition_clip", new JsonObject { ["path"] = genPath, ["volume"] = 0 });
                 await C("stop_audition", new JsonObject());
 
-                log.Log("mcp tools: OK — " + ToolCatalog.All.Count + " tools; material, grid (12), scatter (8, resting on the tiles), scripts with line-accurate errors, crate + prefab, audio + mixer + generated " + Path.GetFileName(genPath));
+                log.Log("mcp tools: OK — " + ToolCatalog.All.Count + " tools; material, grid (12), scatter (8, resting on the tiles), scripts with line-accurate errors, " + Path.GetFileName(crate) + " + prefab, audio + mixer + generated " + Path.GetFileName(genPath));
                 return true;
             }
             catch (Exception ex) { return Fail(ex.GetType().Name + ": " + ex.Message); }

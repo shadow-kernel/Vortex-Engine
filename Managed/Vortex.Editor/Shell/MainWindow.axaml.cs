@@ -78,6 +78,8 @@ namespace VortexEditor.Shell
             var o = Program.Options;
             Session.EnsureEngine();
             Claude.McpHost.AutoStart();
+            // a smoke run is unattended: answer the project-upgrade question with "Upgrade" (it backs the project up first)
+            if (o.SmokeSeconds > 0 && ProjectCompatibility.TestAnswer == null) ProjectCompatibility.TestAnswer = () => 0;
             bool opened = false;
             if (!string.IsNullOrEmpty(o.ProjectPath)) opened = Session.OpenProject(o.ProjectPath);
             else if (EditorPreferences.Current.OpenLastProjectOnStart && Session.LastProjectPath != null) opened = Session.OpenProject(Session.LastProjectPath);

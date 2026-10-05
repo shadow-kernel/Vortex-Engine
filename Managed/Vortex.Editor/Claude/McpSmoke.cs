@@ -88,7 +88,9 @@ namespace VortexEditor.Claude
                 var outline = Text(await Call(http, "scene_outline", new JsonObject { ["root"] = cubeId, ["max_depth"] = 5 }));
                 if (!outline.Contains("Mcp Cube [" + cubeId + "] MeshRenderer, BoxCollider") || !outline.Contains("    Mcp Lamp [" + lampId + "] Light")) return Fail("scene_outline (root): " + outline);
                 var whole = Text(await Call(http, "scene_outline", new JsonObject { ["max_entities"] = 20 }));
-                if (whole.Split('\n').Length > 24 || !whole.Contains(" more (raise max_entities")) return Fail("scene_outline must stay within max_entities and say what it left out: " + whole);
+                int sceneSize = SceneModel.All(ProjectData.Current.ActiveScene).Count();
+                if (whole.Split('\n').Length > 24) return Fail("scene_outline must stay within max_entities: " + whole);
+                if (sceneSize > 20 && !whole.Contains(" more (raise max_entities")) return Fail("scene_outline must say what it left out: " + whole);
                 var ent = Json(await Call(http, "get_entity", new JsonObject { ["entity"] = "Mcp Cube/Mcp Lamp" }));
                 if ((string)ent?["components"]?[0]?["properties"]?["light_type"] != "Point") return Fail("get_entity: " + ent?.ToJsonString());
 

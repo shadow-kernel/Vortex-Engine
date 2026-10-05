@@ -1,0 +1,110 @@
+name: PR tests
+
+# The test gate for pull requests (#161, #184): every PR builds the engine and both editors on Windows and macOS and
+# runs the headless tests — native (audio, physics, particles, navigation, primitive geometry) and managed (Vortex.Core:
+# asset library, store, Sound Studio, Claude chat loop, .mcp.json). Docs-only changes skip the build jobs (a skipped
+# job counts as passed for a required check). The full editor smoke suite needs a GPU and runs on developer machines.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: pr-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: filter
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+          else
+            base="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
+          fi
+          changed="$(git diff --name-only "$base" HEAD)"
+          echo "$changed"
+          if echo "$changed" | grep -qvE '^(docs/|README|ROADMAP|CHANGELOG|.*\.md$|Templates/.*\.(png|jpg|webp)$)'; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  windows:
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout (submodules: Streamline headers)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v2
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore NuGet packages (packages.config)
+        run: |
+          nuget restore Engine/packages.config -SolutionDirectory .
+          nuget restore VortexAPI/packages.config -SolutionDirectory .
+          nuget restore Editor/packages.config -SolutionDirectory .
+
+      # The same solution build as the release (Engine.lib -> VortexAPI.dll -> WPF editor), so a PR that breaks the
+      # Windows build — native DX12 code, the shared C# core in the .NET Framework editor — fails here, not at release.
+      - name: Build Vortex.slnx (Release x64, DX12 + WPF editor)
+        run: msbuild Vortex.slnx /t:Build /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /m /v:minimal "/clp:ErrorsOnly;Summary"
+
+      - name: Build the managed layer (Vortex.Core, Player, Avalonia editor)
+        run: dotnet build Managed/Vortex.Managed.slnx -c Release -v minimal
+
+      - name: Managed tests (Vortex.Core)
+        run: dotnet run --project Managed/Vortex.Core.Tests -c Release
+
+  macos:
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: brew install ninja assimp sdl3
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Configure (Release)
+        run: cmake --preset macos-release
+
+      - name: Build engine, SDL GPU renderer, VortexAPI, native tests
+        run: cmake --build --preset macos-release
+
+      - name: Native tests (audio, physics, particles, navigation, geometry)
+        run: ctest --preset macos-release --output-on-failure
+
+      - name: Build the managed layer (Vortex.Core, Player, Avalonia editor)
+        run: dotnet build Managed/Vortex.Managed.slnx -c Release -v minimal
+
+      - name: Managed tests (Vortex.Core)
+        run: dotnet run --project Managed/Vortex.Core.Tests -c Release
