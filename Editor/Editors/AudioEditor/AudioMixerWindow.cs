@@ -105,7 +105,14 @@ namespace Editor.Editors.AudioEditor
             _meterTimer.Tick += (s, e) => UpdateMeters();
             _meterTimer.Start();
 
-            Closed += (s, e) => { try { _meterTimer.Stop(); } catch { } _open = null; };
+            Closed += (s, e) =>
+            {
+                try { _meterTimer.Stop(); } catch { }
+                // solo is a live listening tool: closing the mixer must not leave the other buses muted
+                for (int i = 0; i < _solo.Length; i++) _solo[i] = false;
+                try { ApplyMuteSolo(); } catch { }
+                _open = null;
+            };
         }
 
         private UIElement BuildStrip(int bus)
