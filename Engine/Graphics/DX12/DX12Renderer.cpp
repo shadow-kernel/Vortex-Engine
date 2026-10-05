@@ -1,4 +1,5 @@
 #include "DX12Renderer_Internal.h"
+#include "DX12ShaderCompiler.h"   // validate_material_shader compiles custom shaders with their errors
 
 namespace vortex::graphics::dx12
 {
