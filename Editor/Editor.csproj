@@ -311,6 +311,7 @@
     <Compile Include="Core\Services\ProjectTemplateService.cs" />
     <Compile Include="Core\Services\TemplatePacks.cs" />
     <Compile Include="Core\Services\TemplateUpdateService.cs" />
+    <Compile Include="Core\Services\PlaySnapshot.cs" />
     <Compile Include="Core\Services\Physics\CollisionService.cs" />
     <Compile Include="Core\Services\Physics\PhysicsService.cs" />
     <Compile Include="Core\Services\Physics\RagdollService.cs" />

@@ -1166,6 +1166,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             = new System.Collections.Generic.List<(GameEntity, float, float, float, float)>();
         private float _snapCamX, _snapCamY, _snapCamZ, _snapCamYaw, _snapCamPitch, _snapCamRoll;
         private bool _hasCamSnap;
+        private Editor.Core.Services.PlaySnapshot _componentSnapshot;   // lights a script changed (flicker, flashlight)
 
         /// <summary>On Play: register every Dynamic-Rigidbody entity with the engine physics tick and
         /// snapshot its start position so Stop can restore it.</summary>
@@ -1301,6 +1302,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             _transformSnapshot.Clear();
             _colorSnapshot.Clear();
             var scene = _currentScene ?? ProjectData.Current?.ActiveScene;
+            _componentSnapshot = Editor.Core.Services.PlaySnapshot.Take(scene);
             if (scene?.Entities != null)
                 foreach (var e in scene.Entities) SnapshotTransformRecursive(e);
         }
@@ -1328,6 +1330,8 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
             Editor.Core.Services.AudioPlaybackService.Instance.EndPlay(); // silence component voices first
             Editor.Scripting.ScriptRuntime.Instance.End(); // stop gameplay scripts (OnDestroy) BEFORE restoring
             VortexAPI.ClearAllRigidbodies();
+            _componentSnapshot?.Restore();   // lights scripts changed (after their OnDestroy)
+            _componentSnapshot = null;
 
             // Restore every entity's local transform (pos/rot/scale). The setters re-sync the engine, so this
             // reverts anything a script or the physics tick moved — supersedes the old position-only restore.

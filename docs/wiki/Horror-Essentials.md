@@ -22,9 +22,9 @@ examples, by their path inside a Horror Starter project.
   `Physics.MoveCharacter` — the Horror Starter's `Player` entity ships as `Untagged`.
 - `Position`, `Rotation` and `Forward` are relative to the entity's parent. For a child entity (a flashlight or an
   interaction ray under the player) the samples read the world pose with `TryGetWorldPose`.
-- Stopping play puts back positions, rotations, scales and mesh colours — but not Light settings a script changed.
-  The samples that change lights put them back in `OnDestroy()`, which runs when play stops, on a scene switch and
-  on `Scene.Destroy`.
+- Stopping play puts back positions, rotations, scales, mesh colours and the Light settings scripts changed. A scene
+  switch or `Scene.Destroy` during play does not, so the samples that change lights also put them back in
+  `OnDestroy()`, which runs in all three cases.
 - The samples are C# 5, the language the Windows editor's script compiler accepts, so they compile in both editors.
 
 ---
