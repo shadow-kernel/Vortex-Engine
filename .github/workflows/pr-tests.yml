@@ -80,9 +80,11 @@ jobs:
       - name: Managed tests (Vortex.Core)
         run: dotnet run --project Managed/Vortex.Core.Tests -c Release
 
-      # #183: the Avalonia editor on Windows — DX12 on the WARP software rasterizer (the runners have no GPU). The
-      # Claude checks drive scenes, tools, captures and the panel end to end. Informational until #183 is done.
-      - name: Avalonia editor smoke (DX12 / WARP, informational)
+      # #183: the cross-platform editor exactly as the installer lays it out — {app}\Editor (self-contained, with its
+      # player) next to {app}\VortexAPI.dll, Shaders and Templates, outside the repository — on DX12 / WARP (the runners
+      # have no GPU). Viewport input, scenes, export, tools, captures and the Claude panel end to end. Informational
+      # until #183 is done.
+      - name: Cross-platform editor smoke, installed layout (DX12 / WARP, informational)
         continue-on-error: true
         shell: pwsh
         env:
@@ -91,17 +93,22 @@ jobs:
           VORTEX_SMOKE_ONLY: 'mcp,claude'
         run: |
           $tmp = $env:RUNNER_TEMP
-          $env:VORTEX_NATIVE_DIR = "$env:GITHUB_WORKSPACE\x64\Release"
+          $app = "$tmp\app"
+          tools/windows/stage-editor.ps1 -Out "$app\Editor"
+          Copy-Item x64\Release\*.dll $app
+          Copy-Item -Recurse Engine\Shaders "$app\Shaders"
+          New-Item -ItemType Directory -Force "$app\Templates" | Out-Null
+          Copy-Item -Recurse Templates\Default3D "$app\Templates\Default3D"
           $env:VORTEX_APPDATA_DIR = "$tmp\appdata"
           Copy-Item -Recurse Templates/Default3D "$tmp\smoke-project"
-          $exe = "Managed/Vortex.Editor/bin/Release/net10.0/Vortex.Editor.exe"
+          $exe = "$app\Editor\Vortex.Editor.exe"
           $p = Start-Process $exe -ArgumentList "--project=$tmp\smoke-project", "--smoke=25", "--capture=$tmp\capture" -PassThru -NoNewWindow `
                  -RedirectStandardOutput "$tmp\smoke.log" -RedirectStandardError "$tmp\smoke.err"
           if (-not $p.WaitForExit(420000)) { $p.Kill(); Write-Host "::warning::the editor smoke timed out" }
           Get-Content "$tmp\smoke.log" -ErrorAction SilentlyContinue
           Get-Content "$tmp\smoke.err" -ErrorAction SilentlyContinue
           if (Select-String -Path "$tmp\smoke.log" -Pattern "SMOKE FAIL" -Quiet) { exit 1 }
-          if (-not (Select-String -Path "$tmp\smoke.log" -Pattern "SMOKE OK" -Quiet)) { exit 1 }
+          if (-not (Select-String -Path "$tmp\smoke.log" -Pattern "SMOKE OK   mcp tools" -Quiet)) { exit 1 }
 
       - name: Upload the Windows smoke capture
         if: always()

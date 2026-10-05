@@ -52,6 +52,7 @@ namespace Editor.Core.Services
             {
                 Path.Combine(baseDir, "Templates"),                                  // installed next to the binaries
                 Path.GetFullPath(Path.Combine(baseDir, "..", "Resources", "Templates")), // macOS .app bundle
+                Path.GetFullPath(Path.Combine(baseDir, "..", "Templates")),           // Windows install: {app}\Editor -> {app}\Templates
                 FindRepositoryTemplates(baseDir),                                    // development: repository checkout
             };
             foreach (var c in candidates)

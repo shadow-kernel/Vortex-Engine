@@ -1,4 +1,4 @@
-; Vortex Engine Installer Script
+﻿; Vortex Engine Installer Script
 ; Inno Setup 6.x
 ;
 ; This script creates a professional installation wizard for Vortex Engine
@@ -61,7 +61,7 @@ Name: "german"; MessagesFile: "compiler:Languages\German.isl"
 [CustomMessages]
 english.DeleteUserData=Delete user settings and project cache?
 english.DeleteUserDataDesc=This will remove all saved preferences and cached data from %1
-german.DeleteUserData=Benutzereinstellungen und Projektcache l�schen?
+german.DeleteUserData=Benutzereinstellungen und Projektcache löschen?
 german.DeleteUserDataDesc=Dies entfernt alle gespeicherten Einstellungen und Cache-Daten aus %1
 
 [Tasks]
@@ -83,9 +83,14 @@ Source: "..\x64\Release\Templates\*"; DestDir: "{app}\Templates"; Flags: ignorev
 ; layout) and only falls back to walking up to the repo's Engine\Shaders in dev checkouts. Without this
 ; an installed editor renders a WHITE viewport (no PSOs compile). Ships .hlsl + any precompiled bin\*.cso.
 Source: "..\Engine\Shaders\*"; DestDir: "{app}\Shaders"; Flags: ignoreversion recursesubdirs createallsubdirs
+; The cross-platform editor (#183): self-contained .NET 10 (nothing to install), staged by
+; tools/windows/stage-editor.ps1. It loads {app}\VortexAPI.dll and uses {app}\Shaders + {app}\Templates, shared with
+; the WPF editor; its Build dialog exports Windows games with the player in Editor\player.
+Source: "..\x64\Release\Editor\*"; DestDir: "{app}\Editor"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
+Name: "{group}\Vortex Editor (cross-platform)"; Filename: "{app}\Editor\Vortex.Editor.exe"; Comment: "The Vortex editor of macOS and Linux: Library, Asset Store, Sound Studio, Claude"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 Name: "{userappdata}\Microsoft\Internet Explorer\Quick Launch\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: quicklaunchicon
@@ -118,6 +123,8 @@ Type: dirifempty; Name: "{app}"
 
 [InstallDelete]
 ; Clean up from previous installations
+; the self-contained editor folder is replaced as a whole (no stale runtime files from an older .NET)
+Type: filesandordirs; Name: "{app}\Editor"
 Type: files; Name: "{app}\*.log"
 Type: filesandordirs; Name: "{app}\Cache"
 

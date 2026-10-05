@@ -58,6 +58,21 @@ namespace vortex::graphics::dx12
 			return slash == std::wstring::npos ? L"." : p.substr(0, slash);
 		}
 
+		// The folder of the module this code is linked into: VortexAPI.dll for the editors, the game exe for shipped
+		// games. The cross-platform editor runs from its own folder ({app}\Editor) and loads {app}\VortexAPI.dll.
+		std::wstring module_dir()
+		{
+			HMODULE self = nullptr;
+			if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+			                        reinterpret_cast<LPCWSTR>(&module_dir), &self))
+				return std::wstring();
+			wchar_t buf[MAX_PATH]{};
+			GetModuleFileNameW(self, buf, MAX_PATH);
+			std::wstring p(buf);
+			auto slash = p.find_last_of(L"\\/");
+			return slash == std::wstring::npos ? std::wstring() : p.substr(0, slash);
+		}
+
 		bool dir_exists(const std::wstring& d)
 		{
 			DWORD a = GetFileAttributesW(d.c_str());
@@ -113,6 +128,8 @@ namespace vortex::graphics::dx12
 		static std::wstring dir = []() -> std::wstring {
 			std::wstring exe = exe_dir();
 			if (dir_exists(exe + L"\\Shaders")) return exe + L"\\Shaders";           // shipped layout
+			std::wstring mod = module_dir();
+			if (!mod.empty() && dir_exists(mod + L"\\Shaders")) return mod + L"\\Shaders";   // installed: next to VortexAPI.dll
 			std::wstring p = exe;
 			for (int i = 0; i < 7; ++i)                                              // dev: walk up to the repo
 			{

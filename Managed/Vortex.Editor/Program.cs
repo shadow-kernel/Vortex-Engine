@@ -24,6 +24,9 @@ namespace VortexEditor
                 Environment.SetEnvironmentVariable("VORTEX_APPDATA_DIR", System.IO.Path.Combine(System.IO.Path.GetTempPath(), "vortex-smoke-appdata"));
             // the console speaks UTF-8 everywhere (Windows' default code page turned "—" in the log into "?")
             if (OperatingSystem.IsWindows()) { try { Console.OutputEncoding = new System.Text.UTF8Encoding(false); } catch { } }
+            // Windows: the installer's AppMutex — a silent update closes a running editor before replacing its files (the
+            // WPF editor holds the same name; the mutex only has to exist while an editor runs)
+            if (OperatingSystem.IsWindows()) { try { _installerMutex = new System.Threading.Mutex(false, "VortexEngineSingleInstance"); } catch { } }
             if (Options.SmokeSeconds > 0) AppDomain.CurrentDomain.ProcessExit += (s, e) => Stage("process exit");
             // An exception in a pointer/key/window handler must not take the editor (and unsaved work) down.
             Shell.CrashGuard.Install();
@@ -31,6 +34,8 @@ namespace VortexEditor
             Stage("the UI ended (exit code " + code + ")");
             return code;
         }
+
+        private static System.Threading.Mutex _installerMutex;
 
         /// <summary>The last shutdown step reached — smoke runs print every step, and the exit watchdog reports the last
         /// one when the editor does not end.</summary>

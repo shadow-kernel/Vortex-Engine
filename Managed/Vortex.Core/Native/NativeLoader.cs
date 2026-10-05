@@ -54,10 +54,14 @@ namespace Editor.Core.Native
         /// <summary>
         /// The shader folder of the backend this build renders with: MSL source for Metal, compiled SPIR-V
         /// modules for Vulkan (see Engine/Graphics/SdlGpu/SdlGpuShaderFormat.h, which does the same lookup
-        /// natively). Windows/DX12 loads .hlsl from the Shaders root.
+        /// natively). Windows/DX12 loads .hlsl from the Shaders root itself ("").
         /// </summary>
         public static string ShaderFormatDirectory =>
-            RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "msl" : "spirv";
+            RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "msl"
+            : RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "" : "spirv";
+
+        private static string ShadersIn(string dir, string leaf) =>
+            leaf.Length == 0 ? Path.Combine(dir, "Shaders") : Path.Combine(dir, "Shaders", leaf);
 
         /// <summary>
         /// Source extension of a project's OWN material shader on this platform's backend: .hlsl for DX12,
@@ -77,19 +81,19 @@ namespace Editor.Core.Native
             // The shaders that belong to the library we actually loaded come first.
             if (!string.IsNullOrEmpty(ResolvedLibraryPath))
             {
-                string beside = Path.Combine(Path.GetDirectoryName(ResolvedLibraryPath) ?? "", "Shaders", leaf);
+                string beside = ShadersIn(Path.GetDirectoryName(ResolvedLibraryPath) ?? "", leaf);
                 if (Directory.Exists(beside)) return beside;
             }
             foreach (string dir in CandidateDirectories())
             {
-                string a = Path.Combine(dir, "Shaders", leaf);
+                string a = ShadersIn(dir, leaf);
                 if (Directory.Exists(a)) return a;
             }
             string repo = FindRepositoryRoot();
             if (repo != null)
             {
                 // The source tree only has the MSL set; the SPIR-V modules are a build product.
-                string src = Path.Combine(repo, "Engine", "Shaders", leaf);
+                string src = ShadersIn(Path.Combine(repo, "Engine"), leaf);
                 if (Directory.Exists(src)) return src;
             }
             return null;
@@ -103,6 +107,7 @@ namespace Editor.Core.Native
             yield return baseDir;
             yield return Path.Combine(baseDir, "native");
             yield return Path.GetFullPath(Path.Combine(baseDir, "..", "Frameworks"));   // .app bundle: Contents/MacOS -> Contents/Frameworks
+            yield return Path.GetFullPath(Path.Combine(baseDir, ".."));                // Windows install: {app}\Editor -> {app}\VortexAPI.dll
             string repo = FindRepositoryRoot();
             if (repo != null)
             {

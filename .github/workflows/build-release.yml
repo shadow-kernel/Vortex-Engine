@@ -51,6 +51,11 @@ jobs:
       uses: ilammy/msvc-dev-cmd@v1
       with:
         arch: x64
+
+    - name: Set up .NET 10 (the cross-platform editor)
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '10.0.x'
     
     - name: Restore NuGet packages (packages.config)
       run: |
@@ -64,7 +69,7 @@ jobs:
         $issFile = "Installer/VortexEngine.iss"
         $content = Get-Content $issFile -Raw
         $content = $content -replace '#define MyAppVersion ".*"', "#define MyAppVersion `"${{ steps.version.outputs.VERSION }}`""
-        Set-Content $issFile $content
+        Set-Content $issFile $content -Encoding utf8BOM
     
     # Builds the whole solution in dependency order (Engine.lib -> VortexAPI.dll -> Vortex Engine.exe).
     # PlatformToolset is overridden to v143 because the GitHub windows-latest runner ships VS2022.
@@ -80,6 +85,17 @@ jobs:
         $missing = $required | Where-Object { -not (Test-Path "$out/$_") }
         if ($missing) { Write-Error "Missing required artifacts in $out : $($missing -join ', ')"; exit 1 }
         Write-Host "OK: $($required -join ', ') present in $out"
+
+    # The cross-platform editor next to the WPF one (#183): self-contained in x64\Release\Editor, with its player.
+    - name: Stage the cross-platform editor
+      shell: pwsh
+      run: tools/windows/stage-editor.ps1 -Configuration ${{ env.BUILD_CONFIGURATION }}
+
+    # The portable ZIP is the installed layout, so it needs the shaders next to the binaries too (the installer takes
+    # them from Engine\Shaders); without them both editors render a white viewport.
+    - name: Shaders next to the binaries (portable layout)
+      shell: pwsh
+      run: Copy-Item -Recurse -Force Engine/Shaders x64/${{ env.BUILD_CONFIGURATION }}/Shaders
     
     # jrsoftware.org/download.php/is.exe now answers with the HTML download page (the v2.9.0 / v2.10.0 runs failed with
     # "The file or directory is corrupted and unreadable"), so install through Chocolatey — present on every Windows
@@ -121,6 +137,9 @@ jobs:
           x64/Release/*.exe
           x64/Release/*.dll
           x64/Release/*.config
+          x64/Release/Shaders/**
+          x64/Release/Templates/**
+          x64/Release/Editor/**
         retention-days: 30
 
   release:
@@ -177,7 +196,9 @@ jobs:
           ### Installation
           
           **Installer (Recommended):**
-          Download and run `VortexEngine-Setup-${{ steps.version.outputs.VERSION }}.exe`
+          Download and run `VortexEngine-Setup-${{ steps.version.outputs.VERSION }}.exe`. It installs both Windows editors:
+          *Vortex Engine* (the WPF editor) and *Vortex Editor (cross-platform)* — the editor of macOS and Linux, with the
+          Library, the Asset Store, the Sound Studio and Claude.
           
           **Portable Version:**
           Download `VortexEngine-Portable-${{ steps.version.outputs.VERSION }}.zip` and extract to any folder.
