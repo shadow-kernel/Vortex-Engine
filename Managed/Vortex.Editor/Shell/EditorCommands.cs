@@ -776,8 +776,8 @@ namespace VortexEditor.Shell
         public static void GitWindow() { if (Session.HasProject) EditorWindows.Git(); else Toast("Open a project first"); }
         public static void History() => EditorWindows.History();
         public static void ResetLayout() => Window?.ResetLayout();
-        public static void Documentation() => OpenUrl("https://github.com/shadow-kernel/Vortex-Engine/wiki");
-        public static void ApiReference() => OpenUrl("https://github.com/shadow-kernel/Vortex-Engine/wiki/Scripting-API");
+        public static void Documentation() => OpenUrl("https://engine.vortexstudio.dev/docs/");
+        public static void ApiReference() => OpenUrl("https://engine.vortexstudio.dev/docs/#/api-index");
         public static void About() => Window?.OpenAbout();
         public static void ReleaseNotes() => OpenUrl("https://github.com/" + Editor.Core.EngineInfo.RepoOwner + "/" + Editor.Core.EngineInfo.RepoName + "/releases");
 

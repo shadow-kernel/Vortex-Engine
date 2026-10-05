@@ -15,7 +15,7 @@
 [![Graphics](https://img.shields.io/badge/GRAPHICS-DirectX%2012%20%C2%B7%20Metal%20%C2%B7%20Vulkan-00A6FB?style=for-the-badge&logo=microsoft&logoColor=white)](#-architecture)
 [![C++](https://img.shields.io/badge/ENGINE-C%2B%2B20-00599C?style=for-the-badge&logo=cplusplus&logoColor=white)](#-architecture)
 [![C#](https://img.shields.io/badge/EDITOR-.NET%2010%20%C2%B7%20Avalonia-512BD4?style=for-the-badge&logo=dotnet&logoColor=white)](#-architecture)
-[![Claude](https://img.shields.io/badge/CLAUDE-MCP%20server%20%2B%20panel-D97757?style=for-the-badge&logo=anthropic&logoColor=white)](docs/wiki/Claude-Integration.md)
+[![Claude](https://img.shields.io/badge/CLAUDE-MCP%20server%20%2B%20panel-D97757?style=for-the-badge&logo=anthropic&logoColor=white)](https://engine.vortexstudio.dev/docs/#/claude)
 [![Status](https://img.shields.io/badge/STATUS-Active%20Alpha-FF6B6B?style=for-the-badge)](#-roadmap)
 [![License](https://img.shields.io/badge/LICENSE-MIT-3DA639?style=for-the-badge&logo=opensourceinitiative&logoColor=white)](LICENSE)
 [![Free](https://img.shields.io/badge/100%25%20FREE-incl.%20commercial-00B894?style=for-the-badge)](#-license)
@@ -67,7 +67,7 @@ all of its gameplay is plain project scripts you can read and change:
 The templates are git submodules under `Templates/` (clone with `--recurse-submodules`). Their models, textures
 and audio live in **Git LFS**. Installed editors don't carry that content: the first project from such a template
 downloads the template pack of your Vortex version from the release and keeps it for later projects
-([Project Templates](docs/wiki/Project-Templates.md)). A source checkout uses its own files after
+([Project Templates](https://engine.vortexstudio.dev/docs/#/templates)). A source checkout uses its own files after
 `git lfs install && git submodule foreach 'git lfs pull'`; without LFS it downloads the packs like an installed editor.
 Games made from an older template update with **Project Hub ▸ right-click ▸ Update from Template…**.
 
@@ -116,7 +116,7 @@ flowchart LR
 - **macOS (Apple Silicon):** `Vortex-Editor-<version>.dmg` from the release (from v3.0; not notarised yet — the first time, right-click ▸ **Open**).
 - **Linux:** build from source, see [Linux](#-linux-x64--native-engine-player-and-editor).
 
-Then follow **[Getting Started](docs/wiki/Getting-Started.md)**: a game from the Horror Starter, your first scare and a build in about an hour.
+Then follow **[Getting Started](https://engine.vortexstudio.dev/docs/#/getting-started)**: a game from the Horror Starter, your first scare and a build in about an hour.
 
 ### Build from source — prerequisites
 
@@ -217,7 +217,7 @@ generation (NVIDIA + Windows only; the render-scale fallback works).
 - **68 tools**: entities and components, materials and custom shaders (with real compiler errors), scripts (with line-accurate compile errors), prefabs, asset import, world macros (grid, scatter, snap), audio and the mixer, sound generation, play mode, screenshots and the console
 - **Safe by design**: every tool call is one undo step, mutating tools take a dry run, the Operations window shows each change (file diffs included) and reverts it — even out of order
 - **Claude panel**: chat in the editor with your own Anthropic key; it sees the viewport and asks before it changes things
-- Guides: [Claude Integration](docs/wiki/Claude-Integration.md) · [Claude Tools](docs/wiki/Claude-Tools.md)
+- Guides: [Claude Integration](https://engine.vortexstudio.dev/docs/#/claude) · [Claude Tools](https://engine.vortexstudio.dev/docs/#/claude-tools)
 </details>
 
 <details>
@@ -237,7 +237,7 @@ generation (NVIDIA + Windows only; the render-scale fallback works).
 - 3D audio sources and listener, sound containers (`.vsndc`) with weighted variation and pitch/volume ranges, reverb zones
 - Mixer with buses, solo/mute, ducking and meters; music with fades and cross-fades; `Vortex.Audio` scripting API
 - **Sound Studio**: describe a sound, audition takes, save the best — procedural offline or ElevenLabs / fal.ai / Stability with your own key
-- Guide: [Audio](docs/wiki/Audio.md)
+- Guide: [Audio](https://engine.vortexstudio.dev/docs/#/audio-guide)
 </details>
 
 <details>
@@ -247,15 +247,15 @@ generation (NVIDIA + Windows only; the render-scale fallback works).
 - C# `VortexBehaviour` gameplay scripts with hot reload: input (keyboard, mouse, gamepads incl. DualSense), triggers, raycasts, `Instantiate`/`Destroy`, coroutines, save slots, scene loading, immediate-mode and retained UI
 - Collide-and-slide character movement; rigid bodies, joints and ragdolls on **Jolt** (macOS / Linux builds; the Visual Studio build follows in v3.1)
 - Skeletal animation with an Animator, IK (two-bone, look-at, foot) and hand poses
-- Guides: [Horror Essentials](docs/wiki/Horror-Essentials.md) · [Scripting](docs/wiki/Scripting-Getting-Started.md) · [API reference](docs/wiki/Scripting-API-Reference.md)
+- Guides: [Horror Essentials](https://engine.vortexstudio.dev/docs/#/horror-essentials) · [Scripting](https://engine.vortexstudio.dev/docs/#/first-script) · [API reference](https://engine.vortexstudio.dev/docs/#/api-index)
 </details>
 
 <details>
 <summary><b>📦 Assets</b></summary>
 
 - Model import via Assimp (FBX · OBJ · glTF · and more), textures with naming-convention detection, PBR material editor
-- **Asset Library**: every asset on your machine stored once (SHA-256), shared by all projects, with tags and previews — [guide](docs/wiki/Asset-Library.md)
-- **Asset Store**: Poly Haven, ambientCG, Kenney, poly.pizza, Freesound, Sketchfab, Mixamo, Sonniss — licenses recorded, credited in builds, checked before shipping — [guide](docs/wiki/Asset-Store.md)
+- **Asset Library**: every asset on your machine stored once (SHA-256), shared by all projects, with tags and previews — [guide](https://engine.vortexstudio.dev/docs/#/asset-library)
+- **Asset Store**: Poly Haven, ambientCG, Kenney, poly.pizza, Freesound, Sketchfab, Mixamo, Sonniss — licenses recorded, credited in builds, checked before shipping — [guide](https://engine.vortexstudio.dev/docs/#/asset-store)
 - Asset browser, file explorer, GUID metadata & dependency tracking
 </details>
 
@@ -272,7 +272,7 @@ generation (NVIDIA + Windows only; the render-scale fallback works).
 
 ## 🗺️ Roadmap
 
-The full roadmap now lives on GitHub: **[Milestones](../../milestones)** (v2.6.0 → v4.0.0), the **[issue backlog](../../issues)** sorted by `P0`–`P3` priority labels, and the **[Wiki](../../wiki)** with the design docs, [feature status matrix](../../wiki/Feature-Status-Matrix) and the [horror-game-readiness gate](../../wiki/Horror-Game-Readiness).
+The full roadmap now lives on GitHub: **[Milestones](../../milestones)** (v2.6.0 → v4.0.0), the **[issue backlog](../../issues)** sorted by `P0`–`P3` priority labels, and the **[documentation](https://engine.vortexstudio.dev/docs/)**. Design docs, the [feature status matrix](docs/wiki/Feature-Status-Matrix.md) and the [horror-game-readiness gate](docs/wiki/Horror-Game-Readiness.md) are in `docs/wiki`.
 
 **The plan in one line:** v2.6 Audio Engine → v2.7 Horror Essentials (*game-dev-ready gate*) → v2.8 Global Asset DB → v2.9 Asset Store + Claude Sound Studio → **v3.0 Claude-Native Engine** → v3.1 Physics v2 (Jolt) → v3.2 AI & Navigation → v3.3 VFX → v3.4 World & Streaming → **v4.0 XXL: 10x-performance GPU-driven renderer**.
 
