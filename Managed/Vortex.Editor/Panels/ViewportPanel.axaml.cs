@@ -486,6 +486,10 @@ namespace VortexEditor.Panels
             }
             else renderers.Add(mr);
             if (renderers.Count == 0) return false;
+            // a store material on a floor/wall primitive: a copy tiled for the object's size instead of one stretched tile
+            string fitNote = null;
+            if (renderers.Count == 1 && ReferenceEquals(renderers[0], mr)) rel = VortexEditor.Services.MaterialFit.ForRenderer(target, mr, rel, out fitNote);
+            if (fitNote != null) EditorCommands.Toast(fitNote);
             var old = renderers.Select(r => r.MaterialPath).ToList();
             UndoRedoManager.Instance.ExecuteAction("Assign Material " + Path.GetFileNameWithoutExtension(rel) + " → " + target.Name,
                 () => { foreach (var r in renderers) r.MaterialPath = rel; Resubmit(target); },

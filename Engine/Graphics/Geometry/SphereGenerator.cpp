@@ -50,13 +50,15 @@ namespace vortex::graphics
 				const u32 a = i * (m_slices + 1) + j;
 				const u32 b = a + m_slices + 1;
 
+				// clockwise seen from outside — the engine's front face (same as the cube and plane generators);
+				// the old order faced inward, so back-face culling showed the inner far wall, lit inside-out
 				out_indices.push_back(a);
-				out_indices.push_back(b);
 				out_indices.push_back(a + 1);
+				out_indices.push_back(b);
 
 				out_indices.push_back(a + 1);
-				out_indices.push_back(b);
 				out_indices.push_back(b + 1);
+				out_indices.push_back(b);
 			}
 		}
 	}

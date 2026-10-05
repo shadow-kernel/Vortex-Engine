@@ -57,7 +57,11 @@ namespace Editor.Core.Assets.Store
                     if (a.TryGetProperty("dimensions", out var dim) && dim.ValueKind == JsonValueKind.Object)
                     {
                         int w = PolyHavenProvider.Int(dim, "width", 0), h = PolyHavenProvider.Int(dim, "height", 0);
-                        if (w > 0 && h > 0) item.Extra["dimensions"] = w + " × " + h + " cm";
+                        if (w > 0 && h > 0)
+                        {
+                            item.Extra["dimensions"] = w + " × " + h + " cm";
+                            item.Extra["size_m"] = (w / 100.0).ToString("0.###", CultureInfo.InvariantCulture) + "," + (h / 100.0).ToString("0.###", CultureInfo.InvariantCulture);
+                        }
                     }
                     page.Items.Add(item);
                 }

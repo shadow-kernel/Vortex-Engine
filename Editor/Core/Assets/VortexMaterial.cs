@@ -79,6 +79,11 @@ namespace Editor.Core.Assets
         // UV Tiling and Offset
         public float[] UVTiling { get; set; } = { 1f, 1f };
         public float[] UVOffset { get; set; } = { 0f, 0f };
+
+        /// <summary>Real-world size of one texture tile in metres ([width, height]) — store materials know it (Poly
+        /// Haven, ambientCG). Assigning such a material to a cube or plane primitive tiles it for the object's size
+        /// instead of stretching one tile over the whole object. Null = unknown.</summary>
+        public float[] RealWorldSize { get; set; }
         
         /// <summary>
         /// Saves the material to a .vmat file.

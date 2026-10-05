@@ -46,7 +46,13 @@ The **Downloads** strip shows progress; you can cancel and retry (partial downlo
 
 What arrives:
 
-- **ambientCG / Poly Haven textures** → a `.vmat` with colour, normal (OpenGL convention), roughness/metal/AO (or a packed ARM map) and height wired up.
+- **ambientCG / Poly Haven textures** → a `.vmat` with colour, normal (OpenGL convention), roughness/metal/AO (or a packed ARM map) and height wired up. The material also knows its **real-world size** (one Poly Haven tile often covers 15–30 m, an ambientCG tile about 2 m), and its parallax depth is set for that size.
+
+### Store materials on floors and walls
+
+Drop a store material on a cube or plane primitive — in the viewport, with *Assign* in the Asset Browser or in the Inspector's *Material* field — and the object gets a copy of the material tiled for its size: a 24 × 92 m range floor with a 15 m texture gets `Coast Sand Rocks 02_24x92m.vmat`, tiled 1.6 × 6.13, so the ground keeps its true scale instead of one tile being stretched over the whole floor. The original material stays untouched for other objects; an object of the same size reuses the copy, and Undo restores the previous material. Imported models keep their own UVs and get the material unchanged.
+
+The size is in the Material Editor under *UV → Real size (m)*: set it for your own materials (or for a store material downloaded before v2.10.0), or set it to 0 to turn the automatic tiling off.
 - **Poly Haven HDRIs** → a `.hdr` file tagged *HDRI* — use it as the skybox texture.
 - **Kenney packs** → every model (GLB preferred), sprite, sound and font of the pack becomes its own library asset, tagged with the pack name.
 - **Freesound** → the HQ preview (OGG); original-quality downloads need a Freesound login (planned).

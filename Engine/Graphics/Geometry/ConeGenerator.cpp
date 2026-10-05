@@ -68,9 +68,10 @@ namespace vortex::graphics
 			const u32 base1 = apex + 1;
 			const u32 base2 = apex + 3;
 
+			// clockwise seen from outside — the engine's front face, like the cube and plane generators
 			out_indices.push_back(apex);
-			out_indices.push_back(base1);
 			out_indices.push_back(base2);
+			out_indices.push_back(base1);
 		}
 
 		// Base cap
@@ -81,8 +82,8 @@ namespace vortex::graphics
 			for (u32 i = 0; i < m_slices; ++i)
 			{
 				out_indices.push_back(center);
-				out_indices.push_back(center + 2 + i);
 				out_indices.push_back(center + 1 + i);
+				out_indices.push_back(center + 2 + i);
 			}
 		}
 	}

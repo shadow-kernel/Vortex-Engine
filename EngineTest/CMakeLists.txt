@@ -31,7 +31,14 @@ target_include_directories(VortexNavigationTest PRIVATE "${CMAKE_SOURCE_DIR}/Eng
 target_compile_definitions(VortexNavigationTest PRIVATE TEST_NAVIGATION=1)
 target_link_libraries(VortexNavigationTest PRIVATE vortex::engine)
 
+# Primitive geometry (#77 follow-up): every triangle of cube / plane / sphere / cylinder / cone faces outward (headless).
+add_executable(VortexGeometryTest Main.cpp)
+target_include_directories(VortexGeometryTest PRIVATE "${CMAKE_SOURCE_DIR}/Engine/Common")
+target_compile_definitions(VortexGeometryTest PRIVATE TEST_GEOMETRY=1)
+target_link_libraries(VortexGeometryTest PRIVATE vortex::engine)
+
 if(NOT MSVC)
+	target_compile_options(VortexGeometryTest PRIVATE -Wall -Wno-unused-parameter)
 	target_compile_options(VortexParticleTest PRIVATE -Wall -Wno-unused-parameter)
 	target_compile_options(EngineTest PRIVATE -Wall -Wno-unused-parameter)
 	target_compile_options(VortexRenderTest PRIVATE -Wall -Wno-unused-parameter)
