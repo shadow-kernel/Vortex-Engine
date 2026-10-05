@@ -272,6 +272,32 @@ IEnumerator JumpScare()
 
 ---
 
+## `Ragdoll`
+
+Physics ragdolls for animated characters (#104). Give the character a **Ragdoll** component (it needs an Animator and a rigged mesh); the engine builds the bodies when it is activated, from the skeleton (humanoid bones are detected on any rig) and the **current** animated pose, so the hand-over never pops and a running character keeps its momentum. When a character goes limp is gameplay — call it from your scripts:
+
+▸ `static bool Activate(long entity)` — ragdoll at the current pose. `false` (and a console line saying why) when the skeleton is not a recognisable humanoid or physics is not running.
+▸ `static bool Activate(long entity, Vector3 impulse, Vector3 point)` — ragdoll and shove the body part nearest `point` (N·s, world space): the shot that killed it.
+▸ `static void Deactivate(long entity)` — hand the character back to its Animator. The entity stays where it is; move it to `Position(entity)` first for a get-up.
+▸ `static bool IsActive(long entity)`
+▸ `static bool AddImpulse(long entity, Vector3 impulse, Vector3 point)` / `AddImpulse(long entity, Vector3 impulse)` — shove the nearest part / the whole body (explosions).
+▸ `static Vector3 Position(long entity)` — where the body lies (the pelvis).
+
+```csharp
+public override void OnMessage(string message, object arg)
+{
+    if (message == "damage" && arg is float && Health > 0f)
+    {
+        Health -= (float)arg;
+        if (Health <= 0f) Ragdoll.Activate(EntityId);
+    }
+}
+```
+
+`Physics.Raycast` hits the limbs of a ragdoll (the hit reports the character's entity), and `Physics.AddImpulseAtPoint` / `AddForce` on a ragdolled entity push the part that was hit — weapon code that shoves props shoves bodies too. The bodies collide with the level and with props, never with each other or with characters (a body never blocks the player).
+
+---
+
 ## `Animation`
 
 Skeletal animation on **other** entities (your own entity has `PlayAnimation()` directly on the behaviour). `clip` is a name from the target's Animator clip table (e.g. `"Walk"`) or a `.vanim` path. Build state machines in your scripts with these calls.
@@ -281,6 +307,7 @@ Skeletal animation on **other** entities (your own entity has `PlayAnimation()` 
 ▸ `static void SetSpeed(long entityId, float speed)` — playback speed multiplier (`1` = authored).
 ▸ `static bool IsPlaying(long entityId, string clip = null)` — is an animation playing? Pass a clip name to ask about that clip.
 ▸ `static float Time(long entityId)` — current playback time in seconds.
+▸ `static void SetIkOffset(long entityId, string tipBone, Vector3 position, Vector3 rotationEulerDeg)` — move the target of the entity's TwoBoneIk chain (the offset from the chain's target bone, in that bone's space): e.g. the support hand's spot on the foregrip of another weapon after a switch. Solved in the same frame as the animation, so the hand never lags.
 
 ---
 

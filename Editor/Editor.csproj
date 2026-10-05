@@ -298,6 +298,7 @@
     <Compile Include="Core\Services\ProjectTemplateService.cs" />
     <Compile Include="Core\Services\Physics\CollisionService.cs" />
     <Compile Include="Core\Services\Physics\PhysicsService.cs" />
+    <Compile Include="Core\Services\Physics\RagdollService.cs" />
     <Compile Include="Core\Services\Particles\ParticleService.cs" />
     <Compile Include="DllWrapper\VortexAPI.Physics.cs" />
     <Compile Include="DllWrapper\VortexAPI.Particles.cs" />
@@ -425,6 +426,7 @@
     <Compile Include="ECS\Components\Lighting\Light.cs" />
     <Compile Include="ECS\Components\Physics\Collider.cs" />
     <Compile Include="ECS\Components\Physics\Joints.cs" />
+    <Compile Include="ECS\Components\Physics\Ragdoll.cs" />
     <Compile Include="ECS\Components\AI\AIPerception.cs" />
     <Compile Include="ECS\Components\AI\NavAgent.cs" />
     <Compile Include="ECS\Components\AI\PatrolPath.cs" />
@@ -544,6 +546,7 @@
     <Compile Include="Scripting\VortexScriptApi.cs" />
     <Compile Include="Scripting\VortexScriptApi.Vfx.cs" />
     <Compile Include="Scripting\VortexScriptApi.Ai.cs" />
+    <Compile Include="Scripting\VortexScriptApi.Ragdoll.cs" />
     <Compile Include="Utilities\Utilities.cs" />
     <EmbeddedResource Include="Properties\Resources.resx">
       <Generator>ResXFileCodeGenerator</Generator>

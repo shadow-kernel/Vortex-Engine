@@ -254,6 +254,12 @@ Subclasses add a shape member (Order 20+):
 
 > Mark a collider `IsTrigger` to receive [`OnTriggerEnter/Stay/Exit`](Scripting-API-Reference#vortexbehaviour); leave it solid for `OnCollisionEnter`. Colliders feed the runtime `Physics.MoveCharacter` collide-and-slide.
 
+### Ragdoll
+
+**`Editor.ECS.Components.Physics`** · DN `"Ragdoll"`, green. Turns the entity's animated character into a physics ragdoll when a script calls [`Ragdoll.Activate`](Scripting-API-Reference#ragdoll) (or at play start). Needs an **Animator** on the same entity and a physics-enabled engine build. The bodies (pelvis, spine, chest, head, upper/lower arms and legs) and their joints are generated at activation from the skeleton and the current pose; the inspector card shows which bones were detected.
+
+`ActivateOnStart` (/10, `false`) · `Mass` (/11, `70` kg in total) · `Thickness` (/12, `1`, capsule radius scale) · `Friction` (/13, `0.8`) · `Damping` (/14, `0.25`, angular) · `JointFriction` (/15, `0.5` N·m at elbows and knees) · `BlendTime` (/16, `0` s — the playing clip hands over to the simulation over this time) · `DisableColliders` (/17, `true` — the entity's own colliders are removed while it is a ragdoll).
+
 ### AudioSource
 
 **`Editor.ECS.Components.Audio`** · DN `"Audio Source"`, tan. Access from scripts via [`VortexBehaviour.GetAudioSource()`](Scripting-API-Reference#audiosource).

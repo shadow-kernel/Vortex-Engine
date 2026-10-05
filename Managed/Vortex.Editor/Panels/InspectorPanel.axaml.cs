@@ -720,6 +720,7 @@ namespace VortexEditor.Panels
             C<SphereCollider>("Physics", "Sphere Collider", "Collider", "VxGreenBrush", x => new SphereCollider(x), "physics collision sphere ball");
             C<CapsuleCollider>("Physics", "Capsule Collider", "Collider", "VxGreenBrush", x => new CapsuleCollider(x), "physics collision capsule character");
             C<MeshCollider>("Physics", "Mesh Collider", "Collider", "VxGreenBrush", x => new MeshCollider(x), "physics collision mesh exact", "edge-accurate");
+            C<Ragdoll>("Physics", "Ragdoll", "Bone", "VxGreenBrush", x => new Ragdoll(x), "ragdoll death dead die fall limp body physics character enemy npc", "fall on death");
             list.Add(new CatalogEntry { Category = "Physics", Name = "Open Collision Editor…", Icon = "Gizmo", BrushKey = "VxGreenBrush", Keywords = "collision editor collider fit", Run = x => EditorWindows.CollisionEditor(x) });
             // physics joints (#103) — an entity may carry several (e.g. a rope segment linked both ways)
             void J(string name, string hint, string keywords, Func<GameEntity, Component> make)

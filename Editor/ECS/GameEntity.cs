@@ -35,6 +35,7 @@ namespace Editor.ECS
     [KnownType(typeof(Components.Physics.SliderJoint))]
     [KnownType(typeof(Components.Physics.FixedJoint))]
     [KnownType(typeof(Components.Physics.DistanceJoint))]
+    [KnownType(typeof(Components.Physics.Ragdoll))]
     [KnownType(typeof(Components.AI.NavAgent))]
     [KnownType(typeof(Components.AI.AIPerception))]
     [KnownType(typeof(Components.AI.PatrolPath))]
