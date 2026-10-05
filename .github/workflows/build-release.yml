@@ -140,6 +140,7 @@ jobs:
         name: VortexEngine-Portable-${{ steps.version.outputs.VERSION }}
         path: |
           x64/Release/*.exe
+          !x64/Release/EngineTest.exe
           x64/Release/*.dll
           x64/Release/*.config
           x64/Release/Shaders/**
