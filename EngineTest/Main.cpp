@@ -8,7 +8,7 @@
 // a native window, renders a lit scene and captures it (CMake builds it as VortexRenderTest);
 // TEST_PHYSICS is the non-interactive Jolt smoke test (CMake builds it as VortexPhysicsTest);
 // TEST_PARTICLES the particle (VFX) test (VortexParticleTest); TEST_NAVIGATION the Recast/Detour test (VortexNavigationTest).
-#if !defined(TEST_AUDIO) && !defined(TEST_ECS) && !defined(TEST_RENDER) && !defined(TEST_PHYSICS) && !defined(TEST_PARTICLES) && !defined(TEST_NAVIGATION)
+#if !defined(TEST_AUDIO) && !defined(TEST_ECS) && !defined(TEST_RENDER) && !defined(TEST_PHYSICS) && !defined(TEST_PARTICLES) && !defined(TEST_NAVIGATION) && !defined(TEST_GEOMETRY)
 #define TEST_AUDIO 1
 #endif
 #ifndef TEST_AUDIO
@@ -29,6 +29,9 @@
 #ifndef TEST_NAVIGATION
 #define TEST_NAVIGATION 0
 #endif
+#ifndef TEST_GEOMETRY
+#define TEST_GEOMETRY 0
+#endif
 
 #if TEST_AUDIO
 #include "TestAudio.h"
@@ -42,6 +45,8 @@
 #include "TestParticles.h"
 #elif TEST_NAVIGATION
 #include "TestNavigation.h"
+#elif TEST_GEOMETRY
+#include "TestGeometry.h"
 #else
 #error "No test defined"
 #endif

@@ -284,6 +284,20 @@ namespace VortexEditor.Shell
                 s.Children.Add(PropertyRows.Row("Offset", Pair(
                     PropertyRows.FloatBox(() => _mat.UVOffset[0], v => Edit("offsetu", () => _mat.UVOffset[0] = v), 0.05),
                     PropertyRows.FloatBox(() => _mat.UVOffset[1], v => Edit("offsetv", () => _mat.UVOffset[1] = v), 0.05)), "Texture offset (U, V)"));
+                // one tile's size in metres: store materials know it; assigning the material to a cube or plane then
+                // uses a copy tiled for the object's size (MaterialFit) instead of stretching one tile over it
+                void SetRealSize(int i, float v)
+                {
+                    var r = _mat.RealWorldSize != null && _mat.RealWorldSize.Length >= 2 ? _mat.RealWorldSize : new[] { 0f, 0f };
+                    r[i] = Math.Max(0f, v);
+                    if (r[1 - i] <= 0f) r[1 - i] = r[i];   // square tiles unless told otherwise
+                    _mat.RealWorldSize = r[0] > 0f && r[1] > 0f ? r : null;
+                }
+                float RealSize(int i) => _mat.RealWorldSize != null && _mat.RealWorldSize.Length > i ? _mat.RealWorldSize[i] : 0f;
+                s.Children.Add(PropertyRows.Row("Real size (m)", Pair(
+                    PropertyRows.FloatBox(() => RealSize(0), v => Edit("realsize", () => SetRealSize(0, v)), 0.5, 0f),
+                    PropertyRows.FloatBox(() => RealSize(1), v => Edit("realsize", () => SetRealSize(1, v)), 0.5, 0f)),
+                    "How many metres one texture tile covers (U, V) — store materials know it, 0 = unknown. Assigning the material to a cube or plane then tiles it for the object's size."));
 
                 s.Children.Add(EditorKit.Section("Emission"));
                 s.Children.Add(PropertyRows.Row("Color", ColorEditor("emissive", "Emissive Color",

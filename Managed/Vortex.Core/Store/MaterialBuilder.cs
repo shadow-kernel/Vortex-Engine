@@ -80,6 +80,48 @@ namespace Editor.Core.Assets.Store
             return m;
         }
 
+        /// <summary>The real-world tile size a provider reported for <paramref name="item"/> ("size_m" = "w,h" metres), or null.</summary>
+        public static float[] RealWorldSizeOf(StoreItem item)
+        {
+            if (item == null || !item.Extra.TryGetValue("size_m", out var s) || string.IsNullOrEmpty(s)) return null;
+            var parts = s.Split(',');
+            if (parts.Length < 2) return null;
+            if (!float.TryParse(parts[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float w) ||
+                !float.TryParse(parts[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float h) || w <= 0f || h <= 0f) return null;
+            return new[] { w, h };
+        }
+
+        /// <summary>
+        /// Parallax depth for a texture that covers <paramref name="tileMetres"/>: the engine offsets UVs in tile units,
+        /// so a fixed depth exaggerates large scans (0.03 on a 15 m tile smears the surface by ~45 cm at grazing angles).
+        /// About 5 cm of relief, kept between 0.002 and 0.03 tile units.
+        /// </summary>
+        public static float HeightScaleFor(float tileMetres)
+            => tileMetres > 0f ? Math.Max(0.002f, Math.Min(0.03f, 0.05f / tileMetres)) : 0.03f;
+
+        /// <summary>
+        /// Tiling that keeps a material with a known real-world size at its true scale on a cube or plane primitive of
+        /// world size (<paramref name="sx"/>, <paramref name="sy"/>, <paramref name="sz"/>) metres: the two largest
+        /// extents are the face the material is seen on (a floor: x/z, a wall: x/y or z/y, matching the primitives' UV
+        /// layout). Null when the mesh is not a cube/plane primitive or the size is unknown. <paramref name="extentU"/>
+        /// / <paramref name="extentV"/> are the face's size in metres.
+        /// </summary>
+        public static float[] FitTiling(string meshPath, float sx, float sy, float sz, float[] realWorldSize, out float extentU, out float extentV)
+        {
+            extentU = extentV = 0f;
+            if (realWorldSize == null || realWorldSize.Length < 2 || realWorldSize[0] <= 0f || realWorldSize[1] <= 0f) return null;
+            string m = (meshPath ?? "").Trim();
+            bool plane = m.Equals("Primitive:Plane", StringComparison.OrdinalIgnoreCase);
+            bool cube = m.Equals("Primitive:Cube", StringComparison.OrdinalIgnoreCase);
+            if (!plane && !cube) return null;
+            sx = Math.Abs(sx); sy = Math.Abs(sy); sz = Math.Abs(sz);
+            if (plane || (sy <= sx && sy <= sz)) { extentU = sx; extentV = sz; }      // floor / ceiling (planes lie in x/z)
+            else if (sz <= sx && sz <= sy) { extentU = sx; extentV = sy; }            // wall facing z
+            else { extentU = sz; extentV = sy; }                                      // wall facing x
+            if (extentU <= 0f || extentV <= 0f) return null;
+            return new[] { (float)Math.Round(extentU / realWorldSize[0], 2), (float)Math.Round(extentV / realWorldSize[1], 2) };
+        }
+
         /// <summary>Every texture path a material references.</summary>
         public static List<string> TexturePaths(VortexMaterial m)
             => new[] { m.AlbedoTexture, m.NormalTexture, m.MetallicTexture, m.RoughnessTexture, m.AOTexture, m.EmissiveTexture, m.HeightTexture,

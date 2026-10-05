@@ -365,6 +365,11 @@ namespace Editor.Core.Assets.Store
             foreach (var img in images) if (!roles.ContainsKey(Path.GetFullPath(img))) { var r = MaterialBuilder.RoleOf(img); if (r != null) roles[Path.GetFullPath(img)] = r; }
             var mat = MaterialBuilder.Build(j.Item.Name, pkg, images.Select(Path.GetFullPath), roles);
             if (mat == null) throw new InvalidDataException("No colour or normal map found in the download.");
+            // the provider knows how much ground one tile covers: keep it, so assigning the material to a floor or a
+            // wall tiles it at its true scale, and keep the parallax relief at a few centimetres for that size
+            mat.RealWorldSize = MaterialBuilder.RealWorldSizeOf(j.Item);
+            if (mat.RealWorldSize != null && !string.IsNullOrEmpty(mat.HeightTexture))
+                mat.HeightScale = MaterialBuilder.HeightScaleFor(Math.Max(mat.RealWorldSize[0], mat.RealWorldSize[1]));
             // lay the material out cleanly: <name>/<name>.vmat + textures/<the maps it uses> (previews, DX duplicates, .usdc … stay behind)
             string matDir = Path.Combine(Path.GetDirectoryName(pkg), "material", name);
             if (Directory.Exists(matDir)) Directory.Delete(matDir, true);

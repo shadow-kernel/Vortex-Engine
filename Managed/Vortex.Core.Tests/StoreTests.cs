@@ -286,7 +286,7 @@ namespace VortexTests
             var zip = Zip(("Bricks010_1K-JPG_Color.jpg", B("c")), ("Bricks010_1K-JPG_NormalGL.jpg", B("ngl")), ("Bricks010_1K-JPG_NormalDX.jpg", B("ndx")),
                           ("Bricks010_1K-JPG_Roughness.jpg", B("r")), ("Bricks010_1K-JPG_AmbientOcclusion.jpg", B("ao")), ("Bricks010_1K-JPG_Displacement.jpg", B("d")),
                           ("Bricks010.png", B("preview")), ("Bricks010_1K-JPG.usdc", B("usd")));
-            fake.Json("https://ambientcg.com/api/v3/assets", "{\"totalResults\":1,\"assets\":[{\"id\":\"Bricks010\",\"title\":\"Bricks 010\",\"tags\":[\"brick\",\"010\"],\"thumbnails\":{\"256-PNG\":\"https://acg.test/thumb.png\"}," +
+            fake.Json("https://ambientcg.com/api/v3/assets", "{\"totalResults\":1,\"assets\":[{\"id\":\"Bricks010\",\"title\":\"Bricks 010\",\"tags\":[\"brick\",\"010\"],\"thumbnails\":{\"256-PNG\":\"https://acg.test/thumb.png\"},\"dimensions\":{\"width\":200,\"height\":100}," +
                 "\"downloads\":[{\"attributes\":\"1K-JPG\",\"extension\":\"zip\",\"url\":\"https://ambientcg.com/get?file=Bricks010_1K-JPG.zip\",\"size\":" + zip.Length + "}]}]}");
             fake.Bytes("https://ambientcg.com/get?file=Bricks010_1K-JPG.zip", zip);
             var p = new AmbientCgProvider();
@@ -309,7 +309,38 @@ namespace VortexTests
             t.Equal("textures/Bricks010_1K-JPG_NormalGL.jpg", m.NormalTexture, "GL normal preferred");
             t.False(m.UseDirectXNormals, "OpenGL convention");
             t.Equal("textures/Bricks010_1K-JPG_AmbientOcclusion.jpg", m.AOTexture, "AO wired");
+            t.True(m.RealWorldSize != null && m.RealWorldSize[0] == 2f && m.RealWorldSize[1] == 1f, "real-world size from the 200 × 100 cm dimensions");
+            t.Equal(0.025f, m.HeightScale, "parallax depth for a 2 m tile (5 cm of relief)");
             t.True(fake.Requests.Any(r => r.RequestUri.Query.Contains("q=brick")), "query sent");
+        }
+
+        [Test]
+        public static void MaterialTilingFitsTheObject(TestContext t)
+        {
+            var real = new[] { 15f, 15f };   // one Poly Haven coast_sand_rocks_02 tile
+            var floor = MaterialBuilder.FitTiling("Primitive:Cube", 24f, 0.024f, 92f, real, out float u, out float v);
+            t.True(floor != null && floor[0] == 1.6f && floor[1] == 6.13f && u == 24f && v == 92f, "thin cube = floor: x/z extents → 1.6 × 6.13");
+            var plane = MaterialBuilder.FitTiling("Primitive:Plane", 30f, 1f, 30f, real, out _, out _);
+            t.True(plane != null && plane[0] == 2f && plane[1] == 2f, "plane lies in x/z");
+            var wallZ = MaterialBuilder.FitTiling("Primitive:Cube", 30f, 3f, 0.2f, new[] { 2f, 2f }, out u, out v);
+            t.True(wallZ != null && wallZ[0] == 15f && wallZ[1] == 1.5f && u == 30f && v == 3f, "wall facing z: x/y");
+            var wallX = MaterialBuilder.FitTiling("Primitive:Cube", 0.2f, 4f, 10f, new[] { 2f, 2f }, out u, out v);
+            t.True(wallX != null && wallX[0] == 5f && wallX[1] == 2f && u == 10f && v == 4f, "wall facing x: z/y");
+            t.True(MaterialBuilder.FitTiling("Assets/Models/crate.glb", 1f, 1f, 1f, real, out _, out _) == null, "models keep their UVs");
+            t.True(MaterialBuilder.FitTiling("Primitive:Cube", 24f, 0.02f, 92f, null, out _, out _) == null, "unknown size: no fitting");
+            var item = new StoreItem { Extra = { ["size_m"] = "15,15" } };
+            var size = MaterialBuilder.RealWorldSizeOf(item);
+            t.True(size != null && size[0] == 15f && size[1] == 15f, "size_m parsed (invariant culture)");
+            t.True(MaterialBuilder.RealWorldSizeOf(new StoreItem()) == null, "no size_m → null");
+            t.Equal(0.002f, MaterialBuilder.HeightScaleFor(30f), "big scans: shallow parallax (clamped)");
+            t.Equal(0.03f, MaterialBuilder.HeightScaleFor(0.5f), "small tiles: capped at 0.03");
+            // the material round-trips its size through the .vmat
+            var mat = new Editor.Core.Assets.VortexMaterial { Name = "x", RealWorldSize = new[] { 15f, 15f } };
+            string path = t.Path("x.vmat");
+            t.True(mat.Save(path), "saved");
+            var back = Editor.Core.Assets.VortexMaterial.Load(path);
+            t.True(back.RealWorldSize != null && back.RealWorldSize[1] == 15f, "RealWorldSize survives the .vmat");
+            t.True(Editor.Core.Assets.VortexMaterial.Load(t.Write("old.vmat", "{\"Name\":\"old\"}")).RealWorldSize == null, "old .vmat: unknown size");
         }
 
         [Test]

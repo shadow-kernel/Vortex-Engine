@@ -1977,7 +1977,8 @@ namespace VortexEditor.Panels
             string rel = AssetFileOps.ToRelative(vmatPath);
             var mr = ent.GetComponent<Editor.ECS.Components.Rendering.MeshRenderer>();
             int n = 0;
-            if (mr != null && !IsMultiSubmeshBase(mr.MeshPath)) { mr.MaterialPath = rel; n = 1; }
+            string fitNote = null;
+            if (mr != null && !IsMultiSubmeshBase(mr.MeshPath)) { mr.MaterialPath = VortexEditor.Services.MaterialFit.ForRenderer(ent, mr, rel, out fitNote); n = 1; }
             else
                 foreach (var child in ent.Children)
                 {
@@ -1986,6 +1987,7 @@ namespace VortexEditor.Panels
                 }
             SceneRenderService.RuntimeDirty = true;
             EditorCommands.Window?.Inspector?.Refresh();
+            if (fitNote != null) { Current?.Refresh(); EditorCommands.Toast(fitNote); return; }
             EditorCommands.Toast(n > 0 ? "Assigned " + Path.GetFileNameWithoutExtension(vmatPath) + " to " + ent.Name + (n > 1 ? " (" + n + " parts)" : "") : ent.Name + " has no mesh to assign a material to");
         }
 

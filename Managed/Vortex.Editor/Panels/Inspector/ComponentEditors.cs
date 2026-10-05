@@ -167,7 +167,14 @@ namespace VortexEditor.Panels.Inspector
             Refreshers[combo] = Sync;
             yield return Row("Mesh", combo);
             yield return Row("Mesh file", AssetPath(() => IsPrimitive(m.MeshPath) ? "" : m.MeshPath, v => { m.MeshPath = v ?? ""; MeshChanged(); Sync(); }, "Model", ModelPatterns, () => AssetPickerDialog.Pick("Models", ModelPatterns)));
-            yield return Row("Material", AssetPath(() => IsMaterialPlaceholder(m.MaterialPath) ? "" : m.MaterialPath, v => { m.MaterialPath = string.IsNullOrEmpty(v) ? null : v; Dirty(); }, "Material", MaterialPatterns, () => AssetPickerDialog.Pick("Materials", MaterialPatterns)), "Drop a .vmat — empty = the engine default material");
+            yield return Row("Material", AssetPath(() => IsMaterialPlaceholder(m.MaterialPath) ? "" : m.MaterialPath, v =>
+            {
+                string note = null;
+                // a store material on a floor/wall primitive: a copy tiled for the object's size (see MaterialFit)
+                m.MaterialPath = string.IsNullOrEmpty(v) ? null : VortexEditor.Services.MaterialFit.ForRenderer(m.Entity, m, v, out note);
+                if (note != null) EditorCommands.Toast(note);
+                Dirty();
+            }, "Material", MaterialPatterns, () => AssetPickerDialog.Pick("Materials", MaterialPatterns)), "Drop a .vmat — empty = the engine default material. Store materials (they know their real size) are tiled for the object's size.");
             var edit = new Button { Content = "Edit Material…", Classes = { "ghost" }, HorizontalAlignment = HorizontalAlignment.Left };
             edit.Click += (s, e) =>
             {

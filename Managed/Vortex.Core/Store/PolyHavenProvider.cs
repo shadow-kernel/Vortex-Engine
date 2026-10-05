@@ -62,7 +62,11 @@ namespace Editor.Core.Assets.Store
                     if (a.TryGetProperty("categories", out var cats) && cats.ValueKind == JsonValueKind.Array) item.Categories.AddRange(cats.EnumerateArray().Select(x => x.GetString()).Where(x => x != null));
                     if (a.TryGetProperty("polycount", out var pc) && pc.ValueKind == JsonValueKind.Number) item.Extra["polycount"] = pc.GetInt64().ToString("N0", CultureInfo.InvariantCulture);
                     if (a.TryGetProperty("dimensions", out var dim) && dim.ValueKind == JsonValueKind.Array)
+                    {
                         item.Extra["dimensions"] = string.Join(" × ", dim.EnumerateArray().Select(d => (d.GetDouble() / 1000.0).ToString("0.00", CultureInfo.InvariantCulture))) + " m";
+                        // millimetres → the material's real-world tile size in metres
+                        item.Extra["size_m"] = string.Join(",", dim.EnumerateArray().Take(2).Select(d => (d.GetDouble() / 1000.0).ToString("0.###", CultureInfo.InvariantCulture)));
+                    }
                     int score = 1;
                     if (words.Length > 0)
                     {

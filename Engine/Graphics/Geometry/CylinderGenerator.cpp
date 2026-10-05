@@ -88,13 +88,14 @@ namespace vortex::graphics
 			const u32 c = a + 2;
 			const u32 d = a + 3;
 
+			// clockwise seen from outside — the engine's front face, like the cube and plane generators
 			out_indices.push_back(a);
-			out_indices.push_back(b);
 			out_indices.push_back(c);
+			out_indices.push_back(b);
 
 			out_indices.push_back(c);
-			out_indices.push_back(b);
 			out_indices.push_back(d);
+			out_indices.push_back(b);
 		}
 	}
 
@@ -105,14 +106,14 @@ namespace vortex::graphics
 			if (top)
 			{
 				out_indices.push_back(center_index);
-				out_indices.push_back(center_index + 1 + i);
 				out_indices.push_back(center_index + 2 + i);
+				out_indices.push_back(center_index + 1 + i);
 			}
 			else
 			{
 				out_indices.push_back(center_index);
-				out_indices.push_back(center_index + 2 + i);
 				out_indices.push_back(center_index + 1 + i);
+				out_indices.push_back(center_index + 2 + i);
 			}
 		}
 	}
