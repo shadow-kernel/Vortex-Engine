@@ -4,10 +4,13 @@
 ; This script creates a professional installation wizard for Vortex Engine
 
 #define MyAppName "Vortex Engine"
-#define MyAppVersion "2.10.0"
+#define MyAppVersion "3.0.0"
 #define MyAppPublisher "Vortex Engine Team"
 #define MyAppURL "https://github.com/shadow-kernel/Vortex-Engine"
-#define MyAppExeName "Vortex Engine.exe"
+; The editor is the cross-platform one (the same UI as on macOS and Linux) since v3.0; the WPF editor stays for one
+; release as "Vortex Engine (Classic)".
+#define MyAppExeName "Editor\Vortex.Editor.exe"
+#define MyClassicExeName "Vortex Engine.exe"
 #define MyAppDataFolder "VortexEngine"
 
 [Setup]
@@ -70,7 +73,7 @@ Name: "quicklaunchicon"; Description: "{cm:CreateQuickLaunchIcon}"; GroupDescrip
 
 [Files]
 ; Main application files from Release build
-Source: "..\x64\Release\Vortex Engine.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\x64\Release\{#MyClassicExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\x64\Release\*.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\x64\Release\*.config"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist; Excludes: "*.vshost.*"
 ; Engine library (built in Engine subfolder)
@@ -83,14 +86,14 @@ Source: "..\x64\Release\Templates\*"; DestDir: "{app}\Templates"; Flags: ignorev
 ; layout) and only falls back to walking up to the repo's Engine\Shaders in dev checkouts. Without this
 ; an installed editor renders a WHITE viewport (no PSOs compile). Ships .hlsl + any precompiled bin\*.cso.
 Source: "..\Engine\Shaders\*"; DestDir: "{app}\Shaders"; Flags: ignoreversion recursesubdirs createallsubdirs
-; The cross-platform editor (#183): self-contained .NET 10 (nothing to install), staged by
-; tools/windows/stage-editor.ps1. It loads {app}\VortexAPI.dll and uses {app}\Shaders + {app}\Templates, shared with
-; the WPF editor; its Build dialog exports Windows games with the player in Editor\player.
+; The editor (#183): self-contained .NET 10 (nothing to install), staged by tools/windows/stage-editor.ps1. It loads
+; {app}\VortexAPI.dll and uses {app}\Shaders + {app}\Templates, shared with the classic WPF editor; its Build dialog
+; exports Windows games with the player in Editor\player.
 Source: "..\x64\Release\Editor\*"; DestDir: "{app}\Editor"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
-Name: "{group}\Vortex Editor (cross-platform)"; Filename: "{app}\Editor\Vortex.Editor.exe"; Comment: "The Vortex editor of macOS and Linux: Library, Asset Store, Sound Studio, Claude"
+Name: "{group}\{#MyAppName} (Classic)"; Filename: "{app}\{#MyClassicExeName}"; Comment: "The previous Windows editor (WPF), kept for one release"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 Name: "{userappdata}\Microsoft\Internet Explorer\Quick Launch\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: quicklaunchicon
@@ -287,7 +290,7 @@ begin
               'Would you like to force close the application?', mbConfirmation, MB_YESNO) = IDYES then
     begin
       // Try to close the application
-      Exec('taskkill', '/F /IM "{#MyAppExeName}"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      Exec('taskkill', '/F /IM "Vortex.Editor.exe" /IM "{#MyClassicExeName}"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
       Sleep(1000);
     end
     else

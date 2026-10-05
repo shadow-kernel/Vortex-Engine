@@ -80,17 +80,15 @@ jobs:
       - name: Managed tests (Vortex.Core)
         run: dotnet run --project Managed/Vortex.Core.Tests -c Release
 
-      # #183: the cross-platform editor exactly as the installer lays it out — {app}\Editor (self-contained, with its
-      # player) next to {app}\VortexAPI.dll, Shaders and Templates, outside the repository — on DX12 / WARP (the runners
-      # have no GPU). Viewport input, scenes, export, tools, captures and the Claude panel end to end. Informational
-      # until #183 is done.
-      - name: Cross-platform editor smoke, installed layout (DX12 / WARP, informational)
-        continue-on-error: true
+      # The Windows editor (#183) exactly as the installer lays it out — {app}\Editor (self-contained, with its player)
+      # next to {app}\VortexAPI.dll, Shaders and Templates, outside the repository — on DX12 / WARP (the runners have no
+      # GPU): viewport input, scenes, export, tools, captures and the Claude panel end to end.
+      - name: Editor smoke, installed layout (DX12 / WARP)
         shell: pwsh
         env:
           VORTEX_DX12_WARP: '1'
           VORTEX_SMOKE_FULL: '1'
-          VORTEX_SMOKE_ONLY: 'mcp,claude'
+          VORTEX_SMOKE_ONLY: 'mcp,claude,title bar,update window'
         run: |
           $tmp = $env:RUNNER_TEMP
           $app = "$tmp\app"
@@ -108,7 +106,7 @@ jobs:
           Get-Content "$tmp\smoke.log" -ErrorAction SilentlyContinue
           Get-Content "$tmp\smoke.err" -ErrorAction SilentlyContinue
           if (Select-String -Path "$tmp\smoke.log" -Pattern "SMOKE FAIL" -Quiet) { exit 1 }
-          if (-not (Select-String -Path "$tmp\smoke.log" -Pattern "SMOKE OK   mcp tools" -Quiet)) { exit 1 }
+          foreach ($c in @("mcp tools", "title bar")) { if (-not (Select-String -Path "$tmp\smoke.log" -Pattern "SMOKE OK   $c" -Quiet)) { Write-Host "::error::smoke check '$c' did not pass"; exit 1 } }
 
       - name: Upload the Windows smoke capture
         if: always()

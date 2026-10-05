@@ -781,10 +781,15 @@ namespace VortexEditor.Shell
         public static void About() => Window?.OpenAbout();
         public static void ReleaseNotes() => OpenUrl("https://github.com/" + Editor.Core.EngineInfo.RepoOwner + "/" + Editor.Core.EngineInfo.RepoName + "/releases");
 
-        /// <summary>Help ▸ Check for Updates: compare with the latest GitHub release (the WPF UpdateService installs
-        /// Windows setups; on macOS the release page is opened for the download).</summary>
+        /// <summary>Help ▸ Check for Updates: an installed Windows build downloads and installs the new version
+        /// (UpdateWindow); elsewhere the release page is opened for the download.</summary>
         public static async Task CheckForUpdates()
         {
+            if (OperatingSystem.IsWindows() && Editor.Core.Services.Update.UpdateService.IsInstalledBuild())
+            {
+                var info = await Editor.Core.Services.Update.UpdateService.CheckAsync();
+                if (info != null && info.Bump != Editor.Core.Services.Update.BumpType.None) { UpdateWindow.Show(info, installNow: false); return; }
+            }
             var r = await LatestRelease();
             if (r.tag == null) { if (await Dialogs.Confirm("Update check failed", "Could not reach GitHub. Open the release page instead?", "Open", "Cancel")) ReleaseNotes(); return; }
             if (IsNewer(r.tag, Editor.Core.EngineInfo.VersionString))

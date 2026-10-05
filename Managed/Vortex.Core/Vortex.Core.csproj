@@ -49,6 +49,7 @@
     <Compile Include="../../Editor/UI/Vui/*.cs" Link="Editor/UI/Vui/%(Filename)%(Extension)" />
     <Compile Include="../../Editor/DllWrapper/**/*.cs" Link="Editor/DllWrapper/%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="../../Editor/Scripting/ScriptRuntime.cs" Link="Editor/Scripting/ScriptRuntime.cs" />
+    <Compile Include="../../Editor/Scripting/DualSenseHid.cs" Link="Editor/Scripting/DualSenseHid.cs" />
     <!-- Editor-side logic that is already framework-free (view models / services the editor shells share). -->
     <Compile Include="../../Editor/Editors/WorldEditor/Components/SceneHierarchy/SceneHierarchyViewModel.cs" Link="Editor/Editors/SceneHierarchy/SceneHierarchyViewModel.cs" />
     <Compile Include="../../Editor/Editors/WorldEditor/Components/FileExplorer/Services/FileExplorerService.cs" Link="Editor/Editors/FileExplorer/FileExplorerService.cs" />
@@ -69,7 +70,6 @@
                       ../../Editor/Core/Services/MultiViewportRenderService.cs;
                       ../../Editor/Core/Services/ViewportRenderer.cs;
                       ../../Editor/Core/Services/Rendering/*.cs;
-                      ../../Editor/Core/Services/Update/*.cs;
                       ../../Editor/Core/Services/Build/GameExporter.cs;
                       ../../Editor/Core/Util/FilePicker.cs"
              Link="Editor/Core/%(RecursiveDir)%(Filename)%(Extension)" />

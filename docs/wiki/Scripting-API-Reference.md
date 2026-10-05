@@ -138,7 +138,7 @@ Keyboard, mouse and gamepad. **All input is dead unless the game window is focus
 
 ### Gamepad / controller
 
-Supports Xbox and PlayStation (DualSense/DualShock) pads via `Windows.Gaming.Input` (with a direct DualSense HID path and an XInput fallback). Polled once per tick. Sticks are `-1..1` with dead zones, triggers `0..1`. Frozen to neutral while a gameplay-blocking screen is up or the window isn't focused. Buttons use Xbox-style names regardless of the physical pad.
+Supports Xbox and PlayStation (DualSense/DualShock) pads on every platform: on Windows a DualSense / DualShock read straight from its HID report, then XInput (the WPF editor also asks `Windows.Gaming.Input` first); on macOS and Linux SDL3's gamepad API (Xbox, PlayStation, Switch Pro and more, USB and Bluetooth). Polled once per tick. Sticks are `-1..1` with dead zones, triggers `0..1`. Frozen to neutral while a gameplay-blocking screen is up or the window isn't focused. Buttons use Xbox-style names regardless of the physical pad.
 
 ▸ `static bool GamepadConnected { get; }` — a controller is connected.
 ▸ `static float LeftStickX { get; }` / `LeftStickY { get; }` — left stick, `-1..1` (X right, Y up).

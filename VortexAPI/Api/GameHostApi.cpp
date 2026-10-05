@@ -1,4 +1,8 @@
 #include "../ApiCommon.h"
+#include <cstdint>
+#if VORTEX_HAS_SDLGPU
+#include <SDL3/SDL.h>
+#endif
 
 EDITOR_INTERFACE bool RunGameHost(unsigned int width, unsigned int height, const wchar_t* title)
 {
@@ -129,3 +133,87 @@ EDITOR_INTERFACE bool RunGameHostUtf8(unsigned int width, unsigned int height, c
 	return runtime::GameHost::run_utf8(width, height, title_utf8);
 }
 
+// ---- Gamepads for the .NET hosts (cross-platform editor, Vortex.Player) --------------------------------------------
+// One controller snapshot in the convention the gameplay API uses (Vortex.Input): XInput button bits, sticks -1..1 with
+// Y up and the XInput dead zones, triggers 0..1. Returns 1 while a gamepad is connected. The SDL builds (macOS, Linux)
+// read SDL3's gamepad API — Xbox, PlayStation, Switch Pro and the rest of SDL's mappings, USB and Bluetooth; the DX12
+// build returns 0 and the Windows hosts read XInput / the DualSense HID from managed code.
+struct VortexGamepadState
+{
+	int32_t connected;
+	uint16_t buttons;
+	uint16_t reserved;
+	float lx, ly, rx, ry, lt, rt;
+};
+
+#if VORTEX_HAS_SDLGPU
+namespace
+{
+	float gamepad_stick(Sint16 v, float dead)
+	{
+		float f = (float)v;
+		if (f > dead) f = (f - dead) / (32767.0f - dead);
+		else if (f < -dead) f = (f + dead) / (32768.0f - dead);
+		else f = 0.0f;
+		return f < -1.0f ? -1.0f : (f > 1.0f ? 1.0f : f);
+	}
+	float gamepad_trigger(Sint16 v)   // SDL 0..32767; the XInput threshold of 30/255
+	{
+		const float t = 30.0f / 255.0f * 32767.0f;
+		return v <= t ? 0.0f : ((float)v - t) / (32767.0f - t);
+	}
+}
+#endif
+
+EDITOR_INTERFACE int32_t PollGamepad(VortexGamepadState* out)
+{
+	if (!out) return 0;
+	*out = VortexGamepadState{};
+#if VORTEX_HAS_SDLGPU
+	static bool s_init = false, s_ok = false;
+	static SDL_Gamepad* s_pad = nullptr;
+	if (!s_init)
+	{
+		s_init = true;
+		s_ok = SDL_InitSubSystem(SDL_INIT_GAMEPAD);
+		// Polled, never event-driven: the editor does not drain SDL's event queue, so keep pad events out of it.
+		if (s_ok) { SDL_SetGamepadEventsEnabled(false); SDL_SetJoystickEventsEnabled(false); }
+	}
+	if (!s_ok) return 0;
+	SDL_UpdateGamepads();
+	if (s_pad && !SDL_GamepadConnected(s_pad)) { SDL_CloseGamepad(s_pad); s_pad = nullptr; }
+	if (!s_pad)
+	{
+		int count = 0;
+		SDL_JoystickID* ids = SDL_GetGamepads(&count);
+		if (ids && count > 0) s_pad = SDL_OpenGamepad(ids[0]);
+		SDL_free(ids);
+		if (!s_pad) return 0;
+	}
+
+	struct { SDL_GamepadButton b; uint16_t bit; } const map[] = {
+		{ SDL_GAMEPAD_BUTTON_DPAD_UP, 0x0001 }, { SDL_GAMEPAD_BUTTON_DPAD_DOWN, 0x0002 },
+		{ SDL_GAMEPAD_BUTTON_DPAD_LEFT, 0x0004 }, { SDL_GAMEPAD_BUTTON_DPAD_RIGHT, 0x0008 },
+		{ SDL_GAMEPAD_BUTTON_START, 0x0010 }, { SDL_GAMEPAD_BUTTON_BACK, 0x0020 },
+		{ SDL_GAMEPAD_BUTTON_LEFT_STICK, 0x0040 }, { SDL_GAMEPAD_BUTTON_RIGHT_STICK, 0x0080 },
+		{ SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, 0x0100 }, { SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, 0x0200 },
+		{ SDL_GAMEPAD_BUTTON_SOUTH, 0x1000 }, { SDL_GAMEPAD_BUTTON_EAST, 0x2000 },     // A / Cross, B / Circle
+		{ SDL_GAMEPAD_BUTTON_WEST, 0x4000 }, { SDL_GAMEPAD_BUTTON_NORTH, 0x8000 },     // X / Square, Y / Triangle
+	};
+	uint16_t buttons = 0;
+	for (const auto& m : map)
+		if (SDL_GetGamepadButton(s_pad, m.b)) buttons |= m.bit;
+
+	out->connected = 1;
+	out->buttons = buttons;
+	out->lx = gamepad_stick(SDL_GetGamepadAxis(s_pad, SDL_GAMEPAD_AXIS_LEFTX), 7849.0f);
+	out->ly = -gamepad_stick(SDL_GetGamepadAxis(s_pad, SDL_GAMEPAD_AXIS_LEFTY), 7849.0f);    // SDL: down is +
+	out->rx = gamepad_stick(SDL_GetGamepadAxis(s_pad, SDL_GAMEPAD_AXIS_RIGHTX), 8689.0f);
+	out->ry = -gamepad_stick(SDL_GetGamepadAxis(s_pad, SDL_GAMEPAD_AXIS_RIGHTY), 8689.0f);
+	out->lt = gamepad_trigger(SDL_GetGamepadAxis(s_pad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER));
+	out->rt = gamepad_trigger(SDL_GetGamepadAxis(s_pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER));
+	return 1;
+#else
+	return 0;
+#endif
+}

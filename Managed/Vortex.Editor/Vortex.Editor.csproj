@@ -13,6 +13,8 @@
     <AssemblyName>Vortex.Editor</AssemblyName>
     <RootNamespace>VortexEditor</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- the Windows exe (Explorer, Start menu, .vortex files) shows the Vortex logo; a Mac/Linux apphost has no icon resource -->
+    <ApplicationIcon Condition="'$(OS)' == 'Windows_NT'">../../Editor/Logo.ico</ApplicationIcon>
     <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>

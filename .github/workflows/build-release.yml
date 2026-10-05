@@ -10,6 +10,11 @@ on:
         description: 'Version number (e.g., 1.0.0)'
         required: true
         default: '1.0.0'
+      publish:
+        description: 'Publish a GitHub release (off = build and upload the installer + portable ZIP as artifacts only)'
+        type: boolean
+        required: false
+        default: true
 
 env:
   SOLUTION_FILE: Vortex.slnx
@@ -81,7 +86,7 @@ jobs:
       shell: pwsh
       run: |
         $out = "x64/${{ env.BUILD_CONFIGURATION }}"
-        $required = @("Vortex Engine.exe", "VortexAPI.dll", "assimp-vc143-mt.dll")
+        $required = @("Vortex Engine.exe", "VortexAPI.dll", "assimp-vc143-mt.dll")   # the classic WPF editor + the engine
         $missing = $required | Where-Object { -not (Test-Path "$out/$_") }
         if ($missing) { Write-Error "Missing required artifacts in $out : $($missing -join ', ')"; exit 1 }
         Write-Host "OK: $($required -join ', ') present in $out"
@@ -135,6 +140,7 @@ jobs:
         name: VortexEngine-Portable-${{ steps.version.outputs.VERSION }}
         path: |
           x64/Release/*.exe
+          !x64/Release/EngineTest.exe
           x64/Release/*.dll
           x64/Release/*.config
           x64/Release/Shaders/**
@@ -142,10 +148,138 @@ jobs:
           x64/Release/Editor/**
         retention-days: 30
 
-  release:
+  # #95: the installer as users get it — on top of the previous release (the update path), then the files, the Start
+  # menu, the .vortex association, and the installed editor's smoke checks (DX12 on WARP). No release without it.
+  installer-test:
     needs: build
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+    - name: Determine version
+      id: version
+      shell: pwsh
+      run: |
+        if ("${{ github.event_name }}" -eq "push") { $version = "${{ github.ref_name }}".TrimStart('v') } else { $version = "${{ github.event.inputs.version }}" }
+        echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+
+    - name: Download the installer
+      uses: actions/download-artifact@v4
+      with:
+        name: VortexEngine-Installer-${{ steps.version.outputs.VERSION }}
+        path: ./installer
+
+    - name: Install the previous release (the update path)
+      shell: pwsh
+      run: |
+        $prev = gh release list -R ${{ github.repository }} --exclude-drafts --exclude-pre-releases --limit 1 --json tagName -q '.[0].tagName'
+        Write-Host "previous release: $prev"
+        gh release download $prev -R ${{ github.repository }} -p "VortexEngine-Setup-*.exe" -D old
+        $old = Get-ChildItem old\*.exe | Select-Object -First 1
+        # WaitForExit, not -Wait: -Wait also waits for the editor the setup starts at the end, which never exits
+        $p = Start-Process $old.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-' -PassThru
+        $p.WaitForExit()
+        Start-Sleep -Seconds 5
+        Get-Process -Name 'Vortex Engine','Vortex.Editor' -ErrorAction SilentlyContinue | Stop-Process -Force   # the setup's relaunch
+        if (-not (Test-Path "$env:ProgramFiles\Vortex Engine\Vortex Engine.exe")) { throw "the previous release did not install" }
+
+    - name: Update to this build
+      shell: pwsh
+      run: |
+        $setup = Get-ChildItem installer\*.exe | Select-Object -First 1
+        $p = Start-Process $setup.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-','/LOG=install.log' -PassThru
+        $p.WaitForExit()
+        Write-Host "setup exit code: $($p.ExitCode)"
+        Start-Sleep -Seconds 5
+        $app = "$env:ProgramFiles\Vortex Engine"
+        # a silent install is the in-app update: it starts the new editor again
+        if (-not (Get-Process -Name 'Vortex.Editor' -ErrorAction SilentlyContinue)) { throw "the silent update did not start the editor" }
+        # v2.x's updater then starts its own "Vortex Engine.exe": the classic editor must leave at once, or both open
+        $c = Start-Process "$app\Vortex Engine.exe" -PassThru
+        if (-not $c.WaitForExit(30000)) { $c.Kill(); throw "after an update from v2.x the classic editor opens next to the new one" }
+        Write-Host "the classic editor started by the old updater left again"
+        Get-Process -Name 'Vortex Engine','Vortex.Editor' -ErrorAction SilentlyContinue | Stop-Process -Force
+        Start-Sleep -Seconds 2
+        # started on its own, the classic editor stays (WARP: the runner has no GPU)
+        $env:VORTEX_DX12_WARP = '1'
+        $c = Start-Process "$app\Vortex Engine.exe" -PassThru
+        if ($c.WaitForExit(10000)) { throw "the classic editor does not start on its own (exit code $($c.ExitCode))" }
+        Get-Process -Name 'Vortex Engine','Vortex.Editor' -ErrorAction SilentlyContinue | Stop-Process -Force
+        $missing = @('unins000.exe','VortexAPI.dll','Vortex Engine.exe','Editor\Vortex.Editor.exe','Editor\player\Vortex.Player.exe','Shaders\standard.hlsl','Templates\Default3D\project.vortex') |
+          Where-Object { -not (Test-Path (Join-Path $app $_)) }
+        if ($missing) { Get-Content install.log -Tail 40; throw "missing after the update: $($missing -join ', ')" }
+        $lnk = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Vortex Engine\Vortex Engine.lnk"
+        $target = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk).TargetPath
+        Write-Host "Start menu 'Vortex Engine' -> $target"
+        if ($target -notlike '*\Editor\Vortex.Editor.exe') { throw "the Start menu entry does not start the editor: $target" }
+        $assoc = (Get-ItemProperty 'Registry::HKEY_CLASSES_ROOT\VortexEngine.Project\shell\open\command').'(default)'
+        Write-Host ".vortex opens with: $assoc"
+        if ($assoc -notlike '*Editor\Vortex.Editor.exe*') { throw ".vortex files do not open the editor: $assoc" }
+
+    - name: Smoke the installed editor (DX12 / WARP)
+      shell: pwsh
+      env:
+        VORTEX_DX12_WARP: '1'
+        VORTEX_SMOKE_FULL: '1'
+        VORTEX_SMOKE_ONLY: 'mcp,claude,title bar,update window'
+      run: |
+        $app = "$env:ProgramFiles\Vortex Engine"
+        $tmp = $env:RUNNER_TEMP
+        $env:VORTEX_APPDATA_DIR = "$tmp\appdata"
+        Copy-Item -Recurse "$app\Templates\Default3D" "$tmp\smoke-project"
+        $p = Start-Process "$app\Editor\Vortex.Editor.exe" -ArgumentList "--project=$tmp\smoke-project", "--smoke=25", "--capture=$tmp\capture" -PassThru -NoNewWindow `
+               -RedirectStandardOutput "$tmp\smoke.log" -RedirectStandardError "$tmp\smoke.err"
+        if (-not $p.WaitForExit(420000)) { $p.Kill(); Write-Host "::warning::the editor smoke timed out" }
+        Get-Content "$tmp\smoke.log" -ErrorAction SilentlyContinue
+        if (Select-String -Path "$tmp\smoke.log" -Pattern "SMOKE FAIL" -Quiet) { exit 1 }
+        foreach ($c in @("mcp tools", "title bar")) { if (-not (Select-String -Path "$tmp\smoke.log" -Pattern "SMOKE OK   $c" -Quiet)) { Write-Host "::error::smoke check '$c' did not pass"; exit 1 } }
+
+    - name: In-app update (the editor hands over to the installer and comes back)
+      shell: pwsh
+      env:
+        VORTEX_DX12_WARP: '1'
+        VORTEX_SMOKE_FULL: '1'
+        VORTEX_SMOKE_ONLY: 'update install'
+      run: |
+        $app = "$env:ProgramFiles\Vortex Engine"
+        $tmp = $env:RUNNER_TEMP
+        $env:VORTEX_SMOKE_UPDATE_SETUP = (Get-ChildItem installer\*.exe | Select-Object -First 1).FullName
+        $env:VORTEX_APPDATA_DIR = "$tmp\appdata-update"
+        Copy-Item -Recurse "$app\Templates\Default3D" "$tmp\update-project"
+        Remove-Item "$env:TEMP\VortexUpdate.log" -ErrorAction SilentlyContinue
+        $p = Start-Process "$app\Editor\Vortex.Editor.exe" -ArgumentList "--project=$tmp\update-project", "--smoke=25" -PassThru -NoNewWindow `
+               -RedirectStandardOutput "$tmp\update.log" -RedirectStandardError "$tmp\update.err"
+        if (-not $p.WaitForExit(300000)) { $p.Kill(); Get-Content "$tmp\update.log" -Tail 30; throw "the editor did not hand over to the installer" }
+        Select-String -Path "$tmp\update.log" -Pattern "update install|SMOKE FAIL" | ForEach-Object { $_.Line }
+        if (-not (Select-String -Path "$tmp\update.log" -Pattern "update install: handing over" -Quiet)) { throw "the update check did not run" }
+        # the relay runs the installer, whose last step starts the editor again
+        $deadline = (Get-Date).AddMinutes(4)
+        while ((Get-Date) -lt $deadline -and -not (Get-Process -Name 'Vortex.Editor' -ErrorAction SilentlyContinue)) { Start-Sleep -Seconds 3 }
+        Get-Content "$env:TEMP\VortexUpdate.log" -Tail 12 -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 20
+        $editors = @(Get-Process -Name 'Vortex.Editor' -ErrorAction SilentlyContinue).Count
+        $classic = @(Get-Process -Name 'Vortex Engine' -ErrorAction SilentlyContinue).Count
+        Write-Host "after the in-app update: $editors editor(s), $classic classic"
+        if ($editors -ne 1 -or $classic -ne 0) { throw "the in-app update must leave exactly one editor running" }
+        # the relay is done: closing the editor must not start it again
+        Get-Process -Name 'Vortex.Editor' | Stop-Process -Force
+        Start-Sleep -Seconds 12
+        if (Get-Process -Name 'Vortex.Editor','Vortex Engine' -ErrorAction SilentlyContinue) { throw "closing the editor after the update started it again" }
+        Write-Host "in-app update: the editor came back once, and stays closed when closed"
+
+    - name: Upload the installed-editor capture
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: installed-editor-capture
+        path: ${{ runner.temp }}/capture
+        if-no-files-found: ignore
+
+  release:
+    needs: [build, installer-test]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish != 'false')
     
     permissions:
       contents: write
@@ -196,9 +330,9 @@ jobs:
           ### Installation
           
           **Installer (Recommended):**
-          Download and run `VortexEngine-Setup-${{ steps.version.outputs.VERSION }}.exe`. It installs both Windows editors:
-          *Vortex Engine* (the WPF editor) and *Vortex Editor (cross-platform)* — the editor of macOS and Linux, with the
-          Library, the Asset Store, the Sound Studio and Claude.
+          Download and run `VortexEngine-Setup-${{ steps.version.outputs.VERSION }}.exe`. *Vortex Engine* is the same editor
+          as on macOS and Linux — with the Library, the Asset Store, the Sound Studio and Claude. The previous Windows editor
+          stays available for this release as *Vortex Engine (Classic)* in the Start menu.
           
           **Portable Version:**
           Download `VortexEngine-Portable-${{ steps.version.outputs.VERSION }}.zip` and extract to any folder.

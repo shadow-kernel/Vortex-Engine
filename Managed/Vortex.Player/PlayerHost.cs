@@ -59,7 +59,7 @@ namespace Vortex.Player
             // Scripted keys are OR-ed with the physical keyboard; a scripted run counts as focused so gameplay input is live.
             HostInput.KeyDown = vk => (_script != null && _script.IsDown(vk)) || VortexAPI.GameHostKeyDown(vk);
             HostInput.WindowFocused = () => _script != null || VortexAPI.GameHostHasFocus();
-            HostInput.Gamepad = null;   // SDL3 gamepads: follow-up
+            HostInput.Gamepad = GamepadInput.Poll;   // DualSense HID / XInput on Windows, SDL3 on macOS + Linux
 
             Log("boot: exe=" + exeDir);
             // Engine/script log -> stdout (the editor shows the same entries in its console panel).

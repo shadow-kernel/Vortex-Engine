@@ -24,8 +24,8 @@ The Windows binaries (installer, portable ZIP and runtime pack, used by both edi
 | Jolt physics + Recast navigation | ❌ no-op stubs in the MSBuild build | ✅ Jolt 5.3.0, Recast/Detour 1.6.0 | ✅ same as macOS |
 | Particle rendering | ❌ simulated, never drawn | ✅ | ✅ |
 | Standalone player (`Vortex.Player`) | 🟡 in the installer (`Editor\player`), never run in CI | ✅ inside the app bundle | 🟡 build from source |
-| WPF editor | ✅ .NET Framework 4.8 | — | — |
-| Avalonia editor | 🟡 DX12 in a child HWND; ships in the installer (#183); CI smoke informational | ✅ Metal view; CI smoke gates the app build | 🟡 X11 (XWayland) window + Vulkan; from source, no CI |
+| WPF editor (classic) | 🟡 .NET Framework 4.8; kept as *Vortex Engine (Classic)* for v3.0, removed in v3.1 | — | — |
+| Avalonia editor (the editor) | ✅ the default since v3.0: DX12 in a child HWND (click routing, mouse look), gamepads, installer + self-update; CI smoke from the installed layout (WARP) gates PRs | ✅ Metal view; CI smoke gates the app build | 🟡 X11 (XWayland) window + Vulkan; from source, no CI |
 | Game export | ✅ WPF: Windows; Avalonia: `.exe` + `.zip` | 🟡 Avalonia: `.app` + `.dmg` (ad-hoc signed, SDL3/Assimp bundled) | 🟡 Avalonia: folder + `.desktop` + `run.sh` (source build) |
 | Distribution | 🟡 installer + portable ZIP from CI, unsigned | 🟡 DMG from CI (arm64, macOS 26+), not notarised; Homebrew libraries bundled (`tools/macos/bundle-dylibs.sh`) | ❌ build from source |
 | CI | ✅ PR gate: MSBuild + managed build + managed tests | ✅ PR gate: CMake + native tests + managed tests; app/DMG on main and tags | ❌ no job |
@@ -148,7 +148,7 @@ The miniaudio engine from v2.6.0 runs the same way in both editors and the playe
 
 | Feature | Status | Notes |
 |---|---|---|
-| Editor shells | ✅ | WPF: AvalonDock panes, borderless DWM chrome, dark theme; Avalonia: fixed 3-column layout with splitters, native menu bar on macOS, System/Dark/Light themes |
+| Editor shells | ✅ | Avalonia (the editor on every platform): fixed 3-column layout with splitters, the macOS menu bar or a menu row above the toolbar (Windows / Linux), the toolbar as the window's title bar, System/Dark/Light themes; WPF (*Vortex Engine (Classic)*, Windows, until v3.1): AvalonDock panes, borderless DWM chrome, dark theme |
 | Scene Hierarchy / File Explorer / Asset Browser panels | ✅ | Both editors: tree + selection service + drag-drop |
 | Dynamic Inspector | ✅ | Avalonia: typed cards for every component + editable generic fallback; WPF has no cards for Rigidbody, joints, ragdoll, particles, AI, Hand Pose/Look-At/Foot IK |
 | Viewport | ✅ | WPF: DX12 via HwndHost; Avalonia: Metal view (macOS), X11 window + Vulkan (Linux), DX12 child HWND (Windows, new) |
@@ -199,7 +199,7 @@ All of it lives in the Avalonia editor (`Managed/Vortex.Editor/Claude/`) on ever
 |---|---|---|
 | VortexBehaviour lifecycle (Start/Update/OnDestroy) | ✅ | Plus LateUpdate, OnMessage, OnAnimationEvent, OnTrigger*/OnCollisionEnter; no FixedUpdate/OnEnable; only the first Script component per entity runs |
 | Transform API | ✅ | Position/Rotation/Scale, Translate/Rotate, Forward/Right, world poses, Quaternion math; any entity via `Scene.*Of` |
-| Input (keyboard, mouse, gamepad) | 🟡 | Keyboard + mouse everywhere; gamepad (XInput/WGI + DualSense HID) only in WPF builds, none in the Avalonia editor or `Vortex.Player`; rebinding → [M13](https://github.com/shadow-kernel/Vortex-Engine/milestone/13) |
+| Input (keyboard, mouse, gamepad) | 🟡 | Keyboard + mouse everywhere; gamepads in every host — WPF: Windows.Gaming.Input + DualSense HID + XInput; cross-platform editor + `Vortex.Player`: DualSense HID + XInput on Windows, SDL3 (Xbox / PlayStation / Switch Pro …) on macOS + Linux (`GamepadTest` in CTest); rebinding → [M13](https://github.com/shadow-kernel/Vortex-Engine/milestone/13) |
 | Character movement (Physics.MoveCharacter) | ✅ | Managed collide-and-slide capsule, Grounded, `SetCharacterOptions(stepHeight, maxSlope)`; works without Jolt |
 | Trigger/collision events | ✅ | OnTriggerEnter/Stay/Exit + OnCollisionEnter from characters and Jolt contacts; no OnCollisionStay/Exit |
 | Skeletal animation API | ✅ | Play/crossfade/speed/time, layers, synced groups, bone overrides, IK targets, sockets, OnAnimationEvent |
@@ -321,7 +321,7 @@ Merged as work in progress; the navmesh parts need Recast, which only the CMake 
 | Rendering backend | ✅ | DX12: D3D11On12 + D2D, image cache, scissor clipping; SDL GPU: own overlay (rects, lines, images, clipping) |
 | Canvas stack (HUD → modal) | ✅ | Push/Pop, cursor-lock + gameplay-block preferences; the top screen gets input first |
 | Modal dialogs | ✅ | `Gui.Confirm(title, msg, onYes, onNo)`: blocking yes/no modal, keyboard/pad navigable; no OK-only alert or text prompt |
-| Gamepad/keyboard menu navigation | ✅ | Focus system: arrows/Tab/Enter, D-pad/A/stick with repeat, focus ring; pads only where gamepad input exists (WPF builds) |
+| Gamepad/keyboard menu navigation | ✅ | Focus system: arrows/Tab/Enter, D-pad/A/stick with repeat, focus ring; with a pad on every platform |
 | Tooltips + UI sound hooks | ✅ | Per-element tooltip + click/hover sounds stored in .vui; authored in the Avalonia UI editor only |
 | Settings persistence schema | 🟡 | The element `TargetSetting` field is unused; only audio bus volumes persist automatically, the rest via `Save.*`; settings menus → [M13](https://github.com/shadow-kernel/Vortex-Engine/milestone/13) |
 | Rich text / responsive layout / data binding | 🟡 | Plain text only; anchors + uniform scaling; one-way Set/Get + List repeater; rich text → [M16](https://github.com/shadow-kernel/Vortex-Engine/milestone/16), responsive layout v2 → [M13](https://github.com/shadow-kernel/Vortex-Engine/milestone/13) |
@@ -391,7 +391,7 @@ Merged as work in progress; the navmesh parts need Recast, which only the CMake 
 | Game loop & tick | ✅ | Native `StepRuntime`: fixed 1/60 s accumulator (max 8 steps); Jolt steps at 60 Hz in `PhysicsService`; scripts get variable dt |
 | Hot-reload (scripts + shaders) | ✅ | Both editors, the external window and Debug exports; off in Release exports |
 | ECS component model | ✅ | 32 types, same model in editor and runtime: rendering, Light, colliders + Rigidbody + 5 joints + Ragdoll, audio, Animator + sockets + IK, AI, Script |
-| Input system | 🟡 | Keyboard/mouse on every host (Win32 raw input, SDL3); gamepads only in WPF builds (see Scripting) |
+| Input system | 🟡 | Keyboard/mouse on every host (Win32 raw input, SDL3); gamepads on every host (see Scripting); no action maps / rebinding yet (#237) |
 | Asset management & streaming | 🟡 | GUID manifest + per-scene paks work; no async or texture streaming → [M9](https://github.com/shadow-kernel/Vortex-Engine/milestone/9) |
 | Save/load game state | 🟡 | `Save` slots + typed keys (one file per slot); no automatic scene/entity snapshot |
 | Audio system | ✅ | See the Audio table |

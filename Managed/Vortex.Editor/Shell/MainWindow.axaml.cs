@@ -78,6 +78,9 @@ namespace VortexEditor.Shell
             var o = Program.Options;
             Session.EnsureEngine();
             Claude.McpHost.AutoStart();
+            // installed Windows builds: the updater (download, install, start again) — never in a smoke run
+            UpdateWindow.InstallHooks();
+            if (VortexEditor.Program.Options.SmokeSeconds <= 0) _ = UpdateWindow.CheckAtStartupAsync();
             // a smoke run is unattended: answer the project-upgrade question with "Upgrade" (it backs the project up first)
             if (o.SmokeSeconds > 0 && ProjectCompatibility.TestAnswer == null) ProjectCompatibility.TestAnswer = () => 0;
             bool opened = false;
@@ -466,7 +469,21 @@ namespace VortexEditor.Shell
         private void BuildMenus()
         {
             NativeMenu.SetMenu(this, EditorMenus.Build(this));
-            if (!OperatingSystem.IsMacOS()) MenuBarHost.IsVisible = true;
+            if (OperatingSystem.IsMacOS()) return;
+            MenuRow.IsVisible = true;
+            if (!OperatingSystem.IsWindows()) return;
+            // Windows asks the window what is under the pointer (WM_NCHITTEST): the header's backgrounds answer
+            // "caption" — move, Snap, double-click to maximize and the system menu, as on a native title bar. The caption
+            // buttons go into the menu row's right end; the title bar spans both rows.
+            foreach (var bg in new[] { MenuRowBackground, TitleBarBackground })
+            {
+                bg.IsHitTestVisible = true;
+                Win32Properties.SetNonClientHitTestResult(bg, Win32Properties.Win32HitTestValue.Caption);
+            }
+            ExtendClientAreaTitleBarHeightHint = MenuRow.Height + Root.RowDefinitions[1].Height.Value;
+            // maximized, a window without a system frame reaches past the screen edges by the frame's width: keep the
+            // editor inside the screen
+            PropertyChanged += (s, e) => { if (e.Property == OffScreenMarginProperty) Root.Margin = OffScreenMargin; };
         }
 
         private ContextMenu BuildContextMenu()
