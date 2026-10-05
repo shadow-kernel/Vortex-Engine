@@ -156,6 +156,18 @@ namespace VortexEditor.Claude
                 var cfg = await C("configure_audio_source", new JsonObject { ["entity"] = cubeId, ["properties"] = new JsonObject { ["clip"] = step, ["loop"] = true, ["spatial"] = true, ["max_distance"] = 12, ["bus"] = "Ambience" } });
                 var src = cubeEntity.GetComponent<AudioSource>();
                 if (src == null || src.AudioClipPath != step || !src.Loop || src.SpatialBlend != 1f || src.MaxDistance != 12f || src.OutputBus != 3) return Fail("configure_audio_source: " + cfg.ToJsonString());
+                var sct = await C("create_sound_container", new JsonObject { ["name"] = "Mcp Clanks", ["clips"] = new JsonArray(genPath, step), ["pitch"] = new JsonArray(0.9, 1.1) });
+                string scPath = (string)sct["path"];
+                if (scPath != null) cleanup.Add(Path.Combine(project.Path, scPath));
+                var scFile = scPath != null ? Editor.Core.Audio.SoundContainer.Load(Path.Combine(project.Path, scPath)) : null;
+                if (scFile == null || scFile.Entries.Count != 2 || scFile.Entries[0].ClipPath != genPath || Math.Abs(scFile.PitchMin - 0.9f) > 0.001f || Math.Abs(scFile.PitchMax - 1.1f) > 0.001f)
+                    return Fail("create_sound_container: " + sct.ToJsonString());
+                await C("configure_audio_source", new JsonObject { ["entity"] = cubeId, ["properties"] = new JsonObject { ["clip"] = scPath } });
+                if (src.AudioClipPath != scPath) return Fail("configure_audio_source does not take the sound container " + scPath);
+                var twice = await Raw("add_component", new JsonObject { ["entity"] = cubeId, ["type"] = "AudioListener" });
+                var third = await Raw("add_component", new JsonObject { ["entity"] = cubeId, ["type"] = "AudioListener" });
+                if ((bool?)twice["isError"] == true || (bool?)third["isError"] != true) return Fail("add_component must refuse a second AudioListener: " + third.ToJsonString());
+                await C("remove_component", new JsonObject { ["entity"] = cubeId, ["type"] = "AudioListener" });
                 var mix = await C("get_mixer_state", new JsonObject());
                 if ((mix as JsonArray)?.Count != 5) return Fail("get_mixer_state: " + mix.ToJsonString());
                 float sfxBefore = AudioMixerConfig.Load(project.Path).BusVolumes[2];
@@ -166,7 +178,7 @@ namespace VortexEditor.Claude
                 var aud = await C("audition_clip", new JsonObject { ["path"] = genPath, ["volume"] = 0 });
                 await C("stop_audition", new JsonObject());
 
-                log.Log("mcp tools: OK — " + ToolCatalog.All.Count + " tools; material, grid (12), scatter (8, resting on the tiles), scripts with line-accurate errors, " + Path.GetFileName(crate) + " + prefab, audio + mixer + generated " + Path.GetFileName(genPath));
+                log.Log("mcp tools: OK — " + ToolCatalog.All.Count + " tools; material, grid (12), scatter (8, resting on the tiles), scripts with line-accurate errors, " + Path.GetFileName(crate) + " + prefab, audio + mixer + generated " + Path.GetFileName(genPath) + " + container " + Path.GetFileName(scPath));
                 return true;
             }
             catch (Exception ex) { return Fail(ex.GetType().Name + ": " + ex.Message); }

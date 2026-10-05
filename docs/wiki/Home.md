@@ -41,7 +41,7 @@ Desktop, or in the editor's own Claude panel. The first game target is **first-p
 - **Assets** — Assimp import (FBX, glTF, OBJ …), a machine-wide content-addressed **library** shared by all projects
   ([[Asset-Library]]), and the **Asset Store** tab with Poly Haven, ambientCG, Kenney, Freesound, Sketchfab and more,
   licenses tracked into the build ([[Asset-Store]])
-- **Claude** — 67 MCP tools: build scenes, materials, shaders, scripts, sound and worlds; play-test and look at the
+- **Claude** — 68 MCP tools: build scenes, materials, shaders, scripts, sound and worlds; play-test and look at the
   result; every change is an undo step, with dry runs and an operations log ([[Claude-Integration]], [[Claude-Tools]])
 - **Shipping** — Build Game for Windows, macOS and Linux from any platform: packed `.vpak` assets, branding, credits,
   a license check; project templates with updates ([[Project-Templates]])

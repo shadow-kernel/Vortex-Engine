@@ -42,7 +42,7 @@
 
 | | |
 |---|---|
-| 🤖 **Claude, built in** | The editor runs an **MCP server**: Claude Code or Claude Desktop builds scenes, materials, shaders, scripts, sound and whole worlds through 67 tools, play-tests and looks at the result — every change one undo step, with dry runs and an operations log. Or chat in the editor's own **Claude panel**. |
+| 🤖 **Claude, built in** | The editor runs an **MCP server**: Claude Code or Claude Desktop builds scenes, materials, shaders, scripts, sound and whole worlds through 68 tools, play-tests and looks at the result — every change one undo step, with dry runs and an operations log. Or chat in the editor's own **Claude panel**. |
 | 🖥️ **Windows · macOS · Linux** | **Direct3D 12**, **Metal** and **Vulkan** renderers; one .NET 10 editor with the same UI on all three; games build for all three from any of them. |
 | 🎨 **Renderer** | Physically-based shading, shadow maps for directional, point and spot lights, height fog, SSAO, bloom, vignette, film grain, colour grading, custom per-material shaders, GPU instancing + LOD, **DLSS 4** on NVIDIA. |
 | 🔊 **Audio** | 3D sound sources, sound containers with variation, reverb zones, a mixer with buses, ducking and meters — and the **Sound Studio**, which generates sounds from a description. |
@@ -212,7 +212,7 @@ generation (NVIDIA + Windows only; the render-scale fallback works).
 <summary><b>🤖 Claude</b></summary>
 
 - **MCP server inside the editor** (Streamable HTTP on `127.0.0.1` — only programs on this computer can connect) — hook up Claude Code or Claude Desktop with *Tools ▸ Claude ▸ Connect Claude Code / Desktop…*
-- **67 tools**: entities and components, materials and custom shaders (with real compiler errors), scripts (with line-accurate compile errors), prefabs, asset import, world macros (grid, scatter, snap), audio and the mixer, sound generation, play mode, screenshots and the console
+- **68 tools**: entities and components, materials and custom shaders (with real compiler errors), scripts (with line-accurate compile errors), prefabs, asset import, world macros (grid, scatter, snap), audio and the mixer, sound generation, play mode, screenshots and the console
 - **Safe by design**: every tool call is one undo step, mutating tools take a dry run, the Operations window shows each change (file diffs included) and reverts it — even out of order
 - **Claude panel**: chat in the editor with your own Anthropic key; it sees the viewport and asks before it changes things
 - Guides: [Claude Integration](docs/wiki/Claude-Integration.md) · [Claude Tools](docs/wiki/Claude-Tools.md)
