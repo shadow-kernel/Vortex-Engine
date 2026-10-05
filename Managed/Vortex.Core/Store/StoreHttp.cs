@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Net.Http;
@@ -62,9 +63,10 @@ namespace Editor.Core.Assets.Store
         }
 
         /// <summary>Wait until the provider may send its next request (one request in flight per provider at a time
-        /// for API calls; CDN downloads are not spaced).</summary>
+        /// for API calls; CDN downloads are not spaced) and count it against the provider's daily limit.</summary>
         private static async Task PaceAsync(IAssetProvider p, CancellationToken ct)
         {
+            CountRequest(p);
             if (p == null || p.MinInterval <= TimeSpan.Zero) return;
             SemaphoreSlim sem;
             lock (Spacing) { if (!Spacing.TryGetValue(p.Id, out sem)) Spacing[p.Id] = sem = new SemaphoreSlim(1, 1); }
@@ -80,6 +82,55 @@ namespace Editor.Core.Assets.Store
             finally { sem.Release(); }
         }
 
+        // ---- daily request limits (Freesound: 2,000 API requests per day) — persisted, so a restart doesn't reset them
+        private sealed class DailyUsage
+        {
+            public string Day { get; set; }
+            public int Count { get; set; }
+        }
+
+        private static readonly object UsageGate = new object();
+        private static Dictionary<string, DailyUsage> _usage;
+
+        private static string UsageFile => Path.Combine(CacheRoot, "usage.json");
+
+        private static string Today => DateTime.UtcNow.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+        private static Dictionary<string, DailyUsage> Usage
+        {
+            get
+            {
+                if (_usage != null) return _usage;
+                try { _usage = File.Exists(UsageFile) ? JsonSerializer.Deserialize<Dictionary<string, DailyUsage>>(File.ReadAllText(UsageFile)) : null; } catch { _usage = null; }
+                return _usage ?? (_usage = new Dictionary<string, DailyUsage>());
+            }
+        }
+
+        /// <summary>Count one API request; throws a "limit reached" 429 when the provider's budget for today is used up.</summary>
+        private static void CountRequest(IAssetProvider p)
+        {
+            int limit = p?.DailyRequestLimit ?? 0;
+            if (limit <= 0) return;
+            lock (UsageGate)
+            {
+                if (!Usage.TryGetValue(p.Id, out var u) || u.Day != Today) Usage[p.Id] = u = new DailyUsage { Day = Today };
+                if (u.Count >= limit)
+                    throw new StoreHttpException(HttpStatusCode.TooManyRequests, p.Name + "'s daily limit of " + limit.ToString("N0", CultureInfo.InvariantCulture) +
+                                                 " requests is used up — cached results still work; the limit resets at midnight UTC.", limitReached: true);
+                u.Count++;
+                try { Directory.CreateDirectory(CacheRoot); File.WriteAllText(UsageFile, JsonSerializer.Serialize(Usage)); } catch { }
+            }
+        }
+
+        /// <summary>API requests sent to a provider today (UTC).</summary>
+        public static int RequestsToday(string providerId)
+        {
+            lock (UsageGate) return Usage.TryGetValue(providerId, out var u) && u.Day == Today ? u.Count : 0;
+        }
+
+        /// <summary>Forget the loaded usage counts (tests switch <see cref="CacheRootOverride"/>).</summary>
+        public static void ReloadUsage() { lock (UsageGate) _usage = null; }
+
         private static HttpRequestMessage Request(HttpMethod m, string url, IAssetProvider p, bool authenticated)
         {
             var req = new HttpRequestMessage(m, url);
@@ -92,7 +143,9 @@ namespace Editor.Core.Assets.Store
         public sealed class StoreHttpException : Exception
         {
             public HttpStatusCode Status { get; }
-            public StoreHttpException(HttpStatusCode status, string message) : base(message) { Status = status; }
+            /// <summary>The provider's daily request limit is used up — retrying today won't help.</summary>
+            public bool LimitReached { get; }
+            public StoreHttpException(HttpStatusCode status, string message, bool limitReached = false) : base(message) { Status = status; LimitReached = limitReached; }
         }
 
         private static string Explain(HttpStatusCode s, string providerName)

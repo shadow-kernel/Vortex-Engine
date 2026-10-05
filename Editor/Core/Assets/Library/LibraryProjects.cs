@@ -279,6 +279,7 @@ namespace Editor.Core.Assets.Library
                 meta.License = from.License; meta.Author = from.Author; meta.SourceUrl = from.SourceUrl; meta.Source = from.SourceName;
             }
             else if (from != null && !string.IsNullOrEmpty(from.License)) { meta.License = from.License; meta.Author = from.Author; meta.SourceUrl = from.SourceUrl; }
+            if (from != null && !string.IsNullOrEmpty(from.Recipe) && hash == from.Hash) meta.Recipe = from.Recipe;
             try { var fi = new FileInfo(fullPath); meta.LastModified = fi.LastWriteTime; meta.FileSize = fi.Length; } catch { }
             meta.SetContentHash(hash, fullPath);
             SaveMeta(fullPath, meta);

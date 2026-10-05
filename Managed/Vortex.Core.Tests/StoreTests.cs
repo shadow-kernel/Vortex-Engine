@@ -109,8 +109,81 @@ namespace VortexTests
             t.False(StoreLicense.Get("Mixamo").Redistributable, "Mixamo can't be re-shared");
             var q = new StoreQuery();
             t.False(q.Allows(StoreLicense.Get("CC-BY-NC-4.0")), "NC filtered by default");
+            t.False(q.Allows(StoreLicense.Get("CC-BY-ND-4.0")), "ND filtered by default (game assets get modified)");
+            t.True(q.Allows(StoreLicense.Get("CC-BY-SA-4.0")), "SA shown by default (flagged before builds)");
+            t.True(q.Allows(StoreLicense.Get("CC-BY-4.0")) && q.Allows(StoreLicense.Get("CC0-1.0")), "BY / CC0 always shown");
             q.IncludeNonCommercial = true;
             t.True(q.Allows(StoreLicense.Get("CC-BY-NC-4.0")), "NC allowed when asked");
+            t.False(q.Allows(StoreLicense.Get("CC-BY-NC-ND-4.0")), "NC-ND still hidden without the ND switch");
+            q.IncludeNoDerivatives = true;
+            t.True(q.Allows(StoreLicense.Get("CC-BY-NC-ND-4.0")), "NC-ND allowed when both are asked for");
+            t.False(StoreLicense.Get("ElevenLabs").Redistributable || StoreLicense.Get("fal-ai").Redistributable || StoreLicense.Get("Stability-AI").Redistributable,
+                    "generated audio is not re-shared as files");
+        }
+
+        /// <summary>Counts API requests against a daily budget (Freesound: 2,000 per day).</summary>
+        private sealed class LimitedProvider : IAssetProvider
+        {
+            public string Id => "limited";
+            public string Name => "Limited";
+            public string Tagline => "";
+            public string HomeUrl => "https://limited.test";
+            public string Attribution => "";
+            public IReadOnlyList<StoreKind> Kinds { get; } = new[] { StoreKind.Sound };
+            public ProviderAccess Access => ProviderAccess.Anonymous;
+            public string KeyName => null;
+            public string KeyHelpUrl => null;
+            public bool HasLicenseFilter => false;
+            public TimeSpan MinInterval => TimeSpan.Zero;
+            public int DailyRequestLimit => 2;
+            public Task<StorePage> SearchAsync(StoreQuery query, CancellationToken ct) => throw new NotSupportedException();
+            public Task<IReadOnlyList<string>> CategoriesAsync(StoreKind kind, CancellationToken ct) => throw new NotSupportedException();
+            public Task<StoreDetails> DetailsAsync(StoreItem item, CancellationToken ct) => throw new NotSupportedException();
+            public Task<DownloadPlan> ResolveAsync(StoreItem item, StoreVariant variant, CancellationToken ct) => throw new NotSupportedException();
+            public void Decorate(HttpRequestMessage request) { }
+        }
+
+        [Test]
+        public static async Task DailyRequestLimit(TestContext t)
+        {
+            var fake = Setup(t);
+            StoreHttp.ReloadUsage();
+            fake.Json("https://limited.test/", "{}");
+            var p = new LimitedProvider();
+            await StoreHttp.GetTextAsync(p, "https://limited.test/a", TimeSpan.FromHours(1), CancellationToken.None);
+            await StoreHttp.GetTextAsync(p, "https://limited.test/a", TimeSpan.FromHours(1), CancellationToken.None);
+            t.Equal(1, StoreHttp.RequestsToday("limited"), "a cached response doesn't count");
+            await StoreHttp.GetTextAsync(p, "https://limited.test/b", TimeSpan.Zero, CancellationToken.None);
+            StoreHttp.StoreHttpException hit = null;
+            try { await StoreHttp.GetTextAsync(p, "https://limited.test/c", TimeSpan.Zero, CancellationToken.None); }
+            catch (StoreHttp.StoreHttpException ex) { hit = ex; }
+            t.True(hit != null && hit.LimitReached && hit.Status == HttpStatusCode.TooManyRequests && hit.Message.Contains("daily limit of 2"), "third request refused: " + hit?.Message);
+            t.Equal(2, fake.Requests.Count, "the refused request never left the machine");
+            t.True((await StoreHttp.GetTextAsync(p, "https://limited.test/a", TimeSpan.FromHours(1), CancellationToken.None)) == "{}", "cached results still work");
+            StoreHttp.ReloadUsage();
+            t.Equal(2, StoreHttp.RequestsToday("limited"), "the count survives a restart");
+            t.Equal(2000, new FreesoundProvider().DailyRequestLimit, "Freesound's documented limit");
+        }
+
+        [Test]
+        public static async Task DiskSpaceIsCheckedAndExplained(TestContext t)
+        {
+            var fake = Setup(t);
+            t.True(StoreDownloads.IsDiskFull(new IOException("No space left on device", OperatingSystem.IsWindows() ? unchecked((int)0x80070070) : 28)), "ENOSPC / ERROR_DISK_FULL");
+            t.True(StoreDownloads.IsDiskFull(new InvalidOperationException("wrapped", new StoreDownloads.DiskSpaceException("full"))), "found in inner exceptions");
+            t.False(StoreDownloads.IsDiskFull(new IOException("connection reset")), "other IO errors are not");
+            t.True(StoreDownloads.FreeBytes(t.Dir) > 0, "free space of the test volume is known");
+            // a download bigger than the disk fails before a single byte is fetched
+            fake.Json("https://ambientcg.com/api/v3/assets", "{\"totalResults\":1,\"assets\":[{\"id\":\"Huge001\",\"title\":\"Huge 001\"," +
+                "\"downloads\":[{\"attributes\":\"1K-JPG\",\"extension\":\"zip\",\"size\":4000000000000000}]}]}");
+            var p = new AmbientCgProvider();
+            var item = (await p.SearchAsync(new StoreQuery { Text = "huge" }, CancellationToken.None)).Items.Single();
+            var det = await p.DetailsAsync(item, CancellationToken.None);
+            var job = await Run(StoreDownloads.Enqueue(p, item, det.Variants.Single()));
+            t.Equal(StoreJobState.Failed, job.State, "failed");
+            t.True(job.Error.StartsWith("Not enough disk space") && job.Error.Contains("Library Settings"), "actionable message: " + job.Error);
+            t.Equal(1, job.Attempts, "not retried");
+            t.False(fake.Requests.Any(r => r.RequestUri.ToString().Contains("/get?file=")), "nothing downloaded");
         }
 
         [Test]

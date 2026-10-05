@@ -106,6 +106,11 @@ namespace Editor.Core.Assets
         [DataMember(Order = 16, EmitDefaultValue = false)]
         public string Source { get; set; }
 
+        /// <summary>How a generated sound was made (Sound Studio recipe JSON: prompt, backend, length, loop …) — "Open in
+        /// Sound Studio" regenerates a sibling from it (#83). Null for normal assets.</summary>
+        [DataMember(Order = 17, EmitDefaultValue = false)]
+        public string Recipe { get; set; }
+
         /// <summary>True when <see cref="ContentHash"/> was computed from the file as it is now.</summary>
         public bool HasFreshContentHash(string fullPath)
         {

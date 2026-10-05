@@ -80,6 +80,9 @@ namespace Editor.Core.Assets.Store
             Add(new StoreLicense { Id = "Mixamo", Name = "Mixamo (Adobe) — royalty-free in games, no re-hosting", Url = "https://helpx.adobe.com/creative-cloud/faq/mixamo-faq.html", Redistributable = false, Notes = "Use in games and films is royalty-free; the files themselves may not be shared or re-hosted." });
             Add(new StoreLicense { Id = "Sonniss-GDC", Name = "Sonniss GDC bundle — royalty-free, no attribution", Url = "https://sonniss.com/gameaudiogdc", Redistributable = false, Notes = "Unlimited commercial use in games; no redistribution as files or as a sound library; no AI/ML training." });
             Add(new StoreLicense { Id = "Sketchfab-Standard", Name = "Sketchfab Standard / Free Standard license", Url = "https://sketchfab.com/licenses", Redistributable = false, Notes = "Use in a game is allowed; the files may not be re-shared." });
+            Add(new StoreLicense { Id = "ElevenLabs", Name = "ElevenLabs generated audio", Url = "https://elevenlabs.io/terms-of-use", Redistributable = false, Notes = "Paid plans: commercial use in games (no resale as sample packs). Free plan: non-commercial, with attribution." });
+            Add(new StoreLicense { Id = "Stability-AI", Name = "Generated with the Stability AI API", Url = "https://stability.ai/terms-of-use", Redistributable = false, Notes = "Output use follows Stability AI's API terms — check them before shipping." });
+            Add(new StoreLicense { Id = "fal-ai", Name = "Generated with a fal.ai model", Url = "https://fal.ai/terms", Redistributable = false, Notes = "Output rights follow the model's terms — check them before shipping." });
             Add(new StoreLicense { Id = "Unknown", Name = "Unknown license — check the source before shipping", Commercial = false, Redistributable = false });
         }
 
@@ -154,14 +157,18 @@ namespace Editor.Core.Assets.Store
         public int PageSize = 40;
         /// <summary>Include licenses that forbid commercial use (off by default — they can't ship in a sold game).</summary>
         public bool IncludeNonCommercial;
-        /// <summary>Include no-derivatives / share-alike licenses.</summary>
-        public bool IncludeRestrictive = true;
+        /// <summary>Include no-derivatives licenses (off by default — an ND asset may not be modified: no re-texturing,
+        /// cutting or re-rigging).</summary>
+        public bool IncludeNoDerivatives;
+        /// <summary>Include share-alike licenses (on by default — usable, but flagged by the license check before builds).</summary>
+        public bool IncludeShareAlike = true;
 
         public bool Allows(StoreLicense l)
         {
             if (l == null) return true;
             if (!l.Commercial && !IncludeNonCommercial) return false;
-            if ((l.NoDerivatives || l.ShareAlike) && !IncludeRestrictive) return false;
+            if (l.NoDerivatives && !IncludeNoDerivatives) return false;
+            if (l.ShareAlike && !IncludeShareAlike) return false;
             return true;
         }
     }
@@ -258,6 +265,8 @@ namespace Editor.Core.Assets.Store
         bool HasLicenseFilter { get; }
         /// <summary>Minimum time between two requests (be polite — ambientCG is run by one person).</summary>
         TimeSpan MinInterval { get; }
+        /// <summary>API requests the provider allows per day (UTC); 0 = no daily limit. Cached responses don't count.</summary>
+        int DailyRequestLimit => 0;
 
         Task<StorePage> SearchAsync(StoreQuery query, CancellationToken ct);
         Task<IReadOnlyList<string>> CategoriesAsync(StoreKind kind, CancellationToken ct);

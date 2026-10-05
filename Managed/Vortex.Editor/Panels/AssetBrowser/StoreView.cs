@@ -116,7 +116,7 @@ namespace VortexEditor.Panels.AssetBrowser
         private readonly ListBox _providers = new ListBox { SelectionMode = SelectionMode.Single };
         private readonly StackPanel _kindChips = new StackPanel { Orientation = Orientation.Horizontal };
         private readonly ComboBox _categories = new ComboBox { MinWidth = 140, PlaceholderText = "All categories" };
-        private readonly CheckBox _nc = new CheckBox { Content = "NonCommercial", FontSize = 11 };
+        private readonly CheckBox _nc = new CheckBox { Content = "NC / ND", FontSize = 11 };
         private readonly Button _keyButton;
         private readonly TextBlock _status = new TextBlock { Classes = { "small", "tertiary" }, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0) };
         private readonly ItemsControl _grid = new ItemsControl();
@@ -162,7 +162,7 @@ namespace VortexEditor.Panels.AssetBrowser
             _keyButton.Margin = new Thickness(4, 0, 0, 0);
             _categories.SelectionChanged += (s, e) => { var c = _categories.SelectedItem as string; _category = c == "All categories" ? null : c; NewSearch(); };
             _nc.IsCheckedChanged += (s, e) => { _includeNc = _nc.IsChecked == true; NewSearch(); };
-            ToolTip.SetTip(_nc, "Include NonCommercial licenses — they can't ship in a game you sell");
+            ToolTip.SetTip(_nc, "Also show NonCommercial (NC) and NoDerivatives (ND) licenses — NC assets can't ship in a game you sell, ND assets may not be modified (re-texturing, cutting, re-rigging)");
             var bar = new DockPanel { Height = 32, Margin = new Thickness(8, 0) };
             var right = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
             right.Children.Add(_status);
@@ -346,7 +346,7 @@ namespace VortexEditor.Panels.AssetBrowser
             Loading = true; LastError = null;
             _status.Text = "Searching…";
             _more.IsVisible = false;
-            var q = new StoreQuery { Text = _search, Kind = _kind, Category = _category, Page = _page, PageSize = 40, IncludeNonCommercial = _includeNc };
+            var q = new StoreQuery { Text = _search, Kind = _kind, Category = _category, Page = _page, PageSize = 40, IncludeNonCommercial = _includeNc, IncludeNoDerivatives = _includeNc };
             StorePage page;
             try { page = await Task.Run(() => web.SearchAsync(q, cts.Token)); }
             catch (OperationCanceledException) { return; }
@@ -372,7 +372,7 @@ namespace VortexEditor.Panels.AssetBrowser
             _status.Text = page.Total >= 0 ? _tiles.Count + " of " + page.Total : _tiles.Count + " results";
             if (_tiles.Count == 0)
                 ShowEmpty("Search", string.IsNullOrEmpty(_search) ? "Nothing here yet" : "Nothing found for “" + _search + "”",
-                    web.HasLicenseFilter && !_includeNc ? "NonCommercial results are hidden — tick NonCommercial to see them." : "Try another word or category.", (null, null), (null, null));
+                    web.HasLicenseFilter && !_includeNc ? "NonCommercial and NoDerivatives results are hidden — tick NC / ND to see them." : "Try another word or category.", (null, null), (null, null));
             else _empty.IsVisible = false;
         }
 
@@ -789,7 +789,7 @@ namespace VortexEditor.Panels.AssetBrowser
         {
             var d = new StoreKeysDialog(focusProvider);
             await LibraryUi.ShowModal(d);
-            if (d._saved) StoreView.Current?.SelectProvider(StoreView.Current.ProviderId ?? "polyhaven");
+            if (d._saved && StoreView.Current?.ProviderId != null) StoreView.Current.SelectProvider(StoreView.Current.ProviderId);
         }
 
         private readonly Dictionary<string, TextBox> _boxes = new Dictionary<string, TextBox>();
@@ -797,11 +797,11 @@ namespace VortexEditor.Panels.AssetBrowser
 
         private StoreKeysDialog(string focus)
         {
-            Title = "Store API Keys";
-            Width = 520; SizeToContent = SizeToContent.Height; CanResize = false;
+            Title = "API Keys";
+            Width = 540; Height = 740; MinHeight = 400;
             WindowStartupLocation = WindowStartupLocation.CenterOwner; ShowInTaskbar = false;
             var stack = new StackPanel { Margin = new Thickness(20, 16, 20, 16), Spacing = 6 };
-            stack.Children.Add(new TextBlock { Text = "Store API keys", FontSize = 16, FontWeight = FontWeight.SemiBold });
+            stack.Children.Add(new TextBlock { Text = "API keys", FontSize = 16, FontWeight = FontWeight.SemiBold });
             stack.Children.Add(LibraryUi.Para("Some sources need your own free key. Keys are stored only on this machine (" + StoreKeys.FilePath + ") — the editor never ships a shared key."));
             foreach (var p in StoreProviders.Web.Where(x => x.Access == ProviderAccess.ApiKey))
             {
@@ -818,10 +818,31 @@ namespace VortexEditor.Panels.AssetBrowser
                 stack.Children.Add(row);
                 if (p.Id == focus) Opened += (s, e) => box.Focus();
             }
+            stack.Children.Add(new TextBlock { Text = "Sound Studio", FontSize = 14, FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 16, 0, 0) });
+            foreach (var (id, name, url) in new[]
+            {
+                ("elevenlabs", "ElevenLabs — API key (sound effects)", "https://elevenlabs.io/app/settings/api-keys"),
+                ("fal", "fal.ai — API key (Stable Audio Open, CassetteAI)", "https://fal.ai/dashboard/keys"),
+                ("stability", "Stability AI — API key (Stable Audio 2.5 / 3)", "https://platform.stability.ai/account/keys"),
+                ("anthropic", "Anthropic — API key (Claude designs the prompts)", "https://console.anthropic.com/settings/keys"),
+            })
+            {
+                string link = url;
+                stack.Children.Add(new TextBlock { Text = name, FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 8, 0, 0) });
+                var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+                var box = new TextBox { Text = StoreKeys.Get(id) ?? "", PasswordChar = '•', Watermark = "paste your key" };
+                _boxes[id] = box;
+                row.Children.Add(box);
+                var get = Ui.Button("Get a Key", () => { try { _ = TopLevel.GetTopLevel(this)?.Launcher.LaunchUriAsync(new Uri(link)); } catch { } });
+                get.Margin = new Thickness(8, 0, 0, 0);
+                Grid.SetColumn(get, 1);
+                row.Children.Add(get);
+                stack.Children.Add(row);
+            }
             var cancel = Ui.Button("Cancel", Close, null, null, 84);
             var save = Ui.Button("Save", () => { foreach (var kv in _boxes) StoreKeys.Set(kv.Key, kv.Value.Text); _saved = true; Close(); }, null, "accent", 90);
             stack.Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 14, 0, 0), Children = { cancel, save } });
-            Content = stack;
+            Content = new ScrollViewer { Content = stack };
         }
     }
 }

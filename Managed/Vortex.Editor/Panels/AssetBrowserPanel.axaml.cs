@@ -1931,6 +1931,13 @@ namespace VortexEditor.Panels
                     case AssetKind.AudioClip:
                         m.Items.Add(Mi("Play", () => Actions.Audition(p), "Play"));
                         m.Items.Add(Mi("Stop", Actions.StopAudition, "Stop"));
+                        {
+                            // a Sound Studio take: reopen its recipe (#83)
+                            Editor.Core.Assets.AssetMetadata meta = null;
+                            try { meta = Editor.Core.Serialization.DataSerializer.LoadFromJson<Editor.Core.Assets.AssetMetadata>(p + Editor.Core.Assets.AssetDatabase.MetaFileExtension); } catch { }
+                            var recipe = Editor.Core.Audio.SoundStudio.SoundRecipe.FromJson(meta?.Recipe);
+                            if (recipe != null) m.Items.Add(Mi("Open in Sound Studio", () => VortexEditor.Shell.Audio.SoundStudioWindow.Open(recipe, meta.ContentHash), "Sparkle"));
+                        }
                         break;
                     case AssetKind.SoundContainer:
                         m.Items.Add(Mi("Open Sound Container Editor", () => EditorWindows.SoundContainerEditor(p), "Layers"));

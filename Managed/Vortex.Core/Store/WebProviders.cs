@@ -208,6 +208,7 @@ namespace Editor.Core.Assets.Store
         public string KeyHelpUrl => "https://freesound.org/apiv2/apply";
         public bool HasLicenseFilter => true;
         public TimeSpan MinInterval => TimeSpan.FromMilliseconds(1100);
+        public int DailyRequestLimit => 2000;
         public void Decorate(HttpRequestMessage request) { var k = StoreKeys.Get(Id); if (!string.IsNullOrEmpty(k)) request.Headers.TryAddWithoutValidation("Authorization", "Token " + k); }
 
         private static string LicenseFilter(StoreQuery q)
@@ -308,7 +309,7 @@ namespace Editor.Core.Assets.Store
         public async Task<StorePage> SearchAsync(StoreQuery q, CancellationToken ct)
         {
             string text = string.IsNullOrWhiteSpace(q.Text) ? (q.Category ?? "") : q.Text.Trim();
-            string key = text + "|" + q.Category + "|" + q.IncludeNonCommercial + "|" + q.IncludeRestrictive;
+            string key = text + "|" + q.Category + "|" + q.IncludeNonCommercial + "|" + q.IncludeNoDerivatives + "|" + q.IncludeShareAlike;
             string url;
             if (q.Page > 0 && _cursors.TryGetValue(key + "|" + q.Page, out var next)) url = next;
             else url = Api + "/search?type=models&downloadable=true&count=" + Math.Min(q.PageSize, 24) + (text.Length > 0 ? "&q=" + StoreHttp.UrlEncode(text) : "") + "&sort_by=-likeCount";

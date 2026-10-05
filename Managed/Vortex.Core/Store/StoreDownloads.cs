@@ -127,6 +127,11 @@ namespace Editor.Core.Assets.Store
                     Directory.CreateDirectory(dl);
                     if (Directory.Exists(pkg)) Directory.Delete(pkg, true);
                     Directory.CreateDirectory(pkg);
+                    // the download, its unpacked files and the library copy all need room
+                    long size = plan.Files.Where(f => f.Size > 0).Sum(f => f.Size);
+                    long needed = size * (plan.Files.Any(f => f.Unzip) ? 3 : 2);
+                    long free = FreeBytes(work);
+                    if (size > 0 && free >= 0 && free < needed) throw new DiskSpaceException(DiskFullMessage(needed));
                     await DownloadAll(j, plan, dl, pkg, ct).ConfigureAwait(false);
 
                     j.State = StoreJobState.Importing; j.Message = "Adding to the library…"; Raise(j);
@@ -152,7 +157,12 @@ namespace Editor.Core.Assets.Store
                 j.State = StoreJobState.Done;
             }
             catch (OperationCanceledException) { j.State = StoreJobState.Cancelled; j.Message = "Cancelled"; }
-            catch (Exception ex) { j.State = StoreJobState.Failed; j.Error = ex.Message; j.Message = ex.Message; }
+            catch (Exception ex)
+            {
+                j.State = StoreJobState.Failed;
+                j.Error = IsDiskFull(ex) && !(ex is DiskSpaceException) ? DiskFullMessage(0) : ex.Message;
+                j.Message = j.Error;
+            }
             finally
             {
                 if (slot) Slots.Release();
@@ -167,11 +177,53 @@ namespace Editor.Core.Assets.Store
 
         private sealed class ChecksumException : IOException { public ChecksumException(string m) : base(m) { } }
 
+        /// <summary>Not enough free space for a download (found before it starts, or the disk filled up during it).</summary>
+        public sealed class DiskSpaceException : IOException { public DiskSpaceException(string m) : base(m) { } }
+
         private static bool Transient(Exception ex)
         {
-            if (ex is ChecksumException) return false;
-            if (ex is StoreHttp.StoreHttpException h) return h.Status == HttpStatusCode.TooManyRequests || (int)h.Status >= 500;
+            if (ex is ChecksumException || IsDiskFull(ex)) return false;
+            if (ex is StoreHttp.StoreHttpException h) return !h.LimitReached && (h.Status == HttpStatusCode.TooManyRequests || (int)h.Status >= 500);
             return ex is HttpRequestException || ex is IOException || (ex is TaskCanceledException && !(ex.InnerException is OperationCanceledException));
+        }
+
+        /// <summary>The disk is full: ENOSPC (28) on macOS/Linux, ERROR_DISK_FULL / ERROR_HANDLE_DISK_FULL on Windows.</summary>
+        public static bool IsDiskFull(Exception ex)
+        {
+            for (var e = ex; e != null; e = e.InnerException)
+            {
+                if (e is DiskSpaceException) return true;
+                if (!(e is IOException)) continue;
+                int hr = e.HResult;
+                if (hr == unchecked((int)0x80070070) || hr == unchecked((int)0x80070027)) return true;
+                if (!OperatingSystem.IsWindows() && hr == 28) return true;
+            }
+            return false;
+        }
+
+        internal static string DiskFullMessage(long needed)
+            => "Not enough disk space" + (needed > 0 ? " — this download needs about " + GlobalAssetDatabase.FormatBytes(needed) : "") +
+               ". Free some space or move the asset library to a bigger drive (Assets → Asset Library → Library Settings…), then retry.";
+
+        /// <summary>Free bytes on the volume that holds <paramref name="dir"/>; -1 when unknown.</summary>
+        public static long FreeBytes(string dir)
+        {
+            try
+            {
+                char sep = Path.DirectorySeparatorChar;
+                string full = Path.GetFullPath(dir).TrimEnd(sep) + sep;
+                var cmp = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+                DriveInfo best = null;
+                int bestLen = -1;
+                foreach (var d in DriveInfo.GetDrives())
+                {
+                    string root;
+                    try { if (!d.IsReady) continue; root = d.RootDirectory.FullName.TrimEnd(sep) + sep; } catch { continue; }
+                    if (full.StartsWith(root, cmp) && root.Length > bestLen) { best = d; bestLen = root.Length; }
+                }
+                return best?.AvailableFreeSpace ?? -1;
+            }
+            catch { return -1; }
         }
 
         private static async Task DownloadAll(StoreJob j, DownloadPlan plan, string dl, string pkg, CancellationToken ct)

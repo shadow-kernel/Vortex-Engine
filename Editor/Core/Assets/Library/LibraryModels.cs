@@ -40,6 +40,8 @@ namespace Editor.Core.Assets.Library
         public string Notes;
         /// <summary>The asset store item this entry was downloaded from ("provider:id:variant"), or null.</summary>
         public string StoreKey;
+        /// <summary>How a generated sound was made (Sound Studio recipe JSON, #83), or null.</summary>
+        public string Recipe;
         public List<string> Tags = new List<string>();
         public List<LibraryCompanion> Companions = new List<LibraryCompanion>();
 
@@ -213,6 +215,8 @@ namespace Editor.Core.Assets.Library
         public Dictionary<string, string> CompanionHashes;
         /// <summary>Asset store item key ("provider:id:variant") — a second download of the same item is skipped.</summary>
         public string StoreKey;
+        /// <summary>Generation recipe (Sound Studio, JSON).</summary>
+        public string Recipe;
     }
 
     public enum AddToProjectStatus { Added, AlreadyInProject, Failed }
