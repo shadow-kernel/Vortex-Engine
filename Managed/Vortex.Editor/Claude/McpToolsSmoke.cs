@@ -178,7 +178,18 @@ namespace VortexEditor.Claude
                 var aud = await C("audition_clip", new JsonObject { ["path"] = genPath, ["volume"] = 0 });
                 await C("stop_audition", new JsonObject());
 
-                log.Log("mcp tools: OK — " + ToolCatalog.All.Count + " tools; material, grid (12), scatter (8, resting on the tiles), scripts with line-accurate errors, " + Path.GetFileName(crate) + " + prefab, audio + mixer + generated " + Path.GetFileName(genPath) + " + container " + Path.GetFileName(scPath));
+                // ================= play mode (#90): enter, the game camera's image, stats, exit
+                var play = await C("enter_play_mode", new JsonObject { ["run_seconds"] = 1 });
+                if ((string)play["state"] != "Playing") return Fail("enter_play_mode: " + play.ToJsonString());
+                var pshot = await Raw("capture_viewport", new JsonObject { ["max_size"] = 512 });
+                bool playImage = (pshot["content"] as JsonArray)?.Any(c => (string)c["type"] == "image") == true;
+                if (!playImage || McpTestClient.Text(pshot).IndexOf("play mode", StringComparison.OrdinalIgnoreCase) < 0) return Fail("capture_viewport in play mode: " + McpTestClient.Text(pshot));
+                var stats = await C("engine_stats", new JsonObject());
+                if ((string)stats["play_state"] != "Playing" || stats["draw_calls"] == null) return Fail("engine_stats: " + stats.ToJsonString());
+                var stop = await C("exit_play_mode", new JsonObject());
+                if ((string)stop["state"] != "Editing") return Fail("exit_play_mode: " + stop.ToJsonString());
+
+                log.Log("mcp tools: OK — " + ToolCatalog.All.Count + " tools; material, grid (12), scatter (8, resting on the tiles), scripts with line-accurate errors, " + Path.GetFileName(crate) + " + prefab, audio + mixer + generated " + Path.GetFileName(genPath) + " + container " + Path.GetFileName(scPath) + ", play mode (capture, stats, exit)");
                 return true;
             }
             catch (Exception ex) { return Fail(ex.GetType().Name + ": " + ex.Message); }
