@@ -7,7 +7,7 @@ scare of your own and build a game you can hand to a friend. Every step links to
 
 | Platform | How |
 |---|---|
-| **Windows 10 / 11** (64-bit, DirectX 12) | Run `VortexEngine-Setup-<version>.exe` from the [latest release](https://github.com/shadow-kernel/Vortex-Engine/releases/latest). The editor keeps itself up to date (*Help ▸ Check for Updates…*). |
+| **Windows 10 / 11** (64-bit, DirectX 12) | Run `VortexEngine-Setup-<version>.exe` from the [latest release](https://github.com/shadow-kernel/Vortex-Engine/releases/latest). *Vortex Engine* in the Start menu is the editor, the same one as on macOS and Linux. *Vortex Engine (Classic)* is the previous Windows editor and ships in v3.0 only. The editor keeps itself up to date: a patch installs by itself when the editor starts; a bigger update shows its notes first (*Help ▸ Check for Updates…*). Coming from v2.x? The old editor offers the update, and afterwards the new one opens. |
 | **macOS** on Apple Silicon | Open `Vortex-Editor-<version>.dmg` from the release and drag *Vortex Editor* to Applications. It is not notarised yet: the first time, right-click it ▸ **Open**. Or build it yourself: `tools/macos/make-app.sh --install`. |
 | **Linux** x64 (Vulkan) | Build from source: `Scripts/linux-dev.sh --release --editor` (see the README's Linux section). |
 

@@ -14,6 +14,7 @@
 
 **Developer Docs**
 - [[Developer-Guide]]
+- [[Release-Process]]
 - [[Scripting-Getting-Started]]
 - [[Scripting-API-Reference]]
 - [[Entities-and-Components]]
