@@ -354,10 +354,16 @@ private:
 		tick_seconds(0.3f);
 		voice_stop(v);
 		// measure once the master METER's own ~0.4 s history has drained: the dry case is then silent, while a
-		// reverb tail still rings (measuring earlier compared the tail with the meter's afterglow — fragile on CI)
-		tick_seconds(0.6f);
+		// reverb tail still rings (measuring earlier compared the tail with the meter's afterglow — fragile on CI).
+		// A busy CI machine runs the audio callback late, so wait for the drain (at least 0.6 s, at most 2 s) instead
+		// of a fixed time — one run measured 0.0019 here after 0.6 s and missed the 3x ratio by a hair.
 		f32 dry_after = 0;
-		mixer_get_bus_levels(bus::master, nullptr, &dry_after);
+		for (int i = 0; i < 10; ++i)
+		{
+			tick_seconds(0.2f);
+			mixer_get_bus_levels(bus::master, nullptr, &dry_after);
+			if (i >= 2 && dry_after < 0.0005f) break;
+		}
 
 		// With full send: the tail must ring on AFTER the voice stopped.
 		v = voice_play(wav.c_str(), p);

@@ -33,7 +33,9 @@ jobs:
           fi
           changed="$(git diff --name-only "$base" HEAD)"
           echo "$changed"
-          if echo "$changed" | grep -qvE '^(docs/|README|ROADMAP|CHANGELOG|.*\.md$|Templates/.*\.(png|jpg|webp)$)'; then
+          # docs are not code — except the wiki pages: the core tests compile every C# sample in them (DocsTests)
+          if echo "$changed" | grep -qvE '^(docs/|README|ROADMAP|CHANGELOG|.*\.md$|Templates/.*\.(png|jpg|webp)$)' \
+             || echo "$changed" | grep -qE '^docs/wiki/.*\.md$'; then
             echo "code=true" >> "$GITHUB_OUTPUT"
           else
             echo "code=false" >> "$GITHUB_OUTPUT"

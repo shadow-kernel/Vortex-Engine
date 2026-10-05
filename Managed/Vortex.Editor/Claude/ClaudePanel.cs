@@ -344,7 +344,7 @@ namespace VortexEditor.Claude
             var connect = new MenuItem { Header = "Connect Claude Code / Desktop…" };
             connect.Click += (s, e) => _ = ClaudeConnectDialog.Run();
             var docs = new MenuItem { Header = "Documentation" };
-            docs.Click += (s, e) => EditorCommands.OpenUrl("https://github.com/shadow-kernel/Vortex-Engine/wiki/Claude-Integration");
+            docs.Click += (s, e) => EditorCommands.OpenUrl("https://engine.vortexstudio.dev/docs/#/claude");
             menu.Items.Add(ops);
             menu.Items.Add(reset);
             menu.Items.Add(connect);

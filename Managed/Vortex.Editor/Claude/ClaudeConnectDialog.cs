@@ -87,7 +87,7 @@ namespace VortexEditor.Claude
                     TextWrapping = TextWrapping.Wrap, FontSize = 12, Foreground = EditorKit.Brush("VxTextSecondaryBrush"),
                 });
 
-            var docs = Ui.Button("Documentation", () => EditorCommands.OpenUrl("https://github.com/shadow-kernel/Vortex-Engine/wiki/Claude-Integration"));
+            var docs = Ui.Button("Documentation", () => EditorCommands.OpenUrl("https://engine.vortexstudio.dev/docs/#/claude"));
             var close = Ui.Button("Close", Close, null, null, 84);
             Content = LibraryUi.Layout(stack, LibraryUi.Footer(docs, close));
 

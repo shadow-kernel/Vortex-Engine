@@ -40,9 +40,9 @@ original-quality downloads (#289).
 "v2.8.0 – Global Asset Database" is v2.9.0 and the Asset Store moved to v2.10.0.
 
 ## Now
-1. **v3.0.1** (#313) — what the real Claude Code sessions found: `create_sound_container`, one Light / Camera / Rigidbody per
-   entity, play mode over MCP in CI; plus the v3.0 trailer. Then the checks on a real Windows PC (#315): the in-app update
-   from v2.10, the editor on a DX12 GPU, an exported game.
+1. **v3.0.2** (#317) — the editors' documentation links point at the docs website (engine.vortexstudio.dev/docs, the only
+   documentation — the GitHub wiki is off), a steadier audio test, wiki changes run the tests. Then the checks on a real
+   Windows PC (#315): the in-app update from v2.10, the editor on a DX12 GPU, an exported game.
 2. **Follow-ups** — the in-app update's elevated restart (#312), shadow settings (#304), the DLSS runtime in release builds
    (#305), Linux CI (#306), `Lighting.SetDirectional` (#307), the Steam Audio runtime (#308), a Kenney manifest (#314).
 3. **v3.1.0 — Physics v2** — Jolt in the Visual Studio build (#182), the player on CharacterVirtual (#105, #187), debug
@@ -50,15 +50,15 @@ original-quality downloads (#289).
 
 ## Shipped
 
-### v3.0.0 — Claude-Native Engine (released 2026-10-05)
+### v3.0.0 — Claude-Native Engine (released 2026-10-05; v3.0.1 the same day)
 - ✅ **Vortex MCP server** in the editor (`127.0.0.1` only) with 67 tools (68 in v3.0.1): scenes, entities, materials, custom shaders
   with the real compiler errors, scripts with line-accurate errors, prefabs, model import, grid / scatter / snap, audio,
   the mixer and generated sounds, play mode, screenshots and the console. Every call is one undo step, changing tools
   offer a dry run, and *Tools ▸ Claude ▸ Operations…* shows each call's file diffs and reverts any of them.
   *Connect Claude Code / Desktop…* writes the project's `.mcp.json` or gives the one command. Checked with real Claude
   Code sessions: one prompt builds and sounds a horror corridor in under three minutes
-  ([trailer](docs/showcase/vortex-3.0-claude.webp)). Docs:
-  [Claude Integration](docs/wiki/Claude-Integration.md), [Claude Tools](docs/wiki/Claude-Tools.md).
+  ([trailer](docs/showcase/vortex-3.0-claude.webp)). v3.0.1 adds `create_sound_container` (68 tools). Docs:
+  [Claude in the Editor](https://engine.vortexstudio.dev/docs/#/claude), [Claude Tools](https://engine.vortexstudio.dev/docs/#/claude-tools).
 - ✅ **Claude panel** in the editor with the user's own Anthropic key: it sees the viewport and asks before it changes
   things.
 - ✅ **One editor on Windows, macOS and Linux** (#183): the installer's *Vortex Engine* is the cross-platform editor
@@ -88,7 +88,7 @@ original-quality downloads (#289).
 - ✅ **Claude Sound Studio** (*Window → Sound Studio…*): procedural (offline), ElevenLabs, fal.ai (CassetteAI, Stable Audio
   Open) and Stability AI (Stable Audio 2.5 up to 3:10 min, Stable Audio 3 up to 6:20 min) backends; Claude designs the
   prompts in a streamed tool loop and refines them from feedback; takes saved with their recipe ("Open in Sound Studio"
-  makes a sibling). Docs: [Asset Store](docs/wiki/Asset-Store.md), [Sound Studio](docs/wiki/Sound-Studio.md).
+  makes a sibling). Docs: [Asset Store](https://engine.vortexstudio.dev/docs/#/asset-store), [Sound Studio](https://engine.vortexstudio.dev/docs/#/sound-studio).
 - ✅ **Library and Asset Store tabs** next to Project and Console (⌘/Ctrl+7, ⌘/Ctrl+8); Shift/⌘-double-click previews a
   library model, texture or material in the viewer without copying it into the project.
 - ✅ **Store materials at their true scale**: real-world size from the provider, a tiled copy when dropped on a floor or
@@ -105,7 +105,7 @@ original-quality downloads (#289).
   (stats, verify, orphan fix, garbage collection), **bundles** (`.vlib.zip`), **settings** (move with verification, size
   cap, type rules), **backfill** of content hashes.
 - ✅ `Managed/Vortex.Core.Tests` — headless core tests (`dotnet run --project Managed/Vortex.Core.Tests`), plus the editor
-  smoke check `VORTEX_SMOKE_ONLY=library`. Docs: [Asset Library](docs/wiki/Asset-Library.md),
+  smoke check `VORTEX_SMOKE_ONLY=library`. Docs: [Asset Library](https://engine.vortexstudio.dev/docs/#/asset-library),
   [design](docs/wiki/Design-Global-Asset-Database.md).
 - ✅ **Windows installer back**: the v2.8.0 release build had failed (DX12 lacked the UTF-8 overlay calls; the Visual
   Studio engine project lacked `RenderBackend.cpp`) and the Inno Setup download link now returns HTML (installed via

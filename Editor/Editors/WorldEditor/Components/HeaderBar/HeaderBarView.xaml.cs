@@ -411,7 +411,7 @@ namespace Editor.Editors.WorldEditor.Components.HeaderBar
         {
             try
             {
-                System.Diagnostics.Process.Start("https://github.com/shadow-kernel/Vortex-Engine/wiki");
+                System.Diagnostics.Process.Start("https://engine.vortexstudio.dev/docs/");
             }
             catch (Exception ex)
             {
