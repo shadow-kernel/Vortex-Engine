@@ -6,17 +6,22 @@ param(
 )
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$srcDir = Join-Path $repoRoot "docswiki"
+$srcDir = Join-Path (Join-Path $repoRoot "docs") "wiki"
 if (-not (Test-Path $srcDir)) { throw "docs/wiki not found" }
 
-$tmp = Join-Path $env:TEMP ("vortex-wiki-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
+$tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("vortex-wiki-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
 git clone $WikiRemote $tmp
 if ($LASTEXITCODE -ne 0) {
     throw "Clone failed. Initialize the wiki once via the web UI (Wiki -> Create the first page), then re-run."
 }
 
 Get-ChildItem $tmp -Filter *.md | Remove-Item -Force
-Copy-Item (Join-Path $srcDir "*.md") $tmp -Force
+# the wiki is a repository of its own: links into this repository (../../Engine/...) become GitHub links
+foreach ($f in Get-ChildItem $srcDir -Filter *.md) {
+    $text = [System.IO.File]::ReadAllText($f.FullName)
+    $text = [regex]::Replace($text, '\]\(\.\./\.\./([^)]*)\)', '](https://github.com/shadow-kernel/Vortex-Engine/blob/main/$1)')
+    [System.IO.File]::WriteAllText((Join-Path $tmp $f.Name), $text)
+}
 
 Push-Location $tmp
 try {
