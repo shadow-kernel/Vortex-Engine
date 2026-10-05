@@ -211,6 +211,8 @@ generation (NVIDIA + Windows only; the render-scale fallback works).
 <details open>
 <summary><b>🤖 Claude</b></summary>
 
+<img src="docs/showcase/vortex-3.0-claude.webp" width="100%" alt="Claude Code builds and sounds a horror corridor in the Vortex editor through its MCP server: one prompt, 85 tool calls in 2.7 minutes, recorded in real time and sped up"/>
+
 - **MCP server inside the editor** (Streamable HTTP on `127.0.0.1` — only programs on this computer can connect) — hook up Claude Code or Claude Desktop with *Tools ▸ Claude ▸ Connect Claude Code / Desktop…*
 - **68 tools**: entities and components, materials and custom shaders (with real compiler errors), scripts (with line-accurate compile errors), prefabs, asset import, world macros (grid, scatter, snap), audio and the mixer, sound generation, play mode, screenshots and the console
 - **Safe by design**: every tool call is one undo step, mutating tools take a dry run, the Operations window shows each change (file diffs included) and reverts it — even out of order
