@@ -176,6 +176,34 @@ namespace VortexEditor.Shell
         /// <summary>Apply an edit from code (tools / tests) and refresh every control.</summary>
         internal void ApplyEdit(string key, Action<VortexMaterial> apply) { Edit(key, () => apply(_mat)); RefreshControls(); }
 
+        /// <summary>UV → Fit to Selected Object: tiling for the selected cube/plane so one tile covers <c>RealWorldSize</c>
+        /// metres (the floor of a range: 24 × 92 m with a 15 m texture → 1.6 × 6.13). Returns the message it showed.</summary>
+        internal string FitToSelection()
+        {
+            var ent = SelectionService.Instance.SelectedEntity;
+            var mr = ent?.GetComponent<Editor.ECS.Components.Rendering.MeshRenderer>();
+            string msg;
+            if (mr == null) msg = "Select the floor or wall in the scene first — the tiling is fitted to its size.";
+            else if (_mat.RealWorldSize == null) msg = "Set the real size first: how many metres one texture tile covers (Poly Haven ground scans: often 15–30 m, ambientCG: about 2 m).";
+            else
+            {
+                MaterialFit.WorldScale(ent, out float sx, out float sy, out float sz);
+                var t = Editor.Core.Assets.Store.MaterialBuilder.FitTiling(mr.MeshPath, sx, sy, sz, _mat.RealWorldSize, out float eu, out float ev);
+                if (t == null) msg = ent.Name + " is not a cube or plane — models use their own UVs, set the tiling by hand.";
+                else
+                {
+                    Edit("tiling", () => { _mat.UVTiling[0] = t[0]; _mat.UVTiling[1] = t[1]; });
+                    RefreshControls();
+                    msg = "Tiling " + t[0].ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + " × " + t[1].ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) +
+                          " for " + ent.Name + " (" + eu.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + " × " + ev.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + " m) — Save to apply it in the scene.";
+                    SetStatus(msg);
+                    return msg;
+                }
+            }
+            SetStatus(msg, true);
+            return msg;
+        }
+
         public void Undo()
         {
             if (_undo.Count == 0) { SetStatus("Nothing to undo"); return; }
@@ -298,6 +326,10 @@ namespace VortexEditor.Shell
                     PropertyRows.FloatBox(() => RealSize(0), v => Edit("realsize", () => SetRealSize(0, v)), 0.5, 0f),
                     PropertyRows.FloatBox(() => RealSize(1), v => Edit("realsize", () => SetRealSize(1, v)), 0.5, 0f)),
                     "How many metres one texture tile covers (U, V) — store materials know it, 0 = unknown. Assigning the material to a cube or plane then tiles it for the object's size."));
+                var fit = new Button { Content = "Fit to Selected Object", Classes = { "ghost" }, HorizontalAlignment = HorizontalAlignment.Left };
+                ToolTip.SetTip(fit, "Set the tiling so the texture keeps its real size on the object selected in the scene (a cube or plane — e.g. the floor)");
+                fit.Click += (s2, e2) => FitToSelection();
+                s.Children.Add(PropertyRows.Row("", fit));
 
                 s.Children.Add(EditorKit.Section("Emission"));
                 s.Children.Add(PropertyRows.Row("Color", ColorEditor("emissive", "Emissive Color",
