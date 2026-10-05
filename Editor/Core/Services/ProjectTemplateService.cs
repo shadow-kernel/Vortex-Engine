@@ -21,6 +21,9 @@ namespace Editor.Core.Services
         public string PreviewImagePath { get; set; } // absolute path to a rendered preview.png (may be null)
         public bool IsEmpty { get; set; }
         public int Order { get; set; }
+        /// <summary>The installed folder holds only Git LFS pointers and no pack is cached yet: creating a project
+        /// downloads the template content first (<see cref="TemplatePacks.EnsureAsync"/>, #299).</summary>
+        public bool NeedsDownload { get; set; }
     }
 
     /// <summary>
@@ -139,10 +142,18 @@ namespace Editor.Core.Services
                 string previewPath = Path.Combine(dir, previewFile);
                 if (!File.Exists(previewPath)) previewPath = null;
 
+                // content in Git LFS that the install lacks: a downloaded pack, or one to download (#299)
+                string id = Path.GetFileName(dir);
+                bool needsDownload = false;
+                string cached = TemplatePacks.CachedProjectDir(id);
+                if (cached != null) projectDir = cached;
+                else needsDownload = TemplatePacks.HasLfsPointers(projectDir);
+
                 return new ProjectTemplate
                 {
-                    Id = Path.GetFileName(dir), Name = name, Tagline = tagline,
-                    Description = description, ProjectDir = projectDir, PreviewImagePath = previewPath, Order = order
+                    Id = id, Name = name, Tagline = tagline,
+                    Description = description, ProjectDir = projectDir, PreviewImagePath = previewPath, Order = order,
+                    NeedsDownload = needsDownload,
                 };
             }
             catch { return null; }

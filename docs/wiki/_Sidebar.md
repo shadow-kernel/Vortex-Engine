@@ -15,6 +15,7 @@
 - [[Managed-Interop-Bindings]]
 
 **Guides**
+- [[Project-Templates]]
 - [[Claude-Integration]]
 - [[Claude-Tools]]
 - [[Asset-Library]]

@@ -2,7 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.IO.Compression;
+using System.Net;
+using System.Net.Http;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using Editor.Core.Data;
 using Editor.Core.Serialization;
 using Editor.Core.Services;
@@ -170,6 +175,81 @@ namespace VortexTests
                 t.True(Math.Abs(p.Y) < 0.05f && grounded, "lands on the floor (y = " + p.Y + ")");
             }
             finally { CollisionService.Clear(); }
+        }
+
+        [Test]
+        public static async Task TemplatePacksDownloadOnceAndCache(TestContext t)
+        {
+            // an installed template with Git LFS pointers instead of its models
+            var installed = t.Path("install", "HorrorStarter");
+            Directory.CreateDirectory(Path.Combine(installed, "Assets", "Models"));
+            File.WriteAllText(Path.Combine(installed, "project.vortex"), "{}");
+            File.WriteAllText(Path.Combine(installed, "Assets", "Models", "crate.glb"),
+                "version https://git-lfs.github.com/spec/v1\noid sha256:abc\nsize 123456\n");
+            t.True(TemplatePacks.HasLfsPointers(installed), "pointer files detected");
+            var real = t.Path("real");
+            Directory.CreateDirectory(real);
+            File.WriteAllBytes(Path.Combine(real, "crate.glb"), new byte[] { 0x67, 0x6C, 0x54, 0x46, 2, 0, 0, 0 });
+            t.False(TemplatePacks.HasLfsPointers(real), "real content is not a pointer");
+
+            // the release asset: a zip with the real project
+            var zipPath = t.Path("Template-HorrorStarter.zip");
+            using (var zip = ZipFile.Open(zipPath, ZipArchiveMode.Create))
+            {
+                using (var w = new StreamWriter(zip.CreateEntry("project.vortex").Open())) w.Write("{\"name\":\"Horror Starter\"}");
+                using (var s2 = zip.CreateEntry("Assets/Models/crate.glb").Open()) s2.Write(new byte[] { 1, 2, 3, 4 }, 0, 4);
+            }
+            byte[] zipBytes = File.ReadAllBytes(zipPath);
+            int downloads = 0;
+            var fake = new FakeHttp();
+            fake.Routes.Add(("https://api.github.com/", r => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"assets\":[{\"name\":\"Template-HorrorStarter.zip\",\"size\":" + zipBytes.Length + ",\"browser_download_url\":\"https://example.test/Template-HorrorStarter.zip\"}]}"),
+            }));
+            fake.Routes.Add(("https://example.test/", r => { downloads++; return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(zipBytes) }; }));
+            TemplatePacks.Handler = fake;
+            try
+            {
+                var template = new ProjectTemplate { Id = "HorrorStarter", Name = "Horror Starter", ProjectDir = installed, NeedsDownload = true };
+                var pack = await TemplatePacks.FindAsync("HorrorStarter");
+                t.NotNull(pack, "pack found on the release");
+                t.Equal((long)zipBytes.Length, pack.Size, "pack size");
+                double last = 0;
+                string dir = await TemplatePacks.EnsureAsync(template, new SyncProgress(v => last = v), CancellationToken.None);
+                t.True(File.Exists(Path.Combine(dir, "project.vortex")), "project unpacked");
+                t.Equal(4L, new FileInfo(Path.Combine(dir, "Assets", "Models", "crate.glb")).Length, "real model bytes");
+                t.Equal(1.0, last, "progress reached 100 %");
+                t.True(dir.StartsWith(TemplatePacks.CacheRoot), "cached under the engine version");
+                string again = await TemplatePacks.EnsureAsync(template, null, CancellationToken.None);
+                t.Equal(dir, again, "second project uses the cache");
+                t.Equal(1, downloads, "downloaded once");
+                t.Equal(dir, TemplatePacks.CachedProjectDir("HorrorStarter"), "discovery sees the cache");
+
+                // a pack with an entry outside its folder is refused
+                var evilZip = t.Path("Template-Evil.zip");
+                using (var zip = ZipFile.Open(evilZip, ZipArchiveMode.Create))
+                using (var w = new StreamWriter(zip.CreateEntry("../../escape.txt").Open())) w.Write("x");
+                byte[] evilBytes = File.ReadAllBytes(evilZip);
+                fake.Routes.Clear();
+                fake.Routes.Add(("https://api.github.com/", r => new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"assets\":[{\"name\":\"Template-Evil.zip\",\"size\":1,\"browser_download_url\":\"https://example.test/evil.zip\"}]}"),
+                }));
+                fake.Routes.Add(("https://example.test/", r => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(evilBytes) }));
+                var evil = new ProjectTemplate { Id = "Evil", Name = "Evil", ProjectDir = installed, NeedsDownload = true };
+                bool refused = false;
+                try { await TemplatePacks.EnsureAsync(evil, null, CancellationToken.None); } catch (InvalidDataException) { refused = true; }
+                t.True(refused, "zip slip refused");
+                t.False(File.Exists(Path.Combine(Path.GetDirectoryName(TemplatePacks.CacheRoot), "escape.txt")), "nothing written outside");
+            }
+            finally { TemplatePacks.Handler = null; }
+        }
+
+        private sealed class SyncProgress : IProgress<double>
+        {
+            private readonly Action<double> _a;
+            public SyncProgress(Action<double> a) { _a = a; }
+            public void Report(double value) => _a(value);
         }
     }
 }

@@ -47,9 +47,22 @@ namespace Editor.Project.Projection
             }
         }
 
-        private void OpenButton_Pressed(object sender, RoutedEventArgs e)
+        private async void OpenButton_Pressed(object sender, RoutedEventArgs e)
         {
-            _dataContextModel?.CreateProject();
+            if (_dataContextModel == null) return;
+            var button = sender as System.Windows.Controls.Button;
+            object caption = button?.Content;
+            try
+            {
+                if (button != null) button.IsEnabled = false;
+                // a template whose content is a release download (#299): the button shows the progress
+                var progress = new System.Progress<double>(f => { if (button != null) button.Content = "Downloading " + (int)(f * 100) + " %"; });
+                await _dataContextModel.CreateProjectAsync(progress);
+            }
+            finally
+            {
+                if (button != null) { button.IsEnabled = true; button.Content = caption; }
+            }
         }
 
         /// <summary>Pick the PARENT folder the new project directory will be created in. Uses the shared STA
