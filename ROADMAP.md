@@ -1,8 +1,23 @@
-# Vortex Engine — Roadmap (updated 2026-09-30)
+# Vortex Engine — Roadmap (updated 2026-10-05)
 
 Status legend: ✅ shipped on `main` · 🟡 partial · ⬜ open. Issue numbers refer to github.com/shadow-kernel/Vortex-Engine.
 
-## Shipped in 2.8 (this merge)
+## Since 2.8
+- ✅ **Linux port**: Vulkan backend via SDL GPU (GLSL → SPIR-V at build time), the editor and the player on X11
+  (`Scripts/linux-dev.sh`).
+- ✅ **Ragdolls** (#104): a Ragdoll component builds Jolt bodies + swing-twist / hinge joints from any humanoid skeleton
+  at its current pose; `Ragdoll.Activate(EntityId)`; shots push the limb they hit.
+- ✅ **Tactical Shooter template**: Call-of-Duty-style gun range, two animated first-person weapon packs, iron-sight
+  ADS, recoil; the player has a **third-person operator body** for every camera but the local one (third-person
+  weapons in the hands, left hand IK'd to the foregrip, crouch/slide via Foot IK, ragdoll on death).
+- ✅ **Joints** (#103: hinge, ball, slider, fixed, distance, motors, breakable), **render interpolation** between fixed
+  physics steps, rig-generic **Hand Pose, Look-At IK and Foot IK** (#147).
+- 🟡 **VFX** (Particle System + VFX editor) and **AI & navigation** (navigation window, agents, perception) — merged as
+  work in progress.
+- ✅ The documented build scripts (`tools/macos/make-app.sh`, `tools/macos/dev.sh`, `tools/make-runtime-pack.*`) are in
+  the repository (they were git-ignored before).
+
+## Shipped in 2.8
 - ✅ **macOS port** (#180): Metal backend via SDL GPU, .NET 10 `Vortex.Core` / `Vortex.Player` / Avalonia `Vortex.Editor`,
   `tools/macos/make-app.sh --install --dmg` builds and installs `Vortex Editor.app`; branded exports for macOS /
   Windows / Linux with runtime packs (`tools/make-runtime-pack.*`).
@@ -19,12 +34,13 @@ Status legend: ✅ shipped on `main` · 🟡 partial · ⬜ open. Issue numbers 
   `Character_Soldier.ventity` blueprints.
 
 ## Next (in order)
-1. **Physics follow-ups** — ⬜ #103 constraints (hinge doors, ball, slider, fixed), ⬜ #104 ragdoll, 🟡 #105 move the
-   player onto `CharacterVirtual`, render interpolation between fixed steps, Jolt in the Visual Studio build.
+1. **Physics follow-ups** — ✅ #103 constraints, ✅ #104 ragdoll, ✅ render interpolation; 🟡 #105 move the player
+   onto `CharacterVirtual`, ⬜ Jolt in the Visual Studio build, ⬜ a shadow-only pass so the local player's own body
+   casts its shadow in first person.
 2. **Windows parity of the port** — Avalonia editor on Windows (HWND viewport), CI runner for the macOS build
    (`.github/workflows/build-macos.yml`), Developer-ID signing + notarisation (#96).
-3. **Animation** — foot placement + look-at (#147 rest), state machine / blend-tree editor (#146), retargeting (#148),
-   root motion (#113).
+3. **Animation** — ✅ foot placement + look-at (#147), ⬜ state machine / blend-tree editor (#146), 🟡 retargeting
+   (#148: Mixamo clips run on any Mixamo rig by bone name; a general retargeter is open), ⬜ root motion (#113).
 4. **VFX** — GPU particles (#116/#117/#118), decals (#120), trails (#121) → weapon VFX package (#178).
 5. **AI & Navigation** — NavMesh (#109), agents (#110), perception (#112), behaviour trees (#111), horror monster sample (#115).
 6. **Asset Store / Library** — provider abstraction + Poly Haven / ambientCG providers (#66–#69), global asset DB (#52–#65).
