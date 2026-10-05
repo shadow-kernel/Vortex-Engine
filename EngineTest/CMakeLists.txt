@@ -77,6 +77,17 @@ set_tests_properties(NavigationSmokeTest PROPERTIES
 	PASS_REGULAR_EXPRESSION "ALL PASSED"
 	TIMEOUT 120)
 
+# Gamepads for the .NET hosts: VortexAPI's PollGamepad driven by an SDL virtual gamepad (headless; SDL builds only).
+if(TARGET VortexAPI AND NOT VORTEX_ENABLE_DX12)
+	add_executable(VortexGamepadTest TestGamepad.cpp)
+	target_link_libraries(VortexGamepadTest PRIVATE VortexAPI vortex::engine)   # the engine carries SDL3 publicly
+	add_test(NAME GamepadTest COMMAND VortexGamepadTest)
+	set_tests_properties(GamepadTest PROPERTIES
+		FAIL_REGULAR_EXPRESSION "FAILURES!"
+		PASS_REGULAR_EXPRESSION "ALL PASSED"
+		TIMEOUT 60)
+endif()
+
 # The render test needs a display (a window server): opt in with -DVORTEX_RENDER_TESTS=ON.
 option(VORTEX_RENDER_TESTS "Register the windowed render smoke test with ctest" OFF)
 if(VORTEX_RENDER_TESTS)

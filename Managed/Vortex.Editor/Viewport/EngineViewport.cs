@@ -47,6 +47,7 @@ namespace VortexEditor.Viewport
             ClipToBounds = true;
             HostInput.KeyDown = vk => _keysDown.Contains(vk);
             HostInput.CapsLock = ViewportCursor.CapsLockOn;
+            GamepadInput.Install();   // controllers in editor play (DualSense HID / XInput on Windows, SDL3 elsewhere)
             HostInput.WindowFocused = () => _topLevel is Window w ? w.IsActive : true;
         }
 

@@ -199,7 +199,7 @@ All of it lives in the Avalonia editor (`Managed/Vortex.Editor/Claude/`) on ever
 |---|---|---|
 | VortexBehaviour lifecycle (Start/Update/OnDestroy) | ✅ | Plus LateUpdate, OnMessage, OnAnimationEvent, OnTrigger*/OnCollisionEnter; no FixedUpdate/OnEnable; only the first Script component per entity runs |
 | Transform API | ✅ | Position/Rotation/Scale, Translate/Rotate, Forward/Right, world poses, Quaternion math; any entity via `Scene.*Of` |
-| Input (keyboard, mouse, gamepad) | 🟡 | Keyboard + mouse everywhere; gamepad (XInput/WGI + DualSense HID) only in WPF builds, none in the Avalonia editor or `Vortex.Player`; rebinding → [M13](https://github.com/shadow-kernel/Vortex-Engine/milestone/13) |
+| Input (keyboard, mouse, gamepad) | 🟡 | Keyboard + mouse everywhere; gamepads in every host — WPF: Windows.Gaming.Input + DualSense HID + XInput; cross-platform editor + `Vortex.Player`: DualSense HID + XInput on Windows, SDL3 (Xbox / PlayStation / Switch Pro …) on macOS + Linux (`GamepadTest` in CTest); rebinding → [M13](https://github.com/shadow-kernel/Vortex-Engine/milestone/13) |
 | Character movement (Physics.MoveCharacter) | ✅ | Managed collide-and-slide capsule, Grounded, `SetCharacterOptions(stepHeight, maxSlope)`; works without Jolt |
 | Trigger/collision events | ✅ | OnTriggerEnter/Stay/Exit + OnCollisionEnter from characters and Jolt contacts; no OnCollisionStay/Exit |
 | Skeletal animation API | ✅ | Play/crossfade/speed/time, layers, synced groups, bone overrides, IK targets, sockets, OnAnimationEvent |
@@ -321,7 +321,7 @@ Merged as work in progress; the navmesh parts need Recast, which only the CMake 
 | Rendering backend | ✅ | DX12: D3D11On12 + D2D, image cache, scissor clipping; SDL GPU: own overlay (rects, lines, images, clipping) |
 | Canvas stack (HUD → modal) | ✅ | Push/Pop, cursor-lock + gameplay-block preferences; the top screen gets input first |
 | Modal dialogs | ✅ | `Gui.Confirm(title, msg, onYes, onNo)`: blocking yes/no modal, keyboard/pad navigable; no OK-only alert or text prompt |
-| Gamepad/keyboard menu navigation | ✅ | Focus system: arrows/Tab/Enter, D-pad/A/stick with repeat, focus ring; pads only where gamepad input exists (WPF builds) |
+| Gamepad/keyboard menu navigation | ✅ | Focus system: arrows/Tab/Enter, D-pad/A/stick with repeat, focus ring; with a pad on every platform |
 | Tooltips + UI sound hooks | ✅ | Per-element tooltip + click/hover sounds stored in .vui; authored in the Avalonia UI editor only |
 | Settings persistence schema | 🟡 | The element `TargetSetting` field is unused; only audio bus volumes persist automatically, the rest via `Save.*`; settings menus → [M13](https://github.com/shadow-kernel/Vortex-Engine/milestone/13) |
 | Rich text / responsive layout / data binding | 🟡 | Plain text only; anchors + uniform scaling; one-way Set/Get + List repeater; rich text → [M16](https://github.com/shadow-kernel/Vortex-Engine/milestone/16), responsive layout v2 → [M13](https://github.com/shadow-kernel/Vortex-Engine/milestone/13) |
@@ -391,7 +391,7 @@ Merged as work in progress; the navmesh parts need Recast, which only the CMake 
 | Game loop & tick | ✅ | Native `StepRuntime`: fixed 1/60 s accumulator (max 8 steps); Jolt steps at 60 Hz in `PhysicsService`; scripts get variable dt |
 | Hot-reload (scripts + shaders) | ✅ | Both editors, the external window and Debug exports; off in Release exports |
 | ECS component model | ✅ | 32 types, same model in editor and runtime: rendering, Light, colliders + Rigidbody + 5 joints + Ragdoll, audio, Animator + sockets + IK, AI, Script |
-| Input system | 🟡 | Keyboard/mouse on every host (Win32 raw input, SDL3); gamepads only in WPF builds (see Scripting) |
+| Input system | 🟡 | Keyboard/mouse on every host (Win32 raw input, SDL3); gamepads on every host (see Scripting); no action maps / rebinding yet (#237) |
 | Asset management & streaming | 🟡 | GUID manifest + per-scene paks work; no async or texture streaming → [M9](https://github.com/shadow-kernel/Vortex-Engine/milestone/9) |
 | Save/load game state | 🟡 | `Save` slots + typed keys (one file per slot); no automatic scene/entity snapshot |
 | Audio system | ✅ | See the Audio table |
