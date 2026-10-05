@@ -24,8 +24,8 @@ The Windows binaries (installer, portable ZIP and runtime pack, used by both edi
 | Jolt physics + Recast navigation | ❌ no-op stubs in the MSBuild build | ✅ Jolt 5.3.0, Recast/Detour 1.6.0 | ✅ same as macOS |
 | Particle rendering | ❌ simulated, never drawn | ✅ | ✅ |
 | Standalone player (`Vortex.Player`) | 🟡 in the installer (`Editor\player`), never run in CI | ✅ inside the app bundle | 🟡 build from source |
-| WPF editor | ✅ .NET Framework 4.8 | — | — |
-| Avalonia editor | 🟡 DX12 in a child HWND; ships in the installer (#183); CI smoke informational | ✅ Metal view; CI smoke gates the app build | 🟡 X11 (XWayland) window + Vulkan; from source, no CI |
+| WPF editor (classic) | 🟡 .NET Framework 4.8; kept as *Vortex Engine (Classic)* for v3.0, removed in v3.1 | — | — |
+| Avalonia editor (the editor) | ✅ the default since v3.0: DX12 in a child HWND (click routing, mouse look), gamepads, installer + self-update; CI smoke from the installed layout (WARP) gates PRs | ✅ Metal view; CI smoke gates the app build | 🟡 X11 (XWayland) window + Vulkan; from source, no CI |
 | Game export | ✅ WPF: Windows; Avalonia: `.exe` + `.zip` | 🟡 Avalonia: `.app` + `.dmg` (ad-hoc signed, SDL3/Assimp bundled) | 🟡 Avalonia: folder + `.desktop` + `run.sh` (source build) |
 | Distribution | 🟡 installer + portable ZIP from CI, unsigned | 🟡 DMG from CI (arm64, macOS 26+), not notarised; Homebrew libraries bundled (`tools/macos/bundle-dylibs.sh`) | ❌ build from source |
 | CI | ✅ PR gate: MSBuild + managed build + managed tests | ✅ PR gate: CMake + native tests + managed tests; app/DMG on main and tags | ❌ no job |

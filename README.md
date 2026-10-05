@@ -14,7 +14,7 @@
 [![Platform](https://img.shields.io/badge/PLATFORM-Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-0078D6?style=for-the-badge&logo=windows&logoColor=white)](#-getting-started)
 [![Graphics](https://img.shields.io/badge/GRAPHICS-DirectX%2012%20%C2%B7%20Metal%20%C2%B7%20Vulkan-00A6FB?style=for-the-badge&logo=microsoft&logoColor=white)](#-architecture)
 [![C++](https://img.shields.io/badge/ENGINE-C%2B%2B20-00599C?style=for-the-badge&logo=cplusplus&logoColor=white)](#-architecture)
-[![C#](https://img.shields.io/badge/EDITOR-.NET%2010%20Avalonia%20%C2%B7%20WPF-512BD4?style=for-the-badge&logo=dotnet&logoColor=white)](#-architecture)
+[![C#](https://img.shields.io/badge/EDITOR-.NET%2010%20%C2%B7%20Avalonia-512BD4?style=for-the-badge&logo=dotnet&logoColor=white)](#-architecture)
 [![Claude](https://img.shields.io/badge/CLAUDE-MCP%20server%20%2B%20panel-D97757?style=for-the-badge&logo=anthropic&logoColor=white)](docs/wiki/Claude-Integration.md)
 [![Status](https://img.shields.io/badge/STATUS-Active%20Alpha-FF6B6B?style=for-the-badge)](#-roadmap)
 [![License](https://img.shields.io/badge/LICENSE-MIT-3DA639?style=for-the-badge&logo=opensourceinitiative&logoColor=white)](LICENSE)
@@ -43,7 +43,7 @@
 | | |
 |---|---|
 | 🤖 **Claude, built in** | The editor runs an **MCP server**: Claude Code or Claude Desktop builds scenes, materials, shaders, scripts, sound and whole worlds through 67 tools, play-tests and looks at the result — every change one undo step, with dry runs and an operations log. Or chat in the editor's own **Claude panel**. |
-| 🖥️ **Windows · macOS · Linux** | **Direct3D 12**, **Metal** and **Vulkan** renderers; a cross-platform .NET 10 editor (plus the WPF editor on Windows); games build for all three from any of them. |
+| 🖥️ **Windows · macOS · Linux** | **Direct3D 12**, **Metal** and **Vulkan** renderers; one .NET 10 editor with the same UI on all three; games build for all three from any of them. |
 | 🎨 **Renderer** | Physically-based shading, shadow maps for directional, point and spot lights, height fog, SSAO, bloom, vignette, film grain, colour grading, custom per-material shaders, GPU instancing + LOD, **DLSS 4** on NVIDIA. |
 | 🔊 **Audio** | 3D sound sources, sound containers with variation, reverb zones, a mixer with buses, ducking and meters — and the **Sound Studio**, which generates sounds from a description. |
 | 📚 **Asset library & store** | Every asset on your machine in one deduplicated library shared by all projects, and an in-editor **Asset Store** (Poly Haven, ambientCG, Kenney, Freesound, Sketchfab …) that tracks licenses into your build. |
@@ -87,7 +87,7 @@ flowchart LR
     subgraph Managed["🟪 Managed (C#)"]
         CORE["📦 Vortex.Core<br/><sub>scenes · assets · scripting · services (shared)</sub>"]
         AV["🖥️ Vortex.Editor<br/><sub>.NET 10 + Avalonia · MCP server · Claude panel</sub>"]
-        WPF["🪟 Vortex Engine.exe<br/><sub>.NET 4.8 WPF editor (Windows)</sub>"]
+        WPF["🪟 Vortex Engine.exe<br/><sub>classic .NET 4.8 WPF editor (Windows, until v3.1)</sub>"]
         CORE --> AV
         CORE --> WPF
     end
@@ -101,7 +101,7 @@ flowchart LR
 | **Engine** | `Engine/` | `Engine.lib` / `libVortexEngine` | Core runtime: ECS, renderers (Direct3D 12 on Windows, SDL GPU on Metal and Vulkan), audio, physics, importers. |
 | **Interop** | `VortexAPI/` | `VortexAPI.dll` / `.dylib` / `.so` | A thin `extern "C"` bridge (`EDITOR_INTERFACE`) exposing the engine to managed code. |
 | **Shared core** | `Editor/` (sources) | in both editors + `Managed/Vortex.Core` | Scenes, components, assets, the scripting runtime and every editor service — compiled for .NET Framework 4.8 and .NET 10. |
-| **Editors** | `Managed/Vortex.Editor`, `Editor/` | `Vortex.Editor`, `Vortex Engine.exe` | The cross-platform Avalonia editor (with the MCP server and the Claude panel) and the Windows WPF editor. |
+| **Editors** | `Managed/Vortex.Editor`, `Editor/` | `Vortex.Editor`, `Vortex Engine.exe` | The editor on every platform (Avalonia, with the MCP server and the Claude panel); the classic WPF editor stays on Windows until v3.1. |
 | **Player** | `Managed/Vortex.Player` | `Vortex.Player` | The standalone game host: what the cross-platform editor exports for Windows, macOS and Linux (via runtime packs). |
 
 > On Windows the WPF editor loads `VortexAPI.dll` from the shared `x64/Release/` output folder; the .NET 10 tools find the native library next to them, in an app bundle's `Frameworks`, or in the CMake build tree.
@@ -120,12 +120,13 @@ Then follow **[Getting Started](docs/wiki/Getting-Started.md)**: a game from the
 
 ### Build from source — prerequisites
 
-- **Windows 10/11 (x64)** — the full engine + editor
+- **Windows 10/11 (x64)** — the engine (DX12) and the editor
 - **macOS (Apple Silicon)** — native engine, player and editor, see [macOS](#-macos-apple-silicon--native-engine-player-and-editor) below
 - **Linux (x64)** — native engine, player and editor, see [Linux](#-linux-x64--native-engine-player-and-editor) below
 - **Visual Studio 2022/2026** with:
   - *Desktop development with **C++*** (MSVC v143/v145 + Windows 10/11 SDK)
-  - *.NET desktop development* (.NET Framework 4.8 targeting pack)
+  - *.NET desktop development* (.NET Framework 4.8 targeting pack, for the classic editor)
+- **.NET 10 SDK** — the editor and the player
 
 ### Build & Run
 
@@ -147,11 +148,12 @@ nuget restore Editor/packages.config    -SolutionDirectory .
 # 3. Build the whole solution (Engine → VortexAPI.dll → Editor)
 msbuild Vortex.slnx /t:Build /p:Configuration=Release /p:Platform=x64
 
-# 4. Launch the editor
-"x64/Release/Vortex Engine.exe"
+# 4. Build and launch the editor (it finds the native engine in x64/Release)
+dotnet run --project Managed/Vortex.Editor -c Release
 ```
 
-> 💡 Or just open `Vortex.slnx` in Visual Studio, set the configuration to **Release | x64**, and press **F5**.
+> 💡 `x64/Release/Vortex Engine.exe` is the classic WPF editor (until v3.1). `tools/windows/stage-editor.ps1` lays the
+> editor out the way the installer ships it.
 
 ### 🍎 macOS (Apple Silicon) — native engine, player and editor
 
@@ -304,7 +306,8 @@ Vortex-Engine/
 │  ├─ Runtime/      scene/resource/prefab managers, systems
 │  └─ Input/        input system
 ├─ VortexAPI/     🔌 C interop DLL (extern "C" bridge)
-├─ Editor/        🟪 C# WPF editor
+├─ Managed/       🟪 .NET 10: Vortex.Core (shared runtime), Vortex.Editor (the editor), Vortex.Player, tests
+├─ Editor/        🟪 shared C# sources (+ the classic WPF editor)
 │  ├─ ECS/          managed entity/component model
 │  ├─ Core/         services, assets, serialization, undo/redo
 │  ├─ DllWrapper/   P/Invoke layer onto VortexAPI.dll

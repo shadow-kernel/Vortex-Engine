@@ -10,6 +10,11 @@ on:
         description: 'Version number (e.g., 1.0.0)'
         required: true
         default: '1.0.0'
+      publish:
+        description: 'Publish a GitHub release (off = build and upload the installer + portable ZIP as artifacts only)'
+        type: boolean
+        required: false
+        default: true
 
 env:
   SOLUTION_FILE: Vortex.slnx
@@ -81,7 +86,7 @@ jobs:
       shell: pwsh
       run: |
         $out = "x64/${{ env.BUILD_CONFIGURATION }}"
-        $required = @("Vortex Engine.exe", "VortexAPI.dll", "assimp-vc143-mt.dll")
+        $required = @("Vortex Engine.exe", "VortexAPI.dll", "assimp-vc143-mt.dll")   # the classic WPF editor + the engine
         $missing = $required | Where-Object { -not (Test-Path "$out/$_") }
         if ($missing) { Write-Error "Missing required artifacts in $out : $($missing -join ', ')"; exit 1 }
         Write-Host "OK: $($required -join ', ') present in $out"
@@ -145,7 +150,7 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish != 'false')
     
     permissions:
       contents: write
@@ -196,9 +201,9 @@ jobs:
           ### Installation
           
           **Installer (Recommended):**
-          Download and run `VortexEngine-Setup-${{ steps.version.outputs.VERSION }}.exe`. It installs both Windows editors:
-          *Vortex Engine* (the WPF editor) and *Vortex Editor (cross-platform)* — the editor of macOS and Linux, with the
-          Library, the Asset Store, the Sound Studio and Claude.
+          Download and run `VortexEngine-Setup-${{ steps.version.outputs.VERSION }}.exe`. *Vortex Engine* is the same editor
+          as on macOS and Linux — with the Library, the Asset Store, the Sound Studio and Claude. The previous Windows editor
+          stays available for this release as *Vortex Engine (Classic)* in the Start menu.
           
           **Portable Version:**
           Download `VortexEngine-Portable-${{ steps.version.outputs.VERSION }}.zip` and extract to any folder.

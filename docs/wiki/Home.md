@@ -29,8 +29,9 @@ Desktop, or in the editor's own Claude panel. The first game target is **first-p
 - **Rendering** — PBR (Cook-Torrance GGX) on Direct3D 12, Metal and Vulkan; directional, point and spot lights with
   shadow maps; height fog; bloom, SSAO, vignette, film grain, colour grading, chromatic aberration; custom per-material
   shaders with live error reporting; GPU instancing and LOD; DLSS Super-Resolution + Frame Generation on NVIDIA/Windows
-- **Editor** — the cross-platform editor (Avalonia, .NET 10) on macOS, Linux and Windows, plus the WPF editor on
-  Windows: scene hierarchy, inspector, prefabs, full undo/redo, material/model/animation/collision/UI editors, Git panel
+- **Editor** — one editor (Avalonia, .NET 10) with the same UI on Windows, macOS and Linux: scene hierarchy, inspector,
+  prefabs, full undo/redo, material/model/animation/collision/UI/VFX editors, Git panel, self-updating installs on
+  Windows (the classic WPF editor stays one more release)
 - **Gameplay scripting** — C# `VortexBehaviour`s with hot reload; input incl. gamepads, triggers, raycasts,
   `Instantiate`/`Destroy`, coroutines, save slots, scene loading, immediate-mode and retained UI
 - **Audio** — 3D sound sources, sound containers with variation, reverb zones, a mixer with buses, ducking and meters

@@ -80,12 +80,10 @@ jobs:
       - name: Managed tests (Vortex.Core)
         run: dotnet run --project Managed/Vortex.Core.Tests -c Release
 
-      # #183: the cross-platform editor exactly as the installer lays it out — {app}\Editor (self-contained, with its
-      # player) next to {app}\VortexAPI.dll, Shaders and Templates, outside the repository — on DX12 / WARP (the runners
-      # have no GPU). Viewport input, scenes, export, tools, captures and the Claude panel end to end. Informational
-      # until #183 is done.
-      - name: Cross-platform editor smoke, installed layout (DX12 / WARP, informational)
-        continue-on-error: true
+      # The Windows editor (#183) exactly as the installer lays it out — {app}\Editor (self-contained, with its player)
+      # next to {app}\VortexAPI.dll, Shaders and Templates, outside the repository — on DX12 / WARP (the runners have no
+      # GPU): viewport input, scenes, export, tools, captures and the Claude panel end to end.
+      - name: Editor smoke, installed layout (DX12 / WARP)
         shell: pwsh
         env:
           VORTEX_DX12_WARP: '1'
