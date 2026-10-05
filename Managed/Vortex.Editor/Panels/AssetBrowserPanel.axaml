@@ -189,6 +189,12 @@
                   <TextBlock Text="Library" VerticalAlignment="Center"/>
                 </StackPanel>
               </RadioButton>
+              <RadioButton GroupName="assettab" Tag="Store" Click="OnTabClick" ToolTip.Tip="Free asset sources (Poly Haven, ambientCG, Kenney, Freesound, Sketchfab, …) — download into the library and the project">
+                <StackPanel Orientation="Horizontal" Spacing="4">
+                  <c:VxIcon Icon="World" Width="12" Height="12" VerticalAlignment="Center"/>
+                  <TextBlock Text="Store" VerticalAlignment="Center"/>
+                </StackPanel>
+              </RadioButton>
               <RadioButton GroupName="assettab" Tag="Meshes" Click="OnTabClick" ToolTip.Tip="Built-in primitives + every model in the project">Meshes</RadioButton>
               <RadioButton GroupName="assettab" Tag="Models" Click="OnTabClick" ToolTip.Tip="Every imported model — double-click to add it to the scene">Models</RadioButton>
               <RadioButton GroupName="assettab" Tag="Textures" Click="OnTabClick">Textures</RadioButton>
@@ -227,6 +233,7 @@
         <TextBlock x:Name="EmptySubHint" Classes="tertiary small" HorizontalAlignment="Center" TextAlignment="Center"/>
       </StackPanel>
       <ab:LibraryView x:Name="Library" IsVisible="False"/>
+      <ab:StoreView x:Name="Store" IsVisible="False"/>
     </Grid>
   </DockPanel>
 </UserControl>

@@ -251,10 +251,10 @@ namespace Editor.Core.Assets.Library
                     File.Copy(lib.BlobPath(c.Hash), dst, false);
                     r.Files.Add(dst);
                     var ct = AssetDatabase.TypeForExtension(Path.GetExtension(dst));
-                    if (ct != AssetType.Unknown) WriteNewMeta(projectRoot, dst, ct, null, c.Hash);
+                    if (ct != AssetType.Unknown) WriteNewMeta(projectRoot, dst, ct, null, c.Hash, e);
                 }
 
-                var meta = WriteNewMeta(projectRoot, main, e.Type, e.Tags, e.Hash);
+                var meta = WriteNewMeta(projectRoot, main, e.Type, e.Tags, e.Hash, e);
                 r.AssetGuid = meta.Guid;
                 r.Path = main;
                 r.Status = AddToProjectStatus.Added;
@@ -268,11 +268,18 @@ namespace Editor.Core.Assets.Library
             catch (Exception ex) { r.Status = AddToProjectStatus.Failed; r.Error = ex.Message; return r; }
         }
 
-        private static AssetMetadata WriteNewMeta(string projectRoot, string fullPath, AssetType type, List<string> tags, string hash)
+        private static AssetMetadata WriteNewMeta(string projectRoot, string fullPath, AssetType type, List<string> tags, string hash, LibraryEntry from)
         {
             string rel = LibraryCompanions.Rel(projectRoot, fullPath).Replace('/', Path.DirectorySeparatorChar);
             var meta = new AssetMetadata(type, rel, Path.GetFileName(fullPath));
             if (tags != null) meta.Tags = new List<string>(tags);
+            // license + credit travel with the file (CREDITS.md at export, #77); own project assets have none
+            if (from != null && from.SourceKind != LibrarySource.Project && from.SourceKind != LibrarySource.Manual)
+            {
+                meta.License = from.License; meta.Author = from.Author; meta.SourceUrl = from.SourceUrl; meta.Source = from.SourceName;
+            }
+            else if (from != null && !string.IsNullOrEmpty(from.License)) { meta.License = from.License; meta.Author = from.Author; meta.SourceUrl = from.SourceUrl; }
+            if (from != null && !string.IsNullOrEmpty(from.Recipe) && hash == from.Hash) meta.Recipe = from.Recipe;
             try { var fi = new FileInfo(fullPath); meta.LastModified = fi.LastWriteTime; meta.FileSize = fi.Length; } catch { }
             meta.SetContentHash(hash, fullPath);
             SaveMeta(fullPath, meta);

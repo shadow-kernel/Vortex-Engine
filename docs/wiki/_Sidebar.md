@@ -16,6 +16,8 @@
 
 **Guides**
 - [[Asset-Library]]
+- [[Asset-Store]]
+- [[Sound-Studio]]
 - [[Audio-Anleitung-DE]]
 
 **Design Docs**

@@ -40,8 +40,8 @@
 | [v2.6.0 – Audio Engine](https://github.com/shadow-kernel/Vortex-Engine/milestone/1) | miniaudio backend, 3D spatial audio, mixer buses, `Vortex.Audio` API, editor audio tooling |
 | [v2.7.0 – Horror Essentials](https://github.com/shadow-kernel/Vortex-Engine/milestone/2) | The game-dev-ready gate: shadow mapping (flashlight), fog, post-FX, transparency, triggers/raycasts/Instantiate/coroutines, save/load, Horror Starter template |
 | [v2.8.0 – Windows · macOS · Linux](https://github.com/shadow-kernel/Vortex-Engine/releases/tag/v2.8.0) | Released 2026-10-04: macOS (Metal) + Linux (Vulkan) ports, Physics v2 (Jolt), editor-first hands |
-| [v2.9.0 – Global Asset Database](https://github.com/shadow-kernel/Vortex-Engine/milestone/3) | PC-wide, SHA-256 content-addressed, deduplicated cross-project asset library + Library tab ([[Asset-Library]]) |
-| [v2.10.0 – Asset Store & Claude Sound Studio](https://github.com/shadow-kernel/Vortex-Engine/milestone/4) | In-editor Store tab (Poly Haven, ambientCG, Freesound, Mixamo, …) + Claude-driven SFX generation |
+| [v2.9.0 – Global Asset Database](https://github.com/shadow-kernel/Vortex-Engine/milestone/3) | ✅ PC-wide, SHA-256 content-addressed, deduplicated cross-project asset library + Library tab ([[Asset-Library]]) |
+| [v2.10.0 – Asset Store & Claude Sound Studio](https://github.com/shadow-kernel/Vortex-Engine/milestone/4) | ✅ In-editor Store tab (Poly Haven, ambientCG, Kenney, Freesound, Sketchfab, Mixamo, …) ([[Asset-Store]]) + Claude Sound Studio ([[Sound-Studio]]) |
 | [v3.0.0 – Claude-Native Engine](https://github.com/shadow-kernel/Vortex-Engine/milestone/5) | In-editor MCP server + embedded Claude panel; Avalonia editor on Windows, CI test gate, signing, crash reports |
 | [v3.1.0 – Physics v2](https://github.com/shadow-kernel/Vortex-Engine/milestone/6) | Ragdolls ✅, constraints ✅, player on Jolt CharacterVirtual, Jolt in the Visual Studio build |
 | [v3.2.0 – AI & Navigation](https://github.com/shadow-kernel/Vortex-Engine/milestone/7) | Recast/Detour NavMesh, NavAgents, behavior trees, perception, Tactical Shooter combat bots |

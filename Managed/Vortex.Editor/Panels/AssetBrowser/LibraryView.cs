@@ -588,6 +588,12 @@ namespace VortexEditor.Panels.AssetBrowser
             if (sel.Any(x => x.Type == AssetType.Mesh || x.Type == AssetType.Prefab))
                 m.Items.Add(Mi("Add to Scene", () => _ = AddToProject(sel.Where(x => x.Type == AssetType.Mesh || x.Type == AssetType.Prefab).ToList(), null, true), "Cube", hasProject && ProjectData.Current?.ActiveScene != null));
             if (one && sel[0].Type == AssetType.Audio) m.Items.Add(Mi("Play", () => LibraryThumbs.Audition(sel[0]), "Play"));
+            if (one && !string.IsNullOrEmpty(sel[0].Recipe))
+            {
+                var rec = Editor.Core.Audio.SoundStudio.SoundRecipe.FromJson(sel[0].Recipe);
+                var parent = sel[0].Hash;
+                if (rec != null) m.Items.Add(Mi("Open in Sound Studio", () => VortexEditor.Shell.Audio.SoundStudioWindow.Open(rec, parent), "Sparkle"));
+            }
             m.Items.Add(new Separator());
             if (one)
             {
@@ -1027,6 +1033,18 @@ namespace VortexEditor.Panels.AssetBrowser
             {
                 _details.Children.Add(Label("License"));
                 _details.Children.Add(Value((e.License ?? "unknown") + (string.IsNullOrEmpty(e.Author) ? "" : " · " + e.Author) + (e.Redistributable ? "" : " · not redistributable")));
+            }
+
+            // a Sound Studio take: its recipe, read-only, and the way back into the studio (#83)
+            var recipe = Editor.Core.Audio.SoundStudio.SoundRecipe.FromJson(e.Recipe);
+            if (recipe != null)
+            {
+                _details.Children.Add(Label("Generated"));
+                _details.Children.Add(Value("“" + recipe.Prompt + "”"));
+                _details.Children.Add(new TextBlock { Text = Editor.Core.Audio.SoundStudio.SoundBackends.Get(recipe.Backend).Name + (recipe.DurationSeconds.HasValue ? " · " + recipe.DurationSeconds.Value.ToString("0.#") + " s" : " · auto length") + (recipe.Loop ? " · loop" : "") + (recipe.Designer != null ? " · designed by " + recipe.Designer : ""), Classes = { "small", "tertiary" }, TextWrapping = TextWrapping.Wrap });
+                var reopen = Ui.Button("Open in Sound Studio", () => VortexEditor.Shell.Audio.SoundStudioWindow.Open(recipe, e.Hash), "Load the recipe and generate a sibling (the original stays)");
+                reopen.HorizontalAlignment = HorizontalAlignment.Left;
+                _details.Children.Add(reopen);
             }
 
             // companions

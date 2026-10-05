@@ -96,6 +96,7 @@ namespace Editor.Core.Assets.Library
                     Directory.CreateDirectory(TempDir);
                     _db = SqliteDb.Open(CatalogPath);
                     _db.ExecScript(Schema);
+                    Migrate(_db);
                     LastError = null;
                     CleanTemp();
                     return true;
@@ -180,6 +181,24 @@ CREATE TABLE IF NOT EXISTS filters(
   created INTEGER NOT NULL);
 INSERT OR IGNORE INTO info(key, value) VALUES('schema', '1');
 ";
+
+        /// <summary>Schema upgrades of older catalogs (v1 → v2: the store key of an asset store download).</summary>
+        private static void Migrate(SqliteDb db)
+        {
+            var cols = db.Query("PRAGMA table_info(assets)", s => s.Text(1));
+            if (!cols.Contains("store_key"))
+            {
+                db.ExecScript("ALTER TABLE assets ADD COLUMN store_key TEXT;");
+                db.Execute("UPDATE info SET value = '2' WHERE key = 'schema'");
+            }
+            db.ExecScript("CREATE INDEX IF NOT EXISTS ix_assets_store_key ON assets(store_key);");
+            // v2 → v3: the generation recipe of a Sound Studio take (#83)
+            if (!cols.Contains("recipe"))
+            {
+                db.ExecScript("ALTER TABLE assets ADD COLUMN recipe TEXT;");
+                db.Execute("UPDATE info SET value = '3' WHERE key = 'schema'");
+            }
+        }
 
         private void CleanTemp()
         {
@@ -335,16 +354,16 @@ INSERT OR IGNORE INTO info(key, value) VALUES('schema', '1');
                             _db.Execute("UPDATE assets SET updated = ?2, " +
                                         "author = COALESCE(author, ?3), license = COALESCE(license, ?4), source_url = COALESCE(source_url, ?5), " +
                                         "duration = COALESCE(duration, ?6), channels = COALESCE(channels, ?7), sample_rate = COALESCE(sample_rate, ?8), " +
-                                        "width = COALESCE(width, ?9), height = COALESCE(height, ?10) WHERE id = ?1",
-                                        id, now, o.Author, o.License, o.SourceUrl, dur, ch, rate, w, h);
+                                        "width = COALESCE(width, ?9), height = COALESCE(height, ?10), store_key = COALESCE(store_key, ?11), recipe = COALESCE(recipe, ?12) WHERE id = ?1",
+                                        id, now, o.Author, o.License, o.SourceUrl, dur, ch, rate, w, h, o.StoreKey, o.Recipe);
                         }
                         else
                         {
                             _db.Execute("INSERT INTO assets(hash, name, file_name, type, added, updated, source_kind, source_name, source_url, author, license, " +
-                                        "redistributable, duration, channels, sample_rate, width, height, notes) " +
-                                        "VALUES(?1, ?2, ?3, ?4, ?5, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                                        "redistributable, duration, channels, sample_rate, width, height, notes, store_key, recipe) " +
+                                        "VALUES(?1, ?2, ?3, ?4, ?5, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
                                         main.Hash, name, fileName, (int)type, now, o.SourceKind ?? LibrarySource.Project, o.SourceName, o.SourceUrl,
-                                        o.Author, o.License, o.Redistributable, dur, ch, rate, w, h, o.Notes);
+                                        o.Author, o.License, o.Redistributable, dur, ch, rate, w, h, o.Notes, o.StoreKey, o.Recipe);
                             id = _db.LastInsertRowId;
                         }
                         foreach (var t in CleanTags(o.Tags)) _db.Execute("INSERT OR IGNORE INTO tags(asset_id, tag) VALUES(?1, ?2)", id, t);
@@ -402,7 +421,7 @@ INSERT OR IGNORE INTO info(key, value) VALUES('schema', '1');
         private const string EntryColumns =
             "a.id, a.hash, a.name, a.file_name, a.type, b.size, b.stored, a.added, a.updated, a.source_kind, a.source_name, a.source_url, " +
             "a.author, a.license, a.redistributable, a.duration, a.channels, a.sample_rate, a.width, a.height, a.notes, " +
-            "(SELECT group_concat(t.tag, char(31)) FROM tags t WHERE t.asset_id = a.id) ";
+            "(SELECT group_concat(t.tag, char(31)) FROM tags t WHERE t.asset_id = a.id), a.store_key, a.recipe ";
 
         private static LibraryEntry ReadEntry(SqliteStmt s)
         {
@@ -416,6 +435,8 @@ INSERT OR IGNORE INTO info(key, value) VALUES('schema', '1');
             };
             var tags = s.Text(21);
             if (!string.IsNullOrEmpty(tags)) e.Tags = tags.Split('\u001f').OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
+            e.StoreKey = s.Text(22);
+            e.Recipe = s.Text(23);
             return e;
         }
 
@@ -437,6 +458,28 @@ INSERT OR IGNORE INTO info(key, value) VALUES('schema', '1');
             if (!ContentHash.IsValid(hash)) return new List<LibraryEntry>();
             return Locked(db => db.Query("SELECT " + EntryColumns + "FROM assets a JOIN blobs b ON b.hash = a.hash WHERE a.hash = ?1 ORDER BY a.id", ReadEntry, hash),
                 new List<LibraryEntry>());
+        }
+
+        /// <summary>Entries downloaded from an asset store item ("provider:id:variant"), newest first.</summary>
+        public List<LibraryEntry> FindByStoreKey(string storeKey)
+        {
+            if (string.IsNullOrEmpty(storeKey)) return new List<LibraryEntry>();
+            return Locked(db => db.Query("SELECT " + EntryColumns + "FROM assets a JOIN blobs b ON b.hash = a.hash WHERE a.store_key = ?1 ORDER BY a.id DESC", ReadEntry, storeKey),
+                new List<LibraryEntry>());
+        }
+
+        /// <summary>"provider:id" of every store item of <paramref name="providerId"/> that is in the library.</summary>
+        public HashSet<string> StoreItemsInLibrary(string providerId)
+        {
+            var keys = Locked(db => db.Query("SELECT DISTINCT store_key FROM assets WHERE store_key LIKE ?1", s => s.Text(0), (providerId ?? "") + ":%"), new List<string>());
+            var set = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var k in keys)
+            {
+                if (k == null) continue;
+                int last = k.LastIndexOf(':');
+                set.Add(last > 0 ? k.Substring(0, last) : k);
+            }
+            return set;
         }
 
         /// <summary>Is this file's content already in the library? (hashes the file)</summary>

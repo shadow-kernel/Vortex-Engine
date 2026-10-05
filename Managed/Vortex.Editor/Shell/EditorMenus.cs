@@ -50,6 +50,7 @@ namespace VortexEditor.Shell
             new EditorEntry { Title = "History…", Gesture = "Cmd+Shift+H", Open = () => EditorWindows.History() },
             new EditorEntry { Title = "Source Control…", Open = () => EditorCommands.GitWindow() },
             new EditorEntry { Title = "Audio Mixer…", Open = () => EditorWindows.AudioMixer() },
+            new EditorEntry { Title = "Sound Studio…", Open = () => Audio.SoundStudioWindow.Open() },
             null,
             new EditorEntry { Title = "Material Editor…", AssetKind = "Material", Patterns = new[] { "*.vmat" }, OpenAsset = EditorWindows.MaterialEditor },
             new EditorEntry { Title = "Texture Editor…", AssetKind = "Texture", Patterns = Textures, OpenAsset = EditorWindows.TextureEditor },

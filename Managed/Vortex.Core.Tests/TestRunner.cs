@@ -72,7 +72,12 @@ namespace VortexTests
                 var t0 = sw.ElapsedMilliseconds;
                 try
                 {
-                    m.Invoke(null, new object[] { ctx });
+                    var ret = m.Invoke(null, new object[] { ctx });
+                    if (ret is System.Threading.Tasks.Task task)
+                    {
+                        try { task.GetAwaiter().GetResult(); }
+                        catch (Exception ex) { throw new TargetInvocationException(ex); }
+                    }
                     Console.WriteLine("  ok    " + name + "  (" + (sw.ElapsedMilliseconds - t0) + " ms)");
                 }
                 catch (TargetInvocationException ex)
