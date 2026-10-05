@@ -151,9 +151,12 @@ namespace Editor.Core.Assets
         /// <summary>
         /// Determines asset type from file extension.
         /// </summary>
-        private AssetType DetermineAssetType(string extension)
+        private AssetType DetermineAssetType(string extension) => TypeForExtension(extension);
+
+        /// <summary>The asset type a file extension (".png", with the dot) maps to.</summary>
+        public static AssetType TypeForExtension(string extension)
         {
-            return extension switch
+            return (extension ?? "").ToLowerInvariant() switch
             {
                 ".vscene" => AssetType.Scene,
                 ".vmesh" or ".fbx" or ".obj" or ".gltf" or ".glb" or ".dae" or ".blend" or ".3ds" => AssetType.Mesh,

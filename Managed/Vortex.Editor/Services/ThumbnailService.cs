@@ -71,6 +71,14 @@ namespace VortexEditor.Services
             Task.Run(() => LoadOrQueue(key, fullPath, size, kind));
         }
 
+        /// <summary>Put a thumbnail made elsewhere (the global asset library's cache) into the memory cache, so a file that
+        /// was just added from the library shows its preview without a second render.</summary>
+        public static void Seed(string fullPath, int size, Bitmap bmp)
+        {
+            if (string.IsNullOrEmpty(fullPath) || bmp == null) return;
+            lock (_memory) _memory[Key(fullPath, size)] = bmp;
+        }
+
         /// <summary>Forget a file's thumbnails (memory + disk), e.g. after its .vmat or model changed. Fires
         /// <see cref="Invalidated"/> so visible tiles can re-request.</summary>
         public static void Invalidate(string fullPath)

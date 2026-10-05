@@ -72,6 +72,48 @@ namespace Editor.Core.Assets
         [DataMember(Order = 9)]
         public List<string> Tags { get; set; }
 
+        /// <summary>
+        /// SHA-256 of the asset file's bytes (lowercase hex) — the asset's identity in the global asset library and the
+        /// join key to its catalog entry (#54). Null until the file has been hashed (on import, "Add to Project" or the
+        /// "Backfill Content Hashes" command); old .vmeta files without it still load.
+        /// </summary>
+        [DataMember(Order = 10, EmitDefaultValue = false)]
+        public string ContentHash { get; set; }
+
+        /// <summary>File size the <see cref="ContentHash"/> was computed from (a different size = stale hash).</summary>
+        [DataMember(Order = 11, EmitDefaultValue = false)]
+        public long ContentHashFileSize { get; set; }
+
+        /// <summary>Last write time (UTC ticks) the <see cref="ContentHash"/> was computed from. A rename or move keeps it,
+        /// so moving an asset never invalidates its hash; editing the file does.</summary>
+        [DataMember(Order = 12, EmitDefaultValue = false)]
+        public long ContentHashFileTime { get; set; }
+
+        /// <summary>True when <see cref="ContentHash"/> was computed from the file as it is now.</summary>
+        public bool HasFreshContentHash(string fullPath)
+        {
+            if (string.IsNullOrEmpty(ContentHash)) return false;
+            return Library.ContentHash.TryStamp(fullPath, out long size, out long ticks) && size == ContentHashFileSize && ticks == ContentHashFileTime;
+        }
+
+        /// <summary>Hash the file now (unless the stored hash is still fresh). Returns true when the metadata changed.</summary>
+        public bool UpdateContentHash(string fullPath)
+        {
+            if (HasFreshContentHash(fullPath)) return false;
+            if (!Library.ContentHash.TryStamp(fullPath, out long size, out long ticks)) return false;
+            string hash = Library.ContentHash.OfFile(fullPath);
+            if (hash == null) return false;
+            ContentHash = hash; ContentHashFileSize = size; ContentHashFileTime = ticks;
+            return true;
+        }
+
+        /// <summary>Record a hash computed elsewhere (e.g. while copying the file) for the file as it is now.</summary>
+        public void SetContentHash(string hash, string fullPath)
+        {
+            ContentHash = hash;
+            if (Library.ContentHash.TryStamp(fullPath, out long size, out long ticks)) { ContentHashFileSize = size; ContentHashFileTime = ticks; }
+        }
+
         public AssetMetadata()
         {
             Guid = Guid.NewGuid();

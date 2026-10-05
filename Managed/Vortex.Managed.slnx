@@ -4,4 +4,5 @@
   <Project Path="Vortex.Core/Vortex.Core.csproj" />
   <Project Path="Vortex.Player/Vortex.Player.csproj" />
   <Project Path="Vortex.Editor/Vortex.Editor.csproj" />
+  <Project Path="Vortex.Core.Tests/Vortex.Core.Tests.csproj" />
 </Solution>
