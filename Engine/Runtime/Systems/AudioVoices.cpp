@@ -252,7 +252,19 @@ namespace vortex::runtime::audio {
 			// effective gain becomes (1-b) + b*attenuation instead of attenuation.
 			f32 correction = 1.0f;
 			const f32 blend = slot.spatial.spatial_blend;
-			if (blend > 0.0f && blend < 1.0f)
+			if (slot.steam_src && blend > 0.0f)
+			{
+				// Steam Audio voices bypass miniaudio's spatializer (the HRTF gives the direction), so miniaudio
+				// applies no distance falloff at all — and the 2D/3D compensation below, which divides by that
+				// falloff, made a partly-blended HRTF source LOUDER with distance. Apply the source's own curve
+				// here instead: (1-b) + b*attenuation, what the built-in spatializer gives every other voice.
+				const f32 dx = slot.position[0] - listener[0];
+				const f32 dy = slot.position[1] - listener[1];
+				const f32 dz = slot.position[2] - listener[2];
+				const f32 b = blend > 1.0f ? 1.0f : blend;
+				correction = (1.0f - b) + b * model_attenuation(slot.spatial, sqrtf(dx * dx + dy * dy + dz * dz));
+			}
+			else if (blend > 0.0f && blend < 1.0f)
 			{
 				const f32 dx = slot.position[0] - listener[0];
 				const f32 dy = slot.position[1] - listener[1];

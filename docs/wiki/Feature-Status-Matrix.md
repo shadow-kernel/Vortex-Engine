@@ -113,7 +113,7 @@ The miniaudio engine from v2.6.0 runs the same way in both editors and the playe
 | Fades | ✅ | FadeIn / FadeOut / FadeTo / crossfade as per-sample ramps |
 | 3D audio gizmos + edit-mode audition | ✅ | Speaker/listener icons, range spheres, zone bounds; inspector Preview, browser click-to-play, container Roll |
 | Player audio settings | ✅ | Shipped games persist bus volumes (`GameAudioSettings`); `Settings.SetMasterVolume` drives the Master bus |
-| Steam Audio (HRTF + occlusion) | 🟡 | Optional: the phonon runtime is loaded if present, but no build ships it (fetch script is Windows-only); opt-in per project + source; HRTF voices skip distance attenuation and doppler |
+| Steam Audio (HRTF + occlusion) | 🟡 | Optional: the phonon runtime is loaded if present, but no build ships it (fetch script is Windows-only); opt-in per project + source; HRTF voices get the engine's distance falloff but no doppler or spread |
 | DSP effects, mixer snapshots, custom buses, device choice | ❌ | No filters/EQ/compressor, fixed bus list, default output device only |
 | Audio tests | ✅ | `EngineTest/TestAudio.h` (ctest `AudioSmokeTest`) on macOS CI; not run on Windows or Linux |
 

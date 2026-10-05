@@ -499,7 +499,7 @@ Without the library, or with the project switch off, every source quietly uses t
 
 ### Limits today
 
-- An HRTF source gets its direction and occlusion from Steam Audio but **no distance falloff**: Min and Max Distance, Rolloff, Doppler and Spread do not apply to it, so it is as loud far away as close by. Keep **Spatial Blend at 1** on HRTF sources — at values between 0 and 1 the engine's 2D/3D blend correction makes the source louder with distance.
+- An HRTF source gets its direction and occlusion from Steam Audio and its distance falloff (Min and Max Distance, Rolloff, Spatial Blend) from the engine, as other 3D sources do. Doppler and Spread do not apply to it.
 - The occlusion geometry is the scene's static collision, taken on the first frame of play and after every scene change.
 - Colliders that move or appear during play (doors, spawned props) do not change the occlusion.
 - All surfaces share one acoustic material. There is no transmission through materials and no Steam Audio reflection or reverb — reverb comes from [reverb zones](#reverb-zones).
