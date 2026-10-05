@@ -23,6 +23,8 @@ namespace VortexEditor.Shell
     /// captured separately and composited offline). Quits the editor when done.
     /// Re-takes: <c>VORTEX_SHOWCASE_ONLY=05,06</c> records just those shots; <c>VORTEX_SHOWCASE_MATERIAL</c> picks the
     /// material (file pattern); <c>VORTEX_SHOWCASE_DEBUG=1</c> writes the preview framing of each window to debug.txt.
+    /// <c>VORTEX_SHOWCASE_SESSION=&lt;seconds&gt;</c> records the main window at 1.5 fps instead of the tour, while Claude Code
+    /// (or anything else) drives the editor from outside.
     /// </summary>
     internal static class ShowcaseRecorder
     {
@@ -49,6 +51,15 @@ namespace VortexEditor.Shell
                 Directory.CreateDirectory(Dir);
                 main.Width = 1600; main.Height = 900;
                 await Task.Delay(2500);
+                // VORTEX_SHOWCASE_SESSION=<seconds>: no scripted tour — record the main window while something outside drives
+                // the editor (Claude Code through the MCP server: the v3.0 trailer)
+                if (double.TryParse(Environment.GetEnvironmentVariable("VORTEX_SHOWCASE_SESSION"), System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out double session) && session > 0)
+                {
+                    await Shot("session", "Claude builds with you", "Claude Code drives the editor through its MCP server", MainShot, session, 1.5, null, viewport: true);
+                    log.Log("showcase: recorded to " + Dir);
+                    return;
+                }
                 string root = ProjectData.Current?.Path ?? "";
                 var scene = ProjectData.Current?.ActiveScene;
 

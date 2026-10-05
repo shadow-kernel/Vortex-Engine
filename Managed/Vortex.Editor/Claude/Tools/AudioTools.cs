@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using Editor.Core.Assets;
 using Editor.Core.Assets.Library;
 using Editor.Core.Assets.Store;
+using Editor.Core.Audio;
 using Editor.Core.Services;
 using Editor.Core.Audio.SoundStudio;
 using Editor.Core.UndoRedo;
@@ -24,6 +25,7 @@ namespace VortexEditor.Claude.Tools
     public static class AudioTools
     {
         private static readonly string[] AudioExt = { ".wav", ".mp3", ".ogg", ".flac", ".vsndc" };
+        private static readonly string[] ClipExt = { ".wav", ".mp3", ".ogg", ".flac" };
 
         [McpServerTool(Name = "search_audio", ReadOnly = true, Idempotent = true)]
         [Description("Finds sounds by name/tag text: the project's audio files and the user's asset library (library entries can be brought " +
@@ -144,6 +146,54 @@ namespace VortexEditor.Claude.Tools
             }
             ToolContext.UndoLabel = (added ? "add audio to " : "configure audio of ") + e.Name;
             return new { entity = SceneModel.ShortId(e), added, set = done, properties = ComponentProps.Values(src) };
+        }
+
+        [McpServerTool(Name = "create_sound_container", Destructive = false)]
+        [Description("Creates a random sound container (.vsndc) from clips — footstep, impact or creak variations — by default in " +
+                     "Assets/Audio. Each play picks one clip (every clip once before any repeats, never the same twice in a row) and rolls " +
+                     "pitch and volume within the ranges. It goes wherever a clip goes: configure_audio_source clip, Audio.PlayOneShot in " +
+                     "scripts. One undo step (Undo deletes the file).")]
+        public static object CreateSoundContainer(
+            [Description("Container name (also the file name), e.g. footsteps_concrete")] string name,
+            [Description("Project paths of the clips, e.g. [\"Assets/Audio/step_01.wav\", \"Assets/Audio/step_02.wav\"]")] string[] clips,
+            [Description("Relative pick weights, one per clip (1 = normal)")] float[] weights = null,
+            [Description("Pitch range [min, max] as multipliers, default [0.95, 1.05]")] float[] pitch = null,
+            [Description("Volume range [min, max] as multipliers, default [0.9, 1]")] float[] volume = null,
+            [Description("Folder relative to the project")] string folder = "Assets/Audio")
+        {
+            if (string.IsNullOrWhiteSpace(name)) throw new ToolError("A container name is required.");
+            if (clips == null || clips.Length == 0) throw new ToolError("clips needs at least one audio file (.wav, .mp3, .ogg, .flac).");
+            if (weights != null && weights.Length != clips.Length) throw new ToolError("weights needs one value per clip (" + clips.Length + ").");
+            var c = new SoundContainer();
+            for (int i = 0; i < clips.Length; i++)
+            {
+                string rel = ProjectFiles.Rel(ProjectFiles.Resolve(clips[i], ClipExt, mustExist: true));
+                float w = weights != null ? weights[i] : 1f;
+                if (!(w > 0)) throw new ToolError("Every weight must be greater than 0.");
+                // the GUID keeps the entry working when the clip is renamed or moved; the path is the fallback
+                var meta = AssetDatabase.Instance.GetAssetByPath(rel);
+                c.Entries.Add(new SoundContainer.Entry { Guid = meta != null ? meta.Guid.ToString() : "", ClipPath = rel, Weight = w });
+            }
+            if (pitch != null) { var r = Range(pitch, "pitch", 0.1f, 4f); c.PitchMin = r.min; c.PitchMax = r.max; }
+            if (volume != null) { var r = Range(volume, "volume", 0f, 2f); c.VolumeMin = r.min; c.VolumeMax = r.max; }
+            string dir = Path.GetDirectoryName(ProjectFiles.Resolve(Path.Combine(folder ?? "Assets/Audio", "x" + SoundContainer.FileExtension).Replace('\\', '/')));
+            string target = ProjectFiles.Unique(dir, name.Trim(), SoundContainer.FileExtension);
+            ProjectFiles.Write(target, Editor.Core.Serialization.DataSerializer.ToJson(c));
+            ToolContext.UndoLabel = "create sound container " + Path.GetFileNameWithoutExtension(target);
+            return new
+            {
+                path = ProjectFiles.Rel(target),
+                clips = c.Entries.Select(x => x.ClipPath).ToArray(),
+                pitch = new[] { c.PitchMin, c.PitchMax },
+                volume = new[] { c.VolumeMin, c.VolumeMax },
+            };
+        }
+
+        private static (float min, float max) Range(float[] r, string what, float lo, float hi)
+        {
+            if (r.Length != 2 || r[0] > r[1] || r[0] < lo || r[1] > hi)
+                throw new ToolError(what + " must be [min, max] with " + lo + " <= min <= max <= " + hi + ".");
+            return (r[0], r[1]);
         }
 
         // ================================================================== mixer

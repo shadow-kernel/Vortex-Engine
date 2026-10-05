@@ -184,7 +184,7 @@ All of it lives in the Avalonia editor (`Managed/Vortex.Editor/Claude/`) on ever
 | Feature | Status | Notes |
 |---|---|---|
 | MCP server | ✅ | `McpHost.cs`: Kestrel, Streamable HTTP (stateless) on `http://127.0.0.1:7420/mcp`, loopback + Host/Origin guard; off until enabled, port per user |
-| Tool sets | ✅ | 67 tools in 8 sets: Assets 8, Audio 7, Editor 4, Materials 8 (incl. shaders), Scenes 19, Scripts 7, Viewport 7, World 7; reference: [[Claude-Tools]] (generated from the code) |
+| Tool sets | ✅ | 68 tools in 8 sets: Assets 8, Audio 8, Editor 4, Materials 8 (incl. shaders), Scenes 19, Scripts 7, Viewport 7, World 7; reference: [[Claude-Tools]] (generated from the code) |
 | Undo model + safety | ✅ | `ToolHost.cs`: one call at a time on the UI thread, one undo step "Claude: …" per call, failed calls roll back; file writes stay in `Assets/` |
 | Dry runs | ✅ | Changing tools take `dry_run` (run, report, roll back); undo/redo, internet tools and non-undoable writers excluded |
 | Operations log + revert | ✅ | *Tools ▸ Claude ▸ Operations…*: every call with client, input, result and file diffs; Revert per operation |

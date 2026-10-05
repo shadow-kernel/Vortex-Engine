@@ -273,15 +273,27 @@ namespace VortexEditor.Claude.Tools
             {
                 string type = item.ValueKind == JsonValueKind.String ? item.GetString()
                     : item.ValueKind == JsonValueKind.Object && item.TryGetProperty("type", out var t) ? t.GetString() : null;
-                var c = AddComponentTo(e, type);
+                // a point_light already has its Light: the properties go to that one instead of a second Light
+                var c = OnePerEntityOn(e, ComponentProps.FindType(type)) ?? AddComponentTo(e, type);
                 if (item.ValueKind == JsonValueKind.Object && item.TryGetProperty("properties", out var props)) SetProps(c, props);
             }
         }
+
+        /// <summary>Components an entity has at most one of: a second Light, Camera, Rigidbody, MeshRenderer or AudioListener
+        /// only confuses the engine (the first one wins).</summary>
+        private static readonly HashSet<Type> OnePerEntity = new HashSet<Type>
+        {
+            typeof(Editor.ECS.Components.Lighting.Light), typeof(Editor.ECS.Components.Rendering.Camera), typeof(Editor.ECS.Components.Physics.Rigidbody),
+            typeof(Editor.ECS.Components.Rendering.MeshRenderer), typeof(Editor.ECS.Components.Audio.AudioListener),
+        };
+
+        private static Component OnePerEntityOn(GameEntity e, Type t) => OnePerEntity.Contains(t) ? e.Components.FirstOrDefault(x => x.GetType() == t) : null;
 
         internal static Component AddComponentTo(GameEntity e, string type)
         {
             var t = ComponentProps.FindType(type);
             if (t == typeof(Transform)) throw new ToolError("Every entity already has a Transform; use set_transform.");
+            if (OnePerEntityOn(e, t) != null) throw new ToolError(e.Name + " already has a " + t.Name + " (one per entity); change it with set_component_properties.");
             var c = ComponentProps.Create(t, e);
             e.AddComponent(c);
             return c;

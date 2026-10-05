@@ -156,6 +156,18 @@ namespace VortexEditor.Claude
                 var cfg = await C("configure_audio_source", new JsonObject { ["entity"] = cubeId, ["properties"] = new JsonObject { ["clip"] = step, ["loop"] = true, ["spatial"] = true, ["max_distance"] = 12, ["bus"] = "Ambience" } });
                 var src = cubeEntity.GetComponent<AudioSource>();
                 if (src == null || src.AudioClipPath != step || !src.Loop || src.SpatialBlend != 1f || src.MaxDistance != 12f || src.OutputBus != 3) return Fail("configure_audio_source: " + cfg.ToJsonString());
+                var sct = await C("create_sound_container", new JsonObject { ["name"] = "Mcp Clanks", ["clips"] = new JsonArray(genPath, step), ["pitch"] = new JsonArray(0.9, 1.1) });
+                string scPath = (string)sct["path"];
+                if (scPath != null) cleanup.Add(Path.Combine(project.Path, scPath));
+                var scFile = scPath != null ? Editor.Core.Audio.SoundContainer.Load(Path.Combine(project.Path, scPath)) : null;
+                if (scFile == null || scFile.Entries.Count != 2 || scFile.Entries[0].ClipPath != genPath || Math.Abs(scFile.PitchMin - 0.9f) > 0.001f || Math.Abs(scFile.PitchMax - 1.1f) > 0.001f)
+                    return Fail("create_sound_container: " + sct.ToJsonString());
+                await C("configure_audio_source", new JsonObject { ["entity"] = cubeId, ["properties"] = new JsonObject { ["clip"] = scPath } });
+                if (src.AudioClipPath != scPath) return Fail("configure_audio_source does not take the sound container " + scPath);
+                var twice = await Raw("add_component", new JsonObject { ["entity"] = cubeId, ["type"] = "AudioListener" });
+                var third = await Raw("add_component", new JsonObject { ["entity"] = cubeId, ["type"] = "AudioListener" });
+                if ((bool?)twice["isError"] == true || (bool?)third["isError"] != true) return Fail("add_component must refuse a second AudioListener: " + third.ToJsonString());
+                await C("remove_component", new JsonObject { ["entity"] = cubeId, ["type"] = "AudioListener" });
                 var mix = await C("get_mixer_state", new JsonObject());
                 if ((mix as JsonArray)?.Count != 5) return Fail("get_mixer_state: " + mix.ToJsonString());
                 float sfxBefore = AudioMixerConfig.Load(project.Path).BusVolumes[2];
@@ -166,7 +178,18 @@ namespace VortexEditor.Claude
                 var aud = await C("audition_clip", new JsonObject { ["path"] = genPath, ["volume"] = 0 });
                 await C("stop_audition", new JsonObject());
 
-                log.Log("mcp tools: OK — " + ToolCatalog.All.Count + " tools; material, grid (12), scatter (8, resting on the tiles), scripts with line-accurate errors, " + Path.GetFileName(crate) + " + prefab, audio + mixer + generated " + Path.GetFileName(genPath));
+                // ================= play mode (#90): enter, the game camera's image, stats, exit
+                var play = await C("enter_play_mode", new JsonObject { ["run_seconds"] = 1 });
+                if ((string)play["state"] != "Playing") return Fail("enter_play_mode: " + play.ToJsonString());
+                var pshot = await Raw("capture_viewport", new JsonObject { ["max_size"] = 512 });
+                bool playImage = (pshot["content"] as JsonArray)?.Any(c => (string)c["type"] == "image") == true;
+                if (!playImage || McpTestClient.Text(pshot).IndexOf("play mode", StringComparison.OrdinalIgnoreCase) < 0) return Fail("capture_viewport in play mode: " + McpTestClient.Text(pshot));
+                var stats = await C("engine_stats", new JsonObject());
+                if ((string)stats["play_state"] != "Playing" || stats["draw_calls"] == null) return Fail("engine_stats: " + stats.ToJsonString());
+                var stop = await C("exit_play_mode", new JsonObject());
+                if ((string)stop["state"] != "Editing") return Fail("exit_play_mode: " + stop.ToJsonString());
+
+                log.Log("mcp tools: OK — " + ToolCatalog.All.Count + " tools; material, grid (12), scatter (8, resting on the tiles), scripts with line-accurate errors, " + Path.GetFileName(crate) + " + prefab, audio + mixer + generated " + Path.GetFileName(genPath) + " + container " + Path.GetFileName(scPath) + ", play mode (capture, stats, exit)");
                 return true;
             }
             catch (Exception ex) { return Fail(ex.GetType().Name + ": " + ex.Message); }
