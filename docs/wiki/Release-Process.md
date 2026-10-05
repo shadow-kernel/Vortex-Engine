@@ -35,6 +35,7 @@ gets in the way. Written for maintainers and contributors; players of the engine
    - **Template packs.** Every release needs them, patches too: an installed editor downloads `Template-<Id>.zip` from the release of *its own* version. Build them with `tools/make-template-packs.sh <version>`; a patch with unchanged templates can reuse the last ones. Then run `gh release upload v<version> dist/template-packs/Template-*.zip`.
    - **Notes and Latest.** Replace the workflow's generic body with the release notes and mark the release Latest: `gh release edit v<version> --title "…" --notes-file notes.md --latest`.
    - **Check** that the DMG arrived and that `gh api repos/shadow-kernel/Vortex-Engine/releases/latest` names the new tag.
+   - **Wiki.** `docs/wiki` is the source of the [GitHub wiki](https://github.com/shadow-kernel/Vortex-Engine/wiki). Publish it with `tools/publish-wiki.sh` (macOS / Linux) or `Scripts/publish-wiki.ps1` (Windows). The script replaces the wiki's pages and turns links into the repository into GitHub links.
 
 ## How users get it
 
