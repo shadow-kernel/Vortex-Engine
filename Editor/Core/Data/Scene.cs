@@ -72,6 +72,27 @@ namespace Editor.Core.Data
         }
 
         /// <summary>
+        /// 1 = the entities' active flags in this file are authored ("Toggle Active") and are honoured when the scene
+        /// becomes active. 0 (missing) in scenes saved before v3.0: deactivating a scene used to clear every entity's
+        /// flag, so such a file can call everything inactive — it is switched on once when first activated, as before,
+        /// and carries the marker from its next save.
+        /// </summary>
+        [DataMember(Name = "activeFlags", Order = 4, IsRequired = false, EmitDefaultValue = false)]
+        public int ActiveFlagsVersion { get; set; }
+
+        /// <summary>A scene saved before v3.0 gets every entity switched on (see <see cref="ActiveFlagsVersion"/>);
+        /// from then on the flags are authored. Returns true when it switched the flags.</summary>
+        public bool EnsureAuthoredActiveFlags()
+        {
+            if (ActiveFlagsVersion >= 1) return false;
+            ActiveFlagsVersion = 1;
+            void On(GameEntity e) { e.SetActiveFlagOnly(true); if (e.Children != null) foreach (var c in e.Children) On(c); }
+            if (_entities != null)
+                foreach (var entity in _entities) On(entity);   // the caller syncs the engine right after
+            return true;
+        }
+
+        /// <summary>
         /// Referenz zum �bergeordneten Projekt (nicht serialisiert)
         /// </summary>
         [IgnoreDataMember]
@@ -149,6 +170,7 @@ namespace Editor.Core.Data
             _entities = new ObservableCollection<GameEntity>();
             _engineHandle = SceneHandle.Invalid;
 			_isActive = false;
+            ActiveFlagsVersion = 1;   // a new scene's flags are authored (deserialization skips constructors)
         }
 
         public Scene(ProjectData project, string name) : this()
@@ -291,6 +313,7 @@ namespace Editor.Core.Data
                 return;
 
             IsActive = true;
+            EnsureAuthoredActiveFlags();
 
             // Authored environment (fog + post-FX) follows the live scene — editor open, editor play
             // AND the shipped game all funnel through Activate(). Scripts may override afterwards.
@@ -433,13 +456,14 @@ namespace Editor.Core.Data
 
 			VortexAPI.ActivateEngineScene(_engineHandle);
 
+			// Each entity keeps its authored active flag ("Toggle Active"): one saved inactive — a monster a trigger
+			// enables later — stays inactive in the shipped game and after a scene switch, as in editor play. Scenes
+			// saved before v3.0 are switched on once (their flags were not authored, see ActiveFlagsVersion).
+			EnsureAuthoredActiveFlags();
 			if (_entities != null)
 			{
 				foreach (var entity in _entities)
-				{
-					SetEntityActiveRecursive(entity, true);
 					entity.SyncEngineStateRecursive();
-				}
 			}
         }
 
@@ -456,27 +480,14 @@ namespace Editor.Core.Data
 				VortexAPI.DeactivateEngineScene(_engineHandle);
 			}
 
+			// Out of the engine — the entities keep their own active flags (clearing them here lost every
+			// "Toggle Active" on a scene switch and saved inactive scenes as all-inactive).
 			if (_entities != null)
 			{
 				foreach (var entity in _entities)
-				{
-					SetEntityActiveRecursive(entity, false);
 					entity.SyncEngineStateRecursive(false);
-				}
 			}
         }
-
-		private void SetEntityActiveRecursive(GameEntity entity, bool active)
-		{
-			entity.IsActive = active;
-			if (entity.Children != null)
-			{
-				foreach (var child in entity.Children)
-				{
-					SetEntityActiveRecursive(child, active);
-				}
-			}
-		}
 
 		internal void ReleaseEngineScene()
 		{

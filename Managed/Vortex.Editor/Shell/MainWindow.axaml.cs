@@ -361,7 +361,21 @@ namespace VortexEditor.Shell
                     if (System.Environment.GetEnvironmentVariable("VORTEX_SMOKE_KEEP_EXPORT") != "1") { try { Directory.Delete(outDir, true); } catch { } }
                     return ok;
                 });
-            Check("scene switch", () => { var other = Session.Project.Scenes.FirstOrDefault(sc => !ReferenceEquals(sc, scene)); if (other == null) return true; Session.ActivateScene(other); Session.ActivateScene(scene); return ReferenceEquals(Session.Project.ActiveScene, scene); });
+            Check("scene switch", () =>
+            {
+                var other = Session.Project.Scenes.FirstOrDefault(sc => !ReferenceEquals(sc, scene));
+                if (other == null) return true;
+                // "Toggle Active" must survive the round trip (switching scenes used to switch every entity on)
+                var hidden = scene.Entities.FirstOrDefault(e => e.IsActive && e.GetComponent<Editor.ECS.Components.Rendering.MeshRenderer>() != null);
+                if (hidden != null) hidden.IsActive = false;
+                int activeBefore = scene.Entities.Count(e => e.IsActive);
+                Session.ActivateScene(other);
+                Session.ActivateScene(scene);
+                bool kept = hidden == null || (!hidden.IsActive && scene.Entities.Count(e => e.IsActive) == activeBefore);
+                if (!kept) log.LogError("scene switch: " + hidden.Name + " active=" + hidden.IsActive + ", active entities " + scene.Entities.Count(e => e.IsActive) + " (were " + activeBefore + ")");
+                if (hidden != null) hidden.IsActive = true;
+                return kept && ReferenceEquals(Session.Project.ActiveScene, scene);
+            });
             // self-registered checks of every editor window / panel (SmokeRegistry)
             _ = SmokeRegistry.RunAll();
         }

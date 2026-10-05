@@ -28,6 +28,38 @@ namespace VortexTests
     public static class EngineCoreTests
     {
         [Test]
+        public static void SceneActiveFlagsAreAuthoredFromV3(TestContext t)
+        {
+            // a new scene: flags are authored — an inactive entity stays inactive, also through a save
+            var scene = new Scene { Name = "Cellar" };
+            var monster = new GameEntity(scene, "Monster") { IsActive = false };
+            var lamp = new GameEntity(scene, "Lamp");
+            scene.Entities.Add(monster);
+            scene.Entities.Add(lamp);
+            t.Equal(1, scene.ActiveFlagsVersion, "new scenes are authored");
+            t.False(scene.EnsureAuthoredActiveFlags(), "nothing to switch on");
+            t.False(monster.IsActive, "the hidden monster stays hidden");
+            var back = DataSerializer.FromBinary<Scene>(DataSerializer.ToBinary(scene));
+            t.Equal(1, back.ActiveFlagsVersion, "marker saved");
+            t.False(back.Entities.First(e => e.Name == "Monster").IsActive, "the flag survives a save");
+            t.True(back.Entities.First(e => e.Name == "Lamp").IsActive, "active stays active");
+
+            // a scene saved before v3.0 (no marker): its flags may all be "inactive" — switched on once, as before
+            var legacy = new Scene { Name = "Demo", ActiveFlagsVersion = 0 };
+            var a = new GameEntity(legacy, "FloorSlab") { IsActive = false };
+            var b = new GameEntity(legacy, "Door") { IsActive = false };
+            b.Children.Add(new GameEntity(legacy, "Handle") { IsActive = false, Parent = b });
+            legacy.Entities.Add(a);
+            legacy.Entities.Add(b);
+            var old = DataSerializer.FromBinary<Scene>(DataSerializer.ToBinary(legacy));
+            t.Equal(0, old.ActiveFlagsVersion, "no marker in an old file");
+            t.True(old.EnsureAuthoredActiveFlags(), "an old scene is switched on");
+            t.True(old.Entities.All(e => e.IsActive) && old.Entities[1].Children.All(c => c.IsActive), "every entity on, children too");
+            t.Equal(1, old.ActiveFlagsVersion, "authored from now on");
+            t.False(old.EnsureAuthoredActiveFlags(), "only once");
+        }
+
+        [Test]
         public static void SceneRoundTripKeepsHierarchyAndComponents(TestContext t)
         {
             var scene = new Scene { Name = "Corridor" };
