@@ -292,6 +292,7 @@ namespace VortexEditor.Shell
                     Item("Sphere Collider", null, () => EditorCommands.AddComponentToSelection(e => new SphereCollider(e), "Sphere Collider")),
                     Item("Capsule Collider", null, () => EditorCommands.AddComponentToSelection(e => new CapsuleCollider(e), "Capsule Collider")),
                     Item("Mesh Collider", null, () => EditorCommands.AddComponentToSelection(e => new MeshCollider(e), "Mesh Collider")),
+                    Item("Ragdoll", null, () => EditorCommands.AddComponentToSelection(e => new Ragdoll(e), "Ragdoll")),
                     Sep(),
                     Item("Hinge Joint", null, () => EditorCommands.AddComponentToSelection(e => new HingeJoint(e), "Hinge Joint")),
                     Item("Ball Joint", null, () => EditorCommands.AddComponentToSelection(e => new BallJoint(e), "Ball Joint")),

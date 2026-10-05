@@ -432,7 +432,8 @@ namespace Editor.Core.Animation
                                 || (state.BoneScale != null && state.BoneScale.Count > 0)
                                 || (state.IkChains != null && state.IkChains.Count > 0)
                                 || (state.LookCfg != null && state.LookRig != null)
-                                || (state.FootCfg != null && state.FootRig != null);
+                                || (state.FootCfg != null && state.FootRig != null)
+                                || Services.Physics.RagdollService.NeedsPose(entity);   // #104: a ragdoll poses every frame
             if (!baseActive && !layersActive && !overridesActive) return;
             state.SmoothDt = dt;
             try { state.Palette = EvaluateStatePalette(state); }
@@ -1819,6 +1820,11 @@ namespace Editor.Core.Animation
         }
 
         /// <summary>The skeleton an Animator owner animates (its own model or the first skinned descendant).</summary>
+        /// <summary>The model-space node worlds of the entity's last evaluated pose (null before its Animator first
+        /// evaluated). Same space as the skinning palette: multiply by the skinned mesh entity's world matrix.</summary>
+        public Matrix4x4[] CurrentNodeWorlds(ECS.GameEntity entity)
+            => entity != null && _states.TryGetValue(entity.Id, out var st) ? st.NodeWorlds : null;
+
         public SkeletonDef SkeletonOf(ECS.GameEntity entity)
         {
             if (entity == null) return null;
@@ -2226,6 +2232,10 @@ namespace Editor.Core.Animation
                     }
                 }
             }
+
+            // Ragdoll (#104): an active ragdoll replaces the pose with the simulated one (sockets and skinning both read
+            // it); a character that can ragdoll records its pose here so an activation inherits its motion.
+            worlds = Services.Physics.RagdollService.ProcessPose(state.Entity, skel, worlds);
 
             state.NodeWorlds = worlds;
             float[] pal = skel.FlattenPalette(worlds);

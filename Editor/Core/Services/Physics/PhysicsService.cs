@@ -69,12 +69,16 @@ namespace Editor.Core.Services.Physics
         /// last step: with a 120 Hz display and 60 Hz physics they otherwise move in visible 60 Hz jumps.</summary>
         public static bool Interpolate = true;
 
+        /// <summary>Where the rendered frame sits between the last two physics steps (0 = the step before last,
+        /// 1 = the last step) — what <see cref="Interpolate"/> blends with. 1 when interpolation is off.</summary>
+        public static float InterpolationAlpha => Interpolate ? Math.Max(0f, Math.Min(1f, _accumulator / FixedStep)) : 1f;
+
         // Object layers (native contract).
         public const int LayerStatic = 0, LayerDynamic = 1, LayerCharacter = 2, LayerTrigger = 3, LayerDebris = 4;
         // Motion types (native contract).
         public const int MotionStatic = 0, MotionKinematic = 1, MotionDynamic = 2;
         // Shape types (native contract).
-        private const int ShapeBox = 0, ShapeSphere = 1, ShapeCapsule = 2, ShapeCylinder = 3;
+        internal const int ShapeBox = 0, ShapeSphere = 1, ShapeCapsule = 2, ShapeCylinder = 3;
 
         /// <summary>Entities with this tag simulate on the DEBRIS layer (shell casings, small props): they collide
         /// with the world and other props but never block or push the player.</summary>
@@ -220,6 +224,7 @@ namespace Editor.Core.Services.Physics
         public static void Clear()
         {
             if (IsBuilt) { try { VortexAPI.PhysicsClear(); } catch { } }
+            RagdollService.OnWorldCleared();   // the native clear destroyed the ragdoll bodies too
             foreach (var j in _jointComponents) j.PropertyChanged -= OnJointComponentChanged;
             _jointComponents.Clear(); _jointComponentSet.Clear(); _joints.Clear(); _jointById.Clear(); _jointByComponent.Clear(); _jointWarned.Clear();
             _jointsDirty = false;
@@ -305,7 +310,7 @@ namespace Editor.Core.Services.Physics
                 {
                     // Several steps this frame: interpolate from the pose after the second-to-last one.
                     bool lastStep = _accumulator - FixedStep < FixedStep || steps + 1 >= MaxSubsteps;
-                    if (lastStep && steps > 0 && Interpolate) { SnapshotPreviousPoses(); snapshotted = true; }
+                    if (lastStep && steps > 0 && Interpolate) { SnapshotPreviousPoses(); RagdollService.SnapshotPrevious(); snapshotted = true; }
                     PushKinematics();
                     VortexAPI.PhysicsStep(FixedStep, 1);
                     _accumulator -= FixedStep;
@@ -315,6 +320,7 @@ namespace Editor.Core.Services.Physics
                 LastStepCount = steps;
 
                 ReadbackDynamics(snapshotted);
+                RagdollService.Readback(snapshotted);
                 if (Interpolate) WriteInterpolatedPoses();
                 PublishDynamicShapes();
                 DispatchContacts();
@@ -361,7 +367,7 @@ namespace Editor.Core.Services.Physics
 
         /// <summary>True when the entity is simulated as a dynamic or kinematic body (a Rigidbody in play).</summary>
         public static bool HasRigidbody(GameEntity e)
-            => e != null && _byEntity.TryGetValue(e, out var b) && (b.Motion == MotionDynamic || b.Motion == MotionKinematic);
+            => e != null && ((_byEntity.TryGetValue(e, out var b) && (b.Motion == MotionDynamic || b.Motion == MotionKinematic)) || RagdollService.IsActive(e));
 
         /// <summary>Native body handle of an entity's primary body (0 = none).</summary>
         public static uint GetBodyId(GameEntity e) => e != null && _byEntity.TryGetValue(e, out var b) ? b.Id : 0u;
@@ -372,6 +378,7 @@ namespace Editor.Core.Services.Physics
         /// <summary>Continuous force in N at the centre of mass (accumulated until the next step). Wakes the body.</summary>
         public static bool AddForce(GameEntity e, Vector3 force)
         {
+            if (RagdollService.IsActive(e)) return RagdollService.AddImpulse(e, ToSys(force) * FixedStep);
             if (!TryDynamic(e, out var b)) return false;
             Wake(b); Fill(_f3a, force);
             VortexAPI.PhysicsAddForce(b.Id, _f3a); return true;
@@ -380,6 +387,7 @@ namespace Editor.Core.Services.Physics
         /// <summary>Force in N applied at a world point (adds torque).</summary>
         public static bool AddForceAtPoint(GameEntity e, Vector3 force, Vector3 worldPoint)
         {
+            if (RagdollService.IsActive(e)) return RagdollService.AddImpulseAtPoint(e, ToSys(force) * FixedStep, ToSys(worldPoint));
             if (!TryDynamic(e, out var b)) return false;
             Wake(b); Fill(_f3a, force); Fill(_f3b, worldPoint);
             VortexAPI.PhysicsAddForceAtPoint(b.Id, _f3a, _f3b); return true;
@@ -388,6 +396,7 @@ namespace Editor.Core.Services.Physics
         /// <summary>Instant impulse in N·s at the centre of mass.</summary>
         public static bool AddImpulse(GameEntity e, Vector3 impulse)
         {
+            if (RagdollService.IsActive(e)) return RagdollService.AddImpulse(e, ToSys(impulse));
             if (!TryDynamic(e, out var b)) return false;
             Wake(b); Fill(_f3a, impulse);
             VortexAPI.PhysicsAddImpulse(b.Id, _f3a); return true;
@@ -396,6 +405,7 @@ namespace Editor.Core.Services.Physics
         /// <summary>Instant impulse in N·s at a world point (adds spin — a shot hitting a barrel's rim).</summary>
         public static bool AddImpulseAtPoint(GameEntity e, Vector3 impulse, Vector3 worldPoint)
         {
+            if (RagdollService.IsActive(e)) return RagdollService.AddImpulseAtPoint(e, ToSys(impulse), ToSys(worldPoint));
             if (!TryDynamic(e, out var b)) return false;
             Wake(b); Fill(_f3a, impulse); Fill(_f3b, worldPoint);
             VortexAPI.PhysicsAddImpulseAtPoint(b.Id, _f3a, _f3b); return true;

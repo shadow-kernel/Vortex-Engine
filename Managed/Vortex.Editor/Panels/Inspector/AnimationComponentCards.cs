@@ -44,6 +44,7 @@ namespace VortexEditor.Panels.Inspector
             ComponentEditors.Custom[typeof(HandPose)] = (c, e) => HandPoseRows((HandPose)c, e ?? c.Entity);
             ComponentEditors.Custom[typeof(LookAtIk)] = (c, e) => LookAtRows((LookAtIk)c, e ?? c.Entity);
             ComponentEditors.Custom[typeof(FootIk)] = (c, e) => FootIkRows((FootIk)c, e ?? c.Entity);
+            ComponentEditors.Custom[typeof(Editor.ECS.Components.Physics.Ragdoll)] = (c, e) => RagdollRows((Editor.ECS.Components.Physics.Ragdoll)c, e ?? c.Entity);
             RegisterSmoke();
         }
 
@@ -217,6 +218,36 @@ namespace VortexEditor.Panels.Inspector
             adv.Children.Add(Row("Right foot", BoneField(() => fi.RightFoot, v => edit(() => fi.RightFoot = v), entity, "foot", "ankle")));
             adv.Children.Add(Row("Pelvis", BoneField(() => fi.PelvisBone, v => edit(() => fi.PelvisBone = v), entity, "hip", "pelvis")));
             yield return new Expander { Header = "Bones", Content = adv, IsExpanded = fi.Rig == RigPreset.Custom, Margin = new Thickness(0, 4, 0, 0) };
+        }
+
+        // ================================================================ Ragdoll (#104)
+
+        private static IEnumerable<Control> RagdollRows(Editor.ECS.Components.Physics.Ragdoll rd, GameEntity entity)
+        {
+            WatchEnabled(rd);
+            var report = new ReportView();
+            Action update = () => report.Show(Editor.Core.Services.Physics.RagdollService.DescribeEntity(entity));
+            update();
+            Refreshers[report.Root] = update;
+
+            yield return Note("Switch it on from a script, usually on death: Ragdoll.Activate(EntityId). The bodies are built from the current animated pose, so the hand-over never pops.");
+            yield return Row("Activate on start", Bool(() => rd.ActivateOnStart, v => rd.ActivateOnStart = v), "Fall as soon as play starts (dead bodies, testing).");
+            yield return Row("Mass (kg)", SliderRow(() => rd.Mass, v => rd.Mass = v, 5, 200, "0"));
+            yield return Row("Thickness", SliderRow(() => rd.Thickness, v => rd.Thickness = v, 0.3, 3, "0.00"), "Scales every capsule's radius (armour, bulky creatures).");
+            yield return Row("Friction", SliderRow(() => rd.Friction, v => rd.Friction = v, 0, 2, "0.00"), "Against the world: higher = the body slides less.");
+            yield return Row("Damping", SliderRow(() => rd.Damping, v => rd.Damping = v, 0, 5, "0.00"), "0 = floppy, higher = the limbs settle faster.");
+            yield return Row("Joint friction (N·m)", SliderRow(() => rd.JointFriction, v => rd.JointFriction = v, 0, 20, "0.0"), "Elbows and knees: 0 = loose, a few N·m = stiff.");
+            yield return Row("Blend time (s)", SliderRow(() => rd.BlendTime, v => rd.BlendTime = v, 0, 3, "0.00"), "The playing clip (a death animation) hands over to the simulation over this time.");
+            yield return Row("Disable colliders", Bool(() => rd.DisableColliders, v => rd.DisableColliders = v), "Remove the entity's own colliders while it is a ragdoll, so shots meet the limbs.");
+            yield return Row("Detected", report.Root);
+            var drop = new Button { Content = "Drop now", HorizontalAlignment = HorizontalAlignment.Left };
+            ToolTip.SetTip(drop, "Play mode: turn this character into a ragdoll right now.");
+            drop.Click += (s, e) =>
+            {
+                if (!Editor.Core.Services.Physics.PhysicsService.IsBuilt) { EditorCommands.Toast("Ragdoll: press Play first"); return; }
+                if (!Editor.Core.Services.Physics.RagdollService.Activate(entity)) EditorCommands.Toast("Ragdoll: could not activate (see the console)");
+            };
+            yield return Row("Test", drop);
         }
 
         // ================================================================ shared pieces
