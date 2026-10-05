@@ -27,7 +27,8 @@
     <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.2" />
     <PackageReference Include="Avalonia.Controls.ColorPicker" Version="11.3.2" />
     <PackageReference Include="Avalonia.Diagnostics" Version="11.3.2" Condition="'$(Configuration)' == 'Debug'" />
-    <PackageReference Include="Tmds.DBus.Protocol" Version="0.22.0" />
+    <!-- Avalonia.FreeDesktop (Linux D-Bus); 0.21.3 carries the fix for GHSA-xrw6-gwf8-vvr9 (0.22.x up to 0.91 do not) -->
+    <PackageReference Include="Tmds.DBus.Protocol" Version="0.21.3" />
     <!-- Claude integration (#84): the in-process MCP server (Streamable HTTP on 127.0.0.1) — brings ASP.NET Core
          (Kestrel) as a framework reference; the self-contained app bundles it. -->
     <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.2.0" />
