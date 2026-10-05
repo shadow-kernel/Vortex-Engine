@@ -177,7 +177,9 @@ jobs:
         Write-Host "previous release: $prev"
         gh release download $prev -R ${{ github.repository }} -p "VortexEngine-Setup-*.exe" -D old
         $old = Get-ChildItem old\*.exe | Select-Object -First 1
-        Start-Process $old.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-' -Wait
+        # WaitForExit, not -Wait: -Wait also waits for the editor the setup starts at the end, which never exits
+        $p = Start-Process $old.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-' -PassThru
+        $p.WaitForExit()
         Start-Sleep -Seconds 5
         Get-Process -Name 'Vortex Engine','Vortex.Editor' -ErrorAction SilentlyContinue | Stop-Process -Force   # the setup's relaunch
         if (-not (Test-Path "$env:ProgramFiles\Vortex Engine\Vortex Engine.exe")) { throw "the previous release did not install" }
@@ -186,7 +188,9 @@ jobs:
       shell: pwsh
       run: |
         $setup = Get-ChildItem installer\*.exe | Select-Object -First 1
-        Start-Process $setup.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-','/LOG=install.log' -Wait
+        $p = Start-Process $setup.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-','/LOG=install.log' -PassThru
+        $p.WaitForExit()
+        Write-Host "setup exit code: $($p.ExitCode)"
         Start-Sleep -Seconds 5
         Get-Process -Name 'Vortex Engine','Vortex.Editor' -ErrorAction SilentlyContinue | Stop-Process -Force
         $app = "$env:ProgramFiles\Vortex Engine"
