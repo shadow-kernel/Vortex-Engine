@@ -148,8 +148,87 @@ jobs:
           x64/Release/Editor/**
         retention-days: 30
 
-  release:
+  # #95: the installer as users get it — on top of the previous release (the update path), then the files, the Start
+  # menu, the .vortex association, and the installed editor's smoke checks (DX12 on WARP). No release without it.
+  installer-test:
     needs: build
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+    - name: Determine version
+      id: version
+      shell: pwsh
+      run: |
+        if ("${{ github.event_name }}" -eq "push") { $version = "${{ github.ref_name }}".TrimStart('v') } else { $version = "${{ github.event.inputs.version }}" }
+        echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+
+    - name: Download the installer
+      uses: actions/download-artifact@v4
+      with:
+        name: VortexEngine-Installer-${{ steps.version.outputs.VERSION }}
+        path: ./installer
+
+    - name: Install the previous release (the update path)
+      shell: pwsh
+      run: |
+        $prev = gh release list -R ${{ github.repository }} --exclude-drafts --exclude-pre-releases --limit 1 --json tagName -q '.[0].tagName'
+        Write-Host "previous release: $prev"
+        gh release download $prev -R ${{ github.repository }} -p "VortexEngine-Setup-*.exe" -D old
+        $old = Get-ChildItem old\*.exe | Select-Object -First 1
+        Start-Process $old.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-' -Wait
+        Start-Sleep -Seconds 5
+        Get-Process -Name 'Vortex Engine','Vortex.Editor' -ErrorAction SilentlyContinue | Stop-Process -Force   # the setup's relaunch
+        if (-not (Test-Path "$env:ProgramFiles\Vortex Engine\Vortex Engine.exe")) { throw "the previous release did not install" }
+
+    - name: Update to this build
+      shell: pwsh
+      run: |
+        $setup = Get-ChildItem installer\*.exe | Select-Object -First 1
+        Start-Process $setup.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-','/LOG=install.log' -Wait
+        Start-Sleep -Seconds 5
+        Get-Process -Name 'Vortex Engine','Vortex.Editor' -ErrorAction SilentlyContinue | Stop-Process -Force
+        $app = "$env:ProgramFiles\Vortex Engine"
+        $missing = @('unins000.exe','VortexAPI.dll','Vortex Engine.exe','Editor\Vortex.Editor.exe','Editor\player\Vortex.Player.exe','Shaders\standard.hlsl','Templates\Default3D\project.vortex') |
+          Where-Object { -not (Test-Path (Join-Path $app $_)) }
+        if ($missing) { Get-Content install.log -Tail 40; throw "missing after the update: $($missing -join ', ')" }
+        $lnk = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Vortex Engine\Vortex Engine.lnk"
+        $target = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk).TargetPath
+        Write-Host "Start menu 'Vortex Engine' -> $target"
+        if ($target -notlike '*\Editor\Vortex.Editor.exe') { throw "the Start menu entry does not start the editor: $target" }
+        $assoc = (Get-ItemProperty 'Registry::HKEY_CLASSES_ROOT\VortexEngine.Project\shell\open\command').'(default)'
+        Write-Host ".vortex opens with: $assoc"
+        if ($assoc -notlike '*Editor\Vortex.Editor.exe*') { throw ".vortex files do not open the editor: $assoc" }
+
+    - name: Smoke the installed editor (DX12 / WARP)
+      shell: pwsh
+      env:
+        VORTEX_DX12_WARP: '1'
+        VORTEX_SMOKE_FULL: '1'
+        VORTEX_SMOKE_ONLY: 'mcp,claude'
+      run: |
+        $app = "$env:ProgramFiles\Vortex Engine"
+        $tmp = $env:RUNNER_TEMP
+        $env:VORTEX_APPDATA_DIR = "$tmp\appdata"
+        Copy-Item -Recurse "$app\Templates\Default3D" "$tmp\smoke-project"
+        $p = Start-Process "$app\Editor\Vortex.Editor.exe" -ArgumentList "--project=$tmp\smoke-project", "--smoke=25", "--capture=$tmp\capture" -PassThru -NoNewWindow `
+               -RedirectStandardOutput "$tmp\smoke.log" -RedirectStandardError "$tmp\smoke.err"
+        if (-not $p.WaitForExit(420000)) { $p.Kill(); Write-Host "::warning::the editor smoke timed out" }
+        Get-Content "$tmp\smoke.log" -ErrorAction SilentlyContinue
+        if (Select-String -Path "$tmp\smoke.log" -Pattern "SMOKE FAIL" -Quiet) { exit 1 }
+        if (-not (Select-String -Path "$tmp\smoke.log" -Pattern "SMOKE OK   mcp tools" -Quiet)) { exit 1 }
+
+    - name: Upload the installed-editor capture
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: installed-editor-capture
+        path: ${{ runner.temp }}/capture
+        if-no-files-found: ignore
+
+  release:
+    needs: [build, installer-test]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish != 'false')
     
