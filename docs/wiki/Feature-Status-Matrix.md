@@ -148,7 +148,7 @@ The miniaudio engine from v2.6.0 runs the same way in both editors and the playe
 
 | Feature | Status | Notes |
 |---|---|---|
-| Editor shells | ✅ | WPF: AvalonDock panes, borderless DWM chrome, dark theme; Avalonia: fixed 3-column layout with splitters, native menu bar on macOS, System/Dark/Light themes |
+| Editor shells | ✅ | Avalonia (the editor on every platform): fixed 3-column layout with splitters, the macOS menu bar or a menu row above the toolbar (Windows / Linux), the toolbar as the window's title bar, System/Dark/Light themes; WPF (*Vortex Engine (Classic)*, Windows, until v3.1): AvalonDock panes, borderless DWM chrome, dark theme |
 | Scene Hierarchy / File Explorer / Asset Browser panels | ✅ | Both editors: tree + selection service + drag-drop |
 | Dynamic Inspector | ✅ | Avalonia: typed cards for every component + editable generic fallback; WPF has no cards for Rigidbody, joints, ragdoll, particles, AI, Hand Pose/Look-At/Foot IK |
 | Viewport | ✅ | WPF: DX12 via HwndHost; Avalonia: Metal view (macOS), X11 window + Vulkan (Linux), DX12 child HWND (Windows, new) |
