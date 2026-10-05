@@ -227,6 +227,51 @@ namespace VortexEditor.Shell
                         }, TimeSpan.FromMilliseconds(200));
                     }
                 }
+                else if (OperatingSystem.IsWindows())
+                {
+                    // The render window is a child HWND: the same three checks as on macOS, through Win32 (#183).
+                    var ev = ViewportPanel.EngineView;
+                    IntPtr top = TryGetPlatformHandle()?.Handle ?? IntPtr.Zero;
+                    string desc = VortexEditor.Viewport.Win32ViewportInput.Describe(ev.NativeHandle, top, ev, out bool embedOk);
+                    if (embedOk) log.Log("SMOKE OK   viewport embedding: " + desc); else log.LogError("SMOKE FAIL viewport embedding: " + desc);
+                    try { Activate(); } catch { }
+                    void ContinueWin()
+                    {
+                        if (System.Environment.GetEnvironmentVariable("VORTEX_SMOKE_PLAYFIRE") == "1") SmokePlayFire(ev);
+                        else if (System.Environment.GetEnvironmentVariable("VORTEX_SMOKE_FULL") == "1") SmokeFull(scene);
+                    }
+                    DispatcherTimer.RunOnce(() =>
+                    {
+                        int presses = ev.PointerPressCount;
+                        bool posted = VortexEditor.Viewport.Win32ViewportInput.Click(ev, top, out string what);
+                        DispatcherTimer.RunOnce(() =>
+                        {
+                            if (posted && ev.PointerPressCount > presses) log.Log("SMOKE OK   viewport click routed to the toolkit (" + what + ")");
+                            else log.LogError("SMOKE FAIL viewport click not received (" + what + ", posted=" + posted + ", presses=" + ev.PointerPressCount + ")");
+                            VortexEditor.Viewport.Win32ViewportInput.MouseButton(ev, top, false, true);
+                            DispatcherTimer.RunOnce(() =>
+                            {
+                                bool lDown = Editor.Core.Input.HostInput.IsKeyDown(0x01);
+                                VortexEditor.Viewport.Win32ViewportInput.MouseButton(ev, top, false, false);
+                                VortexEditor.Viewport.Win32ViewportInput.MouseButton(ev, top, true, true);
+                                DispatcherTimer.RunOnce(() =>
+                                {
+                                    bool lUp = !Editor.Core.Input.HostInput.IsKeyDown(0x01);
+                                    bool rDown = Editor.Core.Input.HostInput.IsKeyDown(0x02);
+                                    VortexEditor.Viewport.Win32ViewportInput.MouseButton(ev, top, true, false);
+                                    DispatcherTimer.RunOnce(() =>
+                                    {
+                                        bool rUp = !Editor.Core.Input.HostInput.IsKeyDown(0x02);
+                                        string r = "LButton down=" + lDown + " up=" + lUp + ", RButton down=" + rDown + " up=" + rUp;
+                                        if (lDown && lUp && rDown && rUp) log.Log("SMOKE OK   mouse buttons reach Input.GetKey (" + r + ")");
+                                        else log.LogError("SMOKE FAIL mouse buttons do not reach Input.GetKey (" + r + ")");
+                                        ContinueWin();
+                                    }, TimeSpan.FromMilliseconds(200));
+                                }, TimeSpan.FromMilliseconds(200));
+                            }, TimeSpan.FromMilliseconds(200));
+                        }, TimeSpan.FromMilliseconds(400));
+                    }, TimeSpan.FromMilliseconds(500));
+                }
                 else if (System.Environment.GetEnvironmentVariable("VORTEX_SMOKE_FULL") == "1") SmokeFull(scene);
                 if (System.Environment.GetEnvironmentVariable("VORTEX_SMOKE_FX") == "1" && scene?.Settings != null)
                 {
@@ -332,13 +377,38 @@ namespace VortexEditor.Shell
                 System.Console.WriteLine("smoke: captured to " + dir);
             }
             catch (Exception ex) { System.Console.WriteLine("smoke capture failed: " + ex.Message); }
+            var open = (Application.Current?.ApplicationLifetime as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime)?.Windows;
+            VortexEditor.Program.Stage("closing the main window (open windows: " + (open == null ? "?" : string.Join(", ", open.Select(w => "\"" + w.Title + "\""))) + ")");
+            StartExitWatchdog();
             _closingConfirmed = true;
             Close();
         }
 
+        /// <summary>A smoke run must end: still alive 30 s after the main window closed, the editor says which shutdown
+        /// step it reached and ends itself — CI gets a FAIL line instead of waiting for its own timeout.</summary>
+        private static void StartExitWatchdog()
+        {
+            var t = new System.Threading.Thread(() =>
+            {
+                System.Threading.Thread.Sleep(30000);
+                System.Console.WriteLine("SMOKE FAIL editor exit: still running 30 s after the main window closed — last step: " + VortexEditor.Program.ShutdownStage);
+                System.Console.Out.Flush();
+                try { System.Diagnostics.Process.GetCurrentProcess().Kill(); } catch { }
+            }) { IsBackground = true, Name = "smoke exit watchdog" };
+            t.Start();
+        }
+
         private async void OnClosing(object sender, WindowClosingEventArgs e)
         {
-            if (_closingConfirmed) { _ = Claude.McpHost.StopAsync(); Session.ShutdownEngine(); return; }
+            if (_closingConfirmed)
+            {
+                VortexEditor.Program.Stage("stopping the MCP server");
+                _ = Claude.McpHost.StopAsync();
+                VortexEditor.Program.Stage("shutting the engine down");
+                Session.ShutdownEngine();
+                VortexEditor.Program.Stage("engine down");
+                return;
+            }
             e.Cancel = true;
             if (Session.HasProject && !await Dialogs.Confirm("Quit Vortex Editor?", "Unsaved changes will be lost.", "Quit", "Cancel", destructive: true)) return;
             CloseConfirmed();

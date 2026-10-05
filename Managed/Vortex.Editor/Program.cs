@@ -22,9 +22,24 @@ namespace VortexEditor
                 }
             if (Options.SmokeSeconds > 0 && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("VORTEX_APPDATA_DIR")))
                 Environment.SetEnvironmentVariable("VORTEX_APPDATA_DIR", System.IO.Path.Combine(System.IO.Path.GetTempPath(), "vortex-smoke-appdata"));
+            // the console speaks UTF-8 everywhere (Windows' default code page turned "—" in the log into "?")
+            if (OperatingSystem.IsWindows()) { try { Console.OutputEncoding = new System.Text.UTF8Encoding(false); } catch { } }
+            if (Options.SmokeSeconds > 0) AppDomain.CurrentDomain.ProcessExit += (s, e) => Stage("process exit");
             // An exception in a pointer/key/window handler must not take the editor (and unsaved work) down.
             Shell.CrashGuard.Install();
-            return Shell.CrashGuard.Run(BuildAvaloniaApp(), args);
+            int code = Shell.CrashGuard.Run(BuildAvaloniaApp(), args);
+            Stage("the UI ended (exit code " + code + ")");
+            return code;
+        }
+
+        /// <summary>The last shutdown step reached — smoke runs print every step, and the exit watchdog reports the last
+        /// one when the editor does not end.</summary>
+        public static volatile string ShutdownStage = "running";
+
+        public static void Stage(string step)
+        {
+            ShutdownStage = step;
+            if (Options.SmokeSeconds > 0) { Console.WriteLine("[shutdown] " + step); Console.Out.Flush(); }
         }
 
         public static AppBuilder BuildAvaloniaApp()

@@ -71,10 +71,21 @@ namespace VortexEditor.Viewport
         private void InitializeRenderer()
         {
             if (_handle == null || _session.IsInitialized) return;
+            RouteNativeInput();
             var (w, h) = PixelSize();
             if (!_session.Initialize(_handle.Handle, w, h, this)) return;
             _session.FlyModeChanged += fly => Cursor = fly ? new Cursor(StandardCursorType.None) : Cursor.Default;
             StartFrameLoop();
+        }
+
+        /// <summary>Windows: clicks over the render window must reach the editor window, where the input handlers
+        /// below take them (see <see cref="Win32ViewportInput"/>). macOS restores the responder chain natively.</summary>
+        private void RouteNativeInput()
+        {
+            if (!OperatingSystem.IsWindows() || _handle == null) return;
+            var top = TopLevel.GetTopLevel(this)?.TryGetPlatformHandle()?.Handle ?? IntPtr.Zero;
+            int n = Win32ViewportInput.MakeTransparent(_handle.Handle, top);
+            if (n > 0) Trace("win32: " + n + " window(s) between the render window and the editor window pass the mouse on");
         }
 
         private (uint, uint) PixelSize()
@@ -143,6 +154,7 @@ namespace VortexEditor.Viewport
             base.OnAttachedToVisualTree(e);
             _topLevel = TopLevel.GetTopLevel(this);
             if (_topLevel == null) return;
+            Dispatcher.UIThread.Post(RouteNativeInput, DispatcherPriority.Loaded);   // a new holder window after a re-dock
             // The native child view sits above the Avalonia tree, so pointer events are taken at the window level
             // and routed here while the pointer is over our bounds (keys while the viewport is "armed" by a click).
             _topLevel.AddHandler(PointerPressedEvent, TopLevelPointerPressed, RoutingStrategies.Tunnel);
