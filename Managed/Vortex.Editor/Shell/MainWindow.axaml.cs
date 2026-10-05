@@ -30,6 +30,8 @@ namespace VortexEditor.Shell
         private int _unseenErrors;
 
         public Thickness LeftInset => OperatingSystem.IsMacOS() ? new Thickness(74, 0, 0, 0) : new Thickness(8, 0, 0, 0);
+        /// <summary>Windows draws minimize / maximize / close into the toolbar's top-right corner (3 × 46 px).</summary>
+        public Thickness RightInset => OperatingSystem.IsWindows() ? new Thickness(0, 0, 150, 0) : new Thickness(0, 0, 12, 0);
 
         public MainWindow()
         {

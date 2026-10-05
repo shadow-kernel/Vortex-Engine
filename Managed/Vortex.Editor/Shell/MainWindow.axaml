@@ -9,9 +9,9 @@
         ExtendClientAreaToDecorationsHint="True" ExtendClientAreaChromeHints="Default" ExtendClientAreaTitleBarHeightHint="52"
         Background="{DynamicResource VxWindowBrush}">
   <Grid RowDefinitions="52,*,26">
-    <!-- unified toolbar (traffic lights live at the far left on macOS) -->
+    <!-- unified toolbar (traffic lights live at the far left on macOS, the caption buttons at the far right on Windows) -->
     <Border x:Name="TitleBar" Background="{DynamicResource VxToolbarBrush}" Classes="hairline-bottom">
-      <Grid ColumnDefinitions="Auto,*,Auto,*,Auto" Margin="0,0,12,0">
+      <Grid ColumnDefinitions="Auto,*,Auto,*,Auto" Margin="{Binding RightInset}">
         <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="8" Margin="{Binding LeftInset}" x:Name="LeftGroup">
           <c:VxIcon Icon="Vortex" Width="20" Height="20" Foreground="{DynamicResource VxAccentBrush}" Margin="8,0,0,0"/>
           <StackPanel VerticalAlignment="Center">
