@@ -17,7 +17,7 @@ Status legend: ✅ shipped on `main` · 🟡 partial · ⬜ open. Issue numbers 
 | v2.8.0 | Windows · macOS · Linux — released 2026-10-04 | ✅ | macOS (Metal) + Linux (Vulkan) ports, Physics v2 (Jolt), editor-first hands |
 | v2.9.0 | Global Asset Database — released 2026-10-05 | ✅ | machine-wide SHA-256 asset library, Library tab, Add to Project, duplicate-aware import, project indexer, maintenance, bundles, settings (#52–#65) |
 | v2.10.0 | Asset Store & Claude Sound Studio — released 2026-10-05 | ✅ | Poly Haven / ambientCG / poly.pizza / Freesound / Kenney / Sketchfab providers feeding the library, Mixamo + Sonniss guided flows, license check + CREDITS.md, Claude Sound Studio with ElevenLabs / fal.ai / Stability backends and recipes (#66–#83) |
-| v3.0.0 | Claude-Native Engine (release) — due 2026-12-19 | ⬜ next | MCP server + tool sets, embedded Claude panel (#84–#94, #99); Avalonia editor on Windows (#183), CI test gate (#161), macOS CI (#184), signing (#96), crash reporting (#97), project upgrades (#186), v3.0 hardening (#95, #98), asset source outreach (#290), template packs for installed editors (#299) |
+| v3.0.0 | Claude-Native Engine (release) — due 2026-12-19 | 🟡 on `main`, not released | ✅ MCP server + 67 tools, Claude panel, safety (#84–#94, #99), CI gate (#161) + macOS app/DMG CI (#184), template packs (#299) + Update from Template (#186), docs sweep (#98), hardening (#95), the cross-platform editor in the Windows installer (#183); ⬜ a real Claude Code session end to end, a real-GPU Windows check, signing (#96), crash reporting (#97), the release itself + template-pack upload, asset source outreach (#290) |
 | v3.1.0 | Physics v2 | 🟡 | ✅ Jolt, joints (#103), ragdolls (#104), render interpolation; ⬜ player on CharacterVirtual (#105, #187), Jolt in the Visual Studio build (#182), debug draw (#106), compound colliders (#107) |
 | v3.2.0 | AI & Navigation | 🟡 | navmesh, agents, perception merged as work in progress; behaviour trees (#111), root motion (#113), Tactical Shooter combat bots (#193) |
 | v3.3.0 | VFX | 🟡 | particle system + VFX editor merged as work in progress; volumetric fog (#119), decals (#120), weapon VFX (#178) for every camera (#194) |
@@ -40,12 +40,15 @@ original-quality downloads (#289).
 "v2.8.0 – Global Asset Database" is v2.9.0 and the Asset Store moved to v2.10.0.
 
 ## Now
-1. **v3.0.0 Claude-Native Engine** — the MCP server and its tool sets (#84–#94, #99) on the plain-HTTP Claude client the
-   Sound Studio already uses; the Avalonia editor on Windows (#183, which also brings the Library, Store and Sound Studio
-   to Windows), the CI test gate (#161) and macOS CI (#184) — a Windows build on every PR would have caught the broken
-   v2.8.0 installer build.
-2. **Release hardening for v3.0.0** — signing (#96), crash reporting (#97), project upgrades (#186), asset source
-   outreach (#290), template packs so installed editors get the templates' LFS assets (#299).
+1. **Release v3.0.0** — everything is merged (#303): the MCP server and its tool sets, the Claude panel, the PR gate on
+   Windows + macOS, the macOS DMG, the cross-platform editor in the Windows installer (which brings the Library, Store,
+   Sound Studio and Claude to Windows), template packs + Update from Template, the docs sweep (Getting Started, Horror
+   Essentials, Audio; every wiki code sample compiles in CI) and a hardening pass. Before the tag: a real Claude Code
+   session against the editor, a run of the cross-platform editor on a real Windows GPU, and the decisions on signing
+   (#96) and crash reporting (#97). At the tag: version bump, release notes, `tools/make-template-packs.sh 3.0.0 --upload`.
+2. **After v3.0.0** — the gaps the docs pass found: shadow settings (#304), the DLSS runtime in release builds (#305),
+   Linux CI (#306), `Lighting.SetDirectional` (#307), the Steam Audio runtime (#308); then v3.1.0 (Jolt in the Visual
+   Studio build, #182).
 
 ## Shipped
 
