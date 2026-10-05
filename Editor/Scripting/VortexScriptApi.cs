@@ -1950,9 +1950,10 @@ namespace Vortex
         /// at the rendered rate (the generated frames show up in <see cref="FrameGenPresentedFps"/>, not here).</summary>
         public static int CurrentFps { get { return Editor.DllWrapper.VortexAPI.CurrentFPS; } }
 
-        /// <summary>Master volume 0..1. Stored here until the (XAudio2) sound engine reads it — audio is still a stub.</summary>
-        public static float MasterVolume { get; private set; } = 1f;
-        public static void SetMasterVolume(float v) { MasterVolume = v < 0f ? 0f : (v > 1f ? 1f : v); }
+        /// <summary>Master volume 0..1: the mixer's Master bus — the same as Audio.SetBusVolume("Master", v), so a
+        /// shipped game keeps the player's choice across restarts. (It used to be stored and never applied.)</summary>
+        public static float MasterVolume { get { return Audio.GetBusVolume("Master"); } }
+        public static void SetMasterVolume(float v) { Audio.SetBusVolume("Master", v < 0f ? 0f : (v > 1f ? 1f : v)); }
 
         /// <summary>The selected GPU's name (e.g. "NVIDIA GeForce RTX 5070").</summary>
         public static string GpuName { get { return Editor.DllWrapper.VortexAPI.GpuName(); } }

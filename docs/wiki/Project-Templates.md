@@ -32,9 +32,9 @@ template gets those fixes with **Project Hub ▸ right-click the project ▸ Upd
 
 - The dialog guesses the template the project came from (its scripts project or scenes) — change it if needed — and
   downloads the template's pack first when its content is not installed.
-- It compares content, not dates: every file the template has under `Assets/` (Scripts, Prefabs, Materials, Textures,
-  Models, Audio, Scenes, Shaders, Animations, UI, Fonts) plus the guides in the project root. Files only the project
-  has are never touched.
+- It compares content, not dates: every file the template has in the folders under `Assets/` (Scripts, Prefabs,
+  Materials, Models, Audio, Scenes, VFX …) plus the guides in the project root. Files only the project has are never
+  touched.
 - Per folder you choose what to take; selecting a file shows a line diff of your version against the template's.
 - **Replacing scenes the project already has is off by default** — the template's scene would discard your level
   edits. New template scenes are copied and added to the scene list.

@@ -46,14 +46,21 @@ namespace Editor.Core.Services
 
     /// <summary>
     /// Project Hub ▸ Update from Template (#186): brings an existing game up to the current content of the template it
-    /// came from. Template files are copied in (scripts, prefabs, materials, textures, models, audio, scenes, shaders,
-    /// animations, UI) — new ones added, changed ones overwritten after a backup of the project's version; nothing the
+    /// came from. Template files are copied in (every folder under Assets: scripts, prefabs, materials, models, audio,
+    /// scenes, VFX …) — new ones added, changed ones overwritten after a backup of the project's version; nothing the
     /// user added is deleted. The scene list of project.vortex gains the template's new scenes. <see cref="Plan"/> is
     /// the dry run; <see cref="Apply"/> backs up into .ve/backups/template-update-&lt;time&gt;/ and copies.
     /// </summary>
     public static class TemplateUpdateService
     {
-        public static readonly string[] Folders = { "Scripts", "Prefabs", "Materials", "Textures", "Models", "Audio", "Scenes", "Shaders", "Animations", "UI", "Fonts" };
+        /// <summary>The template's top folders under Assets (Scripts, Prefabs, Models, VFX, Characters, Weapons …).</summary>
+        public static List<string> FoldersOf(string templateDir)
+        {
+            string assets = System.IO.Path.Combine(templateDir, "Assets");
+            if (!Directory.Exists(assets)) return new List<string>();
+            return Directory.GetDirectories(assets).Select(d => System.IO.Path.GetFileName(d))
+                .Where(n => !n.StartsWith(".", StringComparison.Ordinal)).OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
+        }
         public static readonly string[] RootFiles = { "WEAPONS_GUIDE.md", "CHARACTER_SETUP_GUIDE.md", "ATTRIBUTIONS.txt" };
 
         /// <summary>Compare a project with a template's project folder (content, not dates). <paramref name="folders"/>
@@ -64,8 +71,9 @@ namespace Editor.Core.Services
             if (!File.Exists(System.IO.Path.Combine(templateDir, "project.vortex"))) throw new InvalidOperationException("Not a template project: " + templateDir);
             if (TemplatePacks.HasLfsPointers(templateDir)) throw new InvalidOperationException("The template's content is not installed (Git LFS pointers) — download it first.");
             var plan = new TemplateUpdatePlan { ProjectDir = projectDir, TemplateDir = templateDir };
-            var wanted = new HashSet<string>(folders ?? Folders, StringComparer.OrdinalIgnoreCase);
-            foreach (var folder in Folders.Where(wanted.Contains))
+            var all = FoldersOf(templateDir);
+            var wanted = new HashSet<string>(folders ?? all, StringComparer.OrdinalIgnoreCase);
+            foreach (var folder in all.Where(wanted.Contains))
             {
                 string src = System.IO.Path.Combine(templateDir, "Assets", folder);
                 if (!Directory.Exists(src)) continue;
