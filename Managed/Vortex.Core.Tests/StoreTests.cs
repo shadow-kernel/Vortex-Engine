@@ -364,6 +364,79 @@ namespace VortexTests
         }
 
         [Test]
+        public static async Task PolyPizzaSearchAndDownload(TestContext t)
+        {
+            var fake = Setup(t);
+            Environment.SetEnvironmentVariable("VORTEX_STORE_KEY_POLYPIZZA", "pp-test");
+            StoreKeys.Reload();
+            try
+            {
+                fake.Json("https://api.poly.pizza/v1.1/search/", "{\"total\":1,\"results\":[{\"ID\":\"abc\",\"Title\":\"Wooden Crate\",\"Thumbnail\":\"https://static.poly.pizza/abc.webp\"," +
+                    "\"Licence\":\"CC0 1.0\",\"Creator\":{\"Username\":\"Quaternius\"},\"Download\":\"https://static.poly.pizza/abc.glb\",\"Tri Count\":1200,\"Animated\":true,\"Category\":\"Props\",\"Tags\":[\"crate\"]}]}");
+                fake.Bytes("https://static.poly.pizza/abc.glb", Encoding.UTF8.GetBytes("glTF test model"));
+                var p = new PolyPizzaProvider();
+                var page = await p.SearchAsync(new StoreQuery { Text = "wooden crate" }, CancellationToken.None);
+                var it = page.Items.Single();
+                var req = fake.Requests.Last();
+                t.Equal("pp-test", req.Headers.GetValues("x-auth-token").Single(), "x-auth-token header");
+                t.True(Uri.UnescapeDataString(req.RequestUri.AbsolutePath).EndsWith("/v1.1/search/wooden crate"), "keyword in the path: " + req.RequestUri);
+                t.Equal("Quaternius", it.Author, "creator");
+                t.Equal("CC0-1.0", it.License.Id, "licence label");
+                t.True(it.Tags.Contains("animated") && it.Categories.Contains("Props"), "animated flag + category");
+                var det = await p.DetailsAsync(it, CancellationToken.None);
+                t.True(det.Facts.Contains("Rigged + animated"), "details say rigged");
+                var job = await Run(StoreDownloads.Enqueue(p, it, det.Variants.Single()));
+                t.Equal(StoreJobState.Done, job.State, "done: " + job.Error);
+                var e = GlobalAssetDatabase.Instance.Get(job.Entries.Single().Id);
+                t.True(e.FileName.EndsWith(".glb"), "GLB in the library: " + e.FileName);
+                t.True(e.License == "CC0-1.0" && e.Author == "Quaternius" && e.SourceName == "poly.pizza", "license, author, source recorded");
+            }
+            finally { Environment.SetEnvironmentVariable("VORTEX_STORE_KEY_POLYPIZZA", null); StoreKeys.Reload(); }
+        }
+
+        [Test]
+        public static async Task SketchfabLicensesAndTokenDownloads(TestContext t)
+        {
+            var fake = Setup(t);
+            Environment.SetEnvironmentVariable("VORTEX_STORE_KEY_SKETCHFAB", null);
+            StoreKeys.Reload();
+            string M(string uid, string name, string label) => "{\"uid\":\"" + uid + "\",\"name\":\"" + name + "\",\"viewerUrl\":\"https://sketchfab.com/3d-models/" + uid +
+                "\",\"license\":{\"label\":\"" + label + "\"},\"user\":{\"displayName\":\"Ann\"},\"archives\":{\"glb\":{\"size\":5}}}";
+            fake.Json("https://api.sketchfab.com/v3/search", "{\"next\":null,\"results\":[" + M("u1", "Door", "CC Attribution") + "," +
+                M("u2", "ND Door", "CC Attribution-NoDerivs") + "," + M("u3", "NC Door", "CC Attribution-NonCommercial") + "]}");
+            var p = new SketchfabProvider();
+            var page = await p.SearchAsync(new StoreQuery { Text = "door" }, CancellationToken.None);
+            t.Equal(1, page.Items.Count, "NoDerivatives and NonCommercial hidden by default");
+            t.Equal("CC-BY-4.0", page.Items[0].License.Id, "per-model license");
+            t.Equal("Ann", page.Items[0].Author, "author");
+            t.False(fake.Requests.Last().Headers.Contains("Authorization"), "search is anonymous");
+            var all = await p.SearchAsync(new StoreQuery { Text = "door", IncludeNonCommercial = true, IncludeNoDerivatives = true }, CancellationToken.None);
+            t.Equal(3, all.Items.Count, "all three with NC / ND switched on");
+            var door = page.Items[0];
+            string err = null;
+            try { await p.ResolveAsync(door, null, CancellationToken.None); } catch (StoreHttp.StoreHttpException ex) { err = ex.Message; }
+            t.True(err != null && err.Contains("API token"), "downloading needs the user's token: " + err);
+            Environment.SetEnvironmentVariable("VORTEX_STORE_KEY_SKETCHFAB", "sf-test");
+            StoreKeys.Reload();
+            try
+            {
+                int asked = 0;
+                fake.Routes.Add(("https://api.sketchfab.com/v3/models/u1/download", r =>
+                {
+                    asked++;
+                    return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"glb\":{\"url\":\"https://media.sketchfab.test/u1.glb?sig=" + asked + "\",\"size\":5,\"expires\":300}}") };
+                }));
+                await p.ResolveAsync(door, new StoreVariant { Id = "glb" }, CancellationToken.None);
+                var plan = await p.ResolveAsync(door, new StoreVariant { Id = "glb" }, CancellationToken.None);
+                t.Equal(2, asked, "the expiring archive URL is requested for every download, never cached");
+                t.True(plan.Files.Single().Url.EndsWith("sig=2"), "fresh URL");
+                var dreq = fake.Requests.Last(r => r.RequestUri.AbsolutePath.EndsWith("/download"));
+                t.Equal("Token sf-test", string.Join(",", dreq.Headers.GetValues("Authorization")), "token header");
+            }
+            finally { Environment.SetEnvironmentVariable("VORTEX_STORE_KEY_SKETCHFAB", null); StoreKeys.Reload(); }
+        }
+
+        [Test]
         public static void LicenseAuditAndCredits(TestContext t)
         {
             string proj = t.Path("game");
