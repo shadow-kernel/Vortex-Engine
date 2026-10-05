@@ -14,11 +14,12 @@ namespace Editor.Core.Viewport
     /// the player - the third-person body (render layer 2) shows, the first-person viewmodel (layer 1) hides.
     /// CAPS LOCK hands all input (mouse + keys) back to the player and freezes the camera, so you can walk,
     /// fire and reload while watching yourself. Shared by the editor viewport and the standalone player.
-    /// <c>VM_DBGCAM="x,y,z,yawDeg,pitchDeg"</c> enters it at a fixed vantage on start (deterministic captures).
+    /// <c>VM_DBGCAM="x,y,z,yawDeg,pitchDeg"</c> enters it at a fixed vantage on start (deterministic captures);
+    /// <c>VM_DBGCAM_DRIVE=1</c> then hands the input (an input script) to the player instead of the camera.
     /// </summary>
     public sealed class DebugFreeCamera
     {
-        private bool _active, _seeded, _pPrev, _drivePlayer, _envChecked;
+        private bool _active, _seeded, _pPrev, _drivePlayer, _envChecked, _envDrive;
         private float _x, _y, _z, _yaw, _pitch;
 
         public bool Active => _active;
@@ -54,6 +55,7 @@ namespace Editor.Core.Viewport
                     _active = true; _seeded = true;
                     SceneRenderService.DebugThirdPersonView = true; SceneRenderService.RuntimeDirty = true;
                     SceneRenderService.DebugShowViewmodel = Environment.GetEnvironmentVariable("VM_DBGCAM_FP") == "1";   // inspect the FP arms instead of the body
+                    _envDrive = Environment.GetEnvironmentVariable("VM_DBGCAM_DRIVE") == "1";   // captures: the input script drives the player
                 }
             }
 
@@ -67,7 +69,7 @@ namespace Editor.Core.Viewport
             }
             _pPrev = pDown;
 
-            _drivePlayer = _active && HostInput.IsCapsLockOn();
+            _drivePlayer = _active && (HostInput.IsCapsLockOn() || _envDrive);
             ScriptRuntime.SuppressGameplayInput = _active && !_drivePlayer;
             if (!_active || _drivePlayer) return;
 

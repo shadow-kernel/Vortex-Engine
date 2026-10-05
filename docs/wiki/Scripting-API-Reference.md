@@ -307,6 +307,7 @@ Skeletal animation on **other** entities (your own entity has `PlayAnimation()` 
 ▸ `static void SetSpeed(long entityId, float speed)` — playback speed multiplier (`1` = authored).
 ▸ `static bool IsPlaying(long entityId, string clip = null)` — is an animation playing? Pass a clip name to ask about that clip.
 ▸ `static float Time(long entityId)` — current playback time in seconds.
+▸ `static void SetIkOffset(long entityId, string tipBone, Vector3 position, Vector3 rotationEulerDeg)` — move the target of the entity's TwoBoneIk chain (the offset from the chain's target bone, in that bone's space): e.g. the support hand's spot on the foregrip of another weapon after a switch. Solved in the same frame as the animation, so the hand never lags.
 
 ---
 

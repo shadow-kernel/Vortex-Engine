@@ -1601,6 +1601,22 @@ namespace Vortex
         public static void ClearIkTarget(long entityId, string tipBone)
             { if (Host != null) Host.ClearIkWorldTarget(entityId, tipBone); }
 
+        /// <summary>Move the target of an entity's TwoBoneIk chain(s) — the offset from the chain's TARGET bone, in that
+        /// bone's space (position in metres, rotation in engine Euler degrees) — e.g. the support hand's spot on the
+        /// foregrip of a different weapon after a weapon switch. Solved in the same frame as the animation, so the hand
+        /// never lags the bone it follows. tipBone null/empty = every chain of the entity.</summary>
+        public static void SetIkOffset(long entityId, string tipBone, Vector3 position, Vector3 rotationEulerDeg)
+        {
+            var e = Editor.Scripting.ScriptRuntime.Instance.FindEntityByHandle(entityId);
+            if (e == null) return;
+            foreach (var ik in e.GetComponents<Editor.ECS.Components.Animation.TwoBoneIk>())
+            {
+                if (!string.IsNullOrEmpty(tipBone) && !string.Equals(ik.TipBone, tipBone, System.StringComparison.OrdinalIgnoreCase)) continue;
+                ik.TargetOffsetPosition = new Editor.ECS.Vector3(position.X, position.Y, position.Z);
+                ik.TargetOffsetRotation = new Editor.ECS.Vector3(rotationEulerDeg.X, rotationEulerDeg.Y, rotationEulerDeg.Z);
+            }
+        }
+
         /// <summary>Swing an IK chain's elbow/knee around the root->target axis (degrees; 0 = the animation's natural
         /// bend plane) — steer a first-person elbow down and out of the view.</summary>
         public static void SetIkPoleAngle(long entityId, string tipBone, float degrees)
