@@ -341,7 +341,19 @@ namespace VortexEditor.Shell
                 Sep(),
                 Item("Refresh", null, EditorCommands.RefreshAssets),
                 Item("Reload Material Shaders", null, EditorCommands.ReloadShaders),
-                Item("Open Scripts Project in IDE", null, EditorCommands.OpenScriptsProject)));
+                Item("Open Scripts Project in IDE", null, EditorCommands.OpenScriptsProject),
+                Sep(),
+                Sub("Asset Library",
+                    Item("Show Library", null, () => { if (!w.IsPanelVisible(MainWindow.PanelProject)) w.TogglePanel(MainWindow.PanelProject); w.AssetBrowser?.SetTab("Library"); }),
+                    Item("Add Files to Library…", null, () => _ = Panels.AssetBrowser.LibraryView.Current?.PickFilesToLibrary()),
+                    Item("Index Existing Projects…", null, () => _ = Library.LibraryIndexDialog.Run()),
+                    Item("Import Library Bundle…", null, () => _ = Panels.AssetBrowser.LibraryView.Current?.ImportBundle()),
+                    Sep(),
+                    Item("Tag Manager…", null, () => _ = Library.LibraryTagManager.Run()),
+                    Item("Maintenance…", null, Library.LibraryMaintenanceWindow.Open),
+                    Item("Library Settings…", null, () => _ = Library.LibrarySettingsDialog.Run()),
+                    Sep(),
+                    Item("Backfill Content Hashes (Project)", null, () => _ = Panels.AssetBrowser.LibraryView.Current?.BackfillProjectHashes()))));
 
             var window = new List<NativeMenuItemBase>
             {

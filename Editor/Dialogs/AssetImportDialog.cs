@@ -517,6 +517,8 @@ namespace Editor.Dialogs
                 };
 
                 AssetDatabase.Instance.Refresh();
+                // global asset library (#55): hash + register in the background (never blocks or fails the import)
+                Editor.Core.Assets.Library.LibraryProjects.QueueImported(targetPath, _selectedTags, projectPath, ProjectData.Current?.Name);
                 DialogResult = true;
                 Close();
             }

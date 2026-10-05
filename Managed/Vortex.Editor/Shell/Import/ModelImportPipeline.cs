@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using Editor.Core.Assets;
+using Editor.Core.Assets.Library;
 using Editor.Core.Data;
 using Editor.Core.Serialization;
 using Editor.Core.Services;
@@ -25,6 +26,11 @@ namespace VortexEditor.Shell.AssetImport
         /// <summary>Replace files that already exist in the target (off = keep both, the new one gets a suffix).</summary>
         public bool Overwrite = true;
         public readonly List<string> Tags = new List<string>();
+        /// <summary>Register the import in the global asset library (subject to the library's settings).</summary>
+        public bool RegisterInLibrary = true;
+        /// <summary>"Import as new": give the content a new library entry (this name) even when the library knows it.</summary>
+        public bool LibraryForceNew;
+        public string LibraryName;
     }
 
     /// <summary>Everything one imported file produced (for the result summary).</summary>
@@ -163,7 +169,14 @@ namespace VortexEditor.Shell.AssetImport
 
         /// <summary>Import one file into <paramref name="targetFolder"/> (absolute). Models go through <see cref="ImportModel"/>.</summary>
         public static ImportReport Import(string source, string targetFolder, ImportOptions o, string newName = null)
-            => IsModel(source) ? ImportModel(source, targetFolder, o, newName) : ImportFile(source, targetFolder, o, newName);
+        {
+            var r = IsModel(source) ? ImportModel(source, targetFolder, o, newName) : ImportFile(source, targetFolder, o, newName);
+            // global asset library (#55): hash into the .vmeta + register machine-wide, in the background — a slow or
+            // broken library never delays or fails the import
+            if (r.Success && r.TargetPath != null && o.RegisterInLibrary)
+                LibraryProjects.QueueImported(r.TargetPath, o.Tags, ProjectData.Current?.Path, ProjectData.Current?.Name, o.LibraryName, o.LibraryForceNew);
+            return r;
+        }
 
         public static ImportReport ImportFile(string source, string targetFolder, ImportOptions o, string newName = null)
         {

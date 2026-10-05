@@ -11,9 +11,11 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Editor.Core.Assets;
+using Editor.Core.Assets.Library;
 using Editor.Core.Data;
 using Editor.Core.Services;
 using VortexEditor.Controls;
+using VortexEditor.Services;
 using VortexEditor.Shell.AssetImport;
 using VortexEditor.Shell.ModelTools;
 
@@ -60,6 +62,16 @@ namespace VortexEditor.Shell
         private readonly TextBlock _subtitle = new TextBlock { FontSize = 12 };
         private readonly TextBlock _error = new TextBlock { FontSize = 11, TextWrapping = TextWrapping.Wrap, IsVisible = false };
         private Control _optionsPage;
+        // global asset library (#57): files whose exact bytes the library already has, and the ones imported "as new"
+        private readonly Dictionary<string, LibraryEntry> _inLibrary = new Dictionary<string, LibraryEntry>(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _asNew = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private readonly Border _libraryBanner = new Border { IsVisible = false, Padding = new Thickness(12, 10), Margin = new Thickness(0, 12, 0, 0), CornerRadius = new CornerRadius(10), BorderThickness = new Thickness(1) };
+        private readonly TextBlock _libraryChecking = new TextBlock { Text = "Checking the asset library…", FontSize = 11, Margin = new Thickness(0, 6, 0, 0) };
+
+        /// <summary>The background library lookup started when the dialog opened (tests await it).</summary>
+        public Task LibraryCheck { get; private set; } = Task.CompletedTask;
+        /// <summary>The library already has this file's exact content.</summary>
+        internal bool KnownInLibrary(string file) => _inLibrary.ContainsKey(file);
 
         public string[] ImportedPaths { get; private set; } = Array.Empty<string>();
         public List<ImportReport> Reports { get; } = new List<ImportReport>();
@@ -90,6 +102,7 @@ namespace VortexEditor.Shell
             Content = _optionsPage;
             AutoSelectTags();
             RefreshFiles();
+            LibraryCheck = CheckLibraryAsync();
             KeyDown += (s, e) => { if (e.Key == Key.Escape && !ShowingResults) Close(); };
         }
 
@@ -100,6 +113,9 @@ namespace VortexEditor.Shell
             var stack = new StackPanel { Margin = new Thickness(22, 18, 22, 10) };
             stack.Children.Add(new TextBlock { Text = Title, FontSize = 18, FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 0, 0, 3) });
             stack.Children.Add(_subtitle);
+            _libraryChecking.Foreground = Ui.Brush("VxTextTertiaryBrush");
+            stack.Children.Add(_libraryChecking);
+            stack.Children.Add(_libraryBanner);
 
             stack.Children.Add(Ui.Header("Files", new Thickness(0, 14, 0, 6)));
             stack.Children.Add(new Border { Classes = { "card" }, Padding = new Thickness(8), MaxHeight = 190, Child = new ScrollViewer { Content = _fileRows } });
@@ -180,7 +196,7 @@ namespace VortexEditor.Shell
             _fileRows.Children.Clear();
             foreach (var f in _files.ToList())
             {
-                var g = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto"), Margin = new Thickness(0, 1) };
+                var g = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto,Auto"), Margin = new Thickness(0, 1) };
                 g.Children.Add(new VxIcon { Icon = AssetPickerDialog.IconFor(f), Margin = new Thickness(2, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center });
                 var name = new TextBlock { Text = Path.GetFileName(f), VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
                 ToolTip.SetTip(name, f);
@@ -188,16 +204,96 @@ namespace VortexEditor.Shell
                 long size = 0; try { size = new FileInfo(f).Length; } catch { }
                 var meta = new TextBlock { Text = ModelImportPipeline.KindOf(f) + " · " + ModelDocument.FormatBytes(size), FontSize = 11, Foreground = Ui.Brush("VxTextSecondaryBrush"), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0) };
                 Grid.SetColumn(meta, 2); g.Children.Add(meta);
+                if (_inLibrary.TryGetValue(f, out var known) && _files.Count > 1)
+                {
+                    var file = f;
+                    var asNew = new CheckBox { Content = "in library — import as new", FontSize = 11, IsChecked = _asNew.Contains(f), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) };
+                    ToolTip.SetTip(asNew, "Already in your library as “" + known.Name + "”" + (known.Tags.Count > 0 ? " (" + string.Join(", ", known.Tags) + ")" : "") +
+                                          ", " + known.SourceDescription +
+                                          ".\nChecked: give it a separate library entry with this import's name and tags (still stored once).");
+                    asNew.IsCheckedChanged += (s, e) => { if (asNew.IsChecked == true) _asNew.Add(file); else _asNew.Remove(file); };
+                    Grid.SetColumn(asNew, 3); g.Children.Add(asNew);
+                }
                 if (_files.Count > 1)
                 {
                     var file = f;
                     var rm = Ui.IconButton("Close", "Don't import this file", () => { _files.Remove(file); RefreshFiles(); });
-                    Grid.SetColumn(rm, 3); g.Children.Add(rm);
+                    Grid.SetColumn(rm, 4); g.Children.Add(rm);
                 }
                 _fileRows.Children.Add(g);
             }
             var groups = _files.GroupBy(ModelImportPipeline.KindOf).Select(x => x.Count() + " " + x.Key.ToLowerInvariant() + (x.Count() > 1 ? "s" : ""));
             _subtitle.Text = _files.Count + " file(s): " + string.Join(", ", groups);
+        }
+
+        // ================================================================== library duplicate check (#57)
+
+        /// <summary>Hash the incoming files (off the UI thread) and ask the library whether it has them already.</summary>
+        private async Task CheckLibraryAsync()
+        {
+            var files = _files.ToList();
+            List<(string file, LibraryEntry entry)> found;
+            try
+            {
+                found = await Task.Run(() =>
+                {
+                    var lib = GlobalAssetDatabase.Instance;
+                    var list = new List<(string, LibraryEntry)>();
+                    if (!lib.IsAvailable) return list;
+                    foreach (var f in files) { var e = lib.FindByFile(f, out _); if (e != null) list.Add((f, e)); }
+                    return list;
+                });
+            }
+            catch { found = new List<(string, LibraryEntry)>(); }
+            _libraryChecking.IsVisible = false;
+            foreach (var (f, e) in found) _inLibrary[f] = e;
+            if (found.Count == 0 || ShowingResults) return;
+            BuildLibraryBanner();
+            RefreshFiles();
+        }
+
+        private void BuildLibraryBanner()
+        {
+            _libraryBanner.Background = Ui.Brush("VxAccentSoftBrush");
+            _libraryBanner.BorderBrush = Ui.Brush("VxAccentBrush");
+            var text = new StackPanel { Spacing = 3 };
+            var head = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+            head.Children.Add(new VxIcon { Icon = "Library", Width = 15, Height = 15, Foreground = Ui.Brush("VxAccentBrush"), VerticalAlignment = VerticalAlignment.Center });
+            head.Children.Add(new TextBlock { Text = "Already in your library", FontWeight = FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center });
+            text.Children.Add(head);
+            if (_files.Count == 1 && _inLibrary.TryGetValue(_files[0], out var e))
+            {
+                text.Children.Add(new TextBlock { Text = "“" + e.Name + "” · " + (e.Type == AssetType.Mesh ? "Model" : e.Type.ToString()) + " · " + e.SourceDescription, FontSize = 12, TextWrapping = TextWrapping.Wrap });
+                if (e.Tags.Count > 0) text.Children.Add(new TextBlock { Text = "Tags: " + string.Join(", ", e.Tags), FontSize = 11, Foreground = Ui.Brush("VxTextSecondaryBrush"), TextWrapping = TextWrapping.Wrap });
+                var useLib = new RadioButton { GroupName = "libchoice", Content = new TextBlock { Text = "Use the library entry — its name and tags (no new library entry)", TextWrapping = TextWrapping.Wrap, FontSize = 12 }, IsChecked = true, Margin = new Thickness(0, 6, 0, 0) };
+                var asNew = new RadioButton { GroupName = "libchoice", Content = new TextBlock { Text = "Import as new — a separate library entry with this import's name and tags (the file is still stored once)", TextWrapping = TextWrapping.Wrap, FontSize = 12 } };
+                string file = _files[0];
+                void Adopt()
+                {
+                    _asNew.Remove(file);
+                    _name.Text = e.Name;
+                    foreach (var t in e.Tags) AddTag(t);
+                }
+                useLib.IsCheckedChanged += (s, a) => { if (useLib.IsChecked == true) Adopt(); };
+                asNew.IsCheckedChanged += (s, a) => { if (asNew.IsChecked == true) _asNew.Add(file); };
+                text.Children.Add(useLib);
+                text.Children.Add(asNew);
+                Adopt();
+                var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*") };
+                var thumb = new Border { Width = 64, Height = 64, CornerRadius = new CornerRadius(8), ClipToBounds = true, Background = Ui.Brush("VxFieldBrush"), Margin = new Thickness(0, 0, 12, 0), VerticalAlignment = VerticalAlignment.Top };
+                thumb.Child = new VxIcon { Icon = AssetPickerDialog.IconFor(file), Width = 26, Height = 26 };
+                LibraryThumbs.Request(e, bmp => thumb.Child = new Image { Source = bmp, Stretch = Stretch.UniformToFill });
+                row.Children.Add(thumb);
+                Grid.SetColumn(text, 1);
+                row.Children.Add(text);
+                _libraryBanner.Child = row;
+            }
+            else
+            {
+                text.Children.Add(new TextBlock { Text = _inLibrary.Count + " of " + _files.Count + " files are already in the library. They are imported into the project as usual and keep one library entry — tick “import as new” on a file to give it a separate entry.", FontSize = 12, TextWrapping = TextWrapping.Wrap });
+                _libraryBanner.Child = text;
+            }
+            _libraryBanner.IsVisible = true;
         }
 
         private void AutoSelectTags()
@@ -315,6 +411,8 @@ namespace VortexEditor.Shell
                 foreach (var f in _files)
                 {
                     await Task.Yield();   // let the UI breathe between files
+                    o.LibraryForceNew = _asNew.Contains(f);
+                    o.LibraryName = o.LibraryForceNew ? (newName ?? Path.GetFileNameWithoutExtension(f)) : null;
                     Reports.Add(ModelImportPipeline.Import(f, target, o, newName));
                 }
                 try { AssetDatabase.Instance.Refresh(); } catch { }

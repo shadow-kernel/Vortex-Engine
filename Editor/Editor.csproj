@@ -73,6 +73,7 @@
       <HintPath>..\packages\System.Buffers.4.6.1\lib\net462\System.Buffers.dll</HintPath>
     </Reference>
     <Reference Include="System.Data" />
+    <Reference Include="System.IO.Compression" />
     <Reference Include="System.IO.Pipelines, Version=10.0.0.2, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51, processorArchitecture=MSIL">
       <HintPath>..\packages\System.IO.Pipelines.10.0.2\lib\net462\System.IO.Pipelines.dll</HintPath>
     </Reference>
@@ -247,6 +248,15 @@
       <DependentUpon>App.xaml</DependentUpon>
     </Compile>
     <Compile Include="Common\ViewModelBase.cs" />
+    <Compile Include="Core\Assets\Library\ContentHash.cs" />
+    <Compile Include="Core\Assets\Library\GlobalAssetDatabase.cs" />
+    <Compile Include="Core\Assets\Library\ImageInfo.cs" />
+    <Compile Include="Core\Assets\Library\LibraryBundle.cs" />
+    <Compile Include="Core\Assets\Library\LibraryCompanions.cs" />
+    <Compile Include="Core\Assets\Library\LibraryModels.cs" />
+    <Compile Include="Core\Assets\Library\LibraryProjects.cs" />
+    <Compile Include="Core\Assets\Library\LibrarySettings.cs" />
+    <Compile Include="Core\Assets\Library\Sqlite.cs" />
     <Compile Include="Core\Assets\AssetDatabase.cs" />
     <Compile Include="Core\Assets\AssetDeletionService.cs" />
     <Compile Include="Core\Assets\AssetMetadata.cs" />
