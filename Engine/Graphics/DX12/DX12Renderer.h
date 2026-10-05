@@ -363,6 +363,19 @@ namespace vortex::graphics::dx12
 		void ui_text(float x, float y, float w, float h, const wchar_t* s, float size, float r, float g, float b, float a, int align, int weight) { m_ui_overlay.add_text(x, y, w, h, s, size, r, g, b, a, align, weight); }
 		void ui_line(float x1, float y1, float x2, float y2, float r, float g, float b, float a, float thick) { m_ui_overlay.add_line(x1, y1, x2, y2, r, g, b, a, thick); }
 		void ui_image(float x, float y, float w, float h, const wchar_t* path, float r, float g, float b, float a) { m_ui_overlay.add_image(x, y, w, h, path, r, g, b, a); }
+		// UTF-8 variants (the exports UITextUtf8 / UIImageUtf8 the .NET hosts call; same as the SDL GPU backend).
+		// The overlay copies the text, so the converted temporary only has to live for the call.
+		void ui_text_utf8(float x, float y, float w, float h, const char* s, float size, float r, float g, float b, float a, int align, int weight) { ui_text(x, y, w, h, utf8_to_wide(s).c_str(), size, r, g, b, a, align, weight); }
+		void ui_image_utf8(float x, float y, float w, float h, const char* path, float r, float g, float b, float a) { ui_image(x, y, w, h, utf8_to_wide(path).c_str(), r, g, b, a); }
+		static std::wstring utf8_to_wide(const char* s)
+		{
+			if (!s || !*s) return std::wstring();
+			int n = MultiByteToWideChar(CP_UTF8, 0, s, -1, nullptr, 0);
+			if (n <= 1) return std::wstring();
+			std::wstring w((size_t)n - 1, L'\0');
+			MultiByteToWideChar(CP_UTF8, 0, s, -1, &w[0], n);
+			return w;
+		}
 		void ui_push_clip(float x, float y, float w, float h) { m_ui_overlay.push_clip(x, y, w, h); }
 		void ui_pop_clip() { m_ui_overlay.pop_clip(); }
 
