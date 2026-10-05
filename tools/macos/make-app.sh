@@ -46,6 +46,8 @@ for d in "$APP/Contents/MacOS" "$APP/Contents/Resources/Player"; do
   cp "$NATIVE/libVortexAPI.dylib" "$d/"
   for lib in "$NATIVE"/lib*.dylib; do [ -f "$lib" ] && cp "$lib" "$d/" || true; done
   mkdir -p "$d/Shaders"; cp -R "$NATIVE/Shaders/." "$d/Shaders/"
+  # SDL3, assimp & co. from Homebrew go into the bundle: the app (and every game it exports) runs without Homebrew
+  "$ROOT/tools/macos/bundle-dylibs.sh" "$d"
 done
 # templates without their git metadata (a template repo's .git holds every LFS object a second time)
 rsync -a --exclude ".git" "$ROOT/Templates/" "$APP/Contents/Resources/Templates/"
