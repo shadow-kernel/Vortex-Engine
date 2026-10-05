@@ -13,6 +13,7 @@
     <ClInclude Include="Runtime\SceneManager.h" />
     <ClInclude Include="Runtime\ResourceManager.h" />
     <ClInclude Include="Runtime\PrefabService.h" />
+    <ClInclude Include="Runtime\Systems\RenderBackend.h" />
     <ClInclude Include="Runtime\Systems\RenderSystem.h" />
     <ClInclude Include="Runtime\Systems\PhysicsSystem.h" />
     <ClInclude Include="Physics\PhysicsWorld.h" />
@@ -77,6 +78,7 @@
     <ClCompile Include="Runtime\SceneManager.cpp" />
     <ClCompile Include="Runtime\ResourceManager.cpp" />
     <ClCompile Include="Runtime\PrefabService.cpp" />
+    <ClCompile Include="Runtime\Systems\RenderBackend.cpp" />
     <ClCompile Include="Runtime\Systems\RenderSystem.cpp" />
     <ClCompile Include="Runtime\Systems\PhysicsSystem.cpp" />
     <ClCompile Include="Physics\PhysicsWorld.cpp" />
