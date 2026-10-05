@@ -69,6 +69,22 @@ namespace Editor.Core.Assets
         }
 
         /// <summary>
+        /// Registers (or re-reads) one file under Assets/ without rescanning the project — creates its .vmeta when
+        /// missing. For tools that write single assets (materials, scripts). Returns null for files outside Assets/.
+        /// </summary>
+        public AssetMetadata RegisterFile(string filePath)
+        {
+            if (string.IsNullOrEmpty(_projectPath) || string.IsNullOrEmpty(filePath) || !File.Exists(filePath))
+                return null;
+            var assetsPath = Path.GetFullPath(Path.Combine(_projectPath, "Assets")) + Path.DirectorySeparatorChar;
+            if (!Path.GetFullPath(filePath).StartsWith(assetsPath, StringComparison.OrdinalIgnoreCase))
+                return null;
+            ProcessAssetFile(filePath);
+            AssetsChanged?.Invoke(this, EventArgs.Empty);
+            return GetAssetByPath(GetRelativePath(filePath));
+        }
+
+        /// <summary>
         /// Scans the project directory for all assets and loads their metadata.
         /// Generates metadata for assets that don't have .vmeta files.
         /// </summary>

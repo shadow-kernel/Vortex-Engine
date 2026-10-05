@@ -15,6 +15,8 @@
 - [[Managed-Interop-Bindings]]
 
 **Guides**
+- [[Claude-Integration]]
+- [[Claude-Tools]]
 - [[Asset-Library]]
 - [[Asset-Store]]
 - [[Sound-Studio]]

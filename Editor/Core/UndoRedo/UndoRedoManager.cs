@@ -50,9 +50,9 @@ namespace Editor.Core.UndoRedo
 
         /// <summary>
         /// Maximale Anzahl von Befehlen im Undo-Stack.
-        /// Standard: 100 Befehle.
+        /// Standard: 300 Befehle (agent sessions — a Claude tool call is one step each — must not silently drop history).
         /// </summary>
-        public int MaxUndoStackSize { get; set; } = 100;
+        public int MaxUndoStackSize { get; set; } = 300;
 
         /// <summary>
         /// Zeitfenster in Millisekunden für das Zusammenführen von Befehlen.
@@ -122,6 +122,25 @@ namespace Editor.Core.UndoRedo
             if (_isExecuting)
                 return;
 
+            if (_group != null)
+            {
+                // an open group (BeginGroup) collects the command; the whole group becomes one undo step at EndGroup
+                try
+                {
+                    _isExecuting = true;
+                    if (execute)
+                    {
+                        command.Execute();
+                    }
+                }
+                finally
+                {
+                    _isExecuting = false;
+                }
+                _group.Add(command);
+                return;
+            }
+
             try
             {
                 _isExecuting = true;
@@ -165,6 +184,9 @@ namespace Editor.Core.UndoRedo
         /// <returns>True wenn ein Befehl rückgängig gemacht wurde.</returns>
         public bool Undo()
         {
+            if (_groupDepth > 0)
+                return false;
+
             if (!CanUndo || _isExecuting)
             {
                 // Am Limit - Sound abspielen
@@ -198,6 +220,9 @@ namespace Editor.Core.UndoRedo
         /// <returns>True wenn ein Befehl wiederholt wurde.</returns>
         public bool Redo()
         {
+            if (_groupDepth > 0)
+                return false;
+
             if (!CanRedo || _isExecuting)
             {
                 // Am Limit - Sound abspielen
@@ -247,6 +272,76 @@ namespace Editor.Core.UndoRedo
             {
                 Redo();
             }
+        }
+
+        // ------------------------------------------------------------------ groups
+
+        private Commands.CompositeCommand _group;
+        private int _groupDepth;
+
+        /// <summary>True while <see cref="BeginGroup"/> collects commands into one undo step.</summary>
+        public bool IsGrouping => _groupDepth > 0;
+
+        /// <summary>
+        /// Collects every command executed until the matching <see cref="EndGroup"/> into ONE undo step named
+        /// <paramref name="name"/> — a Claude tool call or a macro that creates hundreds of entities reverts with a
+        /// single Undo. Groups nest; only the outermost one reaches the stack. Undo/Redo are refused while a group is open.
+        /// </summary>
+        public void BeginGroup(string name)
+        {
+            if (_groupDepth++ == 0)
+                _group = new Commands.CompositeCommand(string.IsNullOrEmpty(name) ? "Edit" : name);
+        }
+
+        /// <summary>Renames the open group (the operation knows what it did only at the end).</summary>
+        public void RenameGroup(string name)
+        {
+            if (_group != null)
+                _group.Rename(name);
+        }
+
+        /// <summary>
+        /// Closes the group opened by <see cref="BeginGroup"/>. The outermost group becomes one undo step (none when no
+        /// command ran); with <paramref name="commit"/> false its commands are undone instead (an operation that failed
+        /// half-way leaves no trace). Returns the pushed step, or null.
+        /// </summary>
+        public IUndoableCommand EndGroup(bool commit = true)
+        {
+            if (_groupDepth == 0)
+                return null;
+            if (--_groupDepth > 0)
+                return null;
+
+            var group = _group;
+            _group = null;
+            if (group == null || group.Count == 0)
+                return null;
+
+            if (!commit)
+            {
+                try
+                {
+                    _isExecuting = true;
+                    group.Undo();
+                }
+                catch
+                {
+                    // a half-undone group is still better than a stuck manager
+                }
+                finally
+                {
+                    _isExecuting = false;
+                }
+                OnStateChanged();
+                return null;
+            }
+
+            _undoStack.Push(group);
+            _redoStack.Clear();
+            TrimUndoStack();
+            OnStateChanged();
+            OnCommandExecuted(group, CommandExecutionType.Execute);
+            return group;
         }
 
         /// <summary>

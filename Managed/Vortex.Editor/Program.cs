@@ -13,6 +13,13 @@ namespace VortexEditor
         public static int Main(string[] args)
         {
             Options = LaunchOptions.Parse(args);
+            // docs: the generated Claude tool reference (no UI, no engine)
+            foreach (var a in args ?? Array.Empty<string>())
+                if (a.StartsWith("--mcp-tools-md=", StringComparison.OrdinalIgnoreCase))
+                {
+                    System.IO.File.WriteAllText(a.Substring(15).Trim('"'), Claude.ToolReference.Markdown());
+                    return 0;
+                }
             if (Options.SmokeSeconds > 0 && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("VORTEX_APPDATA_DIR")))
                 Environment.SetEnvironmentVariable("VORTEX_APPDATA_DIR", System.IO.Path.Combine(System.IO.Path.GetTempPath(), "vortex-smoke-appdata"));
             // An exception in a pointer/key/window handler must not take the editor (and unsaved work) down.

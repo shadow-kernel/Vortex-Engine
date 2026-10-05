@@ -10,7 +10,7 @@ namespace Editor.Core.UndoRedo.Commands
     public class CompositeCommand : UndoableCommandBase
     {
         private readonly List<IUndoableCommand> _commands;
-        private readonly string _name;
+        private string _name;
 
         public override string Name => _name;
 
@@ -38,6 +38,15 @@ namespace Editor.Core.UndoRedo.Commands
         {
             _name = name ?? throw new ArgumentNullException(nameof(name));
             _commands = new List<IUndoableCommand>(commands ?? throw new ArgumentNullException(nameof(commands)));
+        }
+
+        /// <summary>
+        /// Gibt dem Befehl einen neuen Anzeigenamen (z. B. sobald eine Gruppe weiß, was sie getan hat).
+        /// </summary>
+        public void Rename(string name)
+        {
+            if (!string.IsNullOrEmpty(name))
+                _name = name;
         }
 
         /// <summary>

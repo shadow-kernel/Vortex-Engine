@@ -17,6 +17,11 @@ namespace Editor.Core.Editing
         public string Theme { get; set; } = "System";
         /// <summary>Preferred IDE for scripts: "" (auto), "code", "rider".</summary>
         public string ScriptIde { get; set; } = "";
+        /// <summary>Run the Claude MCP server (Claude Code / Claude Desktop operate the editor over http://127.0.0.1:port/mcp).
+        /// Off until the user turns it on (Tools ▸ Claude ▸ Connect Claude…).</summary>
+        public bool McpServerEnabled { get; set; }
+        /// <summary>Port of the MCP server. A fixed default keeps committed .mcp.json files valid across sessions.</summary>
+        public int McpPort { get; set; } = 7420;
 
         private static string FilePath => Path.Combine(EditorPaths.VortexAppData, "editor-prefs.json");
 

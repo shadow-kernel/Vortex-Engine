@@ -74,6 +74,49 @@ is **not** bundled in this source repository.
 `System.Threading.Tasks.Extensions`, `System.ValueTuple`.
 - **License:** MIT. © Microsoft Corporation. Upstream: https://github.com/dotnet/runtime
 
+## The cross-platform editor and player (`Managed/`, bundled in the self-contained macOS / Linux apps)
+
+### Avalonia
+- **Use:** the UI framework of the cross-platform editor (`Avalonia`, `.Desktop`, `.Themes.Fluent`, `.Fonts.Inter`,
+  `.Controls.ColorPicker`).
+- **License:** MIT. Copyright 2013-2025 © The AvaloniaUI Project. Upstream: https://github.com/AvaloniaUI/Avalonia
+
+### SkiaSharp / HarfBuzzSharp (via Avalonia)
+- **Use:** 2D rendering and text shaping of the editor UI; SkiaSharp also encodes the viewport images the Claude
+  tools return.
+- **License:** MIT, © Microsoft Corporation. The native assets contain Skia (BSD-3-Clause, © Google LLC) and HarfBuzz
+  (the "Old MIT" license). Upstream: https://github.com/mono/SkiaSharp
+
+### Tmds.DBus.Protocol (via Avalonia, Linux)
+- **License:** MIT. © Tom Deseyn. Upstream: https://github.com/tmds/Tmds.DBus
+
+### Roslyn (Microsoft.CodeAnalysis.CSharp)
+- **Use:** compiles the project's C# scripts in-process (`Managed/Vortex.Core/Scripting/RoslynScriptCompiler.cs`).
+- **License:** MIT. © Microsoft Corporation. Upstream: https://github.com/dotnet/roslyn
+
+### Model Context Protocol C# SDK
+- **Use:** the editor's Claude MCP server (`Managed/Vortex.Editor/Claude/`) — packages `ModelContextProtocol.AspNetCore`,
+  `ModelContextProtocol`, `ModelContextProtocol.Core` (2.2.0).
+- **License:** Apache License 2.0. © Model Context Protocol a Series of LF Projects, LLC.
+  Text: https://www.apache.org/licenses/LICENSE-2.0 · upstream: https://github.com/modelcontextprotocol/csharp-sdk
+
+### ASP.NET Core (Kestrel) and Microsoft.Extensions
+- **Use:** the HTTP host of the MCP server (framework reference `Microsoft.AspNetCore.App`, bundled by the self-contained
+  publish) and its dependencies `Microsoft.Extensions.AI.Abstractions`, `Microsoft.Extensions.Hosting.Abstractions`,
+  `Microsoft.Extensions.Logging.Abstractions`, `Microsoft.Extensions.Caching.Abstractions`.
+- **License:** MIT. © .NET Foundation and Contributors / © Microsoft Corporation.
+  Upstream: https://github.com/dotnet/aspnetcore · https://github.com/dotnet/extensions
+
+### SDL3 (macOS / Linux)
+- **Use:** window, input and the SDL GPU renderer (Metal / Vulkan) of the CMake build; linked from the system package
+  (`brew install sdl3` / `libsdl3-dev`) and copied into the macOS app bundle.
+- **License:** zlib. © 1997-2025 Sam Lantinga. Upstream: https://github.com/libsdl-org/SDL
+
+### Jolt Physics (macOS / Linux CMake build)
+- **Use:** Physics v2 (rigid bodies, characters, ragdolls, constraints) — fetched at a pinned tag and statically linked
+  (`Engine/CMakeLists.txt`, `VORTEX_ENABLE_JOLT`).
+- **License:** MIT. © 2021 Jorrit Rouwe. Upstream: https://github.com/jrouwe/JoltPhysics
+
 ---
 
 ## Optional — NVIDIA DLSS / Streamline (NOT bundled)
