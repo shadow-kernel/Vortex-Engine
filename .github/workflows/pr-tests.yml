@@ -45,7 +45,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 40
     steps:
-      - name: Checkout (submodules: Streamline headers)
+      - name: Checkout (with submodules — Streamline headers)
         uses: actions/checkout@v4
         with:
           submodules: recursive

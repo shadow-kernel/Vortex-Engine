@@ -44,7 +44,7 @@ jobs:
         run: tools/macos/make-app.sh --skip-native --dmg
 
       # The runners have a window server; whether Metal is available depends on the image — informational for now.
-      - name: Editor smoke (the Claude checks: MCP server + tools, panel, safety)
+      - name: Editor smoke (the Claude checks — MCP server + tools, panel, safety)
         continue-on-error: true
         run: |
           export VORTEX_APPDATA_DIR="$RUNNER_TEMP/appdata" VORTEX_SMOKE_FULL=1 VORTEX_SMOKE_ONLY="mcp,claude"
