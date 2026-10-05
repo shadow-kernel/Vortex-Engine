@@ -88,7 +88,7 @@ jobs:
         env:
           VORTEX_DX12_WARP: '1'
           VORTEX_SMOKE_FULL: '1'
-          VORTEX_SMOKE_ONLY: 'mcp,claude'
+          VORTEX_SMOKE_ONLY: 'mcp,claude,title bar,update window'
         run: |
           $tmp = $env:RUNNER_TEMP
           $app = "$tmp\app"
@@ -106,7 +106,7 @@ jobs:
           Get-Content "$tmp\smoke.log" -ErrorAction SilentlyContinue
           Get-Content "$tmp\smoke.err" -ErrorAction SilentlyContinue
           if (Select-String -Path "$tmp\smoke.log" -Pattern "SMOKE FAIL" -Quiet) { exit 1 }
-          if (-not (Select-String -Path "$tmp\smoke.log" -Pattern "SMOKE OK   mcp tools" -Quiet)) { exit 1 }
+          foreach ($c in @("mcp tools", "title bar")) { if (-not (Select-String -Path "$tmp\smoke.log" -Pattern "SMOKE OK   $c" -Quiet)) { Write-Host "::error::smoke check '$c' did not pass"; exit 1 } }
 
       - name: Upload the Windows smoke capture
         if: always()

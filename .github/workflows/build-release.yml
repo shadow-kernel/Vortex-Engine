@@ -210,7 +210,7 @@ jobs:
       env:
         VORTEX_DX12_WARP: '1'
         VORTEX_SMOKE_FULL: '1'
-        VORTEX_SMOKE_ONLY: 'mcp,claude'
+        VORTEX_SMOKE_ONLY: 'mcp,claude,title bar,update window'
       run: |
         $app = "$env:ProgramFiles\Vortex Engine"
         $tmp = $env:RUNNER_TEMP
@@ -221,7 +221,7 @@ jobs:
         if (-not $p.WaitForExit(420000)) { $p.Kill(); Write-Host "::warning::the editor smoke timed out" }
         Get-Content "$tmp\smoke.log" -ErrorAction SilentlyContinue
         if (Select-String -Path "$tmp\smoke.log" -Pattern "SMOKE FAIL" -Quiet) { exit 1 }
-        if (-not (Select-String -Path "$tmp\smoke.log" -Pattern "SMOKE OK   mcp tools" -Quiet)) { exit 1 }
+        foreach ($c in @("mcp tools", "title bar")) { if (-not (Select-String -Path "$tmp\smoke.log" -Pattern "SMOKE OK   $c" -Quiet)) { Write-Host "::error::smoke check '$c' did not pass"; exit 1 } }
 
     - name: Upload the installed-editor capture
       if: always()
