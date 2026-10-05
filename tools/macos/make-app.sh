@@ -65,6 +65,14 @@ rm -rf "$ICONSET"
 
 VERSION="$(grep -o 'Version(\([0-9]*, *\)\{2\}[0-9]*' "$ROOT/Editor/Core/EngineInfo.cs" 2>/dev/null | head -1 | grep -o '[0-9, ]*' | tr -d ' ' | tr ',' '.' || true)"
 [ -z "$VERSION" ] && VERSION="1.0.0"
+# The oldest macOS the app runs on is the newest one any bundled library was built for (Homebrew bottles target the
+# build machine's macOS) — say so in Info.plist instead of letting an older macOS crash at the first dlopen.
+MINOS=13.0
+for f in "$APP/Contents/MacOS"/*.dylib; do
+  v="$(otool -l "$f" 2>/dev/null | awk '/LC_BUILD_VERSION/{b=1} b&&/minos/{print $2; exit}')"
+  [ -n "$v" ] && [ "$(printf '%s\n%s\n' "$MINOS" "$v" | sort -V | tail -1)" = "$v" ] && MINOS="$v"
+done
+echo "   minimum macOS $MINOS"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -78,7 +86,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleVersion</key><string>$VERSION</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
-  <key>LSMinimumSystemVersion</key><string>13.0</string>
+  <key>LSMinimumSystemVersion</key><string>$MINOS</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
   <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>

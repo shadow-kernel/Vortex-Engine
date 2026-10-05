@@ -182,9 +182,15 @@ jobs:
           **Portable Version:**
           Download `VortexEngine-Portable-${{ steps.version.outputs.VERSION }}.zip` and extract to any folder.
           
+          **macOS (Apple Silicon):**
+          `Vortex-Editor-${{ steps.version.outputs.VERSION }}.dmg` is added by the macOS build a few minutes after this release appears.
+          The app is not notarised yet: the first time, right-click *Vortex Editor* ▸ **Open** (or allow it in System Settings ▸ Privacy & Security).
+
+          **Linux:** build from source — see the README.
+
           ### System Requirements
-          - Windows 10 or later (64-bit)
-          - .NET Framework 4.8
-          - DirectX 11 compatible graphics card
+          - Windows 10 or later (64-bit), .NET Framework 4.8, a DirectX 12 graphics card
+          - macOS 26 or later on Apple Silicon (Metal) — the DMG bundles libraries built for the CI runner's macOS
+          - Linux x64 with Vulkan (from source)
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

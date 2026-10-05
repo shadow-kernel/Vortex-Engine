@@ -115,7 +115,11 @@ namespace VortexEditor.Claude
                 var img = (shot?["content"] as JsonArray)?.FirstOrDefault(c => (string)c["type"] == "image");
                 string data = (string)img?["data"];
                 if (data == null || (string)img["mimeType"] != "image/jpeg" || data.Length < 2000) return Fail("capture_viewport: " + Shorten(shot?.ToJsonString()));
-                if (!string.IsNullOrEmpty(SmokeRegistry.CaptureDir)) File.WriteAllBytes(Path.Combine(SmokeRegistry.CaptureDir, "mcp_capture.jpg"), Convert.FromBase64String(data));
+                if (!string.IsNullOrEmpty(SmokeRegistry.CaptureDir))
+                {
+                    Directory.CreateDirectory(SmokeRegistry.CaptureDir);
+                    File.WriteAllBytes(Path.Combine(SmokeRegistry.CaptureDir, "mcp_capture.jpg"), Convert.FromBase64String(data));
+                }
 
                 // ---- the guard
                 if (await Status(http, "http://evil.example", null) != HttpStatusCode.Forbidden) return Fail("a foreign Origin must be refused");

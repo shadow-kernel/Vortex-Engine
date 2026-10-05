@@ -50,7 +50,10 @@ namespace VortexEditor.Claude
             if (r.IsError) throw new InvalidOperationException(tool + ": " + text);
             var img = r.Content.FirstOrDefault(c => c.Image != null);
             if (img != null && !string.IsNullOrEmpty(SmokeRegistry.CaptureDir))
+            {
+                Directory.CreateDirectory(SmokeRegistry.CaptureDir);   // the first capture of a run may come from here
                 File.WriteAllBytes(Path.Combine(SmokeRegistry.CaptureDir, "claude_corridor.jpg"), img.Image);
+            }
             try { return JsonNode.Parse(text); } catch { return JsonValue.Create(text); }
         }
 
