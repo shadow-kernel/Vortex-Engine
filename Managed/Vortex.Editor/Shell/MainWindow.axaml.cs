@@ -30,8 +30,6 @@ namespace VortexEditor.Shell
         private int _unseenErrors;
 
         public Thickness LeftInset => OperatingSystem.IsMacOS() ? new Thickness(74, 0, 0, 0) : new Thickness(8, 0, 0, 0);
-        /// <summary>Windows draws minimize / maximize / close into the toolbar's top-right corner (3 × 46 px).</summary>
-        public Thickness RightInset => OperatingSystem.IsWindows() ? new Thickness(0, 0, 150, 0) : new Thickness(0, 0, 12, 0);
 
         public MainWindow()
         {
@@ -471,7 +469,21 @@ namespace VortexEditor.Shell
         private void BuildMenus()
         {
             NativeMenu.SetMenu(this, EditorMenus.Build(this));
-            if (!OperatingSystem.IsMacOS()) MenuBarHost.IsVisible = true;
+            if (OperatingSystem.IsMacOS()) return;
+            MenuRow.IsVisible = true;
+            if (!OperatingSystem.IsWindows()) return;
+            // Windows asks the window what is under the pointer (WM_NCHITTEST): the header's backgrounds answer
+            // "caption" — move, Snap, double-click to maximize and the system menu, as on a native title bar. The caption
+            // buttons go into the menu row's right end; the title bar spans both rows.
+            foreach (var bg in new[] { MenuRowBackground, TitleBarBackground })
+            {
+                bg.IsHitTestVisible = true;
+                Win32Properties.SetNonClientHitTestResult(bg, Win32Properties.Win32HitTestValue.Caption);
+            }
+            ExtendClientAreaTitleBarHeightHint = MenuRow.Height + Root.RowDefinitions[1].Height.Value;
+            // maximized, a window without a system frame reaches past the screen edges by the frame's width: keep the
+            // editor inside the screen
+            PropertyChanged += (s, e) => { if (e.Property == OffScreenMarginProperty) Root.Margin = OffScreenMargin; };
         }
 
         private ContextMenu BuildContextMenu()

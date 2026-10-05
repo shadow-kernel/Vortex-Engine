@@ -8,20 +8,27 @@
         Title="Vortex Editor" Width="1500" Height="940" MinWidth="1024" MinHeight="640"
         ExtendClientAreaToDecorationsHint="True" ExtendClientAreaChromeHints="Default" ExtendClientAreaTitleBarHeightHint="52"
         Background="{DynamicResource VxWindowBrush}">
-  <Grid RowDefinitions="52,*,26">
-    <!-- unified toolbar (traffic lights live at the far left on macOS, the caption buttons at the far right on Windows) -->
-    <Border x:Name="TitleBar" Background="{DynamicResource VxToolbarBrush}" Classes="hairline-bottom">
-      <Grid ColumnDefinitions="Auto,*,Auto,*,Auto" Margin="{Binding RightInset}">
-        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="8" Margin="{Binding LeftInset}" x:Name="LeftGroup">
+  <Grid x:Name="Root" RowDefinitions="Auto,52,*,26">
+    <!-- Windows / Linux: the menu bar in a row of its own above the toolbar, where macOS has the system menu bar (on
+         Windows the caption buttons sit at its right end). Empty header space is the title bar: it drags the window and
+         a double-click maximizes it (macOS: the backgrounds are not hit-testable; Windows: they answer "caption"). -->
+    <Panel x:Name="MenuRow" Height="30" IsVisible="False">
+      <Border x:Name="MenuRowBackground" Background="{DynamicResource VxToolbarBrush}" IsHitTestVisible="False"/>
+      <NativeMenuBar x:Name="MenuBarHost" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="4,0,0,0"/>
+    </Panel>
+    <!-- unified toolbar (the traffic lights live at its far left on macOS) -->
+    <Panel Grid.Row="1" x:Name="TitleBar">
+      <Border x:Name="TitleBarBackground" Background="{DynamicResource VxToolbarBrush}" Classes="hairline-bottom" IsHitTestVisible="False"/>
+      <Grid ColumnDefinitions="Auto,*,Auto,*,Auto" Margin="0,0,12,0">
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="8" Margin="{Binding LeftInset}" x:Name="LeftGroup" IsHitTestVisible="False">
           <c:VxIcon Icon="Vortex" Width="20" Height="20" Foreground="{DynamicResource VxAccentBrush}" Margin="8,0,0,0"/>
           <StackPanel VerticalAlignment="Center">
             <TextBlock x:Name="ProjectTitle" Text="Vortex" FontWeight="SemiBold"/>
             <TextBlock x:Name="SceneSubtitle" Text="No project" Classes="small secondary"/>
           </StackPanel>
-          <NativeMenuBar x:Name="MenuBarHost" Margin="12,0,0,0" IsVisible="False"/>
         </StackPanel>
         <!-- centre: view tabs + play controls -->
-        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Spacing="6">
+        <StackPanel Grid.Column="2" x:Name="CenterGroup" Orientation="Horizontal" VerticalAlignment="Center" Spacing="6">
           <Border Classes="segmented">
             <StackPanel Orientation="Horizontal">
               <RadioButton x:Name="TabScene" GroupName="view" IsChecked="True" Click="OnSceneTab" ToolTip.Tip="Build view (edit / fly camera)">Scene</RadioButton>
@@ -39,17 +46,17 @@
           </Border>
         </StackPanel>
         <!-- right: build / git / settings -->
-        <StackPanel Grid.Column="4" Orientation="Horizontal" VerticalAlignment="Center" Spacing="6">
+        <StackPanel Grid.Column="4" x:Name="RightGroup" Orientation="Horizontal" VerticalAlignment="Center" Spacing="6">
           <Button x:Name="BuildButton" Classes="ghost" Click="OnBuildClick" ToolTip.Tip="Build the game (⌘B) — right-click for Build &amp; Run / settings"><StackPanel Orientation="Horizontal" Spacing="6"><c:VxIcon Icon="Hammer"/><TextBlock Text="Build"/></StackPanel></Button>
           <Button Classes="ghost" Click="OnGitClick" ToolTip.Tip="Source control (Git)"><StackPanel Orientation="Horizontal" Spacing="6"><c:VxIcon Icon="Git"/><TextBlock Text="Git"/></StackPanel></Button>
           <Button Classes="icon" Click="OnHistoryClick" ToolTip.Tip="History — undo list (⇧⌘H)"><c:VxIcon Icon="Undo"/></Button>
           <Button Classes="icon" Click="OnSettingsClick" ToolTip.Tip="Project settings (⌘,)"><c:VxIcon Icon="Gear"/></Button>
         </StackPanel>
       </Grid>
-    </Border>
+    </Panel>
 
     <!-- workspace -->
-    <Grid Grid.Row="1" x:Name="Workspace" ColumnDefinitions="260,5,*,5,330">
+    <Grid Grid.Row="2" x:Name="Workspace" ColumnDefinitions="260,5,*,5,330">
       <Grid x:Name="LeftColumn" RowDefinitions="3*,5,2*">
         <Border x:Name="HierarchyHost" Classes="sidebar hairline-right"><p:HierarchyPanel x:Name="Hierarchy"/></Border>
         <GridSplitter Grid.Row="1" ResizeDirection="Rows"/>
@@ -114,7 +121,7 @@
     </Grid>
 
     <!-- status bar -->
-    <Border Grid.Row="2" Background="{DynamicResource VxToolbarBrush}" Classes="hairline-top" Padding="12,0">
+    <Border Grid.Row="3" Background="{DynamicResource VxToolbarBrush}" Classes="hairline-top" Padding="12,0">
       <DockPanel VerticalAlignment="Center">
         <TextBlock x:Name="ResolutionText" DockPanel.Dock="Right" Classes="small tertiary"/>
         <Button x:Name="UndoStatus" DockPanel.Dock="Right" Classes="link" Padding="0" Margin="0,0,18,0" Click="OnHistoryClick" ToolTip.Tip="Open the History (undo list)" IsVisible="False">
