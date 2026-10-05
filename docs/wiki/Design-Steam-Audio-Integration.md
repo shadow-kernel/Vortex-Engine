@@ -140,7 +140,7 @@ gain is kept (Steam Audio's own distance model is disabled) so the two never dou
 
 - SDK vendored at `ThirdParty/steam-audio/` — `include/phonon.h` (+ headers) and
   `lib/windows-x64/phonon.lib` / `phonon.dll` (Windows x64 only; the SDK's other platforms/plugins are not
-  vendored). License text kept at `ThirdParty/steam-audio/LICENSE.md`.
+  vendored). License text kept at `ThirdParty/steam-audio/LICENSE`.
 - `Engine.vcxproj`: `phonon.h` include dir + `phonon.lib` additional dependency; a post-build step copies
   `phonon.dll` next to the engine outputs (same pattern as Streamline/DLSS).
 - Game export: when Steam Audio is enabled for a project, `phonon.dll` ships next to the game exe (it is a
