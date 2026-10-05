@@ -81,13 +81,16 @@ jobs:
         if ($missing) { Write-Error "Missing required artifacts in $out : $($missing -join ', ')"; exit 1 }
         Write-Host "OK: $($required -join ', ') present in $out"
     
-    - name: Download Inno Setup
+    # jrsoftware.org/download.php/is.exe now answers with the HTML download page (the v2.9.0 / v2.10.0 runs failed with
+    # "The file or directory is corrupted and unreadable"), so install through Chocolatey — present on every Windows
+    # runner — unless the image already has Inno Setup 6.
+    - name: Install Inno Setup
       shell: pwsh
       run: |
-        $innoUrl = "https://jrsoftware.org/download.php/is.exe"
-        $innoInstaller = "$env:TEMP\innosetup.exe"
-        Invoke-WebRequest -Uri $innoUrl -OutFile $innoInstaller
-        Start-Process -FilePath $innoInstaller -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-" -Wait
+        $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+        if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y }
+        if (-not (Test-Path $iscc)) { Write-Error "Inno Setup was not installed at $iscc"; exit 1 }
+        Write-Host "Inno Setup: $iscc"
     
     - name: Create Installer output directory
       run: New-Item -ItemType Directory -Force -Path "Installer/Output"
