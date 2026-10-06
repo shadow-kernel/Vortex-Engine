@@ -99,6 +99,15 @@
               </TabItem.Header>
               <p:ConsolePanel x:Name="ConsoleView"/>
             </TabItem>
+            <TabItem x:Name="TerminalTab" ToolTip.Tip="Terminal — your shell in the project folder (⌃` or ⌥F12)">
+              <TabItem.Header>
+                <StackPanel Orientation="Horizontal" Spacing="5">
+                  <c:VxIcon Icon="Console" Width="12" Height="12" VerticalAlignment="Center"/>
+                  <TextBlock Text="Terminal" VerticalAlignment="Center"/>
+                </StackPanel>
+              </TabItem.Header>
+              <p:TerminalPanel x:Name="TerminalPanel"/>
+            </TabItem>
           </TabControl>
         </Border>
       </Grid>

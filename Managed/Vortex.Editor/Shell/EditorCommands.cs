@@ -104,6 +104,13 @@ namespace VortexEditor.Shell
             return (f as Visual)?.FindAncestorOfType<TextBox>();
         }
 
+        /// <summary>True when the keyboard is in a terminal (Claude Code in the sidebar): typing and Ctrl keys go to the program.</summary>
+        public static bool TerminalFocused()
+        {
+            var f = FocusedElement() as Visual;
+            return f is VortexEditor.Controls.TerminalView || f?.FindAncestorOfType<VortexEditor.Controls.TerminalView>() != null;
+        }
+
         /// <summary>True when keyboard focus is inside <paramref name="scope"/>.</summary>
         public static bool FocusWithin(Visual scope)
         {

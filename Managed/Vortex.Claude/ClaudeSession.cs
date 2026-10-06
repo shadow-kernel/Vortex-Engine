@@ -399,6 +399,24 @@ namespace Editor.Core.Claude
             try { return msg.StopReason?.ToString()?.Trim('"').ToLowerInvariant(); } catch { return null; }
         }
 
+        /// <summary>The API's own sentence from an error ("Status Code: BadRequest {"type":"error","error":{…,"message":"…"}}").</summary>
+        internal static string ApiMessage(string raw)
+        {
+            if (string.IsNullOrEmpty(raw)) return "the request failed";
+            int brace = raw.IndexOf('{');
+            if (brace >= 0)
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(raw.Substring(brace));
+                    if (doc.RootElement.TryGetProperty("error", out var err) && err.TryGetProperty("message", out var m) && m.ValueKind == JsonValueKind.String)
+                        return m.GetString();
+                }
+                catch { }
+            }
+            return raw;
+        }
+
         /// <summary>The SDK's errors as the short sentences the panel shows.</summary>
         private static ClaudeChatException Friendly(Exception ex)
         {
@@ -413,7 +431,14 @@ namespace Editor.Core.Claude
                 case Anthropic.Exceptions.Anthropic5xxException:
                     return new ClaudeChatException("Claude: the API is busy or unavailable — try again in a moment.", HttpStatusCode.ServiceUnavailable);
                 case Anthropic.Exceptions.AnthropicApiException api:
-                    return new ClaudeChatException("Claude: " + api.Message);
+                    {
+                        string msg = ApiMessage(api.Message);
+                        // a Console account without credits: a Claude plan only works through Claude Code (the panel offers it)
+                        if (msg.IndexOf("credit balance", StringComparison.OrdinalIgnoreCase) >= 0)
+                            return new ClaudeChatException("Claude: this Anthropic Console account has no API credits. A Claude Pro / Max plan is separate from the Console — " +
+                                                           "use it with Claude Code, or add credits under Plans & Billing.", HttpStatusCode.PaymentRequired);
+                        return new ClaudeChatException("Claude: " + msg);
+                    }
                 case HttpRequestException http:
                     return new ClaudeChatException("Claude: no connection to the Anthropic API (" + http.Message + ").");
                 default:

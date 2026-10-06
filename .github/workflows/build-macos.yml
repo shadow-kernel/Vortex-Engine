@@ -48,7 +48,7 @@ jobs:
       # The runners have a window server and Metal (verified 2026-10-05, run 37338063100), so the checks gate the build.
       - name: Editor smoke (the Claude checks — MCP server + tools, panel, safety, shaders)
         run: |
-          export VORTEX_APPDATA_DIR="$RUNNER_TEMP/appdata" VORTEX_SMOKE_FULL=1 VORTEX_SMOKE_ONLY="mcp,claude,title bar,update window"
+          export VORTEX_APPDATA_DIR="$RUNNER_TEMP/appdata" VORTEX_SMOKE_FULL=1 VORTEX_SMOKE_ONLY="mcp,claude,title bar,update window,terminal,workspace layout"
           cp -R Templates/Default3D "$RUNNER_TEMP/smoke-project"
           perl -e 'alarm shift; exec @ARGV' 300 "dist/macos/Vortex Editor.app/Contents/MacOS/Vortex.Editor" \
             --project="$RUNNER_TEMP/smoke-project" --smoke=25 --capture="$RUNNER_TEMP/capture" | tee "$RUNNER_TEMP/smoke.log"
@@ -56,6 +56,8 @@ jobs:
           # the run got as far as the MCP checks (a crash before them prints no FAIL line)
           grep -q "SMOKE OK   mcp tools" "$RUNNER_TEMP/smoke.log"
           grep -q "SMOKE OK   title bar" "$RUNNER_TEMP/smoke.log"
+          grep -q "SMOKE OK   terminal" "$RUNNER_TEMP/smoke.log"
+          grep -q "SMOKE OK   claude code" "$RUNNER_TEMP/smoke.log"
 
       - name: Upload the DMG
         uses: actions/upload-artifact@v4

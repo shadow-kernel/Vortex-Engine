@@ -84,6 +84,17 @@ namespace VortexEditor.Claude
         private readonly Button _terminalSignIn = new Button { Content = "Sign in from a terminal", HorizontalAlignment = HorizontalAlignment.Left, IsVisible = false };
         private CancellationTokenSource _signInCts;
         private string _signInUrl;
+
+        // Chat (the editor's own chat on the Anthropic API) or Claude Code (the user's own Claude Code in a terminal)
+        private readonly ClaudeCodePane _codePane = new ClaudeCodePane();
+        private readonly ContentControl _main = new ContentControl();
+        private DockPanel _chatRoot;
+        private readonly RadioButton _tabChat = new RadioButton { GroupName = "claudemode", Content = "Chat" };
+        private readonly RadioButton _tabCode = new RadioButton { GroupName = "claudemode", Content = "Claude Code" };
+
+        /// <summary>Claude Code runs in the sidebar (instead of the chat).</summary>
+        public bool IsCodeMode => ReferenceEquals(_main.Content, _codePane);
+        internal ClaudeCodePane CodePane => _codePane;
         /// <summary>The user opened the sign-in view on purpose (to change the key) — coming back to the window does not
         /// switch to the chat until they finish or go back.</summary>
         private bool _stayOnSignIn;
@@ -128,11 +139,18 @@ namespace VortexEditor.Claude
             ApplyChoices();
 
             // ---- header: title, new chat, menu, close
-            var title = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
+            var title = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
             title.Children.Add(new VxIcon { Icon = "Sparkle", Width = 14, Height = 14, Foreground = EditorKit.Brush("VxAccentBrush"), VerticalAlignment = VerticalAlignment.Center });
-            title.Children.Add(new TextBlock { Text = "Claude", FontWeight = FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center });
+            ToolTip.SetTip(_tabChat, "Chat — the editor's own Claude chat, billed to your Anthropic Console account (API)");
+            ToolTip.SetTip(_tabCode, "Claude Code — Anthropic's Claude Code in the sidebar, with your Claude Pro / Max plan or Console account, connected to this editor");
+            _tabChat.Click += (s, e) => SetBackend(false);
+            _tabCode.Click += (s, e) => SetBackend(true);
+            var tabs = new StackPanel { Orientation = Orientation.Horizontal };
+            tabs.Children.Add(_tabChat);
+            tabs.Children.Add(_tabCode);
+            title.Children.Add(new Border { Classes = { "segmented" }, Child = tabs, VerticalAlignment = VerticalAlignment.Center });
             var right = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 0, VerticalAlignment = VerticalAlignment.Center };
-            right.Children.Add(IconButton("Plus", "New chat", NewChat));
+            right.Children.Add(IconButton("Plus", "New chat", () => { if (IsCodeMode) _codePane.Terminal.SendText("/clear\r"); else NewChat(); }));
             right.Children.Add(MenuButton());
             right.Children.Add(IconButton("Close", "Hide the Claude sidebar (⌘9)", () => EditorCommands.Window?.TogglePanel(MainWindow.PanelClaude)));
             var header = new DockPanel();
@@ -189,11 +207,17 @@ namespace VortexEditor.Claude
             _scroll = new ScrollViewer { Content = _log, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
             _signIn = SignInView();
 
+            _chatRoot = new DockPanel();
+            _chatRoot.Children.Add(footer);
+            _chatRoot.Children.Add(_body);
             var root = new DockPanel();
             root.Children.Add(headerBorder);
-            root.Children.Add(footer);
-            root.Children.Add(_body);
+            root.Children.Add(_main);
             Content = root;
+            bool code = _settings.Backend == "code";
+            _main.Content = code ? _codePane : _chatRoot;
+            _tabChat.IsChecked = !code;
+            _tabCode.IsChecked = code;
 
             SelectionService.Instance.SelectionChanged += (s, e) => Dispatcher.UIThread.Post(() => { _excludeSelection = false; UpdateAttachments(); });
             RefreshAccount();
@@ -206,9 +230,30 @@ namespace VortexEditor.Claude
         /// cursor in the composer.</summary>
         public void OnShown()
         {
+            if (IsCodeMode) { _ = _codePane.ShowAsync(); return; }
             RefreshAccount();
             UpdateAttachments();
             Dispatcher.UIThread.Post(() => { if (!ShowsSignIn) _input.Focus(); }, DispatcherPriority.Background);
+        }
+
+        /// <summary>Switch between the chat and Claude Code (remembered).</summary>
+        public void SetBackend(bool code)
+        {
+            _settings.Backend = code ? "code" : "api";
+            _settings.Save();
+            _tabChat.IsChecked = !code;
+            _tabCode.IsChecked = code;
+            if (code)
+            {
+                if (_busy) Stop();
+                _main.Content = _codePane;
+                _ = _codePane.ShowAsync();
+            }
+            else
+            {
+                _main.Content = _chatRoot;
+                OnShown();
+            }
         }
 
         // ================================================================== sending
@@ -250,6 +295,7 @@ namespace VortexEditor.Claude
             {
                 AddNote(ex.Message, true);
                 if (ex.Status == System.Net.HttpStatusCode.Unauthorized) AddSignInAgain();
+                else if (ex.Status == System.Net.HttpStatusCode.PaymentRequired) AddNoCredits();
                 else retry = true;
             }
             catch (Exception ex) { AddNote("Something went wrong: " + ex.Message, true); retry = true; }
@@ -442,6 +488,21 @@ namespace VortexEditor.Claude
             Grid.SetColumn(r, 2);
             g.Children.Add(r);
             _log.Children.Add(g);
+            ScrollToEnd();
+        }
+
+        /// <summary>The Console account has no API credits: a Claude plan works through Claude Code; or add credits.</summary>
+        private void AddNoCredits()
+        {
+            var row = new WrapPanel { ItemSpacing = 8, LineSpacing = 6 };
+            var code = new Button { Classes = { "accent" }, Content = "Use Claude Code (Claude plan)" };
+            ToolTip.SetTip(code, "Claude Code in this sidebar works with a Claude Pro or Max plan");
+            code.Click += (s, e) => SetBackend(true);
+            var credits = new Button { Content = "Add API credits" };
+            credits.Click += (s, e) => EditorCommands.OpenUrl("https://console.anthropic.com/settings/billing");
+            row.Children.Add(code);
+            row.Children.Add(credits);
+            _log.Children.Add(row);
             ScrollToEnd();
         }
 
@@ -766,10 +827,11 @@ namespace VortexEditor.Claude
             // ---- Claude subscription → Claude Code
             sp.Children.Add(new Border { Height = 1, Background = EditorKit.Brush("VxHairlineBrush"), Margin = new Thickness(0, 10, 0, 2) });
             sp.Children.Add(new TextBlock { Text = "Have Claude Pro or Max?", FontWeight = FontWeight.SemiBold, FontSize = 12.5 });
-            sp.Children.Add(Para("A Claude plan can't be used inside other apps. Use it with Claude Code — it opens on this project and drives the editor through its MCP server.", true));
-            var code = new Button { Content = "Open in Claude Code", HorizontalAlignment = HorizontalAlignment.Left };
-            code.Click += (s, e) => _ = OpenInClaudeCodeAsync();
+            sp.Children.Add(Para("Use your plan with Claude Code, right here in the sidebar: Anthropic's Claude Code runs on this project with your own sign-in (/login) and works with the editor's tools.", true));
+            var code = new Button { Classes = { "accent" }, Content = "Use Claude Code here", HorizontalAlignment = HorizontalAlignment.Left };
+            code.Click += (s, e) => SetBackend(true);
             sp.Children.Add(code);
+            sp.Children.Add(LinkButton("Open Claude Code in a terminal window instead", () => _ = OpenInClaudeCodeAsync()));
             return new ScrollViewer { Content = sp, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         }
 
@@ -918,8 +980,10 @@ namespace VortexEditor.Claude
             b.Click += (s, e) =>
             {
                 var f = new MenuFlyout { Placement = PlacementMode.BottomEdgeAlignedRight };
-                var code = new MenuItem { Header = "Open in Claude Code (Claude Pro / Max)" };
-                code.Click += (s2, e2) => _ = OpenInClaudeCodeAsync();
+                var code = new MenuItem { Header = IsCodeMode ? "Restart Claude Code" : "Use Claude Code here (Claude Pro / Max)" };
+                code.Click += (s2, e2) => { if (IsCodeMode) _codePane.Restart(); else SetBackend(true); };
+                var external = new MenuItem { Header = "Open Claude Code in a terminal window" };
+                external.Click += (s2, e2) => _ = OpenInClaudeCodeAsync();
                 var connect = new MenuItem { Header = "Connect Claude Code / Desktop (MCP)…" };
                 connect.Click += (s2, e2) => _ = ClaudeConnectDialog.Run();
                 var ops = new MenuItem { Header = "Operations… (history, revert, diffs)" };
@@ -931,6 +995,7 @@ namespace VortexEditor.Claude
                 var docs = new MenuItem { Header = "Documentation" };
                 docs.Click += (s2, e2) => EditorCommands.OpenUrl("https://engine.vortexstudio.dev/docs/#/claude");
                 f.Items.Add(code);
+                f.Items.Add(external);
                 f.Items.Add(connect);
                 f.Items.Add(new Separator());
                 f.Items.Add(ops);

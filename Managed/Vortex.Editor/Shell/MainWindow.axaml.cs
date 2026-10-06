@@ -68,6 +68,7 @@ namespace VortexEditor.Shell
                 if (IsConsoleShowing) ClearConsoleBadge();
                 if (ReferenceEquals(BottomTabs.SelectedItem, LibraryTab)) LibraryPanel.OnShown();
                 else if (ReferenceEquals(BottomTabs.SelectedItem, StoreTab)) StorePanel.OnShown();
+                else if (ReferenceEquals(BottomTabs.SelectedItem, TerminalTab)) TerminalPanel.OnShown();
             };
             AddHandler(KeyDownEvent, OnGlobalKeyDown, RoutingStrategies.Tunnel);
             // a smaller window: the side columns give way before the centre gets too narrow (and come back when it grows)
@@ -437,6 +438,8 @@ namespace VortexEditor.Shell
             {
                 try { CaptureClaudeWidth(); SaveClaudeLayout(); }
                 catch { }
+                // the shells and Claude Code end with the editor, as when terminal windows close
+                try { TerminalPanel.CloseAll(); ClaudePanel.CodePane.Stop(); } catch { }
                 VortexEditor.Program.Stage("stopping the MCP server");
                 _ = Claude.McpHost.StopAsync();
                 VortexEditor.Program.Stage("shutting the engine down");
@@ -514,6 +517,23 @@ namespace VortexEditor.Shell
             bool mac = OperatingSystem.IsMacOS();
             bool cmd = mac ? m.HasFlag(KeyModifiers.Meta) : m.HasFlag(KeyModifiers.Control);
             bool shift = m.HasFlag(KeyModifiers.Shift);
+            // the terminal: Ctrl+` as in VS Code, ⌥F12 / Alt+F12 as in JetBrains — from anywhere, also from inside it
+            if ((e.Key == Key.OemTilde && m == KeyModifiers.Control) || (e.Key == Key.F12 && m == KeyModifiers.Alt))
+            {
+                ToggleTerminal();
+                e.Handled = true;
+                return;
+            }
+            if (EditorCommands.TerminalFocused())
+            {
+                // typing in Claude Code: keys and Ctrl combinations belong to the terminal; only the sidebar toggle and,
+                // on macOS, the ⌘ shortcuts that are not editing keys stay with the editor
+                bool editing = e.Key == Key.C || e.Key == Key.V || e.Key == Key.X || e.Key == Key.A || e.Key == Key.Z || e.Key == Key.Y ||
+                               e.Key == Key.D || e.Key == Key.K || e.Key == Key.Back || e.Key == Key.Delete;
+                if (cmd && e.Key == Key.D9) { TogglePanel(PanelClaude); e.Handled = true; }
+                else if (cmd && mac && !editing && HandleCommandKey(e.Key, shift)) e.Handled = true;
+                return;
+            }
             if (cmd) { if (HandleCommandKey(e.Key, shift)) e.Handled = true; return; }
             if (m.HasFlag(KeyModifiers.Alt) || m.HasFlag(KeyModifiers.Control) || m.HasFlag(KeyModifiers.Meta)) return;
             if (HandlePlainKey(e.Key, shift)) e.Handled = true;
@@ -702,11 +722,11 @@ namespace VortexEditor.Shell
 
         // ---------------------------------------------------------------- panels
         public const string PanelHierarchy = "Hierarchy", PanelFiles = "Files", PanelInspector = "Inspector", PanelEnvironment = "Environment", PanelProject = "Project", PanelConsole = "Console",
-                            PanelLibrary = "Library", PanelStore = "Store", PanelClaude = "Claude";
+                            PanelLibrary = "Library", PanelStore = "Store", PanelClaude = "Claude", PanelTerminal = "Terminal";
         private readonly Dictionary<string, bool> _panels = new Dictionary<string, bool>
         {
             [PanelHierarchy] = true, [PanelFiles] = true, [PanelInspector] = true, [PanelEnvironment] = true, [PanelProject] = true, [PanelConsole] = true,
-            [PanelLibrary] = true, [PanelStore] = true, [PanelClaude] = Claude.ClaudePanelSettings.Current.Open,
+            [PanelLibrary] = true, [PanelStore] = true, [PanelClaude] = Claude.ClaudePanelSettings.Current.Open, [PanelTerminal] = true,
         };
         private GridLength _leftWidth = new GridLength(260), _rightWidth = new GridLength(330), _bottomHeight = new GridLength(300);
         private const double ClaudeDefaultWidth = 400, ClaudeMinWidth = 300;
@@ -801,6 +821,15 @@ namespace VortexEditor.Shell
 
         public void ShowPanel(string name) => TogglePanel(name, forceShow: true);
 
+        /// <summary>Show the terminal and type into it — or, when it already has the keyboard, hide it again.</summary>
+        public void ToggleTerminal()
+        {
+            bool inFront = _panels[PanelTerminal] && ReferenceEquals(BottomTabs.SelectedItem, TerminalTab);
+            if (inFront && EditorCommands.FocusWithin(TerminalPanel)) { TogglePanel(PanelTerminal); return; }
+            ShowPanel(PanelTerminal);
+            TerminalPanel.OnShown();
+        }
+
         private TabItem TabFor(string name, out TabControl tabs)
         {
             tabs = null;
@@ -812,6 +841,7 @@ namespace VortexEditor.Shell
                 case PanelLibrary: tabs = BottomTabs; return LibraryTab;
                 case PanelStore: tabs = BottomTabs; return StoreTab;
                 case PanelConsole: tabs = BottomTabs; return ConsoleTab;
+                case PanelTerminal: tabs = BottomTabs; return TerminalTab;
             }
             return null;
         }
@@ -862,8 +892,8 @@ namespace VortexEditor.Shell
             if (claude) ClaudeToggleIcon.Foreground = EditorKit.Brush("VxAccentBrush");
             else ClaudeToggleIcon.ClearValue(Avalonia.Controls.Primitives.TemplatedControl.ForegroundProperty);
 
-            ApplyTabs(BottomTabs, (ProjectTab, _panels[PanelProject]), (LibraryTab, _panels[PanelLibrary]), (StoreTab, _panels[PanelStore]), (ConsoleTab, _panels[PanelConsole]));
-            bool bottom = _panels[PanelProject] || _panels[PanelLibrary] || _panels[PanelStore] || _panels[PanelConsole];
+            ApplyTabs(BottomTabs, (ProjectTab, _panels[PanelProject]), (LibraryTab, _panels[PanelLibrary]), (StoreTab, _panels[PanelStore]), (ConsoleTab, _panels[PanelConsole]), (TerminalTab, _panels[PanelTerminal]));
+            bool bottom = _panels[PanelProject] || _panels[PanelLibrary] || _panels[PanelStore] || _panels[PanelConsole] || _panels[PanelTerminal];
             CenterColumn.RowDefinitions[2].Height = bottom ? _bottomHeight : new GridLength(0);
             CenterColumn.RowDefinitions[1].Height = new GridLength(bottom ? 5 : 0);
             BottomDock.IsVisible = bottom;

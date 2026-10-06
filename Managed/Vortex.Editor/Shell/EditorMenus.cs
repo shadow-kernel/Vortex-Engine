@@ -371,6 +371,7 @@ namespace VortexEditor.Shell
                 Check("Library", "Cmd+D7", () => w.TogglePanel(MainWindow.PanelLibrary), () => w.IsPanelVisible(MainWindow.PanelLibrary)),
                 Check("Asset Store", "Cmd+D8", () => w.TogglePanel(MainWindow.PanelStore), () => w.IsPanelVisible(MainWindow.PanelStore)),
                 Check("Claude Sidebar", "Cmd+D9", () => w.TogglePanel(MainWindow.PanelClaude), () => w.IsPanelVisible(MainWindow.PanelClaude)),
+                Check("Terminal", "Ctrl+OemTilde", w.ToggleTerminal, () => w.IsPanelVisible(MainWindow.PanelTerminal)),
                 Sep(),
             };
             foreach (var e in Editors)
@@ -395,7 +396,8 @@ namespace VortexEditor.Shell
                 Item("Audio Mixer…", null, EditorCommands.AudioMixer),
                 Sub("Claude",
                     Item("Claude Sidebar", null, () => w.ShowPanel(MainWindow.PanelClaude)),
-                    Item("Open in Claude Code", null, () => _ = Claude.ClaudePanel.Current?.OpenInClaudeCodeAsync()),
+                    Item("Claude Code in the Sidebar", null, () => { w.ShowPanel(MainWindow.PanelClaude); Claude.ClaudePanel.Current?.SetBackend(true); }),
+                    Item("Open Claude Code in a Terminal Window", null, () => _ = Claude.ClaudePanel.Current?.OpenInClaudeCodeAsync()),
                     Item("Connect Claude Code / Desktop…", null, () => _ = Claude.ClaudeConnectDialog.Run()),
                     Item("Operations…", null, () => Claude.ClaudeOperationsWindow.Open()),
                     Check("MCP Server", null, () => _ = Claude.McpHost.SetEnabledAsync(!Claude.McpHost.IsRunning), () => Claude.McpHost.IsRunning)),
