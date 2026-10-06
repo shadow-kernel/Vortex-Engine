@@ -256,7 +256,7 @@ namespace VortexEditor.Controls
         }
 
         private static bool IsSimple(Cell c) => string.IsNullOrEmpty(c.Text) || (c.Text.Length == 1 && c.Text[0] < 0x7F && !c.Flags.HasFlag(CellFlags.WideTail));
-        private static bool Same(Cell a, Cell b) => a.Fg == b.Fg && a.Bg == b.Bg && (a.Flags & ~CellFlags.WideTail) == (b.Flags & ~CellFlags.WideTail);
+        private static bool Same(Cell a, Cell b) => a.Fg == b.Fg && a.Bg == b.Bg && (a.Flags & ~(CellFlags.WideTail | CellFlags.Wrapped)) == (b.Flags & ~(CellFlags.WideTail | CellFlags.Wrapped));
 
         private static string Text(Cell[] line, int from, int to)
         {
@@ -376,6 +376,14 @@ namespace VortexEditor.Controls
             Focus();
             var p = e.GetCurrentPoint(this);
             if (!p.Properties.IsLeftButtonPressed) return;
+            // ⌘-click (Ctrl-click elsewhere) opens a web link, as in Terminal and VS Code
+            if (e.KeyModifiers.HasFlag(OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control))
+            {
+                var (row, col) = CellAtPoint(p.Position);
+                string link;
+                lock (_gate) link = _screen.LinkAt(row, col);
+                if (link != null) { VortexEditor.Shell.EditorCommands.OpenUrl(link); e.Handled = true; return; }
+            }
             if (e.ClickCount == 2) { SelectWord(CellAtPoint(p.Position)); e.Handled = true; return; }
             _selStart = _selEnd = CellAtPoint(p.Position);
             _selecting = true;
@@ -483,8 +491,10 @@ namespace VortexEditor.Controls
                     var part = new StringBuilder();
                     for (int x = from; x <= to && x < line.Length; x++)
                         if (!line[x].Flags.HasFlag(CellFlags.WideTail)) part.Append(string.IsNullOrEmpty(line[x].Text) ? " " : line[x].Text);
-                    sb.Append(part.ToString().TrimEnd());
-                    if (row < b.row) sb.Append('\n');
+                    // a row that wrapped goes on without a line break (a long link copies in one piece)
+                    bool wrapped = row < b.row && _screen.IsWrapped(row);
+                    sb.Append(wrapped ? part.ToString() : part.ToString().TrimEnd());
+                    if (row < b.row && !wrapped) sb.Append('\n');
                 }
             }
             return sb.ToString();

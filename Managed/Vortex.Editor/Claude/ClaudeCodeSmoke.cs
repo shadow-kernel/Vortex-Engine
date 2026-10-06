@@ -73,6 +73,13 @@ namespace VortexEditor.Claude
                         await SmokeRegistry.Settle(1500);
                         SmokeRegistry.Capture(window, "claude_code_real.png");
                         log.Log("claude code (real): first screen\n" + term.Screen.ScreenText());
+                        // a key through the terminal: Enter picks the highlighted theme and Claude Code draws its next step
+                        string before = term.Screen.ScreenText();
+                        term.SendText("\r");
+                        bool moved = await WaitFor(() => term.Screen.ScreenText() != before, 15000);
+                        await SmokeRegistry.Settle(2000);
+                        SmokeRegistry.Capture(window, "claude_code_real2.png");
+                        log.Log("claude code (real): after Enter" + (moved ? "" : " (unchanged)") + "\n" + term.Screen.ScreenText());
                         panel.CodePane.Stop();
                         if (!shown) return Fail("the real Claude Code showed nothing recognisable");
                     }

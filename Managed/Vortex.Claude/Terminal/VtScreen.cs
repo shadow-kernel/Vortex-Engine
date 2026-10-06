@@ -12,6 +12,8 @@ namespace Editor.Core.Claude.Terminal
         None = 0, Bold = 1, Dim = 2, Italic = 4, Underline = 8, Inverse = 16, Hidden = 32, Strike = 64,
         /// <summary>The right half of a double-width character (its text is in the cell before).</summary>
         WideTail = 128,
+        /// <summary>On a row's last cell: the text went on in the next row (an automatic wrap, not a new line).</summary>
+        Wrapped = 256,
     }
 
     /// <summary>One cell of the screen: its text (a grapheme, "" for empty), colours and attributes.</summary>
@@ -319,14 +321,14 @@ namespace Editor.Core.Claude.Terminal
             }
             if (_wrapPending)
             {
-                if (_autoWrap) { CursorX = 0; LineFeed(); }
+                if (_autoWrap) { _lines[CursorY][Cols - 1].Flags |= CellFlags.Wrapped; CursorX = 0; LineFeed(); }
                 _wrapPending = false;
             }
             if (width == 2 && CursorX == Cols - 1)
             {
                 // no room for a wide character at the right edge: it wraps
                 _lines[CursorY][CursorX] = Blank();
-                if (_autoWrap) { CursorX = 0; LineFeed(); } else return;
+                if (_autoWrap) { _lines[CursorY][Cols - 1].Flags |= CellFlags.Wrapped; CursorX = 0; LineFeed(); } else return;
             }
             var line = _lines[CursorY];
             if (_insertMode) InsertCells(width);
@@ -784,5 +786,43 @@ namespace Editor.Core.Claude.Terminal
 
         /// <summary>The cell at a position of the visible screen.</summary>
         public Cell CellAt(int x, int y) => _lines[y][x];
+
+        /// <summary>True when a row's text goes on in the next row (it wrapped).</summary>
+        public bool IsWrapped(int row)
+        {
+            var line = Line(row);
+            return line != null && line.Length > 0 && line[line.Length - 1].Flags.HasFlag(CellFlags.Wrapped);
+        }
+
+        /// <summary>The web link (http/https) at a cell, following it across wrapped rows; null when there is none.</summary>
+        public string LinkAt(int row, int col)
+        {
+            // the logical line: this row plus the rows it wraps from and into
+            int first = row, last = row;
+            while (IsWrapped(first - 1) && Line(first - 1) != null) first--;
+            while (IsWrapped(last) && Line(last + 1) != null) last++;
+            var sb = new StringBuilder();
+            int at = -1;
+            for (int r = first; r <= last; r++)
+            {
+                var line = Line(r);
+                for (int x = 0; x < line.Length; x++)
+                {
+                    if (line[x].Flags.HasFlag(CellFlags.WideTail)) continue;
+                    if (r == row && x == col) at = sb.Length;
+                    sb.Append(string.IsNullOrEmpty(line[x].Text) ? " " : line[x].Text);
+                }
+            }
+            if (at < 0) return null;
+            string text = sb.ToString();
+            int start = at, end = at;
+            while (start > 0 && !char.IsWhiteSpace(text[start - 1])) start--;
+            while (end < text.Length && !char.IsWhiteSpace(text[end])) end++;
+            string token = text.Substring(start, end - start).Trim('(', ')', '[', ']', '<', '>', '"', '\'', ',', '.');
+            int http = token.IndexOf("http", StringComparison.Ordinal);
+            if (http < 0) return null;
+            token = token.Substring(http);
+            return token.StartsWith("https://", StringComparison.Ordinal) || token.StartsWith("http://", StringComparison.Ordinal) ? token : null;
+        }
     }
 }

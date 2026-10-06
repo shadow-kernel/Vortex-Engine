@@ -27,6 +27,18 @@ namespace VortexTests
         }
 
         [Test]
+        public static void WrappedLinksStayWhole(TestContext t)
+        {
+            var s = new VtScreen(20, 4);
+            s.Feed("go to https://claude.ai/oauth/authorize?code=abc123 now\r\nnext");
+            t.True(s.IsWrapped(0), "the long line wrapped");
+            t.False(s.IsWrapped(2), "the line ended with a real new line");
+            t.Equal("https://claude.ai/oauth/authorize?code=abc123", s.LinkAt(1, 3), "the link, read across the wrap");
+            t.Equal("https://claude.ai/oauth/authorize?code=abc123", s.LinkAt(0, 8), "from its first row too");
+            t.Equal(null, s.LinkAt(3, 1), "no link elsewhere");
+        }
+
+        [Test]
         public static void CursorMovesEraseAndInsert(TestContext t)
         {
             var s = new VtScreen(20, 5);
