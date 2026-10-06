@@ -9,7 +9,7 @@
 // unchanged. phonon.dll is loaded DYNAMICALLY (LoadLibrary), so it is a true optional runtime dependency:
 // the engine builds and boots without it.
 //
-// Design: docs/wiki/Design-Steam-Audio-Integration.md.
+// Design: https://engine.vortexstudio.dev/docs/#/design-steam-audio
 
 typedef void ma_node;   // matches miniaudio's `typedef void ma_node;` (identical redefinition is allowed)
 
