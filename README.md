@@ -42,7 +42,7 @@
 
 | | |
 |---|---|
-| 🤖 **Claude, built in** | The editor runs an **MCP server**: Claude Code or Claude Desktop builds scenes, materials, shaders, scripts, sound and whole worlds through 68 tools, play-tests and looks at the result — every change one undo step, with dry runs and an operations log. Or chat in the editor's own **Claude panel**. |
+| 🤖 **Claude, built in** | The editor runs an **MCP server**: Claude Code or Claude Desktop builds scenes, materials, shaders, scripts, sound and whole worlds through 68 tools, play-tests and looks at the result — every change one undo step, with dry runs and an operations log. Or work with Claude in the editor's own **Claude sidebar**: Ask or Agent, your choice of model, effort and context. |
 | 🖥️ **Windows · macOS · Linux** | **Direct3D 12**, **Metal** and **Vulkan** renderers; one .NET 10 editor with the same UI on all three; games build for all three from any of them. |
 | 🎨 **Renderer** | Physically-based shading, shadow maps for directional, point and spot lights, height fog, SSAO, bloom, vignette, film grain, colour grading, custom per-material shaders, GPU instancing + LOD, **DLSS 4** on NVIDIA. |
 | 🔊 **Audio** | 3D sound sources, sound containers with variation, reverb zones, a mixer with buses, ducking and meters — and the **Sound Studio**, which generates sounds from a description. |
@@ -86,7 +86,7 @@ flowchart LR
     end
     subgraph Managed["🟪 Managed (C#)"]
         CORE["📦 Vortex.Core<br/><sub>scenes · assets · scripting · services (shared)</sub>"]
-        AV["🖥️ Vortex.Editor<br/><sub>.NET 10 + Avalonia · MCP server · Claude panel</sub>"]
+        AV["🖥️ Vortex.Editor<br/><sub>.NET 10 + Avalonia · MCP server · Claude sidebar</sub>"]
         WPF["🪟 Vortex Engine.exe<br/><sub>classic .NET 4.8 WPF editor (Windows, until v3.1)</sub>"]
         CORE --> AV
         CORE --> WPF
@@ -101,7 +101,7 @@ flowchart LR
 | **Engine** | `Engine/` | `Engine.lib` / `libVortexEngine` | Core runtime: ECS, renderers (Direct3D 12 on Windows, SDL GPU on Metal and Vulkan), audio, physics, importers. |
 | **Interop** | `VortexAPI/` | `VortexAPI.dll` / `.dylib` / `.so` | A thin `extern "C"` bridge (`EDITOR_INTERFACE`) exposing the engine to managed code. |
 | **Shared core** | `Editor/` (sources) | in both editors + `Managed/Vortex.Core` | Scenes, components, assets, the scripting runtime and every editor service — compiled for .NET Framework 4.8 and .NET 10. |
-| **Editors** | `Managed/Vortex.Editor`, `Editor/` | `Vortex.Editor`, `Vortex Engine.exe` | The editor on every platform (Avalonia, with the MCP server and the Claude panel); the classic WPF editor stays on Windows until v3.1. |
+| **Editors** | `Managed/Vortex.Editor`, `Editor/` | `Vortex.Editor`, `Vortex Engine.exe` | The editor on every platform (Avalonia, with the MCP server and the Claude sidebar); the classic WPF editor stays on Windows until v3.1. |
 | **Player** | `Managed/Vortex.Player` | `Vortex.Player` | The standalone game host: what the cross-platform editor exports for Windows, macOS and Linux (via runtime packs). |
 
 > On Windows the WPF editor loads `VortexAPI.dll` from the shared `x64/Release/` output folder; the .NET 10 tools find the native library next to them, in an app bundle's `Frameworks`, or in the CMake build tree.
@@ -216,7 +216,7 @@ generation (NVIDIA + Windows only; the render-scale fallback works).
 - **MCP server inside the editor** (Streamable HTTP on `127.0.0.1` — only programs on this computer can connect) — hook up Claude Code or Claude Desktop with *Tools ▸ Claude ▸ Connect Claude Code / Desktop…*
 - **68 tools**: entities and components, materials and custom shaders (with real compiler errors), scripts (with line-accurate compile errors), prefabs, asset import, world macros (grid, scatter, snap), audio and the mixer, sound generation, play mode, screenshots and the console
 - **Safe by design**: every tool call is one undo step, mutating tools take a dry run, the Operations window shows each change (file diffs included) and reverts it — even out of order
-- **Claude panel**: chat in the editor with your own Anthropic key; it sees the viewport and asks before it changes things
+- **Claude sidebar** (v3.0.3): Claude next to the scene — Ask or Agent, with your choice of model, effort and context; sign in with your Anthropic account or an API key ([guide](https://engine.vortexstudio.dev/docs/#/claude))
 - Guides: [Claude Integration](https://engine.vortexstudio.dev/docs/#/claude) · [Claude Tools](https://engine.vortexstudio.dev/docs/#/claude-tools)
 </details>
 

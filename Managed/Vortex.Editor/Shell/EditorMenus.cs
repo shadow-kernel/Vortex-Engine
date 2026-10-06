@@ -370,7 +370,7 @@ namespace VortexEditor.Shell
                 Check("Environment", "Cmd+D6", () => w.TogglePanel(MainWindow.PanelEnvironment), () => w.IsPanelVisible(MainWindow.PanelEnvironment)),
                 Check("Library", "Cmd+D7", () => w.TogglePanel(MainWindow.PanelLibrary), () => w.IsPanelVisible(MainWindow.PanelLibrary)),
                 Check("Asset Store", "Cmd+D8", () => w.TogglePanel(MainWindow.PanelStore), () => w.IsPanelVisible(MainWindow.PanelStore)),
-                Check("Claude", "Cmd+D9", () => w.TogglePanel(MainWindow.PanelClaude), () => w.IsPanelVisible(MainWindow.PanelClaude)),
+                Check("Claude Sidebar", "Cmd+D9", () => w.TogglePanel(MainWindow.PanelClaude), () => w.IsPanelVisible(MainWindow.PanelClaude)),
                 Sep(),
             };
             foreach (var e in Editors)
@@ -380,7 +380,7 @@ namespace VortexEditor.Shell
                 window.Add(Item(entry.Title, entry.Gesture, () => _ = Run(entry)));
             }
             window.Add(Sep());
-            window.Add(Item("Reset Layout (show all panels)", null, EditorCommands.ResetLayout));
+            window.Add(Item("Reset Layout (show all panels, hide Claude)", null, EditorCommands.ResetLayout));
             menu.Items.Add(Sub("Window", window.ToArray()));
 
             menu.Items.Add(Sub("Tools",
@@ -394,7 +394,8 @@ namespace VortexEditor.Shell
                 Item("Source Control…", null, EditorCommands.GitWindow),
                 Item("Audio Mixer…", null, EditorCommands.AudioMixer),
                 Sub("Claude",
-                    Item("Claude Panel", null, () => w.ShowPanel(MainWindow.PanelClaude)),
+                    Item("Claude Sidebar", null, () => w.ShowPanel(MainWindow.PanelClaude)),
+                    Item("Open in Claude Code", null, () => _ = Claude.ClaudePanel.Current?.OpenInClaudeCodeAsync()),
                     Item("Connect Claude Code / Desktop…", null, () => _ = Claude.ClaudeConnectDialog.Run()),
                     Item("Operations…", null, () => Claude.ClaudeOperationsWindow.Open()),
                     Check("MCP Server", null, () => _ = Claude.McpHost.SetEnabledAsync(!Claude.McpHost.IsRunning), () => Claude.McpHost.IsRunning)),

@@ -49,6 +49,7 @@
         <StackPanel Grid.Column="4" x:Name="RightGroup" Orientation="Horizontal" VerticalAlignment="Center" Spacing="6">
           <Button x:Name="BuildButton" Classes="ghost" Click="OnBuildClick" ToolTip.Tip="Build the game (⌘B) — right-click for Build &amp; Run / settings"><StackPanel Orientation="Horizontal" Spacing="6"><c:VxIcon Icon="Hammer"/><TextBlock Text="Build"/></StackPanel></Button>
           <Button Classes="ghost" Click="OnGitClick" ToolTip.Tip="Source control (Git)"><StackPanel Orientation="Horizontal" Spacing="6"><c:VxIcon Icon="Git"/><TextBlock Text="Git"/></StackPanel></Button>
+          <Button x:Name="ClaudeToggle" Classes="ghost" Click="OnClaudeToggle" ToolTip.Tip="Claude — ask, or let it build (⌘9)"><StackPanel Orientation="Horizontal" Spacing="6"><c:VxIcon x:Name="ClaudeToggleIcon" Icon="Sparkle"/><TextBlock Text="Claude"/></StackPanel></Button>
           <Button Classes="icon" Click="OnHistoryClick" ToolTip.Tip="History — undo list (⇧⌘H)"><c:VxIcon Icon="Undo"/></Button>
           <Button Classes="icon" Click="OnSettingsClick" ToolTip.Tip="Project settings (⌘,)"><c:VxIcon Icon="Gear"/></Button>
         </StackPanel>
@@ -56,7 +57,7 @@
     </Panel>
 
     <!-- workspace -->
-    <Grid Grid.Row="2" x:Name="Workspace" ColumnDefinitions="260,5,*,5,330">
+    <Grid Grid.Row="2" x:Name="Workspace" ColumnDefinitions="260,5,*,5,330,0,0">
       <Grid x:Name="LeftColumn" RowDefinitions="3*,5,2*">
         <Border x:Name="HierarchyHost" Classes="sidebar hairline-right"><p:HierarchyPanel x:Name="Hierarchy"/></Border>
         <GridSplitter Grid.Row="1" ResizeDirection="Rows"/>
@@ -106,18 +107,14 @@
         <TabControl x:Name="RightTabs">
           <TabItem x:Name="InspectorTab" Header="Inspector"><p:InspectorPanel x:Name="Inspector"/></TabItem>
           <TabItem x:Name="EnvironmentTab" Header="Environment"><p:EnvironmentPanel x:Name="Environment"/></TabItem>
-          <TabItem x:Name="ClaudeTab" ToolTip.Tip="Claude — build and change the scene by asking (⌘9)">
-            <TabItem.Header>
-              <StackPanel Orientation="Horizontal" Spacing="5">
-                <c:VxIcon Icon="Sparkle" Width="12" Height="12" VerticalAlignment="Center"/>
-                <TextBlock Text="Claude" VerticalAlignment="Center"/>
-              </StackPanel>
-            </TabItem.Header>
-            <cl:ClaudePanel x:Name="ClaudePanel"/>
-          </TabItem>
         </TabControl>
       </Border>
-      <sh:ToastHost x:Name="Toast" Grid.ColumnSpan="5"/>
+      <!-- the Claude sidebar: its own column, shown and hidden like a sidebar (⌘9, View ▸ Claude, the title bar button) -->
+      <GridSplitter Grid.Column="5" x:Name="ClaudeSplitter" ResizeDirection="Columns" IsVisible="False"/>
+      <Border Grid.Column="6" x:Name="ClaudeColumn" Classes="panel hairline-left" IsVisible="False" MinWidth="0">
+        <cl:ClaudePanel x:Name="ClaudePanel"/>
+      </Border>
+      <sh:ToastHost x:Name="Toast" Grid.ColumnSpan="7"/>
     </Grid>
 
     <!-- status bar -->

@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for proposing a feature! Check the [Roadmap](../../wiki/Roadmap) and existing issues first to avoid duplicates.
+        Thanks for proposing a feature! Check the [Roadmap](https://github.com/shadow-kernel/Vortex-Engine/blob/main/ROADMAP.md), the [milestones](https://github.com/shadow-kernel/Vortex-Engine/milestones) and existing issues first to avoid duplicates.
   - type: textarea
     id: problem
     attributes:

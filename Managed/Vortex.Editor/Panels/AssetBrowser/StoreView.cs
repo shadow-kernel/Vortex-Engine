@@ -812,7 +812,7 @@ namespace VortexEditor.Panels.AssetBrowser
             void B(string text, Action a, string cls = null) { var b = Ui.Button(text, a, null, cls); b.Margin = new Thickness(0, 0, 8, 8); buttons.Children.Add(b); }
             B("Open Sound Studio", () => VortexEditor.Shell.Audio.SoundStudioWindow.Open(), "accent");
             B("API Keys…", async () => { await StoreKeysDialog.Run(null); if (ReferenceEquals(_provider, SoundStudioEntry)) _guidedHost.Child = BuildSoundStudioPage(); });
-            B("Guide", () => Open("https://github.com/shadow-kernel/Vortex-Engine/blob/main/docs/wiki/Sound-Studio.md"));
+            B("Guide", () => Open("https://engine.vortexstudio.dev/docs/#/sound-studio"));
             stack.Children.Add(buttons);
             return new ScrollViewer { Content = stack };
         }

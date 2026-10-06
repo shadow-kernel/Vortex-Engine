@@ -1,4 +1,4 @@
-# Vortex Engine — Roadmap (updated 2026-10-05)
+# Vortex Engine — Roadmap (updated 2026-10-06)
 
 **The plan lives in the [GitHub milestones](https://github.com/shadow-kernel/Vortex-Engine/milestones).** This file summarises them;
 the pinned issue #188 mirrors it.
@@ -17,7 +17,7 @@ Status legend: ✅ shipped on `main` · 🟡 partial · ⬜ open. Issue numbers 
 | v2.8.0 | Windows · macOS · Linux — released 2026-10-04 | ✅ | macOS (Metal) + Linux (Vulkan) ports, Physics v2 (Jolt), editor-first hands |
 | v2.9.0 | Global Asset Database — released 2026-10-05 | ✅ | machine-wide SHA-256 asset library, Library tab, Add to Project, duplicate-aware import, project indexer, maintenance, bundles, settings (#52–#65) |
 | v2.10.0 | Asset Store & Claude Sound Studio — released 2026-10-05 | ✅ | Poly Haven / ambientCG / poly.pizza / Freesound / Kenney / Sketchfab providers feeding the library, Mixamo + Sonniss guided flows, license check + CREDITS.md, Claude Sound Studio with ElevenLabs / fal.ai / Stability backends and recipes (#66–#83) |
-| v3.0.0 | Claude-Native Engine — released 2026-10-05 | ✅ | MCP server + 67 tools (68 in v3.0.1), Claude panel, safety (#84–#94, #99) — checked end to end with real Claude Code sessions; the cross-platform editor on Windows too (#183) with self-update and gamepads, the macOS DMG (#184), template packs (#299) + Update from Template (#186), docs sweep (#98), hardening + an installer test that plays an in-app update (#95), CI gate (#161), the v3.0 trailer and homepage |
+| v3.0.0 | Claude-Native Engine — released 2026-10-05 | ✅ | MCP server + 67 tools (68 in v3.0.1), Claude panel (the Claude sidebar in v3.0.3), safety (#84–#94, #99) — checked end to end with real Claude Code sessions; the cross-platform editor on Windows too (#183) with self-update and gamepads, the macOS DMG (#184), template packs (#299) + Update from Template (#186), docs sweep (#98), hardening + an installer test that plays an in-app update (#95), CI gate (#161), the v3.0 trailer and homepage |
 | v3.1.0 | Physics v2 | 🟡 | ✅ Jolt, joints (#103), ragdolls (#104), render interpolation; ⬜ player on CharacterVirtual (#105, #187), Jolt in the Visual Studio build (#182), debug draw (#106), compound colliders (#107) |
 | v3.2.0 | AI & Navigation | 🟡 | navmesh, agents, perception merged as work in progress; behaviour trees (#111), root motion (#113), Tactical Shooter combat bots (#193) |
 | v3.3.0 | VFX | 🟡 | particle system + VFX editor merged as work in progress; volumetric fog (#119), decals (#120), weapon VFX (#178) for every camera (#194) |
@@ -40,9 +40,8 @@ original-quality downloads (#289).
 "v2.8.0 – Global Asset Database" is v2.9.0 and the Asset Store moved to v2.10.0.
 
 ## Now
-1. **v3.0.2** (#317) — the editors' documentation links point at the docs website (engine.vortexstudio.dev/docs, the only
-   documentation — the GitHub wiki is off), a steadier audio test, wiki changes run the tests. Then the checks on a real
-   Windows PC (#315): the in-app update from v2.10, the editor on a DX12 GPU, an exported game.
+1. **v3.0.3** — the **Claude sidebar** (Ask / Agent, model, effort, context, Anthropic sign-in). Then the checks on a
+   real Windows PC (#315): the in-app update from v2.10, the editor on a DX12 GPU, an exported game.
 2. **Follow-ups** — the in-app update's elevated restart (#312), shadow settings (#304), the DLSS runtime in release builds
    (#305), Linux CI (#306), `Lighting.SetDirectional` (#307), the Steam Audio runtime (#308), a Kenney manifest (#314).
 3. **v3.1.0 — Physics v2** — Jolt in the Visual Studio build (#182), the player on CharacterVirtual (#105, #187), debug
@@ -60,7 +59,8 @@ original-quality downloads (#289).
   ([trailer](docs/showcase/vortex-3.0-claude.webp)). v3.0.1 adds `create_sound_container` (68 tools). Docs:
   [Claude in the Editor](https://engine.vortexstudio.dev/docs/#/claude), [Claude Tools](https://engine.vortexstudio.dev/docs/#/claude-tools).
 - ✅ **Claude panel** in the editor with the user's own Anthropic key: it sees the viewport and asks before it changes
-  things.
+  things. v3.0.3 turns it into the **Claude sidebar**: Ask / Agent, model, effort and context per message, sign-in with
+  the Anthropic account, on the official Anthropic C# SDK.
 - ✅ **One editor on Windows, macOS and Linux** (#183): the installer's *Vortex Engine* is the cross-platform editor
   (self-contained .NET 10, DX12 viewport in a child window) with self-update, gamepads (DualSense / DualShock HID and
   XInput on Windows, SDL3 elsewhere) and the same window header everywhere. The WPF editor stays one release as
