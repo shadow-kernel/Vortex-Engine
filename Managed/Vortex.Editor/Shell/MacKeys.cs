@@ -87,6 +87,8 @@ namespace VortexEditor.Shell
                 case 'y': return 0x10; case 'o': return 0x1F; case 'p': return 0x23; case 'n': return 0x2D;
                 case 'g': return 0x05; case 'h': return 0x04; case 'i': return 0x22;
                 case '\b': return 0x33;   // backspace ("delete" on a Mac keyboard)
+                case '\r': return 0x24;   // return
+                case ' ': return 0x31;
                 default: return 0xFFFF;
             }
         }

@@ -40,6 +40,28 @@ namespace VortexEditor.Shell
                 string folder = Path.GetFileName(ProjectData.Current.Path.TrimEnd(Path.DirectorySeparatorChar));
                 if (!await WaitFor(() => view.Screen.ScreenText().Contains(folder), 5000)) return Fail("the shell is not in the project folder: " + Short(view.Screen.ScreenText()));
                 await SmokeRegistry.Settle(300);
+
+                // real key presses (macOS: AppKit events, the path a physical key takes): typing reaches the shell, Enter runs
+                // it, Ctrl+C interrupts — and none of it fires the editor's own shortcuts (E would switch to the rotate tool)
+                if (OperatingSystem.IsMacOS() && !MacKeys.IsScreenLocked())
+                {
+                    IntPtr nsw = w.TryGetPlatformHandle()?.Handle ?? IntPtr.Zero;
+                    MacKeys.ActivateApp();
+                    MacKeys.MakeKey(nsw);
+                    view.Focus();
+                    await SmokeRegistry.Settle(300);
+                    var tool = Editor.Core.Services.TransformGizmoService.Instance.CurrentMode;
+                    foreach (char c in "echo keyed") MacKeys.Press(nsw, c, 0);
+                    MacKeys.Press(nsw, '\r', 0);
+                    if (!await WaitFor(() => HasRow(view, "keyed"), 8000)) return Fail("typed keys did not reach the shell: " + Short(view.Screen.ScreenText()));
+                    if (Editor.Core.Services.TransformGizmoService.Instance.CurrentMode != tool) return Fail("typing in the terminal switched the editor's tool");
+                    foreach (char c in "sleep 30") MacKeys.Press(nsw, c, 0);
+                    MacKeys.Press(nsw, '\r', 0);
+                    await SmokeRegistry.Settle(600);
+                    MacKeys.Press(nsw, 'c', MacKeys.Control);
+                    if (!await WaitFor(() => view.Screen.ScreenText().Contains("^C"), 5000)) return Fail("Ctrl+C did not reach the shell: " + Short(view.Screen.ScreenText()));
+                    log.Log("terminal: real keys — typing, Enter and Ctrl+C reach the shell; no editor shortcut fired");
+                }
                 SmokeRegistry.Capture(w, "terminal.png");
 
                 int before = panel.SessionCount;
@@ -59,6 +81,13 @@ namespace VortexEditor.Shell
                 if (front != null) w.BottomTabs.SelectedItem = front;
                 if (hidden && w.IsPanelVisible(MainWindow.PanelTerminal)) w.TogglePanel(MainWindow.PanelTerminal);
             }
+        }
+
+        private static bool HasRow(VortexEditor.Controls.TerminalView view, string text)
+        {
+            var s = view.Screen;
+            for (int y = 0; y < s.Rows; y++) if (s.RowText(y).Trim() == text) return true;
+            return false;
         }
 
         private static async Task<bool> WaitFor(Func<bool> ok, int ms)

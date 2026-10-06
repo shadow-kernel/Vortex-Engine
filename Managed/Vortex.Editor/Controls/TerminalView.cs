@@ -5,6 +5,7 @@ using System.Text;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Input.TextInput;
 using Avalonia.Media;
 using Avalonia.Threading;
 using Editor.Core.Claude.Terminal;
@@ -51,6 +52,10 @@ namespace VortexEditor.Controls
             Focusable = true;
             ClipToBounds = true;
             Cursor = new Cursor(StandardCursorType.Ibeam);
+            // a text input client, as a text field is: typed characters (dead keys and input methods included) come in as
+            // text before any menu shortcut sees the key — on macOS the plain-key menu shortcuts (W/E/R) would take them
+            var client = new InputClient(this);
+            AddHandler(TextInputMethodClientRequestedEvent, (s, e) => e.Client = client);
             _screen = new VtScreen(80, 24);
             _screen.Reply += s => _pty?.Write(s);
             _screen.TitleChanged += t => Dispatcher.UIThread.Post(() => TitleChanged?.Invoke(t));
@@ -266,6 +271,27 @@ namespace VortexEditor.Controls
         }
 
         // ================================================================== keyboard
+
+        /// <summary>The operating system's text input reaches the terminal through this (no preedit display: a composed
+        /// character arrives when it is complete).</summary>
+        private sealed class InputClient : TextInputMethodClient
+        {
+            private readonly TerminalView _view;
+            public InputClient(TerminalView view) { _view = view; }
+            public override Visual TextViewVisual => _view;
+            public override bool SupportsPreedit => false;
+            public override bool SupportsSurroundingText => false;
+            public override string SurroundingText => "";
+            public override Rect CursorRectangle => _view.CursorRect();
+            public override TextSelection Selection { get => new TextSelection(0, 0); set { } }
+        }
+
+        /// <summary>Where the cursor is (input method windows open there).</summary>
+        private Rect CursorRect()
+        {
+            var s = _screen;
+            return new Rect(4 + s.CursorX * _cellW, 3 + s.CursorY * _cellH, _cellW, _cellH);
+        }
 
         protected override void OnGotFocus(GotFocusEventArgs e) { base.OnGotFocus(e); _focused = true; if (_screen.FocusReporting) _pty?.Write("\x1b[I"); InvalidateVisual(); }
         protected override void OnLostFocus(Avalonia.Interactivity.RoutedEventArgs e) { base.OnLostFocus(e); _focused = false; if (_screen.FocusReporting) _pty?.Write("\x1b[O"); InvalidateVisual(); }
