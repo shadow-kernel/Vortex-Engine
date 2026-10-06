@@ -40,9 +40,9 @@ original-quality downloads (#289).
 "v2.8.0 – Global Asset Database" is v2.9.0 and the Asset Store moved to v2.10.0.
 
 ## Now
-1. **v3.0.4** — **Claude Code in the sidebar** (a Claude Pro / Max plan works in the editor), a **Terminal** tab (Ctrl+`),
-   and the sidebar no longer pushes the Inspector over the viewport toolbar. (v3.0.3: the Claude sidebar.) Then the
-   checks on a real Windows PC (#315): the in-app update from v2.10, the editor on a DX12 GPU, an exported game.
+1. **v3.0.4** — a **Terminal** tab (Ctrl+`), the sidebar no longer pushes the Inspector over the viewport toolbar, and
+   the documentation lives only on the website. (v3.0.3: the Claude sidebar.) Then the checks on a real Windows PC
+   (#315): the in-app update from v2.10, the editor on a DX12 GPU, an exported game.
 2. **Follow-ups** — the in-app update's elevated restart (#312), shadow settings (#304), the DLSS runtime in release builds
    (#305), Linux CI (#306), `Lighting.SetDirectional` (#307), the Steam Audio runtime (#308), a Kenney manifest (#314).
 3. **v3.1.0 — Physics v2** — Jolt in the Visual Studio build (#182), the player on CharacterVirtual (#105, #187), debug

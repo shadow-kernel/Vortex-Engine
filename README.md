@@ -216,7 +216,7 @@ generation (NVIDIA + Windows only; the render-scale fallback works).
 - **MCP server inside the editor** (Streamable HTTP on `127.0.0.1` — only programs on this computer can connect) — hook up Claude Code or Claude Desktop with *Tools ▸ Claude ▸ Connect Claude Code / Desktop…*
 - **68 tools**: entities and components, materials and custom shaders (with real compiler errors), scripts (with line-accurate compile errors), prefabs, asset import, world macros (grid, scatter, snap), audio and the mixer, sound generation, play mode, screenshots and the console
 - **Safe by design**: every tool call is one undo step, mutating tools take a dry run, the Operations window shows each change (file diffs included) and reverts it — even out of order
-- **Claude sidebar** (v3.0.3): Claude next to the scene — Ask or Agent, with your choice of model, effort and context; sign in with your Anthropic account or an API key. Since v3.0.4 it also runs **Claude Code** itself, so a Claude Pro / Max plan works in the editor, and a **Terminal** tab (Ctrl+`) runs your shell ([guide](https://engine.vortexstudio.dev/docs/#/claude))
+- **Claude sidebar** (v3.0.3): Claude next to the scene — Ask or Agent, with your choice of model, effort and context; sign in with your Anthropic account or an API key. Since v3.0.4 a **Terminal** tab (Ctrl+`) runs your shell in the project folder ([guide](https://engine.vortexstudio.dev/docs/#/claude))
 - Guides: [Claude Integration](https://engine.vortexstudio.dev/docs/#/claude) · [Claude Tools](https://engine.vortexstudio.dev/docs/#/claude-tools)
 </details>
 

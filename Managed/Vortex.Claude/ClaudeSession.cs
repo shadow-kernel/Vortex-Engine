@@ -433,10 +433,10 @@ namespace Editor.Core.Claude
                 case Anthropic.Exceptions.AnthropicApiException api:
                     {
                         string msg = ApiMessage(api.Message);
-                        // a Console account without credits: a Claude plan only works through Claude Code (the panel offers it)
+                        // a Console account without credits (a Claude Pro / Max plan is billed separately and can't be used here)
                         if (msg.IndexOf("credit balance", StringComparison.OrdinalIgnoreCase) >= 0)
-                            return new ClaudeChatException("Claude: this Anthropic Console account has no API credits. A Claude Pro / Max plan is separate from the Console — " +
-                                                           "use it with Claude Code, or add credits under Plans & Billing.", HttpStatusCode.PaymentRequired);
+                            return new ClaudeChatException("Claude: this Anthropic Console account has no API credits — add some under Plans & Billing. " +
+                                                           "A Claude Pro / Max plan is billed separately: Anthropic lets it work only in its own apps.", HttpStatusCode.PaymentRequired);
                         return new ClaudeChatException("Claude: " + msg);
                     }
                 case HttpRequestException http:

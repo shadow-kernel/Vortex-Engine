@@ -57,7 +57,6 @@ jobs:
           grep -q "SMOKE OK   mcp tools" "$RUNNER_TEMP/smoke.log"
           grep -q "SMOKE OK   title bar" "$RUNNER_TEMP/smoke.log"
           grep -q "SMOKE OK   terminal" "$RUNNER_TEMP/smoke.log"
-          grep -q "SMOKE OK   claude code" "$RUNNER_TEMP/smoke.log"
 
       - name: Upload the DMG
         uses: actions/upload-artifact@v4

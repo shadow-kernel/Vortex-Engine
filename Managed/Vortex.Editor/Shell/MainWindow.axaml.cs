@@ -438,8 +438,8 @@ namespace VortexEditor.Shell
             {
                 try { CaptureClaudeWidth(); SaveClaudeLayout(); }
                 catch { }
-                // the shells and Claude Code end with the editor, as when terminal windows close
-                try { TerminalPanel.CloseAll(); ClaudePanel.CodePane.Stop(); } catch { }
+                // the shells end with the editor, as when terminal windows close
+                try { TerminalPanel.CloseAll(); } catch { }
                 VortexEditor.Program.Stage("stopping the MCP server");
                 _ = Claude.McpHost.StopAsync();
                 VortexEditor.Program.Stage("shutting the engine down");

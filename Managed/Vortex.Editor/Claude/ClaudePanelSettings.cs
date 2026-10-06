@@ -15,9 +15,6 @@ namespace VortexEditor.Claude
         public Dictionary<string, string> Effort { get; set; } = new Dictionary<string, string>();
         public int Context { get; set; }
         public string Mode { get; set; }
-        /// <summary>"code": Claude Code itself runs in the sidebar (the user's own Claude plan or account); otherwise the
-        /// editor's chat on the Anthropic API.</summary>
-        public string Backend { get; set; }
         public bool Open { get; set; }
         public double Width { get; set; }
         /// <summary>Tell Claude what is selected in the editor with each message.</summary>

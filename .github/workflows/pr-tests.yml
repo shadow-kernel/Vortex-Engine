@@ -108,7 +108,7 @@ jobs:
           Get-Content "$tmp\smoke.log" -ErrorAction SilentlyContinue
           Get-Content "$tmp\smoke.err" -ErrorAction SilentlyContinue
           if (Select-String -Path "$tmp\smoke.log" -Pattern "SMOKE FAIL" -Quiet) { exit 1 }
-          foreach ($c in @("mcp tools", "title bar", "terminal", "claude code", "workspace layout")) { if (-not (Select-String -Path "$tmp\smoke.log" -Pattern "SMOKE OK   $c" -Quiet)) { Write-Host "::error::smoke check '$c' did not pass"; exit 1 } }
+          foreach ($c in @("mcp tools", "title bar", "terminal", "workspace layout")) { if (-not (Select-String -Path "$tmp\smoke.log" -Pattern "SMOKE OK   $c" -Quiet)) { Write-Host "::error::smoke check '$c' did not pass"; exit 1 } }
 
       - name: Upload the Windows smoke capture
         if: always()

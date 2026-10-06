@@ -195,16 +195,7 @@ namespace Editor.Core.Claude
     {
         public const string InstallUrl = "https://code.claude.com/docs/en/setup";
 
-        /// <summary>Claude Code's executable: <c>VORTEX_CLAUDE_CLI</c> (tests), else <c>claude</c> on the PATH or in its install
-        /// folders.</summary>
-        public static string FindCli()
-        {
-            string over = Environment.GetEnvironmentVariable("VORTEX_CLAUDE_CLI");
-            if (!string.IsNullOrEmpty(over)) return File.Exists(over) ? over : null;
-            return Find();
-        }
-
-        private static string Find() => ProcessTools.FindExecutable("claude", new[]
+        public static string FindCli() => ProcessTools.FindExecutable("claude", new[]
         {
             "/opt/homebrew/bin/claude", "/usr/local/bin/claude",
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "bin", "claude"),
@@ -269,42 +260,6 @@ namespace Editor.Core.Claude
         }
 
         internal static string ShellQuote(string s) => "'" + (s ?? "").Replace("'", "'\\''") + "'";
-
-        private static string _userPath;
-
-        /// <summary>
-        /// The PATH a terminal window would have. An app started from the Finder or the Start menu gets a minimal PATH, and
-        /// Claude Code runs commands (git, node, the project's tools) with it: the login shell's PATH, then the usual
-        /// install folders, then the editor's own.
-        /// </summary>
-        public static string UserPath()
-        {
-            if (_userPath != null) return _userPath;
-            var parts = new List<string>();
-            void Add(string p) { if (!string.IsNullOrWhiteSpace(p) && !parts.Contains(p)) parts.Add(p); }
-            string own = Environment.GetEnvironmentVariable("PATH") ?? "";
-            if (!OperatingSystem.IsWindows())
-            {
-                try
-                {
-                    string shell = Environment.GetEnvironmentVariable("SHELL");
-                    if (string.IsNullOrEmpty(shell) || !File.Exists(shell)) shell = OperatingSystem.IsMacOS() ? "/bin/zsh" : "/bin/bash";
-                    // an interactive login shell reads the files a terminal reads (.zprofile and .zshrc); the PATH is the last line
-                    var (ok, output) = RunAsync(shell, new[] { "-ilc", "printf '\\n__VXPATH__%s' \"$PATH\"" }, TimeSpan.FromSeconds(4), CancellationToken.None).GetAwaiter().GetResult();
-                    int i = output.LastIndexOf("__VXPATH__", StringComparison.Ordinal);
-                    if (i >= 0) foreach (var p in output.Substring(i + 10).Trim().Split(':')) Add(p);
-                }
-                catch { }
-                string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-                foreach (var p in new[] { Path.Combine(home, ".local", "bin"), "/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin" }) Add(p);
-                foreach (var p in own.Split(':')) Add(p);
-                return _userPath = string.Join(":", parts);
-            }
-            foreach (var p in own.Split(';')) Add(p);
-            Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "bin"));
-            Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm"));
-            return _userPath = string.Join(";", parts);
-        }
 
         public static string FindExecutable(string name, IEnumerable<string> knownPaths)
         {

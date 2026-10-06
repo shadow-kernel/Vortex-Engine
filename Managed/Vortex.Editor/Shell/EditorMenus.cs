@@ -396,7 +396,6 @@ namespace VortexEditor.Shell
                 Item("Audio Mixer…", null, EditorCommands.AudioMixer),
                 Sub("Claude",
                     Item("Claude Sidebar", null, () => w.ShowPanel(MainWindow.PanelClaude)),
-                    Item("Claude Code in the Sidebar", null, () => { w.ShowPanel(MainWindow.PanelClaude); Claude.ClaudePanel.Current?.SetBackend(true); }),
                     Item("Open Claude Code in a Terminal Window", null, () => _ = Claude.ClaudePanel.Current?.OpenInClaudeCodeAsync()),
                     Item("Connect Claude Code / Desktop…", null, () => _ = Claude.ClaudeConnectDialog.Run()),
                     Item("Operations…", null, () => Claude.ClaudeOperationsWindow.Open()),
