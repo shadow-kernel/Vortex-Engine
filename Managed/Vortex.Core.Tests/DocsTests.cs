@@ -9,52 +9,77 @@ using Editor.Scripting;
 namespace VortexTests
 {
     /// <summary>
-    /// The wiki's C# samples compile against the gameplay API — and as C# 5, the language the Windows editor's CodeDOM
-    /// compiler accepts (#98: "every code sample tested against the release build"). A complete sample (it declares a
-    /// class) must compile as it is, usings included, because that is what readers paste. Member-only samples are
-    /// wrapped in a VortexBehaviour, statement samples in one of its methods. A block preceded by
-    /// <c>&lt;!-- no-compile --&gt;</c> is an illustration and skipped.
+    /// The documentation's C# samples compile against the gameplay API — and as C# 5, the language the Windows classic
+    /// editor's CodeDOM compiler accepts (#98: "every code sample tested against the release build"). The documentation
+    /// is the docs website (repository shadow-kernel/Vortex-Engine-Homepage, pages in <c>docs/content</c>); CI checks it
+    /// out and points <c>VORTEX_DOCS_DIR</c> at it, and on a developer machine a clone next to this repository
+    /// (<c>../Vortex-Engine-Homepage</c>) is found too. A complete sample (it declares a class) must compile as it is,
+    /// usings included, because that is what readers paste. Member-only samples are wrapped in a VortexBehaviour,
+    /// statement samples in one of its methods. Lines starting with <c>//~</c> are context the website hides (the fields
+    /// a fragment uses, say): the test compiles them without the marker. A block fenced <c>```csharp nocompile</c> is an
+    /// illustration (an API listing) and skipped.
     /// </summary>
     public static class DocsTests
     {
-        /// <summary>Pages about the engine's own code (interop, internals, workflow) — their C# is not gameplay script.</summary>
+        /// <summary>Pages about the engine's own code and process — their C# is not gameplay script.</summary>
         private static readonly string[] InternalPages =
         {
-            "Architecture.md", "Developer-Guide.md", "Managed-Interop-Bindings.md", "Native-DLL-API.md", "Performance-Master-Plan.md",
-            "Contributing-Workflow.md", "Roadmap.md", "Release-Test-Plan-v2.7.md",
+            "architecture.md", "vortexapi.md", "developer-guide.md", "contributing.md", "feature-status.md", "release-process.md",
+            "claude-tools.md", "changelog.md",
         };
 
         [Test]
-        public static void WikiCodeSamplesCompile(TestContext t)
+        public static void DocsCodeSamplesCompile(TestContext t)
         {
-            string wiki = FindWiki();
-            t.NotNull(wiki, "docs/wiki above the test binaries");
+            string docs = FindDocs();
+            if (docs == null)
+            {
+                // CI always has the docs; a developer machine without a clone of the docs repository skips the check
+                t.True(string.IsNullOrEmpty(Environment.GetEnvironmentVariable("CI")), "the docs (VORTEX_DOCS_DIR) are missing in CI");
+                Console.WriteLine("        skipped: no docs — clone shadow-kernel/Vortex-Engine-Homepage next to this repository or set VORTEX_DOCS_DIR");
+                return;
+            }
             var samples = new List<(string path, string code)>();
-            foreach (var page in Directory.GetFiles(wiki, "*.md").OrderBy(p => p, StringComparer.Ordinal))
+            foreach (var page in Directory.GetFiles(docs, "*.md").OrderBy(p => p, StringComparer.Ordinal))
             {
                 string name = Path.GetFileName(page);
-                if (name.StartsWith("Design-", StringComparison.Ordinal) || InternalPages.Contains(name)) continue;
+                if (name.StartsWith("design-", StringComparison.Ordinal) || InternalPages.Contains(name)) continue;
                 foreach (var (line, code) in Blocks(File.ReadAllLines(page)))
                     samples.Add((name + ":" + line, Wrap(code, samples.Count)));
             }
-            t.True(samples.Count > 10, "the wiki has C# samples (" + samples.Count + ")");
+            t.True(samples.Count > 10, "the docs have C# samples (" + samples.Count + " in " + docs + ")");
             var errors = RoslynScriptCompiler.CheckSources(samples, csharp5: true);
             var report = errors.GroupBy(e => e.File).Select(g => g.Key + " → " + string.Join(" | ", g.Take(3).Select(e => e.Id + " " + e.Message))).ToList();
             foreach (var r in report) Console.WriteLine("        " + r);
             t.True(errors.Count == 0, report.Count + " of " + samples.Count + " samples do not compile (listed above)");
         }
 
-        /// <summary>The ```csharp blocks of a page: (1-based line of the fence, code).</summary>
+        /// <summary>The ```csharp blocks of a page that are meant to compile: (1-based line of the fence, code).</summary>
         internal static IEnumerable<(int line, string code)> Blocks(string[] lines)
         {
             for (int i = 0; i < lines.Length; i++)
             {
-                string fence = lines[i].Trim();
-                if (!(fence == "```csharp" || fence == "```cs" || fence == "```c#" || fence == "```C#")) continue;
-                bool skip = i > 0 && lines[i - 1].Contains("<!-- no-compile");
+                var info = lines[i].Trim();
+                if (!info.StartsWith("```", StringComparison.Ordinal)) continue;
+                var words = info.Substring(3).Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                string lang = words.Length > 0 ? words[0].ToLowerInvariant() : "";
+                if (!(lang == "csharp" || lang == "cs" || lang == "c#"))
+                {
+                    // another language's block (or one without a language): skip to its closing fence
+                    for (i++; i < lines.Length && lines[i].Trim() != "```"; i++) { }
+                    continue;
+                }
+                bool skip = words.Skip(1).Any(w => w.Equals("nocompile", StringComparison.OrdinalIgnoreCase));
                 var code = new StringBuilder();
                 int j = i + 1;
-                for (; j < lines.Length && lines[j].Trim() != "```"; j++) code.AppendLine(lines[j]);
+                for (; j < lines.Length && lines[j].Trim() != "```"; j++)
+                {
+                    string l = lines[j];
+                    int k = l.IndexOf("//~", StringComparison.Ordinal);
+                    // hidden context: "//~ float _yaw;" compiles as "float _yaw;"
+                    if (k >= 0 && l.Substring(0, k).Trim().Length == 0) l = l.Substring(0, k) + l.Substring(k + 3).TrimStart();
+                    code.AppendLine(l);
+                }
                 if (!skip) yield return (i + 1, code.ToString());
                 i = j;
             }
@@ -85,12 +110,20 @@ namespace VortexTests
             return sb.Append("\n}\n").ToString();
         }
 
-        private static string FindWiki()
+        /// <summary>The docs website's pages: <c>VORTEX_DOCS_DIR</c> (the docs repository or its <c>docs/content</c>), else a
+        /// clone of the docs repository next to this one.</summary>
+        internal static string FindDocs()
         {
+            string env = Environment.GetEnvironmentVariable("VORTEX_DOCS_DIR");
+            if (!string.IsNullOrWhiteSpace(env))
+            {
+                string content = Path.Combine(env, "docs", "content");
+                return Directory.Exists(content) ? content : Directory.Exists(env) ? env : null;
+            }
             for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir != null; dir = dir.Parent)
             {
-                string wiki = Path.Combine(dir.FullName, "docs", "wiki");
-                if (Directory.Exists(wiki)) return wiki;
+                string sibling = Path.Combine(dir.FullName, "Vortex-Engine-Homepage", "docs", "content");
+                if (Directory.Exists(sibling)) return sibling;
             }
             return null;
         }
