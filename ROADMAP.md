@@ -40,10 +40,8 @@ original-quality downloads (#289).
 "v2.8.0 – Global Asset Database" is v2.9.0 and the Asset Store moved to v2.10.0.
 
 ## Now
-1. **v3.0.3** — the **Claude sidebar**: Claude in its own column beside the scene (⌘9), Ask or Agent, model, effort and
-   context per message, thinking summaries, sign-in with the Anthropic account (official Anthropic CLI) or an API key,
-   *Open in Claude Code* for Claude plans; on the official Anthropic C# SDK. Then the checks on a real Windows PC
-   (#315): the in-app update from v2.10, the editor on a DX12 GPU, an exported game.
+1. **v3.0.3** — the **Claude sidebar** (Ask / Agent, model, effort, context, Anthropic sign-in). Then the checks on a
+   real Windows PC (#315): the in-app update from v2.10, the editor on a DX12 GPU, an exported game.
 2. **Follow-ups** — the in-app update's elevated restart (#312), shadow settings (#304), the DLSS runtime in release builds
    (#305), Linux CI (#306), `Lighting.SetDirectional` (#307), the Steam Audio runtime (#308), a Kenney manifest (#314).
 3. **v3.1.0 — Physics v2** — Jolt in the Visual Studio build (#182), the player on CharacterVirtual (#105, #187), debug
@@ -61,11 +59,8 @@ original-quality downloads (#289).
   ([trailer](docs/showcase/vortex-3.0-claude.webp)). v3.0.1 adds `create_sound_container` (68 tools). Docs:
   [Claude in the Editor](https://engine.vortexstudio.dev/docs/#/claude), [Claude Tools](https://engine.vortexstudio.dev/docs/#/claude-tools).
 - ✅ **Claude panel** in the editor with the user's own Anthropic key: it sees the viewport and asks before it changes
-  things. v3.0.3 turns it into the **Claude sidebar** — its own column (⌘9, View ▸ Claude Sidebar, the title bar's
-  Claude button) with Ask / Agent, the model (Opus 5.5, Fable 5.1, Sonnet 5.5, Haiku 4.5), effort (low → max) and
-  context (200K / 1M, compacted on the server), Claude's thinking as summaries, the editor selection as context, and
-  sign-in with the Anthropic account through the official Anthropic CLI (`ant auth login`) or an API key; Claude Pro /
-  Max plans work through *Open in Claude Code* (MCP). Built on the official Anthropic C# SDK.
+  things. v3.0.3 turns it into the **Claude sidebar**: Ask / Agent, model, effort and context per message, sign-in with
+  the Anthropic account, on the official Anthropic C# SDK.
 - ✅ **One editor on Windows, macOS and Linux** (#183): the installer's *Vortex Engine* is the cross-platform editor
   (self-contained .NET 10, DX12 viewport in a child window) with self-update, gamepads (DualSense / DualShock HID and
   XInput on Windows, SDL3 elsewhere) and the same window header everywhere. The WPF editor stays one release as
