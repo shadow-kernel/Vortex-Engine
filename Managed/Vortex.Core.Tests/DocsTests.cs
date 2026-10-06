@@ -11,9 +11,9 @@ namespace VortexTests
     /// <summary>
     /// The documentation's C# samples compile against the gameplay API — and as C# 5, the language the Windows classic
     /// editor's CodeDOM compiler accepts (#98: "every code sample tested against the release build"). The documentation
-    /// is the docs website (repository shadow-kernel/Vortex-Engine-Homepage, pages in <c>docs/content</c>); CI checks it
-    /// out and points <c>VORTEX_DOCS_DIR</c> at it, and on a developer machine a clone next to this repository
-    /// (<c>../Vortex-Engine-Homepage</c>) is found too. A complete sample (it declares a class) must compile as it is,
+    /// is the docs website (repository shadow-kernel/Vortex-Engine-Homepage, pages in <c>docs/content</c>); CI downloads
+    /// its pages from the site (<c>tools/fetch-docs.sh</c>) and points <c>VORTEX_DOCS_DIR</c> at them, and on a developer
+    /// machine a clone next to this repository (<c>../Vortex-Engine-Homepage</c>) is found too. A complete sample (it declares a class) must compile as it is,
     /// usings included, because that is what readers paste. Member-only samples are wrapped in a VortexBehaviour,
     /// statement samples in one of its methods. Lines starting with <c>//~</c> are context the website hides (the fields
     /// a fragment uses, say): the test compiles them without the marker. A block fenced <c>```csharp nocompile</c> is an
