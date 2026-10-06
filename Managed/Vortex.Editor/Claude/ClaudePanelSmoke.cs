@@ -56,13 +56,13 @@ namespace VortexEditor.Claude
                                     "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"sig-smoke\"}}",
                                     "{\"type\":\"content_block_stop\",\"index\":0}",
                                 },
-                                Text(1, "Ich baue einen Würfel und schaue ihn mir an."),
+                                Text(1, "I'll add a cube in front of the player and take a look."),
                                 Tool(2, "tu_a", "create_entity", "{\"kind\":\"cube\",\"name\":\"Panel Cube\",\"position\":[0,1,3]}"),
                                 Tool(3, "tu_b", "capture_viewport", "{\"max_size\":640,\"focus\":[\"Panel Cube\"]}"),
                                 Stop("tool_use", 90)),
-                    2 => Concat(Start(200, read: 9000), Text(0, "Fertig: der **Würfel** steht bei `[0, 1, 3]`.\n\n- Name: Panel Cube\n- Rückgängig: ⌘Z"), Stop("end_turn", 20)),
+                    2 => Concat(Start(200, read: 9000), Text(0, "Done: the **cube** stands at `[0, 1, 3]`, in front of the player.\n\n- Name: Panel Cube\n- Undo: one step (⌘Z)"), Stop("end_turn", 20)),
                     3 => Concat(Start(220, read: 9100), Tool(0, "tu_c", "delete_entities", "{\"entities\":[\"Panel Cube\"]}"), Stop("tool_use", 15)),
-                    _ => Concat(Start(240, read: 9200), Text(0, "Im Ask-Modus ändere ich nichts — wechsle zu Agent, dann lösche ich ihn."), Stop("end_turn", 12)),
+                    _ => Concat(Start(240, read: 9200), Text(0, "Ask mode changes nothing — switch to Agent and I'll delete it."), Stop("end_turn", 12)),
                 };
                 var sse = string.Concat(events.Select(e => "event: " + JsonDocument.Parse(e).RootElement.GetProperty("type").GetString() + "\ndata: " + e + "\n\n"));
                 return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(sse, Encoding.UTF8, "text/event-stream") };
@@ -148,7 +148,7 @@ namespace VortexEditor.Claude
                 if (!movedIn) return Fail("with the Inspector hidden the sidebar did not take its place");
                 if (Grid.GetColumn(window.ClaudeColumn) != 6 || window.ClaudeColumn.Bounds.Width < 290) return Fail("the sidebar did not go back beside the Inspector");
 
-                var send = panel.SendAsync("Bau einen Würfel und zeig ihn mir");
+                var send = panel.SendAsync("Add a cube in front of the player and show it to me");
                 // the create_entity card asks first: click Allow
                 Button allow = null;
                 for (int i = 0; i < 200 && allow == null; i++)
@@ -167,8 +167,8 @@ namespace VortexEditor.Claude
                 if (cube == null) return Fail("Claude's create_entity did not create the cube");
                 if (UndoRedoManager.Instance.UndoName != "Claude: create Panel Cube") return Fail("undo step is '" + UndoRedoManager.Instance.UndoName + "'");
                 var answers = panel.Log.Children.OfType<MarkdownBlock>().Select(m => m.Text).ToList();
-                if (!answers.Contains("Ich baue einen Würfel und schaue ihn mir an.")) return Fail("streamed text missing: " + string.Join(" | ", answers));
-                if (!answers.Any(a => a.StartsWith("Fertig: der **Würfel**", StringComparison.Ordinal))) return Fail("final answer missing");
+                if (!answers.Contains("I'll add a cube in front of the player and take a look.")) return Fail("streamed text missing: " + string.Join(" | ", answers));
+                if (!answers.Any(a => a.StartsWith("Done: the **cube**", StringComparison.Ordinal))) return Fail("final answer missing");
                 var thinking = panel.Log.Children.OfType<ClaudePanel.ThinkingBlock>().FirstOrDefault();
                 if (thinking == null || !thinking.Text.Contains("Planning the cube")) return Fail("no thinking summary");
                 if (!panel.Log.GetVisualDescendants().OfType<Image>().Any()) return Fail("the capture card shows no image");
@@ -182,7 +182,7 @@ namespace VortexEditor.Claude
 
                 // Ask mode: the delete is refused, the cube stays
                 panel.SetMode("Ask");
-                var ask = panel.SendAsync("Lösch den Würfel");
+                var ask = panel.SendAsync("Delete the cube");
                 if (await Task.WhenAny(ask, Task.Delay(20000)) != ask) return Fail("the Ask turn did not finish");
                 await SmokeRegistry.Settle(300);
                 if (SceneModel.All(ProjectData.Current.ActiveScene).All(e => e.Name != "Panel Cube")) return Fail("Ask mode deleted the cube");
