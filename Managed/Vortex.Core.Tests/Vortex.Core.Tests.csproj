@@ -19,6 +19,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../Vortex.Core/Vortex.Core.csproj" />
+    <ProjectReference Include="../Vortex.Claude/Vortex.Claude.csproj" />
   </ItemGroup>
 
 </Project>

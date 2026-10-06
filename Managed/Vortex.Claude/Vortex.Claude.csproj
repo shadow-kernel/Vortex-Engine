@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Vortex.Claude — the Claude panel's conversation engine on the official Anthropic C# SDK: models, effort, context
+    (server-side compaction), Ask / Agent modes, the tool loop and the user's credentials (API key, or the Anthropic
+    account they signed in with through the Anthropic CLI). Referenced by the editor and the tests only — exported
+    games (Vortex.Player) never carry the SDK.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>Vortex.Claude</AssemblyName>
+    <RootNamespace>Editor.Core.Claude</RootNamespace>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Vortex.Core.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Anthropic" Version="12.53.0" />
+    <ProjectReference Include="../Vortex.Core/Vortex.Core.csproj" />
+  </ItemGroup>
+
+</Project>

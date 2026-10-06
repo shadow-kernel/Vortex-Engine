@@ -19,6 +19,7 @@ using Editor.DllWrapper;
 using Editor.ECS;
 using Editor.ECS.Components.Lighting;
 using VortexEditor.Panels;
+using VortexEditor.Shell.Material;
 
 namespace VortexEditor.Shell
 {
@@ -46,6 +47,8 @@ namespace VortexEditor.Shell
             Opened += (s, e) => Keys.LocalizeHints(this);
             Opened += OnOpened;
             Activated += (s, e) => Session.OnWindowActivated();
+            // back from the browser or a terminal: the user may have signed in to Anthropic there
+            Activated += (s, e) => { if (IsPanelVisible(PanelClaude)) ClaudePanel.RefreshAccount(); };
             Closing += OnClosing;
             Session.ProjectOpened += p => Dispatcher.UIThread.Post(() => OnProjectChanged(p));
             Session.ProjectClosed += () => Dispatcher.UIThread.Post(() => OnProjectChanged(null));
@@ -71,6 +74,7 @@ namespace VortexEditor.Shell
             SyncPlayButtons();
             SyncUndoText();
             SyncClaudeStatus();
+            ApplyLayout();
         }
 
         private void OnOpened(object sender, EventArgs e)
@@ -429,6 +433,8 @@ namespace VortexEditor.Shell
         {
             if (_closingConfirmed)
             {
+                try { CaptureClaudeWidth(); SaveClaudeLayout(); }
+                catch { }
                 VortexEditor.Program.Stage("stopping the MCP server");
                 _ = Claude.McpHost.StopAsync();
                 VortexEditor.Program.Stage("shutting the engine down");
@@ -624,6 +630,7 @@ namespace VortexEditor.Shell
         }
         private void OnBuildClick(object s, RoutedEventArgs e) => EditorCommands.Build();
         private void OnGitClick(object s, RoutedEventArgs e) => EditorCommands.GitWindow();
+        private void OnClaudeToggle(object s, RoutedEventArgs e) => TogglePanel(PanelClaude);
         private void OnHistoryClick(object s, RoutedEventArgs e) => EditorCommands.History();
 
         // ---------------------------------------------------------------- Claude (MCP server) indicator
@@ -697,9 +704,14 @@ namespace VortexEditor.Shell
         private readonly Dictionary<string, bool> _panels = new Dictionary<string, bool>
         {
             [PanelHierarchy] = true, [PanelFiles] = true, [PanelInspector] = true, [PanelEnvironment] = true, [PanelProject] = true, [PanelConsole] = true,
-            [PanelLibrary] = true, [PanelStore] = true, [PanelClaude] = true,
+            [PanelLibrary] = true, [PanelStore] = true, [PanelClaude] = Claude.ClaudePanelSettings.Current.Open,
         };
         private GridLength _leftWidth = new GridLength(260), _rightWidth = new GridLength(330), _bottomHeight = new GridLength(300);
+        private const double ClaudeDefaultWidth = 400, ClaudeMinWidth = 300;
+        /// <summary>The Claude sidebar sits in the right column's place while Inspector and Environment are hidden (a
+        /// splitter next to an empty column would open a blank gap).</summary>
+        private bool _claudeInRight;
+        private GridLength _claudeWidth = new GridLength(Claude.ClaudePanelSettings.Current.Width >= ClaudeMinWidth ? Claude.ClaudePanelSettings.Current.Width : ClaudeDefaultWidth);
 
         public bool IsPanelVisible(string name) => _panels.TryGetValue(name, out bool v) && v;
 
@@ -718,7 +730,29 @@ namespace VortexEditor.Shell
             if (_panels[name] && tab != null) tabs.SelectedItem = tab;
             if (name == PanelConsole && _panels[name]) ClearConsoleBadge();
             if (name == PanelHierarchy && _panels[name] && forceShow) Hierarchy.FocusTree();
+            if (name == PanelClaude)
+            {
+                SaveClaudeLayout();
+                if (_panels[name]) ClaudePanel.OnShown();
+            }
             EditorMenus.Refresh();
+        }
+
+        /// <summary>Remember the width the user dragged the Claude sidebar to (in whichever column it sits).</summary>
+        private void CaptureClaudeWidth()
+        {
+            if (!ClaudeColumn.IsVisible) return;
+            var w = Workspace.ColumnDefinitions[_claudeInRight ? 4 : 6].Width;
+            if (w.IsAbsolute && w.Value >= ClaudeMinWidth) _claudeWidth = w;
+        }
+
+        /// <summary>The Claude sidebar's open state and width outlive the session.</summary>
+        private void SaveClaudeLayout()
+        {
+            var st = Claude.ClaudePanelSettings.Current;
+            st.Open = _panels[PanelClaude];
+            st.Width = _claudeWidth.Value;
+            st.Save();
         }
 
         public void ShowPanel(string name) => TogglePanel(name, forceShow: true);
@@ -730,7 +764,6 @@ namespace VortexEditor.Shell
             {
                 case PanelInspector: tabs = RightTabs; return InspectorTab;
                 case PanelEnvironment: tabs = RightTabs; return EnvironmentTab;
-                case PanelClaude: tabs = RightTabs; return ClaudeTab;
                 case PanelProject: tabs = BottomTabs; return ProjectTab;
                 case PanelLibrary: tabs = BottomTabs; return LibraryTab;
                 case PanelStore: tabs = BottomTabs; return StoreTab;
@@ -741,8 +774,9 @@ namespace VortexEditor.Shell
 
         public void ResetLayout()
         {
-            foreach (var k in _panels.Keys.ToList()) _panels[k] = true;
+            foreach (var k in _panels.Keys.ToList()) _panels[k] = k != PanelClaude;
             _leftWidth = new GridLength(260); _rightWidth = new GridLength(330); _bottomHeight = new GridLength(300);
+            _claudeWidth = new GridLength(ClaudeDefaultWidth); Workspace.ColumnDefinitions[6].Width = new GridLength(0);
             Workspace.ColumnDefinitions[0].Width = _leftWidth; Workspace.ColumnDefinitions[4].Width = _rightWidth; CenterColumn.RowDefinitions[2].Height = _bottomHeight;
             LeftColumn.RowDefinitions[0].Height = new GridLength(3, GridUnitType.Star); LeftColumn.RowDefinitions[2].Height = new GridLength(2, GridUnitType.Star);
             ApplyLayout();
@@ -753,7 +787,8 @@ namespace VortexEditor.Shell
         {
             // remember sizes the user dragged before collapsing a column
             if (Workspace.ColumnDefinitions[0].Width.Value > 10) _leftWidth = Workspace.ColumnDefinitions[0].Width;
-            if (Workspace.ColumnDefinitions[4].Width.Value > 10) _rightWidth = Workspace.ColumnDefinitions[4].Width;
+            CaptureClaudeWidth();
+            if (!_claudeInRight && Workspace.ColumnDefinitions[4].Width.Value > 10) _rightWidth = Workspace.ColumnDefinitions[4].Width;
             if (CenterColumn.RowDefinitions[2].Height.Value > 10) _bottomHeight = CenterColumn.RowDefinitions[2].Height;
 
             bool hier = _panels[PanelHierarchy], files = _panels[PanelFiles], left = hier || files;
@@ -764,11 +799,24 @@ namespace VortexEditor.Shell
             LeftColumn.RowDefinitions[2].Height = files ? new GridLength(2, GridUnitType.Star) : new GridLength(0);
             HierarchyHost.IsVisible = hier; FilesHost.IsVisible = files;
 
-            ApplyTabs(RightTabs, (InspectorTab, _panels[PanelInspector]), (EnvironmentTab, _panels[PanelEnvironment]), (ClaudeTab, _panels[PanelClaude]));
-            bool right = _panels[PanelInspector] || _panels[PanelEnvironment] || _panels[PanelClaude];
-            Workspace.ColumnDefinitions[4].Width = right ? _rightWidth : new GridLength(0);
-            Workspace.ColumnDefinitions[3].Width = new GridLength(right ? 5 : 0);
+            ApplyTabs(RightTabs, (InspectorTab, _panels[PanelInspector]), (EnvironmentTab, _panels[PanelEnvironment]));
+            bool right = _panels[PanelInspector] || _panels[PanelEnvironment];
+            bool claude = _panels[PanelClaude];
+            _claudeInRight = claude && !right;
+            var cols = Workspace.ColumnDefinitions;
+            Grid.SetColumn(ClaudeColumn, _claudeInRight ? 4 : 6);
+            cols[4].MinWidth = _claudeInRight ? ClaudeMinWidth : 0;
+            cols[4].Width = _claudeInRight ? _claudeWidth : right ? _rightWidth : new GridLength(0);
+            cols[3].Width = new GridLength(right || claude ? 5 : 0);
             RightColumn.IsVisible = right;
+            bool beside = claude && right;
+            cols[6].MinWidth = beside ? ClaudeMinWidth : 0;
+            cols[6].Width = beside ? _claudeWidth : new GridLength(0);
+            cols[5].Width = new GridLength(beside ? 5 : 0);
+            ClaudeColumn.IsVisible = claude;
+            ClaudeSplitter.IsVisible = beside;
+            if (claude) ClaudeToggleIcon.Foreground = EditorKit.Brush("VxAccentBrush");
+            else ClaudeToggleIcon.ClearValue(Avalonia.Controls.Primitives.TemplatedControl.ForegroundProperty);
 
             ApplyTabs(BottomTabs, (ProjectTab, _panels[PanelProject]), (LibraryTab, _panels[PanelLibrary]), (StoreTab, _panels[PanelStore]), (ConsoleTab, _panels[PanelConsole]));
             bool bottom = _panels[PanelProject] || _panels[PanelLibrary] || _panels[PanelStore] || _panels[PanelConsole];
