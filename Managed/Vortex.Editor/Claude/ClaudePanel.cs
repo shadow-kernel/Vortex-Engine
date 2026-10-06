@@ -81,6 +81,7 @@ namespace VortexEditor.Claude
         private readonly StackPanel _keyBox = new StackPanel { Spacing = 6, IsVisible = false };
         private readonly TextBox _keyField = new TextBox { PasswordChar = '•', Watermark = "sk-ant-…" };
         private readonly TextBlock _signInError = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 11.5, IsVisible = false };
+        private readonly Button _terminalSignIn = new Button { Content = "Sign in from a terminal", HorizontalAlignment = HorizontalAlignment.Left, IsVisible = false };
         private CancellationTokenSource _signInCts;
         private string _signInUrl;
         /// <summary>The user opened the sign-in view on purpose (to change the key) — coming back to the window does not
@@ -718,12 +719,31 @@ namespace VortexEditor.Claude
             waitRow.Children.Add(_signInWaitText);
             _signInWait.Children.Add(waitRow);
             _signInWait.Children.Add(_signInLink);
-            _signInWait.Children.Add(cancel);
+            var waitButtons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            waitButtons.Children.Add(cancel);
+            var viaTerminal = new Button { Classes = { "link" }, Content = "Use a terminal instead", FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
+            viaTerminal.Click += (s, e) => _terminalSignIn.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            waitButtons.Children.Add(viaTerminal);
+            _signInWait.Children.Add(waitButtons);
             sp.Children.Add(_signInWait);
             BuildCliInstall();
             sp.Children.Add(_cliInstall);
             _signInError.Foreground = EditorKit.Brush("VxRedBrush");
             sp.Children.Add(_signInError);
+            // the background sign-in did not finish (the CLI may want a terminal): the same sign-in in a terminal window;
+            // coming back to the editor picks the new sign-in up
+            _terminalSignIn.Click += (s, e) =>
+            {
+                try { _signInCts?.Cancel(); } catch { }
+                if (ClaudeAccount.SignInInTerminal())
+                {
+                    _signInError.Text = "Finish the sign-in in the terminal and your browser, then come back here.";
+                    _signInError.Foreground = EditorKit.Brush("VxTextSecondaryBrush");
+                    _signInError.IsVisible = true;
+                }
+                else EditorCommands.Toast("No terminal could be opened — run: ant auth login");
+            };
+            sp.Children.Add(_terminalSignIn);
 
             // ---- API key
             var useKey = new Button { Content = "Use an API key", HorizontalAlignment = HorizontalAlignment.Stretch, MinHeight = 30, Margin = new Thickness(0, 6, 0, 0) };
@@ -783,6 +803,8 @@ namespace VortexEditor.Claude
         {
             if (_signInCts != null) return;
             _signInError.IsVisible = false;
+            _signInError.Foreground = EditorKit.Brush("VxRedBrush");
+            _terminalSignIn.IsVisible = false;
             if (ClaudeAccount.FindCli() == null) { _cliInstall.IsVisible = true; return; }
             _cliInstall.IsVisible = false;
             _signInCts = new CancellationTokenSource();
@@ -809,6 +831,7 @@ namespace VortexEditor.Claude
                 {
                     _signInError.Text = "Sign-in did not finish." + (string.IsNullOrWhiteSpace(output) ? "" : "\n" + Tail(output, 6));
                     _signInError.IsVisible = true;
+                    _terminalSignIn.IsVisible = true;
                 }
             }
             finally

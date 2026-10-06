@@ -169,6 +169,14 @@ namespace Editor.Core.Claude
             return ProcessTools.RunAsync(cli, args, timeout, ct, onLine);
         }
 
+        /// <summary>The Anthropic CLI's sign-in in a terminal window (when the background sign-in does not finish, e.g.
+        /// because the CLI wants a terminal). The panel notices the new profile when the user comes back.</summary>
+        public static bool SignInInTerminal()
+        {
+            string cli = FindCli();
+            return cli != null && ProcessTools.OpenInTerminal(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), cli, "auth", "login");
+        }
+
         /// <summary>The first https link in a line of CLI output, or null.</summary>
         public static string LinkIn(string line)
         {
@@ -198,13 +206,23 @@ namespace Editor.Core.Claude
 
         /// <summary>Open a terminal on <paramref name="folder"/> running Claude Code. False when no terminal could be
         /// started (the caller shows the command instead).</summary>
-        public static bool OpenInTerminal(string folder, string claude)
+        public static bool OpenInTerminal(string folder, string claude) => ProcessTools.OpenInTerminal(folder, claude);
+
+    }
+
+    /// <summary>Finding and running the command-line tools the panel works with.</summary>
+    public static class ProcessTools
+    {
+        /// <summary>Open a terminal window on <paramref name="folder"/> that runs <paramref name="exe"/> with
+        /// <paramref name="args"/> (Terminal on macOS, Windows Terminal or cmd on Windows, the desktop's terminal on Linux).
+        /// False when no terminal could be started.</summary>
+        public static bool OpenInTerminal(string folder, string exe, params string[] args)
         {
             try
             {
                 if (OperatingSystem.IsMacOS())
                 {
-                    string cmd = "cd " + ShellQuote(folder) + " && " + ShellQuote(claude);
+                    string cmd = "cd " + ShellQuote(folder) + " && " + string.Join(" ", new[] { exe }.Concat(args).Select(ShellQuote));
                     string script = "tell application \"Terminal\"\n  activate\n  do script \"" + cmd.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"\nend tell";
                     var psi = new ProcessStartInfo("osascript") { UseShellExecute = false, CreateNoWindow = true };
                     psi.ArgumentList.Add("-e");
@@ -214,22 +232,25 @@ namespace Editor.Core.Claude
                 }
                 if (OperatingSystem.IsWindows())
                 {
-                    string wt = ProcessTools.FindExecutable("wt.exe", new string[0]);
+                    string wt = FindExecutable("wt.exe", new string[0]);
                     var psi = wt != null
                         ? new ProcessStartInfo(wt) { UseShellExecute = true }
                         : new ProcessStartInfo("cmd.exe") { UseShellExecute = true, WorkingDirectory = folder };
-                    if (wt != null) { psi.ArgumentList.Add("-d"); psi.ArgumentList.Add(folder); psi.ArgumentList.Add("cmd"); psi.ArgumentList.Add("/k"); psi.ArgumentList.Add(claude); }
-                    else { psi.ArgumentList.Add("/k"); psi.ArgumentList.Add(claude); }
+                    if (wt != null) { psi.ArgumentList.Add("-d"); psi.ArgumentList.Add(folder); psi.ArgumentList.Add("cmd"); }
+                    psi.ArgumentList.Add("/k");
+                    psi.ArgumentList.Add(exe);
+                    foreach (var a in args) psi.ArgumentList.Add(a);
                     using var p = Process.Start(psi);
                     return p != null;
                 }
                 foreach (var term in new[] { "x-terminal-emulator", "gnome-terminal", "konsole", "xterm" })
                 {
-                    string exe = ProcessTools.FindExecutable(term, new string[0]);
-                    if (exe == null) continue;
-                    var psi = new ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = folder };
-                    if (term == "gnome-terminal") { psi.ArgumentList.Add("--"); psi.ArgumentList.Add(claude); }
-                    else { psi.ArgumentList.Add("-e"); psi.ArgumentList.Add(claude); }
+                    string t = FindExecutable(term, new string[0]);
+                    if (t == null) continue;
+                    var psi = new ProcessStartInfo(t) { UseShellExecute = false, WorkingDirectory = folder };
+                    psi.ArgumentList.Add(term == "gnome-terminal" ? "--" : "-e");
+                    psi.ArgumentList.Add(exe);
+                    foreach (var a in args) psi.ArgumentList.Add(a);
                     using var p = Process.Start(psi);
                     return p != null;
                 }
@@ -239,11 +260,7 @@ namespace Editor.Core.Claude
         }
 
         internal static string ShellQuote(string s) => "'" + (s ?? "").Replace("'", "'\\''") + "'";
-    }
 
-    /// <summary>Finding and running the command-line tools the panel works with.</summary>
-    public static class ProcessTools
-    {
         public static string FindExecutable(string name, IEnumerable<string> knownPaths)
         {
             try
