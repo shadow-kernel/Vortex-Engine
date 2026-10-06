@@ -21,6 +21,11 @@ is **not** bundled in this source repository.
 - **License:** Dual Public Domain (Unlicense) / MIT. © Sean Barrett.
 - **Text:** embedded at the bottom of `Engine/ThirdParty/stb_image.h` · upstream: https://github.com/nothings/stb
 
+### stb_truetype
+- **Use:** rasterizing TrueType fonts for in-game text (`Engine/ThirdParty/stb_truetype.h`).
+- **License:** Dual Public Domain (Unlicense) / MIT. © Sean Barrett.
+- **Text:** embedded at the bottom of `Engine/ThirdParty/stb_truetype.h` · upstream: https://github.com/nothings/stb
+
 ### miniaudio
 - **Use:** audio engine backend — playback device (WASAPI), mixing node graph, WAV/FLAC/MP3 decoding (`Engine/ThirdParty/miniaudio.h`, v0.11.22).
 - **License:** Dual Public Domain (Unlicense) / MIT-0 ("No Attribution"). © David Reid.
@@ -99,6 +104,11 @@ is **not** bundled in this source repository.
   `ModelContextProtocol`, `ModelContextProtocol.Core` (2.2.0).
 - **License:** Apache License 2.0. © Model Context Protocol a Series of LF Projects, LLC.
   Text: https://www.apache.org/licenses/LICENSE-2.0 · upstream: https://github.com/modelcontextprotocol/csharp-sdk
+
+### Anthropic C# SDK
+- **Use:** the Claude sidebar's chat on the Anthropic API (`Managed/Vortex.Claude/`) — package `Anthropic` (12.53.0), with
+  its dependency `System.Net.ServerSentEvents` (MIT, © .NET Foundation and Contributors).
+- **License:** MIT. © 2026 Anthropic. Upstream: https://github.com/anthropics/anthropic-sdk-csharp
 
 ### ASP.NET Core (Kestrel) and Microsoft.Extensions
 - **Use:** the HTTP host of the MCP server (framework reference `Microsoft.AspNetCore.App`, bundled by the self-contained
