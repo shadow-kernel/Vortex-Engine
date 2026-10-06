@@ -70,6 +70,8 @@ namespace VortexEditor.Shell
                 else if (ReferenceEquals(BottomTabs.SelectedItem, StoreTab)) StorePanel.OnShown();
             };
             AddHandler(KeyDownEvent, OnGlobalKeyDown, RoutingStrategies.Tunnel);
+            // a smaller window: the side columns give way before the centre gets too narrow (and come back when it grows)
+            Workspace.SizeChanged += (s, e) => { if (!Same(e.NewSize.Width, e.PreviousSize.Width)) { CaptureClaudeWidth(); FitColumns(); } };
             BuildButton.ContextMenu = BuildContextMenu();
             SyncPlayButtons();
             SyncUndoText();
@@ -708,6 +710,10 @@ namespace VortexEditor.Shell
         };
         private GridLength _leftWidth = new GridLength(260), _rightWidth = new GridLength(330), _bottomHeight = new GridLength(300);
         private const double ClaudeDefaultWidth = 400, ClaudeMinWidth = 300;
+        /// <summary>The centre (viewport, asset browser) keeps at least this width: the side columns give way first.</summary>
+        private const double CenterMinWidth = 460, LeftMinWidth = 200, RightMinWidth = 280;
+        /// <summary>The widths the layout last gave the side columns; a column whose width differs was dragged by the user.</summary>
+        private double _appliedLeft = -1, _appliedRight = -1, _appliedClaude = -1;
         /// <summary>The Claude sidebar sits in the right column's place while Inspector and Environment are hidden (a
         /// splitter next to an empty column would open a blank gap).</summary>
         private bool _claudeInRight;
@@ -743,7 +749,45 @@ namespace VortexEditor.Shell
         {
             if (!ClaudeColumn.IsVisible) return;
             var w = Workspace.ColumnDefinitions[_claudeInRight ? 4 : 6].Width;
-            if (w.IsAbsolute && w.Value >= ClaudeMinWidth) _claudeWidth = w;
+            if (w.IsAbsolute && w.Value >= ClaudeMinWidth && !Same(w.Value, _appliedClaude)) _claudeWidth = w;
+        }
+
+        private static bool Same(double a, double b) => Math.Abs(a - b) < 0.5;
+
+        /// <summary>
+        /// Keep the centre usable: when the side columns would leave it less than <see cref="CenterMinWidth"/>, they give
+        /// way — the Claude sidebar first, then the right column, then the left — down to their own minimums, and grow back
+        /// to the widths the user chose once there is room again. A splitter can't squeeze the centre below it either. Only
+        /// a window too small for even the minimums lets the centre get narrower (its toolbars wrap; nothing draws over a
+        /// neighbour — every column clips).
+        /// </summary>
+        private void FitColumns()
+        {
+            var cols = Workspace.ColumnDefinitions;
+            double avail = Workspace.Bounds.Width;
+            bool leftOn = _panels[PanelHierarchy] || _panels[PanelFiles];
+            bool rightOn = _panels[PanelInspector] || _panels[PanelEnvironment];
+            bool claudeOn = _panels[PanelClaude];
+            double l = leftOn ? _leftWidth.Value : 0, r = rightOn ? _rightWidth.Value : 0, c = claudeOn ? _claudeWidth.Value : 0;
+            double splitters = cols[1].Width.Value + cols[3].Width.Value + cols[5].Width.Value;
+            if (avail > 0)
+            {
+                double excess = l + r + c + splitters + CenterMinWidth - avail;
+                void Give(ref double w, double min)
+                {
+                    double d = Math.Min(excess, Math.Max(0, w - min));
+                    w -= d;
+                    excess -= d;
+                }
+                if (excess > 0 && claudeOn) Give(ref c, ClaudeMinWidth);
+                if (excess > 0 && rightOn) Give(ref r, RightMinWidth);
+                if (excess > 0 && leftOn) Give(ref l, LeftMinWidth);
+            }
+            if (leftOn) { cols[0].Width = new GridLength(l); _appliedLeft = l; }
+            if (rightOn && !_claudeInRight) { cols[4].Width = new GridLength(r); _appliedRight = r; }
+            if (claudeOn) { cols[_claudeInRight ? 4 : 6].Width = new GridLength(c); _appliedClaude = c; }
+            double sides = l + r + c + splitters;
+            cols[2].MinWidth = avail > 0 ? Math.Max(0, Math.Min(CenterMinWidth, avail - sides)) : 0;
         }
 
         /// <summary>The Claude sidebar's open state and width outlive the session.</summary>
@@ -785,10 +829,10 @@ namespace VortexEditor.Shell
 
         private void ApplyLayout()
         {
-            // remember sizes the user dragged before collapsing a column
-            if (Workspace.ColumnDefinitions[0].Width.Value > 10) _leftWidth = Workspace.ColumnDefinitions[0].Width;
+            // remember sizes the user dragged before collapsing a column (not the ones FitColumns narrowed)
+            if (Workspace.ColumnDefinitions[0].Width.Value > 10 && !Same(Workspace.ColumnDefinitions[0].Width.Value, _appliedLeft)) _leftWidth = Workspace.ColumnDefinitions[0].Width;
             CaptureClaudeWidth();
-            if (!_claudeInRight && Workspace.ColumnDefinitions[4].Width.Value > 10) _rightWidth = Workspace.ColumnDefinitions[4].Width;
+            if (!_claudeInRight && Workspace.ColumnDefinitions[4].Width.Value > 10 && !Same(Workspace.ColumnDefinitions[4].Width.Value, _appliedRight)) _rightWidth = Workspace.ColumnDefinitions[4].Width;
             if (CenterColumn.RowDefinitions[2].Height.Value > 10) _bottomHeight = CenterColumn.RowDefinitions[2].Height;
 
             bool hier = _panels[PanelHierarchy], files = _panels[PanelFiles], left = hier || files;
@@ -823,6 +867,7 @@ namespace VortexEditor.Shell
             CenterColumn.RowDefinitions[2].Height = bottom ? _bottomHeight : new GridLength(0);
             CenterColumn.RowDefinitions[1].Height = new GridLength(bottom ? 5 : 0);
             BottomDock.IsVisible = bottom;
+            FitColumns();
         }
 
         private static void ApplyTabs(TabControl tabs, params (TabItem tab, bool visible)[] items)

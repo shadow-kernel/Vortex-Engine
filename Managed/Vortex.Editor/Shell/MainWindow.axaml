@@ -58,13 +58,13 @@
 
     <!-- workspace -->
     <Grid Grid.Row="2" x:Name="Workspace" ColumnDefinitions="260,5,*,5,330,0,0">
-      <Grid x:Name="LeftColumn" RowDefinitions="3*,5,2*">
+      <Grid x:Name="LeftColumn" RowDefinitions="3*,5,2*" ClipToBounds="True">
         <Border x:Name="HierarchyHost" Classes="sidebar hairline-right"><p:HierarchyPanel x:Name="Hierarchy"/></Border>
         <GridSplitter Grid.Row="1" ResizeDirection="Rows"/>
         <Border x:Name="FilesHost" Grid.Row="2" Classes="sidebar hairline-right"><p:FileTreePanel x:Name="FileTree"/></Border>
       </Grid>
       <GridSplitter Grid.Column="1" ResizeDirection="Columns"/>
-      <Grid Grid.Column="2" x:Name="CenterColumn" RowDefinitions="*,5,300">
+      <Grid Grid.Column="2" x:Name="CenterColumn" RowDefinitions="*,5,300" ClipToBounds="True">
         <p:ViewportPanel x:Name="ViewportPanel"/>
         <GridSplitter Grid.Row="1" ResizeDirection="Rows"/>
         <Border Grid.Row="2" x:Name="BottomDock" Classes="panel hairline-top">
@@ -103,7 +103,7 @@
         </Border>
       </Grid>
       <GridSplitter Grid.Column="3" ResizeDirection="Columns"/>
-      <Border Grid.Column="4" x:Name="RightColumn" Classes="panel hairline-left">
+      <Border Grid.Column="4" x:Name="RightColumn" Classes="panel hairline-left" ClipToBounds="True">
         <TabControl x:Name="RightTabs">
           <TabItem x:Name="InspectorTab" Header="Inspector"><p:InspectorPanel x:Name="Inspector"/></TabItem>
           <TabItem x:Name="EnvironmentTab" Header="Environment"><p:EnvironmentPanel x:Name="Environment"/></TabItem>
@@ -111,7 +111,7 @@
       </Border>
       <!-- the Claude sidebar: its own column, shown and hidden like a sidebar (⌘9, View ▸ Claude, the title bar button) -->
       <GridSplitter Grid.Column="5" x:Name="ClaudeSplitter" ResizeDirection="Columns" IsVisible="False"/>
-      <Border Grid.Column="6" x:Name="ClaudeColumn" Classes="panel hairline-left" IsVisible="False" MinWidth="0">
+      <Border Grid.Column="6" x:Name="ClaudeColumn" Classes="panel hairline-left" IsVisible="False" MinWidth="0" ClipToBounds="True">
         <cl:ClaudePanel x:Name="ClaudePanel"/>
       </Border>
       <sh:ToastHost x:Name="Toast" Grid.ColumnSpan="7"/>

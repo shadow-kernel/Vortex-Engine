@@ -4,10 +4,11 @@
              xmlns:vp="clr-namespace:VortexEditor.Viewport"
              x:Class="VortexEditor.Panels.ViewportPanel">
   <DockPanel>
-    <!-- viewport toolbar -->
-    <Border DockPanel.Dock="Top" x:Name="Toolbar" Height="34" Background="{DynamicResource VxToolbarBrush}" Classes="hairline-bottom" Padding="8,0">
-      <Grid ColumnDefinitions="Auto,*,Auto">
-        <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+    <!-- viewport toolbar: one row while it fits; when the panel is narrow (side panels open) the view controls move to a
+         second row instead of running under the next panel -->
+    <Border DockPanel.Dock="Top" x:Name="Toolbar" MinHeight="34" Background="{DynamicResource VxToolbarBrush}" Classes="hairline-bottom" Padding="8,0">
+      <c:ResponsiveToolbar x:Name="ToolbarLayout" RowHeight="34" Gap="12">
+        <WrapPanel x:Name="ToolGroup" Orientation="Horizontal" ItemSpacing="6" VerticalAlignment="Center">
           <Border Classes="segmented">
             <StackPanel Orientation="Horizontal">
               <RadioButton x:Name="ToolMove" GroupName="tool" ToolTip.Tip="Move tool (W)" Click="OnToolMove"><c:VxIcon Icon="Move"/></RadioButton>
@@ -23,8 +24,8 @@
           <ToggleButton x:Name="ColliderToggle" Classes="icon" ToolTip.Tip="Show collision (green net = solid, amber = trigger) — right-click: all colliders" Click="OnColliderToggle" PointerPressed="OnColliderPressed"><c:VxIcon Icon="Collider"/></ToggleButton>
           <ToggleButton x:Name="FpToggle" Classes="icon" ToolTip.Tip="First-person layer (render layer 1): hidden / in the world / as the game shows it" Click="OnFpToggle"><c:VxIcon Icon="Crosshair"/></ToggleButton>
           <Button x:Name="ViewOptionsButton" Classes="icon" ToolTip.Tip="View options — shading, snap size, camera speed" Click="OnViewOptions"><c:VxIcon Icon="More"/></Button>
-        </StackPanel>
-        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center" VerticalAlignment="Center">
+        </WrapPanel>
+        <WrapPanel x:Name="ViewGroup" Orientation="Horizontal" ItemSpacing="6" VerticalAlignment="Center">
           <Border Classes="segmented">
             <StackPanel Orientation="Horizontal">
               <RadioButton x:Name="LayoutSingle" GroupName="layout" IsChecked="True" ToolTip.Tip="Single view" Click="OnLayoutClick" Tag="1"><c:VxIcon Icon="LayoutSingle"/></RadioButton>
@@ -35,15 +36,15 @@
           </Border>
           <ComboBox x:Name="CameraSelector" MinWidth="150" SelectionChanged="OnCameraSelected" ToolTip.Tip="View: free camera, a scene camera or the in-game first-person preview"/>
           <ToggleButton x:Name="PipToggle" Classes="icon" ToolTip.Tip="Camera preview (picture in picture)" Click="OnPipToggle"><c:VxIcon Icon="Pip"/></ToggleButton>
-        </StackPanel>
-        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+        </WrapPanel>
+        <StackPanel x:Name="BadgeGroup" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
           <Border x:Name="WireBadge" Classes="badge" IsVisible="False" Background="{DynamicResource VxControlBrush}"><TextBlock Text="WIREFRAME"/></Border>
           <Border x:Name="GameViewBadge" Classes="badge" IsVisible="False" Background="{DynamicResource VxPanelRaisedBrush}"><TextBlock Text="GAME VIEW · press ▶" Foreground="{DynamicResource VxTextSecondaryBrush}"/></Border>
           <Border x:Name="FlyBadge" Classes="badge" IsVisible="False" Background="{DynamicResource VxAccentSoftBrush}"><TextBlock x:Name="FlyText" Text="FLY" Foreground="{DynamicResource VxAccentBrush}"/></Border>
           <Border x:Name="PlayBadge" Classes="badge" IsVisible="False" Background="{DynamicResource VxGreenBrush}"><TextBlock Text="PLAY MODE" Foreground="White"/></Border>
           <Border x:Name="ExternalBadge" Classes="badge" IsVisible="False" Background="{DynamicResource VxOrangeBrush}"><TextBlock Text="RUNS IN PLAYER WINDOW" Foreground="White"/></Border>
         </StackPanel>
-      </Grid>
+      </c:ResponsiveToolbar>
     </Border>
     <!-- render surface + optional secondary views -->
     <Grid x:Name="ViewGrid" Background="{DynamicResource VxViewportBgBrush}">

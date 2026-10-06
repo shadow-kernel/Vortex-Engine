@@ -84,6 +84,12 @@ namespace VortexEditor.Panels
         {
             InitializeComponent();
             Current = this;
+            // a narrow centre column (side panels open): the search field gives way before the buttons next to it are cut
+            SizeChanged += (s, e) =>
+            {
+                SearchBox.Width = Math.Clamp(e.NewSize.Width - 300, 110, 180);
+                CreateLabel.IsVisible = ImportLabel.IsVisible = e.NewSize.Width >= 420;   // icons only when it is tight
+            };
             _settings = BrowserSettings.Load();
             Items.ItemsSource = _tiles;
             _listMode = string.Equals(_settings.ViewMode, "List", StringComparison.OrdinalIgnoreCase);

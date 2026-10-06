@@ -99,33 +99,51 @@
   </UserControl.Resources>
 
   <DockPanel>
-    <!-- row 1: history + breadcrumb | search, create, import, refresh -->
-    <Border DockPanel.Dock="Top" Classes="panelheader" Height="36">
-      <DockPanel>
-        <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,4,0">
-          <Button x:Name="BackButton" Classes="icon small" ToolTip.Tip="Back (⌘[)" Click="OnBackClick"><c:VxIcon Icon="ChevronLeft" Width="13" Height="13"/></Button>
-          <Button x:Name="ForwardButton" Classes="icon small" ToolTip.Tip="Forward (⌘])" Click="OnForwardClick"><c:VxIcon Icon="ChevronRight" Width="13" Height="13"/></Button>
-        </StackPanel>
-        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+    <!-- row 1: history + breadcrumb | search, create, import, refresh — the right group moves to a second row when the
+         centre column is narrow (side panels open), it never reaches under the next panel -->
+    <Border DockPanel.Dock="Top" Classes="panelheader" Height="NaN" MinHeight="36">
+      <c:ResponsiveToolbar RowHeight="36" Gap="8" FlexibleLeftMinWidth="120">
+        <DockPanel>
+          <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,4,0">
+            <Button x:Name="BackButton" Classes="icon small" ToolTip.Tip="Back (⌘[)" Click="OnBackClick"><c:VxIcon Icon="ChevronLeft" Width="13" Height="13"/></Button>
+            <Button x:Name="ForwardButton" Classes="icon small" ToolTip.Tip="Forward (⌘])" Click="OnForwardClick"><c:VxIcon Icon="ChevronRight" Width="13" Height="13"/></Button>
+          </StackPanel>
+          <ScrollViewer x:Name="BreadcrumbScroll" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled" VerticalAlignment="Center">
+            <StackPanel x:Name="Breadcrumb" Orientation="Horizontal" Spacing="0" VerticalAlignment="Center"/>
+          </ScrollViewer>
+        </DockPanel>
+        <WrapPanel Orientation="Horizontal" ItemSpacing="4" VerticalAlignment="Center">
           <TextBox x:Name="SearchBox" Classes="search" Watermark="Search assets" Width="180" TextChanged="OnSearchChanged"/>
           <Button x:Name="CreateButton" Classes="ghost" Click="OnCreateClick" ToolTip.Tip="Create a new asset in this folder">
-            <StackPanel Orientation="Horizontal" Spacing="5"><c:VxIcon Icon="Plus"/><TextBlock Text="Create"/></StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="5"><c:VxIcon Icon="Plus"/><TextBlock x:Name="CreateLabel" Text="Create"/></StackPanel>
           </Button>
           <Button x:Name="ImportButton" Classes="ghost" Click="OnImportClick" ToolTip.Tip="Import files into this folder (or drop files from Finder)">
-            <StackPanel Orientation="Horizontal" Spacing="5"><c:VxIcon Icon="Import"/><TextBlock Text="Import"/></StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="5"><c:VxIcon Icon="Import"/><TextBlock x:Name="ImportLabel" Text="Import"/></StackPanel>
           </Button>
           <Button Classes="icon" ToolTip.Tip="Refresh" Click="OnRefreshClick"><c:VxIcon Icon="Refresh"/></Button>
-        </StackPanel>
-        <ScrollViewer x:Name="BreadcrumbScroll" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled" VerticalAlignment="Center">
-          <StackPanel x:Name="Breadcrumb" Orientation="Horizontal" Spacing="0" VerticalAlignment="Center"/>
-        </ScrollViewer>
-      </DockPanel>
+        </WrapPanel>
+      </c:ResponsiveToolbar>
     </Border>
 
-    <!-- row 2: type tabs | tag filter, sort, grid/list, tile size -->
-    <Border DockPanel.Dock="Top" Height="34" Padding="8,0" Classes="hairline-bottom">
-      <DockPanel>
-        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center" Margin="8,0,0,0">
+    <!-- row 2: type tabs | tag filter, sort, grid/list, tile size (the right group gets its own row when narrow) -->
+    <Border DockPanel.Dock="Top" MinHeight="34" Padding="8,0" Classes="hairline-bottom">
+      <c:ResponsiveToolbar RowHeight="34" Gap="8" FlexibleLeftMinWidth="160">
+        <ScrollViewer HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled" VerticalAlignment="Center">
+          <Border x:Name="TabsBorder" Classes="segmented" HorizontalAlignment="Left">
+            <StackPanel Orientation="Horizontal" x:Name="Tabs">
+              <RadioButton GroupName="assettab" Tag="Explorer" IsChecked="True" Click="OnTabClick" ToolTip.Tip="Browse the current folder (sub-folders + all files)">Explorer</RadioButton>
+              <RadioButton GroupName="assettab" Tag="Meshes" Click="OnTabClick" ToolTip.Tip="Built-in primitives + every model in the project">Meshes</RadioButton>
+              <RadioButton GroupName="assettab" Tag="Models" Click="OnTabClick" ToolTip.Tip="Every imported model — double-click to add it to the scene">Models</RadioButton>
+              <RadioButton GroupName="assettab" Tag="Textures" Click="OnTabClick">Textures</RadioButton>
+              <RadioButton GroupName="assettab" Tag="Materials" Click="OnTabClick">Materials</RadioButton>
+              <RadioButton GroupName="assettab" Tag="Scripts" Click="OnTabClick">Scripts</RadioButton>
+              <RadioButton GroupName="assettab" Tag="Audio" Click="OnTabClick" ToolTip.Tip="Audio clips — click a tile to audition, drag onto an AudioSource to assign">Audio</RadioButton>
+              <RadioButton GroupName="assettab" Tag="Prefabs" Click="OnTabClick" ToolTip.Tip="All .ventity prefabs — double-click to place, Shift+double-click to edit">Prefabs</RadioButton>
+              <RadioButton GroupName="assettab" Tag="Scenes" Click="OnTabClick">Scenes</RadioButton>
+            </StackPanel>
+          </Border>
+        </ScrollViewer>
+        <WrapPanel Orientation="Horizontal" ItemSpacing="4" VerticalAlignment="Center">
           <Button x:Name="TagButton" Classes="ghost" Click="OnTagFilterClick" ToolTip.Tip="Show only assets with a tag">
             <StackPanel Orientation="Horizontal" Spacing="4">
               <c:VxIcon x:Name="TagIcon" Icon="Tag" Width="13" Height="13"/>
@@ -150,23 +168,8 @@
           </Border>
           <Slider x:Name="SizeSlider" Width="70" Minimum="56" Maximum="176" Value="96" VerticalAlignment="Center" ToolTip.Tip="Tile size"
                   ValueChanged="OnSizeChanged"/>
-        </StackPanel>
-        <ScrollViewer HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled" VerticalAlignment="Center">
-          <Border x:Name="TabsBorder" Classes="segmented" HorizontalAlignment="Left">
-            <StackPanel Orientation="Horizontal" x:Name="Tabs">
-              <RadioButton GroupName="assettab" Tag="Explorer" IsChecked="True" Click="OnTabClick" ToolTip.Tip="Browse the current folder (sub-folders + all files)">Explorer</RadioButton>
-              <RadioButton GroupName="assettab" Tag="Meshes" Click="OnTabClick" ToolTip.Tip="Built-in primitives + every model in the project">Meshes</RadioButton>
-              <RadioButton GroupName="assettab" Tag="Models" Click="OnTabClick" ToolTip.Tip="Every imported model — double-click to add it to the scene">Models</RadioButton>
-              <RadioButton GroupName="assettab" Tag="Textures" Click="OnTabClick">Textures</RadioButton>
-              <RadioButton GroupName="assettab" Tag="Materials" Click="OnTabClick">Materials</RadioButton>
-              <RadioButton GroupName="assettab" Tag="Scripts" Click="OnTabClick">Scripts</RadioButton>
-              <RadioButton GroupName="assettab" Tag="Audio" Click="OnTabClick" ToolTip.Tip="Audio clips — click a tile to audition, drag onto an AudioSource to assign">Audio</RadioButton>
-              <RadioButton GroupName="assettab" Tag="Prefabs" Click="OnTabClick" ToolTip.Tip="All .ventity prefabs — double-click to place, Shift+double-click to edit">Prefabs</RadioButton>
-              <RadioButton GroupName="assettab" Tag="Scenes" Click="OnTabClick">Scenes</RadioButton>
-            </StackPanel>
-          </Border>
-        </ScrollViewer>
-      </DockPanel>
+        </WrapPanel>
+      </c:ResponsiveToolbar>
     </Border>
 
     <!-- list mode column header (click to sort) -->
