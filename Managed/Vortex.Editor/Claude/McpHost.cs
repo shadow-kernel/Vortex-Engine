@@ -57,6 +57,13 @@ namespace VortexEditor.Claude
         /// <summary>Raised on the UI thread whenever <see cref="State"/> changes.</summary>
         public static event Action StatusChanged;
 
+        /// <summary>The bare name of the permission-prompt tool the in-panel Claude Code engine points at.</summary>
+        public const string ApproveTool = "approve";
+
+        /// <summary>Answers Claude Code's permission prompts for the in-panel engine: (bare tool name, input JSON) → allow.
+        /// Null (no panel registered, e.g. an external client) allows the call.</summary>
+        public static Func<string, string, CancellationToken, Task<bool>> PermissionHandler;
+
         /// <summary>The configured port (preferences), or the default.</summary>
         public static int ConfiguredPort
         {
@@ -158,9 +165,15 @@ namespace VortexEditor.Claude
                     o.ServerInstructions = Instructions;
                 })
                 .WithHttpTransport(o => o.Stateless = true)
-                .WithListToolsHandler((ctx, ct) => ValueTask.FromResult(new ListToolsResult { Tools = ToolCatalog.All.Select(ToProtocol).ToList() }))
+                .WithListToolsHandler((ctx, ct) =>
+                {
+                    var tools = ToolCatalog.All.Select(ToProtocol).ToList();
+                    tools.Add(ApproveToolDef());
+                    return ValueTask.FromResult(new ListToolsResult { Tools = tools });
+                })
                 .WithCallToolHandler(async (ctx, ct) =>
                 {
+                    if (ctx.Params?.Name == ApproveTool) return await HandleApproveAsync(ctx, ct);
                     Interlocked.Increment(ref _calls);
                     var args = ctx.Params?.Arguments?.ToDictionary(kv => kv.Key, kv => (object)kv.Value) ?? new Dictionary<string, object>();
                     var result = await ToolHost.CallAsync(ctx.Params?.Name, args, "mcp", ct);
@@ -232,6 +245,59 @@ namespace VortexEditor.Claude
             }
             if (content.Count == 0) content.Add(new TextContentBlock { Text = "ok" });
             return new CallToolResult { Content = content, IsError = r.IsError };
+        }
+
+        // ------------------------------------------------------------------ permission prompt (Agent-mode approval)
+
+        private static readonly JsonElement ApproveSchema = JsonSerializer.SerializeToElement(new
+        {
+            type = "object",
+            properties = new
+            {
+                tool_name = new { type = "string", description = "The tool the editor is about to run." },
+                input = new { type = "object", description = "The tool's arguments." },
+            },
+        });
+
+        private static Tool ApproveToolDef() => new Tool
+        {
+            Name = ApproveTool,
+            Title = "Editor permission prompt",
+            Description = "Internal. The in-editor Claude panel answers tool-permission prompts here (Agent mode). Not for direct use.",
+            InputSchema = ApproveSchema,
+            Annotations = new ToolAnnotations { Title = "Editor permission prompt", ReadOnlyHint = true, OpenWorldHint = false },
+        };
+
+        /// <summary>Claude Code asks, before a tool that changes the project runs, whether it may (the editor shows the
+        /// approval card). The reply is the permission-prompt-tool contract: allow (with the input) or deny.</summary>
+        private static async Task<CallToolResult> HandleApproveAsync(RequestContext<CallToolRequestParams> ctx, CancellationToken ct)
+        {
+            string toolName = null, inputJson = "{}";
+            var args = ctx.Params?.Arguments;
+            if (args != null)
+            {
+                if (args.TryGetValue("tool_name", out var tn) && tn.ValueKind == JsonValueKind.String) toolName = tn.GetString();
+                if (args.TryGetValue("input", out var inp) && inp.ValueKind == JsonValueKind.Object) inputJson = inp.GetRawText();
+            }
+            bool allow = true;
+            var handler = PermissionHandler;
+            if (handler != null) { try { allow = await handler(ShortName(toolName), inputJson, ct); } catch { allow = false; } }
+            string payload = allow
+                ? "{\"behavior\":\"allow\",\"updatedInput\":" + inputJson + "}"
+                : "{\"behavior\":\"deny\",\"message\":\"The user did not allow this change in the Vortex editor.\"}";
+            return new CallToolResult { Content = new List<ContentBlock> { new TextContentBlock { Text = payload } } };
+        }
+
+        /// <summary>Strip the <c>mcp__&lt;server&gt;__</c> prefix Claude Code adds, so permissions key on the bare tool name.</summary>
+        private static string ShortName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return name;
+            if (name.StartsWith("mcp__", StringComparison.Ordinal))
+            {
+                var parts = name.Split(new[] { "__" }, StringSplitOptions.None);
+                if (parts.Length >= 3) return string.Join("__", parts.Skip(2));
+            }
+            return name;
         }
 
         private static string Explain(Exception ex, int port)

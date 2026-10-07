@@ -26,16 +26,16 @@ namespace Editor.Core.Claude
     /// modes; Ask mode refuses tools that change something when they are called, and a short note tells Claude which
     /// mode a turn is in.</para>
     /// </summary>
-    public sealed class ClaudeSession
+    public sealed class ClaudeSession : IClaudeEngine
     {
-        public ClaudeModelInfo Model = ClaudeModels.All[0];
+        public ClaudeModelInfo Model { get; set; } = ClaudeModels.All[0];
         /// <summary>Effort level; null = the model's default. Ignored by models that take none.</summary>
-        public string Effort;
+        public string Effort { get; set; }
         /// <summary>The context size the conversation may grow to; it is compacted on the server at about 80 %.</summary>
-        public int ContextSize = 1_000_000;
-        public ClaudeMode Mode = ClaudeMode.Agent;
-        public string SystemPrompt;
-        public IReadOnlyList<ChatTool> Tools = Array.Empty<ChatTool>();
+        public int ContextSize { get; set; } = 1_000_000;
+        public ClaudeMode Mode { get; set; } = ClaudeMode.Agent;
+        public string SystemPrompt { get; set; }
+        public IReadOnlyList<ChatTool> Tools { get; set; } = Array.Empty<ChatTool>();
         /// <summary>Tool rounds per message before Claude stops and asks to continue.</summary>
         public int MaxRounds = 60;
 

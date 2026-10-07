@@ -34,9 +34,9 @@ namespace Editor.Core.Claude
     /// browser OAuth sign-in against the Claude Console that stores a profile the official SDK reads by itself
     /// (and refreshes) — usage is billed to that Console account like an API key.</item>
     /// </list>
-    /// A Claude subscription (Pro / Max) is not offered here: Anthropic does not allow third-party apps to offer
-    /// claude.ai login. Subscribers use Claude Code itself, connected to the editor's MCP server
-    /// (<see cref="ClaudeCode"/>).
+    /// A Claude plan (Pro / Max) is a separate path: it runs through the user's own Claude Code
+    /// (<see cref="ClaudeCode"/>, <see cref="ClaudeCodeSession"/>) — Anthropic allows running Claude Code, unmodified,
+    /// inside a product as long as each user signs in with their own plan. This class covers only the SDK credentials.
     /// </summary>
     public static class ClaudeAccount
     {
@@ -208,6 +208,91 @@ namespace Editor.Core.Claude
         /// started (the caller shows the command instead).</summary>
         public static bool OpenInTerminal(string folder, string claude) => ProcessTools.OpenInTerminal(folder, claude);
 
+        // ------------------------------------------------------------------ the user's Claude Code sign-in
+
+        /// <summary>Claude Code's own sign-in, as <c>claude auth status --json</c> reports it. Its credentials stay with
+        /// Claude Code — the editor only reads whether a plan is signed in, to drive the panel through Claude Code.</summary>
+        public struct AuthStatus
+        {
+            public bool LoggedIn;
+            /// <summary><c>claude.ai</c> (a Pro / Max plan) or <c>console</c> (API billing).</summary>
+            public string Method;
+            /// <summary><c>max</c>, <c>pro</c>, … or null.</summary>
+            public string Subscription;
+            public string Email;
+
+            /// <summary>Signed in with a Claude plan (Pro / Max) — the panel can run on it through Claude Code.</summary>
+            public bool IsPlan => LoggedIn && string.Equals(Method, "claude.ai", StringComparison.OrdinalIgnoreCase);
+
+            public string Label => Subscription?.ToLowerInvariant() switch
+            {
+                "max" => "Claude Max",
+                "pro" => "Claude Pro",
+                _ => IsPlan ? "Claude account" : "Claude Code",
+            };
+        }
+
+        /// <summary>The last status read (synchronous for the UI); refreshed with <see cref="RefreshAsync"/>.</summary>
+        public static AuthStatus Status { get; private set; }
+
+        /// <summary>Raised on whatever thread finished the refresh when <see cref="Status"/> changed.</summary>
+        public static event Action StatusChanged;
+
+        /// <summary>Read Claude Code's sign-in again (and remember it). Safe to call often; returns the fresh status.</summary>
+        public static async Task<AuthStatus> RefreshAsync(CancellationToken ct = default)
+        {
+            var s = await AuthStatusAsync(ct).ConfigureAwait(false);
+            bool changed = s.LoggedIn != Status.LoggedIn || s.Method != Status.Method || s.Subscription != Status.Subscription;
+            Status = s;
+            if (changed) { try { StatusChanged?.Invoke(); } catch { } }
+            return s;
+        }
+
+        /// <summary><c>claude auth status --json</c>, parsed. Default (not logged in) when Claude Code is absent or fails.</summary>
+        public static async Task<AuthStatus> AuthStatusAsync(CancellationToken ct = default)
+        {
+            string claude = FindCli();
+            if (claude == null) return default;
+            var (_, output) = await ProcessTools.RunAsync(claude, new[] { "auth", "status", "--json" }, TimeSpan.FromSeconds(20), ct).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(output)) return default;
+            int a = output.IndexOf('{'), b = output.LastIndexOf('}');
+            if (a < 0 || b <= a) return default;
+            try
+            {
+                using var doc = JsonDocument.Parse(output.Substring(a, b - a + 1));
+                var r = doc.RootElement;
+                return new AuthStatus
+                {
+                    LoggedIn = r.TryGetProperty("loggedIn", out var li) && li.ValueKind == JsonValueKind.True,
+                    Method = r.TryGetProperty("authMethod", out var m) ? m.GetString() : null,
+                    Subscription = r.TryGetProperty("subscriptionType", out var s) && s.ValueKind == JsonValueKind.String ? s.GetString() : null,
+                    Email = r.TryGetProperty("email", out var e) && e.ValueKind == JsonValueKind.String ? e.GetString() : null,
+                };
+            }
+            catch { return default; }
+        }
+
+        /// <summary>Sign in to Claude Code: the browser opens for a Claude plan (Pro / Max) sign-in, or the Console when
+        /// <paramref name="console"/>. Claude Code stores and refreshes the credentials itself.</summary>
+        public static Task<(bool ok, string output)> LoginAsync(bool console, CancellationToken ct, Action<string> onLine = null)
+        {
+            string claude = FindCli();
+            if (claude == null) return Task.FromResult((false, "Claude Code (claude) is not installed."));
+            var args = console ? new[] { "auth", "login", "--console" } : new[] { "auth", "login", "--claudeai" };
+            return ProcessTools.RunAsync(claude, args, TimeSpan.FromMinutes(10), ct, onLine);
+        }
+
+        public static Task<(bool ok, string output)> LogoutAsync(CancellationToken ct = default)
+        {
+            string claude = FindCli();
+            if (claude == null) return Task.FromResult((false, "Claude Code (claude) is not installed."));
+            return ProcessTools.RunAsync(claude, new[] { "auth", "logout" }, TimeSpan.FromSeconds(30), ct);
+        }
+
+        /// <summary>Claude Code's sign-in in a terminal window (when the background sign-in cannot open a browser).</summary>
+        public static bool LoginInTerminal(bool console) =>
+            FindCli() is string cli &&
+            ProcessTools.OpenInTerminal(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), cli, "auth", "login", console ? "--console" : "--claudeai");
     }
 
     /// <summary>Finding and running the command-line tools the panel works with.</summary>

@@ -38,9 +38,9 @@ namespace VortexEditor.Claude
     /// changes the project and asks before each change unless the user allowed that tool always.</item>
     /// <item>The composer picks the model, the effort (how hard Claude thinks) and the context size (the conversation is
     /// compacted on the server before it outgrows it); Claude's thinking shows as collapsible summaries.</item>
-    /// <item>Credentials are the user's own (<see cref="ClaudeAccount"/>): the Anthropic account they signed in to with
-    /// the Anthropic CLI, or an API key. A Claude subscription works in Claude Code, which drives the editor through
-    /// MCP — "Open in Claude Code".</item>
+    /// <item>Credentials are the user's own: their Claude plan (Pro / Max) through their own Claude Code, run headless
+    /// behind this panel (<see cref="ClaudeCodeSession"/>) — no terminal; or an API key / Console account on the SDK
+    /// (<see cref="ClaudeSession"/>, <see cref="ClaudeAccount"/>). The panel switches engine under the one UI.</item>
     /// </list>
     /// </summary>
     public sealed class ClaudePanel : UserControl
@@ -48,6 +48,12 @@ namespace VortexEditor.Claude
         public static ClaudePanel Current { get; private set; }
 
         private readonly ClaudeSession _session = new ClaudeSession();
+        private readonly ClaudeCodeSession _cc = new ClaudeCodeSession();
+        /// <summary>The engine the next turn runs on: the user's Claude plan through Claude Code when they are signed in
+        /// to one, otherwise the SDK with their API key / Console account.</summary>
+        private IClaudeEngine _engine;
+        /// <summary>A Claude plan (Pro / Max) is signed in to Claude Code (cached from <see cref="ClaudeCode.Status"/>).</summary>
+        private bool _ccPlan;
         private readonly ClaudePanelSettings _settings = ClaudePanelSettings.Current;
         private readonly StackPanel _log = new StackPanel { Spacing = 10, Margin = new Thickness(12, 12, 12, 8) };
         private readonly ScrollViewer _scroll;
@@ -85,6 +91,15 @@ namespace VortexEditor.Claude
         private CancellationTokenSource _signInCts;
         private string _signInUrl;
 
+        // Claude plan (Pro / Max) sign-in, used through the user's own Claude Code
+        private readonly Button _planSignIn = new Button { Classes = { "accent" }, Content = "Sign in with your Claude account", HorizontalAlignment = HorizontalAlignment.Stretch, MinHeight = 34 };
+        private readonly StackPanel _planWait = new StackPanel { Spacing = 6, IsVisible = false };
+        private readonly TextBlock _planWaitText = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 12, Text = "Finish signing in in your browser…" };
+        private readonly Button _planLink = new Button { Classes = { "link" }, Content = "Open the sign-in page", IsVisible = false, FontSize = 12 };
+        private readonly TextBlock _planError = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 11.5, IsVisible = false };
+        private CancellationTokenSource _planCts;
+        private string _planUrl;
+
         /// <summary>The user opened the sign-in view on purpose (to change the key) — coming back to the window does not
         /// switch to the chat until they finish or go back.</summary>
         private bool _stayOnSignIn;
@@ -113,19 +128,24 @@ namespace VortexEditor.Claude
         public ClaudePanel()
         {
             Current = this;
+            var chatTools = ToolCatalog.All.Select(t => new ChatTool { Name = t.Name, Description = t.Description, InputSchemaJson = t.InputSchema.GetRawText(), ReadOnly = t.ReadOnly }).ToList();
+
+            // the SDK engine (API key / Console): runs the tools in-process, asks before each change
             _session.SystemPrompt = SystemPrompt;
-            _session.Tools = ToolCatalog.All.Select(t => new ChatTool { Name = t.Name, Description = t.Description, InputSchemaJson = t.InputSchema.GetRawText(), ReadOnly = t.ReadOnly }).ToList();
+            _session.Tools = chatTools;
             _session.RunTool = RunToolAsync;
             _session.Approve = ApproveAsync;
-            _session.ThinkingStarted += () => Dispatcher.UIThread.Post(StartThinking);
-            _session.ThinkingDelta += d => Dispatcher.UIThread.Post(() => _thinking?.Append(d));
-            _session.TextStarted += () => Dispatcher.UIThread.Post(() => { EndThinking(); EndText(); });
-            _session.TextDelta += d => Dispatcher.UIThread.Post(() => AppendText(d));
-            _session.ToolStarted += c => Dispatcher.UIThread.Post(() => { EndThinking(); EndText(); AddCard(c); });
-            _session.ToolFinished += c => Dispatcher.UIThread.Post(() => { if (_cards.TryGetValue(c.Id, out var card)) card.Finish(c, _session.Mode); });
-            _session.Compacted += () => Dispatcher.UIThread.Post(() => AddDivider("Earlier turns were summarized to stay within " + ClaudeModels.ContextLabel(_session.ContextSize) + " of context"));
-            _session.Refused += why => Dispatcher.UIThread.Post(() => AddNote(why, true));
-            _session.TurnCompleted += () => Dispatcher.UIThread.Post(UpdateStatus);
+
+            // the Claude Code engine (the user's own plan, headless): reaches the same tools over the editor's MCP server
+            _cc.SystemPrompt = SystemPrompt;
+            _cc.Tools = chatTools;
+            _cc.ToolPrefix = "mcp__vortex__";
+            _cc.EnsureToolsReady = ct => McpHost.IsRunning ? Task.FromResult(true) : McpHost.SetEnabledAsync(true);
+            McpHost.PermissionHandler = CcPermissionAsync;   // Agent-mode changes ask on the transcript's approval card
+
+            Bind(_session);
+            Bind(_cc);
+            _engine = _session;
             ApplyChoices();
 
             // ---- header: title, new chat, menu, close
@@ -201,6 +221,7 @@ namespace VortexEditor.Claude
             UpdateChips();
             UpdateAttachments();
             UpdateStatus();
+            _ = RefreshClaudeCodeAsync();   // learn the user's Claude plan sign-in early, then pick the engine
         }
 
         /// <summary>The sidebar was shown: check the credentials again (the user may have signed in elsewhere) and put the
@@ -209,8 +230,50 @@ namespace VortexEditor.Claude
         {
             RefreshAccount();
             UpdateAttachments();
+            _ = RefreshClaudeCodeAsync();
             Dispatcher.UIThread.Post(() => { if (!ShowsSignIn) _input.Focus(); }, DispatcherPriority.Background);
         }
+
+        /// <summary>Wire a conversation engine's streaming events to the transcript — both engines share the one UI.</summary>
+        private void Bind(IClaudeEngine e)
+        {
+            e.ThinkingStarted += () => Dispatcher.UIThread.Post(StartThinking);
+            e.ThinkingDelta += d => Dispatcher.UIThread.Post(() => _thinking?.Append(d));
+            e.TextStarted += () => Dispatcher.UIThread.Post(() => { EndThinking(); EndText(); });
+            e.TextDelta += d => Dispatcher.UIThread.Post(() => AppendText(d));
+            e.ToolStarted += c => Dispatcher.UIThread.Post(() => { EndThinking(); EndText(); AddCard(c); });
+            e.ToolFinished += c => Dispatcher.UIThread.Post(() => { if (_cards.TryGetValue(c.Id, out var card)) card.Finish(c, e.Mode); });
+            e.Compacted += () => Dispatcher.UIThread.Post(() => AddDivider("Earlier turns were summarized to stay within " + ClaudeModels.ContextLabel(e.ContextSize) + " of context"));
+            e.Refused += why => Dispatcher.UIThread.Post(() => AddNote(why, true));
+            e.TurnCompleted += () => Dispatcher.UIThread.Post(UpdateStatus);
+        }
+
+        /// <summary>Read the user's Claude Code sign-in (a Pro / Max plan) in the background, then pick the engine. On a
+        /// machine without Claude Code this quietly leaves the SDK engine in place.</summary>
+        private async Task RefreshClaudeCodeAsync()
+        {
+            try { await ClaudeCode.RefreshAsync(); }
+            catch { return; }
+            Dispatcher.UIThread.Post(() =>
+            {
+                ChooseEngineIfIdle();
+                RefreshAccount();
+                UpdateStatus();
+            });
+        }
+
+        /// <summary>Use the Claude plan engine when one is signed in — but never swap engines in the middle of a chat
+        /// (the context lives inside whichever engine started it).</summary>
+        private void ChooseEngineIfIdle()
+        {
+            _ccPlan = ClaudeCode.Status.IsPlan;
+            if (_engine != null && _engine.MessageCount > 0) return;
+            _engine = _ccPlan ? (IClaudeEngine)_cc : _session;
+            ApplyChoices();
+        }
+
+        /// <summary>Credentials of any kind are available (a Claude plan, an API key, or an environment key).</summary>
+        private bool HasCredentials => ClaudeCode.Status.IsPlan || ClaudeAccount.Current != ClaudeCredential.None;
 
 
         // ================================================================== sending
@@ -222,24 +285,68 @@ namespace VortexEditor.Claude
             if (string.IsNullOrEmpty(text) || _busy) return;
             if (ProjectData.Current == null) { ShowTranscript(); AddNote("Open a project first — Claude works on the open project.", true); return; }
             RefreshAccount();
-            if (ClaudeAccount.Current == ClaudeCredential.None) { ShowSignIn(); return; }
+            if (!HasCredentials) { ShowSignIn(); return; }
+            ChooseEngineIfIdle();
             ApplyChoices();
+            if (!await PrepareEngineAsync()) return;
             string selection = SelectionNote(out string selectionLabel);
             _input.Text = "";
             ShowTranscript();
             _empty.IsVisible = false;
             AddUser(text, selectionLabel);
             string message = selection == null ? text : text + "\n\n" + selection;
-            await RunTurnAsync(ct => _session.SendAsync(message, ct));
+            await RunTurnAsync(ct => _engine.SendAsync(message, ct));
         }
 
         /// <summary>Run the open turn again (the Retry button after an error or a stop).</summary>
         private async Task RetryAsync(Control button)
         {
-            if (_busy || !_session.CanRetry) return;
+            if (_busy || !_engine.CanRetry) return;
             _log.Children.Remove(button);
-            await RunTurnAsync(ct => _session.RetryAsync(ct));
+            if (!await PrepareEngineAsync()) return;
+            await RunTurnAsync(ct => _engine.RetryAsync(ct));
         }
+
+        /// <summary>Ready the active engine for a turn. For Claude Code: start the editor's MCP server and point it at the
+        /// live URL and open project. Returns false (with a note) when the tools cannot be reached.</summary>
+        private async Task<bool> PrepareEngineAsync()
+        {
+            if (_engine is not ClaudeCodeSession cc) return true;
+            if (!McpHost.IsRunning && !await McpHost.SetEnabledAsync(true))
+            {
+                ShowTranscript();
+                AddNote("The editor's MCP server did not start (" + McpHost.LastError + ") — Claude Code cannot reach the editor's tools.", true);
+                return false;
+            }
+            cc.ProjectDir = ProjectData.Current?.Path;
+            cc.McpConfigJson = JsonSerializer.Serialize(new { mcpServers = new Dictionary<string, object> { ["vortex"] = new { type = "http", url = McpHost.Url } } });
+            // tools the user chose to always allow run without a prompt (the rest ask on the card)
+            cc.AlwaysAllowedTools = ToolCatalog.All.Where(t => ClaudePermissions.IsAlwaysAllowed(t.Name)).Select(t => t.Name).ToArray();
+            return true;
+        }
+
+        /// <summary>Claude Code (Agent mode) asks, before a tool that changes the project runs, whether it may: show the
+        /// approval card for that tool and answer with the user's choice. Ask mode denies (changes are blocked there).</summary>
+        private Task<bool> CcPermissionAsync(string toolName, string inputJson, CancellationToken ct)
+        {
+            if (_cc.Mode == ClaudeMode.Ask) return Task.FromResult(false);
+            if (ClaudePermissions.IsAlwaysAllowed(toolName)) return Task.FromResult(true);
+            var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            ct.Register(() => tcs.TrySetResult(false));
+            Dispatcher.UIThread.Post(() =>
+            {
+                var card = FindPendingCard(toolName);
+                if (card == null) { tcs.TrySetResult(true); return; }   // no card to ask on — allow (the change is revertable)
+                card.AskApproval(a => tcs.TrySetResult(a == ToolApproval.Allow));
+                ScrollToEnd();
+            });
+            return tcs.Task;
+        }
+
+        /// <summary>The transcript card for a tool that is waiting to run (used to attach the approval prompt).</summary>
+        private ToolCard FindPendingCard(string toolName) =>
+            _cards.Values.FirstOrDefault(c => c.ToolName == toolName && !c.Finished && !c.AwaitingApproval)
+            ?? _cards.Values.FirstOrDefault(c => !c.Finished && !c.AwaitingApproval);
 
         private async Task RunTurnAsync(Func<CancellationToken, Task<string>> run)
         {
@@ -264,7 +371,7 @@ namespace VortexEditor.Claude
                 UpdateStatus();
                 ScrollToEnd();
             }
-            if (retry && _session.CanRetry)
+            if (retry && _engine.CanRetry)
             {
                 var b = new Button { Content = "Retry", HorizontalAlignment = HorizontalAlignment.Left };
                 ToolTip.SetTip(b, "Send the last message again — or just write the next one");
@@ -283,12 +390,14 @@ namespace VortexEditor.Claude
         {
             if (_busy) Stop();
             _session.Reset();
+            _cc.Reset();
             _cards.Clear();
             _streaming = null;
             _thinking = null;
             _log.Children.Clear();
             _log.Children.Add(_empty);
             _empty.IsVisible = true;
+            ChooseEngineIfIdle();
             RefreshAccount();
             UpdateChips();
             UpdateStatus();
@@ -307,11 +416,17 @@ namespace VortexEditor.Claude
         private void ApplyChoices()
         {
             var model = ClaudeModels.Find(_settings.Model);
-            _session.Model = model;
-            _session.Effort = _settings.Effort.TryGetValue(model.Id, out var e) ? e : null;
+            string effort = _settings.Effort.TryGetValue(model.Id, out var e) ? e : null;
             int ctx = _settings.Context > 0 ? _settings.Context : 1_000_000;
-            _session.ContextSize = ClaudeModels.ContextSizesFor(model).Contains(ctx) ? ctx : ClaudeModels.ContextSizesFor(model).Max();
-            _session.Mode = _settings.Mode == "Ask" ? ClaudeMode.Ask : ClaudeMode.Agent;
+            ctx = ClaudeModels.ContextSizesFor(model).Contains(ctx) ? ctx : ClaudeModels.ContextSizesFor(model).Max();
+            var mode = _settings.Mode == "Ask" ? ClaudeMode.Ask : ClaudeMode.Agent;
+            foreach (IClaudeEngine engine in new IClaudeEngine[] { _session, _cc })
+            {
+                engine.Model = model;
+                engine.Effort = effort;
+                engine.ContextSize = ctx;
+                engine.Mode = mode;
+            }
         }
 
         /// <summary>What is selected in the editor, as a note for Claude (null when nothing is, or the user removed it).</summary>
@@ -521,30 +636,34 @@ namespace VortexEditor.Claude
         private void UpdateChips()
         {
             ApplyChoices();
-            var m = _session.Model;
-            SetChip(_modeChip, _session.Mode == ClaudeMode.Ask ? "Ask" : "Agent",
-                    _session.Mode == ClaudeMode.Ask ? "Ask — Claude answers and looks, and changes nothing" : "Agent — Claude builds and changes the project; you approve each change");
+            var m = _engine.Model;
+            SetChip(_modeChip, _engine.Mode == ClaudeMode.Ask ? "Ask" : "Agent",
+                    _engine.Mode == ClaudeMode.Ask ? "Ask — Claude answers and looks, and changes nothing" : "Agent — Claude builds and changes the project; you approve each change");
             SetChip(_modelChip, m.Label, "Model — " + m.Blurb);
-            string effort = _session.EffectiveEffort;
+            string effort = _engine.EffectiveEffort;
             _effortChip.IsEnabled = effort != null;
             SetChip(_effortChip, effort == null ? "No effort" : EffortLabel(effort),
                     effort == null ? m.Label + " has no effort setting" : "Effort — how much Claude thinks before it answers");
-            SetChip(_contextChip, ClaudeModels.ContextLabel(_session.ContextSize),
-                    "Context — the conversation is summarized on the server once it reaches about " + ClaudeModels.ContextLabel(_session.CompactAt) + " tokens");
-            _input.Watermark = _session.Mode == ClaudeMode.Ask ? "Ask about your project…" : "Ask Claude to build or change something…";
+            SetChip(_contextChip, ClaudeModels.ContextLabel(_engine.ContextSize),
+                    "Context — the conversation is summarized once it reaches about " + ClaudeModels.ContextLabel(_engine.CompactAt) + " tokens");
+            _input.Watermark = _engine.Mode == ClaudeMode.Ask ? "Ask about your project…" : "Ask Claude to build or change something…";
         }
 
         private void UpdateStatus()
         {
-            long ctx = _session.ContextTokens;
-            _meter.Value = Math.Min(1, ctx / (double)Math.Max(1, _session.ContextSize));
+            bool plan = _engine is ClaudeCodeSession;
+            long ctx = _engine.ContextTokens;
+            _meter.Value = Math.Min(1, ctx / (double)Math.Max(1, _engine.ContextSize));
             _meter.IsVisible = ctx > 0;
-            if (ctx == 0 && _session.OutputTokens == 0)
-                _status.Text = ClaudeModels.ContextLabel(_session.ContextSize) + " context";
+            if (ctx == 0 && _engine.OutputTokens == 0)
+                _status.Text = ClaudeModels.ContextLabel(_engine.ContextSize) + " context";
+            else if (plan)
+                // a plan's usage is included — show tokens, not a dollar figure
+                _status.Text = K(ctx) + " / " + ClaudeModels.ContextLabel(_engine.ContextSize) + " · on your plan";
             else
-                _status.Text = K(ctx) + " / " + ClaudeModels.ContextLabel(_session.ContextSize) + " · ≈ $" + _session.Cost.ToString(_session.Cost < 1 ? "0.000" : "0.00", CultureInfo.InvariantCulture);
-            ToolTip.SetTip(_status, "Context in use / context size · estimated cost of this chat at API prices (" +
-                K(_session.InputTokens + _session.CacheReadTokens + _session.CacheWriteTokens) + " in, " + K(_session.CacheReadTokens) + " of it cached, " + K(_session.OutputTokens) + " out)");
+                _status.Text = K(ctx) + " / " + ClaudeModels.ContextLabel(_engine.ContextSize) + " · ≈ $" + _engine.Cost.ToString(_engine.Cost < 1 ? "0.000" : "0.00", CultureInfo.InvariantCulture);
+            ToolTip.SetTip(_status, (plan ? "Context in use / context size · billed to your Claude plan (" : "Context in use / context size · estimated cost of this chat at API prices (") +
+                K(_engine.InputTokens + _engine.CacheReadTokens + _engine.CacheWriteTokens) + " in, " + K(_engine.CacheReadTokens) + " of it cached, " + K(_engine.OutputTokens) + " out)");
         }
 
         private static string K(long n) => n >= 1000 ? (n / 1000.0).ToString(n >= 10000 ? "0" : "0.0", CultureInfo.InvariantCulture) + "K" : n.ToString(CultureInfo.InvariantCulture);
@@ -584,8 +703,8 @@ namespace VortexEditor.Claude
         }
 
         private MenuFlyout ModeMenu() => Flyout(
-            Choice("Agent", "Builds and changes the project — asks before each change", _session.Mode == ClaudeMode.Agent, () => SetMode("Agent")),
-            Choice("Ask", "Answers, explains and looks around — changes nothing", _session.Mode == ClaudeMode.Ask, () => SetMode("Ask")));
+            Choice("Agent", "Builds and changes the project — asks before each change", _engine.Mode == ClaudeMode.Agent, () => SetMode("Agent")),
+            Choice("Ask", "Answers, explains and looks around — changes nothing", _engine.Mode == ClaudeMode.Ask, () => SetMode("Ask")));
 
         internal void SetMode(string mode)
         {
@@ -596,13 +715,15 @@ namespace VortexEditor.Claude
 
         private MenuFlyout ModelMenu()
         {
-            bool started = _session.MessageCount > 0;
+            bool started = _engine.MessageCount > 0;
+            bool plan = _engine is ClaudeCodeSession;
             return Flyout(ClaudeModels.All.Select(m =>
             {
-                string price = "$" + m.InputPrice.ToString("0.##", CultureInfo.InvariantCulture) + " / $" + m.OutputPrice.ToString("0.##", CultureInfo.InvariantCulture) + " per million tokens";
-                bool newChat = started && m.Thinking != _session.Model.Thinking;
+                string price = plan ? "on your plan"
+                    : "$" + m.InputPrice.ToString("0.##", CultureInfo.InvariantCulture) + " / $" + m.OutputPrice.ToString("0.##", CultureInfo.InvariantCulture) + " per million tokens";
+                bool newChat = started && m.Thinking != _engine.Model.Thinking;
                 string detail = m.Blurb + " · " + price + (newChat ? " · starts a new chat" : "");
-                return Choice(m.Label, detail, m.Id == _session.Model.Id, () => SetModel(m, newChat));
+                return Choice(m.Label, detail, m.Id == _engine.Model.Id, () => SetModel(m, newChat));
             }).ToArray());
         }
 
@@ -618,7 +739,7 @@ namespace VortexEditor.Claude
 
         private MenuFlyout EffortMenu()
         {
-            var m = _session.Model;
+            var m = _engine.Model;
             var details = new Dictionary<string, string>
             {
                 ["low"] = "Fastest and cheapest — quick questions and small edits",
@@ -627,7 +748,7 @@ namespace VortexEditor.Claude
                 ["xhigh"] = "Extra high — hard problems and long agent runs",
                 ["max"] = "Maximum — slowest and most thorough",
             };
-            string current = _session.EffectiveEffort;
+            string current = _engine.EffectiveEffort;
             return Flyout(m.Efforts.Select(e => Choice(EffortLabel(e) + (e == m.DefaultEffort ? "  (default)" : ""), details.TryGetValue(e, out var d) ? d : null, e == current, () =>
             {
                 _settings.Effort[m.Id] = e;
@@ -638,11 +759,11 @@ namespace VortexEditor.Claude
 
         private MenuFlyout ContextMenuFor()
         {
-            var m = _session.Model;
+            var m = _engine.Model;
             return Flyout(ClaudeModels.ContextSizesFor(m).Select(c => Choice(ClaudeModels.ContextLabel(c) + " context",
                 (c >= 1_000_000 ? "Keeps more of a long session" : "Cheaper long sessions") + " — summarizes earlier turns at about " + ClaudeModels.ContextLabel((int)(c * 0.8)) +
                 (m.Compaction ? "" : " (" + m.Label + ": starts to forget instead)"),
-                c == _session.ContextSize, () =>
+                c == _engine.ContextSize, () =>
                 {
                     _settings.Context = c;
                     _settings.Save();
@@ -656,12 +777,14 @@ namespace VortexEditor.Claude
         /// <summary>Show the sign-in view or the transcript, and the account in the status row.</summary>
         public void RefreshAccount()
         {
+            bool plan = _ccPlan;
             var c = ClaudeAccount.Current;
+            bool has = plan || c != ClaudeCredential.None;
             var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5 };
-            row.Children.Add(new Ellipse { Width = 6, Height = 6, VerticalAlignment = VerticalAlignment.Center, Fill = EditorKit.Brush(c == ClaudeCredential.None ? "VxTextTertiaryBrush" : "VxGreenBrush") });
+            row.Children.Add(new Ellipse { Width = 6, Height = 6, VerticalAlignment = VerticalAlignment.Center, Fill = EditorKit.Brush(has ? "VxGreenBrush" : "VxTextTertiaryBrush") });
             row.Children.Add(new TextBlock
             {
-                Text = c switch
+                Text = plan ? ClaudeCode.Status.Label : c switch
                 {
                     ClaudeCredential.AnthropicAccount => "Anthropic account",
                     ClaudeCredential.ApiKey => "API key",
@@ -671,19 +794,34 @@ namespace VortexEditor.Claude
                 VerticalAlignment = VerticalAlignment.Center,
             });
             _account.Content = row;
-            ToolTip.SetTip(_account, ClaudeAccount.Describe(c) + (ClaudeAccount.EnvironmentShadowsAccount ? " — ANTHROPIC_API_KEY in the environment is used instead of your signed-in account" : ""));
-            if (c == ClaudeCredential.None) { if (!ReferenceEquals(_body.Content, _signIn)) ShowSignIn(); }
-            else if (_signInCts == null && !_stayOnSignIn) ShowTranscript();
+            ToolTip.SetTip(_account, plan
+                ? ClaudeCode.Status.Label + (string.IsNullOrEmpty(ClaudeCode.Status.Email) ? "" : " · " + ClaudeCode.Status.Email) + " — through Claude Code, billed to your Claude plan"
+                : ClaudeAccount.Describe(c) + (ClaudeAccount.EnvironmentShadowsAccount ? " — ANTHROPIC_API_KEY in the environment is used instead of your signed-in account" : ""));
+            if (!has) { if (!ReferenceEquals(_body.Content, _signIn)) ShowSignIn(); }
+            else if (_signInCts == null && _planCts == null && !_stayOnSignIn) ShowTranscript();
         }
 
         private MenuFlyout AccountMenu()
         {
             var c = ClaudeAccount.Current;
             var f = new MenuFlyout { Placement = PlacementMode.TopEdgeAlignedRight };
-            f.Items.Add(new MenuItem { Header = ClaudeAccount.Describe(c), IsEnabled = false });
+            f.Items.Add(new MenuItem { Header = _ccPlan ? ClaudeCode.Status.Label + " (through Claude Code)" : ClaudeAccount.Describe(c), IsEnabled = false });
+            if (_ccPlan)
+            {
+                var planOut = new MenuItem { Header = "Sign out of Claude Code" };
+                planOut.Click += async (s, e) => await ClaudeCodeSignOutAsync();
+                f.Items.Add(planOut);
+            }
+            else
+            {
+                var planIn = new MenuItem { Header = "Sign in with your Claude account (Pro / Max)…" };
+                planIn.Click += (s, e) => { ShowSignIn(); _ = ClaudeCodeSignInAsync(false); };
+                f.Items.Add(planIn);
+            }
+            f.Items.Add(new Separator());
             if (c == ClaudeCredential.AnthropicAccount)
             {
-                var signOut = new MenuItem { Header = "Sign out" };
+                var signOut = new MenuItem { Header = "Sign out of Anthropic Console" };
                 signOut.Click += async (s, e) => await SignOutAsync();
                 f.Items.Add(signOut);
             }
@@ -717,9 +855,47 @@ namespace VortexEditor.Claude
             sp.Children.Add(new VxIcon { Icon = "Sparkle", Width = 26, Height = 26, Foreground = EditorKit.Brush("VxAccentBrush"), HorizontalAlignment = HorizontalAlignment.Left });
             sp.Children.Add(new TextBlock { Text = "Sign in to use Claude", FontSize = 16, FontWeight = FontWeight.SemiBold });
             sp.Children.Add(Para("Claude works on your open project: it builds scenes, lights, materials, scripts and audio, and looks at the viewport. " +
-                                 "Ask mode answers questions; Agent mode makes changes you approve."));
+                                 "Ask mode answers questions; Agent mode makes changes."));
 
-            // ---- Anthropic account (the Anthropic CLI's browser sign-in)
+            // ---- the user's own Claude plan (Pro / Max): used through their own Claude Code, headless — no terminal,
+            // this panel stays the UI; billed to the plan, not to API credits
+            _planSignIn.Click += (s, e) => _ = ClaudeCodeSignInAsync(false);
+            sp.Children.Add(_planSignIn);
+            sp.Children.Add(Para("Opens your browser to sign in with your Claude account. Your Pro or Max plan then works right here — billed to your plan, no API credits. Uses your installed Claude Code (on most dev machines already).", true));
+            var planCancel = new Button { Content = "Cancel", HorizontalAlignment = HorizontalAlignment.Left };
+            planCancel.Click += (s, e) => { try { _planCts?.Cancel(); } catch { } };
+            _planLink.Click += (s, e) => { if (_planUrl != null) EditorCommands.OpenUrl(_planUrl); };
+            var planWaitRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            planWaitRow.Children.Add(new ProgressBar { IsIndeterminate = true, Width = 60, MinWidth = 0, Height = 3, MinHeight = 3, VerticalAlignment = VerticalAlignment.Center });
+            planWaitRow.Children.Add(_planWaitText);
+            _planWait.Children.Add(planWaitRow);
+            _planWait.Children.Add(_planLink);
+            var planButtons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            planButtons.Children.Add(planCancel);
+            var planTerminal = new Button { Classes = { "link" }, Content = "Use a terminal instead", FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
+            planTerminal.Click += (s, e) =>
+            {
+                try { _planCts?.Cancel(); } catch { }
+                if (ClaudeCode.LoginInTerminal(false))
+                {
+                    _planError.Text = "Finish the sign-in in the terminal and your browser, then come back here.";
+                    _planError.Foreground = EditorKit.Brush("VxTextSecondaryBrush");
+                    _planError.IsVisible = true;
+                }
+                else EditorCommands.Toast("No terminal could be opened — run: claude auth login");
+            };
+            planButtons.Children.Add(planTerminal);
+            _planWait.Children.Add(planButtons);
+            sp.Children.Add(_planWait);
+            _planError.Foreground = EditorKit.Brush("VxRedBrush");
+            sp.Children.Add(_planError);
+
+            sp.Children.Add(new Border { Height = 1, Background = EditorKit.Brush("VxHairlineBrush"), Margin = new Thickness(0, 8, 0, 2) });
+            sp.Children.Add(new TextBlock { Text = "Or use API billing", FontWeight = FontWeight.SemiBold, FontSize = 12.5 });
+
+            // ---- Anthropic Console account (the Anthropic CLI's browser sign-in)
+            _signInButton.Content = "Sign in with Anthropic Console";
+            _signInButton.Classes.Remove("accent");
             _signInButton.Click += (s, e) => _ = SignInAsync();
             sp.Children.Add(_signInButton);
             sp.Children.Add(Para("Opens your browser to sign in to your Anthropic Console account. Usage is billed to that account at API prices.", true));
@@ -775,10 +951,10 @@ namespace VortexEditor.Claude
             _keyBox.Children.Add(keyHelp);
             sp.Children.Add(_keyBox);
 
-            // ---- Claude subscription: only Anthropic's own apps may use it — they can drive this editor through MCP
+            // ---- Claude Desktop (or an external Claude Code) can also drive the editor from its own window over MCP
             sp.Children.Add(new Border { Height = 1, Background = EditorKit.Brush("VxHairlineBrush"), Margin = new Thickness(0, 10, 0, 2) });
-            sp.Children.Add(new TextBlock { Text = "Have Claude Pro or Max?", FontWeight = FontWeight.SemiBold, FontSize = 12.5 });
-            sp.Children.Add(Para("Anthropic lets a Claude plan work only in its own apps. Claude Code and Claude Desktop can use this editor's tools — connect them, and they build in your scene with your plan.", true));
+            sp.Children.Add(new TextBlock { Text = "Prefer Claude Desktop or a separate Claude Code?", FontWeight = FontWeight.SemiBold, FontSize = 12.5 });
+            sp.Children.Add(Para("They can operate this editor's tools from their own window through the editor's MCP server.", true));
             var connect = new Button { Content = "Connect Claude Code / Desktop…", HorizontalAlignment = HorizontalAlignment.Left };
             connect.Click += (s, e) => _ = ClaudeConnectDialog.Run();
             sp.Children.Add(connect);
@@ -857,11 +1033,72 @@ namespace VortexEditor.Claude
             }
         }
 
+        /// <summary>Sign in to the user's own Claude plan (Pro / Max) through Claude Code: the browser opens, Claude Code
+        /// stores the credentials, and the panel then runs on the Claude Code engine. No terminal — this panel stays the UI.</summary>
+        internal async Task ClaudeCodeSignInAsync(bool console)
+        {
+            if (_planCts != null) return;
+            if (ClaudeCode.FindCli() == null)
+            {
+                _planError.Foreground = EditorKit.Brush("VxRedBrush");
+                _planError.Text = "Claude Code (claude) is not installed. Install it once (see “Connect Claude Code / Desktop…” below), then sign in here.";
+                _planError.IsVisible = true;
+                return;
+            }
+            _planError.IsVisible = false;
+            _planError.Foreground = EditorKit.Brush("VxRedBrush");
+            _planCts = new CancellationTokenSource();
+            _planUrl = null;
+            _planLink.IsVisible = false;
+            _planWait.IsVisible = true;
+            _planSignIn.IsEnabled = false;
+            try
+            {
+                var (_, output) = await ClaudeCode.LoginAsync(console, _planCts.Token, line =>
+                {
+                    string url = ClaudeAccount.LinkIn(line);
+                    if (url != null) Dispatcher.UIThread.Post(() => { _planUrl ??= url; _planLink.IsVisible = true; });
+                });
+                await ClaudeCode.RefreshAsync();
+                if (ClaudeCode.Status.IsPlan)
+                {
+                    _stayOnSignIn = false;
+                    ChooseEngineIfIdle();
+                    EditorCommands.Toast("Signed in — " + ClaudeCode.Status.Label);
+                }
+                else if (!_planCts.IsCancellationRequested)
+                {
+                    _planError.Text = "Sign-in did not finish." + (string.IsNullOrWhiteSpace(output) ? "" : "\n" + Tail(output, 6));
+                    _planError.IsVisible = true;
+                }
+            }
+            finally
+            {
+                _planCts.Dispose();
+                _planCts = null;
+                _planWait.IsVisible = false;
+                _planSignIn.IsEnabled = true;
+                RefreshAccount();
+                UpdateChips();
+                UpdateStatus();
+            }
+        }
+
         private async Task SignOutAsync()
         {
             var (ok, output) = await ClaudeAccount.SignOutAsync(CancellationToken.None);
             RefreshAccount();
             EditorCommands.Toast(ok ? "Signed out of Anthropic" : "Sign-out failed: " + Tail(output, 1));
+        }
+
+        private async Task ClaudeCodeSignOutAsync()
+        {
+            var (ok, output) = await ClaudeCode.LogoutAsync();
+            await ClaudeCode.RefreshAsync();
+            ChooseEngineIfIdle();
+            RefreshAccount();
+            UpdateStatus();
+            EditorCommands.Toast(ok ? "Signed out of Claude Code" : "Sign-out failed: " + Tail(output, 1));
         }
 
         private void SaveKey()
@@ -1053,6 +1290,13 @@ namespace VortexEditor.Claude
             private Control _approval;
             private readonly ChatToolCall _call;
 
+            /// <summary>The tool's bare name (used to match an incoming permission prompt to this card).</summary>
+            public string ToolName => _call.Name;
+            /// <summary>The tool finished (a result came back).</summary>
+            public bool Finished { get; private set; }
+            /// <summary>The card is showing its approval buttons and waiting for the user.</summary>
+            public bool AwaitingApproval { get; private set; }
+
             public ToolCard(ChatToolCall call, ToolDef def)
             {
                 _call = call;
@@ -1081,10 +1325,12 @@ namespace VortexEditor.Claude
 
             public void AskApproval(Action<ToolApproval> decide)
             {
+                AwaitingApproval = true;
                 var row = new WrapPanel { Margin = new Thickness(0, 6, 0, 0) };
                 row.Children.Add(new TextBlock { Text = "Claude wants to " + Verb(_call.Name) + ".", FontSize = 12, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 4), TextWrapping = TextWrapping.Wrap });
                 void Done(ToolApproval a)
                 {
+                    AwaitingApproval = false;
                     _body.Children.Remove(_approval);
                     _approval = null;
                     _details.IsVisible = false;
@@ -1110,6 +1356,8 @@ namespace VortexEditor.Claude
 
             public void Finish(ChatToolCall call, ClaudeMode mode)
             {
+                Finished = true;
+                AwaitingApproval = false;
                 BorderBrush = EditorKit.Brush("VxHairlineBrush");
                 if (_approval != null) { _body.Children.Remove(_approval); _approval = null; }
                 var r = call.Result;
