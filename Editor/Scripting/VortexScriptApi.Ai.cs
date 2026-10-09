@@ -73,6 +73,9 @@ namespace Vortex
 
         /// <summary>True while a destination is set (arrival or Stop clears it).</summary>
         public static bool HasDestination(long entity) { return NavigationService.HasDestination(E(entity)); }
+        /// <summary>Draw the navmesh and / or the agents' paths as overlays in the game view (the Navigation window's
+        /// toggles, from a script — a feature tour key, a debug menu). Off again with (false, false).</summary>
+        public static void DebugDraw(bool navmesh, bool paths) { NavigationService.ShowNavMesh = navmesh; NavigationService.ShowAgentPaths = paths; }
 
         /// <summary>Metres left along the path; 0 after arriving, -1 without a path (infinity while the path is pending).</summary>
         public static float RemainingDistance(long entity) { return NavigationService.RemainingDistance(E(entity)); }
@@ -226,6 +229,8 @@ namespace Vortex
     /// </summary>
     public static class Perception
     {
+        /// <summary>Draw every AI Perception's vision cone and its last seen / heard markers as overlays in the game view.</summary>
+        public static void DebugDraw(bool on) { PerceptionService.ShowDebug = on; }
         public const string SeenMessage = "PerceptionSeen";
         public const string LostMessage = "PerceptionLost";
         public const string HeardMessage = "PerceptionHeard";

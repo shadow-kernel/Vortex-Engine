@@ -56,7 +56,7 @@ namespace VortexEditor.Panels
                 Slider("Ground Mist", "0 = uniform distance fog; higher = mist hugging the ground below Height Y", 0, 2, s => s.FogHeightFalloff, (s, v) => s.FogHeightFalloff = v),
                 ColorRow("Color", s => (s.FogR, s.FogG, s.FogB), (s, c) => { s.FogR = c.r; s.FogG = c.g; s.FogB = c.b; })));
             Sections.Children.Add(Section("Volumetric Fog", "Ray-marched fog (#119): light scattered towards the camera from the fog colour, the sun and every point / spot light — visible cones and shafts. Uses the Fog height and colour above; works with Fog off.", s => s.VolumetricEnabled, (s, v) => s.VolumetricEnabled = v,
-                Slider("Density", "Scattering density — how thick the air is", 0, 2, s => s.VolumetricDensity, (s, v) => s.VolumetricDensity = v),
+                Slider("Density", "Scattering per metre — 0.01 a haze, 0.03 fog, 0.1 a thick cellar", 0, 0.25, s => s.VolumetricDensity, (s, v) => s.VolumetricDensity = v),
                 Slider("Anisotropy", "0 = light spreads evenly; towards 1 = bright halos when looking into a light", 0, 0.95, s => s.VolumetricAnisotropy, (s, v) => s.VolumetricAnisotropy = v),
                 Slider("Distance (m)", "How far the march goes", 5, 200, s => s.VolumetricDistance, (s, v) => s.VolumetricDistance = v),
                 Slider("Noise", "Wind-blown patchiness (0 = uniform)", 0, 1, s => s.VolumetricNoise, (s, v) => s.VolumetricNoise = v),
