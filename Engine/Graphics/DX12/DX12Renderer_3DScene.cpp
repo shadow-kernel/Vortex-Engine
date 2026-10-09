@@ -73,15 +73,16 @@ namespace vortex::graphics::dx12
 		const bool fx1 = fx && m_particles.has_layer(1);
 		// Decals (#120): drawn between the opaque and the transparent meshes of the world pass against a copy of its depth.
 		const bool fx_decals = m_decal_pass.ready() && !m_decal_list.empty();
+		const bool fx_fog = m_volumetrics.active();   // volumetric fog (#119), over the world's meshes before the particles
 		DX12Decals::View dview{};
-		if (fx_decals)
+		if (fx_decals || fx_fog)
 		{
 			using namespace DirectX;
 			dview.view_projection = m_frame_constants.view_projection;
 			XMStoreFloat4x4(&dview.inv_view_projection, XMMatrixInverse(nullptr, XMLoadFloat4x4(&m_frame_constants.view_projection)));
 			dview.eye = m_camera_position; dview.near_clip = m_near_clip; dview.far_clip = m_far_clip; dview.ortho = false;
 		}
-		const DX12Particles::Environment penv = (fx || fx_decals) ? particle_environment(m_frame_constants) : DX12Particles::Environment{};
+		const DX12Particles::Environment penv = (fx || fx_decals || fx_fog) ? particle_environment(m_frame_constants) : DX12Particles::Environment{};
 		const D3D12_GPU_VIRTUAL_ADDRESS fx_lights = m_light_cb ? m_light_cb->GetGPUVirtualAddress() : 0;
 		auto fx_layer = [&](u32 layer)
 		{
@@ -89,8 +90,20 @@ namespace vortex::graphics::dx12
 		};
 		// the collision snapshot of the world depth (the main view only; a no-op unless an emitter collides)
 		auto fx_capture = [&]() { m_particles.capture_depth(m_command_list.Get(), m_active_depth, m_active_width, m_active_height, pview, rtv, dsv); };
+		auto fx_volumetrics = [&]()
+		{
+			if (!fx_fog) return;
+			const D3D12_GPU_DESCRIPTOR_HANDLE depth_srv = m_particles.scene_depth_srv(m_command_list.Get(), m_active_depth);
+			if (depth_srv.ptr == 0) return;
+			DX12Volumetrics::View vv{};
+			vv.inv_view_projection = dview.inv_view_projection; vv.eye = m_camera_position; vv.near_clip = m_near_clip; vv.far_clip = m_far_clip; vv.ortho = false;
+			m_volumetrics.draw(m_command_list.Get(), rtv, dsv, depth_srv, m_active_width, m_active_height, vv, penv, fx_lights,
+				m_shadow_srv_gpu, m_csm_srv_gpu, m_point_srv_gpu, m_frame_constants.shadow_map_texel);
+			bind_scene_pass(m_per_frame_cb->GetGPUVirtualAddress());   // the fog pass left its own roots bound
+		};
 		auto fx_only = [&]()
 		{
+			fx_volumetrics();
 			if (fx0) fx_layer(0);
 			fx_capture();
 			if (fx1) { m_command_list->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr); fx_layer(1); }
@@ -666,6 +679,7 @@ namespace vortex::graphics::dx12
 		for (size_t r = 0; r < runN; ++r) if (m_draw_runs[r].layer != 0) { vmStart = r; break; }
 
 		record_pass(0, vmStart, true);
+		fx_volumetrics();   // volumetric fog over the finished world (#119), before the particles
 		// World-layer particles after the opaque + transparent meshes, then the collision snapshot of the world depth
 		// (before the viewmodel pass clears it).
 		if (fx0) fx_layer(0);

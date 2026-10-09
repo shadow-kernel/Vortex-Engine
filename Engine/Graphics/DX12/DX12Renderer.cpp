@@ -71,6 +71,11 @@ namespace vortex::graphics::dx12
 			OutputDebugStringA("Decal pipeline OK\n");
 		else
 			OutputDebugStringA("Decal pipeline FAILED\n");
+		// Volumetric fog (#119): volumetrics.hlsl — a half-res ray march through the depth copy, the light buffer and the shadow atlases.
+		if (m_volumetrics.initialize(core.device(), &m_fx_ring, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_D32_FLOAT))
+			OutputDebugStringA("Volumetric fog pipeline OK\n");
+		else
+			OutputDebugStringA("Volumetric fog pipeline FAILED\n");
 
 		// Upscale pipeline (render-scale composite). Writes the swapchain format. If it fails, render-scale just
 		// stays disabled (m_render_scale<1 falls back to direct rendering); the rest of the renderer is unaffected.
@@ -209,6 +214,7 @@ namespace vortex::graphics::dx12
 		m_scaled_rt.shutdown();
 		m_geometry.shutdown();
 		m_grid_pipeline.shutdown();
+		m_volumetrics.shutdown();
 		m_decal_pass.shutdown();
 		m_particles.shutdown();
 		m_fx_ring.shutdown();

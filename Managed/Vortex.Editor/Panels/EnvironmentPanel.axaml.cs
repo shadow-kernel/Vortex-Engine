@@ -55,6 +55,18 @@ namespace VortexEditor.Panels
                 Slider("Height Y", null, -20, 20, s => s.FogHeightY, (s, v) => s.FogHeightY = v),
                 Slider("Ground Mist", "0 = uniform distance fog; higher = mist hugging the ground below Height Y", 0, 2, s => s.FogHeightFalloff, (s, v) => s.FogHeightFalloff = v),
                 ColorRow("Color", s => (s.FogR, s.FogG, s.FogB), (s, c) => { s.FogR = c.r; s.FogG = c.g; s.FogB = c.b; })));
+            Sections.Children.Add(Section("Volumetric Fog", "Ray-marched fog (#119): light scattered towards the camera from the fog colour, the sun and every point / spot light — visible cones and shafts. Uses the Fog height and colour above; works with Fog off.", s => s.VolumetricEnabled, (s, v) => s.VolumetricEnabled = v,
+                Slider("Density", "Scattering density — how thick the air is", 0, 2, s => s.VolumetricDensity, (s, v) => s.VolumetricDensity = v),
+                Slider("Anisotropy", "0 = light spreads evenly; towards 1 = bright halos when looking into a light", 0, 0.95, s => s.VolumetricAnisotropy, (s, v) => s.VolumetricAnisotropy = v),
+                Slider("Distance (m)", "How far the march goes", 5, 200, s => s.VolumetricDistance, (s, v) => s.VolumetricDistance = v),
+                Slider("Noise", "Wind-blown patchiness (0 = uniform)", 0, 1, s => s.VolumetricNoise, (s, v) => s.VolumetricNoise = v),
+                Slider("Noise Scale (m)", null, 0.5, 30, s => s.VolumetricNoiseScale, (s, v) => s.VolumetricNoiseScale = v),
+                Slider("Wind", "Noise drift in cells per second", 0, 3, s => s.VolumetricNoiseSpeed, (s, v) => s.VolumetricNoiseSpeed = v),
+                Slider("Sun Shafts", "Directional light contribution (through its cascaded shadows)", 0, 3, s => s.VolumetricSun, (s, v) => s.VolumetricSun = v),
+                Slider("Lights", "Point / spot light contribution (through their shadow maps)", 0, 3, s => s.VolumetricLights, (s, v) => s.VolumetricLights = v),
+                Slider("Ambient", "Fog-colour glow without a light", 0, 2, s => s.VolumetricAmbient, (s, v) => s.VolumetricAmbient = v),
+                Slider("Steps", "Ray-march quality (more = smoother, slower)", 8, 48, s => s.VolumetricSteps, (s, v) => s.VolumetricSteps = (int)Math.Round(v)),
+                Slider("Shadows", "1 = light shafts stop at walls (shadow maps), 0 = cheaper, unshadowed", 0, 1, s => s.VolumetricShadows ? 1f : 0f, (s, v) => s.VolumetricShadows = v >= 0.5f)));
             Sections.Children.Add(Section("Vignette", null, s => s.VignetteEnabled, (s, v) => s.VignetteEnabled = v,
                 Slider("Intensity", null, 0, 1.5, s => s.VignetteIntensity, (s, v) => s.VignetteIntensity = v),
                 Slider("Smoothness", null, 0.01, 1, s => s.VignetteSmoothness, (s, v) => s.VignetteSmoothness = v),

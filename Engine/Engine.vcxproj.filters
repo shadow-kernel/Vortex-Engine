@@ -60,6 +60,8 @@
     <ClInclude Include="Graphics\DX12\DX12Decals.h" />
     <ClInclude Include="Graphics\DX12\DX12FrameRing.h" />
     <ClInclude Include="Graphics\DX12\DX12Particles.h" />
+    <ClInclude Include="Graphics\DX12\DX12Volumetrics.h" />
+    <ClInclude Include="Graphics\Volumetrics\Volumetrics.h" />
     <ClInclude Include="Graphics\DX12\DX12SkyboxPipeline.h" />
     <ClInclude Include="Components\Skybox.h" />
     <ClInclude Include="Graphics\DX12\DX12MotionVectorPipeline.h" />
@@ -124,6 +126,7 @@
     <ClCompile Include="Graphics\DX12\DX12Pipeline3D.cpp" />
     <ClCompile Include="Graphics\DX12\DX12Decals.cpp" />
     <ClCompile Include="Graphics\DX12\DX12Particles.cpp" />
+    <ClCompile Include="Graphics\DX12\DX12Volumetrics.cpp" />
     <ClCompile Include="Graphics\DX12\DX12SkyboxPipeline.cpp" />
     <ClCompile Include="Components\Skybox.cpp" />
     <ClCompile Include="Graphics\DX12\DX12GridPipeline.cpp" />

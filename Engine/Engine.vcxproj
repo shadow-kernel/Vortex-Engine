@@ -45,6 +45,8 @@
     <ClInclude Include="Graphics\DX12\DX12Decals.h" />
     <ClInclude Include="Graphics\DX12\DX12FrameRing.h" />
     <ClInclude Include="Graphics\DX12\DX12Particles.h" />
+    <ClInclude Include="Graphics\DX12\DX12Volumetrics.h" />
+    <ClInclude Include="Graphics\Volumetrics\Volumetrics.h" />
     <ClInclude Include="Graphics\DX12\DX12SkyboxPipeline.h" />
     <ClInclude Include="Graphics\DX12\DX12Streamline.h" />
     <ClInclude Include="Graphics\DX12\DX12UpscalePipeline.h" />
@@ -136,6 +138,7 @@
     <ClCompile Include="Graphics\DX12\DX12ShaderCompiler.cpp" />
     <ClCompile Include="Graphics\DX12\DX12Decals.cpp" />
     <ClCompile Include="Graphics\DX12\DX12Particles.cpp" />
+    <ClCompile Include="Graphics\DX12\DX12Volumetrics.cpp" />
     <ClCompile Include="Graphics\DX12\DX12SkyboxPipeline.cpp" />
     <ClCompile Include="Graphics\DX12\DX12Streamline.cpp" />
     <ClCompile Include="Graphics\DX12\DX12UpscalePipeline.cpp" />
