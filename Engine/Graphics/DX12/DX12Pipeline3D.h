@@ -20,6 +20,8 @@ namespace vortex::graphics::dx12
 
 		ID3D12RootSignature* root_signature() const { return m_root_signature.Get(); }
 		ID3D12PipelineState* pipeline_state() const { return m_pipeline_state.Get(); }
+		// Mirrored instances (#334): the same PSO with counter-clockwise front faces (falls back to the normal one).
+		ID3D12PipelineState* pipeline_state(bool mirrored) const { return mirrored && m_mirrored_pso ? m_mirrored_pso.Get() : m_pipeline_state.Get(); }
 
 		// Wireframe mode for debugging
 		ID3D12PipelineState* wireframe_pso() const { return m_wireframe_pso.Get(); }
@@ -42,6 +44,7 @@ namespace vortex::graphics::dx12
 		// DrawIndexedInstanced through the exact same binding flow. nullptr = skinned shader failed to
 		// compile (renderer falls back to the rigid PSO -> bind pose, never a crash).
 		ID3D12PipelineState* skinned_pso() const { return m_skinned_pso.Get(); }
+		ID3D12PipelineState* skinned_pso(bool mirrored) const { return mirrored && m_skinned_m_pso ? m_skinned_m_pso.Get() : m_skinned_pso.Get(); }
 
 		// Shadow PSO: depth-only (standard VS, no PS, no RTV, D32 DSV + depth bias) — renders casters from
 		// the spot light's view into the shadow map. Rigid input layout, so it draws straight from the
@@ -56,10 +59,10 @@ namespace vortex::graphics::dx12
 		// on LESS_EQUAL) — drawn in the sorted back-to-front pass after all opaques. blend_mode 1 = alpha
 		// (SrcAlpha/InvSrcAlpha), 2 = additive (SrcAlpha/One); double_sided mirrors the opaque unlit rule.
 		// Returns nullptr for opaque/unknown modes (callers must route those through the opaque pass).
-		ID3D12PipelineState* transparent_pso(u32 blend_mode, bool double_sided) const
+		ID3D12PipelineState* transparent_pso(u32 blend_mode, bool double_sided, bool mirrored = false) const
 		{
-			if (blend_mode == 1) return double_sided ? m_alpha_ds_pso.Get() : m_alpha_pso.Get();
-			if (blend_mode == 2) return double_sided ? m_additive_ds_pso.Get() : m_additive_pso.Get();
+			if (blend_mode == 1) return double_sided ? m_alpha_ds_pso.Get() : (mirrored && m_alpha_m_pso ? m_alpha_m_pso.Get() : m_alpha_pso.Get());
+			if (blend_mode == 2) return double_sided ? m_additive_ds_pso.Get() : (mirrored && m_additive_m_pso ? m_additive_m_pso.Get() : m_additive_pso.Get());
 			return nullptr;
 		}
 
@@ -68,7 +71,10 @@ namespace vortex::graphics::dx12
 		// with the same PerFrame/PerObject/light/texture setup. Returns nullptr on any compile/create failure (the
 		// caller keeps the built-in PSO as a fallback -> a bad custom shader never black-screens). No device state
 		// is mutated. hlsl_path is an ABSOLUTE path to the project's shader file.
-		ComPtr<ID3D12PipelineState> create_custom_pso(ID3D12Device* device, const std::wstring& hlsl_path);
+		// blend_mode 1 / 2 give the alpha / additive variant (blend on, depth write off — #333), double_sided drops the
+		// culling, mirrored flips the front face (#334).
+		ComPtr<ID3D12PipelineState> create_custom_pso(ID3D12Device* device, const std::wstring& hlsl_path,
+			u32 blend_mode = 0, bool double_sided = false, bool mirrored = false);
 
 	private:
 		bool compile_shaders();
@@ -90,6 +96,10 @@ namespace vortex::graphics::dx12
 		ComPtr<ID3D12PipelineState> m_alpha_ds_pso;    // #33: alpha blend, double-sided
 		ComPtr<ID3D12PipelineState> m_additive_pso;    // #33: additive, cull back, depth write off
 		ComPtr<ID3D12PipelineState> m_additive_ds_pso; // #33: additive, double-sided
+		ComPtr<ID3D12PipelineState> m_mirrored_pso;    // #334: opaque, counter-clockwise front faces
+		ComPtr<ID3D12PipelineState> m_alpha_m_pso;     // #334: alpha, counter-clockwise
+		ComPtr<ID3D12PipelineState> m_additive_m_pso;  // #334: additive, counter-clockwise
+		ComPtr<ID3D12PipelineState> m_skinned_m_pso;   // #334: skinned, counter-clockwise
 		ComPtr<ID3DBlob> m_vs_blob;
 		ComPtr<ID3DBlob> m_ps_blob;
 		ComPtr<ID3DBlob> m_skinned_vs_blob;        // optional — skinned PSO skipped if it fails to load

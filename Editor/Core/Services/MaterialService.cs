@@ -393,12 +393,17 @@ namespace Editor.Core.Services
             if (vmat.EmissiveStrength > 0f)
                 VortexAPI.SetMaterialEmissiveBrightness(mat, vmat.EmissiveStrength);
 
-            // Blend mode (#33): AlphaBlend/Additive route the material into the engine's sorted
-            // transparent pass. AlphaTest keeps drawing opaque for now (no clip() path yet).
+            // Blend mode (#33): AlphaBlend/Additive route the material into the engine's sorted transparent pass;
+            // AlphaTest (#329) stays in the opaque pass and discards fragments below the cutoff. TwoSided drops the
+            // back-face culling (cut-outs usually want it).
             int blend = 0;
+            bool alphaTest = string.Equals(vmat.BlendMode, "AlphaTest", StringComparison.OrdinalIgnoreCase);
             if (string.Equals(vmat.BlendMode, "AlphaBlend", StringComparison.OrdinalIgnoreCase)) blend = 1;
             else if (string.Equals(vmat.BlendMode, "Additive", StringComparison.OrdinalIgnoreCase)) blend = 2;
+            else if (alphaTest) blend = 3;
             VortexAPI.SetMaterialBlendModeValue(mat, blend);
+            VortexAPI.SetMaterialAlphaCutoffValue(mat, alphaTest ? vmat.AlphaCutoff : 0f);
+            VortexAPI.SetMaterialTwoSided(mat, vmat.TwoSided);
 
             // UV tiling (texture repeat scale) — always applied (it's a scalar, no texture re-import), so tiling shows
             // in the scene AND thumbnails/previews. Falls back to 1 for a missing/zero value.

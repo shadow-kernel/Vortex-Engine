@@ -485,7 +485,8 @@ namespace vortex::graphics::sdlgpu
 	}
 
 	SDL_GPUGraphicsPipeline* SdlGpuRenderer::create_scene_pipeline(SDL_GPUShader* vs, SDL_GPUShader* fs, u32 stride, bool skinned_layout,
-		SDL_GPUFillMode fill, SDL_GPUCullMode cull, bool depth_test, bool depth_write, SDL_GPUCompareOp depth_op, u32 blend_mode)
+		SDL_GPUFillMode fill, SDL_GPUCullMode cull, bool depth_test, bool depth_write, SDL_GPUCompareOp depth_op, u32 blend_mode,
+		bool front_ccw)
 	{
 		SDL_GPUVertexBufferDescription buffers[2] = {
 			{ 0, stride, SDL_GPU_VERTEXINPUTRATE_VERTEX, 0 },
@@ -527,7 +528,8 @@ namespace vortex::graphics::sdlgpu
 		pci.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
 		pci.rasterizer_state.fill_mode = fill;
 		pci.rasterizer_state.cull_mode = cull;
-		pci.rasterizer_state.front_face = SDL_GPU_FRONTFACE_CLOCKWISE;   // D3D convention (the mesh generators wind clockwise)
+		// D3D convention (the mesh generators wind clockwise); mirrored instances get the counter-clockwise twin (#334)
+		pci.rasterizer_state.front_face = front_ccw ? SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE : SDL_GPU_FRONTFACE_CLOCKWISE;
 		pci.rasterizer_state.enable_depth_clip = true;
 		pci.multisample_state.sample_count = SDL_GPU_SAMPLECOUNT_1;
 		pci.depth_stencil_state.enable_depth_test = depth_test;
@@ -590,7 +592,12 @@ namespace vortex::graphics::sdlgpu
 		set.alpha_ds = create_scene_pipeline(m_vs_standard, m_fs_standard, stride, false, SDL_GPU_FILLMODE_FILL, SDL_GPU_CULLMODE_NONE, true, false, SDL_GPU_COMPAREOP_LESS_OR_EQUAL, 1);
 		set.additive = create_scene_pipeline(m_vs_standard, m_fs_standard, stride, false, SDL_GPU_FILLMODE_FILL, SDL_GPU_CULLMODE_BACK, true, false, SDL_GPU_COMPAREOP_LESS_OR_EQUAL, 2);
 		set.additive_ds = create_scene_pipeline(m_vs_standard, m_fs_standard, stride, false, SDL_GPU_FILLMODE_FILL, SDL_GPU_CULLMODE_NONE, true, false, SDL_GPU_COMPAREOP_LESS_OR_EQUAL, 2);
-		return set.opaque && set.wireframe && set.double_sided && set.gizmo && set.gizmo_wire && set.alpha && set.alpha_ds && set.additive && set.additive_ds;
+		// mirrored twins (#334): same state, counter-clockwise front faces
+		set.opaque_m = create_scene_pipeline(m_vs_standard, m_fs_standard, stride, false, SDL_GPU_FILLMODE_FILL, SDL_GPU_CULLMODE_BACK, true, true, SDL_GPU_COMPAREOP_LESS, 0, true);
+		set.alpha_m = create_scene_pipeline(m_vs_standard, m_fs_standard, stride, false, SDL_GPU_FILLMODE_FILL, SDL_GPU_CULLMODE_BACK, true, false, SDL_GPU_COMPAREOP_LESS_OR_EQUAL, 1, true);
+		set.additive_m = create_scene_pipeline(m_vs_standard, m_fs_standard, stride, false, SDL_GPU_FILLMODE_FILL, SDL_GPU_CULLMODE_BACK, true, false, SDL_GPU_COMPAREOP_LESS_OR_EQUAL, 2, true);
+		return set.opaque && set.wireframe && set.double_sided && set.gizmo && set.gizmo_wire && set.alpha && set.alpha_ds && set.additive && set.additive_ds
+			&& set.opaque_m && set.alpha_m && set.additive_m;
 	}
 
 	bool SdlGpuRenderer::create_pipelines()
@@ -598,6 +605,7 @@ namespace vortex::graphics::sdlgpu
 		if (!create_pipeline_set(m_pipelines, 32, false)) return false;
 		if (!create_pipeline_set(m_pipelines_skinned_stride, 52, false)) return false;
 		m_pipeline_skinned = create_scene_pipeline(m_vs_skinned, m_fs_standard, 52, true, SDL_GPU_FILLMODE_FILL, SDL_GPU_CULLMODE_BACK, true, true, SDL_GPU_COMPAREOP_LESS, 0);
+		m_pipeline_skinned_m = create_scene_pipeline(m_vs_skinned, m_fs_standard, 52, true, SDL_GPU_FILLMODE_FILL, SDL_GPU_CULLMODE_BACK, true, true, SDL_GPU_COMPAREOP_LESS, 0, true);
 		m_pipeline_grid = create_fullscreen_pipeline(m_vs_grid, m_fs_grid, m_scene_format, true, true);
 		m_pipeline_skybox = create_fullscreen_pipeline(m_vs_sky, m_fs_sky, m_scene_format, true, false);
 		if (!ensure_shadow_resources()) log("shadow maps unavailable on this device - rendering without shadows");
@@ -691,7 +699,7 @@ namespace vortex::graphics::sdlgpu
 	void SdlGpuRenderer::release_pipeline_set(PipelineSet& set)
 	{
 		SDL_GPUGraphicsPipeline** all[] = { &set.opaque, &set.wireframe, &set.double_sided, &set.gizmo, &set.gizmo_wire,
-			&set.alpha, &set.alpha_ds, &set.additive, &set.additive_ds };
+			&set.alpha, &set.alpha_ds, &set.additive, &set.additive_ds, &set.opaque_m, &set.alpha_m, &set.additive_m };
 		for (auto** p : all) { if (*p) SDL_ReleaseGPUGraphicsPipeline(m_device, *p); *p = nullptr; }
 	}
 
@@ -719,13 +727,13 @@ namespace vortex::graphics::sdlgpu
 		m_static_submit.clear(); m_static_render.clear(); m_static_pending = false; m_submit_target = 0;
 			m_gizmo_render.clear(); m_gizmo_submit.clear(); m_gizmo_wire_render.clear(); m_gizmo_wire_submit.clear();
 		}
-		for (auto& [id, cs] : m_custom_shaders) cs.pipeline = nullptr;
 		m_custom_shaders.clear();
-		for (auto& [path, cp] : m_pipeline_cache) if (cp.pipeline) SDL_ReleaseGPUGraphicsPipeline(m_device, cp.pipeline);
+		for (auto& [path, cp] : m_pipeline_cache)
+			for (auto* p : cp.pipeline) if (p) SDL_ReleaseGPUGraphicsPipeline(m_device, p);
 		m_pipeline_cache.clear();
 		release_pipeline_set(m_pipelines);
 		release_pipeline_set(m_pipelines_skinned_stride);
-		SDL_GPUGraphicsPipeline** singles[] = { &m_pipeline_skinned, &m_pipeline_grid, &m_pipeline_skybox, &m_pipeline_blit, &m_pipeline_postfx };
+		SDL_GPUGraphicsPipeline** singles[] = { &m_pipeline_skinned, &m_pipeline_skinned_m, &m_pipeline_grid, &m_pipeline_skybox, &m_pipeline_blit, &m_pipeline_postfx };
 		for (auto** p : singles) { if (*p) SDL_ReleaseGPUGraphicsPipeline(m_device, *p); *p = nullptr; }
 		SDL_GPUShader** shaders[] = { &m_vs_standard, &m_vs_skinned, &m_fs_standard, &m_vs_grid, &m_fs_grid, &m_vs_sky, &m_fs_sky, &m_vs_blit, &m_fs_blit, &m_fs_postfx };
 		for (auto** s : shaders) { if (*s) SDL_ReleaseGPUShader(m_device, *s); *s = nullptr; }
@@ -1064,13 +1072,31 @@ namespace vortex::graphics::sdlgpu
 		return (unsigned long long)t.time_since_epoch().count();
 	}
 
+	namespace
+	{
+		// blend (0 opaque / 1 alpha / 2 additive) × double-sided × mirrored -> 0..11
+		u32 pipeline_variant(u32 blend_mode, bool double_sided, bool mirrored)
+		{
+			const u32 b = blend_mode == 1 ? 1u : (blend_mode == 2 ? 2u : 0u);
+			return b + (double_sided ? 3u : 0u) + (mirrored ? 6u : 0u);
+		}
+	}
+
 	SDL_GPUGraphicsPipeline* SdlGpuRenderer::get_or_compile_pipeline(const std::string& path)
 	{
+		return get_or_compile_pipeline(path, 0, false, false);
+	}
+
+	SDL_GPUGraphicsPipeline* SdlGpuRenderer::get_or_compile_pipeline(const std::string& path, u32 blend_mode, bool double_sided, bool mirrored)
+	{
 		if (path.empty()) return nullptr;
+		const u32 variant = pipeline_variant(blend_mode, double_sided, mirrored);
 		const unsigned long long mt = file_mtime(path);
 		auto it = m_pipeline_cache.find(path);
-		if (it != m_pipeline_cache.end() && it->second.pipeline && it->second.mtime == mt) return it->second.pipeline;
+		if (it != m_pipeline_cache.end() && it->second.pipeline[variant] && it->second.mtime[variant] == mt) return it->second.pipeline[variant];
 
+		// A custom shader keeps the material's blend mode (#333): the alpha / additive variants blend with depth write
+		// off like the built-in transparent pipelines; a mirrored instance gets counter-clockwise front faces (#334).
 		SDL_GPUGraphicsPipeline* pipeline = nullptr;
 		std::vector<unsigned char> vs_code, fs_code;
 		if (load_material_shader(path, SDL_GPU_SHADERSTAGE_VERTEX, vs_code) &&
@@ -1081,7 +1107,10 @@ namespace vortex::graphics::sdlgpu
 			if (vs && fs)
 			{
 				wait_idle();
-				pipeline = create_scene_pipeline(vs, fs, 32, false, SDL_GPU_FILLMODE_FILL, SDL_GPU_CULLMODE_BACK, true, true, SDL_GPU_COMPAREOP_LESS, 0);
+				const u32 b = blend_mode == 1 ? 1u : (blend_mode == 2 ? 2u : 0u);
+				pipeline = create_scene_pipeline(vs, fs, 32, false, SDL_GPU_FILLMODE_FILL,
+					double_sided ? SDL_GPU_CULLMODE_NONE : SDL_GPU_CULLMODE_BACK, true, b == 0,
+					b == 0 ? SDL_GPU_COMPAREOP_LESS : SDL_GPU_COMPAREOP_LESS_OR_EQUAL, b, mirrored && !double_sided);
 			}
 			if (vs) SDL_ReleaseGPUShader(m_device, vs);
 			if (fs) SDL_ReleaseGPUShader(m_device, fs);
@@ -1092,13 +1121,20 @@ namespace vortex::graphics::sdlgpu
 				+ " file (or it failed to compile) — the built-in PBR shader stays active on this backend");
 		}
 		auto& e = m_pipeline_cache[path];
-		e.mtime = mt;
+		e.mtime[variant] = mt;   // a failed compile keeps the last-good variant and is not retried until the file changes
 		if (pipeline)
 		{
-			if (e.pipeline) SDL_ReleaseGPUGraphicsPipeline(m_device, e.pipeline);
-			e.pipeline = pipeline;
+			if (e.pipeline[variant]) SDL_ReleaseGPUGraphicsPipeline(m_device, e.pipeline[variant]);
+			e.pipeline[variant] = pipeline;
 		}
-		return e.pipeline;
+		return e.pipeline[variant];
+	}
+
+	SDL_GPUGraphicsPipeline* SdlGpuRenderer::custom_pipeline(u32 material_id, u32 blend_mode, bool double_sided, bool mirrored)
+	{
+		auto it = m_custom_shaders.find(material_id);
+		if (it == m_custom_shaders.end() || it->second.path.empty()) return nullptr;
+		return get_or_compile_pipeline(it->second.path, blend_mode, double_sided, mirrored);
 	}
 
 	void SdlGpuRenderer::set_material_shader(u32 material_id, const std::string& shader_path)
@@ -1106,7 +1142,7 @@ namespace vortex::graphics::sdlgpu
 		if (shader_path.empty()) { m_custom_shaders.erase(material_id); return; }
 		auto& e = m_custom_shaders[material_id];
 		e.path = shader_path;
-		e.pipeline = get_or_compile_pipeline(shader_path);
+		get_or_compile_pipeline(shader_path);   // the opaque variant now, so a broken file is reported at assignment
 		e.mtime = file_mtime(shader_path);
 	}
 
@@ -1116,17 +1152,17 @@ namespace vortex::graphics::sdlgpu
 		for (auto& kv : m_pipeline_cache)
 		{
 			const unsigned long long mt = file_mtime(kv.first);
-			if (mt == 0ull || mt == kv.second.mtime) continue;
-			SDL_GPUGraphicsPipeline* before = kv.second.pipeline;
-			kv.second.mtime = 0;   // force a rebuild
-			if (get_or_compile_pipeline(kv.first) != before || kv.second.mtime == mt) ++changed;
+			if (mt == 0ull) continue;
+			// every variant that was built from an older file is rebuilt (a variant nobody asked for yet stays empty)
+			for (u32 v = 0; v < PIPELINE_VARIANTS; ++v)
+			{
+				if (!kv.second.pipeline[v] || kv.second.mtime[v] == mt) continue;
+				SDL_GPUGraphicsPipeline* before = kv.second.pipeline[v];
+				if (get_or_compile_pipeline(kv.first, v % 3, (v / 3) % 2 != 0, v >= 6) != before || kv.second.mtime[v] == mt) ++changed;
+			}
 		}
 		if (changed == 0) return 0;
-		for (auto& kv : m_custom_shaders)
-		{
-			auto it = m_pipeline_cache.find(kv.second.path);
-			if (it != m_pipeline_cache.end()) { kv.second.pipeline = it->second.pipeline; kv.second.mtime = it->second.mtime; }
-		}
+		for (auto& kv : m_custom_shaders) kv.second.mtime = file_mtime(kv.second.path);
 		return changed;
 	}
 
@@ -1212,7 +1248,9 @@ namespace vortex::graphics::sdlgpu
 		for (auto& kv : m_pipeline_cache)
 		{
 			const unsigned long long mt = file_mtime(kv.first);
-			if (mt != 0ull && mt != kv.second.mtime) return true;
+			if (mt == 0ull) continue;
+			for (u32 v = 0; v < PIPELINE_VARIANTS; ++v)
+				if (kv.second.pipeline[v] && kv.second.mtime[v] != mt) return true;
 		}
 		return false;
 	}

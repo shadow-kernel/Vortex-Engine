@@ -336,6 +336,20 @@ EDITOR_INTERFACE void SetMaterialBlendMode(id::id_type material_id, int mode)
 	if (mat) mat->set_blend_mode(mode < 0 ? 0u : (u32)mode);
 }
 
+// AlphaTest (#329): fragments whose alpha falls below the cutoff are discarded in the main pass (0 = off).
+EDITOR_INTERFACE void SetMaterialAlphaCutoff(id::id_type material_id, float cutoff)
+{
+	auto* mat = graphics::ResourceRegistry::instance().get_material(material_id);
+	if (mat) mat->set_alpha_cutoff(cutoff);
+}
+
+// TwoSided: the material draws without back-face culling (cut-outs, foliage, cloth).
+EDITOR_INTERFACE void SetMaterialDoubleSided(id::id_type material_id, bool two_sided)
+{
+	auto* mat = graphics::ResourceRegistry::instance().get_material(material_id);
+	if (mat) mat->set_double_sided(two_sided);
+}
+
 EDITOR_INTERFACE void SetMaterialHeightTexture(id::id_type material_id, id::id_type texture_id)
 {
 	auto* mat = graphics::ResourceRegistry::instance().get_material(material_id);

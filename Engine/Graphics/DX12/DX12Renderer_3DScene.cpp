@@ -163,6 +163,7 @@ namespace vortex::graphics::dx12
 					if (a.layer != b.layer) return a.layer < b.layer;
 					if (a.material_id != b.material_id) return a.material_id < b.material_id;
 					if (a.mesh_id != b.mesh_id) return a.mesh_id < b.mesh_id;
+					if (a.mirrored != b.mirrored) return a.mirrored < b.mirrored;
 					float ax = a.world_matrix._41 - eye.x, ay = a.world_matrix._42 - eye.y, az = a.world_matrix._43 - eye.z;
 					float bx = b.world_matrix._41 - eye.x, by = b.world_matrix._42 - eye.y, bz = b.world_matrix._43 - eye.z;
 					return (ax * ax + ay * ay + az * az) < (bx * bx + by * by + bz * bz);
@@ -199,6 +200,7 @@ namespace vortex::graphics::dx12
 				const auto idMat = m_render_queue[i].material_id;
 				const u32 idLayer = m_render_queue[i].layer;
 				const bool skinnedRun = m_render_queue[i].bone_offset != NO_BONES;
+				const u32 idMirrored = m_render_queue[i].mirrored;
 				size_t j = i;
 				if (skinnedRun)
 					j = i + 1;   // each skinned item is its OWN run (needs its own bone palette bound)
@@ -206,13 +208,15 @@ namespace vortex::graphics::dx12
 					// Layer in the break condition (#175): a world item and a viewmodel item sharing
 					// mesh+material must never merge into one run (correct by construction, not just by sort).
 					while (j < objectCount && m_render_queue[j].mesh_id == idMesh && m_render_queue[j].material_id == idMat
-						&& m_render_queue[j].bone_offset == NO_BONES && m_render_queue[j].layer == idLayer) ++j;
+						&& m_render_queue[j].bone_offset == NO_BONES && m_render_queue[j].layer == idLayer
+						&& m_render_queue[j].mirrored == idMirrored) ++j;
 				u32 cnt = (u32)(j - i);
 				Mesh* meshp = reg.get_mesh(idMesh);
 				float minx = 0, miny = 0, minz = 0, maxx = 1, maxy = 1, maxz = 1;
 				if (meshp && meshp->is_valid()) { meshp->get_min(minx, miny, minz); meshp->get_max(maxx, maxy, maxz); }
 				DrawRun run{};
 				run.layer = idLayer;
+				run.mirrored = idMirrored != 0;
 				run.start = i; run.count = cnt; run.mesh = idMesh; run.mat = idMat; run.meshp = meshp;
 				run.defaultBounds = (minx == 0.f && miny == 0.f && minz == 0.f && maxx == 1.f && maxy == 1.f && maxz == 1.f);
 				run.lcx = (minx + maxx) * 0.5f; run.lcy = (miny + maxy) * 0.5f; run.lcz = (minz + maxz) * 0.5f;
@@ -437,6 +441,7 @@ namespace vortex::graphics::dx12
 			auto* height_tex = mat->height_texture();
 			if (height_tex && height_tex->is_valid() && height_tex->srv_gpu().ptr != 0) { obj.has_height_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(9, height_tex->srv_gpu()); }
 			obj.height_scale = props.height_scale;   // parallax depth (root param 9 = height map at t6)
+			obj.alpha_cutoff = props.alpha_cutoff;   // AlphaTest (#329)
 		};
 
 		// Record the draws single-threaded: one DrawIndexedInstanced per run with visible instances.
@@ -459,9 +464,10 @@ namespace vortex::graphics::dx12
 			if (!mesh || !mesh->is_valid() || run.visible == 0) continue;
 
 			auto* mat = reg.get_material(run.mat);
-			if (!m_wireframe_mode && !run.skinned && mat && mat->blend_mode() != 0
-				&& m_pipeline_3d.transparent_pso(mat->blend_mode(), false)
-				&& m_custom_shaders.find((u32)run.mat) == m_custom_shaders.end())
+			// alpha blend / additive draw in the sorted transparent pass — custom shaders included (#333); alpha test
+			// (3) stays here and discards in the shader (#329)
+			const u32 blend = mat ? mat->blend_mode() : 0u;
+			if (!m_wireframe_mode && !run.skinned && (blend == 1 || blend == 2) && m_pipeline_3d.transparent_pso(blend, false))
 			{
 				transparentRuns.push_back((u32)r);
 				continue;
@@ -471,7 +477,7 @@ namespace vortex::graphics::dx12
 			// Skinned runs use the skinned PSO + bind their bone palette (root SRV param 8). Custom material
 			// shaders don't apply to skinned meshes in v1 (they'd need a skinned input-layout variant).
 			// A compiled custom per-material shader overrides the built-in PSO; else unlit -> double-sided, else PBR.
-			auto* skinned_pso = m_pipeline_3d.skinned_pso();
+			auto* skinned_pso = m_pipeline_3d.skinned_pso(run.mirrored);
 			if (run.skinned && skinned_pso && m_bone_vb)
 			{
 				m_command_list->SetPipelineState(skinned_pso);
@@ -480,11 +486,13 @@ namespace vortex::graphics::dx12
 			}
 			else
 			{
-				auto csit = m_custom_shaders.find((u32)run.mat);
-				if (csit != m_custom_shaders.end() && csit->second.pso)
-					m_command_list->SetPipelineState(csit->second.pso.Get());
-				else if (mat && mat->properties().is_unlit) m_command_list->SetPipelineState(double_sided_pso);
-				else m_command_list->SetPipelineState(pso);
+				// TwoSided and unlit materials cull nothing; everything else culls back faces, and a mirrored run (#334)
+				// takes the counter-clockwise twin so its front faces survive
+				const bool two_sided = mat && (mat->properties().is_unlit || mat->double_sided());
+				ID3D12PipelineState* custom = custom_pso((u32)run.mat, 0, two_sided, run.mirrored);
+				if (custom) m_command_list->SetPipelineState(custom);
+				else if (two_sided) m_command_list->SetPipelineState(double_sided_pso);
+				else m_command_list->SetPipelineState(m_wireframe_mode ? pso : m_pipeline_3d.pipeline_state(run.mirrored));
 			}
 			PerObjectConstants obj{};
 			apply_material(mat, obj);
@@ -588,8 +596,9 @@ namespace vortex::graphics::dx12
 					if (!tmesh || !tmesh->is_valid()) { tmesh = nullptr; continue; }
 					auto* mat = reg.get_material(run.mat);
 					const u32 bm = mat ? mat->blend_mode() : 1u;
-					const bool ds = mat && mat->properties().is_unlit;   // mirror the opaque unlit->double-sided rule
-					auto* tpso = m_pipeline_3d.transparent_pso(bm, ds);
+					const bool ds = mat && (mat->properties().is_unlit || mat->double_sided());   // mirror the opaque rule
+					ID3D12PipelineState* tpso = custom_pso((u32)run.mat, bm, ds, run.mirrored);   // a custom shader keeps its blend mode (#333)
+					if (!tpso) tpso = m_pipeline_3d.transparent_pso(bm, ds, run.mirrored);
 					if (!tpso) { tmesh = nullptr; continue; }
 					m_command_list->SetPipelineState(tpso);
 					PerObjectConstants obj{};

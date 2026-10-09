@@ -2,6 +2,19 @@
 
 namespace vortex::graphics::dx12
 {
+	namespace
+	{
+		// A world matrix with a negative determinant (an odd number of negative scale axes) flips the triangle
+		// winding; the run picks a counter-clockwise front-face PSO for it (#334).
+		inline RenderItem with_winding(RenderItem item)
+		{
+			const DirectX::XMFLOAT4X4& m = item.world_matrix;
+			const float det = m._11 * (m._22 * m._33 - m._23 * m._32) - m._12 * (m._21 * m._33 - m._23 * m._31) + m._13 * (m._21 * m._32 - m._22 * m._31);
+			item.mirrored = det < 0.0f ? 1u : 0u;
+			return item;
+		}
+	}
+
 		bool DX12Renderer::create_game_window(HWND hwnd, u32 width, u32 height)
 	{
 		if (!m_initialized || !hwnd || width == 0 || height == 0) return false;
@@ -140,14 +153,14 @@ namespace vortex::graphics::dx12
 	void DX12Renderer::submit_render_item(const RenderItem& item)
 	{
 		std::lock_guard<std::mutex> lock(m_queue_mutex);
-		(m_submit_target == 1 ? m_static_submit : m_submit_queue).push_back(item);
+		(m_submit_target == 1 ? m_static_submit : m_submit_queue).push_back(with_winding(item));
 	}
 
 
 	void DX12Renderer::submit_gizmo_item(const RenderItem& item)
 	{
 		std::lock_guard<std::mutex> lock(m_queue_mutex);
-		if (m_gizmo_submit.size() < MAX_GIZMO_ITEMS) m_gizmo_submit.push_back(item);
+		if (m_gizmo_submit.size() < MAX_GIZMO_ITEMS) m_gizmo_submit.push_back(with_winding(item));
 	}
 
 
@@ -156,7 +169,7 @@ namespace vortex::graphics::dx12
 		std::lock_guard<std::mutex> lock(m_queue_mutex);
 		// Solid + wire share the tail CB/VB slot range — cap their SUM, not each list.
 		if (m_gizmo_submit.size() + m_gizmo_wire_submit.size() < MAX_GIZMO_ITEMS)
-			m_gizmo_wire_submit.push_back(item);
+			m_gizmo_wire_submit.push_back(with_winding(item));
 	}
 
 
@@ -173,7 +186,7 @@ namespace vortex::graphics::dx12
 			item.material_id = material;
 			item.layer = layer;
 			memcpy(&item.world_matrix, world_matrices + (size_t)i * 16, sizeof(DirectX::XMFLOAT4X4));
-			q.push_back(item);
+			q.push_back(with_winding(item));
 		}
 	}
 	
@@ -195,13 +208,13 @@ namespace vortex::graphics::dx12
 		if (offset + bone_count > MAX_BONE_MATRICES_PER_FRAME)
 		{
 			// Palette half full — submit as rigid (bind pose) instead of overrunning.
-			m_submit_queue.push_back(item);
+			m_submit_queue.push_back(with_winding(item));
 			return;
 		}
 		item.bone_offset = offset;
 		item.bone_count = bone_count;
 		m_bone_submit.insert(m_bone_submit.end(), bone_matrices, bone_matrices + (size_t)bone_count * 16);
-		m_submit_queue.push_back(item);
+		m_submit_queue.push_back(with_winding(item));
 	}
 
 
