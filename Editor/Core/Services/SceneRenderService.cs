@@ -110,6 +110,9 @@ namespace Editor.Core.Services
         private static int _meshDbg; // diagnostic: log first few mesh creations
         private static int _submitN, _ssDbg; // diagnostic: count submits per SubmitScene
         private static DateTime _slowSubmitLogAt;   // rate limit for the slow-submit console line
+        /// <summary>How long the last SubmitScene took and how many meshes it sent — the player's FPS log shows them.</summary>
+        public static double LastSubmitMs;
+        public static int LastSubmitMeshes;
         private readonly Dictionary<Guid, long> _entityMaterials = new Dictionary<Guid, long>();
         
         // Track mesh paths to detect changes
@@ -642,6 +645,7 @@ namespace Editor.Core.Services
                 _batcher.Flush(FlushBatch);   // one P/Invoke per (mesh, material, layer) group
             }
             swSubmit.Stop();
+            LastSubmitMs = swSubmit.Elapsed.TotalMilliseconds; LastSubmitMeshes = _submitN;
             // a slow submit is either the first one (it imports every model) or a scene too big for the per-frame
             // re-submit (#364 A) — say so, at most once every 10 s
             if (swSubmit.ElapsedMilliseconds > 500 && (DateTime.UtcNow - _slowSubmitLogAt).TotalSeconds > 10)
