@@ -307,6 +307,38 @@ namespace Editor.DllWrapper
 
         /// <summary>Layer-aware submit (#175): layer 0 = world, 1 = first-person VIEWMODEL (second pass
         /// after a depth clear, own FOV, never clips walls, casts no shadows).</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SubmitRenderItemTinted(long meshId, long materialId, float[] worldMatrix, float r, float g, float b, float a, int layer);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SubmitMeshInstancesTinted(long meshId, long materialId, float[] worldMatrices, float[] colors, int count, int layer);
+
+        private static bool _tintExportMissing;
+
+        /// <summary>One instance with a per-instance tint (#331) multiplied with the material's base colour. An older
+        /// engine library without the export draws it untinted.</summary>
+        public static void SubmitMeshForRenderingTinted(long meshId, long materialId, float[] worldMatrix, float r, float g, float b, float a, int layer)
+        {
+            if (!_tintExportMissing)
+            {
+                try { SubmitRenderItemTinted(meshId, materialId, worldMatrix, r, g, b, a, layer); return; }
+                catch (System.EntryPointNotFoundException) { _tintExportMissing = true; }
+            }
+            SubmitMeshForRenderingLayered(meshId, materialId, worldMatrix, layer);
+        }
+
+        /// <summary>Instances with a tint each (colors = count x r,g,b,a; #331).</summary>
+        public static void SubmitMeshInstancedTinted(long meshId, long materialId, float[] worldMatrices, float[] colors, int count, int layer)
+        {
+            if (count <= 0) return;
+            if (!_tintExportMissing && colors != null)
+            {
+                try { SubmitMeshInstancesTinted(meshId, materialId, worldMatrices, colors, count, layer); return; }
+                catch (System.EntryPointNotFoundException) { _tintExportMissing = true; }
+            }
+            SubmitMeshInstancedLayered(meshId, materialId, worldMatrices, count, layer);
+        }
+
         public static void SubmitMeshForRenderingLayered(long meshId, long materialId, float[] worldMatrix, int layer)
         {
             if (layer <= 0 || worldMatrix == null) { SubmitRenderItem(meshId, materialId, worldMatrix); return; }

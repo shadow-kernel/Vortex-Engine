@@ -146,6 +146,7 @@ namespace VortexEditor.Services
             VortexAPI.SubmeshImportData[] subs = null;
             if (ext != ".vmesh")
             {
+                CoreAssetActions.EnsureAnimationClips(full);   // takes of a hand-copied model (#340)
                 // through the render cache: one load per model and session, no import per placement (#357)
                 try { subs = SceneRenderService.LoadModelSubmeshes(rel); } catch { subs = null; }
             }

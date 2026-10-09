@@ -26,7 +26,12 @@ namespace
 		if (ec) return std::string(filepath);
 		const auto time = std::filesystem::last_write_time(p, ec);
 		if (ec) return std::string(filepath);
-		return std::string(filepath) + "|" + std::to_string((long long)time.time_since_epoch().count()) + "|" + std::to_string((unsigned long long)size);
+		std::string key = std::string(filepath) + "|" + std::to_string((long long)time.time_since_epoch().count()) + "|" + std::to_string((unsigned long long)size);
+		// the "<model>.vimport" sidecar changes what a parse yields (#352): its mtime is part of the key
+		std::error_code ec2;
+		const auto sidecar = std::filesystem::last_write_time(std::filesystem::path(std::string(filepath) + ".vimport"), ec2);
+		if (!ec2) key += "|vimport" + std::to_string((long long)sidecar.time_since_epoch().count());
+		return key;
 	}
 
 	std::shared_ptr<const graphics::ImportedModelData> parsed_model(const char* filepath)
@@ -250,6 +255,36 @@ EDITOR_INTERFACE int GetModelSubmeshTriangleDataFromMemory(const unsigned char* 
 	if (!data || length <= 0) return 0;
 	auto model = graphics::ModelImporter::import_from_memory(
 		reinterpret_cast<const u8*>(data), static_cast<u64>(length), ext_hint ? ext_hint : "", "");
+	return write_triangles(model, submesh, out_positions, max_floats);
+}
+
+// #352: in-memory variants with the handedness flag (the file variants read "<model>.vimport" themselves).
+EDITOR_INTERFACE int ImportModelFromMemoryWithMaterialsEx(const unsigned char* data, int length, const char* ext_hint,
+	const char* virtual_dir, id::id_type* out_mesh_ids, id::id_type* out_material_ids, id::id_type* out_texture_ids,
+	int max_submeshes, int left_handed)
+{
+	if (!data || length <= 0 || !out_mesh_ids || !out_material_ids || !out_texture_ids || max_submeshes <= 0)
+		return 0;
+	auto result = graphics::ResourceRegistry::instance().import_model_with_materials_from_memory(
+		reinterpret_cast<const u8*>(data), static_cast<u64>(length),
+		ext_hint ? ext_hint : "", virtual_dir ? virtual_dir : "", left_handed != 0);
+	if (!result.success) return 0;
+	int count = static_cast<int>((std::min)(result.submeshes.size(), static_cast<size_t>(max_submeshes)));
+	for (int i = 0; i < count; i++)
+	{
+		out_mesh_ids[i] = result.submeshes[i].mesh_id;
+		out_material_ids[i] = result.submeshes[i].material_id;
+		out_texture_ids[i] = result.submeshes[i].texture_id;
+	}
+	return count;
+}
+
+EDITOR_INTERFACE int GetModelSubmeshTriangleDataFromMemoryEx(const unsigned char* data, int length, const char* ext_hint,
+	int submesh, float* out_positions, int max_floats, int left_handed)
+{
+	if (!data || length <= 0) return 0;
+	auto model = graphics::ModelImporter::import_from_memory(
+		reinterpret_cast<const u8*>(data), static_cast<u64>(length), ext_hint ? ext_hint : "", "", left_handed != 0);
 	return write_triangles(model, submesh, out_positions, max_floats);
 }
 

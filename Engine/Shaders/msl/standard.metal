@@ -130,6 +130,7 @@ struct VSOut
     float2 uv;
     float3 tangent;
     float3 bitangent;
+    float4 tint;                       // per-instance tint (#331)
 };
 
 static inline void tangent_basis(float3 N, thread float3& T, thread float3& B)
@@ -142,7 +143,10 @@ static inline void tangent_basis(float3 N, thread float3& T, thread float3& B)
 vertex VSOut VSMain(VertexIn in [[stage_in]], constant PerFrame& frame [[buffer(0)]])
 {
     VSOut o;
-    float4x4 world = float4x4(in.iw0, in.iw1, in.iw2, in.iw3);
+    // per-instance tint (#331): the fourth column of the instance matrix carries (r-1, g-1, b-1, a) — an affine
+    // matrix never uses it, so an untinted instance is an exact matrix
+    float4 tint = float4(1.0 + in.iw0.w, 1.0 + in.iw1.w, 1.0 + in.iw2.w, in.iw3.w);
+    float4x4 world = float4x4(float4(in.iw0.xyz, 0.0), float4(in.iw1.xyz, 0.0), float4(in.iw2.xyz, 0.0), float4(in.iw3.xyz, 1.0));
     float4 world_pos = world * float4(in.pos, 1.0);
     o.world_pos = world_pos.xyz;
     o.pos = frame.view_projection * world_pos;
@@ -150,6 +154,7 @@ vertex VSOut VSMain(VertexIn in [[stage_in]], constant PerFrame& frame [[buffer(
     o.norm = normalize(world3 * in.norm);
     o.uv = in.uv;
     tangent_basis(o.norm, o.tangent, o.bitangent);
+    o.tint = tint;
     return o;
 }
 
@@ -174,7 +179,10 @@ vertex VSOut VSSkinned(SkinnedVertexIn in [[stage_in]], constant PerFrame& frame
     float3x3 skin3 = float3x3(skin[0].xyz, skin[1].xyz, skin[2].xyz);
     float3 skinned_norm = normalize(skin3 * in.norm);
 
-    float4x4 world = float4x4(in.iw0, in.iw1, in.iw2, in.iw3);
+    // per-instance tint (#331): the fourth column of the instance matrix carries (r-1, g-1, b-1, a) — an affine
+    // matrix never uses it, so an untinted instance is an exact matrix
+    float4 tint = float4(1.0 + in.iw0.w, 1.0 + in.iw1.w, 1.0 + in.iw2.w, in.iw3.w);
+    float4x4 world = float4x4(float4(in.iw0.xyz, 0.0), float4(in.iw1.xyz, 0.0), float4(in.iw2.xyz, 0.0), float4(in.iw3.xyz, 1.0));
     float4 world_pos = world * skinned_pos;
     o.world_pos = world_pos.xyz;
     o.pos = frame.view_projection * world_pos;
@@ -182,6 +190,7 @@ vertex VSOut VSSkinned(SkinnedVertexIn in [[stage_in]], constant PerFrame& frame
     o.norm = normalize(world3 * skinned_norm);
     o.uv = in.uv;
     tangent_basis(o.norm, o.tangent, o.bitangent);
+    o.tint = tint;
     return o;
 }
 
@@ -430,8 +439,8 @@ fragment float4 PSMain(VSOut in [[stage_in]],
         uv -= (Vt.xy / max(Vt.z, 0.15)) * ((1.0 - h) * obj.height_scale);
     }
 
-    float3 albedo = obj.base_color.rgb;
-    float alpha = obj.base_color.a;
+    float3 albedo = obj.base_color.rgb * in.tint.rgb;   // the instance tint multiplies the base colour (#331)
+    float alpha = obj.base_color.a * in.tint.a;
     if (obj.has_albedo_texture != 0)
     {
         float4 tex = albedo_tex.sample(albedo_smp, uv);

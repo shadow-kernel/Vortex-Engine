@@ -2072,7 +2072,7 @@ namespace Editor.Scripting
                 var ext = System.IO.Path.GetExtension(actual); if (ext != null) ext = ext.TrimStart('.');
                 byte[] bytes;
                 if (Editor.Core.Services.AssetVfs.IsMounted && Editor.Core.Services.AssetVfs.TryGetBytes(abs, out bytes) && bytes != null)
-                    tris = Editor.DllWrapper.VortexAPI.GetModelTrianglesFromMemory(bytes, ext, submesh);
+                    tris = Editor.DllWrapper.VortexAPI.GetModelTrianglesFromMemory(bytes, ext, submesh, Editor.Core.Services.ModelImportSettings.LoadLeftHanded(abs));
                 else if (System.IO.File.Exists(abs))
                 {
                     // the on-disk cache saves the second Assimp pass per model on every later start (#364 C)

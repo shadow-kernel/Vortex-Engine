@@ -16,7 +16,10 @@ layout(location = 6) in vec4 a_iw3;
 
 void main()
 {
-	mat4 world = mat4(a_iw0, a_iw1, a_iw2, a_iw3);
+	// per-instance tint (#331): the fourth column of the instance matrix carries (r-1, g-1, b-1, a) — an affine
+	// matrix never uses it, so an untinted instance is an exact matrix
+	vec4 tint = vec4(1.0 + a_iw0.w, 1.0 + a_iw1.w, 1.0 + a_iw2.w, a_iw3.w);
+	mat4 world = mat4(vec4(a_iw0.xyz, 0.0), vec4(a_iw1.xyz, 0.0), vec4(a_iw2.xyz, 0.0), vec4(a_iw3.xyz, 1.0));
 	vec4 world_pos = world * vec4(a_pos, 1.0);
 	v_world_pos = world_pos.xyz;
 	gl_Position = frame.view_projection * world_pos;
@@ -24,4 +27,5 @@ void main()
 	v_norm = normalize(world3 * a_norm);
 	v_uv = a_uv;
 	tangent_basis(v_norm, v_tangent, v_bitangent);
+	v_tint = tint;
 }

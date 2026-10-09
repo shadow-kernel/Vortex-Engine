@@ -19,12 +19,12 @@ namespace VortexTests
             return m;
         }
 
-        private sealed class Sent { public long Mesh, Mat; public int Layer, Count; public float[] Data; }
+        private sealed class Sent { public long Mesh, Mat; public int Layer, Count; public float[] Data, Tint; }
 
         private static List<Sent> Drain(SceneRenderService.InstanceBatcher b)
         {
             var sent = new List<Sent>();
-            b.Flush((mesh, mat, layer, data, count) => sent.Add(new Sent { Mesh = mesh, Mat = mat, Layer = layer, Count = count, Data = (float[])data.Clone() }));
+            b.Flush((mesh, mat, layer, data, tint, count) => sent.Add(new Sent { Mesh = mesh, Mat = mat, Layer = layer, Count = count, Data = (float[])data.Clone(), Tint = (float[])tint.Clone() }));
             return sent;
         }
 
@@ -32,12 +32,12 @@ namespace VortexTests
         public static void BatcherGroupsByMeshMaterialAndLayer(TestContext t)
         {
             var b = new SceneRenderService.InstanceBatcher();
-            b.Add(1, 10, 0, Translation(1, 0, 0));
-            b.Add(2, 10, 0, Translation(2, 0, 0));
-            b.Add(1, 10, 0, Translation(3, 0, 0));
-            b.Add(1, 10, 1, Translation(4, 0, 0));   // same mesh+material, other layer = other group
-            b.Add(1, 11, 0, Translation(5, 0, 0));   // other material = other group
-            b.Add(1, 10, 0, Translation(6, 0, 0));
+            b.Add(1, 10, 0, Translation(1, 0, 0), 1f, 1f, 1f, 1f);
+            b.Add(2, 10, 0, Translation(2, 0, 0), 1f, 1f, 1f, 1f);
+            b.Add(1, 10, 0, Translation(3, 0, 0), 1f, 1f, 1f, 1f);
+            b.Add(1, 10, 1, Translation(4, 0, 0), 1f, 1f, 1f, 1f);   // same mesh+material, other layer = other group
+            b.Add(1, 11, 0, Translation(5, 0, 0), 1f, 1f, 1f, 1f);   // other material = other group
+            b.Add(1, 10, 0, Translation(6, 0, 0), 1f, 0f, 0f, 1f);
             t.Equal(4, b.BatchCount, "four distinct (mesh, material, layer) groups");
             t.Equal(6, b.InstanceCount, "six instances queued");
 
@@ -49,6 +49,9 @@ namespace VortexTests
             t.Equal(1f, g.Data[0 * 16 + 12], "instance 0 translation kept in submit order");
             t.Equal(3f, g.Data[1 * 16 + 12], "instance 1");
             t.Equal(6f, g.Data[2 * 16 + 12], "instance 2");
+            t.Equal(1f, g.Tint[0 * 4 + 1], "instance 0 untinted (green 1)");
+            t.Equal(0f, g.Tint[2 * 4 + 1], "instance 2 carries its red tint (green 0, #331)");
+            t.Equal(1f, g.Tint[2 * 4 + 0], "instance 2 red 1");
             t.Equal(1, sent[2].Layer, "the layer-1 group is its own call");
             t.Equal(11L, sent[3].Mat, "the material-11 group is its own call");
             t.Equal(0, b.BatchCount, "flushed: no open groups");
@@ -59,12 +62,12 @@ namespace VortexTests
         public static void BatcherReusesBuffersAcrossPasses(TestContext t)
         {
             var b = new SceneRenderService.InstanceBatcher();
-            for (int i = 0; i < 40; i++) b.Add(7, 1, 0, Translation(i, 0, 0));   // grows past the initial 16 slots
+            for (int i = 0; i < 40; i++) b.Add(7, 1, 0, Translation(i, 0, 0), 1f, 1f, 1f, 1f);   // grows past the initial 16 slots
             var pass1 = Drain(b);
             t.Equal(1, pass1.Count, "one group"); t.Equal(40, pass1[0].Count, "forty instances");
             t.Equal(39f, pass1[0].Data[39 * 16 + 12], "the last instance survived the buffer growth");
 
-            for (int i = 0; i < 5; i++) b.Add(7, 1, 0, Translation(100 + i, 0, 0));
+            for (int i = 0; i < 5; i++) b.Add(7, 1, 0, Translation(100 + i, 0, 0), 1f, 1f, 1f, 1f);
             var pass2 = Drain(b);
             t.Equal(1, pass2.Count, "one group again (pooled batch reused)");
             t.Equal(5, pass2[0].Count, "count reset for the new pass");

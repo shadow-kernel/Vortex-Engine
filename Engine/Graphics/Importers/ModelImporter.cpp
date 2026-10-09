@@ -1,10 +1,37 @@
 #include "../../Common/VerboseLog.h"
 #include "ModelImporter_Internal.h"
 #include <cctype>
+#include <cstdio>
+#include <cstring>
 
 namespace vortex::graphics
 {
 #ifdef VORTEX_USE_ASSIMP
+	namespace
+	{
+		// "<model>.vimport" next to the file: {"leftHanded": true} asks for the conversion into the engine's left-handed
+		// space (#352). Read here, so every native path — import, metadata, collision triangles, clip extraction —
+		// honours the same setting without each caller passing it through. glTF / FBX data is right-handed; read as-is
+		// a model shows its back as its front, so text and asymmetric props look mirrored.
+		bool sidecar_left_handed(const std::string& filepath)
+		{
+			FILE* f = nullptr;
+			if (fopen_s(&f, (filepath + ".vimport").c_str(), "rb") != 0 || !f) return false;
+			char buf[1024];
+			const size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+			fclose(f);
+			buf[n] = 0;
+			const char* k = strstr(buf, "\"leftHanded\"");
+			if (!k) return false;
+			const char* c = strchr(k + 12, ':');
+			if (!c) return false;
+			++c;
+			while (*c == ' ' || *c == '\t') ++c;
+			return strncmp(c, "true", 4) == 0;
+		}
+		constexpr unsigned left_handed_flags = aiProcess_MakeLeftHanded | aiProcess_FlipWindingOrder;
+	}
+
 	ImportedModelData ModelImporter::import_from_file(const std::string& filepath)
 	{
 		ImportedModelData result;
@@ -22,7 +49,8 @@ namespace vortex::graphics
 			aiProcess_FlipUVs |
 			aiProcess_JoinIdenticalVertices |
 			aiProcess_SortByPType |
-			aiProcess_LimitBoneWeights);   // max 4 influences per vertex (matches the 52-byte skinned vertex)
+			aiProcess_LimitBoneWeights |   // max 4 influences per vertex (matches the 52-byte skinned vertex)
+			(sidecar_left_handed(filepath) ? left_handed_flags : 0u));   // #352
 
 		// Do NOT reject AI_SCENE_FLAGS_INCOMPLETE: animation-only FBX (Mixamo "Without Skin" pack clips) carry
 		// no mesh, so Assimp marks the scene INCOMPLETE — but the skeleton node hierarchy and the animation
@@ -76,7 +104,7 @@ namespace vortex::graphics
 		return result;
 	}
 	ImportedModelData ModelImporter::import_from_memory(const u8* data, u64 length,
-		const std::string& ext_hint, const std::string& virtual_dir)
+		const std::string& ext_hint, const std::string& virtual_dir, bool left_handed)
 	{
 		ImportedModelData result;
 		if (!data || length == 0) return result;
@@ -90,7 +118,7 @@ namespace vortex::graphics
 			aiProcess_FlipUVs |
 			aiProcess_JoinIdenticalVertices |
 			aiProcess_SortByPType |
-			aiProcess_LimitBoneWeights,
+			aiProcess_LimitBoneWeights | (left_handed ? left_handed_flags : 0u),   // #352
 			ext_hint.c_str());
 
 		if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode)

@@ -212,7 +212,8 @@ namespace Editor.Core.Services.Update
         /// answers the "application is running" prompt with CANCEL — the install silently never happened
         /// (the pre-2.4.1 bug: download, exit, still the old version). The relay:
         ///   1. waits for THIS process to fully exit (mutex released, files unlocked — deterministic, no race),
-        ///   2. runs the installer /VERYSILENT (elevated via UAC),
+        ///   2. runs the installer /VERYSILENT — it elevates itself via UAC (#312: not started elevated, so the
+        ///      relaunch below can drop back to the user's rights),
         ///   3. the installer's [Run] skipifnotsilent entry relaunches the new version de-elevated.
         /// </summary>
         public static void InstallAndRestart(string setupPath)
@@ -227,19 +228,24 @@ namespace Editor.Core.Services.Update
                 if (!File.Exists(relaunch)) relaunch = Path.Combine(root, "Vortex Engine.exe");
                 string script = Path.Combine(Path.GetTempPath(), "VortexUpdateRelay.ps1");
 
-                // The relay waits up to 30s for us to die, then installs. -Verb RunAs = the single UAC consent.
-                // If the setup's [Run] relaunch ever failed (defensive), the relay starts the app itself — but
-                // only when the install log shows no fresh launch happened is hard to detect, so instead the
-                // relay checks whether the app came back within 15s and starts it de-elevated via explorer if not.
+                // The relay waits up to 30s for us to die, then installs. The setup is started WITHOUT -Verb RunAs
+                // (#312): it elevates itself (PrivilegesRequired=admin — still exactly one UAC prompt), and only a
+                // setup that elevated itself has a non-elevated original to return to, so its [Run] relaunch with
+                // runasoriginaluser brings the editor back with the user's normal rights. Started elevated, the
+                // relaunched editor stayed elevated until the next Start-menu start: Explorer drag & drop blocked
+                // (UIPI), every tool it started elevated, files owned by Administrators.
+                // If the setup's [Run] relaunch ever failed (defensive), the relay checks whether the app came back
+                // and starts it de-elevated via explorer if not.
                 File.WriteAllText(script,
                     "$ErrorActionPreference = 'SilentlyContinue'\n" +
                     "Wait-Process -Id " + pid + " -Timeout 30\n" +
                     "Start-Sleep -Milliseconds 500\n" +   // let the OS release file handles/mutex fully
                     "$p = Start-Process -FilePath '" + setupPath.Replace("'", "''") + "' " +
                         "-ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CLOSEAPPLICATIONS','/FORCECLOSEAPPLICATIONS','/NOCANCEL','/SP-','/LOG=\"" + log.Replace("'", "''") + "\"' " +
-                        "-Verb RunAs -PassThru\n" +
-                    // WaitForExit, not -Wait: -Wait also waits for the editor the setup starts at the end (an elevated
-                    // relay can put the setup in a job), and would then start it again once the user closes it
+                        "-PassThru\n" +
+                    // WaitForExit on the loader the relay started (it keeps the original token and starts the [Run]
+                    // entry de-elevated once its elevated child is done), not -Wait: -Wait also waits for the editor the
+                    // setup starts at the end, and would then start it again once the user closes it
                     "if ($p) { $p.WaitForExit() }\n" +
                     "Start-Sleep -Seconds 3\n" +
                     "if (-not (Get-Process -Name 'Vortex.Editor','Vortex Engine' -ErrorAction SilentlyContinue)) {\n" +

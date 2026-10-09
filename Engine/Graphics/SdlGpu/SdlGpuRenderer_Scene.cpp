@@ -56,6 +56,15 @@ namespace vortex::graphics::sdlgpu
 	{
 		// A world matrix with a negative determinant (an odd number of negative scale axes) flips the triangle
 		// winding; the run picks a counter-clockwise front-face pipeline for it (#334).
+		// The instance stream carries the world matrix (64 bytes). An affine matrix never uses its fourth column (0, 0, 0, 1),
+		// so the per-instance tint (#331) rides there as (r-1, g-1, b-1, a): an untinted instance stays an exact affine
+		// matrix (older custom vertex shaders keep working), and the standard vertex shaders take the two apart.
+		inline void pack_instance(float* dst, const RenderItem& item)
+		{
+			memcpy(dst, &item.world_matrix, 64);
+			dst[3] = item.color.x - 1.0f; dst[7] = item.color.y - 1.0f; dst[11] = item.color.z - 1.0f; dst[15] = item.color.w;
+		}
+
 		inline RenderItem with_winding(RenderItem item)
 		{
 			const DirectX::XMFLOAT4X4& m = item.world_matrix;
@@ -83,7 +92,7 @@ namespace vortex::graphics::sdlgpu
 		if (m_gizmo_submit.size() + m_gizmo_wire_submit.size() < MAX_GIZMO_ITEMS) m_gizmo_wire_submit.push_back(with_winding(item));
 	}
 
-	void SdlGpuRenderer::submit_mesh_instances(id::id_type mesh, id::id_type material, const float* world_matrices, u32 count, u32 layer)
+	void SdlGpuRenderer::submit_mesh_instances(id::id_type mesh, id::id_type material, const float* world_matrices, u32 count, u32 layer, const float* colors)
 	{
 		if (!world_matrices || count == 0) return;
 		std::lock_guard<std::mutex> lock(m_queue_mutex);
@@ -94,17 +103,19 @@ namespace vortex::graphics::sdlgpu
 			RenderItem item;
 			item.mesh_id = mesh; item.material_id = material; item.layer = layer;
 			memcpy(&item.world_matrix, world_matrices + (size_t)i * 16, sizeof(DirectX::XMFLOAT4X4));
+			if (colors) item.color = { colors[(size_t)i * 4], colors[(size_t)i * 4 + 1], colors[(size_t)i * 4 + 2], colors[(size_t)i * 4 + 3] };
 			q.push_back(with_winding(item));
 		}
 	}
 
 	void SdlGpuRenderer::submit_skinned_item(id::id_type mesh, id::id_type material, const float* world_matrix,
-		const float* bone_matrices, u32 bone_count, u32 layer)
+		const float* bone_matrices, u32 bone_count, u32 layer, const float* color)
 	{
 		if (!world_matrix || !bone_matrices || bone_count == 0) return;
 		std::lock_guard<std::mutex> lock(m_queue_mutex);
 		RenderItem item;
 		item.mesh_id = mesh; item.material_id = material; item.layer = layer;
+		if (color) item.color = { color[0], color[1], color[2], color[3] };
 		memcpy(&item.world_matrix, world_matrix, sizeof(DirectX::XMFLOAT4X4));
 		const u32 offset = (u32)(m_bone_submit.size() / 16);
 		if (offset + bone_count > MAX_BONE_MATRICES) { m_submit_queue.push_back(with_winding(item)); return; }   // palette full -> bind pose
@@ -531,7 +542,7 @@ namespace vortex::graphics::sdlgpu
 			if (lod == 0xFF) continue;
 			const u32 ri = m_item_run[k];
 			const u32 dst = cursor[(size_t)ri * 4 + lod]++;
-			if (dst < globalBase) memcpy(m_instance_staging.data() + (size_t)dst * 16, &m_render_queue[k].world_matrix, 64);
+			if (dst < globalBase) pack_instance(m_instance_staging.data() + (size_t)dst * 16, m_render_queue[k]);
 		}
 
 		// Gizmo items ride in the same buffer after the scene slabs (solid list first, then wire).
