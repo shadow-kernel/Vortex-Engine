@@ -1269,10 +1269,15 @@ namespace Editor.Core.Services.Physics
         /// pushing dynamic props come from Jolt). Off by default — the managed controller keeps its behaviour.</summary>
         public static bool JoltCharacters;
 
+        /// <summary>#105: the mass Jolt gives a character (kg) — what it pushes dynamic props with. Scripts set it
+        /// through <c>Physics.SetCharacterMass</c>; a change recreates the characters on their next move. Reset to the
+        /// stock 70 kg by <see cref="Clear"/>.</summary>
+        public static float CharacterMass = 70f;
+
         private sealed class JoltChar
         {
             public uint Handle;
-            public float R, H, Step, Slope;
+            public float R, H, Step, Slope, Mass;
             public Vector3 LastPos;
         }
         private static readonly Dictionary<long, JoltChar> _joltChars = new Dictionary<long, JoltChar>();
@@ -1302,10 +1307,11 @@ namespace Editor.Core.Services.Physics
             if (stepHeight < 0f) stepHeight = 0f;
             if (!(dt > 1e-5f) || float.IsNaN(dt) || float.IsInfinity(dt)) dt = FixedStep;
             dt = Math.Min(dt, 0.25f);
+            float mass = CharacterMass > 1f && !float.IsNaN(CharacterMass) ? CharacterMass : 70f;
 
             JoltChar c;
             bool fresh = !_joltChars.TryGetValue(selfId, out c);
-            if (!fresh && (c.R != radius || c.H != height || c.Step != stepHeight || c.Slope != maxSlopeDeg))
+            if (!fresh && (c.R != radius || c.H != height || c.Step != stepHeight || c.Slope != maxSlopeDeg || c.Mass != mass))
             {
                 try { VortexAPI.PhysicsCharacterDestroy(c.Handle); } catch { }
                 _joltChars.Remove(selfId);
@@ -1315,11 +1321,11 @@ namespace Editor.Core.Services.Physics
             {
                 _chPos[0] = feet.X; _chPos[1] = feet.Y; _chPos[2] = feet.Z;
                 uint h = 0;
-                try { h = VortexAPI.PhysicsCharacterCreate(radius, height, _chPos, maxSlopeDeg, stepHeight, 70f); }
+                try { h = VortexAPI.PhysicsCharacterCreate(radius, height, _chPos, maxSlopeDeg, stepHeight, mass); }
                 catch (Exception ex) { if (!_joltCharWarned) { _joltCharWarned = true; Log("[Physics] Jolt character unavailable (" + ex.Message + ") — using the managed controller"); } }
                 if (h == 0)
                     return CollisionService.MoveCharacter(feet, radius, height, move, out grounded, selfId, stepHeight, maxSlopeDeg);
-                c = new JoltChar { Handle = h, R = radius, H = height, Step = stepHeight, Slope = maxSlopeDeg, LastPos = feet };
+                c = new JoltChar { Handle = h, R = radius, H = height, Step = stepHeight, Slope = maxSlopeDeg, Mass = mass, LastPos = feet };
                 _joltChars[selfId] = c;
             }
             else
@@ -1348,6 +1354,7 @@ namespace Editor.Core.Services.Physics
             // PhysicsClear() destroyed the native characters with the bodies; only the handles are dropped here
             _joltChars.Clear();
             JoltCharacters = false;
+            CharacterMass = 70f;
         }
 
         private static void ApplyCharacterPushes(float frameDt)
