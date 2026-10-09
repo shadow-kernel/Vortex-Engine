@@ -268,8 +268,16 @@ namespace VortexEditor.Claude.Tools
             var project = SceneModel.Project;
             if (!Seen.TryGetValue(p.Id + ":" + id, out var item))
             {
-                var res = await p.SearchAsync(new StoreQuery { Text = id, PageSize = 40 }, ct);
-                item = res.Items.FirstOrDefault(x => x.Id == id) ?? throw new ToolError("No item '" + id + "' at " + p.Name + " — use an id from search_store.");
+                // by id first (#356): a valid id downloads without a prior search; the licence filter still applies
+                item = await p.GetItemAsync(id, ct);
+                if (item != null && !new StoreQuery().Allows(item.License))
+                    throw new ToolError("'" + item.Name + "' at " + p.Name + " is excluded by the license filter: " + (item.License?.Name ?? "unknown license") +
+                                        " (non-commercial / no-derivatives / share-alike licenses are not downloaded through the store).");
+                if (item == null)
+                {
+                    var res = await p.SearchAsync(new StoreQuery { Text = id, PageSize = 40 }, ct);
+                    item = res.Items.FirstOrDefault(x => x.Id == id) ?? throw new ToolError("No item '" + id + "' at " + p.Name + " — use an id from search_store.");
+                }
                 Seen[item.Key] = item;
             }
             var det = await p.DetailsAsync(item, ct);

@@ -277,6 +277,10 @@ namespace Editor.Core.Assets.Store
 
         /// <summary>The thumbnail URL of a result — providers whose search results carry none (Kenney) look it up here.</summary>
         Task<string> ThumbnailUrlAsync(StoreItem item, CancellationToken ct) => Task.FromResult(item?.ThumbnailUrl);
+
+        /// <summary>One item by its id, WITHOUT the licence filter (the caller applies it and can say why an item is
+        /// excluded) — null when the provider cannot look items up directly or the id does not exist (#356).</summary>
+        Task<StoreItem> GetItemAsync(string id, CancellationToken ct) => Task.FromResult<StoreItem>(null);
     }
 
     /// <summary>A store source without an API (Mixamo, Sonniss): instructions, a link to open, and how the files get in.</summary>

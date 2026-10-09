@@ -224,7 +224,7 @@ namespace Editor.Core.Assets
                         if (File.Exists(Path.Combine(projectPath, vmatRel))) mr.MaterialPath = vmatRel;
                     }
                     catch { }
-                    if (string.IsNullOrEmpty(mr.MaterialPath) && textures.Count > 0) BindTexture(mr, result[0].MaterialId, textures[0], projectPath);
+                    if (string.IsNullOrEmpty(mr.MaterialPath) && textures.Count > 0 && !HasOwnTexture(result[0].MaterialId)) BindTexture(mr, result[0].MaterialId, textures[0], projectPath);
                     if (result[0].MaterialId >= 0) SceneRenderService.RegisterMaterialForMeshPath(entityPath, result[0].MaterialId);
                     entity.AddComponent(mr);
                     entity.Transform.LocalPosition = new Vector3(0, 0, 0);
@@ -239,9 +239,19 @@ namespace Editor.Core.Assets
             return fallback;
         }
 
+        /// <summary>The import material already carries the model's own albedo map (#351): the folder-scan fallback
+        /// must not replace it with whatever image lies next to the file.</summary>
+        private static bool HasOwnTexture(long materialId)
+        {
+            if (materialId < 0) return false;
+            try { return VortexAPI.HasMaterialTexture(materialId); } catch { return false; }
+        }
+
         private static void BindTexture(MeshRenderer mr, long materialId, string texPath, string projectPath)
         {
-            try { long texId = VortexAPI.LoadTextureResource(texPath); if (texId >= 0 && materialId >= 0) VortexAPI.SetMaterialAlbedoTexture(materialId, texId); } catch { }
+            // a GRAPHICS texture id (cached per file): LoadTextureResource returned a resource-manager handle from
+            // another id space, which bound a random texture or none (#351)
+            try { long texId = MaterialService.ImportTextureCached(texPath); if (texId >= 0 && materialId >= 0) VortexAPI.SetMaterialAlbedoTexture(materialId, texId); } catch { }
             mr.TexturePath = Relative(texPath);
         }
 
@@ -266,7 +276,7 @@ namespace Editor.Core.Assets
                     if (File.Exists(Path.Combine(projectPath, vmatRel))) mr.MaterialPath = vmatRel;
                 }
                 catch { }
-                if (string.IsNullOrEmpty(mr.MaterialPath) && textures.Count > 0)
+                if (string.IsNullOrEmpty(mr.MaterialPath) && textures.Count > 0 && !HasOwnTexture(sm.MaterialId))
                 {
                     string tex = FindTextureForSubmesh(childName, textures);
                     if (!string.IsNullOrEmpty(tex)) BindTexture(mr, sm.MaterialId, tex, projectPath);
@@ -286,6 +296,9 @@ namespace Editor.Core.Assets
             var dir = Path.GetDirectoryName(modelPath);
             if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return result;
             var color = new List<string>(); var other = new List<string>();
+            // the importer extracts a model's embedded images as embedded_<stem>_N: only this model's own ones count —
+            // the folder-wide scan bound a tree's leaf PNG to every other prop in the folder (#351)
+            string ownEmbedded = MeshRenderer.EmbeddedTexturePrefix(modelPath).ToLowerInvariant();
             foreach (var ext in new[] { "*.png", "*.jpg", "*.jpeg", "*.tga", "*.bmp", "*.dds" })
             {
                 try
@@ -293,6 +306,7 @@ namespace Editor.Core.Assets
                     foreach (var file in Directory.GetFiles(dir, ext))
                     {
                         var fn = Path.GetFileName(file).ToLowerInvariant();
+                        if (fn.StartsWith("embedded_") && !fn.StartsWith(ownEmbedded)) continue;
                         bool unwanted = fn.Contains("_nor") || fn.Contains("_normal") || fn.Contains("_nrm") || fn.Contains("normal.") || fn.Contains("_ao") || fn.Contains("_occ") || fn.Contains("occlusion")
                                         || fn.Contains("_rough") || fn.Contains("roughness") || fn.Contains("_metal") || fn.Contains("metallic") || fn.Contains("_spec") || fn.Contains("specular")
                                         || fn.Contains("_height") || fn.Contains("_disp") || fn.Contains("_emis") || fn.Contains("emission");

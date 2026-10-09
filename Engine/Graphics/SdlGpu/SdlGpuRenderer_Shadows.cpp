@@ -348,51 +348,61 @@ namespace vortex::graphics::sdlgpu
 
 		if (m_shadow_spot_count == 0 && m_csm_count == 0 && m_shadow_point_count == 0) return;
 
-		// ---- pack casters per tile (own culling per light frustum; the scene pack is keyed to the camera) ----
+		// ---- gather the casters ONCE per frame (#363) ----
+		// The per-tile pack used to scan the whole render queue — a map lookup, a matrix transform and a sphere test per
+		// item, for up to 19 tiles (4 spots, 3 cascades, 2 x 6 point faces): 19 x N per frame, single-threaded. Now the
+		// filter and the world-space bounding sphere are computed once; each tile runs the sphere test only.
 		auto& reg = ResourceRegistry::instance();
-		struct Caster { id::id_type mesh; const XMFLOAT4X4* world; Mesh* meshp; };
-		std::vector<Caster> casters;
-		std::unordered_map<id::id_type, XMFLOAT4> bounds;
-		u32 vb_used = 0;
+		if (reg.mesh_generation() != m_shadow_bounds_generation) { m_shadow_bounds.clear(); m_shadow_bounds_generation = reg.mesh_generation(); }
+		auto& all = m_shadow_casters; all.clear();
+		for (const auto& item : m_render_queue)
+		{
+			if (item.bone_offset != NO_BONES || item.layer != 0) continue;
+			Material* cmat = reg.get_material(item.material_id);
+			if (cmat && (cmat->blend_mode() == 1 || cmat->blend_mode() == 2)) continue;
+			Mesh* mp = reg.get_mesh(item.mesh_id);
+			if (!mp || !mp->is_valid()) continue;
+			XMFLOAT4 bd;
+			auto bit = m_shadow_bounds.find(item.mesh_id);
+			if (bit == m_shadow_bounds.end())
+			{
+				float mnx = 0, mny = 0, mnz = 0, mxx = 1, mxy = 1, mxz = 1;
+				mp->get_min(mnx, mny, mnz); mp->get_max(mxx, mxy, mxz);
+				float dx = mxx - mnx, dy = mxy - mny, dz = mxz - mnz;
+				bd = XMFLOAT4((mnx + mxx) * 0.5f, (mny + mxy) * 0.5f, (mnz + mxz) * 0.5f, 0.5f * sqrtf(dx * dx + dy * dy + dz * dz));
+				m_shadow_bounds.emplace(item.mesh_id, bd);
+			}
+			else bd = bit->second;
+			const XMFLOAT4X4& W = item.world_matrix;
+			XMVECTOR wc = XMVector3TransformCoord(XMVectorSet(bd.x, bd.y, bd.z, 1.f), XMLoadFloat4x4(&W));
+			float sx = sqrtf(W._11 * W._11 + W._12 * W._12 + W._13 * W._13);
+			float sy = sqrtf(W._21 * W._21 + W._22 * W._22 + W._23 * W._23);
+			float sz = sqrtf(W._31 * W._31 + W._32 * W._32 + W._33 * W._33);
+			float ms = sx > sy ? (sx > sz ? sx : sz) : (sy > sz ? sy : sz);
+			all.push_back({ item.mesh_id, &item.world_matrix, mp, XMVectorGetX(wc), XMVectorGetY(wc), XMVectorGetZ(wc), bd.w * ms + 0.05f });
+		}
 
+		// ---- pack casters per tile (own culling per light frustum; the scene pack is keyed to the camera) ----
+		u32 vb_used = 0, dropped = 0;
 		auto pack = [&](const XMFLOAT4X4& vp, u32 x, u32 y, u32 size, std::vector<ShadowTile>& tiles)
 		{
 			const ShadowFrustum fr = extract_shadow_frustum(vp);
-			casters.clear();
-			for (const auto& item : m_render_queue)
+			auto& casters = m_shadow_tile_casters; casters.clear();
+			for (const auto& c : all)
+				if (sphere_in_shadow_frustum(fr, c.cx, c.cy, c.cz, c.r)) casters.push_back(c);
+			// The tiles share one instance buffer. A tile over budget keeps its LARGEST casters (the shadows one sees from
+			// afar) instead of the first in queue order, and the drop is reported below.
+			const u32 room = vb_used < MAX_SHADOW_INSTANCES ? MAX_SHADOW_INSTANCES - vb_used : 0;
+			if (casters.size() > room)
 			{
-				if (item.bone_offset != NO_BONES || item.layer != 0) continue;
-				Material* cmat = reg.get_material(item.material_id);
-				if (cmat && (cmat->blend_mode() == 1 || cmat->blend_mode() == 2)) continue;
-				Mesh* mp = reg.get_mesh(item.mesh_id);
-				if (!mp || !mp->is_valid()) continue;
-				XMFLOAT4 bd;
-				auto bit = bounds.find(item.mesh_id);
-				if (bit == bounds.end())
-				{
-					float mnx = 0, mny = 0, mnz = 0, mxx = 1, mxy = 1, mxz = 1;
-					mp->get_min(mnx, mny, mnz); mp->get_max(mxx, mxy, mxz);
-					float dx = mxx - mnx, dy = mxy - mny, dz = mxz - mnz;
-					bd = XMFLOAT4((mnx + mxx) * 0.5f, (mny + mxy) * 0.5f, (mnz + mxz) * 0.5f, 0.5f * sqrtf(dx * dx + dy * dy + dz * dz));
-					bounds.emplace(item.mesh_id, bd);
-				}
-				else bd = bit->second;
-				const XMFLOAT4X4& W = item.world_matrix;
-				XMVECTOR wc = XMVector3TransformCoord(XMVectorSet(bd.x, bd.y, bd.z, 1.f), XMLoadFloat4x4(&W));
-				float sx = sqrtf(W._11 * W._11 + W._12 * W._12 + W._13 * W._13);
-				float sy = sqrtf(W._21 * W._21 + W._22 * W._22 + W._23 * W._23);
-				float sz = sqrtf(W._31 * W._31 + W._32 * W._32 + W._33 * W._33);
-				float ms = sx > sy ? (sx > sz ? sx : sz) : (sy > sz ? sy : sz);
-				if (sphere_in_shadow_frustum(fr, XMVectorGetX(wc), XMVectorGetY(wc), XMVectorGetZ(wc), bd.w * ms + 0.05f))
-				{
-					casters.push_back({ item.mesh_id, &item.world_matrix, mp });
-					if (vb_used + casters.size() >= MAX_SHADOW_INSTANCES) break;
-				}
+				std::nth_element(casters.begin(), casters.begin() + room, casters.end(), [](const ShadowCaster& a, const ShadowCaster& b) { return a.r > b.r; });
+				dropped += (u32)(casters.size() - room);
+				casters.resize(room);
 			}
 			ShadowTile tile{ x, y, size, vp, (u32)m_shadow_segs.size(), (u32)m_shadow_segs.size() };
 			if (!casters.empty())
 			{
-				std::sort(casters.begin(), casters.end(), [](const Caster& a, const Caster& b) { return a.mesh < b.mesh; });
+				std::sort(casters.begin(), casters.end(), [](const ShadowCaster& a, const ShadowCaster& b) { return a.mesh < b.mesh; });
 				m_shadow_staging.resize((size_t)(vb_used + casters.size()) * 16);
 				for (size_t i = 0; i < casters.size(); ++i)
 					memcpy(m_shadow_staging.data() + (size_t)(vb_used + i) * 16, casters[i].world, 64);
@@ -410,16 +420,27 @@ namespace vortex::graphics::sdlgpu
 			tiles.push_back(tile);
 		};
 
-		for (u32 t = 0; t < m_shadow_spot_count; ++t)
-			pack(m_shadow_spots[t].vp, (t & 1) * SHADOW_TILE_SIZE, ((t >> 1) & 1) * SHADOW_TILE_SIZE, SHADOW_TILE_SIZE, m_shadow_tiles_spot);
+		// cascades first: the sun's shadows must never lose casters to the spot tiles packed before them (#363)
 		for (u32 c = 0; c < m_csm_count; ++c)
 			pack(m_csm_vp[c], (c & 1) * SHADOW_TILE_SIZE, ((c >> 1) & 1) * SHADOW_TILE_SIZE, SHADOW_TILE_SIZE, m_shadow_tiles_csm);
+		for (u32 t = 0; t < m_shadow_spot_count; ++t)
+			pack(m_shadow_spots[t].vp, (t & 1) * SHADOW_TILE_SIZE, ((t >> 1) & 1) * SHADOW_TILE_SIZE, SHADOW_TILE_SIZE, m_shadow_tiles_spot);
 		for (u32 p = 0; p < m_shadow_point_count; ++p)
 			for (u32 f = 0; f < 6; ++f)
 			{
 				const u32 tile = p * 6 + f;
 				pack(m_shadow_points[p].face_vp[f], (tile % POINT_ATLAS_COLS) * POINT_SHADOW_TILE, (tile / POINT_ATLAS_COLS) * POINT_SHADOW_TILE, POINT_SHADOW_TILE, m_shadow_tiles_point);
 			}
+		if (dropped > 0)
+		{
+			const auto now = std::chrono::steady_clock::now();
+			if (now - m_shadow_drop_logged > std::chrono::seconds(5))
+			{
+				m_shadow_drop_logged = now;
+				log("shadows: " + std::to_string(dropped) + " caster(s) dropped this frame — the shared shadow instance budget of "
+					+ std::to_string(MAX_SHADOW_INSTANCES) + " is full (cascades packed first, largest casters kept) (#363)");
+			}
+		}
 	}
 
 	// GPU side: upload the packed casters, then one depth-only render pass per atlas with a viewport/scissor
@@ -486,7 +507,7 @@ namespace vortex::graphics::sdlgpu
 						SDL_DrawGPUIndexedPrimitives(pass, mesh->index_count(), seg.instance_count, 0, 0, 0);
 					}
 					else SDL_DrawGPUPrimitives(pass, mesh->vertex_count(), seg.instance_count, 0, 0);
-					++m_draw_call_count;
+					++m_draw_call_count; ++m_shadow_draw_count;
 				}
 			}
 			SDL_EndGPURenderPass(pass);

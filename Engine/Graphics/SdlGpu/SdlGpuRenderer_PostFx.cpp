@@ -264,7 +264,7 @@ namespace vortex::graphics::sdlgpu
 						SDL_DrawGPUIndexedPrimitives(pass, mesh->index_count(), (u32)(j - i), 0, 0, 0);
 					}
 					else SDL_DrawGPUPrimitives(pass, mesh->vertex_count(), (u32)(j - i), 0, 0);
-					++m_draw_call_count;
+					++m_draw_call_count; ++m_post_draw_count;
 				}
 				i = j;
 			}

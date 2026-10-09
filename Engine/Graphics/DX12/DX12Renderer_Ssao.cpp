@@ -378,7 +378,7 @@ namespace vortex::graphics::dx12
 					}
 					else
 						m_command_list->DrawInstanced(mesh->vertex_count(), count, 0, 0);
-					++m_draw_call_count;
+					++m_draw_call_count; ++m_post_draw_count;
 				}
 				i = j;
 			}

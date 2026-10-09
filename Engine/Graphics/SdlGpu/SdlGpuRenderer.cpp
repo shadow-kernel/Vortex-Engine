@@ -795,6 +795,7 @@ namespace vortex::graphics::sdlgpu
 			m_last_fps_time = now;
 		}
 		m_draw_call_count = 0; m_vertex_count = 0; m_instances_tested = 0; m_instances_drawn = 0;
+		m_shadow_draw_count = 0; m_post_draw_count = 0;
 
 		if (m_vsync_dirty) { m_vsync_dirty = false; apply_swapchain_params(m_main.window); if (m_game.window) apply_swapchain_params(m_game.window); }
 		sync_host_surface();

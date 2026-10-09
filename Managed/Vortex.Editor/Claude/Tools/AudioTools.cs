@@ -243,7 +243,10 @@ namespace VortexEditor.Claude.Tools
         [Description("Generates a sound effect from a text prompt with the Sound Studio and saves it to the asset library and the project " +
                      "(returns the path for configure_audio_source). backend: procedural (free, offline synth), elevenlabs, fal-cassette-sfx, " +
                      "fal-stable-audio, stability-audio-2.5, stability-audio-3 — the AI backends use the user's own API key and may cost credits. " +
-                     "Default: the first AI backend that has a key, else procedural. Describe the sound concretely: source, material, space, length.")]
+                     "Default: the first AI backend that has a key, else procedural. Describe the sound concretely: source, material, space, length. " +
+                     "The procedural backend only knows a fixed set of recipes (click, beep, impact, whoosh, laser, gunshot, reload, explosion, heartbeat, riser, " +
+                     "stinger, siren/alarm/horn, glass, fire, rain, water, creak, rustle, whisper, crowd, engine, wind, drone/ambience); the result says which " +
+                     "one it used (family) and carries a warning when the prompt matched none.")]
         public static async Task<object> GenerateSound(
             [Description("What it sounds like, e.g. \"heavy wooden door creaking open slowly in a stone corridor\"")] string prompt,
             [Description("Length in seconds (backend limits apply)")] double? duration = null,
@@ -279,12 +282,25 @@ namespace VortexEditor.Claude.Tools
             if (!saved.Success) throw new ToolError("The sound was generated but could not be saved: " + saved.Error);
             try { if (saved.ProjectPath != null) AssetDatabase.Instance.RegisterFile(saved.ProjectPath); } catch { }
             var entry = saved.Entry;
+            // the procedural synthesizer says what it understood (#353): it used to hand out a broadband noise burst for
+            // every prompt outside its recipes without a word
+            string family = null, keyword = null, warning = null;
+            if (b.Id == "procedural")
+            {
+                family = ProceduralBackend.Family(req.Prompt, out keyword);
+                if (family == null)
+                    warning = "The procedural synthesizer has no recipe for this prompt and made a generic whoosh. It understands: " +
+                              string.Join(", ", ProceduralBackend.KnownFamilies) + ". Use an AI backend (the user's API key) for anything else.";
+            }
             return new
             {
                 path = saved.ProjectPath != null ? ProjectFiles.Rel(saved.ProjectPath) : null,
                 library_id = entry?.Id,
                 name = entry?.Name,
                 backend = b.Name,
+                family,
+                understood = b.Id == "procedural" ? (family != null ? "as " + family + " (\"" + keyword + "\")" : "no") : null,
+                warning,
                 duration_s = entry?.Duration.HasValue == true ? (double?)Math.Round(entry.Duration.Value, 2) : null,
                 channels = entry?.Channels,
                 license = b.LicenseId ?? "generated (yours)",

@@ -252,6 +252,34 @@ namespace Editor.ECS.Components.Rendering
             return value;
         }
 
+        /// <summary>"embedded_&lt;stem&gt;_" — the prefix of the images the importer extracts from this model file (the stem
+        /// sanitised like ModelImporter_Process.cpp: every non-alphanumeric character becomes '_').</summary>
+        public static string EmbeddedTexturePrefix(string modelPath)
+        {
+            string stem;
+            try { stem = System.IO.Path.GetFileNameWithoutExtension(modelPath ?? ""); } catch { stem = ""; }
+            var sb = new System.Text.StringBuilder("embedded_");
+            foreach (char c in stem) sb.Append(c < 128 && char.IsLetterOrDigit(c) ? c : '_');
+            if (stem.Length == 0) sb.Append("model");
+            return sb.Append('_').ToString();
+        }
+
+        /// <summary>A stored texturePath that names ANOTHER model's extracted embedded image (#351): the old folder-scan
+        /// fallback bound e.g. a tree's leaf PNG to every prop placed from the same folder, and the path re-textured the
+        /// model's shared import material on every scene load. Such a path is ignored and cleared.</summary>
+        public static bool IsForeignEmbeddedTexture(string meshPath, string texturePath)
+        {
+            if (string.IsNullOrEmpty(meshPath) || string.IsNullOrEmpty(texturePath)) return false;
+            string file;
+            try { file = System.IO.Path.GetFileName(texturePath); } catch { return false; }
+            if (!file.StartsWith("embedded_", StringComparison.OrdinalIgnoreCase)) return false;
+            string model = meshPath;
+            int hash = model.LastIndexOf('#');
+            if (hash > 0) model = model.Substring(0, hash);
+            if (Core.Services.SceneRenderService.IsPrimitivePath(model)) return false;
+            return !file.StartsWith(EmbeddedTexturePrefix(model), StringComparison.OrdinalIgnoreCase);
+        }
+
         [OnDeserialized]
         internal void OnDeserializedMeshRenderer(StreamingContext context)
         {
@@ -350,6 +378,13 @@ namespace Editor.ECS.Components.Rendering
             if (string.IsNullOrEmpty(_texturePath))
             {
                 System.Diagnostics.Debug.WriteLine($"[MeshRenderer] TexturePath is empty, skipping texture reload");
+                return;
+            }
+            if (IsForeignEmbeddedTexture(_meshPath, _texturePath))
+            {
+                // another model's embedded image (#351): never bind it to this model's import material; the scene
+                // saves without the stale path
+                _texturePath = null;
                 return;
             }
 

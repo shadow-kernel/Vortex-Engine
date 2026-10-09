@@ -148,6 +148,7 @@ namespace VortexEditor.Claude
                 var gen = await C("generate_sound", new JsonObject { ["prompt"] = "short metallic clank", ["duration"] = 0.6, ["backend"] = "procedural", ["name"] = "Mcp Clank" });
                 string genPath = (string)gen["path"];
                 if (genPath == null || !File.Exists(Path.Combine(project.Path, genPath))) return Fail("generate_sound: " + gen.ToJsonString());
+                if ((string)gen["family"] != "impact" || gen["warning"] != null) return Fail("generate_sound: 'short metallic clank' must be an impact without a warning (#353): " + gen.ToJsonString());
                 cleanup.Add(Path.Combine(project.Path, genPath));
                 var sa = await C("search_audio", new JsonObject { ["query"] = "step concrete" });
                 if ((sa["project"] as JsonArray)?.Count == 0) sa = await C("search_audio", new JsonObject { ["query"] = "Mcp Clank" });

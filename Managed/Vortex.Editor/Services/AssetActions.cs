@@ -167,7 +167,7 @@ namespace VortexEditor.Services
                     string submeshPath = rel + "#submesh" + i;
                     var mr = new MeshRenderer(child) { MeshPath = submeshPath, MaterialHandle = sm.MaterialId };
                     BindSubmeshVmat(mr, rel, i, projectPath);
-                    if (string.IsNullOrEmpty(mr.MaterialPath) && textures.Count > 0) BindTexture(mr, sm.MaterialId, TextureForSubmesh(childName, textures));
+                    if (string.IsNullOrEmpty(mr.MaterialPath) && textures.Count > 0 && !HasOwnTexture(sm.MaterialId)) BindTexture(mr, sm.MaterialId, TextureForSubmesh(childName, textures));
                     if (sm.MaterialId >= 0) SceneRenderService.RegisterMaterialForMeshPath(submeshPath, sm.MaterialId);
                     child.AddComponentDirect(mr);
                     child.Parent = root;             // raw wiring: the whole placement is ONE undo step
@@ -180,7 +180,7 @@ namespace VortexEditor.Services
                 var mr = new MeshRenderer(root) { MeshPath = rel };
                 if (matId >= 0) mr.MaterialHandle = matId;
                 BindSubmeshVmat(mr, rel, 0, projectPath);
-                if (string.IsNullOrEmpty(mr.MaterialPath))
+                if (string.IsNullOrEmpty(mr.MaterialPath) && !HasOwnTexture(matId))
                 {
                     var textures = CoreAssetActions.FindTexturesForModel(full);
                     if (textures.Count > 0) BindTexture(mr, matId, textures[0]);
@@ -219,12 +219,22 @@ namespace VortexEditor.Services
             catch { }
         }
 
+        /// <summary>The import material already carries the model's own albedo map (#351): the folder-scan fallback
+        /// must not replace it with whatever image lies next to the file.</summary>
+        private static bool HasOwnTexture(long materialId)
+        {
+            if (materialId < 0) return false;
+            try { return VortexAPI.HasMaterialTexture(materialId); } catch { return false; }
+        }
+
         private static void BindTexture(MeshRenderer mr, long materialId, string texPath)
         {
             if (string.IsNullOrEmpty(texPath)) return;
             try
             {
-                long tex = VortexAPI.LoadTextureResource(texPath);
+                // a GRAPHICS texture id (cached per file): LoadTextureResource returned a resource-manager handle from
+                // another id space, which bound a random texture or none (#351)
+                long tex = MaterialService.ImportTextureCached(texPath);
                 if (tex >= 0 && materialId >= 0) VortexAPI.SetMaterialAlbedoTexture(materialId, tex);
             }
             catch { }
