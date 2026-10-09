@@ -74,8 +74,8 @@ namespace VortexEditor.Panels.Inspector
             yield return Row("Play on start", Bool(() => ps.PlayOnStart, v => ps.PlayOnStart = v), "Start emitting when play starts (off = a script calls Vfx.Play / Vfx.Burst).");
             yield return Row("Loop", Choice(() => ps.Loop, v => ps.Loop = v, "As authored", "Always loop", "Play once"));
             yield return Row("Simulation space", Choice(() => ps.SimulationSpace, v => ps.SimulationSpace = v, "As authored", "World (trails behind)", "Local (moves with it)"));
-            yield return Row("Render layer", Choice(() => ps.RenderLayer, v => ps.RenderLayer = v, "World", "First-person (viewmodel)"),
-                "First-person: drawn with the weapon (own field of view, never clips into walls) — muzzle flashes of the player's gun.");
+            yield return Row("Render layer", Choice(() => ps.RenderLayer, v => ps.RenderLayer = v, "World", "First-person (viewmodel)", "Third-person only"),
+                "First-person: drawn with the weapon (own field of view, never clips into walls) — muzzle flashes of the player's gun. Third-person only: seen by the cameras that look at the player (debug cam, spectators), never by the local first-person view.");
             yield return Row("Speed", SliderRow(() => ps.SimulationSpeed, v => ps.SimulationSpeed = v, 0, 3, "0.00"));
             yield return Row("Seed", IntBox(() => ps.Seed, v => ps.Seed = v), "0 = different every play; any other value repeats the same sequence.");
             yield return Row("Preview in editor", Bool(() => ps.PreviewInEditor, v => { ps.PreviewInEditor = v; update(); }), "Simulate in the Scene view while editing.");

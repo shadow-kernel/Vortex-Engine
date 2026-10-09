@@ -49,6 +49,8 @@ namespace Editor.Core.Services.Particles
             public uint[] Emitters = new uint[0];
             public uint Beam;
             public bool Scene;              // belongs to the running scene (dropped on stop / scene switch)
+            public int Layer;               // 0 world, 1 first-person, 2 third-person only (#194)
+            public bool Visible = true;
         }
 
         private sealed class CachedAsset { public VfxAsset Asset; public long Stamp; public DateTime CheckedUtc; }
@@ -165,6 +167,7 @@ namespace Editor.Core.Services.Particles
             CheckAssetChanges();
             Sync(scene, playing, paused ? 0f : dt);
             PruneSpawned();
+            SyncSpawnedLayers();
             try { VortexAPI.ParticleUpdate(0, paused ? 0f : dt); } catch { }
             Editor.Core.Services.Decals.DecalService.Tick(paused ? 0f : dt);   // #120: lifetimes + fade-outs of spawned decals
         }
@@ -199,7 +202,7 @@ namespace Editor.Core.Services.Particles
                 if (inst == null) continue;
                 inst.Seen = true;
                 Follow(inst, e);
-                bool visible = !hidden;
+                bool visible = !hidden && LayerVisible(ps.RenderLayer, playing);
                 if (visible != inst.Visible)
                 {
                     inst.Visible = visible;
@@ -231,7 +234,7 @@ namespace Editor.Core.Services.Particles
             if (inst.Layer != inst.Component.RenderLayer)
             {
                 inst.Layer = inst.Component.RenderLayer;
-                foreach (var h in inst.Emitters) VortexAPI.ParticleSetLayer(h, inst.Layer);
+                foreach (var h in inst.Emitters) VortexAPI.ParticleSetLayer(h, NativeLayer(inst.Layer));
             }
         }
 
@@ -306,8 +309,36 @@ namespace Editor.Core.Services.Particles
                 return 0;
             }
             ApplyTextures(h, em, vfxPath);
-            VortexAPI.ParticleSetLayer(h, layer);
+            VortexAPI.ParticleSetLayer(h, NativeLayer(layer));
             return h;
+        }
+
+        // Render layers (#175 / #194): 0 world, 1 the first-person viewmodel layer (its own projection), 2 "third-person
+        // only" — drawn like world geometry but, as for layer-2 meshes, only for the views that look AT the player
+        // (the debug cam, spectators); the local first-person camera skips it and hides layer 1 the moment it
+        // becomes an external view. The engine knows layers 0 / 1; layer 2 is layer 0 with a visibility gate.
+        private static int NativeLayer(int layer) => layer == 1 ? 1 : 0;
+        private static bool LayerVisible(int layer, bool playing)
+        {
+            if (layer <= 0) return true;
+            bool external = SceneRenderService.DebugThirdPersonView;
+            if (layer == 1) return !external;
+            return !playing || external;   // while editing a third-person effect previews as plain world geometry
+        }
+        private static bool _lastExternal;
+        private static void SyncSpawnedLayers()
+        {
+            bool external = SceneRenderService.DebugThirdPersonView;
+            if (external == _lastExternal) return;
+            _lastExternal = external;
+            foreach (var s in _spawned.Values)
+            {
+                if (s.Layer == 0) continue;
+                bool visible = LayerVisible(s.Layer, true);
+                if (visible == s.Visible) continue;
+                s.Visible = visible;
+                foreach (var h in s.Emitters) { try { VortexAPI.ParticleSetVisible(h, visible ? 1 : 0); } catch { } }
+            }
         }
 
         private static void ApplyTextures(uint h, VfxEmitter em, string vfxPath)
@@ -529,8 +560,10 @@ namespace Editor.Core.Services.Particles
                 list.Add(h);
             }
             if (list.Count == 0) return 0;
+            bool visible = LayerVisible(layer, true);
+            if (!visible) foreach (var h in list) VortexAPI.ParticleSetVisible(h, 0);
             long id = ++_nextSpawnId;
-            _spawned[id] = new Spawned { Emitters = list.ToArray(), Scene = true };
+            _spawned[id] = new Spawned { Emitters = list.ToArray(), Scene = true, Layer = layer, Visible = visible };
             return id;
         }
 
@@ -541,6 +574,7 @@ namespace Editor.Core.Services.Particles
         {
             EnsureRegistered();
             if (!_available) return 0;
+            if (!LayerVisible(layer, true)) return 0;   // a beam on a layer this view does not show (#194) is simply not made
             string path = string.IsNullOrEmpty(vfxPath) ? null : ResolveAssetPath(vfxPath);
             VfxAsset asset = path != null ? GetAsset(path, out _) : null;
             VfxBeam b = asset?.Beam;
@@ -552,12 +586,12 @@ namespace Editor.Core.Services.Particles
             else b = System.Text.Json.JsonSerializer.Deserialize<VfxBeam>(System.Text.Json.JsonSerializer.Serialize(b, VfxAsset.JsonOptions), VfxAsset.JsonOptions);
             if (duration > 0f) b.Duration = duration;
             else if (b.Speed > 0f && b.Duration <= 0f) b.Duration = (Vector3.Distance(from, to) + b.Length) / b.Speed + b.FadeOut;
-            uint h = VortexAPI.ParticleCreateBeam(VfxAsset.BeamJson(b, layer), 0);
+            uint h = VortexAPI.ParticleCreateBeam(VfxAsset.BeamJson(b, NativeLayer(layer)), 0);
             if (h == 0) { ConsoleService.Instance.LogError("VFX: beam failed: " + VortexAPI.ParticleLastError()); return 0; }
             if (path != null) VortexAPI.ParticleSetBeamTexture(h, TextureId(VfxAsset.ResolveTexture(b.Texture, path, ProjectData.Current?.Path)));
             VortexAPI.ParticleSetBeamPoints(h, new[] { from.X, from.Y, from.Z }, new[] { to.X, to.Y, to.Z });
             long id = ++_nextSpawnId;
-            _spawned[id] = new Spawned { Beam = h, Scene = true };
+            _spawned[id] = new Spawned { Beam = h, Scene = true, Layer = layer };
             return id;
         }
 
