@@ -1,9 +1,10 @@
 name: PR tests
 
-# The test gate for pull requests (#161, #184): every PR builds the engine and both editors on Windows and macOS and
+# The test gate for pull requests (#161, #184): every PR builds the engine and the editor on Windows and macOS and
 # runs the headless tests — native (audio, physics, particles, navigation, primitive geometry) and managed (Vortex.Core:
 # asset library, store, Sound Studio, Claude chat loop, .mcp.json). Docs-only changes skip the build jobs (a skipped
 # job counts as passed for a required check). The full editor smoke suite needs a GPU and runs on developer machines.
+# Since #311 the Windows job is CMake + dotnet only — no MSBuild, no .NET Framework, no WPF editor.
 on:
   pull_request:
   push:
@@ -53,33 +54,11 @@ jobs:
       - name: Submodules (Streamline headers, Default 3D template)
         run: git submodule update --init --depth 1 ThirdParty/Streamline Templates/Default3D
 
-      - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v2
-
-      - name: Setup NuGet
-        uses: NuGet/setup-nuget@v2
-
       - name: Set up .NET 10
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
 
-      - name: Restore NuGet packages (packages.config)
-        run: |
-          nuget restore Engine/packages.config -SolutionDirectory .
-          nuget restore VortexAPI/packages.config -SolutionDirectory .
-          nuget restore Editor/packages.config -SolutionDirectory .
-
-      # The same solution build as the release (Engine.lib -> VortexAPI.dll -> WPF editor), so a PR that breaks the
-      # Windows build — native DX12 code, the shared C# core in the .NET Framework editor — fails here, not at release.
-      - name: Build Vortex.slnx (Release x64, DX12 + WPF editor)
-        run: msbuild Vortex.slnx /t:Build /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /m /v:minimal "/clp:ErrorsOnly;Summary"
-
-      # #182: the native engine the Windows build SHIPS comes from CMake — Jolt Physics is fetched and linked there,
-      # while the Visual Studio projects still compile the no-op physics stub. The MSBuild VortexAPI.dll above only
-      # feeds the WPF editor's build; the CMake one replaces it before the editor is staged and smoked. The MSVC
-      # environment is scoped to this one step (vcvars64 via vswhere): exported job-wide it sets Platform=x64, which
-      # breaks the managed solution build ("Release|x64" is no configuration of Vortex.Managed.slnx).
       - name: Native engine through CMake (DX12 + Jolt)
         shell: cmd
         run: |
@@ -87,13 +66,19 @@ jobs:
           cmake -S . -B build/windows-ninja -G Ninja -DCMAKE_BUILD_TYPE=Release -DVORTEX_BUILD_TESTS=OFF || exit /b 1
           cmake --build build/windows-ninja --target VortexAPI || exit /b 1
 
-      - name: Ship the CMake VortexAPI.dll (Jolt)
+      # x64\Release is the layout the staging script, the smoke and the installer expect: the engine DLL from the CMake
+      # build plus the native DLLs it loads (Assimp; Streamline is optional and comes from Redist when prepared).
+      - name: Native binaries into x64/Release
         shell: pwsh
         run: |
           $src = "build/windows-ninja/bin/VortexAPI.dll"
           if (-not (Test-Path $src)) { Write-Error "no CMake VortexAPI.dll"; exit 1 }
+          New-Item -ItemType Directory -Force "x64/Release" | Out-Null
           Copy-Item -Force $src "x64/Release/VortexAPI.dll"
-          Write-Host "x64/Release/VortexAPI.dll <- CMake build ($([math]::Round((Get-Item $src).Length/1MB,1)) MB)"
+          Copy-Item -Force "ThirdParty/assimp6/bin/assimp-vc143-mt.dll" "x64/Release/"
+          Get-ChildItem "build/windows-ninja/bin" -Filter "*.dll" | Where-Object { $_.Name -ne "VortexAPI.dll" } | Copy-Item -Destination "x64/Release/" -Force
+          if (Test-Path "Redist/Streamline/x64") { Get-ChildItem "Redist/Streamline/x64" -Filter "*.dll" | Copy-Item -Destination "x64/Release/" -Force }
+          Write-Host "x64/Release: $((Get-ChildItem x64/Release -Filter *.dll | ForEach-Object Name) -join ', ')"
 
       - name: Build the managed layer (Vortex.Core, Player, Avalonia editor)
         run: dotnet build Managed/Vortex.Managed.slnx -c Release -v minimal

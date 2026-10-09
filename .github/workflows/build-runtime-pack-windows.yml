@@ -18,20 +18,17 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v2
-
-      - name: Setup NuGet
-        uses: NuGet/setup-nuget@v2
-
       - name: Set up .NET 10
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
 
+      # The native engine comes from CMake (Ninja + MSVC, Jolt linked); vcvars64 is scoped to this step (#311).
       - name: Build the runtime pack
-        shell: pwsh
-        run: powershell -ExecutionPolicy Bypass -File tools\windows\make-runtime-pack.ps1 -Configuration Release -Zip
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath`) do call "%%i\VC\Auxiliary\Build\vcvars64.bat"
+          powershell -ExecutionPolicy Bypass -File tools\windows\make-runtime-pack.ps1 -Configuration Release -Zip || exit /b 1
 
       - name: Upload
         uses: actions/upload-artifact@v4

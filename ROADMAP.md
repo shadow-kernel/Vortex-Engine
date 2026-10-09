@@ -46,7 +46,7 @@ original-quality downloads (#289).
 2. **Follow-ups** — the in-app update's elevated restart (#312), shadow settings (#304), the DLSS runtime in release builds
    (#305), Linux CI (#306), `Lighting.SetDirectional` (#307), the Steam Audio runtime (#308), a Kenney manifest (#314).
 3. **v3.1.0 — Physics v2** — Jolt in the Visual Studio build (#182), the player on CharacterVirtual (#105, #187), debug
-   draw (#106), compound colliders (#107); the classic WPF editor retires (#311).
+   draw (#106), compound colliders (#107); the classic WPF editor retired (#311, done).
 
 ## Shipped
 
@@ -64,8 +64,8 @@ original-quality downloads (#289).
   the Anthropic account, on the official Anthropic C# SDK.
 - ✅ **One editor on Windows, macOS and Linux** (#183): the installer's *Vortex Engine* is the cross-platform editor
   (self-contained .NET 10, DX12 viewport in a child window) with self-update, gamepads (DualSense / DualShock HID and
-  XInput on Windows, SDL3 elsewhere) and the same window header everywhere. The WPF editor stays one release as
-  *Vortex Engine (Classic)*; #311 retires it.
+  XInput on Windows, SDL3 elsewhere) and the same window header everywhere. The WPF editor stayed one release as
+  *Vortex Engine (Classic)*; #311 retired it in v3.1 (Windows ships one editor, no .NET Framework, no MSBuild).
 - ✅ **macOS DMG** on every release (#184); the app and the games it exports carry their own libraries.
 - ✅ **Template packs** (#299): the Horror Starter and Tactical Shooter content downloads once per engine version.
   *Update from Template…* (#186) shows line diffs, backs up what it overwrites, and replacing scenes is opt-in.

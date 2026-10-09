@@ -2,7 +2,7 @@
 
 | Project | What it is |
 |---|---|
-| `Vortex.Core` | The UI-framework-free runtime + tools core: ECS model, scene/prefab/material formats, scripting API + runtime (Roslyn on modern .NET), play-mode services, asset actions, viewport session, game packager, native interop (`VortexAPI`). It compiles the framework-free sources under `Editor/` as linked files, so the WPF editor, the Avalonia editor and the player run **one** implementation. `VORTEX_CORE` selects the few shared-core branches where a WPF type used to leak in. |
+| `Vortex.Core` | The UI-framework-free runtime + tools core: ECS model, scene/prefab/material formats, scripting API + runtime (Roslyn on modern .NET), play-mode services, asset actions, viewport session, game packager, native interop (`VortexAPI`). It compiles the framework-free sources under `Editor/` as linked files, so the editor and the player run **one** implementation. `VORTEX_CORE` selects the few shared-core branches where a WPF type used to leak in. |
 | `Vortex.Player` | The standalone game runtime (no UI framework): drives the native `GameHost` window and runs the gameplay layer each tick. Runs an exported game (`player.vortex` + `Assets.vpak`) or a loose project (`--project=`). |
 | `Vortex.Editor` | The cross-platform editor shell (Avalonia 11): macOS-style unified toolbar, native menu bar, hierarchy, viewport (native Metal surface embedded in the window), inspector, environment, project browser, console, project hub, dialogs (settings, build, git, audio mixer, material editor). UI only — everything it does goes through `Vortex.Core`. |
 
@@ -100,7 +100,7 @@ VORTEX_SMOKE_FULL=1 Vortex.Editor --project=/tmp/copy-of-Default3D --smoke=14 --
 
 * `Vortex.Core` never references a UI framework. Host services it needs (UI-thread posting, key state, cursor capture, message boxes) are behind the small hook classes in `Input/`, `Threading/` and `Viewport/IViewportHost`.
 * Editor shells contain views only; every user action funnels through `Shell/EditorCommands.cs` → core services, so menus, toolbars, context menus and shortcuts share one code path.
-* Windows keeps building the original WPF editor from `Vortex.slnx` unchanged; the shared sources carry `#if VORTEX_CORE` only where a WPF type had leaked into otherwise pure code.
+* The WPF editor that once compiled the same sources directly was retired in v3.1 (#311): `Vortex.slnx` holds the native projects only, and the shared sources have no `#if VORTEX_CORE` branches left.
 
 ## Physics
 

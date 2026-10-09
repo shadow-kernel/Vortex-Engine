@@ -74,7 +74,6 @@ namespace Editor.Core.Services.Particles
         /// <summary>Raised after a .vfx was (re)loaded from disk — the editor refreshes open views.</summary>
         public static event Action<string> AssetReloaded;
 
-#if VORTEX_CORE
         // Self-registration (Vortex.Core hosts: player + Avalonia editor): only managed wiring here — the native library
         // may not be resolved yet when the module loads; the callback registers on the first play-state change.
         [System.Runtime.CompilerServices.ModuleInitializer]
@@ -82,7 +81,6 @@ namespace Editor.Core.Services.Particles
         {
             try { PlayModeService.Instance.StateChanged += (s, st) => EnsureRegistered(); } catch { }
         }
-#endif
 
         /// <summary>Register the native frame driver (idempotent). Safe to call before the engine is up: it retries.</summary>
         public static void EnsureRegistered()

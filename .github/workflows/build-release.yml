@@ -17,7 +17,6 @@ on:
         default: true
 
 env:
-  SOLUTION_FILE: Vortex.slnx
   BUILD_CONFIGURATION: Release
   BUILD_PLATFORM: x64
 
@@ -46,27 +45,10 @@ jobs:
         echo "VERSION=$version" >> $env:GITHUB_OUTPUT
         echo "Version: $version"
     
-    - name: Setup MSBuild
-      uses: microsoft/setup-msbuild@v2
-    
-    - name: Setup NuGet
-      uses: NuGet/setup-nuget@v2
-    
-    - name: Setup Visual Studio Developer Environment
-      uses: ilammy/msvc-dev-cmd@v1
-      with:
-        arch: x64
-
-    - name: Set up .NET 10 (the cross-platform editor)
+    - name: Set up .NET 10 (the editor and the player)
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '10.0.x'
-    
-    - name: Restore NuGet packages (packages.config)
-      run: |
-        nuget restore Engine/packages.config -SolutionDirectory .
-        nuget restore VortexAPI/packages.config -SolutionDirectory .
-        nuget restore Editor/packages.config -SolutionDirectory .
     
     - name: Update version in Installer script
       shell: pwsh
@@ -76,15 +58,8 @@ jobs:
         $content = $content -replace '#define MyAppVersion ".*"', "#define MyAppVersion `"${{ steps.version.outputs.VERSION }}`""
         Set-Content $issFile $content -Encoding utf8BOM
     
-    # Builds the whole solution in dependency order (Engine.lib -> VortexAPI.dll -> Vortex Engine.exe).
-    # PlatformToolset is overridden to v143 because the GitHub windows-latest runner ships VS2022.
-    # On a machine with VS2026 (v145) installed, build without the override (the projects pin v145).
-    - name: Build full solution (Engine -> VortexAPI.dll -> Editor)
-      run: msbuild ${{ env.SOLUTION_FILE }} /t:Rebuild /p:Configuration=${{ env.BUILD_CONFIGURATION }} /p:Platform=${{ env.BUILD_PLATFORM }} /p:PlatformToolset=v143 /m
-
-    # #182: the native engine the installer SHIPS comes from CMake — Jolt Physics is fetched and linked there, while the
-    # Visual Studio projects still compile the no-op physics stub. The MSBuild VortexAPI.dll above only feeds the WPF
-    # editor's build; the CMake one replaces it before anything is staged. vcvars64 is scoped to this step.
+    # #182 / #311: the native engine the installer ships comes from CMake (Ninja + MSVC) — Jolt Physics is fetched and
+    # linked there. Nothing is MSBuilt any more: the editor and the player are .NET 10. vcvars64 is scoped to this step.
     - name: Native engine through CMake (DX12 + Jolt)
       shell: cmd
       run: |
@@ -92,24 +67,25 @@ jobs:
         cmake -S . -B build/windows-ninja -G Ninja -DCMAKE_BUILD_TYPE=Release -DVORTEX_BUILD_TESTS=OFF || exit /b 1
         cmake --build build/windows-ninja --target VortexAPI || exit /b 1
 
-    - name: Ship the CMake VortexAPI.dll (Jolt)
-      shell: pwsh
-      run: |
-        $src = "build/windows-ninja/bin/VortexAPI.dll"
-        if (-not (Test-Path $src)) { Write-Error "no CMake VortexAPI.dll"; exit 1 }
-        Copy-Item -Force $src "x64/${{ env.BUILD_CONFIGURATION }}/VortexAPI.dll"
-        Write-Host "VortexAPI.dll <- CMake build ($([math]::Round((Get-Item $src).Length/1MB,1)) MB)"
-
-    - name: Verify native engine + editor artifacts are co-located
+    # x64\Release is the layout the staging script and the installer expect: the engine DLL from the CMake build plus
+    # the native DLLs it loads (Assimp; Streamline is optional and comes from Redist when prepared).
+    - name: Native binaries into x64/Release
       shell: pwsh
       run: |
         $out = "x64/${{ env.BUILD_CONFIGURATION }}"
-        $required = @("Vortex Engine.exe", "VortexAPI.dll", "assimp-vc143-mt.dll")   # the classic WPF editor + the engine
+        $src = "build/windows-ninja/bin/VortexAPI.dll"
+        if (-not (Test-Path $src)) { Write-Error "no CMake VortexAPI.dll"; exit 1 }
+        New-Item -ItemType Directory -Force $out | Out-Null
+        Copy-Item -Force $src "$out/VortexAPI.dll"
+        Copy-Item -Force "ThirdParty/assimp6/bin/assimp-vc143-mt.dll" "$out/"
+        Get-ChildItem "build/windows-ninja/bin" -Filter "*.dll" | Where-Object { $_.Name -ne "VortexAPI.dll" } | Copy-Item -Destination "$out/" -Force
+        if (Test-Path "Redist/Streamline/x64") { Get-ChildItem "Redist/Streamline/x64" -Filter "*.dll" | Copy-Item -Destination "$out/" -Force }
+        $required = @("VortexAPI.dll", "assimp-vc143-mt.dll")
         $missing = $required | Where-Object { -not (Test-Path "$out/$_") }
         if ($missing) { Write-Error "Missing required artifacts in $out : $($missing -join ', ')"; exit 1 }
-        Write-Host "OK: $($required -join ', ') present in $out"
+        Write-Host "OK: $((Get-ChildItem $out -Filter *.dll | ForEach-Object Name) -join ', ')"
 
-    # The cross-platform editor next to the WPF one (#183): self-contained in x64\Release\Editor, with its player.
+    # The editor (#183, the only one since #311): self-contained in x64\Release\Editor, with its player.
     - name: Stage the cross-platform editor
       shell: pwsh
       run: tools/windows/stage-editor.ps1 -Configuration ${{ env.BUILD_CONFIGURATION }}
@@ -200,7 +176,7 @@ jobs:
         $p.WaitForExit()
         Start-Sleep -Seconds 5
         Get-Process -Name 'Vortex Engine','Vortex.Editor' -ErrorAction SilentlyContinue | Stop-Process -Force   # the setup's relaunch
-        if (-not (Test-Path "$env:ProgramFiles\Vortex Engine\Vortex Engine.exe")) { throw "the previous release did not install" }
+        if (-not (Test-Path "$env:ProgramFiles\Vortex Engine\Editor\Vortex.Editor.exe")) { throw "the previous release did not install" }
 
     - name: Update to this build
       shell: pwsh
@@ -213,18 +189,11 @@ jobs:
         $app = "$env:ProgramFiles\Vortex Engine"
         # a silent install is the in-app update: it starts the new editor again
         if (-not (Get-Process -Name 'Vortex.Editor' -ErrorAction SilentlyContinue)) { throw "the silent update did not start the editor" }
-        # v2.x's updater then starts its own "Vortex Engine.exe": the classic editor must leave at once, or both open
-        $c = Start-Process "$app\Vortex Engine.exe" -PassThru
-        if (-not $c.WaitForExit(30000)) { $c.Kill(); throw "after an update from v2.x the classic editor opens next to the new one" }
-        Write-Host "the classic editor started by the old updater left again"
         Get-Process -Name 'Vortex Engine','Vortex.Editor' -ErrorAction SilentlyContinue | Stop-Process -Force
-        Start-Sleep -Seconds 2
-        # started on its own, the classic editor stays (WARP: the runner has no GPU)
-        $env:VORTEX_DX12_WARP = '1'
-        $c = Start-Process "$app\Vortex Engine.exe" -PassThru
-        if ($c.WaitForExit(10000)) { throw "the classic editor does not start on its own (exit code $($c.ExitCode))" }
-        Get-Process -Name 'Vortex Engine','Vortex.Editor' -ErrorAction SilentlyContinue | Stop-Process -Force
-        $missing = @('unins000.exe','VortexAPI.dll','Vortex Engine.exe','Editor\Vortex.Editor.exe','Editor\player\Vortex.Player.exe','Shaders\standard.hlsl','Templates\Default3D\project.vortex') |
+        # #311: the classic WPF editor is gone — the update must have removed it and its .NET Framework assemblies
+        $stale = @('Vortex Engine.exe', 'Vortex Engine.exe.config', 'AvalonDock.dll', 'System.Text.Json.dll') | Where-Object { Test-Path (Join-Path $app $_) }
+        if ($stale) { throw "classic editor files survived the update: $($stale -join ', ')" }
+        $missing = @('unins000.exe','VortexAPI.dll','assimp-vc143-mt.dll','Editor\Vortex.Editor.exe','Editor\player\Vortex.Player.exe','Shaders\standard.hlsl','Templates\Default3D\project.vortex') |
           Where-Object { -not (Test-Path (Join-Path $app $_)) }
         if ($missing) { Get-Content install.log -Tail 40; throw "missing after the update: $($missing -join ', ')" }
         $lnk = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Vortex Engine\Vortex Engine.lnk"
@@ -349,8 +318,9 @@ jobs:
           
           **Installer (Recommended):**
           Download and run `VortexEngine-Setup-${{ steps.version.outputs.VERSION }}.exe`. *Vortex Engine* is the same editor
-          as on macOS and Linux — with the Library, the Asset Store, the Sound Studio and Claude. The previous Windows editor
-          stays available for this release as *Vortex Engine (Classic)* in the Start menu.
+          as on macOS and Linux — with the Library, the Asset Store, the Sound Studio and Claude. Nothing else to install:
+          the editor carries its own .NET runtime. (The previous WPF editor, *Vortex Engine (Classic)*, was retired in 3.1 and
+          is removed by the update.)
           
           **Portable Version:**
           Download `VortexEngine-Portable-${{ steps.version.outputs.VERSION }}.zip` and extract to any folder.

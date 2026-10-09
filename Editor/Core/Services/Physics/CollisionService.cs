@@ -151,7 +151,7 @@ namespace Editor.Core.Services.Physics
             private int Cx(float v) => ClampI((int)((v - _origin.X) * _inv), 0, _nx - 1);
             private int Cy(float v) => ClampI((int)((v - _origin.Y) * _inv), 0, _ny - 1);
             private int Cz(float v) => ClampI((int)((v - _origin.Z) * _inv), 0, _nz - 1);
-            // (not Math.Clamp: the classic WPF editor compiles this file for net48, which has none)
+            // (a local clamp — this file predates .NET Core's Math.Clamp and keeps the dependency-free form)
             private static int ClampI(int v, int lo, int hi) => v < lo ? lo : (v > hi ? hi : v);
 
             private void TriCells(V3[] tris, int tri, out int x0, out int y0, out int z0, out int x1, out int y1, out int z1)

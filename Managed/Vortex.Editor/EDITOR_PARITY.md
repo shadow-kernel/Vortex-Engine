@@ -29,8 +29,9 @@ scene, scene → open, script → open in the code editor, sound container → i
 * Only edit the files your package owns (table below). Need a hook elsewhere? Use the registries above or report the
   one-line change you need — don't edit another package's files.
 * Rendering calls (anything that touches `VortexAPI` render/mesh functions) run on the UI thread.
-* Keep `Editor/Editor.csproj` (the Windows WPF build) compiling: shared code under `Editor/` must stay WPF-free where it is
-  linked into `Vortex.Core`; new shared files under `Editor/` need a `<Compile Include>` in `Editor/Editor.csproj`.
+* Shared code under `Editor/` is compiled into `Vortex.Core` only (the WPF editor is gone, #311): keep it free of any UI
+  framework; new files under `Editor/Core`, `Editor/ECS`, `Editor/DllWrapper` are picked up by the globs in
+  `Managed/Vortex.Core/Vortex.Core.csproj`, new files elsewhere under `Editor/` need a `<Compile Include>` there.
 * Build: `DOTNET_ROOT=/opt/homebrew/opt/dotnet/libexec dotnet build Managed/Vortex.Managed.slnx -c Debug`.
 * Run (never touch the user's settings — ALWAYS set a private app-data dir):
   `VORTEX_NATIVE_DIR=/Users/danielbrueckmann/DEV/Vortex-Engine/build/macos-debug/bin VORTEX_APPDATA_DIR=<tmp>/appdata

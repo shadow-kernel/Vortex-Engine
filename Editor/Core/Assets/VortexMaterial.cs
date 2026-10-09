@@ -2,9 +2,6 @@ using System;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-#if !VORTEX_CORE
-using System.Windows.Media;
-#endif
 
 namespace Editor.Core.Assets
 {
@@ -134,34 +131,6 @@ namespace Editor.Core.Assets
             }
         }
         
-#if !VORTEX_CORE
-        /// <summary>
-        /// Creates a material from WPF Color.
-        /// </summary>
-        public void SetBaseColor(Color color)
-        {
-            BaseColor = new float[]
-            {
-                color.R / 255f,
-                color.G / 255f,
-                color.B / 255f,
-                color.A / 255f
-            };
-        }
-        
-        /// <summary>
-        /// Gets the base color as WPF Color.
-        /// </summary>
-        public Color GetBaseColor()
-        {
-            return Color.FromArgb(
-                (byte)(BaseColor[3] * 255),
-                (byte)(BaseColor[0] * 255),
-                (byte)(BaseColor[1] * 255),
-                (byte)(BaseColor[2] * 255)
-            );
-        }
-#endif
         
         /// <summary>
         /// Makes texture paths relative to the material file location.
@@ -205,89 +174,6 @@ namespace Editor.Core.Assets
             OcclusionRoughnessMetallicTexture = ResolveAbsolute(OcclusionRoughnessMetallicTexture, materialDirectory);
         }
         
-#if !VORTEX_CORE
-        /// <summary>
-        /// Creates a UniversalMaterial from this VortexMaterial.
-        /// </summary>
-        public UniversalMaterial ToUniversalMaterial()
-        {
-            var material = new UniversalMaterial
-            {
-                Name = Name,
-                Metallic = Metallic,
-                Roughness = Roughness,
-                NormalStrength = NormalStrength,
-                AOStrength = AmbientOcclusion,
-                EmissiveStrength = EmissiveStrength,
-                TwoSided = TwoSided
-            };
-            
-            material.BaseColor = GetBaseColor();
-            
-            if (EmissiveColor != null && EmissiveColor.Length >= 3)
-            {
-                material.EmissiveColor = Color.FromScRgb(1f, EmissiveColor[0], EmissiveColor[1], EmissiveColor[2]);
-            }
-            
-            // Dynamic slots: create a slot ONLY for each texture the .vmat actually carries — no placeholders.
-            if (!string.IsNullOrEmpty(AlbedoTexture))
-                material.SetTexture(TextureMapType.Albedo, AlbedoTexture);
-            if (!string.IsNullOrEmpty(NormalTexture))
-                material.SetTexture(TextureMapType.Normal, NormalTexture);
-            if (!string.IsNullOrEmpty(MetallicTexture))
-                material.SetTexture(TextureMapType.Metallic, MetallicTexture);
-            if (!string.IsNullOrEmpty(RoughnessTexture))
-                material.SetTexture(TextureMapType.Roughness, RoughnessTexture);
-            if (!string.IsNullOrEmpty(AOTexture))
-                material.SetTexture(TextureMapType.AmbientOcclusion, AOTexture);
-            if (!string.IsNullOrEmpty(EmissiveTexture))
-                material.SetTexture(TextureMapType.Emissive, EmissiveTexture);
-            if (!string.IsNullOrEmpty(HeightTexture))
-                material.SetTexture(TextureMapType.Height, HeightTexture);
-            if (!string.IsNullOrEmpty(OpacityTexture))
-                material.SetTexture(TextureMapType.Opacity, OpacityTexture);
-            if (!string.IsNullOrEmpty(MetallicRoughnessTexture))
-                material.SetTexture(TextureMapType.MetallicRoughness, MetallicRoughnessTexture);
-            if (!string.IsNullOrEmpty(OcclusionRoughnessMetallicTexture))
-                material.SetTexture(TextureMapType.OcclusionRoughnessMetallic, OcclusionRoughnessMetallicTexture);
-
-            return material;
-        }
-        
-        /// <summary>
-        /// Creates a VortexMaterial from a UniversalMaterial.
-        /// </summary>
-        public static VortexMaterial FromUniversalMaterial(UniversalMaterial source)
-        {
-            var vmat = new VortexMaterial
-            {
-                Name = source.Name,
-                Metallic = source.Metallic,
-                Roughness = source.Roughness,
-                NormalStrength = source.NormalStrength,
-                AmbientOcclusion = source.AOStrength,
-                EmissiveStrength = source.EmissiveStrength,
-                TwoSided = source.TwoSided
-            };
-            
-            vmat.SetBaseColor(source.BaseColor);
-            vmat.EmissiveColor = new[] { source.EmissiveColor.ScR, source.EmissiveColor.ScG, source.EmissiveColor.ScB };
-            
-            // Persist every map the material actually has (not just the old fixed 6).
-            vmat.AlbedoTexture = source.GetTextureSlot(TextureMapType.Albedo)?.FilePath;
-            vmat.NormalTexture = source.GetTextureSlot(TextureMapType.Normal)?.FilePath;
-            vmat.MetallicTexture = source.GetTextureSlot(TextureMapType.Metallic)?.FilePath;
-            vmat.RoughnessTexture = source.GetTextureSlot(TextureMapType.Roughness)?.FilePath;
-            vmat.AOTexture = source.GetTextureSlot(TextureMapType.AmbientOcclusion)?.FilePath;
-            vmat.EmissiveTexture = source.GetTextureSlot(TextureMapType.Emissive)?.FilePath;
-            vmat.HeightTexture = source.GetTextureSlot(TextureMapType.Height)?.FilePath;
-            vmat.OpacityTexture = source.GetTextureSlot(TextureMapType.Opacity)?.FilePath;
-            vmat.MetallicRoughnessTexture = source.GetTextureSlot(TextureMapType.MetallicRoughness)?.FilePath;
-            vmat.OcclusionRoughnessMetallicTexture = source.GetTextureSlot(TextureMapType.OcclusionRoughnessMetallic)?.FilePath;
-
-            return vmat;
-        }
-#endif
         
         // .vmat files store texture references relative to the material, with backslashes (the format's
         // canonical separator, so files written on Windows and macOS stay identical). Resolution accepts either

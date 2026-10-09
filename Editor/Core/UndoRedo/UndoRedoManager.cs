@@ -1,9 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
-#if !VORTEX_CORE
-using System.Media;
-#endif
 using System.Runtime.CompilerServices;
 
 namespace Editor.Core.UndoRedo
@@ -460,12 +457,7 @@ namespace Editor.Core.UndoRedo
 
             try
             {
-#if VORTEX_CORE
                 Editor.Core.Threading.HostShell.PlayAlertSound();
-#else
-                // Windows System-Sound für "Hinweis" - ähnlich wie Windows Explorer bei Limit
-                SystemSounds.Exclamation.Play();
-#endif
             }
             catch
             {

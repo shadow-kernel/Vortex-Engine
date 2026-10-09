@@ -7,10 +7,10 @@
 #define MyAppVersion "3.0.6"
 #define MyAppPublisher "Vortex Engine Team"
 #define MyAppURL "https://github.com/shadow-kernel/Vortex-Engine"
-; The editor is the cross-platform one (the same UI as on macOS and Linux) since v3.0; the WPF editor stays for one
-; release as "Vortex Engine (Classic)".
+; The editor is the cross-platform one (the same UI as on macOS and Linux) since v3.0 — self-contained .NET 10, nothing to
+; install. The WPF editor ("Vortex Engine (Classic)", .NET Framework 4.8) shipped next to it for one release and was retired
+; in v3.1 (#311): [InstallDelete] removes it from older installs.
 #define MyAppExeName "Editor\Vortex.Editor.exe"
-#define MyClassicExeName "Vortex Engine.exe"
 #define MyAppDataFolder "VortexEngine"
 
 [Setup]
@@ -41,7 +41,7 @@ PrivilegesRequired=admin
 PrivilegesRequiredOverridesAllowed=dialog
 ; Auto-update: AppMutex lets a silent updater (/CLOSEAPPLICATIONS) cleanly close the running editor before
 ; overwriting files; SetupMutex stops two updater installs racing. AppMutex MUST match the mutex the app holds
-; (App.OnStartup creates "VortexEngineSingleInstance").
+; (Vortex.Editor's Program.Main creates "VortexEngineSingleInstance").
 AppMutex=VortexEngineSingleInstance
 SetupMutex=VortexEngineSetup
 ; Minimum Windows version (Windows 10)
@@ -72,12 +72,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Name: "quicklaunchicon"; Description: "{cm:CreateQuickLaunchIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked; OnlyBelowVersion: 6.1; Check: not IsAdminInstallMode
 
 [Files]
-; Main application files from Release build
-Source: "..\x64\Release\{#MyClassicExeName}"; DestDir: "{app}"; Flags: ignoreversion
+; The native engine (VortexAPI.dll from the CMake build) and the DLLs it loads (Assimp, optional Streamline/DLSS)
 Source: "..\x64\Release\*.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\x64\Release\*.config"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist; Excludes: "*.vshost.*"
-; Engine library (built in Engine subfolder)
-Source: "..\Engine\x64\Release\Engine.lib"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 ; Additional resources (if any)
 Source: "..\x64\Release\Resources\*"; DestDir: "{app}\Resources"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 ; Templates and assets
@@ -87,13 +83,12 @@ Source: "..\x64\Release\Templates\*"; DestDir: "{app}\Templates"; Flags: ignorev
 ; an installed editor renders a WHITE viewport (no PSOs compile). Ships .hlsl + any precompiled bin\*.cso.
 Source: "..\Engine\Shaders\*"; DestDir: "{app}\Shaders"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; The editor (#183): self-contained .NET 10 (nothing to install), staged by tools/windows/stage-editor.ps1. It loads
-; {app}\VortexAPI.dll and uses {app}\Shaders + {app}\Templates, shared with the classic WPF editor; its Build dialog
-; exports Windows games with the player in Editor\player.
+; {app}\VortexAPI.dll and uses {app}\Shaders + {app}\Templates; its Build dialog exports Windows games with the player
+; in Editor\player.
 Source: "..\x64\Release\Editor\*"; DestDir: "{app}\Editor"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
-Name: "{group}\{#MyAppName} (Classic)"; Filename: "{app}\{#MyClassicExeName}"; Comment: "The previous Windows editor (WPF), kept for one release"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 Name: "{userappdata}\Microsoft\Internet Explorer\Quick Launch\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: quicklaunchicon
@@ -128,6 +123,19 @@ Type: dirifempty; Name: "{app}"
 ; Clean up from previous installations
 ; the self-contained editor folder is replaced as a whole (no stale runtime files from an older .NET)
 Type: filesandordirs; Name: "{app}\Editor"
+; #311: the classic WPF editor (v2.x, and v3.0.x next to the new editor) with its .NET Framework assemblies — the new
+; layout keeps only native DLLs in {app}, so these patterns cannot hit anything that is still needed
+Type: files; Name: "{app}\Vortex Engine.exe"
+Type: files; Name: "{app}\Vortex Engine.exe.config"
+Type: files; Name: "{app}\Vortex Engine.exe.mda.config"
+Type: files; Name: "{app}\Vortex Engine.pdb"
+Type: files; Name: "{app}\AvalonDock*.dll"
+Type: files; Name: "{app}\Xceed.Wpf.AvalonDock*.dll"
+Type: files; Name: "{app}\System.*.dll"
+Type: files; Name: "{app}\Microsoft.Bcl.*.dll"
+Type: files; Name: "{app}\*.xml"
+Type: files; Name: "{app}\Engine.lib"
+Type: files; Name: "{group}\{#MyAppName} (Classic).lnk"
 Type: files; Name: "{app}\*.log"
 Type: filesandordirs; Name: "{app}\Cache"
 
@@ -135,30 +143,10 @@ Type: filesandordirs; Name: "{app}\Cache"
 var
   DeleteUserDataCheckbox: TNewCheckBox;
 
-// Check if .NET Framework 4.8 is installed
-function IsDotNetDetected(): Boolean;
-var
-  Release: Cardinal;
-begin
-  Result := False;
-  if RegQueryDWordValue(HKLM, 'SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full', 'Release', Release) then
-  begin
-    // 4.8 = 528040 or higher
-    Result := (Release >= 528040);
-  end;
-end;
-
+// Nothing to check before setup: the editor is self-contained (.NET 10 inside Editor\), the engine is native.
 function InitializeSetup(): Boolean;
 begin
   Result := True;
-  
-  if not IsDotNetDetected() then
-  begin
-    MsgBox('Vortex Engine requires .NET Framework 4.8 or later.'#13#10#13#10
-           'Please install .NET Framework 4.8 from Microsoft and run this installer again.',
-           mbCriticalError, MB_OK);
-    Result := False;
-  end;
 end;
 
 // Custom welcome page message
@@ -290,7 +278,7 @@ begin
               'Would you like to force close the application?', mbConfirmation, MB_YESNO) = IDYES then
     begin
       // Try to close the application
-      Exec('taskkill', '/F /IM "Vortex.Editor.exe" /IM "{#MyClassicExeName}"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      Exec('taskkill', '/F /IM "Vortex.Editor.exe" /IM "Vortex Engine.exe"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
       Sleep(1000);
     end
     else

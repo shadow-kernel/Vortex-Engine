@@ -4,9 +4,7 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
-  <Project Path="Editor/Editor.csproj" Id="fbd41bc8-2108-4479-b909-3081d00767df">
-    <BuildDependency Project="VortexAPI/VortexAPI.vcxproj" />
-  </Project>
+  <!-- Native projects only (#311): the editor and the player are .NET 10 — Managed/Vortex.Managed.slnx. -->
   <Project Path="Engine/Engine.vcxproj" Id="cd0e018b-277f-4863-bb32-e44d7f5a654d" />
   
   <!-- Solution Folders -->

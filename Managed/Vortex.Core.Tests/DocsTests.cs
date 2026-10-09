@@ -9,16 +9,9 @@ using Editor.Scripting;
 namespace VortexTests
 {
     /// <summary>
-    /// The documentation's C# samples compile against the gameplay API — and as C# 5, the language the Windows classic
-    /// editor's CodeDOM compiler accepts (#98: "every code sample tested against the release build"). The documentation
-    /// is the docs website (repository shadow-kernel/Vortex-Engine-Homepage, pages in <c>docs/content</c>); CI downloads
-    /// its pages from the site (<c>tools/fetch-docs.sh</c>) and points <c>VORTEX_DOCS_DIR</c> at them, and on a developer
-    /// machine a clone next to this repository (<c>../Vortex-Engine-Homepage</c>) is found too. A complete sample (it declares a class) must compile as it is,
-    /// usings included, because that is what readers paste. Member-only samples are wrapped in a VortexBehaviour,
-    /// statement samples in one of its methods. Lines starting with <c>//~</c> are context the website hides (the fields
-    /// a fragment uses, say): the test compiles them without the marker. A block fenced <c>```csharp nocompile</c> is an
-    /// illustration (an API listing) and skipped.
-    /// </summary>
+    /// The documentation's C# samples compile against the gameplay API (Roslyn, C# latest — the same compiler every
+    /// editor and the player use for project scripts). A sample that references an API that does not exist, or uses
+    /// it wrongly, fails this test before it misleads a reader.
     public static class DocsTests
     {
         /// <summary>Pages about the engine's own code and process — their C# is not gameplay script.</summary>
@@ -48,7 +41,7 @@ namespace VortexTests
                     samples.Add((name + ":" + line, Wrap(code, samples.Count)));
             }
             t.True(samples.Count > 10, "the docs have C# samples (" + samples.Count + " in " + docs + ")");
-            var errors = RoslynScriptCompiler.CheckSources(samples, csharp5: true);
+            var errors = RoslynScriptCompiler.CheckSources(samples);   // every editor compiles scripts with Roslyn (C# latest) since #311
             var report = errors.GroupBy(e => e.File).Select(g => g.Key + " → " + string.Join(" | ", g.Take(3).Select(e => e.Id + " " + e.Message))).ToList();
             foreach (var r in report) Console.WriteLine("        " + r);
             t.True(errors.Count == 0, report.Count + " of " + samples.Count + " samples do not compile (listed above)");

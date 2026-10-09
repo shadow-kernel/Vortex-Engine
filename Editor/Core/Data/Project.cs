@@ -1,10 +1,6 @@
 using System;
 using System.Collections.ObjectModel;
 using System.Runtime.Serialization;
-#if !VORTEX_CORE
-using System.Windows;
-using System.Windows.Media;
-#endif
 using Editor.Core.UndoRedo;
 using Editor.Core.UndoRedo.Commands;
 
@@ -83,11 +79,7 @@ namespace Editor.Core.Data
         /// Thumbnail f�r die Projektliste (nicht serialisiert - wird aus ImagePath geladen)
         /// </summary>
         [IgnoreDataMember]
-#if VORTEX_CORE
         public object Thumbnail { get; set; }   // framework-specific image (set by the editor shell, unused by the player)
-#else
-        public ImageSource Thumbnail { get; set; }
-#endif
 
         /// <summary>
         /// Formatierte Anzeige des letzten �nderungsdatums
@@ -186,28 +178,11 @@ namespace Editor.Core.Data
         private static ProjectData _currentCache;
         // Thread-safe: reads MainWindow.DataContext on the UI thread and caches it, so a dedicated render
         // thread (the standalone game loop) can read the active project without a Dispatcher.VerifyAccess throw.
-#if VORTEX_CORE
         // Shared core (player / Avalonia editor): the host sets the current project explicitly.
         public static ProjectData Current
         {
             get { return _currentCache; }
             set { _currentCache = value; }
         }
-#else
-        public static ProjectData Current
-        {
-            get
-            {
-                try
-                {
-                    var c = (Application.Current != null && Application.Current.MainWindow != null)
-                        ? Application.Current.MainWindow.DataContext as ProjectData : null;
-                    if (c != null) _currentCache = c;
-                    return c ?? _currentCache;
-                }
-                catch { return _currentCache; } // off the UI thread → last cached project
-            }
-        }
-#endif
     }
 }

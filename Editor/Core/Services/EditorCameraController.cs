@@ -1,10 +1,5 @@
 using System;
-#if VORTEX_CORE
 using Point = Editor.Core.Input.PointD;
-#else
-using System.Windows;
-using System.Windows.Input;
-#endif
 using Editor.DllWrapper;
 
 namespace Editor.Core.Services
@@ -104,25 +99,6 @@ namespace Editor.Core.Services
             UpdateCamera();
         }
 
-#if !VORTEX_CORE
-        public void OnMouseDown(MouseButtonEventArgs e, Point pos)
-        {
-            _lastMouse = pos;
-            if (e.RightButton == MouseButtonState.Pressed)
-                _rightMouseDown = true;
-        }
-
-        public void OnMouseUp(MouseButtonEventArgs e)
-        {
-            if (e.RightButton == MouseButtonState.Released)
-            {
-                _rightMouseDown = false;
-                // Leaving fly mode: drop all movement state so nothing can carry over into the next
-                // fly session (belt to the per-frame self-heal in Update).
-                _wKey = _sKey = _aKey = _dKey = _qKey = _eKey = _shiftKey = false;
-            }
-        }
-#endif
 
         // Framework-neutral input entry points (the Avalonia editor and any other shell drive the camera through
         // these; the WPF viewport keeps its event-typed overloads above).
@@ -173,7 +149,6 @@ namespace Editor.Core.Services
             }
         }
 
-#if VORTEX_CORE
         /// <summary>Physical key state from the host shell — true while the key is really held. Used only to
         /// RELEASE stale movement flags (see Update).</summary>
         private static bool IsPhysicallyDown(int vk)
@@ -181,18 +156,6 @@ namespace Editor.Core.Services
             try { return Editor.Core.Input.HostInput.IsKeyDown(vk); }
             catch { return false; }
         }
-#else
-        /// <summary>Physical key state via GetAsyncKeyState — true while the key is really held,
-        /// regardless of WPF focus. Used only to RELEASE stale movement flags (see Update).</summary>
-        private static bool IsPhysicallyDown(int vk)
-        {
-            try { return (GetAsyncKeyState(vk) & 0x8000) != 0; }
-            catch { return false; } // if the query itself fails, treat as released -> camera stops
-        }
-
-        [System.Runtime.InteropServices.DllImport("user32.dll")]
-        private static extern short GetAsyncKeyState(int vKey);
-#endif
 
         public void OnMouseMove(Point pos)
         {
@@ -222,43 +185,6 @@ namespace Editor.Core.Services
             UpdateCamera();
         }
 
-#if !VORTEX_CORE
-        public void OnKeyDown(Key key)
-        {
-            // Ctrl/Alt chords are editor COMMANDS (Ctrl+S save, Ctrl+D duplicate, ...), not movement.
-            // The viewport forwards every key here; without this guard the command's letter set a movement
-            // flag, and when the command stole focus the matching KeyUp never arrived -> the flag stayed on
-            // and the camera "flew by itself" the next time fly mode started.
-            if ((Keyboard.Modifiers & (ModifierKeys.Control | ModifierKeys.Alt)) != 0)
-                return;
-
-            switch (key)
-            {
-                case Key.W: _wKey = true; break;
-                case Key.S: _sKey = true; break;
-                case Key.A: _aKey = true; break;
-                case Key.D: _dKey = true; break;
-                case Key.Q: _qKey = true; break;
-                case Key.E: _eKey = true; break;
-                case Key.LeftShift: case Key.RightShift: _shiftKey = true; break;
-                case Key.Home: Reset(); break;
-            }
-        }
-
-        public void OnKeyUp(Key key)
-        {
-            switch (key)
-            {
-                case Key.W: _wKey = false; break;
-                case Key.S: _sKey = false; break;
-                case Key.A: _aKey = false; break;
-                case Key.D: _dKey = false; break;
-                case Key.Q: _qKey = false; break;
-                case Key.E: _eKey = false; break;
-                case Key.LeftShift: case Key.RightShift: _shiftKey = false; break;
-            }
-        }
-#endif
 
         public void Update(float dt)
         {

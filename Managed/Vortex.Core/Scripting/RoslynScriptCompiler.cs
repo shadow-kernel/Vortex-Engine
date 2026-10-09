@@ -93,8 +93,8 @@ namespace Editor.Scripting
         }
 
         /// <summary>Errors of in-memory sources against the gameplay API (the docs' code samples). With
-        /// <paramref name="csharp5"/> they must also be C# 5 — what the Windows editor's CodeDOM compiler accepts.</summary>
-        public static List<ScriptDiagnostic> CheckSources(IEnumerable<(string path, string code)> sources, bool csharp5)
+        /// <paramref name="csharp5"/> restricts them to C# 5 (what the retired .NET Framework editor's CodeDOM compiler accepted; off by default since #311).
+        public static List<ScriptDiagnostic> CheckSources(IEnumerable<(string path, string code)> sources, bool csharp5 = false)
         {
             var compilation = CreateCompilation(sources, csharp5 ? LanguageVersion.CSharp5 : LanguageVersion.Latest, OptimizationLevel.Debug, "Samples_Check");
             return compilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).Select(d =>
