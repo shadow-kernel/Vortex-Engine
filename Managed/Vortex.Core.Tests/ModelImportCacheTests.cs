@@ -38,7 +38,9 @@ namespace VortexTests
             File.WriteAllBytes(SceneRenderService.ModelImportCache.SubmeshFile(dir, 0), new byte[] { 1 });
             t.Equal(-1, SceneRenderService.ModelImportCache.Count(dir), "still one file short");
             File.WriteAllBytes(SceneRenderService.ModelImportCache.SubmeshFile(dir, 1), new byte[] { 2 });
-            t.Equal(2, SceneRenderService.ModelImportCache.Count(dir), "complete: two submeshes");
+            t.Equal(-1, SceneRenderService.ModelImportCache.Count(dir), "the material records are missing");
+            File.WriteAllBytes(SceneRenderService.ModelImportCache.Materials(dir), new byte[] { 3 });
+            t.Equal(2, SceneRenderService.ModelImportCache.Count(dir), "complete: two submeshes + materials");
 
             File.WriteAllText(SceneRenderService.ModelImportCache.Manifest(dir), "something else\n2\n");
             t.Equal(-1, SceneRenderService.ModelImportCache.Count(dir), "a foreign manifest is ignored");

@@ -261,6 +261,24 @@ namespace Editor.DllWrapper
             int maxSubmeshes);
 
         [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int ImportModelWithMaterialsCached(
+            [MarshalAs(UnmanagedType.LPStr)] string filepath,
+            [MarshalAs(UnmanagedType.LPStr)] string cacheDir,
+            [In, Out] long[] meshIds,
+            [In, Out] long[] materialIds,
+            [In, Out] long[] textureIds,
+            int maxSubmeshes,
+            out int cached);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int ImportModelFromCache(
+            [MarshalAs(UnmanagedType.LPStr)] string cacheDir,
+            [In, Out] long[] meshIds,
+            [In, Out] long[] materialIds,
+            [In, Out] long[] textureIds,
+            int maxSubmeshes);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
         private static extern int GetModelSubmeshCount([MarshalAs(UnmanagedType.LPStr)] string filepath);
 
         // In-memory variants (packed/encrypted asset pak loaded into RAM — no file on disk).
@@ -318,6 +336,68 @@ namespace Editor.DllWrapper
             var textureIds = new long[maxSubmeshes];
 
             int count = ImportModelWithMaterials(filepath, meshIds, materialIds, textureIds, maxSubmeshes);
+
+            var result = new SubmeshImportData[count];
+            for (int i = 0; i < count; i++)
+            {
+                result[i] = new SubmeshImportData
+                {
+                    MeshId = meshIds[i],
+                    MaterialId = materialIds[i],
+                    TextureId = textureIds[i]
+                };
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Import a model with separate meshes and materials for each submesh and, when <paramref name="cacheDir"/> is
+        /// given, let the engine write one .vmesh per submesh into it (the render-side import cache, #364 C).
+        /// <paramref name="cached"/> is the number of files written: 0 for a skinned model, a failed write or an engine
+        /// without the cached entry point.
+        /// </summary>
+        public static SubmeshImportData[] ImportModelWithMaterialsFromFile(string filepath, string cacheDir, out int cached)
+        {
+            cached = 0;
+            if (string.IsNullOrEmpty(cacheDir)) return ImportModelWithMaterialsFromFile(filepath);
+            const int maxSubmeshes = 64;
+            var meshIds = new long[maxSubmeshes];
+            var materialIds = new long[maxSubmeshes];
+            var textureIds = new long[maxSubmeshes];
+
+            int count;
+            try { count = ImportModelWithMaterialsCached(filepath, cacheDir, meshIds, materialIds, textureIds, maxSubmeshes, out cached); }
+            catch (EntryPointNotFoundException) { return ImportModelWithMaterialsFromFile(filepath); }
+
+            var result = new SubmeshImportData[count];
+            for (int i = 0; i < count; i++)
+            {
+                result[i] = new SubmeshImportData
+                {
+                    MeshId = meshIds[i],
+                    MaterialId = materialIds[i],
+                    TextureId = textureIds[i]
+                };
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Load a model from the cache folder an earlier <see cref="ImportModelWithMaterialsFromFile(string, string, out int)"/>
+        /// wrote (#364 C): meshes from the .vmesh files, materials from the records — no Assimp. Empty when the cache
+        /// is missing, incomplete or the engine has no cache support.
+        /// </summary>
+        public static SubmeshImportData[] ImportModelFromCacheDir(string cacheDir)
+        {
+            if (string.IsNullOrEmpty(cacheDir)) return new SubmeshImportData[0];
+            const int maxSubmeshes = 64;
+            var meshIds = new long[maxSubmeshes];
+            var materialIds = new long[maxSubmeshes];
+            var textureIds = new long[maxSubmeshes];
+
+            int count;
+            try { count = ImportModelFromCache(cacheDir, meshIds, materialIds, textureIds, maxSubmeshes); }
+            catch (EntryPointNotFoundException) { return new SubmeshImportData[0]; }
 
             var result = new SubmeshImportData[count];
             for (int i = 0; i < count; i++)

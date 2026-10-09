@@ -45,6 +45,20 @@ namespace vortex::graphics
 		/// </summary>
 		static ImportedModelData load_from_file(const std::string& filepath);
 
+		/// <summary>
+		/// The render-side import cache (#364 C): write every submesh of an imported model as its own single-submesh
+		/// file <dir>/submesh_N.vmesh, so a later start loads the model with load_vmesh instead of Assimp. Returns the
+		/// number of files written; 0 when the model is skinned (the format carries no bone weights) or a write fails.
+		/// The vertex / index data is moved out and back, not copied.
+		/// </summary>
+		static u32 save_submeshes_to_dir(ImportedModelData& data, const std::string& dir);
+
+		/// <summary>
+		/// Read a folder written by save_submeshes_to_dir back into one model: the geometry from the submesh_N.vmesh
+		/// files, the material records from materials.vmc. False when the folder is incomplete or from another version.
+		/// </summary>
+		static bool load_submeshes_from_dir(const std::string& dir, ImportedModelData& out);
+
 	private:
 		static bool write_string(std::ofstream& file, const std::string& str, size_t max_length);
 		static std::string read_string(std::ifstream& file, size_t max_length);
