@@ -46,10 +46,147 @@ namespace Editor.Core.Services.Physics
             public float Radius;          // sphere/capsule radius
             public V3 A, B;               // capsule segment
             public V3[] Tris;             // triangles: flat [v0,v1,v2, v0,v1,v2, ...]
+            public TriGrid Grid;          // uniform grid over Tris (perf #342): null for small meshes (brute force)
             public V3 Min, Max;           // world AABB (broadphase)
             public GameEntity Owner;      // the entity this shape belongs to (for trigger/collision event dispatch)
             public uint BodyId;           // physics body handle for DYNAMIC shapes (0 for the static world)
             public bool Dynamic;          // published per step by PhysicsService (a Jolt rigid body), not baked
+        }
+
+        // ---- uniform grid over a MeshCollider's triangles (perf #342) --------------------------------------------
+        // A terrain-sized MeshCollider (tens of thousands of triangles) otherwise makes the character controller test
+        // EVERY triangle for each capsule sample, walkability raycast and ground snap, every frame (40 → 4 FPS). The
+        // grid buckets each triangle by its AABB; the controller then only looks at the few cells it touches.
+        private const int GridMinTris = 256;   // below this the brute-force loop is as fast and simpler
+        private const int GridMaxDim = 128;    // cap cells per axis (build cost + memory)
+
+        /// <summary>Triangle count examined by the most recent Tris query — for tests to confirm the grid is selective.</summary>
+        internal static int DebugLastTriTests;
+
+        private sealed class TriGrid
+        {
+            private V3 _origin; private float _cell, _inv; private int _nx, _ny, _nz;
+            private int[] _cellStart;   // CSR: length _nx*_ny*_nz + 1
+            private int[] _items;       // triangle indices grouped by cell (a tri is listed in every cell its AABB spans)
+            private readonly int[] _stamp; private int _gen;   // per-query dedup (single-threaded physics step)
+            private int[] _buf = new int[64]; private int _n;  // reusable candidate buffer
+
+            private TriGrid(int triCount) { _stamp = new int[triCount]; }
+
+            public static TriGrid Build(V3[] tris, V3 mn, V3 mx)
+            {
+                int triCount = tris.Length / 3;
+                if (triCount < GridMinTris) return null;
+                V3 ext = mx - mn;
+                float big = Math.Max(ext.X, Math.Max(ext.Y, ext.Z));
+                if (big <= 1e-5f) return null;
+                float horiz = Math.Max(ext.X, ext.Z); if (horiz < 1e-4f) horiz = big;
+                float cell = horiz / (float)Math.Sqrt(triCount);   // aim for ~1 triangle per cell (terrain-friendly)
+                float minCell = big / GridMaxDim;                  // keep each axis within GridMaxDim cells
+                if (cell < minCell) cell = minCell;
+                if (cell < 1e-4f) cell = 1e-4f;
+                var g = new TriGrid(triCount)
+                {
+                    _origin = mn, _cell = cell, _inv = 1f / cell,
+                    _nx = Math.Clamp((int)(ext.X / cell) + 1, 1, GridMaxDim),
+                    _ny = Math.Clamp((int)(ext.Y / cell) + 1, 1, GridMaxDim),
+                    _nz = Math.Clamp((int)(ext.Z / cell) + 1, 1, GridMaxDim),
+                };
+                int cells = g._nx * g._ny * g._nz;
+                var counts = new int[cells + 1];
+                for (int i = 0; i < triCount; i++)
+                {
+                    g.TriCells(tris, i, out int x0, out int y0, out int z0, out int x1, out int y1, out int z1);
+                    for (int z = z0; z <= z1; z++) for (int y = y0; y <= y1; y++) for (int x = x0; x <= x1; x++)
+                        counts[g.Idx(x, y, z) + 1]++;
+                }
+                for (int i = 0; i < cells; i++) counts[i + 1] += counts[i];
+                g._cellStart = counts;
+                g._items = new int[counts[cells]];
+                var cursor = (int[])counts.Clone();
+                for (int i = 0; i < triCount; i++)
+                {
+                    g.TriCells(tris, i, out int x0, out int y0, out int z0, out int x1, out int y1, out int z1);
+                    for (int z = z0; z <= z1; z++) for (int y = y0; y <= y1; y++) for (int x = x0; x <= x1; x++)
+                        g._items[cursor[g.Idx(x, y, z)]++] = i;
+                }
+                return g;
+            }
+
+            private int Idx(int x, int y, int z) => (z * _ny + y) * _nx + x;
+            private int Cx(float v) => Math.Clamp((int)((v - _origin.X) * _inv), 0, _nx - 1);
+            private int Cy(float v) => Math.Clamp((int)((v - _origin.Y) * _inv), 0, _ny - 1);
+            private int Cz(float v) => Math.Clamp((int)((v - _origin.Z) * _inv), 0, _nz - 1);
+
+            private void TriCells(V3[] tris, int tri, out int x0, out int y0, out int z0, out int x1, out int y1, out int z1)
+            {
+                V3 a = tris[tri * 3], b = tris[tri * 3 + 1], c = tris[tri * 3 + 2];
+                x0 = Cx(Math.Min(a.X, Math.Min(b.X, c.X))); x1 = Cx(Math.Max(a.X, Math.Max(b.X, c.X)));
+                y0 = Cy(Math.Min(a.Y, Math.Min(b.Y, c.Y))); y1 = Cy(Math.Max(a.Y, Math.Max(b.Y, c.Y)));
+                z0 = Cz(Math.Min(a.Z, Math.Min(b.Z, c.Z))); z1 = Cz(Math.Max(a.Z, Math.Max(b.Z, c.Z)));
+            }
+
+            private void Begin() { _gen++; _n = 0; }
+            private void Add(int tri)
+            {
+                if (_stamp[tri] == _gen) return;
+                _stamp[tri] = _gen;
+                if (_n == _buf.Length) Array.Resize(ref _buf, _buf.Length * 2);
+                _buf[_n++] = tri;
+            }
+
+            /// <summary>Triangle indices whose cells overlap the box [qmin,qmax]. Returns the shared buffer; read [0,count).</summary>
+            public int[] QueryBox(V3 qmin, V3 qmax, out int count)
+            {
+                Begin();
+                int x0 = Cx(qmin.X), x1 = Cx(qmax.X), y0 = Cy(qmin.Y), y1 = Cy(qmax.Y), z0 = Cz(qmin.Z), z1 = Cz(qmax.Z);
+                for (int z = z0; z <= z1; z++) for (int y = y0; y <= y1; y++) for (int x = x0; x <= x1; x++)
+                {
+                    int ci = Idx(x, y, z);
+                    for (int k = _cellStart[ci]; k < _cellStart[ci + 1]; k++) Add(_items[k]);
+                }
+                count = _n; return _buf;
+            }
+
+            /// <summary>Triangle indices along the ray o+dir*t, t in [0,maxDist], by 3D-DDA. Returns the shared buffer.</summary>
+            public int[] QueryRay(V3 o, V3 dir, float maxDist, out int count)
+            {
+                Begin();
+                float x0 = _origin.X, y0 = _origin.Y, z0 = _origin.Z;
+                float x1 = x0 + _nx * _cell, y1 = y0 + _ny * _cell, z1 = z0 + _nz * _cell;
+                float tmin = 0f, tmax = maxDist;
+                if (!Slab(o.X, dir.X, x0, x1, ref tmin, ref tmax) ||
+                    !Slab(o.Y, dir.Y, y0, y1, ref tmin, ref tmax) ||
+                    !Slab(o.Z, dir.Z, z0, z1, ref tmin, ref tmax)) { count = 0; return _buf; }
+                float t = Math.Max(tmin, 0f);
+                int ix = Cx(o.X + dir.X * t), iy = Cy(o.Y + dir.Y * t), iz = Cz(o.Z + dir.Z * t);
+                int sx = dir.X >= 0 ? 1 : -1, sy = dir.Y >= 0 ? 1 : -1, sz = dir.Z >= 0 ? 1 : -1;
+                float dX = Math.Abs(dir.X) > 1e-12f ? Math.Abs(_cell / dir.X) : 1e30f;
+                float dY = Math.Abs(dir.Y) > 1e-12f ? Math.Abs(_cell / dir.Y) : 1e30f;
+                float dZ = Math.Abs(dir.Z) > 1e-12f ? Math.Abs(_cell / dir.Z) : 1e30f;
+                float mX = Math.Abs(dir.X) > 1e-12f ? (_origin.X + (ix + (sx > 0 ? 1 : 0)) * _cell - o.X) / dir.X : 1e30f;
+                float mY = Math.Abs(dir.Y) > 1e-12f ? (_origin.Y + (iy + (sy > 0 ? 1 : 0)) * _cell - o.Y) / dir.Y : 1e30f;
+                float mZ = Math.Abs(dir.Z) > 1e-12f ? (_origin.Z + (iz + (sz > 0 ? 1 : 0)) * _cell - o.Z) / dir.Z : 1e30f;
+                while (true)
+                {
+                    int ci = Idx(ix, iy, iz);
+                    for (int k = _cellStart[ci]; k < _cellStart[ci + 1]; k++) Add(_items[k]);
+                    if (mX < mY && mX < mZ) { if (mX > tmax) break; ix += sx; if (ix < 0 || ix >= _nx) break; mX += dX; }
+                    else if (mY < mZ) { if (mY > tmax) break; iy += sy; if (iy < 0 || iy >= _ny) break; mY += dY; }
+                    else { if (mZ > tmax) break; iz += sz; if (iz < 0 || iz >= _nz) break; mZ += dZ; }
+                }
+                count = _n; return _buf;
+            }
+
+            private static bool Slab(float o, float d, float lo, float hi, ref float tmin, ref float tmax)
+            {
+                if (Math.Abs(d) < 1e-9f) return o >= lo && o <= hi;
+                float inv = 1f / d, t1 = (lo - o) * inv, t2 = (hi - o) * inv;
+                if (t1 > t2) { var tmp = t1; t1 = t2; t2 = tmp; }
+                if (t1 > tmin) tmin = t1;
+                if (t2 < tmax) tmax = t2;
+                return tmin <= tmax;
+            }
         }
 
         private static readonly List<Shape> _world = new List<Shape>();
@@ -296,7 +433,7 @@ namespace Editor.Core.Services.Physics
                     if (s == null) continue;
                     float t;
                     bool got = (s.Kind == Kind.Tris && s.Tris != null)
-                        ? RayDownTris(o, s.Tris, bestT, out t)
+                        ? RayDownTris(o, s, bestT, out t)
                         : RayDownAabb(o, s.Min, s.Max, bestT, out t);
                     if (got && t <= bestT) { bestT = t; best = s; }
                 }
@@ -316,26 +453,39 @@ namespace Editor.Core.Services.Physics
         }
 
         // Downward ray vs a flat triangle soup — Möller–Trumbore per triangle, closest hit.
-        private static bool RayDownTris(V3 o, V3[] tris, float maxDist, out float t)
+        private static bool RayDownTris(V3 o, Shape s, float maxDist, out float t)
         {
             t = maxDist; bool any = false;
-            V3 d = new V3(0f, -1f, 0f);
-            for (int i = 0; i + 2 < tris.Length; i += 3)
+            var tris = s.Tris;
+            if (s.Grid != null)
             {
-                V3 v0 = tris[i], v1 = tris[i + 1], v2 = tris[i + 2];
-                V3 e1 = v1 - v0, e2 = v2 - v0;
-                V3 p = new V3(d.Y * e2.Z - d.Z * e2.Y, d.Z * e2.X - d.X * e2.Z, d.X * e2.Y - d.Y * e2.X);
-                float det = e1.Dot(p);
-                if (det > -1e-7f && det < 1e-7f) continue;
-                float inv = 1f / det;
-                V3 tv = o - v0;
-                float u = tv.Dot(p) * inv; if (u < 0f || u > 1f) continue;
-                V3 q = new V3(tv.Y * e1.Z - tv.Z * e1.Y, tv.Z * e1.X - tv.X * e1.Z, tv.X * e1.Y - tv.Y * e1.X);
-                float vv = d.Dot(q) * inv; if (vv < 0f || u + vv > 1f) continue;
-                float hitT = e2.Dot(q) * inv;
-                if (hitT >= 0f && hitT < t) { t = hitT; any = true; }
+                var buf = s.Grid.QueryRay(o, new V3(0f, -1f, 0f), maxDist, out int cnt);
+                DebugLastTriTests = cnt;
+                for (int j = 0; j < cnt; j++) { int i = buf[j] * 3; if (TriRayDown(o, tris[i], tris[i + 1], tris[i + 2], ref t)) any = true; }
+            }
+            else
+            {
+                DebugLastTriTests = tris.Length / 3;
+                for (int i = 0; i + 2 < tris.Length; i += 3) if (TriRayDown(o, tris[i], tris[i + 1], tris[i + 2], ref t)) any = true;
             }
             return any;
+        }
+
+        private static bool TriRayDown(V3 o, V3 v0, V3 v1, V3 v2, ref float t)
+        {
+            V3 d = new V3(0f, -1f, 0f);
+            V3 e1 = v1 - v0, e2 = v2 - v0;
+            V3 p = new V3(d.Y * e2.Z - d.Z * e2.Y, d.Z * e2.X - d.X * e2.Z, d.X * e2.Y - d.Y * e2.X);
+            float det = e1.Dot(p);
+            if (det > -1e-7f && det < 1e-7f) return false;
+            float inv = 1f / det;
+            V3 tv = o - v0;
+            float u = tv.Dot(p) * inv; if (u < 0f || u > 1f) return false;
+            V3 q = new V3(tv.Y * e1.Z - tv.Z * e1.Y, tv.Z * e1.X - tv.X * e1.Z, tv.X * e1.Y - tv.Y * e1.X);
+            float vv = d.Dot(q) * inv; if (vv < 0f || u + vv > 1f) return false;
+            float hitT = e2.Dot(q) * inv;
+            if (hitT >= 0f && hitT < t) { t = hitT; return true; }
+            return false;
         }
 
         /// <summary>General raycast (#35): closest SOLID-world hit along an arbitrary direction. Boxes test as
@@ -360,7 +510,7 @@ namespace Editor.Core.Services.Physics
                     if (s.Owner != null && (layerMask & (1 << (s.Owner.Layer & 31))) == 0) continue;
                     float t; V3 n;
                     bool got;
-                    if (s.Kind == Kind.Tris && s.Tris != null) got = RayTris(o, d, s.Tris, bestT, out t, out n);
+                    if (s.Kind == Kind.Tris && s.Tris != null) got = RayTris(o, d, s, bestT, out t, out n);
                     else if (s.Kind == Kind.Box) got = RayObb(o, d, s, bestT, out t, out n);
                     else if (s.Kind == Kind.Sphere) got = RaySphere(o, d, s.Center, s.Radius, bestT, out t, out n);
                     else got = RayAabbGeneric(o, d, s.Min, s.Max, bestT, out t, out n);   // capsule: coarse AABB
@@ -378,30 +528,44 @@ namespace Editor.Core.Services.Physics
 
         // Ray vs triangle soup — Möller–Trumbore per triangle, closest hit + geometric normal flipped
         // to face the ray origin.
-        private static bool RayTris(V3 o, V3 d, V3[] tris, float maxDist, out float t, out V3 n)
+        private static bool RayTris(V3 o, V3 d, Shape s, float maxDist, out float t, out V3 n)
         {
             t = maxDist; n = new V3(0, 1, 0); bool any = false;
-            for (int i = 0; i + 2 < tris.Length; i += 3)
+            var tris = s.Tris;
+            if (s.Grid != null)
             {
-                V3 v0 = tris[i], v1 = tris[i + 1], v2 = tris[i + 2];
-                V3 e1 = v1 - v0, e2 = v2 - v0;
-                V3 p = Cross(d, e2);
-                float det = e1.Dot(p);
-                if (det > -1e-7f && det < 1e-7f) continue;
-                float inv = 1f / det;
-                V3 tv = o - v0;
-                float u = tv.Dot(p) * inv; if (u < 0f || u > 1f) continue;
-                V3 q = Cross(tv, e1);
-                float vv = d.Dot(q) * inv; if (vv < 0f || u + vv > 1f) continue;
-                float hitT = e2.Dot(q) * inv;
-                if (hitT >= 0f && hitT < t)
-                {
-                    t = hitT; any = true;
-                    var tn = Cross(e1, e2).Norm();
-                    n = tn.Dot(d) > 0f ? tn * -1f : tn;
-                }
+                var buf = s.Grid.QueryRay(o, d, maxDist, out int cnt);
+                DebugLastTriTests = cnt;
+                for (int j = 0; j < cnt; j++) { int i = buf[j] * 3; if (TriRay(o, d, tris[i], tris[i + 1], tris[i + 2], ref t, ref n)) any = true; }
+            }
+            else
+            {
+                DebugLastTriTests = tris.Length / 3;
+                for (int i = 0; i + 2 < tris.Length; i += 3) if (TriRay(o, d, tris[i], tris[i + 1], tris[i + 2], ref t, ref n)) any = true;
             }
             return any;
+        }
+
+        private static bool TriRay(V3 o, V3 d, V3 v0, V3 v1, V3 v2, ref float t, ref V3 n)
+        {
+            V3 e1 = v1 - v0, e2 = v2 - v0;
+            V3 p = Cross(d, e2);
+            float det = e1.Dot(p);
+            if (det > -1e-7f && det < 1e-7f) return false;
+            float inv = 1f / det;
+            V3 tv = o - v0;
+            float u = tv.Dot(p) * inv; if (u < 0f || u > 1f) return false;
+            V3 q = Cross(tv, e1);
+            float vv = d.Dot(q) * inv; if (vv < 0f || u + vv > 1f) return false;
+            float hitT = e2.Dot(q) * inv;
+            if (hitT >= 0f && hitT < t)
+            {
+                t = hitT;
+                var tn = Cross(e1, e2).Norm();
+                n = tn.Dot(d) > 0f ? tn * -1f : tn;
+                return true;
+            }
+            return false;
         }
 
         // Ray vs oriented box: transform the ray into box space (project on the OBB axes), slab-test there,
@@ -635,7 +799,7 @@ namespace Editor.Core.Services.Physics
                         mn = new V3(Math.Min(mn.X, wv.X), Math.Min(mn.Y, wv.Y), Math.Min(mn.Z, wv.Z));
                         mx = new V3(Math.Max(mx.X, wv.X), Math.Max(mx.Y, wv.Y), Math.Max(mx.Z, wv.Z));
                     }
-                    return new Shape { Kind = Kind.Tris, Tris = tris, Min = mn, Max = mx };
+                    return new Shape { Kind = Kind.Tris, Tris = tris, Min = mn, Max = mx, Grid = TriGrid.Build(tris, mn, mx) };
                 }
             }
             // last resort: mesh AABB as a box (approximate) — better than no collision
@@ -814,7 +978,7 @@ namespace Editor.Core.Services.Physics
                     {
                         float t = samples == 1 ? 0f : (float)k / (samples - 1);
                         V3 c = new V3(c0.X + (c1.X - c0.X) * t, c0.Y + (c1.Y - c0.Y) * t, c0.Z + (c1.Z - c0.Z) * t);
-                        V3 q; if (!ClosestOnShape(s, c, out q)) continue;
+                        V3 q; if (!ClosestOnShape(s, c, out q, r + ShapeRadius(s) + 1e-3f)) continue;
                         V3 d = c - q; float dl = d.Len();
                         float sr = ShapeRadius(s);
                         if (dl < r + sr && dl > 1e-6f)
@@ -990,7 +1154,7 @@ namespace Editor.Core.Services.Physics
             {
                 float t = samples == 1 ? 0f : (float)k / (samples - 1);
                 V3 c = new V3(c0.X + (c1.X - c0.X) * t, c0.Y + (c1.Y - c0.Y) * t, c0.Z + (c1.Z - c0.Z) * t);
-                if (!ClosestOnShape(s, c, out var q)) continue;
+                if (!ClosestOnShape(s, c, out var q, r + sr + ContactSkin + 1e-3f)) continue;
                 if ((c - q).Len() < r + sr + ContactSkin) return true;
             }
             return false;
@@ -998,7 +1162,10 @@ namespace Editor.Core.Services.Physics
 
         private static float ShapeRadius(Shape s) => s.Kind == Kind.Sphere || s.Kind == Kind.Capsule ? s.Radius : 0f;
 
-        private static bool ClosestOnShape(Shape s, V3 c, out V3 q)
+        // maxDist bounds the search for a MeshCollider: the character only cares about triangles within the capsule
+        // radius, so the grid can skip everything else (a triangle whose closest point is within maxDist of c has its
+        // AABB inside [c-maxDist, c+maxDist], so it sits in a queried cell). Infinite = search all (small meshes).
+        private static bool ClosestOnShape(Shape s, V3 c, out V3 q, float maxDist = float.PositiveInfinity)
         {
             switch (s.Kind)
             {
@@ -1007,14 +1174,30 @@ namespace Editor.Core.Services.Physics
                 case Kind.Capsule: q = ClosestOnSeg(s.A, s.B, c); return true;
                 case Kind.Tris:
                     {
-                        // nearest triangle (broadphase already gated the whole mesh)
                         float best = 1e30f; V3 bq = new V3(0, 0, 0); bool any = false;
-                        int tc = s.Tris.Length / 3;
-                        for (int i = 0; i < tc; i++)
+                        if (s.Grid != null && !float.IsPositiveInfinity(maxDist))
                         {
-                            V3 p = ClosestOnTri(s.Tris[i * 3], s.Tris[i * 3 + 1], s.Tris[i * 3 + 2], c);
-                            float dl = (c - p).Len();
-                            if (dl < best) { best = dl; bq = p; any = true; }
+                            var buf = s.Grid.QueryBox(new V3(c.X - maxDist, c.Y - maxDist, c.Z - maxDist),
+                                                      new V3(c.X + maxDist, c.Y + maxDist, c.Z + maxDist), out int cnt);
+                            DebugLastTriTests = cnt;
+                            for (int j = 0; j < cnt; j++)
+                            {
+                                int i = buf[j];
+                                V3 p = ClosestOnTri(s.Tris[i * 3], s.Tris[i * 3 + 1], s.Tris[i * 3 + 2], c);
+                                float dl = (c - p).Len();
+                                if (dl < best) { best = dl; bq = p; any = true; }
+                            }
+                        }
+                        else
+                        {
+                            int tc = s.Tris.Length / 3;
+                            DebugLastTriTests = tc;
+                            for (int i = 0; i < tc; i++)
+                            {
+                                V3 p = ClosestOnTri(s.Tris[i * 3], s.Tris[i * 3 + 1], s.Tris[i * 3 + 2], c);
+                                float dl = (c - p).Len();
+                                if (dl < best) { best = dl; bq = p; any = true; }
+                            }
                         }
                         q = bq; return any;
                     }
@@ -1060,5 +1243,43 @@ namespace Editor.Core.Services.Physics
             => amin.X <= bmax.X && amax.X >= bmin.X && amin.Y <= bmax.Y && amax.Y >= bmin.Y && amin.Z <= bmax.Z && amax.Z >= bmin.Z;
 
         private static float Clamp(float v, float lo, float hi) => v < lo ? lo : (v > hi ? hi : v);
+
+        // ---- test hooks for the MeshCollider grid (perf #342) ----------------------------------------------------
+        // `tris` is a flat world-space triangle soup (x,y,z per vertex, 3 vertices per triangle). Tests run the same
+        // query with and without the grid, compare the answers, and read DebugLastTriTests for selectivity.
+
+        internal static Vector3 TestClosestOnTris(float[] tris, Vector3 c, float maxDist, bool useGrid, out bool hit)
+        {
+            var s = MakeTrisShape(tris, useGrid);
+            hit = ClosestOnShape(s, From(c), out var q, useGrid ? maxDist : float.PositiveInfinity);
+            return To(q);
+        }
+
+        internal static bool TestRaycastTris(float[] tris, Vector3 o, Vector3 dir, float maxDist, bool useGrid, out float t, out Vector3 n)
+        {
+            var s = MakeTrisShape(tris, useGrid);
+            bool got = RayTris(From(o), From(dir), s, maxDist, out t, out var nn);
+            n = To(nn); return got;
+        }
+
+        internal static bool TestRayDownTris(float[] tris, Vector3 o, float maxDist, bool useGrid, out float t)
+            => RayDownTris(From(o), MakeTrisShape(tris, useGrid), maxDist, out t);
+
+        internal static bool TestGridBuilt(float[] tris) => MakeTrisShape(tris, true).Grid != null;
+
+        private static Shape MakeTrisShape(float[] triXyz, bool useGrid)
+        {
+            int n = triXyz.Length / 3;
+            var tris = new V3[n];
+            var mn = new V3(1e30f, 1e30f, 1e30f); var mx = new V3(-1e30f, -1e30f, -1e30f);
+            for (int i = 0; i < n; i++)
+            {
+                var v = new V3(triXyz[i * 3], triXyz[i * 3 + 1], triXyz[i * 3 + 2]);
+                tris[i] = v;
+                mn = new V3(Math.Min(mn.X, v.X), Math.Min(mn.Y, v.Y), Math.Min(mn.Z, v.Z));
+                mx = new V3(Math.Max(mx.X, v.X), Math.Max(mx.Y, v.Y), Math.Max(mx.Z, v.Z));
+            }
+            return new Shape { Kind = Kind.Tris, Tris = tris, Min = mn, Max = mx, Grid = useGrid ? TriGrid.Build(tris, mn, mx) : null };
+        }
     }
 }
