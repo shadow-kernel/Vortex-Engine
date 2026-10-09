@@ -82,6 +82,22 @@ jobs:
     - name: Build full solution (Engine -> VortexAPI.dll -> Editor)
       run: msbuild ${{ env.SOLUTION_FILE }} /t:Rebuild /p:Configuration=${{ env.BUILD_CONFIGURATION }} /p:Platform=${{ env.BUILD_PLATFORM }} /p:PlatformToolset=v143 /m
 
+    # #182: the native engine the installer SHIPS comes from CMake — Jolt Physics is fetched and linked there, while the
+    # Visual Studio projects still compile the no-op physics stub. The MSBuild VortexAPI.dll above only feeds the WPF
+    # editor's build; the CMake one replaces it before anything is staged.
+    - name: Native engine through CMake (DX12 + Jolt)
+      run: |
+        cmake -S . -B build/windows-ninja -G Ninja -DCMAKE_BUILD_TYPE=Release -DVORTEX_BUILD_TESTS=OFF
+        cmake --build build/windows-ninja --target VortexAPI
+
+    - name: Ship the CMake VortexAPI.dll (Jolt)
+      shell: pwsh
+      run: |
+        $src = "build/windows-ninja/bin/VortexAPI.dll"
+        if (-not (Test-Path $src)) { Write-Error "no CMake VortexAPI.dll"; exit 1 }
+        Copy-Item -Force $src "x64/${{ env.BUILD_CONFIGURATION }}/VortexAPI.dll"
+        Write-Host "VortexAPI.dll <- CMake build ($([math]::Round((Get-Item $src).Length/1MB,1)) MB)"
+
     - name: Verify native engine + editor artifacts are co-located
       shell: pwsh
       run: |
