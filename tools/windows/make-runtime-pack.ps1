@@ -26,7 +26,10 @@ Write-Host "== native engine (VortexAPI.dll, $Configuration x64, CMake + Ninja w
 if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) { throw "cmake not found - run from a Visual Studio Developer PowerShell" }
 if (-not (Get-Command cl -ErrorAction SilentlyContinue)) { throw "the MSVC compiler (cl) is not on PATH - run from a Visual Studio Developer PowerShell (vcvars64)" }
 $BuildDir = Join-Path $Root "build\windows-ninja"
-cmake -S $Root -B $BuildDir -G Ninja -DCMAKE_BUILD_TYPE=$Configuration -DVORTEX_BUILD_TESTS=OFF
+# Quoted on purpose: PowerShell passes a token that starts with "-" to a native command verbatim, so an unquoted
+# -DCMAKE_BUILD_TYPE=$Configuration reaches cmake as the literal text "$Configuration" and the generate step dies on
+# "$<CONFIG:$Configuration>" (the runtime pack failed like that on every tag from v3.1.0 to v3.3.0).
+cmake -S $Root -B $BuildDir -G Ninja "-DCMAKE_BUILD_TYPE=$Configuration" -DVORTEX_BUILD_TESTS=OFF
 if ($LASTEXITCODE -ne 0) { throw "cmake configure failed" }
 cmake --build $BuildDir --target VortexAPI
 if ($LASTEXITCODE -ne 0) { throw "cmake build failed" }
