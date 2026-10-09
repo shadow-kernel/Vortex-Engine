@@ -165,6 +165,11 @@ namespace Editor.Core.Services.Physics
 
         /// <summary>Draw the live physics shapes (cyan wire lines) over the play view — View ▸ Physics Debug.</summary>
         public static bool ShowPhysicsDebug;
+        /// <summary>#106: which debug layers draw while <see cref="ShowPhysicsDebug"/> is on.</summary>
+        [Flags] public enum DebugLayer { None = 0, Bodies = 1, Joints = 2, Characters = 4, Contacts = 8, All = 15 }
+        public static DebugLayer DebugLayers = DebugLayer.All;
+        private static byte[] _dbgKinds;
+        private static readonly System.Collections.Generic.List<float> _dbgContacts = new System.Collections.Generic.List<float>();   // 6 floats per contact: point, normal
 
         /// <summary>Receives every contact the world reported (set by the script runtime; null = events dropped).</summary>
         public static Action<PhysicsContactEvent> ContactHandler;
@@ -337,9 +342,45 @@ namespace Editor.Core.Services.Physics
         /// is on. Called once per frame by the script runtime after its own debug shapes.</summary>
         public static void SubmitDebugDraw()
         {
-            if (!ShowPhysicsDebug || !IsBuilt) return;
+            if (!ShowPhysicsDebug || !IsBuilt || DebugLayers == DebugLayer.None) return;
+            if (PlayModeService.Instance.IsReleaseMode) return;   // a shipped game draws no debug layers (#106)
             int n = FetchDebugLines();
-            if (n > 0) VortexAPI.RenderPhysicsDebugLines(_dbgBuf, n);
+            if (n > 0)
+            {
+                // kinds 0..3 are bodies, 4 joints, 5 characters — the layer flags map onto the kind mask
+                int mask = 0;
+                if ((DebugLayers & DebugLayer.Bodies) != 0) mask |= 0xF;
+                if ((DebugLayers & DebugLayer.Joints) != 0) mask |= 1 << 4;
+                if ((DebugLayers & DebugLayer.Characters) != 0) mask |= 1 << 5;
+                VortexAPI.RenderPhysicsDebugLines(_dbgBuf, n, _dbgKinds, mask);
+            }
+            if ((DebugLayers & DebugLayer.Contacts) != 0 && _dbgContacts.Count >= 6)
+            {
+                // a contact: a short line along its normal and a small cross at the point (orange, kind 6)
+                int count = _dbgContacts.Count / 6;
+                var segs = new float[count * 4 * 6];
+                var kinds = new byte[count * 4];
+                for (int i = 0; i < kinds.Length; i++) kinds[i] = 6;
+                int o = 0;
+                for (int i = 0; i < count; i++)
+                {
+                    float px = _dbgContacts[i * 6], py = _dbgContacts[i * 6 + 1], pz = _dbgContacts[i * 6 + 2];
+                    float nx = _dbgContacts[i * 6 + 3], ny = _dbgContacts[i * 6 + 4], nz = _dbgContacts[i * 6 + 5];
+                    void Seg(float ax, float ay, float az, float bx, float by, float bz) { segs[o++] = ax; segs[o++] = ay; segs[o++] = az; segs[o++] = bx; segs[o++] = by; segs[o++] = bz; }
+                    Seg(px, py, pz, px + nx * 0.3f, py + ny * 0.3f, pz + nz * 0.3f);
+                    Seg(px - 0.06f, py, pz, px + 0.06f, py, pz);
+                    Seg(px, py - 0.06f, pz, px, py + 0.06f, pz);
+                    Seg(px, py, pz - 0.06f, px, py, pz + 0.06f);
+                }
+                VortexAPI.RenderPhysicsDebugLines(segs, o, kinds, 1 << 6);
+            }
+        }
+
+        /// <summary>Script / View-menu switch for the debug layers (#106).</summary>
+        public static void SetDebugDraw(bool on, DebugLayer layers = DebugLayer.All)
+        {
+            ShowPhysicsDebug = on;
+            DebugLayers = layers;
         }
 
         /// <summary>World-space line segments of every body's shape (6 floats per segment: x0 y0 z0 x1 y1 z1) — the
@@ -353,9 +394,16 @@ namespace Editor.Core.Services.Physics
             return result;
         }
 
+        private static bool _dbgKindsUnavailable;
         private static int FetchDebugLines()
         {
-            if (_dbgBuf == null) _dbgBuf = new float[6 * 24000];
+            if (_dbgBuf == null) { _dbgBuf = new float[6 * 24000]; _dbgKinds = new byte[24000]; }
+            if (!_dbgKindsUnavailable)
+            {
+                try { return Math.Max(0, Math.Min(_dbgBuf.Length, VortexAPI.PhysicsGetDebugLinesEx(_dbgBuf, _dbgBuf.Length, _dbgKinds, _dbgKinds.Length))); }
+                catch (EntryPointNotFoundException) { _dbgKindsUnavailable = true; }   // older engine library: one colour
+                catch { return 0; }
+            }
             try { return Math.Max(0, Math.Min(_dbgBuf.Length, VortexAPI.PhysicsGetDebugLines(_dbgBuf, _dbgBuf.Length))); }
             catch { return 0; }
         }
@@ -1043,6 +1091,7 @@ namespace Editor.Core.Services.Physics
                 Fill(_f3b, cs.Dims);
                 id = VortexAPI.PhysicsCreateBody(entityId, cs.Type, _f3b, _f3a, _f4, motion, mass, friction, restitution,
                     linDamp, angDamp, isTrigger ? 1 : 0, layer, lockFlags, gravityFactor);
+                if (id != 0 && mat != null) ApplyCombineModes(id, mat);   // #107
             }
             else
             {
@@ -1057,6 +1106,7 @@ namespace Editor.Core.Services.Physics
                 }
                 id = VortexAPI.PhysicsCreateCompoundBody(entityId, buf, children.Count, _f3a, _f4, motion, mass, friction, restitution,
                     linDamp, angDamp, isTrigger ? 1 : 0, layer, lockFlags, gravityFactor);
+                if (id != 0 && mat != null) ApplyCombineModes(id, mat);   // #107
             }
             if (id == 0) { Warn(e, "physics body creation failed"); return null; }
 
@@ -1372,14 +1422,37 @@ namespace Editor.Core.Services.Physics
             CollisionService.SetDynamicBodies(_publish);
         }
 
+        private static bool _combineUnavailable;
+        /// <summary>#107: the PhysicsMaterial's combine modes travel with the body (0 average, 1 minimum, 2 multiply,
+        /// 3 maximum); an engine library without the export keeps Jolt's defaults.</summary>
+        private static void ApplyCombineModes(uint id, PhysicsMaterial mat)
+        {
+            if (_combineUnavailable) return;
+            try { VortexAPI.PhysicsSetCombineModes(id, mat.FrictionCombine, mat.BounceCombine); }
+            catch (EntryPointNotFoundException) { _combineUnavailable = true; }
+            catch { }
+        }
+
         private static void DispatchContacts()
         {
             _stayThisFrame.Clear();
+            _dbgContacts.Clear();
             int n;
             do
             {
                 n = VortexAPI.PhysicsGetContacts(_contactBuf, _contactBuf.Length);
                 if (n <= 0) break;
+                if (ShowPhysicsDebug && (DebugLayers & DebugLayer.Contacts) != 0)
+                {
+                    // the debug layer keeps this frame's touching contacts (#106)
+                    for (int i = 0; i < n && i < _contactBuf.Length && _dbgContacts.Count < 6 * 512; i++)
+                    {
+                        var c = _contactBuf[i];
+                        if (c.Kind == 2) continue;   // separated
+                        _dbgContacts.Add(c.PointX); _dbgContacts.Add(c.PointY); _dbgContacts.Add(c.PointZ);
+                        _dbgContacts.Add(c.NormalX); _dbgContacts.Add(c.NormalY); _dbgContacts.Add(c.NormalZ);
+                    }
+                }
                 if (ContactHandler != null)
                 {
                     for (int i = 0; i < n && i < _contactBuf.Length; i++)

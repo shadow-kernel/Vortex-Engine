@@ -104,6 +104,7 @@ EDITOR_INTERFACE void    PhysicsAddTorque(uint32_t body, const float* torque)   
 EDITOR_INTERFACE void    PhysicsSetMotionType(uint32_t body, int32_t motion)       { phys::set_motion_type(body, motion); }
 EDITOR_INTERFACE void    PhysicsSetGravityFactor(uint32_t body, float factor)      { phys::set_gravity_factor(body, factor); }
 EDITOR_INTERFACE void    PhysicsSetFriction(uint32_t body, float friction)         { phys::set_friction(body, friction); }
+EDITOR_INTERFACE void    PhysicsSetCombineModes(uint32_t body, int32_t frictionMode, int32_t restitutionMode) { phys::set_combine_modes(body, frictionMode, restitutionMode); }   // #107
 EDITOR_INTERFACE void    PhysicsSetRestitution(uint32_t body, float restitution)   { phys::set_restitution(body, restitution); }
 EDITOR_INTERFACE void    PhysicsSetDamping(uint32_t body, float linear, float angular) { phys::set_damping(body, linear, angular); }
 EDITOR_INTERFACE void    PhysicsSetActive(uint32_t body, int32_t active)           { phys::set_active(body, active != 0); }            // wake / sleep
@@ -228,6 +229,8 @@ EDITOR_INTERFACE int32_t PhysicsGetConstraintCount(void) { return phys::constrai
 
 // ---- Debug (issue #106): world-space line segments of every joint gizmo and body shape wireframe ----
 // Fills up to maxFloats (6 floats per segment: x0 y0 z0 x1 y1 z1); returns the number of floats written.
+// #106: the segments plus one kind byte per segment (0 static, 1 kinematic, 2 dynamic, 3 sleeping, 4 joint, 5 character).
+EDITOR_INTERFACE int32_t PhysicsGetDebugLinesEx(float* buffer, int32_t maxFloats, uint8_t* kinds, int32_t maxKinds) { return phys::get_debug_lines_ex(buffer, maxFloats, kinds, maxKinds); }
 EDITOR_INTERFACE int32_t PhysicsGetDebugLines(float* buffer, int32_t maxFloats)
 {
 	return phys::get_debug_lines(buffer, maxFloats);

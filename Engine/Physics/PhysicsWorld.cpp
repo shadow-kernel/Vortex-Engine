@@ -356,6 +356,7 @@ namespace vortex::physics {
 			u16 generation{ 1 };
 			u8 layer{ 0 };
 			u8 motion{ 0 };
+			u8 friction_combine{ 0 }, restitution_combine{ 0 };   // #107: 0 average, 1 minimum, 2 multiply, 3 maximum
 			bool is_trigger{ false };
 			bool must_be_static{ false };
 			bool used{ false };
@@ -454,6 +455,10 @@ namespace vortex::physics {
 		}
 
 		// ---- the world ------------------------------------------------------------------------------------
+		// #107: the per-pair combine callbacks the world constructor registers (defined after the slot helpers below).
+		f32 combine_friction(const JPH::Body& b1, const JPH::SubShapeID&, const JPH::Body& b2, const JPH::SubShapeID&);
+		f32 combine_restitution(const JPH::Body& b1, const JPH::SubShapeID&, const JPH::Body& b2, const JPH::SubShapeID&);
+
 		struct world
 		{
 			JPH::TempAllocatorImpl temp_allocator{ k_temp_allocator_bytes };
@@ -490,6 +495,8 @@ namespace vortex::physics {
 			{
 				system.Init(k_max_bodies, k_body_mutexes, k_max_body_pairs, k_max_contact_constraints, bp_interface, object_vs_bp, object_pair);
 				system.SetContactListener(&listener);
+				system.SetCombineFriction(combine_friction);       // #107: the PhysicsMaterial combine modes
+				system.SetCombineRestitution(combine_restitution);
 				system.SetGravity(JPH::Vec3(0.0f, -9.81f, 0.0f));
 				// Jolt lets resting bodies sink 2 cm by default; 5 mm keeps small props (0.25 m boxes) visually on the floor.
 				JPH::PhysicsSettings settings = system.GetPhysicsSettings();
@@ -722,6 +729,45 @@ namespace vortex::physics {
 			return it != w.handle_by_body.end() ? it->second : 0;
 		}
 
+		body_slot* find_body(u32 handle);
+
+		// Per-pair friction / restitution combine modes (#107): the PhysicsMaterial's modes travel with the body slot
+		// (0 average, 1 minimum, 2 multiply, 3 maximum — the order the component uses); when the two bodies disagree
+		// the stronger mode wins (maximum > multiply > minimum > average). Called by Jolt from its worker threads
+		// during Update — the slot table is read only, nothing creates or destroys bodies inside a step.
+		u8 combine_mode_of(const JPH::Body& body, bool friction)
+		{
+			if (!g_world) return 0;
+			auto it = g_world->handle_by_body.find(body.GetID().GetIndexAndSequenceNumber());
+			if (it == g_world->handle_by_body.end()) return 0;
+			const body_slot* slot = find_body(it->second);
+			if (!slot) return 0;
+			return friction ? slot->friction_combine : slot->restitution_combine;
+		}
+
+		f32 combine_values(f32 a, f32 b, u8 ma, u8 mb)
+		{
+			static const int precedence[4] = { 0, 1, 2, 3 };
+			const u8 mode = precedence[ma & 3] >= precedence[mb & 3] ? (ma & 3) : (mb & 3);
+			switch (mode)
+			{
+			case 1: return std::min(a, b);
+			case 2: return a * b;
+			case 3: return std::max(a, b);
+			default: return 0.5f * (a + b);
+			}
+		}
+
+		f32 combine_friction(const JPH::Body& b1, const JPH::SubShapeID&, const JPH::Body& b2, const JPH::SubShapeID&)
+		{
+			return combine_values(b1.GetFriction(), b2.GetFriction(), combine_mode_of(b1, true), combine_mode_of(b2, true));
+		}
+
+		f32 combine_restitution(const JPH::Body& b1, const JPH::SubShapeID&, const JPH::Body& b2, const JPH::SubShapeID&)
+		{
+			return combine_values(b1.GetRestitution(), b2.GetRestitution(), combine_mode_of(b1, false), combine_mode_of(b2, false));
+		}
+
 		body_slot* find_body(u32 handle)
 		{
 			return g_world ? resolve_slot(g_world->bodies, handle) : nullptr;
@@ -922,6 +968,11 @@ namespace vortex::physics {
 			s32 capacity;
 			s32 written{ 0 };
 			s32 body_mesh_floats{ 0 };   // per-body budget for triangle soups
+			// #106: one kind per segment, when the caller asked for them (0 static, 1 kinematic, 2 dynamic, 3 sleeping,
+			// 4 joint, 5 character) — the editor colours the layers and switches them on and off
+			u8* kinds{ nullptr };
+			s32 kind_capacity{ 0 };
+			u8 kind{ 0 };
 
 			bool full() const { return written + 6 > capacity; }
 
@@ -931,6 +982,8 @@ namespace vortex::physics {
 				f32* out = buffer + written;
 				out[0] = a.GetX(); out[1] = a.GetY(); out[2] = a.GetZ();
 				out[3] = b.GetX(); out[4] = b.GetY(); out[5] = b.GetZ();
+				const s32 segment = written / 6;
+				if (kinds && segment < kind_capacity) kinds[segment] = kind;
 				written += 6;
 				return true;
 			}
@@ -1559,6 +1612,15 @@ namespace vortex::physics {
 			g_world->system.GetBodyInterface().SetRestitution(slot->id, std::max(sane(restitution, 0.0f), 0.0f));
 	}
 
+	void set_combine_modes(u32 body, s32 friction_mode, s32 restitution_mode)
+	{
+		if (body_slot* slot = find_body(body))
+		{
+			slot->friction_combine = (u8)std::clamp(friction_mode, 0, 3);
+			slot->restitution_combine = (u8)std::clamp(restitution_mode, 0, 3);
+		}
+	}
+
 	void set_damping(u32 body, f32 linear, f32 angular)
 	{
 		const body_slot* slot = find_body(body);
@@ -2038,11 +2100,18 @@ namespace vortex::physics {
 
 	s32 get_debug_lines(f32* buffer, s32 max_floats)
 	{
+		return get_debug_lines_ex(buffer, max_floats, nullptr, 0);
+	}
+
+	s32 get_debug_lines_ex(f32* buffer, s32 max_floats, u8* kinds, s32 max_kinds)
+	{
 		const world* w = g_world;
 		if (!w || !buffer || max_floats < 6) return 0;
 
 		line_sink sink{ buffer, max_floats };
+		sink.kinds = kinds; sink.kind_capacity = kinds ? max_kinds : 0;
 		// Joints first: a handful of segments each, and exactly what one looks at while tuning them.
+		sink.kind = 4;
 		for (const constraint_slot& slot : w->constraints)
 		{
 			if (!slot.used || !slot.constraint || !slot.constraint->GetEnabled()) continue;
@@ -2057,9 +2126,11 @@ namespace vortex::physics {
 			if (!lock.Succeeded()) continue;
 			const JPH::Body& body = lock.GetBody();
 			sink.body_mesh_floats = 0;
+			sink.kind = slot.motion == 2 && !body.IsActive() ? 3 : (u8)std::min<u8>(slot.motion, 2);   // sleeping dynamic bodies apart
 			draw_shape(sink, body.GetShape(), JPH::Mat44(body.GetWorldTransform()), JPH::Vec3::sOne());
 			if (sink.full()) break;
 		}
+		sink.kind = 5;
 		for (const character_slot& slot : w->characters)
 		{
 			if (!slot.used || !slot.character) continue;
@@ -2116,6 +2187,7 @@ namespace vortex::physics {
 	void set_gravity_factor(u32, f32) {}
 	void set_friction(u32, f32) {}
 	void set_restitution(u32, f32) {}
+	void set_combine_modes(u32, s32, s32) {}
 	void set_damping(u32, f32, f32) {}
 	void set_active(u32, bool) {}
 	bool is_active(u32) { return false; }
@@ -2148,6 +2220,7 @@ namespace vortex::physics {
 	s32  constraint_count() { return 0; }
 
 	s32  get_debug_lines(f32*, s32) { return 0; }
+	s32  get_debug_lines_ex(f32*, s32, u8*, s32) { return 0; }
 }
 
 #endif // VORTEX_HAS_JOLT

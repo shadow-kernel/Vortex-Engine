@@ -151,6 +151,11 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc)]
         public static extern void PhysicsSetRestitution(uint body, float restitution);
 
+        /// <summary>#107: how the body combines friction / restitution with what it touches — 0 average, 1 minimum,
+        /// 2 multiply, 3 maximum (the PhysicsMaterial's combine fields).</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern void PhysicsSetCombineModes(uint body, int frictionMode, int restitutionMode);
+
         [DllImport(_dllName, CallingConvention = _cc)]
         public static extern void PhysicsSetDamping(uint body, float linear, float angular);
 
@@ -293,7 +298,43 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc)]
         public static extern int PhysicsGetDebugLines([In, Out] float[] buffer, int maxFloats);
 
+        /// <summary>#106: the segments plus one kind byte per segment — 0 static, 1 kinematic, 2 dynamic, 3 sleeping,
+        /// 4 joint, 5 character.</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern int PhysicsGetDebugLinesEx([In, Out] float[] buffer, int maxFloats, [In, Out] byte[] kinds, int maxKinds);
+
         private static long _physicsDebugMaterial = ID.INVALID_ID;   // cyan unlit net: the physics world, not the authored collider
+        // #106: one unlit material per debug kind — static grey, kinematic blue, dynamic cyan, sleeping dim, joints
+        // yellow, characters green, contacts orange
+        private static readonly long[] _physicsDebugKindMaterials = new long[7];
+        private static readonly float[][] _physicsDebugKindColors =
+        {
+            new[] { 0.55f, 0.55f, 0.6f }, new[] { 0.3f, 0.6f, 1.0f }, new[] { 0.25f, 0.85f, 1.0f }, new[] { 0.15f, 0.4f, 0.5f },
+            new[] { 1.0f, 0.85f, 0.2f }, new[] { 0.3f, 1.0f, 0.4f }, new[] { 1.0f, 0.5f, 0.1f },
+        };
+
+        /// <summary>Draw debug segments colour-coded by kind (#106): <paramref name="kinds"/> holds one byte per segment
+        /// (0 static, 1 kinematic, 2 dynamic, 3 sleeping, 4 joint, 5 character, 6 contact); a kind whose bit is not in
+        /// <paramref name="kindMask"/> is skipped.</summary>
+        public static void RenderPhysicsDebugLines(float[] segments, int floatCount, byte[] kinds, int kindMask, int maxSegments = 12000)
+        {
+            if (segments == null || floatCount < 6) return;
+            if (!_gizmosInitialized) InitializeGizmos();
+            if (_gizmoCube == ID.INVALID_ID) return;
+            int segs = Math.Min(floatCount / 6, maxSegments);
+            for (int i = 0; i < segs; i++)
+            {
+                int kind = kinds != null && i < kinds.Length ? Math.Min((int)kinds[i], _physicsDebugKindMaterials.Length - 1) : 2;
+                if ((kindMask & (1 << kind)) == 0) continue;
+                if (_physicsDebugKindMaterials[kind] <= 0)
+                {
+                    var c = _physicsDebugKindColors[kind];
+                    _physicsDebugKindMaterials[kind] = MakeUnlitMaterial(c[0], c[1], c[2]);
+                    if (_physicsDebugKindMaterials[kind] <= 0) continue;
+                }
+                SubmitDebugSegment(segments, i * 6, _physicsDebugKindMaterials[kind]);
+            }
+        }
 
         /// <summary>Draw physics debug segments (as returned by <see cref="PhysicsGetDebugLines"/>) as thin
         /// always-on-top wire boxes through the gizmo pass — the same technique the script Debug.DrawLine uses, so
@@ -309,30 +350,36 @@ namespace Editor.DllWrapper
             if (_physicsDebugMaterial == ID.INVALID_ID) return;
 
             int segs = Math.Min(floatCount / 6, maxSegments);
-            var m = new float[16];
+            for (int i = 0; i < segs; i++) SubmitDebugSegment(segments, i * 6, _physicsDebugMaterial);
+        }
+
+        private static readonly float[] _debugSegmentMatrix = new float[16];
+
+        /// <summary>One thin always-on-top wire box along the segment at <paramref name="o"/> (6 floats).</summary>
+        private static void SubmitDebugSegment(float[] segments, int o, long material)
+        {
+            var m = _debugSegmentMatrix;
             const float T = 0.015f;   // line thickness (m)
-            for (int i = 0; i < segs; i++)
             {
-                int o = i * 6;
                 float ax = segments[o], ay = segments[o + 1], az = segments[o + 2];
                 float bx = segments[o + 3], by = segments[o + 4], bz = segments[o + 5];
                 float dx = bx - ax, dy = by - ay, dz = bz - az;
                 float len = (float)Math.Sqrt(dx * dx + dy * dy + dz * dz);
-                if (len < 1e-5f) continue;
+                if (len < 1e-5f) return;
                 float ix = dx / len, iy = dy / len, iz = dz / len;
                 // Orthonormal frame around the segment direction (row-vector basis, like the script debug lines).
                 float ux = 0f, uy = 1f, uz = 0f;
                 if (Math.Abs(iy) > 0.99f) { uy = 0f; uz = 1f; }
                 float rx = uy * iz - uz * iy, ry = uz * ix - ux * iz, rz = ux * iy - uy * ix;
                 float rl = (float)Math.Sqrt(rx * rx + ry * ry + rz * rz);
-                if (rl < 1e-6f) continue;
+                if (rl < 1e-6f) return;
                 rx /= rl; ry /= rl; rz /= rl;
                 float upx = iy * rz - iz * ry, upy = iz * rx - ix * rz, upz = ix * ry - iy * rx;
                 m[0] = rx * T; m[1] = ry * T; m[2] = rz * T; m[3] = 0f;
                 m[4] = upx * T; m[5] = upy * T; m[6] = upz * T; m[7] = 0f;
                 m[8] = ix * len; m[9] = iy * len; m[10] = iz * len; m[11] = 0f;
                 m[12] = (ax + bx) * 0.5f; m[13] = (ay + by) * 0.5f; m[14] = (az + bz) * 0.5f; m[15] = 1f;
-                SubmitGizmoWireForRendering(_gizmoCube, _physicsDebugMaterial, m);
+                SubmitGizmoWireForRendering(_gizmoCube, material, m);
             }
         }
 

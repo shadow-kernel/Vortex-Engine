@@ -208,11 +208,20 @@ namespace VortexEditor.Panels
             m.Items.Add(new Separator());
             var phys = new MenuItem { Header = "Physics Debug (play)", ToggleType = MenuItemToggleType.CheckBox, IsChecked = Editor.Core.Services.Physics.PhysicsService.ShowPhysicsDebug };
             phys.Click += (a, b) => EditorCommands.TogglePhysicsDebug();
+            // #106: the debug layers — bodies (static grey / kinematic blue / dynamic cyan / sleeping dim), joints, characters, contacts
+            var layers = new MenuItem { Header = "Physics Debug Layers" };
+            foreach (var (name, flag) in new[] { ("Bodies", Editor.Core.Services.Physics.PhysicsService.DebugLayer.Bodies), ("Joints", Editor.Core.Services.Physics.PhysicsService.DebugLayer.Joints), ("Characters", Editor.Core.Services.Physics.PhysicsService.DebugLayer.Characters), ("Contacts", Editor.Core.Services.Physics.PhysicsService.DebugLayer.Contacts) })
+            {
+                var item = new MenuItem { Header = name, ToggleType = MenuItemToggleType.CheckBox, IsChecked = (Editor.Core.Services.Physics.PhysicsService.DebugLayers & flag) != 0 };
+                var f = flag;
+                item.Click += (a, b) => EditorCommands.TogglePhysicsDebugLayer(f);
+                layers.Items.Add(item);
+            }
             var all = new MenuItem { Header = "Show All Colliders", ToggleType = MenuItemToggleType.CheckBox, IsChecked = EditorViewportService.Instance.ShowAllColliders };
             all.Click += (a, b) => EditorCommands.ToggleAllColliders();
             var fx = new MenuItem { Header = "Preview Post Effects in Viewport", ToggleType = MenuItemToggleType.CheckBox, IsChecked = EnvironmentPanel.PreviewPostEffects };
             fx.Click += (a, b) => EnvironmentPanel.SetPreviewPostEffects(!EnvironmentPanel.PreviewPostEffects);
-            m.Items.Add(phys); m.Items.Add(all); m.Items.Add(fx);
+            m.Items.Add(phys); m.Items.Add(layers); m.Items.Add(all); m.Items.Add(fx);
             m.ShowAt(ViewOptionsButton);
         }
 
