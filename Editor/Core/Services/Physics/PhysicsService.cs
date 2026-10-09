@@ -909,6 +909,22 @@ namespace Editor.Core.Services.Physics
             if (e.Children != null) foreach (var c in e.Children) RemoveRecursive(c);
         }
 
+        /// <summary>A Rigidbody without ANY Collider component gets the render mesh's shape as its body ("just add a
+        /// Rigidbody to the crate"). An entity whose colliders exist but are all disabled gets nothing (#341): a
+        /// script that called Scene.SetColliderEnabled(e, false) must stay out of every query, whatever re-adds the
+        /// entity afterwards (RefreshCollider, SetActive, a ragdoll that settles).</summary>
+        internal static bool UsesMeshAsBody(GameEntity e)
+        {
+            if (e == null) return false;
+            var rb = e.GetComponent<Rigidbody>();
+            if (rb == null || !rb.IsEnabled || e.GetComponent<MeshRenderer>() == null) return false;
+            var colliders = e.GetComponents<Collider>();
+            if (colliders != null)
+                foreach (var c in colliders)
+                    if (c != null) return false;
+            return true;
+        }
+
         private static void CreateBodiesFor(GameEntity e)
         {
             var colliders = e.GetComponents<Collider>();
@@ -927,9 +943,9 @@ namespace Editor.Core.Services.Physics
             bool derivedFromMesh = false;
             if (solids.Count == 0 && triggers.Count == 0)
             {
-                // A Rigidbody without any Collider: the render mesh's shape stands in (a Collider is still the
-                // recommended setup — this keeps "just add a Rigidbody to the crate" working).
-                if (rb == null || e.GetComponent<MeshRenderer>() == null) return;
+                // the render mesh stands in only when there is no Collider component at all (#341) — disabled
+                // colliders mean "no body", not "fall back to the mesh"
+                if (!UsesMeshAsBody(e)) return;
                 derivedFromMesh = true;
             }
 

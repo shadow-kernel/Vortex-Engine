@@ -199,7 +199,9 @@ namespace Editor.Scripting
                 SetColliderFlagRecursive(e, enabled);
                 Editor.Core.Services.Physics.CollisionService.RemoveEntityShapes(e);
                 if (enabled && e.IsActive) Editor.Core.Services.Physics.CollisionService.AddEntityShapes(e);
-                // Rigid bodies follow the collider flags too (a disabled collider = no body).
+                // Rigid bodies follow the collider flags too (a disabled collider = no body) — a live ragdoll's part
+                // bodies included (#341): a hidden passenger must not be hit by the car's own probes.
+                if (!enabled && Editor.Core.Services.Physics.RagdollService.IsActive(e)) Editor.Core.Services.Physics.RagdollService.Deactivate(e);
                 Editor.Core.Services.Physics.PhysicsService.RemoveEntity(e);
                 if (enabled && e.IsActive) Editor.Core.Services.Physics.PhysicsService.AddEntity(e);
             }
