@@ -232,17 +232,24 @@ namespace Editor.Core.Services.Build
             if (Directory.Exists(assetsSrc))
             {
                 var files = Directory.GetFiles(assetsSrc, "*", SearchOption.AllDirectories);
+                // glTF files ship self-contained: the shipped game imports from memory, where a sibling .bin cannot be
+                // opened (#370) — the buffers are embedded and the .bin stays out of the pak
+                var consumedBins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var embeddedGltf = GltfEmbed.EmbedAll(files, consumedBins);
                 for (int i = 0; i < files.Length; i++)
                 {
                     var f = files[i];
                     if (Path.GetExtension(f).Equals(".cs", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (consumedBins.Contains(Path.GetFullPath(f))) continue;   // embedded into its .gltf
                     var rel = "Assets/" + f.Substring(assetsSrc.Length).TrimStart('\\', '/').Replace('\\', '/');
                     if (Path.GetExtension(f).Equals(".vscene", StringComparison.OrdinalIgnoreCase) && rel.StartsWith("Assets/Scenes/", StringComparison.OrdinalIgnoreCase))
                         sceneEntries.Add(new KeyValuePair<string, byte[]>(rel, File.ReadAllBytes(f)));
-                    else entries.Add(new KeyValuePair<string, byte[]>(rel, File.ReadAllBytes(f)));
+                    else entries.Add(new KeyValuePair<string, byte[]>(rel, embeddedGltf.TryGetValue(f, out var gltfBytes) ? gltfBytes : File.ReadAllBytes(f)));
                     assetCount++;
                     if ((i & 15) == 0) P(0.45 + 0.30 * ((double)i / Math.Max(1, files.Length)), "Packing assets… (" + assetCount + ")");
                 }
+                if (embeddedGltf.Count > 0)
+                    sb.AppendLine("• " + embeddedGltf.Count + " glTF file(s) packed self-contained (" + consumedBins.Count + " .bin buffer(s) embedded)");
             }
             if (scriptsDll != null && File.Exists(scriptsDll)) entries.Add(new KeyValuePair<string, byte[]>("GameScripts.dll", File.ReadAllBytes(scriptsDll)));
             var mixerCfg = Path.Combine(projectRoot, AudioMixerConfig.RelativePath.Replace('/', Path.DirectorySeparatorChar));
