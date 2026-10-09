@@ -17,7 +17,7 @@ namespace vortex::graphics::volumetrics
 	struct Params
 	{
 		bool enabled{ false };
-		float density{ 0.5f };         // scattering density (× the scene fog's height profile)
+		float density{ 0.03f };        // scattering density per metre (× the scene fog's height profile); 0.01 haze .. 0.1 thick
 		float anisotropy{ 0.55f };     // Henyey-Greenstein g: 0 = isotropic, towards 1 = forward (looking into lights)
 		float max_distance{ 60.0f };   // metres marched
 		float noise_strength{ 0.5f };  // 0 = uniform, 1 = fully patchy

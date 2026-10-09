@@ -1978,8 +1978,8 @@ namespace Vortex
         /// <paramref name="anisotropy"/> is the Henyey-Greenstein g (0 even, towards 1 bright halos looking into lights),
         /// <paramref name="noise"/> / <paramref name="noiseScale"/> / <paramref name="noiseSpeed"/> the wind-blown patchiness,
         /// <paramref name="sun"/> / <paramref name="lights"/> / <paramref name="ambient"/> the contributions, <paramref name="steps"/> the
-        /// quality (8..48). Scare ramps: call it again with a higher density. <c>Atmosphere.SetVolumetricFog(0.8f, anisotropy: 0.6f);</c></summary>
-        public static void SetVolumetricFog(float density = 0.5f, float anisotropy = 0.55f, float maxDistance = 60f, float noise = 0.5f,
+        /// quality (8..48). Density is per metre (0.01 a haze, 0.03 fog, 0.1 a thick cellar). Scare ramps: call it again with a higher density. <c>Atmosphere.SetVolumetricFog(0.08f, anisotropy: 0.6f);</c></summary>
+        public static void SetVolumetricFog(float density = 0.03f, float anisotropy = 0.55f, float maxDistance = 60f, float noise = 0.5f,
                                             float noiseScale = 6f, float noiseSpeed = 0.35f, float sun = 1f, float lights = 1f, float ambient = 0.35f,
                                             int steps = 24, bool shadows = true)
             { Editor.DllWrapper.VortexAPI.SetVolumetricFog(density > 0f, density, anisotropy, maxDistance, noise, noiseScale, noiseSpeed, sun, lights, ambient, steps, shadows); }

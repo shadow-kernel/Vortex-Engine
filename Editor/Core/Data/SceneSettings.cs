@@ -61,7 +61,7 @@ namespace Editor.Core.Data
         [DataMember(Name = "aoIntensity", Order = 62)] public float AoIntensity { get; set; } = 1.0f;
         // ---- Volumetric fog (#119): ray-marched in-scattering of the sun and the lights, over the fog's height profile ----
         [DataMember(Name = "volOn", Order = 70)] public bool VolumetricEnabled { get; set; }
-        [DataMember(Name = "volDensity", Order = 71)] public float VolumetricDensity { get; set; } = 0.5f;
+        [DataMember(Name = "volDensity", Order = 71)] public float VolumetricDensity { get; set; } = 0.03f;
         [DataMember(Name = "volAnisotropy", Order = 72)] public float VolumetricAnisotropy { get; set; } = 0.55f;
         [DataMember(Name = "volDistance", Order = 73)] public float VolumetricDistance { get; set; } = 60f;
         [DataMember(Name = "volNoise", Order = 74)] public float VolumetricNoise { get; set; } = 0.5f;
@@ -87,7 +87,7 @@ namespace Editor.Core.Data
             Contrast = 1.0f; Saturation = 1.0f;
             BloomThreshold = 0.75f; BloomKnee = 0.5f; BloomIntensity = 0.7f; BloomScatter = 0.65f;
             AoRadius = 0.6f; AoIntensity = 1.0f;
-            VolumetricDensity = 0.5f; VolumetricAnisotropy = 0.55f; VolumetricDistance = 60f; VolumetricNoise = 0.5f; VolumetricNoiseScale = 6f;
+            VolumetricDensity = 0.03f; VolumetricAnisotropy = 0.55f; VolumetricDistance = 60f; VolumetricNoise = 0.5f; VolumetricNoiseScale = 6f;
             VolumetricNoiseSpeed = 0.35f; VolumetricSun = 1f; VolumetricLights = 1f; VolumetricAmbient = 0.35f; VolumetricSteps = 24; VolumetricShadows = true;
         }
 
