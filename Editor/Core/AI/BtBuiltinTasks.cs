@@ -117,28 +117,30 @@ namespace Vortex.Tasks
     public sealed class MoveTo : BtTask
     {
         private Vector3 _sent;
-        private float _resend;
+        private float _resend, _sinceSend;
         private bool _any;
 
         public override void OnEnter()
         {
             float speed = ParamFloat("speed", 0f);
             if (speed > 0f) Navigation.SetSpeed(Agent, speed);
-            _any = false; _resend = 0f;
+            _any = false; _resend = 0f; _sinceSend = 0f;
         }
 
         public override BtStatus OnTick(float dt)
         {
             Vector3 p;
             if (!Targets.Resolve(Blackboard, Param("target", "Target"), out p)) return BtStatus.Failure;
-            _resend -= dt;
+            _resend -= dt; _sinceSend += dt;
             if (!_any || (_resend <= 0f && Dist2(p, _sent) > 0.25f))
             {
                 if (!Navigation.SetDestination(Agent, p)) return BtStatus.Failure;
-                _sent = p; _any = true; _resend = 0.25f;
+                _sent = p; _any = true; _resend = 0.25f; _sinceSend = 0f;
             }
+            // the crowd plans the path over the next ticks: "no path" only counts once the request had its chance and
+            // the agent dropped the destination (unreachable target, agent off the navmesh)
             var status = Navigation.PathStatus(Agent);
-            if (status == NavPathStatus.Invalid) return BtStatus.Failure;
+            if (status == NavPathStatus.Invalid && _sinceSend > 0.75f && !Navigation.HasDestination(Agent)) return BtStatus.Failure;
             float acceptance = ParamFloat("acceptance", 0f);
             if (acceptance > 0f)
             {
