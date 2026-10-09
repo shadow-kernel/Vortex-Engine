@@ -72,16 +72,39 @@ namespace vortex::graphics::dx12
 		auto serialize = get_serialize_root_signature();
 		if (!serialize) return false;
 
-		// One CBV for skybox constants
-		D3D12_ROOT_PARAMETER param{};
-		param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
-		param.Descriptor.ShaderRegister = 0;
-		param.Descriptor.RegisterSpace = 0;
-		param.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+		// b0: skybox constants; t0 (descriptor table) + static s0: the equirect sky texture (#326)
+		D3D12_DESCRIPTOR_RANGE range{};
+		range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+		range.NumDescriptors = 1;
+		range.BaseShaderRegister = 0;
+		range.RegisterSpace = 0;
+		range.OffsetInDescriptorsFromTableStart = 0;
+
+		D3D12_ROOT_PARAMETER params[2]{};
+		params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+		params[0].Descriptor.ShaderRegister = 0;
+		params[0].Descriptor.RegisterSpace = 0;
+		params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+		params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+		params[1].DescriptorTable.NumDescriptorRanges = 1;
+		params[1].DescriptorTable.pDescriptorRanges = &range;
+		params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+		D3D12_STATIC_SAMPLER_DESC sampler{};
+		sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+		sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+		sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+		sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+		sampler.MaxLOD = D3D12_FLOAT32_MAX;
+		sampler.ShaderRegister = 0;
+		sampler.RegisterSpace = 0;
+		sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
 		D3D12_ROOT_SIGNATURE_DESC desc{};
-		desc.NumParameters = 1;
-		desc.pParameters = &param;
+		desc.NumParameters = 2;
+		desc.pParameters = params;
+		desc.NumStaticSamplers = 1;
+		desc.pStaticSamplers = &sampler;
 		desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
 		ComPtr<ID3DBlob> signature, error;

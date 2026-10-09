@@ -273,7 +273,7 @@ namespace vortex::graphics::sdlgpu
 
 		// ---- AO + blur ----
 		const float aspect = (float)target_w / (float)(target_h ? target_h : 1);
-		XMMATRIX proj = XMMatrixPerspectiveFovLH(XMConvertToRadians(m_fov_degrees), aspect, 0.1f, 1000.0f);
+		XMMATRIX proj = XMMatrixPerspectiveFovLH(XMConvertToRadians(m_fov_degrees), aspect, m_near_clip, m_far_clip);
 		SsaoCB cb{};
 		XMStoreFloat4x4(&cb.inv_proj, XMMatrixInverse(nullptr, proj));
 		cb.texel[0] = 1.0f / (float)hw; cb.texel[1] = 1.0f / (float)hh;

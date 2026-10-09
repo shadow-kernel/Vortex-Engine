@@ -239,6 +239,12 @@ namespace vortex::graphics::sdlgpu
 		void set_skybox_enabled(bool enabled) { m_skybox_enabled = enabled; }
 		bool is_skybox_enabled() const { return m_skybox_enabled; }
 		void set_skybox_mode(SkyboxMode mode) { m_skybox_mode = mode; }
+		// Equirect texture sky (#326): the registry texture the fullscreen sky pass samples in SkyboxMode::Texture —
+		// behind everything at the far plane, no depth write, centred on whichever camera renders the frame.
+		void set_skybox_texture(id::id_type texture, float exposure, float rotation_radians)
+		{
+			m_sky_texture = texture; m_sky_exposure = exposure; m_sky_rotation = rotation_radians;
+		}
 		SkyboxMode get_skybox_mode() const { return m_skybox_mode; }
 		void set_skybox_colors(const DirectX::XMFLOAT3& sky, const DirectX::XMFLOAT3& horizon, const DirectX::XMFLOAT3& ground)
 		{
@@ -253,6 +259,14 @@ namespace vortex::graphics::sdlgpu
 		void set_projection(float fov_degrees, float aspect, float near_clip, float far_clip);
 		void set_field_of_view(float fov_degrees) { if (fov_degrees >= 30.0f && fov_degrees <= 120.0f) m_fov_degrees = fov_degrees; }
 		float field_of_view() const { return m_fov_degrees; }
+		// Near / far planes of the live view (#327): the main view, SSAO, grid and sky read these instead of a
+		// fixed 0.1 / 1000 m. Driven by the game's main Camera component in play mode.
+		void set_clip_planes(float near_clip, float far_clip)
+		{
+			if (near_clip > 0.0001f && far_clip > near_clip) { m_near_clip = near_clip; m_far_clip = far_clip; }
+		}
+		float near_clip() const { return m_near_clip; }
+		float far_clip() const { return m_far_clip; }
 		void set_viewmodel_fov(float fov_degrees) { if (fov_degrees >= 10.0f && fov_degrees <= 120.0f) m_viewmodel_fov = fov_degrees; }
 		void set_render_distance(float d) { m_render_distance = d >= 0.0f ? d : 0.0f; }
 		float render_distance() const { return m_render_distance; }
@@ -405,6 +419,7 @@ namespace vortex::graphics::sdlgpu
 			DirectX::XMFLOAT3 ground_color; float padding3;
 			DirectX::XMFLOAT3 sun_direction; float sun_intensity;
 			DirectX::XMFLOAT3 sun_color; float padding4;
+			DirectX::XMFLOAT4 params;   // x: 1 = sample the equirect texture (#326), y: exposure, z: yaw offset (radians)
 		};
 		struct PostFxCB
 		{
@@ -723,6 +738,9 @@ namespace vortex::graphics::sdlgpu
 		bool m_gizmos_visible{ true };
 		bool m_skybox_enabled{ true };
 		SkyboxMode m_skybox_mode{ SkyboxMode::Gradient };
+		id::id_type m_sky_texture{ id::invalid_id };
+		float m_sky_exposure{ 1.0f };
+		float m_sky_rotation{ 0.0f };
 		DirectX::XMFLOAT3 m_sky_color{ 0.3f, 0.5f, 0.85f };
 		DirectX::XMFLOAT3 m_horizon_color{ 0.7f, 0.8f, 0.9f };
 		DirectX::XMFLOAT3 m_ground_color{ 0.25f, 0.25f, 0.28f };

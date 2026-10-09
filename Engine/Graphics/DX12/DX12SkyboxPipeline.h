@@ -30,6 +30,12 @@ namespace vortex::graphics::dx12
 		
 		// Set sun parameters
 		void set_sun(const DirectX::XMFLOAT3& direction, const DirectX::XMFLOAT3& color, float intensity);
+
+		// Equirect texture sky (#326): mode 1 samples the texture bound at root parameter 1 (t0).
+		void set_texture_params(float mode, float exposure, float rotation_radians)
+		{
+			m_constants.params = { mode, exposure, rotation_radians, 0.0f };
+		}
 		
 		// Get constant buffer data
 		const void* get_constants() const { return &m_constants; }
@@ -60,6 +66,7 @@ namespace vortex::graphics::dx12
 			float sun_intensity;
 			DirectX::XMFLOAT3 sun_color;
 			float padding4;
+			DirectX::XMFLOAT4 params;   // x: 1 = sample the equirect texture at t0 (#326), y: exposure, z: yaw offset (radians)
 		};
 
 		SkyboxConstants m_constants{};

@@ -477,7 +477,7 @@ namespace vortex::graphics::sdlgpu
 		m_vs_grid = create_shader("grid", "GridVS", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 1);
 		m_fs_grid = create_shader("grid", "GridPS", SDL_GPU_SHADERSTAGE_FRAGMENT, 0, 0, 1);
 		m_vs_sky = create_shader("skybox", "SkyVS", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 1);
-		m_fs_sky = create_shader("skybox", "SkyPS", SDL_GPU_SHADERSTAGE_FRAGMENT, 0, 0, 1);
+		m_fs_sky = create_shader("skybox", "SkyPS", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0, 1);   // sampler 0: the equirect sky (#326)
 		m_vs_blit = create_shader("postfx", "BlitVS", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 0);
 		m_fs_blit = create_shader("postfx", "BlitPS", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0, 0);
 		m_fs_postfx = create_shader("postfx", "PostFxPS", SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 0, 1);

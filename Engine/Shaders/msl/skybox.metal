@@ -11,6 +11,7 @@ struct SkyboxConstants
     packed_float3 ground_color;    float padding3;
     packed_float3 sun_direction;   float sun_intensity;
     packed_float3 sun_color;       float padding4;
+    float4 params;   // x: 1 = sample the equirect texture (#326), y: exposure, z: yaw offset (radians)
 };
 
 struct SkyOut
@@ -32,10 +33,21 @@ vertex SkyOut SkyVS(uint id [[vertex_id]], constant SkyboxConstants& c [[buffer(
     return o;
 }
 
-fragment float4 SkyPS(SkyOut in [[stage_in]], constant SkyboxConstants& c [[buffer(0)]])
+fragment float4 SkyPS(SkyOut in [[stage_in]], constant SkyboxConstants& c [[buffer(0)]],
+                      texture2d<float> sky_tex [[texture(0)]], sampler sky_smp [[sampler(0)]])
 {
     float3 dir = normalize(in.world_dir);
     float y = dir.y;
+
+    // Equirect texture sky (#326): sampled at the far plane, no depth write, centred on the rendering camera.
+    // Mip 0 — the atan2 seam would otherwise pull the smallest mip into a visible line.
+    if (c.params.x > 0.5)
+    {
+        const float two_pi = 6.28318530718;
+        float u = atan2(dir.x, dir.z) / two_pi + 0.5 + c.params.z / two_pi;
+        float v = acos(clamp(y, -1.0, 1.0)) / 3.14159265359;
+        return float4(sky_tex.sample(sky_smp, float2(u, v), level(0)).rgb * c.params.y, 1.0);
+    }
     float3 color;
     if (y > 0.0)
     {

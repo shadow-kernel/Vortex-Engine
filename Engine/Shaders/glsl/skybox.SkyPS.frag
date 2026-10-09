@@ -5,6 +5,8 @@
 #include "common.glsl"
 #include "skybox_common.glsl"
 
+layout(set = 2, binding = 0) uniform sampler2D u_sky;   // the equirect sky (#326), white when unused
+
 layout(location = 0) in  vec3 v_world_dir;
 layout(location = 0) out vec4 o_color;
 
@@ -12,6 +14,16 @@ void main()
 {
 	vec3 dir = normalize(v_world_dir);
 	float y = dir.y;
+
+	// Equirect texture sky (#326): sampled at the far plane, no depth write, centred on the rendering camera.
+	if (c.params.x > 0.5)
+	{
+		const float two_pi = 6.28318530718;
+		float u = atan(dir.x, dir.z) / two_pi + 0.5 + c.params.z / two_pi;
+		float v = acos(clamp(y, -1.0, 1.0)) / 3.14159265359;
+		o_color = vec4(textureLod(u_sky, vec2(u, v), 0.0).rgb * c.params.y, 1.0);
+		return;
+	}
 	vec3 color;
 	if (y > 0.0)
 	{

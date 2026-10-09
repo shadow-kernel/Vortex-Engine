@@ -301,6 +301,11 @@ namespace vortex::graphics::dx12
 		void set_skybox_enabled(bool enabled) { m_skybox_enabled = enabled; }
 		bool is_skybox_enabled() const { return m_skybox_enabled; }
 		void set_skybox_mode(SkyboxMode mode);
+		// Equirect texture sky (#326): the registry texture the fullscreen sky pass samples in SkyboxMode::Texture.
+		void set_skybox_texture(id::id_type texture, float exposure, float rotation_radians)
+		{
+			m_sky_texture = texture; m_sky_exposure = exposure; m_sky_rotation = rotation_radians;
+		}
 		SkyboxMode get_skybox_mode() const { return m_skybox_mode; }
 		void set_skybox_colors(
 			const DirectX::XMFLOAT3& sky_color,
@@ -314,6 +319,14 @@ namespace vortex::graphics::dx12
 		// Vertical FOV (degrees) used by the live view camera (editor play + standalone). Settable from the game.
 		void set_field_of_view(float fov_degrees) { if (fov_degrees >= 30.0f && fov_degrees <= 120.0f) m_fov_degrees = fov_degrees; }
 		float field_of_view() const { return m_fov_degrees; }
+		// Near / far planes of the live view (#327): the main view, SSAO, grid and sky read these instead of a
+		// fixed 0.1 / 1000 m. Driven by the game's main Camera component in play mode.
+		void set_clip_planes(float near_clip, float far_clip)
+		{
+			if (near_clip > 0.0001f && far_clip > near_clip) { m_near_clip = near_clip; m_far_clip = far_clip; }
+		}
+		float near_clip() const { return m_near_clip; }
+		float far_clip() const { return m_far_clip; }
 		// Viewmodel FOV (#175): the first-person layer's own projection (world FOV distortion never
 		// touches the arms/weapon). Wider clamp than the world FOV — ADS zooms want < 30.
 		void set_viewmodel_fov(float fov_degrees) { if (fov_degrees >= 10.0f && fov_degrees <= 120.0f) m_viewmodel_fov = fov_degrees; }
@@ -757,6 +770,9 @@ namespace vortex::graphics::dx12
 		bool m_gizmos_visible{ true };
 		bool m_skybox_enabled{ false };
 		SkyboxMode m_skybox_mode{ SkyboxMode::Gradient };
+		id::id_type m_sky_texture{ id::invalid_id };
+		float m_sky_exposure{ 1.0f };
+		float m_sky_rotation{ 0.0f };
 		// last gradient colours (the skybox pipeline keeps its own copy) -> PerFrame env for metal reflections
 		DirectX::XMFLOAT3 m_env_sky{ 0.3f, 0.5f, 0.85f };
 		DirectX::XMFLOAT3 m_env_horizon{ 0.7f, 0.8f, 0.9f };

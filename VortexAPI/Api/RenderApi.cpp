@@ -436,6 +436,12 @@ EDITOR_INTERFACE float GetViewFieldOfView()
 	return graphics::Renderer::instance().field_of_view();
 }
 
+// Near / far planes of the live view camera (#327) — the main Camera component's values in play mode.
+EDITOR_INTERFACE void SetViewClipPlanes(float near_clip, float far_clip)
+{
+	graphics::Renderer::instance().set_clip_planes(near_clip, far_clip);
+}
+
 // Grid and Gizmo control
 EDITOR_INTERFACE void SetGridVisible(bool visible)
 {

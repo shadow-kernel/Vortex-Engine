@@ -38,8 +38,18 @@ namespace vortex::graphics::dx12
 		XMVECTOR up = XMLoadFloat3(&m_camera_up);
 		XMMATRIX view = XMMatrixLookAtLH(eye, at, up);
 		float aspect = (float)m_active_width / (float)m_active_height;
-		XMMATRIX proj = XMMatrixPerspectiveFovLH(XMConvertToRadians(m_fov_degrees), aspect, 0.1f, 1000.0f); // MUST match the scene FOV (update_per_frame_constants) or grid/sky misalign vs objects
+		XMMATRIX proj = XMMatrixPerspectiveFovLH(XMConvertToRadians(m_fov_degrees), aspect, m_near_clip, m_far_clip); // MUST match the scene projection (update_per_frame_constants) or grid/sky misalign vs objects
 		XMMATRIX vp = view * proj;
+
+		// the equirect map (#326) — or the white texture, so t0 always holds a valid descriptor
+		{
+			auto& reg = ResourceRegistry::instance();
+			Texture* sky = (m_skybox_mode == SkyboxMode::Texture && m_sky_texture != id::invalid_id) ? reg.get_texture(m_sky_texture) : nullptr;
+			m_skybox_pipeline.set_texture_params(sky ? 1.0f : 0.0f, m_sky_exposure, m_sky_rotation);
+			if (!sky) sky = reg.get_texture(reg.default_white_texture());
+			if (auto* heap = reg.srv_heap()) { ID3D12DescriptorHeap* heaps[] = { heap }; m_command_list->SetDescriptorHeaps(1, heaps); }
+			if (sky && sky->srv_gpu().ptr != 0) m_command_list->SetGraphicsRootDescriptorTable(1, sky->srv_gpu());
+		}
 
 		// Update skybox constants with inverse VP matrix
 		auto constants_ptr = reinterpret_cast<u8*>(m_skybox_cb_mapped);

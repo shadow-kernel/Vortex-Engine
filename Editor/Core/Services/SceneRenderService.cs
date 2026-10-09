@@ -2201,16 +2201,15 @@ namespace Editor.Core.Services
                         
                     case SkyboxType.Cubemap:
                     case SkyboxType.Texture:
-                        // IMPORTANT: Disable the built-in gradient skybox when using texture
-                        VortexAPI.EnableSkybox(false);
-                        
-                        // Render skybox with texture on built-in sphere or custom mesh
-                        if (!string.IsNullOrEmpty(skybox.TexturePath))
+                        // an equirect texture is sampled by the renderer's fullscreen sky pass (#326): behind
+                        // everything, centred on whichever camera renders the frame, no depth write, no fog
+                        if (!string.IsNullOrEmpty(skybox.TexturePath) && SubmitSkyboxWithTexture(skybox))
                         {
-                            SubmitSkyboxWithTexture(skybox);
+                            // the sky pass is on, in Texture mode
                         }
                         else if (!string.IsNullOrEmpty(skybox.SkyboxMeshPath))
                         {
+                            VortexAPI.EnableSkybox(false);   // a custom sky mesh replaces the built-in pass
                             SubmitSkyboxMesh(skybox);
                         }
                         else
@@ -2315,128 +2314,45 @@ namespace Editor.Core.Services
         }
 
         // Cache for built-in skybox sphere
-        private long _skyboxSphereId = -1;
-        private long _skyboxMaterialId = -1;
         private long _skyboxTextureId = -1;
         private string _cachedSkyboxTexturePath = null;
-        private float _cachedSkyboxExposure = -1f;
 
         /// <summary>
         /// Submit a skybox with texture on a built-in inverted sphere.
         /// This is the simplest and most reliable way to render a textured skybox.
         /// </summary>
-        private void SubmitSkyboxWithTexture(Skybox skybox)
+        /// <summary>Texture sky (#326): hand the equirect map to the renderer's fullscreen sky pass, which draws it
+        /// behind all geometry at the far plane without a depth write, centred on the camera that renders the frame
+        /// and outside the fog — no 1000 m sphere mesh around the editor camera any more. False when the texture
+        /// cannot be loaded (the caller falls back to the gradient).</summary>
+        private bool SubmitSkyboxWithTexture(Skybox skybox)
         {
             var texturePath = skybox.TexturePath;
-            var exposure = skybox.Exposure;
             var projectPath = Data.ProjectData.Current?.Path ?? "";
-            
-            // Build full texture path
             var fullTexturePath = System.IO.Path.IsPathRooted(texturePath)
                 ? texturePath
                 : System.IO.Path.Combine(projectPath, texturePath);
 
-            // Check if texture file exists
-            if (!AssetVfs.Exists(fullTexturePath))
+            if (_cachedSkyboxTexturePath != fullTexturePath)
             {
-                Log($"[SceneRenderService] Skybox texture not found: {fullTexturePath}");
-                return;
-            }
-
-            // Check if we need to reload (texture path or exposure changed)
-            bool needsReload = _cachedSkyboxTexturePath != fullTexturePath || 
-                               Math.Abs(_cachedSkyboxExposure - exposure) > 0.01f;
-                               
-            if (needsReload)
-            {
-                Log($"[SceneRenderService] Loading skybox texture: {fullTexturePath} (exposure={exposure})");
-                
-                // Create sphere if not exists (only once)
-                if (_skyboxSphereId < 0)
+                // a new path: load it once; a missing file is remembered too, so the fallback does not retry every frame
+                _cachedSkyboxTexturePath = fullTexturePath;
+                _skyboxTextureId = -1;
+                if (!AssetVfs.Exists(fullTexturePath))
+                    Log($"[SceneRenderService] Skybox texture not found: {fullTexturePath}");
+                else
                 {
-                    // Try to create inverted sphere, fall back to normal sphere
-                    try
-                    {
-                        _skyboxSphereId = VortexAPI.CreateInvertedSphereMesh(1.0f);
-                    }
-                    catch
-                    {
-                        _skyboxSphereId = VortexAPI.CreateSphereMesh(1.0f);
-                    }
-                    
-                    if (_skyboxSphereId < 0)
-                    {
-                        _skyboxSphereId = VortexAPI.CreateSphereMesh(1.0f);
-                    }
-                    Log($"[SceneRenderService] Created skybox sphere: {_skyboxSphereId}");
-                }
-
-                // Load texture
-                long newTextureId = ImportTexturePath(fullTexturePath);
-                if (newTextureId < 0)
-                {
-                    Log($"[SceneRenderService] Failed to load skybox texture");
-                    return;
-                }
-
-                // Create or update material
-                if (_skyboxMaterialId < 0)
-                {
-                    _skyboxMaterialId = VortexAPI.CreateNewMaterial();
-                }
-
-                if (_skyboxMaterialId >= 0)
-                {
-                    // Set material properties for skybox (UNLIT - no lighting, controlled by exposure)
-                    VortexAPI.SetMaterialBaseColor(_skyboxMaterialId, 1.0f, 1.0f, 1.0f, 1.0f);
-                    VortexAPI.SetMaterialAlbedoTexture(_skyboxMaterialId, newTextureId);
-                    
-                    // CRITICAL: Set material as unlit so it ignores all scene lighting
-                    VortexAPI.SetMaterialAsUnlit(_skyboxMaterialId, true);
-                    // Use exposure from skybox component (typically 0.1-4.0)
-                    VortexAPI.SetMaterialEmissiveBrightness(_skyboxMaterialId, exposure);
-                    
-                    
-                    _skyboxTextureId = newTextureId;
-                    _cachedSkyboxTexturePath = fullTexturePath;
-                    _cachedSkyboxExposure = exposure;
-                    
-                    Log($"[SceneRenderService] Skybox ready (UNLIT, exposure={exposure}): sphere={_skyboxSphereId}, material={_skyboxMaterialId}, texture={newTextureId}");
+                    Log($"[SceneRenderService] Loading skybox texture: {fullTexturePath}");
+                    _skyboxTextureId = ImportTexturePath(fullTexturePath);
+                    if (_skyboxTextureId < 0) Log("[SceneRenderService] Failed to load skybox texture");
                 }
             }
-            else if (_skyboxMaterialId >= 0 && Math.Abs(_cachedSkyboxExposure - exposure) > 0.01f)
-            {
-                // Just update exposure without reloading texture (for smooth slider operation)
-                VortexAPI.SetMaterialEmissiveBrightness(_skyboxMaterialId, exposure);
-                _cachedSkyboxExposure = exposure;
-            }
+            if (_skyboxTextureId < 0) return false;
 
-            // Render the skybox sphere
-            if (_skyboxSphereId >= 0 && _skyboxMaterialId >= 0)
-            {
-                // Get camera position to center the skybox sphere around the camera
-                // This prevents the "rectangular anomaly" artifacts when flying high
-                var cameraController = EditorCameraController.Instance;
-                float camX = cameraController?.PositionX ?? 0f;
-                float camY = cameraController?.PositionY ?? 0f;
-                float camZ = cameraController?.PositionZ ?? 0f;
-                
-                // Use a smaller scale that fits within the far clip plane (typically 1000)
-                // The sphere should be large enough to encompass all objects but smaller than far plane
-                float scale = 1000.0f;
-                
-                // Create world matrix with translation to camera position
-                // This ensures the skybox always surrounds the camera regardless of position
-                float[] worldMatrix = new float[16]
-                {
-                    scale, 0, 0, 0,
-                    0, scale, 0, 0,
-                    0, 0, scale, 0,
-                    camX, camY, camZ, 1
-                };
-
-                VortexAPI.SubmitMeshForRendering(_skyboxSphereId, _skyboxMaterialId, worldMatrix);
-            }
+            VortexAPI.EnableSkybox(true);
+            VortexAPI.SetSkyboxRenderMode(VortexAPI.SkyboxMode.Texture);
+            VortexAPI.ApplySkyboxTexture(_skyboxTextureId, skybox.Exposure, 0f);
+            return true;
         }
 
         // Cache for skybox mesh
@@ -2533,14 +2449,9 @@ namespace Editor.Core.Services
                 }
             }
 
-            // Get camera position to center the skybox mesh around the camera
-            var cameraController = EditorCameraController.Instance;
-            float camX = cameraController?.PositionX ?? 0f;
-            float camY = cameraController?.PositionY ?? 0f;
-            float camZ = cameraController?.PositionZ ?? 0f;
-            
-            // Use a scale that fits within the far clip plane
-            float scale = 500.0f;
+            // centred on the camera that renders the frame — the game camera while playing, the editor's otherwise —
+            // and sized to stay inside that camera's far plane (#326)
+            SkyMeshPlacement(out float camX, out float camY, out float camZ, out float scale);
             
             // Create world matrix with translation to camera position
             float[] worldMatrix = new float[16]
@@ -2555,6 +2466,24 @@ namespace Editor.Core.Services
             VortexAPI.SubmitMeshForRendering(cached.meshId, cached.materialId, worldMatrix);
         }
 
+        /// <summary>Where a camera-following sky mesh goes this frame: the render camera's world position and a radius
+        /// inside its far plane (#326) — the game camera while playing, the editor camera otherwise.</summary>
+        private void SkyMeshPlacement(out float x, out float y, out float z, out float scale)
+        {
+            float far = RaycastService.EditorFarClip;
+            if (IsPlayLike && PlayCameraHelper.TryGetMainCameraWorld(Data.ProjectData.Current?.ActiveScene, out var pos, out _, out var cam))
+            {
+                x = pos.X; y = pos.Y; z = pos.Z;
+                if (cam != null && cam.FarClip > 1f) far = cam.FarClip;
+            }
+            else
+            {
+                var c = EditorCameraController.Instance;
+                x = c?.PositionX ?? 0f; y = c?.PositionY ?? 0f; z = c?.PositionZ ?? 0f;
+            }
+            scale = far * 0.9f;
+        }
+
         /// <summary>
         /// Clear cached skybox mesh and texture (call when skybox properties change).
         /// </summary>
@@ -2562,14 +2491,7 @@ namespace Editor.Core.Services
         {
             _skyboxMeshCache.Clear();
             _cachedSkyboxTexturePath = null; // Force reload of texture
-            
-            // Delete the old sphere to force recreation with inverted normals
-            if (_skyboxSphereId >= 0)
-            {
-                VortexAPI.DeleteMesh(_skyboxSphereId);
-                _skyboxSphereId = -1;
-            }
-            
+            _skyboxTextureId = -1;
             Log("[SceneRenderService] Skybox cache cleared");
         }
 

@@ -234,6 +234,7 @@ namespace Editor.Core.Viewport
                 if (_editorFovApplied != RaycastService.EditorFovYDegrees)
                 {
                     VortexAPI.SetViewFOV(RaycastService.EditorFovYDegrees);
+                    VortexAPI.SetViewClipPlanes(RaycastService.EditorNearClip, RaycastService.EditorFarClip);   // the game may have set its own (#327)
                     _editorFovApplied = RaycastService.EditorFovYDegrees;
                 }
                 if (_playGridHidden) { VortexAPI.ShowGrid(_savedGrid); _playGridHidden = false; }

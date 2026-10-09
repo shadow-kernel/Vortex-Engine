@@ -205,7 +205,7 @@ namespace vortex::graphics::sdlgpu
 		XMVECTOR up = XMLoadFloat3(&m_camera_up);
 		XMMATRIX view = XMMatrixLookAtLH(eye, at, up);
 		const float aspect = (float)width / (float)(height ? height : 1);
-		XMMATRIX proj = XMMatrixPerspectiveFovLH(XMConvertToRadians(m_fov_degrees), aspect, 0.1f, 1000.0f);
+		XMMATRIX proj = XMMatrixPerspectiveFovLH(XMConvertToRadians(m_fov_degrees), aspect, m_near_clip, m_far_clip);
 		XMMATRIX vp = view * proj;
 
 		v.frame = m_frame_constants;   // keeps the persistent fog fields
@@ -228,7 +228,7 @@ namespace vortex::graphics::sdlgpu
 		XMMATRIX vm_proj = XMMatrixPerspectiveFovLH(XMConvertToRadians(m_viewmodel_fov), aspect, VIEWMODEL_NEAR, VIEWMODEL_FAR);
 		XMStoreFloat4x4(&v.viewmodel.view_projection, view * vm_proj);
 		camera_basis(m_camera_position, m_camera_target, m_camera_up, v.right, v.up, v.forward);
-		v.near_clip = 0.1f; v.far_clip = 1000.0f; v.ortho = false;
+		v.near_clip = m_near_clip; v.far_clip = m_far_clip; v.ortho = false;
 		v.tan_half_y = tanf(XMConvertToRadians(m_fov_degrees) * 0.5f);
 		v.tan_half_x = v.tan_half_y * aspect;
 		fill_light_buffer();
@@ -643,9 +643,19 @@ namespace vortex::graphics::sdlgpu
 		c.camera_position = view.eye;
 		c.sky_color = m_sky_color; c.horizon_color = m_horizon_color; c.ground_color = m_ground_color;
 		c.sun_direction = m_sun_direction; c.sun_intensity = m_sun_intensity; c.sun_color = m_sun_color;
+		// the equirect map (#326) — or the white texture, so sampler slot 0 is always bound
+		auto& reg = ResourceRegistry::instance();
+		Texture* sky = (m_skybox_mode == SkyboxMode::Texture && m_sky_texture != id::invalid_id) ? reg.get_texture(m_sky_texture) : nullptr;
+		c.params = { sky ? 1.0f : 0.0f, m_sky_exposure, m_sky_rotation, 0.0f };
+		if (!sky) sky = reg.white_texture();
 		SDL_BindGPUGraphicsPipeline(pass, m_pipeline_skybox);
 		SDL_PushGPUVertexUniformData(cmd, 0, &c, sizeof(c));
 		SDL_PushGPUFragmentUniformData(cmd, 0, &c, sizeof(c));
+		if (sky && sky->texture())
+		{
+			SDL_GPUTextureSamplerBinding tex{ sky->texture(), m_sampler_linear_wrap };
+			SDL_BindGPUFragmentSamplers(pass, 0, &tex, 1);
+		}
 		SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
 		++m_draw_call_count;
 	}
