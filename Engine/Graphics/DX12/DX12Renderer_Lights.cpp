@@ -54,11 +54,14 @@ namespace vortex::graphics::dx12
 	// Viewmodel b0 clone (#175): identical frame constants with ONLY the projection swapped to the
 	// viewmodel FOV (same view, same near/far, same aspect) — world FOV distortion never reaches the
 	// first-person arms/weapon. Written here (view matrix is local) like the main copy above.
+	{
+		XMMATRIX vmProj = XMMatrixPerspectiveFovLH(XMConvertToRadians(m_viewmodel_fov), aspect, VIEWMODEL_NEAR, VIEWMODEL_FAR);
+		XMStoreFloat4x4(&m_viewmodel_view_projection, view * vmProj);   // the viewmodel particle layer (#117) projects with it too
+	}
 	if (m_viewmodel_cb_mapped)
 	{
 		PerFrameConstants vm = m_frame_constants;
-		XMMATRIX vmProj = XMMatrixPerspectiveFovLH(XMConvertToRadians(m_viewmodel_fov), aspect, VIEWMODEL_NEAR, VIEWMODEL_FAR);
-		XMStoreFloat4x4(&vm.view_projection, view * vmProj);
+		vm.view_projection = m_viewmodel_view_projection;
 		memcpy(m_viewmodel_cb_mapped, &vm, sizeof(vm));
 	}
 			

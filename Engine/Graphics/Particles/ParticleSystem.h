@@ -318,7 +318,7 @@ namespace vortex::particles
 		float simulate_ms, gather_ms;
 		u64 spawned_total;
 		u32 depth_snapshots;
-		u32 renderer_draws;   // 1 when the active render backend draws particles (SDL GPU), 0 on DX12
+		u32 renderer_draws;   // 1 when the active render backend draws particles (SDL GPU and, since #117, DX12)
 	};
 	void get_stats(u32 world, Stats& out);   // ALL_WORLDS for everything
 	void note_gather_time(float ms, u32 drawn, u32 batches, u32 ribbon_vertices);
