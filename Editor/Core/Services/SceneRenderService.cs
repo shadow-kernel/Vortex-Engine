@@ -119,6 +119,52 @@ namespace Editor.Core.Services
         public static double LastSubmitMs;
         public static int LastSubmitMeshes;
         private readonly Dictionary<Guid, long> _entityMaterials = new Dictionary<Guid, long>();
+
+        // ---- shared plain materials (#364 D) --------------------------------------------------------------------
+        // A primitive / plain-colour entity used to get its OWN native material, so 8k identical cubes were 8k material
+        // ids — and the renderer only merges consecutive items with the same mesh AND material into one instanced run,
+        // so they never instanced. Now one native material per (colour, metallic, roughness) is shared by every entity
+        // with that look. Copy-on-write: a shared material is never mutated in place — a recoloured entity switches to
+        // the shared material of its new colour, so recolouring one cube cannot recolour the others.
+        internal struct MaterialKey : IEquatable<MaterialKey>
+        {
+            public float R, G, B, A, Metallic, Roughness;
+            public long Texture;
+            public bool Equals(MaterialKey o) => R == o.R && G == o.G && B == o.B && A == o.A && Metallic == o.Metallic && Roughness == o.Roughness && Texture == o.Texture;
+            public override bool Equals(object obj) => obj is MaterialKey k && Equals(k);
+            public override int GetHashCode()
+            {
+                unchecked
+                {
+                    int h = R.GetHashCode(); h = h * 31 + G.GetHashCode(); h = h * 31 + B.GetHashCode(); h = h * 31 + A.GetHashCode();
+                    h = h * 31 + Metallic.GetHashCode(); h = h * 31 + Roughness.GetHashCode(); h = h * 31 + Texture.GetHashCode();
+                    return h;
+                }
+            }
+        }
+        private static readonly Dictionary<MaterialKey, long> _sharedPlainMaterials = new Dictionary<MaterialKey, long>();
+        // Every SHARED material id (plain materials above + the per-mesh-path import materials): never DeleteMaterial'd
+        // on behalf of one entity. (ClearAllRenderables used to delete a model's shared import material once per
+        // entity that used it — a double free of the same kind the shared meshes had.)
+        private static readonly HashSet<long> _sharedMaterialIds = new HashSet<long>();
+        private readonly Dictionary<Guid, MaterialKey> _entityMaterialKey = new Dictionary<Guid, MaterialKey>();
+
+        /// <summary>The shared native material for a plain look, created on first use.</summary>
+        private static long GetOrCreatePlainMaterial(MaterialKey key)
+        {
+            long id;
+            if (_sharedPlainMaterials.TryGetValue(key, out id) && id >= 0) return id;
+            id = VortexAPI.CreateNewMaterial();
+            if (id < 0) return id;
+            VortexAPI.SetMaterialBaseColor(id, key.R, key.G, key.B, key.A);
+            // Push PBR scalars too — otherwise the engine keeps its material defaults and a freshly created primitive
+            // renders far too dark (metallic surface, one weak light).
+            VortexAPI.SetMaterialMetallicValue(id, key.Metallic);
+            VortexAPI.SetMaterialRoughnessValue(id, key.Roughness);
+            _sharedPlainMaterials[key] = id;
+            _sharedMaterialIds.Add(id);
+            return id;
+        }
         
         // Track mesh paths to detect changes
         private readonly Dictionary<Guid, string> _entityMeshPaths = new Dictionary<Guid, string>();
@@ -232,6 +278,7 @@ namespace Editor.Core.Services
             if (!string.IsNullOrEmpty(meshPath) && materialId >= 0)
             {
                 _meshPathToMaterialId[meshPath] = materialId;
+                _sharedMaterialIds.Add(materialId);   // shared by every entity of that model: never deleted per entity
                 Log($"[SceneRenderService] Registered material {materialId} for mesh path: {meshPath}");
             }
         }
@@ -1656,50 +1703,35 @@ namespace Editor.Core.Services
                 }
             }
 
-            var currentColor = (renderer.ColorR, renderer.ColorG, renderer.ColorB, renderer.ColorA);
-            
-            // Check if material color changed (dirty check)
-            bool needsUpdate = false;
-            if (_entityMaterialColors.TryGetValue(entityId, out var cachedColor))
+            // Plain look (primitives, single meshes without a material): a SHARED native material per look (#364 D).
+            var key = new MaterialKey
             {
-                if (cachedColor != currentColor)
+                R = renderer.ColorR, G = renderer.ColorG, B = renderer.ColorB, A = renderer.ColorA,
+                Metallic = renderer.Metallic, Roughness = renderer.Roughness, Texture = -1,
+            };
+            long existingMaterial;
+            if (_entityMaterials.TryGetValue(entityId, out existingMaterial) && existingMaterial >= 0)
+            {
+                MaterialKey oldKey;
+                if (_entityMaterialKey.TryGetValue(entityId, out oldKey) && oldKey.Equals(key)) return existingMaterial;
+                if (!_sharedMaterialIds.Contains(existingMaterial))
                 {
-                    needsUpdate = true;
+                    // this entity's own (textured) material: keep updating it in place, as before
+                    VortexAPI.SetMaterialBaseColor(existingMaterial, key.R, key.G, key.B, key.A);
+                    _entityMaterialKey[entityId] = key;
+                    _entityMaterialColors[entityId] = (key.R, key.G, key.B, key.A);
+                    return existingMaterial;
                 }
+                // a shared material: the look changed, so switch to the shared material of the NEW look (copy-on-write)
             }
-            else
+            long shared = GetOrCreatePlainMaterial(key);
+            if (shared >= 0)
             {
-                needsUpdate = true;
+                _entityMaterials[entityId] = shared;
+                _entityMaterialKey[entityId] = key;
+                _entityMaterialColors[entityId] = (key.R, key.G, key.B, key.A);
             }
-
-            // Check if we already have a material for this entity
-            if (_entityMaterials.TryGetValue(entityId, out long existingMaterial))
-            {
-                // Update color if needed
-                if (needsUpdate)
-                {
-                    VortexAPI.SetMaterialBaseColor(existingMaterial, 
-                        renderer.ColorR, renderer.ColorG, renderer.ColorB, renderer.ColorA);
-                    _entityMaterialColors[entityId] = currentColor;
-                }
-                return existingMaterial;
-            }
-
-            // Create new material
-            long materialId = VortexAPI.CreateNewMaterial();
-            if (materialId >= 0)
-            {
-                VortexAPI.SetMaterialBaseColor(materialId,
-                    renderer.ColorR, renderer.ColorG, renderer.ColorB, renderer.ColorA);
-                // Push PBR scalars too — otherwise the engine keeps its material defaults and a
-                // freshly created primitive renders far too dark (metallic surface, one weak light).
-                VortexAPI.SetMaterialMetallicValue(materialId, renderer.Metallic);
-                VortexAPI.SetMaterialRoughnessValue(materialId, renderer.Roughness);
-                _entityMaterials[entityId] = materialId;
-                _entityMaterialColors[entityId] = currentColor;
-            }
-
-            return materialId;
+            return shared;
         }
 
         private float[] BuildWorldMatrix(Transform transform)
@@ -1860,8 +1892,18 @@ namespace Editor.Core.Services
             // Per-entity material (primitives / single mesh / texture fallback).
             if (_entityMaterials.TryGetValue(entity.Id, out long matId) && matId >= 0)
             {
-                VortexAPI.SetMaterialBaseColor(matId, r, g, b, a);
-                _entityMaterialColors[entity.Id] = (r, g, b, a);
+                if (_sharedMaterialIds.Contains(matId))
+                {
+                    // shared with other entities (copy-on-write, #364 D): never recolour it in place — move this entity
+                    // to the shared material of its new colour and have the scene re-submit
+                    if (mr != null) GetOrCreateMaterial(entity.Id, mr);
+                    RuntimeDirty = true;
+                }
+                else
+                {
+                    VortexAPI.SetMaterialBaseColor(matId, r, g, b, a);
+                    _entityMaterialColors[entity.Id] = (r, g, b, a);
+                }
             }
 
             // Imported multi-submesh models have no per-entity material — tint the shared per-mesh-path materials
@@ -1919,12 +1961,13 @@ namespace Editor.Core.Services
 
             if (_entityMaterials.TryGetValue(entityId, out long materialId))
             {
-                VortexAPI.DeleteMaterial(materialId);
+                if (!_sharedMaterialIds.Contains(materialId)) VortexAPI.DeleteMaterial(materialId);   // shared: others use it
                 _entityMaterials.Remove(entityId);
             }
 
             _entityMeshPaths.Remove(entityId);
             _entityMaterialColors.Remove(entityId);
+            _entityMaterialKey.Remove(entityId);
             
             // Also remove camera if exists
             RemoveEntityCamera(entityId);
@@ -1953,11 +1996,16 @@ namespace Editor.Core.Services
             }
             _entityMeshes.Clear();
 
+            // delete only this entity's own materials, each id once; shared ones (plain looks, import materials) stay
+            // resident for reuse — deleting them per entity was a double free
+            var deletedMaterials = new HashSet<long>();
             foreach (var materialId in _entityMaterials.Values)
             {
+                if (materialId < 0 || _sharedMaterialIds.Contains(materialId) || !deletedMaterials.Add(materialId)) continue;
                 VortexAPI.DeleteMaterial(materialId);
             }
             _entityMaterials.Clear();
+            _entityMaterialKey.Clear();
 
             _entityMeshPaths.Clear();
             _entityMaterialColors.Clear();
