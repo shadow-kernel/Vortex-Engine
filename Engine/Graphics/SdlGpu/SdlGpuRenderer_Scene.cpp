@@ -872,6 +872,9 @@ namespace vortex::graphics::sdlgpu
 			if (run.skinned && m_pipeline_skinned && mesh->vertex_stride() == 52)
 			{
 				pipeline = run.mirrored && m_pipeline_skinned_m ? m_pipeline_skinned_m : m_pipeline_skinned;
+				// a custom material shader applies to skinned meshes too (#332): engine skinning VS + its PSMain
+				SDL_GPUGraphicsPipeline* custom = has_custom ? custom_pipeline((u32)run.mat, 0, two_sided, run.mirrored, true) : nullptr;
+				if (custom) pipeline = custom;
 				skinned_draw = true;
 			}
 			else

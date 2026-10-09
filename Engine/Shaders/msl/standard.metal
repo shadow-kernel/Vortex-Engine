@@ -200,6 +200,35 @@ vertex float4 ShadowVSSkinnedLayout(SkinnedVertexIn in [[stage_in]], constant Pe
 
 fragment void ShadowPS() {}
 
+// cut-out casters (#329): the albedo alpha decides what casts — foliage, fences, hair cards
+struct ShadowCutOut { float4 pos [[position]]; float2 uv; };
+vertex ShadowCutOut ShadowVSCut(VertexIn in [[stage_in]], constant PerFrame& frame [[buffer(0)]])
+{
+    float4x4 world = float4x4(in.iw0, in.iw1, in.iw2, in.iw3);
+    ShadowCutOut o;
+    o.pos = frame.view_projection * (world * float4(in.pos, 1.0));
+    o.uv = in.uv;
+    return o;
+}
+
+vertex ShadowCutOut ShadowVSCutSkinnedLayout(SkinnedVertexIn in [[stage_in]], constant PerFrame& frame [[buffer(0)]])
+{
+    float4x4 world = float4x4(in.iw0, in.iw1, in.iw2, in.iw3);
+    ShadowCutOut o;
+    o.pos = frame.view_projection * (world * float4(in.pos, 1.0));
+    o.uv = in.uv;
+    return o;
+}
+
+fragment void ShadowPSCut(ShadowCutOut in [[stage_in]], constant PerObject& obj [[buffer(1)]],
+                          texture2d<float> albedo_tex [[texture(0)]], sampler albedo_smp [[sampler(0)]])
+{
+    float2 tiling = (obj.uv_tiling.x > 0.0 && obj.uv_tiling.y > 0.0) ? obj.uv_tiling : float2(1.0, 1.0);
+    float a = obj.base_color.a;
+    if (obj.has_albedo_texture != 0) a *= albedo_tex.sample(albedo_smp, in.uv * tiling).a;
+    if (obj.alpha_cutoff > 0.0 && a < obj.alpha_cutoff) discard_fragment();
+}
+
 static inline float fog_optical_depth(float density, float height_y, float k, float3 cam, float3 world_pos)
 {
     float3 delta = world_pos - cam;

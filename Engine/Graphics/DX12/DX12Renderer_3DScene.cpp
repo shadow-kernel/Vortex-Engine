@@ -481,17 +481,19 @@ namespace vortex::graphics::dx12
 			// shaders don't apply to skinned meshes in v1 (they'd need a skinned input-layout variant).
 			// A compiled custom per-material shader overrides the built-in PSO; else unlit -> double-sided, else PBR.
 			auto* skinned_pso = m_pipeline_3d.skinned_pso(run.mirrored);
+			// TwoSided and unlit materials cull nothing; everything else culls back faces, and a mirrored run (#334)
+			// takes the counter-clockwise twin so its front faces survive
+			const bool two_sided = mat && (mat->properties().is_unlit || mat->double_sided());
 			if (run.skinned && skinned_pso && m_bone_vb)
 			{
-				m_command_list->SetPipelineState(skinned_pso);
+				// a custom material shader applies to skinned meshes too (#332): engine skinning VS + its PSMain
+				ID3D12PipelineState* custom = custom_pso((u32)run.mat, 0, two_sided, run.mirrored, true);
+				m_command_list->SetPipelineState(custom ? custom : skinned_pso);
 				m_command_list->SetGraphicsRootShaderResourceView(8,
 					bone_palette_base_va() + (UINT64)run.boneOffset * 64);
 			}
 			else
 			{
-				// TwoSided and unlit materials cull nothing; everything else culls back faces, and a mirrored run (#334)
-				// takes the counter-clockwise twin so its front faces survive
-				const bool two_sided = mat && (mat->properties().is_unlit || mat->double_sided());
 				ID3D12PipelineState* custom = custom_pso((u32)run.mat, 0, two_sided, run.mirrored);
 				if (custom) m_command_list->SetPipelineState(custom);
 				else if (two_sided) m_command_list->SetPipelineState(double_sided_pso);
