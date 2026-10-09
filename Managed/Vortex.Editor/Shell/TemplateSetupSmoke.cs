@@ -111,21 +111,21 @@ namespace VortexEditor.Shell
             return true;
         }
 
-        private static void Reparent(Scene scene, GameEntity child, GameEntity parent)
+        internal static void Reparent(Scene scene, GameEntity child, GameEntity parent)
         {
             // CreateEntity adds a root entity; the route / spot own their markers
             scene.Entities.Remove(child);
             parent.AddChild(child);
         }
 
-        private static void Remove(Scene scene, string name)
+        internal static void Remove(Scene scene, string name)
         {
             var e = Find(scene, x => x.Name == name);
             if (e == null) return;
             if (e.Parent != null) e.Parent.Children.Remove(e); else scene.Entities.Remove(e);
         }
 
-        private static GameEntity Find(Scene scene, Func<GameEntity, bool> pred)
+        internal static GameEntity Find(Scene scene, Func<GameEntity, bool> pred)
         {
             foreach (var e in scene.Entities) { var r = FindIn(e, pred); if (r != null) return r; }
             return null;
@@ -139,7 +139,7 @@ namespace VortexEditor.Shell
             return null;
         }
 
-        private static float Dist(Vector3 a, Vector3 b) { float x = a.X - b.X, z = a.Z - b.Z; return (float)Math.Sqrt(x * x + z * z); }
-        private static string F(Vector3 v) => "(" + v.X.ToString("0.0") + ", " + v.Y.ToString("0.0") + ", " + v.Z.ToString("0.0") + ")";
+        internal static float Dist(Vector3 a, Vector3 b) { float x = a.X - b.X, z = a.Z - b.Z; return (float)Math.Sqrt(x * x + z * z); }
+        internal static string F(Vector3 v) => "(" + v.X.ToString("0.0") + ", " + v.Y.ToString("0.0") + ", " + v.Z.ToString("0.0") + ")";
     }
 }
