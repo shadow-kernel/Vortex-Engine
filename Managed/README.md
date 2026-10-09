@@ -156,7 +156,7 @@ if (Physics.Raycast(eye, dir, 40f, out var hit) && Physics.HasRigidbody(hit.Enti
 
 // Explosion: shove everything within 4 m away from the blast
 foreach (var id in Physics.OverlapSphere(Position, 4f))
-    Physics.AddImpulse(id, (Scene.PositionOf(id) - Position).Normalized * 25f);
+    Physics.AddImpulse(id, (Scene.WorldPositionOf(id) - Position).Normalized * 25f);
 
 // A prop's own behaviour: throw itself when the player interacts, read its speed later
 public override void OnMessage(string msg, object arg)

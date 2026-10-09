@@ -2312,6 +2312,17 @@ namespace Editor.Core.Services
         /// pitch-black horror scene snapped back to bright. Cleared by ScriptRuntime on play begin/end.</summary>
         public static float? ScriptAmbientOverride;
 
+        /// <summary>A sky set from a script (#349) — wins over the scene's Skybox component until cleared (play end).
+        /// Either an equirect texture (project-relative path, exposure, yaw in degrees) or a gradient.</summary>
+        public sealed class SkyOverride
+        {
+            public string TexturePath;
+            public float Exposure = 1f;
+            public float RotationDeg;
+            public float[] Gradient;   // top rgb, horizon rgb, bottom rgb — when no texture
+        }
+        public static SkyOverride ScriptSky;
+
         /// <summary>
         /// Submit all lights in the scene to the renderer.
         /// </summary>
@@ -2353,7 +2364,8 @@ namespace Editor.Core.Services
             // the ambient right now (horror scenes crush it to ~0.01; the default would flood the dark).
             if (!_hasSkybox)
             {
-                VortexAPI.EnableSkybox(false);
+                if (ScriptSky != null) ApplyScriptSky(ScriptSky);   // a scripted sky needs no Skybox component (#349)
+                else VortexAPI.EnableSkybox(false);
                 VortexAPI.SetAmbientLightStrength(ScriptAmbientOverride ?? 0.35f);  // 0.35 matches the engine header default
             }
         }
@@ -2374,8 +2386,9 @@ namespace Editor.Core.Services
                 // Enable skybox rendering
                 VortexAPI.EnableSkybox(true);
                 
-                // Set skybox mode based on type
-                switch (skybox.SkyboxType)
+                // a script's sky (#349) wins over the component while it is set
+                if (ScriptSky != null) ApplyScriptSky(ScriptSky);
+                else switch (skybox.SkyboxType)
                 {
                     case SkyboxType.SolidColor:
                         VortexAPI.SetSkyboxRenderMode(VortexAPI.SkyboxMode.SolidColor);
@@ -2523,9 +2536,14 @@ namespace Editor.Core.Services
         /// behind all geometry at the far plane without a depth write, centred on the camera that renders the frame
         /// and outside the fog — no 1000 m sphere mesh around the editor camera any more. False when the texture
         /// cannot be loaded (the caller falls back to the gradient).</summary>
-        private bool SubmitSkyboxWithTexture(Skybox skybox)
+        private bool SubmitSkyboxWithTexture(Skybox skybox) => SubmitSkyTexture(skybox.TexturePath, skybox.Exposure, 0f);
+
+        /// <summary>Texture sky (#326): hand an equirect map to the renderer's fullscreen sky pass, which draws it
+        /// behind all geometry at the far plane without a depth write, centred on the camera that renders the frame
+        /// and outside the fog. <paramref name="rotationDeg"/> turns it around the up axis. False when the texture
+        /// cannot be loaded (the caller falls back to the gradient).</summary>
+        private bool SubmitSkyTexture(string texturePath, float exposure, float rotationDeg)
         {
-            var texturePath = skybox.TexturePath;
             var projectPath = Data.ProjectData.Current?.Path ?? "";
             var fullTexturePath = System.IO.Path.IsPathRooted(texturePath)
                 ? texturePath
@@ -2549,8 +2567,19 @@ namespace Editor.Core.Services
 
             VortexAPI.EnableSkybox(true);
             VortexAPI.SetSkyboxRenderMode(VortexAPI.SkyboxMode.Texture);
-            VortexAPI.ApplySkyboxTexture(_skyboxTextureId, skybox.Exposure, 0f);
+            VortexAPI.ApplySkyboxTexture(_skyboxTextureId, exposure, rotationDeg);
             return true;
+        }
+
+        /// <summary>The sky a script asked for (#349): its texture through the sky pass, or its gradient.</summary>
+        private void ApplyScriptSky(SkyOverride s)
+        {
+            if (!string.IsNullOrEmpty(s.TexturePath) && SubmitSkyTexture(s.TexturePath, s.Exposure, s.RotationDeg)) return;
+            VortexAPI.EnableSkybox(true);
+            VortexAPI.SetSkyboxRenderMode(VortexAPI.SkyboxMode.Gradient);
+            var g = s.Gradient;
+            if (g != null && g.Length >= 9)
+                VortexAPI.SetSkyboxGradient(g[0] * s.Exposure, g[1] * s.Exposure, g[2] * s.Exposure, g[3] * s.Exposure, g[4] * s.Exposure, g[5] * s.Exposure, g[6] * s.Exposure, g[7] * s.Exposure, g[8] * s.Exposure);
         }
 
         // Cache for skybox mesh

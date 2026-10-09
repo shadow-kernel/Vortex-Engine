@@ -139,6 +139,34 @@ EDITOR_INTERFACE int ImportModelFromMemoryWithMaterials(
 	return count;
 }
 
+namespace
+{
+	// Triangle vertex positions (x,y,z per vertex, 3 verts/triangle, indices expanded) of ONE submesh, or of the whole
+	// model when submesh < 0. out_positions=null (or max_floats=0) is a size query -> the required float count.
+	int write_triangles(const graphics::ImportedModelData& model, int submesh, float* out_positions, int max_floats)
+	{
+		size_t total_idx = 0;
+		for (size_t i = 0; i < model.submeshes.size(); ++i)
+			if (submesh < 0 || (size_t)submesh == i) total_idx += model.submeshes[i].indices.size();
+		int needed = static_cast<int>(total_idx * 3);
+		if (!out_positions || max_floats <= 0) return needed;
+		int w = 0;
+		for (size_t i = 0; i < model.submeshes.size(); ++i)
+		{
+			if (submesh >= 0 && (size_t)submesh != i) continue;
+			const auto& sm = model.submeshes[i];
+			for (u32 idx : sm.indices)
+			{
+				if (idx >= sm.vertices.size()) continue;
+				if (w + 3 > max_floats) return w;
+				const auto& p = sm.vertices[idx].position;
+				out_positions[w++] = p.x; out_positions[w++] = p.y; out_positions[w++] = p.z;
+			}
+		}
+		return w;
+	}
+}
+
 // Collision: return a model's TRIANGLE vertex positions (x,y,z per vertex, 3 verts/triangle, all submeshes,
 // indices expanded) so the managed collision system can build edge-accurate mesh colliders that match what's
 // rendered. Pass out_positions=null (or max_floats=0) for a size query -> returns the required float count;
@@ -147,22 +175,7 @@ EDITOR_INTERFACE int GetModelTriangleData(const char* filepath, float* out_posit
 {
 	if (!filepath) return 0;
 	auto model = graphics::ModelImporter::import_from_file(filepath);
-	size_t total_idx = 0;
-	for (const auto& sm : model.submeshes) total_idx += sm.indices.size();
-	int needed = static_cast<int>(total_idx * 3);
-	if (!out_positions || max_floats <= 0) return needed; // size query
-	int w = 0;
-	for (const auto& sm : model.submeshes)
-	{
-		for (u32 idx : sm.indices)
-		{
-			if (idx >= sm.vertices.size()) continue;
-			if (w + 3 > max_floats) return w;
-			const auto& p = sm.vertices[idx].position;
-			out_positions[w++] = p.x; out_positions[w++] = p.y; out_positions[w++] = p.z;
-		}
-	}
-	return w;
+	return write_triangles(model, -1, out_positions, max_floats);
 }
 
 // Same as GetModelTriangleData but for a model whose bytes live in the in-RAM asset pak (shipped game).
@@ -172,22 +185,25 @@ EDITOR_INTERFACE int GetModelTriangleDataFromMemory(const unsigned char* data, i
 	if (!data || length <= 0) return 0;
 	auto model = graphics::ModelImporter::import_from_memory(
 		reinterpret_cast<const u8*>(data), static_cast<u64>(length), ext_hint ? ext_hint : "", "");
-	size_t total_idx = 0;
-	for (const auto& sm : model.submeshes) total_idx += sm.indices.size();
-	int needed = static_cast<int>(total_idx * 3);
-	if (!out_positions || max_floats <= 0) return needed;
-	int w = 0;
-	for (const auto& sm : model.submeshes)
-	{
-		for (u32 idx : sm.indices)
-		{
-			if (idx >= sm.vertices.size()) continue;
-			if (w + 3 > max_floats) return w;
-			const auto& p = sm.vertices[idx].position;
-			out_positions[w++] = p.x; out_positions[w++] = p.y; out_positions[w++] = p.z;
-		}
-	}
-	return w;
+	return write_triangles(model, -1, out_positions, max_floats);
+}
+
+// ONE submesh's triangles (#362): a placed "model.glb#submeshN" part collides with its own geometry, not the whole
+// model's. submesh < 0 = all, like GetModelTriangleData.
+EDITOR_INTERFACE int GetModelSubmeshTriangleData(const char* filepath, int submesh, float* out_positions, int max_floats)
+{
+	if (!filepath) return 0;
+	auto model = graphics::ModelImporter::import_from_file(filepath);
+	return write_triangles(model, submesh, out_positions, max_floats);
+}
+
+EDITOR_INTERFACE int GetModelSubmeshTriangleDataFromMemory(const unsigned char* data, int length, const char* ext_hint,
+	int submesh, float* out_positions, int max_floats)
+{
+	if (!data || length <= 0) return 0;
+	auto model = graphics::ModelImporter::import_from_memory(
+		reinterpret_cast<const u8*>(data), static_cast<u64>(length), ext_hint ? ext_hint : "", "");
+	return write_triangles(model, submesh, out_positions, max_floats);
 }
 
 // Get submesh count without importing (for pre-allocation)

@@ -40,6 +40,8 @@ namespace Editor.Core.Services.Particles
             public int Layer;
             public float IdleTime;           // edit mode: seconds since a one-shot finished (auto replay when selected)
             public bool Seen;
+            public float LastX, LastY, LastZ;   // where the emitter was last frame (teleport detection, #347)
+            public bool HasLast;
         }
 
         private sealed class Spawned
@@ -119,6 +121,32 @@ namespace Editor.Core.Services.Particles
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ParticleService] frame: " + ex); }
         }
 
+        /// <summary>Play starts: the previous run's instances and spawns go BEFORE the scripts' Start() runs (#347) —
+        /// the frame callback used to notice the transition one tick later and destroy what Start() had spawned.</summary>
+        public static void BeginPlay(Scene scene)
+        {
+            try
+            {
+                DestroySceneInstances();
+                DestroySpawned(sceneOnly: false);
+                _playing = true;
+                _scene = scene;
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ParticleService] begin play: " + ex); }
+        }
+
+        /// <summary>Play ends: everything the run created goes now, so the editor frame never sees a stale emitter.</summary>
+        public static void EndPlay()
+        {
+            try
+            {
+                DestroySceneInstances();
+                DestroySpawned(sceneOnly: false);
+                _playing = false;
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ParticleService] end play: " + ex); }
+        }
+
         // --------------------------------------------------------------------------------------------- frame
         private static void Tick(float dt)
         {
@@ -190,6 +218,15 @@ namespace Editor.Core.Services.Particles
             _matrix[4] = w.M21; _matrix[5] = w.M22; _matrix[6] = w.M23; _matrix[7] = w.M24;
             _matrix[8] = w.M31; _matrix[9] = w.M32; _matrix[10] = w.M33; _matrix[11] = w.M34;
             _matrix[12] = w.M41; _matrix[13] = w.M42; _matrix[14] = w.M43; _matrix[15] = w.M44;
+            // a jump of more than 25 m in one frame is a teleport (level warp, checkpoint), not motion: the emitter
+            // forgets its last position so nothing smears along the jump and the inherited velocity stays sane (#347)
+            if (inst.HasLast)
+            {
+                float dx = w.M41 - inst.LastX, dy = w.M42 - inst.LastY, dz = w.M43 - inst.LastZ;
+                if (dx * dx + dy * dy + dz * dz > 25f * 25f)
+                    foreach (var h in inst.Emitters) { try { VortexAPI.ParticleResetMotion(h); } catch { } }
+            }
+            inst.LastX = w.M41; inst.LastY = w.M42; inst.LastZ = w.M43; inst.HasLast = true;
             foreach (var h in inst.Emitters) VortexAPI.ParticleSetTransform(h, _matrix);
             if (inst.Layer != inst.Component.RenderLayer)
             {

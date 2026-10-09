@@ -769,9 +769,9 @@ namespace vortex::graphics::dx12
 		float m_far_clip{ 1000.0f };
 		float m_render_distance{ 0.0f };   // generic distance cull (0 = disabled)
 		bool  m_lod_enabled{ false };      // density LOD: thin distant instances
-		bool  m_geo_lod_enabled{ false };  // geometric LOD: distant instances use a decimated mesh
-		float m_lod_mid{ 0.0f };           // density: keep 1/2 beyond this | geometric: -> LOD1 beyond this
-		float m_lod_far{ 0.0f };           // density: keep 1/4 beyond this | geometric: -> LOD2 beyond this
+		bool  m_geo_lod_enabled{ true };   // geometric LOD on by default (#360): distant instances use a decimated mesh
+		float m_lod_mid{ 40.0f };          // density: keep 1/2 beyond this (metres) | geometric: -> LOD1 beyond this × the mesh radius
+		float m_lod_far{ 120.0f };         // density: keep 1/4 beyond this (metres) | geometric: -> LOD2 beyond this × the mesh radius
 
 	// Lighting - balanced for PBR rendering
 		DirectX::XMFLOAT3 m_light_direction{ -0.5f, -0.7f, 0.5f };

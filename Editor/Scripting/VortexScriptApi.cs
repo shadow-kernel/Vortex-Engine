@@ -375,7 +375,8 @@ namespace Vortex
         /// <summary>The host the engine wires up so behaviours can affect the live game.</summary>
         internal static IScriptHost Host;
 
-        /// <summary>World position of this behaviour's entity (read/write).</summary>
+        /// <summary>LOCAL (parent-relative) position of this behaviour's entity (read/write). For an entity under a
+        /// moved parent read <see cref="Scene.WorldPositionOf"/> / write <see cref="Scene.SetWorldPose"/> (#354).</summary>
         public Vector3 Position
         {
             get => Host != null ? Host.GetPosition(EntityId) : Vector3.Zero;
@@ -1058,11 +1059,29 @@ namespace Vortex
         /// <summary>Tag of an entity ("" if none).</summary>
         public static string TagOf(long entity) { return Editor.Scripting.ScriptRuntime.Instance.EntityTagOf(entity); }
 
-        /// <summary>World position of any entity (not just your own).</summary>
+        /// <summary>LOCAL (parent-relative) position of any entity — the same value the inspector shows. For a parented
+        /// entity (a door marker inside a group) use <see cref="WorldPositionOf"/> (#354).</summary>
         public static Vector3 PositionOf(long entity) { return Host != null ? Host.GetPosition(entity) : Vector3.Zero; }
 
-        /// <summary>Set the world position of any entity.</summary>
+        /// <summary>Set the LOCAL (parent-relative) position of any entity — see <see cref="SetWorldPositionOf"/> for
+        /// a world-space target (#354).</summary>
         public static void SetPositionOf(long entity, Vector3 position) { Host?.SetPosition(entity, position); }
+
+        /// <summary>WORLD position of any entity, through every parent — the one to teleport to, aim at or measure
+        /// distances with (#354). Equals <see cref="PositionOf"/> for an unparented entity.</summary>
+        public static Vector3 WorldPositionOf(long entity)
+        {
+            Vector3 p, r;
+            return TryGetWorldPose(entity, out p, out r) ? p : PositionOf(entity);
+        }
+
+        /// <summary>Set the WORLD position of any entity, keeping its world rotation (#354) — a teleport that lands
+        /// where you say even for an entity inside a moved group.</summary>
+        public static void SetWorldPositionOf(long entity, Vector3 position)
+        {
+            Vector3 p, r;
+            if (TryGetWorldPose(entity, out p, out r)) SetWorldPose(entity, position, r); else SetPositionOf(entity, position);
+        }
 
         /// <summary>LOCAL rotation (Euler degrees) of any entity — pairs with <see cref="PositionOf"/>.</summary>
         public static Vector3 RotationOf(long entity) { return Host != null ? Host.GetRotation(entity) : Vector3.Zero; }
@@ -1566,7 +1585,7 @@ namespace Vortex
         public static void SetGravity(Vector3 gravity) { if (Host != null) Host.PhysicsSetGravity(gravity); }
 
         /// <summary>Every entity whose physics body overlaps a sphere — explosions, "what's around me":
-        /// <c>foreach (var id in Physics.OverlapSphere(Position, 4f)) Physics.AddImpulse(id, (Scene.PositionOf(id) - Position).Normalized * 20f);</c>
+        /// <c>foreach (var id in Physics.OverlapSphere(Position, 4f)) Physics.AddImpulse(id, (Scene.WorldPositionOf(id) - Position).Normalized * 20f);</c>
         /// Triggers are not included. Empty without a physics-enabled build.</summary>
         public static long[] OverlapSphere(Vector3 center, float radius) { return Host != null ? (Host.PhysicsOverlapSphere(center, radius) ?? new long[0]) : new long[0]; }
 
@@ -1710,7 +1729,7 @@ namespace Vortex
 
         /// <summary>Turn a character's head (neck, upper spine) toward a WORLD point until cleared — within the Look-At IK
         /// component's limits, or default limits (70° yaw / 40° pitch) on a character without one.
-        /// <code>Animation.SetLookAtTarget(bot, Scene.PositionOf(player));</code></summary>
+        /// <code>Animation.SetLookAtTarget(bot, Scene.WorldPositionOf(player));</code></summary>
         public static void SetLookAtTarget(long entityId, Vector3 worldPoint)
             { if (Host != null) Host.SetLookAtPoint(entityId, worldPoint); }
 
@@ -2087,6 +2106,55 @@ namespace Vortex
 
         /// <summary>Turn fog off.</summary>
         public static void ClearFog() { Editor.DllWrapper.VortexAPI.SetFog(0f, 0f, 0f, 0f, 0f, 0f); }
+    }
+
+    /// <summary>The sky from game scripts (#349): swap the equirect texture per area or time of day, or set a gradient.
+    /// The script's sky wins over the scene's Skybox component until <see cref="Clear"/> or the end of play; ambient
+    /// stays with <see cref="Lighting.SetAmbient"/>. The sky is drawn by the renderer's own pass — behind everything,
+    /// around whichever camera renders, never fogged.</summary>
+    public static class Sky
+    {
+        /// <summary>An equirect texture (project-relative, e.g. "Assets/Skies/dusk.hdr"). <paramref name="exposure"/>
+        /// scales it, <paramref name="rotationDeg"/> turns it around the up axis so the sun in the image lines up with
+        /// the directional light.</summary>
+        public static void SetTexture(string path, float exposure = 1f, float rotationDeg = 0f)
+        {
+            Editor.Core.Services.SceneRenderService.ScriptSky = new Editor.Core.Services.SceneRenderService.SkyOverride { TexturePath = path, Exposure = exposure, RotationDeg = rotationDeg };
+            Editor.Core.Services.SceneRenderService.RuntimeDirty = true;
+        }
+
+        /// <summary>A three-colour gradient sky (linear 0..1): top, horizon, bottom.</summary>
+        public static void SetGradient(float topR, float topG, float topB, float horizonR, float horizonG, float horizonB,
+                                       float bottomR, float bottomG, float bottomB, float exposure = 1f)
+        {
+            Editor.Core.Services.SceneRenderService.ScriptSky = new Editor.Core.Services.SceneRenderService.SkyOverride
+                { Exposure = exposure, Gradient = new[] { topR, topG, topB, horizonR, horizonG, horizonB, bottomR, bottomG, bottomB } };
+            Editor.Core.Services.SceneRenderService.RuntimeDirty = true;
+        }
+
+        /// <summary>Global ambient strength — the same as <see cref="Lighting.SetAmbient"/>, here for symmetry.</summary>
+        public static void SetAmbient(float strength) => Lighting.SetAmbient(strength);
+
+        /// <summary>Back to the scene's own Skybox component.</summary>
+        public static void Clear()
+        {
+            Editor.Core.Services.SceneRenderService.ScriptSky = null;
+            Editor.Core.Services.SceneRenderService.RuntimeDirty = true;
+        }
+    }
+
+    /// <summary>Draw distance and level of detail from game scripts (#360). Geometric LOD is on by default: a mesh
+    /// switches to its decimated copies beyond <c>mid</c> and <c>far</c> times its own radius (40 / 120 radii), so a
+    /// crate thins out at 40 m and a building at 800 m. Persistent until changed; play end restores the defaults.</summary>
+    public static class Rendering
+    {
+        /// <summary>Instances whose centre is farther than this (metres) are not drawn; 0 = no limit (the camera's
+        /// far plane). Pair it with fog so nothing pops.</summary>
+        public static void SetDrawDistance(float metres) => Editor.DllWrapper.VortexAPI.RenderDistance(metres);
+
+        /// <summary>Geometric LOD on/off and its switch distances in multiples of each mesh's radius.</summary>
+        public static void SetLod(bool enabled, float midRadii = 40f, float farRadii = 120f)
+            => Editor.DllWrapper.VortexAPI.GeometricLod(enabled, midRadii, farRadii);
     }
 
     /// <summary>Screen post-effects for game scripts (#28/#29): vignette, animated film grain and

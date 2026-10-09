@@ -34,7 +34,7 @@ namespace Vortex
     ///     public override void Start() { _player = Scene.Find("Player"); }
     ///     public override void Update(float dt)
     ///     {
-    ///         Navigation.SetDestination(EntityId, Scene.PositionOf(_player));   // re-plans cheaply every frame
+    ///         Navigation.SetDestination(EntityId, Scene.WorldPositionOf(_player));   // re-plans cheaply every frame
     ///         if (Navigation.HasArrived(EntityId)) { /* attack */ }
     ///     }
     /// }
