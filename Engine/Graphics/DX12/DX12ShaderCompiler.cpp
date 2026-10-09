@@ -221,6 +221,7 @@ namespace vortex::graphics::dx12
 			{ "skybox",       "vs", "SkyVS",   "vs_5_0" }, { "skybox",       "ps", "SkyPS",   "ps_5_0" },
 			{ "particles",    "vs", "ParticleVS", "vs_5_0" }, { "particles", "vs_ribbon", "RibbonVS", "vs_5_0" },   // #117
 			{ "particles",    "ps", "ParticlePS", "ps_5_0" }, { "particles", "vs_snap", "SnapVS", "vs_5_0" }, { "particles", "ps_snap", "SnapPS", "ps_5_0" },
+			{ "decals",       "vs", "DecalVS",  "vs_5_0" }, { "decals",       "ps", "DecalPS",  "ps_5_0" },   // #120
 			{ "grid",         "vs", "GridVS",  "vs_5_0" }, { "grid",         "ps", "GridPS",  "ps_5_0" },
 			{ "motionvector", "vs", "MvecVS",  "vs_5_0" }, { "motionvector", "ps", "MvecPS",  "ps_5_0" },
 			{ "upscale",      "vs", "VSMain",  "vs_5_0" }, { "upscale",      "ps", "PSMain",  "ps_5_0" },

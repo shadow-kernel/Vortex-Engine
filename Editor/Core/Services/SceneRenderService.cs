@@ -531,6 +531,7 @@ namespace Editor.Core.Services
             if (scene == null) return;
 
             _vmatPathCache.Clear();   // fresh material resolution for the (re)loaded scene
+            Decals.DecalService.ClearMaterialCache();
             try { EvictModelsUnusedBy(scene); } catch { }   // the previous scene's models go (#358)
             Log($"[SceneRenderService] Preloading assets for scene: {scene.Name}");
             var projectPath = Data.ProjectData.Current?.Path ?? "";
@@ -881,6 +882,7 @@ namespace Editor.Core.Services
 
             // Clear and submit all lights first
             SubmitSceneLights(scene);
+            Decals.DecalService.Submit(scene, IsPlayLike);   // #120: the scene's Decal components + spawned decals, like the lights
 
             var swSubmit = System.Diagnostics.Stopwatch.StartNew();
             if (_splitEnabled && IsPlayLike) SubmitSceneSplit(scene);
@@ -1008,6 +1010,9 @@ namespace Editor.Core.Services
                 VortexAPI.RenderReverbZoneGizmo(pos.X, pos.Y, pos.Z, reverbZone.Shape, reverbZone.Radius,
                     Math.Max(0.01f, reverbZone.BoxExtents.X), Math.Max(0.01f, reverbZone.BoxExtents.Y), Math.Max(0.01f, reverbZone.BoxExtents.Z),
                     reverbZone.Falloff);
+            var decal = selected.GetComponent<ECS.Components.Rendering.Decal>();
+            if (decal != null && decal.IsEnabled)
+                VortexAPI.RenderDecalGizmo(Decals.DecalService.BoxWorld(selected, decal));   // the projection box (#120)
 
             if (VortexAPI.AreGizmosVisible)
             {

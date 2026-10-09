@@ -23,6 +23,7 @@ namespace Editor.ECS
     [KnownType(typeof(Components.Rendering.SpriteRenderer))]
     [KnownType(typeof(Components.Rendering.Camera))]
     [KnownType(typeof(Components.Rendering.ParticleSystem))]
+    [KnownType(typeof(Components.Rendering.Decal))]
     [KnownType(typeof(Components.Lighting.Light))]
     [KnownType(typeof(Components.Physics.Collider))]
     [KnownType(typeof(Components.Physics.BoxCollider))]

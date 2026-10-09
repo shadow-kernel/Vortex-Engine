@@ -128,6 +128,8 @@ namespace vortex::graphics::sdlgpu
 			log("UI overlay unavailable (continuing without it)");
 		if (!m_particles.initialize(m_device, m_shader_dir, m_scene_format, m_sampler_linear_wrap, m_sampler_linear_clamp))
 			log("particles unavailable (continuing without them)");
+		if (!m_decals.initialize(m_device, m_shader_dir, m_scene_format, m_sampler_linear_clamp))
+			log("decals unavailable (continuing without them)");
 
 		m_initialized = true;
 		log("initialized (" + m_gpu_name + ")");
@@ -716,6 +718,7 @@ namespace vortex::graphics::sdlgpu
 		destroy_shadow_resources();
 		m_overlay.shutdown();
 		m_particles.shutdown();
+		m_decals.shutdown();
 		::vortex::particles::on_renderer_shutdown();   // the engine texture ids the emitters hold die with the registry
 		destroy_game_window();
 		for (auto& [id, target] : m_render_targets) release_target(*target);

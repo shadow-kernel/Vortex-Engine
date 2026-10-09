@@ -142,6 +142,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
         public ICommand CreateCameraCommand { get; }
         public ICommand CreateAudioSourceCommand { get; }
         public ICommand CreateReverbZoneCommand { get; }
+        public ICommand CreateDecalCommand { get; }
         #endregion
 
         #region UI Commands
@@ -192,6 +193,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             CreateCameraCommand = new RelayCommand(_ => CreateCamera());
             CreateAudioSourceCommand = new RelayCommand(_ => CreateAudioSource());
             CreateReverbZoneCommand = new RelayCommand(_ => CreateReverbZone());
+            CreateDecalCommand = new RelayCommand(_ => CreateDecal());
 
             // UI
             CreateUICanvasCommand = new RelayCommand(_ => CreateUIElement("Canvas"));
@@ -408,6 +410,16 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             if (_selectedScene == null) return;
             var entity = new GameEntity(_selectedScene, "Reverb Zone");
             entity.AddComponent(new ReverbZone(entity));
+            _selectedScene.AddEntity(entity);
+            SelectedEntity = entity;
+            SelectionService.Instance.RequestFocus(entity);
+        }
+
+        private void CreateDecal()
+        {
+            if (_selectedScene == null) return;
+            var entity = new GameEntity(_selectedScene, "Decal");
+            entity.AddComponent(new Editor.ECS.Components.Rendering.Decal(entity));
             _selectedScene.AddEntity(entity);
             SelectedEntity = entity;
             SelectionService.Instance.RequestFocus(entity);

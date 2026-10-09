@@ -19,6 +19,8 @@
 #include "SdlGpuResources.h"
 #include "SdlGpuOverlay.h"
 #include "SdlGpuParticles.h"
+#include "SdlGpuDecals.h"
+#include "../Decals/Decals.h"
 #include <SDL3/SDL.h>
 #include <chrono>
 #include <memory>
@@ -136,6 +138,11 @@ namespace vortex::graphics::sdlgpu
 		void submit_render_item(const RenderItem& item);
 		void submit_gizmo_item(const RenderItem& item);
 		void submit_gizmo_wire_item(const RenderItem& item);
+		// Decals (#120): the scene submit clears and refills the list (DecalApi.cpp, like the lights); the world pass draws
+		// it between the opaque and the transparent meshes.
+		void clear_decals() { m_decal_list.clear(); }
+		void add_decal(const decals::Decal& d) { if (m_decal_list.size() < decals::MAX_DECALS) m_decal_list.push_back(d); }
+		const std::vector<decals::Decal>& decal_list() const { return m_decal_list; }
 		// colors (#331): count x (r, g, b, a) per instance, or nullptr for untinted
 		void submit_mesh_instances(id::id_type mesh, id::id_type material, const float* world_matrices, u32 count, u32 layer = 0, const float* colors = nullptr);
 		void submit_skinned_item(id::id_type mesh, id::id_type material, const float* world_matrix,
@@ -613,7 +620,7 @@ namespace vortex::graphics::sdlgpu
 			f.env_ground = { m_ground_color.x, m_ground_color.y, m_ground_color.z, 0.0f };
 		}
 		void draw_grid(SDL_GPURenderPass* pass, SDL_GPUCommandBuffer* cmd, const FrameView& view);
-		void record_runs(SDL_GPURenderPass* pass, SDL_GPUCommandBuffer* cmd, size_t run_begin, size_t run_end, const FrameView& view);
+		void record_runs(SDL_GPURenderPass* pass, SDL_GPUCommandBuffer* cmd, size_t run_begin, size_t run_end, const FrameView& view, u32 phase = 3u);   // phase bits: 1 opaque, 2 transparent
 		void draw_gizmos(SDL_GPURenderPass* pass, SDL_GPUCommandBuffer* cmd);
 		void bind_material(SDL_GPURenderPass* pass, SDL_GPUCommandBuffer* cmd, Material* mat, PerObjectConstants& obj, bool gizmo);
 		void push_frame_uniforms(SDL_GPUCommandBuffer* cmd, const PerFrameConstants& frame);
@@ -802,6 +809,8 @@ namespace vortex::graphics::sdlgpu
 		// overlay + particles + capture + stats
 		SdlGpuOverlay m_overlay;
 		SdlGpuParticles m_particles;
+		SdlGpuDecals m_decals;                    // the projected decal pass (#120)
+		std::vector<decals::Decal> m_decal_list;  // the frame's decals (refilled on every scene submit, like the lights)
 		bool m_capture_requested{ false };
 		std::string m_capture_path;
 		int m_current_fps{ 0 }, m_frame_count{ 0 };

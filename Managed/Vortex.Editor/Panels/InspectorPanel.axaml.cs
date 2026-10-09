@@ -712,6 +712,7 @@ namespace VortexEditor.Panels
             C<Camera>("Rendering", "Camera", "Camera", "VxPurpleBrush", x => new Camera(x), "camera view render");
             C<Skybox>("Rendering", "Skybox", "World", "VxTealBrush", x => new Skybox(x), "sky environment background");
             C<Editor.ECS.Components.Rendering.ParticleSystem>("Effects", "Particle System", "Sparkle", "VxOrangeBrush", x => new Editor.ECS.Components.Rendering.ParticleSystem(x) { PreviewInEditor = true }, "particles vfx effect fire smoke sparks muzzle flash impact explosion dust");
+            C<Editor.ECS.Components.Rendering.Decal>("Effects", "Decal", "Image", "VxPinkBrush", x => new Editor.ECS.Components.Rendering.Decal(x), "decal projected blood bullet hole grime sticker stamp poster", "projected");
             C<Light>("Lighting", "Directional Light", "Sun", "VxYellowBrush", x => new Light(x, LightType.Directional), "light sun directional");
             C<Light>("Lighting", "Point Light", "Light", "VxYellowBrush", x => new Light(x, LightType.Point), "light point lamp bulb");
             C<Light>("Lighting", "Spot Light", "Light", "VxYellowBrush", x => new Light(x, LightType.Spot), "light spot torch flashlight");

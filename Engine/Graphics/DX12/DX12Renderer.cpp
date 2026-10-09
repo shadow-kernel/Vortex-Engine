@@ -61,10 +61,16 @@ namespace vortex::graphics::dx12
 
 		// Particles (#117): particles.hlsl — billboards, ribbons, soft particles, the collision depth snapshot. Without it the
 		// simulation still runs, nothing is drawn (ParticleStats.renderer_draws stays 1 — the module is wired, the pass failed).
-		if (m_particles.initialize(core.device(), DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_D32_FLOAT))
+		m_fx_ring.initialize(core.device());
+		if (m_particles.initialize(core.device(), &m_fx_ring, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_D32_FLOAT))
 			OutputDebugStringA("Particle pipeline OK\n");
 		else
 			OutputDebugStringA("Particle pipeline FAILED\n");
+		// Decals (#120): decals.hlsl — box-projected materials between the opaque and the transparent meshes.
+		if (m_decal_pass.initialize(core.device(), &m_fx_ring, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_D32_FLOAT))
+			OutputDebugStringA("Decal pipeline OK\n");
+		else
+			OutputDebugStringA("Decal pipeline FAILED\n");
 
 		// Upscale pipeline (render-scale composite). Writes the swapchain format. If it fails, render-scale just
 		// stays disabled (m_render_scale<1 falls back to direct rendering); the rest of the renderer is unaffected.
@@ -203,7 +209,9 @@ namespace vortex::graphics::dx12
 		m_scaled_rt.shutdown();
 		m_geometry.shutdown();
 		m_grid_pipeline.shutdown();
+		m_decal_pass.shutdown();
 		m_particles.shutdown();
+		m_fx_ring.shutdown();
 		m_skybox_pipeline.shutdown();
 		m_upscale.shutdown();
 		m_postfx.shutdown();
@@ -657,6 +665,7 @@ namespace vortex::graphics::dx12
 		// Particles (#117): retire last frame's GPU memory, hand finished collision readbacks to the simulation, then let
 		// the frame driver (the managed ParticleService callback, or the automatic world-0 update) step it before anything
 		// is gathered. Same order as the SDL GPU backend.
+		m_fx_ring.begin_frame();
 		m_particles.begin_frame();
 		::vortex::particles::begin_frame();
 

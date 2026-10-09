@@ -75,11 +75,12 @@ namespace vortex::graphics::dx12
 	// ---------------------------------------------------------------------------------------------------------
 	// setup
 	// ---------------------------------------------------------------------------------------------------------
-	bool DX12Particles::initialize(ID3D12Device* device, DXGI_FORMAT rtv_format, DXGI_FORMAT dsv_format)
+	bool DX12Particles::initialize(ID3D12Device* device, DX12FrameRing* ring, DXGI_FORMAT rtv_format, DXGI_FORMAT dsv_format)
 	{
 		shutdown();
 		m_device = device;
-		if (!device) return false;
+		m_ring = ring;
+		if (!device || !ring) return false;
 		m_vs_particle = DX12ShaderCompiler::load_shader("particles", "vs", "ParticleVS", "vs_5_0");
 		m_vs_ribbon = DX12ShaderCompiler::load_shader("particles", "vs_ribbon", "RibbonVS", "vs_5_0");
 		m_ps_particle = DX12ShaderCompiler::load_shader("particles", "ps", "ParticlePS", "ps_5_0");
@@ -104,19 +105,18 @@ namespace vortex::graphics::dx12
 		m_snap.Reset();
 		m_root_signature.Reset();
 		m_vs_particle.Reset(); m_vs_ribbon.Reset(); m_ps_particle.Reset(); m_vs_snap.Reset(); m_ps_snap.Reset();
-		for (auto& r : m_rings) r = Ring{};
-		m_graveyard.clear();
 		for (auto& c : m_depth_copies) { c.texture.Reset(); c.w = c.h = 0; c.state = D3D12_RESOURCE_STATE_COPY_DEST; }   // the SRV slots stay reserved
 		m_snap_texture.Reset();
 		m_snap_rtv_heap.Reset();
 		m_snap_w = m_snap_h = 0;
 		for (auto& s : m_snaps) s = Snap{};
-		m_instances = Upload{};
+		m_instances = DX12FrameRing::Upload{};
 		m_ribbon_vbv = {}; m_ribbon_ibv = {};
 		m_layer_batches[0] = m_layer_batches[1] = 0;
 		m_list.clear();
 		m_ready = false;
 		m_device = nullptr;
+		m_ring = nullptr;
 	}
 
 	bool DX12Particles::create_root_signature()
@@ -261,58 +261,11 @@ namespace vortex::graphics::dx12
 		return true;
 	}
 
-	// ---------------------------------------------------------------------------------------------------------
-	// memory
-	// ---------------------------------------------------------------------------------------------------------
-	void DX12Particles::retire(const ComPtr<ID3D12Resource>& res)
-	{
-		if (res) m_graveyard.emplace_back(m_frame, res);
-	}
-
-	DX12Particles::Upload DX12Particles::alloc(u64 bytes, u64 align)
-	{
-		Upload u{};
-		if (bytes == 0 || !m_device) return u;
-		Ring& r = m_rings[m_frame % FRAMES];
-		u64 off = (r.used + align - 1) / align * align;
-		if (!r.buffer || off + bytes > r.cap)
-		{
-			// Grow: the frame's earlier allocations stay valid in the old buffer until it is retired.
-			if (r.buffer) retire(r.buffer);
-			r.buffer.Reset(); r.mapped = nullptr; r.used = 0; off = 0;
-			u64 cap = (std::max<u64>)(1ull << 20, r.cap * 2);
-			while (cap < bytes) cap *= 2;
-			D3D12_HEAP_PROPERTIES hp{};
-			hp.Type = D3D12_HEAP_TYPE_UPLOAD;
-			D3D12_RESOURCE_DESC rd{};
-			rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-			rd.Width = cap;
-			rd.Height = 1; rd.DepthOrArraySize = 1; rd.MipLevels = 1;
-			rd.SampleDesc.Count = 1;
-			rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-			if (FAILED(m_device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&r.buffer))))
-			{
-				r.cap = 0;
-				log("upload ring allocation failed (" + std::to_string(cap) + " bytes)");
-				return u;
-			}
-			D3D12_RANGE none{ 0, 0 };
-			void* p = nullptr;
-			if (FAILED(r.buffer->Map(0, &none, &p)) || !p) { r.buffer.Reset(); r.cap = 0; return u; }
-			r.mapped = static_cast<u8*>(p);
-			r.cap = cap;
-		}
-		u.cpu = r.mapped + off;
-		u.gpu = r.buffer->GetGPUVirtualAddress() + off;
-		r.used = off + bytes;
-		return u;
-	}
-
 	// A copy of the pass's depth buffer the particle shader can sample (the bound DSV itself cannot be). One texture
 	// per target size, kept across frames; the depth comes back in DEPTH_WRITE.
 	DX12Particles::DepthCopy* DX12Particles::copy_depth(ID3D12GraphicsCommandList* cmd, ID3D12Resource* depth)
 	{
-		if (!cmd || !depth) return nullptr;
+		if (!cmd || !depth || !m_ring) return nullptr;
 		const D3D12_RESOURCE_DESC dd = depth->GetDesc();
 		const u32 w = (u32)dd.Width, h = (u32)dd.Height;
 		if (w == 0 || h == 0 || dd.SampleDesc.Count != 1) return nullptr;
@@ -322,7 +275,7 @@ namespace vortex::graphics::dx12
 		{
 			for (auto& c : m_depth_copies) if (!c.texture) { e = &c; break; }
 			if (!e) { e = &m_depth_copies[0]; for (auto& c : m_depth_copies) if (c.last_used < e->last_used) e = &c; }
-			if (e->texture) { retire(e->texture); e->texture.Reset(); }
+			if (e->texture) { m_ring->retire(e->texture); e->texture.Reset(); }
 			if (!e->slot)
 			{
 				if (!ResourceRegistry::instance().reserve_srv_slot(e->cpu, e->gpu)) { log("no SRV slot for the depth copy"); return nullptr; }
@@ -361,13 +314,19 @@ namespace vortex::graphics::dx12
 		return e;
 	}
 
+	D3D12_GPU_DESCRIPTOR_HANDLE DX12Particles::scene_depth_srv(ID3D12GraphicsCommandList* cmd, ID3D12Resource* depth)
+	{
+		DepthCopy* dc = m_device ? copy_depth(cmd, depth) : nullptr;
+		return dc ? dc->gpu : D3D12_GPU_DESCRIPTOR_HANDLE{};
+	}
+
 	// ---------------------------------------------------------------------------------------------------------
 	// per view
 	// ---------------------------------------------------------------------------------------------------------
 	bool DX12Particles::prepare(const View& view, u32 world)
 	{
 		m_layer_batches[0] = m_layer_batches[1] = 0;
-		m_instances = Upload{};
+		m_instances = DX12FrameRing::Upload{};
 		m_ribbon_vbv = {}; m_ribbon_ibv = {};
 		if (!m_ready) return false;
 		particles::ViewInfo vi{};
@@ -383,16 +342,16 @@ namespace vortex::graphics::dx12
 		const u64 ib = (u64)m_list.instances.size() * sizeof(particles::GpuParticle);
 		const u64 vb = (u64)m_list.ribbon_vertices.size() * sizeof(particles::RibbonVertex);
 		const u64 xb = (u64)m_list.ribbon_indices.size() * sizeof(u32);
-		auto fail = [&]() { m_layer_batches[0] = m_layer_batches[1] = 0; m_instances = Upload{}; m_ribbon_vbv = {}; m_ribbon_ibv = {}; return false; };
+		auto fail = [&]() { m_layer_batches[0] = m_layer_batches[1] = 0; m_instances = DX12FrameRing::Upload{}; m_ribbon_vbv = {}; m_ribbon_ibv = {}; return false; };
 		if (ib)
 		{
-			m_instances = alloc(ib);
+			m_instances = m_ring->alloc(ib);
 			if (!m_instances.cpu) return fail();
 			std::memcpy(m_instances.cpu, m_list.instances.data(), ib);
 		}
 		if (vb)
 		{
-			Upload v = alloc(vb);
+			DX12FrameRing::Upload v = m_ring->alloc(vb);
 			if (!v.cpu) return fail();
 			std::memcpy(v.cpu, m_list.ribbon_vertices.data(), vb);
 			m_ribbon_vbv.BufferLocation = v.gpu;
@@ -401,7 +360,7 @@ namespace vortex::graphics::dx12
 		}
 		if (xb)
 		{
-			Upload x = alloc(xb);
+			DX12FrameRing::Upload x = m_ring->alloc(xb);
 			if (!x.cpu) return fail();
 			std::memcpy(x.cpu, m_list.ribbon_indices.data(), xb);
 			m_ribbon_ibv.BufferLocation = x.gpu;
@@ -432,13 +391,13 @@ namespace vortex::graphics::dx12
 		f.sun_dir[0] = env.sun_direction.x; f.sun_dir[1] = env.sun_direction.y; f.sun_dir[2] = env.sun_direction.z; f.sun_dir[3] = env.sun_intensity;
 		f.sun_color[0] = env.sun_color.x; f.sun_color[1] = env.sun_color.y; f.sun_color[2] = env.sun_color.z; f.sun_color[3] = env.ambient;
 		f.counts[0] = lights ? env.point_lights : 0; f.counts[1] = lights ? env.spot_lights : 0;
-		Upload fcb = alloc(sizeof(PFrame));
+		DX12FrameRing::Upload fcb = m_ring->alloc(sizeof(PFrame));
 		if (!fcb.cpu) return;
 		std::memcpy(fcb.cpu, &f, sizeof(f));
 		D3D12_GPU_VIRTUAL_ADDRESS lights_va = lights;
 		if (!lights_va)
 		{
-			Upload z = alloc(LIGHT_BYTES);
+			DX12FrameRing::Upload z = m_ring->alloc(LIGHT_BYTES);
 			if (!z.cpu) return;
 			std::memset(z.cpu, 0, LIGHT_BYTES);
 			lights_va = z.gpu;
@@ -487,7 +446,7 @@ namespace vortex::graphics::dx12
 			pb.frame_blend = b.frame_blend; pb.lit = b.lit; pb.blend = b.blend; pb.has_texture = has_tex ? 1u : 0u;
 			pb.soft_inv = b.soft_distance > 1e-4f ? 1.0f / b.soft_distance : 0.0f;
 			pb.emissive = b.emissive;
-			Upload bcb = alloc(sizeof(PBatch));
+			DX12FrameRing::Upload bcb = m_ring->alloc(sizeof(PBatch));
 			if (!bcb.cpu) break;
 			std::memcpy(bcb.cpu, &pb, sizeof(pb));
 			cmd->SetGraphicsRootConstantBufferView(RP_BATCH, bcb.gpu);
@@ -503,7 +462,7 @@ namespace vortex::graphics::dx12
 	bool DX12Particles::ensure_snap_target(u32 w, u32 h)
 	{
 		if (m_snap_texture && m_snap_w == w && m_snap_h == h) return true;
-		if (m_snap_texture) { retire(m_snap_texture); m_snap_texture.Reset(); }
+		if (m_snap_texture) { m_ring->retire(m_snap_texture); m_snap_texture.Reset(); }
 		if (!m_snap_rtv_heap)
 		{
 			D3D12_DESCRIPTOR_HEAP_DESC hd{};
@@ -555,7 +514,7 @@ namespace vortex::graphics::dx12
 		const u64 bytes = (u64)pitch * sh;
 		if (!slot.readback || slot.bytes < bytes)
 		{
-			if (slot.readback) { retire(slot.readback); slot.readback.Reset(); }
+			if (slot.readback) { m_ring->retire(slot.readback); slot.readback.Reset(); }
 			D3D12_HEAP_PROPERTIES hp{};
 			hp.Type = D3D12_HEAP_TYPE_READBACK;
 			D3D12_RESOURCE_DESC rd{};
@@ -585,7 +544,7 @@ namespace vortex::graphics::dx12
 		cmd->SetGraphicsRootSignature(m_root_signature.Get());
 		if (auto* heap = ResourceRegistry::instance().srv_heap()) { ID3D12DescriptorHeap* heaps[] = { heap }; cmd->SetDescriptorHeaps(1, heaps); }
 		SnapCB cb{ { view.near_clip, view.far_clip, view.ortho ? 1.0f : 0.0f, 0.0f }, { (float)w, (float)h }, { (float)sw, (float)sh } };
-		Upload u = alloc(sizeof(SnapCB));
+		DX12FrameRing::Upload u = m_ring->alloc(sizeof(SnapCB));
 		if (!u.cpu) return;
 		std::memcpy(u.cpu, &cb, sizeof(cb));
 		cmd->SetGraphicsRootConstantBufferView(RP_SNAP, u.gpu);
@@ -627,13 +586,7 @@ namespace vortex::graphics::dx12
 
 	void DX12Particles::begin_frame()
 	{
-		++m_frame;
-		for (auto it = m_graveyard.begin(); it != m_graveyard.end();)
-		{
-			if (it->first + FRAMES + 1 <= m_frame) it = m_graveyard.erase(it);
-			else ++it;
-		}
-		m_rings[m_frame % FRAMES].used = 0;
+		++m_frame;   // the renderer rotated the shared upload ring already
 		if (!m_ready) return;
 		// newest capture the GPU has certainly finished (the renderer keeps < 3 frames in flight)
 		Snap* best = nullptr;
