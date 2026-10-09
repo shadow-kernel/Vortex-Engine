@@ -12,7 +12,11 @@ cbuffer SkyboxConstants : register(b0)
     float3 GroundColor;    float Padding3;
     float3 SunDirection;   float SunIntensity;
     float3 SunColor;       float Padding4;
+    float4 Params;         // x: 1 = sample the equirect texture (#326), y: exposure, z: yaw offset (radians)
 };
+
+Texture2D SkyTexture : register(t0);
+SamplerState SkySampler : register(s0);
 
 struct VS_OUT
 {
@@ -42,6 +46,15 @@ float4 SkyPS(VS_OUT input) : SV_TARGET
 {
     float3 dir = normalize(input.worldDir);
     float y = dir.y;
+
+    // Equirect texture sky (#326): sampled at the far plane, no depth write, centred on the rendering camera.
+    // Mip 0 — the atan2 seam would otherwise pull the smallest mip into a visible line.
+    if (Params.x > 0.5)
+    {
+        float u = atan2(dir.x, dir.z) / (2.0 * PI) + 0.5 + Params.z / (2.0 * PI);
+        float v = acos(clamp(y, -1.0, 1.0)) / PI;
+        return float4(SkyTexture.SampleLevel(SkySampler, float2(u, v), 0).rgb * Params.y, 1.0);
+    }
 
     // Sky to horizon to ground gradient
     float3 color;

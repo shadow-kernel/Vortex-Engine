@@ -46,6 +46,13 @@ EDITOR_INTERFACE void SetSkyboxSun(float dirX, float dirY, float dirZ, float col
 		intensity);
 }
 
+// Equirect texture sky (#326): the registry texture the fullscreen sky pass samples in SkyboxMode::Texture, its
+// exposure and a yaw offset in degrees. Drawn behind everything, centred on whichever camera renders the frame.
+EDITOR_INTERFACE void SetSkyboxTexture(id::id_type texture_id, float exposure, float rotation_degrees)
+{
+	graphics::Renderer::instance().set_skybox_texture(texture_id, exposure, rotation_degrees * 0.01745329252f);
+}
+
 // ============== SKYBOX COMPONENT API (Runtime) ==============
 
 namespace {

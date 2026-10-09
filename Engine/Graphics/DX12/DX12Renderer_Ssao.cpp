@@ -388,7 +388,7 @@ namespace vortex::graphics::dx12
 		// ---- AO + blur fullscreen passes ----
 		// InvProj must invert the SAME projection update_per_frame_constants composed into the VP.
 		const float aspect = (float)m_swapchain.width() / (float)(m_swapchain.height() ? m_swapchain.height() : 1);
-		XMMATRIX proj = XMMatrixPerspectiveFovLH(XMConvertToRadians(m_fov_degrees), aspect, 0.1f, 1000.0f);
+		XMMATRIX proj = XMMatrixPerspectiveFovLH(XMConvertToRadians(m_fov_degrees), aspect, m_near_clip, m_far_clip);
 		SsaoCB cb{};
 		XMStoreFloat4x4(&cb.inv_proj, XMMatrixInverse(nullptr, proj));
 		cb.texel[0] = 1.0f / (float)v.w;

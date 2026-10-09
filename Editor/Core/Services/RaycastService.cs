@@ -39,6 +39,10 @@ namespace Editor.Core.Services
         /// screen centre and drift ever further off toward the edges (the "hitboxes are wrong / I have to get ultra
         /// close" bug). Single source of truth: change it here and pass it to SetViewFOV.</summary>
         public const float EditorFovYDegrees = 60.0f;
+        /// <summary>The editor view's clip planes; play mode replaces them with the main camera's (#327) and the
+        /// editor view puts them back together with its FOV.</summary>
+        public const float EditorNearClip = 0.1f;
+        public const float EditorFarClip = 1000.0f;
 
         private RaycastService() { }
 

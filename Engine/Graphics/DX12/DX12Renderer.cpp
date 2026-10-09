@@ -728,13 +728,13 @@ namespace vortex::graphics::dx12
 				ed.depth    = m_scaled_rt.depth_resource(); ed.depthState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 				ed.mvec     = m_mvec_rt.resource();         ed.mvecState  = D3D12_RESOURCE_STATE_RENDER_TARGET;
 				XMStoreFloat4x4(&ed.proj, XMMatrixPerspectiveFovLH(XMConvertToRadians(m_fov_degrees),
-					(float)m_scaled_rt.width() / (float)m_scaled_rt.height(), 0.1f, 1000.0f));
+					(float)m_scaled_rt.width() / (float)m_scaled_rt.height(), m_near_clip, m_far_clip));
 				ed.camPos = m_camera_position;
 				XMVECTOR cp = XMLoadFloat3(&m_camera_position), ct = XMLoadFloat3(&m_camera_target), cu = XMLoadFloat3(&m_camera_up);
 				XMVECTOR fwd = XMVector3Normalize(XMVectorSubtract(ct, cp));
 				XMVECTOR rgt = XMVector3Normalize(XMVector3Cross(cu, fwd));
 				XMStoreFloat3(&ed.camFwd, fwd); XMStoreFloat3(&ed.camRight, rgt);
-				ed.fovY = XMConvertToRadians(m_fov_degrees); ed.nearZ = 0.1f; ed.farZ = 1000.0f;
+				ed.fovY = XMConvertToRadians(m_fov_degrees); ed.nearZ = m_near_clip; ed.farZ = m_far_clip;
 
 				// DLSS Super Resolution: also needs color in/out, then evaluate -> m_dlss_output.
 				if (dlss_active && ensure_dlss_output(out_w, out_h))

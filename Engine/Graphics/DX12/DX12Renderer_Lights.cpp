@@ -20,7 +20,7 @@ namespace vortex::graphics::dx12
 
 	XMMATRIX view = XMMatrixLookAtLH(eye, at, up);
 	float aspect = (float)m_swapchain.width() / (float)m_swapchain.height();
-	XMMATRIX proj = XMMatrixPerspectiveFovLH(XMConvertToRadians(m_fov_degrees), aspect, 0.1f, 1000.0f); // settable FOV (game camera)
+	XMMATRIX proj = XMMatrixPerspectiveFovLH(XMConvertToRadians(m_fov_degrees), aspect, m_near_clip, m_far_clip); // settable FOV + clip planes (game camera, #327)
 	XMMATRIX vp = view * proj;
 
 	// Track last frame's VP (motion vectors + DLSS clipToPrevClip) before overwriting it.

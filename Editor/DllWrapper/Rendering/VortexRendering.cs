@@ -280,6 +280,16 @@ namespace Editor.DllWrapper
             SetViewFieldOfView(fovDegrees);
         }
 
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetViewClipPlanes(float nearClip, float farClip);
+
+        /// <summary>Near / far planes of the live view (#327): the main Camera component's values while playing.
+        /// A far plane below the near plane is ignored by the engine.</summary>
+        public static void SetViewClipPlanes(float nearClip, float farClip, bool _ = false)
+        {
+            try { SetViewClipPlanes(nearClip, farClip); } catch (System.EntryPointNotFoundException) { }
+        }
+
         #endregion
 
         #region Render Item Submission
@@ -1027,6 +1037,17 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void SetSkyboxSun(float dirX, float dirY, float dirZ, 
             float colorR, float colorG, float colorB, float intensity);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetSkyboxTexture(long textureId, float exposure, float rotationDegrees);
+
+        /// <summary>Equirect texture sky (#326): the texture the renderer's fullscreen sky pass samples in
+        /// <see cref="SkyboxMode.Texture"/>, its exposure and a yaw offset in degrees. The pass draws it behind
+        /// everything, centred on whichever camera renders the frame — no sphere mesh, no depth write, no fog.</summary>
+        public static void ApplySkyboxTexture(long textureId, float exposure, float rotationDegrees)
+        {
+            try { SetSkyboxTexture(textureId, exposure, rotationDegrees); } catch (System.EntryPointNotFoundException) { }
+        }
 
         private static bool _skyboxEnabled = false;
         public static bool IsSkyboxOn => _skyboxEnabled;
