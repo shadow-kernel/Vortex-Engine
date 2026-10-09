@@ -953,7 +953,8 @@ namespace VortexEditor.Shell
                 psi.ArgumentList.Add("--project=" + p.Path);
                 if (p.ActiveScene != null) psi.ArgumentList.Add("--scene=" + p.ActiveScene.Name);
                 Process.Start(psi);
-                PlayModeService.Instance.IsExternalWindow = true;
+                // a separate PROCESS: the editor itself is not playing, so it must not switch into its external-window
+                // play state (that disabled script hot-reload in the editor until Stop) (#346)
                 ShowToast("Player started in its own window");
             }
             catch (Exception ex) { EditorCommands.Fail("Could not start the player", ex); }

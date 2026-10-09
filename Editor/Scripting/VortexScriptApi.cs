@@ -160,6 +160,8 @@ namespace Vortex
         // 3P body (layer 2) vs the FP viewmodel copy (layer 1).
         void SetRenderLayer(long entityId, int layer);
         bool GetKey(string key);
+        bool GetKeyDown(string key);
+        bool GetKeyUp(string key);
 
         // Collide-and-slide a character capsule (feet, radius, height) against the scene's colliders.
         // selfId registers this character so other characters can't walk through it (0 = anonymous).
@@ -711,6 +713,11 @@ namespace Vortex
     {
         internal static IScriptHost Host;
         public static bool GetKey(string key) => Host != null && Host.GetKey(key);
+        /// <summary>True for exactly the tick the key went down (E = interact, R = reload) — a tap shorter than one
+        /// frame still counts in the editor. Key names as for <see cref="GetKey"/>.</summary>
+        public static bool GetKeyDown(string key) => Host != null && Host.GetKeyDown(key);
+        /// <summary>True for exactly the tick the key was released.</summary>
+        public static bool GetKeyUp(string key) => Host != null && Host.GetKeyUp(key);
 
         /// <summary>Mouse movement since the last tick, in pixels (only non-zero while the game has
         /// captured the cursor — i.e. in play before ESC). Use it for mouse-look. Forced to 0 while a screen that

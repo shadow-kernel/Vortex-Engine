@@ -204,8 +204,8 @@ void main()
 	if (obj.has_albedo_texture != 0u)
 	{
 		vec4 tex = texture(u_albedo, uv);
-		albedo = srgb_to_linear(tex.rgb);
-		alpha = tex.a;
+		albedo *= srgb_to_linear(tex.rgb);   // base colour TINTS the texture, alpha multiplies — standard PBR (#330)
+		alpha *= tex.a;
 	}
 
 	if (obj.is_unlit != 0u)

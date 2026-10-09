@@ -70,8 +70,11 @@ namespace Vortex.Player
                 {
                     if (console.Entries.Count == 0) return;
                     var e = console.Entries[console.Entries.Count - 1];
+                    string line = "[" + e.LevelTag + "] " + e.Message;
                     var w = e.Level == LogLevel.Error ? Console.Error : Console.Out;
-                    w.WriteLine("[" + e.LevelTag + "] " + e.Message);
+                    w.WriteLine(line);
+                    // … and into the player's log file: started from the editor, stdout goes nowhere visible (#346)
+                    try { File.AppendAllText(_logPath, line + Environment.NewLine); } catch { }
                 }
                 catch { }
             };
@@ -106,7 +109,11 @@ namespace Vortex.Player
             try { EditorViewportService.Instance.AreGizmosVisible = false; } catch { }
 
             string pak = Path.Combine(exeDir, "Assets.vpak");
-            if (File.Exists(pak))
+            // --project runs the project's CURRENT scripts and assets: a stale pak next to the player (an earlier
+            // export) must not shadow them with its own GameScripts.dll and assets (#346).
+            if (File.Exists(pak) && !string.IsNullOrEmpty(options.ProjectPath))
+                Log("skipping " + pak + " — --project given, the project's own scripts and assets win");
+            else if (File.Exists(pak))
             {
                 AssetVfs.Mount(pak);
                 Log("mounted pak: " + AssetVfs.FileCount + " files");

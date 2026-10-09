@@ -127,6 +127,15 @@ namespace VortexEditor.Panels.AssetBrowser
             {
                 ThumbnailService.Invalidate(p);
                 batch.Invalidated.Add(p);
+                string ext = Path.GetExtension(p).ToLowerInvariant();
+                // a model file changed on disk: drop its cached meshes so every placed instance shows the new file
+                // on its next submit, without renaming it (#339)
+                if (AssetKinds.Is(ext, AssetKinds.ModelExt))
+                    try { Editor.Core.Services.SceneRenderService.InvalidateModel(p); } catch { }
+                // a .vmat saved by an external editor / git / a script reaches the live scene exactly like a Material
+                // Editor save (#344) — Flush runs on the UI thread
+                if (ext == ".vmat" && File.Exists(p))
+                    try { var m = Editor.Core.Assets.VortexMaterial.Load(p); if (m != null) VortexEditor.Shell.Material.MaterialLive.PushToScene(p, m); } catch { }
                 // A model's per-submesh materials live in <model folder>/materials/*.vmat: editing one changes how the
                 // model (and prefabs of it) render, so the model thumbnails next to that folder are stale too.
                 if (p.EndsWith(".vmat", StringComparison.OrdinalIgnoreCase))

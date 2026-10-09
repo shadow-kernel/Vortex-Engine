@@ -383,8 +383,8 @@ float4 PSMain(PS_IN input) : SV_TARGET
 
     if (HasAlbedoTexture != 0) {
         float4 tex = AlbedoTexture.Sample(LinearSampler, uv);
-        albedo = SRGBToLinear(tex.rgb);
-        alpha = tex.a;
+        albedo *= SRGBToLinear(tex.rgb);   // base colour TINTS the texture, alpha multiplies — standard PBR (#330)
+        alpha *= tex.a;
     }
 
     // UNLIT/EMISSIVE PATH - bypass all lighting calculations (for skybox, etc.)

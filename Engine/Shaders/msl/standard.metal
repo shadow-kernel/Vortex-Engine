@@ -388,8 +388,8 @@ fragment float4 PSMain(VSOut in [[stage_in]],
     if (obj.has_albedo_texture != 0)
     {
         float4 tex = albedo_tex.sample(albedo_smp, uv);
-        albedo = srgb_to_linear(tex.rgb);
-        alpha = tex.a;
+        albedo *= srgb_to_linear(tex.rgb);   // base colour TINTS the texture, alpha multiplies — standard PBR (#330)
+        alpha *= tex.a;
     }
 
     if (obj.is_unlit != 0)

@@ -389,7 +389,8 @@ namespace Editor.ECS.Components.Rendering
                         System.Diagnostics.Debug.WriteLine($"[MeshRenderer] Failed to create material");
                         return;
                     }
-                    VortexAPI.SetMaterialBaseColor(_materialHandle, 0.9f, 0.9f, 0.9f, 1.0f);
+                    // white: the base colour TINTS the albedo texture bound below (#330); 0.9 would darken it by 10 %
+                    VortexAPI.SetMaterialBaseColor(_materialHandle, 1.0f, 1.0f, 1.0f, 1.0f);
                 }
 
                 // Bind texture to material

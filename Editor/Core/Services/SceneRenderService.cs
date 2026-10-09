@@ -241,6 +241,67 @@ namespace Editor.Core.Services
             }
         }
 
+        /// <summary>A model file changed on disk or is being re-imported (#339): forget every cached mesh, material and
+        /// bounds entry for it (the bare path and its "path#submeshN" keys, relative or absolute), free the old meshes,
+        /// and make the entities that used them re-resolve on their next submit. The path caches were keyed by the
+        /// path string alone, so an overwritten .fbx/.glb kept showing the previous mesh until the file was renamed.</summary>
+        public static void InvalidateModel(string modelPath)
+        {
+            if (string.IsNullOrEmpty(modelPath)) return;
+            string target = NormalizeModelPath(modelPath);
+            var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var k in _submeshMeshCache.Keys) if (SameModel(k, target)) keys.Add(k);
+            foreach (var k in _meshPathToMaterialId.Keys) if (SameModel(k, target)) keys.Add(k);
+            foreach (var k in _meshBoundsCache.Keys) if (SameModel(k, target)) keys.Add(k);
+            if (keys.Count == 0) return;
+            var ids = new HashSet<long>();
+            foreach (var k in keys)
+            {
+                long id;
+                if (_submeshMeshCache.TryGetValue(k, out id) && id >= 0) ids.Add(id);
+                _submeshMeshCache.Remove(k);
+                _meshPathToMaterialId.Remove(k);
+                _meshBoundsCache.Remove(k);
+                _isModelPath.Remove(k);
+            }
+            _resolvedSubmeshes.Clear();
+            foreach (var id in ids)
+            {
+                _sharedMeshIds.Remove(id);
+                try { VortexAPI.DeleteMesh(id); } catch { }
+            }
+            var inst = Instance;
+            if (inst != null) inst.ForgetEntityMeshes(ids);
+            RuntimeDirty = true;
+        }
+
+        /// <summary>Entities whose mesh id was just freed re-create it on their next submit.</summary>
+        private void ForgetEntityMeshes(HashSet<long> ids)
+        {
+            var gone = new List<Guid>();
+            foreach (var kv in _entityMeshes) if (ids.Contains(kv.Value)) gone.Add(kv.Key);
+            foreach (var g in gone) { _entityMeshes.Remove(g); _entityMeshPaths.Remove(g); }
+        }
+
+        /// <summary>A cache key or model path without its "#submeshN" suffix, as an absolute path (relative keys are
+        /// resolved against the open project), so relative and absolute spellings of one file compare equal.</summary>
+        private static string NormalizeModelPath(string p)
+        {
+            string s = p;
+            int h = s.LastIndexOf('#');
+            if (h > 0 && s.Length > h + 7 && s.Substring(h + 1, 7) == "submesh") s = s.Substring(0, h);
+            try
+            {
+                var proj = Data.ProjectData.Current != null ? Data.ProjectData.Current.Path : null;
+                if (!System.IO.Path.IsPathRooted(s) && !string.IsNullOrEmpty(proj)) s = System.IO.Path.Combine(proj, s);
+                return System.IO.Path.GetFullPath(s);
+            }
+            catch { return s; }
+        }
+
+        private static bool SameModel(string key, string targetFull)
+            => string.Equals(NormalizeModelPath(key), targetFull, StringComparison.OrdinalIgnoreCase);
+
         /// <summary>
         /// Get the material ID for a mesh path (if one was imported)
         /// </summary>
@@ -1460,7 +1521,9 @@ namespace Editor.Core.Services
                             long newMaterialId = VortexAPI.CreateNewMaterial();
                             if (newMaterialId >= 0)
                             {
-                                VortexAPI.SetMaterialBaseColor(newMaterialId, 0.9f, 0.9f, 0.9f, 1.0f);
+                                // white: the base colour now TINTS the albedo texture (#330), 0.9 would darken every
+                                // textured model by 10 %
+                                VortexAPI.SetMaterialBaseColor(newMaterialId, 1.0f, 1.0f, 1.0f, 1.0f);
                                 VortexAPI.SetMaterialMetallicValue(newMaterialId, renderer.Metallic);
                                 VortexAPI.SetMaterialRoughnessValue(newMaterialId, renderer.Roughness);
                                 VortexAPI.SetMaterialAlbedoTexture(newMaterialId, textureId);

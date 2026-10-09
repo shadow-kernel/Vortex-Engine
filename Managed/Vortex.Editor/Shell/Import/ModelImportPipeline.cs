@@ -234,6 +234,9 @@ namespace VortexEditor.Shell.AssetImport
                 r.Folder = Path.GetDirectoryName(modelPath);
                 string rel = Rel(modelPath);
 
+                // a re-import of the same path must not keep serving the previous file's meshes (#339)
+                SceneRenderService.InvalidateModel(rel);
+
                 if (ext == ".vmesh")
                 {
                     long mesh = VortexAPI.LoadVMeshFromFile(modelPath);
@@ -312,6 +315,9 @@ namespace VortexEditor.Shell.AssetImport
                         SceneRenderService.RegisterMaterialForMeshPath(subPath, subs[i].MaterialId);
                     }
                     SceneRenderService.RegisterMaterialForMeshPath(rel, subs[0].MaterialId);
+                    // a single-submesh model is placed under its BARE path (AssetActions) — register that key too, or a
+                    // re-import keeps serving the previous mesh for it (#339)
+                    SceneRenderService.RegisterMeshIdForPath(rel, subs[0].MeshId);
                     r.MissingTextures.AddRange(missing);
 
                     // ---- 4. animation clips -> animations/*.vanim

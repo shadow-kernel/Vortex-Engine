@@ -125,11 +125,21 @@ namespace VortexEditor.Claude.Tools
             [Description("Exact tag")] string tag = null,
             [Description("Component type the entity must have, e.g. Light, BoxCollider, AudioSource")] string component = null,
             [Description("Only descendants of this entity")] string under = null,
-            [Description("Maximum results")] int limit = 50)
+            [Description("Maximum results per page (1–500)")] int limit = 50,
+            [Description("Skip this many matches: page through a large scene with the next_offset of the previous call")] int offset = 0)
         {
             var all = Query(name, tag, component, under);
             limit = Math.Clamp(limit, 1, 500);
-            return new { count = all.Count, entities = all.Take(limit).Select(SceneModel.Brief).ToArray(), truncated = all.Count > limit ? (bool?)true : null };
+            offset = Math.Max(0, offset);
+            bool more = offset + limit < all.Count;   // #343: a 2,000-entity scene is listed in pages, not cut at 500
+            return new
+            {
+                count = all.Count,
+                offset,
+                entities = all.Skip(offset).Take(limit).Select(SceneModel.Brief).ToArray(),
+                truncated = more ? (bool?)true : null,
+                next_offset = more ? (int?)(offset + limit) : null,
+            };
         }
 
         /// <summary>Entities of the active scene matching every given filter (find_entities, bulk edits).</summary>

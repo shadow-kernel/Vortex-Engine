@@ -814,6 +814,11 @@ namespace Editor.Scripting
         /// <summary>Tick every running behaviour.</summary>
         public void Update(float dt)
         {
+            // a new input tick: key edges (GetKeyDown / GetKeyUp) and the sub-frame press latch roll over (#337)
+            _keyTick++;
+#if VORTEX_CORE
+            Editor.Core.Input.HostInput.BeginTick();
+#endif
             if (!_active) return;
             Vortex.Time.DeltaTime = dt;
             Vortex.Input.PollGamepad();   // refresh controller state once per tick (scripts read Input.LeftStickX etc.)
@@ -2112,8 +2117,8 @@ namespace Editor.Scripting
             // the WPF Key enum names the scripts were written against, mapped to virtual-key codes.
             if (mvk != 0) return Editor.Core.Input.HostInput.IsKeyDown(mvk);
             int vk = Editor.Core.Input.KeyNames.VirtualKeyFromName(key);
-            if (vk == 0) return false;
-            return Editor.Core.Input.HostInput.IsKeyDown(vk);
+            if (vk == 0) { WarnUnknownKey(key); return false; }
+            return Editor.Core.Input.HostInput.IsKeyDownThisTick(vk);   // incl. a tap shorter than one frame (#337)
 #else
             if (mvk != 0) return (GetAsyncKeyState(mvk) & 0x8000) != 0;
             if (!Enum.TryParse(key, true, out Key k)) return false;
@@ -2125,6 +2130,39 @@ namespace Editor.Scripting
             if (vk == 0) return false;
             return (GetAsyncKeyState(vk) & 0x8000) != 0;
 #endif
+        }
+
+        // ---- key edges (#337): GetKeyDown / GetKeyUp without hand-rolled edge detection. Per-tick cache so every
+        // call in one tick agrees; the tick advances at the start of Update.
+        private struct KeyEdgeState { public int Tick; public bool Now, Prev; }
+        private readonly Dictionary<string, KeyEdgeState> _keyEdges = new Dictionary<string, KeyEdgeState>(StringComparer.OrdinalIgnoreCase);
+        private int _keyTick = 1;
+
+        private KeyEdgeState KeyEdge(string key)
+        {
+            KeyEdgeState s;
+            if (string.IsNullOrEmpty(key)) return new KeyEdgeState();
+            if (_keyEdges.TryGetValue(key, out s) && s.Tick == _keyTick) return s;
+            bool prev = s.Tick != 0 && s.Now;   // the last tick this key was looked at
+            s = new KeyEdgeState { Tick = _keyTick, Now = ((Vortex.IScriptHost)this).GetKey(key), Prev = prev };
+            _keyEdges[key] = s;
+            return s;
+        }
+
+        bool Vortex.IScriptHost.GetKeyDown(string key) { var e = KeyEdge(key); return e.Now && !e.Prev; }
+        bool Vortex.IScriptHost.GetKeyUp(string key) { var e = KeyEdge(key); return !e.Now && e.Prev; }
+
+        /// <summary>An unknown key name used to fail silently (#336) — say so once per name.</summary>
+        private static readonly HashSet<string> _warnedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private static void WarnUnknownKey(string key)
+        {
+            lock (_warnedKeys) { if (!_warnedKeys.Add(key)) return; }
+            try
+            {
+                Editor.Core.Services.ConsoleService.Instance.LogWarning("Input.GetKey: unknown key name \"" + key +
+                    "\" — use W, Space, LeftShift, Num1 / Alpha1 / \"1\", Keypad1, F5, Left, LButton, … (the KeyCode names)");
+            }
+            catch { }
         }
     }
 }

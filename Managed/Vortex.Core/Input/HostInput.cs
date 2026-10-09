@@ -27,6 +27,36 @@ namespace Editor.Core.Input
         public static Func<bool> CapsLock;
 
         public static bool IsKeyDown(int vk) { var f = KeyDown; return f != null && f(vk); }
+
+        // ---- per-tick press latch (#337): a key tapped and released BETWEEN two script ticks is still seen as down
+        // for the following tick. Hosts call NotifyKeyDown from their key-down events; the script runtime calls
+        // BeginTick once at the start of every update, which turns the presses collected since the previous tick
+        // into this tick's latch.
+        private static readonly object _latchLock = new object();
+        private static System.Collections.Generic.HashSet<int> _pressedPending = new System.Collections.Generic.HashSet<int>();
+        private static System.Collections.Generic.HashSet<int> _pressedThisTick = new System.Collections.Generic.HashSet<int>();
+
+        public static void NotifyKeyDown(int vk) { if (vk != 0) lock (_latchLock) _pressedPending.Add(vk); }
+
+        /// <summary>Physically down now, or pressed since the previous script tick.</summary>
+        public static bool IsKeyDownThisTick(int vk)
+        {
+            if (IsKeyDown(vk)) return true;
+            lock (_latchLock) return _pressedThisTick.Contains(vk);
+        }
+
+        /// <summary>Start of a script tick: the presses since the previous tick become this tick's latch.</summary>
+        public static void BeginTick()
+        {
+            lock (_latchLock)
+            {
+                var t = _pressedThisTick;
+                _pressedThisTick = _pressedPending;
+                t.Clear();
+                _pressedPending = t;
+            }
+        }
+
         public static bool IsWindowFocused() { var f = WindowFocused; return f == null || f(); }
         public static GamepadState PollGamepad() { var f = Gamepad; return f != null ? f() : default(GamepadState); }
         public static bool IsCapsLockOn() { var f = CapsLock; return f != null && f(); }
@@ -48,10 +78,13 @@ namespace Editor.Core.Input
     /// </summary>
     public static class KeyNames
     {
+        private static readonly string[] DigitPrefixes = { "Num", "Alpha", "Digit", "Key" };
+
         public static int VirtualKeyFromName(string name)
         {
             if (string.IsNullOrEmpty(name)) return 0;
             string n = name.Trim();
+            if (n.Length == 0) return 0;   // whitespace-only: the F-key check below indexed n[0] and threw
             if (n.Length == 1)
             {
                 char c = char.ToUpperInvariant(n[0]);
@@ -62,6 +95,16 @@ namespace Editor.Core.Input
             if ((n[0] == 'F' || n[0] == 'f') && n.Length <= 3 && int.TryParse(n.Substring(1), out int fn) && fn >= 1 && fn <= 24)
                 return 0x70 + (fn - 1);
             if (n.StartsWith("NumPad", StringComparison.OrdinalIgnoreCase) && n.Length == 7 && n[6] >= '0' && n[6] <= '9')
+                return 0x60 + (n[6] - '0');
+            // The spellings scripts naturally reach for (the public KeyCode enum, Unity habits) (#336):
+            // Num1 / Alpha1 / Digit1 / Key1 = the number-row "1", Keypad1 = the numeric keypad.
+            for (int i = 0; i < DigitPrefixes.Length; i++)
+            {
+                string p = DigitPrefixes[i];
+                if (n.Length == p.Length + 1 && n.StartsWith(p, StringComparison.OrdinalIgnoreCase) && n[p.Length] >= '0' && n[p.Length] <= '9')
+                    return n[p.Length];
+            }
+            if (n.StartsWith("Keypad", StringComparison.OrdinalIgnoreCase) && n.Length == 7 && n[6] >= '0' && n[6] <= '9')
                 return 0x60 + (n[6] - '0');
             switch (n.ToLowerInvariant())
             {

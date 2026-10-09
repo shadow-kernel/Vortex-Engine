@@ -56,7 +56,7 @@ void main()
 	// Edit from here. A plain lambert term over the material's albedo, so the template renders something
 	// recognisable before you change it.
 	vec3 albedo = obj.base_color.rgb;
-	if (obj.has_albedo_texture != 0u) albedo = pow(max(texture(u_albedo, v_uv).rgb, 0.0), vec3(2.2));
+	if (obj.has_albedo_texture != 0u) albedo *= pow(max(texture(u_albedo, v_uv).rgb, 0.0), vec3(2.2));   // tinted by base colour (#330)
 
 	vec3 N = normalize(v_norm);
 	vec3 L = normalize(-frame.light_direction);

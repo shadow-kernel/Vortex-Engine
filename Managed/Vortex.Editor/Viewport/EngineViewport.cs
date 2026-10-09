@@ -302,13 +302,26 @@ namespace VortexEditor.Viewport
             try { _lastScreenPointer = this.PointToScreen(_lastPointer); } catch { }
         }
 
-        private static int VkFromKey(Key key) => KeyNames.VirtualKeyFromName(key.ToString());
+        /// <summary>The virtual key of a key event. The number row goes by PHYSICAL position (#336): on a German or
+        /// AZERTY layout the Key for the "1" cap is not D1, so Input.GetKey("1") never fired there. Everything else
+        /// keeps the layout's Key.</summary>
+        private static int VkFromKey(KeyEventArgs e)
+        {
+            switch (e.PhysicalKey)
+            {
+                case PhysicalKey.Digit0: return '0'; case PhysicalKey.Digit1: return '1'; case PhysicalKey.Digit2: return '2';
+                case PhysicalKey.Digit3: return '3'; case PhysicalKey.Digit4: return '4'; case PhysicalKey.Digit5: return '5';
+                case PhysicalKey.Digit6: return '6'; case PhysicalKey.Digit7: return '7'; case PhysicalKey.Digit8: return '8';
+                case PhysicalKey.Digit9: return '9';
+            }
+            return KeyNames.VirtualKeyFromName(e.Key.ToString());
+        }
 
         private void TopLevelKeyDown(object sender, KeyEventArgs e)
         {
-            int vk = VkFromKey(e.Key);
+            int vk = VkFromKey(e);
             Trace($"keydown {e.Key} vk=0x{vk:X} hasFocus={_hasFocus}");
-            if (vk != 0) _keysDown.Add(vk);
+            if (vk != 0) { _keysDown.Add(vk); HostInput.NotifyKeyDown(vk); }   // the latch sees taps shorter than a frame (#337)
             if (!_hasFocus || vk == 0) return;
             if (_topLevel?.FocusManager?.GetFocusedElement() is TextBox) return;   // typing in a text field
             var m = e.KeyModifiers;
@@ -318,7 +331,7 @@ namespace VortexEditor.Viewport
 
         private void TopLevelKeyUp(object sender, KeyEventArgs e)
         {
-            int vk = VkFromKey(e.Key);
+            int vk = VkFromKey(e);
             if (vk != 0) _keysDown.Remove(vk);
             if (!_hasFocus || vk == 0) return;
             _session.OnKeyUp(vk);
