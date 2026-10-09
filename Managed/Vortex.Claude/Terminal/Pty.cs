@@ -246,6 +246,11 @@ namespace Editor.Core.Claude.Terminal
 
             var si = new StartupInfoEx();
             si.StartupInfo.cb = Marshal.SizeOf<StartupInfoEx>();
+            // STARTF_USESTDHANDLES with NO handles (#365): the child must take its standard handles from the pseudoconsole.
+            // Without this flag a child of a process whose own std handles are redirected (the editor started by a script
+            // or a CI harness) inherits those handle VALUES — invalid with bInheritHandles = false — reads EOF on stdin
+            // and exits at once, while its prompt lands in the parent's stdout. Windows Terminal does the same.
+            si.StartupInfo.dwFlags = 0x00000100;   // STARTF_USESTDHANDLES
             IntPtr size = IntPtr.Zero;
             InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref size);
             si.lpAttributeList = Marshal.AllocHGlobal(size);
