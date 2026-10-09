@@ -137,21 +137,28 @@ namespace Editor.Core.Services.Build
                     if (Directory.Exists(assetsSrc))
                     {
                         var files = Directory.GetFiles(assetsSrc, "*", SearchOption.AllDirectories);
+                        // glTF files ship self-contained: the shipped game imports from memory, where a sibling .bin
+                        // cannot be opened (#370) — the buffers are embedded and the .bin stays out of the pak
+                        var consumedBins = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        var embeddedGltf = GltfEmbed.EmbedAll(files, consumedBins);
                         for (int i = 0; i < files.Length; i++)
                         {
                             var f = files[i];
                             if (Path.GetExtension(f).Equals(".cs", StringComparison.OrdinalIgnoreCase)) continue; // source -> compiled DLL
+                            if (consumedBins.Contains(Path.GetFullPath(f))) continue;   // embedded into its .gltf
                             var rel = "Assets/" + f.Substring(assetsSrc.Length).TrimStart('\\', '/').Replace('\\', '/');
                             // Scene files go into their own per-scene pack (streamed on demand); everything else is shared.
                             if (Path.GetExtension(f).Equals(".vscene", StringComparison.OrdinalIgnoreCase) &&
                                 rel.StartsWith("Assets/Scenes/", StringComparison.OrdinalIgnoreCase))
                                 sceneEntries.Add(new System.Collections.Generic.KeyValuePair<string, byte[]>(rel, File.ReadAllBytes(f)));
                             else
-                                entries.Add(new System.Collections.Generic.KeyValuePair<string, byte[]>(rel, File.ReadAllBytes(f)));
+                                entries.Add(new System.Collections.Generic.KeyValuePair<string, byte[]>(rel, embeddedGltf.TryGetValue(f, out var gltfBytes) ? gltfBytes : File.ReadAllBytes(f)));
                             assetCount++;
                             if ((i & 7) == 0 && files.Length > 0)
                                 P(0.38 + 0.45 * ((double)i / files.Length), "Packing assets… (" + assetCount + " files)");
                         }
+                        if (embeddedGltf.Count > 0)
+                            sb.AppendLine("• " + embeddedGltf.Count + " glTF file(s) packed self-contained (" + consumedBins.Count + " .bin buffer(s) embedded)");
                     }
                     if (scriptsOk && File.Exists(tmpDll))
                         entries.Add(new System.Collections.Generic.KeyValuePair<string, byte[]>("GameScripts.dll", File.ReadAllBytes(tmpDll)));
