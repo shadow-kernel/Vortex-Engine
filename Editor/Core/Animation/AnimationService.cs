@@ -46,6 +46,14 @@ namespace Editor.Core.Animation
             public Vector3[] FadeT; public Quaternion[] FadeR; public Vector3[] FadeS;
             public float FadeDuration, FadeElapsed;
             public float[] Palette;               // current pose, flattened (boneCount * 16)
+            // #113 root motion: the resolved root bone (-2 = not resolved yet for this clip / bone setting), the clip's
+            // start position of that bone in MODEL space (the pose is pinned to it), this tick's model-space delta.
+            public int RootNode = -2;
+            public string RootResolvedFor;        // "<clip name>|<bone setting>" the RootNode was resolved for
+            public int RootTrack = -1;            // clip.Tracks index of the root bone's position track (-1 = none)
+            public Vector3 RootStartModel;
+            public Vector3 RootDeltaModel;
+            public bool RootPinned;               // ApplyRootMotion active and a root track found: pin the pose
             public Matrix4x4[] NodeWorlds;        // model-space node worlds of the SAME pose (bone sockets read these)
             public List<LayerState> Layers;       // bone-masked override layers (#173); null = single-clip fast path
             public SyncGroup Group;               // synced playback group (#174); null = independent clock
@@ -337,6 +345,8 @@ namespace Editor.Core.Animation
                 float durT = Math.Max(state.Clip.DurationSec, 0.0001f);
                 state.Time = state.Group.Norm * durT;
                 FireEvents(entity, state.Clip, prevT, state.Time, state.Group.WrappedThisFrame, state.Group.Speed >= 0f);
+                if (animator.ApplyRootMotion) ExtractRootMotion(state, animator, prevT, state.Time, state.Group.WrappedThisFrame, state.Group.Speed >= 0f);
+                else { state.RootPinned = false; state.RootDeltaModel = Vector3.Zero; }
                 if (!state.Group.Loop && state.Group.Norm >= 1f) state.Playing = false;
                 if (state.FadeDuration > 0f)
                 {
@@ -367,6 +377,8 @@ namespace Editor.Core.Animation
                 }
 
                 FireEvents(entity, state.Clip, prev, state.Time, wrapped, step >= 0f);
+                if (animator.ApplyRootMotion) ExtractRootMotion(state, animator, prev, state.Time, wrapped, step >= 0f);
+                else { state.RootPinned = false; state.RootDeltaModel = Vector3.Zero; }
 
                 if (state.FadeDuration > 0f)
                 {
@@ -439,6 +451,155 @@ namespace Editor.Core.Animation
             try { state.Palette = EvaluateStatePalette(state); }
             finally { state.SmoothDt = 0f; }
             HasActiveAnimators = true;
+            if (animator.ApplyRootMotion && baseActive) ApplyRootMotion(entity, state);
+        }
+
+        // ------------------------------------------------------------------ root motion (#113)
+
+        /// <summary>The root-motion bone for this state's clip: the Animator's named bone, else hips / pelvis by name,
+        /// else the first node under a model root that has skinned descendants. Cached per clip + setting.</summary>
+        private static void ResolveRootNode(AnimatorState state, ECS.Components.Animation.Animator animator)
+        {
+            string key = (state.Clip != null ? state.Clip.Name : "") + "|" + (animator.RootMotionBone ?? "");
+            if (state.RootNode != -2 && state.RootResolvedFor == key) return;
+            state.RootResolvedFor = key;
+            state.RootNode = FindRootMotionNode(state.Skeleton, animator.RootMotionBone);
+            state.RootTrack = -1;
+            if (state.RootNode >= 0 && state.Clip != null && state.TrackNodes != null)
+                for (int i = 0; i < state.TrackNodes.Length; i++)
+                    if (state.TrackNodes[i] == state.RootNode && state.Clip.Tracks[i].Pos != null && state.Clip.Tracks[i].Pos.Count > 0) { state.RootTrack = i; break; }
+            if (state.RootTrack >= 0)
+            {
+                var first = state.Clip.Tracks[state.RootTrack].Pos[0];
+                state.RootStartModel = RootToModel(state.Skeleton, state.RootNode, new Vector3(first.X, first.Y, first.Z));
+            }
+        }
+
+        /// <summary>The bone whose translation carries a clip's travel: <paramref name="preferred"/> when set and found,
+        /// else a node named hips / pelvis, else the first child of a model root that skins vertices.</summary>
+        public static int FindRootMotionNode(SkeletonDef skel, string preferred)
+        {
+            if (skel == null || skel.Nodes == null || skel.Nodes.Length == 0) return -1;
+            if (!string.IsNullOrWhiteSpace(preferred)) { int p = RigMap.Find(skel, preferred); if (p >= 0) return p; }
+            for (int i = 0; i < skel.Nodes.Length; i++)
+            {
+                string n = (skel.Nodes[i].Name ?? "").ToLowerInvariant();
+                if (n.EndsWith("hips") || n.EndsWith("hip") || n.EndsWith("pelvis") || n.Contains(":hips") || n.Contains("_hips")) return i;
+            }
+            var si = RigMap.Info(skel);
+            for (int i = 0; i < skel.Nodes.Length; i++)
+            {
+                int parent = skel.Nodes[i].Parent;
+                if (parent < 0) continue;
+                if (skel.Nodes[parent].Parent < 0 && si != null && si.Effective != null && i < si.Effective.Length && si.Effective[i]) return i;
+            }
+            return -1;
+        }
+
+        /// <summary>A position in the root bone's LOCAL space (its track values) → model space, through the parent's bind pose.</summary>
+        private static Vector3 RootToModel(SkeletonDef skel, int root, Vector3 local)
+        {
+            int parent = skel.Nodes[root].Parent;
+            if (parent < 0) return local;
+            var si = RigMap.Info(skel);
+            return si != null && si.Bind != null && parent < si.Bind.Length ? Vector3.Transform(local, si.Bind[parent]) : local;
+        }
+
+        private static Vector3 ModelToRoot(SkeletonDef skel, int root, Vector3 model)
+        {
+            int parent = skel.Nodes[root].Parent;
+            if (parent < 0) return model;
+            var si = RigMap.Info(skel);
+            Matrix4x4 inv;
+            if (si != null && si.Bind != null && parent < si.Bind.Length && Matrix4x4.Invert(si.Bind[parent], out inv)) return Vector3.Transform(model, inv);
+            return model;
+        }
+
+        /// <summary>The root bone's model-space travel between two clip times — across a loop wrap the end-to-start jump
+        /// is skipped (the travel is end − prev plus now − start). Pure: used by the tests.</summary>
+        public static Vector3 RootDelta(SkeletonDef skel, VortexAnimClip clip, int rootNode, int rootTrack, float prev, float now, bool wrapped, bool forward)
+        {
+            if (clip == null || rootTrack < 0 || rootTrack >= clip.Tracks.Count || rootNode < 0) return Vector3.Zero;
+            var keys = clip.Tracks[rootTrack].Pos;
+            if (keys == null || keys.Count == 0) return Vector3.Zero;
+            float dur = Math.Max(clip.DurationSec, 0.0001f);
+            Vector3 p0 = SampleVec3(keys, prev), p1 = SampleVec3(keys, now);
+            Vector3 local;
+            if (!wrapped) local = p1 - p0;
+            else if (forward) local = (SampleVec3(keys, dur) - p0) + (p1 - SampleVec3(keys, 0f));
+            else local = (SampleVec3(keys, 0f) - p0) + (p1 - SampleVec3(keys, dur));
+            // a delta is a direction: through the parent's bind rotation / scale, no translation
+            int parent = skel.Nodes[rootNode].Parent;
+            if (parent < 0) return local;
+            var si = RigMap.Info(skel);
+            return si != null && si.Bind != null && parent < si.Bind.Length ? Vector3.TransformNormal(local, si.Bind[parent]) : local;
+        }
+
+        private void ExtractRootMotion(AnimatorState state, ECS.Components.Animation.Animator animator, float prev, float now, bool wrapped, bool forward)
+        {
+            ResolveRootNode(state, animator);
+            if (state.RootNode < 0 || state.RootTrack < 0 || state.Clip == null) { state.RootPinned = false; state.RootDeltaModel = Vector3.Zero; return; }
+            state.RootPinned = true;
+            state.RootDeltaModel = RootDelta(state.Skeleton, state.Clip, state.RootNode, state.RootTrack, prev, now, wrapped, forward);
+        }
+
+        /// <summary>Pin the root bone's horizontal model-space position to the clip's start (the entity carries the travel).</summary>
+        private static void PinRoot(AnimatorState state, SkeletonDef skel, Vector3[] t)
+        {
+            if (!state.RootPinned || state.RootNode < 0 || state.RootNode >= t.Length) return;
+            var model = RootToModel(skel, state.RootNode, t[state.RootNode]);
+            model = new Vector3(state.RootStartModel.X, model.Y, state.RootStartModel.Z);
+            t[state.RootNode] = ModelToRoot(skel, state.RootNode, model);
+        }
+
+        /// <summary>Move the entity by this tick's root travel (world space, horizontal) — through the character
+        /// collision world when it is built (walls stop the character), else directly.</summary>
+        private void ApplyRootMotion(ECS.GameEntity entity, AnimatorState state)
+        {
+            if (!state.RootPinned || entity?.Transform == null) return;
+            var dm = state.RootDeltaModel;
+            state.RootDeltaModel = Vector3.Zero;
+            if (dm.LengthSquared() < 1e-12f) return;
+            var world = BoneSocketService.EntityWorld(entity);
+            var dw = Vector3.TransformNormal(dm, world);
+            dw.Y = 0f;
+            if (dw.LengthSquared() < 1e-12f || float.IsNaN(dw.X) || float.IsNaN(dw.Z)) return;
+            var feet = world.Translation;
+            Vector3 moved;
+            if (Services.Physics.CollisionService.IsBuilt)
+            {
+                float radius = 0.35f, height = 1.8f;
+                var cap = entity.GetComponent<ECS.Components.Physics.CapsuleCollider>();
+                if (cap != null) { radius = Math.Max(0.05f, cap.Radius); height = Math.Max(2f * radius, cap.Height); }
+                var res = Services.Physics.CollisionService.MoveCharacter(new ECS.Vector3(feet.X, feet.Y, feet.Z), radius, height, new ECS.Vector3(dw.X, 0f, dw.Z), out _, 0);
+                moved = new Vector3(res.X, feet.Y, res.Z);   // horizontal only: gravity / ground stay the script's or the agent's
+            }
+            else moved = feet + dw;
+            Services.AI.NavigationService.WritePose(entity, moved, null);
+            Services.SceneRenderService.RuntimeDirty = true;
+            LastRootMotionTick = Environment.TickCount;
+        }
+
+        /// <summary>TickCount of the last entity moved by root motion (the Nav Agent sync and tests read it).</summary>
+        public int LastRootMotionTick { get; private set; }
+
+        /// <summary>#113: does root motion currently drive this entity (an enabled Animator with ApplyRootMotion on the
+        /// entity or a direct child, playing a clip whose root bone travels)? The Nav Agent then follows the entity
+        /// instead of moving it.</summary>
+        public bool RootMotionDrives(ECS.GameEntity e)
+        {
+            if (e == null) return false;
+            if (Drives(e)) return true;
+            if (e.Children != null) foreach (var c in e.Children) if (Drives(c)) return true;
+            return false;
+        }
+
+        private bool Drives(ECS.GameEntity e)
+        {
+            var an = e.GetComponent<ECS.Components.Animation.Animator>();
+            if (an == null || !an.IsEnabled || !an.ApplyRootMotion) return false;
+            AnimatorState st;
+            return _states.TryGetValue(e.Id, out st) && st.Playing && st.RootPinned;
         }
 
         private void FireEvents(ECS.GameEntity entity, VortexAnimClip clip, float from, float to, bool wrapped, bool forward)
@@ -573,6 +734,7 @@ namespace Editor.Core.Animation
                 int n = state.Skeleton.Nodes.Length;
                 state.FadeT = new Vector3[n]; state.FadeR = new Quaternion[n]; state.FadeS = new Vector3[n];
                 EvaluateLocals(state.Skeleton, state.Clip, state.TrackNodes, state.Time, state.FadeT, state.FadeR, state.FadeS);
+                PinRoot(state, state.Skeleton, state.FadeT);
                 state.FadeDuration = fade;
                 state.FadeElapsed = 0f;
             }
@@ -586,6 +748,7 @@ namespace Editor.Core.Animation
 
             state.Clip = clip;
             state.TrackNodes = ResolveTrackNodes(state.Skeleton, clip);
+            state.RootNode = -2; state.RootTrack = -1; state.RootDeltaModel = Vector3.Zero;   // #113: resolve the root for this clip on the next step
             state.Time = 0f;
             state.Loop = clip.Loop;
             state.Playing = true;
@@ -2074,6 +2237,7 @@ namespace Editor.Core.Animation
             int n = skel.Nodes.Length;
             var t = new Vector3[n]; var r = new Quaternion[n]; var s = new Vector3[n];
             EvaluateLocals(skel, state.Clip, state.TrackNodes, state.Time, t, r, s);
+            PinRoot(state, skel, t);   // #113: the entity carries the clip's travel, the pose stays in place
 
             if (state.FadeDuration > 0f && state.FadeT != null)
             {

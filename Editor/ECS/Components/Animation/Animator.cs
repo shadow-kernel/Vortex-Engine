@@ -67,6 +67,29 @@ namespace Editor.ECS.Components.Animation
             set => SetProperty(ref _speed, value, nameof(Speed));
         }
 
+        /// <summary>#113 root motion: the root bone's horizontal travel in the clip moves the ENTITY (through character
+        /// collision) instead of the mesh, so a walk cycle authored with forward motion walks the character. The pose
+        /// keeps the bone pinned at the clip's start position; in-place clips (zero travel) move nothing. Off = the mesh
+        /// plays as authored and scripts / the Nav Agent move the entity.</summary>
+        [DataMember(Name = "applyRootMotion", Order = 14)]
+        public bool ApplyRootMotion
+        {
+            get => _applyRootMotion;
+            set => SetProperty(ref _applyRootMotion, value, nameof(ApplyRootMotion));
+        }
+
+        /// <summary>The bone whose translation is the root motion (empty = detected: hips / pelvis, else the first
+        /// skinned node under the model root).</summary>
+        [DataMember(Name = "rootMotionBone", Order = 15)]
+        public string RootMotionBone
+        {
+            get => _rootMotionBone;
+            set => SetProperty(ref _rootMotionBone, value ?? "", nameof(RootMotionBone));
+        }
+
+        private bool _applyRootMotion;
+        private string _rootMotionBone = "";
+
         public Animator() : base() { }
         public Animator(GameEntity entity) : base(entity) { }
 

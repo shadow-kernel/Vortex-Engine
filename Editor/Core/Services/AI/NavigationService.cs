@@ -533,7 +533,17 @@ namespace Editor.Core.Services.AI
                 r.StateValid = true;
                 var nav = new SysVec(r.State.PosX, r.State.PosY, r.State.PosZ);
                 var feet = nav;
-                if (r.Agent.ResolveCollisions && CollisionService.IsBuilt && r.HasLastFeet)
+                bool rootDriven = Animation.AnimationService.Instance.RootMotionDrives(r.Entity);
+                if (rootDriven)
+                {
+                    // #113: the clip's root motion moves the entity (through collision); the crowd agent follows it, so the
+                    // path corridor and the desired velocity (Navigation.Velocity — the script picks walk / run from it)
+                    // stay valid, and the agent only turns the body toward the path.
+                    var cur = EntityFeet(r);
+                    if (!r.HasLastFeet || (cur - nav).LengthSquared() > 1e-6f) { Fill(_fa, cur); VortexAPI.NavAgentMovePosition(r.Handle, _fa); }
+                    feet = cur;
+                }
+                else if (r.Agent.ResolveCollisions && CollisionService.IsBuilt && r.HasLastFeet)
                 {
                     if (r.HasColliders) { try { CollisionService.RemoveEntityShapes(r.Entity); } catch { } }   // never collide with itself
                     var delta = nav - r.LastFeet;
