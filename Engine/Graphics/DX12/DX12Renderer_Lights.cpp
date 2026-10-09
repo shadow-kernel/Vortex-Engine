@@ -14,6 +14,7 @@ namespace vortex::graphics::dx12
 	void DX12Renderer::update_per_frame_constants()
 	{
 	using namespace DirectX;
+	prioritize_lights();   // #335: the slots go to the most relevant lights, not the first submitted
 	XMVECTOR eye = XMLoadFloat3(&m_camera_position);
 	XMVECTOR at = XMLoadFloat3(&m_camera_target);
 	XMVECTOR up = XMLoadFloat3(&m_camera_up);
@@ -208,21 +209,49 @@ namespace vortex::graphics::dx12
 	}
 	
 
-	void DX12Renderer::add_point_light(const PointLightData& light)
+	namespace
 	{
-	if (m_point_lights.size() < MAX_POINT_LIGHTS)
-	{
-	m_point_lights.push_back(light);
+		// Lights beyond the shader's slots are chosen by relevance to the camera, not by submission order (#335):
+		// intensity weighted by how deep the camera sits inside the light's range sphere and, outside it, by how
+		// close that sphere is. The brightest nearby lights win; far dim ones drop out.
+		template<class L>
+		void keep_most_relevant(std::vector<L>& lights, size_t cap, const DirectX::XMFLOAT3& eye)
+		{
+			if (lights.size() <= cap) return;
+			std::vector<std::pair<float, size_t>> order;
+			order.reserve(lights.size());
+			for (size_t i = 0; i < lights.size(); ++i)
+			{
+				const L& l = lights[i];
+				const float dx = l.position.x - eye.x, dy = l.position.y - eye.y, dz = l.position.z - eye.z;
+				const float d = sqrtf(dx * dx + dy * dy + dz * dz);
+				float inside = l.range > 0.0f ? 1.0f - d / l.range : 1.0f;
+				if (inside < 0.0f) inside = 0.0f;
+				float nearness = l.range > 0.0f ? l.range / (d + 1e-3f) : 1.0f;
+				if (nearness > 1.0f) nearness = 1.0f;
+				order.push_back({ l.intensity * (inside + nearness), i });
+			}
+			std::stable_sort(order.begin(), order.end(), [](const std::pair<float, size_t>& a, const std::pair<float, size_t>& b) { return a.first > b.first; });
+			std::vector<L> kept;
+			kept.reserve(cap);
+			for (size_t i = 0; i < cap; ++i) kept.push_back(lights[order[i].second]);
+			lights.swap(kept);
+		}
 	}
-	}
-	
 
-	void DX12Renderer::add_spot_light(const SpotLightData& light)
+	// every submitted light is kept here; prioritize_lights() picks the ones that fit the shader slots (#335)
+	void DX12Renderer::add_point_light(const PointLightData& light) { if (m_point_lights.size() < MAX_SUBMITTED_LIGHTS) m_point_lights.push_back(light); }
+	void DX12Renderer::add_spot_light(const SpotLightData& light) { if (m_spot_lights.size() < MAX_SUBMITTED_LIGHTS) m_spot_lights.push_back(light); }
+
+	void DX12Renderer::prioritize_lights()
 	{
-	if (m_spot_lights.size() < MAX_SPOT_LIGHTS)
-	{
-	m_spot_lights.push_back(light);
-	}
+		const size_t points = m_point_lights.size(), spots = m_spot_lights.size();
+		if (points <= MAX_POINT_LIGHTS && spots <= MAX_SPOT_LIGHTS) return;
+		keep_most_relevant(m_point_lights, MAX_POINT_LIGHTS, m_camera_position);
+		keep_most_relevant(m_spot_lights, MAX_SPOT_LIGHTS, m_camera_position);
+		if (m_light_cap_log++ % 600 == 0)
+			OutputDebugStringA(("lights: " + std::to_string(points) + " point / " + std::to_string(spots) + " spot submitted, "
+				+ std::to_string(MAX_POINT_LIGHTS) + " / " + std::to_string(MAX_SPOT_LIGHTS) + " fit — the brightest near the camera are used (#335)\n").c_str());
 	}
 	
 	// ============== Multi-Viewport Rendering ==============

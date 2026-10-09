@@ -29,10 +29,10 @@ namespace VortexEditor.Shell
             SmokeRegistry.Add("sky texture", SkyTexture);
         }
 
-        private static bool Green((int r, int g, int b) c) => c.g > 110 && c.g > c.r + 50 && c.g > c.b + 50;
+        internal static bool Green((int r, int g, int b) c) => c.g > 110 && c.g > c.r + 50 && c.g > c.b + 50;
         private static bool Blue((int r, int g, int b) c) => c.b > 110 && c.b > c.r + 50 && c.b > c.g + 50;
         private static bool Red((int r, int g, int b) c) => c.r > 110 && c.r > c.g + 50 && c.r > c.b + 50;
-        private static string Rgb((int r, int g, int b) c) => c.r + "/" + c.g + "/" + c.b;
+        internal static string Rgb((int r, int g, int b) c) => c.r + "/" + c.g + "/" + c.b;
 
         /// <summary>A green wall 120 m ahead of the editor camera is there with the far plane at 1000 m and gone with
         /// the far plane at 60 m — the main view's projection reads the clip planes instead of a fixed 1000.</summary>
@@ -144,11 +144,11 @@ namespace VortexEditor.Shell
 
         // ---- capture helpers --------------------------------------------------------------------------------------
 
-        private static Task<(int r, int g, int b)> Centre(string file) => Sample(file, 0.5, 0.5);
+        internal static Task<(int r, int g, int b)> Centre(string file) => Sample(file, 0.5, 0.5);
 
         /// <summary>The average colour of a 9×9 block of the next presented frame at (fx, fy) in 0..1 — captured by the
         /// renderer itself (CaptureFrame writes the real back buffer as a 32-bit BMP).</summary>
-        private static async Task<(int r, int g, int b)> Sample(string file, double fx, double fy, bool capture = true)
+        internal static async Task<(int r, int g, int b)> Sample(string file, double fx, double fy, bool capture = true)
         {
             string dir = SmokeRegistry.CaptureDir;
             if (string.IsNullOrEmpty(dir)) dir = Path.Combine(Path.GetTempPath(), "vortex-smoke-capture");
@@ -194,22 +194,23 @@ namespace VortexEditor.Shell
         }
 
         /// <summary>An equirectangular test map: the upper half (above the horizon) blue, the lower half red.</summary>
-        private static void WriteEquirect(string file, int w, int h)
+        private static void WriteEquirect(string file, int w, int h) =>
+            WritePng(file, w, h, (x, y) => y < h / 2 ? ((byte)0, (byte)0, (byte)255, (byte)255) : ((byte)255, (byte)0, (byte)0, (byte)255));
+
+        /// <summary>A PNG from a per-pixel (r, g, b, a) function — test textures for the smoke checks.</summary>
+        internal static void WritePng(string file, int w, int h, Func<int, int, (byte r, byte g, byte b, byte a)> pixel)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(file));
-            var bmp = new WriteableBitmap(new PixelSize(w, h), new Vector(96, 96), PixelFormat.Bgra8888, AlphaFormat.Opaque);
+            var bmp = new WriteableBitmap(new PixelSize(w, h), new Vector(96, 96), PixelFormat.Bgra8888, AlphaFormat.Unpremul);
             using (var fb = bmp.Lock())
             {
                 var row = new byte[w * 4];
                 for (int y = 0; y < h; y++)
                 {
-                    bool upper = y < h / 2;
                     for (int x = 0; x < w; x++)
                     {
-                        row[x * 4 + 0] = (byte)(upper ? 255 : 0);   // B
-                        row[x * 4 + 1] = 0;                          // G
-                        row[x * 4 + 2] = (byte)(upper ? 0 : 255);   // R
-                        row[x * 4 + 3] = 255;
+                        var p = pixel(x, y);
+                        row[x * 4 + 0] = p.b; row[x * 4 + 1] = p.g; row[x * 4 + 2] = p.r; row[x * 4 + 3] = p.a;
                     }
                     Marshal.Copy(row, 0, IntPtr.Add(fb.Address, y * fb.RowBytes), row.Length);
                 }
