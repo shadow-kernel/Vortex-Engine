@@ -76,6 +76,8 @@ cbuffer PerObject : register(b1)
     float2 UVTiling;         // texture repeat scale (mirrors PerObjectConstants at byte offset 128)
     uint HasHeightTexture;   // @136 — parallax/displacement height map bound
     float HeightScale;       // @140 — parallax depth
+    float AlphaCutoff;       // @144 — AlphaTest cutoff (#329), 0 = off
+    float3 _Pad0;
 };
 
 struct PointLight
@@ -386,6 +388,8 @@ float4 PSMain(PS_IN input) : SV_TARGET
         albedo *= SRGBToLinear(tex.rgb);   // base colour TINTS the texture, alpha multiplies — standard PBR (#330)
         alpha *= tex.a;
     }
+    // AlphaTest (#329): cut-outs (foliage, fences, hair cards) drop their transparent texels here
+    if (AlphaCutoff > 0.0 && alpha < AlphaCutoff) clip(-1);
 
     // UNLIT/EMISSIVE PATH - bypass all lighting calculations (for skybox, etc.)
     if (IsUnlit != 0) {

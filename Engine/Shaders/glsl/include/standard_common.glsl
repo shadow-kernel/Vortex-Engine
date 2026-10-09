@@ -64,7 +64,9 @@ layout(set = SET_UNIFORM, binding = 1, std140) uniform PerObjectBlock
 	vec2  uv_tiling;              // @128
 	uint  has_height_texture;     // @136
 	float height_scale;           // @140
-} obj;                            // = 144
+	float alpha_cutoff;           // @144 (#329: > 0 = AlphaTest cutoff)
+	float _pad0; float _pad1; float _pad2;
+} obj;                            // = 160
 #endif
 
 #ifdef VORTEX_NEED_LIGHTS

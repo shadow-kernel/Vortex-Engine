@@ -52,22 +52,35 @@ namespace vortex::graphics::sdlgpu
 	// ---------------------------------------------------------------------------------------------
 	// Queue
 	// ---------------------------------------------------------------------------------------------
+	namespace
+	{
+		// A world matrix with a negative determinant (an odd number of negative scale axes) flips the triangle
+		// winding; the run picks a counter-clockwise front-face pipeline for it (#334).
+		inline RenderItem with_winding(RenderItem item)
+		{
+			const DirectX::XMFLOAT4X4& m = item.world_matrix;
+			const float det = m._11 * (m._22 * m._33 - m._23 * m._32) - m._12 * (m._21 * m._33 - m._23 * m._31) + m._13 * (m._21 * m._32 - m._22 * m._31);
+			item.mirrored = det < 0.0f ? 1u : 0u;
+			return item;
+		}
+	}
+
 	void SdlGpuRenderer::submit_render_item(const RenderItem& item)
 	{
 		std::lock_guard<std::mutex> lock(m_queue_mutex);
-		(m_submit_target == 1 ? m_static_submit : m_submit_queue).push_back(item);
+		(m_submit_target == 1 ? m_static_submit : m_submit_queue).push_back(with_winding(item));
 	}
 
 	void SdlGpuRenderer::submit_gizmo_item(const RenderItem& item)
 	{
 		std::lock_guard<std::mutex> lock(m_queue_mutex);
-		if (m_gizmo_submit.size() < MAX_GIZMO_ITEMS) m_gizmo_submit.push_back(item);
+		if (m_gizmo_submit.size() < MAX_GIZMO_ITEMS) m_gizmo_submit.push_back(with_winding(item));
 	}
 
 	void SdlGpuRenderer::submit_gizmo_wire_item(const RenderItem& item)
 	{
 		std::lock_guard<std::mutex> lock(m_queue_mutex);
-		if (m_gizmo_submit.size() + m_gizmo_wire_submit.size() < MAX_GIZMO_ITEMS) m_gizmo_wire_submit.push_back(item);
+		if (m_gizmo_submit.size() + m_gizmo_wire_submit.size() < MAX_GIZMO_ITEMS) m_gizmo_wire_submit.push_back(with_winding(item));
 	}
 
 	void SdlGpuRenderer::submit_mesh_instances(id::id_type mesh, id::id_type material, const float* world_matrices, u32 count, u32 layer)
@@ -81,7 +94,7 @@ namespace vortex::graphics::sdlgpu
 			RenderItem item;
 			item.mesh_id = mesh; item.material_id = material; item.layer = layer;
 			memcpy(&item.world_matrix, world_matrices + (size_t)i * 16, sizeof(DirectX::XMFLOAT4X4));
-			q.push_back(item);
+			q.push_back(with_winding(item));
 		}
 	}
 
@@ -94,11 +107,11 @@ namespace vortex::graphics::sdlgpu
 		item.mesh_id = mesh; item.material_id = material; item.layer = layer;
 		memcpy(&item.world_matrix, world_matrix, sizeof(DirectX::XMFLOAT4X4));
 		const u32 offset = (u32)(m_bone_submit.size() / 16);
-		if (offset + bone_count > MAX_BONE_MATRICES) { m_submit_queue.push_back(item); return; }   // palette full -> bind pose
+		if (offset + bone_count > MAX_BONE_MATRICES) { m_submit_queue.push_back(with_winding(item)); return; }   // palette full -> bind pose
 		item.bone_offset = offset;
 		item.bone_count = bone_count;
 		m_bone_submit.insert(m_bone_submit.end(), bone_matrices, bone_matrices + (size_t)bone_count * 16);
-		m_submit_queue.push_back(item);
+		m_submit_queue.push_back(with_winding(item));
 	}
 
 	void SdlGpuRenderer::clear_render_queue()
@@ -336,6 +349,7 @@ namespace vortex::graphics::sdlgpu
 				if (a.layer != b.layer) return a.layer < b.layer;
 				if (a.material_id != b.material_id) return a.material_id < b.material_id;
 				if (a.mesh_id != b.mesh_id) return a.mesh_id < b.mesh_id;
+				if (a.mirrored != b.mirrored) return a.mirrored < b.mirrored;
 				float ax = a.world_matrix._41 - eye.x, ay = a.world_matrix._42 - eye.y, az = a.world_matrix._43 - eye.z;
 				float bx = b.world_matrix._41 - eye.x, by = b.world_matrix._42 - eye.y, bz = b.world_matrix._43 - eye.z;
 				return (ax * ax + ay * ay + az * az) < (bx * bx + by * by + bz * bz);
@@ -350,15 +364,18 @@ namespace vortex::graphics::sdlgpu
 				const auto idMat = m_render_queue[i].material_id;
 				const u32 idLayer = m_render_queue[i].layer;
 				const bool skinnedRun = m_render_queue[i].bone_offset != NO_BONES;
+				const u32 idMirrored = m_render_queue[i].mirrored;
 				size_t j = i;
 				if (skinnedRun) j = i + 1;
 				else while (j < objectCount && m_render_queue[j].mesh_id == idMesh && m_render_queue[j].material_id == idMat
-					&& m_render_queue[j].bone_offset == NO_BONES && m_render_queue[j].layer == idLayer) ++j;
+					&& m_render_queue[j].bone_offset == NO_BONES && m_render_queue[j].layer == idLayer
+					&& m_render_queue[j].mirrored == idMirrored) ++j;
 				Mesh* meshp = reg.get_mesh(idMesh);
 				float minx = 0, miny = 0, minz = 0, maxx = 1, maxy = 1, maxz = 1;
 				if (meshp && meshp->is_valid()) { meshp->get_min(minx, miny, minz); meshp->get_max(maxx, maxy, maxz); }
 				DrawRun run{};
 				run.layer = idLayer;
+				run.mirrored = idMirrored != 0;
 				run.start = i; run.count = (u32)(j - i); run.mesh = idMesh; run.mat = idMat; run.meshp = meshp;
 				run.defaultBounds = (minx == 0.f && miny == 0.f && minz == 0.f && maxx == 1.f && maxy == 1.f && maxz == 1.f);
 				run.lcx = (minx + maxx) * 0.5f; run.lcy = (miny + maxy) * 0.5f; run.lcz = (minz + maxz) * 0.5f;
@@ -740,6 +757,7 @@ namespace vortex::graphics::sdlgpu
 				obj.ao = props.ao; obj.normal_strength = props.normal_strength; obj.use_directx_normals = props.use_directx_normals;
 				obj.is_unlit = props.is_unlit; obj.emissive_strength = props.emissive_strength;
 				obj.uv_tiling = props.uv_tiling; obj.height_scale = props.height_scale;
+				obj.alpha_cutoff = props.alpha_cutoff;   // AlphaTest (#329)
 				// flag = 1 + the channel a packed map is read from (see Material::set_texture_channels)
 				auto bind = [&](Texture* t, int slot, u32& flag, u32 packed)
 				{
@@ -791,23 +809,31 @@ namespace vortex::graphics::sdlgpu
 			const PipelineSet& set = pipelines_for(mesh);
 			const bool has_custom = m_custom_shaders.find((u32)run.mat) != m_custom_shaders.end();
 
-			if (!m_wireframe_mode && !run.skinned && mat && mat->blend_mode() != 0 && set.transparent(mat->blend_mode(), false) && !has_custom)
+			// alpha blend / additive draw in the sorted transparent pass — custom shaders included (#333); alpha test
+			// (3) stays here and discards in the shader (#329)
+			const u32 blend = mat ? mat->blend_mode() : 0u;
+			if (!m_wireframe_mode && !run.skinned && (blend == 1 || blend == 2) && set.transparent(blend, false))
 			{
 				transparentRuns.push_back((u32)r);
 				continue;
 			}
 
-			SDL_GPUGraphicsPipeline* pipeline = m_wireframe_mode ? set.wireframe : set.opaque;
+			// TwoSided and unlit materials cull nothing; everything else culls back faces, and a mirrored run (#334)
+			// takes the counter-clockwise twin so its front faces survive
+			const bool two_sided = mat && (mat->properties().is_unlit || mat->double_sided());
+			SDL_GPUGraphicsPipeline* pipeline = m_wireframe_mode ? set.wireframe : (run.mirrored && set.opaque_m ? set.opaque_m : set.opaque);
 			bool skinned_draw = false;
 			if (run.skinned && m_pipeline_skinned && mesh->vertex_stride() == 52)
 			{
-				pipeline = m_pipeline_skinned;
+				pipeline = run.mirrored && m_pipeline_skinned_m ? m_pipeline_skinned_m : m_pipeline_skinned;
 				skinned_draw = true;
 			}
-			else if (has_custom && mesh->vertex_stride() == 32 && m_custom_shaders[(u32)run.mat].pipeline)
-				pipeline = m_custom_shaders[(u32)run.mat].pipeline;
-			else if (mat && mat->properties().is_unlit)
-				pipeline = set.double_sided;
+			else
+			{
+				SDL_GPUGraphicsPipeline* custom = (has_custom && mesh->vertex_stride() == 32) ? custom_pipeline((u32)run.mat, 0, two_sided, run.mirrored) : nullptr;
+				if (custom) pipeline = custom;
+				else if (two_sided) pipeline = set.double_sided;
+			}
 
 			SDL_BindGPUGraphicsPipeline(pass, pipeline);
 			if (skinned_draw)
@@ -868,8 +894,11 @@ namespace vortex::graphics::sdlgpu
 				if (!tmesh || !tmesh->is_valid()) { tmesh = nullptr; continue; }
 				Material* mat = reg.get_material(run.mat);
 				const u32 bm = mat ? mat->blend_mode() : 1u;
-				const bool ds = mat && mat->properties().is_unlit;
-				SDL_GPUGraphicsPipeline* tp = pipelines_for(tmesh).transparent(bm, ds);
+				const bool ds = mat && (mat->properties().is_unlit || mat->double_sided());
+				SDL_GPUGraphicsPipeline* tp = nullptr;
+				if (tmesh->vertex_stride() == 32 && m_custom_shaders.find((u32)run.mat) != m_custom_shaders.end())
+					tp = custom_pipeline((u32)run.mat, bm, ds, run.mirrored);   // a custom shader keeps its blend mode (#333)
+				if (!tp) tp = pipelines_for(tmesh).transparent(bm, ds, run.mirrored);
 				if (!tp) { tmesh = nullptr; continue; }
 				SDL_BindGPUGraphicsPipeline(pass, tp);
 				PerObjectConstants obj{};

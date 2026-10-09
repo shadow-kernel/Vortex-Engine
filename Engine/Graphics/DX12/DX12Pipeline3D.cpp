@@ -26,7 +26,8 @@ namespace vortex::graphics::dx12
 		return true;
 	}
 
-	ComPtr<ID3D12PipelineState> DX12Pipeline3D::create_custom_pso(ID3D12Device* device, const std::wstring& hlsl_path)
+	ComPtr<ID3D12PipelineState> DX12Pipeline3D::create_custom_pso(ID3D12Device* device, const std::wstring& hlsl_path,
+		u32 blend_mode, bool double_sided, bool mirrored)
 	{
 		if (!device || !m_root_signature || hlsl_path.empty()) return nullptr;
 
@@ -48,16 +49,30 @@ namespace vortex::graphics::dx12
 
 		D3D12_RASTERIZER_DESC rasterizer{};
 		rasterizer.FillMode = D3D12_FILL_MODE_SOLID;
-		rasterizer.CullMode = D3D12_CULL_MODE_BACK;
+		rasterizer.CullMode = double_sided ? D3D12_CULL_MODE_NONE : D3D12_CULL_MODE_BACK;
+		rasterizer.FrontCounterClockwise = (mirrored && !double_sided) ? TRUE : FALSE;   // #334
 		rasterizer.DepthClipEnable = TRUE;
 
+		// A custom shader keeps the material's blend mode (#333): alpha / additive blend with depth write off, like
+		// the built-in transparent PSOs.
+		const u32 b = blend_mode == 1 ? 1u : (blend_mode == 2 ? 2u : 0u);
 		D3D12_BLEND_DESC blend{};
 		blend.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+		if (b != 0)
+		{
+			blend.RenderTarget[0].BlendEnable = TRUE;
+			blend.RenderTarget[0].SrcBlend = D3D12_BLEND_SRC_ALPHA;
+			blend.RenderTarget[0].DestBlend = b == 1 ? D3D12_BLEND_INV_SRC_ALPHA : D3D12_BLEND_ONE;
+			blend.RenderTarget[0].BlendOp = D3D12_BLEND_OP_ADD;
+			blend.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_ONE;
+			blend.RenderTarget[0].DestBlendAlpha = b == 1 ? D3D12_BLEND_INV_SRC_ALPHA : D3D12_BLEND_ONE;
+			blend.RenderTarget[0].BlendOpAlpha = D3D12_BLEND_OP_ADD;
+		}
 
 		D3D12_DEPTH_STENCIL_DESC depth_stencil{};
 		depth_stencil.DepthEnable = TRUE;
-		depth_stencil.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
-		depth_stencil.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+		depth_stencil.DepthWriteMask = b == 0 ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;
+		depth_stencil.DepthFunc = b == 0 ? D3D12_COMPARISON_FUNC_LESS : D3D12_COMPARISON_FUNC_LESS_EQUAL;
 
 		D3D12_GRAPHICS_PIPELINE_STATE_DESC pso_desc{};
 		pso_desc.pRootSignature = m_root_signature.Get();
@@ -85,6 +100,10 @@ namespace vortex::graphics::dx12
 		m_alpha_ds_pso.Reset();
 		m_additive_pso.Reset();
 		m_additive_ds_pso.Reset();
+		m_mirrored_pso.Reset();
+		m_alpha_m_pso.Reset();
+		m_additive_m_pso.Reset();
+		m_skinned_m_pso.Reset();
 		m_skinned_pso.Reset();
 		m_wireframe_pso.Reset();
 		m_pipeline_state.Reset();
@@ -339,6 +358,13 @@ namespace vortex::graphics::dx12
 			return false;
 		}
 
+		// Mirrored twin (#334): an instance whose world matrix has a negative determinant is wound the other way.
+		rasterizer.FrontCounterClockwise = TRUE;
+		pso_desc.RasterizerState = rasterizer;
+		if (FAILED(device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&m_mirrored_pso))))
+			OutputDebugStringA("DX12Pipeline3D: mirrored PSO creation failed — mirrored meshes render inside-out\n");
+		rasterizer.FrontCounterClockwise = FALSE;
+
 		rasterizer.FillMode = D3D12_FILL_MODE_WIREFRAME;
 		rasterizer.CullMode = D3D12_CULL_MODE_NONE;
 		pso_desc.RasterizerState = rasterizer;
@@ -382,6 +408,11 @@ namespace vortex::graphics::dx12
 			pso_desc.RasterizerState = rasterizer;
 			if (FAILED(device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&m_alpha_pso))))
 				OutputDebugStringA("DX12Pipeline3D: alpha PSO creation failed — alpha materials render opaque\n");
+			rasterizer.FrontCounterClockwise = TRUE;   // mirrored twin (#334)
+			pso_desc.RasterizerState = rasterizer;
+			if (FAILED(device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&m_alpha_m_pso))))
+				OutputDebugStringA("DX12Pipeline3D: mirrored alpha PSO creation failed\n");
+			rasterizer.FrontCounterClockwise = FALSE;
 			rasterizer.CullMode = D3D12_CULL_MODE_NONE;
 			pso_desc.RasterizerState = rasterizer;
 			if (FAILED(device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&m_alpha_ds_pso))))
@@ -395,6 +426,11 @@ namespace vortex::graphics::dx12
 			pso_desc.RasterizerState = rasterizer;
 			if (FAILED(device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&m_additive_pso))))
 				OutputDebugStringA("DX12Pipeline3D: additive PSO creation failed — additive materials render opaque\n");
+			rasterizer.FrontCounterClockwise = TRUE;   // mirrored twin (#334)
+			pso_desc.RasterizerState = rasterizer;
+			if (FAILED(device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&m_additive_m_pso))))
+				OutputDebugStringA("DX12Pipeline3D: mirrored additive PSO creation failed\n");
+			rasterizer.FrontCounterClockwise = FALSE;
 			rasterizer.CullMode = D3D12_CULL_MODE_NONE;
 			pso_desc.RasterizerState = rasterizer;
 			if (FAILED(device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&m_additive_ds_pso))))
@@ -477,6 +513,11 @@ namespace vortex::graphics::dx12
 			pso_desc.InputLayout = { skinned_layout, _countof(skinned_layout) };
 			if (FAILED(device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&m_skinned_pso))))
 				OutputDebugStringA("DX12Pipeline3D: skinned PSO creation failed — GPU skinning disabled\n");
+			skinned_raster.FrontCounterClockwise = TRUE;   // mirrored twin (#334)
+			pso_desc.RasterizerState = skinned_raster;
+			if (FAILED(device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&m_skinned_m_pso))))
+				OutputDebugStringA("DX12Pipeline3D: mirrored skinned PSO creation failed\n");
+			skinned_raster.FrontCounterClockwise = FALSE;
 		}
 
 		// SHADOW PSO: depth-only pass that renders the scene from the spot light's point of view into the
@@ -487,7 +528,7 @@ namespace vortex::graphics::dx12
 		{
 			D3D12_RASTERIZER_DESC shadow_raster{};
 			shadow_raster.FillMode = D3D12_FILL_MODE_SOLID;
-			shadow_raster.CullMode = D3D12_CULL_MODE_BACK;
+			shadow_raster.CullMode = D3D12_CULL_MODE_NONE;   // thin walls/floors cast from both sides, mirrored meshes (#334) need no twin (as on Metal)
 			shadow_raster.FrontCounterClockwise = FALSE;
 			shadow_raster.DepthBias = 100;
 			shadow_raster.DepthBiasClamp = 0.0f;

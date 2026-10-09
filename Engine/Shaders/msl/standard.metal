@@ -59,6 +59,8 @@ struct PerObject
     float2 uv_tiling;                  // @128
     uint has_height_texture;           // @136
     float height_scale;                // @140
+    float alpha_cutoff;                // @144 (#329: > 0 = AlphaTest cutoff)
+    float _pad0, _pad1, _pad2;
 };
 
 struct PointLight
@@ -391,6 +393,8 @@ fragment float4 PSMain(VSOut in [[stage_in]],
         albedo *= srgb_to_linear(tex.rgb);   // base colour TINTS the texture, alpha multiplies — standard PBR (#330)
         alpha *= tex.a;
     }
+    // AlphaTest (#329): cut-outs (foliage, fences, hair cards) drop their transparent texels here
+    if (obj.alpha_cutoff > 0.0 && alpha < obj.alpha_cutoff) discard_fragment();
 
     if (obj.is_unlit != 0)
     {

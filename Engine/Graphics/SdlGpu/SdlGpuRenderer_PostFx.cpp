@@ -193,7 +193,7 @@ namespace vortex::graphics::sdlgpu
 		{
 			if (item.bone_offset != NO_BONES || item.layer != 0) continue;
 			Material* cmat = reg.get_material(item.material_id);
-			if (cmat && cmat->blend_mode() != 0) continue;
+			if (cmat && (cmat->blend_mode() == 1 || cmat->blend_mode() == 2)) continue;
 			Mesh* mp = reg.get_mesh(item.mesh_id);
 			if (!mp || !mp->is_valid()) continue;
 			XMFLOAT4 bd;

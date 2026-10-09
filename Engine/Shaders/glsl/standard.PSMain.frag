@@ -207,6 +207,8 @@ void main()
 		albedo *= srgb_to_linear(tex.rgb);   // base colour TINTS the texture, alpha multiplies — standard PBR (#330)
 		alpha *= tex.a;
 	}
+	// AlphaTest (#329): cut-outs (foliage, fences, hair cards) drop their transparent texels here
+	if (obj.alpha_cutoff > 0.0 && alpha < obj.alpha_cutoff) discard;
 
 	if (obj.is_unlit != 0u)
 	{

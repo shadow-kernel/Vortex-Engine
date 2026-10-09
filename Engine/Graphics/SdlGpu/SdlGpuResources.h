@@ -145,7 +145,13 @@ namespace vortex::graphics
 		void set_emissive_strength(float strength) { m_properties.emissive_strength = strength; }
 		void set_uv_tiling(float u, float v) { m_properties.uv_tiling = { u, v }; }
 		void set_height_scale(float value) { m_properties.height_scale = value; }
-		void set_blend_mode(u32 mode) { m_blend_mode = (mode <= 2) ? mode : 0; }
+		// AlphaTest (#329): fragments whose alpha falls below the cutoff are discarded (0 = off).
+		void set_alpha_cutoff(float cutoff) { m_properties.alpha_cutoff = cutoff < 0.0f ? 0.0f : cutoff; }
+		float alpha_cutoff() const { return m_properties.alpha_cutoff; }
+		// TwoSided: drawn without back-face culling (cut-outs, foliage, cloth) — a pipeline choice, not CB data.
+		void set_double_sided(bool two_sided) { m_double_sided = two_sided; }
+		bool double_sided() const { return m_double_sided; }
+		void set_blend_mode(u32 mode) { m_blend_mode = (mode <= 3) ? mode : 0; }   // 3 = alpha test (#329)
 		u32 blend_mode() const { return m_blend_mode; }
 
 		void set_albedo_texture(Texture* texture) { m_albedo_texture = texture; m_properties.has_albedo_texture = (texture && texture->is_valid()) ? 1 : 0; }
@@ -185,7 +191,8 @@ namespace vortex::graphics
 
 	private:
 		MaterialProperties m_properties;
-		u32 m_blend_mode{ 0 };
+		u32 m_blend_mode{ 0 };   // 0 opaque, 1 alpha blend, 2 additive, 3 alpha test — not part of the CB
+		bool m_double_sided{ false };   // TwoSided (#329): drawn without back-face culling
 		bool m_valid{ false };
 		std::string m_name{ "New Material" };
 		Texture* m_albedo_texture{ nullptr };

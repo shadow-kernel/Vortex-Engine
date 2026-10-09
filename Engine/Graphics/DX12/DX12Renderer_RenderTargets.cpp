@@ -316,16 +316,22 @@ namespace vortex::graphics::dx12
 					}
 					else
 					{
-						auto csit = m_custom_shaders.find((u32)item.material_id);
-						if (csit != m_custom_shaders.end() && csit->second.pso) want_pso = csit->second.pso.Get();
-						else if (mat && mat->blend_mode() != 0)
+						const u32 bm = mat ? mat->blend_mode() : 0u;
+						const bool blended = bm == 1 || bm == 2;
+						const bool ds = mat && (mat->properties().is_unlit || mat->double_sided());
+						const bool mirrored = item.mirrored != 0;
+						ID3D12PipelineState* custom = custom_pso((u32)item.material_id, blended ? bm : 0u, ds, mirrored);
+						if (custom) want_pso = custom;
+						else if (blended)
 						{
 							// Transparent material (#33) in a preview/thumbnail: at least render it BLENDED so
 							// the Material Editor sphere shows the see-through look (no sorting needed — the
 							// preview draws a handful of items and the checker/sky behind them is opaque).
-							auto* tpso = m_pipeline_3d.transparent_pso(mat->blend_mode(), mat->properties().is_unlit);
+							auto* tpso = m_pipeline_3d.transparent_pso(bm, ds, mirrored);
 							if (tpso) want_pso = tpso;
 						}
+						else if (ds) want_pso = m_pipeline_3d.double_sided_pso();
+						else if (mirrored) want_pso = m_pipeline_3d.pipeline_state(true);   // #334
 					}
 					if (want_pso != cur_pso) { m_command_list->SetPipelineState(want_pso); cur_pso = want_pso; }
 				}

@@ -52,6 +52,7 @@ namespace vortex::graphics::sdlgpu
 		u32 bone_offset{ NO_BONES };
 		u32 bone_count{ 0 };
 		u32 layer{ 0 };
+		u32 mirrored{ 0 };   // det(world) < 0: the instance is wound the other way (#334), set at submit
 	};
 
 	struct ViewportCamera
@@ -380,8 +381,9 @@ namespace vortex::graphics::sdlgpu
 			u32 has_albedo_texture, has_normal_texture, has_metallic_texture, has_roughness_texture;
 			u32 has_ao_texture, use_directx_normals, is_unlit; float emissive_strength;
 			DirectX::XMFLOAT2 uv_tiling; u32 has_height_texture; float height_scale;
+			float alpha_cutoff; float _pad0, _pad1, _pad2;   // @144: AlphaTest cutoff (#329), 0 = off
 		};
-		static_assert(sizeof(PerObjectConstants) == 144, "PerObjectConstants must byte-match standard.metal");
+		static_assert(sizeof(PerObjectConstants) == 160, "PerObjectConstants must byte-match standard.metal");
 
 		struct GPUPointLight { DirectX::XMFLOAT3 position; float range; DirectX::XMFLOAT3 color; float intensity; };
 		struct GPUSpotLight
@@ -486,6 +488,7 @@ namespace vortex::graphics::sdlgpu
 			bool skinned{ false };
 			u32 boneOffset{ 0 }; u32 boneCount{ 0 };
 			u32 layer{ 0 };
+			bool mirrored{ false };   // every instance of the run has a negative-determinant world matrix (#334)
 		};
 
 		// Pipeline variants keyed by the mesh vertex stride (32 rigid / 52 skinned-layout) — SDL GPU bakes
@@ -501,10 +504,14 @@ namespace vortex::graphics::sdlgpu
 			SDL_GPUGraphicsPipeline* alpha_ds{ nullptr };
 			SDL_GPUGraphicsPipeline* additive{ nullptr };
 			SDL_GPUGraphicsPipeline* additive_ds{ nullptr };
-			SDL_GPUGraphicsPipeline* transparent(u32 blend_mode, bool ds) const
+			// counter-clockwise front faces for mirrored instances (#334); the double-sided variants cull nothing
+			SDL_GPUGraphicsPipeline* opaque_m{ nullptr };
+			SDL_GPUGraphicsPipeline* alpha_m{ nullptr };
+			SDL_GPUGraphicsPipeline* additive_m{ nullptr };
+			SDL_GPUGraphicsPipeline* transparent(u32 blend_mode, bool ds, bool mirrored = false) const
 			{
-				if (blend_mode == 1) return ds ? alpha_ds : alpha;
-				if (blend_mode == 2) return ds ? additive_ds : additive;
+				if (blend_mode == 1) return ds ? alpha_ds : (mirrored && alpha_m ? alpha_m : alpha);
+				if (blend_mode == 2) return ds ? additive_ds : (mirrored && additive_m ? additive_m : additive);
 				return nullptr;
 			}
 		};
@@ -519,8 +526,11 @@ namespace vortex::graphics::sdlgpu
 			u32 last_w{ 0 }, last_h{ 0 };
 		};
 
-		struct CustomShader { SDL_GPUGraphicsPipeline* pipeline{ nullptr }; std::string path; unsigned long long mtime{ 0 }; };
-		struct CachedPipeline { SDL_GPUGraphicsPipeline* pipeline{ nullptr }; unsigned long long mtime{ 0 }; };
+		struct CustomShader { std::string path; unsigned long long mtime{ 0 }; };
+		// One compiled pipeline per variant (blend 0/1/2 × double-sided × mirrored = 12), each built the first time a
+		// draw asks for it; the mtime of the source it was built from decides whether it is stale.
+		static constexpr u32 PIPELINE_VARIANTS = 12;
+		struct CachedPipeline { SDL_GPUGraphicsPipeline* pipeline[PIPELINE_VARIANTS]{}; unsigned long long mtime[PIPELINE_VARIANTS]{}; };
 
 		// ---- init helpers (SdlGpuRenderer.cpp) ----
 		bool create_device();
@@ -549,7 +559,8 @@ namespace vortex::graphics::sdlgpu
 		bool create_pipelines();
 		bool create_pipeline_set(PipelineSet& set, u32 stride, bool skinned_layout);
 		SDL_GPUGraphicsPipeline* create_scene_pipeline(SDL_GPUShader* vs, SDL_GPUShader* fs, u32 stride, bool skinned_layout,
-			SDL_GPUFillMode fill, SDL_GPUCullMode cull, bool depth_test, bool depth_write, SDL_GPUCompareOp depth_op, u32 blend_mode);
+			SDL_GPUFillMode fill, SDL_GPUCullMode cull, bool depth_test, bool depth_write, SDL_GPUCompareOp depth_op, u32 blend_mode,
+			bool front_ccw = false);
 		SDL_GPUGraphicsPipeline* create_fullscreen_pipeline(SDL_GPUShader* vs, SDL_GPUShader* fs, SDL_GPUTextureFormat color_format,
 			bool depth, bool blend);
 		bool create_dynamic_buffers();
@@ -559,6 +570,9 @@ namespace vortex::graphics::sdlgpu
 		void wait_idle();
 		unsigned long long file_mtime(const std::string& path) const;
 		SDL_GPUGraphicsPipeline* get_or_compile_pipeline(const std::string& path);
+		// The custom pipeline variant a draw needs: blend mode (#333) × double-sided × mirrored (#334), compiled on demand.
+		SDL_GPUGraphicsPipeline* get_or_compile_pipeline(const std::string& path, u32 blend_mode, bool double_sided, bool mirrored);
+		SDL_GPUGraphicsPipeline* custom_pipeline(u32 material_id, u32 blend_mode, bool double_sided, bool mirrored);
 
 		// ---- frame helpers (SdlGpuRenderer.cpp) ----
 		void render_surface(WindowSurface& surface, int slot);
@@ -639,6 +653,7 @@ namespace vortex::graphics::sdlgpu
 		PipelineSet m_pipelines;                 // stride 32
 		PipelineSet m_pipelines_skinned_stride;  // stride 52, rigid shading (bind pose / no palette)
 		SDL_GPUGraphicsPipeline* m_pipeline_skinned{ nullptr };
+		SDL_GPUGraphicsPipeline* m_pipeline_skinned_m{ nullptr };   // mirrored skinned instances (#334)
 		SDL_GPUGraphicsPipeline* m_pipeline_grid{ nullptr };
 		SDL_GPUGraphicsPipeline* m_pipeline_skybox{ nullptr };
 		SDL_GPUGraphicsPipeline* m_pipeline_blit{ nullptr };
