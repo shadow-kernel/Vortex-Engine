@@ -84,11 +84,13 @@ jobs:
 
     # #182: the native engine the installer SHIPS comes from CMake — Jolt Physics is fetched and linked there, while the
     # Visual Studio projects still compile the no-op physics stub. The MSBuild VortexAPI.dll above only feeds the WPF
-    # editor's build; the CMake one replaces it before anything is staged.
+    # editor's build; the CMake one replaces it before anything is staged. vcvars64 is scoped to this step.
     - name: Native engine through CMake (DX12 + Jolt)
+      shell: cmd
       run: |
-        cmake -S . -B build/windows-ninja -G Ninja -DCMAKE_BUILD_TYPE=Release -DVORTEX_BUILD_TESTS=OFF
-        cmake --build build/windows-ninja --target VortexAPI
+        for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath`) do call "%%i\VC\Auxiliary\Build\vcvars64.bat"
+        cmake -S . -B build/windows-ninja -G Ninja -DCMAKE_BUILD_TYPE=Release -DVORTEX_BUILD_TESTS=OFF || exit /b 1
+        cmake --build build/windows-ninja --target VortexAPI || exit /b 1
 
     - name: Ship the CMake VortexAPI.dll (Jolt)
       shell: pwsh
