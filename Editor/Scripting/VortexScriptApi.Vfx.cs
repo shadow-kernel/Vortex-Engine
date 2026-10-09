@@ -83,8 +83,10 @@ namespace Vortex
 
         public static VfxHandle SpawnAt(string vfxPath, Vector3 position) { return SpawnAt(vfxPath, position, Quaternion.Identity); }
 
-        /// <summary>SpawnAt with a scale and a render layer (1 = first-person viewmodel layer, e.g. a muzzle flash
-        /// spawned at the viewmodel's muzzle).</summary>
+        /// <summary>SpawnAt with a scale and a render layer: 1 = the first-person viewmodel layer (a muzzle flash at the
+        /// viewmodel's muzzle — hidden the moment the view becomes external), 2 = third-person only (the copy at the
+        /// third-person gun that the debug cam / spectators see, never the local first-person view) — every camera sees
+        /// exactly one.</summary>
         public static VfxHandle SpawnAt(string vfxPath, Vector3 position, Quaternion rotation, float scale, int renderLayer = 0)
         {
             return new VfxHandle(ParticleService.SpawnAt(vfxPath, Sys(position), Sys(rotation), scale, renderLayer));
@@ -98,7 +100,8 @@ namespace Vortex
             return new VfxHandle(ParticleService.Beam(Sys(from), Sys(to), vfxPath, duration));
         }
 
-        /// <summary>Beam on a render layer (1 = viewmodel layer).</summary>
+        /// <summary>Beam on a render layer (1 = viewmodel layer, 2 = third-person only; a beam on a layer the current view
+        /// does not show is not made and returns an invalid handle).</summary>
         public static VfxHandle Beam(Vector3 from, Vector3 to, string vfxPath, float duration, int renderLayer)
         {
             return new VfxHandle(ParticleService.Beam(Sys(from), Sys(to), vfxPath, duration, renderLayer));

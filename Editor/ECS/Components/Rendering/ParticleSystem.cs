@@ -67,7 +67,7 @@ namespace Editor.ECS.Components.Rendering
         public int RenderLayer
         {
             get => _renderLayer;
-            set => SetProperty(ref _renderLayer, value <= 0 ? 0 : 1, nameof(RenderLayer));
+            set => SetProperty(ref _renderLayer, value <= 0 ? 0 : (value >= 2 ? 2 : 1), nameof(RenderLayer));   // 0 world, 1 first-person, 2 third-person only (#194)
         }
 
         /// <summary>Random seed; 0 = different every play, anything else = the same sequence every time.</summary>

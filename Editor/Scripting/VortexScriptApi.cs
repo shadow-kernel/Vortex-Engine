@@ -1171,6 +1171,11 @@ namespace Vortex
         /// <summary>Vertical field of view in degrees (clamped 30–120 by the engine).</summary>
         public static void SetFieldOfView(float fovDegrees) { if (Host != null) Host.SetCameraFov(fovDegrees); }
 
+        /// <summary>True while the view is NOT the local first-person camera — the debug free camera (P), a spectator:
+        /// the third-person body (render layer 2) is drawn and the viewmodel (layer 1) hidden. Weapon scripts start
+        /// tracers and eject shells at the third-person gun's sockets then (#194).</summary>
+        public static bool IsExternalView { get { return Editor.Core.Services.SceneRenderService.DebugThirdPersonView; } }
+
         /// <summary>FOV of the FIRST-PERSON layer (entities with the "First-Person (viewmodel)" flag on
         /// their Mesh Renderer). Default 54 — the world FOV never distorts the arms/weapon. Clamped
         /// 10–120 (values below 30 are the ADS-zoom range).</summary>
