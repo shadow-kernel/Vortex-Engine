@@ -337,8 +337,8 @@ namespace Editor.Core.Audio.SoundStudio
                 case "glass":
                     {
                         bool thick = Has("bottle", "ceramic", "porcelain", "plate", "vase", "jar");
-                        var burst = Biquad.BandPass(thick ? 2600 : 4200, 1.1);
-                        var burst2 = Biquad.BandPass(thick ? 5200 : 7800, 1.6);
+                        var burst = Biquad.BandPass(thick ? 2600 : 4200, 1.8);
+                        var burst2 = Biquad.BandPass(thick ? 5200 : 7800, 2.4);
                         for (int i = 0; i < n; i++)
                         {
                             double t = T(i);
