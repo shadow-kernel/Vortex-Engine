@@ -158,6 +158,16 @@ namespace VortexEditor.Shell
             _scaleBox.LostFocus += (s, e) => CommitDefaultScale();
             _scaleBox.KeyDown += (s, e) => { if (e.Key == Key.Return) { CommitDefaultScale(); _preview.Focus(); e.Handled = true; } };
             ToolTip.SetTip(_scaleBox, "Placement scale, stored in the model's .vimport sidecar");
+            var leftHanded = new CheckBox { Content = "Left-handed", IsChecked = ModelImportSettings.LoadLeftHanded(_path), VerticalAlignment = VerticalAlignment.Center };
+            ToolTip.SetTip(leftHanded, "Convert from the right-handed source space (glTF, FBX) into the engine's left-handed one — text and asymmetric props stop looking mirrored (#352). Stored in the .vimport sidecar; placed instances update, re-open the model to preview it here.");
+            leftHanded.IsCheckedChanged += (s, e) =>
+            {
+                bool on = leftHanded.IsChecked == true;
+                if (on == ModelImportSettings.LoadLeftHanded(_path)) return;
+                ModelImportSettings.SaveLeftHanded(_path, on);
+                try { SceneRenderService.InvalidateModel(_path); } catch { }
+                _status.Text = (on ? "Left-handed conversion on" : "Left-handed conversion off") + " — placed instances re-import; re-open the model to preview it here";
+            };
 
             _isolate = Ui.Toggle("Isolate", "Show only the selected submesh in the preview", on => RebuildItems());
             var turn = Ui.TurntableToggle(_preview);
@@ -170,7 +180,7 @@ namespace VortexEditor.Shell
             hint.VerticalAlignment = VerticalAlignment.Center; hint.Margin = new Thickness(10, 0, 10, 0);
             Grid.SetColumn(hint, 2); barGrid.Children.Add(hint);
             var rightRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
-            rightRow.Children.Add(_isolate); rightRow.Children.Add(turn); rightRow.Children.Add(reset);
+            rightRow.Children.Add(leftHanded); rightRow.Children.Add(_isolate); rightRow.Children.Add(turn); rightRow.Children.Add(reset);
             Grid.SetColumn(rightRow, 3); barGrid.Children.Add(rightRow);
             var bar = new Border { Background = Ui.Brush("VxToolbarBrush"), BorderBrush = Ui.Brush("VxHairlineBrush"), BorderThickness = new Thickness(0, 0, 0, 1), Padding = new Thickness(14, 7), Child = barGrid };
 

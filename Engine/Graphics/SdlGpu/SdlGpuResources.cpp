@@ -655,11 +655,11 @@ namespace vortex::graphics
 	}
 
 	ResourceRegistry::MultiMaterialImportResult ResourceRegistry::import_model_with_materials_from_memory(
-		const u8* data, u64 length, const std::string& ext_hint, const std::string& virtual_dir)
+		const u8* data, u64 length, const std::string& ext_hint, const std::string& virtual_dir, bool left_handed)
 	{
 		MultiMaterialImportResult result;
 		if (!m_device) return result;
-		ImportedModelData model_data = ModelImporter::import_from_memory(data, length, ext_hint, virtual_dir);
+		ImportedModelData model_data = ModelImporter::import_from_memory(data, length, ext_hint, virtual_dir, left_handed);
 		if (!model_data.is_valid()) return result;
 		return build_model_result(model_data);
 	}

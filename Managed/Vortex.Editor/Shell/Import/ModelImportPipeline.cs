@@ -23,6 +23,9 @@ namespace VortexEditor.Shell.AssetImport
         public bool CopyRelatedTextures = true;
         /// <summary>Models: write each embedded animation clip as a .vanim (animations/).</summary>
         public bool ExtractAnimations = true;
+        /// <summary>Models: convert from the right-handed source space (glTF, FBX) into the engine's left-handed one
+        /// (#352) — stored as "leftHanded" in the model's .vimport sidecar, read by every import of that file.</summary>
+        public bool ConvertToLeftHanded = true;
         /// <summary>Replace files that already exist in the target (off = keep both, the new one gets a suffix).</summary>
         public bool Overwrite = true;
         public readonly List<string> Tags = new List<string>();
@@ -246,6 +249,9 @@ namespace VortexEditor.Shell.AssetImport
                 }
                 else
                 {
+                    // the handedness sidecar comes first: the import below reads it (#352)
+                    if (o.ConvertToLeftHanded) ModelImportSettings.SaveLeftHanded(modelPath, true);
+
                     // ---- 2. native import (validates the file; embedded textures are written next to the model)
                     var before = SafeFiles(r.Folder);
                     var subs = VortexAPI.ImportModelWithMaterialsFromFile(modelPath);

@@ -453,7 +453,21 @@ namespace Editor.DllWrapper
         /// Import a multi-material model from an in-memory buffer (asset pak loaded into RAM).
         /// extHint is the bare extension ("obj","fbx",...); virtualDir is the model's pak folder (for textures).
         /// </summary>
-        public static SubmeshImportData[] ImportModelFromBytes(byte[] data, string extHint, string virtualDir)
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int ImportModelFromMemoryWithMaterialsEx(
+            byte[] data, int length,
+            [MarshalAs(UnmanagedType.LPStr)] string extHint,
+            [MarshalAs(UnmanagedType.LPStr)] string virtualDir,
+            [In, Out] long[] meshIds,
+            [In, Out] long[] materialIds,
+            [In, Out] long[] textureIds,
+            int maxSubmeshes, int leftHanded);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int GetModelSubmeshTriangleDataFromMemoryEx(byte[] data, int length, [MarshalAs(UnmanagedType.LPStr)] string extHint, int submesh, float[] outPositions, int maxFloats, int leftHanded);
+
+        /// <summary>leftHanded (#352): the packed model's ".vimport" says so (the file import reads the sidecar itself).</summary>
+        public static SubmeshImportData[] ImportModelFromBytes(byte[] data, string extHint, string virtualDir, bool leftHanded = false)
         {
             if (data == null || data.Length == 0) return new SubmeshImportData[0];
             const int maxSubmeshes = 64;
@@ -461,8 +475,15 @@ namespace Editor.DllWrapper
             var materialIds = new long[maxSubmeshes];
             var textureIds = new long[maxSubmeshes];
 
-            int count = ImportModelFromMemoryWithMaterials(data, data.Length, extHint ?? "", virtualDir ?? "",
-                meshIds, materialIds, textureIds, maxSubmeshes);
+            int count = -1;
+            if (leftHanded)
+            {
+                try { count = ImportModelFromMemoryWithMaterialsEx(data, data.Length, extHint ?? "", virtualDir ?? "", meshIds, materialIds, textureIds, maxSubmeshes, 1); }
+                catch (EntryPointNotFoundException) { count = -1; }
+            }
+            if (count < 0)
+                count = ImportModelFromMemoryWithMaterials(data, data.Length, extHint ?? "", virtualDir ?? "",
+                    meshIds, materialIds, textureIds, maxSubmeshes);
 
             var result = new SubmeshImportData[count];
             for (int i = 0; i < count; i++)
@@ -521,9 +542,21 @@ namespace Editor.DllWrapper
         /// <summary>Triangle positions for a model whose bytes live in the in-RAM asset pak (shipped game).</summary>
         public static float[] GetModelTrianglesFromMemory(byte[] data, string extHint) => GetModelTrianglesFromMemory(data, extHint, -1);
 
-        public static float[] GetModelTrianglesFromMemory(byte[] data, string extHint, int submesh)
+        public static float[] GetModelTrianglesFromMemory(byte[] data, string extHint, int submesh, bool leftHanded = false)
         {
             if (data == null || data.Length == 0) return null;
+            if (leftHanded)
+            {
+                // #352: the packed model's sidecar asks for the left-handed conversion — same triangles as rendered
+                try
+                {
+                    int need = GetModelSubmeshTriangleDataFromMemoryEx(data, data.Length, extHint ?? "", submesh, null, 0, 1);
+                    if (need <= 0) return null;
+                    var lhBuf = new float[need];
+                    return TrimFloats(lhBuf, GetModelSubmeshTriangleDataFromMemoryEx(data, data.Length, extHint ?? "", submesh, lhBuf, need, 1));
+                }
+                catch (EntryPointNotFoundException) { }
+            }
             if (submesh < 0)
             {
                 int needed = GetModelTriangleDataFromMemory(data, data.Length, extHint ?? "", null, 0);
