@@ -346,6 +346,17 @@ namespace Editor.DllWrapper
             SubmitMeshInstances(meshId, materialId, worldMatrices, count);
         }
 
+        /// <summary>Layer-aware batch submit: <paramref name="count"/> instances of ONE mesh+material in ONE call
+        /// (worldMatrices = count*16 floats). The scene submit groups every rigid entity by (mesh, material, layer)
+        /// and sends each group this way — thousands of P/Invokes become a handful.</summary>
+        public static void SubmitMeshInstancedLayered(long meshId, long materialId, float[] worldMatrices, int count, int layer)
+        {
+            if (worldMatrices == null || count <= 0) return;
+            if (layer <= 0) { SubmitMeshInstances(meshId, materialId, worldMatrices, count); return; }
+            try { SubmitMeshInstancesEx(meshId, materialId, worldMatrices, count, layer); }
+            catch { SubmitMeshInstances(meshId, materialId, worldMatrices, count); /* older VortexAPI.dll */ }
+        }
+
         #endregion
 
         #region Grid & Gizmos Visibility

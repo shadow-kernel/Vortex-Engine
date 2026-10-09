@@ -88,9 +88,9 @@ namespace Editor.Core.Services.Physics
                 var g = new TriGrid(triCount)
                 {
                     _origin = mn, _cell = cell, _inv = 1f / cell,
-                    _nx = Math.Clamp((int)(ext.X / cell) + 1, 1, GridMaxDim),
-                    _ny = Math.Clamp((int)(ext.Y / cell) + 1, 1, GridMaxDim),
-                    _nz = Math.Clamp((int)(ext.Z / cell) + 1, 1, GridMaxDim),
+                    _nx = ClampI((int)(ext.X / cell) + 1, 1, GridMaxDim),
+                    _ny = ClampI((int)(ext.Y / cell) + 1, 1, GridMaxDim),
+                    _nz = ClampI((int)(ext.Z / cell) + 1, 1, GridMaxDim),
                 };
                 int cells = g._nx * g._ny * g._nz;
                 var counts = new int[cells + 1];
@@ -114,9 +114,11 @@ namespace Editor.Core.Services.Physics
             }
 
             private int Idx(int x, int y, int z) => (z * _ny + y) * _nx + x;
-            private int Cx(float v) => Math.Clamp((int)((v - _origin.X) * _inv), 0, _nx - 1);
-            private int Cy(float v) => Math.Clamp((int)((v - _origin.Y) * _inv), 0, _ny - 1);
-            private int Cz(float v) => Math.Clamp((int)((v - _origin.Z) * _inv), 0, _nz - 1);
+            private int Cx(float v) => ClampI((int)((v - _origin.X) * _inv), 0, _nx - 1);
+            private int Cy(float v) => ClampI((int)((v - _origin.Y) * _inv), 0, _ny - 1);
+            private int Cz(float v) => ClampI((int)((v - _origin.Z) * _inv), 0, _nz - 1);
+            // (not Math.Clamp: the classic WPF editor compiles this file for net48, which has none)
+            private static int ClampI(int v, int lo, int hi) => v < lo ? lo : (v > hi ? hi : v);
 
             private void TriCells(V3[] tris, int tri, out int x0, out int y0, out int z0, out int x1, out int y1, out int z1)
             {

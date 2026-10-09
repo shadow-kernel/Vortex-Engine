@@ -113,6 +113,85 @@ namespace Editor.Core.Services
         
         // Track mesh paths to detect changes
         private readonly Dictionary<Guid, string> _entityMeshPaths = new Dictionary<Guid, string>();
+
+        // ---- scene-submit performance (8–10k entities; see the render-performance tracking issue) -------------------
+        // The player re-submits the WHOLE scene every frame something moves, so every per-entity cost here is paid
+        // thousands of times per frame. These keep that loop allocation-free and cheap.
+        // One GPU mesh per primitive kind ("Primitive:Cube") for the whole scene — never one per entity.
+        private static readonly Dictionary<string, long> _primitiveMeshCache = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+        // Every SHARED mesh id (model submeshes + primitives): never DeleteMesh'd on behalf of one entity.
+        private static readonly HashSet<long> _sharedMeshIds = new HashSet<long>();
+        // A model path's "path#submeshN" keys + mesh ids, resolved once — the per-frame loop no longer builds up to
+        // 64 strings and misses up to 64 dictionary lookups per entity. Cleared whenever the submesh cache changes.
+        private sealed class SubmeshSet { public string[] Keys; public long[] MeshIds; }
+        private static readonly Dictionary<string, SubmeshSet> _resolvedSubmeshes = new Dictionary<string, SubmeshSet>();
+        private static readonly Dictionary<string, bool> _isModelPath = new Dictionary<string, bool>();
+        // Zero-allocation world matrices: one result buffer per entity submit (the renderer memcpy's it during the
+        // call) and scratch buffers per hierarchy depth — instead of a new float[16] per entity per frame
+        // (≈40 MB/s of garbage at 8k entities, i.e. GC stalls).
+        private readonly float[] _worldTmp = new float[16];
+        private float[][] _localPool = new float[8][], _worldPool = new float[8][];
+        // Rigid submits of one SubmitScene pass grouped by (mesh, material, layer): one P/Invoke per group instead of
+        // one per entity. The renderer sorts its queue and merges same-mesh items into instanced draw runs anyway.
+        private readonly InstanceBatcher _batcher = new InstanceBatcher();
+        private bool _batching;
+
+        /// <summary>Groups rigid mesh submits by (mesh, material, layer) and sends each group in ONE call with all its
+        /// world matrices. Allocation-free after warm-up: batches and matrix buffers are pooled across frames.</summary>
+        internal sealed class InstanceBatcher
+        {
+            private struct Key : IEquatable<Key>
+            {
+                public long Mesh, Material; public int Layer;
+                public bool Equals(Key o) => Mesh == o.Mesh && Material == o.Material && Layer == o.Layer;
+                public override bool Equals(object obj) => obj is Key k && Equals(k);
+                public override int GetHashCode() { unchecked { return (int)Mesh * 397 ^ (int)(Mesh >> 32) ^ (int)Material * 31 ^ (int)(Material >> 32) ^ Layer; } }
+            }
+            private sealed class Batch { public Key Key; public float[] Data = new float[16 * 16]; public int Count; }
+
+            private readonly Dictionary<Key, Batch> _open = new Dictionary<Key, Batch>();
+            private readonly List<Batch> _order = new List<Batch>();   // first-seen order (deterministic)
+            private readonly Stack<Batch> _pool = new Stack<Batch>();
+
+            /// <summary>Groups in the current pass.</summary>
+            public int BatchCount => _order.Count;
+            /// <summary>Instances added in the current pass.</summary>
+            public int InstanceCount { get; private set; }
+
+            /// <summary>Queue one instance; <paramref name="world"/> (row-major 4x4, 16 floats) is copied now.</summary>
+            public void Add(long mesh, long material, int layer, float[] world)
+            {
+                var key = new Key { Mesh = mesh, Material = material, Layer = layer };
+                Batch b;
+                if (!_open.TryGetValue(key, out b))
+                {
+                    b = _pool.Count > 0 ? _pool.Pop() : new Batch();
+                    b.Key = key; b.Count = 0;
+                    _open[key] = b;
+                    _order.Add(b);
+                }
+                int need = (b.Count + 1) * 16;
+                if (need > b.Data.Length) Array.Resize(ref b.Data, Math.Max(need, b.Data.Length * 2));
+                Array.Copy(world, 0, b.Data, b.Count * 16, 16);
+                b.Count++;
+                InstanceCount++;
+            }
+
+            /// <summary>Send every group as (mesh, material, layer, matrices, count), then reset for the next pass.</summary>
+            public void Flush(Action<long, long, int, float[], int> submit)
+            {
+                for (int i = 0; i < _order.Count; i++)
+                {
+                    var b = _order[i];
+                    if (b.Count > 0) submit(b.Key.Mesh, b.Key.Material, b.Key.Layer, b.Data, b.Count);
+                    b.Count = 0;
+                    _pool.Push(b);
+                }
+                _order.Clear();
+                _open.Clear();
+                InstanceCount = 0;
+            }
+        }
         
         // Material color cache for dirty checking
         private readonly Dictionary<Guid, (float r, float g, float b, float a)> _entityMaterialColors = 
@@ -156,6 +235,8 @@ namespace Editor.Core.Services
             if (!string.IsNullOrEmpty(meshPath) && meshId >= 0)
             {
                 _submeshMeshCache[meshPath] = meshId;
+                _sharedMeshIds.Add(meshId);
+                _resolvedSubmeshes.Clear();   // per-path submesh sets are re-resolved on the next submit
                 Log($"[SceneRenderService] Registered mesh {meshId} for path: {meshPath}");
             }
         }
@@ -341,8 +422,9 @@ namespace Editor.Core.Services
                 return;
             }
 
-            // Build world matrix from transform (including parent transforms)
-            float[] worldMatrix = BuildWorldMatrixWithParent(entity);
+            // Build world matrix from transform (including parent transforms) — into a reused buffer, no allocation
+            float[] worldMatrix = _worldTmp;
+            BuildWorldMatrixInto(entity, worldMatrix, 0);
 
             // Skinned characters: an entity with an Animator + a skinned model renders through the GPU
             // skinning path — the AnimationService supplies the bone palette (animated pose while playing,
@@ -397,25 +479,23 @@ namespace Editor.Core.Services
 
             // Imported models (no explicit .vmat) are multi-submesh with per-submesh colored materials —
             // submit EVERY submesh, not just the first, so e.g. a Kenney tree shows trunk + leaves.
-            var ext = System.IO.Path.GetExtension(meshRenderer.MeshPath)?.ToLowerInvariant();
-            if (string.IsNullOrEmpty(meshRenderer.MaterialPath) && IsModelFileExtension(ext))
+            if (string.IsNullOrEmpty(meshRenderer.MaterialPath) && IsModelPath(meshRenderer.MeshPath))
             {
-                bool any = false;
-                for (int n = 0; n < 64; n++)
+                var set = ResolveSubmeshes(meshRenderer.MeshPath);   // resolved once per path, not per frame
+                if (set != null)
                 {
-                    string sub = meshRenderer.MeshPath + "#submesh" + n;
-                    if (_submeshMeshCache.TryGetValue(sub, out long subMesh) && subMesh >= 0)
+                    for (int i = 0; i < set.MeshIds.Length; i++)
                     {
+                        long subMesh = set.MeshIds[i];
+                        long subMat = GetMaterialForMeshPath(set.Keys[i]);
                         if (bonePalette != null && Core.Animation.AnimationService.Instance.IsMeshSkinned(subMesh))
-                            VortexAPI.SubmitSkinnedMesh(subMesh, GetMaterialForMeshPath(sub), worldMatrix, bonePalette, boneCount, layer);
+                            VortexAPI.SubmitSkinnedMesh(subMesh, subMat, worldMatrix, bonePalette, boneCount, layer);
                         else
-                            VortexAPI.SubmitMeshForRenderingLayered(subMesh, GetMaterialForMeshPath(sub), worldMatrix, layer);
+                            SubmitRigid(subMesh, subMat, worldMatrix, layer);
                         _submitN++;
-                        any = true;
                     }
-                    else if (n > 0) break;
+                    return;
                 }
-                if (any) return;
             }
 
             // Primitive / single mesh / explicitly-assigned .vmat:
@@ -423,8 +503,50 @@ namespace Editor.Core.Services
             if (bonePalette != null && Core.Animation.AnimationService.Instance.IsMeshSkinned(meshId))
                 VortexAPI.SubmitSkinnedMesh(meshId, materialId, worldMatrix, bonePalette, boneCount, layer);
             else
-                VortexAPI.SubmitMeshForRenderingLayered(meshId, materialId, worldMatrix, layer);
+                SubmitRigid(meshId, materialId, worldMatrix, layer);
             _submitN++;
+        }
+
+        /// <summary>A rigid (non-skinned) submit: batched per (mesh, material, layer) inside SubmitScene, immediate
+        /// when SubmitEntity is called on its own.</summary>
+        private void SubmitRigid(long meshId, long materialId, float[] world, int layer)
+        {
+            if (_batching) _batcher.Add(meshId, materialId, layer, world);
+            else VortexAPI.SubmitMeshForRenderingLayered(meshId, materialId, world, layer);
+        }
+
+        private static void FlushBatch(long mesh, long material, int layer, float[] matrices, int count)
+            => VortexAPI.SubmitMeshInstancedLayered(mesh, material, matrices, count, layer);
+
+        /// <summary>Is this an imported model path (.fbx/.glb/…)? Cached per path — the extension check allocated
+        /// two strings per entity per frame.</summary>
+        private static bool IsModelPath(string meshPath)
+        {
+            bool m;
+            if (_isModelPath.TryGetValue(meshPath, out m)) return m;
+            var ext = System.IO.Path.GetExtension(meshPath);
+            m = IsModelFileExtension(ext != null ? ext.ToLowerInvariant() : null);
+            _isModelPath[meshPath] = m;
+            return m;
+        }
+
+        /// <summary>The loaded submeshes of a model path (null when none are loaded yet) — resolved once and reused
+        /// every frame; <see cref="_resolvedSubmeshes"/> is cleared whenever the submesh cache changes.</summary>
+        private static SubmeshSet ResolveSubmeshes(string meshPath)
+        {
+            SubmeshSet set;
+            if (_resolvedSubmeshes.TryGetValue(meshPath, out set)) return set;
+            var keys = new List<string>(); var ids = new List<long>();
+            for (int n = 0; n < 64; n++)
+            {
+                string sub = meshPath + "#submesh" + n;
+                long id;
+                if (_submeshMeshCache.TryGetValue(sub, out id) && id >= 0) { keys.Add(sub); ids.Add(id); }
+                else if (n > 0) break;
+            }
+            set = keys.Count > 0 ? new SubmeshSet { Keys = keys.ToArray(), MeshIds = ids.ToArray() } : null;
+            _resolvedSubmeshes[meshPath] = set;   // null is cached too ("not loaded yet"); an import clears it
+            return set;
         }
 
 
@@ -443,9 +565,18 @@ namespace Editor.Core.Services
             SubmitSceneLights(scene);
 
             _submitN = 0;
-            foreach (var entity in scene.Entities)
+            _batching = true;
+            try
             {
-                SubmitEntityRecursive(entity);
+                foreach (var entity in scene.Entities)
+                {
+                    SubmitEntityRecursive(entity);
+                }
+            }
+            finally
+            {
+                _batching = false;
+                _batcher.Flush(FlushBatch);   // one P/Invoke per (mesh, material, layer) group
             }
             if (scene.Name != "Lobby" && _ssDbg < 12) { _ssDbg++; try { System.IO.File.AppendAllText(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "vortex_submit.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " SubmitScene '" + scene.Name + "' topEnts=" + System.Linq.Enumerable.Count(scene.Entities) + " submitted=" + _submitN + "\r\n"); } catch { } }
 
@@ -918,6 +1049,11 @@ namespace Editor.Core.Services
         {
             try
             {
+                // Shared caches first — O(1), where the scan below is O(entities) per bounds query
+                long sharedId;
+                if (_submeshMeshCache.TryGetValue(meshPath, out sharedId) && sharedId >= 0) return sharedId;
+                if (_primitiveMeshCache.TryGetValue(meshPath, out sharedId) && sharedId >= 0) return sharedId;
+
                 // Check the entity mesh cache first
                 foreach (var kvp in _entityMeshes)
                 {
@@ -1015,7 +1151,7 @@ namespace Editor.Core.Services
                     // Path changed, need to recreate
                     if (_entityMeshes.TryGetValue(entityId, out long oldMesh))
                     {
-                        VortexAPI.DeleteMesh(oldMesh);
+                        if (!_sharedMeshIds.Contains(oldMesh)) VortexAPI.DeleteMesh(oldMesh);   // shared: other entities use it
                         _entityMeshes.Remove(entityId);
                     }
                     needsRecreate = true;
@@ -1048,35 +1184,46 @@ namespace Editor.Core.Services
         {
             if (meshPath.StartsWith("Primitive:", StringComparison.OrdinalIgnoreCase))
             {
-                var primitiveType = meshPath.Substring("Primitive:".Length);
-                switch (primitiveType.ToLower())
-                {
-                    case "cube":
-                        return VortexAPI.CreateCubeMesh(1.0f);
-                    case "sphere":
-                        return VortexAPI.CreateSphereMesh(0.5f);
-                    case "plane":
-                        return VortexAPI.CreatePlaneMesh(1.0f, 1.0f);
-                    case "cylinder":
-                        return VortexAPI.CreateCylinderMesh(0.5f, 1.0f);
-                    case "capsule":
-                        // Capsule approximated with cylinder for now
-                        return VortexAPI.CreateCylinderMesh(0.5f, 1.0f);
-                    case "cone":
-                        // Cone approximated with cylinder for now
-                        return VortexAPI.CreateCylinderMesh(0.5f, 1.0f);
-                    case "torus":
-                        // Torus approximated with sphere for now
-                        return VortexAPI.CreateSphereMesh(0.5f);
-                    case "quad":
-                        return VortexAPI.CreatePlaneMesh(1.0f, 1.0f);
-                    default:
-                        return -1;
-                }
+                // One shared GPU mesh per primitive kind for the whole scene: 8k cubes = 1 mesh, not 8k uploads.
+                // Materials stay per entity, so colours are still individual. Shared ids are never deleted per entity.
+                long shared;
+                if (_primitiveMeshCache.TryGetValue(meshPath, out shared) && shared >= 0) return shared;
+                long created = CreatePrimitiveMesh(meshPath.Substring("Primitive:".Length));
+                if (created >= 0) { _primitiveMeshCache[meshPath] = created; _sharedMeshIds.Add(created); }
+                return created;
             }
 
             // Load mesh from external file
             return LoadMeshFromFile(meshPath);
+        }
+
+        /// <summary>The engine mesh for a primitive kind ("cube", "sphere", …); -1 for an unknown kind.</summary>
+        private static long CreatePrimitiveMesh(string primitiveType)
+        {
+            switch (primitiveType.ToLower())
+            {
+                case "cube":
+                    return VortexAPI.CreateCubeMesh(1.0f);
+                case "sphere":
+                    return VortexAPI.CreateSphereMesh(0.5f);
+                case "plane":
+                    return VortexAPI.CreatePlaneMesh(1.0f, 1.0f);
+                case "cylinder":
+                    return VortexAPI.CreateCylinderMesh(0.5f, 1.0f);
+                case "capsule":
+                    // Capsule approximated with cylinder for now
+                    return VortexAPI.CreateCylinderMesh(0.5f, 1.0f);
+                case "cone":
+                    // Cone approximated with cylinder for now
+                    return VortexAPI.CreateCylinderMesh(0.5f, 1.0f);
+                case "torus":
+                    // Torus approximated with sphere for now
+                    return VortexAPI.CreateSphereMesh(0.5f);
+                case "quad":
+                    return VortexAPI.CreatePlaneMesh(1.0f, 1.0f);
+                default:
+                    return -1;
+            }
         }
 
         // Cache for submesh mesh IDs (keyed by submesh path like "path#submesh0")
@@ -1176,6 +1323,7 @@ namespace Editor.Core.Services
                         {
                             string subPath = $"{actualPath}#submesh{i}";
                             _submeshMeshCache[subPath] = submeshes[i].MeshId;
+                            _sharedMeshIds.Add(submeshes[i].MeshId);
                             
                             // Also register materials
                             if (submeshes[i].MaterialId >= 0)
@@ -1186,6 +1334,8 @@ namespace Editor.Core.Services
                         
                         // Also cache the base path with first mesh
                         _submeshMeshCache[actualPath] = submeshes[0].MeshId;
+                        _sharedMeshIds.Add(submeshes[0].MeshId);
+                        _resolvedSubmeshes.Clear();   // the per-path submesh sets pick the new entries up next submit
                         
                         // Return requested submesh or first mesh
                         if (submeshIndex >= 0 && submeshIndex < submeshes.Length)
@@ -1445,6 +1595,55 @@ namespace Editor.Core.Services
             return MultiplyMatrices(localMatrix, parentMatrix);
         }
 
+        // ---- allocation-free world matrices (the renderer copies the 16 floats during the submit call) -----------
+
+        /// <summary>World matrix of <paramref name="entity"/> (local × parent chain) into <paramref name="dst"/>.
+        /// <paramref name="depth"/> selects the scratch buffers so the recursion never aliases a buffer in use.</summary>
+        private void BuildWorldMatrixInto(GameEntity entity, float[] dst, int depth)
+        {
+            if (entity == null || entity.Transform == null) { IdentityInto(dst); return; }
+            if (depth >= _localPool.Length) { Array.Resize(ref _localPool, depth * 2); Array.Resize(ref _worldPool, depth * 2); }
+            var local = _localPool[depth] ?? (_localPool[depth] = new float[16]);
+            LocalMatrixInto(entity.Transform, local);
+            if (entity.Parent == null || entity.Parent.Transform == null) { Array.Copy(local, dst, 16); return; }
+            var parentWorld = _worldPool[depth] ?? (_worldPool[depth] = new float[16]);
+            BuildWorldMatrixInto(entity.Parent, parentWorld, depth + 1);
+            MultiplyInto(local, parentWorld, dst);
+        }
+
+        internal static void IdentityInto(float[] m)
+        {
+            Array.Clear(m, 0, 16);
+            m[0] = m[5] = m[10] = m[15] = 1f;
+        }
+
+        /// <summary>Same math as <see cref="BuildWorldMatrix"/> (S·R(ZXY)·T, row-major), written into <paramref name="m"/>.</summary>
+        internal static void LocalMatrixInto(Transform transform, float[] m)
+        {
+            var pos = transform.LocalPosition;
+            var rot = transform.LocalRotation;
+            var scale = transform.LocalScale;
+            float radX = rot.X * (float)(Math.PI / 180.0), radY = rot.Y * (float)(Math.PI / 180.0), radZ = rot.Z * (float)(Math.PI / 180.0);
+            float cosX = (float)Math.Cos(radX), sinX = (float)Math.Sin(radX);
+            float cosY = (float)Math.Cos(radY), sinY = (float)Math.Sin(radY);
+            float cosZ = (float)Math.Cos(radZ), sinZ = (float)Math.Sin(radZ);
+            float r00 = cosZ * cosY + sinZ * sinX * sinY, r01 = sinZ * cosX, r02 = -cosZ * sinY + sinZ * sinX * cosY;
+            float r10 = -sinZ * cosY + cosZ * sinX * sinY, r11 = cosZ * cosX, r12 = sinZ * sinY + cosZ * sinX * cosY;
+            float r20 = cosX * sinY, r21 = -sinX, r22 = cosX * cosY;
+            m[0] = scale.X * r00; m[1] = scale.X * r01; m[2] = scale.X * r02; m[3] = 0;
+            m[4] = scale.Y * r10; m[5] = scale.Y * r11; m[6] = scale.Y * r12; m[7] = 0;
+            m[8] = scale.Z * r20; m[9] = scale.Z * r21; m[10] = scale.Z * r22; m[11] = 0;
+            m[12] = pos.X; m[13] = pos.Y; m[14] = pos.Z; m[15] = 1;
+        }
+
+        /// <summary>dst = a × b (row-major); <paramref name="dst"/> must not be <paramref name="a"/> or <paramref name="b"/>.</summary>
+        internal static void MultiplyInto(float[] a, float[] b, float[] dst)
+        {
+            for (int row = 0; row < 4; row++)
+                for (int col = 0; col < 4; col++)
+                    dst[row * 4 + col] = a[row * 4 + 0] * b[col] + a[row * 4 + 1] * b[4 + col] + a[row * 4 + 2] * b[8 + col] + a[row * 4 + 3] * b[12 + col];
+        }
+
         private float[] BuildIdentityMatrix()
         {
             return new float[]
@@ -1513,10 +1712,10 @@ namespace Editor.Core.Services
         /// </summary>
         public void OnMeshChanged(Guid entityId)
         {
-            // Remove old mesh so it gets recreated
+            // Remove old mesh so it gets recreated (a shared model/primitive mesh stays — other entities use it)
             if (_entityMeshes.TryGetValue(entityId, out long meshId))
             {
-                VortexAPI.DeleteMesh(meshId);
+                if (!_sharedMeshIds.Contains(meshId)) VortexAPI.DeleteMesh(meshId);
                 _entityMeshes.Remove(entityId);
             }
         }
@@ -1542,7 +1741,7 @@ namespace Editor.Core.Services
         {
             if (_entityMeshes.TryGetValue(entityId, out long meshId))
             {
-                VortexAPI.DeleteMesh(meshId);
+                if (!_sharedMeshIds.Contains(meshId)) VortexAPI.DeleteMesh(meshId);   // shared: other entities use it
                 _entityMeshes.Remove(entityId);
             }
 
@@ -1572,6 +1771,7 @@ namespace Editor.Core.Services
             // startup with 50 copies). Here: delete ONLY non-shared (e.g. primitive) meshes, each id at most once,
             // and NEVER delete a shared cached model mesh — it stays loaded for reuse.
             var sharedMeshIds = new HashSet<long>(_submeshMeshCache.Values);
+            sharedMeshIds.UnionWith(_sharedMeshIds);   // + shared primitives (also kept resident for reuse)
             var alreadyDeleted = new HashSet<long>();
             foreach (var meshId in _entityMeshes.Values)
             {
