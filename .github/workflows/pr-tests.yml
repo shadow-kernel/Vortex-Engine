@@ -75,6 +75,26 @@ jobs:
       - name: Build Vortex.slnx (Release x64, DX12 + WPF editor)
         run: msbuild Vortex.slnx /t:Build /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /m /v:minimal "/clp:ErrorsOnly;Summary"
 
+      # #182: the native engine the Windows build SHIPS comes from CMake — Jolt Physics is fetched and linked there,
+      # while the Visual Studio projects still compile the no-op physics stub. The MSBuild VortexAPI.dll above only
+      # feeds the WPF editor's build; the CMake one replaces it before the editor is staged and smoked. The MSVC
+      # environment is scoped to this one step (vcvars64 via vswhere): exported job-wide it sets Platform=x64, which
+      # breaks the managed solution build ("Release|x64" is no configuration of Vortex.Managed.slnx).
+      - name: Native engine through CMake (DX12 + Jolt)
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath`) do call "%%i\VC\Auxiliary\Build\vcvars64.bat"
+          cmake -S . -B build/windows-ninja -G Ninja -DCMAKE_BUILD_TYPE=Release -DVORTEX_BUILD_TESTS=OFF || exit /b 1
+          cmake --build build/windows-ninja --target VortexAPI || exit /b 1
+
+      - name: Ship the CMake VortexAPI.dll (Jolt)
+        shell: pwsh
+        run: |
+          $src = "build/windows-ninja/bin/VortexAPI.dll"
+          if (-not (Test-Path $src)) { Write-Error "no CMake VortexAPI.dll"; exit 1 }
+          Copy-Item -Force $src "x64/Release/VortexAPI.dll"
+          Write-Host "x64/Release/VortexAPI.dll <- CMake build ($([math]::Round((Get-Item $src).Length/1MB,1)) MB)"
+
       - name: Build the managed layer (Vortex.Core, Player, Avalonia editor)
         run: dotnet build Managed/Vortex.Managed.slnx -c Release -v minimal
 
@@ -114,6 +134,7 @@ jobs:
           Get-Content "$tmp\smoke.err" -ErrorAction SilentlyContinue
           if (Select-String -Path "$tmp\smoke.log" -Pattern "SMOKE FAIL" -Quiet) { exit 1 }
           foreach ($c in @("mcp tools", "title bar", "terminal", "workspace layout", "camera clip planes", "sky texture", "height fog", "material pipelines", "light priority", "tool arguments", "resource lifecycle", "cutout shadows", "instance tint", "import handedness")) { if (-not (Select-String -Path "$tmp\smoke.log" -Pattern "SMOKE OK   $c" -Quiet)) { Write-Host "::error::smoke check '$c' did not pass"; exit 1 } }
+          if (-not (Select-String -Path "$tmp\smoke.log" -Pattern "Jolt world ready" -Quiet)) { Write-Host "::error::the editor ran with the physics stub — no 'Jolt world ready' in the smoke log (#182)"; exit 1 }
 
       - name: Upload the Windows smoke capture
         if: always()
