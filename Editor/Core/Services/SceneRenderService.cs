@@ -109,6 +109,7 @@ namespace Editor.Core.Services
         private readonly Dictionary<Guid, long> _entityMeshes = new Dictionary<Guid, long>();
         private static int _meshDbg; // diagnostic: log first few mesh creations
         private static int _submitN, _ssDbg; // diagnostic: count submits per SubmitScene
+        private static DateTime _slowSubmitLogAt;   // rate limit for the slow-submit console line
         private readonly Dictionary<Guid, long> _entityMaterials = new Dictionary<Guid, long>();
         
         // Track mesh paths to detect changes
@@ -627,6 +628,7 @@ namespace Editor.Core.Services
 
             _submitN = 0;
             _batching = true;
+            var swSubmit = System.Diagnostics.Stopwatch.StartNew();
             try
             {
                 foreach (var entity in scene.Entities)
@@ -638,6 +640,14 @@ namespace Editor.Core.Services
             {
                 _batching = false;
                 _batcher.Flush(FlushBatch);   // one P/Invoke per (mesh, material, layer) group
+            }
+            swSubmit.Stop();
+            // a slow submit is either the first one (it imports every model) or a scene too big for the per-frame
+            // re-submit (#364 A) — say so, at most once every 10 s
+            if (swSubmit.ElapsedMilliseconds > 500 && (DateTime.UtcNow - _slowSubmitLogAt).TotalSeconds > 10)
+            {
+                _slowSubmitLogAt = DateTime.UtcNow;
+                try { ConsoleService.Instance.LogSystem("Scene submit '" + scene.Name + "': " + _submitN + " meshes in " + swSubmit.ElapsedMilliseconds + " ms"); } catch { }
             }
             if (scene.Name != "Lobby" && _ssDbg < 12) { _ssDbg++; try { System.IO.File.AppendAllText(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "vortex_submit.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " SubmitScene '" + scene.Name + "' topEnts=" + System.Linq.Enumerable.Count(scene.Entities) + " submitted=" + _submitN + "\r\n"); } catch { } }
 
@@ -1374,9 +1384,14 @@ namespace Editor.Core.Services
                     // Import with materials (this creates all submeshes at once) — from RAM if packed, else disk.
                     Log($"[SceneRenderService] Importing model with materials: {fullPath} (vfs={fromVfs})");
                     var virtualDir = (System.IO.Path.GetDirectoryName(actualPath) ?? "").Replace('\\', '/');
+                    var swImport = System.Diagnostics.Stopwatch.StartNew();
                     var submeshes = fromVfs
                         ? VortexAPI.ImportModelFromBytes(vfsBytes, extension.TrimStart('.'), virtualDir)
                         : VortexAPI.ImportModelWithMaterialsFromFile(fullPath);
+                    swImport.Stop();
+                    // make the load cost visible: this runs on EVERY start for every model that is not a .vmesh (#364 C)
+                    if (swImport.ElapsedMilliseconds > 50)
+                        try { ConsoleService.Instance.LogSystem("Model import " + System.IO.Path.GetFileName(actualPath) + ": " + (submeshes != null ? submeshes.Length : 0) + " submeshes in " + swImport.ElapsedMilliseconds + " ms (Assimp, on every start)"); } catch { }
                     if (submeshes != null && submeshes.Length > 0)
                     {
                         // Cache all submeshes for future use

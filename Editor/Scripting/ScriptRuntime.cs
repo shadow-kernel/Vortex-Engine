@@ -2005,7 +2005,20 @@ namespace Editor.Scripting
                 if (Editor.Core.Services.AssetVfs.IsMounted && Editor.Core.Services.AssetVfs.TryGetBytes(abs, out bytes) && bytes != null)
                     tris = Editor.DllWrapper.VortexAPI.GetModelTrianglesFromMemory(bytes, ext);
                 else if (System.IO.File.Exists(abs))
-                    tris = Editor.DllWrapper.VortexAPI.GetModelTriangles(abs);
+                {
+                    // the on-disk cache saves the second Assimp pass per model on every later start (#364 C)
+                    string cacheFile = Editor.Core.Services.Physics.CollisionTriangleCache.FileFor(proj, abs);
+                    tris = Editor.Core.Services.Physics.CollisionTriangleCache.TryRead(cacheFile);
+                    if (tris == null)
+                    {
+                        var sw = System.Diagnostics.Stopwatch.StartNew();
+                        tris = Editor.DllWrapper.VortexAPI.GetModelTriangles(abs);
+                        sw.Stop();
+                        if (tris != null) Editor.Core.Services.Physics.CollisionTriangleCache.Write(cacheFile, tris);
+                        if (sw.ElapsedMilliseconds > 50)
+                            try { Editor.Core.Services.ConsoleService.Instance.LogSystem("Collision mesh " + System.IO.Path.GetFileName(abs) + ": " + (tris != null ? tris.Length / 9 : 0) + " triangles parsed in " + sw.ElapsedMilliseconds + " ms — cached for the next start"); } catch { }
+                    }
+                }
             }
             catch { }
             _triCache[meshPath] = tris;
