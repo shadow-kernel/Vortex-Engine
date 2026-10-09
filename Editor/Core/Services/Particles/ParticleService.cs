@@ -157,6 +157,7 @@ namespace Editor.Core.Services.Particles
             {
                 DestroySceneInstances();
                 DestroySpawned(sceneOnly: false);
+                Editor.Core.Services.Decals.DecalService.Clear();   // spawned decals die with the scene / play session (#120)
                 _playing = playing;
                 _scene = scene;
             }
@@ -165,6 +166,7 @@ namespace Editor.Core.Services.Particles
             Sync(scene, playing, paused ? 0f : dt);
             PruneSpawned();
             try { VortexAPI.ParticleUpdate(0, paused ? 0f : dt); } catch { }
+            Editor.Core.Services.Decals.DecalService.Tick(paused ? 0f : dt);   // #120: lifetimes + fade-outs of spawned decals
         }
 
         /// <summary>Create / follow / drop the emitters of every ParticleSystem in the scene.</summary>

@@ -17,6 +17,7 @@
 // ============================================================================
 #include "../../Common/CommonHeaders.h"
 #include "../Particles/ParticleSystem.h"
+#include "DX12FrameRing.h"
 #include <d3d12.h>
 #include <wrl/client.h>
 #include <DirectXMath.h>
@@ -52,7 +53,7 @@ namespace vortex::graphics::dx12
 			u32 point_lights{ 0 }, spot_lights{ 0 };
 		};
 
-		bool initialize(ID3D12Device* device, DXGI_FORMAT rtv_format, DXGI_FORMAT dsv_format);
+		bool initialize(ID3D12Device* device, DX12FrameRing* ring, DXGI_FORMAT rtv_format, DXGI_FORMAT dsv_format);
 		void shutdown();
 		bool ready() const { return m_ready; }
 
@@ -79,13 +80,13 @@ namespace vortex::graphics::dx12
 		void capture_depth(ID3D12GraphicsCommandList* cmd, ID3D12Resource* depth, u32 w, u32 h, const View& view,
 			D3D12_CPU_DESCRIPTOR_HANDLE rtv, D3D12_CPU_DESCRIPTOR_HANDLE dsv);
 
+		// A copy of the pass's depth buffer as a shader resource for other effect passes (decals, #120); {} when unavailable.
+		D3D12_GPU_DESCRIPTOR_HANDLE scene_depth_srv(ID3D12GraphicsCommandList* cmd, ID3D12Resource* depth);
+
 	private:
-		static constexpr u32 FRAMES = 3;          // upload rings: the renderer keeps < 3 frames in flight
 		static constexpr u32 SNAP_SLOTS = 4;
 		static constexpr u32 DEPTH_COPIES = 4;    // distinct target sizes per frame (main view + previews)
 
-		struct Ring { ComPtr<ID3D12Resource> buffer; u8* mapped{ nullptr }; u64 cap{ 0 }, used{ 0 }; };
-		struct Upload { u8* cpu{ nullptr }; D3D12_GPU_VIRTUAL_ADDRESS gpu{ 0 }; };
 		struct DepthCopy
 		{
 			ComPtr<ID3D12Resource> texture;      // R32_TYPELESS copy of a pass's depth, sampled as R32_FLOAT
@@ -108,8 +109,6 @@ namespace vortex::graphics::dx12
 
 		bool create_root_signature();
 		bool create_pipelines(DXGI_FORMAT rtv_format, DXGI_FORMAT dsv_format);
-		Upload alloc(u64 bytes, u64 align = 256);
-		void retire(const ComPtr<ID3D12Resource>& res);
 		DepthCopy* copy_depth(ID3D12GraphicsCommandList* cmd, ID3D12Resource* depth);
 		bool ensure_snap_target(u32 w, u32 h);
 
@@ -121,13 +120,12 @@ namespace vortex::graphics::dx12
 		ComPtr<ID3D12PipelineState> m_ribbon[3];
 		ComPtr<ID3D12PipelineState> m_snap;
 
-		Ring m_rings[FRAMES];
-		std::vector<std::pair<u64, ComPtr<ID3D12Resource>>> m_graveyard;   // (retired in frame, resource)
+		DX12FrameRing* m_ring{ nullptr };   // the renderer's per-frame upload ring (shared with the decal pass)
 
 		particles::DrawList m_list;
 		u32 m_layer_batches[2]{ 0, 0 };
 		int m_next_target_world{ -1 };
-		Upload m_instances{};                        // this view's GpuParticle array (root SRV t2)
+		DX12FrameRing::Upload m_instances{};                        // this view's GpuParticle array (root SRV t2)
 		D3D12_VERTEX_BUFFER_VIEW m_ribbon_vbv{};
 		D3D12_INDEX_BUFFER_VIEW m_ribbon_ibv{};
 

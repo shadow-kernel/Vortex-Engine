@@ -18,8 +18,7 @@
 // (0 = the scene, create more with ParticleCreateWorld for previews), world matrices = 16 floats row-major
 // (row 3 = translation, the SubmitRenderItem layout), texture ids = engine texture ids (u64, ~0 = none),
 // descriptors as JSON (the .vfx schema) or as ParticleEmitterDesc / ParticleBeamDesc structs.
-// Backend: the SDL GPU (Metal) renderer draws particles; on DX12 the simulation runs and the API behaves
-// identically but nothing is drawn yet (ParticleStats.rendererDraws == 0).
+// Backend: both renderers draw particles — SDL GPU (Metal / Vulkan) and, since #117, DirectX 12 (ParticleStats.rendererDraws == 1).
 // ============================================================================================
 
 namespace pfx = vortex::particles;

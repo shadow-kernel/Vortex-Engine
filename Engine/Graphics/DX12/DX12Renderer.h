@@ -10,6 +10,9 @@
 #include "DX12GridPipeline.h"
 #include "DX12SkyboxPipeline.h"
 #include "DX12Particles.h"       // the particle / VFX pass (#117)
+#include "DX12Decals.h"          // the projected decal pass (#120)
+#include "DX12FrameRing.h"
+#include "../Decals/Decals.h"
 #include "DX12UpscalePipeline.h"
 #include "DX12PostFxChain.h"
 #include "DX12MotionVectorPipeline.h"
@@ -143,6 +146,11 @@ namespace vortex::graphics::dx12
 		// Same always-on-top pass, but rasterized as WIREFRAME (fine triangle net) — one draw renders a whole
 		// audio range sphere / reverb-zone shape as thin lines instead of hundreds of scaled-cube edge segments.
 		void submit_gizmo_wire_item(const RenderItem& item);
+		// Decals (#120): the scene submit clears and refills the list (DecalApi.cpp, like the lights); the world pass draws
+		// it between the opaque and the transparent meshes.
+		void clear_decals() { m_decal_list.clear(); }
+		void add_decal(const decals::Decal& d) { if (m_decal_list.size() < decals::MAX_DECALS) m_decal_list.push_back(d); }
+		const std::vector<decals::Decal>& decal_list() const { return m_decal_list; }
 		// Submit `count` instances of the SAME mesh+material in ONE call (world_matrices = count * 16 floats,
 		// row-major 4x4 each). Avoids one P/Invoke per instance — the path for spawning large crowds.
 		// colors (#331): count x (r, g, b, a) per instance, or nullptr for untinted
@@ -538,6 +546,9 @@ namespace vortex::graphics::dx12
 		DX12GridPipeline m_grid_pipeline;  // Grid rendering pipeline
 		DX12SkyboxPipeline m_skybox_pipeline; // Skybox rendering pipeline
 		DX12Particles m_particles;            // Particle / VFX pass (#117): billboards, ribbons, soft particles, depth collision
+		DX12FrameRing m_fx_ring;              // per-frame upload ring shared by the effect passes
+		DX12Decals m_decal_pass;              // projected decals (#120)
+		std::vector<decals::Decal> m_decal_list;   // the frame's decals (refilled on every scene submit, like the lights)
 		DX12UpscalePipeline m_upscale;        // Fullscreen upscale (render-scale composite + the DLSS slot)
 		DX12PostFxChain m_postfx;             // Post-processing chain (#28/#29) between composite and UI overlay
 		std::chrono::steady_clock::time_point m_time_origin{ std::chrono::steady_clock::now() };

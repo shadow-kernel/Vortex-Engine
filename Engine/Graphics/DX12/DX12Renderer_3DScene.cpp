@@ -71,7 +71,17 @@ namespace vortex::graphics::dx12
 		const bool fx = m_particles.prepare(pview, 0);
 		const bool fx0 = fx && m_particles.has_layer(0);
 		const bool fx1 = fx && m_particles.has_layer(1);
-		const DX12Particles::Environment penv = fx ? particle_environment(m_frame_constants) : DX12Particles::Environment{};
+		// Decals (#120): drawn between the opaque and the transparent meshes of the world pass against a copy of its depth.
+		const bool fx_decals = m_decal_pass.ready() && !m_decal_list.empty();
+		DX12Decals::View dview{};
+		if (fx_decals)
+		{
+			using namespace DirectX;
+			dview.view_projection = m_frame_constants.view_projection;
+			XMStoreFloat4x4(&dview.inv_view_projection, XMMatrixInverse(nullptr, XMLoadFloat4x4(&m_frame_constants.view_projection)));
+			dview.eye = m_camera_position; dview.near_clip = m_near_clip; dview.far_clip = m_far_clip; dview.ortho = false;
+		}
+		const DX12Particles::Environment penv = (fx || fx_decals) ? particle_environment(m_frame_constants) : DX12Particles::Environment{};
 		const D3D12_GPU_VIRTUAL_ADDRESS fx_lights = m_light_cb ? m_light_cb->GetGPUVirtualAddress() : 0;
 		auto fx_layer = [&](u32 layer)
 		{
@@ -461,7 +471,7 @@ namespace vortex::graphics::dx12
 		// SHARED across both passes (per-run CB slots must not alias); transparentRuns is per-pass
 		// (world transparents must not re-draw over the cleared depth).
 		u32 cbSlot = 0;
-		auto record_pass = [&](size_t rBegin, size_t rEnd)
+		auto record_pass = [&](size_t rBegin, size_t rEnd, bool world)
 		{
 		std::vector<u32> transparentRuns;
 		for (size_t r = rBegin; r < rEnd; ++r)
@@ -570,6 +580,15 @@ namespace vortex::graphics::dx12
 			}
 		}
 
+		// Decals (#120) go between the opaque and the transparent meshes of the world pass: back faces of their boxes,
+		// no depth test, the covered position reconstructed from a copy of the depth so far.
+		if (world && fx_decals)
+		{
+			const D3D12_GPU_DESCRIPTOR_HANDLE depth_srv = m_particles.scene_depth_srv(m_command_list.Get(), m_active_depth);
+			if (depth_srv.ptr != 0)
+				m_decal_pass.draw(m_command_list.Get(), rtv, dsv, depth_srv, m_active_width, m_active_height, dview, penv, fx_lights, m_decal_list);
+			bind_scene_pass(m_per_frame_cb->GetGPUVirtualAddress());   // the decal pass left its own roots bound
+		}
 		// ---- Sorted transparent pass (#33): every deferred run's packed instances, back-to-front ----
 		// The instances already sit culled+packed in the instance-VB slab (upload heap = CPU-readable);
 		// each item's view depth comes from the world translation at bytes 48..59 of its 64B matrix.
@@ -646,7 +665,7 @@ namespace vortex::graphics::dx12
 		size_t vmStart = runN;
 		for (size_t r = 0; r < runN; ++r) if (m_draw_runs[r].layer != 0) { vmStart = r; break; }
 
-		record_pass(0, vmStart);
+		record_pass(0, vmStart, true);
 		// World-layer particles after the opaque + transparent meshes, then the collision snapshot of the world depth
 		// (before the viewmodel pass clears it).
 		if (fx0) fx_layer(0);
@@ -661,7 +680,7 @@ namespace vortex::graphics::dx12
 			// without viewmodel meshes.
 			m_command_list->ClearDepthStencilView(m_active_dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 			bind_scene_pass(m_viewmodel_cb ? m_viewmodel_cb->GetGPUVirtualAddress() : m_per_frame_cb->GetGPUVirtualAddress());   // the particle pass left its own roots
-			record_pass(vmStart, runN);
+			record_pass(vmStart, runN, false);
 			if (fx1) { fx_layer(1); bind_scene_pass(m_per_frame_cb->GetGPUVirtualAddress()); }
 			else m_command_list->SetGraphicsRootConstantBufferView(0, m_per_frame_cb->GetGPUVirtualAddress());
 		}

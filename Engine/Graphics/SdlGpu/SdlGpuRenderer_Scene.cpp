@@ -656,7 +656,9 @@ namespace vortex::graphics::sdlgpu
 		const bool fx = particle_world >= 0 && m_particles.prepare(cmd, pview, (u32)particle_world);
 		const bool fx0 = fx && m_particles.has_layer(0);
 		const bool fx1 = fx && m_particles.has_layer(1);
-		const SdlGpuParticles::Environment penv = fx ? particle_environment(view) : SdlGpuParticles::Environment{};
+		// Decals (#120): the scene view's list, built + uploaded before the pass, drawn between the opaque and the transparent meshes.
+		const bool dx = particle_world == 0 && m_decals.ready() && m_decals.prepare(cmd, m_decal_list);
+		const SdlGpuParticles::Environment penv = (fx || dx) ? particle_environment(view) : SdlGpuParticles::Environment{};
 
 		SDL_GPUColorTargetInfo color{};
 		color.texture = target.color;
@@ -701,7 +703,25 @@ namespace vortex::graphics::sdlgpu
 		if (draw_grid_pass) draw_grid(pass, cmd, view);
 		// The skybox/grid pushed their own constants into uniform slot 0 — the scene shaders read PerFrame there.
 		push_frame_uniforms(cmd, view.frame);
-		record_runs(pass, cmd, 0, vmStart, view);
+		if (dx)
+		{
+			// opaque meshes, then the decal pass (it samples the depth, so it needs a pass of its own), then the transparent
+			// meshes with colour + depth loaded
+			record_runs(pass, cmd, 0, vmStart, view, 1u);
+			SDL_EndGPURenderPass(pass);
+			SdlGpuDecals::View dv{};
+			dv.view_projection = view.view_projection; dv.inv_view_projection = view.inverse_view_projection; dv.eye = view.eye;
+			dv.near_clip = view.near_clip; dv.far_clip = view.far_clip; dv.ortho = view.ortho;
+			m_decals.draw(cmd, target.color, target.depth, target.width, target.height, dv, penv);
+			color.load_op = SDL_GPU_LOADOP_LOAD;
+			depth.load_op = SDL_GPU_LOADOP_LOAD;
+			pass = SDL_BeginGPURenderPass(cmd, &color, 1, &depth);
+			if (!pass) return;
+			SDL_SetGPUViewport(pass, &vp);
+			push_frame_uniforms(cmd, view.frame);   // the decal pass left its own uniforms in the slots
+			record_runs(pass, cmd, 0, vmStart, view, 2u);
+		}
+		else record_runs(pass, cmd, 0, vmStart, view);
 		if (!vm_pass && gizmos && !fx0) draw_gizmos(pass, cmd);
 		SDL_EndGPURenderPass(pass);
 
@@ -851,7 +871,7 @@ namespace vortex::graphics::sdlgpu
 		++m_draw_call_count;
 	}
 
-	void SdlGpuRenderer::record_runs(SDL_GPURenderPass* pass, SDL_GPUCommandBuffer* cmd, size_t run_begin, size_t run_end, const FrameView& view)
+	void SdlGpuRenderer::record_runs(SDL_GPURenderPass* pass, SDL_GPUCommandBuffer* cmd, size_t run_begin, size_t run_end, const FrameView& view, u32 phase)
 	{
 		auto& reg = ResourceRegistry::instance();
 		std::vector<u32> transparentRuns;
@@ -859,7 +879,7 @@ namespace vortex::graphics::sdlgpu
 		for (size_t r = run_begin; r < run_end; ++r)
 		{
 			const DrawRun& run = m_draw_runs[r];
-			m_instances_drawn += (int)run.visible;
+			if (phase & 1u) m_instances_drawn += (int)run.visible;
 			Mesh* mesh = run.meshp;
 			if (!mesh || !mesh->is_valid() || run.visible == 0) continue;
 			Material* mat = reg.get_material(run.mat);
@@ -874,6 +894,7 @@ namespace vortex::graphics::sdlgpu
 				transparentRuns.push_back((u32)r);
 				continue;
 			}
+			if (!(phase & 1u)) continue;   // transparent phase: the opaque runs were drawn before the decal pass
 
 			// TwoSided and unlit materials cull nothing; everything else culls back faces, and a mirrored run (#334)
 			// takes the counter-clockwise twin so its front faces survive
@@ -925,6 +946,7 @@ namespace vortex::graphics::sdlgpu
 			}
 		}
 
+		if (!(phase & 2u)) return;   // opaque phase only
 		// Sorted transparent pass: one draw per instance, farthest first, depth write off.
 		if (transparentRuns.empty()) return;
 		struct TDraw { u32 run; u32 slot; float d2; };

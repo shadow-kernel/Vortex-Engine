@@ -36,6 +36,7 @@
     <ClCompile Include="Api\ImporterApi.cpp" />
     <ClCompile Include="Api\AssetDatabaseApi.cpp" />
     <ClCompile Include="Api\MeshRendererApi.cpp" />
+    <ClCompile Include="Api\DecalApi.cpp" />
     <ClCompile Include="Api\LightingApi.cpp" />
     <ClCompile Include="Api\SkyboxApi.cpp" />
     <ClCompile Include="Api\AnimationApi.cpp" />
