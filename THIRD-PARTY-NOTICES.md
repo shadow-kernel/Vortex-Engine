@@ -47,6 +47,13 @@ is **not** bundled in this source repository.
 
 ---
 
+
+## Jolt Physics
+
+- **Use:** Physics v2 — rigid bodies, joints, ragdolls, the character controller (`Engine/Physics/`). Fetched and
+  linked by the CMake build (pinned tag, `Engine/CMakeLists.txt`); the Windows installer ships it since v3.0.7 (#182).
+- **License:** MIT. © 2021 Jorrit Rouwé.
+- **Text:** https://github.com/jrouwe/JoltPhysics/blob/master/LICENSE
 ## Fetched at configure time by the CMake build (non-Windows only; not committed here)
 
 ### DirectXMath
