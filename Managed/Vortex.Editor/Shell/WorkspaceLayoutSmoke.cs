@@ -42,7 +42,7 @@ namespace VortexEditor.Shell
                 foreach (var (target, name) in new[] { (1480.0, "wide"), (w.MinWidth, "min") })
                 {
                     w.Width = Math.Max(w.MinWidth, target);
-                    await SmokeRegistry.Settle(700);
+                    await SmokeRegistry.Settle(1000)   /* two layout passes: the OS may clamp the window to the work area first */;
                     Check(w, name, problems, expectCentreMin: name == "wide");
                     SmokeRegistry.Capture(w, "layout_claude_" + name + ".png");
                 }
