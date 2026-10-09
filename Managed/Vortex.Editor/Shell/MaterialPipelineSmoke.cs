@@ -78,8 +78,11 @@ namespace VortexEditor.Shell
                 EditorViewportSession.RequestResubmit();
                 var cL = await CameraSkySmoke.Sample("mat_cutout.bmp", 0.36, 0.5);
                 var cR = await CameraSkySmoke.Sample("mat_cutout.bmp", 0.64, 0.5, capture: false);
-                bool opaqueBoth = CameraSkySmoke.Green(oL) && CameraSkySmoke.Green(oR);
-                bool cutOne = CameraSkySmoke.Green(cL) != CameraSkySmoke.Green(cR);   // whichever side the U axis puts the hole on
+                // WARP lights the wall darker than Metal does, so the halves are judged by hue and against each other:
+                // both green with Opaque, and with AlphaTest exactly one half keeps its colour while the other changes
+                // (whichever side the U axis puts the hole on)
+                bool opaqueBoth = Greenish(oL) && Greenish(oR);
+                bool cutOne = Near(cL, oL) != Near(cR, oR);
                 log.Log("material pipelines: opaque " + CameraSkySmoke.Rgb(oL) + " / " + CameraSkySmoke.Rgb(oR) + ", alpha test " + CameraSkySmoke.Rgb(cL) + " / " + CameraSkySmoke.Rgb(cR) + " (background " + CameraSkySmoke.Rgb(background) + ")");
                 if (!opaqueBoth) log.LogError("material pipelines: the textured cube is not green on both halves with BlendMode Opaque");
                 if (!cutOne) log.LogError("material pipelines: AlphaTest did not cut the transparent half away");
@@ -117,5 +120,6 @@ namespace VortexEditor.Shell
         private static bool Near((int r, int g, int b) a, (int r, int g, int b) b) =>
             Math.Abs(a.r - b.r) <= 24 && Math.Abs(a.g - b.g) <= 24 && Math.Abs(a.b - b.b) <= 24;
         private static bool Red((int r, int g, int b) c) => c.r > 150 && c.g < 80 && c.b < 80;
+        private static bool Greenish((int r, int g, int b) c) => c.g > 80 && c.g > c.r + 40 && c.g > c.b + 40;
     }
 }
