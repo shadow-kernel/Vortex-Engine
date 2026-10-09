@@ -1,4 +1,7 @@
+// The Visual Studio solution links Engine.lib by name; the CMake build links the vortex::engine target (#182).
+#ifndef VORTEX_CMAKE_BUILD
 #pragma comment(lib, "Engine.lib")
+#endif
 
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>

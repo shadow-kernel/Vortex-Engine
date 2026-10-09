@@ -33,7 +33,7 @@ if(WIN32)
 endif()
 
 target_include_directories(VortexAPI PRIVATE "${CMAKE_SOURCE_DIR}/Engine/Common")
-target_compile_definitions(VortexAPI PRIVATE VORTEXAPI_EXPORTS $<$<BOOL:${WIN32}>:_WINDOWS _USRDLL>)
+target_compile_definitions(VortexAPI PRIVATE VORTEXAPI_EXPORTS VORTEX_CMAKE_BUILD $<$<BOOL:${WIN32}>:_WINDOWS _USRDLL>)
 target_link_libraries(VortexAPI PRIVATE vortex::engine)
 
 # The .NET side loads "VortexAPI": keep the base name identical on every platform.
