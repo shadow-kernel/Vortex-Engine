@@ -1,14 +1,8 @@
 ﻿using System;
-#if !VORTEX_CORE
-using System.CodeDom.Compiler;
-#endif
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-#if !VORTEX_CORE
-using System.Windows.Input;
-#endif
 using Editor.Core.Data;
 using Editor.Core.Services;
 using Editor.ECS;
@@ -842,9 +836,7 @@ namespace Editor.Scripting
         {
             // a new input tick: key edges (GetKeyDown / GetKeyUp) and the sub-frame press latch roll over (#337)
             _keyTick++;
-#if VORTEX_CORE
             Editor.Core.Input.HostInput.BeginTick();
-#endif
             if (!_active) return;
             Vortex.Time.DeltaTime = dt;
             Vortex.Input.PollGamepad();   // refresh controller state once per tick (scripts read Input.LeftStickX etc.)
@@ -1459,45 +1451,8 @@ namespace Editor.Scripting
                 .ToArray();
             if (files.Length == 0) return null;
 
-#if VORTEX_CORE
             // Shared core (modern .NET): Roslyn compiles the scripts in-process into a collectible load context.
             return Editor.Scripting.RoslynScriptCompiler.Compile(files, out log);
-#else
-            try
-            {
-                using (var provider = new Microsoft.CSharp.CSharpCodeProvider())
-                {
-                    var p = new CompilerParameters
-                    {
-                        GenerateInMemory = true,
-                        GenerateExecutable = false,
-                        TreatWarningsAsErrors = false
-                    };
-                    p.ReferencedAssemblies.Add("mscorlib.dll");
-                    p.ReferencedAssemblies.Add("System.dll");
-                    p.ReferencedAssemblies.Add("System.Core.dll");
-                    // Reference this editor assembly so scripts get the real Vortex.* API + shared types.
-                    p.ReferencedAssemblies.Add(typeof(Vortex.VortexBehaviour).Assembly.Location);
-
-                    CompilerResults results = provider.CompileAssemblyFromFile(p, files);
-                    if (results.Errors.HasErrors)
-                    {
-                        var sb = new System.Text.StringBuilder();
-                        foreach (CompilerError err in results.Errors)
-                            if (!err.IsWarning)
-                                sb.AppendLine($"{Path.GetFileName(err.FileName)}({err.Line}): {err.ErrorText}");
-                        log = "Script compile failed:\n" + sb;
-                        return null;
-                    }
-                    return results.CompiledAssembly;
-                }
-            }
-            catch (Exception ex)
-            {
-                log = "Script compile exception: " + ex.Message;
-                return null;
-            }
-#endif
         }
 
         // ---- IScriptHost (behaviours act on the live game through these; transforms go through the C#
@@ -1974,10 +1929,6 @@ namespace Editor.Scripting
             return result;
         }
 
-#if !VORTEX_CORE
-        [System.Runtime.InteropServices.DllImport("user32.dll")]
-        private static extern short GetAsyncKeyState(int vKey);
-#endif
 
         // --- deferred scene-switch request (set by a script via Vortex.Scene.Load; applied by the driver) ---
         private string _pendingScene;
@@ -2194,24 +2145,12 @@ namespace Editor.Scripting
             if (key == "LButton" || key == "Mouse0" || key == "LeftMouse") mvk = 0x01;
             else if (key == "RButton" || key == "Mouse1" || key == "RightMouse") mvk = 0x02;
             else if (key == "MButton" || key == "Mouse2" || key == "MiddleMouse") mvk = 0x04;
-#if VORTEX_CORE
             // Shared core: the host (native GameHost / editor shell) answers physical key state; key names are
             // the WPF Key enum names the scripts were written against, mapped to virtual-key codes.
             if (mvk != 0) return Editor.Core.Input.HostInput.IsKeyDown(mvk);
             int vk = Editor.Core.Input.KeyNames.VirtualKeyFromName(key);
             if (vk == 0) { WarnUnknownKey(key); return false; }
             return Editor.Core.Input.HostInput.IsKeyDownThisTick(vk);   // incl. a tap shorter than one frame (#337)
-#else
-            if (mvk != 0) return (GetAsyncKeyState(mvk) & 0x8000) != 0;
-            if (!Enum.TryParse(key, true, out Key k)) return false;
-            // Use the global physical key state (not WPF Keyboard.IsKeyDown): while playing, focus is on
-            // a native swapchain HWND (editor viewport or the standalone game window), where the WPF
-            // keyboard device reports nothing — so WASD/jump would do nothing. GetAsyncKeyState works
-            // regardless of which window/HWND has focus.
-            int vk = KeyInterop.VirtualKeyFromKey(k);
-            if (vk == 0) return false;
-            return (GetAsyncKeyState(vk) & 0x8000) != 0;
-#endif
         }
 
         // ---- key edges (#337): GetKeyDown / GetKeyUp without hand-rolled edge detection. Per-tick cache so every

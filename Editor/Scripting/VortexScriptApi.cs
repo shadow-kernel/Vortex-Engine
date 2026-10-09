@@ -735,26 +735,9 @@ namespace Vortex
         // ---- Window focus: ALL input (keyboard, mouse, controller) is dead unless OUR window is the foreground
         // window. Works everywhere — in-editor play, the external game window, and an exported debug/release build
         // (they're all in this process) — so an unfocused/alt-tabbed game can't be driven by stray global input. ----
-#if VORTEX_CORE
         /// <summary>True only while this app's window is the foreground window. Input is ignored otherwise.
         /// The host (native GameHost / editor shell) reports focus through Editor.Core.Input.HostInput.</summary>
         public static bool WindowFocused { get { return Editor.Core.Input.HostInput.IsWindowFocused(); } }
-#else
-        [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
-        [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
-        [System.Runtime.InteropServices.DllImport("kernel32.dll")] private static extern uint GetCurrentProcessId();
-        private static bool _focusApiMissing;
-        /// <summary>True only while this app's window is the foreground window. Input is ignored otherwise.</summary>
-        public static bool WindowFocused
-        {
-            get
-            {
-                if (_focusApiMissing) return true;
-                try { uint pid; GetWindowThreadProcessId(GetForegroundWindow(), out pid); return pid == GetCurrentProcessId(); }
-                catch { _focusApiMissing = true; return true; }
-            }
-        }
-#endif
 
         // ---- Gamepad / controller (Windows.Gaming.Input incl. PlayStation, XInput fallback). Polled once per tick.
         // Sticks/triggers are normalized to -1..1 / 0..1 with dead zones; frozen to neutral while a gameplay-blocking
@@ -818,194 +801,14 @@ namespace Vortex
             // No controller input while our window isn't focused.
             if (!WindowFocused) { _padOn = false; _buttons = 0; _lx = _ly = _rx = _ry = _lt = _rt = 0f; return; }
 
-#if VORTEX_CORE
             // Shared core: the host supplies the controller snapshot (SDL3 gamepads on macOS/Linux).
             var pad = Editor.Core.Input.HostInput.PollGamepad();
             _padOn = pad.Connected;
             _buttons = pad.Buttons;
             _lx = pad.LeftX; _ly = pad.LeftY; _rx = pad.RightX; _ry = pad.RightY; _lt = pad.LeftTrigger; _rt = pad.RightTrigger;
             return;
-#else
-            if (!_wgiMissing)
-            {
-                try { if (PollWgi()) return; }               // Xbox or (Win11) DualSense via Windows.Gaming.Input
-                catch (System.IO.FileNotFoundException) { _wgiMissing = true; }
-                catch (TypeLoadException) { _wgiMissing = true; }
-                catch (MissingMethodException) { _wgiMissing = true; }
-                catch { /* transient WinRT error — fall through this frame instead of going dead */ }
-            }
-
-            // Direct DualSense/DualShock HID — deterministic, works even when Windows.Gaming.Input doesn't surface a
-            // PS5 pad over USB (the reported "controller not accepted"). Isolated + guarded; a failure just falls on.
-            try
-            {
-                if (Editor.Scripting.DualSenseHid.Poll())
-                {
-                    _padOn = true;
-                    _lx = Editor.Scripting.DualSenseHid.LX; _ly = Editor.Scripting.DualSenseHid.LY;
-                    _rx = Editor.Scripting.DualSenseHid.RX; _ry = Editor.Scripting.DualSenseHid.RY;
-                    _lt = Editor.Scripting.DualSenseHid.L2; _rt = Editor.Scripting.DualSenseHid.R2;
-                    _buttons = Editor.Scripting.DualSenseHid.Buttons;
-                    return;
-                }
-            }
-            catch { }
-
-            // Last resort -> XInput (Xbox, or a DualSense mapped via Steam Input / DS4Windows).
-            PollXInput();
-#endif
         }
 
-#if !VORTEX_CORE
-        // Windows.Gaming.Input: Gamepad first (normalized), else RawGameController (a PlayStation pad Windows didn't
-        // surface as a Gamepad). Returns true only if a controller was actually found + read.
-        private static bool PollWgi()
-        {
-            var pads = Windows.Gaming.Input.Gamepad.Gamepads;
-            if (pads != null && pads.Count > 0)
-            {
-                var r = pads[0].GetCurrentReading();
-                _padOn = true;
-                _lx = Dead((float)r.LeftThumbstickX);
-                _ly = Dead((float)r.LeftThumbstickY);
-                _rx = Dead((float)r.RightThumbstickX);
-                _ry = Dead((float)r.RightThumbstickY);
-                _lt = Clamp01((float)r.LeftTrigger);
-                _rt = Clamp01((float)r.RightTrigger);
-                _buttons = MapWgiButtons(r.Buttons);
-                return true;
-            }
-            return PollRawSony();
-        }
-
-        private static float Clamp01(float v) { return v < 0f ? 0f : (v > 1f ? 1f : v); }
-        private static float Dead(float v) { const float d = 0.16f; if (v > d) return (v - d) / (1f - d); if (v < -d) return (v + d) / (1f - d); return 0f; }
-
-        private static ushort MapWgiButtons(Windows.Gaming.Input.GamepadButtons b)
-        {
-            var W = Windows.Gaming.Input.GamepadButtons.None;
-            ushort m = 0;
-            if ((b & Windows.Gaming.Input.GamepadButtons.A) != W) m |= 0x1000;             // PS: Cross
-            if ((b & Windows.Gaming.Input.GamepadButtons.B) != W) m |= 0x2000;             // PS: Circle
-            if ((b & Windows.Gaming.Input.GamepadButtons.X) != W) m |= 0x4000;             // PS: Square
-            if ((b & Windows.Gaming.Input.GamepadButtons.Y) != W) m |= 0x8000;             // PS: Triangle
-            if ((b & Windows.Gaming.Input.GamepadButtons.LeftShoulder) != W) m |= 0x0100;  // L1
-            if ((b & Windows.Gaming.Input.GamepadButtons.RightShoulder) != W) m |= 0x0200; // R1
-            if ((b & Windows.Gaming.Input.GamepadButtons.DPadUp) != W) m |= 0x0001;
-            if ((b & Windows.Gaming.Input.GamepadButtons.DPadDown) != W) m |= 0x0002;
-            if ((b & Windows.Gaming.Input.GamepadButtons.DPadLeft) != W) m |= 0x0004;
-            if ((b & Windows.Gaming.Input.GamepadButtons.DPadRight) != W) m |= 0x0008;
-            if ((b & Windows.Gaming.Input.GamepadButtons.Menu) != W) m |= 0x0010;          // Start / PS: Options
-            if ((b & Windows.Gaming.Input.GamepadButtons.View) != W) m |= 0x0020;          // Back / PS: Create
-            if ((b & Windows.Gaming.Input.GamepadButtons.LeftThumbstick) != W) m |= 0x0040;
-            if ((b & Windows.Gaming.Input.GamepadButtons.RightThumbstick) != W) m |= 0x0080;
-            return m;
-        }
-
-        // A PlayStation pad (DualSense/DualShock) that Windows didn't surface as a Gamepad — read it raw and map the
-        // standard HID layout to the Xbox-style bitmask so scripts stay controller-agnostic. Prefer a Sony device;
-        // otherwise take the first controller with sticks (covers other HID pads too).
-        private static bool PollRawSony()
-        {
-            var raws = Windows.Gaming.Input.RawGameController.RawGameControllers;
-            if (raws == null || raws.Count == 0) return false;
-            Windows.Gaming.Input.RawGameController rc = null;
-            foreach (var c in raws) { if (c.HardwareVendorId == 0x054C) { rc = c; break; } } // Sony
-            if (rc == null) foreach (var c in raws) { if (c.AxisCount >= 4) { rc = c; break; } }
-            if (rc == null) return false;
-            {
-                var btns = new bool[rc.ButtonCount];
-                var sws = new Windows.Gaming.Input.GameControllerSwitchPosition[rc.SwitchCount];
-                var ax = new double[rc.AxisCount];
-                rc.GetCurrentReading(btns, sws, ax);
-                _padOn = true;
-                // DualSense/standard HID gamepad axis order: [0]=LX [1]=LY [2]=RX [3]=RY [4]=L2 [5]=R2 (0..1; sticks 0.5=center).
-                _lx = ax.Length > 0 ? Dead((float)(ax[0] * 2 - 1)) : 0f;
-                _ly = ax.Length > 1 ? Dead((float)-(ax[1] * 2 - 1)) : 0f; // HID Y is down-positive -> invert
-                _rx = ax.Length > 2 ? Dead((float)(ax[2] * 2 - 1)) : 0f;
-                _ry = ax.Length > 3 ? Dead((float)-(ax[3] * 2 - 1)) : 0f;
-                _lt = ax.Length > 4 ? Clamp01((float)ax[4]) : 0f;
-                _rt = ax.Length > 5 ? Clamp01((float)ax[5]) : 0f;
-                ushort m = 0;
-                if (Btn(btns, 1)) m |= 0x1000; // Cross  -> A
-                if (Btn(btns, 2)) m |= 0x2000; // Circle -> B
-                if (Btn(btns, 0)) m |= 0x4000; // Square -> X
-                if (Btn(btns, 3)) m |= 0x8000; // Triangle -> Y
-                if (Btn(btns, 4)) m |= 0x0100; // L1
-                if (Btn(btns, 5)) m |= 0x0200; // R1
-                if (Btn(btns, 9)) m |= 0x0010; // Options -> Start
-                if (Btn(btns, 8)) m |= 0x0020; // Create  -> Back
-                if (Btn(btns, 10)) m |= 0x0040; // L3
-                if (Btn(btns, 11)) m |= 0x0080; // R3
-                if (sws.Length > 0)
-                {
-                    switch (sws[0])
-                    {
-                        case Windows.Gaming.Input.GameControllerSwitchPosition.Up:        m |= 0x0001; break;
-                        case Windows.Gaming.Input.GameControllerSwitchPosition.UpRight:   m |= 0x0001 | 0x0008; break;
-                        case Windows.Gaming.Input.GameControllerSwitchPosition.Right:     m |= 0x0008; break;
-                        case Windows.Gaming.Input.GameControllerSwitchPosition.DownRight: m |= 0x0002 | 0x0008; break;
-                        case Windows.Gaming.Input.GameControllerSwitchPosition.Down:      m |= 0x0002; break;
-                        case Windows.Gaming.Input.GameControllerSwitchPosition.DownLeft:  m |= 0x0002 | 0x0004; break;
-                        case Windows.Gaming.Input.GameControllerSwitchPosition.Left:      m |= 0x0004; break;
-                        case Windows.Gaming.Input.GameControllerSwitchPosition.UpLeft:    m |= 0x0001 | 0x0004; break;
-                    }
-                }
-                _buttons = m;
-                return true;
-            }
-            return false;
-        }
-
-        private static bool Btn(bool[] a, int i) { return i >= 0 && i < a.Length && a[i]; }
-        private static bool _wgiMissing;
-
-        // ---- XInput fallback (only if WinRT is unavailable) ----
-        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
-        private struct XINPUT_GAMEPAD { public ushort wButtons; public byte bLeftTrigger; public byte bRightTrigger; public short sThumbLX; public short sThumbLY; public short sThumbRX; public short sThumbRY; }
-        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
-        private struct XINPUT_STATE { public uint dwPacketNumber; public XINPUT_GAMEPAD Gamepad; }
-        [System.Runtime.InteropServices.DllImport("xinput1_4.dll", EntryPoint = "XInputGetState")]
-        private static extern uint XInputGetState(uint dwUserIndex, out XINPUT_STATE pState);
-        private static bool _xinputMissing;
-
-        private static void PollXInput()
-        {
-            if (_xinputMissing) { _padOn = false; return; }
-            try
-            {
-                for (uint i = 0; i < 4; i++)
-                {
-                    XINPUT_STATE s;
-                    if (XInputGetState(i, out s) == 0)
-                    {
-                        _padOn = true;
-                        _buttons = s.Gamepad.wButtons;
-                        _lx = Stick(s.Gamepad.sThumbLX, 7849);
-                        _ly = Stick(s.Gamepad.sThumbLY, 7849);
-                        _rx = Stick(s.Gamepad.sThumbRX, 8689);
-                        _ry = Stick(s.Gamepad.sThumbRY, 8689);
-                        _lt = Trigger(s.Gamepad.bLeftTrigger);
-                        _rt = Trigger(s.Gamepad.bRightTrigger);
-                        return;
-                    }
-                }
-                _padOn = false; _buttons = 0; _lx = _ly = _rx = _ry = _lt = _rt = 0f;
-            }
-            catch (DllNotFoundException) { _xinputMissing = true; _padOn = false; }
-            catch { _padOn = false; }
-        }
-
-        private static float Stick(short v, int dead)
-        {
-            float f = v;
-            if (f > dead) f = (f - dead) / (32767f - dead);
-            else if (f < -dead) f = (f + dead) / (32768f - dead);
-            else f = 0f;
-            return f < -1f ? -1f : (f > 1f ? 1f : f);
-        }
-        private static float Trigger(byte t) { return t <= 30 ? 0f : (t - 30) / (255f - 30f); }
-#endif
     }
 
     /// <summary>Frame timing.</summary>

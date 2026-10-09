@@ -20,12 +20,23 @@ $Root = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 Set-Location $Root
 $Out = Join-Path $Root "dist\runtimes\win-x64"
 
-Write-Host "== native engine (VortexAPI.dll, $Configuration x64)"
-if (-not (Get-Command msbuild -ErrorAction SilentlyContinue)) { throw "msbuild not found - run from a Visual Studio Developer PowerShell" }
-nuget restore Engine\packages.config -SolutionDirectory . | Out-Null
-nuget restore VortexAPI\packages.config -SolutionDirectory . | Out-Null
-msbuild Vortex.slnx /t:VortexAPI /p:Configuration=$Configuration /p:Platform=x64 /m /v:m
+Write-Host "== native engine (VortexAPI.dll, $Configuration x64, CMake + Ninja with Jolt)"
+# #311: no MSBuild any more — the engine comes from the CMake build (run from a Visual Studio Developer PowerShell /
+# after vcvars64.bat so cmake finds MSVC). The DLLs land in x64\<Configuration> like every other Windows build output.
+if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) { throw "cmake not found - run from a Visual Studio Developer PowerShell" }
+if (-not (Get-Command cl -ErrorAction SilentlyContinue)) { throw "the MSVC compiler (cl) is not on PATH - run from a Visual Studio Developer PowerShell (vcvars64)" }
+$BuildDir = Join-Path $Root "build\windows-ninja"
+cmake -S $Root -B $BuildDir -G Ninja -DCMAKE_BUILD_TYPE=$Configuration -DVORTEX_BUILD_TESTS=OFF
+if ($LASTEXITCODE -ne 0) { throw "cmake configure failed" }
+cmake --build $BuildDir --target VortexAPI
+if ($LASTEXITCODE -ne 0) { throw "cmake build failed" }
 $NativeDir = Join-Path $Root "x64\$Configuration"
+New-Item -ItemType Directory -Force $NativeDir | Out-Null
+Copy-Item -Force (Join-Path $BuildDir "bin\VortexAPI.dll") $NativeDir
+Copy-Item -Force (Join-Path $Root "ThirdParty\assimp6\bin\assimp-vc143-mt.dll") $NativeDir
+Get-ChildItem (Join-Path $BuildDir "bin") -Filter "*.dll" | Where-Object { $_.Name -ne "VortexAPI.dll" } | Copy-Item -Destination $NativeDir -Force
+$sl = Join-Path $Root "Redist\Streamline\x64"
+if (Test-Path $sl) { Get-ChildItem $sl -Filter "*.dll" | Copy-Item -Destination $NativeDir -Force }
 $NativeDll = Join-Path $NativeDir "VortexAPI.dll"
 if (-not (Test-Path $NativeDll)) { throw "native library missing: $NativeDll" }
 

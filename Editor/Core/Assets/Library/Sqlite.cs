@@ -155,7 +155,6 @@ namespace Editor.Core.Assets.Library
         public static bool IsWindows => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
         public static bool IsMac => RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
 
-#if VORTEX_CORE
         private static IntPtr LoadLibrary(string name)
         {
             try { return NativeLibrary.TryLoad(name, out IntPtr h) ? h : IntPtr.Zero; } catch { return IntPtr.Zero; }
@@ -164,14 +163,6 @@ namespace Editor.Core.Assets.Library
         {
             try { return NativeLibrary.TryGetExport(lib, name, out IntPtr p) ? p : IntPtr.Zero; } catch { return IntPtr.Zero; }
         }
-#else
-        [DllImport("kernel32", EntryPoint = "LoadLibraryW", CharSet = CharSet.Unicode, SetLastError = true)]
-        private static extern IntPtr LoadLibraryW(string path);
-        [DllImport("kernel32", CharSet = CharSet.Ansi, ExactSpelling = true, SetLastError = true)]
-        private static extern IntPtr GetProcAddress(IntPtr module, string name);
-        private static IntPtr LoadLibrary(string name) { try { return LoadLibraryW(name); } catch { return IntPtr.Zero; } }
-        private static IntPtr GetSymbol(IntPtr lib, string name) { try { return GetProcAddress(lib, name); } catch { return IntPtr.Zero; } }
-#endif
 
         /// <summary>NUL-terminated UTF-8 → string (Marshal.PtrToStringUTF8 does not exist on .NET Framework).</summary>
         public static string Utf8(IntPtr p)

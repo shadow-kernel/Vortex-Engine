@@ -65,8 +65,22 @@
       }
     },
     {
+      "name": "windows-ninja",
+      "displayName": "Windows x64 Release (MSVC + Ninja, DX12 + Jolt) — run after vcvars64 / in a Developer PowerShell",
+      "inherits": "ninja-base",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "VORTEX_BUILD_TESTS": "OFF"
+      }
+    },
+    {
       "name": "windows-x64",
-      "displayName": "Windows x64 (Visual Studio 2022, DX12) — not yet verified, use Vortex.slnx",
+      "displayName": "Windows x64 (Visual Studio 2022 generator) — the CI and the release use windows-ninja",
       "generator": "Visual Studio 17 2022",
       "architecture": {
         "value": "x64",
@@ -115,6 +129,10 @@
       "name": "windows-x64-release",
       "configurePreset": "windows-x64",
       "configuration": "Release"
+    },
+    {
+      "name": "windows-ninja",
+      "configurePreset": "windows-ninja"
     }
   ],
   "testPresets": [

@@ -87,9 +87,7 @@ flowchart LR
     subgraph Managed["🟪 Managed (C#)"]
         CORE["📦 Vortex.Core<br/><sub>scenes · assets · scripting · services (shared)</sub>"]
         AV["🖥️ Vortex.Editor<br/><sub>.NET 10 + Avalonia · MCP server · Claude sidebar</sub>"]
-        WPF["🪟 Vortex Engine.exe<br/><sub>classic .NET 4.8 WPF editor (Windows, until v3.1)</sub>"]
         CORE --> AV
-        CORE --> WPF
     end
     API -- "P/Invoke" --> CORE
     CORE -. "Vortex.Player" .-> GAME["🎮 Your exported game"]
@@ -100,8 +98,8 @@ flowchart LR
 |-------|---------|--------|------|
 | **Engine** | `Engine/` | `Engine.lib` / `libVortexEngine` | Core runtime: ECS, renderers (Direct3D 12 on Windows, SDL GPU on Metal and Vulkan), audio, physics, importers. |
 | **Interop** | `VortexAPI/` | `VortexAPI.dll` / `.dylib` / `.so` | A thin `extern "C"` bridge (`EDITOR_INTERFACE`) exposing the engine to managed code. |
-| **Shared core** | `Editor/` (sources) | in both editors + `Managed/Vortex.Core` | Scenes, components, assets, the scripting runtime and every editor service — compiled for .NET Framework 4.8 and .NET 10. |
-| **Editors** | `Managed/Vortex.Editor`, `Editor/` | `Vortex.Editor`, `Vortex Engine.exe` | The editor on every platform (Avalonia, with the MCP server and the Claude sidebar); the classic WPF editor stays on Windows until v3.1. |
+| **Shared core** | `Editor/` (sources) | `Managed/Vortex.Core` | Scenes, components, assets, the scripting runtime and every editor service — framework-free C# compiled into the core the editor and the player share. |
+| **Editor** | `Managed/Vortex.Editor` | `Vortex.Editor` | The editor on every platform (Avalonia, .NET 10): viewport, inspector, Library, Asset Store, Sound Studio, the MCP server and the Claude sidebar. |
 | **Player** | `Managed/Vortex.Player` | `Vortex.Player` | The standalone game host: what the cross-platform editor exports for Windows, macOS and Linux (via runtime packs). |
 
 > On Windows the WPF editor loads `VortexAPI.dll` from the shared `x64/Release/` output folder; the .NET 10 tools find the native library next to them, in an app bundle's `Frameworks`, or in the CMake build tree.
@@ -125,7 +123,7 @@ Then follow **[Getting Started](https://engine.vortexstudio.dev/docs/#/getting-s
 - **Linux (x64)** — native engine, player and editor, see [Linux](#-linux-x64--native-engine-player-and-editor) below
 - **Visual Studio 2022/2026** with:
   - *Desktop development with **C++*** (MSVC v143/v145 + Windows 10/11 SDK)
-  - *.NET desktop development* (.NET Framework 4.8 targeting pack, for the classic editor)
+  - *C++ CMake tools for Windows* (CMake + Ninja — the native engine builds through CMake)
 - **.NET 10 SDK** — the editor and the player
 
 ### Build & Run
@@ -140,20 +138,20 @@ cd Vortex-Engine
 git submodule update --init --recursive
 git submodule foreach 'git lfs pull'
 
-# 2. Restore native + managed NuGet packages
-nuget restore Engine/packages.config    -SolutionDirectory .
-nuget restore VortexAPI/packages.config -SolutionDirectory .
-nuget restore Editor/packages.config    -SolutionDirectory .
-
-# 3. Build the whole solution (Engine → VortexAPI.dll → Editor)
-msbuild Vortex.slnx /t:Build /p:Configuration=Release /p:Platform=x64
+# 2. Build the native engine (Engine → VortexAPI.dll, with Jolt Physics) — from a Developer PowerShell / after vcvars64
+cmake --preset windows-ninja
+cmake --build --preset windows-ninja --target VortexAPI
+# the editor loads x64/Release/VortexAPI.dll + the Assimp runtime next to it
+mkdir x64\Release -Force; copy build\windows-ninja\bin\VortexAPI.dll x64\Release; copy ThirdParty\assimp6\bin\assimp-vc143-mt.dll x64\Release
+# (Visual Studio users: Vortex.slnx still opens the native projects — Engine, VortexAPI, EngineTest — but builds the
+#  physics stub; the shipped engine comes from CMake.)
 
 # 4. Build and launch the editor (it finds the native engine in x64/Release)
 dotnet run --project Managed/Vortex.Editor -c Release
 ```
 
-> 💡 `x64/Release/Vortex Engine.exe` is the classic WPF editor (until v3.1). `tools/windows/stage-editor.ps1` lays the
-> editor out the way the installer ships it.
+> 💡 `tools/windows/stage-editor.ps1` lays the editor out the way the installer ships it (self-contained, with its
+> player, next to `x64/Release/VortexAPI.dll`). The classic WPF editor (`Vortex Engine.exe`) was retired in v3.1 (#311).
 
 ### 🍎 macOS (Apple Silicon) — native engine, player and editor
 
@@ -309,11 +307,11 @@ Vortex-Engine/
 │  └─ Input/        input system
 ├─ VortexAPI/     🔌 C interop DLL (extern "C" bridge)
 ├─ Managed/       🟪 .NET 10: Vortex.Core (shared runtime), Vortex.Editor (the editor), Vortex.Player, tests
-├─ Editor/        🟪 shared C# sources (+ the classic WPF editor)
+├─ Editor/        🟪 shared C# sources (compiled into Vortex.Core)
 │  ├─ ECS/          managed entity/component model
-│  ├─ Core/         services, assets, serialization, undo/redo
+│  ├─ Core/         services, assets, serialization, undo/redo, the scene-hierarchy / file-explorer view models
 │  ├─ DllWrapper/   P/Invoke layer onto VortexAPI.dll
-│  └─ Editors/      WorldEditor UI (viewports, inspector, hierarchy …)
+│  └─ Scripting/    the gameplay API (Vortex.*) and the script runtime
 ├─ EngineTest/    🧪 native ECS test harness
 └─ Installer/      📦 Inno Setup packaging
 ```

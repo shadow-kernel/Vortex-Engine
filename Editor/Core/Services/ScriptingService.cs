@@ -519,13 +519,9 @@ namespace Vortex
 
         private static string CsprojTemplate(string name, string apiAssemblyPath)
         {
-            // The cross-platform editor compiles scripts with Roslyn against the .NET 10 Vortex.Core; a net48 project
-            // referencing it showed IDE errors for code that compiled fine (#321). The classic editor stays on net48.
-#if VORTEX_CORE
+            // The editor compiles scripts with Roslyn against the .NET 10 Vortex.Core; a net48 project referencing it
+            // showed IDE errors for code that compiled fine (#321). Since #311 there is no .NET Framework editor left.
             const string tfm = "net10.0";
-#else
-            const string tfm = "net48";
-#endif
             return
 @"<Project Sdk=""Microsoft.NET.Sdk"">
 

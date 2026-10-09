@@ -1004,16 +1004,8 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             _canExecute = canExecute;
         }
 
-#if VORTEX_CORE
         public event EventHandler CanExecuteChanged;
         public void RaiseCanExecuteChanged() => CanExecuteChanged?.Invoke(this, EventArgs.Empty);
-#else
-        public event EventHandler CanExecuteChanged
-        {
-            add => CommandManager.RequerySuggested += value;
-            remove => CommandManager.RequerySuggested -= value;
-        }
-#endif
 
         public bool CanExecute(object parameter) => _canExecute?.Invoke(parameter) ?? true;
         public void Execute(object parameter) => _execute(parameter);

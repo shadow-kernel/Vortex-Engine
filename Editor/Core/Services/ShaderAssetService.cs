@@ -71,11 +71,7 @@ namespace Editor.Core.Services
         {
             get
             {
-#if VORTEX_CORE
                 return System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.OSX);
-#else
-                return false;
-#endif
             }
         }
 

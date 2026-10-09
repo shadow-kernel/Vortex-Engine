@@ -3,17 +3,12 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Threading;
-#if VORTEX_CORE
 using Application = Editor.Core.Threading.CoreApplication;
 using DispatcherPriority = Editor.Core.Threading.CoreDispatcherPriority;
 using MessageBox = Editor.Core.Threading.CoreMessageBox;
 using MessageBoxButton = Editor.Core.Threading.MessageBoxButton;
 using MessageBoxImage = Editor.Core.Threading.MessageBoxImage;
 using MessageBoxResult = Editor.Core.Threading.MessageBoxResult;
-#else
-using System.Windows;
-using System.Windows.Threading;
-#endif
 using Editor.Core.Data;
 using Editor.Core.UndoRedo;
 using Editor.Core.UndoRedo.Commands;

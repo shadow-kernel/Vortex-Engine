@@ -3,10 +3,6 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
-#if !VORTEX_CORE
-using System.Windows;
-using System.Windows.Media.Imaging;
-#endif
 using Editor.Core.Assets;
 using Editor.Core.Data;
 using Editor.Core.Exceptions;
@@ -127,12 +123,7 @@ namespace Editor.Core.Services
             // Editor-only compatibility gate: migrate an older-format project (with a backup) or warn on a project
             // saved by a NEWER engine, before it loads. The shipped game's pak is read-only + has no UI, so skip
             // when mounted. Up-to-date projects (the common case) pass through with no dialog.
-#if VORTEX_CORE
             if (!AssetVfs.IsMounted) CompatibilityGate?.Invoke(projectPath, manifest, manifestPath);
-#else
-            if (!AssetVfs.IsMounted)
-                Editor.Dialogs.ProjectMigrationDialog.EnsureCompatible(projectPath, manifest, manifestPath);
-#endif
 
             // Erstelle ProjectData aus Manifest
             var project = new ProjectData(manifest.Id, projectPath, manifest.Name)
@@ -714,7 +705,6 @@ namespace Editor.Core.Services
             }
         }
 
-#if VORTEX_CORE
         /// <summary>Editor shells install their migration/compatibility gate here (the player skips it).</summary>
         public static Action<string, Data.ProjectManifest, string> CompatibilityGate;
         /// <summary>Editor shells install a PNG writer for the default project icon (resource key, output path).</summary>
@@ -733,32 +723,5 @@ namespace Editor.Core.Services
                 return null;
             }
         }
-#else
-        private string SaveIconFromResources(string resourceKey, string projectPath, string fileName = "icon.png")
-        {
-            try
-            {
-                var resource = Application.Current.FindResource(resourceKey) as BitmapImage;
-                if (resource == null)
-                    return null;
-
-                string iconPath = Path.Combine(projectPath, ".ve", fileName);
-
-                using (var fileStream = new FileStream(iconPath, FileMode.Create))
-                {
-                    var encoder = new PngBitmapEncoder();
-                    encoder.Frames.Add(BitmapFrame.Create(resource));
-                    encoder.Save(fileStream);
-                }
-
-                return iconPath;
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"Fehler beim Speichern des Icons: {ex.Message}");
-                return null;
-            }
-        }
-#endif
     }
 }
