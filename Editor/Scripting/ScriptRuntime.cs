@@ -760,6 +760,10 @@ namespace Editor.Scripting
             Editor.Core.Services.Physics.PhysicsService.ContactHandler = OnPhysicsContact;
             try { Editor.Core.Services.Physics.PhysicsService.Build(scene); }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] physics build failed: " + ex.Message); }
+            // AI & Navigation (#108): the navmesh + crowd and the perception run start with the worlds they query —
+            // driven from here (Begin / Tick / End), no longer lazily from the first AI script call.
+            try { Editor.Core.Services.AI.AiRuntime.Begin(scene); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] AI begin failed: " + ex.Message); }
 
             _entitiesById.Clear();
             _behavioursByHandle.Clear();
@@ -855,6 +859,10 @@ namespace Editor.Scripting
 
             // Rigid-body physics (#100) steps AFTER the behaviours' Update (forces/impulses/kinematic moves of this
             // frame are in) and BEFORE LateUpdate/animation, so a viewmodel or camera in LateUpdate reads final poses.
+            // AI agents + perception tick after the behaviours' Update (destinations of this frame are in) and before the
+            // physics step, so a NavAgent's move of this frame is what the physics world and LateUpdate see (#108).
+            try { Editor.Core.Services.AI.AiRuntime.Tick(dt); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] AI tick error: " + ex.Message); }
             try { Editor.Core.Services.Physics.PhysicsService.Step(dt); }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] physics step error: " + ex.Message); }
 
@@ -881,6 +889,7 @@ namespace Editor.Scripting
             // Debug draw + dev console (#42): re-submit live wire shapes, then the console overlay on top.
             SubmitDebugShapes(dt);
             try { Editor.Core.Services.Physics.PhysicsService.SubmitDebugDraw(); } catch { }   // View ▸ Physics Debug (#106)
+            try { Editor.Core.Services.AI.AiRuntime.SubmitDebugDraw(); } catch { }           // navmesh / agent paths / patrol routes / vision cones
             RenderDebugConsole();
 
             // Skeletal animation: advance every Animator AFTER behaviours ran, so a same-frame
@@ -1128,6 +1137,7 @@ namespace Editor.Scripting
             _behavioursByEntity.Clear();
             try { Editor.Core.Services.Physics.CollisionService.ResetEvents(); Editor.Core.Services.Physics.CollisionService.ClearCharacters(); } catch { }
             try { Editor.Core.Services.Physics.PhysicsService.Clear(); Editor.Core.Services.Physics.PhysicsService.ContactHandler = null; } catch { }
+            try { Editor.Core.Services.AI.AiRuntime.End(); } catch { }
             try { Editor.Core.Animation.AnimationService.Instance.ResetStates(); } catch { }
             try { Editor.Core.Animation.BoneSocketService.Instance.ResetRuntime(); } catch { }
             try { Editor.Core.Services.CameraFXService.Instance.Reset(); } catch { }
