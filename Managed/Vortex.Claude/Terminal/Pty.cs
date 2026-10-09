@@ -272,6 +272,7 @@ namespace Editor.Core.Claude.Terminal
             _process = pi.hProcess;
             _thread = pi.hThread;
             ProcessId = pi.dwProcessId;
+            Diag("conpty: started " + Path.GetFileName(file) + " pid " + ProcessId + " (" + cols + "x" + rows + ")");
             _input = new FileStream(_inputWrite, FileAccess.Write, 1);
 
             _reader = new Thread(ReadLoop) { IsBackground = true, Name = "conpty reader" };
@@ -286,16 +287,36 @@ namespace Editor.Core.Claude.Terminal
             using var output = new FileStream(_outputRead, FileAccess.Read, 1);
             try
             {
-                int n;
-                while (!_disposed && (n = output.Read(buf, 0, buf.Length)) > 0) RaiseOutput(buf, n);
+                int n; bool first = true;
+                while (!_disposed && (n = output.Read(buf, 0, buf.Length)) > 0)
+                {
+                    // the Windows Terminal tab stays empty on CI: these lines show whether ConPTY output arrives at all
+                    if (first) { first = false; Diag("conpty: first output " + n + " bytes: " + Printable(buf, n)); }
+                    RaiseOutput(buf, n);
+                }
+                Diag("conpty: output pipe closed");
             }
-            catch { }
+            catch (Exception ex) { Diag("conpty: read loop ended: " + ex.Message); }
+        }
+
+        private static void Diag(string m) { try { Editor.Core.Services.ConsoleService.Instance.LogSystem(m); } catch { } }
+
+        private static string Printable(byte[] b, int n)
+        {
+            var sb = new StringBuilder();
+            for (int i = 0; i < n && sb.Length < 60; i++)
+            {
+                char c = (char)b[i];
+                if (c >= 32 && c < 127) sb.Append(c); else sb.Append("\\x").Append(b[i].ToString("x2"));
+            }
+            return sb.ToString();
         }
 
         private void WaitLoop()
         {
             WaitForSingleObject(_process, uint.MaxValue);
             GetExitCodeProcess(_process, out uint code);
+            Diag("conpty: process exited with " + code);
             Thread.Sleep(50);
             RaiseExited((int)code);
             // closing the pseudo console ends the reader's pipe
