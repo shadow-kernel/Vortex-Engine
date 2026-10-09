@@ -115,7 +115,7 @@ jobs:
         env:
           VORTEX_DX12_WARP: '1'
           VORTEX_SMOKE_FULL: '1'
-          VORTEX_SMOKE_ONLY: 'mcp,claude,title bar,update window,terminal,workspace layout,camera clip planes,sky texture,height fog,material pipelines,light priority,tool arguments,resource lifecycle,cutout shadows,instance tint,import handedness'
+          VORTEX_SMOKE_ONLY: 'mcp,claude,title bar,update window,terminal,workspace layout,camera clip planes,sky texture,height fog,material pipelines,light priority,tool arguments,resource lifecycle,cutout shadows,instance tint,import handedness,jolt character'
         run: |
           $tmp = $env:RUNNER_TEMP
           $app = "$tmp\app"
@@ -133,7 +133,7 @@ jobs:
           Get-Content "$tmp\smoke.log" -ErrorAction SilentlyContinue
           Get-Content "$tmp\smoke.err" -ErrorAction SilentlyContinue
           if (Select-String -Path "$tmp\smoke.log" -Pattern "SMOKE FAIL" -Quiet) { exit 1 }
-          foreach ($c in @("mcp tools", "title bar", "terminal", "workspace layout", "camera clip planes", "sky texture", "height fog", "material pipelines", "light priority", "tool arguments", "resource lifecycle", "cutout shadows", "instance tint", "import handedness")) { if (-not (Select-String -Path "$tmp\smoke.log" -Pattern "SMOKE OK   $c" -Quiet)) { Write-Host "::error::smoke check '$c' did not pass"; exit 1 } }
+          foreach ($c in @("mcp tools", "title bar", "terminal", "workspace layout", "camera clip planes", "sky texture", "height fog", "material pipelines", "light priority", "tool arguments", "resource lifecycle", "cutout shadows", "instance tint", "import handedness", "jolt character")) { if (-not (Select-String -Path "$tmp\smoke.log" -Pattern "SMOKE OK   $c" -Quiet)) { Write-Host "::error::smoke check '$c' did not pass"; exit 1 } }
           if (-not (Select-String -Path "$tmp\smoke.log" -Pattern "Jolt world ready" -Quiet)) { Write-Host "::error::the editor ran with the physics stub — no 'Jolt world ready' in the smoke log (#182)"; exit 1 }
 
       - name: Upload the Windows smoke capture

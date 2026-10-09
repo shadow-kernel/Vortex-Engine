@@ -1431,6 +1431,25 @@ namespace Vortex
             Editor.Core.Services.Physics.CollisionService.CharacterMaxSlopeDeg = maxSlopeDeg;
         }
 
+        /// <summary>Which controller resolves <see cref="MoveCharacter"/> (#187): <c>"managed"</c> (the default — the
+        /// engine's own collide-and-slide) or <c>"jolt"</c> (Jolt's CharacterVirtual: smooth stairs and slopes from the
+        /// physics engine, pushes dynamic props with the character's mass). The call contract is the same either way:
+        /// feet, capsule, this frame's displacement in, resolved feet and <see cref="Grounded"/> out; the step height
+        /// and slope limit from <see cref="SetCharacterOptions"/> apply to both. Call once in Start() — like the
+        /// options it resets to "managed" on every scene load. Without a physics world (an engine build without
+        /// Jolt) "jolt" silently keeps the managed controller.</summary>
+        public static void SetCharacterController(string controller)
+        {
+            bool jolt = controller != null && (controller.Trim().ToLowerInvariant() == "jolt" || controller.Trim().ToLowerInvariant() == "v2");
+            Editor.Core.Services.Physics.PhysicsService.JoltCharacters = jolt;
+        }
+
+        /// <summary>The controller <see cref="MoveCharacter"/> currently resolves with: "jolt" or "managed".</summary>
+        public static string CharacterController
+        {
+            get { return Editor.Core.Services.Physics.PhysicsService.JoltCharacters ? "jolt" : "managed"; }
+        }
+
         /// <summary>Ray straight DOWN from <paramref name="from"/> (up to <paramref name="maxDist"/>) against the world
         /// colliders — returns the <b>Tag</b> of the surface entity you're standing on (its material), or "" if
         /// nothing is below. This is the standard "what am I standing on?" query. Use it for material-based footsteps:

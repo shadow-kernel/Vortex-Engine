@@ -2098,7 +2098,12 @@ namespace Editor.Scripting
         {
             var f = new Editor.ECS.Vector3(feet.X, feet.Y, feet.Z);
             var m = new Editor.ECS.Vector3(move.X, move.Y, move.Z);
-            var r = Editor.Core.Services.Physics.CollisionService.MoveCharacter(f, radius, height, m, out grounded, selfId);
+            Editor.ECS.Vector3 r;
+            if (Editor.Core.Services.Physics.PhysicsService.JoltCharacters)   // #187: the scene opted into Jolt's CharacterVirtual
+                r = Editor.Core.Services.Physics.PhysicsService.MoveCharacterJolt(f, radius, height, m, Vortex.Time.DeltaTime, out grounded, selfId,
+                    Editor.Core.Services.Physics.CollisionService.CharacterStepHeight, Editor.Core.Services.Physics.CollisionService.CharacterMaxSlopeDeg);
+            else
+                r = Editor.Core.Services.Physics.CollisionService.MoveCharacter(f, radius, height, m, out grounded, selfId);
             return new Vortex.Vector3(r.X, r.Y, r.Z);
         }
 

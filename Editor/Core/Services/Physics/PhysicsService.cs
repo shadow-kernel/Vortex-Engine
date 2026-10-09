@@ -235,6 +235,7 @@ namespace Editor.Core.Services.Physics
             _jointsDirty = false;
             _scene = null;
             _byEntity.Clear(); _byId.Clear(); _bodies.Clear(); _publish.Clear(); _pushes.Clear(); _stayThisFrame.Clear();
+            ClearJoltCharacters();
             _accumulator = 0f;
             LastStepCount = 0;
             IsBuilt = false;
@@ -1260,6 +1261,95 @@ namespace Editor.Core.Services.Physics
         /// player shoves barrels and crates instead of bouncing off immovable ghosts. Impulse = the spec's
         /// 80 kg × relative speed along the normal × 0.3, capped at 60 N·s — and additionally at body mass × relative
         /// speed, so a light box never leaves faster than the player pushed it.</summary>
+        // ---- Character controller on Jolt's CharacterVirtual (#187 / #105) --------------------------------------
+        // Opt-in: a script calls Physics.SetCharacterController("jolt") in Start(); every Physics.MoveCharacter call of
+        // that scene then goes through MoveCharacterJolt instead of the managed collide-and-slide. Reset by Clear().
+
+        /// <summary>#187: route <c>Physics.MoveCharacter</c> through Jolt's CharacterVirtual (stairs, slopes and
+        /// pushing dynamic props come from Jolt). Off by default — the managed controller keeps its behaviour.</summary>
+        public static bool JoltCharacters;
+
+        private sealed class JoltChar
+        {
+            public uint Handle;
+            public float R, H, Step, Slope;
+            public Vector3 LastPos;
+        }
+        private static readonly Dictionary<long, JoltChar> _joltChars = new Dictionary<long, JoltChar>();
+        private static readonly float[] _chVel = new float[3], _chPos = new float[3], _chOut = new float[3], _chNrm = new float[3];
+        private static bool _joltCharWarned;
+
+        /// <summary>Number of live Jolt characters (one per characterId the scripts moved this scene).</summary>
+        public static int JoltCharacterCount => _joltChars.Count;
+
+        /// <summary>Move a character capsule through Jolt's CharacterVirtual: the same contract as
+        /// <see cref="CollisionService.MoveCharacter(Vector3, float, float, Vector3, out bool, long, float, float)"/> —
+        /// feet position, capsule radius / total height, this frame's displacement (input + gravity, already × dt) —
+        /// returns the resolved feet position and whether the character ended on walkable ground. One Jolt character
+        /// lives per <paramref name="selfId"/> (0 = the anonymous one) and is recreated when its capsule or the
+        /// step / slope options change; a feet position that is not where the character ended last frame is a
+        /// teleport (respawn, scene start) and moves it there first. The character is registered with
+        /// <see cref="CollisionService"/> too, so trigger volumes and the managed characters of other scripts still
+        /// see it. Falls back to the managed controller when the Jolt world is not built.</summary>
+        public static Vector3 MoveCharacterJolt(Vector3 feet, float radius, float height, Vector3 move, float dt,
+            out bool grounded, long selfId, float stepHeight, float maxSlopeDeg)
+        {
+            if (!IsBuilt)
+                return CollisionService.MoveCharacter(feet, radius, height, move, out grounded, selfId, stepHeight, maxSlopeDeg);
+            grounded = false;
+            radius = Math.Max(0.05f, radius);
+            height = Math.Max(2f * radius, height);
+            if (stepHeight < 0f) stepHeight = 0f;
+            if (!(dt > 1e-5f) || float.IsNaN(dt) || float.IsInfinity(dt)) dt = FixedStep;
+            dt = Math.Min(dt, 0.25f);
+
+            JoltChar c;
+            bool fresh = !_joltChars.TryGetValue(selfId, out c);
+            if (!fresh && (c.R != radius || c.H != height || c.Step != stepHeight || c.Slope != maxSlopeDeg))
+            {
+                try { VortexAPI.PhysicsCharacterDestroy(c.Handle); } catch { }
+                _joltChars.Remove(selfId);
+                fresh = true;
+            }
+            if (fresh)
+            {
+                _chPos[0] = feet.X; _chPos[1] = feet.Y; _chPos[2] = feet.Z;
+                uint h = 0;
+                try { h = VortexAPI.PhysicsCharacterCreate(radius, height, _chPos, maxSlopeDeg, stepHeight, 70f); }
+                catch (Exception ex) { if (!_joltCharWarned) { _joltCharWarned = true; Log("[Physics] Jolt character unavailable (" + ex.Message + ") — using the managed controller"); } }
+                if (h == 0)
+                    return CollisionService.MoveCharacter(feet, radius, height, move, out grounded, selfId, stepHeight, maxSlopeDeg);
+                c = new JoltChar { Handle = h, R = radius, H = height, Step = stepHeight, Slope = maxSlopeDeg, LastPos = feet };
+                _joltChars[selfId] = c;
+            }
+            else
+            {
+                float dx = feet.X - c.LastPos.X, dy = feet.Y - c.LastPos.Y, dz = feet.Z - c.LastPos.Z;
+                if (dx * dx + dy * dy + dz * dz > 1e-6f)   // the script moved the character itself (teleport / respawn)
+                {
+                    _chPos[0] = feet.X; _chPos[1] = feet.Y; _chPos[2] = feet.Z;
+                    VortexAPI.PhysicsCharacterSetPosition(c.Handle, _chPos);
+                }
+            }
+
+            _chVel[0] = move.X / dt; _chVel[1] = move.Y / dt; _chVel[2] = move.Z / dt;
+            int g;
+            VortexAPI.PhysicsCharacterMove(c.Handle, _chVel, dt, _chPos, _chOut, out g, _chNrm);
+            var p = new Vector3(_chPos[0], _chPos[1], _chPos[2]);
+            if (float.IsNaN(p.X) || float.IsNaN(p.Y) || float.IsNaN(p.Z)) { p = new Vector3(feet.X + move.X, feet.Y + move.Y, feet.Z + move.Z); }
+            grounded = g != 0;
+            c.LastPos = p;
+            CollisionService.RegisterCharacter(selfId, p, radius, height);
+            return p;
+        }
+
+        private static void ClearJoltCharacters()
+        {
+            // PhysicsClear() destroyed the native characters with the bodies; only the handles are dropped here
+            _joltChars.Clear();
+            JoltCharacters = false;
+        }
+
         private static void ApplyCharacterPushes(float frameDt)
         {
             var contacts = CollisionService.CharacterContacts;
