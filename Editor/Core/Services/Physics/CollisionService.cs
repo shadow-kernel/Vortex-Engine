@@ -53,6 +53,38 @@ namespace Editor.Core.Services.Physics
             public GameEntity Owner;      // the entity this shape belongs to (for trigger/collision event dispatch)
             public uint BodyId;           // physics body handle for DYNAMIC shapes (0 for the static world)
             public bool Dynamic;          // published per step by PhysicsService (a Jolt rigid body), not baked
+            public bool Trigger;          // in _triggers (reports overlap) rather than _world (blocks)
+
+            // #362 part two: a MOVABLE triangle shape — a MeshCollider under a kinematic Rigidbody (cars, lifts,
+            // doors) — keeps its scaled local-space triangles and a grid over THEM, built once. A move re-transforms
+            // Tris in place (no allocation, the grid stays) and the grid queries map the world-space query into
+            // local space through Origin + Yaw. Static level geometry stays world-space (no second copy).
+            public V3[] LocalTris;        // scaled, unrotated local triangles (movable shapes only)
+            public V3 Origin;             // world position of the local origin (movable shapes)
+            public float Yaw;             // world yaw in degrees (movable shapes)
+            public V3 Scale;              // the world scale LocalTris were scaled with (a scale change rebuilds)
+            public bool Movable => LocalTris != null;
+
+            public int[] QueryRay(V3 o, V3 dir, float maxDist, out int count)
+            {
+                if (LocalTris == null) return Grid.QueryRay(o, dir, maxDist, out count);
+                return Grid.QueryRay(RotY(o - Origin, -Yaw), RotY(dir, -Yaw), maxDist, out count);
+            }
+
+            public int[] QueryBox(V3 qmin, V3 qmax, out int count)
+            {
+                if (LocalTris == null) return Grid.QueryBox(qmin, qmax, out count);
+                // the world box rotated into local space: the AABB of its corners (conservative)
+                var mn = new V3(1e30f, 1e30f, 1e30f); var mx = new V3(-1e30f, -1e30f, -1e30f);
+                for (int i = 0; i < 8; i++)
+                {
+                    var c = new V3((i & 1) != 0 ? qmax.X : qmin.X, (i & 2) != 0 ? qmax.Y : qmin.Y, (i & 4) != 0 ? qmax.Z : qmin.Z);
+                    var l = RotY(c - Origin, -Yaw);
+                    mn = new V3(Math.Min(mn.X, l.X), Math.Min(mn.Y, l.Y), Math.Min(mn.Z, l.Z));
+                    mx = new V3(Math.Max(mx.X, l.X), Math.Max(mx.Y, l.Y), Math.Max(mx.Z, l.Z));
+                }
+                return Grid.QueryBox(mn, mx, out count);
+            }
         }
 
         // ---- uniform grid over a MeshCollider's triangles (perf #342) --------------------------------------------
@@ -194,6 +226,7 @@ namespace Editor.Core.Services.Physics
         }
 
         private static readonly List<Shape> _world = new List<Shape>();
+        private static readonly Dictionary<GameEntity, List<Shape>> _byOwner = new Dictionary<GameEntity, List<Shape>>();   // #362: the baked shapes of each entity
         // Trigger colliders (IsTrigger): NOT solid — they never block, only report overlap enter/stay/exit.
         private static readonly List<Shape> _triggers = new List<Shape>();
         // Physics v2 (#100): the CURRENT pose of every simulated rigid body (barrels, crates, ...), refreshed by
@@ -303,7 +336,7 @@ namespace Editor.Core.Services.Physics
         /// MeshRenderer MeshPath. Set by the runtime (native mesh export). Null → imported models fall back to a box.</summary>
         public static Func<string, float[]> MeshTriangleProvider;
 
-        public static void Clear() { _world.Clear(); _triggers.Clear(); _dynamic.Clear(); CharacterContacts.Clear(); _chars.Clear(); ResetEvents(); IsBuilt = false; }
+        public static void Clear() { _world.Clear(); _triggers.Clear(); _byOwner.Clear(); _dynamic.Clear(); CharacterContacts.Clear(); _chars.Clear(); ResetEvents(); IsBuilt = false; }
 
         /// <summary>Steam Audio v2 (#21): flatten the SOLID world colliders into a world-space triangle soup
         /// (vertex xyz array + per-triangle vertex indices) for the acoustic occlusion scene. Mesh colliders emit
@@ -463,7 +496,7 @@ namespace Editor.Core.Services.Physics
             var tris = s.Tris;
             if (s.Grid != null)
             {
-                var buf = s.Grid.QueryRay(o, new V3(0f, -1f, 0f), maxDist, out int cnt);
+                var buf = s.QueryRay(o, new V3(0f, -1f, 0f), maxDist, out int cnt);
                 DebugLastTriTests = cnt;
                 for (int j = 0; j < cnt; j++) { int i = buf[j] * 3; if (TriRayDown(o, tris[i], tris[i + 1], tris[i + 2], ref t)) any = true; }
             }
@@ -543,7 +576,7 @@ namespace Editor.Core.Services.Physics
             var tris = s.Tris;
             if (s.Grid != null)
             {
-                var buf = s.Grid.QueryRay(o, d, maxDist, out int cnt);
+                var buf = s.QueryRay(o, d, maxDist, out int cnt);
                 DebugLastTriTests = cnt;
                 for (int j = 0; j < cnt; j++) { int i = buf[j] * 3; if (TriRay(o, d, tris[i], tris[i + 1], tris[i + 2], ref t, ref n)) any = true; }
             }
@@ -688,6 +721,55 @@ namespace Editor.Core.Services.Physics
             _world.RemoveAll(s => s != null && s.Owner != null && set.Contains(s.Owner));
             _triggers.RemoveAll(s => s != null && s.Owner != null && set.Contains(s.Owner));
             _dynamic.RemoveAll(s => s != null && s.Owner != null && set.Contains(s.Owner));
+            foreach (var e in set) _byOwner.Remove(e);
+        }
+
+        /// <summary>#362 part two: a kinematic mover (with its children) moved — re-place its shapes IN PLACE instead
+        /// of removing and rebuilding the whole subtree every physics step: analytic shapes are refilled, a movable
+        /// triangle shape re-transforms its local triangles (no allocation, its grid stays), and only a shape that
+        /// cannot be refilled (collider type or scale changed, collider toggled) is rebuilt — for that one entity.</summary>
+        public static void UpdateEntityShapes(GameEntity root)
+        {
+            if (!IsBuilt || root == null) return;
+            UpdateRecursive(root);
+        }
+
+        private static void UpdateRecursive(GameEntity e)
+        {
+            if (e == null) return;
+            var col = e.GetComponent<Collider>();
+            bool enabled = col != null && col.IsEnabled;
+            _byOwner.TryGetValue(e, out var owned);
+            if (owned != null && owned.Count > 0)
+            {
+                if (!enabled) RemoveEntityShapes(e, false);
+                else
+                {
+                    var old = owned[0];
+                    Shape s = null;
+                    try { s = BuildShape(e, col, old); } catch { }
+                    if (s != old || old.Trigger != col.IsTrigger)
+                    {
+                        RemoveEntityShapes(e, false);
+                        if (s != null) AddShape(e, s, col.IsTrigger); else AddOwnShape(e, col);
+                    }
+                }
+            }
+            else if (enabled) AddOwnShape(e, col);
+            if (e.Children != null) foreach (var c in e.Children) UpdateRecursive(c);
+        }
+
+        private static void AddOwnShape(GameEntity e, Collider col)
+        {
+            try { var s = BuildShape(e, col); if (s != null) AddShape(e, s, col.IsTrigger); } catch { }
+        }
+
+        private static void AddShape(GameEntity e, Shape s, bool trigger)
+        {
+            s.Owner = e; s.Trigger = trigger;
+            if (trigger) _triggers.Add(s); else _world.Add(s);
+            if (!_byOwner.TryGetValue(e, out var list)) _byOwner[e] = list = new List<Shape>(1);
+            list.Add(s);
         }
 
         /// <summary>Reset the per-frame overlap state (call on Build / scene switch / play end so stale pairs
@@ -700,6 +782,7 @@ namespace Editor.Core.Services.Physics
         {
             _world.Clear();
             _triggers.Clear();
+            _byOwner.Clear();
             _dynamic.Clear();
             CharacterContacts.Clear();
             _chars.Clear();   // characters re-register on their next MoveCharacter — don't leak across scene switches / replays
@@ -718,7 +801,7 @@ namespace Editor.Core.Services.Physics
             if (col != null && col.IsEnabled)
             {
                 // Solid colliders block (go into _world); triggers only report overlap (go into _triggers).
-                try { var s = BuildShape(e, col); if (s != null) { s.Owner = e; if (col.IsTrigger) _triggers.Add(s); else _world.Add(s); } } catch { }
+                AddOwnShape(e, col);
             }
             if (e.Children != null) foreach (var c in e.Children) AddRecursive(c);
         }
@@ -727,7 +810,7 @@ namespace Editor.Core.Services.Physics
         private static void WorldTransform(GameEntity e, out V3 pos, out V3 rotDeg, out V3 scale)
         {
             pos = new V3(0, 0, 0); rotDeg = new V3(0, 0, 0); scale = new V3(1, 1, 1);
-            var chain = new List<GameEntity>();
+            var chain = _chainBuf; chain.Clear();   // single-threaded (physics step / scene build) — one reusable buffer
             for (var cur = e; cur != null; cur = cur.Parent) chain.Add(cur);
             // apply from root down: accumulate scale + rotation(Y only, level geometry) + translate
             var p = new V3(0, 0, 0); var sc = new V3(1, 1, 1); float yaw = 0f, pitch = 0f, roll = 0f;
@@ -745,20 +828,27 @@ namespace Editor.Core.Services.Physics
             pos = p; scale = sc; rotDeg = new V3(pitch, yaw, roll);
         }
 
+        private static readonly List<GameEntity> _chainBuf = new List<GameEntity>(8);
+
         private static V3 RotY(V3 v, float deg)
         {
             double r = deg * Math.PI / 180.0; float c = (float)Math.Cos(r), s = (float)Math.Sin(r);
             return new V3(v.X * c + v.Z * s, v.Y, -v.X * s + v.Z * c);
         }
 
-        private static Shape BuildShape(GameEntity e, Collider col)
+        private static Shape BuildShape(GameEntity e, Collider col) => BuildShape(e, col, null);
+
+        // <paramref name="reuse"/> (#362 part two): refill that existing shape for a moved entity — analytic shapes
+        // get new numbers, a movable triangle shape re-transforms its local triangles. Returns a DIFFERENT shape
+        // (or null) when the old one cannot be refilled: the caller replaces it.
+        private static Shape BuildShape(GameEntity e, Collider col, Shape reuse)
         {
             WorldTransform(e, out var wpos, out var wrot, out var wscale);
             var center = wpos + RotY(new V3(col.Center.X * wscale.X, col.Center.Y * wscale.Y, col.Center.Z * wscale.Z), wrot.Y);
 
             if (col is BoxCollider box)
             {
-                var s = new Shape { Kind = Kind.Box, Center = center };
+                var s = Reuse(reuse, Kind.Box); s.Center = center;
                 s.Half = new V3(Math.Abs(box.Size.X * 0.5f * wscale.X), Math.Abs(box.Size.Y * 0.5f * wscale.Y), Math.Abs(box.Size.Z * 0.5f * wscale.Z));
                 s.AxX = RotY(new V3(1, 0, 0), wrot.Y); s.AxY = new V3(0, 1, 0); s.AxZ = RotY(new V3(0, 0, 1), wrot.Y);
                 Aabb(s); return s;
@@ -766,7 +856,7 @@ namespace Editor.Core.Services.Physics
             if (col is SphereCollider sph)
             {
                 float r = sph.Radius * Math.Max(Math.Abs(wscale.X), Math.Max(Math.Abs(wscale.Y), Math.Abs(wscale.Z)));
-                var s = new Shape { Kind = Kind.Sphere, Center = center, Radius = r };
+                var s = Reuse(reuse, Kind.Sphere); s.Center = center; s.Radius = r;
                 s.Min = center - new V3(r, r, r); s.Max = center + new V3(r, r, r); return s;
             }
             if (col is CapsuleCollider cap)
@@ -774,17 +864,20 @@ namespace Editor.Core.Services.Physics
                 float r = cap.Radius * Math.Max(Math.Abs(wscale.X), Math.Abs(wscale.Z));
                 float half = Math.Max(0f, cap.Height * 0.5f * Math.Abs(wscale.Y) - r);
                 V3 axis = cap.Direction == 0 ? new V3(1, 0, 0) : (cap.Direction == 2 ? new V3(0, 0, 1) : new V3(0, 1, 0));
-                var s = new Shape { Kind = Kind.Capsule, Radius = r, A = center - axis * half, B = center + axis * half };
+                var s = Reuse(reuse, Kind.Capsule); s.Radius = r; s.A = center - axis * half; s.B = center + axis * half;
                 s.Min = new V3(Math.Min(s.A.X, s.B.X) - r, Math.Min(s.A.Y, s.B.Y) - r, Math.Min(s.A.Z, s.B.Z) - r);
                 s.Max = new V3(Math.Max(s.A.X, s.B.X) + r, Math.Max(s.A.Y, s.B.Y) + r, Math.Max(s.A.Z, s.B.Z) + r);
                 return s;
             }
             // Mesh collider (or a base Collider): primitives collide as exact analytic shapes; imported models as
             // real triangles; anything else falls back to the mesh's bounding box.
-            return BuildMeshShape(e, center, wrot, wscale);
+            return BuildMeshShape(e, center, wrot, wscale, reuse);
         }
 
-        private static Shape BuildMeshShape(GameEntity e, V3 center, V3 wrot, V3 wscale)
+        private static Shape Reuse(Shape reuse, Kind kind)
+            => reuse != null && reuse.Kind == kind && reuse.Tris == null ? reuse : new Shape { Kind = kind };
+
+        private static Shape BuildMeshShape(GameEntity e, V3 center, V3 wrot, V3 wscale, Shape reuse)
         {
             var mr = e.GetComponent<MeshRenderer>();
             string mp = mr?.MeshPath;
@@ -793,35 +886,57 @@ namespace Editor.Core.Services.Physics
                 var prim = mp.Substring("Primitive:".Length).ToLowerInvariant();
                 if (prim == "cube")
                 {
-                    var s = new Shape { Kind = Kind.Box, Center = center, Half = new V3(0.5f * Math.Abs(wscale.X), 0.5f * Math.Abs(wscale.Y), 0.5f * Math.Abs(wscale.Z)) };
+                    var s = Reuse(reuse, Kind.Box); s.Center = center; s.Half = new V3(0.5f * Math.Abs(wscale.X), 0.5f * Math.Abs(wscale.Y), 0.5f * Math.Abs(wscale.Z));
                     s.AxX = RotY(new V3(1, 0, 0), wrot.Y); s.AxY = new V3(0, 1, 0); s.AxZ = RotY(new V3(0, 0, 1), wrot.Y); Aabb(s); return s;
                 }
                 if (prim == "plane" || prim == "quad")
                 {
-                    var s = new Shape { Kind = Kind.Box, Center = center, Half = new V3(0.5f * Math.Abs(wscale.X), 0.05f, 0.5f * Math.Abs(wscale.Z)) };
+                    var s = Reuse(reuse, Kind.Box); s.Center = center; s.Half = new V3(0.5f * Math.Abs(wscale.X), 0.05f, 0.5f * Math.Abs(wscale.Z));
                     s.AxX = RotY(new V3(1, 0, 0), wrot.Y); s.AxY = new V3(0, 1, 0); s.AxZ = RotY(new V3(0, 0, 1), wrot.Y); Aabb(s); return s;
                 }
                 if (prim == "sphere")
                 {
                     float r = 0.5f * Math.Max(Math.Abs(wscale.X), Math.Max(Math.Abs(wscale.Y), Math.Abs(wscale.Z)));
-                    return new Shape { Kind = Kind.Sphere, Center = center, Radius = r, Min = center - new V3(r, r, r), Max = center + new V3(r, r, r) };
+                    var s = Reuse(reuse, Kind.Sphere); s.Center = center; s.Radius = r; s.Min = center - new V3(r, r, r); s.Max = center + new V3(r, r, r); return s;
                 }
                 if (prim == "cylinder" || prim == "capsule" || prim == "cone")
                 {
                     float r = 0.5f * Math.Max(Math.Abs(wscale.X), Math.Abs(wscale.Z));
                     float half = Math.Max(0f, 0.5f * Math.Abs(wscale.Y) - r);
-                    var s = new Shape { Kind = Kind.Capsule, Radius = r, A = center - new V3(0, half, 0), B = center + new V3(0, half, 0) };
+                    var s = Reuse(reuse, Kind.Capsule); s.Radius = r; s.A = center - new V3(0, half, 0); s.B = center + new V3(0, half, 0);
                     s.Min = new V3(center.X - r, center.Y - r - half, center.Z - r); s.Max = new V3(center.X + r, center.Y + r + half, center.Z + r); return s;
                 }
             }
             // imported model -> real triangles if a provider is wired
             if (!string.IsNullOrEmpty(mp) && MeshTriangleProvider != null)
             {
+                // a moved movable shape: same mesh, same scale — re-place the local triangles, nothing is rebuilt
+                if (reuse != null && reuse.Kind == Kind.Tris && reuse.LocalTris != null && SameScale(reuse.Scale, wscale))
+                {
+                    PlaceMovable(reuse, center, wrot.Y);
+                    return reuse;
+                }
                 var raw = MeshTriangleProvider(mp);
                 if (raw != null && raw.Length >= 9)
                 {
                     int triCount = raw.Length / 9;
                     var tris = new V3[triCount * 3];
+                    if (IsKinematicMover(e))
+                    {
+                        // #362 part two: local triangles + a local grid once; the move re-transforms into Tris
+                        var local = new V3[triCount * 3];
+                        var lmn = new V3(1e30f, 1e30f, 1e30f); var lmx = new V3(-1e30f, -1e30f, -1e30f);
+                        for (int i = 0; i < triCount * 3; i++)
+                        {
+                            var lv = new V3(raw[i * 3] * wscale.X, raw[i * 3 + 1] * wscale.Y, raw[i * 3 + 2] * wscale.Z);
+                            local[i] = lv;
+                            lmn = new V3(Math.Min(lmn.X, lv.X), Math.Min(lmn.Y, lv.Y), Math.Min(lmn.Z, lv.Z));
+                            lmx = new V3(Math.Max(lmx.X, lv.X), Math.Max(lmx.Y, lv.Y), Math.Max(lmx.Z, lv.Z));
+                        }
+                        var ms = new Shape { Kind = Kind.Tris, Tris = tris, LocalTris = local, Scale = wscale, Grid = TriGrid.Build(local, lmn, lmx) };
+                        PlaceMovable(ms, center, wrot.Y);
+                        return ms;
+                    }
                     var mn = new V3(1e30f, 1e30f, 1e30f); var mx = new V3(-1e30f, -1e30f, -1e30f);
                     for (int i = 0; i < triCount * 3; i++)
                     {
@@ -836,6 +951,39 @@ namespace Editor.Core.Services.Physics
             }
             // last resort: mesh AABB as a box (approximate) — better than no collision
             return null;
+        }
+
+        /// <summary>#362: the entity (or an ancestor) is driven by a kinematic Rigidbody — its mesh shape will move
+        /// every step, so it is built as a movable shape.</summary>
+        private static bool IsKinematicMover(GameEntity e)
+        {
+            for (var cur = e; cur != null; cur = cur.Parent)
+            {
+                var rb = cur.GetComponent<Rigidbody>();
+                if (rb != null && rb.IsEnabled && rb.BodyType == RigidbodyType.Kinematic) return true;
+            }
+            return false;
+        }
+
+        private static bool SameScale(V3 a, V3 b)
+            => Math.Abs(a.X - b.X) < 1e-5f && Math.Abs(a.Y - b.Y) < 1e-5f && Math.Abs(a.Z - b.Z) < 1e-5f;
+
+        /// <summary>Transform a movable shape's local triangles into Tris (in place) for a new pose + world AABB.</summary>
+        private static void PlaceMovable(Shape s, V3 origin, float yawDeg)
+        {
+            s.Origin = origin; s.Yaw = yawDeg;
+            var local = s.LocalTris; var tris = s.Tris;
+            double r = yawDeg * Math.PI / 180.0; float c = (float)Math.Cos(r), sn = (float)Math.Sin(r);
+            var mn = new V3(1e30f, 1e30f, 1e30f); var mx = new V3(-1e30f, -1e30f, -1e30f);
+            for (int i = 0; i < local.Length; i++)
+            {
+                var lv = local[i];
+                var wv = new V3(origin.X + lv.X * c + lv.Z * sn, origin.Y + lv.Y, origin.Z - lv.X * sn + lv.Z * c);
+                tris[i] = wv;
+                if (wv.X < mn.X) mn.X = wv.X; if (wv.Y < mn.Y) mn.Y = wv.Y; if (wv.Z < mn.Z) mn.Z = wv.Z;
+                if (wv.X > mx.X) mx.X = wv.X; if (wv.Y > mx.Y) mx.Y = wv.Y; if (wv.Z > mx.Z) mx.Z = wv.Z;
+            }
+            s.Min = mn; s.Max = mx;
         }
 
         private static void Aabb(Shape s)
@@ -1209,7 +1357,7 @@ namespace Editor.Core.Services.Physics
                         float best = 1e30f; V3 bq = new V3(0, 0, 0); bool any = false;
                         if (s.Grid != null && !float.IsPositiveInfinity(maxDist))
                         {
-                            var buf = s.Grid.QueryBox(new V3(c.X - maxDist, c.Y - maxDist, c.Z - maxDist),
+                            var buf = s.QueryBox(new V3(c.X - maxDist, c.Y - maxDist, c.Z - maxDist),
                                                       new V3(c.X + maxDist, c.Y + maxDist, c.Z + maxDist), out int cnt);
                             DebugLastTriTests = cnt;
                             for (int j = 0; j < cnt; j++)
@@ -1298,6 +1446,37 @@ namespace Editor.Core.Services.Physics
             => RayDownTris(From(o), MakeTrisShape(tris, useGrid), maxDist, out t);
 
         internal static bool TestGridBuilt(float[] tris) => MakeTrisShape(tris, true).Grid != null;
+
+        /// <summary>#362 test hook: a MOVABLE triangle shape (local grid, placed twice so the second placement is the
+        /// in-place path) answers a ray like a world-space shape built from the transformed triangles. The static
+        /// shape is cast first, so <see cref="DebugLastTriTests"/> reports the movable shape's grid afterwards.</summary>
+        internal static bool TestMovableRaycast(float[] localTris, Vector3 origin, float yawDeg, Vector3 o, Vector3 dir, float maxDist,
+            out float tMovable, out bool hitStatic, out float tStatic)
+        {
+            var org = From(origin);
+            var world = new float[localTris.Length];
+            for (int i = 0; i < localTris.Length / 3; i++)
+            {
+                var wv = org + RotY(new V3(localTris[i * 3], localTris[i * 3 + 1], localTris[i * 3 + 2]), yawDeg);
+                world[i * 3] = wv.X; world[i * 3 + 1] = wv.Y; world[i * 3 + 2] = wv.Z;
+            }
+            hitStatic = RayTris(From(o), From(dir), MakeTrisShape(world, true), maxDist, out tStatic, out _);
+
+            int n = localTris.Length / 3;
+            var local = new V3[n];
+            var mn = new V3(1e30f, 1e30f, 1e30f); var mx = new V3(-1e30f, -1e30f, -1e30f);
+            for (int i = 0; i < n; i++)
+            {
+                var v = new V3(localTris[i * 3], localTris[i * 3 + 1], localTris[i * 3 + 2]);
+                local[i] = v;
+                mn = new V3(Math.Min(mn.X, v.X), Math.Min(mn.Y, v.Y), Math.Min(mn.Z, v.Z));
+                mx = new V3(Math.Max(mx.X, v.X), Math.Max(mx.Y, v.Y), Math.Max(mx.Z, v.Z));
+            }
+            var s = new Shape { Kind = Kind.Tris, Tris = new V3[n], LocalTris = local, Scale = new V3(1, 1, 1), Grid = TriGrid.Build(local, mn, mx) };
+            PlaceMovable(s, org + new V3(7f, 1f, -3f), yawDeg + 137f);   // somewhere else first
+            PlaceMovable(s, org, yawDeg);                                  // then the pose under test (in place)
+            return RayTris(From(o), From(dir), s, maxDist, out tMovable, out _);
+        }
 
         private static Shape MakeTrisShape(float[] triXyz, bool useGrid)
         {
