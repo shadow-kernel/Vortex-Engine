@@ -151,9 +151,77 @@ namespace VortexEditor.Claude
             finally { Gate.Release(); }
         }
 
+        /// <summary>The error for argument keys the tool's schema does not know (null when all are known), with the
+        /// nearest parameter as a hint and the full parameter list.</summary>
+        internal static string UnknownArguments(ToolDef def, IDictionary<string, object> args)
+        {
+            if (def == null || args == null || args.Count == 0) return null;
+            var known = new List<string>();
+            try
+            {
+                if (def.InputSchema.ValueKind == JsonValueKind.Object && def.InputSchema.TryGetProperty("properties", out var props) && props.ValueKind == JsonValueKind.Object)
+                    foreach (var p in props.EnumerateObject()) known.Add(p.Name);
+            }
+            catch { }
+            if (known.Count == 0) return null;   // a schema that cannot be read: the function decides
+            List<string> bad = null;
+            foreach (var key in args.Keys)
+                if (!known.Contains(key, StringComparer.Ordinal)) (bad ??= new List<string>()).Add(key);
+            if (bad == null) return null;
+            var sb = new System.Text.StringBuilder();
+            foreach (var b in bad)
+            {
+                sb.Append("Unknown parameter '").Append(b).Append("' for ").Append(def.Name);
+                string hint = NearestParameter(b, known);
+                if (hint != null) sb.Append(" — did you mean '").Append(hint).Append("'?");
+                if (b == "dry_run") sb.Append(" (this tool has no dry run; nothing was executed)");
+                sb.Append(". ");
+            }
+            sb.Append("Parameters: ").Append(string.Join(", ", known)).Append('.');
+            return sb.ToString();
+        }
+
+        private static readonly Dictionary<string, string> ArgumentAliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["primitive"] = "kind", ["type"] = "kind", ["shape"] = "kind", ["target"] = "look_at", ["lookat"] = "look_at",
+            ["pos"] = "position", ["rot"] = "rotation", ["id"] = "entity", ["entities"] = "entity", ["names"] = "name",
+        };
+
+        private static string NearestParameter(string key, List<string> known)
+        {
+            if (ArgumentAliases.TryGetValue(key, out var alias) && known.Contains(alias, StringComparer.Ordinal)) return alias;
+            string best = null; int bestD = int.MaxValue;
+            foreach (var k in known)
+            {
+                if (k.IndexOf(key, StringComparison.OrdinalIgnoreCase) >= 0 || key.IndexOf(k, StringComparison.OrdinalIgnoreCase) >= 0) return k;
+                int d = Levenshtein(key.ToLowerInvariant(), k.ToLowerInvariant());
+                if (d < bestD) { bestD = d; best = k; }
+            }
+            return best != null && bestD <= Math.Max(2, key.Length / 3) ? best : null;
+        }
+
+        private static int Levenshtein(string a, string b)
+        {
+            var prev = new int[b.Length + 1]; var cur = new int[b.Length + 1];
+            for (int j = 0; j <= b.Length; j++) prev[j] = j;
+            for (int i = 1; i <= a.Length; i++)
+            {
+                cur[0] = i;
+                for (int j = 1; j <= b.Length; j++)
+                    cur[j] = Math.Min(Math.Min(cur[j - 1] + 1, prev[j] + 1), prev[j - 1] + (a[i - 1] == b[j - 1] ? 0 : 1));
+                var t = prev; prev = cur; cur = t;
+            }
+            return prev[b.Length];
+        }
+
         private static async Task<ToolResult> RunAsync(ToolDef def, IDictionary<string, object> args, string origin, CancellationToken ct)
         {
             var sw = Stopwatch.StartNew();
+            // an unknown top-level argument is an error, not a silent default (#355): create_entity {"primitive": "Cube"}
+            // used to make an empty entity, focus_camera {"target": …} kept the old yaw, and dry_run on a tool without
+            // one ran for real
+            string unknown = UnknownArguments(def, args);
+            if (unknown != null) return ToolResult.Error(unknown);
             bool dryRun = def.GenericDryRun && args.TryGetValue("dry_run", out var dv) && IsTrue(dv);
             if (def.GenericDryRun) args.Remove("dry_run");
             var op = new ToolOperation { Time = DateTime.Now, Tool = def.Name, Origin = origin, Arguments = Shorten(ToolJson.Serialize(args), 240), DryRun = dryRun };

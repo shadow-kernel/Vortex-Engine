@@ -126,13 +126,25 @@ namespace VortexEditor.Shell
                 EditorViewportSession.RequestResubmit();
                 var away = await Sample("sky_away.bmp", 0.5, 0.2);
 
-                log.Log("sky texture: up " + Rgb(up) + ", above the horizon " + Rgb(above) + ", below " + Rgb(below) + ", 400 m away " + Rgb(away));
+                // a script's sky (#349) wins over the component: a pure red gradient, then back to the texture
+                SceneRenderService.ScriptSky = new SceneRenderService.SkyOverride { Gradient = new[] { 1f, 0f, 0f, 1f, 0f, 0f, 1f, 0f, 0f } };
+                cam.SetPositionAndRotation(0, 500, 0, 0, -80);
+                EditorViewportSession.RequestResubmit();
+                var scripted = await Centre("sky_scripted.bmp");
+                SceneRenderService.ScriptSky = null;
+                EditorViewportSession.RequestResubmit();
+                var back = await Centre("sky_back.bmp");
+
+                log.Log("sky texture: up " + Rgb(up) + ", above the horizon " + Rgb(above) + ", below " + Rgb(below) + ", 400 m away " + Rgb(away) + "; scripted red gradient " + Rgb(scripted) + ", cleared " + Rgb(back));
                 bool ok = Blue(up) && Blue(above) && Red(below) && Blue(away);
+                bool okScript = Red(scripted) && Blue(back);
                 if (!ok) log.LogError("sky texture: expected blue up / above the horizon and from 400 m away, red below the horizon");
-                return ok;
+                if (!okScript) log.LogError("sky texture: the scripted sky did not take over (or did not let go) — #349");
+                return ok && okScript;
             }
             finally
             {
+                SceneRenderService.ScriptSky = null;
                 sky.SkyboxType = type; sky.TexturePath = path; sky.Exposure = exposure; sky.IsEnabled = enabled;
                 if (made != null) EditorCommands.DeleteEntities(new List<GameEntity> { made });
                 SceneRenderService.Instance.ClearSkyboxMeshCache();

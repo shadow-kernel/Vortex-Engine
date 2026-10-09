@@ -755,8 +755,9 @@ namespace vortex::graphics::sdlgpu
 		DirectX::XMFLOAT3 m_sun_color{ 1.0f, 0.95f, 0.85f };
 		float m_sun_intensity{ 1.0f };
 		float m_render_distance{ 0.0f };
-		bool m_lod_enabled{ false }, m_geo_lod_enabled{ false };
-		float m_lod_mid{ 0.0f }, m_lod_far{ 0.0f };
+		// geometric LOD is on by default (#360): the thresholds are multiples of each mesh's radius (40 / 120 radii)
+		bool m_lod_enabled{ false }, m_geo_lod_enabled{ true };
+		float m_lod_mid{ 40.0f }, m_lod_far{ 120.0f };
 		float m_clear_color[4]{ 0.18f, 0.18f, 0.20f, 1.0f };
 
 		// overlay + particles + capture + stats

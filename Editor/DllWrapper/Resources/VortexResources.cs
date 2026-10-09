@@ -449,27 +449,59 @@ namespace Editor.DllWrapper
         private static extern int GetModelTriangleData([MarshalAs(UnmanagedType.LPStr)] string filepath, float[] outPositions, int maxFloats);
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern int GetModelTriangleDataFromMemory(byte[] data, int length, [MarshalAs(UnmanagedType.LPStr)] string extHint, float[] outPositions, int maxFloats);
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int GetModelSubmeshTriangleData([MarshalAs(UnmanagedType.LPStr)] string filepath, int submesh, float[] outPositions, int maxFloats);
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int GetModelSubmeshTriangleDataFromMemory(byte[] data, int length, [MarshalAs(UnmanagedType.LPStr)] string extHint, int submesh, float[] outPositions, int maxFloats);
 
         /// <summary>A model's TRIANGLE vertex positions (x,y,z per vertex, 3 verts/triangle, all submeshes, indices
         /// expanded) in local model space — for edge-accurate mesh colliders that match what's rendered. Null if the
         /// model has no geometry / can't be read.</summary>
-        public static float[] GetModelTriangles(string filepath)
+        public static float[] GetModelTriangles(string filepath) => GetModelTriangles(filepath, -1);
+
+        /// <summary>Triangle positions of ONE submesh (#362) — or of the whole model with <paramref name="submesh"/> = -1.
+        /// An engine without the submesh entry point returns the whole model.</summary>
+        public static float[] GetModelTriangles(string filepath, int submesh)
         {
             if (string.IsNullOrEmpty(filepath)) return null;
-            int needed = GetModelTriangleData(filepath, null, 0);
-            if (needed <= 0) return null;
-            var buf = new float[needed];
-            return TrimFloats(buf, GetModelTriangleData(filepath, buf, needed));
+            if (submesh < 0)
+            {
+                int needed = GetModelTriangleData(filepath, null, 0);
+                if (needed <= 0) return null;
+                var buf = new float[needed];
+                return TrimFloats(buf, GetModelTriangleData(filepath, buf, needed));
+            }
+            try
+            {
+                int needed = GetModelSubmeshTriangleData(filepath, submesh, null, 0);
+                if (needed <= 0) return null;
+                var buf = new float[needed];
+                return TrimFloats(buf, GetModelSubmeshTriangleData(filepath, submesh, buf, needed));
+            }
+            catch (EntryPointNotFoundException) { return GetModelTriangles(filepath, -1); }
         }
 
         /// <summary>Triangle positions for a model whose bytes live in the in-RAM asset pak (shipped game).</summary>
-        public static float[] GetModelTrianglesFromMemory(byte[] data, string extHint)
+        public static float[] GetModelTrianglesFromMemory(byte[] data, string extHint) => GetModelTrianglesFromMemory(data, extHint, -1);
+
+        public static float[] GetModelTrianglesFromMemory(byte[] data, string extHint, int submesh)
         {
             if (data == null || data.Length == 0) return null;
-            int needed = GetModelTriangleDataFromMemory(data, data.Length, extHint ?? "", null, 0);
-            if (needed <= 0) return null;
-            var buf = new float[needed];
-            return TrimFloats(buf, GetModelTriangleDataFromMemory(data, data.Length, extHint ?? "", buf, needed));
+            if (submesh < 0)
+            {
+                int needed = GetModelTriangleDataFromMemory(data, data.Length, extHint ?? "", null, 0);
+                if (needed <= 0) return null;
+                var buf = new float[needed];
+                return TrimFloats(buf, GetModelTriangleDataFromMemory(data, data.Length, extHint ?? "", buf, needed));
+            }
+            try
+            {
+                int needed = GetModelSubmeshTriangleDataFromMemory(data, data.Length, extHint ?? "", submesh, null, 0);
+                if (needed <= 0) return null;
+                var buf = new float[needed];
+                return TrimFloats(buf, GetModelSubmeshTriangleDataFromMemory(data, data.Length, extHint ?? "", submesh, buf, needed));
+            }
+            catch (EntryPointNotFoundException) { return GetModelTrianglesFromMemory(data, extHint, -1); }
         }
 
         private static float[] TrimFloats(float[] buf, int w)

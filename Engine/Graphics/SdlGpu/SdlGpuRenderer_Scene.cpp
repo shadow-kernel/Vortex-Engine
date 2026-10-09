@@ -377,9 +377,12 @@ namespace vortex::graphics::sdlgpu
 					{
 						run.lodLevels = chain->lod_count;
 						for (u32 L = 0; L < chain->lod_count && L < 4; ++L) run.lodMesh[L] = chain->lods[L];
-						run.lodT1sq = m_lod_mid * m_lod_mid;
-						run.lodT2sq = m_lod_far * m_lod_far;
-						float t3 = m_lod_far * 1.8f; run.lodT3sq = t3 * t3;
+						// thresholds scale with the mesh's radius (#360): a crate thins out at 40 m, a building at 800 m
+						const float radius = run.localR > 0.5f ? run.localR : 0.5f;
+						const float t1 = m_lod_mid * radius, t2 = m_lod_far * radius, t3 = m_lod_far * 1.8f * radius;
+						run.lodT1sq = t1 * t1;
+						run.lodT2sq = t2 * t2;
+						run.lodT3sq = t3 * t3;
 					}
 				}
 				const u32 ri = (u32)m_draw_runs.size();

@@ -733,8 +733,9 @@ namespace Editor.Scripting
             Vortex.CameraFX.Host = this;
             Vortex.Assets.Host = this;
 
-            // Scripted scene-atmosphere state starts clean each run (a previous run's ambient/fog must not leak).
+            // Scripted scene-atmosphere state starts clean each run (a previous run's ambient/fog/sky must not leak).
             Editor.Core.Services.SceneRenderService.ScriptAmbientOverride = null;
+            Editor.Core.Services.SceneRenderService.ScriptSky = null;
             // The authored per-scene environment (fog + post-FX) is the baseline every run starts from —
             // the End() above wiped ALL post-FX, including what ActivateEntities just applied on boot.
             // Scripts may override from Start() onwards.
@@ -767,6 +768,8 @@ namespace Editor.Scripting
             _behavioursByHandle.Clear();
             _behavioursByEntity.Clear();
             _nextHandle = 0;
+            // the previous run's particles go NOW, before any Start() spawns new ones (#347)
+            try { Editor.Core.Services.Particles.ParticleService.BeginPlay(scene); } catch { }
 
             string log = null;
             Assembly asm = overrideAsm ?? PrecompiledAssembly;
@@ -1094,6 +1097,7 @@ namespace Editor.Scripting
             // Scripting-wave teardown (#36-#40): undo runtime scene mutations, stop timers/coroutines,
             // drop event subscriptions, persist pending save data.
             try { RollbackRuntimeSceneChanges(); } catch { }
+            try { Editor.Core.Services.Particles.ParticleService.EndPlay(); } catch { }   // #347
             _coroutines.Clear();
             _invokes.Clear();
             _debugShapes.Clear();
@@ -1117,7 +1121,9 @@ namespace Editor.Scripting
             // scripted fog is switched off — otherwise the horror scene's darkness/fog sticks to the
             // EDITOR viewport after leaving play mode (the fog CB is persistent frame state).
             Editor.Core.Services.SceneRenderService.ScriptAmbientOverride = null;
+            Editor.Core.Services.SceneRenderService.ScriptSky = null;   // #349
             try { Editor.DllWrapper.VortexAPI.SetFog(0f, 0f, 0f, 0f, 0f, 0f); } catch { }
+            try { Editor.DllWrapper.VortexAPI.RenderDistance(0f); Editor.DllWrapper.VortexAPI.GeometricLod(true, 40f, 120f); } catch { }   // #360 defaults
             // Post-FX is persistent renderer state too — scripted grain/vignette must not stick to the
             // editor viewport after play. The scene's AUTHORED environment then re-applies on top.
             try { Vortex.PostFx.ClearAll(); } catch { }
@@ -1999,22 +2005,30 @@ namespace Editor.Scripting
             float[] tris = null;
             try
             {
-                var actual = meshPath; int h = actual.LastIndexOf('#'); if (h > 0) actual = actual.Substring(0, h);
+                // "model.glb#submeshN" collides with submesh N only (#362) — the whole model used to be loaded N times
+                var actual = meshPath; int h = actual.LastIndexOf('#'); int submesh = -1;
+                if (h > 0)
+                {
+                    var tag = actual.Substring(h + 1);
+                    if (tag.StartsWith("submesh", System.StringComparison.OrdinalIgnoreCase)) int.TryParse(tag.Substring(7), out submesh);
+                    actual = actual.Substring(0, h);
+                    if (submesh < 0) submesh = -1;
+                }
                 var proj = Editor.Core.Data.ProjectData.Current != null ? Editor.Core.Data.ProjectData.Current.Path : null;
                 var abs = System.IO.Path.IsPathRooted(actual) ? actual : (proj != null ? System.IO.Path.Combine(proj, actual) : actual);
                 var ext = System.IO.Path.GetExtension(actual); if (ext != null) ext = ext.TrimStart('.');
                 byte[] bytes;
                 if (Editor.Core.Services.AssetVfs.IsMounted && Editor.Core.Services.AssetVfs.TryGetBytes(abs, out bytes) && bytes != null)
-                    tris = Editor.DllWrapper.VortexAPI.GetModelTrianglesFromMemory(bytes, ext);
+                    tris = Editor.DllWrapper.VortexAPI.GetModelTrianglesFromMemory(bytes, ext, submesh);
                 else if (System.IO.File.Exists(abs))
                 {
                     // the on-disk cache saves the second Assimp pass per model on every later start (#364 C)
-                    string cacheFile = Editor.Core.Services.Physics.CollisionTriangleCache.FileFor(proj, abs);
+                    string cacheFile = Editor.Core.Services.Physics.CollisionTriangleCache.FileFor(proj, abs, submesh);
                     tris = Editor.Core.Services.Physics.CollisionTriangleCache.TryRead(cacheFile);
                     if (tris == null)
                     {
                         var sw = System.Diagnostics.Stopwatch.StartNew();
-                        tris = Editor.DllWrapper.VortexAPI.GetModelTriangles(abs);
+                        tris = Editor.DllWrapper.VortexAPI.GetModelTriangles(abs, submesh);
                         sw.Stop();
                         if (tris != null) Editor.Core.Services.Physics.CollisionTriangleCache.Write(cacheFile, tris);
                         if (sw.ElapsedMilliseconds > 50)

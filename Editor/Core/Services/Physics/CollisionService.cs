@@ -514,7 +514,12 @@ namespace Editor.Core.Services.Physics
                     if (s.Owner != null && (layerMask & (1 << (s.Owner.Layer & 31))) == 0) continue;
                     float t; V3 n;
                     bool got;
-                    if (s.Kind == Kind.Tris && s.Tris != null) got = RayTris(o, d, s, bestT, out t, out n);
+                    if (s.Kind == Kind.Tris && s.Tris != null)
+                    {
+                        // the ray must enter the mesh's box before any triangle is worth testing (#362)
+                        if (!RayTouchesAabb(o, d, s.Min, s.Max, bestT)) continue;
+                        got = RayTris(o, d, s, bestT, out t, out n);
+                    }
                     else if (s.Kind == Kind.Box) got = RayObb(o, d, s, bestT, out t, out n);
                     else if (s.Kind == Kind.Sphere) got = RaySphere(o, d, s.Center, s.Radius, bestT, out t, out n);
                     else got = RayAabbGeneric(o, d, s.Min, s.Max, bestT, out t, out n);   // capsule: coarse AABB
@@ -613,6 +618,29 @@ namespace Editor.Core.Services.Physics
             t = -b - (float)Math.Sqrt(disc);
             if (t < 0f || t > maxDist) return false;
             n = ((o + d * t) - c).Norm();
+            return true;
+        }
+
+        /// <summary>Slab test: does the segment o + d·[0, maxDist] touch the box at all? True for an origin inside the box
+        /// (RayAabbGeneric wants an entry face and says no for those).</summary>
+        private static bool RayTouchesAabb(V3 o, V3 d, V3 min, V3 max, float maxDist)
+        {
+            float tmin = 0f, tmax = maxDist;
+            float[] ov = { o.X, o.Y, o.Z }, dv = { d.X, d.Y, d.Z }, mn = { min.X, min.Y, min.Z }, mx = { max.X, max.Y, max.Z };
+            for (int i = 0; i < 3; i++)
+            {
+                if (dv[i] > -1e-8f && dv[i] < 1e-8f)
+                {
+                    if (ov[i] < mn[i] || ov[i] > mx[i]) return false;
+                    continue;
+                }
+                float inv = 1f / dv[i];
+                float t1 = (mn[i] - ov[i]) * inv, t2 = (mx[i] - ov[i]) * inv;
+                float lo = t1 < t2 ? t1 : t2, hi = t1 < t2 ? t2 : t1;
+                if (lo > tmin) tmin = lo;
+                if (hi < tmax) tmax = hi;
+                if (tmin > tmax) return false;
+            }
             return true;
         }
 
@@ -1302,8 +1330,9 @@ namespace Editor.Core.Services.Physics
         public static string CacheDir(string projectPath)
             => string.IsNullOrEmpty(projectPath) ? null : Path.Combine(projectPath, ".ve", "cache", "collision");
 
-        /// <summary>The cache file for a model file — null when it cannot be keyed (no project, missing file).</summary>
-        public static string FileFor(string projectPath, string absModelPath)
+        /// <summary>The cache file for a model file (one submesh of it with <paramref name="submesh"/> ≥ 0, #362) — null
+        /// when it cannot be keyed (no project, missing file).</summary>
+        public static string FileFor(string projectPath, string absModelPath, int submesh = -1)
         {
             string dir = CacheDir(projectPath);
             if (dir == null || string.IsNullOrEmpty(absModelPath)) return null;
@@ -1311,7 +1340,7 @@ namespace Editor.Core.Services.Physics
             {
                 var fi = new FileInfo(absModelPath);
                 if (!fi.Exists) return null;
-                string key = absModelPath.ToLowerInvariant() + "|" + fi.LastWriteTimeUtc.Ticks + "|" + fi.Length;
+                string key = absModelPath.ToLowerInvariant() + "|" + fi.LastWriteTimeUtc.Ticks + "|" + fi.Length + (submesh >= 0 ? "|#" + submesh : "");
                 using (var sha = System.Security.Cryptography.SHA1.Create())
                 {
                     var h = sha.ComputeHash(Encoding.UTF8.GetBytes(key));
