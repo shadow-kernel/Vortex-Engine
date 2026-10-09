@@ -66,14 +66,29 @@ float attenuation(float distance_, float range)
 	return atten * atten / (distance_ * distance_ + 0.01);
 }
 
+// Height fog (#328): density is uniform up to fog_height_y and falls off as exp(-k * (y - fog_height_y)) above
+// it, integrated along the camera ray (the camera's own height counts, nothing is clamped to a band).
+float fog_optical_depth(float density, float height_y, float k, vec3 cam, vec3 world_pos)
+{
+	vec3 delta = world_pos - cam;
+	float dist = length(delta);
+	if (k <= 0.0) { float d = density * dist; return -log2(max(exp2(-d * d), 1e-6)); }   // uniform fog, the old exp2 look
+	float ya = cam.y - height_y, yb = world_pos.y - height_y;
+	if (ya <= 0.0 && yb <= 0.0) return density * dist;
+	float t0 = 0.0, t1 = 1.0;
+	if (ya <= 0.0) t0 = -ya / (yb - ya);
+	else if (yb <= 0.0) t1 = ya / (ya - yb);
+	float above = (t1 - t0) * dist, below = dist - above;
+	float hya = max(ya, 0.0), hyb = max(yb, 0.0), dyv = hyb - hya;
+	float mean_density = abs(dyv) > 1e-3 ? (exp(-k * hya) - exp(-k * hyb)) / (k * dyv) : exp(-k * hya);
+	return density * (below + above * mean_density);
+}
+
 vec3 apply_fog(vec3 color, vec3 world_pos)
 {
 	if (frame.fog_density <= 0.0) return color;
-	float dist = length(frame.camera_position - world_pos);
-	float d = frame.fog_density * dist;
-	float f = 1.0 - exp2(-d * d);
-	if (frame.fog_height_falloff > 0.0)
-		f *= saturate((frame.fog_height_y - world_pos.y) * frame.fog_height_falloff);
+	float optical = fog_optical_depth(frame.fog_density, frame.fog_height_y, frame.fog_height_falloff, frame.camera_position, world_pos);
+	float f = 1.0 - exp2(-optical);
 	return mix(color, frame.fog_color, saturate(f));
 }
 

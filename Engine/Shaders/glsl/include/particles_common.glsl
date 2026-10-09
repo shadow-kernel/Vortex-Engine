@@ -65,10 +65,28 @@ float p_atten(float dist, float range)
 float fog_amount(vec3 wp)
 {
 	if (f.fog.w <= 0.0) return 0.0;
-	float d = f.fog.w * length(f.eye.xyz - wp);
-	float k = 1.0 - exp2(-d * d);
-	if (f.fog2.y > 0.0) k *= saturate((f.fog2.x - wp.y) * f.fog2.y);
-	return saturate(k);
+	// the standard shader's height fog (#328): uniform up to fog2.x, exp(-fog2.y * height) above, integrated along the ray
+	vec3 cam = f.eye.xyz;
+	float dist = length(wp - cam);
+	float density = f.fog.w, height_y = f.fog2.x, k = f.fog2.y;
+	float optical;
+	if (k <= 0.0) { float d = density * dist; optical = -log2(max(exp2(-d * d), 1e-6)); }
+	else
+	{
+		float ya = cam.y - height_y, yb = wp.y - height_y;
+		if (ya <= 0.0 && yb <= 0.0) optical = density * dist;
+		else
+		{
+			float t0 = 0.0, t1 = 1.0;
+			if (ya <= 0.0) t0 = -ya / (yb - ya);
+			else if (yb <= 0.0) t1 = ya / (ya - yb);
+			float above = (t1 - t0) * dist, below = dist - above;
+			float hya = max(ya, 0.0), hyb = max(yb, 0.0), dyv = hyb - hya;
+			float mean_density = abs(dyv) > 1e-3 ? (exp(-k * hya) - exp(-k * hyb)) / (k * dyv) : exp(-k * hya);
+			optical = density * (below + above * mean_density);
+		}
+	}
+	return saturate(1.0 - exp2(-optical));
 }
 
 #ifdef VORTEX_NEED_PLIGHTS

@@ -1432,24 +1432,56 @@ namespace Vortex
         /// workhorse: line-of-sight checks, interaction rays, "what am I looking at".
         /// <c>if (Physics.Raycast(eye, Forward, 3f, out var h) &amp;&amp; h.Tag == "Door") ...</c></summary>
         public static bool Raycast(Vector3 origin, Vector3 direction, float maxDist, out RaycastHit hit, int layerMask = ~0)
+            => Raycast(origin, direction, maxDist, out hit, layerMask, 0);
+
+        /// <summary>Raycast that passes THROUGH one entity (#341): <paramref name="ignoreEntity"/> — its handle, as
+        /// RaycastHit.EntityId / a behaviour's EntityId — and everything under it never count as the hit. The car's
+        /// ground probe ignores the car, the player's interaction ray ignores the player.
+        /// <c>Physics.Raycast(wheel, Vector3.Down, 1f, out var h, ~0, EntityId)</c></summary>
+        public static bool Raycast(Vector3 origin, Vector3 direction, float maxDist, out RaycastHit hit, int layerMask, long ignoreEntity)
         {
             hit = default(RaycastHit);
             var o = new Editor.ECS.Vector3(origin.X, origin.Y, origin.Z);
             var d = new Editor.ECS.Vector3(direction.X, direction.Y, direction.Z);
-            Editor.ECS.Vector3 point, normal; Editor.ECS.GameEntity entity; float dist;
-            // Jolt casts against the live world (static level, simulated props at their CURRENT pose, triggers
-            // excluded). An explicit entity-layer mask keeps the managed cast (entity layers are not physics layers).
-            bool got = Editor.Core.Services.Physics.PhysicsService.IsBuilt && layerMask == ~0
-                ? Editor.Core.Services.Physics.PhysicsService.Raycast(o, d, maxDist, out point, out normal, out entity, out dist)
-                : Editor.Core.Services.Physics.CollisionService.Raycast(o, d, maxDist, layerMask, out point, out normal, out entity, out dist);
-            if (!got) return false;
-            hit.Point = new Vector3(point.X, point.Y, point.Z);
-            hit.Normal = new Vector3(normal.X, normal.Y, normal.Z);
-            hit.Distance = dist;
-            hit.Name = entity != null ? (entity.Name ?? "") : "";
-            hit.Tag = entity != null ? (entity.Tag ?? "") : "";
-            hit.EntityId = entity != null ? Editor.Scripting.ScriptRuntime.Instance.HandleForEntity(entity) : 0;
-            return true;
+            float dl = (float)Math.Sqrt(d.X * d.X + d.Y * d.Y + d.Z * d.Z);
+            if (dl < 1e-6f || maxDist <= 0f) return false;
+            var unit = new Editor.ECS.Vector3(d.X / dl, d.Y / dl, d.Z / dl);
+            var ignored = ignoreEntity != 0 ? Editor.Scripting.ScriptRuntime.Instance.FindEntityByHandle(ignoreEntity) : null;
+            float travelled = 0f;
+            // the ignored entity is stepped over: the cast resumes just past its hit, a few times at most
+            for (int attempt = 0; attempt < 4; attempt++)
+            {
+                Editor.ECS.Vector3 point, normal; Editor.ECS.GameEntity entity; float dist;
+                float remaining = maxDist - travelled;
+                if (remaining <= 0f) return false;
+                // Jolt casts against the live world (static level, simulated props at their CURRENT pose, triggers
+                // excluded). An explicit entity-layer mask keeps the managed cast (entity layers are not physics layers).
+                bool got = Editor.Core.Services.Physics.PhysicsService.IsBuilt && layerMask == ~0
+                    ? Editor.Core.Services.Physics.PhysicsService.Raycast(o, unit, remaining, out point, out normal, out entity, out dist)
+                    : Editor.Core.Services.Physics.CollisionService.Raycast(o, unit, remaining, layerMask, out point, out normal, out entity, out dist);
+                if (!got) return false;
+                if (ignored != null && entity != null && IsSelfOrUnder(entity, ignored))
+                {
+                    const float step = 0.01f;
+                    travelled += dist + step;
+                    o = new Editor.ECS.Vector3(point.X + unit.X * step, point.Y + unit.Y * step, point.Z + unit.Z * step);
+                    continue;
+                }
+                hit.Point = new Vector3(point.X, point.Y, point.Z);
+                hit.Normal = new Vector3(normal.X, normal.Y, normal.Z);
+                hit.Distance = travelled + dist;
+                hit.Name = entity != null ? (entity.Name ?? "") : "";
+                hit.Tag = entity != null ? (entity.Tag ?? "") : "";
+                hit.EntityId = entity != null ? Editor.Scripting.ScriptRuntime.Instance.HandleForEntity(entity) : 0;
+                return true;
+            }
+            return false;
+        }
+
+        private static bool IsSelfOrUnder(Editor.ECS.GameEntity e, Editor.ECS.GameEntity root)
+        {
+            for (var p = e; p != null; p = p.Parent) if (ReferenceEquals(p, root)) return true;
+            return false;
         }
 
         /// <summary>Raycast without hit details — "is something within maxDist in that direction?".</summary>
@@ -2043,8 +2075,12 @@ namespace Vortex
     /// in Start(). <c>Atmosphere.SetFog(density: 0.14f, heightY: 1.2f, heightFalloff: 0.6f, r: 0.016f, g: 0.02f, b: 0.027f);</c></summary>
     public static class Atmosphere
     {
-        /// <summary>Enable fog: <paramref name="density"/> &gt; 0 (try 0.05–0.2); heightFalloff &gt; 0 makes it
-        /// ground mist below heightY (0 = uniform distance fog). Colors are linear 0..1 (keep them DARK for horror).</summary>
+        /// <summary>Enable fog: <paramref name="density"/> &gt; 0 (try 0.05–0.2 for a cellar, 0.005–0.02 outdoors).
+        /// With <paramref name="heightFalloff"/> = 0 it is uniform distance fog. With heightFalloff &gt; 0 it is HEIGHT
+        /// fog (#328): the fog is uniform up to <paramref name="heightY"/> and thins out above it as
+        /// exp(-heightFalloff · (y − heightY)) — 0.06 halves it every ~12 m, 0.3 every ~2 m — integrated along the view
+        /// ray, so a camera high above the layer sees only the fog the ray actually crosses and a camera inside it sees
+        /// the full density. The sky is never fogged. Colors are linear 0..1 (keep them DARK for horror).</summary>
         public static void SetFog(float density, float heightY = 0f, float heightFalloff = 0f,
                                   float r = 0.02f, float g = 0.025f, float b = 0.035f)
             { Editor.DllWrapper.VortexAPI.SetFog(r, g, b, density, heightY, heightFalloff); }

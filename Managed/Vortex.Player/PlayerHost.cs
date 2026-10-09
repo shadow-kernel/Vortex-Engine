@@ -31,6 +31,7 @@ namespace Vortex.Player
         private static DateTime _hotReloadAt;
         private static readonly char[] _vuiCharBuf = new char[64];
         private static readonly int[] _vuiKeyBuf = new int[64];
+        private static int _keyCount;   // key-down events drained this tick (the latch and the UI share them)
         private static PlayerOptions _options;
         private static double _runSeconds;
         private static bool _captured;
@@ -297,6 +298,11 @@ namespace Vortex.Player
 
                 Vortex.Input.ScrollDelta = (playing && !VuiStack.Instance.HasActiveScreens) ? VortexAPI.GameHostMouseWheel() : 0f;
 
+                // every key that went down since the last tick, before the scripts run (#337): a tap shorter than a
+                // frame is still seen by Input.GetKey / GetKeyDown for this tick; the UI reads the same events below
+                _keyCount = 0;
+                for (int k; _keyCount < _vuiKeyBuf.Length && (k = VortexAPI.GameHostNextKeyPressed()) > 0;) { _vuiKeyBuf[_keyCount++] = k; HostInput.NotifyKeyDown(k); }
+
                 sr.SetUIFrame(cw, ch, mx, my, down, pressed);
                 VortexAPI.UIBegin(cw, ch);
 
@@ -354,8 +360,7 @@ namespace Vortex.Player
         {
             int wheel = VortexAPI.GameHostMouseWheel();
             int cc = 0; for (int c; cc < _vuiCharBuf.Length && (c = VortexAPI.GameHostNextChar()) >= 0;) _vuiCharBuf[cc++] = (char)c;
-            int kc = 0; for (int k; kc < _vuiKeyBuf.Length && (k = VortexAPI.GameHostNextKeyPressed()) > 0;) _vuiKeyBuf[kc++] = k;
-            return new VuiInput { Mx = mx, My = my, Down = down, Pressed = pressed, Wheel = wheel, Chars = _vuiCharBuf, CharCount = cc, KeyEvents = _vuiKeyBuf, KeyCount = kc };
+            return new VuiInput { Mx = mx, My = my, Down = down, Pressed = pressed, Wheel = wheel, Chars = _vuiCharBuf, CharCount = cc, KeyEvents = _vuiKeyBuf, KeyCount = _keyCount };
         }
 
         private static void DrawHotReloadOverlay(int cw, int ch)
