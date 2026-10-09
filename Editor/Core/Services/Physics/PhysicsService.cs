@@ -1317,7 +1317,7 @@ namespace Editor.Core.Services.Physics
                     b.LastPos = pos; b.LastRot = rot;
                     if (!b.Secondary && !b.IsTrigger)
                     {
-                        try { CollisionService.RemoveEntityShapes(b.Entity); CollisionService.AddEntityShapes(b.Entity); } catch { }   // whole subtree: children moved too
+                        try { CollisionService.UpdateEntityShapes(b.Entity); } catch { }   // whole subtree, in place (#362): children moved too
                     }
                 }
             }

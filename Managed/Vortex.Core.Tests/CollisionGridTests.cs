@@ -122,6 +122,74 @@ namespace VortexTests
             t.True(CollisionService.DebugLastTriTests < total / 10, "an angled ray only walks cells along it (" + CollisionService.DebugLastTriTests + " of " + total + ")");
         }
 
+        /// <summary>#362 part two: a MeshCollider under a kinematic Rigidbody keeps its local triangles and a local
+        /// grid; after a move the in-place re-transform must answer rays exactly like a shape rebuilt in world space,
+        /// and through the grid (not the brute-force loop).</summary>
+        [Test]
+        public static void MovableMeshMatchesWorldSpaceBuild(TestContext t)
+        {
+            var local = Terrain(60, 40f, 1f);   // ~7k triangles, grid-sized
+            int total = local.Length / 9;
+            var rng = new Random(5);
+            int hits = 0;
+            for (int k = 0; k < 60; k++)
+            {
+                var origin = new Vector3(rng.Next(-50, 50), rng.Next(-5, 5), rng.Next(-50, 50));
+                float yaw = (float)(rng.NextDouble() * 360.0);
+                // a point above the mesh's footprint: a local (x, z) rotated by the yaw and moved to the origin
+                float lx = (float)rng.NextDouble() * 36f + 2f, lz = (float)rng.NextDouble() * 36f + 2f;
+                double r = yaw * Math.PI / 180.0; float c = (float)Math.Cos(r), sn = (float)Math.Sin(r);
+                var o = new Vector3(origin.X + lx * c + lz * sn, origin.Y + 30f, origin.Z - lx * sn + lz * c);
+                var d = Norm(new Vector3((float)(rng.NextDouble() - 0.5) * 0.3f, -1f, (float)(rng.NextDouble() - 0.5) * 0.3f));
+                bool hm = CollisionService.TestMovableRaycast(local, origin, yaw, o, d, 100f, out float tm, out bool hs, out float ts);
+                t.Equal(hs, hm, "movable and world-space shapes agree on whether the ray hits");
+                if (hm && hs) { hits++; t.True(Math.Abs(tm - ts) < 2e-3f, "hit distance matches (" + tm + " vs " + ts + ")"); }
+            }
+            t.True(hits > 30, "most rays hit the moved mesh (" + hits + ")");
+            t.True(CollisionService.DebugLastTriTests < total / 10, "the movable shape's local grid is used (" + CollisionService.DebugLastTriTests + " of " + total + ")");
+        }
+
+        /// <summary>#362 part two, end to end: a kinematic mover with a MeshCollider (and a box child) is moved and
+        /// turned, UpdateEntityShapes re-places its shapes in place, and the collision world answers for the new
+        /// pose only — without rebuilding the subtree.</summary>
+        [Test]
+        public static void KinematicMoverUpdatesInPlace(TestContext t)
+        {
+            var scene = new Editor.Core.Data.Scene { Name = "Movers" };
+            var car = new GameEntity(scene, "Car");
+            car.Transform.LocalPosition = new Vector3(0, 0, 0);
+            car.AddComponentDirect(new Editor.ECS.Components.Rendering.MeshRenderer(car) { MeshPath = "Assets/car.glb" });
+            car.AddComponentDirect(new Editor.ECS.Components.Physics.Rigidbody(car) { BodyType = Editor.ECS.Components.Physics.RigidbodyType.Kinematic });
+            car.AddComponentDirect(new Editor.ECS.Components.Physics.MeshCollider(car));
+            var roof = new GameEntity(scene, "Roof");
+            roof.Transform.LocalPosition = new Vector3(0, 2f, 4f);   // a box 4 m ahead of the car's origin, 2 m up
+            roof.AddComponentDirect(new Editor.ECS.Components.Physics.BoxCollider(roof));
+            car.AddChild(roof);
+            scene.Entities.Add(car);
+            // the car's "mesh": a flat 4 x 4 m slab around its origin at y = 1 (grid-sized so the local grid is used)
+            var slab = Terrain(40, 4f, 0f);
+            for (int i = 0; i < slab.Length; i += 3) { slab[i] -= 2f; slab[i + 1] += 1f; slab[i + 2] -= 2f; }
+            var oldProvider = CollisionService.MeshTriangleProvider;
+            CollisionService.MeshTriangleProvider = _ => slab;
+            try
+            {
+                CollisionService.Build(scene);
+                t.True(CollisionService.RaycastDown(new Vector3(1f, 5f, 1f), 10f, out var hit0, out _) && Math.Abs(hit0.Y - 1f) < 1e-3f, "the slab is hit at its first pose");
+                t.True(CollisionService.RaycastDown(new Vector3(0f, 5f, 4f), 10f, out var r0, out _) && Math.Abs(r0.Y - 2.5f) < 1e-3f, "the roof box is hit at its first pose (y = " + r0.Y + ")");
+
+                // drive 20 m in X and turn 90° (the roof is now 4 m in +X of the car)
+                car.Transform.LocalPosition = new Vector3(20f, 0, 0);
+                car.Transform.LocalRotation = new Vector3(0, 90f, 0);
+                CollisionService.UpdateEntityShapes(car);
+                t.False(CollisionService.RaycastDown(new Vector3(1f, 5f, 1f), 10f, out _, out _), "nothing is left at the old pose");
+                t.True(CollisionService.RaycastDown(new Vector3(21f, 5f, 1f), 10f, out var hit1, out _) && Math.Abs(hit1.Y - 1f) < 1e-3f, "the slab is hit at the new pose");
+                t.True(CollisionService.DebugLastTriTests < slab.Length / 9 / 10, "the moved slab still answers through its grid (" + CollisionService.DebugLastTriTests + ")");
+                t.True(CollisionService.RaycastDown(new Vector3(24f, 5f, 0f), 10f, out var r1, out _) && Math.Abs(r1.Y - 2.5f) < 1e-3f, "the roof box turned with the car (y = " + r1.Y + ")");
+                t.False(CollisionService.RaycastDown(new Vector3(20f, 5f, 4f), 10f, out _, out _), "the roof box is no longer where it was relative to the world");
+            }
+            finally { CollisionService.Clear(); CollisionService.MeshTriangleProvider = oldProvider; }
+        }
+
         private static float Dist(Vector3 a, Vector3 b)
         {
             float dx = a.X - b.X, dy = a.Y - b.Y, dz = a.Z - b.Z;
