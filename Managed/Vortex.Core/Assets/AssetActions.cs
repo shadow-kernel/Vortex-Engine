@@ -146,7 +146,11 @@ namespace Editor.Core.Assets
         /// .vmat per submesh (materials/submesh_N.vmat) so placement binds real materials. Returns the imported
         /// model's absolute path.
         /// </summary>
-        public static string ImportModel(string sourcePath, string targetFolderRelative = "Models")
+        public static string ImportModel(string sourcePath, string targetFolderRelative = "Models") => ImportModel(sourcePath, targetFolderRelative, true);
+
+        /// <summary>leftHanded (#352): write the model's .vimport sidecar so the importer converts the right-handed
+        /// source into the engine's left-handed space — on by default for new imports; existing models keep theirs.</summary>
+        public static string ImportModel(string sourcePath, string targetFolderRelative, bool leftHanded)
         {
             var root = ProjectRoot; if (string.IsNullOrEmpty(root)) throw new InvalidOperationException("Open a project first.");
             if (!File.Exists(sourcePath)) throw new FileNotFoundException(sourcePath);
@@ -155,6 +159,7 @@ namespace Editor.Core.Assets
             Directory.CreateDirectory(destDir);
             string dest = Path.Combine(destDir, Path.GetFileName(sourcePath));
             File.Copy(sourcePath, dest, true);
+            if (leftHanded) ModelImportSettings.SaveLeftHanded(dest, true);   // read by the native import below (#352)
             // Sidecar textures (and .mtl / .bin companions) from the source folder.
             string srcDir = Path.GetDirectoryName(sourcePath);
             foreach (var f in Directory.GetFiles(srcDir))

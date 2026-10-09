@@ -1659,7 +1659,7 @@ namespace Editor.Core.Services
                         // nothing (no bone weights in .vmesh) and keeps going through Assimp
                         writeDir = cacheDir;
                         submeshes = fromVfs
-                            ? VortexAPI.ImportModelFromBytes(vfsBytes, extension.TrimStart('.'), virtualDir)
+                            ? VortexAPI.ImportModelFromBytes(vfsBytes, extension.TrimStart('.'), virtualDir, ModelImportSettings.LoadLeftHanded(fullPath))
                             : VortexAPI.ImportModelWithMaterialsFromFile(fullPath, writeDir, out cachedWritten);
                         swImport.Stop();
                         // make the load cost visible: this runs on every start for a model that could not be cached (#364 C)
@@ -1752,7 +1752,7 @@ namespace Editor.Core.Services
                     var fi = new System.IO.FileInfo(absModelPath);
                     if (!fi.Exists) return null;
                     // "|v2": glTF node transforms are baked since #338 — caches written before are ignored
-                    string key = absModelPath.ToLowerInvariant() + "|" + fi.LastWriteTimeUtc.Ticks + "|" + fi.Length + "|v2";
+                    string key = absModelPath.ToLowerInvariant() + "|" + fi.LastWriteTimeUtc.Ticks + "|" + fi.Length + "|v2|" + ModelImportSettings.SidecarSignature(absModelPath);
                     using (var sha = System.Security.Cryptography.SHA1.Create())
                     {
                         var h = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(key));

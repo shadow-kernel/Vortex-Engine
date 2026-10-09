@@ -163,10 +163,60 @@ namespace Editor.Core.Services
                 var p = SidecarPath(modelPath);
                 if (p == null) return;
                 if (scale <= 0.0001f) scale = 1.0f;
-                System.IO.File.WriteAllText(p,
-                    "{\n  \"defaultScale\": " + scale.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture) + "\n}\n");
+                Write(p, scale, LoadLeftHanded(modelPath));
             }
             catch { }
+        }
+
+        /// <summary>"leftHanded" in the sidecar (#352): the importer converts the model from its right-handed source
+        /// space (glTF, FBX) into the engine's left-handed one, so text and asymmetric props stop looking mirrored.
+        /// Read from the asset pak in a shipped game, from disk in the editor. The native importer reads the file
+        /// itself; this is for the in-memory paths and the cache keys.</summary>
+        public static bool LoadLeftHanded(string modelPath)
+        {
+            try
+            {
+                var p = SidecarPath(modelPath);
+                if (p == null) return false;
+                string txt = null;
+                byte[] vfs;
+                if (AssetVfs.IsMounted && AssetVfs.TryGetBytes(p, out vfs) && vfs != null) txt = System.Text.Encoding.UTF8.GetString(vfs);
+                else if (System.IO.File.Exists(p)) txt = System.IO.File.ReadAllText(p);
+                return txt != null && System.Text.RegularExpressions.Regex.IsMatch(txt, "\"leftHanded\"\\s*:\\s*true");
+            }
+            catch { return false; }
+        }
+
+        public static void SaveLeftHanded(string modelPath, bool leftHanded)
+        {
+            try
+            {
+                var p = SidecarPath(modelPath);
+                if (p == null) return;
+                Write(p, LoadDefaultScale(modelPath), leftHanded);
+            }
+            catch { }
+        }
+
+        /// <summary>The sidecar's mtime + size for cache keys ("" without one): any change — scale, handedness — is a
+        /// new cache entry for the model's meshes and collision triangles.</summary>
+        public static string SidecarSignature(string modelPath)
+        {
+            try
+            {
+                var p = SidecarPath(modelPath);
+                if (p == null || !System.IO.File.Exists(p)) return "";
+                var fi = new System.IO.FileInfo(p);
+                return fi.LastWriteTimeUtc.Ticks + ":" + fi.Length;
+            }
+            catch { return ""; }
+        }
+
+        private static void Write(string sidecarPath, float scale, bool leftHanded)
+        {
+            System.IO.File.WriteAllText(sidecarPath,
+                "{\n  \"defaultScale\": " + scale.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture) +
+                ",\n  \"leftHanded\": " + (leftHanded ? "true" : "false") + "\n}\n");
         }
 
         /// <summary>The .vimport sidecar next to the model. Normalises relative paths against the project root and

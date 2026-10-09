@@ -291,7 +291,7 @@ namespace vortex::graphics
 		/// materials from the records — no Assimp. Not successful when the cache is missing, incomplete or stale.</summary>
 		MultiMaterialImportResult import_model_from_cache(const std::string& cache_dir);
 		MultiMaterialImportResult import_model_with_materials_from_memory(const u8* data, u64 length,
-			const std::string& ext_hint, const std::string& virtual_dir);
+			const std::string& ext_hint, const std::string& virtual_dir, bool left_handed = false);
 
 		// Default resources
 		id::id_type default_cube_mesh() const { return m_default_cube; }

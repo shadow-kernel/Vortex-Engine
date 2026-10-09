@@ -120,8 +120,9 @@ namespace vortex::graphics
 		/// ext_hint is the bare extension ("obj","fbx",...) so Assimp can pick the right importer;
 		/// virtual_dir is the model's virtual folder, used only to build relative texture paths.
 		/// </summary>
+		/// left_handed (#352): the in-memory twin of the "<model>.vimport" sidecar the file import reads itself.
 		static ImportedModelData import_from_memory(const u8* data, u64 length,
-			const std::string& ext_hint, const std::string& virtual_dir);
+			const std::string& ext_hint, const std::string& virtual_dir, bool left_handed = false);
 
 		/// <summary>
 		/// Check if a file format is supported.

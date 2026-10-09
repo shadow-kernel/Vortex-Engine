@@ -57,6 +57,7 @@ namespace VortexEditor.Shell
         private readonly CheckBox _meta = new CheckBox { Content = "Generate metadata files (.vmeta)", IsChecked = true };
         private readonly CheckBox _related = new CheckBox { Content = "Auto-detect related textures (bring them along)", IsChecked = true };
         private readonly CheckBox _clips = new CheckBox { Content = "Extract animation clips (.vanim)", IsChecked = true };
+        private readonly CheckBox _leftHanded = new CheckBox { Content = "Convert to the engine's left-handed space (glTF / FBX import mirrored otherwise)", IsChecked = true };
         private readonly CheckBox _overwrite = new CheckBox { Content = "Overwrite existing files (off: keep both)", IsChecked = true };
         private readonly StackPanel _fileRows = new StackPanel { Spacing = 2 };
         private readonly TextBlock _subtitle = new TextBlock { FontSize = 12 };
@@ -171,8 +172,8 @@ namespace VortexEditor.Shell
             opts.Children.Add(new TextBlock { Text = "Import Options", FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 0, 0, 6) });
             opts.Children.Add(_copy); opts.Children.Add(_meta);
             bool anyModel = _files.Any(ModelImportPipeline.IsModel);
-            _related.IsVisible = anyModel; _clips.IsVisible = anyModel;
-            opts.Children.Add(_related); opts.Children.Add(_clips); opts.Children.Add(_overwrite);
+            _related.IsVisible = anyModel; _clips.IsVisible = anyModel; _leftHanded.IsVisible = anyModel;
+            opts.Children.Add(_related); opts.Children.Add(_clips); opts.Children.Add(_leftHanded); opts.Children.Add(_overwrite);
             ToolTip.SetTip(_copy, "Off: register files that already live inside the project where they are");
             ToolTip.SetTip(_related, "Copy the textures next to the source model (and its textures/ folder) into the model's folder");
             stack.Children.Add(new Border { Classes = { "card" }, Padding = new Thickness(14), Margin = new Thickness(0, 14, 0, 0), Child = opts });
@@ -392,6 +393,7 @@ namespace VortexEditor.Shell
                 GenerateMeta = _meta.IsChecked == true,
                 CopyRelatedTextures = _related.IsChecked == true,
                 ExtractAnimations = _clips.IsChecked == true,
+                ConvertToLeftHanded = _leftHanded.IsChecked == true,
                 Overwrite = _overwrite.IsChecked == true
             };
             o.Tags.AddRange(_tags);
@@ -584,6 +586,7 @@ namespace VortexEditor.Shell
                 case "meta": _meta.IsChecked = on; break;
                 case "related": _related.IsChecked = on; break;
                 case "clips": _clips.IsChecked = on; break;
+                case "lefthanded": _leftHanded.IsChecked = on; break;
                 case "overwrite": _overwrite.IsChecked = on; break;
             }
         }
