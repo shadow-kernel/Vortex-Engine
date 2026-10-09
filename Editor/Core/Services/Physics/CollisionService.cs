@@ -297,6 +297,13 @@ namespace Editor.Core.Services.Physics
         private struct CharCap { public V3 Feet; public float R, H; }
         private static readonly Dictionary<long, CharCap> _chars = new Dictionary<long, CharCap>();
         public static void RemoveCharacter(long id) { _chars.Remove(id); }
+        /// <summary>#187: record a character's capsule (feet, radius, total height) that something else resolved —
+        /// the Jolt character route — so trigger volumes and the managed characters of other scripts still see it.</summary>
+        public static void RegisterCharacter(long id, Vector3 feet, float radius, float height)
+        {
+            if (id == 0) return;
+            _chars[id] = new CharCap { Feet = From(feet), R = Math.Max(0.05f, radius), H = height };
+        }
         public static void ClearCharacters() { _chars.Clear(); }
 
         /// <summary>Optional hook that returns an imported model's local-space triangles (flat float[] x,y,z…) for a
