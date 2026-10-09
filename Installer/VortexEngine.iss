@@ -4,7 +4,7 @@
 ; This script creates a professional installation wizard for Vortex Engine
 
 #define MyAppName "Vortex Engine"
-#define MyAppVersion "3.0.6"
+#define MyAppVersion "3.1.0"
 #define MyAppPublisher "Vortex Engine Team"
 #define MyAppURL "https://github.com/shadow-kernel/Vortex-Engine"
 ; The editor is the cross-platform one (the same UI as on macOS and Linux) since v3.0 — self-contained .NET 10, nothing to
