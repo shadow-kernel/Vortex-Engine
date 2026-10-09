@@ -179,6 +179,8 @@ namespace VortexEditor.Panels.Inspector
             rows.Add(Row("Default clip", defaultBox, "Played on start (by name from the table, or a .vanim path)"));
             rows.Add(Row("Play on start", Bool(() => an.PlayOnStart, v => an.PlayOnStart = v)));
             rows.Add(Row("Speed", SliderRow(() => an.Speed, v => an.Speed = v, 0, 3, "0.##", 0f, 10f), "Playback rate multiplier (1 = authored speed)"));
+            rows.Add(Row("Apply root motion", Bool(() => an.ApplyRootMotion, v => an.ApplyRootMotion = v), "The root bone's travel in the clip moves the entity through character collision (#113); the pose stays in place. In-place clips move nothing; a Nav Agent then follows the entity and keeps steering."));
+            rows.Add(Row("Root bone", Text(() => an.RootMotionBone, v => an.RootMotionBone = v), "Bone carrying the travel (empty = hips / pelvis, else the first skinned node under the model root)"));
 
             var open = new Button { Content = "Open Keyframe Editor…", Classes = { "ghost" } };
             open.Click += async (s, e) =>
