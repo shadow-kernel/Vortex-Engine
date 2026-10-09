@@ -56,6 +56,7 @@
     <ClInclude Include="Runtime\AssetDatabase.h" />
     <ClInclude Include="Runtime\AssetManifest.h" />
     <ClInclude Include="Common\VortexAssert.h" />
+    <ClInclude Include="Graphics\DX12\DX12Particles.h" />
     <ClInclude Include="Graphics\DX12\DX12SkyboxPipeline.h" />
     <ClInclude Include="Components\Skybox.h" />
     <ClInclude Include="Graphics\DX12\DX12MotionVectorPipeline.h" />
@@ -118,6 +119,7 @@
     <ClCompile Include="Graphics\Importers\ModelImporter.cpp" />
     <ClCompile Include="Graphics\Resources\ResourceRegistry.cpp" />
     <ClCompile Include="Graphics\DX12\DX12Pipeline3D.cpp" />
+    <ClCompile Include="Graphics\DX12\DX12Particles.cpp" />
     <ClCompile Include="Graphics\DX12\DX12SkyboxPipeline.cpp" />
     <ClCompile Include="Components\Skybox.cpp" />
     <ClCompile Include="Graphics\DX12\DX12GridPipeline.cpp" />

@@ -70,6 +70,7 @@ set(VORTEX_ENGINE_DX12_SOURCES
 	Graphics/DX12/DX12MotionVectorPipeline.cpp
 	Graphics/DX12/DX12Pipeline.cpp
 	Graphics/DX12/DX12Pipeline3D.cpp
+	Graphics/DX12/DX12Particles.cpp
 	Graphics/DX12/DX12PostFxChain.cpp
 	Graphics/DX12/DX12Renderer.cpp
 	Graphics/DX12/DX12Renderer_3DScene.cpp

@@ -58,44 +58,37 @@ namespace vortex::graphics::dx12
 		auto rtv = m_active_rtv;
 		auto dsv = m_active_dsv;
 		m_command_list->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
-
 	auto* pso = m_wireframe_mode ? m_pipeline_3d.wireframe_pso() : m_pipeline_3d.pipeline_state();
 	auto* double_sided_pso = m_pipeline_3d.double_sided_pso();
 	m_command_list->SetPipelineState(pso);
-		m_command_list->SetGraphicsRootSignature(m_pipeline_3d.root_signature());
-		m_command_list->SetGraphicsRootConstantBufferView(0, m_per_frame_cb->GetGPUVirtualAddress());
-		
-		// Bind light buffer at root parameter 2
-		m_command_list->SetGraphicsRootConstantBufferView(2, m_light_cb->GetGPUVirtualAddress());
+		bind_scene_pass(m_per_frame_cb->GetGPUVirtualAddress());
 
-		// Set descriptor heap for texture sampling (from ResourceRegistry)
-		auto* srv_heap = ResourceRegistry::instance().srv_heap();
-		if (srv_heap)
+		// Particles (#117): gather + upload the scene world for this view; each layer draws right after its meshes —
+		// world particles against the world depth, viewmodel particles against the viewmodel's own (cleared) depth.
+		const float fx_aspect = m_active_height ? (float)m_active_width / (float)m_active_height : 1.0f;
+		const DX12Particles::View pview = particle_view(m_frame_constants.view_projection, m_viewmodel_view_projection,
+			m_camera_position, m_camera_target, m_camera_up, m_fov_degrees, fx_aspect, m_near_clip, m_far_clip, false, 0.0f);
+		const bool fx = m_particles.prepare(pview, 0);
+		const bool fx0 = fx && m_particles.has_layer(0);
+		const bool fx1 = fx && m_particles.has_layer(1);
+		const DX12Particles::Environment penv = fx ? particle_environment(m_frame_constants) : DX12Particles::Environment{};
+		const D3D12_GPU_VIRTUAL_ADDRESS fx_lights = m_light_cb ? m_light_cb->GetGPUVirtualAddress() : 0;
+		auto fx_layer = [&](u32 layer)
 		{
-			ID3D12DescriptorHeap* heaps[] = { srv_heap };
-			m_command_list->SetDescriptorHeaps(1, heaps);
-		}
-
-		// Shadow map at t7 (root param 10): standard.hlsl references it, so it must be bound whenever the
-		// standard PS runs — the descriptor lives in the registry heap bound above. Strength 0 in the
-		// per-frame CB makes it a no-op when no shadow light exists (map is cleared-to-1 anyway).
-		if (m_shadow_srv_gpu.ptr != 0)
-			m_command_list->SetGraphicsRootDescriptorTable(10, m_shadow_srv_gpu);
-		// CSM atlas at t8 (root param 11, #24) — same always-bound rule.
-		if (m_csm_srv_gpu.ptr != 0)
-			m_command_list->SetGraphicsRootDescriptorTable(11, m_csm_srv_gpu);
-		// Point face atlas at t9 (root param 12, #25).
-		if (m_point_srv_gpu.ptr != 0)
-			m_command_list->SetGraphicsRootDescriptorTable(12, m_point_srv_gpu);
-		// SSAO texture at t10 (root param 13, #32) — the current view's blurred AO.
-		if (m_ssao_current_srv.ptr != 0)
-			m_command_list->SetGraphicsRootDescriptorTable(13, m_ssao_current_srv);
+			m_particles.draw_layer(m_command_list.Get(), rtv, dsv, m_active_depth, m_active_width, m_active_height, layer, pview, penv, fx_lights);
+		};
+		// the collision snapshot of the world depth (the main view only; a no-op unless an emitter collides)
+		auto fx_capture = [&]() { m_particles.capture_depth(m_command_list.Get(), m_active_depth, m_active_width, m_active_height, pview, rtv, dsv); };
+		auto fx_only = [&]()
+		{
+			if (fx0) fx_layer(0);
+			fx_capture();
+			if (fx1) { m_command_list->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr); fx_layer(1); }
+		};
 
 		auto& reg = ResourceRegistry::instance();
-		
-		// Limit to MAX_RENDER_OBJECTS to prevent buffer overflow
 		size_t objectCount = (std::min)(m_render_queue.size(), static_cast<size_t>(MAX_RENDER_OBJECTS));
-		if (objectCount == 0) return;
+		if (objectCount == 0) { fx_only(); return; }
 
 		if (m_worker_count == 0)
 		{
@@ -154,7 +147,7 @@ namespace vortex::graphics::dx12
 			for (size_t k = 0; k < N; ++k) if (vis[k]) { if (w != k) m_render_queue[w] = m_render_queue[k]; ++w; }
 			m_render_queue.resize(w);
 			objectCount = (std::min)(m_render_queue.size(), static_cast<size_t>(MAX_RENDER_OBJECTS));
-			if (objectCount == 0) return;
+			if (objectCount == 0) { fx_only(); return; }
 		}
 
 		// Rebuild the sorted (material,mesh) layout + run table ONLY when the submit queue changed (or the pre-cull
@@ -654,18 +647,23 @@ namespace vortex::graphics::dx12
 		for (size_t r = 0; r < runN; ++r) if (m_draw_runs[r].layer != 0) { vmStart = r; break; }
 
 		record_pass(0, vmStart);
-
-		if (vmStart < runN)
+		// World-layer particles after the opaque + transparent meshes, then the collision snapshot of the world depth
+		// (before the viewmodel pass clears it).
+		if (fx0) fx_layer(0);
+		fx_capture();
+		if (vmStart < runN || fx1)
 		{
 			// Viewmodel pass (#175): clear depth so the first-person weapon/arms NEVER clip world
 			// geometry, swap b0 to the viewmodel projection (own FOV, identical lighting fields —
 			// lighting is world-space, so only the projection changes), draw the tail runs, then
 			// restore b0 for everything recorded after (wire gizmos, preview restores, later passes).
+			// Viewmodel particles (a muzzle flash on the weapon, #117) need that cleared depth too, even
+			// without viewmodel meshes.
 			m_command_list->ClearDepthStencilView(m_active_dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
-			if (m_viewmodel_cb)
-				m_command_list->SetGraphicsRootConstantBufferView(0, m_viewmodel_cb->GetGPUVirtualAddress());
+			bind_scene_pass(m_viewmodel_cb ? m_viewmodel_cb->GetGPUVirtualAddress() : m_per_frame_cb->GetGPUVirtualAddress());   // the particle pass left its own roots
 			record_pass(vmStart, runN);
-			m_command_list->SetGraphicsRootConstantBufferView(0, m_per_frame_cb->GetGPUVirtualAddress());
+			if (fx1) { fx_layer(1); bind_scene_pass(m_per_frame_cb->GetGPUVirtualAddress()); }
+			else m_command_list->SetGraphicsRootConstantBufferView(0, m_per_frame_cb->GetGPUVirtualAddress());
 		}
 		}
 
@@ -674,6 +672,55 @@ namespace vortex::graphics::dx12
 	// move/rotate/scale handles + the selection outline render over scene geometry (never occluded). Reuses the TAIL
 	// slots of the per-object CB + instance VB (the editor scene never fills 8192 runs / 262144 instances), so no
 	// extra GPU buffers are needed. One draw per gizmo mesh (few per frame) — no instancing/culling.
+	void DX12Renderer::bind_scene_pass(D3D12_GPU_VIRTUAL_ADDRESS frame_cb)
+	{
+		m_command_list->SetGraphicsRootSignature(m_pipeline_3d.root_signature());
+		m_command_list->SetGraphicsRootConstantBufferView(0, frame_cb);
+		m_command_list->SetGraphicsRootConstantBufferView(2, m_light_cb->GetGPUVirtualAddress());
+		if (auto* srv_heap = ResourceRegistry::instance().srv_heap()) { ID3D12DescriptorHeap* heaps[] = { srv_heap }; m_command_list->SetDescriptorHeaps(1, heaps); }
+		if (m_shadow_srv_gpu.ptr != 0)
+			m_command_list->SetGraphicsRootDescriptorTable(10, m_shadow_srv_gpu);
+		if (m_csm_srv_gpu.ptr != 0)
+			m_command_list->SetGraphicsRootDescriptorTable(11, m_csm_srv_gpu);   // t8 (#24)
+		if (m_point_srv_gpu.ptr != 0)
+			m_command_list->SetGraphicsRootDescriptorTable(12, m_point_srv_gpu); // t9 (#25)
+		if (m_ssao_current_srv.ptr != 0)
+			m_command_list->SetGraphicsRootDescriptorTable(13, m_ssao_current_srv); // t10 (#32)
+	}
+
+	DX12Particles::View DX12Renderer::particle_view(const DirectX::XMFLOAT4X4& view_projection, const DirectX::XMFLOAT4X4& viewmodel_projection,
+		const DirectX::XMFLOAT3& eye, const DirectX::XMFLOAT3& at, const DirectX::XMFLOAT3& up_hint, float fov_degrees, float aspect,
+		float near_clip, float far_clip, bool ortho, float ortho_size) const
+	{
+		using namespace DirectX;
+		DX12Particles::View v{};
+		v.view_projection = view_projection;
+		v.viewmodel_projection = viewmodel_projection;
+		v.eye = eye;
+		// the XMMatrixLookAtLH basis (forward = at - eye, right = up x forward, up = forward x right)
+		XMVECTOR f = XMVector3Normalize(XMVectorSubtract(XMLoadFloat3(&at), XMLoadFloat3(&eye)));
+		XMVECTOR r = XMVector3Normalize(XMVector3Cross(XMLoadFloat3(&up_hint), f));
+		XMVECTOR u = XMVector3Cross(f, r);
+		XMStoreFloat3(&v.forward, f); XMStoreFloat3(&v.right, r); XMStoreFloat3(&v.up, u);
+		v.near_clip = near_clip; v.far_clip = far_clip; v.ortho = ortho;
+		v.vm_near_clip = VIEWMODEL_NEAR; v.vm_far_clip = VIEWMODEL_FAR;
+		if (ortho) { v.tan_half_y = ortho_size * 0.5f; v.tan_half_x = v.tan_half_y * aspect; }
+		else { v.tan_half_y = tanf(XMConvertToRadians(fov_degrees) * 0.5f); v.tan_half_x = v.tan_half_y * aspect; }
+		return v;
+	}
+
+	DX12Particles::Environment DX12Renderer::particle_environment(const PerFrameConstants& f) const
+	{
+		DX12Particles::Environment e{};
+		e.fog_color = f.fog_color; e.fog_density = f.fog_density;
+		e.fog_height_y = f.fog_height_y; e.fog_height_falloff = f.fog_height_falloff;
+		e.sun_direction = f.light_direction; e.sun_intensity = f.directional_intensity;
+		e.sun_color = f.light_color; e.ambient = f.ambient_strength;
+		e.point_lights = (std::min)(f.point_light_count, (u32)MAX_POINT_LIGHTS);
+		e.spot_lights = (std::min)(f.spot_light_count, (u32)MAX_SPOT_LIGHTS);
+		return e;
+	}
+
 	void DX12Renderer::render_gizmos()
 	{
 		if (m_gizmo_render.empty() && m_gizmo_wire_render.empty()) return;

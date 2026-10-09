@@ -9,6 +9,7 @@
 #include "DX12Pipeline3D.h"
 #include "DX12GridPipeline.h"
 #include "DX12SkyboxPipeline.h"
+#include "DX12Particles.h"       // the particle / VFX pass (#117)
 #include "DX12UpscalePipeline.h"
 #include "DX12PostFxChain.h"
 #include "DX12MotionVectorPipeline.h"
@@ -338,6 +339,9 @@ namespace vortex::graphics::dx12
 		// Viewmodel FOV (#175): the first-person layer's own projection (world FOV distortion never
 		// touches the arms/weapon). Wider clamp than the world FOV — ADS zooms want < 30.
 		void set_viewmodel_fov(float fov_degrees) { if (fov_degrees >= 10.0f && fov_degrees <= 120.0f) m_viewmodel_fov = fov_degrees; }
+		// Particles (#117): the VFX pass. The scene view draws world 0; ParticleSetNextTargetWorld names the world an
+		// offscreen render draws (one-shot).
+		DX12Particles& particles() { return m_particles; }
 		// Generic render-distance cull (world units; 0 = disabled). Set from the game's graphics settings.
 		void set_render_distance(float d) { m_render_distance = d >= 0.0f ? d : 0.0f; }
 		float render_distance() const { return m_render_distance; }
@@ -505,6 +509,7 @@ namespace vortex::graphics::dx12
 		// same recording path serves both windows.
 		D3D12_CPU_DESCRIPTOR_HANDLE m_active_rtv{};
 		D3D12_CPU_DESCRIPTOR_HANDLE m_active_dsv{};
+		ID3D12Resource* m_active_depth{ nullptr };   // the depth resource behind m_active_dsv (the particle pass copies it)
 		u32 m_active_width{ 0 };
 		u32 m_active_height{ 0 };
 
@@ -532,6 +537,7 @@ namespace vortex::graphics::dx12
 		ID3D12PipelineState* custom_pso(u32 material_id, u32 blend_mode, bool double_sided, bool mirrored, bool skinned = false);
 		DX12GridPipeline m_grid_pipeline;  // Grid rendering pipeline
 		DX12SkyboxPipeline m_skybox_pipeline; // Skybox rendering pipeline
+		DX12Particles m_particles;            // Particle / VFX pass (#117): billboards, ribbons, soft particles, depth collision
 		DX12UpscalePipeline m_upscale;        // Fullscreen upscale (render-scale composite + the DLSS slot)
 		DX12PostFxChain m_postfx;             // Post-processing chain (#28/#29) between composite and UI overlay
 		std::chrono::steady_clock::time_point m_time_origin{ std::chrono::steady_clock::now() };
@@ -540,6 +546,7 @@ namespace vortex::graphics::dx12
 		DX12RenderTarget m_mvec_rt;           // RG16F motion vectors (render res) — DLSS input
 		DX12RenderTarget m_dlss_output;       // Full-res DLSS upscaled output (UAV); blitted to the back buffer
 		DirectX::XMFLOAT4X4 m_prev_view_projection{}; // previous frame VP (motion vectors + DLSS clipToPrevClip)
+		DirectX::XMFLOAT4X4 m_viewmodel_view_projection{}; // view * viewmodel projection (#175); the viewmodel particle layer reads it
 		int m_dlss_mode{ 0 };                 // 0=off, 1..4 quality modes
 		int m_fg_mode{ 0 };                   // DLSS Frame Generation: 0=off, 1=x2, 2=x3, 3=x4
 		DX12DepthBuffer m_depth_buffer;
@@ -646,6 +653,14 @@ namespace vortex::graphics::dx12
 			float shadow_slot;
 		};
 		PerFrameConstants m_frame_constants;
+		// The 3D pass's root signature + per-frame roots (b0 = frame_cb, b2 = lights, the shadow / CSM / point-shadow /
+		// SSAO tables): bound at the start of render_3d_scene and again after a particle pass left its own state.
+		void bind_scene_pass(D3D12_GPU_VIRTUAL_ADDRESS frame_cb);
+		// Particles (#117): what the VFX pass needs to know about a view / the scene look.
+		DX12Particles::View particle_view(const DirectX::XMFLOAT4X4& view_projection, const DirectX::XMFLOAT4X4& viewmodel_projection,
+			const DirectX::XMFLOAT3& eye, const DirectX::XMFLOAT3& at, const DirectX::XMFLOAT3& up, float fov_degrees, float aspect,
+			float near_clip, float far_clip, bool ortho, float ortho_size) const;
+		DX12Particles::Environment particle_environment(const PerFrameConstants& f) const;
 
 		// Per-object constants - matches shader cbuffer PerObject
 		ComPtr<ID3D12Resource> m_per_object_cb;

@@ -2211,11 +2211,7 @@ namespace vortex::particles
 		out.simulate_ms = g_sim_ms;
 		out.gather_ms = g_gather_ms;
 		out.depth_snapshots = g_depth_snapshots;
-#if VORTEX_HAS_SDLGPU
-		out.renderer_draws = 1;
-#else
-		out.renderer_draws = 0;   // DX12: the simulation runs, nothing is drawn yet (README.md)
-#endif
+		out.renderer_draws = 1;   // every backend draws particles: SDL GPU (Metal / Vulkan) and DX12 since #117
 	}
 
 	void note_gather_time(float ms, u32 drawn, u32 batches, u32 ribbon_vertices)

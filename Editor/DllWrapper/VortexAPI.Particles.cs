@@ -13,7 +13,7 @@ namespace Editor.DllWrapper
         /// <summary>CPU milliseconds of the last simulation step / the last render gather.</summary>
         public float SimulateMs, GatherMs;
         public int DepthSnapshots;
-        /// <summary>1 when the active render backend draws particles (SDL GPU / Metal); 0 on DX12 (simulation only).</summary>
+        /// <summary>1 when the active render backend draws particles (SDL GPU / Metal / Vulkan, and DX12 since #117).</summary>
         public int RendererDraws;
         public ulong SpawnedTotal;
     }

@@ -390,6 +390,20 @@ namespace vortex::graphics::dx12
 		// The gizmo PSO is depth-disabled (always-on-top), so the wireframe draws over the mesh, exactly aligned.
 		// Gate on BOTH queues: collider nets are WIRE-only items (SubmitGizmoWireItem), so a solid-queue-only
 		// check silently skipped the pass and the Collision Editor preview never showed its wireframe.
+		// Particles (#117): an offscreen target draws the world ParticleSetNextTargetWorld named for this render (one-shot;
+		// thumbnails and previews stay particle-free unless they ask). World layer only — previews have no viewmodel.
+		{
+			const int fx_world = m_particles.consume_target_world();
+			if (fx_world >= 0 && m_particles.ready())
+			{
+				XMFLOAT4X4 fx_vp; XMStoreFloat4x4(&fx_vp, vp_matrix);
+				const DX12Particles::View pv = particle_view(fx_vp, fx_vp, camera.position, camera.target, camera.up, camera.fov_degrees, aspect,
+					camera.near_clip, camera.far_clip, camera.orthographic, camera.ortho_size);
+				if (m_particles.prepare(pv, (u32)fx_world) && m_particles.has_layer(0))
+					m_particles.draw_layer(m_command_list.Get(), rtv, dsv, target->depth_resource(), target->width(), target->height(), 0, pv,
+						particle_environment(frame_constants), m_light_cb ? m_light_cb->GetGPUVirtualAddress() : 0);
+			}
+		}
 		if (render_gizmos && (!m_gizmo_render.empty() || !m_gizmo_wire_render.empty()))
 		{
 			m_active_rtv = rtv; m_active_dsv = dsv;

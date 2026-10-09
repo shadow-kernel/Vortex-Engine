@@ -64,11 +64,7 @@ EDITOR_INTERFACE void     ParticleSetAutoUpdate(int32_t enabled)    { pfx::set_a
 // offscreen renders — thumbnails and previews stay particle-free unless they ask). The scene view always draws world 0.
 EDITOR_INTERFACE void ParticleSetNextTargetWorld(int32_t world)
 {
-#if VORTEX_HAS_SDLGPU
-	graphics::Renderer::instance().particles().set_next_target_world(world);
-#else
-	(void)world;
-#endif
+	graphics::Renderer::instance().particles().set_next_target_world(world);   // SDL GPU and DX12 (#117)
 }
 
 // Last JSON / creation error (UTF-8, truncated to size). Returns the full length.

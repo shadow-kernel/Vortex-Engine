@@ -59,6 +59,13 @@ namespace vortex::graphics::dx12
 			m_skybox_enabled = false;
 		}
 
+		// Particles (#117): particles.hlsl — billboards, ribbons, soft particles, the collision depth snapshot. Without it the
+		// simulation still runs, nothing is drawn (ParticleStats.renderer_draws stays 1 — the module is wired, the pass failed).
+		if (m_particles.initialize(core.device(), DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_D32_FLOAT))
+			OutputDebugStringA("Particle pipeline OK\n");
+		else
+			OutputDebugStringA("Particle pipeline FAILED\n");
+
 		// Upscale pipeline (render-scale composite). Writes the swapchain format. If it fails, render-scale just
 		// stays disabled (m_render_scale<1 falls back to direct rendering); the rest of the renderer is unaffected.
 		if (m_upscale.initialize(core.device(), DXGI_FORMAT_R8G8B8A8_UNORM))
@@ -196,6 +203,7 @@ namespace vortex::graphics::dx12
 		m_scaled_rt.shutdown();
 		m_geometry.shutdown();
 		m_grid_pipeline.shutdown();
+		m_particles.shutdown();
 		m_skybox_pipeline.shutdown();
 		m_upscale.shutdown();
 		m_postfx.shutdown();
@@ -646,6 +654,11 @@ namespace vortex::graphics::dx12
 		upload_staged_bone_palettes();
 
 		update_per_frame_constants();   // aspect from swapchain dims — a UNIFORM render-scale keeps it matching
+		// Particles (#117): retire last frame's GPU memory, hand finished collision readbacks to the simulation, then let
+		// the frame driver (the managed ParticleService callback, or the automatic world-0 update) step it before anything
+		// is gathered. Same order as the SDL GPU backend.
+		m_particles.begin_frame();
+		::vortex::particles::begin_frame();
 
 		m_command_allocators[idx]->Reset();
 
@@ -693,6 +706,7 @@ namespace vortex::graphics::dx12
 			// ---- 3D into the scaled offscreen RT (skybox + grid + scene read m_active_*) ----
 			m_active_rtv = m_scaled_rt.rtv();
 			m_active_dsv = m_scaled_rt.dsv();
+			m_active_depth = m_scaled_rt.depth_resource();
 			m_active_width = m_scaled_rt.width();
 			m_active_height = m_scaled_rt.height();
 
@@ -712,7 +726,7 @@ namespace vortex::graphics::dx12
 
 			if (m_skybox_enabled) render_skybox();
 			if (m_grid_visible) render_grid();
-			if (!m_render_queue.empty()) render_3d_scene();
+			render_3d_scene();   // meshes + particles (#117: the particle layers draw with an empty mesh queue too)
 			render_gizmos();   // always-on-top editor gizmos, drawn into the scaled RT before mvec/upscale
 
 			// ---- DLSS SR (optional) + Frame Generation (optional): both need the motion-vector pass ----
@@ -829,6 +843,7 @@ namespace vortex::graphics::dx12
 			// ---- direct path: render straight to the back buffer at native res (unchanged) ----
 			m_active_rtv = m_swapchain.current_rtv();
 			m_active_dsv = m_depth_buffer.dsv();
+			m_active_depth = m_depth_buffer.resource();
 			m_active_width = m_swapchain.width();
 			m_active_height = m_swapchain.height();
 
@@ -850,7 +865,7 @@ namespace vortex::graphics::dx12
 
 			if (m_skybox_enabled) render_skybox();
 			if (m_grid_visible) render_grid();
-			if (!m_render_queue.empty()) render_3d_scene();
+			render_3d_scene();   // meshes + particles (#117: the particle layers draw with an empty mesh queue too)
 			render_gizmos();   // always-on-top editor gizmos, drawn last so they're never occluded
 
 			barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
