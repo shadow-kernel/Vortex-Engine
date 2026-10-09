@@ -228,6 +228,23 @@ namespace Editor.DllWrapper
         /// <summary>Submit a skinned mesh for this frame: row-major world float[16] + bone palette
         /// (boneCount row-major 4x4s, each = inverseBind * boneWorld). Re-submit every frame the pose
         /// changes. layer 1 = first-person viewmodel arms (#175).</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SubmitSkinnedMeshForRenderingTinted(long meshId, long materialId,
+            float[] world, float[] bonePalette, int boneCount, int layer, float r, float g, float b, float a);
+
+        private static bool _skinnedTintMissing;
+
+        /// <summary>A skinned mesh with a per-instance tint (#331); an older engine library draws it untinted.</summary>
+        public static void SubmitSkinnedMeshTinted(long meshId, long materialId, float[] world, float[] bonePalette, int boneCount, int layer, float r, float g, float b, float a)
+        {
+            if (!_skinnedTintMissing)
+            {
+                try { SubmitSkinnedMeshForRenderingTinted(meshId, materialId, world, bonePalette, boneCount, layer, r, g, b, a); return; }
+                catch (EntryPointNotFoundException) { _skinnedTintMissing = true; }
+            }
+            SubmitSkinnedMesh(meshId, materialId, world, bonePalette, boneCount, layer);
+        }
+
         public static void SubmitSkinnedMesh(long meshId, long materialId, float[] world, float[] bonePalette, int boneCount, int layer = 0)
         {
             if (world == null || bonePalette == null || boneCount <= 0) return;

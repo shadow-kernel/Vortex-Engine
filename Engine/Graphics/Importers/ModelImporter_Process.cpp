@@ -202,15 +202,20 @@ namespace vortex::graphics
 			VORTEX_VLOG(("ModelImporter: " + std::to_string(data.animations.size()) + " animation clip(s)\n").c_str());
 	}
 
-	void ModelImporter::process_node(void* node_ptr, void* scene_ptr, ImportedModelData& data)
+	void ModelImporter::process_node(void* node_ptr, void* scene_ptr, ImportedModelData& data, const void* parent_transform)
 	{
 		aiNode* node = static_cast<aiNode*>(node_ptr);
 		const aiScene* scene = static_cast<const aiScene*>(scene_ptr);
+		// The node's world transform (#338). Every mesh used to be read in its own node space, so the wheels of a
+		// glTF car — separate objects with their own pivots — all sat at the model origin.
+		const aiMatrix4x4 world = parent_transform
+			? (*static_cast<const aiMatrix4x4*>(parent_transform)) * node->mTransformation
+			: node->mTransformation;
 
 		for (u32 i = 0; i < node->mNumMeshes; i++)
 		{
 			aiMesh* mesh = scene->mMeshes[node->mMeshes[i]];
-			SubMeshData submesh = process_mesh(mesh, (void*)scene, data);
+			SubMeshData submesh = process_mesh(mesh, (void*)scene, data, &world);
 			if (!submesh.vertices.empty())
 			{
 				data.submeshes.push_back(std::move(submesh));
@@ -219,11 +224,11 @@ namespace vortex::graphics
 
 		for (u32 i = 0; i < node->mNumChildren; i++)
 		{
-			process_node(node->mChildren[i], scene_ptr, data);
+			process_node(node->mChildren[i], scene_ptr, data, &world);
 		}
 	}
 
-	SubMeshData ModelImporter::process_mesh(void* mesh_ptr, void* scene_ptr, ImportedModelData& data)
+	SubMeshData ModelImporter::process_mesh(void* mesh_ptr, void* scene_ptr, ImportedModelData& data, const void* world_transform)
 	{
 		aiMesh* mesh = static_cast<aiMesh*>(mesh_ptr);
 		SubMeshData result;
@@ -231,20 +236,39 @@ namespace vortex::graphics
 		result.name = mesh->mName.C_Str();
 		result.material_index = mesh->mMaterialIndex;
 
+		// glTF only (#338): unskinned geometry is baked into the node's world space so the parts keep their placement.
+		// Skinned meshes stay in mesh space (their bind matrices refer to it, the skeleton carries the placement), and
+		// FBX keeps the old reading — its root carries axis/unit conversions that every existing scene already
+		// compensates for.
+		const aiMatrix4x4* world = static_cast<const aiMatrix4x4*>(world_transform);
+		const bool bake = data.gltf && world && !world->IsIdentity() && mesh->mNumBones == 0;
+		aiMatrix3x3 normal_m;
+		bool flip_winding = false;
+		if (bake)
+		{
+			normal_m = aiMatrix3x3(*world);
+			flip_winding = normal_m.Determinant() < 0.0f;   // a mirrored node turns the triangles inside out
+			normal_m.Inverse().Transpose();
+		}
+
 		result.vertices.reserve(mesh->mNumVertices);
 		for (u32 i = 0; i < mesh->mNumVertices; i++)
 		{
 			VertexPosNormalUV vertex;
 
-			vertex.position.x = mesh->mVertices[i].x;
-			vertex.position.y = mesh->mVertices[i].y;
-			vertex.position.z = mesh->mVertices[i].z;
+			aiVector3D p = mesh->mVertices[i];
+			if (bake) p = (*world) * p;
+			vertex.position.x = p.x;
+			vertex.position.y = p.y;
+			vertex.position.z = p.z;
 
 			if (mesh->HasNormals())
 			{
-				vertex.normal.x = mesh->mNormals[i].x;
-				vertex.normal.y = mesh->mNormals[i].y;
-				vertex.normal.z = mesh->mNormals[i].z;
+				aiVector3D nrm = mesh->mNormals[i];
+				if (bake) { nrm = normal_m * nrm; nrm.NormalizeSafe(); }
+				vertex.normal.x = nrm.x;
+				vertex.normal.y = nrm.y;
+				vertex.normal.z = nrm.z;
 			}
 			else
 			{
@@ -267,6 +291,13 @@ namespace vortex::graphics
 		for (u32 i = 0; i < mesh->mNumFaces; i++)
 		{
 			aiFace face = mesh->mFaces[i];
+			if (flip_winding && face.mNumIndices == 3)
+			{
+				result.indices.push_back(face.mIndices[0]);
+				result.indices.push_back(face.mIndices[2]);
+				result.indices.push_back(face.mIndices[1]);
+				continue;
+			}
 			for (u32 j = 0; j < face.mNumIndices; j++)
 			{
 				result.indices.push_back(face.mIndices[j]);

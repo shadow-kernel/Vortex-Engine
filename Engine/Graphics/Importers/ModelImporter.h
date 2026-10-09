@@ -138,8 +138,9 @@ namespace vortex::graphics
 
 	private:
 	static void calculate_bounds(ImportedModelData& data);
-	static void process_node(void* node, void* scene, ImportedModelData& data);
-	static SubMeshData process_mesh(void* mesh, void* scene, ImportedModelData& data);
+	// parent_transform / world_transform: aiMatrix4x4* of the node chain (#338) — glTF parts keep their placement
+	static void process_node(void* node, void* scene, ImportedModelData& data, const void* parent_transform = nullptr);
+	static SubMeshData process_mesh(void* mesh, void* scene, ImportedModelData& data, const void* world_transform = nullptr);
 	static void extract_materials(void* scene, ImportedModelData& data, const std::string& filepath, bool allow_disk_search = true);
 	static void search_textures_in_directory(const std::string& dir, ImportedModelData& data);
 	// Skeleton/clip extraction (must run BEFORE process_node so bone lookups can resolve node names).

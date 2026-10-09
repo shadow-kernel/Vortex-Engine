@@ -276,13 +276,17 @@ struct PS_IN
     float2 uv        : TEXCOORD0;
     float3 tangent   : TEXCOORD3;
     float3 bitangent : TEXCOORD4;
+    float4 tint      : COLOR0;       // per-instance tint (#331)
 };
 
 PS_IN VSMain(VS_IN input)
 {
     PS_IN output;
     // World comes per-instance from the vertex stream (row-major), not the constant buffer.
-    float4x4 World = float4x4(input.iw0, input.iw1, input.iw2, input.iw3);
+    // per-instance tint (#331): the fourth column of the instance matrix carries (r-1, g-1, b-1, a) — an affine
+    // matrix never uses it, so an untinted instance is an exact matrix
+    float4 tint = float4(1.0 + input.iw0.w, 1.0 + input.iw1.w, 1.0 + input.iw2.w, input.iw3.w);
+    float4x4 World = float4x4(float4(input.iw0.xyz, 0), float4(input.iw1.xyz, 0), float4(input.iw2.xyz, 0), float4(input.iw3.xyz, 1));
     float4 worldPos = mul(float4(input.pos, 1), World);
     output.worldPos = worldPos.xyz;
     output.pos = mul(worldPos, ViewProjection);
@@ -299,6 +303,7 @@ PS_IN VSMain(VS_IN input)
     float3 B = normalize(cross(N, T));
     output.tangent = T;
     output.bitangent = B;
+    output.tint = tint;
 
     return output;
 }
@@ -394,8 +399,8 @@ float4 PSMain(PS_IN input) : SV_TARGET
         uv -= (Vt.xy / max(Vt.z, 0.15)) * ((1.0 - h) * HeightScale);
     }
 
-    float3 albedo = BaseColor.rgb;
-    float alpha = BaseColor.a;
+    float3 albedo = BaseColor.rgb * input.tint.rgb;   // the instance tint multiplies the base colour (#331)
+    float alpha = BaseColor.a * input.tint.a;
 
     if (HasAlbedoTexture != 0) {
         float4 tex = AlbedoTexture.Sample(LinearSampler, uv);

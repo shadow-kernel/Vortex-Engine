@@ -436,6 +436,24 @@ EDITOR_INTERFACE void SubmitMeshInstancesEx(id::id_type mesh_id, id::id_type mat
 		static_cast<u32>(count), layer > 0 ? 1u : 0u);
 }
 
+// #331: per-instance tint — colors = count x (r, g, b, a), multiplied with the material's base colour per instance, so
+// instances of one shared material (a .vmat, an imported material) can differ in colour without a material each.
+EDITOR_INTERFACE void SubmitMeshInstancesTinted(id::id_type mesh_id, id::id_type material_id, const float* world_matrices,
+	const float* colors, int count, int layer)
+{
+	if (!world_matrices || count <= 0) return;
+	graphics::Renderer::instance().submit_mesh_instances(mesh_id, material_id, world_matrices,
+		static_cast<u32>(count), layer > 0 ? 1u : 0u, colors);
+}
+
+EDITOR_INTERFACE void SubmitRenderItemTinted(id::id_type mesh_id, id::id_type material_id, const float* world_matrix,
+	float r, float g, float b, float a, int layer)
+{
+	if (!world_matrix) return;
+	const float color[4] = { r, g, b, a };
+	graphics::Renderer::instance().submit_mesh_instances(mesh_id, material_id, world_matrix, 1u, layer > 0 ? 1u : 0u, color);
+}
+
 // #364 A: static / dynamic split. Everything submitted between BeginStaticScene and EndStaticScene is RETAINED by
 // the renderer across frames; per-frame submits (the moving entities) go to the normal queue and are merged in at the
 // swap. An empty pass (Begin + End) clears the retained set.

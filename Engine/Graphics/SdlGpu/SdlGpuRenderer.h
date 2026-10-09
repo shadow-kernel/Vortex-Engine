@@ -49,6 +49,7 @@ namespace vortex::graphics::sdlgpu
 		id::id_type mesh_id{ id::invalid_id };
 		id::id_type material_id{ id::invalid_id };
 		DirectX::XMFLOAT4X4 world_matrix;
+		DirectX::XMFLOAT4 color{ 1.0f, 1.0f, 1.0f, 1.0f };   // per-instance tint (#331), multiplied with the material's base colour
 		u32 bone_offset{ NO_BONES };
 		u32 bone_count{ 0 };
 		u32 layer{ 0 };
@@ -135,9 +136,10 @@ namespace vortex::graphics::sdlgpu
 		void submit_render_item(const RenderItem& item);
 		void submit_gizmo_item(const RenderItem& item);
 		void submit_gizmo_wire_item(const RenderItem& item);
-		void submit_mesh_instances(id::id_type mesh, id::id_type material, const float* world_matrices, u32 count, u32 layer = 0);
+		// colors (#331): count x (r, g, b, a) per instance, or nullptr for untinted
+		void submit_mesh_instances(id::id_type mesh, id::id_type material, const float* world_matrices, u32 count, u32 layer = 0, const float* colors = nullptr);
 		void submit_skinned_item(id::id_type mesh, id::id_type material, const float* world_matrix,
-			const float* bone_matrices, u32 bone_count, u32 layer = 0);
+			const float* bone_matrices, u32 bone_count, u32 layer = 0, const float* color = nullptr);
 		void clear_render_queue();
 		void begin_static_scene();
 		void end_static_scene();

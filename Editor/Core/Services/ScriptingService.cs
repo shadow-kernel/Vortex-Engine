@@ -517,11 +517,20 @@ namespace Vortex
 }
 ";
 
-        private static string CsprojTemplate(string name, string apiAssemblyPath) =>
+        private static string CsprojTemplate(string name, string apiAssemblyPath)
+        {
+            // The cross-platform editor compiles scripts with Roslyn against the .NET 10 Vortex.Core; a net48 project
+            // referencing it showed IDE errors for code that compiled fine (#321). The classic editor stays on net48.
+#if VORTEX_CORE
+            const string tfm = "net10.0";
+#else
+            const string tfm = "net48";
+#endif
+            return
 @"<Project Sdk=""Microsoft.NET.Sdk"">
 
   <PropertyGroup>
-    <TargetFramework>net48</TargetFramework>
+    <TargetFramework>" + tfm + @"</TargetFramework>
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
     <AssemblyName>" + name + @"</AssemblyName>
@@ -549,6 +558,7 @@ namespace Vortex
 
 </Project>
 ";
+        }
 
         private static string SlnTemplate(string name)
         {

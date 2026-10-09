@@ -2795,7 +2795,7 @@ namespace Editor.Core.Animation
             if (flat == null || flat.Length < 1 || nodes == null) return null;
             var clip = new VortexAnimClip { Name = name, DurationSec = Math.Max(durationSec, 0.0001f) };
 
-            int p = 0;
+            int p = 0, dropped = 0;
             int channelCount = (int)flat[p++];
             for (int c = 0; c < channelCount && p < flat.Length; c++)
             {
@@ -2806,6 +2806,7 @@ namespace Editor.Core.Animation
 
                 string bone = (nodeIndex >= 0 && nodeIndex < nodes.Length) ? nodes[nodeIndex].Name : null;
                 var track = bone != null ? new AnimTrack { Bone = bone } : null;
+                if (track == null) dropped++;
 
                 for (int k = 0; k < posCount; k++, p += 4)
                     track?.Pos.Add(new AnimKeyVec3 { T = flat[p], X = flat[p + 1], Y = flat[p + 2], Z = flat[p + 3] });
@@ -2816,6 +2817,9 @@ namespace Editor.Core.Animation
 
                 if (track != null) clip.Tracks.Add(track);
             }
+            // a take with channels for nodes outside the skeleton table used to lose them without a word (#340)
+            if (dropped > 0)
+                try { Services.ConsoleService.Instance.LogWarning("Animation clip '" + name + "': " + dropped + " of " + channelCount + " channel(s) skipped — their nodes are not in the model's skeleton table"); } catch { }
             return clip;
         }
 
@@ -2853,7 +2857,11 @@ namespace Editor.Core.Animation
                 if (!DllWrapper.VortexAPI.GetAnimationInfo(full, c, out string clipName, out float durationSec)) continue;
                 var flat = DllWrapper.VortexAPI.GetAnimationData(full, c);
                 var clip = ClipFromModelData(clipName, durationSec, flat, nodes);
-                if (clip == null || clip.Tracks.Count == 0) continue;
+                if (clip == null || clip.Tracks.Count == 0)
+                {
+                    try { Services.ConsoleService.Instance.LogWarning("Animation clip '" + clipName + "' of " + System.IO.Path.GetFileName(full) + " has no usable channels and was not written (#340)"); } catch { }
+                    continue;
+                }
 
                 clip.Model = rel.Replace('\\', '/');
                 string safe = string.Concat((clipName ?? ("Clip" + c)).Split(System.IO.Path.GetInvalidFileNameChars()));

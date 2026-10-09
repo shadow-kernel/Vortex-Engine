@@ -1340,7 +1340,7 @@ namespace Editor.Core.Services.Physics
             {
                 var fi = new FileInfo(absModelPath);
                 if (!fi.Exists) return null;
-                string key = absModelPath.ToLowerInvariant() + "|" + fi.LastWriteTimeUtc.Ticks + "|" + fi.Length + (submesh >= 0 ? "|#" + submesh : "");
+                string key = absModelPath.ToLowerInvariant() + "|" + fi.LastWriteTimeUtc.Ticks + "|" + fi.Length + (submesh >= 0 ? "|#" + submesh : "") + "|v2";   // v2: #338
                 using (var sha = System.Security.Cryptography.SHA1.Create())
                 {
                     var h = sha.ComputeHash(Encoding.UTF8.GetBytes(key));

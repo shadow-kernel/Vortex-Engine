@@ -2,6 +2,18 @@
 
 namespace vortex::graphics::dx12
 {
+	namespace
+	{
+		// The instance stream carries the world matrix (64 bytes). An affine matrix never uses its fourth column (0, 0, 0, 1),
+		// so the per-instance tint (#331) rides there as (r-1, g-1, b-1, a): an untinted instance stays an exact affine
+		// matrix (older custom vertex shaders keep working), and the standard vertex shaders take the two apart.
+		inline void pack_instance(float* dst, const RenderItem& item)
+		{
+			memcpy(dst, &item.world_matrix, 64);
+			dst[3] = item.color.x - 1.0f; dst[7] = item.color.y - 1.0f; dst[11] = item.color.z - 1.0f; dst[15] = item.color.w;
+		}
+	}
+
 	namespace {
 		struct FrustumPlanes { float p[6][4]; };
 
@@ -299,7 +311,7 @@ namespace vortex::graphics::dx12
 				{
 					u32 slot = counters[ri].fetch_add(1, std::memory_order_relaxed);
 					if (run.vbBase + slot < MAX_RENDER_OBJECTS)
-						memcpy((u8*)m_instance_vb_mapped + (size_t)(run.vbBase + slot) * 64, &item.world_matrix, 64);
+						pack_instance((float*)((u8*)m_instance_vb_mapped + (size_t)(run.vbBase + slot) * 64), item);
 					// Geometric LOD: bucket this instance by distance. Single-threaded when geo-LOD is on (see
 					// m_mt_active), so the slab is distance-ordered and lodCount segments are contiguous.
 					if (run.lodLevels > 1)
@@ -398,7 +410,7 @@ namespace vortex::graphics::dx12
 					const u32 ri = m_item_run[k];
 					u32 dst = c4[ri * 4 + lod].fetch_add(1, std::memory_order_relaxed);
 					if (dst < MAX_RENDER_OBJECTS && m_instance_vb_mapped)
-						memcpy((u8*)m_instance_vb_mapped + (size_t)dst * 64, &m_render_queue[k].world_matrix, 64);
+						pack_instance((float*)((u8*)m_instance_vb_mapped + (size_t)dst * 64), m_render_queue[k]);
 				}
 			};
 			if (m_mt_active)
