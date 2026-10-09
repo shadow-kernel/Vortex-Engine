@@ -1450,6 +1450,29 @@ namespace Vortex
             get { return Editor.Core.Services.Physics.PhysicsService.JoltCharacters ? "jolt" : "managed"; }
         }
 
+        /// <summary>How hard the character shoves dynamic props (#105): the mass in kilograms Jolt gives the character
+        /// controller (default 70). A heavier character pushes a chair or a crate further; a very light one is stopped by
+        /// it. Applies to the "jolt" controller (the managed one pushes with the character's move). Call in Start();
+        /// resets to the default on every scene load.</summary>
+        public static void SetCharacterMass(float kilograms)
+        {
+            Editor.Core.Services.Physics.PhysicsService.CharacterMass = kilograms > 1f ? kilograms : 1f;
+        }
+
+        /// <summary>Is there room for a capsule of this <paramref name="height"/> at <paramref name="feet"/> (#105)? The
+        /// stand-up ceiling check: before a crouched character rises, ask with the STANDING height — false means a
+        /// ceiling, a table top or another character is in the way, so stay crouched this frame. Tests the level
+        /// colliders, simulated props and other characters; <paramref name="characterId"/> excludes your own capsule
+        /// (pass what you pass to <see cref="MoveCharacter(Vector3, float, float, Vector3, long)"/>). Works with both
+        /// controllers. Without a collision world → true.</summary>
+        public static bool CanStand(Vector3 feet, float radius, float height, long characterId = 0)
+        {
+            // a 2 cm lift keeps the floor the character stands on out of the test — only what is ABOVE counts
+            var probe = new Vector3(feet.X, feet.Y + 0.02f, feet.Z);
+            return !Editor.Core.Services.Physics.CollisionService.CapsuleOverlaps(
+                new Editor.ECS.Vector3(probe.X, probe.Y, probe.Z), radius, height - 0.02f, characterId);
+        }
+
         /// <summary>Ray straight DOWN from <paramref name="from"/> (up to <paramref name="maxDist"/>) against the world
         /// colliders — returns the <b>Tag</b> of the surface entity you're standing on (its material), or "" if
         /// nothing is below. This is the standard "what am I standing on?" query. Use it for material-based footsteps:

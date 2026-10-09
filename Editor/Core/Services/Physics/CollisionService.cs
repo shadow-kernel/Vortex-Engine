@@ -1134,6 +1134,56 @@ namespace Editor.Core.Services.Physics
             return To(p);
         }
 
+        /// <summary>#105: does a character capsule (feet, radius, total height) overlap anything solid — level
+        /// colliders, simulated rigid bodies, OTHER characters — by more than <paramref name="skin"/>? A probe only:
+        /// nothing is moved, no contact is recorded. <c>Physics.CanStand</c> asks this with the standing height before
+        /// a crouched character rises; <paramref name="selfId"/> excludes the asking character's own capsule.</summary>
+        public static bool CapsuleOverlaps(Vector3 feet, float radius, float height, long selfId = 0, float skin = 0.01f)
+        {
+            if (!IsBuilt) return false;
+            float r = Math.Max(0.05f, radius);
+            float segLen = Math.Max(0f, height - 2f * r);
+            V3 f = From(feet);
+            V3 c0 = new V3(f.X, f.Y + r, f.Z);
+            V3 c1 = new V3(f.X, f.Y + r + segLen, f.Z);
+            int samples = Math.Max(2, (int)Math.Ceiling(segLen / r) + 1);
+            V3 capMin = new V3(f.X - r, f.Y - r, f.Z - r);
+            V3 capMax = new V3(f.X + r, f.Y + r + segLen + r, f.Z + r);
+            for (int list = 0; list < 2; list++)
+            {
+                var shapes = list == 0 ? _world : _dynamic;
+                for (int si = 0; si < shapes.Count; si++)
+                {
+                    var s = shapes[si];
+                    if (!AabbOverlap(capMin, capMax, s.Min, s.Max)) continue;
+                    float sr = ShapeRadius(s);
+                    for (int k = 0; k < samples; k++)
+                    {
+                        float t = (float)k / (samples - 1);
+                        V3 c = new V3(c0.X, c0.Y + (c1.Y - c0.Y) * t, c0.Z);
+                        V3 q; if (!ClosestOnShape(s, c, out q, r + sr + 1e-3f)) continue;
+                        float dl = (c - q).Len();
+                        if (dl <= 1e-6f || (r + sr) - dl > skin) return true;
+                    }
+                }
+            }
+            foreach (var kv in _chars)
+            {
+                if (kv.Key == selfId) continue;
+                var cc = kv.Value;
+                V3 oA = new V3(cc.Feet.X, cc.Feet.Y + cc.R, cc.Feet.Z);
+                V3 oB = new V3(cc.Feet.X, cc.Feet.Y + Math.Max(cc.R, cc.H - cc.R), cc.Feet.Z);
+                for (int k = 0; k < samples; k++)
+                {
+                    float t = (float)k / (samples - 1);
+                    V3 c = new V3(c0.X, c0.Y + (c1.Y - c0.Y) * t, c0.Z);
+                    float dl = (c - ClosestOnSeg(oA, oB, c)).Len();
+                    if ((r + cc.R) - dl > skin) return true;
+                }
+            }
+            return false;
+        }
+
         // Returns true if any push happened this pass. slopeCos (#48): surfaces whose contact normal
         // has Y >= slopeCos count as walkable ground; steeper ones act like walls — their push is
         // flattened to horizontal (slide, no slow depenetration-climb) and never sets grounded.

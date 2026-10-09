@@ -209,6 +209,42 @@ namespace VortexTests
             finally { CollisionService.Clear(); }
         }
 
+        /// <summary>#105: the stand-up ceiling check — a crouched capsule may rise under open sky, not under a low
+        /// ceiling or another character; the probe never moves anything.</summary>
+        [Test]
+        public static void CapsuleOverlapIsAStandUpCheck(TestContext t)
+        {
+            var scene = new Scene { Name = "Ceiling" };
+            var floor = new GameEntity(scene, "Floor");
+            floor.Transform.LocalPosition = new Vector3(0, -0.5f, 0);
+            floor.Transform.LocalScale = new Vector3(20, 1, 20);
+            floor.AddComponentDirect(new BoxCollider(floor));
+            var ceiling = new GameEntity(scene, "LowCeiling");   // 1.2 m above the floor, over x = 2..4
+            ceiling.Transform.LocalPosition = new Vector3(3f, 1.45f, 0);
+            ceiling.Transform.LocalScale = new Vector3(2, 0.5f, 4);
+            ceiling.AddComponentDirect(new BoxCollider(ceiling));
+            scene.Entities.Add(floor);
+            scene.Entities.Add(ceiling);
+            try
+            {
+                CollisionService.Build(scene);
+                const float r = 0.35f, standing = 1.85f, crouched = 1.0f;
+                // the standing capsule on the open floor: free (the floor it stands on does not count)
+                t.False(CollisionService.CapsuleOverlaps(new Vector3(0, 0.02f, 0), r, standing - 0.02f), "standing in the open is free");
+                // under the 1.2 m ceiling: standing overlaps, crouching fits
+                t.True(CollisionService.CapsuleOverlaps(new Vector3(3, 0.02f, 0), r, standing - 0.02f), "standing under the low ceiling overlaps");
+                t.False(CollisionService.CapsuleOverlaps(new Vector3(3, 0.02f, 0), r, crouched - 0.02f), "crouching under the low ceiling fits");
+                // another character registered where we want to stand: blocked, unless it is us
+                CollisionService.RegisterCharacter(77, new Vector3(0.2f, 0, 0), r, standing);
+                t.True(CollisionService.CapsuleOverlaps(new Vector3(0, 0.02f, 0), r, standing - 0.02f, selfId: 1), "another character blocks");
+                t.False(CollisionService.CapsuleOverlaps(new Vector3(0, 0.02f, 0), r, standing - 0.02f, selfId: 77), "our own capsule does not block");
+                // the probe moved nothing: the character still stands where it was registered
+                var p = CollisionService.MoveCharacter(new Vector3(0.2f, 0, 0), r, standing, new Vector3(0, 0, 0), out _, 77);
+                t.True(Math.Abs(p.X - 0.2f) < 1e-3f && Math.Abs(p.Y) < 0.05f, "the probe had no side effect (" + p.X + ", " + p.Y + ")");
+            }
+            finally { CollisionService.Clear(); }
+        }
+
         [Test]
         public static async Task TemplatePacksDownloadOnceAndCache(TestContext t)
         {
