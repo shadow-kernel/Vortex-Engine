@@ -473,6 +473,7 @@ namespace Editor.Editors.WorldEditor.Components.GamePreview
                     _currentScene = value;
                     _dropHandler = null; // Reset drop handler for new scene
                     SceneRenderService.Instance.ClearAllRenderables();
+                    try { SceneRenderService.EvictModelsUnusedBy(value); } catch { }   // #358
                     _sceneDirty = true;  // force a re-submit for the new scene
                 }
             }

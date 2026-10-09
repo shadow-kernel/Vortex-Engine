@@ -244,6 +244,10 @@ namespace vortex::graphics
 		Texture* get_texture(id::id_type id);
 		void destroy_texture(id::id_type id);
 		std::vector<id::id_type> get_all_texture_ids() const;
+		// Live counts for engine_stats / the resource smoke: a leak shows as a number that only grows (#357 #358).
+		size_t mesh_count() const { return m_meshes.size(); }
+		size_t texture_count() const { return m_textures.size(); }
+		size_t material_count() const { return m_materials.size(); }
 
 		// Material management
 		id::id_type create_material(const std::string& name = "");
@@ -313,6 +317,11 @@ namespace vortex::graphics
 		std::unordered_map<id::id_type, std::unique_ptr<Mesh>> m_meshes;
 		std::unordered_map<id::id_type, std::unique_ptr<Texture>> m_textures;
 		std::unordered_map<std::string, id::id_type> m_texture_path_cache;   // "<path>|<mtime>|<size>" -> texture
+		// Every material slot showing `from` shows `to` afterwards (nullptr unbinds). Materials keep raw Texture pointers.
+		void rebind_texture(Texture* from, Texture* to);
+		// `path` was imported again under a new mtime/size as `keep`: the earlier uploads of that file are rebound to
+		// `keep` and freed, so an edited or re-exported texture no longer leaves its predecessors in VRAM (#358).
+		void retire_stale_textures(const std::string& path, id::id_type keep);
 		std::unordered_map<id::id_type, std::unique_ptr<Material>> m_materials;
 
 		id::id_type m_next_mesh_id{ 1 };

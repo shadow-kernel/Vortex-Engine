@@ -339,6 +339,88 @@ namespace Editor.Core.Services
             foreach (var g in gone) { _entityMeshes.Remove(g); _entityMeshPaths.Remove(g); }
         }
 
+        private void ForgetEntityMaterials(HashSet<long> ids)
+        {
+            var gone = new List<Guid>();
+            foreach (var kv in _entityMaterials) if (ids.Contains(kv.Value)) gone.Add(kv.Key);
+            foreach (var g in gone) { _entityMaterials.Remove(g); _entityMaterialKey.Remove(g); _entityMaterialColors.Remove(g); }
+        }
+
+        /// <summary>Free a model completely: its meshes (InvalidateModel) AND its import materials. For a model no entity
+        /// references any more — a scene switch (#358); a live re-import keeps the materials (InvalidateModel).</summary>
+        private static void EvictModel(string modelPath)
+        {
+            string target = NormalizeModelPath(modelPath);
+            var mats = new HashSet<long>();
+            foreach (var kv in _meshPathToMaterialId) if (SameModel(kv.Key, target) && kv.Value >= 0) mats.Add(kv.Value);
+            InvalidateModel(modelPath);
+            foreach (var id in mats)
+            {
+                _sharedMaterialIds.Remove(id);
+                try { VortexAPI.DeleteMaterial(id); } catch { }
+            }
+            var inst = Instance;
+            if (inst != null && mats.Count > 0) inst.ForgetEntityMaterials(mats);
+        }
+
+        /// <summary>Scene switch (#358): the meshes, LOD chains and import materials of every model the new scene does not
+        /// reference are freed (null = everything). They used to stay for the whole session so a reload never re-imported;
+        /// with the import cache (#364 C) a reload is a .vmesh read, so holding every model ever opened only cost memory.
+        /// Textures stay cached by path (shared between models and scenes).</summary>
+        public static void EvictModelsUnusedBy(Data.Scene scene)
+        {
+            var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (scene?.Entities != null) CollectModelPaths(scene.Entities, used);
+            var models = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var k in _submeshMeshCache.Keys) models.Add(NormalizeModelPath(k));
+            foreach (var k in _meshPathToMaterialId.Keys) models.Add(NormalizeModelPath(k));
+            int n = 0;
+            foreach (var m in models)
+            {
+                if (string.IsNullOrEmpty(m) || used.Contains(m)) continue;
+                EvictModel(m); n++;
+            }
+            if (n > 0) Log("[SceneRenderService] evicted " + n + " model(s) the scene does not use");
+        }
+
+        private static void CollectModelPaths(IEnumerable<GameEntity> entities, HashSet<string> into)
+        {
+            foreach (var e in entities)
+            {
+                if (e == null) continue;
+                var mr = e.GetComponent<MeshRenderer>();
+                if (mr != null && !string.IsNullOrEmpty(mr.MeshPath) && !IsPrimitivePath(mr.MeshPath)) into.Add(NormalizeModelPath(mr.MeshPath));
+                if (e.Children != null) CollectModelPaths(e.Children, into);
+            }
+        }
+
+        /// <summary>Load a model through the render cache (once per path and session) and return its submesh mesh and
+        /// material ids in submesh order, or null when it is not a loadable model file. Placement reads bounds, names
+        /// and materials from here instead of importing the file per placement — those imports created meshes, LOD
+        /// chains, materials and texture uploads nothing ever drew or freed (#357).</summary>
+        public static VortexAPI.SubmeshImportData[] LoadModelSubmeshes(string meshPath)
+        {
+            if (string.IsNullOrEmpty(meshPath)) return null;
+            string ext = null;
+            try { ext = System.IO.Path.GetExtension(meshPath)?.ToLowerInvariant(); } catch { }
+            if (!IsModelFileExtension(ext)) return null;
+            var inst = Instance;
+            if (inst == null) return null;
+            long first;
+            try { first = inst.LoadMeshFromFile(meshPath); } catch { return null; }
+            if (first < 0) return null;
+            var list = new List<VortexAPI.SubmeshImportData>();
+            for (int i = 0; i < 4096; i++)
+            {
+                string key = meshPath + "#submesh" + i;
+                long meshId;
+                if (!_submeshMeshCache.TryGetValue(key, out meshId) || meshId < 0) break;
+                list.Add(new VortexAPI.SubmeshImportData { MeshId = meshId, MaterialId = GetMaterialForMeshPath(key), TextureId = -1 });
+            }
+            if (list.Count == 0) list.Add(new VortexAPI.SubmeshImportData { MeshId = first, MaterialId = GetMaterialForMeshPath(meshPath), TextureId = -1 });
+            return list.ToArray();
+        }
+
         /// <summary>A cache key or model path without its "#submeshN" suffix, as an absolute path (relative keys are
         /// resolved against the open project), so relative and absolute spellings of one file compare equal.</summary>
         private static string NormalizeModelPath(string p)
@@ -432,6 +514,7 @@ namespace Editor.Core.Services
             if (scene == null) return;
 
             _vmatPathCache.Clear();   // fresh material resolution for the (re)loaded scene
+            try { EvictModelsUnusedBy(scene); } catch { }   // the previous scene's models go (#358)
             Log($"[SceneRenderService] Preloading assets for scene: {scene.Name}");
             var projectPath = Data.ProjectData.Current?.Path ?? "";
 
@@ -2055,6 +2138,15 @@ namespace Editor.Core.Services
         /// Event fired when camera properties are modified.
         /// </summary>
         public event EventHandler<Guid> CameraPropertiesChanged;
+
+        /// <summary>An entity left the scene (deleted, destroyed at runtime, undone): free what the renderer created for
+        /// it and its children. Shared meshes and materials (models, primitives, plain looks) stay for the others (#358).</summary>
+        public void RemoveEntityTree(GameEntity e)
+        {
+            if (e == null) return;
+            try { RemoveEntity(e.Id); } catch { }
+            if (e.Children != null) for (int i = 0; i < e.Children.Count; i++) RemoveEntityTree(e.Children[i]);
+        }
 
         /// <summary>
         /// Remove an entity from the render system.

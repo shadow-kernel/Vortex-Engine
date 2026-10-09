@@ -470,7 +470,7 @@ namespace Editor.Scripting
             if (!_active || _currentScene == null || string.IsNullOrEmpty(prefabPath)) return 0;
             GameEntity ent = null;
             try { ent = Editor.Core.Services.PrefabService.Instance.InstantiatePrefab(prefabPath, _currentScene, null, false); }
-            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] Instantiate failed: " + ex.Message); }
+            catch (Exception ex) { LogScriptError("Scene", "Instantiate", ex); }
             if (ent == null)
             {
                 try { Editor.Core.Services.ConsoleService.Instance.LogError("Instantiate: prefab not found: " + prefabPath); } catch { }
@@ -648,6 +648,8 @@ namespace Editor.Scripting
                 else { rec.Index = _currentScene.Entities.IndexOf(e); _currentScene.Entities.Remove(e); }
                 _removed.Add(rec);
             }
+            // its own render resources go now (#358); a ledgered entity gets them back on its next submit after Stop
+            try { Editor.Core.Services.SceneRenderService.Instance.RemoveEntityTree(e); } catch { }
 
             // Release the subtree's script handles — a stale id must resolve to nothing, not a ghost.
             void Release(GameEntity x)
@@ -672,6 +674,7 @@ namespace Editor.Scripting
                 {
                     e.SyncEngineStateRecursive(false);
                     if (e.Parent != null) e.Parent.Children.Remove(e); else _currentScene?.Entities.Remove(e);
+                    Editor.Core.Services.SceneRenderService.Instance.RemoveEntityTree(e);   // spawned-and-kept: free it (#358)
                 }
                 catch { }
             }
@@ -803,9 +806,27 @@ namespace Editor.Scripting
         private static string _lastErrKey;
         private static DateTime _lastErrTime;
         private static void LogScriptError(string phase, object behaviour, Exception ex)
+            => LogScriptError(behaviour?.GetType().Name ?? "Script", phase, ex);
+
+        private static void LogScriptError(string who, string phase, Exception ex)
         {
-            var who = behaviour?.GetType().Name ?? "Script";
-            var msg = who + "." + phase + "(): " + (ex?.InnerException?.Message ?? ex?.Message ?? "error");
+            var inner = ex?.InnerException ?? ex;
+            var msg = who + "." + phase + "(): " + (inner?.Message ?? "error");
+            // the first frame of the script's own code (file and line) — a trigger script that throws is otherwise a
+            // message without a place (#322)
+            try
+            {
+                var st = new System.Diagnostics.StackTrace(inner, true);
+                for (int i = 0; i < st.FrameCount; i++)
+                {
+                    var f = st.GetFrame(i);
+                    var file = f?.GetFileName();
+                    if (string.IsNullOrEmpty(file)) continue;
+                    msg += " — " + System.IO.Path.GetFileName(file) + ":" + f.GetFileLineNumber();
+                    break;
+                }
+            }
+            catch { }
             // Throttle a per-frame-repeating exception (a script throwing every Update) so it can't flood the Console
             // ~60×/sec and freeze the UI. The Debug.WriteLine sits BEHIND the throttle too: with a VS debugger
             // attached every write is a ~1ms cross-process round-trip — unthrottled it alone tanked F5 FPS.
@@ -894,7 +915,7 @@ namespace Editor.Scripting
             if (_behavioursByEntity.TryGetValue(entity, out var b) && b != null)
             {
                 try { b.OnAnimationEvent(name); }
-                catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] OnAnimationEvent error: " + ex.Message); }
+                catch (Exception ex) { LogScriptError("OnAnimationEvent", b, ex); }   // #322
             }
         }
 
@@ -984,7 +1005,7 @@ namespace Editor.Scripting
                     case EvKind.Collision: b.OnCollisionEnter(hit); break;
                 }
             }
-            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] " + kind + " error: " + ex.Message); }
+            catch (Exception ex) { LogScriptError(kind == EvKind.Collision ? "OnCollisionEnter" : "OnTrigger" + kind, b, ex); }   // #322
         }
 
         /// <summary>Invoke the C# method bound to each fired UI button action (the button↔code link). Routing
@@ -1006,7 +1027,7 @@ namespace Editor.Scripting
                 }
                 var m = GetParamlessMethod(target.GetType(), a.Action);
                 try { m.Invoke(target, null); }
-                catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[UIAction] " + a.Action + ": " + ex.Message); }
+                catch (Exception ex) { LogScriptError(target.GetType().Name, a.Action, ex); }   // #322
             }
         }
 
@@ -1057,11 +1078,11 @@ namespace Editor.Scripting
                         inst = (Vortex.VortexBehaviour)Activator.CreateInstance(type);
                         inst.EntityId = 0; // no scene entity -> Position/Rotation read as zero; UI action classes don't use them
                         try { inst.Start(); }
-                        catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[UIAction] Start " + cls + ": " + ex.Message); }
+                        catch (Exception ex) { LogScriptError(cls, "Start", ex); }
                     }
                 }
             }
-            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[UIAction] create " + cls + ": " + ex.Message); }
+            catch (Exception ex) { LogScriptError(cls, "constructor", ex); }
             _uiActions[cls] = inst; // cache the result (incl. null) so we don't rescan the assembly every click
             return inst;
         }
@@ -1091,13 +1112,14 @@ namespace Editor.Scripting
         {
             for (int i = 0; i < _behaviours.Count; i++)
             {
-                try { _behaviours[i].OnDestroy(); } catch { }
+                try { _behaviours[i].OnDestroy(); } catch (Exception ex) { LogScriptError("OnDestroy", _behaviours[i], ex); }   // #322
             }
-            foreach (var b in _uiActions.Values) { if (b != null) try { b.OnDestroy(); } catch { } }
+            foreach (var b in _uiActions.Values) { if (b != null) try { b.OnDestroy(); } catch (Exception ex) { LogScriptError("OnDestroy", b, ex); } }
             // Scripting-wave teardown (#36-#40): undo runtime scene mutations, stop timers/coroutines,
             // drop event subscriptions, persist pending save data.
             try { RollbackRuntimeSceneChanges(); } catch { }
             try { Editor.Core.Services.Particles.ParticleService.EndPlay(); } catch { }   // #347
+            _triCache.Clear();   // whole-model triangle arrays, one per collider key — rebuilt from the disk cache next play (#358)
             _coroutines.Clear();
             _invokes.Clear();
             _debugShapes.Clear();
@@ -1281,7 +1303,7 @@ namespace Editor.Scripting
                         _behavioursByHandle[handle] = behaviour;
                         _behavioursByEntity[e] = behaviour;
                     }
-                    catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] instantiate '" + script.ScriptClassName + "' failed: " + ex.Message); }
+                    catch (Exception ex) { LogScriptError(script.ScriptClassName, "constructor", ex); }
                 }
                 else
                 {

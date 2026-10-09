@@ -43,11 +43,44 @@ namespace vortex::graphics
 	void ResourceRegistry::destroy_texture(id::id_type id)
 	{
 		auto it = m_textures.find(id);
-		if (it != m_textures.end())
+		if (it == m_textures.end()) return;
+		// Materials keep raw Texture pointers: unbind the dying texture everywhere first (#358).
+		rebind_texture(it->second.get(), nullptr);
+		// its SRV slot goes back to the free list — the heap has a fixed size and textures now come and go
+		const auto cpu = it->second->srv();
+		if (cpu.ptr != 0 && m_srv_heap && m_srv_descriptor_size > 0)
+			m_free_srv_slots.push_back((UINT)((cpu.ptr - m_srv_heap->GetCPUDescriptorHandleForHeapStart().ptr) / m_srv_descriptor_size));
+		m_textures.erase(it);
+		for (auto c = m_texture_path_cache.begin(); c != m_texture_path_cache.end();)
+			c = (c->second == id) ? m_texture_path_cache.erase(c) : std::next(c);
+	}
+
+	void ResourceRegistry::rebind_texture(Texture* from, Texture* to)
+	{
+		if (!from) return;
+		for (auto& [mid, mat] : m_materials)
 		{
-			m_textures.erase(it);
-			for (auto c = m_texture_path_cache.begin(); c != m_texture_path_cache.end();)
-				c = (c->second == id) ? m_texture_path_cache.erase(c) : std::next(c);
+			if (mat->albedo_texture() == from) mat->set_albedo_texture(to);
+			if (mat->normal_texture() == from) mat->set_normal_texture(to);
+			if (mat->metallic_texture() == from) mat->set_metallic_texture(to);
+			if (mat->roughness_texture() == from) mat->set_roughness_texture(to);
+			if (mat->ao_texture() == from) mat->set_ao_texture(to);
+			if (mat->height_texture() == from) mat->set_height_texture(to);
+		}
+	}
+
+	void ResourceRegistry::retire_stale_textures(const std::string& path, id::id_type keep)
+	{
+		if (path.empty()) return;
+		const std::string prefix = path + "|";
+		std::vector<id::id_type> stale;
+		for (const auto& [key, id] : m_texture_path_cache)
+			if (id != keep && key.compare(0, prefix.size(), prefix) == 0) stale.push_back(id);
+		Texture* fresh = get_texture(keep);
+		for (id::id_type id : stale)
+		{
+			rebind_texture(get_texture(id), fresh);
+			destroy_texture(id);   // drops its path-cache entries too
 		}
 	}
 
@@ -154,17 +187,27 @@ namespace vortex::graphics
 	void ResourceRegistry::assign_srv_to_texture(Texture* texture)
 	{
 		if (!texture || !m_srv_heap || !m_device) return;
-		if (m_next_srv_index >= MAX_SRV_DESCRIPTORS)
+		UINT slot;
+		if (!m_free_srv_slots.empty() && (m_free_srv_slots.size() > 8 || m_next_srv_index >= MAX_SRV_DESCRIPTORS))
 		{
-			VORTEX_VLOG("SRV heap full\n");
-			return;
+			slot = m_free_srv_slots.front();
+			m_free_srv_slots.pop_front();
+		}
+		else
+		{
+			if (m_next_srv_index >= MAX_SRV_DESCRIPTORS)
+			{
+				VORTEX_VLOG("SRV heap full\n");
+				return;
+			}
+			slot = m_next_srv_index++;
 		}
 
 		D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle = m_srv_heap->GetCPUDescriptorHandleForHeapStart();
-		cpu_handle.ptr += m_next_srv_index * m_srv_descriptor_size;
+		cpu_handle.ptr += (SIZE_T)slot * m_srv_descriptor_size;
 
 		D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle = m_srv_heap->GetGPUDescriptorHandleForHeapStart();
-		gpu_handle.ptr += m_next_srv_index * m_srv_descriptor_size;
+		gpu_handle.ptr += (UINT64)slot * m_srv_descriptor_size;
 
 		D3D12_SHADER_RESOURCE_VIEW_DESC srv_desc{};
 		srv_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
@@ -175,7 +218,5 @@ namespace vortex::graphics
 
 		m_device->CreateShaderResourceView(texture->resource(), &srv_desc, cpu_handle);
 		texture->set_srv_handles(cpu_handle, gpu_handle);
-
-		m_next_srv_index++;
 	}
 }

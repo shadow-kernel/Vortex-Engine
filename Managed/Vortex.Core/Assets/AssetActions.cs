@@ -210,8 +210,8 @@ namespace Editor.Core.Assets
 
             if (ModelExt.Contains(ext) && File.Exists(fullPath))
             {
-                int submeshCount = VortexAPI.GetSubmeshCount(fullPath);
-                var result = submeshCount >= 1 ? VortexAPI.ImportModelWithMaterialsFromFile(fullPath) : null;
+                // through the render cache: one load per model and session, no import per placement (#357)
+                var result = SceneRenderService.LoadModelSubmeshes(entityPath);
                 if (result != null && result.Length > 1) return CreateMultiMaterialEntity(scene, name, entityPath, result, projectPath);
                 if (result != null && result.Length == 1)
                 {

@@ -152,17 +152,22 @@ namespace VortexEditor.Claude.Tools
         }
 
         [McpServerTool(Name = "engine_stats", ReadOnly = true)]
-        [Description("Renderer statistics of the last frame: FPS, draw calls, vertices, instances tested/drawn by culling, entity count.")]
-        public static object EngineStats() => new
+        [Description("Renderer statistics of the last frame: FPS, draw calls, vertices, instances tested/drawn by culling, entity count, and the live GPU resource counts (meshes incl. LOD meshes, materials, textures) — a count that only grows is a leak.")]
+        public static object EngineStats()
         {
-            fps = VortexAPI.CurrentFPS,
-            draw_calls = VortexAPI.DrawCalls,
-            vertices = VortexAPI.VertexCount,
-            instances_tested = VortexAPI.InstancesTested,
-            instances_drawn = VortexAPI.InstancesDrawn,
-            entities = ProjectData.Current?.ActiveScene != null ? SceneModel.All(ProjectData.Current.ActiveScene).Count() : 0,
-            play_state = PlayModeService.Instance.State.ToString(),
-        };
+            VortexAPI.TryGetResourceCounts(out int meshes, out int materials, out int textures);
+            return new
+            {
+                fps = VortexAPI.CurrentFPS,
+                draw_calls = VortexAPI.DrawCalls,
+                vertices = VortexAPI.VertexCount,
+                instances_tested = VortexAPI.InstancesTested,
+                instances_drawn = VortexAPI.InstancesDrawn,
+                entities = ProjectData.Current?.ActiveScene != null ? SceneModel.All(ProjectData.Current.ActiveScene).Count() : 0,
+                meshes, materials, textures,
+                play_state = PlayModeService.Instance.State.ToString(),
+            };
+        }
 
         private static string[] NewEntries(int before, LogLevel level, int max)
         {

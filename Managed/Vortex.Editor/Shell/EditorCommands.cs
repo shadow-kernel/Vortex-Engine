@@ -1005,6 +1005,7 @@ namespace VortexEditor.Shell
                 var c = _copies[i];
                 try { c.SyncEngineStateRecursive(false); } catch { }
                 if (c.Parent != null) c.Parent.Children.Remove(c); else c.Scene?.Entities.Remove(c);
+                try { SceneRenderService.Instance.RemoveEntityTree(c); } catch { }   // #358
                 if (c.Scene != null) c.Scene.IsDirty = true;
             }
         }

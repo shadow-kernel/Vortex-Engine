@@ -62,6 +62,7 @@ namespace Editor.Core.Viewport
         private bool _playGridHidden, _savedGrid = true, _lmbPrevEd;
         private float _editorFovApplied = float.NaN;
         private float _uiMx, _uiMy; private bool _uiDown, _uiPressed;
+        private float _wheelAccum;   // wheel notches since the last script tick (#319)
         private static readonly char[] _vuiCharsEmpty = new char[0];
         private static readonly int[] _navVks = { 0x25, 0x26, 0x27, 0x28, 0x09, 0x0D, 0x20 };
         private readonly bool[] _navPrev = new bool[7];
@@ -101,6 +102,7 @@ namespace Editor.Core.Viewport
                 if (ReferenceEquals(_currentScene, value)) return;
                 _currentScene = value;
                 SceneRenderService.Instance.ClearAllRenderables();
+                try { SceneRenderService.EvictModelsUnusedBy(value); } catch { }   // #358
                 _sceneDirty = true;
             }
         }
@@ -213,6 +215,9 @@ namespace Editor.Core.Viewport
 
                 VortexAPI.StepEngineRuntime(dt);
                 ReadbackPhysics();
+                // this tick's wheel notches, 0 on a tick without any (#319): the wheel event used to set ScrollDelta and
+                // nothing reset it, so a zoom or weapon-switch script kept scrolling after one notch
+                Vortex.Input.ScrollDelta = _wheelAccum; _wheelAccum = 0f;
                 ScriptRuntime.Instance.Update(dt);
                 GameRuntime.ProcessPendingSceneSwitch();
                 AudioPlaybackService.Instance.Tick();
@@ -452,7 +457,8 @@ namespace Editor.Core.Viewport
 
         public void OnPointerWheel(int delta)
         {
-            if (IsPlaying) { Vortex.Input.ScrollDelta = delta / 120f; return; }
+            if (IsPlaying) { _wheelAccum += delta / 120f; return; }
+            _wheelAccum = 0f;
             if (!_viewingThroughGameCamera) _camera.OnMouseWheel(delta);
         }
 

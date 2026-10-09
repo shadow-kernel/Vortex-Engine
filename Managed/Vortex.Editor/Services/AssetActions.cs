@@ -146,9 +146,8 @@ namespace VortexEditor.Services
             VortexAPI.SubmeshImportData[] subs = null;
             if (ext != ".vmesh")
             {
-                int count = 0;
-                try { count = VortexAPI.GetSubmeshCount(full); } catch { }
-                if (count >= 1) { try { subs = VortexAPI.ImportModelWithMaterialsFromFile(full); } catch { subs = null; } }
+                // through the render cache: one load per model and session, no import per placement (#357)
+                try { subs = SceneRenderService.LoadModelSubmeshes(rel); } catch { subs = null; }
             }
             float defScale = 1f;
             try { defScale = ModelImportSettings.LoadDefaultScale(full); } catch { }
