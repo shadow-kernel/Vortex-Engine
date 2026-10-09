@@ -3,9 +3,9 @@
 #   <Out>\Vortex.Editor.exe, ...           the editor, self-contained (no .NET runtime to install)
 #   <Out>\player\Vortex.Player.exe, ...    the game host its Build dialog exports Windows games with
 #
-# <Out> defaults to x64\<Configuration>\Editor, next to the solution build: the editor loads ..\VortexAPI.dll and uses
-# ..\Shaders and ..\Templates, which it shares with the WPF editor (Installer\VortexEngine.iss copies the folder to
-# {app}\Editor). Run after the solution build:
+# <Out> defaults to x64\<Configuration>\Editor, next to the native build: the editor loads ..\VortexAPI.dll and uses
+# ..\Shaders and ..\Templates (Installer\VortexEngine.iss copies the folder to {app}\Editor). The project templates are
+# staged here as well (see the end). Run after the native build:
 #
 #   powershell -ExecutionPolicy Bypass -File tools\windows\stage-editor.ps1 [-Configuration Release] [-Out <folder>]
 param(
@@ -31,3 +31,17 @@ foreach ($f in @("Vortex.Editor.exe", "player\Vortex.Player.exe", "player\Vortex
 }
 $mb = [math]::Round(((Get-ChildItem -Recurse $Out | Measure-Object -Sum Length).Sum / 1MB), 0)
 Write-Host "== staged ($mb MB)"
+
+# The project templates (git submodules under Templates\) next to the editor: the "Create New Project" dialog finds them
+# in <Out>\..\Templates (installed: {app}\Templates). The classic editor's csproj used to copy them and #311 retired it —
+# the 3.1.0 installer shipped none. Git metadata, build output and the per-project Library stay behind; the big
+# templates' LFS assets come from the release's template packs (#299).
+$templates = Join-Path (Split-Path $Out -Parent) "Templates"
+if (Test-Path $templates) { Remove-Item -Recurse -Force $templates }
+foreach ($t in Get-ChildItem (Join-Path $Root "Templates") -Directory) {
+    $null = robocopy $t.FullName (Join-Path $templates $t.Name) /E /XD .git bin obj Library Build .vs /XF .git /NFL /NDL /NJH /NJS /NP /R:1 /W:1
+    if ($LASTEXITCODE -ge 8) { throw "copying the template $($t.Name) failed (robocopy $LASTEXITCODE)" }
+}
+& cmd.exe /c "exit 0"   # robocopy's success codes (1-7) must not fail a CI step
+if (-not (Test-Path (Join-Path $templates "Default3D\project.vortex"))) { throw "the 3D Starter template was not staged (git submodule update --init?)" }
+Write-Host "== templates -> $templates ($((Get-ChildItem $templates -Directory | ForEach-Object Name) -join ', '))"
