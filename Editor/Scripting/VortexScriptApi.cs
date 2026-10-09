@@ -2075,8 +2075,12 @@ namespace Vortex
     /// in Start(). <c>Atmosphere.SetFog(density: 0.14f, heightY: 1.2f, heightFalloff: 0.6f, r: 0.016f, g: 0.02f, b: 0.027f);</c></summary>
     public static class Atmosphere
     {
-        /// <summary>Enable fog: <paramref name="density"/> &gt; 0 (try 0.05–0.2); heightFalloff &gt; 0 makes it
-        /// ground mist below heightY (0 = uniform distance fog). Colors are linear 0..1 (keep them DARK for horror).</summary>
+        /// <summary>Enable fog: <paramref name="density"/> &gt; 0 (try 0.05–0.2 for a cellar, 0.005–0.02 outdoors).
+        /// With <paramref name="heightFalloff"/> = 0 it is uniform distance fog. With heightFalloff &gt; 0 it is HEIGHT
+        /// fog (#328): the fog is uniform up to <paramref name="heightY"/> and thins out above it as
+        /// exp(-heightFalloff · (y − heightY)) — 0.06 halves it every ~12 m, 0.3 every ~2 m — integrated along the view
+        /// ray, so a camera high above the layer sees only the fog the ray actually crosses and a camera inside it sees
+        /// the full density. The sky is never fogged. Colors are linear 0..1 (keep them DARK for horror).</summary>
         public static void SetFog(float density, float heightY = 0f, float heightFalloff = 0f,
                                   float r = 0.02f, float g = 0.025f, float b = 0.035f)
             { Editor.DllWrapper.VortexAPI.SetFog(r, g, b, density, heightY, heightFalloff); }
