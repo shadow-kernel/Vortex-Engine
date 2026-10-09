@@ -173,3 +173,13 @@ EDITOR_INTERFACE void SubmitSkinnedMeshForRenderingEx(id::id_type mesh_id, id::i
 	graphics::Renderer::instance().submit_skinned_item(
 		mesh_id, material_id, world_matrix, bone_matrices, static_cast<u32>(bone_count), layer > 0 ? 1u : 0u);
 }
+
+// #331: with a per-instance tint (r, g, b, a) multiplied with the material's base colour.
+EDITOR_INTERFACE void SubmitSkinnedMeshForRenderingTinted(id::id_type mesh_id, id::id_type material_id,
+	const float* world_matrix, const float* bone_matrices, int bone_count, int layer, float r, float g, float b, float a)
+{
+	if (!world_matrix || !bone_matrices || bone_count <= 0) return;
+	const float color[4] = { r, g, b, a };
+	graphics::Renderer::instance().submit_skinned_item(
+		mesh_id, material_id, world_matrix, bone_matrices, static_cast<u32>(bone_count), layer > 0 ? 1u : 0u, color);
+}

@@ -143,6 +143,9 @@ namespace Editor.Core.Services
             }
         }
         private static readonly Dictionary<MaterialKey, long> _sharedPlainMaterials = new Dictionary<MaterialKey, long>();
+        // The plain materials' ids: their colour is NOT in the material (white) but in the per-instance tint (#331), so
+        // every plain primitive of one metallic/roughness shares one material whatever its colour.
+        private static readonly HashSet<long> _plainMaterialIds = new HashSet<long>();
         // Every SHARED material id (plain materials above + the per-mesh-path import materials): never DeleteMaterial'd
         // on behalf of one entity. (ClearAllRenderables used to delete a model's shared import material once per
         // entity that used it — a double free of the same kind the shared meshes had.)
@@ -163,7 +166,18 @@ namespace Editor.Core.Services
             VortexAPI.SetMaterialRoughnessValue(id, key.Roughness);
             _sharedPlainMaterials[key] = id;
             _sharedMaterialIds.Add(id);
+            _plainMaterialIds.Add(id);
             return id;
+        }
+
+        /// <summary>The instance tint (#331). A plain material is white, so the MeshRenderer colour IS the instance's colour.
+        /// A textured, imported or .vmat material has its own base colour; the MeshRenderer colour tints it on top, where
+        /// the component's default grey (0.7) means "untinted" — otherwise every placed model would darken by 30 %.</summary>
+        private static void TintFor(MeshRenderer mr, long materialId, out float r, out float g, out float b, out float a)
+        {
+            r = mr.ColorR; g = mr.ColorG; b = mr.ColorB; a = mr.ColorA;
+            if (_plainMaterialIds.Contains(materialId)) return;
+            if (Math.Abs(r - 0.7f) < 0.002f && Math.Abs(g - 0.7f) < 0.002f && Math.Abs(b - 0.7f) < 0.002f) { r = 1f; g = 1f; b = 1f; }
         }
         
         // Track mesh paths to detect changes
@@ -202,7 +216,7 @@ namespace Editor.Core.Services
                 public override bool Equals(object obj) => obj is Key k && Equals(k);
                 public override int GetHashCode() { unchecked { return (int)Mesh * 397 ^ (int)(Mesh >> 32) ^ (int)Material * 31 ^ (int)(Material >> 32) ^ Layer; } }
             }
-            private sealed class Batch { public Key Key; public float[] Data = new float[16 * 16]; public int Count; }
+            private sealed class Batch { public Key Key; public float[] Data = new float[16 * 16]; public float[] Tint = new float[16 * 4]; public int Count; }
 
             private readonly Dictionary<Key, Batch> _open = new Dictionary<Key, Batch>();
             private readonly List<Batch> _order = new List<Batch>();   // first-seen order (deterministic)
@@ -213,8 +227,8 @@ namespace Editor.Core.Services
             /// <summary>Instances added in the current pass.</summary>
             public int InstanceCount { get; private set; }
 
-            /// <summary>Queue one instance; <paramref name="world"/> (row-major 4x4, 16 floats) is copied now.</summary>
-            public void Add(long mesh, long material, int layer, float[] world)
+            /// <summary>Queue one instance; <paramref name="world"/> (row-major 4x4, 16 floats) and its tint are copied now.</summary>
+            public void Add(long mesh, long material, int layer, float[] world, float r, float g, float bl, float a)
             {
                 var key = new Key { Mesh = mesh, Material = material, Layer = layer };
                 Batch b;
@@ -227,18 +241,21 @@ namespace Editor.Core.Services
                 }
                 int need = (b.Count + 1) * 16;
                 if (need > b.Data.Length) Array.Resize(ref b.Data, Math.Max(need, b.Data.Length * 2));
+                if ((b.Count + 1) * 4 > b.Tint.Length) Array.Resize(ref b.Tint, Math.Max((b.Count + 1) * 4, b.Tint.Length * 2));
                 Array.Copy(world, 0, b.Data, b.Count * 16, 16);
+                int t = b.Count * 4;
+                b.Tint[t] = r; b.Tint[t + 1] = g; b.Tint[t + 2] = bl; b.Tint[t + 3] = a;
                 b.Count++;
                 InstanceCount++;
             }
 
-            /// <summary>Send every group as (mesh, material, layer, matrices, count), then reset for the next pass.</summary>
-            public void Flush(Action<long, long, int, float[], int> submit)
+            /// <summary>Send every group as (mesh, material, layer, matrices, tints, count), then reset for the next pass.</summary>
+            public void Flush(Action<long, long, int, float[], float[], int> submit)
             {
                 for (int i = 0; i < _order.Count; i++)
                 {
                     var b = _order[i];
-                    if (b.Count > 0) submit(b.Key.Mesh, b.Key.Material, b.Key.Layer, b.Data, b.Count);
+                    if (b.Count > 0) submit(b.Key.Mesh, b.Key.Material, b.Key.Layer, b.Data, b.Tint, b.Count);
                     b.Count = 0;
                     _pool.Push(b);
                 }
@@ -578,8 +595,8 @@ namespace Editor.Core.Services
                     long materialId = VortexAPI.CreateNewMaterial();
                     if (materialId >= 0)
                     {
-                        VortexAPI.SetMaterialBaseColor(materialId, 
-                            meshRenderer.ColorR, meshRenderer.ColorG, meshRenderer.ColorB, meshRenderer.ColorA);
+                        // white: the MeshRenderer colour tints this instance alone (#331), not the shared material
+                        VortexAPI.SetMaterialBaseColor(materialId, 1.0f, 1.0f, 1.0f, 1.0f);
                         VortexAPI.SetMaterialAlbedoTexture(materialId, textureId);
 
                         // Cache the material (per model path; a primitive's texture belongs to this entity only)
@@ -688,10 +705,12 @@ namespace Editor.Core.Services
                     {
                         long subMesh = set.MeshIds[i];
                         long subMat = GetMaterialForMeshPath(set.Keys[i]);
+                        float tr, tg, tb, ta;
+                        TintFor(meshRenderer, subMat, out tr, out tg, out tb, out ta);   // per-instance tint (#331)
                         if (bonePalette != null && Core.Animation.AnimationService.Instance.IsMeshSkinned(subMesh))
-                            VortexAPI.SubmitSkinnedMesh(subMesh, subMat, worldMatrix, bonePalette, boneCount, layer);
+                            VortexAPI.SubmitSkinnedMeshTinted(subMesh, subMat, worldMatrix, bonePalette, boneCount, layer, tr, tg, tb, ta);
                         else
-                            SubmitRigid(subMesh, subMat, worldMatrix, layer);
+                            SubmitRigid(subMesh, subMat, worldMatrix, layer, tr, tg, tb, ta);
                         _submitN++;
                     }
                     return;
@@ -700,23 +719,25 @@ namespace Editor.Core.Services
 
             // Primitive / single mesh / explicitly-assigned .vmat:
             long materialId = GetOrCreateMaterial(entity.Id, meshRenderer);
+            float r, g, b, a;
+            TintFor(meshRenderer, materialId, out r, out g, out b, out a);   // per-instance tint (#331)
             if (bonePalette != null && Core.Animation.AnimationService.Instance.IsMeshSkinned(meshId))
-                VortexAPI.SubmitSkinnedMesh(meshId, materialId, worldMatrix, bonePalette, boneCount, layer);
+                VortexAPI.SubmitSkinnedMeshTinted(meshId, materialId, worldMatrix, bonePalette, boneCount, layer, r, g, b, a);
             else
-                SubmitRigid(meshId, materialId, worldMatrix, layer);
+                SubmitRigid(meshId, materialId, worldMatrix, layer, r, g, b, a);
             _submitN++;
         }
 
         /// <summary>A rigid (non-skinned) submit: batched per (mesh, material, layer) inside SubmitScene, immediate
-        /// when SubmitEntity is called on its own.</summary>
-        private void SubmitRigid(long meshId, long materialId, float[] world, int layer)
+        /// when SubmitEntity is called on its own. The tint rides with the instance (#331).</summary>
+        private void SubmitRigid(long meshId, long materialId, float[] world, int layer, float r, float g, float b, float a)
         {
-            if (_batching) _batcher.Add(meshId, materialId, layer, world);
-            else VortexAPI.SubmitMeshForRenderingLayered(meshId, materialId, world, layer);
+            if (_batching) _batcher.Add(meshId, materialId, layer, world, r, g, b, a);
+            else VortexAPI.SubmitMeshForRenderingTinted(meshId, materialId, world, r, g, b, a, layer);
         }
 
-        private static void FlushBatch(long mesh, long material, int layer, float[] matrices, int count)
-            => VortexAPI.SubmitMeshInstancedLayered(mesh, material, matrices, count, layer);
+        private static void FlushBatch(long mesh, long material, int layer, float[] matrices, float[] tints, int count)
+            => VortexAPI.SubmitMeshInstancedTinted(mesh, material, matrices, tints, count, layer);
 
         /// <summary>Is this an imported model path (.fbx/.glb/…)? Cached per path — the extension check allocated
         /// two strings per entity per frame.</summary>
@@ -1730,7 +1751,8 @@ namespace Editor.Core.Services
                 {
                     var fi = new System.IO.FileInfo(absModelPath);
                     if (!fi.Exists) return null;
-                    string key = absModelPath.ToLowerInvariant() + "|" + fi.LastWriteTimeUtc.Ticks + "|" + fi.Length;
+                    // "|v2": glTF node transforms are baked since #338 — caches written before are ignored
+                    string key = absModelPath.ToLowerInvariant() + "|" + fi.LastWriteTimeUtc.Ticks + "|" + fi.Length + "|v2";
                     using (var sha = System.Security.Cryptography.SHA1.Create())
                     {
                         var h = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(key));
@@ -1895,9 +1917,11 @@ namespace Editor.Core.Services
             }
 
             // Plain look (primitives, single meshes without a material): a SHARED native material per look (#364 D).
+            // The material is WHITE — the colour rides with the instance (#331), so every plain primitive of one
+            // metallic/roughness shares one material whatever its colour (8k cubes in 8k colours = one draw run).
             var key = new MaterialKey
             {
-                R = renderer.ColorR, G = renderer.ColorG, B = renderer.ColorB, A = renderer.ColorA,
+                R = 1f, G = 1f, B = 1f, A = 1f,
                 Metallic = renderer.Metallic, Roughness = renderer.Roughness, Texture = -1,
             };
             long existingMaterial;
@@ -1907,10 +1931,9 @@ namespace Editor.Core.Services
                 if (_entityMaterialKey.TryGetValue(entityId, out oldKey) && oldKey.Equals(key)) return existingMaterial;
                 if (!_sharedMaterialIds.Contains(existingMaterial))
                 {
-                    // this entity's own (textured) material: keep updating it in place, as before
-                    VortexAPI.SetMaterialBaseColor(existingMaterial, key.R, key.G, key.B, key.A);
+                    // this entity's own (textured) material stays white — the colour is the instance tint (#331)
                     _entityMaterialKey[entityId] = key;
-                    _entityMaterialColors[entityId] = (key.R, key.G, key.B, key.A);
+                    _entityMaterialColors[entityId] = (renderer.ColorR, renderer.ColorG, renderer.ColorB, renderer.ColorA);
                     return existingMaterial;
                 }
                 // a shared material: the look changed, so switch to the shared material of the NEW look (copy-on-write)
@@ -1920,7 +1943,7 @@ namespace Editor.Core.Services
             {
                 _entityMaterials[entityId] = shared;
                 _entityMaterialKey[entityId] = key;
-                _entityMaterialColors[entityId] = (key.R, key.G, key.B, key.A);
+                _entityMaterialColors[entityId] = (renderer.ColorR, renderer.ColorG, renderer.ColorB, renderer.ColorA);
             }
             return shared;
         }
@@ -2079,37 +2102,11 @@ namespace Editor.Core.Services
             if (entity == null) return;
             var mr = entity.GetComponent<MeshRenderer>();
             if (mr != null) { mr.ColorR = r; mr.ColorG = g; mr.ColorB = b; mr.ColorA = a; }
-
-            // Per-entity material (primitives / single mesh / texture fallback).
-            if (_entityMaterials.TryGetValue(entity.Id, out long matId) && matId >= 0)
-            {
-                if (_sharedMaterialIds.Contains(matId))
-                {
-                    // shared with other entities (copy-on-write, #364 D): never recolour it in place — move this entity
-                    // to the shared material of its new colour and have the scene re-submit
-                    if (mr != null) GetOrCreateMaterial(entity.Id, mr);
-                    RuntimeDirty = true;
-                }
-                else
-                {
-                    VortexAPI.SetMaterialBaseColor(matId, r, g, b, a);
-                    _entityMaterialColors[entity.Id] = (r, g, b, a);
-                }
-            }
-
-            // Imported multi-submesh models have no per-entity material — tint the shared per-mesh-path materials
-            // instead (note: this tints every instance that shares the same mesh path).
-            if (mr != null && !string.IsNullOrEmpty(mr.MeshPath))
-            {
-                long baseMat = GetMaterialForMeshPath(mr.MeshPath);
-                if (baseMat >= 0) VortexAPI.SetMaterialBaseColor(baseMat, r, g, b, a);
-                for (int n = 0; n < 64; n++)
-                {
-                    long sm = GetMaterialForMeshPath(mr.MeshPath + "#submesh" + n);
-                    if (sm >= 0) VortexAPI.SetMaterialBaseColor(sm, r, g, b, a);
-                    else if (n > 0) break;
-                }
-            }
+            // The colour is a per-instance tint (#331): it rides with the next submit of THIS entity and touches no
+            // material — a shared .vmat / import / plain material is never recoloured for the other instances.
+            _entityMaterialColors[entity.Id] = (r, g, b, a);
+            RuntimeDirty = true;
+            StaticDirty = true;   // a static entity's tint lives in the retained static set
         }
 
         /// <summary>

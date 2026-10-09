@@ -183,8 +183,35 @@ namespace Editor.Core.Assets
                 if (!string.IsNullOrEmpty(tex)) m.AlbedoTexture = Path.GetRelativePath(matDir, tex).Replace('/', '\\');
                 m.Save(vmat);
             }
+            EnsureAnimationClips(dest);   // #340
             try { AssetDatabase.Instance.Refresh(); } catch { }
             return dest;
+        }
+
+        private static readonly HashSet<string> _clipsChecked = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>Write a model's embedded animation clips to its animations/ folder when none are there yet (#340).
+        /// A file copied into Assets by hand, by a script or over MCP never went through the import dialog, so its
+        /// takes were never extracted. Once per file and session; returns the number of clips written.</summary>
+        public static int EnsureAnimationClips(string fullModelPath)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(fullModelPath) || !File.Exists(fullModelPath)) return 0;
+                if (!_clipsChecked.Add(fullModelPath)) return 0;
+                string animDir = Path.Combine(Path.GetDirectoryName(fullModelPath) ?? "", "animations");
+                if (Directory.Exists(animDir) && Directory.GetFiles(animDir, "*.vanim").Length > 0) return 0;
+                if (VortexAPI.GetAnimationCount(fullModelPath) <= 0) return 0;
+                var written = Editor.Core.Animation.AnimationService.ExtractClipsFromModel(fullModelPath);
+                if (written.Count > 0)
+                    try { ConsoleService.Instance.LogSystem("Animation clips: " + written.Count + " extracted from " + Path.GetFileName(fullModelPath) + " into animations/"); } catch { }
+                return written.Count;
+            }
+            catch (Exception ex)
+            {
+                try { ConsoleService.Instance.LogWarning("Animation clips of " + Path.GetFileName(fullModelPath) + ": " + ex.Message); } catch { }
+                return 0;
+            }
         }
 
         // ------------------------------------------------------------------ place in scene
@@ -210,6 +237,7 @@ namespace Editor.Core.Assets
 
             if (ModelExt.Contains(ext) && File.Exists(fullPath))
             {
+                EnsureAnimationClips(fullPath);   // takes of a hand-copied model (#340)
                 // through the render cache: one load per model and session, no import per placement (#357)
                 var result = SceneRenderService.LoadModelSubmeshes(entityPath);
                 if (result != null && result.Length > 1) return CreateMultiMaterialEntity(scene, name, entityPath, result, projectPath);

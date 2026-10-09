@@ -214,8 +214,8 @@ void main()
 		uv -= (Vt.xy / max(Vt.z, 0.15)) * ((1.0 - h) * obj.height_scale);
 	}
 
-	vec3 albedo = obj.base_color.rgb;
-	float alpha = obj.base_color.a;
+	vec3 albedo = obj.base_color.rgb * v_tint.rgb;   // the instance tint multiplies the base colour (#331)
+	float alpha = obj.base_color.a * v_tint.a;
 	if (obj.has_albedo_texture != 0u)
 	{
 		vec4 tex = texture(u_albedo, uv);

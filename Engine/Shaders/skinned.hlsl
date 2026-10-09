@@ -67,6 +67,7 @@ struct PS_IN
     float2 uv        : TEXCOORD0;
     float3 tangent   : TEXCOORD3;
     float3 bitangent : TEXCOORD4;
+    float4 tint      : COLOR0;       // per-instance tint (#331)
 };
 
 float4x4 LoadBone(uint i)
@@ -89,7 +90,10 @@ PS_IN VSMain(VS_IN input)
     float4 skinnedPos = mul(float4(input.pos, 1), skin);
     float3 skinnedNorm = normalize(mul(input.norm, (float3x3)skin));
 
-    float4x4 World = float4x4(input.iw0, input.iw1, input.iw2, input.iw3);
+    // per-instance tint (#331): the fourth column of the instance matrix carries (r-1, g-1, b-1, a) — an affine
+    // matrix never uses it, so an untinted instance is an exact matrix
+    float4 tint = float4(1.0 + input.iw0.w, 1.0 + input.iw1.w, 1.0 + input.iw2.w, input.iw3.w);
+    float4x4 World = float4x4(float4(input.iw0.xyz, 0), float4(input.iw1.xyz, 0), float4(input.iw2.xyz, 0), float4(input.iw3.xyz, 1));
     float4 worldPos = mul(skinnedPos, World);
     output.worldPos = worldPos.xyz;
     output.pos = mul(worldPos, ViewProjection);
@@ -102,6 +106,7 @@ PS_IN VSMain(VS_IN input)
     float3 B = normalize(cross(N, T));
     output.tangent = T;
     output.bitangent = B;
+    output.tint = tint;
 
     return output;
 }

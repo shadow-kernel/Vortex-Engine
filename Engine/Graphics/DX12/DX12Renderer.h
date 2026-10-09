@@ -72,6 +72,7 @@ namespace vortex::graphics::dx12
 		id::id_type mesh_id{ id::invalid_id };
 		id::id_type material_id{ id::invalid_id };
 		DirectX::XMFLOAT4X4 world_matrix;
+		DirectX::XMFLOAT4 color{ 1.0f, 1.0f, 1.0f, 1.0f };   // per-instance tint (#331), multiplied with the material's base colour
 		// GPU skinning: offset (in matrices) into the frame's bone-palette buffer + palette size.
 		// NO_BONES = rigid item (the default; every existing submit path is untouched).
 		u32 bone_offset{ NO_BONES };
@@ -143,13 +144,14 @@ namespace vortex::graphics::dx12
 		void submit_gizmo_wire_item(const RenderItem& item);
 		// Submit `count` instances of the SAME mesh+material in ONE call (world_matrices = count * 16 floats,
 		// row-major 4x4 each). Avoids one P/Invoke per instance — the path for spawning large crowds.
-		void submit_mesh_instances(id::id_type mesh, id::id_type material, const float* world_matrices, u32 count, u32 layer = 0);
+		// colors (#331): count x (r, g, b, a) per instance, or nullptr for untinted
+		void submit_mesh_instances(id::id_type mesh, id::id_type material, const float* world_matrices, u32 count, u32 layer = 0, const float* colors = nullptr);
 		// Submit a SKINNED mesh: world matrix + this frame's bone palette (bone_count row-major 4x4s,
 		// each = inverseBind * boneWorld — computed by the managed AnimationService). The palette is staged
 		// CPU-side and uploaded to the GPU bone buffer on the next queue swap. Skinned items must be
 		// re-submitted every frame their pose changes (they are inherently dynamic).
 		void submit_skinned_item(id::id_type mesh, id::id_type material, const float* world_matrix,
-			const float* bone_matrices, u32 bone_count, u32 layer = 0);
+			const float* bone_matrices, u32 bone_count, u32 layer = 0, const float* color = nullptr);
 		void clear_render_queue();
 		void begin_static_scene();
 		void end_static_scene();
