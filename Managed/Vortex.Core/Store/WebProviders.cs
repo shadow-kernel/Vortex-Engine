@@ -325,27 +325,53 @@ namespace Editor.Core.Assets.Store
                 if (nx != null) { _cursors[key + "|" + (q.Page + 1)] = nx; page.HasMore = true; }
                 foreach (var m in root.GetProperty("results").EnumerateArray())
                 {
-                    var lic = m.TryGetProperty("license", out var l) && l.ValueKind == JsonValueKind.Object ? StoreLicense.FromLabel(PolyHavenProvider.Str(l, "label")) : StoreLicense.Get("Unknown");
-                    if (!q.Allows(lic)) continue;
-                    var item = new StoreItem
-                    {
-                        ProviderId = Id, Id = PolyHavenProvider.Str(m, "uid"), Name = PolyHavenProvider.Str(m, "name"), Kind = StoreKind.Model, License = lic,
-                        PageUrl = PolyHavenProvider.Str(m, "viewerUrl"),
-                        Author = m.TryGetProperty("user", out var u) ? (PolyHavenProvider.Str(u, "displayName") ?? PolyHavenProvider.Str(u, "username")) : null,
-                        Description = PolyHavenProvider.Str(m, "description"),
-                    };
-                    if (m.TryGetProperty("thumbnails", out var th) && th.TryGetProperty("images", out var imgs))
-                        item.ThumbnailUrl = imgs.EnumerateArray().OrderBy(i => Math.Abs(PolyHavenProvider.Int(i, "width", 0) - 256)).Select(i => PolyHavenProvider.Str(i, "url")).FirstOrDefault();
-                    if (m.TryGetProperty("faceCount", out var fc) && fc.ValueKind == JsonValueKind.Number) item.Extra["polycount"] = fc.GetInt64().ToString("N0", CultureInfo.InvariantCulture);
-                    if (m.TryGetProperty("animationCount", out var ac) && ac.ValueKind == JsonValueKind.Number && ac.GetInt32() > 0) item.Tags.Add("animated");
-                    if (m.TryGetProperty("tags", out var tags) && tags.ValueKind == JsonValueKind.Array) item.Tags.AddRange(tags.EnumerateArray().Select(x => PolyHavenProvider.Str(x, "name")).Where(x => x != null).Take(10));
-                    if (m.TryGetProperty("archives", out var ar) && ar.ValueKind == JsonValueKind.Object)
-                        foreach (var fmt in new[] { "glb", "gltf" })
-                            if (ar.TryGetProperty(fmt, out var a) && a.ValueKind == JsonValueKind.Object) item.Extra["size_" + fmt] = PolyHavenProvider.Long(a, "size").ToString(CultureInfo.InvariantCulture);
+                    var item = ItemFrom(m);
+                    if (!q.Allows(item.License)) continue;
                     page.Items.Add(item);
                 }
             }
             return page;
+        }
+
+        /// <summary>A model as the search results and GET /models/{uid} describe it (same fields), licence included.</summary>
+        private StoreItem ItemFrom(JsonElement m)
+        {
+            var lic = m.TryGetProperty("license", out var l) && l.ValueKind == JsonValueKind.Object ? StoreLicense.FromLabel(PolyHavenProvider.Str(l, "label")) : StoreLicense.Get("Unknown");
+            var item = new StoreItem
+            {
+                ProviderId = Id, Id = PolyHavenProvider.Str(m, "uid"), Name = PolyHavenProvider.Str(m, "name"), Kind = StoreKind.Model, License = lic,
+                PageUrl = PolyHavenProvider.Str(m, "viewerUrl"),
+                Author = m.TryGetProperty("user", out var u) ? (PolyHavenProvider.Str(u, "displayName") ?? PolyHavenProvider.Str(u, "username")) : null,
+                Description = PolyHavenProvider.Str(m, "description"),
+            };
+            if (m.TryGetProperty("thumbnails", out var th) && th.TryGetProperty("images", out var imgs))
+                item.ThumbnailUrl = imgs.EnumerateArray().OrderBy(i => Math.Abs(PolyHavenProvider.Int(i, "width", 0) - 256)).Select(i => PolyHavenProvider.Str(i, "url")).FirstOrDefault();
+            if (m.TryGetProperty("faceCount", out var fc) && fc.ValueKind == JsonValueKind.Number) item.Extra["polycount"] = fc.GetInt64().ToString("N0", CultureInfo.InvariantCulture);
+            if (m.TryGetProperty("animationCount", out var ac) && ac.ValueKind == JsonValueKind.Number && ac.GetInt32() > 0) item.Tags.Add("animated");
+            if (m.TryGetProperty("tags", out var tags) && tags.ValueKind == JsonValueKind.Array) item.Tags.AddRange(tags.EnumerateArray().Select(x => PolyHavenProvider.Str(x, "name")).Where(x => x != null).Take(10));
+            if (m.TryGetProperty("archives", out var ar) && ar.ValueKind == JsonValueKind.Object)
+                foreach (var fmt in new[] { "glb", "gltf" })
+                    if (ar.TryGetProperty(fmt, out var a) && a.ValueKind == JsonValueKind.Object) item.Extra["size_" + fmt] = PolyHavenProvider.Long(a, "size").ToString(CultureInfo.InvariantCulture);
+            return item;
+        }
+
+        /// <summary>GET /v3/models/{uid} (#356): a valid uid downloads without a prior search. Full-text search never
+        /// matched uids, so download_store_asset refused every id it had not seen in a search result.</summary>
+        public async Task<StoreItem> GetItemAsync(string id, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(id)) return null;
+            string uid = id.Trim();
+            foreach (char c in uid) if (!char.IsLetterOrDigit(c) && c != '-' && c != '_') return null;
+            try
+            {
+                using (var doc = await StoreHttp.GetJsonAsync(this, Api + "/models/" + uid, TimeSpan.FromHours(3), ct, authenticated: false).ConfigureAwait(false))
+                {
+                    var root = doc.RootElement;
+                    if (root.ValueKind != JsonValueKind.Object || PolyHavenProvider.Str(root, "uid") == null) return null;
+                    return ItemFrom(root);
+                }
+            }
+            catch (StoreHttp.StoreHttpException ex) when (ex.Status == System.Net.HttpStatusCode.NotFound) { return null; }
         }
 
         public Task<IReadOnlyList<string>> CategoriesAsync(StoreKind kind, CancellationToken ct)

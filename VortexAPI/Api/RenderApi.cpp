@@ -565,6 +565,17 @@ EDITOR_INTERFACE int GetVertexCount()
 	return graphics::Renderer::instance().get_vertex_count();
 }
 
+// Shadow-atlas and SSAO-prepass draws of the last frame; both are included in GetDrawCallCount (#363).
+EDITOR_INTERFACE int GetShadowDrawCallCount()
+{
+	return graphics::Renderer::instance().get_shadow_draw_count();
+}
+
+EDITOR_INTERFACE int GetPostDrawCallCount()
+{
+	return graphics::Renderer::instance().get_post_draw_count();
+}
+
 EDITOR_INTERFACE int GetInstancesTested()
 {
 	return graphics::Renderer::instance().get_instances_tested();

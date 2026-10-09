@@ -152,14 +152,18 @@ namespace VortexEditor.Claude.Tools
         }
 
         [McpServerTool(Name = "engine_stats", ReadOnly = true)]
-        [Description("Renderer statistics of the last frame: FPS, draw calls, vertices, instances tested/drawn by culling, entity count, and the live GPU resource counts (meshes incl. LOD meshes, materials, textures) — a count that only grows is a leak.")]
+        [Description("Renderer statistics of the last frame: FPS, draw calls (total, and split into main pass / shadow atlases / SSAO prepass), indices drawn by the main pass (vertices), instances tested/drawn by culling, entity count, and the live GPU resource counts (meshes incl. LOD meshes, materials, textures) — a count that only grows is a leak.")]
         public static object EngineStats()
         {
             VortexAPI.TryGetResourceCounts(out int meshes, out int materials, out int textures);
+            int draws = VortexAPI.DrawCalls, shadowDraws = VortexAPI.DrawCallsShadow, postDraws = VortexAPI.DrawCallsPost;
             return new
             {
                 fps = VortexAPI.CurrentFPS,
-                draw_calls = VortexAPI.DrawCalls,
+                draw_calls = draws,
+                draw_calls_main = Math.Max(0, draws - shadowDraws - postDraws),
+                draw_calls_shadow = shadowDraws,
+                draw_calls_post = postDraws,
                 vertices = VortexAPI.VertexCount,
                 instances_tested = VortexAPI.InstancesTested,
                 instances_drawn = VortexAPI.InstancesDrawn,

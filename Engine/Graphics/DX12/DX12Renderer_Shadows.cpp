@@ -521,54 +521,64 @@ namespace vortex::graphics::dx12
 		m_command_list->SetGraphicsRootSignature(m_pipeline_3d.root_signature());
 		m_command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-		struct Caster { id::id_type mesh; const DirectX::XMFLOAT4X4* world; };
-		std::vector<Caster> casters;
-		std::unordered_map<id::id_type, XMFLOAT4> bounds;   // mesh -> (local center, radius) — shared across tiles
-		bounds.reserve(64);
+		// ---- gather the casters ONCE per frame (#363) ----
+		// The per-tile pack used to scan the whole render queue — a map lookup, a matrix transform and a sphere test per
+		// item, for up to 19 tiles (4 spots, 3 cascades, 2 x 6 point faces): 19 x N per frame, single-threaded. Now the
+		// filter and the world-space bounding sphere are computed once; each tile runs the sphere test only.
+		if (reg.mesh_generation() != m_shadow_bounds_generation) { m_shadow_bounds.clear(); m_shadow_bounds_generation = reg.mesh_generation(); }
+		auto& all = m_shadow_casters; all.clear();
+		for (const auto& item : m_render_queue)
+		{
+			if (item.bone_offset != NO_BONES) continue;   // v1: skinned meshes receive but don't cast
+			if (item.layer != 0) continue;                // #175: the viewmodel receives but never casts
+			// Transparent materials (#33) don't cast: an alpha-blended ghost/glass pane throwing a
+			// fully SOLID shadow reads as a bug (real tinted-glass shadows need translucent maps — v2).
+			{
+				auto* cmat = reg.get_material(item.material_id);
+				if (cmat && (cmat->blend_mode() == 1 || cmat->blend_mode() == 2)) continue;
+			}
+			XMFLOAT4 bd;
+			auto bit = m_shadow_bounds.find(item.mesh_id);
+			if (bit == m_shadow_bounds.end())
+			{
+				Mesh* mp = reg.get_mesh(item.mesh_id);
+				float mnx = 0, mny = 0, mnz = 0, mxx = 1, mxy = 1, mxz = 1;
+				if (mp && mp->is_valid()) { mp->get_min(mnx, mny, mnz); mp->get_max(mxx, mxy, mxz); }
+				float dx = mxx - mnx, dy = mxy - mny, dz = mxz - mnz;
+				bd = XMFLOAT4((mnx + mxx) * 0.5f, (mny + mxy) * 0.5f, (mnz + mxz) * 0.5f,
+					0.5f * sqrtf(dx * dx + dy * dy + dz * dz));
+				m_shadow_bounds.emplace(item.mesh_id, bd);
+			}
+			else bd = bit->second;
+			const XMFLOAT4X4& W = item.world_matrix;
+			XMVECTOR wc = XMVector3TransformCoord(XMVectorSet(bd.x, bd.y, bd.z, 1.f), XMLoadFloat4x4(&W));
+			float sx = sqrtf(W._11 * W._11 + W._12 * W._12 + W._13 * W._13);
+			float sy = sqrtf(W._21 * W._21 + W._22 * W._22 + W._23 * W._23);
+			float sz = sqrtf(W._31 * W._31 + W._32 * W._32 + W._33 * W._33);
+			float ms = sx > sy ? (sx > sz ? sx : sz) : (sy > sz ? sy : sz);
+			all.push_back({ item.mesh_id, &item.world_matrix, XMVectorGetX(wc), XMVectorGetY(wc), XMVectorGetZ(wc), bd.w * ms + 0.05f });
+		}
 
-		u32 vb_used = 0;   // running offset into the shared shadow instance VB (across ALL tiles, both atlases)
+		auto& casters = m_shadow_tile_casters;
+		u32 vb_used = 0;   // running offset into the shared shadow instance VB (across ALL tiles, all atlases)
+		u32 dropped = 0;
 
-		// ---- cull + collect one tile's casters (shared by spot AND cascade tiles) ----
+		// ---- cull one tile's casters (shared by spot, cascade and point tiles) ----
 		// Own pack per tile: the scene's instance packing is keyed to the MAIN camera frustum and
 		// runs later — the wall BEHIND the player must still cast into the light frustum.
 		auto pack_casters = [&](const ShadowFrustum& fr)
 		{
 			casters.clear();
-			for (const auto& item : m_render_queue)
+			for (const auto& c : all)
+				if (sphere_in_shadow_frustum(fr, c.cx, c.cy, c.cz, c.r)) casters.push_back(c);
+			// The tiles share one instance buffer. A tile over budget keeps its LARGEST casters (the shadows one sees from
+			// afar) instead of the first in queue order, and the drop is reported once the frame is packed.
+			const u32 room = vb_used < MAX_SHADOW_INSTANCES ? MAX_SHADOW_INSTANCES - vb_used : 0;
+			if (casters.size() > room)
 			{
-				if (item.bone_offset != NO_BONES) continue;   // v1: skinned meshes receive but don't cast
-				if (item.layer != 0) continue;                // #175: the viewmodel receives but never casts
-				// Transparent materials (#33) don't cast: an alpha-blended ghost/glass pane throwing a
-				// fully SOLID shadow reads as a bug (real tinted-glass shadows need translucent maps — v2).
-				{
-					auto* cmat = reg.get_material(item.material_id);
-					if (cmat && (cmat->blend_mode() == 1 || cmat->blend_mode() == 2)) continue;
-				}
-				XMFLOAT4 bd;
-				auto bit = bounds.find(item.mesh_id);
-				if (bit == bounds.end())
-				{
-					Mesh* mp = reg.get_mesh(item.mesh_id);
-					float mnx = 0, mny = 0, mnz = 0, mxx = 1, mxy = 1, mxz = 1;
-					if (mp && mp->is_valid()) { mp->get_min(mnx, mny, mnz); mp->get_max(mxx, mxy, mxz); }
-					float dx = mxx - mnx, dy = mxy - mny, dz = mxz - mnz;
-					bd = XMFLOAT4((mnx + mxx) * 0.5f, (mny + mxy) * 0.5f, (mnz + mxz) * 0.5f,
-						0.5f * sqrtf(dx * dx + dy * dy + dz * dz));
-					bounds.emplace(item.mesh_id, bd);
-				}
-				else bd = bit->second;
-
-				const XMFLOAT4X4& W = item.world_matrix;
-				XMVECTOR wc = XMVector3TransformCoord(XMVectorSet(bd.x, bd.y, bd.z, 1.f), XMLoadFloat4x4(&W));
-				float sx = sqrtf(W._11 * W._11 + W._12 * W._12 + W._13 * W._13);
-				float sy = sqrtf(W._21 * W._21 + W._22 * W._22 + W._23 * W._23);
-				float sz = sqrtf(W._31 * W._31 + W._32 * W._32 + W._33 * W._33);
-				float ms = sx > sy ? (sx > sz ? sx : sz) : (sy > sz ? sy : sz);
-				if (sphere_in_shadow_frustum(fr, XMVectorGetX(wc), XMVectorGetY(wc), XMVectorGetZ(wc), bd.w * ms + 0.05f))
-				{
-					casters.push_back({ item.mesh_id, &item.world_matrix });
-					if (vb_used + casters.size() >= MAX_SHADOW_INSTANCES) break;   // shared hard cap
-				}
+				std::nth_element(casters.begin(), casters.begin() + room, casters.end(), [](const ShadowCaster& a, const ShadowCaster& b) { return a.r > b.r; });
+				dropped += (u32)(casters.size() - room);
+				casters.resize(room);
 			}
 		};
 
@@ -580,7 +590,7 @@ namespace vortex::graphics::dx12
 			if (casters.empty()) return;   // empty tile stays cleared -> fully lit, correct
 
 			std::sort(casters.begin(), casters.end(),
-				[](const Caster& a, const Caster& b) { return a.mesh < b.mesh; });
+				[](const ShadowCaster& a, const ShadowCaster& b) { return a.mesh < b.mesh; });
 			u8* vb = (u8*)m_shadow_instance_vb_mapped;
 			for (size_t i = 0; i < casters.size(); ++i)
 				memcpy(vb + (size_t)(vb_used + i) * 64, casters[i].world, 64);
@@ -619,12 +629,48 @@ namespace vortex::graphics::dx12
 					{
 						m_command_list->DrawInstanced(mesh->vertex_count(), count, 0, 0);
 					}
-					++m_draw_call_count;
+					++m_draw_call_count; ++m_shadow_draw_count;
 				}
 				i = j;
 			}
 			vb_used += (u32)casters.size();
 		};
+
+		// ---- directional cascade atlas (#24): t8 — packed FIRST so the sun never loses casters to the spot tiles (#363) ----
+		if (m_csm_count > 0 && m_csm_map)
+		{
+			if (m_csm_map_state != D3D12_RESOURCE_STATE_DEPTH_WRITE)
+			{
+				D3D12_RESOURCE_BARRIER b{};
+				b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+				b.Transition.pResource = m_csm_map.Get();
+				b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+				b.Transition.StateBefore = m_csm_map_state;
+				b.Transition.StateAfter = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+				m_command_list->ResourceBarrier(1, &b);
+				m_csm_map_state = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+			}
+
+			auto cdsv = m_csm_dsv_heap->GetCPUDescriptorHandleForHeapStart();
+			m_command_list->ClearDepthStencilView(cdsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+			m_command_list->OMSetRenderTargets(0, nullptr, FALSE, &cdsv);
+
+			for (u32 c = 0; c < m_csm_count; ++c)
+			{
+				pack_casters(extract_shadow_frustum(m_csm_vp[c]));
+				draw_tile((c & 1) * SHADOW_TILE_SIZE, ((c >> 1) & 1) * SHADOW_TILE_SIZE,
+					SHADOW_TILE_SIZE, MAX_SHADOW_SPOTS + c);
+			}
+
+			D3D12_RESOURCE_BARRIER b{};
+			b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+			b.Transition.pResource = m_csm_map.Get();
+			b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+			b.Transition.StateBefore = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+			b.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+			m_command_list->ResourceBarrier(1, &b);
+			m_csm_map_state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		}
 
 		// ---- spot atlas (#23): t7 ----
 		if (m_shadow_spot_count > 0 && m_shadow_map)
@@ -660,42 +706,6 @@ namespace vortex::graphics::dx12
 			b.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 			m_command_list->ResourceBarrier(1, &b);
 			m_shadow_map_state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-		}
-
-		// ---- directional cascade atlas (#24): t8 — same flow, its own resource + round-trip ----
-		if (m_csm_count > 0 && m_csm_map)
-		{
-			if (m_csm_map_state != D3D12_RESOURCE_STATE_DEPTH_WRITE)
-			{
-				D3D12_RESOURCE_BARRIER b{};
-				b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-				b.Transition.pResource = m_csm_map.Get();
-				b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-				b.Transition.StateBefore = m_csm_map_state;
-				b.Transition.StateAfter = D3D12_RESOURCE_STATE_DEPTH_WRITE;
-				m_command_list->ResourceBarrier(1, &b);
-				m_csm_map_state = D3D12_RESOURCE_STATE_DEPTH_WRITE;
-			}
-
-			auto cdsv = m_csm_dsv_heap->GetCPUDescriptorHandleForHeapStart();
-			m_command_list->ClearDepthStencilView(cdsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
-			m_command_list->OMSetRenderTargets(0, nullptr, FALSE, &cdsv);
-
-			for (u32 c = 0; c < m_csm_count; ++c)
-			{
-				pack_casters(extract_shadow_frustum(m_csm_vp[c]));
-				draw_tile((c & 1) * SHADOW_TILE_SIZE, ((c >> 1) & 1) * SHADOW_TILE_SIZE,
-					SHADOW_TILE_SIZE, MAX_SHADOW_SPOTS + c);
-			}
-
-			D3D12_RESOURCE_BARRIER b{};
-			b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-			b.Transition.pResource = m_csm_map.Get();
-			b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-			b.Transition.StateBefore = D3D12_RESOURCE_STATE_DEPTH_WRITE;
-			b.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-			m_command_list->ResourceBarrier(1, &b);
-			m_csm_map_state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		}
 
 		// ---- point-light face atlas (#25): t9 — 6 perspective tiles per shadowed light ----
@@ -738,6 +748,16 @@ namespace vortex::graphics::dx12
 			b.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 			m_command_list->ResourceBarrier(1, &b);
 			m_point_shadow_state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		}
+		if (dropped > 0)
+		{
+			const auto now = std::chrono::steady_clock::now();
+			if (now - m_shadow_drop_logged > std::chrono::seconds(5))
+			{
+				m_shadow_drop_logged = now;
+				OutputDebugStringA(("[dx12] shadows: " + std::to_string(dropped) + " caster(s) dropped this frame — the shared shadow instance budget of "
+					+ std::to_string(MAX_SHADOW_INSTANCES) + " is full (cascades packed first, largest casters kept) (#363)\n").c_str());
+			}
 		}
 	}
 }

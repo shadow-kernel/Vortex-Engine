@@ -628,6 +628,7 @@ namespace vortex::graphics::dx12
 		
 		// Reset per-frame stats
 		m_draw_call_count = 0;
+		m_shadow_draw_count = 0; m_post_draw_count = 0;
 		m_vertex_count = 0;
 		m_instances_tested = 0;
 		m_instances_drawn = 0;

@@ -515,11 +515,29 @@ namespace Editor.DllWrapper
         public static bool MultithreadingActive { get { try { return IsMultithreadingActive(); } catch { return false; } } }
 
         /// <summary>
-        /// Get draw call count from the engine.
+        /// Get draw call count from the engine (main pass + shadow atlases + SSAO prepass).
         /// </summary>
         public static int DrawCalls
         {
             get { try { return GetDrawCallCount(); } catch { return 0; } }
+        }
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int GetShadowDrawCallCount();
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int GetPostDrawCallCount();
+
+        /// <summary>Draws of the shadow atlases in the last frame — part of <see cref="DrawCalls"/> (#363).</summary>
+        public static int DrawCallsShadow
+        {
+            get { try { return GetShadowDrawCallCount(); } catch { return 0; } }
+        }
+
+        /// <summary>Draws of the SSAO depth prepass in the last frame — part of <see cref="DrawCalls"/> (#363).</summary>
+        public static int DrawCallsPost
+        {
+            get { try { return GetPostDrawCallCount(); } catch { return 0; } }
         }
 
         /// <summary>

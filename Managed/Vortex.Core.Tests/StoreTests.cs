@@ -443,6 +443,17 @@ namespace VortexTests
             t.False(fake.Requests.Last().Headers.Contains("Authorization"), "search is anonymous");
             var all = await p.SearchAsync(new StoreQuery { Text = "door", IncludeNonCommercial = true, IncludeNoDerivatives = true }, CancellationToken.None);
             t.Equal(3, all.Items.Count, "all three with NC / ND switched on");
+            // by id (#356): a uid that no search returned is looked up directly; the licence is reported, not filtered
+            fake.Json("https://api.sketchfab.com/v3/models/u9", M("u9", "Lamp", "CC Attribution"));
+            fake.Json("https://api.sketchfab.com/v3/models/u8", M("u8", "NC Lamp", "CC Attribution-NonCommercial"));
+            fake.Status("https://api.sketchfab.com/v3/models/nope", HttpStatusCode.NotFound);
+            var lamp = await p.GetItemAsync("u9", CancellationToken.None);
+            t.Equal("Lamp", lamp?.Name, "GET /models/{uid}");
+            t.Equal("CC-BY-4.0", lamp?.License?.Id, "licence of the item");
+            var nc = await p.GetItemAsync("u8", CancellationToken.None);
+            t.True(nc != null && !new StoreQuery().Allows(nc.License), "an NC item comes back with its licence so the caller can say why it is excluded");
+            t.True(await p.GetItemAsync("nope", CancellationToken.None) == null, "unknown uid -> null");
+            t.True(await p.GetItemAsync("../x", CancellationToken.None) == null, "an id with path characters is never requested");
             var door = page.Items[0];
             string err = null;
             try { await p.ResolveAsync(door, null, CancellationToken.None); } catch (StoreHttp.StoreHttpException ex) { err = ex.Message; }

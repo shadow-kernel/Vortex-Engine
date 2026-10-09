@@ -402,6 +402,9 @@ namespace vortex::graphics::dx12
 		// Performance statistics
 		int get_current_fps() const { return m_current_fps; }
 		int get_draw_call_count() const { return m_draw_call_count; }
+		// draws of the shadow atlases / the SSAO prepass — part of get_draw_call_count (#363)
+		int get_shadow_draw_count() const { return m_shadow_draw_count; }
+		int get_post_draw_count() const { return m_post_draw_count; }
 		int get_vertex_count() const { return m_vertex_count; }
 		// Cull stats (per frame): instances examined vs actually drawn — proves cull effectiveness on big maps.
 		int get_instances_tested() const { return m_instances_tested; }
@@ -815,6 +818,7 @@ namespace vortex::graphics::dx12
 		// Performance statistics
 		int m_current_fps{ 0 };
 		int m_draw_call_count{ 0 };
+		int m_shadow_draw_count{ 0 }, m_post_draw_count{ 0 };
 		int m_vertex_count{ 0 };
 		int m_instances_tested{ 0 };
 		int m_instances_drawn{ 0 };
@@ -855,6 +859,14 @@ namespace vortex::graphics::dx12
 		void* m_shadow_pass_cb_mapped{ nullptr };
 		ComPtr<ID3D12Resource> m_shadow_instance_vb;        // world matrices of this frame's shadow casters
 		void* m_shadow_instance_vb_mapped{ nullptr };
+		// Casters gathered ONCE per frame (#363): every tile tests precomputed world-space spheres instead of scanning
+		// the queue with a map lookup and a matrix transform per item (up to 19 tiles x N). m_shadow_bounds (mesh ->
+		// local centre + radius) is kept across frames and dropped when a mesh was destroyed.
+		struct ShadowCaster { id::id_type mesh; const DirectX::XMFLOAT4X4* world; float cx, cy, cz, r; };
+		std::vector<ShadowCaster> m_shadow_casters, m_shadow_tile_casters;
+		std::unordered_map<id::id_type, DirectX::XMFLOAT4> m_shadow_bounds;
+		u32 m_shadow_bounds_generation{ 0 };
+		std::chrono::steady_clock::time_point m_shadow_drop_logged{};
 		// This frame's shadow spots (filled by prepare_shadow_pass, consumed by render_shadow_pass +
 		// the GPUSpotLight copy in update_per_frame_constants).
 		struct ShadowSpot { int spot_index; DirectX::XMFLOAT4X4 vp; };

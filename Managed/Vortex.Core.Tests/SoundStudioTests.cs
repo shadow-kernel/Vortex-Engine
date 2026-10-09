@@ -32,6 +32,71 @@ namespace VortexTests
         private static void Key(string id, string value) { Environment.SetEnvironmentVariable("VORTEX_STORE_KEY_" + id.ToUpperInvariant().Replace('-', '_'), value); StoreKeys.Reload(); }
 
         [Test]
+        public static void ProceduralFamilyRouting(TestContext t)
+        {
+            // whole words, most specific family first (#353)
+            t.Equal("reload", ProceduralBackend.Family("pistol magazine reload"), "reload before gunshot");
+            t.Equal("glass", ProceduralBackend.Family("glass bottle shatters on stone floor"), "glass");
+            t.Equal("rustle", ProceduralBackend.Family("soft paper rustle"), "rustle");
+            t.Equal("crowd", ProceduralBackend.Family("crowd murmur in a plaza"), "crowd");
+            t.Equal("siren", ProceduralBackend.Family("car horn"), "horn");
+            t.Equal("creak", ProceduralBackend.Family("Old heavy wooden door slowly creaking open on rusty hinges, long creak with tension, quiet room"), "door creak preset");
+            t.Equal("impact", ProceduralBackend.Family("Slow footsteps on wet basement concrete, leather boots"), "footsteps preset: an impact, not a basement drone");
+            t.Equal("drone", ProceduralBackend.Family("Dark basement ambience: low ventilation hum, distant water drips"), "ambience wins over water");
+            t.Equal("whoosh", ProceduralBackend.Family("Bullet whizzing past the listener's head, quick supersonic crack and whoosh"), "bullet whiz preset");
+            t.Equal("impact", ProceduralBackend.Family("short metallic clank"), "clank (the MCP smoke prompt)");
+            t.Equal("glass", ProceduralBackend.Family("window breaks"), "window is not wind");
+            t.Equal("impact", ProceduralBackend.Family("human thumping"), "thumping is an impact, human is not a hum");
+            t.Equal("gunshot", ProceduralBackend.Family("Rifle gunshot far away"), "gunshot");
+            t.Equal("fire", ProceduralBackend.Family("campfire crackling at night"), "fire");
+            t.Equal("rain", ProceduralBackend.Family("heavy rain on a tin roof"), "rain");
+            t.True(ProceduralBackend.Family("pressurised cabin") == null, "pressurised is not a riser");
+            t.True(ProceduralBackend.Family("white architecture") == null, "white is not a hit");
+            t.True(ProceduralBackend.Family("quiet liquid") == null, "quiet / liquid are not ui clicks");
+            t.True(ProceduralBackend.Family("walking along slowly") == null, "along is not long, slowly is not low");
+            t.True(ProceduralBackend.Family("xyzzy frobnicate") == null, "unknown prompt -> null");
+            ProceduralBackend.Family("glass shatter", out string kw);
+            t.Equal("glass", kw, "the deciding keyword is reported");
+            // band-limited recipes: no broadband hiss — the long-term spectrum is far from flat
+            t.True(Flatness(WhiteNoise(ProceduralBackend.Rate, 11)) > 0.75, "white noise measures as flat");
+            var report = new List<string>(); bool allShaped = true;
+            foreach (var (prompt, max) in new[] { ("glass bottle shatters", 0.5), ("soft paper rustle", 0.5), ("crowd murmur in a plaza", 0.5), ("heavy rain on a roof", 0.6), ("pistol magazine reload", 0.6), ("campfire crackling", 0.5), ("quick whoosh", 0.5) })
+            {
+                var s = ProceduralBackend.Synthesize(prompt, 1.5, false, 2);
+                double fl = Flatness(s);
+                report.Add(prompt + " " + fl.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) + (fl < max ? "" : " (>= " + max + ")"));
+                if (fl >= max) allShaped = false;
+            }
+            t.True(allShaped, "spectral flatness per recipe: " + string.Join("; ", report));
+            var soft = ProceduralBackend.Synthesize("soft paper rustle", 1.0, false, 3);
+            t.True(soft.Max(Math.Abs) < 0.6f, "a soft prompt is not normalised to full scale");
+        }
+
+        private static float[] WhiteNoise(int n, int seed) { var r = new Random(seed); var x = new float[n]; for (int i = 0; i < n; i++) x[i] = (float)(r.NextDouble() * 2 - 1); return x; }
+
+        /// <summary>Spectral flatness (geometric / arithmetic mean of the magnitude spectrum) averaged over 16 frames of
+        /// 1024 samples — ~0.85 for white noise, well below 0.5 for anything with a shape.</summary>
+        private static double Flatness(float[] x)
+        {
+            const int N = 1024; int frames = 16;
+            var acc = new double[N / 2];
+            for (int f = 0; f < frames; f++)
+            {
+                int start = (int)((long)(x.Length - N) * f / Math.Max(1, frames - 1));
+                if (start < 0) start = 0;
+                for (int k = 1; k < N / 2; k++)
+                {
+                    double re = 0, im = 0;
+                    for (int i = 0; i < N && start + i < x.Length; i++) { double w = 0.5 - 0.5 * Math.Cos(2 * Math.PI * i / N); double a = 2 * Math.PI * k * i / N; re += x[start + i] * w * Math.Cos(a); im -= x[start + i] * w * Math.Sin(a); }
+                    acc[k] += Math.Sqrt(re * re + im * im);
+                }
+            }
+            double logSum = 0, sum = 0; int cnt = 0;
+            for (int k = 1; k < N / 2; k++) { double m = acc[k] / frames + 1e-9; logSum += Math.Log(m); sum += m; cnt++; }
+            return Math.Exp(logSum / cnt) / (sum / cnt);
+        }
+
+        [Test]
         public static async Task ProceduralSynthMakesWavs(TestContext t)
         {
             t.Equal("heartbeat", ProceduralBackend.Family("slow tense heartbeat"), "heartbeat");
