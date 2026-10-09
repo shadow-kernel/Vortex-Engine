@@ -112,10 +112,8 @@ jobs:
           if (-not $p.WaitForExit(420000)) { $p.Kill(); Write-Host "::warning::the editor smoke timed out" }
           Get-Content "$tmp\smoke.log" -ErrorAction SilentlyContinue
           Get-Content "$tmp\smoke.err" -ErrorAction SilentlyContinue
-          # the Terminal tab's ConPTY path is broken on Windows (#365): its smoke still runs for the diagnostics, but does not block
-          if (Select-String -Path "$tmp\smoke.log" -Pattern "SMOKE FAIL terminal" -Quiet) { Write-Host "::warning::smoke check 'terminal' failed - non-blocking until #365 (Windows ConPTY) is fixed" }
-          if (Select-String -Path "$tmp\smoke.log" -Pattern "SMOKE FAIL (?!terminal)" -Quiet) { exit 1 }
-          foreach ($c in @("mcp tools", "title bar", "workspace layout")) { if (-not (Select-String -Path "$tmp\smoke.log" -Pattern "SMOKE OK   $c" -Quiet)) { Write-Host "::error::smoke check '$c' did not pass"; exit 1 } }
+          if (Select-String -Path "$tmp\smoke.log" -Pattern "SMOKE FAIL" -Quiet) { exit 1 }
+          foreach ($c in @("mcp tools", "title bar", "terminal", "workspace layout")) { if (-not (Select-String -Path "$tmp\smoke.log" -Pattern "SMOKE OK   $c" -Quiet)) { Write-Host "::error::smoke check '$c' did not pass"; exit 1 } }
 
       - name: Upload the Windows smoke capture
         if: always()

@@ -39,11 +39,16 @@ namespace VortexEditor.Shell
                 w.ShowPanel(MainWindow.PanelInspector);
                 w.ShowPanel(MainWindow.PanelProject);
 
+                // the runner's screen may be narrower than the wide target (CI: 1024 px): lay out at what fits, and expect the
+                // wide layout's centre width only when the window could actually get that wide
+                double scale = 1.0, usable = double.MaxValue;
+                try { var scr = w.Screens?.Primary; if (scr != null) { scale = scr.Scaling > 0 ? scr.Scaling : 1.0; usable = scr.WorkingArea.Width / scale - 8; } } catch { }
                 foreach (var (target, name) in new[] { (1480.0, "wide"), (w.MinWidth, "min") })
                 {
-                    w.Width = Math.Max(w.MinWidth, target);
-                    await SmokeRegistry.Settle(1000)   /* two layout passes: the OS may clamp the window to the work area first */;
-                    Check(w, name, problems, expectCentreMin: name == "wide");
+                    double want = Math.Max(w.MinWidth, Math.Min(target, usable));
+                    w.Width = want;
+                    await SmokeRegistry.Settle(1000);
+                    Check(w, name, problems, expectCentreMin: name == "wide" && want >= 1480);
                     SmokeRegistry.Capture(w, "layout_claude_" + name + ".png");
                 }
             }
