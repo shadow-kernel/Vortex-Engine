@@ -28,6 +28,8 @@
 #include <unordered_map>
 
 
+namespace vortex::graphics { class Material; }   // ShadowCaster keeps the material of a cut-out caster (#329)
+
 namespace vortex::graphics::dx12
 {
 	using Microsoft::WRL::ComPtr;
