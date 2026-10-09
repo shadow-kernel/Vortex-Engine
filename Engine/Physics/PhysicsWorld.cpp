@@ -455,6 +455,10 @@ namespace vortex::physics {
 		}
 
 		// ---- the world ------------------------------------------------------------------------------------
+		// #107: the per-pair combine callbacks the world constructor registers (defined after the slot helpers below).
+		f32 combine_friction(const JPH::Body& b1, const JPH::SubShapeID&, const JPH::Body& b2, const JPH::SubShapeID&);
+		f32 combine_restitution(const JPH::Body& b1, const JPH::SubShapeID&, const JPH::Body& b2, const JPH::SubShapeID&);
+
 		struct world
 		{
 			JPH::TempAllocatorImpl temp_allocator{ k_temp_allocator_bytes };
