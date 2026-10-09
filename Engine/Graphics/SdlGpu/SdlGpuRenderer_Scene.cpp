@@ -658,7 +658,8 @@ namespace vortex::graphics::sdlgpu
 		const bool fx1 = fx && m_particles.has_layer(1);
 		// Decals (#120): the scene view's list, built + uploaded before the pass, drawn between the opaque and the transparent meshes.
 		const bool dx = particle_world == 0 && m_decals.ready() && m_decals.prepare(cmd, m_decal_list);
-		const SdlGpuParticles::Environment penv = (fx || dx) ? particle_environment(view) : SdlGpuParticles::Environment{};
+		const bool vf = particle_world == 0 && m_volumetrics.active();   // volumetric fog (#119)
+		const SdlGpuParticles::Environment penv = (fx || dx || vf) ? particle_environment(view) : SdlGpuParticles::Environment{};
 
 		SDL_GPUColorTargetInfo color{};
 		color.texture = target.color;
@@ -725,6 +726,15 @@ namespace vortex::graphics::sdlgpu
 		if (!vm_pass && gizmos && !fx0) draw_gizmos(pass, cmd);
 		SDL_EndGPURenderPass(pass);
 
+		// Volumetric fog (#119): over the finished world, before the particles (they carry the analytic fog themselves).
+		if (vf)
+		{
+			SdlGpuVolumetrics::View vv{};
+			vv.inv_view_projection = view.inverse_view_projection; vv.eye = view.eye; vv.near_clip = view.near_clip; vv.far_clip = view.far_clip; vv.ortho = view.ortho;
+			SdlGpuVolumetrics::Shadows sh{};
+			sh.spot_atlas = m_shadow_atlas; sh.csm_atlas = m_csm_atlas; sh.point_atlas = m_point_atlas; sh.comparison = m_sampler_shadow; sh.map_texel = view.frame.shadow_map_texel;
+			m_volumetrics.draw(cmd, target.color, target.depth, target.width, target.height, vv, penv, &m_light_data, sh);
+		}
 		// World-layer particles: after the opaque + transparent meshes, depth-tested against the world depth.
 		if (fx0) m_particles.draw_layer(cmd, target.color, target.depth, target.width, target.height, 0, pview, penv);
 		// Collision snapshot of the world depth (before the viewmodel pass clears it).

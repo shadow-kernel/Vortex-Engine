@@ -21,6 +21,8 @@
 #include "SdlGpuParticles.h"
 #include "SdlGpuDecals.h"
 #include "../Decals/Decals.h"
+#include "SdlGpuVolumetrics.h"
+#include "../Volumetrics/Volumetrics.h"
 #include <SDL3/SDL.h>
 #include <chrono>
 #include <memory>
@@ -143,6 +145,9 @@ namespace vortex::graphics::sdlgpu
 		void clear_decals() { m_decal_list.clear(); }
 		void add_decal(const decals::Decal& d) { if (m_decal_list.size() < decals::MAX_DECALS) m_decal_list.push_back(d); }
 		const std::vector<decals::Decal>& decal_list() const { return m_decal_list; }
+		// Volumetric fog (#119): persistent like the analytic fog (scene settings / Atmosphere.SetVolumetricFog).
+		void set_volumetric_fog(const volumetrics::Params& p) { m_volumetrics.set_params(p); }
+		const volumetrics::Params& volumetric_fog() const { return m_volumetrics.params(); }
 		// colors (#331): count x (r, g, b, a) per instance, or nullptr for untinted
 		void submit_mesh_instances(id::id_type mesh, id::id_type material, const float* world_matrices, u32 count, u32 layer = 0, const float* colors = nullptr);
 		void submit_skinned_item(id::id_type mesh, id::id_type material, const float* world_matrix,
@@ -810,6 +815,7 @@ namespace vortex::graphics::sdlgpu
 		SdlGpuOverlay m_overlay;
 		SdlGpuParticles m_particles;
 		SdlGpuDecals m_decals;                    // the projected decal pass (#120)
+		SdlGpuVolumetrics m_volumetrics;          // volumetric fog (#119)
 		std::vector<decals::Decal> m_decal_list;  // the frame's decals (refilled on every scene submit, like the lights)
 		bool m_capture_requested{ false };
 		std::string m_capture_path;

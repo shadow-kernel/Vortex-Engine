@@ -59,6 +59,19 @@ namespace Editor.Core.Data
         [DataMember(Name = "aoOn", Order = 60)] public bool AoEnabled { get; set; }
         [DataMember(Name = "aoRadius", Order = 61)] public float AoRadius { get; set; } = 0.6f;
         [DataMember(Name = "aoIntensity", Order = 62)] public float AoIntensity { get; set; } = 1.0f;
+        // ---- Volumetric fog (#119): ray-marched in-scattering of the sun and the lights, over the fog's height profile ----
+        [DataMember(Name = "volOn", Order = 70)] public bool VolumetricEnabled { get; set; }
+        [DataMember(Name = "volDensity", Order = 71)] public float VolumetricDensity { get; set; } = 0.5f;
+        [DataMember(Name = "volAnisotropy", Order = 72)] public float VolumetricAnisotropy { get; set; } = 0.55f;
+        [DataMember(Name = "volDistance", Order = 73)] public float VolumetricDistance { get; set; } = 60f;
+        [DataMember(Name = "volNoise", Order = 74)] public float VolumetricNoise { get; set; } = 0.5f;
+        [DataMember(Name = "volNoiseScale", Order = 75)] public float VolumetricNoiseScale { get; set; } = 6f;
+        [DataMember(Name = "volNoiseSpeed", Order = 76)] public float VolumetricNoiseSpeed { get; set; } = 0.35f;
+        [DataMember(Name = "volSun", Order = 77)] public float VolumetricSun { get; set; } = 1f;
+        [DataMember(Name = "volLights", Order = 78)] public float VolumetricLights { get; set; } = 1f;
+        [DataMember(Name = "volAmbient", Order = 79)] public float VolumetricAmbient { get; set; } = 0.35f;
+        [DataMember(Name = "volSteps", Order = 80)] public int VolumetricSteps { get; set; } = 24;
+        [DataMember(Name = "volShadows", Order = 81)] public bool VolumetricShadows { get; set; } = true;
 
         /// <summary>DataContractSerializer builds an UNINITIALIZED object (field initializers never
         /// run), so members missing from an older .vscene would deserialize as 0 — a scene saved
@@ -74,6 +87,8 @@ namespace Editor.Core.Data
             Contrast = 1.0f; Saturation = 1.0f;
             BloomThreshold = 0.75f; BloomKnee = 0.5f; BloomIntensity = 0.7f; BloomScatter = 0.65f;
             AoRadius = 0.6f; AoIntensity = 1.0f;
+            VolumetricDensity = 0.5f; VolumetricAnisotropy = 0.55f; VolumetricDistance = 60f; VolumetricNoise = 0.5f; VolumetricNoiseScale = 6f;
+            VolumetricNoiseSpeed = 0.35f; VolumetricSun = 1f; VolumetricLights = 1f; VolumetricAmbient = 0.35f; VolumetricSteps = 24; VolumetricShadows = true;
         }
 
         /// <summary>Push every setting into the renderer (persistent frame state, same-frame visible).</summary>
@@ -88,6 +103,8 @@ namespace Editor.Core.Data
             DllWrapper.VortexAPI.SetPostColorGrade(GradeEnabled, Exposure, Contrast, Saturation, Temperature, Tint);
             DllWrapper.VortexAPI.SetPostBloom(BloomEnabled, BloomThreshold, BloomKnee, BloomIntensity, BloomScatter);
             DllWrapper.VortexAPI.SetAmbientOcclusion(AoEnabled, AoRadius, AoIntensity);
+            DllWrapper.VortexAPI.SetVolumetricFog(VolumetricEnabled, VolumetricDensity, VolumetricAnisotropy, VolumetricDistance, VolumetricNoise,
+                VolumetricNoiseScale, VolumetricNoiseSpeed, VolumetricSun, VolumetricLights, VolumetricAmbient, VolumetricSteps, VolumetricShadows);
         }
 
         /// <summary>Renderer back to a clean image (used when a scene without settings becomes live).</summary>

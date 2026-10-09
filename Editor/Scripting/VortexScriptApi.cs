@@ -1971,6 +1971,20 @@ namespace Vortex
 
         /// <summary>Turn fog off.</summary>
         public static void ClearFog() { Editor.DllWrapper.VortexAPI.SetFog(0f, 0f, 0f, 0f, 0f, 0f); }
+
+        /// <summary>Volumetric fog (#119): the air itself scatters light towards the camera — the flashlight becomes a visible
+        /// cone, point lights glow, the sun throws shafts, all stopped by the shadow maps. <paramref name="density"/> scales the
+        /// scattering (the height profile and colour come from <see cref="SetFog"/>, which may stay at density 0),
+        /// <paramref name="anisotropy"/> is the Henyey-Greenstein g (0 even, towards 1 bright halos looking into lights),
+        /// <paramref name="noise"/> / <paramref name="noiseScale"/> / <paramref name="noiseSpeed"/> the wind-blown patchiness,
+        /// <paramref name="sun"/> / <paramref name="lights"/> / <paramref name="ambient"/> the contributions, <paramref name="steps"/> the
+        /// quality (8..48). Scare ramps: call it again with a higher density. <c>Atmosphere.SetVolumetricFog(0.8f, anisotropy: 0.6f);</c></summary>
+        public static void SetVolumetricFog(float density = 0.5f, float anisotropy = 0.55f, float maxDistance = 60f, float noise = 0.5f,
+                                            float noiseScale = 6f, float noiseSpeed = 0.35f, float sun = 1f, float lights = 1f, float ambient = 0.35f,
+                                            int steps = 24, bool shadows = true)
+            { Editor.DllWrapper.VortexAPI.SetVolumetricFog(density > 0f, density, anisotropy, maxDistance, noise, noiseScale, noiseSpeed, sun, lights, ambient, steps, shadows); }
+        /// <summary>Volumetric fog off (the analytic fog of <see cref="SetFog"/> stays).</summary>
+        public static void ClearVolumetricFog() { Editor.DllWrapper.VortexAPI.SetVolumetricFog(false, 0f, 0.55f, 60f, 0f, 6f, 0f, 1f, 1f, 0.35f, 24, true); }
     }
 
     /// <summary>The sky from game scripts (#349): swap the equirect texture per area or time of day, or set a gradient.

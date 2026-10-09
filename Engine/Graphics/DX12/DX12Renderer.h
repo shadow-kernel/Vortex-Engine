@@ -11,6 +11,8 @@
 #include "DX12SkyboxPipeline.h"
 #include "DX12Particles.h"       // the particle / VFX pass (#117)
 #include "DX12Decals.h"          // the projected decal pass (#120)
+#include "DX12Volumetrics.h"     // volumetric fog (#119)
+#include "../Volumetrics/Volumetrics.h"
 #include "DX12FrameRing.h"
 #include "../Decals/Decals.h"
 #include "DX12UpscalePipeline.h"
@@ -151,6 +153,9 @@ namespace vortex::graphics::dx12
 		void clear_decals() { m_decal_list.clear(); }
 		void add_decal(const decals::Decal& d) { if (m_decal_list.size() < decals::MAX_DECALS) m_decal_list.push_back(d); }
 		const std::vector<decals::Decal>& decal_list() const { return m_decal_list; }
+		// Volumetric fog (#119): persistent like the analytic fog (scene settings / Atmosphere.SetVolumetricFog).
+		void set_volumetric_fog(const volumetrics::Params& p) { m_volumetrics.set_params(p); }
+		const volumetrics::Params& volumetric_fog() const { return m_volumetrics.params(); }
 		// Submit `count` instances of the SAME mesh+material in ONE call (world_matrices = count * 16 floats,
 		// row-major 4x4 each). Avoids one P/Invoke per instance — the path for spawning large crowds.
 		// colors (#331): count x (r, g, b, a) per instance, or nullptr for untinted
@@ -548,6 +553,7 @@ namespace vortex::graphics::dx12
 		DX12Particles m_particles;            // Particle / VFX pass (#117): billboards, ribbons, soft particles, depth collision
 		DX12FrameRing m_fx_ring;              // per-frame upload ring shared by the effect passes
 		DX12Decals m_decal_pass;              // projected decals (#120)
+		DX12Volumetrics m_volumetrics;        // volumetric fog (#119)
 		std::vector<decals::Decal> m_decal_list;   // the frame's decals (refilled on every scene submit, like the lights)
 		DX12UpscalePipeline m_upscale;        // Fullscreen upscale (render-scale composite + the DLSS slot)
 		DX12PostFxChain m_postfx;             // Post-processing chain (#28/#29) between composite and UI overlay

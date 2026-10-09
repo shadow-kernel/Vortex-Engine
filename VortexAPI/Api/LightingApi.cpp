@@ -1,4 +1,5 @@
 #include "../ApiCommon.h"
+#include "../../Engine/Graphics/Volumetrics/Volumetrics.h"
 
 EDITOR_INTERFACE void ClearLights()
 {
@@ -83,6 +84,28 @@ EDITOR_INTERFACE void SetFogParams(
 	float density, float heightY, float heightFalloff)
 {
 	graphics::Renderer::instance().set_fog({ colorR, colorG, colorB }, density, heightY, heightFalloff);
+}
+
+// Volumetric fog (#119) — Engine/Graphics/Volumetrics/Volumetrics.h. enabled == 0 or density <= 0 = the analytic fog alone.
+// Internal ABI: changed in lockstep with Editor/DllWrapper/VortexAPI.Volumetrics.cs.
+EDITOR_INTERFACE void SetVolumetricFogParams(int32_t enabled, float density, float anisotropy, float maxDistance,
+	float noiseStrength, float noiseScale, float noiseSpeed, float sun, float lights, float ambient, int32_t steps, int32_t shadows)
+{
+	auto clampf = [](float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); };
+	graphics::volumetrics::Params p{};
+	p.enabled = enabled != 0 && density > 0.0f;
+	p.density = density > 0.0f ? density : 0.0f;
+	p.anisotropy = clampf(anisotropy, -0.95f, 0.95f);
+	p.max_distance = maxDistance < 1.0f ? 1.0f : maxDistance;
+	p.noise_strength = clampf(noiseStrength, 0.0f, 1.0f);
+	p.noise_scale = noiseScale < 0.1f ? 0.1f : noiseScale;
+	p.noise_speed = noiseSpeed;
+	p.sun = sun < 0.0f ? 0.0f : sun;
+	p.lights = lights < 0.0f ? 0.0f : lights;
+	p.ambient = ambient < 0.0f ? 0.0f : ambient;
+	p.steps = (u32)(steps < 4 ? 4 : (steps > 64 ? 64 : steps));
+	p.shadows = shadows != 0;
+	graphics::Renderer::instance().set_volumetric_fog(p);
 }
 
 

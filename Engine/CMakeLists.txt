@@ -52,6 +52,7 @@ set(VORTEX_ENGINE_SDLGPU_SOURCES
 	Graphics/SdlGpu/SdlGpuOverlay.cpp
 	Graphics/SdlGpu/SdlGpuDecals.cpp
 	Graphics/SdlGpu/SdlGpuParticles.cpp
+	Graphics/SdlGpu/SdlGpuVolumetrics.cpp
 	Graphics/SdlGpu/SdlGpuRenderer.cpp
 	Graphics/SdlGpu/SdlGpuRenderer_Scene.cpp
 	Graphics/SdlGpu/SdlGpuRenderer_Shadows.cpp
@@ -73,6 +74,7 @@ set(VORTEX_ENGINE_DX12_SOURCES
 	Graphics/DX12/DX12Pipeline3D.cpp
 	Graphics/DX12/DX12Decals.cpp
 	Graphics/DX12/DX12Particles.cpp
+	Graphics/DX12/DX12Volumetrics.cpp
 	Graphics/DX12/DX12PostFxChain.cpp
 	Graphics/DX12/DX12Renderer.cpp
 	Graphics/DX12/DX12Renderer_3DScene.cpp

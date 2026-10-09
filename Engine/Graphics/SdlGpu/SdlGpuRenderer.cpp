@@ -130,6 +130,8 @@ namespace vortex::graphics::sdlgpu
 			log("particles unavailable (continuing without them)");
 		if (!m_decals.initialize(m_device, m_shader_dir, m_scene_format, m_sampler_linear_clamp))
 			log("decals unavailable (continuing without them)");
+		if (!m_volumetrics.initialize(m_device, m_shader_dir, m_scene_format, m_sampler_linear_clamp))
+			log("volumetric fog unavailable (continuing without it)");
 
 		m_initialized = true;
 		log("initialized (" + m_gpu_name + ")");
@@ -719,6 +721,7 @@ namespace vortex::graphics::sdlgpu
 		m_overlay.shutdown();
 		m_particles.shutdown();
 		m_decals.shutdown();
+		m_volumetrics.shutdown();
 		::vortex::particles::on_renderer_shutdown();   // the engine texture ids the emitters hold die with the registry
 		destroy_game_window();
 		for (auto& [id, target] : m_render_targets) release_target(*target);
