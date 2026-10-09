@@ -140,7 +140,7 @@ namespace vortex::graphics::dx12
 	void DX12Renderer::submit_render_item(const RenderItem& item)
 	{
 		std::lock_guard<std::mutex> lock(m_queue_mutex);
-		m_submit_queue.push_back(item);
+		(m_submit_target == 1 ? m_static_submit : m_submit_queue).push_back(item);
 	}
 
 
@@ -164,7 +164,8 @@ namespace vortex::graphics::dx12
 	{
 		if (!world_matrices || count == 0) return;
 		std::lock_guard<std::mutex> lock(m_queue_mutex);
-		m_submit_queue.reserve(m_submit_queue.size() + count);
+		auto& q = m_submit_target == 1 ? m_static_submit : m_submit_queue;
+		q.reserve(q.size() + count);
 		for (u32 i = 0; i < count; ++i)
 		{
 			RenderItem item;
@@ -172,7 +173,7 @@ namespace vortex::graphics::dx12
 			item.material_id = material;
 			item.layer = layer;
 			memcpy(&item.world_matrix, world_matrices + (size_t)i * 16, sizeof(DirectX::XMFLOAT4X4));
-			m_submit_queue.push_back(item);
+			q.push_back(item);
 		}
 	}
 	
@@ -209,6 +210,23 @@ namespace vortex::graphics::dx12
 		std::lock_guard<std::mutex> lock(m_queue_mutex);
 		m_submit_queue.clear();
 		m_bone_submit.clear();
+		m_static_submit.clear(); m_static_render.clear(); m_static_pending = false; m_submit_target = 0;
+	}
+
+	// #364 A: everything submitted between these two calls is RETAINED across frames (the static scene); an empty pass
+	// clears the retained set. Per-frame submits outside the pass are the dynamic entities, merged in at the swap.
+	void DX12Renderer::begin_static_scene()
+	{
+		std::lock_guard<std::mutex> lock(m_queue_mutex);
+		m_static_submit.clear();
+		m_submit_target = 1;
+	}
+
+	void DX12Renderer::end_static_scene()
+	{
+		std::lock_guard<std::mutex> lock(m_queue_mutex);
+		m_submit_target = 0;
+		m_static_pending = true;
 	}
 
 

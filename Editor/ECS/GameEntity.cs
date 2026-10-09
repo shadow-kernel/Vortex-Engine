@@ -56,6 +56,13 @@ namespace Editor.ECS
         private Guid _id;
         private string _name;
         private bool _isActive = true;
+
+        /// <summary>Render classification (#364 A), set by the scene submit: true when this entity or an ancestor moves
+        /// every frame (Animator, Rigidbody, NavAgent, Ragdoll, ParticleSystem) and is therefore re-submitted per frame;
+        /// false for the static scene, which the renderer keeps across frames. A transform change on a static entity
+        /// bumps <see cref="Components.Transform.StaticVersion"/> so the static set is re-sent. Not serialized.</summary>
+        [IgnoreDataMember]
+        public bool RenderDynamic { get; set; }
         private bool _isStatic;
         private int _layer;
         private string _tag = "Untagged";

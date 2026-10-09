@@ -30,6 +30,11 @@ namespace Editor.Core.Services
         /// script-moved entities render frozen in shipped games (editor play re-submits every frame anyway).
         /// </summary>
         public static bool RuntimeDirty;
+        /// <summary>The STATIC scene changed in a way a transform version cannot see (#364 A): an entity was created,
+        /// destroyed, (de)activated, re-parented, its renderer enabled/disabled, its layer or colour changed. The next
+        /// play-mode submit re-sends the retained static set. Set it together with <see cref="RuntimeDirty"/> at
+        /// structural sites; per-frame movement of dynamic entities must NOT set it.</summary>
+        public static bool StaticDirty = true;
 
         /// <summary>How the EDIT-mode viewport presents non-world render layers (#175: 1 = FP viewmodel,
         /// 2 = third-person only). Play mode ignores this — while playing the layers always behave like
@@ -669,16 +674,89 @@ namespace Editor.Core.Services
         /// <summary>
         /// Submit all entities in a scene for rendering.
         /// </summary>
-        public void SubmitScene(Data.Scene scene)
+        // ---- static / dynamic split (#364 A) ---------------------------------------------------------------------
+        // While playing, the scene is re-submitted every frame something moves. The renderer now keeps a RETAINED
+        // static set (BeginStaticSubmit .. EndStaticSubmit) and merges the per-frame submits into it, so the managed
+        // side only walks the entities that actually move every frame: those with an Animator, Rigidbody, NavAgent,
+        // Ragdoll or ParticleSystem on them or an ancestor. The static set is re-sent only when a static transform
+        // changed (Transform.StaticVersion), something structural happened (StaticDirty) or the scene changed.
+        // VORTEX_STATIC_SUBMIT=0 switches back to the full submit; an older native library does so by itself.
+        private static bool _splitEnabled = Environment.GetEnvironmentVariable("VORTEX_STATIC_SUBMIT") != "0";
+        private readonly List<GameEntity> _dynamicEntities = new List<GameEntity>();
+        private Data.Scene _splitScene;
+        private int _staticVersionSent = -1;
+        private bool _splitWasActive;
+        /// <summary>Static submits of the last structural pass (the FPS log and tests).</summary>
+        public static int LastStaticMeshes;
+
+        private static readonly HashSet<string> DynamicComponentNames = new HashSet<string>(StringComparer.Ordinal)
+            { "Animator", "Rigidbody", "NavAgent", "Ragdoll", "ParticleSystem" };
+
+        /// <summary>Does this entity itself move every frame (a per-frame component on it)?</summary>
+        internal static bool IsDynamicSelf(GameEntity e)
         {
-            if (scene == null || scene.Entities == null) return;
+            var comps = e.Components;
+            if (comps == null) return false;
+            for (int i = 0; i < comps.Count; i++)
+            {
+                var c = comps[i];
+                if (c != null && DynamicComponentNames.Contains(c.GetType().Name)) return true;
+            }
+            return false;
+        }
 
-            // Clear and submit all lights first
-            SubmitSceneLights(scene);
+        /// <summary>Walk a subtree the way SubmitEntityRecursive does: dynamic entities (self or ancestor) go to
+        /// <paramref name="dynamicOut"/> and are re-submitted every frame, static ones to <paramref name="submitStatic"/>.
+        /// Inactive subtrees are skipped (a later SetActive raises StaticDirty, which re-classifies).</summary>
+        internal static void Classify(GameEntity entity, bool parentDynamic, List<GameEntity> dynamicOut, Action<GameEntity> submitStatic)
+        {
+            if (entity == null) return;
+            if (entity.IsHiddenInEditor && !IsPlayLike) return;
+            if (!entity.IsActive) return;
+            bool dyn = parentDynamic || IsDynamicSelf(entity);
+            entity.RenderDynamic = dyn;
+            if (dyn) dynamicOut.Add(entity); else submitStatic(entity);
+            if (entity.Children != null)
+                foreach (var child in entity.Children) Classify(child, dyn, dynamicOut, submitStatic);
+        }
 
+        private void SubmitSceneSplit(Data.Scene scene)
+        {
+            bool structural = StaticDirty || _staticVersionSent != Transform.StaticVersion || !ReferenceEquals(scene, _splitScene);
+            if (structural)
+            {
+                if (!VortexAPI.BeginStaticSubmit()) { _splitEnabled = false; SubmitSceneFull(scene); return; }   // older native library
+                _dynamicEntities.Clear();
+                _submitN = 0;
+                _batching = true;
+                try { foreach (var entity in scene.Entities) Classify(entity, false, _dynamicEntities, SubmitEntity); }
+                finally { _batching = false; _batcher.Flush(FlushBatch); }
+                VortexAPI.EndStaticSubmit();
+                LastStaticMeshes = _submitN;
+                _staticVersionSent = Transform.StaticVersion;
+                StaticDirty = false;
+                _splitScene = scene;
+                _splitWasActive = true;
+            }
+            // the dynamic entities, every frame (skinned meshes carry their bone palettes here)
             _submitN = 0;
             _batching = true;
-            var swSubmit = System.Diagnostics.Stopwatch.StartNew();
+            try { for (int i = 0; i < _dynamicEntities.Count; i++) SubmitEntity(_dynamicEntities[i]); }
+            finally { _batching = false; _batcher.Flush(FlushBatch); }
+        }
+
+        /// <summary>The whole scene into the per-frame queue (edit mode, or the split switched off).</summary>
+        private void SubmitSceneFull(Data.Scene scene)
+        {
+            if (_splitWasActive)
+            {
+                // leaving the split: an empty static pass drops the renderer's retained set, or it would draw twice
+                if (VortexAPI.BeginStaticSubmit()) VortexAPI.EndStaticSubmit();
+                _splitWasActive = false;
+                _splitScene = null;
+            }
+            _submitN = 0;
+            _batching = true;
             try
             {
                 foreach (var entity in scene.Entities)
@@ -691,6 +769,18 @@ namespace Editor.Core.Services
                 _batching = false;
                 _batcher.Flush(FlushBatch);   // one P/Invoke per (mesh, material, layer) group
             }
+        }
+
+        public void SubmitScene(Data.Scene scene)
+        {
+            if (scene == null || scene.Entities == null) return;
+
+            // Clear and submit all lights first
+            SubmitSceneLights(scene);
+
+            var swSubmit = System.Diagnostics.Stopwatch.StartNew();
+            if (_splitEnabled && IsPlayLike) SubmitSceneSplit(scene);
+            else SubmitSceneFull(scene);
             swSubmit.Stop();
             LastSubmitMs = swSubmit.Elapsed.TotalMilliseconds; LastSubmitMeshes = _submitN;
             // a slow submit is either the first one (it imports every model) or a scene too big for the per-frame

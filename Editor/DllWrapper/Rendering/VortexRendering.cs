@@ -357,6 +357,27 @@ namespace Editor.DllWrapper
             catch { SubmitMeshInstances(meshId, materialId, worldMatrices, count); /* older VortexAPI.dll */ }
         }
 
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void BeginStaticScene();
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void EndStaticScene();
+
+        /// <summary>Static / dynamic split (#364 A): rigid submits between <see cref="BeginStaticSubmit"/> and
+        /// <see cref="EndStaticSubmit"/> are RETAINED by the renderer across frames; per-frame submits (the moving
+        /// entities) are merged in. An empty pass clears the retained set. Returns false when the native library
+        /// predates the split — the caller then submits the whole scene every time, as before.</summary>
+        public static bool BeginStaticSubmit()
+        {
+            try { BeginStaticScene(); return true; }
+            catch { return false; }
+        }
+
+        public static void EndStaticSubmit()
+        {
+            try { EndStaticScene(); } catch { }
+        }
+
         #endregion
 
         #region Grid & Gizmos Visibility

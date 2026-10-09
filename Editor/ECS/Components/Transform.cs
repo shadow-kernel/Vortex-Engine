@@ -18,6 +18,10 @@ namespace Editor.ECS.Components
         public override string IconCode => "\uE81E";
         public override string IconColor => "#4EC9B0";
 
+        /// <summary>Bumped whenever a transform of a STATIC entity changes (#364 A); the scene submit compares it with
+        /// the version it last sent the static set for.</summary>
+        public static int StaticVersion;
+
         #region Serialized Properties
 
         /// <summary>
@@ -76,6 +80,9 @@ namespace Editor.ECS.Components
         /// </summary>
         internal void SyncToEngine()
         {
+            // a STATIC entity moved (#364 A): the renderer's retained static set must be re-sent. Dynamic entities
+            // (Animator / Rigidbody / … on them or an ancestor) are re-sent every frame anyway and stay silent here.
+            if (Entity == null || !Entity.RenderDynamic) StaticVersion++;
             var owner = Entity;
             if (owner == null) return;
 

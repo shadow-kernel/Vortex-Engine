@@ -273,8 +273,14 @@ namespace vortex::graphics::dx12
 		m_gizmo_wire_render.swap(m_gizmo_wire_submit);
 		m_gizmo_wire_submit.clear();
 
-		if (m_submit_queue.empty()) return;   // scene: nothing new -> KEEP last frame's (camera-only orbit is free)
-		m_render_queue.swap(m_submit_queue);
+		bool staticChanged = false;
+		if (m_static_pending) { m_static_render.swap(m_static_submit); m_static_submit.clear(); m_static_pending = false; staticChanged = true; }
+		if (m_submit_queue.empty() && !staticChanged) return;   // scene: nothing new -> KEEP last frame's (camera-only orbit is free)
+		// the frame = the retained static set + this frame's dynamic submits (#364 A)
+		m_render_queue.clear();
+		m_render_queue.reserve(m_static_render.size() + m_submit_queue.size());
+		m_render_queue.insert(m_render_queue.end(), m_static_render.begin(), m_static_render.end());
+		m_render_queue.insert(m_render_queue.end(), m_submit_queue.begin(), m_submit_queue.end());
 		m_submit_queue.clear();
 		m_queue_dirty = true;   // new geometry -> re-sort + rebuild runs this frame
 
@@ -314,6 +320,7 @@ namespace vortex::graphics::dx12
 		{
 			std::lock_guard<std::mutex> lock(m_queue_mutex);
 			m_render_queue.clear();
+			m_static_submit.clear(); m_static_render.clear(); m_static_pending = false; m_submit_target = 0;
 			m_submit_queue.clear();
 			m_bone_submit.clear();
 			m_bone_render.clear();

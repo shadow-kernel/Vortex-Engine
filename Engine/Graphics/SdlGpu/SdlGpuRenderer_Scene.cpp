@@ -55,7 +55,7 @@ namespace vortex::graphics::sdlgpu
 	void SdlGpuRenderer::submit_render_item(const RenderItem& item)
 	{
 		std::lock_guard<std::mutex> lock(m_queue_mutex);
-		m_submit_queue.push_back(item);
+		(m_submit_target == 1 ? m_static_submit : m_submit_queue).push_back(item);
 	}
 
 	void SdlGpuRenderer::submit_gizmo_item(const RenderItem& item)
@@ -74,13 +74,14 @@ namespace vortex::graphics::sdlgpu
 	{
 		if (!world_matrices || count == 0) return;
 		std::lock_guard<std::mutex> lock(m_queue_mutex);
-		m_submit_queue.reserve(m_submit_queue.size() + count);
+		auto& q = m_submit_target == 1 ? m_static_submit : m_submit_queue;
+		q.reserve(q.size() + count);
 		for (u32 i = 0; i < count; ++i)
 		{
 			RenderItem item;
 			item.mesh_id = mesh; item.material_id = material; item.layer = layer;
 			memcpy(&item.world_matrix, world_matrices + (size_t)i * 16, sizeof(DirectX::XMFLOAT4X4));
-			m_submit_queue.push_back(item);
+			q.push_back(item);
 		}
 	}
 
@@ -105,6 +106,23 @@ namespace vortex::graphics::sdlgpu
 		std::lock_guard<std::mutex> lock(m_queue_mutex);
 		m_submit_queue.clear();
 		m_bone_submit.clear();
+		m_static_submit.clear(); m_static_render.clear(); m_static_pending = false; m_submit_target = 0;
+	}
+
+	// #364 A: everything submitted between these two calls is RETAINED across frames (the static scene); an empty pass
+	// clears the retained set. Per-frame submits outside the pass are the dynamic entities, merged in at the swap.
+	void SdlGpuRenderer::begin_static_scene()
+	{
+		std::lock_guard<std::mutex> lock(m_queue_mutex);
+		m_static_submit.clear();
+		m_submit_target = 1;
+	}
+
+	void SdlGpuRenderer::end_static_scene()
+	{
+		std::lock_guard<std::mutex> lock(m_queue_mutex);
+		m_submit_target = 0;
+		m_static_pending = true;
 	}
 
 	void SdlGpuRenderer::swap_render_queue()
@@ -113,8 +131,14 @@ namespace vortex::graphics::sdlgpu
 		// Gizmos are re-submitted every frame by the editor: swap unconditionally (empty = no gizmo).
 		m_gizmo_render.swap(m_gizmo_submit); m_gizmo_submit.clear();
 		m_gizmo_wire_render.swap(m_gizmo_wire_submit); m_gizmo_wire_submit.clear();
-		if (m_submit_queue.empty()) return;   // nothing new -> keep last frame's scene (camera-only frames are free)
-		m_render_queue.swap(m_submit_queue);
+		bool staticChanged = false;
+		if (m_static_pending) { m_static_render.swap(m_static_submit); m_static_submit.clear(); m_static_pending = false; staticChanged = true; }
+		if (m_submit_queue.empty() && !staticChanged) return;   // nothing new -> keep last frame's scene (camera-only frames are free)
+		// the frame = the retained static set + this frame's dynamic submits (#364 A)
+		m_render_queue.clear();
+		m_render_queue.reserve(m_static_render.size() + m_submit_queue.size());
+		m_render_queue.insert(m_render_queue.end(), m_static_render.begin(), m_static_render.end());
+		m_render_queue.insert(m_render_queue.end(), m_submit_queue.begin(), m_submit_queue.end());
 		m_submit_queue.clear();
 		m_queue_dirty = true;
 		m_bone_render.swap(m_bone_submit);
