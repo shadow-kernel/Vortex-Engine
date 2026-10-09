@@ -603,3 +603,13 @@ float4 PSMain(PS_IN input) : SV_TARGET
 
     return float4(color, alpha);
 }
+
+// ---- cut-out shadow casters (#329): the shadow PSO with this pixel shader clips by the albedo alpha, so foliage,
+// fences and hair cards cast the shape of their texture instead of a solid quad. Fed by VSMain (PS_IN.uv).
+void ShadowCutPS(PS_IN input)
+{
+    float2 tiling = (UVTiling.x > 0.0 && UVTiling.y > 0.0) ? UVTiling : float2(1.0, 1.0);
+    float a = BaseColor.a;
+    if (HasAlbedoTexture != 0) a *= AlbedoTexture.Sample(LinearSampler, input.uv * tiling).a;
+    if (AlphaCutoff > 0.0 && a < AlphaCutoff) clip(-1);
+}

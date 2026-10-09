@@ -50,6 +50,8 @@ namespace vortex::graphics::dx12
 		// the spot light's view into the shadow map. Rigid input layout, so it draws straight from the
 		// shadow instance VB. nullptr = creation failed (spot shadows silently disabled, never a crash).
 		ID3D12PipelineState* shadow_pso() const { return m_shadow_pso.Get(); }
+		// cut-out casters (#329): the shadow PSO with a pixel shader that clips by the albedo alpha; nullptr = solid
+		ID3D12PipelineState* shadow_cut_pso() const { return m_shadow_cut_pso.Get(); }
 
 		// Z-prepass PSO (#32): the shadow PSO recipe without depth biases — renders the camera-view
 		// half-res AO depth the SSAO pass reconstructs from. nullptr = SSAO silently disabled.
@@ -73,8 +75,9 @@ namespace vortex::graphics::dx12
 		// is mutated. hlsl_path is an ABSOLUTE path to the project's shader file.
 		// blend_mode 1 / 2 give the alpha / additive variant (blend on, depth write off — #333), double_sided drops the
 		// culling, mirrored flips the front face (#334).
+		// skinned (#332): the engine's skinning VS (skinned.hlsl) in front of the file's PSMain, skinned input layout.
 		ComPtr<ID3D12PipelineState> create_custom_pso(ID3D12Device* device, const std::wstring& hlsl_path,
-			u32 blend_mode = 0, bool double_sided = false, bool mirrored = false);
+			u32 blend_mode = 0, bool double_sided = false, bool mirrored = false, bool skinned = false);
 
 	private:
 		bool compile_shaders();
@@ -91,6 +94,7 @@ namespace vortex::graphics::dx12
 		ComPtr<ID3D12PipelineState> m_gizmo_wire_pso; // gizmo PSO variant with WIREFRAME fill (fine-net shapes)
 		ComPtr<ID3D12PipelineState> m_skinned_pso; // GPU skinning (skinned.hlsl VS + standard PS)
 		ComPtr<ID3D12PipelineState> m_shadow_pso;  // depth-only shadow-map pass (standard VS, no PS/RTV)
+		ComPtr<ID3D12PipelineState> m_shadow_cut_pso;   // #329: + ShadowCutPS (albedo alpha clip)
 		ComPtr<ID3D12PipelineState> m_zprepass_pso; // #32: camera-view depth-only pass, no biases
 		ComPtr<ID3D12PipelineState> m_alpha_pso;       // #33: alpha blend, cull back, depth write off
 		ComPtr<ID3D12PipelineState> m_alpha_ds_pso;    // #33: alpha blend, double-sided
@@ -103,5 +107,6 @@ namespace vortex::graphics::dx12
 		ComPtr<ID3DBlob> m_vs_blob;
 		ComPtr<ID3DBlob> m_ps_blob;
 		ComPtr<ID3DBlob> m_skinned_vs_blob;        // optional — skinned PSO skipped if it fails to load
+		ComPtr<ID3DBlob> m_shadow_cut_ps_blob;     // optional — cut-out casters cast solid shadows without it (#329)
 	};
 }

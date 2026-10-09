@@ -27,20 +27,34 @@ namespace vortex::graphics::dx12
 	}
 
 	ComPtr<ID3D12PipelineState> DX12Pipeline3D::create_custom_pso(ID3D12Device* device, const std::wstring& hlsl_path,
-		u32 blend_mode, bool double_sided, bool mirrored)
+		u32 blend_mode, bool double_sided, bool mirrored, bool skinned)
 	{
 		if (!device || !m_root_signature || hlsl_path.empty()) return nullptr;
+		if (skinned && !m_skinned_vs_blob) return nullptr;
 
 		// Compile VSMain/PSMain from the project's .hlsl. nullptr on failure -> caller keeps the built-in PSO.
-		ComPtr<ID3DBlob> vs = DX12ShaderCompiler::compile_from_file(hlsl_path, "VSMain", "vs_5_0");
+		// A skinned mesh (#332) keeps the engine's skinning VS in front of the file's PSMain (skinned.hlsl's PS_IN
+		// is semantically identical to standard.hlsl's, which the template copies).
+		ComPtr<ID3DBlob> vs = skinned ? m_skinned_vs_blob : DX12ShaderCompiler::compile_from_file(hlsl_path, "VSMain", "vs_5_0");
 		ComPtr<ID3DBlob> ps = DX12ShaderCompiler::compile_from_file(hlsl_path, "PSMain", "ps_5_0");
 		if (!vs || !ps) return nullptr;
 
 		// Same input layout + render state as the built-in PBR PSO — only the shader stages differ (binding-compatible).
-		D3D12_INPUT_ELEMENT_DESC input_layout[] = {
+		D3D12_INPUT_ELEMENT_DESC rigid_layout[] = {
 			{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 			{ "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 			{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+			{ "INSTANCEWORLD", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0,  D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
+			{ "INSTANCEWORLD", 1, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 16, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
+			{ "INSTANCEWORLD", 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 32, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
+			{ "INSTANCEWORLD", 3, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 48, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 }
+		};
+		D3D12_INPUT_ELEMENT_DESC skinned_layout[] = {
+			{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+			{ "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+			{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+			{ "BLENDINDICES", 0, DXGI_FORMAT_R8G8B8A8_UINT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+			{ "BLENDWEIGHT", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 36, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 			{ "INSTANCEWORLD", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0,  D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
 			{ "INSTANCEWORLD", 1, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 16, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
 			{ "INSTANCEWORLD", 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 32, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
@@ -82,7 +96,8 @@ namespace vortex::graphics::dx12
 		pso_desc.SampleMask = UINT_MAX;
 		pso_desc.RasterizerState = rasterizer;
 		pso_desc.DepthStencilState = depth_stencil;
-		pso_desc.InputLayout = { input_layout, _countof(input_layout) };
+		pso_desc.InputLayout = skinned ? D3D12_INPUT_LAYOUT_DESC{ skinned_layout, _countof(skinned_layout) }
+		                               : D3D12_INPUT_LAYOUT_DESC{ rigid_layout, _countof(rigid_layout) };
 		pso_desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
 		pso_desc.NumRenderTargets = 1;
 		pso_desc.RTVFormats[0] = m_rtv_format;
@@ -105,6 +120,8 @@ namespace vortex::graphics::dx12
 		m_additive_m_pso.Reset();
 		m_skinned_m_pso.Reset();
 		m_skinned_pso.Reset();
+		m_shadow_cut_pso.Reset();
+		m_shadow_cut_ps_blob.Reset();
 		m_wireframe_pso.Reset();
 		m_pipeline_state.Reset();
 		m_root_signature.Reset();
@@ -123,6 +140,8 @@ namespace vortex::graphics::dx12
 		// meshes then draw through the rigid PSO in bind pose) — it never aborts renderer init.
 		m_skinned_vs_blob = DX12ShaderCompiler::load_shader("skinned", "vs", "VSMain", "vs_5_0");
 		if (!m_skinned_vs_blob) OutputDebugStringA("DX12Pipeline3D: skinned.hlsl unavailable — GPU skinning disabled\n");
+		m_shadow_cut_ps_blob = DX12ShaderCompiler::load_shader("standard", "ps_shadowcut", "ShadowCutPS", "ps_5_0");
+		if (!m_shadow_cut_ps_blob) OutputDebugStringA("DX12Pipeline3D: ShadowCutPS unavailable — alpha-tested casters cast solid shadows\n");
 		return m_vs_blob != nullptr && m_ps_blob != nullptr;
 	}
 
@@ -551,6 +570,15 @@ namespace vortex::graphics::dx12
 			pso_desc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
 			if (FAILED(device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&m_shadow_pso))))
 				OutputDebugStringA("DX12Pipeline3D: shadow PSO creation failed — spot shadows disabled\n");
+
+			// cut-out casters (#329): the same depth-only pass with a pixel shader that clips by the albedo alpha
+			if (m_shadow_cut_ps_blob)
+			{
+				pso_desc.PS = { m_shadow_cut_ps_blob->GetBufferPointer(), m_shadow_cut_ps_blob->GetBufferSize() };
+				if (FAILED(device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&m_shadow_cut_pso))))
+					OutputDebugStringA("DX12Pipeline3D: cut-out shadow PSO creation failed — alpha-tested casters cast solid shadows\n");
+				pso_desc.PS = { nullptr, 0 };
+			}
 
 			// Z-PREPASS PSO (#32 SSAO): the same depth-only pass WITHOUT the shadow depth biases
 			// (those exist to fight shadow acne; in a camera prepass they would shift the AO depth

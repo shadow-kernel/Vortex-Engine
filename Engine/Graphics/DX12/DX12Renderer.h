@@ -28,6 +28,8 @@
 #include <unordered_map>
 
 
+namespace vortex::graphics { class Material; }   // ShadowCaster keeps the material of a cut-out caster (#329)
+
 namespace vortex::graphics::dx12
 {
 	using Microsoft::WRL::ComPtr;
@@ -519,12 +521,13 @@ namespace vortex::graphics::dx12
 		// Also drives the hot-reload dirty check so the overlay only appears on a REAL change.
 		// One compiled PSO per variant (blend 0/1/2 × double-sided × mirrored = 12), each built the first time a draw
 		// asks for it (#333, #334); the mtime of the source it was built from decides whether it is stale.
-		static constexpr u32 PSO_VARIANTS = 12;
+		// ... each once more for the skinned input layout (#332): 24
+		static constexpr u32 PSO_VARIANTS = 24;
 		struct CachedPso { ComPtr<ID3D12PipelineState> pso[PSO_VARIANTS]; unsigned long long mtime[PSO_VARIANTS]{}; };
 		std::unordered_map<std::wstring, CachedPso> m_pso_cache;
 		ComPtr<ID3D12PipelineState> get_or_compile_pso(const std::wstring& hlsl_path);
-		ComPtr<ID3D12PipelineState> get_or_compile_pso(const std::wstring& hlsl_path, u32 blend_mode, bool double_sided, bool mirrored);
-		ID3D12PipelineState* custom_pso(u32 material_id, u32 blend_mode, bool double_sided, bool mirrored);
+		ComPtr<ID3D12PipelineState> get_or_compile_pso(const std::wstring& hlsl_path, u32 blend_mode, bool double_sided, bool mirrored, bool skinned = false);
+		ID3D12PipelineState* custom_pso(u32 material_id, u32 blend_mode, bool double_sided, bool mirrored, bool skinned = false);
 		DX12GridPipeline m_grid_pipeline;  // Grid rendering pipeline
 		DX12SkyboxPipeline m_skybox_pipeline; // Skybox rendering pipeline
 		DX12UpscalePipeline m_upscale;        // Fullscreen upscale (render-scale composite + the DLSS slot)
@@ -862,7 +865,11 @@ namespace vortex::graphics::dx12
 		// Casters gathered ONCE per frame (#363): every tile tests precomputed world-space spheres instead of scanning
 		// the queue with a map lookup and a matrix transform per item (up to 19 tiles x N). m_shadow_bounds (mesh ->
 		// local centre + radius) is kept across frames and dropped when a mesh was destroyed.
-		struct ShadowCaster { id::id_type mesh; const DirectX::XMFLOAT4X4* world; float cx, cy, cz, r; };
+		struct ShadowCaster { id::id_type mesh; const DirectX::XMFLOAT4X4* world; Material* mat; bool cut; float cx, cy, cz, r; };
+		// cut-out casters (#329): one 256-byte PerObject slot per cut segment this frame
+		static constexpr u32 MAX_SHADOW_CUT_SEGS = 256;
+		ComPtr<ID3D12Resource> m_shadow_cut_cb;
+		void* m_shadow_cut_cb_mapped{ nullptr };
 		std::vector<ShadowCaster> m_shadow_casters, m_shadow_tile_casters;
 		std::unordered_map<id::id_type, DirectX::XMFLOAT4> m_shadow_bounds;
 		u32 m_shadow_bounds_generation{ 0 };

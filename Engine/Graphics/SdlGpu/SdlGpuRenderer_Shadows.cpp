@@ -133,8 +133,12 @@ namespace vortex::graphics::sdlgpu
 		m_vs_shadow_skinned_layout = create_shader("standard", "ShadowVSSkinnedLayout", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 1);
 		m_fs_shadow = create_shader("standard", "ShadowPS", SDL_GPU_SHADERSTAGE_FRAGMENT, 0, 0, 0);
 		if (!m_vs_shadow || !m_vs_shadow_skinned_layout || !m_fs_shadow) { destroy_shadow_resources(); return false; }
+		// cut-out casters (#329): the albedo alpha decides what casts; optional — an older shader set keeps solid shadows
+		m_vs_shadow_cut = create_shader("standard", "ShadowVSCut", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 1);
+		m_vs_shadow_cut_skinned_layout = create_shader("standard", "ShadowVSCutSkinnedLayout", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 1);
+		m_fs_shadow_cut = create_shader("standard", "ShadowPSCut", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0, 2);
 
-		auto make_pipeline = [&](SDL_GPUShader* vs, u32 stride, bool skinned_layout) -> SDL_GPUGraphicsPipeline*
+		auto make_pipeline = [&](SDL_GPUShader* vs, SDL_GPUShader* fs, u32 stride, bool skinned_layout) -> SDL_GPUGraphicsPipeline*
 		{
 			SDL_GPUVertexBufferDescription buffers[2] = {
 				{ 0, stride, SDL_GPU_VERTEXINPUTRATE_VERTEX, 0 },
@@ -154,7 +158,7 @@ namespace vortex::graphics::sdlgpu
 			for (u32 r = 0; r < 4; ++r) attrs.push_back({ loc++, 1, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, r * 16 });
 			SDL_GPUGraphicsPipelineCreateInfo pci{};
 			pci.vertex_shader = vs;
-			pci.fragment_shader = m_fs_shadow;
+			pci.fragment_shader = fs;
 			pci.vertex_input_state.vertex_buffer_descriptions = buffers;
 			pci.vertex_input_state.num_vertex_buffers = 2;
 			pci.vertex_input_state.vertex_attributes = attrs.data();
@@ -175,9 +179,11 @@ namespace vortex::graphics::sdlgpu
 			if (!p) log(std::string("shadow pipeline failed: ") + SDL_GetError());
 			return p;
 		};
-		m_pipeline_shadow = make_pipeline(m_vs_shadow, 32, false);
-		m_pipeline_shadow_52 = make_pipeline(m_vs_shadow_skinned_layout, 52, true);
+		m_pipeline_shadow = make_pipeline(m_vs_shadow, m_fs_shadow, 32, false);
+		m_pipeline_shadow_52 = make_pipeline(m_vs_shadow_skinned_layout, m_fs_shadow, 52, true);
 		if (!m_pipeline_shadow) { destroy_shadow_resources(); return false; }
+		if (m_vs_shadow_cut && m_fs_shadow_cut) m_pipeline_shadow_cut = make_pipeline(m_vs_shadow_cut, m_fs_shadow_cut, 32, false);
+		if (m_vs_shadow_cut_skinned_layout && m_fs_shadow_cut) m_pipeline_shadow_cut_52 = make_pipeline(m_vs_shadow_cut_skinned_layout, m_fs_shadow_cut, 52, true);
 
 		if (!create_shadow_fallback()) { destroy_shadow_resources(); return false; }
 
@@ -210,8 +216,11 @@ namespace vortex::graphics::sdlgpu
 		rel_tex(m_shadow_atlas); rel_tex(m_csm_atlas); rel_tex(m_point_atlas);
 		if (m_pipeline_shadow) { SDL_ReleaseGPUGraphicsPipeline(m_device, m_pipeline_shadow); m_pipeline_shadow = nullptr; }
 		if (m_pipeline_shadow_52) { SDL_ReleaseGPUGraphicsPipeline(m_device, m_pipeline_shadow_52); m_pipeline_shadow_52 = nullptr; }
+		if (m_pipeline_shadow_cut) { SDL_ReleaseGPUGraphicsPipeline(m_device, m_pipeline_shadow_cut); m_pipeline_shadow_cut = nullptr; }
+		if (m_pipeline_shadow_cut_52) { SDL_ReleaseGPUGraphicsPipeline(m_device, m_pipeline_shadow_cut_52); m_pipeline_shadow_cut_52 = nullptr; }
 		auto rel_sh = [&](SDL_GPUShader*& s) { if (s) { SDL_ReleaseGPUShader(m_device, s); s = nullptr; } };
 		rel_sh(m_vs_shadow); rel_sh(m_vs_shadow_skinned_layout); rel_sh(m_fs_shadow);
+		rel_sh(m_vs_shadow_cut); rel_sh(m_vs_shadow_cut_skinned_layout); rel_sh(m_fs_shadow_cut);
 		if (m_shadow_instance_buffer) { SDL_ReleaseGPUBuffer(m_device, m_shadow_instance_buffer); m_shadow_instance_buffer = nullptr; }
 		if (m_shadow_instance_transfer) { SDL_ReleaseGPUTransferBuffer(m_device, m_shadow_instance_transfer); m_shadow_instance_transfer = nullptr; }
 		m_shadows_ready = false;
@@ -379,7 +388,9 @@ namespace vortex::graphics::sdlgpu
 			float sy = sqrtf(W._21 * W._21 + W._22 * W._22 + W._23 * W._23);
 			float sz = sqrtf(W._31 * W._31 + W._32 * W._32 + W._33 * W._33);
 			float ms = sx > sy ? (sx > sz ? sx : sz) : (sy > sz ? sy : sz);
-			all.push_back({ item.mesh_id, &item.world_matrix, mp, XMVectorGetX(wc), XMVectorGetY(wc), XMVectorGetZ(wc), bd.w * ms + 0.05f });
+			// an alpha-tested material casts the shape of its texture (#329) when the cut-out shadow pipeline exists
+			const bool cut = cmat && cmat->blend_mode() == 3 && cmat->properties().alpha_cutoff > 0.0f && m_pipeline_shadow_cut;
+			all.push_back({ item.mesh_id, &item.world_matrix, mp, cmat, cut, XMVectorGetX(wc), XMVectorGetY(wc), XMVectorGetZ(wc), bd.w * ms + 0.05f });
 		}
 
 		// ---- pack casters per tile (own culling per light frustum; the scene pack is keyed to the camera) ----
@@ -402,7 +413,13 @@ namespace vortex::graphics::sdlgpu
 			ShadowTile tile{ x, y, size, vp, (u32)m_shadow_segs.size(), (u32)m_shadow_segs.size() };
 			if (!casters.empty())
 			{
-				std::sort(casters.begin(), casters.end(), [](const ShadowCaster& a, const ShadowCaster& b) { return a.mesh < b.mesh; });
+				// solid casters first, grouped by mesh; cut-out casters after them, grouped by mesh AND material (#329)
+				std::sort(casters.begin(), casters.end(), [](const ShadowCaster& a, const ShadowCaster& b)
+				{
+					if (a.cut != b.cut) return !a.cut;
+					if (a.mesh != b.mesh) return a.mesh < b.mesh;
+					return a.cut && a.mat < b.mat;
+				});
 				m_shadow_staging.resize((size_t)(vb_used + casters.size()) * 16);
 				for (size_t i = 0; i < casters.size(); ++i)
 					memcpy(m_shadow_staging.data() + (size_t)(vb_used + i) * 16, casters[i].world, 64);
@@ -410,8 +427,9 @@ namespace vortex::graphics::sdlgpu
 				while (i < casters.size())
 				{
 					size_t j = i + 1;
-					while (j < casters.size() && casters[j].mesh == casters[i].mesh) ++j;
-					m_shadow_segs.push_back({ casters[i].meshp, vb_used + (u32)i, (u32)(j - i) });
+					while (j < casters.size() && casters[j].mesh == casters[i].mesh && casters[j].cut == casters[i].cut
+						&& (!casters[i].cut || casters[j].mat == casters[i].mat)) ++j;
+					m_shadow_segs.push_back({ casters[i].meshp, vb_used + (u32)i, (u32)(j - i), casters[i].cut ? casters[i].mat : nullptr });
 					i = j;
 				}
 				vb_used += (u32)casters.size();
@@ -489,15 +507,33 @@ namespace vortex::graphics::sdlgpu
 				PerFrameConstants fc = m_frame_constants;
 				fc.view_projection = tile.vp;
 				SDL_PushGPUVertexUniformData(cmd, 0, &fc, sizeof(fc));
+				SDL_PushGPUFragmentUniformData(cmd, 0, &fc, sizeof(fc));
 				SDL_GPUGraphicsPipeline* bound = nullptr;
 				for (u32 s = tile.seg_begin; s < tile.seg_end; ++s)
 				{
 					const ShadowDrawSeg& seg = m_shadow_segs[s];
 					Mesh* mesh = seg.mesh;
 					if (!mesh || !mesh->is_valid()) continue;
-					SDL_GPUGraphicsPipeline* want = mesh->vertex_stride() == 52 ? m_pipeline_shadow_52 : (mesh->vertex_stride() == 32 ? m_pipeline_shadow : nullptr);
+					const bool cut = seg.cut_mat != nullptr;
+					SDL_GPUGraphicsPipeline* want = mesh->vertex_stride() == 52
+						? (cut ? m_pipeline_shadow_cut_52 : m_pipeline_shadow_52)
+						: (mesh->vertex_stride() == 32 ? (cut ? m_pipeline_shadow_cut : m_pipeline_shadow) : nullptr);
 					if (!want) continue;
 					if (want != bound) { SDL_BindGPUGraphicsPipeline(pass, want); bound = want; }
+					if (cut)
+					{
+						// the material's albedo + cutoff (#329): PerObject at fragment uniform slot 1, albedo at sampler 0
+						PerObjectConstants obj{};
+						const auto& props = seg.cut_mat->properties();
+						obj.base_color = props.base_color; obj.uv_tiling = props.uv_tiling; obj.alpha_cutoff = props.alpha_cutoff;
+						Texture* at = seg.cut_mat->albedo_texture();
+						Texture* white = ResourceRegistry::instance().white_texture();
+						const bool has = at && at->is_valid();
+						obj.has_albedo_texture = has ? 1u : 0u;
+						SDL_GPUTextureSamplerBinding tb{ has ? at->texture() : (white ? white->texture() : nullptr), m_sampler_linear_wrap };
+						SDL_PushGPUFragmentUniformData(cmd, 1, &obj, sizeof(obj));
+						if (tb.texture) SDL_BindGPUFragmentSamplers(pass, 0, &tb, 1);
+					}
 					SDL_GPUBufferBinding vbs[2] = { { mesh->vertex_buffer(), 0 }, { m_shadow_instance_buffer, seg.instance_base * 64 } };
 					SDL_BindGPUVertexBuffers(pass, 0, vbs, 2);
 					if (mesh->has_indices())

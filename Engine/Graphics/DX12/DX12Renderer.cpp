@@ -159,6 +159,8 @@ namespace vortex::graphics::dx12
 		m_shadow_pass_cb.Reset();
 		if (m_shadow_instance_vb && m_shadow_instance_vb_mapped) { m_shadow_instance_vb->Unmap(0, nullptr); m_shadow_instance_vb_mapped = nullptr; }
 		m_shadow_instance_vb.Reset();
+		if (m_shadow_cut_cb && m_shadow_cut_cb_mapped) { m_shadow_cut_cb->Unmap(0, nullptr); m_shadow_cut_cb_mapped = nullptr; }
+		m_shadow_cut_cb.Reset();
 		m_shadow_map.Reset();
 		m_shadow_dsv_heap.Reset();
 		m_shadow_srv_cpu = {}; m_shadow_srv_gpu = {}; m_shadow_map_size = 0; m_shadow_spot_count = 0;
@@ -498,10 +500,10 @@ namespace vortex::graphics::dx12
 	namespace
 	{
 		// blend (0 opaque / 1 alpha / 2 additive) × double-sided × mirrored -> 0..11
-		u32 pso_variant(u32 blend_mode, bool double_sided, bool mirrored)
+		u32 pso_variant(u32 blend_mode, bool double_sided, bool mirrored, bool skinned)
 		{
 			const u32 b = blend_mode == 1 ? 1u : (blend_mode == 2 ? 2u : 0u);
-			return b + (double_sided ? 3u : 0u) + (mirrored ? 6u : 0u);
+			return b + (double_sided ? 3u : 0u) + (mirrored ? 6u : 0u) + (skinned ? 12u : 0u);
 		}
 	}
 
@@ -510,31 +512,31 @@ namespace vortex::graphics::dx12
 	// on every orbit frame. A compile failure keeps the last-good cached PSO (never black).
 	ComPtr<ID3D12PipelineState> DX12Renderer::get_or_compile_pso(const std::wstring& hlsl_path)
 	{
-		return get_or_compile_pso(hlsl_path, 0, false, false);
+		return get_or_compile_pso(hlsl_path, 0, false, false, false);
 	}
 
-	ComPtr<ID3D12PipelineState> DX12Renderer::get_or_compile_pso(const std::wstring& hlsl_path, u32 blend_mode, bool double_sided, bool mirrored)
+	ComPtr<ID3D12PipelineState> DX12Renderer::get_or_compile_pso(const std::wstring& hlsl_path, u32 blend_mode, bool double_sided, bool mirrored, bool skinned)
 	{
 		if (hlsl_path.empty()) return nullptr;
-		const u32 v = pso_variant(blend_mode, double_sided, mirrored);
+		const u32 v = pso_variant(blend_mode, double_sided, mirrored, skinned);
 		unsigned long long mt = shader_file_mtime(hlsl_path);
 		auto it = m_pso_cache.find(hlsl_path);
 		if (it != m_pso_cache.end() && it->second.pso[v] && it->second.mtime[v] == mt)
 			return it->second.pso[v];                              // cached + up-to-date -> no recompile
 		if (it != m_pso_cache.end() && it->second.pso[v])
 			m_command_queue.flush();                               // GPU-idle before swapping an in-use PSO
-		auto pso = m_pipeline_3d.create_custom_pso(DX12Core::instance().device(), hlsl_path, blend_mode, double_sided, mirrored);
+		auto pso = m_pipeline_3d.create_custom_pso(DX12Core::instance().device(), hlsl_path, blend_mode, double_sided, mirrored, skinned);
 		auto& e = m_pso_cache[hlsl_path];
 		e.mtime[v] = mt;
 		if (pso) e.pso[v] = pso;                                   // else keep last-good (or nullptr -> built-in)
 		return e.pso[v];
 	}
 
-	ID3D12PipelineState* DX12Renderer::custom_pso(u32 material_id, u32 blend_mode, bool double_sided, bool mirrored)
+	ID3D12PipelineState* DX12Renderer::custom_pso(u32 material_id, u32 blend_mode, bool double_sided, bool mirrored, bool skinned)
 	{
 		auto it = m_custom_shaders.find(material_id);
 		if (it == m_custom_shaders.end() || it->second.path.empty()) return nullptr;
-		return get_or_compile_pso(it->second.path, blend_mode, double_sided, mirrored).Get();
+		return get_or_compile_pso(it->second.path, blend_mode, double_sided, mirrored, skinned).Get();
 	}
 
 	void DX12Renderer::set_material_shader(u32 material_id, const std::wstring& hlsl_path)
@@ -560,7 +562,7 @@ namespace vortex::graphics::dx12
 			{
 				if (!kv.second.pso[v] || kv.second.mtime[v] == mt) continue;   // unchanged
 				m_command_queue.flush();                               // GPU-idle before swapping in-use PSOs
-				auto pso = m_pipeline_3d.create_custom_pso(DX12Core::instance().device(), kv.first, v % 3, (v / 3) % 2 != 0, v >= 6);
+				auto pso = m_pipeline_3d.create_custom_pso(DX12Core::instance().device(), kv.first, v % 3, (v / 3) % 2 != 0, (v / 6) % 2 != 0, v >= 12);
 				kv.second.mtime[v] = mt;
 				if (pso) { kv.second.pso[v] = pso; ++changed; }       // keep old PSO on compile failure -> never black
 			}

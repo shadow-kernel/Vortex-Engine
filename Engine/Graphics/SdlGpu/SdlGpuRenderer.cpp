@@ -1076,22 +1076,23 @@ namespace vortex::graphics::sdlgpu
 	namespace
 	{
 		// blend (0 opaque / 1 alpha / 2 additive) × double-sided × mirrored -> 0..11
-		u32 pipeline_variant(u32 blend_mode, bool double_sided, bool mirrored)
+		u32 pipeline_variant(u32 blend_mode, bool double_sided, bool mirrored, bool skinned)
 		{
 			const u32 b = blend_mode == 1 ? 1u : (blend_mode == 2 ? 2u : 0u);
-			return b + (double_sided ? 3u : 0u) + (mirrored ? 6u : 0u);
+			return b + (double_sided ? 3u : 0u) + (mirrored ? 6u : 0u) + (skinned ? 12u : 0u);
 		}
 	}
 
 	SDL_GPUGraphicsPipeline* SdlGpuRenderer::get_or_compile_pipeline(const std::string& path)
 	{
-		return get_or_compile_pipeline(path, 0, false, false);
+		return get_or_compile_pipeline(path, 0, false, false, false);
 	}
 
-	SDL_GPUGraphicsPipeline* SdlGpuRenderer::get_or_compile_pipeline(const std::string& path, u32 blend_mode, bool double_sided, bool mirrored)
+	SDL_GPUGraphicsPipeline* SdlGpuRenderer::get_or_compile_pipeline(const std::string& path, u32 blend_mode, bool double_sided, bool mirrored, bool skinned)
 	{
 		if (path.empty()) return nullptr;
-		const u32 variant = pipeline_variant(blend_mode, double_sided, mirrored);
+		if (skinned && !m_vs_skinned) return nullptr;
+		const u32 variant = pipeline_variant(blend_mode, double_sided, mirrored, skinned);
 		const unsigned long long mt = file_mtime(path);
 		auto it = m_pipeline_cache.find(path);
 		if (it != m_pipeline_cache.end() && it->second.pipeline[variant] && it->second.mtime[variant] == mt) return it->second.pipeline[variant];
@@ -1100,20 +1101,22 @@ namespace vortex::graphics::sdlgpu
 		// off like the built-in transparent pipelines; a mirrored instance gets counter-clockwise front faces (#334).
 		SDL_GPUGraphicsPipeline* pipeline = nullptr;
 		std::vector<unsigned char> vs_code, fs_code;
-		if (load_material_shader(path, SDL_GPU_SHADERSTAGE_VERTEX, vs_code) &&
+		// A skinned mesh (#332) runs the ENGINE's skinning vertex shader in front of the material's PSMain: the
+		// template's VSOut is the standard one, so the fragment shader reads the same interpolants either way.
+		if ((skinned || load_material_shader(path, SDL_GPU_SHADERSTAGE_VERTEX, vs_code)) &&
 			load_material_shader(path, SDL_GPU_SHADERSTAGE_FRAGMENT, fs_code))
 		{
-			SDL_GPUShader* vs = create_shader_from_code(vs_code, "VSMain", path, SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 1);
+			SDL_GPUShader* vs = skinned ? m_vs_skinned : create_shader_from_code(vs_code, "VSMain", path, SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 1);
 			SDL_GPUShader* fs = create_shader_from_code(fs_code, "PSMain", path, SDL_GPU_SHADERSTAGE_FRAGMENT, 10, 0, 3);
 			if (vs && fs)
 			{
 				wait_idle();
 				const u32 b = blend_mode == 1 ? 1u : (blend_mode == 2 ? 2u : 0u);
-				pipeline = create_scene_pipeline(vs, fs, 32, false, SDL_GPU_FILLMODE_FILL,
+				pipeline = create_scene_pipeline(vs, fs, skinned ? 52u : 32u, skinned, SDL_GPU_FILLMODE_FILL,
 					double_sided ? SDL_GPU_CULLMODE_NONE : SDL_GPU_CULLMODE_BACK, true, b == 0,
 					b == 0 ? SDL_GPU_COMPAREOP_LESS : SDL_GPU_COMPAREOP_LESS_OR_EQUAL, b, mirrored && !double_sided);
 			}
-			if (vs) SDL_ReleaseGPUShader(m_device, vs);
+			if (vs && !skinned) SDL_ReleaseGPUShader(m_device, vs);
 			if (fs) SDL_ReleaseGPUShader(m_device, fs);
 		}
 		else if (it == m_pipeline_cache.end())
@@ -1131,11 +1134,11 @@ namespace vortex::graphics::sdlgpu
 		return e.pipeline[variant];
 	}
 
-	SDL_GPUGraphicsPipeline* SdlGpuRenderer::custom_pipeline(u32 material_id, u32 blend_mode, bool double_sided, bool mirrored)
+	SDL_GPUGraphicsPipeline* SdlGpuRenderer::custom_pipeline(u32 material_id, u32 blend_mode, bool double_sided, bool mirrored, bool skinned)
 	{
 		auto it = m_custom_shaders.find(material_id);
 		if (it == m_custom_shaders.end() || it->second.path.empty()) return nullptr;
-		return get_or_compile_pipeline(it->second.path, blend_mode, double_sided, mirrored);
+		return get_or_compile_pipeline(it->second.path, blend_mode, double_sided, mirrored, skinned);
 	}
 
 	void SdlGpuRenderer::set_material_shader(u32 material_id, const std::string& shader_path)
@@ -1159,7 +1162,7 @@ namespace vortex::graphics::sdlgpu
 			{
 				if (!kv.second.pipeline[v] || kv.second.mtime[v] == mt) continue;
 				SDL_GPUGraphicsPipeline* before = kv.second.pipeline[v];
-				if (get_or_compile_pipeline(kv.first, v % 3, (v / 3) % 2 != 0, v >= 6) != before || kv.second.mtime[v] == mt) ++changed;
+				if (get_or_compile_pipeline(kv.first, v % 3, (v / 3) % 2 != 0, (v / 6) % 2 != 0, v >= 12) != before || kv.second.mtime[v] == mt) ++changed;
 			}
 		}
 		if (changed == 0) return 0;

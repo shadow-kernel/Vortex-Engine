@@ -164,6 +164,12 @@ namespace vortex::graphics::dx12
 			if (FAILED(dev->CreateCommittedResource(&up, D3D12_HEAP_FLAG_NONE, &bd,
 				D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_shadow_instance_vb)))) return false;
 			if (FAILED(m_shadow_instance_vb->Map(0, &none, &m_shadow_instance_vb_mapped))) return false;
+
+			// PerObject constants of the cut-out caster segments (#329)
+			bd.Width = (UINT64)256 * MAX_SHADOW_CUT_SEGS;
+			if (FAILED(dev->CreateCommittedResource(&up, D3D12_HEAP_FLAG_NONE, &bd,
+				D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_shadow_cut_cb)))) return false;
+			if (FAILED(m_shadow_cut_cb->Map(0, &none, &m_shadow_cut_cb_mapped))) return false;
 		}
 
 		OutputDebugStringA("[shadows] shadow atlas ready\n");
@@ -556,12 +562,17 @@ namespace vortex::graphics::dx12
 			float sy = sqrtf(W._21 * W._21 + W._22 * W._22 + W._23 * W._23);
 			float sz = sqrtf(W._31 * W._31 + W._32 * W._32 + W._33 * W._33);
 			float ms = sx > sy ? (sx > sz ? sx : sz) : (sy > sz ? sy : sz);
-			all.push_back({ item.mesh_id, &item.world_matrix, XMVectorGetX(wc), XMVectorGetY(wc), XMVectorGetZ(wc), bd.w * ms + 0.05f });
+			// an alpha-tested material casts the shape of its texture (#329) when the cut-out shadow PSO exists
+			Material* cmat = reg.get_material(item.material_id);
+			const bool cut = cmat && cmat->blend_mode() == 3 && cmat->properties().alpha_cutoff > 0.0f && m_pipeline_3d.shadow_cut_pso() && m_shadow_cut_cb_mapped;
+			all.push_back({ item.mesh_id, &item.world_matrix, cmat, cut, XMVectorGetX(wc), XMVectorGetY(wc), XMVectorGetZ(wc), bd.w * ms + 0.05f });
 		}
 
 		auto& casters = m_shadow_tile_casters;
 		u32 vb_used = 0;   // running offset into the shared shadow instance VB (across ALL tiles, all atlases)
 		u32 dropped = 0;
+		u32 cut_slot = 0;  // PerObject slots used by cut-out segments this frame (#329)
+		ID3D12PipelineState* bound_pso = m_pipeline_3d.shadow_pso();   // set at the top of the pass; cut segments switch and back
 
 		// ---- cull one tile's casters (shared by spot, cascade and point tiles) ----
 		// Own pack per tile: the scene's instance packing is keyed to the MAIN camera frustum and
@@ -589,8 +600,13 @@ namespace vortex::graphics::dx12
 		{
 			if (casters.empty()) return;   // empty tile stays cleared -> fully lit, correct
 
-			std::sort(casters.begin(), casters.end(),
-				[](const ShadowCaster& a, const ShadowCaster& b) { return a.mesh < b.mesh; });
+			// solid casters first, grouped by mesh; cut-out casters after them, grouped by mesh AND material (#329)
+			std::sort(casters.begin(), casters.end(), [](const ShadowCaster& a, const ShadowCaster& b)
+			{
+				if (a.cut != b.cut) return !a.cut;
+				if (a.mesh != b.mesh) return a.mesh < b.mesh;
+				return a.cut && a.mat < b.mat;
+			});
 			u8* vb = (u8*)m_shadow_instance_vb_mapped;
 			for (size_t i = 0; i < casters.size(); ++i)
 				memcpy(vb + (size_t)(vb_used + i) * 64, casters[i].world, 64);
@@ -608,12 +624,28 @@ namespace vortex::graphics::dx12
 			{
 				const id::id_type meshId = casters[i].mesh;
 				size_t j = i + 1;
-				while (j < casters.size() && casters[j].mesh == meshId) ++j;
+				while (j < casters.size() && casters[j].mesh == meshId && casters[j].cut == casters[i].cut
+					&& (!casters[i].cut || casters[j].mat == casters[i].mat)) ++j;
 				const u32 count = (u32)(j - i);
 
 				Mesh* mesh = reg.get_mesh(meshId);
 				if (mesh && mesh->is_valid())
 				{
+					// cut-out segment (#329): the cut PSO, the material's PerObject (cutoff, tiling, base alpha) at root
+					// param 1 and its albedo at the texture table (root param 3, as the main pass binds it)
+					ID3D12PipelineState* want = casters[i].cut ? m_pipeline_3d.shadow_cut_pso() : m_pipeline_3d.shadow_pso();
+					if (want != bound_pso) { m_command_list->SetPipelineState(want); bound_pso = want; }
+					if (casters[i].cut && cut_slot < MAX_SHADOW_CUT_SEGS)
+					{
+						PerObjectConstants obj{};
+						const auto& props = casters[i].mat->properties();
+						obj.base_color = props.base_color; obj.uv_tiling = props.uv_tiling; obj.alpha_cutoff = props.alpha_cutoff;
+						Texture* at = casters[i].mat->albedo_texture();
+						if (at && at->is_valid() && at->srv_gpu().ptr != 0) { obj.has_albedo_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(3, at->srv_gpu()); }
+						memcpy((u8*)m_shadow_cut_cb_mapped + (size_t)cut_slot * 256, &obj, sizeof(obj));
+						m_command_list->SetGraphicsRootConstantBufferView(1, m_shadow_cut_cb->GetGPUVirtualAddress() + (UINT64)cut_slot * 256);
+						++cut_slot;
+					}
 					D3D12_VERTEX_BUFFER_VIEW vbs[2];
 					vbs[0] = mesh->vertex_buffer_view();
 					vbs[1].BufferLocation = m_shadow_instance_vb->GetGPUVirtualAddress() + (UINT64)(vb_used + i) * 64;

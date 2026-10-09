@@ -216,6 +216,7 @@ namespace vortex::graphics::dx12
 		static const BuiltinShader kBuiltins[] =
 		{
 			{ "standard",     "vs", "VSMain",  "vs_5_0" }, { "standard",     "ps", "PSMain",  "ps_5_0" },
+			{ "standard", "ps_shadowcut", "ShadowCutPS", "ps_5_0" },
 			{ "skinned",      "vs", "VSMain",  "vs_5_0" },
 			{ "skybox",       "vs", "SkyVS",   "vs_5_0" }, { "skybox",       "ps", "SkyPS",   "ps_5_0" },
 			{ "grid",         "vs", "GridVS",  "vs_5_0" }, { "grid",         "ps", "GridPS",  "ps_5_0" },

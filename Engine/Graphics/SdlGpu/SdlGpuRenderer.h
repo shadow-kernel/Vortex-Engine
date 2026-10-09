@@ -533,7 +533,8 @@ namespace vortex::graphics::sdlgpu
 		struct CustomShader { std::string path; unsigned long long mtime{ 0 }; };
 		// One compiled pipeline per variant (blend 0/1/2 × double-sided × mirrored = 12), each built the first time a
 		// draw asks for it; the mtime of the source it was built from decides whether it is stale.
-		static constexpr u32 PIPELINE_VARIANTS = 12;
+		// blend 0/1/2 x double-sided x mirrored (#333, #334) = 12, each once more for the skinned layout (#332)
+		static constexpr u32 PIPELINE_VARIANTS = 24;
 		struct CachedPipeline { SDL_GPUGraphicsPipeline* pipeline[PIPELINE_VARIANTS]{}; unsigned long long mtime[PIPELINE_VARIANTS]{}; };
 
 		// ---- init helpers (SdlGpuRenderer.cpp) ----
@@ -575,8 +576,8 @@ namespace vortex::graphics::sdlgpu
 		unsigned long long file_mtime(const std::string& path) const;
 		SDL_GPUGraphicsPipeline* get_or_compile_pipeline(const std::string& path);
 		// The custom pipeline variant a draw needs: blend mode (#333) × double-sided × mirrored (#334), compiled on demand.
-		SDL_GPUGraphicsPipeline* get_or_compile_pipeline(const std::string& path, u32 blend_mode, bool double_sided, bool mirrored);
-		SDL_GPUGraphicsPipeline* custom_pipeline(u32 material_id, u32 blend_mode, bool double_sided, bool mirrored);
+		SDL_GPUGraphicsPipeline* get_or_compile_pipeline(const std::string& path, u32 blend_mode, bool double_sided, bool mirrored, bool skinned = false);
+		SDL_GPUGraphicsPipeline* custom_pipeline(u32 material_id, u32 blend_mode, bool double_sided, bool mirrored, bool skinned = false);
 
 		// ---- frame helpers (SdlGpuRenderer.cpp) ----
 		void render_surface(WindowSurface& surface, int slot);
@@ -738,19 +739,25 @@ namespace vortex::graphics::sdlgpu
 		SDL_GPUShader* m_fs_shadow{ nullptr };
 		SDL_GPUGraphicsPipeline* m_pipeline_shadow{ nullptr };      // stride 32
 		SDL_GPUGraphicsPipeline* m_pipeline_shadow_52{ nullptr };   // stride 52 (skinned layout, rigid pose)
+		// cut-out casters (#329): uv through to a fragment stage that discards by the albedo alpha; optional
+		SDL_GPUShader* m_vs_shadow_cut{ nullptr };
+		SDL_GPUShader* m_vs_shadow_cut_skinned_layout{ nullptr };
+		SDL_GPUShader* m_fs_shadow_cut{ nullptr };
+		SDL_GPUGraphicsPipeline* m_pipeline_shadow_cut{ nullptr };
+		SDL_GPUGraphicsPipeline* m_pipeline_shadow_cut_52{ nullptr };
 		SDL_GPUBuffer* m_shadow_instance_buffer{ nullptr };
 		SDL_GPUTransferBuffer* m_shadow_instance_transfer{ nullptr };
 		std::vector<float> m_shadow_staging;              // packed caster world matrices for this frame
 		// Casters gathered ONCE per frame (#363): every tile tests precomputed world-space spheres instead of scanning
 		// the queue with a map lookup and a matrix transform per item (up to 19 tiles x N). m_shadow_bounds (mesh ->
 		// local centre + radius) is kept across frames and dropped when a mesh was destroyed.
-		struct ShadowCaster { id::id_type mesh; const DirectX::XMFLOAT4X4* world; Mesh* meshp; float cx, cy, cz, r; };
+		struct ShadowCaster { id::id_type mesh; const DirectX::XMFLOAT4X4* world; Mesh* meshp; Material* mat; bool cut; float cx, cy, cz, r; };
 		std::vector<ShadowCaster> m_shadow_casters, m_shadow_tile_casters;
 		std::unordered_map<id::id_type, DirectX::XMFLOAT4> m_shadow_bounds;
 		u32 m_shadow_bounds_generation{ 0 };
 		std::chrono::steady_clock::time_point m_shadow_drop_logged{};
 		bool m_shadows_ready{ false };
-		struct ShadowDrawSeg { Mesh* mesh; u32 instance_base; u32 instance_count; };
+		struct ShadowDrawSeg { Mesh* mesh; u32 instance_base; u32 instance_count; Material* cut_mat; };   // cut_mat: alpha-tested casters (#329)
 		struct ShadowTile { u32 x, y, size; DirectX::XMFLOAT4X4 vp; u32 seg_begin, seg_end; };
 		std::vector<ShadowDrawSeg> m_shadow_segs;
 		std::vector<ShadowTile> m_shadow_tiles_spot, m_shadow_tiles_csm, m_shadow_tiles_point;
