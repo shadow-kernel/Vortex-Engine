@@ -28,7 +28,7 @@ namespace vortex::graphics
 		float emissive_strength{ 1.0f };                          // 4 bytes (brightness multiplier for unlit)
 		DirectX::XMFLOAT2 uv_tiling{ 1.0f, 1.0f };                // 8 bytes (texture repeat scale; 1,1 = no tiling)
 		float height_scale{ 0.05f };                              // 4 bytes (parallax/displacement depth)
-		float _pad_h{ 0.0f };                                     // 4 bytes (keep the struct 16-byte aligned)
+		float alpha_cutoff{ 0.0f };                               // 4 bytes (#329: > 0 = AlphaTest, fragments below it are discarded; was padding)
 	};
 	static_assert(sizeof(MaterialProperties) == 80, "MaterialProperties is a GPU + .vmat ABI: keep it 80 bytes");
 }

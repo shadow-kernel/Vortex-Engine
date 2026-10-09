@@ -77,6 +77,7 @@ namespace vortex::graphics::dx12
 		// Render layer (#175): 0 = world, 1 = first-person VIEWMODEL — drawn in a second pass after a
 		// depth clear with its own projection, excluded from shadow casting + SSAO + frustum cull.
 		u32 layer{ 0 };
+		u32 mirrored{ 0 };   // det(world) < 0: the instance is wound the other way (#334), set at submit
 	};
 	
 	/// <summary>
@@ -508,14 +509,19 @@ namespace vortex::graphics::dx12
 		DX12Pipeline m_pipeline;           // Simple 2D pipeline (fallback)
 		DX12Pipeline3D m_pipeline_3d;      // Full 3D pipeline
 		// Custom per-material shaders: material_id -> its compiled PSO + source .hlsl + last-seen mtime (hot-reload).
-		struct CustomShader { ComPtr<ID3D12PipelineState> pso; std::wstring path; unsigned long long mtime{ 0 }; };
+		struct CustomShader { std::wstring path; unsigned long long mtime{ 0 }; };
 		std::unordered_map<u32, CustomShader> m_custom_shaders;
 		// Shared PSO cache keyed by .hlsl PATH (not material id): many materials + repeated preview rebuilds reuse ONE
 		// compiled PSO, so an assigned shader recompiles only when its file's mtime changes (not every orbit frame).
 		// Also drives the hot-reload dirty check so the overlay only appears on a REAL change.
-		struct CachedPso { ComPtr<ID3D12PipelineState> pso; unsigned long long mtime{ 0 }; };
+		// One compiled PSO per variant (blend 0/1/2 × double-sided × mirrored = 12), each built the first time a draw
+		// asks for it (#333, #334); the mtime of the source it was built from decides whether it is stale.
+		static constexpr u32 PSO_VARIANTS = 12;
+		struct CachedPso { ComPtr<ID3D12PipelineState> pso[PSO_VARIANTS]; unsigned long long mtime[PSO_VARIANTS]{}; };
 		std::unordered_map<std::wstring, CachedPso> m_pso_cache;
 		ComPtr<ID3D12PipelineState> get_or_compile_pso(const std::wstring& hlsl_path);
+		ComPtr<ID3D12PipelineState> get_or_compile_pso(const std::wstring& hlsl_path, u32 blend_mode, bool double_sided, bool mirrored);
+		ID3D12PipelineState* custom_pso(u32 material_id, u32 blend_mode, bool double_sided, bool mirrored);
 		DX12GridPipeline m_grid_pipeline;  // Grid rendering pipeline
 		DX12SkyboxPipeline m_skybox_pipeline; // Skybox rendering pipeline
 		DX12UpscalePipeline m_upscale;        // Fullscreen upscale (render-scale composite + the DLSS slot)
@@ -677,7 +683,9 @@ namespace vortex::graphics::dx12
 		DirectX::XMFLOAT2 uv_tiling;          // 8 bytes @128
 		UINT has_height_texture;              // 4 bytes @136 (parallax/displacement height map bound)
 		float height_scale;                   // 4 bytes @140 (parallax depth) -> row 8 full (128-143)
-		};  // Total: 144 bytes, aligned to 256
+		float alpha_cutoff;                   // 4 bytes @144 (AlphaTest cutoff, #329; 0 = off)
+		float _pad0, _pad1, _pad2;            // row 9 (144-159)
+		};  // Total: 160 bytes, aligned to 256
 		
 		// Light constant buffer
 		ComPtr<ID3D12Resource> m_light_cb;
@@ -717,6 +725,7 @@ namespace vortex::graphics::dx12
 		struct DrawRun
 		{
 			size_t start; u32 count;
+			bool mirrored{ false };   // every instance of the run has a negative-determinant world matrix (#334)
 			id::id_type mesh; id::id_type mat;
 			Mesh* meshp;
 			bool defaultBounds;

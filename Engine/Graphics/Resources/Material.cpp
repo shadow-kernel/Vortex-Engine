@@ -166,6 +166,12 @@ namespace vortex::graphics
 		update_gpu_data();
 	}
 
+	void Material::set_alpha_cutoff(float cutoff)
+	{
+		m_properties.alpha_cutoff = cutoff < 0.0f ? 0.0f : cutoff;
+		update_gpu_data();
+	}
+
 	void Material::update_gpu_data()
 	{
 		if (m_mapped_data)

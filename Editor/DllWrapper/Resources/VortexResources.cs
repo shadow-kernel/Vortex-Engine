@@ -101,6 +101,12 @@ namespace Editor.DllWrapper
         private static extern void SetMaterialBlendMode(long materialId, int mode);
 
         [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetMaterialAlphaCutoff(long materialId, float cutoff);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetMaterialDoubleSided(long materialId, [MarshalAs(UnmanagedType.I1)] bool twoSided);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
         [return: MarshalAs(UnmanagedType.I1)]
         private static extern bool MaterialHasTexture(long materialId);
 
@@ -152,11 +158,24 @@ namespace Editor.DllWrapper
         public static void SetMaterialEmissiveBrightness(long materialId, float strength)
             => SetMaterialEmissiveStrength(materialId, strength);
 
-        /// <summary>Blend mode (#33): 0 = opaque, 1 = alpha blend, 2 = additive. Non-opaque materials
-        /// render in the engine's sorted transparent pass (depth test on, depth write off).</summary>
+        /// <summary>Blend mode (#33): 0 = opaque, 1 = alpha blend, 2 = additive, 3 = alpha test (#329). Alpha blend and
+        /// additive render in the engine's sorted transparent pass (depth test on, depth write off); alpha test stays
+        /// in the opaque pass and discards fragments below <see cref="SetMaterialAlphaCutoffValue"/>.</summary>
         public static void SetMaterialBlendModeValue(long materialId, int mode)
         {
             try { SetMaterialBlendMode(materialId, mode); } catch { }
+        }
+
+        /// <summary>AlphaTest cutoff (#329): fragments whose alpha falls below it are discarded; 0 = off.</summary>
+        public static void SetMaterialAlphaCutoffValue(long materialId, float cutoff)
+        {
+            try { SetMaterialAlphaCutoff(materialId, cutoff); } catch { }
+        }
+
+        /// <summary>TwoSided: the material draws without back-face culling (cut-outs, foliage, cloth).</summary>
+        public static void SetMaterialTwoSided(long materialId, bool twoSided)
+        {
+            try { SetMaterialDoubleSided(materialId, twoSided); } catch { }
         }
 
         /// <summary>Texture repeat scale (UV tiling). 1,1 = no tiling; higher repeats the texture across the surface

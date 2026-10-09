@@ -44,16 +44,30 @@ cbuffer PerFrame : register(b0)
     float4 EnvGround;
 };
 
-// Exp2 distance fog with optional height weighting (ground mist below FogHeightY).
-// Applied in LINEAR space before tonemapping; FogDensity 0 = off (default).
+// Exp2 distance fog with optional HEIGHT fog (#328): density is uniform up to FogHeightY and falls off as
+// exp(-FogHeightFalloff * (y - FogHeightY)) above it, integrated along the camera ray (the camera's own height
+// counts, nothing is clamped to a band). Applied in LINEAR space before tonemapping; FogDensity 0 = off.
+float FogOpticalDepth(float density, float heightY, float k, float3 cam, float3 worldPos)
+{
+    float3 delta = worldPos - cam;
+    float dist = length(delta);
+    if (k <= 0.0) { float d = density * dist; return -log2(max(exp2(-d * d), 1e-6)); }   // uniform fog, the old exp2 look
+    float ya = cam.y - heightY, yb = worldPos.y - heightY;
+    if (ya <= 0.0 && yb <= 0.0) return density * dist;
+    float t0 = 0.0, t1 = 1.0;
+    if (ya <= 0.0) t0 = -ya / (yb - ya);
+    else if (yb <= 0.0) t1 = ya / (ya - yb);
+    float above = (t1 - t0) * dist, below = dist - above;
+    float hya = max(ya, 0.0), hyb = max(yb, 0.0), dyv = hyb - hya;
+    float meanDensity = abs(dyv) > 1e-3 ? (exp(-k * hya) - exp(-k * hyb)) / (k * dyv) : exp(-k * hya);
+    return density * (below + above * meanDensity);
+}
+
 float3 ApplyFog(float3 color, float3 worldPos)
 {
     if (FogDensity <= 0.0) return color;
-    float dist = length(CameraPosition - worldPos);
-    float d = FogDensity * dist;
-    float f = 1.0 - exp2(-d * d);
-    if (FogHeightFalloff > 0.0)
-        f *= saturate((FogHeightY - worldPos.y) * FogHeightFalloff);
+    float optical = FogOpticalDepth(FogDensity, FogHeightY, FogHeightFalloff, CameraPosition, worldPos);
+    float f = 1.0 - exp2(-optical);
     return lerp(color, FogColor, saturate(f));
 }
 
@@ -76,6 +90,8 @@ cbuffer PerObject : register(b1)
     float2 UVTiling;         // texture repeat scale (mirrors PerObjectConstants at byte offset 128)
     uint HasHeightTexture;   // @136 — parallax/displacement height map bound
     float HeightScale;       // @140 — parallax depth
+    float AlphaCutoff;       // @144 — AlphaTest cutoff (#329), 0 = off
+    float3 _Pad0;
 };
 
 struct PointLight
@@ -386,6 +402,8 @@ float4 PSMain(PS_IN input) : SV_TARGET
         albedo *= SRGBToLinear(tex.rgb);   // base colour TINTS the texture, alpha multiplies — standard PBR (#330)
         alpha *= tex.a;
     }
+    // AlphaTest (#329): cut-outs (foliage, fences, hair cards) drop their transparent texels here
+    if (AlphaCutoff > 0.0 && alpha < AlphaCutoff) clip(-1);
 
     // UNLIT/EMISSIVE PATH - bypass all lighting calculations (for skybox, etc.)
     if (IsUnlit != 0) {

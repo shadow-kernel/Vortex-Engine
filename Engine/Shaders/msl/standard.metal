@@ -59,6 +59,8 @@ struct PerObject
     float2 uv_tiling;                  // @128
     uint has_height_texture;           // @136
     float height_scale;                // @140
+    float alpha_cutoff;                // @144 (#329: > 0 = AlphaTest cutoff)
+    float _pad0, _pad1, _pad2;
 };
 
 struct PointLight
@@ -198,14 +200,30 @@ vertex float4 ShadowVSSkinnedLayout(SkinnedVertexIn in [[stage_in]], constant Pe
 
 fragment void ShadowPS() {}
 
+static inline float fog_optical_depth(float density, float height_y, float k, float3 cam, float3 world_pos)
+{
+    float3 delta = world_pos - cam;
+    float dist = length(delta);
+    if (k <= 0.0) { float d = density * dist; return -log2(max(exp2(-d * d), 1e-6)); }   // uniform fog, the old exp2 look
+    // Height fog (#328): density is uniform up to height_y and falls off as exp(-k * (y - height_y)) above it; the
+    // ray is split at the ceiling and both parts are integrated, so the camera's own height counts and nothing is
+    // clamped to a band below height_y.
+    float ya = cam.y - height_y, yb = world_pos.y - height_y;
+    if (ya <= 0.0 && yb <= 0.0) return density * dist;
+    float t0 = 0.0, t1 = 1.0;
+    if (ya <= 0.0) t0 = -ya / (yb - ya);
+    else if (yb <= 0.0) t1 = ya / (ya - yb);
+    float above = (t1 - t0) * dist, below = dist - above;
+    float hya = max(ya, 0.0), hyb = max(yb, 0.0), dyv = hyb - hya;
+    float mean = abs(dyv) > 1e-3 ? (exp(-k * hya) - exp(-k * hyb)) / (k * dyv) : exp(-k * hya);
+    return density * (below + above * mean);
+}
+
 static inline float3 apply_fog(constant PerFrame& frame, float3 color, float3 world_pos)
 {
     if (frame.fog_density <= 0.0) return color;
-    float dist = length(float3(frame.camera_position) - world_pos);
-    float d = frame.fog_density * dist;
-    float f = 1.0 - exp2(-d * d);
-    if (frame.fog_height_falloff > 0.0)
-        f *= saturate((frame.fog_height_y - world_pos.y) * frame.fog_height_falloff);
+    float optical = fog_optical_depth(frame.fog_density, frame.fog_height_y, frame.fog_height_falloff, float3(frame.camera_position), world_pos);
+    float f = 1.0 - exp2(-optical);
     return mix(color, float3(frame.fog_color), saturate(f));
 }
 
@@ -391,6 +409,8 @@ fragment float4 PSMain(VSOut in [[stage_in]],
         albedo *= srgb_to_linear(tex.rgb);   // base colour TINTS the texture, alpha multiplies — standard PBR (#330)
         alpha *= tex.a;
     }
+    // AlphaTest (#329): cut-outs (foliage, fences, hair cards) drop their transparent texels here
+    if (obj.alpha_cutoff > 0.0 && alpha < obj.alpha_cutoff) discard_fragment();
 
     if (obj.is_unlit != 0)
     {

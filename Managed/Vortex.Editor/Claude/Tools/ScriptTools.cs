@@ -211,7 +211,17 @@ namespace VortexEditor.Claude.Tools
             else if (ScriptRuntime.Instance.GetScriptTypeForInspector(sc.ScriptClassName) == null)
                 note = "the class " + sc.ScriptClassName + " is not compiled yet (or the file has errors) — check compile_scripts";
             ToolContext.UndoLabel = (added ? "attach " : "set fields of ") + Path.GetFileNameWithoutExtension(rel) + " on " + e.Name;
-            return new { entity = SceneModel.ShortId(e), script = rel, behaviour = sc.ScriptClassName, added, fields_set = set.Count > 0 ? set : null, note };
+            // while playing the running behaviour takes the values now, and a new script starts now (#345); Stop
+            // reverts the scene to what it was before Play
+            bool playing = PlayModeService.Instance.State == PlayState.Playing;
+            bool live = false;
+            if (playing)
+            {
+                live = ScriptRuntime.Instance.ApplyFieldsToLiveBehaviour(e) || ScriptRuntime.Instance.AttachAtRuntime(e);
+                if (!live) note = (note == null ? "" : note + "; ") + "play mode: the entity has no running behaviour for this script (another Script on it runs instead, or the class does not compile) — the change applies on the next Play";
+            }
+            return new { entity = SceneModel.ShortId(e), script = rel, behaviour = sc.ScriptClassName, added, fields_set = set.Count > 0 ? set : null,
+                runtime_only = playing ? true : (bool?)null, live = playing ? live : (bool?)null, note };
         }
 
         private static object FieldValue(JsonElement v, Type t, string name)

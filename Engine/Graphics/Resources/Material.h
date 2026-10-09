@@ -45,10 +45,16 @@ namespace vortex::graphics
 		void set_emissive_strength(float strength);
 		void set_uv_tiling(float u, float v);
 		void set_height_scale(float value);
+		// AlphaTest (#329): fragments whose alpha falls below the cutoff are discarded (0 = off).
+		void set_alpha_cutoff(float cutoff);
+		float alpha_cutoff() const { return m_properties.alpha_cutoff; }
+		// TwoSided: drawn without back-face culling (cut-outs, foliage, cloth) — a pipeline choice, not CB data.
+		void set_double_sided(bool two_sided) { m_double_sided = two_sided; }
+		bool double_sided() const { return m_double_sided; }
 		// Blend mode (#33): 0 = opaque, 1 = alpha blend, 2 = additive. CPU-side draw-routing state
 		// only (the renderer picks the PSO + pass from it) — deliberately NOT in MaterialProperties,
 		// whose layout is a GPU constant-buffer ABI.
-		void set_blend_mode(u32 mode) { m_blend_mode = (mode <= 2) ? mode : 0; }
+		void set_blend_mode(u32 mode) { m_blend_mode = (mode <= 3) ? mode : 0; }
 		u32 blend_mode() const { return m_blend_mode; }
 
 		// Texture setters
@@ -90,7 +96,8 @@ namespace vortex::graphics
 
 	private:
 		MaterialProperties m_properties;
-		u32 m_blend_mode{ 0 };   // 0 opaque, 1 alpha blend, 2 additive (#33) — not part of the CB
+		u32 m_blend_mode{ 0 };   // 0 opaque, 1 alpha blend, 2 additive (#33), 3 alpha test (#329) — not part of the CB
+		bool m_double_sided{ false };   // TwoSided (#329): drawn without back-face culling
 		ComPtr<ID3D12Resource> m_constant_buffer;
 		void* m_mapped_data{ nullptr };
 		std::string m_name{ "New Material" };

@@ -293,7 +293,7 @@ namespace vortex::graphics::dx12
 			if (item.bone_offset != NO_BONES) continue;   // v1: skinned meshes don't occlude in AO
 			if (item.layer != 0) continue;   // #175: the viewmodel would rasterize at the WRONG projection here
 			auto* cmat = reg.get_material(item.material_id);
-			if (cmat && cmat->blend_mode() != 0) continue;   // transparents neither
+			if (cmat && (cmat->blend_mode() == 1 || cmat->blend_mode() == 2)) continue;   // transparents neither
 			XMFLOAT4 bd;
 			auto bit = bounds.find(item.mesh_id);
 			if (bit == bounds.end())
