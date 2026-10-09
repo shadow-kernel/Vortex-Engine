@@ -81,7 +81,7 @@ namespace Editor.Core.Services
             _entries.Clear();
             if (!had) return;
 #if VORTEX_CORE
-            Editor.Core.Services.SceneRenderService.RuntimeDirty = true;
+            Editor.Core.Services.SceneRenderService.RuntimeDirty = Editor.Core.Services.SceneRenderService.StaticDirty = true;   // structural (#364 A)
 #else
             try { Editor.Editors.WorldEditor.Components.GamePreview.GamePreviewView.RequestResubmit(); } catch { }
 #endif

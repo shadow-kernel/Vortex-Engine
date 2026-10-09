@@ -164,7 +164,7 @@ namespace Editor.Scripting
             {
                 try { StopAudioRecursive(e); } catch { }
             }
-            Editor.Core.Services.SceneRenderService.RuntimeDirty = true;
+            Editor.Core.Services.SceneRenderService.RuntimeDirty = Editor.Core.Services.SceneRenderService.StaticDirty = true;   // structural (#364 A)
             return true;
         }
 
@@ -184,7 +184,7 @@ namespace Editor.Scripting
             var mr = e != null ? e.GetComponent<Editor.ECS.Components.Rendering.MeshRenderer>() : null;
             if (mr == null) return false;
             mr.IsEnabled = enabled;   // SubmitScene skips disabled renderers
-            Editor.Core.Services.SceneRenderService.RuntimeDirty = true;
+            Editor.Core.Services.SceneRenderService.RuntimeDirty = Editor.Core.Services.SceneRenderService.StaticDirty = true;   // structural (#364 A)
             return true;
         }
 
@@ -482,7 +482,7 @@ namespace Editor.Scripting
             ((Vortex.IScriptHost)this).SetRotation(handle, rot);
 
             try { ent.SyncEngineStateRecursive(true); } catch { }
-            Editor.Core.Services.SceneRenderService.RuntimeDirty = true;
+            Editor.Core.Services.SceneRenderService.RuntimeDirty = Editor.Core.Services.SceneRenderService.StaticDirty = true;   // structural (#364 A)
             try { Editor.Core.Services.Physics.CollisionService.AddEntityShapes(ent); } catch { }
             try { Editor.Core.Services.Physics.PhysicsService.AddEntity(ent); } catch { }   // spawned crates/barrels simulate at once
             try { Editor.Core.Services.AudioPlaybackService.Instance.AddEntity(ent); } catch { }   // its sounds play (Play On Awake next tick)
@@ -656,7 +656,7 @@ namespace Editor.Scripting
             }
             Release(e);
 
-            Editor.Core.Services.SceneRenderService.RuntimeDirty = true;
+            Editor.Core.Services.SceneRenderService.RuntimeDirty = Editor.Core.Services.SceneRenderService.StaticDirty = true;   // structural (#364 A)
             return true;
         }
 
@@ -695,7 +695,7 @@ namespace Editor.Scripting
             }
             _activeChanged.Clear();
 
-            Editor.Core.Services.SceneRenderService.RuntimeDirty = true;
+            Editor.Core.Services.SceneRenderService.RuntimeDirty = Editor.Core.Services.SceneRenderService.StaticDirty = true;   // structural (#364 A)
         }
 
         /// <summary>Last compile diagnostics (empty on success) — surfaced to the user.</summary>
@@ -1712,7 +1712,7 @@ namespace Editor.Scripting
             if (layer < 0 || layer > 2) return;
             if (!_entitiesById.TryGetValue(entityId, out var e)) return;
             ApplyRenderLayerRecursive(e, layer);
-            Editor.Core.Services.SceneRenderService.RuntimeDirty = true;   // retained queue -> re-submit
+            Editor.Core.Services.SceneRenderService.RuntimeDirty = Editor.Core.Services.SceneRenderService.StaticDirty = true;   // structural (#364 A)   // retained queue -> re-submit
         }
 
         void Vortex.IScriptHost.SetIkWeight(long entityId, string tipBone, float weight)

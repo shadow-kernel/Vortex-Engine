@@ -716,6 +716,7 @@ namespace vortex::graphics::sdlgpu
 		{
 			std::lock_guard<std::mutex> lock(m_queue_mutex);
 			m_render_queue.clear(); m_submit_queue.clear();
+		m_static_submit.clear(); m_static_render.clear(); m_static_pending = false; m_submit_target = 0;
 			m_gizmo_render.clear(); m_gizmo_submit.clear(); m_gizmo_wire_render.clear(); m_gizmo_wire_submit.clear();
 		}
 		for (auto& [id, cs] : m_custom_shaders) cs.pipeline = nullptr;
@@ -954,6 +955,7 @@ namespace vortex::graphics::sdlgpu
 		wait_idle();
 		std::lock_guard<std::mutex> lock(m_queue_mutex);
 		m_render_queue.clear(); m_submit_queue.clear();
+		m_static_submit.clear(); m_static_render.clear(); m_static_pending = false; m_submit_target = 0;
 		m_bone_submit.clear(); m_bone_render.clear();
 		m_bone_upload_pending = false;
 		m_queue_dirty = true;

@@ -408,6 +408,19 @@ EDITOR_INTERFACE void SubmitMeshInstancesEx(id::id_type mesh_id, id::id_type mat
 		static_cast<u32>(count), layer > 0 ? 1u : 0u);
 }
 
+// #364 A: static / dynamic split. Everything submitted between BeginStaticScene and EndStaticScene is RETAINED by
+// the renderer across frames; per-frame submits (the moving entities) go to the normal queue and are merged in at the
+// swap. An empty pass (Begin + End) clears the retained set.
+EDITOR_INTERFACE void BeginStaticScene()
+{
+	graphics::Renderer::instance().begin_static_scene();
+}
+
+EDITOR_INTERFACE void EndStaticScene()
+{
+	graphics::Renderer::instance().end_static_scene();
+}
+
 // #175: the first-person layer's own field of view (degrees; world FOV never distorts the viewmodel).
 EDITOR_INTERFACE void SetViewmodelFOV(float fov_degrees)
 {

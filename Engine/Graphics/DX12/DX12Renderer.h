@@ -148,6 +148,8 @@ namespace vortex::graphics::dx12
 		void submit_skinned_item(id::id_type mesh, id::id_type material, const float* world_matrix,
 			const float* bone_matrices, u32 bone_count, u32 layer = 0);
 		void clear_render_queue();
+		void begin_static_scene();
+		void end_static_scene();
 
 		// Camera
 		void set_camera(const DirectX::XMFLOAT3& position, const DirectX::XMFLOAT3& target, const DirectX::XMFLOAT3& up);
@@ -667,6 +669,11 @@ namespace vortex::graphics::dx12
 		// Render queue - double buffered for thread safety
 		std::vector<RenderItem> m_render_queue;
 		std::vector<RenderItem> m_submit_queue;
+		// Static / dynamic split (#364 A): the static set is submitted once (begin_static_scene .. end_static_scene) and
+		// kept; per-frame submits (the moving entities) go to m_submit_queue as before. swap_render_queue merges both.
+		std::vector<RenderItem> m_static_submit, m_static_render;
+		bool m_static_pending{ false };
+		int m_submit_target{ 0 };   // 0 = dynamic (per frame), 1 = static (retained)
 		// Separate double-buffered queue for editor gizmos so the optimized scene path never touches them; they draw
 		// in render_gizmos() after the scene with the depth-disabled gizmo PSO (always on top).
 		std::vector<RenderItem> m_gizmo_render;

@@ -138,6 +138,8 @@ namespace vortex::graphics::sdlgpu
 		void submit_skinned_item(id::id_type mesh, id::id_type material, const float* world_matrix,
 			const float* bone_matrices, u32 bone_count, u32 layer = 0);
 		void clear_render_queue();
+		void begin_static_scene();
+		void end_static_scene();
 
 		// Camera + lights
 		void set_camera(const DirectX::XMFLOAT3& position, const DirectX::XMFLOAT3& target, const DirectX::XMFLOAT3& up);
@@ -644,6 +646,11 @@ namespace vortex::graphics::sdlgpu
 
 		// queues
 		std::vector<RenderItem> m_render_queue, m_submit_queue;
+		// Static / dynamic split (#364 A): the static set is submitted once (begin_static_scene .. end_static_scene) and
+		// kept; per-frame submits (the moving entities) go to m_submit_queue as before. swap_render_queue merges both.
+		std::vector<RenderItem> m_static_submit, m_static_render;
+		bool m_static_pending{ false };
+		int m_submit_target{ 0 };   // 0 = dynamic (per frame), 1 = static (retained)
 		std::vector<RenderItem> m_gizmo_render, m_gizmo_submit;
 		std::vector<RenderItem> m_gizmo_wire_render, m_gizmo_wire_submit;
 		std::mutex m_queue_mutex;
