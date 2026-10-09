@@ -222,7 +222,7 @@ jobs:
       env:
         VORTEX_DX12_WARP: '1'
         VORTEX_SMOKE_FULL: '1'
-        VORTEX_SMOKE_ONLY: 'mcp,claude,title bar,update window,terminal,workspace layout,camera clip planes,sky texture,height fog,material pipelines'
+        VORTEX_SMOKE_ONLY: 'mcp,claude,title bar,update window,terminal,workspace layout,camera clip planes,sky texture,height fog,material pipelines,light priority'
       run: |
         $app = "$env:ProgramFiles\Vortex Engine"
         $tmp = $env:RUNNER_TEMP

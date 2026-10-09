@@ -163,6 +163,7 @@ namespace vortex::graphics::dx12
 		// Multi-light system
 		static constexpr u32 MAX_POINT_LIGHTS = 16;
 		static constexpr u32 MAX_SPOT_LIGHTS = 8;
+		static constexpr u32 MAX_SUBMITTED_LIGHTS = 1024;   // kept per frame; the most relevant fill the slots above (#335)
 		
 		struct PointLightData
 		{
@@ -463,6 +464,9 @@ namespace vortex::graphics::dx12
 		bool create_grid_resources();
 		bool create_skybox_resources();
 		void update_per_frame_constants();
+		// Keep the MAX_POINT_LIGHTS / MAX_SPOT_LIGHTS most relevant lights for this camera (#335); a no-op below the caps.
+		void prioritize_lights();
+		u32 m_light_cap_log{ 0 };
 		void wait_for_previous_frame();
 
 		void render_3d_scene();

@@ -149,6 +149,7 @@ namespace vortex::graphics::sdlgpu
 
 		static constexpr u32 MAX_POINT_LIGHTS = 16;
 		static constexpr u32 MAX_SPOT_LIGHTS = 8;
+		static constexpr u32 MAX_SUBMITTED_LIGHTS = 1024;   // kept per frame; the most relevant fill the slots above (#335)
 
 		struct PointLightData
 		{
@@ -586,6 +587,9 @@ namespace vortex::graphics::sdlgpu
 		FrameView build_main_view(u32 width, u32 height);
 		FrameView build_camera_view(const ViewportCamera& camera, u32 width, u32 height);
 		void fill_light_buffer();
+		// Keep the MAX_POINT_LIGHTS / MAX_SPOT_LIGHTS most relevant lights for this camera (#335); a no-op below the caps.
+		void prioritize_lights();
+		u32 m_light_cap_log{ 0 };
 		void upload_staged_bone_palettes();
 		void prepare_scene(const FrameView& view);   // sort + cull + pack (CPU) into the staging vectors
 		void upload_dynamic(SDL_GPUCommandBuffer* cmd);
