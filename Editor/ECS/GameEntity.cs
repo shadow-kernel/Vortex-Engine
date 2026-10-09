@@ -39,6 +39,7 @@ namespace Editor.ECS
     [KnownType(typeof(Components.AI.NavAgent))]
     [KnownType(typeof(Components.AI.AIPerception))]
     [KnownType(typeof(Components.AI.PatrolPath))]
+    [KnownType(typeof(Components.AI.BehaviorTreeAgent))]
     [KnownType(typeof(Components.Audio.AudioSource))]
     [KnownType(typeof(Components.Audio.AudioListener))]
     [KnownType(typeof(Components.Audio.ReverbZone))]

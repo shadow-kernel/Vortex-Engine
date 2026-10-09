@@ -7,7 +7,7 @@ namespace VortexEditor.Panels.AssetBrowser
     public enum AssetKind
     {
         Folder, ParentFolder, Primitive, Model, Texture, Material, Shader, Script, Scene, Prefab,
-        AudioClip, SoundContainer, AnimationClip, UiScreen, Font, Text, BuiltInMaterial, BuiltInTexture, Vfx, Other
+        AudioClip, SoundContainer, AnimationClip, UiScreen, Font, Text, BuiltInMaterial, BuiltInTexture, Vfx, BehaviorTree, Other
     }
 
     /// <summary>
@@ -54,6 +54,7 @@ namespace VortexEditor.Panels.AssetBrowser
                 case ".vanim": return AssetKind.AnimationClip;
                 case ".vui": return AssetKind.UiScreen;
                 case ".vfx": return AssetKind.Vfx;
+                case ".vbt": return AssetKind.BehaviorTree;
             }
             return AssetKind.Other;
         }
@@ -80,6 +81,7 @@ namespace VortexEditor.Panels.AssetBrowser
                 case AssetKind.UiScreen: return "UI Screen";
                 case AssetKind.Font: return "Font";
                 case AssetKind.Vfx: return "Visual Effect";
+                case AssetKind.BehaviorTree: return "Behavior Tree";
                 case AssetKind.BuiltInMaterial: return "Built-in Material";
                 case AssetKind.BuiltInTexture: return "Built-in Texture";
                 default: return string.IsNullOrEmpty(e) ? "File" : e + " File";
@@ -106,6 +108,7 @@ namespace VortexEditor.Panels.AssetBrowser
                 case AssetKind.AnimationClip: return "Play";
                 case AssetKind.UiScreen: return "LayoutSingle";
                 case AssetKind.Vfx: return "Sparkle";
+                case AssetKind.BehaviorTree: return "Flow";
                 default: return "File";
             }
         }
@@ -127,6 +130,7 @@ namespace VortexEditor.Panels.AssetBrowser
                 case AssetKind.AudioClip: case AssetKind.SoundContainer: return "VxRedBrush";
                 case AssetKind.UiScreen: return "VxTealBrush";
                 case AssetKind.Vfx: return "VxOrangeBrush";
+                case AssetKind.BehaviorTree: return "VxTealBrush";
                 default: return "VxTextSecondaryBrush";
             }
         }

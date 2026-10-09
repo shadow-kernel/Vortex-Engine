@@ -51,6 +51,7 @@ namespace VortexEditor.Panels.Inspector
                 case PhysicsJoint _: return ("Link", "VxGreenBrush");
                 case Ragdoll _: return ("Bone", "VxGreenBrush");
                 case Editor.ECS.Components.AI.NavAgent _: return ("Crosshair", "VxTealBrush");
+                case Editor.ECS.Components.AI.BehaviorTreeAgent _: return ("Flow", "VxTealBrush");
                 case Editor.ECS.Components.AI.AIPerception _: return ("Eye", "VxTealBrush");
                 case Editor.ECS.Components.AI.PatrolPath _: return ("Link", "VxTealBrush");
                 case Editor.ECS.Components.Rendering.ParticleSystem _: return ("Sparkle", "VxOrangeBrush");
