@@ -1475,6 +1475,34 @@ namespace Editor.Core.Services
                         return -1;
                     }
 
+                    // the render-side import cache (#364 C): one .vmesh per submesh, written after the first import; on
+                    // later starts the Assimp pass is skipped and the materials come from the sidecar .vmat files
+                    string cacheDir = fromVfs ? null : ModelImportCache.Dir(projectPath, fullPath);
+                    int cachedCount = ModelImportCache.Count(cacheDir);
+                    if (cachedCount > 0)
+                    {
+                        bool sidecars = true;
+                        for (int i = 0; i < cachedCount && sidecars; i++) if (SidecarMaterial(fullPath, i) == null) sidecars = false;
+                        if (sidecars)
+                        {
+                            var swCache = System.Diagnostics.Stopwatch.StartNew();
+                            var ids = new List<long>();
+                            for (int i = 0; i < cachedCount; i++)
+                            {
+                                long id = VortexAPI.LoadVMeshFromFile(ModelImportCache.SubmeshFile(cacheDir, i));
+                                if (id < 0) { ids.Clear(); break; }
+                                ids.Add(id);
+                            }
+                            if (ids.Count == cachedCount)
+                            {
+                                RegisterModelSubmeshes(actualPath, ids, fullPath);
+                                swCache.Stop();
+                                try { ConsoleService.Instance.LogSystem("Model cache " + System.IO.Path.GetFileName(actualPath) + ": " + cachedCount + " submeshes in " + swCache.ElapsedMilliseconds + " ms (no Assimp)"); } catch { }
+                                return submeshIndex >= 0 && submeshIndex < ids.Count ? ids[submeshIndex] : ids[0];
+                            }
+                        }
+                    }
+
                     // Import with materials (this creates all submeshes at once) — from RAM if packed, else disk.
                     Log($"[SceneRenderService] Importing model with materials: {fullPath} (vfs={fromVfs})");
                     var virtualDir = (System.IO.Path.GetDirectoryName(actualPath) ?? "").Replace('\\', '/');
@@ -1506,6 +1534,32 @@ namespace Editor.Core.Services
                         _submeshMeshCache[actualPath] = submeshes[0].MeshId;
                         _sharedMeshIds.Add(submeshes[0].MeshId);
                         _resolvedSubmeshes.Clear();   // the per-path submesh sets pick the new entries up next submit
+
+                        // write the import cache for the next start (#364 C) — not for a skinned model (the .vmesh
+                        // exporter carries no bone weights) and not without the sidecar materials the cache restores
+                        if (!fromVfs && cacheDir != null)
+                        {
+                            bool cacheable = true;
+                            for (int i = 0; i < submeshes.Length && cacheable; i++)
+                                if (SidecarMaterial(fullPath, i) == null || Core.Animation.AnimationService.Instance.IsMeshSkinned(submeshes[i].MeshId)) cacheable = false;
+                            if (cacheable)
+                            {
+                                try
+                                {
+                                    System.IO.Directory.CreateDirectory(cacheDir);
+                                    bool ok = true;
+                                    for (int i = 0; i < submeshes.Length && ok; i++)
+                                        ok = VortexAPI.SaveMeshToVMesh(submeshes[i].MeshId, ModelImportCache.SubmeshFile(cacheDir, i));
+                                    if (ok)
+                                    {
+                                        ModelImportCache.WriteManifest(cacheDir, submeshes.Length);
+                                        try { ConsoleService.Instance.LogSystem("Model cache written: " + System.IO.Path.GetFileName(actualPath) + " (" + submeshes.Length + " submeshes) — the next start skips Assimp"); } catch { }
+                                    }
+                                    else { try { System.IO.Directory.Delete(cacheDir, true); } catch { } }   // no exporter on this backend (SDL-GPU today)
+                                }
+                                catch { }
+                            }
+                        }
                         
                         // Return requested submesh or first mesh
                         if (submeshIndex >= 0 && submeshIndex < submeshes.Length)
@@ -1533,6 +1587,97 @@ namespace Editor.Core.Services
                 ".fbx" or ".obj" or ".gltf" or ".glb" or ".dae" or ".3ds" or ".blend" => true,
                 _ => false
             };
+        }
+
+        // ---- render-side model import cache (#364 C) -------------------------------------------------------------
+        // A model that is not a .vmesh goes through Assimp on EVERY start. After the first import its submeshes are
+        // written as .vmesh files under <project>/.ve/cache/models/<sha1(path|mtime|size)>/ and loaded from there on
+        // later starts (the native .vmesh loader is a straight upload, LODs included). Materials are the per-submesh
+        // sidecar .vmat files the import pipeline wrote (materials/submesh_N.vmat) — scene placement binds those
+        // anyway — so the cache is only used when every submesh has its sidecar, and never for skinned models (the
+        // .vmesh exporter cannot carry bone weights). Where the exporter is a stub (SDL-GPU / Metal today) nothing is
+        // written and the Assimp path stays. An overwritten model gets a new key by itself.
+        internal static class ModelImportCache
+        {
+            public static string Dir(string projectPath, string absModelPath)
+            {
+                if (string.IsNullOrEmpty(projectPath) || string.IsNullOrEmpty(absModelPath)) return null;
+                try
+                {
+                    var fi = new System.IO.FileInfo(absModelPath);
+                    if (!fi.Exists) return null;
+                    string key = absModelPath.ToLowerInvariant() + "|" + fi.LastWriteTimeUtc.Ticks + "|" + fi.Length;
+                    using (var sha = System.Security.Cryptography.SHA1.Create())
+                    {
+                        var h = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(key));
+                        var sb = new System.Text.StringBuilder(40);
+                        foreach (var b in h) sb.Append(b.ToString("x2"));
+                        return System.IO.Path.Combine(projectPath, ".ve", "cache", "models", sb.ToString());
+                    }
+                }
+                catch { return null; }
+            }
+
+            public static string Manifest(string dir) => System.IO.Path.Combine(dir, "manifest.txt");
+            public static string SubmeshFile(string dir, int i) => System.IO.Path.Combine(dir, "submesh_" + i + ".vmesh");
+
+            /// <summary>The cached submesh count, or -1 when <paramref name="dir"/> holds no complete cache.</summary>
+            public static int Count(string dir)
+            {
+                try
+                {
+                    if (dir == null || !System.IO.File.Exists(Manifest(dir))) return -1;
+                    var lines = System.IO.File.ReadAllLines(Manifest(dir));
+                    int n;
+                    if (lines.Length < 2 || lines[0] != "vortex-model-cache 1" || !int.TryParse(lines[1], out n) || n <= 0) return -1;
+                    for (int i = 0; i < n; i++) if (!System.IO.File.Exists(SubmeshFile(dir, i))) return -1;
+                    return n;
+                }
+                catch { return -1; }
+            }
+
+            /// <summary>Write the manifest last (atomically), so a half-written cache is never used.</summary>
+            public static void WriteManifest(string dir, int count)
+            {
+                System.IO.Directory.CreateDirectory(dir);
+                string tmp = Manifest(dir) + ".tmp";
+                System.IO.File.WriteAllText(tmp, "vortex-model-cache 1\n" + count + "\n");
+                if (System.IO.File.Exists(Manifest(dir))) System.IO.File.Delete(Manifest(dir));
+                System.IO.File.Move(tmp, Manifest(dir));
+            }
+        }
+
+        /// <summary>The sidecar material of submesh <paramref name="i"/> of a model (materials/submesh_N.vmat next to it),
+        /// or null when the import pipeline never wrote one.</summary>
+        private static string SidecarMaterial(string absModelPath, int i)
+        {
+            try
+            {
+                string p = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(absModelPath) ?? "", "materials", "submesh_" + i + ".vmat");
+                return System.IO.File.Exists(p) ? p : null;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>Register a cached model's submeshes under "path#submeshN" + the bare path, with the materials
+        /// built from their sidecar .vmat files.</summary>
+        private static void RegisterModelSubmeshes(string actualPath, List<long> meshIds, string absModelPath)
+        {
+            for (int i = 0; i < meshIds.Count; i++)
+            {
+                string subPath = actualPath + "#submesh" + i;
+                _submeshMeshCache[subPath] = meshIds[i];
+                _sharedMeshIds.Add(meshIds[i]);
+                string vmat = SidecarMaterial(absModelPath, i);
+                if (vmat != null)
+                {
+                    long mat = MaterialService.Instance.GetOrBuildVortexMaterial(vmat);
+                    if (mat >= 0) RegisterMaterialForMeshPath(subPath, mat);
+                }
+            }
+            _submeshMeshCache[actualPath] = meshIds[0];
+            _sharedMeshIds.Add(meshIds[0]);
+            _resolvedSubmeshes.Clear();
         }
 
         /// <summary>Load a texture by path — from the in-RAM asset pak (shipped game) or from disk (editor).</summary>
