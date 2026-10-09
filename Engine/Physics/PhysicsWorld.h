@@ -144,6 +144,8 @@ namespace vortex::physics {
 	void set_gravity_factor(u32 body, f32 factor);
 	void set_friction(u32 body, f32 friction);
 	void set_restitution(u32 body, f32 restitution);
+	// #107: how two touching bodies combine friction / restitution — 0 average, 1 minimum, 2 multiply, 3 maximum
+	void set_combine_modes(u32 body, s32 friction_mode, s32 restitution_mode);
 	void set_damping(u32 body, f32 linear, f32 angular);
 	void set_active(u32 body, bool active);                                        // wake / sleep
 	bool is_active(u32 body);
@@ -221,4 +223,7 @@ namespace vortex::physics {
 	// marker, axis, limit arc / range, cone) first, then every body's shape and the character capsules.
 	// Fills up to max_floats and returns the number of floats written. Meshes are capped at 20k floats per body.
 	s32  get_debug_lines(f32* buffer, s32 max_floats);
+	// #106: like get_debug_lines, plus one kind per segment (0 static, 1 kinematic, 2 dynamic, 3 sleeping, 4 joint,
+	// 5 character) for the editor's colour-coded, switchable debug layers
+	s32  get_debug_lines_ex(f32* buffer, s32 max_floats, u8* kinds, s32 max_kinds);
 }

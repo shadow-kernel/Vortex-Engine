@@ -1389,6 +1389,21 @@ namespace Vortex
         private static bool _grounded;
         public static bool Grounded { get { return _grounded; } }
 
+        /// <summary>Draw the physics world over the scene (#106): body wireframes colour-coded static / kinematic /
+        /// dynamic / sleeping, joints, character capsules and this frame's contacts. Editor play and dev builds only —
+        /// a shipped game draws nothing. <c>Physics.DebugDraw(true)</c> switches every layer on.</summary>
+        public static void DebugDraw(bool on) { Editor.Core.Services.Physics.PhysicsService.SetDebugDraw(on); }
+        /// <summary>The same with the layers chosen one by one.</summary>
+        public static void DebugDraw(bool bodies, bool joints, bool characters, bool contacts)
+        {
+            var l = Editor.Core.Services.Physics.PhysicsService.DebugLayer.None;
+            if (bodies) l |= Editor.Core.Services.Physics.PhysicsService.DebugLayer.Bodies;
+            if (joints) l |= Editor.Core.Services.Physics.PhysicsService.DebugLayer.Joints;
+            if (characters) l |= Editor.Core.Services.Physics.PhysicsService.DebugLayer.Characters;
+            if (contacts) l |= Editor.Core.Services.Physics.PhysicsService.DebugLayer.Contacts;
+            Editor.Core.Services.Physics.PhysicsService.SetDebugDraw(l != Editor.Core.Services.Physics.PhysicsService.DebugLayer.None, l);
+        }
+
         /// <summary>Move a character capsule (feet = the entity/eye base, radius, total height) by <paramref name="move"/>
         /// and return the collision-resolved feet position. Call it each frame with your desired displacement
         /// (input + gravity). No collision world yet → returns feet+move unchanged.</summary>

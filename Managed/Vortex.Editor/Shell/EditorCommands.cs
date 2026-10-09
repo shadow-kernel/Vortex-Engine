@@ -413,6 +413,14 @@ namespace VortexEditor.Shell
         /// <summary>Physics v2 (#106): draw the live Jolt shapes (cyan wire lines) over the play view.</summary>
         public static void TogglePhysicsDebug()
             => Editor.Core.Services.Physics.PhysicsService.ShowPhysicsDebug = !Editor.Core.Services.Physics.PhysicsService.ShowPhysicsDebug;
+        /// <summary>#106: switch one physics debug layer; switching one on turns the debug draw on as well.</summary>
+        public static void TogglePhysicsDebugLayer(Editor.Core.Services.Physics.PhysicsService.DebugLayer layer)
+        {
+            var svc = Editor.Core.Services.Physics.PhysicsService.DebugLayers;
+            svc ^= layer;
+            Editor.Core.Services.Physics.PhysicsService.DebugLayers = svc;
+            if ((svc & layer) != 0) Editor.Core.Services.Physics.PhysicsService.ShowPhysicsDebug = true;
+        }
         public static void FocusSelected() => Editor.Core.Viewport.EditorViewportSession.Main?.FocusOnSelected();
         public static void ResetCamera() => Editor.Core.Viewport.EditorViewportSession.Main?.Camera.Reset();
         public static void ToggleReleaseMode() => PlayModeService.Instance.IsReleaseMode = !PlayModeService.Instance.IsReleaseMode;
