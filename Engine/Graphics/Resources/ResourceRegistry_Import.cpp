@@ -158,6 +158,48 @@ namespace vortex::graphics
 	}
 
 
+	ResourceRegistry::MultiMaterialImportResult ResourceRegistry::import_model_with_materials_cached(
+		const std::string& filepath, const std::string& cache_dir)
+	{
+		MultiMaterialImportResult result;
+		result.success = false;
+		if (!m_device)
+		{
+			VORTEX_VLOG("ResourceRegistry not initialized\n");
+			return result;
+		}
+
+		VORTEX_VLOG(("=== Multi-Material Import (cached): " + filepath + " ===\n").c_str());
+		ImportedModelData model_data = ModelImporter::import_from_file(filepath);
+		if (!model_data.is_valid())
+		{
+			VORTEX_VLOG("Import failed - no valid data\n");
+			return result;
+		}
+		// the render-side import cache (#364 C): one .vmesh per submesh, so the next start skips Assimp
+		const u32 cached = cache_dir.empty() ? 0 : MeshSerializer::save_submeshes_to_dir(model_data, cache_dir);
+		result = build_model_result(model_data);
+		result.cached = cached;
+		return result;
+	}
+
+
+	ResourceRegistry::MultiMaterialImportResult ResourceRegistry::import_model_from_cache(const std::string& cache_dir)
+	{
+		MultiMaterialImportResult result;
+		result.success = false;
+		if (!m_device) return result;
+		ImportedModelData model_data;
+		if (!MeshSerializer::load_submeshes_from_dir(cache_dir, model_data))
+		{
+			VORTEX_VLOG(("Model cache unusable: " + cache_dir + "\n").c_str());
+			return result;
+		}
+		VORTEX_VLOG(("=== Multi-Material Import (from cache): " + cache_dir + " ===\n").c_str());
+		return build_model_result(model_data);
+	}
+
+
 	ResourceRegistry::MultiMaterialImportResult ResourceRegistry::import_model_with_materials_from_memory(
 		const u8* data, u64 length, const std::string& ext_hint, const std::string& virtual_dir)
 	{

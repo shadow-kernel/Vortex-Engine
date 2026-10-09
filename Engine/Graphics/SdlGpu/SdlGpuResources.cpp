@@ -605,6 +605,28 @@ namespace vortex::graphics
 		return build_model_result(model_data);
 	}
 
+	ResourceRegistry::MultiMaterialImportResult ResourceRegistry::import_model_with_materials_cached(
+		const std::string& filepath, const std::string& cache_dir)
+	{
+		MultiMaterialImportResult result;
+		if (!m_device) return result;
+		ImportedModelData model_data = ModelImporter::import_from_file(filepath);
+		if (!model_data.is_valid()) return result;
+		const u32 cached = cache_dir.empty() ? 0 : MeshSerializer::save_submeshes_to_dir(model_data, cache_dir);
+		result = build_model_result(model_data);
+		result.cached = cached;
+		return result;
+	}
+
+	ResourceRegistry::MultiMaterialImportResult ResourceRegistry::import_model_from_cache(const std::string& cache_dir)
+	{
+		MultiMaterialImportResult result;
+		if (!m_device) return result;
+		ImportedModelData model_data;
+		if (!MeshSerializer::load_submeshes_from_dir(cache_dir, model_data)) return result;
+		return build_model_result(model_data);
+	}
+
 	ResourceRegistry::MultiMaterialImportResult ResourceRegistry::import_model_with_materials_from_memory(
 		const u8* data, u64 length, const std::string& ext_hint, const std::string& virtual_dir)
 	{

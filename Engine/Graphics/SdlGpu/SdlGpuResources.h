@@ -268,9 +268,17 @@ namespace vortex::graphics
 			std::vector<SubmeshImportResult> submeshes;
 			std::string model_name;
 			bool success{ false };
+			u32 cached{ 0 };   // .vmesh files written by import_model_with_materials_cached (0 = not cacheable)
 		};
 
 		MultiMaterialImportResult import_model_with_materials(const std::string& filepath);
+		/// <summary>Like import_model_with_materials, but also writes one .vmesh per submesh into cache_dir (the
+		/// render-side import cache, #364 C) so the next start loads the model without Assimp. Nothing is written for
+		/// a skinned model; result.cached tells how many files were written.</summary>
+		MultiMaterialImportResult import_model_with_materials_cached(const std::string& filepath, const std::string& cache_dir);
+		/// <summary>Load a model from the folder import_model_with_materials_cached wrote: meshes from the .vmesh files,
+		/// materials from the records — no Assimp. Not successful when the cache is missing, incomplete or stale.</summary>
+		MultiMaterialImportResult import_model_from_cache(const std::string& cache_dir);
 		MultiMaterialImportResult import_model_with_materials_from_memory(const u8* data, u64 length,
 			const std::string& ext_hint, const std::string& virtual_dir);
 

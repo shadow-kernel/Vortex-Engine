@@ -44,6 +44,63 @@ EDITOR_INTERFACE int ImportModelWithMaterials(
 	return count;
 }
 
+// Like ImportModelWithMaterials, but also writes one .vmesh per submesh into cache_dir (created when missing) so the
+// next start can load the model without Assimp (#364 C). Nothing is written for a skinned model (the format carries
+// no bone weights). *out_cached receives the number of files written (0 = not cacheable).
+EDITOR_INTERFACE int ImportModelWithMaterialsCached(
+	const char* filepath,
+	const char* cache_dir,
+	id::id_type* out_mesh_ids,
+	id::id_type* out_material_ids,
+	id::id_type* out_texture_ids,
+	int max_submeshes,
+	int* out_cached)
+{
+	if (out_cached) *out_cached = 0;
+	if (!filepath || !out_mesh_ids || !out_material_ids || !out_texture_ids || max_submeshes <= 0)
+		return 0;
+
+	auto result = graphics::ResourceRegistry::instance().import_model_with_materials_cached(filepath, cache_dir ? cache_dir : "");
+	if (!result.success)
+		return 0;
+
+	int count = static_cast<int>((std::min)(result.submeshes.size(), static_cast<size_t>(max_submeshes)));
+	for (int i = 0; i < count; i++)
+	{
+		out_mesh_ids[i] = result.submeshes[i].mesh_id;
+		out_material_ids[i] = result.submeshes[i].material_id;
+		out_texture_ids[i] = result.submeshes[i].texture_id;
+	}
+	if (out_cached) *out_cached = static_cast<int>(result.cached);
+	return count;
+}
+
+// Load a model from the folder ImportModelWithMaterialsCached wrote (#364 C): meshes from submesh_N.vmesh, materials
+// from materials.vmc — no Assimp. Returns the submesh count, 0 when the cache is missing, incomplete or stale.
+EDITOR_INTERFACE int ImportModelFromCache(
+	const char* cache_dir,
+	id::id_type* out_mesh_ids,
+	id::id_type* out_material_ids,
+	id::id_type* out_texture_ids,
+	int max_submeshes)
+{
+	if (!cache_dir || !*cache_dir || !out_mesh_ids || !out_material_ids || !out_texture_ids || max_submeshes <= 0)
+		return 0;
+
+	auto result = graphics::ResourceRegistry::instance().import_model_from_cache(cache_dir);
+	if (!result.success)
+		return 0;
+
+	int count = static_cast<int>((std::min)(result.submeshes.size(), static_cast<size_t>(max_submeshes)));
+	for (int i = 0; i < count; i++)
+	{
+		out_mesh_ids[i] = result.submeshes[i].mesh_id;
+		out_material_ids[i] = result.submeshes[i].material_id;
+		out_texture_ids[i] = result.submeshes[i].texture_id;
+	}
+	return count;
+}
+
 // In-memory texture import (packed/encrypted asset pak loaded into RAM — no file on disk).
 EDITOR_INTERFACE id::id_type ImportTextureFromMemory(const unsigned char* data, int length)
 {
