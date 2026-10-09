@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Text;
 using Editor.Core.Data;
 using Editor.ECS;
 using Editor.ECS.Components;
@@ -1282,6 +1284,86 @@ namespace Editor.Core.Services.Physics
                 mx = new V3(Math.Max(mx.X, v.X), Math.Max(mx.Y, v.Y), Math.Max(mx.Z, v.Z));
             }
             return new Shape { Kind = Kind.Tris, Tris = tris, Min = mn, Max = mx, Grid = useGrid ? TriGrid.Build(tris, mn, mx) : null };
+        }
+    }
+
+    /// <summary>
+    /// On-disk cache of a model's collision triangles (#364 C). The render import cannot be read back, so the first
+    /// play start used to parse every MeshCollider model with Assimp a SECOND time just for its triangles — seconds
+    /// per terrain, on the main thread, on every start. Now the triangles are written once to
+    /// <c>&lt;project&gt;/.ve/cache/collision/&lt;key&gt;.tris</c> and read from there afterwards (milliseconds). The key
+    /// is the model file's path + mtime + size, so an overwritten model re-parses by itself.
+    /// </summary>
+    public static class CollisionTriangleCache
+    {
+        private const uint Magic = 0x52545856;   // "VXTR"
+        private const int Version = 1;
+
+        public static string CacheDir(string projectPath)
+            => string.IsNullOrEmpty(projectPath) ? null : Path.Combine(projectPath, ".ve", "cache", "collision");
+
+        /// <summary>The cache file for a model file — null when it cannot be keyed (no project, missing file).</summary>
+        public static string FileFor(string projectPath, string absModelPath)
+        {
+            string dir = CacheDir(projectPath);
+            if (dir == null || string.IsNullOrEmpty(absModelPath)) return null;
+            try
+            {
+                var fi = new FileInfo(absModelPath);
+                if (!fi.Exists) return null;
+                string key = absModelPath.ToLowerInvariant() + "|" + fi.LastWriteTimeUtc.Ticks + "|" + fi.Length;
+                using (var sha = System.Security.Cryptography.SHA1.Create())
+                {
+                    var h = sha.ComputeHash(Encoding.UTF8.GetBytes(key));
+                    var sb = new StringBuilder(40);
+                    foreach (var b in h) sb.Append(b.ToString("x2"));
+                    return Path.Combine(dir, sb.ToString() + ".tris");
+                }
+            }
+            catch { return null; }
+        }
+
+        /// <summary>The cached triangles (flat x,y,z × 3 per triangle), or null when there is no valid cache file.</summary>
+        public static float[] TryRead(string cacheFile)
+        {
+            try
+            {
+                if (cacheFile == null || !File.Exists(cacheFile)) return null;
+                using (var br = new BinaryReader(File.OpenRead(cacheFile)))
+                {
+                    if (br.ReadUInt32() != Magic || br.ReadInt32() != Version) return null;
+                    int n = br.ReadInt32();
+                    if (n < 0 || n % 9 != 0) return null;
+                    byte[] bytes = br.ReadBytes(n * 4);
+                    if (bytes.Length != n * 4) return null;
+                    var tris = new float[n];
+                    Buffer.BlockCopy(bytes, 0, tris, 0, bytes.Length);
+                    return tris;
+                }
+            }
+            catch { return null; }
+        }
+
+        /// <summary>Write the triangles (atomically: temp file + rename). False when the cache is not writable.</summary>
+        public static bool Write(string cacheFile, float[] tris)
+        {
+            try
+            {
+                if (cacheFile == null || tris == null || tris.Length % 9 != 0) return false;
+                Directory.CreateDirectory(Path.GetDirectoryName(cacheFile));
+                string tmp = cacheFile + ".tmp";
+                using (var bw = new BinaryWriter(File.Create(tmp)))
+                {
+                    bw.Write(Magic); bw.Write(Version); bw.Write(tris.Length);
+                    var bytes = new byte[tris.Length * 4];
+                    Buffer.BlockCopy(tris, 0, bytes, 0, bytes.Length);
+                    bw.Write(bytes);
+                }
+                if (File.Exists(cacheFile)) File.Delete(cacheFile);
+                File.Move(tmp, cacheFile);
+                return true;
+            }
+            catch { return false; }
         }
     }
 }

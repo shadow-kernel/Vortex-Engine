@@ -38,6 +38,8 @@ namespace Vortex.Player
         private static readonly Editor.Core.Viewport.DebugFreeCamera _debugCam = new Editor.Core.Viewport.DebugFreeCamera();
         private static bool _fullscreenApplied;
 
+        private static int _gc0Last, _gc2Last;   // GC counts at the last FPS line
+
         public static int Run(PlayerOptions options)
         {
             string exeDir = AppContext.BaseDirectory;
@@ -304,8 +306,13 @@ namespace Vortex.Player
                 if ((now - _fpsT0).TotalMilliseconds >= 2000)
                 {
                     var p = ProjectData.Current;
+                    int gc0 = GC.CollectionCount(0), gc2 = GC.CollectionCount(2);
                     Log("FPS=" + _frames / 2 + " scene=" + (p != null && p.ActiveScene != null ? p.ActiveScene.Name : "?")
-                        + " draws=" + VortexAPI.DrawCalls + " drawn=" + VortexAPI.InstancesDrawn + "/" + VortexAPI.InstancesTested);
+                        + " draws=" + VortexAPI.DrawCalls + " drawn=" + VortexAPI.InstancesDrawn + "/" + VortexAPI.InstancesTested
+                        // where the CPU time goes (#364 E): the last scene submit, and how often the GC ran since the last line
+                        + " submit=" + SceneRenderService.LastSubmitMs.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + "ms/" + SceneRenderService.LastSubmitMeshes
+                        + " gc=" + (gc0 - _gc0Last) + "/" + (gc2 - _gc2Last));
+                    _gc0Last = gc0; _gc2Last = gc2;
                     _frames = 0; _fpsT0 = now;
                 }
 
