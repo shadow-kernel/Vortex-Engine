@@ -290,6 +290,7 @@ namespace Editor.Core.Data
 			entity.SyncEngineStateRecursive(false);
             var command = new CollectionRemoveCommand<GameEntity>(Entities, entity, "Entities");
             UndoRedoManager.Instance.Execute(command);
+            try { Services.SceneRenderService.Instance.RemoveEntityTree(entity); } catch { }   // its own meshes/materials go (#358)
 
             if (SelectedEntity == entity)
                 SelectedEntity = null;

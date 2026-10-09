@@ -500,6 +500,16 @@ namespace Editor.Core.Services
             if (_textureIdCache.TryGetValue(key, out long cached) && cached >= 0) return cached;
             long id = fromVfs ? VortexAPI.ImportTextureFromBytes(vfsBytes) : VortexAPI.ImportTextureFromFile(absPath);
             if (id >= 0) _textureIdCache[key] = id;
+            if (id >= 0 && !fromVfs)
+            {
+                // the file changed (new mtime): the engine moved every material from the previous upload to this one
+                // and freed it (#358) — drop the stale keys so nothing hands the dead id out again
+                string prefix = absPath + "|";
+                List<string> stale = null;
+                foreach (var k in _textureIdCache.Keys)
+                    if (k != key && k.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) (stale ?? (stale = new List<string>())).Add(k);
+                if (stale != null) foreach (var k in stale) _textureIdCache.Remove(k);
+            }
             return id;
         }
 

@@ -81,7 +81,7 @@ namespace vortex::graphics
 			return id::invalid_id;
 		}
 		const id::id_type id = create_texture_from_image(image_data, filepath);
-		if (!key.empty() && id != id::invalid_id) m_texture_path_cache[key] = id;
+		if (!key.empty() && id != id::invalid_id) { m_texture_path_cache[key] = id; retire_stale_textures(filepath, id); }
 		return id;
 	}
 
@@ -115,7 +115,7 @@ namespace vortex::graphics
 				ImageData image = jobs[i - start].get();
 				if (!image.is_valid()) continue;
 				const id::id_type id = create_texture_from_image(image, todo[i].first);
-				if (id != id::invalid_id) m_texture_path_cache[todo[i].second] = id;
+				if (id != id::invalid_id) { m_texture_path_cache[todo[i].second] = id; retire_stale_textures(todo[i].first, id); }
 			}
 		}
 	}

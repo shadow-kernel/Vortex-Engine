@@ -116,6 +116,7 @@ namespace Editor.Core.Editing
             var project = ProjectData.Current;
             try { SelectionService.Instance.ClearSelection(); } catch { }
             try { SceneRenderService.Instance.ClearAllRenderables(); } catch { }
+            try { SceneRenderService.EvictModelsUnusedBy(null); } catch { }   // every model of the closed project (#358)
             project?.Unload();
             ProjectData.Current = null;
             Hierarchy.SetProject(null);

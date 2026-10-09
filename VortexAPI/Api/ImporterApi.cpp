@@ -3,6 +3,53 @@
 #include <windows.h>
 #include "../../Engine/Graphics/DX12/DX12ShaderCompiler.h"
 #endif
+#include <deque>
+#include <filesystem>
+#include <memory>
+#include <mutex>
+
+namespace
+{
+	// The editor asks a model several questions in a row (submesh count, names, texture paths, material props, one
+	// GetModelSubmeshTriangleData per part) and each ran a full Assimp parse — a placement was three parses and a mesh
+	// collider one per submesh (#357). The last two parsed files stay here, keyed by path|mtime|size, so an unchanged
+	// file is parsed once and a re-exported one again. Two entries only: a parsed model can be hundreds of MB.
+	struct ParsedModel { std::string key; std::shared_ptr<const graphics::ImportedModelData> data; };
+	std::mutex g_parsed_mutex;
+	std::deque<ParsedModel> g_parsed;
+
+	std::string parsed_model_key(const char* filepath)
+	{
+		std::error_code ec;
+		const std::filesystem::path p(filepath);
+		const auto size = std::filesystem::file_size(p, ec);
+		if (ec) return std::string(filepath);
+		const auto time = std::filesystem::last_write_time(p, ec);
+		if (ec) return std::string(filepath);
+		return std::string(filepath) + "|" + std::to_string((long long)time.time_since_epoch().count()) + "|" + std::to_string((unsigned long long)size);
+	}
+
+	std::shared_ptr<const graphics::ImportedModelData> parsed_model(const char* filepath)
+	{
+		const std::string key = parsed_model_key(filepath);
+		{
+			std::lock_guard<std::mutex> lock(g_parsed_mutex);
+			for (size_t i = 0; i < g_parsed.size(); ++i)
+			{
+				if (g_parsed[i].key != key) continue;
+				ParsedModel hit = g_parsed[i];
+				if (i != 0) { g_parsed.erase(g_parsed.begin() + i); g_parsed.push_front(hit); }
+				return hit.data;
+			}
+		}
+		std::shared_ptr<const graphics::ImportedModelData> data =
+			std::make_shared<graphics::ImportedModelData>(graphics::ModelImporter::import_from_file(filepath));
+		std::lock_guard<std::mutex> lock(g_parsed_mutex);
+		g_parsed.push_front(ParsedModel{ key, data });
+		while (g_parsed.size() > 2) g_parsed.pop_back();
+		return data;
+	}
+}
 
 EDITOR_INTERFACE id::id_type ImportModel(const char* filepath)
 {
@@ -174,8 +221,8 @@ namespace
 EDITOR_INTERFACE int GetModelTriangleData(const char* filepath, float* out_positions, int max_floats)
 {
 	if (!filepath) return 0;
-	auto model = graphics::ModelImporter::import_from_file(filepath);
-	return write_triangles(model, -1, out_positions, max_floats);
+	auto model = parsed_model(filepath);
+	return write_triangles(*model, -1, out_positions, max_floats);
 }
 
 // Same as GetModelTriangleData but for a model whose bytes live in the in-RAM asset pak (shipped game).
@@ -193,8 +240,8 @@ EDITOR_INTERFACE int GetModelTriangleDataFromMemory(const unsigned char* data, i
 EDITOR_INTERFACE int GetModelSubmeshTriangleData(const char* filepath, int submesh, float* out_positions, int max_floats)
 {
 	if (!filepath) return 0;
-	auto model = graphics::ModelImporter::import_from_file(filepath);
-	return write_triangles(model, submesh, out_positions, max_floats);
+	auto model = parsed_model(filepath);
+	return write_triangles(*model, submesh, out_positions, max_floats);
 }
 
 EDITOR_INTERFACE int GetModelSubmeshTriangleDataFromMemory(const unsigned char* data, int length, const char* ext_hint,
@@ -211,7 +258,8 @@ EDITOR_INTERFACE int GetModelSubmeshCount(const char* filepath)
 {
 	if (!filepath) return 0;
 	
-	auto model_data = graphics::ModelImporter::import_from_file(filepath);
+	auto parsed = parsed_model(filepath);
+	const auto& model_data = *parsed;
 	return static_cast<int>(model_data.submeshes.size());
 }
 
@@ -220,7 +268,8 @@ EDITOR_INTERFACE int GetModelSubmeshNames(const char* filepath, char** out_names
 {
 	if (!filepath || !out_names || max_submeshes <= 0 || max_name_length <= 0) return 0;
 	
-	auto model_data = graphics::ModelImporter::import_from_file(filepath);
+	auto parsed = parsed_model(filepath);
+	const auto& model_data = *parsed;
 	int count = static_cast<int>((std::min)(model_data.submeshes.size(), static_cast<size_t>(max_submeshes)));
 	
 	for (int i = 0; i < count; i++)
@@ -259,7 +308,8 @@ EDITOR_INTERFACE int GetModelTexturePaths(const char* filepath,
 	int max_submeshes, int max_len)
 {
 	if (!filepath || max_submeshes <= 0 || max_len <= 0) return 0;
-	auto model_data = graphics::ModelImporter::import_from_file(filepath);
+	auto parsed = parsed_model(filepath);
+	const auto& model_data = *parsed;
 	int count = static_cast<int>((std::min)(model_data.submeshes.size(), static_cast<size_t>(max_submeshes)));
 	for (int i = 0; i < count; i++)
 	{
@@ -280,7 +330,8 @@ EDITOR_INTERFACE int GetModelMaterialProps(const char* filepath,
 	float* out_base_colors, float* out_metallic, float* out_roughness, int max_submeshes)
 {
 	if (!filepath || max_submeshes <= 0) return 0;
-	auto model_data = graphics::ModelImporter::import_from_file(filepath);
+	auto parsed = parsed_model(filepath);
+	const auto& model_data = *parsed;
 	int count = static_cast<int>((std::min)(model_data.submeshes.size(), static_cast<size_t>(max_submeshes)));
 	for (int i = 0; i < count; i++)
 	{

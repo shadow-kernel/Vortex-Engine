@@ -2,6 +2,29 @@
 #include "ModelImporter_Internal.h"
 #include <cctype>
 #include <cstdio>
+#include <cstring>
+#include <vector>
+
+namespace
+{
+	// true when the file exists and holds exactly these bytes
+	bool same_file_bytes(const std::string& path, const void* bytes, size_t count)
+	{
+		FILE* f = nullptr;
+		if (fopen_s(&f, path.c_str(), "rb") != 0 || !f) return false;
+		fseek(f, 0, SEEK_END);
+		const long size = ftell(f);
+		bool same = size >= 0 && (size_t)size == count;
+		if (same && count > 0)
+		{
+			fseek(f, 0, SEEK_SET);
+			std::vector<unsigned char> buf(count);
+			same = fread(buf.data(), 1, count, f) == count && memcmp(buf.data(), bytes, count) == 0;
+		}
+		fclose(f);
+		return same;
+	}
+}
 
 namespace vortex::graphics
 {
@@ -352,8 +375,13 @@ namespace vortex::graphics
 				std::string full = model_dir + "embedded_" + model_stem + "_" + tag + "." + ext;
 				if (emb->mHeight == 0 && emb->mWidth > 0 && emb->pcData)   // compressed blob (PNG/JPG): mWidth = byte count
 				{
-					FILE* f = nullptr;
-					if (fopen_s(&f, full.c_str(), "wb") == 0 && f) { fwrite(emb->pcData, 1, emb->mWidth, f); fclose(f); }
+					// written only when the bytes differ: every import used to rewrite the file, which changed its mtime
+					// and with it the texture cache key, so each placement uploaded the embedded maps again (#357)
+					if (!same_file_bytes(full, emb->pcData, emb->mWidth))
+					{
+						FILE* f = nullptr;
+						if (fopen_s(&f, full.c_str(), "wb") == 0 && f) { fwrite(emb->pcData, 1, emb->mWidth, f); fclose(f); }
+					}
 				}
 				return full;
 			}

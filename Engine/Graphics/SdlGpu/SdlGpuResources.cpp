@@ -366,7 +366,14 @@ namespace vortex::graphics
 	void ResourceRegistry::destroy_mesh(id::id_type id)
 	{
 		if (m_meshes.erase(id) > 0) ++m_mesh_generation;
-		m_lod_chains.erase(id);
+		// the decimated LOD meshes belong to their base mesh and go with it (#358)
+		auto chain = m_lod_chains.find(id);
+		if (chain != m_lod_chains.end())
+		{
+			for (u32 i = 1; i < chain->second.lod_count && i < 4; ++i)
+				if (chain->second.lods[i] != id::invalid_id) m_meshes.erase(chain->second.lods[i]);
+			m_lod_chains.erase(chain);
+		}
 	}
 
 	std::vector<id::id_type> ResourceRegistry::get_all_mesh_ids() const
@@ -411,20 +418,40 @@ namespace vortex::graphics
 	{
 		auto it = m_textures.find(id);
 		if (it == m_textures.end()) return;
-		// Materials keep raw Texture pointers: unbind the dying texture everywhere first.
-		Texture* dying = it->second.get();
-		for (auto& [mid, mat] : m_materials)
-		{
-			if (mat->albedo_texture() == dying) mat->set_albedo_texture(nullptr);
-			if (mat->normal_texture() == dying) mat->set_normal_texture(nullptr);
-			if (mat->metallic_texture() == dying) mat->set_metallic_texture(nullptr);
-			if (mat->roughness_texture() == dying) mat->set_roughness_texture(nullptr);
-			if (mat->ao_texture() == dying) mat->set_ao_texture(nullptr);
-			if (mat->height_texture() == dying) mat->set_height_texture(nullptr);
-		}
+		// Materials keep raw Texture pointers: unbind the dying texture everywhere first (#358).
+		rebind_texture(it->second.get(), nullptr);
 		m_textures.erase(it);
 		for (auto c = m_texture_path_cache.begin(); c != m_texture_path_cache.end();)
 			c = (c->second == id) ? m_texture_path_cache.erase(c) : std::next(c);
+	}
+
+	void ResourceRegistry::rebind_texture(Texture* from, Texture* to)
+	{
+		if (!from) return;
+		for (auto& [mid, mat] : m_materials)
+		{
+			if (mat->albedo_texture() == from) mat->set_albedo_texture(to);
+			if (mat->normal_texture() == from) mat->set_normal_texture(to);
+			if (mat->metallic_texture() == from) mat->set_metallic_texture(to);
+			if (mat->roughness_texture() == from) mat->set_roughness_texture(to);
+			if (mat->ao_texture() == from) mat->set_ao_texture(to);
+			if (mat->height_texture() == from) mat->set_height_texture(to);
+		}
+	}
+
+	void ResourceRegistry::retire_stale_textures(const std::string& path, id::id_type keep)
+	{
+		if (path.empty()) return;
+		const std::string prefix = path + "|";
+		std::vector<id::id_type> stale;
+		for (const auto& [key, id] : m_texture_path_cache)
+			if (id != keep && key.compare(0, prefix.size(), prefix) == 0) stale.push_back(id);
+		Texture* fresh = get_texture(keep);
+		for (id::id_type id : stale)
+		{
+			rebind_texture(get_texture(id), fresh);
+			destroy_texture(id);   // drops its path-cache entries too
+		}
 	}
 
 	std::vector<id::id_type> ResourceRegistry::get_all_texture_ids() const
@@ -514,7 +541,7 @@ namespace vortex::graphics
 			return id::invalid_id;
 		}
 		const id::id_type id = create_texture_from_image(image_data, filepath);
-		if (!key.empty() && id != id::invalid_id) m_texture_path_cache[key] = id;
+		if (!key.empty() && id != id::invalid_id) { m_texture_path_cache[key] = id; retire_stale_textures(filepath, id); }
 		return id;
 	}
 
@@ -547,7 +574,7 @@ namespace vortex::graphics
 				ImageData image = jobs[i - start].get();
 				if (!image.is_valid()) continue;
 				const id::id_type id = create_texture_from_image(image, todo[i].first);
-				if (id != id::invalid_id) m_texture_path_cache[todo[i].second] = id;
+				if (id != id::invalid_id) { m_texture_path_cache[todo[i].second] = id; retire_stale_textures(todo[i].first, id); }
 			}
 		}
 	}

@@ -39,6 +39,24 @@ namespace Editor.DllWrapper
         public static long CreateConeMesh(float radius = 0.5f, float height = 1.0f) => CreatePrimitiveCone(radius, height);
         public static void DeleteMesh(long meshId) => DestroyMesh(meshId);
 
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void DestroyTexture(long textureId);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void GetResourceCounts(out int meshes, out int materials, out int textures);
+
+        /// <summary>Free a GPU texture (#358). Materials still showing it lose that map.</summary>
+        public static void DeleteTexture(long textureId) { if (textureId >= 0) DestroyTexture(textureId); }
+
+        /// <summary>Live native resource counts (meshes incl. LOD meshes, materials, textures) for engine_stats and the
+        /// resource smoke; false with an engine library that predates the export.</summary>
+        public static bool TryGetResourceCounts(out int meshes, out int materials, out int textures)
+        {
+            meshes = materials = textures = 0;
+            try { GetResourceCounts(out meshes, out materials, out textures); return true; }
+            catch (EntryPointNotFoundException) { return false; }
+        }
+
         #endregion
 
         #region Material Creation

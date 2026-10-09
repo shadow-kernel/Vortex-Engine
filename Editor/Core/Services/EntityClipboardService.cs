@@ -356,6 +356,7 @@ namespace Editor.Core.Services
                 {
                     info.Scene.Entities.Remove(info.Entity);
                 }
+                try { SceneRenderService.Instance.RemoveEntityTree(info.Entity); } catch { }   // #358 (undo re-creates on submit)
             }
         }
 

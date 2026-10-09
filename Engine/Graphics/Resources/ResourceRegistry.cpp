@@ -169,6 +169,14 @@ namespace vortex::graphics
 			m_meshes.erase(it);
 			++m_mesh_generation;
 		}
+		// the decimated LOD meshes belong to their base mesh and go with it (#358)
+		auto chain = m_lod_chains.find(id);
+		if (chain != m_lod_chains.end())
+		{
+			for (u32 i = 1; i < chain->second.lod_count && i < 4; ++i)
+				if (chain->second.lods[i] != id::invalid_id) m_meshes.erase(chain->second.lods[i]);
+			m_lod_chains.erase(chain);
+		}
 	}
 
 

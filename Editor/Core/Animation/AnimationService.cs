@@ -509,7 +509,9 @@ namespace Editor.Core.Animation
             var posEntity = srcEntity ?? entity;   // play from the source's own transform, not always the parent's
             if (spatial && posEntity.Transform != null)
             {
-                var p = posEntity.Transform.LocalPosition;   // world pos source-of-truth (see AudioPlaybackService.ReadWorldPosition)
+                // the WORLD position (#320): an event on a child — the weapon in the hand, feet under a rig — sounds where
+                // the child is, not at its parent's origin (same source of truth as AudioPlaybackService.ReadWorldPosition)
+                var p = ECS.TransformMath.WorldPosition(posEntity);
                 svc.PlayOneShot(clip, p.X, p.Y, p.Z, vol, pitch);
             }
             else svc.PlayOneShot2D(clip, vol, pitch);

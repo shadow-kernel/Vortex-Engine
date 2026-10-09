@@ -172,6 +172,20 @@ EDITOR_INTERFACE void DestroyMesh(id::id_type mesh_id)
 	graphics::ResourceRegistry::instance().destroy_mesh(mesh_id);
 }
 
+EDITOR_INTERFACE void DestroyTexture(id::id_type texture_id)
+{
+	graphics::ResourceRegistry::instance().destroy_texture(texture_id);
+}
+
+// Live resource counts (meshes incl. LOD meshes, materials, textures) so a leak shows up in engine_stats (#357 #358).
+EDITOR_INTERFACE void GetResourceCounts(int* meshes, int* materials, int* textures)
+{
+	auto& reg = graphics::ResourceRegistry::instance();
+	if (meshes) *meshes = (int)reg.mesh_count();
+	if (materials) *materials = (int)reg.material_count();
+	if (textures) *textures = (int)reg.texture_count();
+}
+
 // Mesh bounds query
 EDITOR_INTERFACE bool QueryMeshBounds(id::id_type mesh_id, float* sizeX, float* sizeY, float* sizeZ)
 {

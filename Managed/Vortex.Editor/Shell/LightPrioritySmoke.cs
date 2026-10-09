@@ -49,12 +49,15 @@ namespace VortexEditor.Shell
                 if (near == null) { log.LogError("light priority: could not create the near light"); return false; }
 
                 cam.SetPositionAndRotation(0, 500, 0, 0, 0);
+                // the near light sits dead centre in front of the camera, so its gizmo (range circle, axes) would be
+                // what the centre pixel samples: hide the editor overlays and read the wall above the light
+                SceneRenderService.HideEditorOverlays = true;
                 near.IsEnabled = false;
                 EditorViewportSession.RequestResubmit();
-                var dark = await CameraSkySmoke.Centre("light_without.bmp");
+                var dark = await CameraSkySmoke.Sample("light_without.bmp", 0.5, 0.15);
                 near.IsEnabled = true;
                 EditorViewportSession.RequestResubmit();
-                var lit = await CameraSkySmoke.Centre("light_with.bmp");
+                var lit = await CameraSkySmoke.Sample("light_with.bmp", 0.5, 0.15);
 
                 int gain = (lit.r + lit.g + lit.b) - (dark.r + dark.g + dark.b);
                 log.Log("light priority: wall without the 18th light " + CameraSkySmoke.Rgb(dark) + ", with it " + CameraSkySmoke.Rgb(lit) + " (gain " + gain + ")");
@@ -63,6 +66,7 @@ namespace VortexEditor.Shell
             }
             finally
             {
+                SceneRenderService.HideEditorOverlays = false;
                 if (made.Count > 0) EditorCommands.DeleteEntities(made);
                 cam.SetPositionAndRotation(px, py, pz, yaw, pitch);
                 EditorViewportSession.RequestResubmit();

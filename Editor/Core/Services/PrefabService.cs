@@ -560,6 +560,7 @@ namespace Editor.Core.Services
             try { entity.SyncEngineStateRecursive(false); } catch { }   // unregister from the engine
             if (entity.Parent != null) entity.Parent.Children.Remove(entity);
             else entity.Scene?.Entities.Remove(entity);
+            try { SceneRenderService.Instance.RemoveEntityTree(entity); } catch { }   // #358
         }
 
         private static string Resolve(string path, ProjectData project)
