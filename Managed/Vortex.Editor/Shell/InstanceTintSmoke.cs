@@ -40,12 +40,12 @@ namespace VortexEditor.Shell
                 if (left?.Transform == null || right?.Transform == null || plain?.Transform == null) { log.LogError("instance tint: no cubes"); return false; }
                 made.Add(left); made.Add(right); made.Add(plain);
                 left.Name = "SmokeTintLeft"; right.Name = "SmokeTintRight"; plain.Name = "SmokeTintPlain";
-                left.Transform.LocalPosition = new Vector3(-8, 500, 20);
-                right.Transform.LocalPosition = new Vector3(8, 500, 20);
+                left.Transform.LocalPosition = new Vector3(-5, 500, 20);
+                right.Transform.LocalPosition = new Vector3(5, 500, 20);
                 plain.Transform.LocalPosition = new Vector3(0, 500, 20);
-                left.Transform.LocalScale = new Vector3(8, 8, 1);
-                right.Transform.LocalScale = new Vector3(8, 8, 1);
-                plain.Transform.LocalScale = new Vector3(4, 8, 1);
+                left.Transform.LocalScale = new Vector3(7, 8, 1);
+                right.Transform.LocalScale = new Vector3(7, 8, 1);
+                plain.Transform.LocalScale = new Vector3(2.4f, 8, 1);
                 var lmr = left.GetComponent<MeshRenderer>(); var rmr = right.GetComponent<MeshRenderer>(); var pmr = plain.GetComponent<MeshRenderer>();
                 if (lmr == null || rmr == null || pmr == null) { log.LogError("instance tint: no MeshRenderer"); return false; }
                 lmr.MaterialPath = matRel;                 // default colour: untinted
@@ -55,8 +55,9 @@ namespace VortexEditor.Shell
                 cam.SetPositionAndRotation(0, 500, 0, 0, 0);
                 SceneRenderService.HideEditorOverlays = true;
                 EditorViewportSession.RequestResubmit();
-                var l = await CameraSkySmoke.Sample("tint.bmp", 0.3, 0.5);
-                var r = await CameraSkySmoke.Sample("tint.bmp", 0.7, 0.5, capture: false);
+                // the cubes sit close to the centre so the columns land on them whatever the viewport aspect (WARP runs smaller)
+                var l = await CameraSkySmoke.Sample("tint.bmp", 0.33, 0.5);
+                var r = await CameraSkySmoke.Sample("tint.bmp", 0.67, 0.5, capture: false);
                 var p = await CameraSkySmoke.Sample("tint.bmp", 0.5, 0.5, capture: false);
                 log.Log("instance tint: shared material untinted " + CameraSkySmoke.Rgb(l) + ", tinted red " + CameraSkySmoke.Rgb(r) + ", plain green cube " + CameraSkySmoke.Rgb(p));
                 bool neutral = Math.Abs(l.r - l.g) < 25 && Math.Abs(l.g - l.b) < 30 && l.r + l.g + l.b > 90;
