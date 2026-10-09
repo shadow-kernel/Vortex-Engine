@@ -36,7 +36,7 @@ namespace VortexEditor.Shell
                 // wait for the prompt (a login shell reads the user's profile first)
                 await WaitFor(() => view.Screen.ScreenText().Trim().Length > 0, 20000);
                 view.SendText(win ? "echo \"VORTEX_TERMINAL_$(40+2)\"; (Get-Location).Path\r" : "echo VORTEX_TERMINAL_$((40+2)); pwd\r");
-                if (!await WaitFor(() => view.Screen.ScreenText().Contains("VORTEX_TERMINAL_42"), 20000)) return Fail("the command did not run: " + Short(view.Screen.ScreenText()));
+                if (!await WaitFor(() => view.Screen.ScreenText().Contains("VORTEX_TERMINAL_42"), 20000)) return Fail("the command did not run (pty running=" + view.IsRunning + "): " + Short(view.Screen.ScreenText()));
                 string folder = Path.GetFileName(ProjectData.Current.Path.TrimEnd(Path.DirectorySeparatorChar));
                 if (!await WaitFor(() => view.Screen.ScreenText().Contains(folder), 5000)) return Fail("the shell is not in the project folder: " + Short(view.Screen.ScreenText()));
                 await SmokeRegistry.Settle(300);
