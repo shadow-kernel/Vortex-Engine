@@ -73,8 +73,9 @@ original-quality downloads (#289).
   `Settings.SetMasterVolume` works, lights come back after Stop, Toggle Active is kept, Windows games flush their saves
   on quit. Before anything is published, the release workflow installs the previous release, updates it, plays an
   in-app update through and smokes the installed editor.
-- ✅ **Docs** (#98): Getting Started, Horror Essentials, Audio; every wiki code sample compiles in CI; the Feature Status
-  Matrix was re-checked against the code.
+- ✅ **Docs** (#98): Getting Started, Horror Essentials, Audio; the Feature Status Matrix was re-checked against the code.
+  Since v3.0.3 the documentation lives only on the [docs website](https://engine.vortexstudio.dev/docs/), and CI compiles
+  its C# samples.
 
 ### v2.10.0 — Asset Store & Claude Sound Studio (released 2026-10-05)
 - ✅ **Store tab** in the Asset Browser (`Managed/Vortex.Core/Store/`): Poly Haven (models, PBR sets, HDRIs, MD5-checked),
@@ -107,7 +108,7 @@ original-quality downloads (#289).
   cap, type rules), **backfill** of content hashes.
 - ✅ `Managed/Vortex.Core.Tests` — headless core tests (`dotnet run --project Managed/Vortex.Core.Tests`), plus the editor
   smoke check `VORTEX_SMOKE_ONLY=library`. Docs: [Asset Library](https://engine.vortexstudio.dev/docs/#/asset-library),
-  [design](docs/wiki/Design-Global-Asset-Database.md).
+  [design](https://engine.vortexstudio.dev/docs/#/design-asset-database).
 - ✅ **Windows installer back**: the v2.8.0 release build had failed (DX12 lacked the UTF-8 overlay calls; the Visual
   Studio engine project lacked `RenderBackend.cpp`) and the Inno Setup download link now returns HTML (installed via
   Chocolatey now), so v2.8.0 shipped without an installer — all fixed; v2.9.0 and v2.10.0 ship installers.

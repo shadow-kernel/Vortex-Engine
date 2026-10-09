@@ -8,7 +8,7 @@ using System.Threading;
 namespace Editor.Core.Assets.Library
 {
     /// <summary>
-    /// The machine-wide asset library (milestone v2.9.0, design: docs/wiki/Design-Global-Asset-Database.md).
+    /// The machine-wide asset library (milestone v2.9.0, design: https://engine.vortexstudio.dev/docs/#/design-asset-database).
     /// <para>
     /// <b>Catalog</b> — SQLite (<c>catalog.db</c>, WAL, so several editor instances can read and write at once):
     /// blobs (one row per content hash), assets (named, tagged entries that point at a blob), tags, companions (extra

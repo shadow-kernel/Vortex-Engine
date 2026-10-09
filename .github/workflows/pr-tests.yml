@@ -33,9 +33,8 @@ jobs:
           fi
           changed="$(git diff --name-only "$base" HEAD)"
           echo "$changed"
-          # docs are not code — except the wiki pages: the core tests compile every C# sample in them (DocsTests)
-          if echo "$changed" | grep -qvE '^(docs/|README|ROADMAP|CHANGELOG|.*\.md$|Templates/.*\.(png|jpg|webp)$)' \
-             || echo "$changed" | grep -qE '^docs/wiki/.*\.md$'; then
+          # docs are not code (the documentation itself lives in the docs website's repository)
+          if echo "$changed" | grep -qvE '^(docs/|README|ROADMAP|CHANGELOG|.*\.md$|Templates/.*\.(png|jpg|webp)$)'; then
             echo "code=true" >> "$GITHUB_OUTPUT"
           else
             echo "code=false" >> "$GITHUB_OUTPUT"
@@ -79,7 +78,13 @@ jobs:
       - name: Build the managed layer (Vortex.Core, Player, Avalonia editor)
         run: dotnet build Managed/Vortex.Managed.slnx -c Release -v minimal
 
+      - name: The docs website (the core tests compile its C# samples)
+        shell: bash
+        run: bash tools/fetch-docs.sh "$RUNNER_TEMP/docs-site"
+
       - name: Managed tests (Vortex.Core)
+        env:
+          VORTEX_DOCS_DIR: ${{ runner.temp }}/docs-site
         run: dotnet run --project Managed/Vortex.Core.Tests -c Release
 
       # The Windows editor (#183) exactly as the installer lays it out — {app}\Editor (self-contained, with its player)
@@ -146,5 +151,11 @@ jobs:
       - name: Build the managed layer (Vortex.Core, Player, Avalonia editor)
         run: dotnet build Managed/Vortex.Managed.slnx -c Release -v minimal
 
+      - name: The docs website (the core tests compile its C# samples)
+        shell: bash
+        run: bash tools/fetch-docs.sh "$RUNNER_TEMP/docs-site"
+
       - name: Managed tests (Vortex.Core)
+        env:
+          VORTEX_DOCS_DIR: ${{ runner.temp }}/docs-site
         run: dotnet run --project Managed/Vortex.Core.Tests -c Release

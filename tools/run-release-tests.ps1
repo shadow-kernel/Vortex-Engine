@@ -63,7 +63,7 @@ if ($totalFail -eq 0) {
 }
 
 if ($Visual) {
-  # Sichtpruefungen: jede Szene oeffnet sich, ansehen (Sollbild siehe docs/wiki/Release-Test-Plan-v2.7.md),
+  # Sichtpruefungen: jede Szene oeffnet sich und wird angesehen,
   # Fenster schliesst nach 20 s selbst. F12 speichert jederzeit ein Vergleichsbild nach ~\Pictures.
   $visualScenes = @(
     "BloomTest","BloomOff","GradeTest","AoTest","AoOff","CsmTest","PointShadowTest",

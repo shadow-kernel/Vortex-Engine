@@ -39,7 +39,13 @@ jobs:
       - name: Native tests (audio, physics, particles, navigation, geometry)
         run: ctest --preset macos-release --output-on-failure
 
+      - name: The docs website (the core tests compile its C# samples)
+        shell: bash
+        run: bash tools/fetch-docs.sh "$RUNNER_TEMP/docs-site"
+
       - name: Managed tests (Vortex.Core)
+        env:
+          VORTEX_DOCS_DIR: ${{ runner.temp }}/docs-site
         run: dotnet run --project Managed/Vortex.Core.Tests -c Release
 
       - name: Build "Vortex Editor.app" + DMG
