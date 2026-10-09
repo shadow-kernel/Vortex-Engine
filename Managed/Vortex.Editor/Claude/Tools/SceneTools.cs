@@ -393,11 +393,18 @@ namespace VortexEditor.Claude.Tools
             [Description("Static (never moves; batched)")] bool? @static = null)
         {
             var e = SceneModel.Resolve(entity);
+            bool playing = PlayModeService.Instance.State == PlayState.Playing;
             if (!string.IsNullOrWhiteSpace(name)) SceneModel.Set(e, "Name", () => e.Name, v => e.Name = v, name.Trim());
             if (tag != null) SceneModel.Set(e, "Tag", () => e.Tag, v => e.Tag = v, tag);
-            if (active.HasValue) SceneModel.Set(e, "Active", () => e.IsActive, v => e.IsActive = v, active.Value);
+            if (active.HasValue)
+            {
+                // in play the runtime flips the entity (physics bodies, audio, child behaviours follow) — the same path
+                // a script's SetActive takes (#345); the Stop snapshot puts the authored state back
+                if (playing && Editor.Scripting.ScriptRuntime.Instance.SetEntityActive(Editor.Scripting.ScriptRuntime.Instance.HandleForEntity(e), active.Value)) { }
+                else SceneModel.Set(e, "Active", () => e.IsActive, v => e.IsActive = v, active.Value);
+            }
             if (@static.HasValue) SceneModel.Set(e, "Static", () => e.IsStatic, v => e.IsStatic = v, @static.Value);
-            return SceneModel.Brief(e);
+            return playing ? new { runtime_only = true, note = "play mode: live only, reverted on Stop", entity = SceneModel.Brief(e) } : SceneModel.Brief(e);
         }
 
         [McpServerTool(Name = "parent_entity")]
@@ -492,7 +499,9 @@ namespace VortexEditor.Claude.Tools
             var c = ComponentProps.On(e, component, index);
             var done = SetProps(c, properties);
             ToolContext.UndoLabel = "edit " + c.GetType().Name + " of " + e.Name;
-            return new { entity = SceneModel.ShortId(e), type = c.GetType().Name, set = done, properties = ComponentProps.Values(c) };
+            bool playing = PlayModeService.Instance.State == PlayState.Playing;
+            return new { entity = SceneModel.ShortId(e), type = c.GetType().Name, set = done, properties = ComponentProps.Values(c),
+                runtime_only = playing ? true : (bool?)null, note = playing ? "play mode: live only, reverted on Stop" : null };
         }
 
         // ================================================================== selection

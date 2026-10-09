@@ -1222,6 +1222,39 @@ namespace Editor.Scripting
         private void InstantiateRecursive(GameEntity e, Assembly asm)
         {
             if (e == null) return;
+            InstantiateOne(e, asm);
+            if (e.Children != null)
+                foreach (var c in e.Children) InstantiateRecursive(c, asm);
+        }
+
+        /// <summary>The live behaviour of an entity re-reads its Script component's field overrides (#345): what
+        /// attach_script / the inspector set while playing reaches the running instance. False when the entity has
+        /// no running behaviour.</summary>
+        public bool ApplyFieldsToLiveBehaviour(GameEntity e)
+        {
+            if (e == null || !_behavioursByEntity.TryGetValue(e, out var b)) return false;
+            ApplySerializedFields(b, e.GetComponent<Script>());
+            return true;
+        }
+
+        /// <summary>A Script added to an entity WHILE playing comes alive now (#345): instantiated from the running
+        /// assembly and started, the way a spawned entity's scripts are. False when nothing new could start (not
+        /// playing, no assembly, the entity already runs a behaviour, or the class does not compile).</summary>
+        public bool AttachAtRuntime(GameEntity e)
+        {
+            if (e == null || _scriptAsm == null || _behavioursByEntity.ContainsKey(e)) return false;
+            int before = _behaviours.Count;
+            InstantiateOne(e, _scriptAsm);
+            for (int i = before; i < _behaviours.Count; i++)
+            {
+                try { _behaviours[i].Start(); }
+                catch (Exception ex) { LogScriptError("Start", _behaviours[i], ex); }
+            }
+            return _behaviours.Count > before;
+        }
+
+        private void InstantiateOne(GameEntity e, Assembly asm)
+        {
             var script = e.GetComponent<Script>();
             if (script != null && !string.IsNullOrEmpty(script.ScriptClassName))
             {
@@ -1258,8 +1291,6 @@ namespace Editor.Scripting
                     catch { }
                 }
             }
-            if (e.Children != null)
-                foreach (var c in e.Children) InstantiateRecursive(c, asm);
         }
 
         private static Type FindBehaviourType(Assembly asm, string className)
