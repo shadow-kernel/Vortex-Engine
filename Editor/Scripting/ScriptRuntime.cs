@@ -761,11 +761,6 @@ namespace Editor.Scripting
             Editor.Core.Services.Physics.PhysicsService.ContactHandler = OnPhysicsContact;
             try { Editor.Core.Services.Physics.PhysicsService.Build(scene); }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] physics build failed: " + ex.Message); }
-            // AI & Navigation (#108): the navmesh + crowd and the perception run start with the worlds they query —
-            // driven from here (Begin / Tick / End), no longer lazily from the first AI script call.
-            try { Editor.Core.Services.AI.AiRuntime.Begin(scene); }
-            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] AI begin failed: " + ex.Message); }
-
             _entitiesById.Clear();
             _behavioursByHandle.Clear();
             _behavioursByEntity.Clear();
@@ -785,6 +780,11 @@ namespace Editor.Scripting
             if (asm == null && !string.IsNullOrEmpty(LastBuildLog))
                 Editor.Core.Services.ConsoleService.Instance.LogError("Script build failed:\n" + LastBuildLog);
             _scriptAsm = asm;
+            // AI & Navigation (#108): the navmesh + crowd, the perception and the behaviour trees start with the worlds
+            // they query — AFTER the entity tables were reset (their agent handles live in _entitiesById) and with the
+            // compiled script assembly in place (behaviour-tree tasks of the project resolve from it), BEFORE Start().
+            try { Editor.Core.Services.AI.AiRuntime.Begin(scene); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] AI begin failed: " + ex.Message); }
             if (asm == null) { _active = true; return; } // no scripts / compile failed -> nothing to run
 
             foreach (var e in scene.Entities) InstantiateRecursive(e, asm);
