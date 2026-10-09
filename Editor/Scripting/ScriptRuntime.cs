@@ -644,6 +644,7 @@ namespace Editor.Scripting
             }
             // its own render resources go now (#358); a ledgered entity gets them back on its next submit after Stop
             try { Editor.Core.Services.SceneRenderService.Instance.RemoveEntityTree(e); } catch { }
+            try { Editor.Core.Services.AI.BehaviorTreeService.RemoveEntity(e); } catch { }   // #111: its tree stops with it
 
             // Release the subtree's script handles — a stale id must resolve to nothing, not a ghost.
             void Release(GameEntity x)
@@ -1321,6 +1322,48 @@ namespace Editor.Scripting
                     catch { }
                 }
             }
+        }
+
+        /// <summary>#111: a behaviour tree task class (<c>Vortex.BtTask</c> subclass) of the project's scripts by simple
+        /// name — the loaded script assembly during play, the on-demand reflection compile in the editor. Null = none.</summary>
+        public Type FindBtTaskType(string className)
+        {
+            if (string.IsNullOrEmpty(className)) return null;
+            try
+            {
+                var asm = _scriptAsm ?? ReflectAssembly();
+                if (asm == null) return null;
+                foreach (var t in asm.GetTypes())
+                    if (!t.IsAbstract && typeof(Vortex.BtTask).IsAssignableFrom(t) && string.Equals(t.Name, className, StringComparison.Ordinal)) return t;
+            }
+            catch { }
+            return null;
+        }
+
+        /// <summary>#111: every behaviour tree task class the project's scripts define (the editor's node palette).</summary>
+        public IEnumerable<Type> BtTaskTypes()
+        {
+            var list = new List<Type>();
+            try
+            {
+                var asm = _scriptAsm ?? ReflectAssembly();
+                if (asm != null)
+                    foreach (var t in asm.GetTypes())
+                        if (!t.IsAbstract && typeof(Vortex.BtTask).IsAssignableFrom(t)) list.Add(t);
+            }
+            catch { }
+            return list;
+        }
+
+        private Assembly ReflectAssembly()
+        {
+            var newest = LatestScriptWrite();
+            if (_reflectAsm == null || newest > _reflectAsmTime)
+            {
+                _reflectAsm = Compile(out _);
+                _reflectAsmTime = newest;
+            }
+            return _reflectAsm;
         }
 
         private static Type FindBehaviourType(Assembly asm, string className)

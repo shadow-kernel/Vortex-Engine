@@ -138,18 +138,22 @@ namespace Editor.Core.Services.AI
             PerceptionService.StimulusSink = Vortex.Perception.Deliver;
             try { NavigationService.Begin(scene); } catch (Exception ex) { NavigationService.Log("[Navigation] begin failed: " + ex.Message, true); }
             try { PerceptionService.Begin(scene); } catch (Exception ex) { NavigationService.Log("[Perception] begin failed: " + ex.Message, true); }
+            try { BehaviorTreeService.Begin(scene); } catch (Exception ex) { NavigationService.Log("[BehaviorTree] begin failed: " + ex.Message, true); }
         }
 
         private static void TickCore(float dt)
         {
-            try { NavigationService.Tick(dt); } catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Navigation] tick: " + ex); }
+            // senses first, then the decisions (#111), then the moves they asked for
             try { PerceptionService.Tick(dt); } catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Perception] tick: " + ex); }
+            try { BehaviorTreeService.Tick(dt); } catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[BehaviorTree] tick: " + ex); }
+            try { NavigationService.Tick(dt); } catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Navigation] tick: " + ex); }
         }
 
         private static void EndCore()
         {
             _generation++;   // a tick coroutine of the previous run (if the script runtime still holds it) retires itself
             _tick = null;
+            try { BehaviorTreeService.End(); } catch { }
             try { NavigationService.End(); } catch { }
             try { PerceptionService.End(); } catch { }
             _scene = null;

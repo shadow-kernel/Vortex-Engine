@@ -55,6 +55,7 @@
     <Compile Include="../../Editor/Scripting/VortexScriptApi.Vfx.cs" Link="Editor/Scripting/VortexScriptApi.Vfx.cs" />
     <Compile Include="../../Editor/Scripting/VortexScriptApi.Ai.cs" Link="Editor/Scripting/VortexScriptApi.Ai.cs" />
     <Compile Include="../../Editor/Scripting/VortexScriptApi.Ragdoll.cs" Link="Editor/Scripting/VortexScriptApi.Ragdoll.cs" />
+    <Compile Include="../../Editor/Scripting/VortexScriptApi.BehaviorTree.cs" Link="Editor/Scripting/VortexScriptApi.BehaviorTree.cs" />
     <Compile Include="../../Editor/Core/**/*.cs"
              Link="Editor/Core/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>

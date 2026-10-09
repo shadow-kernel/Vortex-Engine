@@ -36,6 +36,7 @@ namespace VortexEditor.Shell
         public static void UiEditor(string fullPath) => UiEditorWindow.Open(fullPath);
         public static void AnimationEditor(string fullPath) => AnimationEditorWindow.Open(fullPath);
         public static void VfxEditor(string fullPath) => VfxEditorWindow.Open(fullPath);
+        public static void BehaviorTreeEditor(string fullPath) => BehaviorTreeEditorWindow.Open(fullPath);
         public static void Navigation() => NavigationWindow.Open();
         public static void SocketEditor(GameEntity e) => SocketEditorWindow.Open(e);
         public static void CollisionEditor(GameEntity e) => CollisionEditorWindow.Open(e);
@@ -67,6 +68,7 @@ namespace VortexEditor.Shell
                 case ".vui": UiEditor(fullPath); return true;
                 case ".vanim": AnimationEditor(fullPath); return true;
                 case ".vfx": VfxEditor(fullPath); return true;
+                case ".vbt": BehaviorTreeEditor(fullPath); return true;
             }
             return false;
         }
@@ -79,6 +81,7 @@ namespace VortexEditor.Shell
             if (fullPath.StartsWith("Primitive:", StringComparison.OrdinalIgnoreCase) || Is(ext, Models) || Is(ext, Textures)
                 || ext == ".vmat" || ext == ".ventity" || ext == ".vprefab") { AssetViewer(fullPath); return true; }
             if (ext == ".vfx") { VfxEditor(fullPath); return true; }   // the editor IS the large live preview
+            if (ext == ".vbt") { BehaviorTreeEditor(fullPath); return true; }
             return false;
         }
     }

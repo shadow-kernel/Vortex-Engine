@@ -1619,6 +1619,7 @@ namespace VortexEditor.Panels
             yield return Mi("New Animation Clip…", () => _ = CreateAnimationClipAsync(), "Play");
             yield return Mi("New Sound Container", () => CreateSoundContainer(), "Layers");
             yield return Mi("New Visual Effect", () => CreateVfx(), "Sparkle");
+            yield return Mi("New Behavior Tree", () => CreateBehaviorTree(), "Flow");
         }
 
         /// <summary>New folder in the browsed folder (undoable), then rename it inline.</summary>
@@ -1709,6 +1710,21 @@ namespace VortexEditor.Panels
         }
 
         /// <summary>New sound container in the browsed folder (else Assets/Audio), opened in its editor.</summary>
+        /// <summary>New .vbt (a Selector root with an idle sequence) in the browsed folder or Assets/AI, opened in the Behavior Tree editor.</summary>
+        public string CreateBehaviorTree(bool open = true)
+        {
+            if (ProjectRoot == null) return null;
+            try
+            {
+                string folder = CreateFolderFor("Assets/AI");
+                string path = BehaviorTreeEditorWindow.CreateNew(folder, "NewBehaviorTree");
+                Created(path, "Behavior tree created");
+                if (open) EditorWindows.BehaviorTreeEditor(path);
+                return path;
+            }
+            catch (Exception ex) { EditorCommands.Fail("Create behavior tree", ex); return null; }
+        }
+
         /// <summary>New .vfx (one soft emitter) in the browsed folder or Assets/VFX, opened in the VFX editor.</summary>
         public string CreateVfx(bool open = true)
         {
@@ -1858,6 +1874,9 @@ namespace VortexEditor.Panels
                     case AssetKind.Vfx:
                         m.Items.Add(Mi("Add to Scene", () => AddToScene(p), "Plus"));
                         m.Items.Add(Mi("Open in VFX Editor", () => EditorWindows.VfxEditor(p), "Sparkle", gestureText: VortexEditor.Shell.Keys.Shift + " double-click"));
+                        break;
+                    case AssetKind.BehaviorTree:
+                        m.Items.Add(Mi("Open in Behavior Tree Editor", () => EditorWindows.BehaviorTreeEditor(p), "Flow"));
                         break;
                     case AssetKind.Shader:
                         m.Items.Add(Mi("Open in Code Editor", () => EditorCommands.OpenInIde(p), "Sparkle"));
