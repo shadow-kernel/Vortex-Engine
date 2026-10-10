@@ -185,6 +185,7 @@ namespace Editor.Core.Assets
                 ".ttf" or ".otf" => AssetType.Font,
                 ".vui" => AssetType.UI,
                 ".vanim" => AssetType.Animation,
+                ".vterrain" => AssetType.Terrain,
                 _ => AssetType.Unknown
             };
         }

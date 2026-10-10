@@ -804,6 +804,8 @@ namespace Editor.Core.Services.Physics
         private static void AddRecursive(GameEntity e)
         {
             if (e == null) return;
+            var terrain = e.GetComponent<Editor.ECS.Components.Rendering.Terrain>();
+            if (terrain != null && terrain.IsEnabled && terrain.Collision) AddTerrainShape(e);   // #124
             var col = e.GetComponent<Collider>();
             if (col != null && col.IsEnabled)
             {
@@ -811,6 +813,33 @@ namespace Editor.Core.Services.Physics
                 AddOwnShape(e, col);
             }
             if (e.Children != null) foreach (var c in e.Children) AddRecursive(c);
+        }
+
+        /// <summary>A terrain (#124) as a world-space triangle shape with a grid — the character walks its slopes and
+        /// Physics.Raycast hits it like any level geometry. Rebuilt by the TerrainService after sculpting.</summary>
+        private static void AddTerrainShape(GameEntity e)
+        {
+            try
+            {
+                float cell;
+                var raw = Editor.Core.Services.Terrain.TerrainService.CollisionTriangles(e, out cell);
+                if (raw == null || raw.Length < 9) return;
+                System.Numerics.Vector3 pos; System.Numerics.Quaternion rot;
+                Editor.Core.Services.Terrain.TerrainService.Pose(e, out pos, out rot);
+                int triCount = raw.Length / 9;
+                var tris = new V3[triCount * 3];
+                var mn = new V3(1e30f, 1e30f, 1e30f); var mx = new V3(-1e30f, -1e30f, -1e30f);
+                for (int i = 0; i < triCount * 3; i++)
+                {
+                    var w = System.Numerics.Vector3.Transform(new System.Numerics.Vector3(raw[i * 3], raw[i * 3 + 1], raw[i * 3 + 2]), rot) + pos;
+                    var v = new V3(w.X, w.Y, w.Z);
+                    tris[i] = v;
+                    mn = new V3(Math.Min(mn.X, v.X), Math.Min(mn.Y, v.Y), Math.Min(mn.Z, v.Z));
+                    mx = new V3(Math.Max(mx.X, v.X), Math.Max(mx.Y, v.Y), Math.Max(mx.Z, v.Z));
+                }
+                AddShape(e, new Shape { Kind = Kind.Tris, Tris = tris, Min = mn, Max = mx, Grid = TriGrid.Build(tris, mn, mx) }, false);
+            }
+            catch { }
         }
 
         // ---- world transform (walk the parent chain; good enough for level geometry) ----

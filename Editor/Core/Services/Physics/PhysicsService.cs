@@ -976,6 +976,17 @@ namespace Editor.Core.Services.Physics
 
         private static void CreateBodiesFor(GameEntity e)
         {
+            var terrainComp = e.GetComponent<Editor.ECS.Components.Rendering.Terrain>();
+            if (terrainComp != null && terrainComp.IsEnabled)
+            {
+                // #124: a terrain is its height field and nothing else
+                if (terrainComp.Collision)
+                {
+                    var tb = CreateTerrainBody(e);
+                    if (tb != null) Register(e, tb, false);
+                }
+                return;
+            }
             var colliders = e.GetComponents<Collider>();
             var solids = new List<Collider>();
             var triggers = new List<Collider>();
@@ -1025,6 +1036,29 @@ namespace Editor.Core.Services.Physics
             {
                 try { CollisionService.RemoveEntityShapes(e, false); } catch { }
             }
+        }
+
+        /// <summary>The Jolt height field of a terrain (#124): static, the terrain's corner at the body origin.</summary>
+        private static Body CreateTerrainBody(GameEntity e)
+        {
+            float[] heights; int n; float cell;
+            if (!Editor.Core.Services.Terrain.TerrainService.HeightField(e, out heights, out n, out cell)) { Warn(e, "terrain has no height data"); return null; }
+            SysVec pos; SysQuat rot;
+            Editor.Core.Services.Terrain.TerrainService.Pose(e, out pos, out rot);
+            int layer = LayerFor(e, MotionStatic, false);
+            Fill(_f3a, pos); Fill(_f4, rot);
+            uint id = VortexAPI.CreateHeightFieldBody(unchecked((ulong)e.EntityId), heights, n, _f3a, _f4, cell, 0.8f, 0f, layer);
+            if (id == 0) { Warn(e, "terrain height-field body creation failed"); return null; }
+            float mn = float.MaxValue, mx = float.MinValue;
+            for (int i = 0; i < heights.Length; i++) { if (heights[i] < mn) mn = heights[i]; if (heights[i] > mx) mx = heights[i]; }
+            float size = (n - 1) * cell;
+            return new Body
+            {
+                Id = id, Entity = e, Motion = MotionStatic, Layer = layer, IsTrigger = false, Scale = SysVec.One,
+                LastPos = pos, LastRot = rot, PrevPos = pos, PrevRot = rot,
+                BoundsCenter = new SysVec(size * 0.5f, (mn + mx) * 0.5f, size * 0.5f),
+                BoundsHalf = new SysVec(size * 0.5f, (mx - mn) * 0.5f + 0.5f, size * 0.5f)
+            };
         }
 
         private static void Register(GameEntity e, Body b, bool secondary)

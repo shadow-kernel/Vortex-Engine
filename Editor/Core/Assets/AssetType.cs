@@ -19,6 +19,7 @@ namespace Editor.Core.Assets
         Folder,
         // Appended AFTER Folder: AssetType serializes as an int in .vmeta sidecars — inserting mid-enum
         // would silently re-type every existing Folder entry.
-        Animation
+        Animation,
+        Terrain
     }
 }

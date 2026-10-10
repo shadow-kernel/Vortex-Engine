@@ -883,6 +883,7 @@ namespace Editor.Core.Services
             // Clear and submit all lights first
             SubmitSceneLights(scene);
             Decals.DecalService.Submit(scene, IsPlayLike);   // #120: the scene's Decal components + spawned decals, like the lights
+            Editor.Core.Services.Terrain.TerrainService.Submit(scene, IsPlayLike);   // #124: the terrains' LOD chunks (built / rebuilt here)
 
             var swSubmit = System.Diagnostics.Stopwatch.StartNew();
             if (_splitEnabled && IsPlayLike) SubmitSceneSplit(scene);
@@ -1013,6 +1014,7 @@ namespace Editor.Core.Services
             var decal = selected.GetComponent<ECS.Components.Rendering.Decal>();
             if (decal != null && decal.IsEnabled)
                 VortexAPI.RenderDecalGizmo(Decals.DecalService.BoxWorld(selected, decal));   // the projection box (#120)
+            Editor.Core.Services.Terrain.TerrainToolService.SubmitGizmo();   // the terrain brush under the cursor (#124)
 
             if (VortexAPI.AreGizmosVisible)
             {

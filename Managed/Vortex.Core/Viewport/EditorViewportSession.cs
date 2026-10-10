@@ -320,6 +320,8 @@ namespace Editor.Core.Viewport
 
         // ------------------------------------------------------------------------------------------ pointer input
 
+        private bool _terrainStroke;   // #124: the left button is sculpting / painting the selected terrain
+
         /// <param name="button">0 = left, 1 = right, 2 = middle</param>
         public void OnPointerDown(int button, double x, double y, bool alt, bool ctrl, bool shift)
         {
@@ -339,6 +341,12 @@ namespace Editor.Core.Viewport
 
             if (button == 0 && !alt && !_rmbDown && !_viewingThroughGameCamera)
             {
+                // #124: with a terrain tool active and a terrain selected, the left button sculpts / paints under the cursor
+                if (Editor.Core.Services.Terrain.TerrainToolService.Active && _host != null && _host.Width > 0 && _host.Height > 0)
+                {
+                    float tnx = (float)(x / _host.Width), tny = (float)(y / _host.Height), taspect = (float)(_host.Width / _host.Height);
+                    if (Editor.Core.Services.Terrain.TerrainToolService.TryBeginStroke(tnx, tny, taspect, shift, ctrl)) { _terrainStroke = true; return; }
+                }
                 var selected = SelectionService.Instance.SelectedEntity;
                 if (selected != null && VortexAPI.AreGizmosVisible && selected.Transform != null && _host != null && _host.Width > 0 && _host.Height > 0)
                 {
@@ -372,6 +380,11 @@ namespace Editor.Core.Viewport
             if (IsPlaying) return;
             if (button == 1) SetCursorHidden(false);
             if (!_viewingThroughGameCamera) _camera.OnMouseUp(button == 1);
+            if (_terrainStroke && button == 0)
+            {
+                _terrainStroke = false;
+                Editor.Core.Services.Terrain.TerrainToolService.EndStroke();
+            }
             if (_isDraggingGizmo && button == 0)
             {
                 _isDraggingGizmo = false;
@@ -390,6 +403,12 @@ namespace Editor.Core.Viewport
                 // Captured mouse-look: the delta comes from the pointer's offset to the centre before re-centering.
                 if (_mouseCaptured && _host != null) _lookAccumX += x - _host.Width * 0.5; 
                 if (_mouseCaptured && _host != null) _lookAccumY += y - _host.Height * 0.5;
+                return;
+            }
+            if (_terrainStroke && _lmbDown)
+            {
+                if (_host != null && _host.Width > 0 && _host.Height > 0)
+                    Editor.Core.Services.Terrain.TerrainToolService.ContinueStroke((float)(x / _host.Width), (float)(y / _host.Height), (float)(_host.Width / _host.Height), false, false);
                 return;
             }
             if (_isDraggingGizmo && _lmbDown)
@@ -450,6 +469,8 @@ namespace Editor.Core.Viewport
             }
             else
             {
+                if (Editor.Core.Services.Terrain.TerrainToolService.Active && _host != null && _host.Width > 0 && _host.Height > 0)
+                    Editor.Core.Services.Terrain.TerrainToolService.UpdateHover((float)(x / _host.Width), (float)(y / _host.Height), (float)(_host.Width / _host.Height));
                 UpdateGizmoHover(x, y);
                 if (!_viewingThroughGameCamera) _camera.OnMouseMove(new PointD(x, y));
             }

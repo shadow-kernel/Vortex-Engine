@@ -143,6 +143,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
         public ICommand CreateAudioSourceCommand { get; }
         public ICommand CreateReverbZoneCommand { get; }
         public ICommand CreateDecalCommand { get; }
+        public ICommand CreateTerrainCommand { get; }
         #endregion
 
         #region UI Commands
@@ -194,6 +195,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             CreateAudioSourceCommand = new RelayCommand(_ => CreateAudioSource());
             CreateReverbZoneCommand = new RelayCommand(_ => CreateReverbZone());
             CreateDecalCommand = new RelayCommand(_ => CreateDecal());
+            CreateTerrainCommand = new RelayCommand(_ => CreateTerrain());
 
             // UI
             CreateUICanvasCommand = new RelayCommand(_ => CreateUIElement("Canvas"));
@@ -420,6 +422,19 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             if (_selectedScene == null) return;
             var entity = new GameEntity(_selectedScene, "Decal");
             entity.AddComponent(new Editor.ECS.Components.Rendering.Decal(entity));
+            _selectedScene.AddEntity(entity);
+            SelectedEntity = entity;
+            SelectionService.Instance.RequestFocus(entity);
+        }
+
+        /// <summary>A 64 m heightfield terrain (#124) centred on the origin — sculpt and paint it with the Terrain tools.</summary>
+        private void CreateTerrain()
+        {
+            if (_selectedScene == null) return;
+            var entity = new GameEntity(_selectedScene, "Terrain");
+            var terrain = new Editor.ECS.Components.Rendering.Terrain(entity) { Size = 64f, Resolution = 65 };
+            entity.AddComponent(terrain);
+            if (entity.Transform != null) entity.Transform.LocalPosition = new Vector3(-32f, 0f, -32f);
             _selectedScene.AddEntity(entity);
             SelectedEntity = entity;
             SelectionService.Instance.RequestFocus(entity);

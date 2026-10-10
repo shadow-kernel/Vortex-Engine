@@ -1035,6 +1035,24 @@ namespace Editor.Core.Services.AI
             {
                 if (e == null || !e.IsActive) return;
                 if (Excluded(e)) return;
+                var terrain = e.GetComponent<Editor.ECS.Components.Rendering.Terrain>();
+                if (terrain != null && terrain.IsEnabled && terrain.Collision)
+                {
+                    // #124: the terrain's surface (every sample up to 257², coarser beyond) is level geometry
+                    float cell;
+                    var raw = Editor.Core.Services.Terrain.TerrainService.CollisionTriangles(e, out cell);
+                    if (raw != null && raw.Length >= 9)
+                    {
+                        SysVec tpos; SysQuat trot;
+                        Editor.Core.Services.Terrain.TerrainService.Pose(e, out tpos, out trot);
+                        SysMat tworld = SysMat.CreateFromQuaternion(trot) * SysMat.CreateTranslation(tpos);
+                        for (int i = 0; i + 8 < raw.Length; i += 9)
+                            AddTriangle(tworld, new SysVec(raw[i], raw[i + 1], raw[i + 2]), new SysVec(raw[i + 3], raw[i + 4], raw[i + 5]), new SysVec(raw[i + 6], raw[i + 7], raw[i + 8]));
+                        _contributors.Add(e);
+                    }
+                    if (e.Children != null) foreach (var c in e.Children) Visit(c);
+                    return;
+                }
                 bool hadCollider = false;
                 if ((_src & NavGeometrySource.Colliders) != 0)
                 {

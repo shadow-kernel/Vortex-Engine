@@ -116,6 +116,12 @@ namespace vortex::physics {
 		const f32* scale /*3*/, bool convex, s32 motion, f32 mass,
 		f32 friction, f32 restitution, bool is_trigger, s32 layer);
 
+	// Static height field for a terrain (#124): heights = sample_count x sample_count metres, row z / column x, one
+	// sample every cell_size metres from the body origin along +X / +Z (Jolt HeightFieldShape; the sample count is
+	// padded to Jolt's block size with "no collision" samples, so any count >= 2 works).
+	u32 create_heightfield_body(u64 entity_id, const f32* heights, s32 sample_count,
+		const f32* pos, const f32* quat, f32 cell_size, f32 friction, f32 restitution, s32 layer);
+
 	// Compound of boxes / spheres / capsules / cylinders on ONE body (issue #107). Each child is 11 floats in
 	// `children`: shape type (as float) + dims(3) + local position(3) + local quaternion(4).
 	inline constexpr s32 compound_child_floats{ 11 };
