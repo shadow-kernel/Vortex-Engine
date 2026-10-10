@@ -885,6 +885,7 @@ namespace Editor.Core.Services
             Decals.DecalService.Submit(scene, IsPlayLike);   // #120: the scene's Decal components + spawned decals, like the lights
             Editor.Core.Services.Terrain.TerrainService.Submit(scene, IsPlayLike);   // #124: the terrains' LOD chunks (built / rebuilt here)
             Editor.Core.Services.Foliage.FoliageService.Submit(scene, IsPlayLike);   // #125: painted foliage through the instancing path
+            Editor.Core.Services.Water.WaterService.Submit(scene, IsPlayLike);   // #200: water surfaces into the transparent pass
 
             var swSubmit = System.Diagnostics.Stopwatch.StartNew();
             if (_splitEnabled && IsPlayLike) SubmitSceneSplit(scene);

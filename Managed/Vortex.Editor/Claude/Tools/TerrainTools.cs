@@ -357,6 +357,74 @@ namespace VortexEditor.Claude.Tools
             return list;
         }
 
+        // ================================================================== water
+
+        [McpServerTool(Name = "create_water", Destructive = false)]
+        [Description("Creates a body of water (#200): a square surface of size metres centred on position at position's height, following the terrain " +
+                     "underneath (it fades at the shore, darkens with depth, foams along the bank, reflects the sky). Colours are linear rgb. One undo step.")]
+        public static object CreateWater(
+            [Description("Centre [x, y, z] — y is the water level")] float[] position,
+            [Description("Edge length in metres (default 64)")] float size = 64f,
+            [Description("Deep colour [r, g, b] (default a dark teal)")] float[] deep_color = null,
+            [Description("Shallow colour [r, g, b] (default a turquoise)")] float[] shallow_color = null,
+            [Description("Depth (m) at which the deep colour is reached (default 3.5)")] float absorption = 3.5f,
+            [Description("Ripple strength 0..4 (default 0.35)")] float wave_height = 0.35f,
+            [Description("Foam band width (m) along the bank (default 0.9)")] float foam_width = 0.9f,
+            [Description("Metres between surface vertices (default 1)")] float cell_size = 1f,
+            [Description("Entity name (default Water)")] string name = null,
+            [Description("Only report")] bool dry_run = false)
+        {
+            var scene = RequireScene();
+            var pos = SceneModel.Vec(position, "position") ?? throw new ToolError("position [x, y, z] is required.");
+            if (size < 1f || size > 8192f) throw new ToolError("size must be 1–8192 metres.");
+            if (dry_run) return new { would_create = name ?? "Water", size, level = pos.Y };
+            var e = new GameEntity(scene, name ?? "Water");
+            var w = new Water(e) { Size = size, Absorption = absorption, WaveHeight = wave_height, FoamWidth = foam_width, CellSize = cell_size };
+            if (deep_color != null && deep_color.Length >= 3) { w.DeepR = deep_color[0]; w.DeepG = deep_color[1]; w.DeepB = deep_color[2]; }
+            if (shallow_color != null && shallow_color.Length >= 3) { w.ShallowR = shallow_color[0]; w.ShallowG = shallow_color[1]; w.ShallowB = shallow_color[2]; }
+            e.AddComponent(w);
+            if (e.Transform != null) e.Transform.LocalPosition = new Editor.ECS.Vector3(pos.X, pos.Y, pos.Z);
+            scene.AddEntity(e);
+            ToolContext.UndoLabel = "water " + e.Name;
+            SelectionService.Instance.SelectedEntity = e;
+            Editor.Core.Viewport.EditorViewportSession.RequestResubmit();
+            return WaterInfoOf(e, w);
+        }
+
+        [McpServerTool(Name = "water_info", ReadOnly = true, Idempotent = true)]
+        [Description("The bodies of water in the scene: level, size, colours, and the surface height under optional world points [[x, z], ...].")]
+        public static object WaterInfo([Description("World points [[x, z], ...] to probe (optional)")] float[][] points = null)
+        {
+            var scene = RequireScene();
+            var list = new List<object>();
+            foreach (var e in SceneModel.All(scene))
+            {
+                var w = e.GetComponent<Water>();
+                if (w != null) list.Add(WaterInfoOf(e, w));
+            }
+            var probes = new List<object>();
+            if (points != null)
+                foreach (var p in points)
+                {
+                    if (p == null || p.Length != 2) { probes.Add(null); continue; }
+                    float y;
+                    probes.Add(Editor.Core.Services.Water.WaterService.TryHeight(p[0], p[1], out y) ? new { x = p[0], z = p[1], surface = (float?)y } : new { x = p[0], z = p[1], surface = (float?)null });
+                }
+            return new { water = list, probes };
+        }
+
+        private static object WaterInfoOf(GameEntity e, Water w)
+        {
+            var pos = e.Transform != null ? e.Transform.LocalPosition : new Editor.ECS.Vector3(0, 0, 0);
+            return new
+            {
+                entity = SceneModel.ShortId(e), name = e.Name, centre = new[] { pos.X, pos.Y, pos.Z }, level = pos.Y, size = w.Size, cell_size = w.CellSize,
+                deep_color = new[] { w.DeepR, w.DeepG, w.DeepB }, shallow_color = new[] { w.ShallowR, w.ShallowG, w.ShallowB }, absorption = w.Absorption,
+                reflection = w.Reflection, roughness = w.Roughness, wave_scale = w.WaveScale, wave_speed = w.WaveSpeed, wave_height = w.WaveHeight, foam_width = w.FoamWidth,
+                wet_vertices = Editor.Core.Services.Water.WaterService.WetVertices(e)
+            };
+        }
+
         /// <summary>A type as the tools take it.</summary>
         public sealed class FoliageTypeSpec
         {

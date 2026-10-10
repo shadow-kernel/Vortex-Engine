@@ -587,6 +587,7 @@ namespace VortexEditor.Shell
         public static GameEntity CreateDecal(Scene scene = null) => RunVm(scene, Vm.CreateDecalCommand);
         public static GameEntity CreateTerrain(Scene scene = null) => RunVm(scene, Vm.CreateTerrainCommand);
         public static GameEntity CreateFoliage(Scene scene = null) => RunVm(scene, Vm.CreateFoliageCommand);
+        public static GameEntity CreateWater(Scene scene = null) => RunVm(scene, Vm.CreateWaterCommand);
         public static GameEntity CreateUI(string kind, Scene scene = null)
         {
             switch (kind)
