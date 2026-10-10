@@ -25,7 +25,7 @@ namespace Vortex
         /// <summary>True when the entity carries a Terrain component.</summary>
         public static bool IsTerrain(long entity)
         {
-            var e = Editor.Scripting.ScriptRuntime.Instance.FindEntityByHandle(entity);
+            var e = Foliage.Resolve(entity);
             return e != null && e.GetComponent<Editor.ECS.Components.Rendering.Terrain>() != null;
         }
 

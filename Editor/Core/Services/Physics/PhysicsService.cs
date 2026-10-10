@@ -987,6 +987,8 @@ namespace Editor.Core.Services.Physics
                 }
                 return;
             }
+            var foliageComp = e.GetComponent<Editor.ECS.Components.Rendering.Foliage>();
+            if (foliageComp != null && foliageComp.IsEnabled) CreateFoliageBodies(e);   // #125: trunks as static capsules
             var colliders = e.GetComponents<Collider>();
             var solids = new List<Collider>();
             var triggers = new List<Collider>();
@@ -1035,6 +1037,37 @@ namespace Editor.Core.Services.Physics
             if (primary != null && primary.Motion == MotionDynamic)
             {
                 try { CollisionService.RemoveEntityShapes(e, false); } catch { }
+            }
+        }
+
+        /// <summary>Static capsule bodies for the colliding foliage instances (#125); every body reports the Foliage entity.</summary>
+        private static void CreateFoliageBodies(GameEntity e)
+        {
+            List<Editor.Core.Services.Foliage.FoliageService.Collidable> cols;
+            try { cols = Editor.Core.Services.Foliage.FoliageService.Collidables(e); } catch { return; }
+            if (cols == null || cols.Count == 0) return;
+            if (cols.Count > 40000) { Warn(e, "foliage: only the first 40000 colliding instances get physics bodies"); }
+            int layer = LayerFor(e, MotionStatic, false);
+            ulong entityId = unchecked((ulong)e.EntityId);
+            int made = 0;
+            for (int i = 0; i < cols.Count && i < 40000; i++)
+            {
+                var c = cols[i];
+                float r = Math.Max(0.02f, c.Radius), halfCyl = Math.Max(0.01f, c.Height * 0.5f - r);
+                var pos = new SysVec(c.Base.X, c.Base.Y + r + halfCyl, c.Base.Z);
+                var rot = SysQuat.Identity;
+                _f3b[0] = r; _f3b[1] = halfCyl; _f3b[2] = 0f;
+                Fill(_f3a, pos); Fill(_f4, rot);
+                uint id = VortexAPI.PhysicsCreateBody(entityId, 2 /* capsule */, _f3b, _f3a, _f4, MotionStatic, 0f, 0.6f, 0f, 0f, 0f, 0, layer, 0, 1f);
+                if (id == 0) continue;
+                var b = new Body
+                {
+                    Id = id, Entity = e, Motion = MotionStatic, Layer = layer, IsTrigger = false, Scale = SysVec.One,
+                    LastPos = pos, LastRot = rot, PrevPos = pos, PrevRot = rot,
+                    BoundsCenter = SysVec.Zero, BoundsHalf = new SysVec(r, halfCyl + r, r), SphereRadius = 0f
+                };
+                Register(e, b, made > 0);
+                made++;
             }
         }
 

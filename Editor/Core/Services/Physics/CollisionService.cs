@@ -806,6 +806,8 @@ namespace Editor.Core.Services.Physics
             if (e == null) return;
             var terrain = e.GetComponent<Editor.ECS.Components.Rendering.Terrain>();
             if (terrain != null && terrain.IsEnabled && terrain.Collision) AddTerrainShape(e);   // #124
+            var foliage = e.GetComponent<Editor.ECS.Components.Rendering.Foliage>();
+            if (foliage != null && foliage.IsEnabled) AddFoliageShapes(e);   // #125
             var col = e.GetComponent<Collider>();
             if (col != null && col.IsEnabled)
             {
@@ -813,6 +815,24 @@ namespace Editor.Core.Services.Physics
                 AddOwnShape(e, col);
             }
             if (e.Children != null) foreach (var c in e.Children) AddRecursive(c);
+        }
+
+        /// <summary>The colliding foliage instances (#125: trunks) as vertical capsules of the static world.</summary>
+        private static void AddFoliageShapes(GameEntity e)
+        {
+            try
+            {
+                var cols = Editor.Core.Services.Foliage.FoliageService.Collidables(e);
+                foreach (var c in cols)
+                {
+                    float r = c.Radius, half = Math.Max(0f, c.Height * 0.5f - r);
+                    var centre = new V3(c.Base.X, c.Base.Y + c.Height * 0.5f, c.Base.Z);
+                    var s = new Shape { Kind = Kind.Capsule, Radius = r, A = centre - new V3(0, half, 0), B = centre + new V3(0, half, 0) };
+                    s.Min = new V3(centre.X - r, centre.Y - r - half, centre.Z - r); s.Max = new V3(centre.X + r, centre.Y + r + half, centre.Z + r);
+                    AddShape(e, s, false);
+                }
+            }
+            catch { }
         }
 
         /// <summary>A terrain (#124) as a world-space triangle shape with a grid — the character walks its slopes and

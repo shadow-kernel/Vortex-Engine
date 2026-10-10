@@ -884,6 +884,7 @@ namespace Editor.Core.Services
             SubmitSceneLights(scene);
             Decals.DecalService.Submit(scene, IsPlayLike);   // #120: the scene's Decal components + spawned decals, like the lights
             Editor.Core.Services.Terrain.TerrainService.Submit(scene, IsPlayLike);   // #124: the terrains' LOD chunks (built / rebuilt here)
+            Editor.Core.Services.Foliage.FoliageService.Submit(scene, IsPlayLike);   // #125: painted foliage through the instancing path
 
             var swSubmit = System.Diagnostics.Stopwatch.StartNew();
             if (_splitEnabled && IsPlayLike) SubmitSceneSplit(scene);
@@ -1015,6 +1016,7 @@ namespace Editor.Core.Services
             if (decal != null && decal.IsEnabled)
                 VortexAPI.RenderDecalGizmo(Decals.DecalService.BoxWorld(selected, decal));   // the projection box (#120)
             Editor.Core.Services.Terrain.TerrainToolService.SubmitGizmo();   // the terrain brush under the cursor (#124)
+            Editor.Core.Services.Foliage.FoliageToolService.SubmitGizmo();   // the foliage brush (#125)
 
             if (VortexAPI.AreGizmosVisible)
             {
@@ -1501,6 +1503,18 @@ namespace Editor.Core.Services
             if (_meshDbg < 16) { _meshDbg++; try { System.IO.File.AppendAllText(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "vortex_mesh.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " path='" + renderer.MeshPath + "' id=" + meshId + " projPath='" + (Data.ProjectData.Current != null ? Data.ProjectData.Current.Path : "?") + "'\r\n"); } catch { } }
 
             return meshId;
+        }
+
+        /// <summary>The scene-wide shared mesh of a primitive kind ("Primitive:Sphere") for instancers such as the foliage (#125);
+        /// -1 for anything else.</summary>
+        public static long SharedPrimitiveMesh(string meshPath)
+        {
+            if (string.IsNullOrEmpty(meshPath) || !meshPath.StartsWith("Primitive:", StringComparison.OrdinalIgnoreCase)) return -1;
+            long shared;
+            if (_primitiveMeshCache.TryGetValue(meshPath, out shared) && shared >= 0) return shared;
+            long created = CreatePrimitiveMesh(meshPath.Substring("Primitive:".Length));
+            if (created >= 0) { _primitiveMeshCache[meshPath] = created; _sharedMeshIds.Add(created); }
+            return created;
         }
 
         private long CreateMeshFromPath(string meshPath)

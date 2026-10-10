@@ -186,6 +186,7 @@ namespace Editor.Core.Assets
                 ".vui" => AssetType.UI,
                 ".vanim" => AssetType.Animation,
                 ".vterrain" => AssetType.Terrain,
+                ".vfoliage" => AssetType.Foliage,
                 _ => AssetType.Unknown
             };
         }

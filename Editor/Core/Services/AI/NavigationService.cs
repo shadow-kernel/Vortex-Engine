@@ -1053,6 +1053,20 @@ namespace Editor.Core.Services.AI
                     if (e.Children != null) foreach (var c in e.Children) Visit(c);
                     return;
                 }
+                var foliageComp = e.GetComponent<Editor.ECS.Components.Rendering.Foliage>();
+                if (foliageComp != null && foliageComp.IsEnabled)
+                {
+                    // #125: the colliding foliage (trunks) blocks the navmesh as boxes
+                    var cols = Editor.Core.Services.Foliage.FoliageService.Collidables(e);
+                    if (cols.Count > 0)
+                    {
+                        foreach (var c in cols)
+                            AddBox(SysMat.Identity, new SysVec(c.Base.X, c.Base.Y + c.Height * 0.5f, c.Base.Z), new SysVec(c.Radius, c.Height * 0.5f, c.Radius), SysQuat.Identity);
+                        _contributors.Add(e);
+                    }
+                    if (e.Children != null) foreach (var c in e.Children) Visit(c);
+                    return;
+                }
                 bool hadCollider = false;
                 if ((_src & NavGeometrySource.Colliders) != 0)
                 {

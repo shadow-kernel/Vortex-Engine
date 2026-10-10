@@ -55,6 +55,7 @@
     <Compile Include="../../Editor/Scripting/VortexScriptApi.Vfx.cs" Link="Editor/Scripting/VortexScriptApi.Vfx.cs" />
     <Compile Include="../../Editor/Scripting/VortexScriptApi.Decal.cs" Link="Editor/Scripting/VortexScriptApi.Decal.cs" />
     <Compile Include="../../Editor/Scripting/VortexScriptApi.Terrain.cs" Link="Editor/Scripting/VortexScriptApi.Terrain.cs" />
+    <Compile Include="../../Editor/Scripting/VortexScriptApi.Foliage.cs" Link="Editor/Scripting/VortexScriptApi.Foliage.cs" />
     <Compile Include="../../Editor/Scripting/VortexScriptApi.Ai.cs" Link="Editor/Scripting/VortexScriptApi.Ai.cs" />
     <Compile Include="../../Editor/Scripting/VortexScriptApi.Ragdoll.cs" Link="Editor/Scripting/VortexScriptApi.Ragdoll.cs" />
     <Compile Include="../../Editor/Scripting/VortexScriptApi.BehaviorTree.cs" Link="Editor/Scripting/VortexScriptApi.BehaviorTree.cs" />
