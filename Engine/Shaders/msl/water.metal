@@ -214,6 +214,9 @@ fragment float4 PSMain(VSOut in [[stage_in]],
 
     float2 p = in.world_pos.xz / wave_scale;
     float3 N = wave_normal(p, t, obj.alpha_cutoff);
+    // the ripples fade with distance: beyond ~80 m the per-pixel sine slopes only alias into stripes
+    float cam_dist = length(cam_pos - in.world_pos);
+    N = normalize(mix(float3(0.0, 1.0, 0.0), N, saturate(80.0 / max(cam_dist, 1.0))));
     float3 V = normalize(cam_pos - in.world_pos);
     float NdotV = max(dot(N, V), 0.0);
     float fresnel = 0.02 + 0.98 * pow(1.0 - NdotV, 5.0);

@@ -140,6 +140,9 @@ void main()
 
 	vec2 p = v_world_pos.xz / wave_scale;
 	vec3 N = wave_normal(p, t, obj.alpha_cutoff);
+	// the ripples fade with distance: beyond ~80 m the per-pixel sine slopes only alias into stripes
+	float cam_dist = length(cam_pos - v_world_pos);
+	N = normalize(mix(vec3(0.0, 1.0, 0.0), N, clamp(80.0 / max(cam_dist, 1.0), 0.0, 1.0)));
 	vec3 V = normalize(cam_pos - v_world_pos);
 	float NdotV = max(dot(N, V), 0.0);
 	float fresnel = 0.02 + 0.98 * pow(1.0 - NdotV, 5.0);

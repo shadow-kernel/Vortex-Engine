@@ -38,7 +38,7 @@ namespace vortex::graphics::dx12
 	// can't run, its reserved t10 slot still holds a valid (stale/neutral) texture.
 	m_frame_constants.ssao_enabled = (m_ssao_enabled && m_ssao_pso) ? 1.0f : 0.0f;
 	{
-		const float env_on = (m_skybox_enabled && m_skybox_mode == SkyboxMode::Gradient) ? 1.0f : 0.0f;
+		const float env_on = (m_skybox_enabled && (m_skybox_mode == SkyboxMode::Gradient || m_skybox_mode == SkyboxMode::Texture)) ? 1.0f : 0.0f;
 		m_frame_constants.env_sky = XMFLOAT4(m_env_sky.x, m_env_sky.y, m_env_sky.z, env_on);
 		m_frame_constants.env_horizon = XMFLOAT4(m_env_horizon.x, m_env_horizon.y, m_env_horizon.z, 0.0f);
 		m_frame_constants.env_ground = XMFLOAT4(m_env_ground.x, m_env_ground.y, m_env_ground.z, 0.0f);

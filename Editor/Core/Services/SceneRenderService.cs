@@ -2524,7 +2524,14 @@ namespace Editor.Core.Services
                     case SkyboxType.Cubemap:
                     case SkyboxType.Texture:
                         // an equirect texture is sampled by the renderer's fullscreen sky pass (#326): behind
-                        // everything, centred on whichever camera renders the frame, no depth write, no fog
+                        // everything, centred on whichever camera renders the frame, no depth write, no fog.
+                        // The gradient colours stay the sky's ENVIRONMENT (specular reflections, the water's sky):
+                        // set them to the HDR's zenith / horizon / ground so reflections match the picture.
+                        float texExp = skybox.Exposure;
+                        VortexAPI.SetSkyboxGradient(
+                            skybox.TopColorR * texExp, skybox.TopColorG * texExp, skybox.TopColorB * texExp,
+                            skybox.HorizonColorR * texExp, skybox.HorizonColorG * texExp, skybox.HorizonColorB * texExp,
+                            skybox.BottomColorR * texExp, skybox.BottomColorG * texExp, skybox.BottomColorB * texExp);
                         if (!string.IsNullOrEmpty(skybox.TexturePath) && SubmitSkyboxWithTexture(skybox))
                         {
                             // the sky pass is on, in Texture mode

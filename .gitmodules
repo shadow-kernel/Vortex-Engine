@@ -11,3 +11,6 @@
 [submodule "Templates/TacticalShooter"]
 	path = Templates/TacticalShooter
 	url = https://github.com/shadow-kernel/Vortex-Engine-Tactical-Template.git
+[submodule "Templates/OpenWorld"]
+	path = Templates/OpenWorld
+	url = https://github.com/shadow-kernel/Vortex-Engine-OpenWorld-Template.git

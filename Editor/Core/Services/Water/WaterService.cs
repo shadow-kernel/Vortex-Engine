@@ -253,6 +253,34 @@ namespace Editor.Core.Services.Water
         }
 
         /// <summary>Rebuild an entity's surface now (after a wholesale terrain change).</summary>
+        /// <summary>The deep part of a surface as world-space boxes (centre xyz, half xyz per entry) for the navmesh bake: every
+        /// <paramref name="cell"/>-metre square of the wet area whose ground lies more than <paramref name="minDepth"/> under the
+        /// level becomes a box from the lake bed up to the surface — agents walk the shallows, not the lake.</summary>
+        public static List<(Vector3 centre, Vector3 half)> DeepBoxes(GameEntity e, float minDepth = 0.7f, float cell = 6f)
+        {
+            var list = new List<(Vector3, Vector3)>();
+            Runtime rt;
+            if (e == null || !_runtimes.TryGetValue(e, out rt) || rt.Component == null) return list;
+            var w = rt.Component;
+            var wp = TransformMath.WorldPosition(e);
+            var pos = new Vector3(wp.X, wp.Y, wp.Z);
+            var terrain = TerrainService.FindAt(pos.X, pos.Z);
+            float half = w.Size * 0.5f;
+            int n = Math.Max(1, (int)Math.Ceiling(w.Size / cell));
+            for (int zi = 0; zi < n; zi++)
+                for (int xi = 0; xi < n; xi++)
+                {
+                    float cx = pos.X - half + (xi + 0.5f) * cell, cz = pos.Z - half + (zi + 0.5f) * cell;
+                    float g = 0f;
+                    bool ground = terrain != null && TerrainService.TryHeight(terrain, cx, cz, out g);
+                    if (!ground) { var t2 = TerrainService.FindAt(cx, cz); if (t2 == null || !TerrainService.TryHeight(t2, cx, cz, out g)) continue; }
+                    float depth = pos.Y - g;
+                    if (depth < minDepth) continue;
+                    list.Add((new Vector3(cx, pos.Y - depth * 0.5f, cz), new Vector3(cell * 0.5f, depth * 0.5f + 0.5f, cell * 0.5f)));
+                }
+            return list;
+        }
+
         public static void Invalidate(GameEntity e)
         {
             Runtime rt;

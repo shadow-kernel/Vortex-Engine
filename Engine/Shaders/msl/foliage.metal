@@ -422,6 +422,7 @@ static inline void cotangent_frame(float3 N, float3 p, float2 uv, thread float3&
 }
 
 fragment float4 PSMain(VSOut in [[stage_in]],
+                       bool isFront [[front_facing]],
                        constant PerFrame& frame [[buffer(0)]],
                        constant PerObject& obj [[buffer(1)]],
                        constant LightBuffer& lights [[buffer(2)]],
@@ -441,6 +442,7 @@ fragment float4 PSMain(VSOut in [[stage_in]],
     float3 cam_pos = float3(frame.camera_position);
 
     float3 Ng = normalize(in.norm);
+    if (!isFront) Ng = -Ng;   // a leaf seen from behind is lit on that side (double-sided cut-outs)
     float3 T = normalize(in.tangent), B = normalize(in.bitangent);
     cotangent_frame(Ng, in.world_pos, uv, T, B);   // outside any branch: it needs derivatives
 
@@ -511,7 +513,10 @@ fragment float4 PSMain(VSOut in [[stage_in]],
         float3 kD = (1.0 - F) * (1.0 - metallic);
         float3 radiance = float3(frame.light_color) * frame.directional_intensity;
         float sun_shadow = sample_cascade_shadow(frame, lights, csm_shadow, csm_smp, in.world_pos);
-        Lo += (kD * albedo / PI + spec) * radiance * NdotL * sun_shadow;
+        // leaves: the diffuse term wraps round the thin blade and the sun shines through it (translucency)
+        float NdotLw = saturate((dot(N, L) + 0.4) / 1.4);
+        float3 trans = albedo * radiance * pow(saturate(dot(V, -L)), 3.0) * 0.35 * (1.0 - metallic);
+        Lo += ((kD * albedo / PI) * radiance * NdotLw + spec * radiance * NdotL + trans / PI) * sun_shadow;
     }
 
     for (uint i = 0; i < frame.point_light_count && i < MAX_POINT_LIGHTS; ++i)

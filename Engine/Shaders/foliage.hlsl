@@ -395,7 +395,7 @@ void CotangentFrame(float3 N, float3 p, float2 uv, inout float3 T, inout float3 
     B = b * k;
 }
 
-float4 PSMain(PS_IN input) : SV_TARGET
+float4 PSMain(PS_IN input, bool isFront : SV_IsFrontFace) : SV_TARGET
 {
     // Texture repeat scale: multiply UVs so a small tiling texture repeats across a large surface instead of being
     // stretched once (the "blurry ground" bug). Guard against an unset/zero tiling (e.g. a non-material draw) -> 1x.
@@ -403,6 +403,7 @@ float4 PSMain(PS_IN input) : SV_TARGET
 
     // Tangent frame for parallax + normal mapping (computed outside any branch: it needs derivatives).
     float3 Ng = normalize(input.norm);
+    if (!isFront) Ng = -Ng;   // a leaf seen from behind is lit on that side (double-sided cut-outs)
     float3 T = normalize(input.tangent);
     float3 B = normalize(input.bitangent);
     CotangentFrame(Ng, input.worldPos, uv, T, B);
@@ -492,7 +493,10 @@ float4 PSMain(PS_IN input) : SV_TARGET
         // Cascaded shadow maps (#24): the sun finally throws real shadows.
         radiance *= SampleCascadeShadow(input.worldPos);
 
-        Lo += (kD * albedo / PI + spec) * radiance * NdotL;
+        // leaves: the diffuse term wraps round the thin blade and the sun shines through it (translucency)
+        float NdotLw = saturate((dot(N, L) + 0.4) / 1.4);
+        float3 trans = albedo * radiance * pow(saturate(dot(V, -L)), 3.0) * 0.35 * (1.0 - metallic);
+        Lo += (kD * albedo / PI) * radiance * NdotLw + spec * radiance * NdotL + trans / PI;
     }
 
     // POINT LIGHTS
