@@ -97,7 +97,8 @@ layout(set = SET_UNIFORM, binding = 2, std140) uniform LightBufferBlock
 	vec4       dir_shadow_params;               // @1488
 	vec4       point_shadows[2];                // @1504
 	mat4       point_face_vp[12];               // @1536
-} lights;                                       // = 2304
+	vec4       sky_sh[9];                       // @2304 .. 2448  sky light: SH9 irradiance per channel, w of [0] = on
+} lights;                                       // = 2448
 #endif
 
 // Vertex-stage helper shared by VSMain and VSSkinned: a stable frame from the normal alone (the fragment

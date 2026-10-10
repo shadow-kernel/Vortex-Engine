@@ -98,6 +98,7 @@ cbuffer LightBuffer : register(b2)
     float4 DirShadowParams;
     float4 PointShadows[2];
     row_major float4x4 PointFaceVP[12];
+    float4 SkySh[9];   // sky light (IBL step 1) @2304: SH9 irradiance per channel, w of [0] = on
 };
 
 Texture2D AlbedoTexture    : register(t0);
@@ -315,6 +316,33 @@ void ClampGrad(inout float2 dx, inout float2 dy)
     if (gl > maxG) { float s = maxG / gl; dx *= s; dy *= s; }
 }
 
+// Sky light (IBL step 1): the diffuse radiance a surface facing n receives from the sky, from the SH9 irradiance baked
+// off the scene's sky picture — E(n)/π with the cosine-lobe weights (1, 2/3, 1/4 per band). Normalised by the baker to
+// the old hemisphere level, so AmbientStrength keeps its meaning and the picture adds colour and direction.
+float3 SkyIrradiance(float3 n)
+{
+    float x = n.x, y = n.y, z = n.z;
+    float3 e = SkySh[0].rgb * 0.282095;
+    e += (2.0 / 3.0) * (SkySh[1].rgb * (0.488603 * y) + SkySh[2].rgb * (0.488603 * z) + SkySh[3].rgb * (0.488603 * x));
+    e += 0.25 * (SkySh[4].rgb * (1.092548 * x * y) + SkySh[5].rgb * (1.092548 * y * z) + SkySh[6].rgb * (0.315392 * (3.0 * z * z - 1.0))
+               + SkySh[7].rgb * (1.092548 * x * z) + SkySh[8].rgb * (0.546274 * (x * x - y * y)));
+    return max(e, 0.0);
+}
+
+// Macro variation (#124 follow-up): a 2-octave value noise over the world XZ at 40 m / 9 m that scales the blended albedo
+// by ±9 %, so a layer's repeats stop reading as a grid across a 500 m terrain — no extra texture samples.
+float MacroHash(float2 p) { return frac(sin(dot(p, float2(127.1, 311.7))) * 43758.5453); }
+float MacroNoise(float2 p)
+{
+    float2 i = floor(p), f = frac(p); f = f * f * (3.0 - 2.0 * f);
+    return lerp(lerp(MacroHash(i), MacroHash(i + float2(1, 0)), f.x), lerp(MacroHash(i + float2(0, 1)), MacroHash(i + float2(1, 1)), f.x), f.y);
+}
+float MacroVariation(float2 worldXZ)
+{
+    float n = 0.65 * MacroNoise(worldXZ * 0.025) + 0.35 * MacroNoise(worldXZ * 0.11 + 7.3);
+    return 0.91 + 0.18 * n;
+}
+
 float4 PSMain(PS_IN input) : SV_TARGET
 {
     float3 Ng = normalize(input.norm);
@@ -346,6 +374,7 @@ float4 PSMain(PS_IN input) : SV_TARGET
         if (HasRoughnessTexture != 0) rough += wi * RoughnessTexture.SampleGrad(LinearSampler, a, dx, dy).r;
     }
     albedo *= input.tint.rgb;
+    albedo *= MacroVariation(input.worldPos.xz);
     float roughness = max(HasRoughnessTexture != 0 ? rough : Roughness, 0.04);
     float metallic = 0.0;
     float ao = AO;
@@ -443,6 +472,7 @@ float4 PSMain(PS_IN input) : SV_TARGET
     float3 groundColor = float3(0.15, 0.15, 0.18);
     float skyAmount = dot(N, float3(0, 1, 0)) * 0.5 + 0.5;
     float3 hemisphereLight = lerp(groundColor, skyColor, skyAmount);
+    if (SkySh[0].w > 0.5) hemisphereLight = SkyIrradiance(N);   // the real sky: blue from above, the ground's bounce from below
     float3 ambient = hemisphereLight * AmbientStrength * albedo * ao;
 
     float3 R = reflect(-V, N);

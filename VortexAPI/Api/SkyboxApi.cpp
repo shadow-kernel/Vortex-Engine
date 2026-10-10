@@ -53,6 +53,13 @@ EDITOR_INTERFACE void SetSkyboxTexture(id::id_type texture_id, float exposure, f
 	graphics::Renderer::instance().set_skybox_texture(texture_id, exposure, rotation_degrees * 0.01745329252f);
 }
 
+// Sky light (image-based lighting, step 1): SH9 irradiance per channel (27 floats, coefficient-major) baked by the
+// managed SkyLight from the sky's HDR or gradient; enabled = 0 returns the shaders to their neutral hemisphere ambient.
+EDITOR_INTERFACE void SetSkyLight(const float* sh27, int enabled)
+{
+	graphics::Renderer::instance().set_sky_light(sh27, enabled != 0);
+}
+
 // ============== SKYBOX COMPONENT API (Runtime) ==============
 
 namespace {

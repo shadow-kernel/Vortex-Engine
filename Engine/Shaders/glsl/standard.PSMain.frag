@@ -193,6 +193,17 @@ void cotangent_frame(vec3 N, vec3 p, vec2 uv, inout vec3 T, inout vec3 B)
 	B = b * k;
 }
 
+// Sky light (IBL step 1): E(n)/π from the SH9 irradiance baked off the sky picture (cosine-lobe weights 1, 2/3, 1/4)
+vec3 sky_irradiance(vec3 n)
+{
+	float x = n.x, y = n.y, z = n.z;
+	vec3 e = lights.sky_sh[0].rgb * 0.282095;
+	e += (2.0 / 3.0) * (lights.sky_sh[1].rgb * (0.488603 * y) + lights.sky_sh[2].rgb * (0.488603 * z) + lights.sky_sh[3].rgb * (0.488603 * x));
+	e += 0.25 * (lights.sky_sh[4].rgb * (1.092548 * x * y) + lights.sky_sh[5].rgb * (1.092548 * y * z) + lights.sky_sh[6].rgb * (0.315392 * (3.0 * z * z - 1.0))
+	           + lights.sky_sh[7].rgb * (1.092548 * x * z) + lights.sky_sh[8].rgb * (0.546274 * (x * x - y * y)));
+	return max(e, vec3(0.0));
+}
+
 void main()
 {
 	vec2 tiling = (obj.uv_tiling.x > 0.0 && obj.uv_tiling.y > 0.0) ? obj.uv_tiling : vec2(1.0, 1.0);
@@ -338,6 +349,7 @@ void main()
 	vec3 ground_color = vec3(0.15, 0.15, 0.18);
 	float sky_amount = dot(N, vec3(0.0, 1.0, 0.0)) * 0.5 + 0.5;
 	vec3 hemisphere = mix(ground_color, sky_color, sky_amount);
+	if (lights.sky_sh[0].w > 0.5) hemisphere = sky_irradiance(N);   // the real sky: blue from above, the ground's bounce from below
 	vec3 ambient = hemisphere * frame.ambient_strength * albedo * ao * (1.0 - metallic);
 	if (frame.ssao_enabled > 0.5)
 	{

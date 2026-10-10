@@ -103,13 +103,13 @@ namespace VortexEditor.Shell
             TransformMath.LookAngles(new Vector3(0f, 0f, 0f), new Vector3(-toSun.X, -toSun.Y, -toSun.Z), out sunYaw, out sunPitch);
             var sun = scene.CreateEntity("Sun");
             sun.Transform.LocalRotation = new Vector3(sunPitch, sunYaw, 0f);
-            sun.AddComponentDirect(new Light(sun, LightType.Directional) { Intensity = 4.2f, ColorR = 1f, ColorG = 0.95f, ColorB = 0.86f, ShadowType = ShadowType.Soft });
+            sun.AddComponentDirect(new Light(sun, LightType.Directional) { Intensity = 4.8f, ColorR = 1f, ColorG = 0.87f, ColorB = 0.68f, ShadowType = ShadowType.Soft });
 
             // ---- the sky: the desert HDRI; the gradient colours are its environment (reflections, the lakes' sky) ----
             var sky = scene.CreateEntity("Sky");
             sky.AddComponentDirect(new Skybox(sky)
             {
-                IsEnabled = true, SkyboxType = SkyboxType.Texture, TexturePath = "Assets/Skies/goegap_2k.hdr", Exposure = 0.85f, AmbientIntensity = 1.2f,
+                IsEnabled = true, SkyboxType = SkyboxType.Texture, TexturePath = "Assets/Skies/goegap_2k.hdr", Exposure = 0.85f, AmbientIntensity = 0.85f,
                 TopColorR = 0.28f, TopColorG = 0.48f, TopColorB = 0.9f,
                 HorizonColorR = 0.82f, HorizonColorG = 0.82f, HorizonColorB = 0.8f,
                 BottomColorR = 0.62f, BottomColorG = 0.49f, BottomColorB = 0.33f
@@ -121,7 +121,7 @@ namespace VortexEditor.Shell
             var tc = new TerrainComponent(ter)
             {
                 Size = Size, Resolution = Resolution, LodDistance = 140f, Collision = true,
-                Layer0Material = "Assets/Materials/aerial_sand.vmat", Layer0Tile = 13f,
+                Layer0Material = "Assets/Materials/aerial_sand.vmat", Layer0Tile = 8f,
                 Layer1Material = "Assets/Materials/damp_sand.vmat", Layer1Tile = 4f,
                 Layer2Material = "Assets/Materials/rock_face_03.vmat", Layer2Tile = 9f,
                 Layer3Material = "Assets/Materials/grass_ground.vmat", Layer3Tile = 3f,
@@ -163,6 +163,7 @@ namespace VortexEditor.Shell
             {
                 rig.Name = "Player";
                 rig.PrefabPath = null;   // its own entity now, not a linked instance
+                rig.AddComponentDirect(new Script(rig, "Assets/Scripts/Player/Footprints.cs"));   // boot prints in the sand
                 rig.Transform.LocalPosition = new Vector3(24f, startY + 1.2f, -10f);
                 rig.Transform.LocalRotation = new Vector3(0f, -60f, 0f);
                 log.Log("oasis setup: the Tactical player rig stands on the strip between the lakes");
@@ -210,7 +211,8 @@ namespace VortexEditor.Shell
             // ---- the air: warm haze that thins with height, a touch of bloom and AO, no vignette ----
             var st = scene.Settings;
             st.FogEnabled = true; st.FogDensity = 0.0021f; st.FogHeightY = -4f; st.FogHeightFalloff = 0.025f;
-            st.FogR = 0.80f; st.FogG = 0.74f; st.FogB = 0.64f;
+            st.FogR = 0.86f; st.FogG = 0.74f; st.FogB = 0.54f;
+            st.GradeEnabled = true; st.Exposure = 0.05f; st.Contrast = 1.06f; st.Saturation = 1.12f; st.Temperature = 0.22f; st.Tint = 0.02f;
             st.AoEnabled = true; st.AoRadius = 0.8f; st.AoIntensity = 0.9f;
             st.BloomEnabled = true; st.BloomThreshold = 0.95f; st.BloomIntensity = 0.3f; st.BloomScatter = 0.6f;
             st.VolumetricEnabled = false;
@@ -488,6 +490,7 @@ namespace VortexEditor.Shell
             try
             {
                 SelectionService.Instance.ClearSelection();
+                var footprintStart = At(ter, -16f, -60f, 0f);
                 if (gridWas) EditorViewportService.Instance.ToggleGrid();   // no editor grid across the sky in the pictures
                 EditorViewportService.Instance.AreGizmosVisible = false;    // no light / particle icons either
                 // a fresh editor loads the 28 models after its first frames: wait until the vegetation draws
@@ -537,6 +540,31 @@ namespace VortexEditor.Shell
                     await CameraSkySmoke.Sample("oasis_dusk.bmp", 0.5, 0.5);
                     VortexEditor.Claude.Tools.EnvironmentTools.ApplyWeather(scene, clear, 1f);
                     EditorViewportSession.RequestResubmit();
+                }
+                // footprints: a few strides stamped along the shore the way Footprints.cs stamps them, for a look at the decals
+                {
+                    var p0 = footprintStart;
+                    float dirX = 0.6f, dirZ = 0.8f;
+                    for (int i = 0; i < 8; i++)
+                    {
+                        bool left = (i & 1) == 0; float side = left ? -0.17f : 0.17f;
+                        float fx = p0.X + dirX * i * 0.78f + (-dirZ) * side, fz = p0.Z + dirZ * i * 0.78f + dirX * side;
+                        float fy; if (!TerrainService.TryHeight(ter, fx, fz, out fy)) continue;
+                        NVec3 n; if (!TerrainService.TryNormal(ter, fx, fz, out n)) n = NVec3.UnitY;
+                        float yaw = (float)(Math.Atan2(dirX, dirZ) * 180.0 / Math.PI);
+                        Editor.Core.Services.Decals.DecalService.Spawn(left ? "Assets/Materials/Decals/Footprint_Sand_L.vmat" : "Assets/Materials/Decals/Footprint_Sand_R.vmat",
+                            new NVec3(fx, fy, fz), n, new NVec3(0.165f, 1.5f, 0.33f), 0f, yaw, 0.78f, 0.7f, 0.6f, 0.9f, 1, 0.5f, 70f, 1);
+                    }
+                    {
+                        float tx = p0.X - 1.2f, tz = p0.Z + 2.5f, ty; NVec3 tn;
+                        if (TerrainService.TryHeight(ter, tx, tz, out ty) && TerrainService.TryNormal(ter, tx, tz, out tn))
+                            Editor.Core.Services.Decals.DecalService.Spawn("Assets/Materials/Decals/BulletHole_Concrete.vmat", new NVec3(tx, ty, tz), tn, new NVec3(0.6f, 1.5f, 0.6f), 0f, 0f, 1f, 0.2f, 0.2f, 1f, 0, 0.5f, 0f, 2);
+                    }
+                    log.Log("oasis capture: " + Editor.Core.Services.Decals.DecalService.SpawnedCount + " decals spawned for the footprint picture");
+                    Look(cam, At(ter, -16.5f, -62.5f, 1.5f), new Vector3(p0.X + dirX * 3f, p0.Y, p0.Z + dirZ * 3f));
+                    await SmokeRegistry.Settle(3000);
+                    await CameraSkySmoke.Sample("oasis_footprints.bmp", 0.5, 0.5);
+                    Editor.Core.Services.Decals.DecalService.Clear();
                 }
                 // one of the infected up close, in the editor: a prefab instance on the shore, removed again after the picture
                 GameEntity shown = null;

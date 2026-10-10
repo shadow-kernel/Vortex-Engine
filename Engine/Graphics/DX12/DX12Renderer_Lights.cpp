@@ -176,6 +176,13 @@ namespace vortex::graphics::dx12
 			for (u32 f = 0; f < 6; ++f)
 				memcpy(fv_ptr + ((size_t)p * 6 + f) * 64,
 					(p < m_shadow_point_count) ? &m_shadow_points[p].face_vp[f] : &ident, 64);
+		// Sky light tail (IBL step 1) @2304: SH9 irradiance per channel as 9 float4 (rgb = coefficient, w of [0] = on)
+		u8* sh_ptr = ptr + 2304;
+		for (u32 k = 0; k < 9; ++k)
+		{
+			float c4[4] = { m_sky_sh[k * 3], m_sky_sh[k * 3 + 1], m_sky_sh[k * 3 + 2], (k == 0 && m_sky_sh_on) ? 1.0f : 0.0f };
+			memcpy(sh_ptr + (size_t)k * 16, c4, 16);
+		}
 	}
 	}
 	}

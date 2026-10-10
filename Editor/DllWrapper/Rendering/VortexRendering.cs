@@ -1101,6 +1101,15 @@ namespace Editor.DllWrapper
             try { SetSkyboxMode((uint)mode); } catch { }
         }
 
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SetSkyLight")]
+        private static extern void SetSkyLightNative(float[] sh27, int enabled);
+
+        /// <summary>Sky light (image-based lighting): SH9 irradiance coefficients (27 floats) from <c>SkyLight</c>; null / false = the neutral hemisphere ambient.</summary>
+        public static void SetSkyLight(float[] sh27, bool enabled)
+        {
+            try { SetSkyLightNative(sh27 != null && sh27.Length >= 27 ? sh27 : new float[27], enabled && sh27 != null ? 1 : 0); } catch { }
+        }
+
         /// <summary>
         /// Set skybox gradient colors (linear RGB).
         /// </summary>

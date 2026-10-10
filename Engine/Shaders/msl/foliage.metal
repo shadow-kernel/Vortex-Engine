@@ -89,6 +89,7 @@ struct LightBuffer
     float4     dir_shadow_params;                // @1488
     float4     point_shadows[2];                 // @1504
     float4x4   point_face_vp[12];                // @1536 .. 2304
+    float4     sky_sh[9];                        // @2304 .. 2448  sky light: SH9 irradiance per channel, w of [0] = on
 };
 
 struct SkinParams
@@ -421,6 +422,17 @@ static inline void cotangent_frame(float3 N, float3 p, float2 uv, thread float3&
     B = b * k;
 }
 
+// Sky light (IBL step 1): E(n)/π from the SH9 irradiance baked off the sky picture (cosine-lobe weights 1, 2/3, 1/4)
+static inline float3 sky_irradiance(constant LightBuffer& lights, float3 n)
+{
+    float x = n.x, y = n.y, z = n.z;
+    float3 e = lights.sky_sh[0].rgb * 0.282095;
+    e += (2.0 / 3.0) * (lights.sky_sh[1].rgb * (0.488603 * y) + lights.sky_sh[2].rgb * (0.488603 * z) + lights.sky_sh[3].rgb * (0.488603 * x));
+    e += 0.25 * (lights.sky_sh[4].rgb * (1.092548 * x * y) + lights.sky_sh[5].rgb * (1.092548 * y * z) + lights.sky_sh[6].rgb * (0.315392 * (3.0 * z * z - 1.0))
+               + lights.sky_sh[7].rgb * (1.092548 * x * z) + lights.sky_sh[8].rgb * (0.546274 * (x * x - y * y)));
+    return max(e, 0.0);
+}
+
 fragment float4 PSMain(VSOut in [[stage_in]],
                        bool isFront [[front_facing]],
                        constant PerFrame& frame [[buffer(0)]],
@@ -582,6 +594,7 @@ fragment float4 PSMain(VSOut in [[stage_in]],
     float3 ground_color = float3(0.15, 0.15, 0.18);
     float sky_amount = dot(N, float3(0.0, 1.0, 0.0)) * 0.5 + 0.5;
     float3 hemisphere = mix(ground_color, sky_color, sky_amount);
+    if (lights.sky_sh[0].w > 0.5) hemisphere = sky_irradiance(lights, N);   // the real sky: blue from above, the ground's bounce from below
     float3 ambient = hemisphere * frame.ambient_strength * albedo * ao * (1.0 - metallic);
     if (frame.ssao_enabled > 0.5)
     {

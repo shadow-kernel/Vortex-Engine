@@ -2475,10 +2475,61 @@ namespace Editor.Core.Services
             // the ambient right now (horror scenes crush it to ~0.01; the default would flood the dark).
             if (!_hasSkybox)
             {
-                if (ScriptSky != null) ApplyScriptSky(ScriptSky);   // a scripted sky needs no Skybox component (#349)
-                else VortexAPI.EnableSkybox(false);
+                if (ScriptSky != null) { ApplyScriptSky(ScriptSky); SubmitSkyLight(ScriptSky); }   // a scripted sky needs no Skybox component (#349)
+                else { VortexAPI.EnableSkybox(false); VortexAPI.SetSkyLight(null, false); }
                 VortexAPI.SetAmbientLightStrength(ScriptAmbientOverride ?? 0.35f);  // 0.35 matches the engine header default
             }
+        }
+
+        // ---- the sky light (IBL step 1): the Skybox component's picture or gradient, or a script's sky, as SH9 irradiance ----
+        private string _skyLightKey;
+
+        private void SubmitSkyLight(Skybox skybox)
+        {
+            SkyLight.Coefficients c = null;
+            float e = skybox.Exposure;
+            try
+            {
+                if ((skybox.SkyboxType == SkyboxType.Texture || skybox.SkyboxType == SkyboxType.Cubemap) && !string.IsNullOrEmpty(skybox.TexturePath))
+                {
+                    var projectPath = Data.ProjectData.Current?.Path ?? "";
+                    var full = System.IO.Path.IsPathRooted(skybox.TexturePath) ? skybox.TexturePath : System.IO.Path.Combine(projectPath, skybox.TexturePath);
+                    c = SkyLight.FromTexture(full, e, 0f);
+                }
+                if (c == null && skybox.SkyboxType == SkyboxType.SolidColor)
+                    c = SkyLight.FromGradient(skybox.TopColorR * e, skybox.TopColorG * e, skybox.TopColorB * e, skybox.TopColorR * e, skybox.TopColorG * e, skybox.TopColorB * e, skybox.TopColorR * e, skybox.TopColorG * e, skybox.TopColorB * e);
+                if (c == null)
+                    c = SkyLight.FromGradient(skybox.TopColorR * e, skybox.TopColorG * e, skybox.TopColorB * e, skybox.HorizonColorR * e, skybox.HorizonColorG * e, skybox.HorizonColorB * e, skybox.BottomColorR * e, skybox.BottomColorG * e, skybox.BottomColorB * e);
+            }
+            catch { c = null; }
+            PushSkyLight(c);
+        }
+
+        private void SubmitSkyLight(SkyOverride s)
+        {
+            SkyLight.Coefficients c = null;
+            try
+            {
+                if (!string.IsNullOrEmpty(s.TexturePath))
+                {
+                    var projectPath = Data.ProjectData.Current?.Path ?? "";
+                    var full = System.IO.Path.IsPathRooted(s.TexturePath) ? s.TexturePath : System.IO.Path.Combine(projectPath, s.TexturePath);
+                    c = SkyLight.FromTexture(full, s.Exposure, s.RotationDeg);
+                }
+                var g = s.Gradient;
+                if (c == null && g != null && g.Length >= 9)
+                    c = SkyLight.FromGradient(g[0], g[1], g[2], g[3], g[4], g[5], g[6], g[7], g[8]);
+            }
+            catch { c = null; }
+            PushSkyLight(c);
+        }
+
+        private void PushSkyLight(SkyLight.Coefficients c)
+        {
+            string key = c != null ? c.Key : "";
+            if (key == _skyLightKey) return;   // the renderer keeps the last coefficients; only changes go over the boundary
+            _skyLightKey = key;
+            VortexAPI.SetSkyLight(c != null ? c.Sh : null, c != null);
         }
 
         private void SubmitEntityLightsRecursive(GameEntity entity)
@@ -2550,6 +2601,11 @@ namespace Editor.Core.Services
                         break;
                 }
                 
+                // the sky as a LIGHT (IBL step 1): SH9 irradiance baked off the picture or the gradient — blue from above,
+                // the ground's bounce from below — replaces the shaders' fixed hemisphere ambient
+                if (ScriptSky != null) SubmitSkyLight(ScriptSky);
+                else SubmitSkyLight(skybox);
+
                 // Also set ambient light based on skybox colors — unless a game script owns the ambient.
                 var (ambientR, ambientG, ambientB) = skybox.GetAmbientColor();
                 float ambientBrightness = Math.Max(Math.Max(ambientR, ambientG), ambientB);
