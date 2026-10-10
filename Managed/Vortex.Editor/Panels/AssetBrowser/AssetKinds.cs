@@ -7,7 +7,7 @@ namespace VortexEditor.Panels.AssetBrowser
     public enum AssetKind
     {
         Folder, ParentFolder, Primitive, Model, Texture, Material, Shader, Script, Scene, Prefab,
-        AudioClip, SoundContainer, AnimationClip, UiScreen, Font, Text, BuiltInMaterial, BuiltInTexture, Vfx, BehaviorTree, Terrain, Other
+        AudioClip, SoundContainer, AnimationClip, UiScreen, Font, Text, BuiltInMaterial, BuiltInTexture, Vfx, BehaviorTree, Terrain, Foliage, Other
     }
 
     /// <summary>
@@ -56,6 +56,7 @@ namespace VortexEditor.Panels.AssetBrowser
                 case ".vfx": return AssetKind.Vfx;
                 case ".vbt": return AssetKind.BehaviorTree;
                 case ".vterrain": return AssetKind.Terrain;
+                case ".vfoliage": return AssetKind.Foliage;
             }
             return AssetKind.Other;
         }
@@ -84,6 +85,7 @@ namespace VortexEditor.Panels.AssetBrowser
                 case AssetKind.Vfx: return "Visual Effect";
                 case AssetKind.BehaviorTree: return "Behavior Tree";
                 case AssetKind.Terrain: return "Terrain";
+                case AssetKind.Foliage: return "Foliage";
                 case AssetKind.BuiltInMaterial: return "Built-in Material";
                 case AssetKind.BuiltInTexture: return "Built-in Texture";
                 default: return string.IsNullOrEmpty(e) ? "File" : e + " File";
@@ -112,6 +114,7 @@ namespace VortexEditor.Panels.AssetBrowser
                 case AssetKind.Vfx: return "Sparkle";
                 case AssetKind.BehaviorTree: return "Flow";
                 case AssetKind.Terrain: return "World";
+                case AssetKind.Foliage: return "Layers";
                 default: return "File";
             }
         }
@@ -135,6 +138,7 @@ namespace VortexEditor.Panels.AssetBrowser
                 case AssetKind.Vfx: return "VxOrangeBrush";
                 case AssetKind.BehaviorTree: return "VxTealBrush";
                 case AssetKind.Terrain: return "VxGreenBrush";
+                case AssetKind.Foliage: return "VxGreenBrush";
                 default: return "VxTextSecondaryBrush";
             }
         }

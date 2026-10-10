@@ -144,6 +144,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
         public ICommand CreateReverbZoneCommand { get; }
         public ICommand CreateDecalCommand { get; }
         public ICommand CreateTerrainCommand { get; }
+        public ICommand CreateFoliageCommand { get; }
         #endregion
 
         #region UI Commands
@@ -196,6 +197,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             CreateReverbZoneCommand = new RelayCommand(_ => CreateReverbZone());
             CreateDecalCommand = new RelayCommand(_ => CreateDecal());
             CreateTerrainCommand = new RelayCommand(_ => CreateTerrain());
+            CreateFoliageCommand = new RelayCommand(_ => CreateFoliage());
 
             // UI
             CreateUICanvasCommand = new RelayCommand(_ => CreateUIElement("Canvas"));
@@ -435,6 +437,17 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             var terrain = new Editor.ECS.Components.Rendering.Terrain(entity) { Size = 64f, Resolution = 65 };
             entity.AddComponent(terrain);
             if (entity.Transform != null) entity.Transform.LocalPosition = new Vector3(-32f, 0f, -32f);
+            _selectedScene.AddEntity(entity);
+            SelectedEntity = entity;
+            SelectionService.Instance.RequestFocus(entity);
+        }
+
+        /// <summary>A foliage layer (#125): add types in the Inspector, then paint them with the brush.</summary>
+        private void CreateFoliage()
+        {
+            if (_selectedScene == null) return;
+            var entity = new GameEntity(_selectedScene, "Foliage");
+            entity.AddComponent(new Editor.ECS.Components.Rendering.Foliage(entity));
             _selectedScene.AddEntity(entity);
             SelectedEntity = entity;
             SelectionService.Instance.RequestFocus(entity);

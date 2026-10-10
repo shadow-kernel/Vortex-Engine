@@ -25,6 +25,8 @@ namespace Editor.ECS
     [KnownType(typeof(Components.Rendering.ParticleSystem))]
     [KnownType(typeof(Components.Rendering.Decal))]
     [KnownType(typeof(Components.Rendering.Terrain))]
+    [KnownType(typeof(Components.Rendering.Foliage))]
+    [KnownType(typeof(Components.Rendering.FoliageType))]
     [KnownType(typeof(Components.Lighting.Light))]
     [KnownType(typeof(Components.Physics.Collider))]
     [KnownType(typeof(Components.Physics.BoxCollider))]

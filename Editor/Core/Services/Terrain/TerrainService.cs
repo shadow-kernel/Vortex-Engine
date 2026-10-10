@@ -661,7 +661,8 @@ namespace Editor.Core.Services.Terrain
 
         // ---------------------------------------------------------------- lifetime
 
-        private static Vector3 CameraPosition(Scene scene, bool playLike)
+        /// <summary>The eye the LODs and cull distances are measured from: the main camera while playing, else the editor camera.</summary>
+        public static Vector3 CameraPosition(Scene scene, bool playLike)
         {
             if (playLike)
             {

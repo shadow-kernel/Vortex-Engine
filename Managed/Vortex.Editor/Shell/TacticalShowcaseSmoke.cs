@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Editor.Core.Data;
 using Editor.Core.Services;
 using Editor.Core.Services.AI;
+using Editor.Core.Services.Foliage;
 using Editor.Core.Services.Terrain;
 using Editor.Core.Terrain;
 using Editor.Core.Viewport;
@@ -180,6 +181,27 @@ namespace VortexEditor.Shell
                 }
                 _made++;
                 log.Log("tactical showcase setup: terrain plot at " + TemplateSetupSmoke.F(plot) + " (" + size + " m, " + tc.Resolution + " samples, " + (tc.DataPath ?? "") + ")");
+
+                // ---- v3.4 World: foliage on the plot (#125) — shrubs and dry branches painted over the hills (they sway),
+                //      boulders that block the player and the navmesh ----
+                var fol = scene.CreateEntity("Showcase Foliage");
+                var fc = new Editor.ECS.Components.Rendering.Foliage(fol) { Wind = 1f, DataPath = "Assets/Foliage/Showcase_Foliage.vfoliage" };
+                var shrub = Editor.ECS.Components.Rendering.Foliage.DefaultType("Shrub", "Assets/Models/Props/shrub_02/shrub_02.gltf", true);
+                shrub.Density = 0.35f; shrub.MinSpacing = 1.1f; shrub.MinScale = 0.8f; shrub.MaxScale = 1.4f; shrub.CullDistance = 120f; shrub.ThinDistance = 45f; shrub.WindStrength = 0.12f; shrub.WindHeight = 1.2f; shrub.MaxSlope = 50f; shrub.Sink = 0.04f;
+                var branches = Editor.ECS.Components.Rendering.Foliage.DefaultType("Dry branches", "Assets/Models/Props/dry_branches_medium_01/dry_branches_medium_01.gltf", true);
+                branches.Density = 0.08f; branches.MinSpacing = 2f; branches.MinScale = 0.7f; branches.MaxScale = 1.2f; branches.CullDistance = 90f; branches.ThinDistance = 40f; branches.WindStrength = 0.03f; branches.WindHeight = 0.6f; branches.AlignToNormal = true; branches.Sink = 0.02f;
+                var boulder = Editor.ECS.Components.Rendering.Foliage.DefaultType("Boulder", "Assets/Models/Props/namaqualand_boulder_02/namaqualand_boulder_02.gltf", false);
+                boulder.Density = 0.012f; boulder.MinSpacing = 4f; boulder.MinScale = 0.6f; boulder.MaxScale = 1.3f; boulder.CullDistance = 200f; boulder.Collision = 1; boulder.CollisionRadius = 0.7f; boulder.CollisionHeight = 1.2f; boulder.WindStrength = 0f; boulder.Cutout = false; boulder.MaxTilt = 12f; boulder.MaxSlope = 60f; boulder.Sink = 0.15f;
+                fc.Types.Add(shrub); fc.Types.Add(branches); fc.Types.Add(boulder);
+                fol.AddComponentDirect(fc);
+                int grown = 0;
+                var plotCentre = new System.Numerics.Vector3(plot.X, 0f, plot.Z);
+                grown += FoliageService.Paint(fol, 0, plotCentre, plotHalf * 0.92f, 1f, 101);
+                grown += FoliageService.Paint(fol, 1, plotCentre, plotHalf * 0.9f, 1f, 202);
+                grown += FoliageService.Paint(fol, 2, plotCentre, plotHalf * 0.85f, 1f, 303);
+                FoliageService.Save(fol);
+                _made++;
+                log.Log("tactical showcase setup: " + grown + " foliage instances on the plot (shrubs, dry branches, boulders)");
             }
             else log.LogWarning("tactical showcase setup: no open ground for the terrain plot — skipped");
 

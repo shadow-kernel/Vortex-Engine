@@ -50,6 +50,8 @@ namespace Editor.Core.Serialization
             typeof(ParticleSystem),   // VFX #116
             typeof(Decal),            // #120
             typeof(Editor.ECS.Components.Rendering.Terrain),   // #124
+            typeof(Editor.ECS.Components.Rendering.Foliage),   // #125
+            typeof(Editor.ECS.Components.Rendering.FoliageType),
             
             // Lighting
             typeof(Light),

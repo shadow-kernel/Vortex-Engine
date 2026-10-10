@@ -714,6 +714,7 @@ namespace VortexEditor.Panels
             C<Editor.ECS.Components.Rendering.ParticleSystem>("Effects", "Particle System", "Sparkle", "VxOrangeBrush", x => new Editor.ECS.Components.Rendering.ParticleSystem(x) { PreviewInEditor = true }, "particles vfx effect fire smoke sparks muzzle flash impact explosion dust");
             C<Editor.ECS.Components.Rendering.Decal>("Effects", "Decal", "Image", "VxPinkBrush", x => new Editor.ECS.Components.Rendering.Decal(x), "decal projected blood bullet hole grime sticker stamp poster", "projected");
             C<Editor.ECS.Components.Rendering.Terrain>("Rendering", "Terrain", "World", "VxGreenBrush", x => new Editor.ECS.Components.Rendering.Terrain(x), "terrain heightfield landscape ground hills sculpt paint splat", "heightfield");
+            C<Editor.ECS.Components.Rendering.Foliage>("Rendering", "Foliage", "Layers", "VxGreenBrush", x => new Editor.ECS.Components.Rendering.Foliage(x), "foliage vegetation grass trees bushes rocks paint scatter instances forest", "painted");
             C<Light>("Lighting", "Directional Light", "Sun", "VxYellowBrush", x => new Light(x, LightType.Directional), "light sun directional");
             C<Light>("Lighting", "Point Light", "Light", "VxYellowBrush", x => new Light(x, LightType.Point), "light point lamp bulb");
             C<Light>("Lighting", "Spot Light", "Light", "VxYellowBrush", x => new Light(x, LightType.Spot), "light spot torch flashlight");

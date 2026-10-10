@@ -859,6 +859,11 @@ namespace vortex::graphics::sdlgpu
 			}
 		}
 		SDL_PushGPUFragmentUniformData(cmd, 1, &obj, sizeof(PerObjectConstants));
+		// The per-object constants reach the VERTEX stage too (#125: the foliage shader bends by the material's wind
+		// fields; the DX12 root signature exposes b1 to every stage). Built-in vertex shaders declare one uniform
+		// buffer and never see slot 1; custom material vertex shaders are created with two (get_or_compile_pipeline).
+		// Skinned draws push their SkinParams into vertex slot 1 after this call, so they stay unaffected.
+		SDL_PushGPUVertexUniformData(cmd, 1, &obj, sizeof(PerObjectConstants));
 		SDL_BindGPUFragmentSamplers(pass, 0, bindings, 10);
 	}
 
@@ -929,13 +934,18 @@ namespace vortex::graphics::sdlgpu
 			SDL_BindGPUGraphicsPipeline(pass, pipeline);
 			if (skinned_draw)
 			{
-				SkinParams sp{ run.boneOffset, { 0, 0, 0 } };
-				SDL_PushGPUVertexUniformData(cmd, 1, &sp, sizeof(sp));
 				SDL_GPUBuffer* bones[1] = { m_bone_buffer };
 				SDL_BindGPUVertexStorageBuffers(pass, 0, bones, 1);
 			}
 			PerObjectConstants obj{};
 			bind_material(pass, cmd, mat, obj, false);
+			if (skinned_draw)
+			{
+				// after bind_material: it pushes the per-object constants into vertex slot 1 (custom vertex shaders), the
+				// skinning shader wants its SkinParams there
+				SkinParams sp{ run.boneOffset, { 0, 0, 0 } };
+				SDL_PushGPUVertexUniformData(cmd, 1, &sp, sizeof(sp));
+			}
 
 			if (run.lodLevels > 1)
 			{

@@ -321,6 +321,7 @@ namespace Editor.Core.Viewport
         // ------------------------------------------------------------------------------------------ pointer input
 
         private bool _terrainStroke;   // #124: the left button is sculpting / painting the selected terrain
+        private bool _foliageStroke;   // #125: the left button is painting / erasing the selected foliage
 
         /// <param name="button">0 = left, 1 = right, 2 = middle</param>
         public void OnPointerDown(int button, double x, double y, bool alt, bool ctrl, bool shift)
@@ -346,6 +347,11 @@ namespace Editor.Core.Viewport
                 {
                     float tnx = (float)(x / _host.Width), tny = (float)(y / _host.Height), taspect = (float)(_host.Width / _host.Height);
                     if (Editor.Core.Services.Terrain.TerrainToolService.TryBeginStroke(tnx, tny, taspect, shift, ctrl)) { _terrainStroke = true; return; }
+                }
+                if (Editor.Core.Services.Foliage.FoliageToolService.Active && _host != null && _host.Width > 0 && _host.Height > 0)
+                {
+                    float fnx = (float)(x / _host.Width), fny = (float)(y / _host.Height), faspect = (float)(_host.Width / _host.Height);
+                    if (Editor.Core.Services.Foliage.FoliageToolService.TryBeginStroke(fnx, fny, faspect, shift, ctrl)) { _foliageStroke = true; return; }
                 }
                 var selected = SelectionService.Instance.SelectedEntity;
                 if (selected != null && VortexAPI.AreGizmosVisible && selected.Transform != null && _host != null && _host.Width > 0 && _host.Height > 0)
@@ -385,6 +391,11 @@ namespace Editor.Core.Viewport
                 _terrainStroke = false;
                 Editor.Core.Services.Terrain.TerrainToolService.EndStroke();
             }
+            if (_foliageStroke && button == 0)
+            {
+                _foliageStroke = false;
+                Editor.Core.Services.Foliage.FoliageToolService.EndStroke();
+            }
             if (_isDraggingGizmo && button == 0)
             {
                 _isDraggingGizmo = false;
@@ -409,6 +420,12 @@ namespace Editor.Core.Viewport
             {
                 if (_host != null && _host.Width > 0 && _host.Height > 0)
                     Editor.Core.Services.Terrain.TerrainToolService.ContinueStroke((float)(x / _host.Width), (float)(y / _host.Height), (float)(_host.Width / _host.Height), false, false);
+                return;
+            }
+            if (_foliageStroke && _lmbDown)
+            {
+                if (_host != null && _host.Width > 0 && _host.Height > 0)
+                    Editor.Core.Services.Foliage.FoliageToolService.ContinueStroke((float)(x / _host.Width), (float)(y / _host.Height), (float)(_host.Width / _host.Height), false, false);
                 return;
             }
             if (_isDraggingGizmo && _lmbDown)
@@ -471,6 +488,8 @@ namespace Editor.Core.Viewport
             {
                 if (Editor.Core.Services.Terrain.TerrainToolService.Active && _host != null && _host.Width > 0 && _host.Height > 0)
                     Editor.Core.Services.Terrain.TerrainToolService.UpdateHover((float)(x / _host.Width), (float)(y / _host.Height), (float)(_host.Width / _host.Height));
+                if (Editor.Core.Services.Foliage.FoliageToolService.Active && _host != null && _host.Width > 0 && _host.Height > 0)
+                    Editor.Core.Services.Foliage.FoliageToolService.UpdateHover((float)(x / _host.Width), (float)(y / _host.Height), (float)(_host.Width / _host.Height));
                 UpdateGizmoHover(x, y);
                 if (!_viewingThroughGameCamera) _camera.OnMouseMove(new PointD(x, y));
             }

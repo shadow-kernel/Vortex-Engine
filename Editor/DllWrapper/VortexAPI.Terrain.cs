@@ -87,22 +87,38 @@ namespace Editor.DllWrapper
         // ---------------------------------------------------------------- terrain material
 
         /// <summary>The terrain shader file for this backend inside the engine's shader directory (null when missing).</summary>
-        public static string TerrainShaderPath()
+        public static string TerrainShaderPath() => BuiltinMaterialShaderPath("terrain");
+
+        /// <summary>The foliage (wind) shader file for this backend (null when missing).</summary>
+        public static string FoliageShaderPath() => BuiltinMaterialShaderPath("foliage");
+
+        /// <summary>A built-in material shader (terrain, foliage, …) of this backend inside the engine's shader directory:
+        /// .hlsl flat on Windows, msl/&lt;name&gt;.metal on macOS, glsl/&lt;name&gt;.glsl beside the spirv set on Linux.</summary>
+        public static string BuiltinMaterialShaderPath(string baseName)
         {
             try
             {
                 string dir = Editor.Core.Native.NativeLoader.ShaderDirectory;
                 if (string.IsNullOrEmpty(dir)) return null;
                 string ext = Editor.Core.Native.NativeLoader.MaterialShaderExtension;
-                string direct = Path.Combine(dir, "terrain" + ext);
+                string direct = Path.Combine(dir, baseName + ext);
                 if (File.Exists(direct)) return direct;
-                // Vulkan: the GLSL source lives in Shaders/glsl next to the compiled spirv set
-                string glsl = Path.GetFullPath(Path.Combine(dir, "..", "glsl", "terrain.glsl"));
+                string glsl = Path.GetFullPath(Path.Combine(dir, "..", "glsl", baseName + ".glsl"));
                 if (File.Exists(glsl)) return glsl;
-                string hlsl = Path.Combine(dir, "terrain.hlsl");
+                string hlsl = Path.Combine(dir, baseName + ".hlsl");
                 return File.Exists(hlsl) ? hlsl : null;
             }
             catch { return null; }
+        }
+
+        /// <summary>A plain lit material of one colour (primitive foliage types, placeholders). <see cref="ID.INVALID_ID"/> on failure.</summary>
+        public static long CreateColorMaterial(float r, float g, float b, float roughness = 0.8f)
+        {
+            long mat;
+            try { mat = CreateMaterial(); } catch { return ID.INVALID_ID; }
+            if (mat == ID.INVALID_ID) return mat;
+            try { SetMaterialColor(mat, r, g, b, 1f); SetMaterialMetallic(mat, 0f); SetMaterialRoughness(mat, Math.Max(0.04f, Math.Min(1f, roughness))); SetMaterialAO(mat, 1f); } catch { }
+            return mat;
         }
 
         /// <summary>A material bound to the terrain shader (<see cref="ID.INVALID_ID"/> when none could be made).</summary>

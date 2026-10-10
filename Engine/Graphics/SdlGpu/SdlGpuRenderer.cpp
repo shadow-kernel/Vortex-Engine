@@ -1112,7 +1112,8 @@ namespace vortex::graphics::sdlgpu
 		if ((skinned || load_material_shader(path, SDL_GPU_SHADERSTAGE_VERTEX, vs_code)) &&
 			load_material_shader(path, SDL_GPU_SHADERSTAGE_FRAGMENT, fs_code))
 		{
-			SDL_GPUShader* vs = skinned ? m_vs_skinned : create_shader_from_code(vs_code, "VSMain", path, SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 1);
+			// two vertex uniform buffers: PerFrame (0) and PerObject (1) — custom vertex shaders may read the material (#125)
+			SDL_GPUShader* vs = skinned ? m_vs_skinned : create_shader_from_code(vs_code, "VSMain", path, SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 2);
 			SDL_GPUShader* fs = create_shader_from_code(fs_code, "PSMain", path, SDL_GPU_SHADERSTAGE_FRAGMENT, 10, 0, 3);
 			if (vs && fs)
 			{
@@ -1225,7 +1226,7 @@ namespace vortex::graphics::sdlgpu
 		SDL_GetLogOutputFunction(&cap.prev_fn, &cap.prev_ud);
 		SDL_SetLogOutputFunction(capture_sdl_log, &cap);
 		SDL_ClearError();
-		SDL_GPUShader* vs = create_shader_from_code(vs_code, "VSMain", path, SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 1);
+		SDL_GPUShader* vs = create_shader_from_code(vs_code, "VSMain", path, SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 2);
 		if (!vs) errors += "VSMain: " + stage_error(cap) + "\n";
 		std::string vs_text = cap.text;
 		cap.text.clear();
