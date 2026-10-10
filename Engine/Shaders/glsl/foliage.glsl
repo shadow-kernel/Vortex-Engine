@@ -251,6 +251,7 @@ void main()
 	vec3 cam_pos = frame.camera_position;
 
 	vec3 Ng = normalize(v_norm);
+	if (!gl_FrontFacing) Ng = -Ng;   // a leaf seen from behind is lit on that side (double-sided cut-outs)
 	vec3 T = normalize(v_tangent), B = normalize(v_bitangent);
 	cotangent_frame(Ng, v_world_pos, uv, T, B);   // outside any branch: it needs derivatives
 
@@ -322,7 +323,10 @@ void main()
 		vec3 kD = (1.0 - F) * (1.0 - metallic);
 		vec3 radiance = frame.light_color * frame.directional_intensity;
 		float sun_shadow = sample_cascade_shadow(v_world_pos);
-		Lo += (kD * albedo / PI + spec) * radiance * NdotL * sun_shadow;
+		// leaves: the diffuse term wraps round the thin blade and the sun shines through it (translucency)
+		float NdotLw = clamp((dot(N, L) + 0.4) / 1.4, 0.0, 1.0);
+		vec3 trans = albedo * radiance * pow(clamp(dot(V, -L), 0.0, 1.0), 3.0) * 0.35 * (1.0 - metallic);
+		Lo += ((kD * albedo / PI) * radiance * NdotLw + spec * radiance * NdotL + trans / PI) * sun_shadow;
 	}
 
 	for (uint i = 0u; i < frame.point_light_count && i < uint(MAX_POINT_LIGHTS); ++i)

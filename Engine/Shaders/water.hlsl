@@ -211,6 +211,9 @@ float4 PSMain(PS_IN input) : SV_TARGET
 
     float2 p = input.worldPos.xz / waveScale;
     float3 N = WaveNormal(p, t, AlphaCutoff);
+    // the ripples fade with distance: beyond ~80 m the per-pixel sine slopes only alias into stripes
+    float camDist = length(CameraPosition - input.worldPos);
+    N = normalize(lerp(float3(0.0, 1.0, 0.0), N, saturate(80.0 / max(camDist, 1.0))));
     float3 V = normalize(CameraPosition - input.worldPos);
     float NdotV = max(dot(N, V), 0.0);
     float fresnel = 0.02 + 0.98 * pow(1.0 - NdotV, 5.0);

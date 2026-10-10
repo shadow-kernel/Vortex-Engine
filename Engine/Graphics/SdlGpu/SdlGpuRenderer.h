@@ -616,10 +616,12 @@ namespace vortex::graphics::sdlgpu
 		SdlGpuParticles::View particle_view(const FrameView& view) const;
 		SdlGpuParticles::Environment particle_environment(const FrameView& view) const;
 		void draw_skybox(SDL_GPURenderPass* pass, SDL_GPUCommandBuffer* cmd, const FrameView& view);
-		// sky gradient -> PerFrame env colours (specular reflections of metals); w = 0 falls back to the neutral env
+		// sky gradient -> PerFrame env colours (specular reflections of metals, the water's sky); w = 0 falls back to the
+		// neutral env. A texture sky carries the gradient colours as its environment too (the managed side sets them to
+		// the HDR's analysed zenith / horizon / ground, so a lake under an HDRI reflects that sky).
 		void fill_environment(PerFrameConstants& f) const
 		{
-			const float on = (m_skybox_enabled && m_skybox_mode == SkyboxMode::Gradient) ? 1.0f : 0.0f;
+			const float on = (m_skybox_enabled && (m_skybox_mode == SkyboxMode::Gradient || m_skybox_mode == SkyboxMode::Texture)) ? 1.0f : 0.0f;
 			f.env_sky = { m_sky_color.x, m_sky_color.y, m_sky_color.z, on };
 			f.env_horizon = { m_horizon_color.x, m_horizon_color.y, m_horizon_color.z, 0.0f };
 			f.env_ground = { m_ground_color.x, m_ground_color.y, m_ground_color.z, 0.0f };
