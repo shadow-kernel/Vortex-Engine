@@ -158,6 +158,96 @@ namespace VortexEditor.Claude.Tools
             return Info(st);
         }
 
+        // ------------------------------------------------------------------ weather
+
+        /// <summary>A weather preset: the air, the sun, the sky's exposure, the wind and which dust effects run. The Open World
+        /// template's Weather.cs script blends the same presets at runtime; this applies them in the editor.</summary>
+        public sealed class WeatherPreset
+        {
+            public string Name;
+            public float FogDensity, FogHeightY, FogFalloff; public float[] FogColor;
+            public float SunIntensity; public float[] SunColor;
+            public float SkyExposure, Ambient, Wind;
+            public bool Haze, Storm;
+            public string Sky; public float SunPitch, SunYaw;   // the HDRI of the preset and where its sun is (tools/hdri-analyze.py)
+            public float[] SkyTop, SkyHorizon, SkyBottom;          // a gradient sky instead (a sandstorm has no blue sky)
+        }
+
+        public static readonly WeatherPreset[] WeatherPresets =
+        {
+            new WeatherPreset { Name = "clear",     FogDensity = 0.0012f, FogHeightY = -4f, FogFalloff = 0.03f,  FogColor = new[] { 0.80f, 0.74f, 0.64f }, SunIntensity = 4.2f, SunColor = new[] { 1f, 0.95f, 0.86f },  SkyExposure = 0.85f, Ambient = 1.2f,  Wind = 0.5f, Sky = "Assets/Skies/goegap_2k.hdr", SunPitch = 46.32f, SunYaw = -141.24f },
+            new WeatherPreset { Name = "haze",      FogDensity = 0.0032f, FogHeightY = 2f,  FogFalloff = 0.02f,  FogColor = new[] { 0.78f, 0.70f, 0.56f }, SunIntensity = 3.6f, SunColor = new[] { 1f, 0.90f, 0.76f },  SkyExposure = 0.78f, Ambient = 1.1f,  Wind = 1.1f, Haze = true, Sky = "Assets/Skies/goegap_2k.hdr", SunPitch = 46.32f, SunYaw = -141.24f },
+            new WeatherPreset { Name = "sandstorm", FogDensity = 0.012f,  FogHeightY = 12f, FogFalloff = 0.012f, FogColor = new[] { 0.74f, 0.58f, 0.38f }, SunIntensity = 2.4f, SunColor = new[] { 1f, 0.74f, 0.48f },  SkyExposure = 0.6f,  Ambient = 1.0f,  Wind = 2.6f, Haze = true, Storm = true, SunPitch = 46.32f, SunYaw = -141.24f, SkyTop = new[] { 0.62f, 0.50f, 0.36f }, SkyHorizon = new[] { 0.80f, 0.64f, 0.44f }, SkyBottom = new[] { 0.66f, 0.50f, 0.34f } },
+            new WeatherPreset { Name = "dusk",      FogDensity = 0.0022f, FogHeightY = -2f, FogFalloff = 0.025f, FogColor = new[] { 0.72f, 0.52f, 0.40f }, SunIntensity = 3.4f, SunColor = new[] { 1f, 0.64f, 0.38f },  SkyExposure = 1.5f,  Ambient = 0.8f,  Wind = 0.4f, Sky = "Assets/Skies/rogland_sunset_2k.hdr", SunPitch = 12.57f, SunYaw = -144.05f },
+        };
+
+        public static WeatherPreset FindWeather(string name)
+        {
+            foreach (var p in WeatherPresets) if (string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)) return p;
+            return null;
+        }
+
+        /// <summary>Apply a weather preset to the open scene in the editor: fog, the directional light, the Skybox exposure
+        /// and ambient, the foliage wind, and the "Weather Haze" / "Weather Sand" particle entities' preview.</summary>
+        public static void ApplyWeather(Scene scene, WeatherPreset p, float intensity)
+        {
+            var st = scene.Settings;
+            float k = Math.Max(0f, Math.Min(2f, intensity));
+            st.FogEnabled = true; st.FogDensity = p.FogDensity * k; st.FogHeightY = p.FogHeightY; st.FogHeightFalloff = p.FogFalloff;
+            st.FogR = p.FogColor[0]; st.FogG = p.FogColor[1]; st.FogB = p.FogColor[2];
+            st.Apply();
+            foreach (var e in SceneModel.All(scene))
+            {
+                var l = e.GetComponent<Light>();
+                if (l != null && l.LightType == LightType.Directional)
+                {
+                    l.Intensity = p.SunIntensity; l.ColorR = p.SunColor[0]; l.ColorG = p.SunColor[1]; l.ColorB = p.SunColor[2];
+                    if (e.Transform != null) e.Transform.LocalRotation = new Vector3(p.SunPitch, p.SunYaw, 0f);
+                }
+                var sky = e.GetComponent<Skybox>();
+                if (sky != null)
+                {
+                    sky.Exposure = p.SkyExposure; sky.AmbientIntensity = p.Ambient;
+                    if (!string.IsNullOrEmpty(p.Sky) && File.Exists(Path.Combine(ProjectData.Current.Path, p.Sky))) { sky.TexturePath = p.Sky; sky.SkyboxType = SkyboxType.Texture; }
+                    else if (p.SkyTop != null)
+                    {
+                        sky.SkyboxType = SkyboxType.Gradient;
+                        sky.TopColorR = p.SkyTop[0]; sky.TopColorG = p.SkyTop[1]; sky.TopColorB = p.SkyTop[2];
+                        sky.HorizonColorR = p.SkyHorizon[0]; sky.HorizonColorG = p.SkyHorizon[1]; sky.HorizonColorB = p.SkyHorizon[2];
+                        sky.BottomColorR = p.SkyBottom[0]; sky.BottomColorG = p.SkyBottom[1]; sky.BottomColorB = p.SkyBottom[2];
+                    }
+                }
+                var f = e.GetComponent<Editor.ECS.Components.Rendering.Foliage>();
+                if (f != null) { f.Wind = p.Wind * (0.5f + 0.5f * k); f.Touch(); }
+                var ps = e.GetComponent<ParticleSystem>();
+                if (ps != null && (e.Name == "Weather Haze" || e.Name == "Weather Sand"))
+                {
+                    bool on = e.Name == "Weather Haze" ? p.Haze : p.Storm;
+                    ps.PreviewInEditor = on; ps.PlayOnStart = on;   // the preview plays what would play on start; Weather.cs takes over in play
+                }
+            }
+            scene.IsDirty = true;
+        }
+
+        [McpServerTool(Name = "set_weather", Idempotent = true)]
+        [Description("Applies a weather preset to the scene in the editor — clear, haze, sandstorm or dusk: fog and height fog, the sun's intensity and colour, " +
+                     "the sky's exposure and ambient, the foliage wind, and the \"Weather Haze\" / \"Weather Sand\" dust effects (entities with a ParticleSystem " +
+                     "under the player, created by the Open World template). intensity scales the fog (0.5 light .. 2 heavy). At runtime the template's " +
+                     "Weather.cs blends the same presets (F6 / F7). One undo step.")]
+        public static object SetWeather(
+            [Description("clear | haze | sandstorm | dusk")] string preset,
+            [Description("0.5 .. 2 (default 1)")] float intensity = 1f,
+            [Description("Only report")] bool dry_run = false)
+        {
+            var scene = Scene();
+            var p = FindWeather(preset) ?? throw new ToolError("preset must be clear, haze, sandstorm or dusk.");
+            if (dry_run) return new { would_apply = p.Name, intensity };
+            ApplyWeather(scene, p, intensity);
+            ToolContext.UndoLabel = "weather " + p.Name;
+            Editor.Core.Viewport.EditorViewportSession.RequestResubmit();
+            return new { preset = p.Name, intensity, fog_density = p.FogDensity * intensity, sun = p.SunIntensity, wind = p.Wind, haze = p.Haze, storm = p.Storm };
+        }
+
         [McpServerTool(Name = "environment_info", ReadOnly = true, Idempotent = true)]
         [Description("The scene's environment settings (fog, SSAO, bloom, volumetrics, grading, vignette) and its sky and directional light.")]
         public static object EnvironmentInfo()

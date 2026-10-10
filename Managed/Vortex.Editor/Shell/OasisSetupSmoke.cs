@@ -165,6 +165,14 @@ namespace VortexEditor.Shell
                 rig.Transform.LocalPosition = new Vector3(24f, startY + 1.2f, -10f);
                 rig.Transform.LocalRotation = new Vector3(0f, -60f, 0f);
                 log.Log("oasis setup: the Tactical player rig stands on the strip between the lakes");
+                // the weather's dust effects travel with the player: a haze and a sandstorm emitter, off until a preset asks
+                foreach (var w in new[] { ("Weather Haze", "Assets/VFX/Dust_Haze.vfx"), ("Weather Sand", "Assets/VFX/Sandstorm.vfx") })
+                {
+                    var d = scene.CreateEntity(w.Item1);
+                    d.Transform.LocalPosition = new Vector3(0f, 2f, 0f);
+                    d.AddComponentDirect(new ParticleSystem(d) { VfxPath = w.Item2, PlayOnStart = false, PreviewInEditor = false });
+                    d.SetParent(rig);
+                }
             }
             else
             {
@@ -188,6 +196,11 @@ namespace VortexEditor.Shell
             FoliageService.MarkDirty(fol);
             FoliageService.Save(fol);
             log.Log("oasis setup: " + placed + " foliage instances in " + types.Count + " types");
+
+            // ---- the weather: a script that blends the presets (F6 / F7) and the wind loop it plays ----
+            var weather = scene.CreateEntity("Weather");
+            weather.AddComponentDirect(new Editor.ECS.Components.Audio.AudioSource(weather) { AudioClipPath = "Assets/Audio/wind_desert_loop.wav", Loop = true, PlayOnAwake = false, Volume = 0f, SpatialBlend = 0f });
+            weather.AddComponentDirect(new Script(weather, "Assets/Scripts/World/Weather.cs"));
 
             // ---- the air: warm haze that thins with height, a touch of bloom and AO, no vignette ----
             var st = scene.Settings;
@@ -455,11 +468,12 @@ namespace VortexEditor.Shell
             if (ter == null) { log.Log("oasis capture: no oasis in this scene — skipped"); return true; }
             var cam = EditorCameraController.Instance;
             float px = cam.PositionX, py = cam.PositionY, pz = cam.PositionZ, yaw0 = cam.Yaw, pitch0 = cam.Pitch;
-            bool gridWas = EditorViewportService.Instance.IsGridVisible;
+            bool gridWas = EditorViewportService.Instance.IsGridVisible, gizmosWere = EditorViewportService.Instance.AreGizmosVisible;
             try
             {
                 SelectionService.Instance.ClearSelection();
                 if (gridWas) EditorViewportService.Instance.ToggleGrid();   // no editor grid across the sky in the pictures
+                EditorViewportService.Instance.AreGizmosVisible = false;    // no light / particle icons either
                 // a fresh editor loads the 28 models after its first frames: wait until the vegetation draws
                 Look(cam, At(ter, 205f, 150f, 42f), new Vector3(0f, WaterLevel - 2f, -8f));
                 for (int i = 0; i < 80 && FoliageService.LastInstancesDrawn == 0; i++) { EditorViewportSession.RequestResubmit(); await Task.Delay(400); }
@@ -491,12 +505,30 @@ namespace VortexEditor.Shell
                 Look(cam, new Vector3(0f, 430f, 1f), new Vector3(0f, 0f, 0f));
                 await SmokeRegistry.Settle(800);
                 await CameraSkySmoke.Sample("oasis_top.bmp", 0.5, 0.5);
+                // the weather: the sandstorm and the dusk presets from the shore, then clear again
+                var storm = VortexEditor.Claude.Tools.EnvironmentTools.FindWeather("sandstorm");
+                var dusk = VortexEditor.Claude.Tools.EnvironmentTools.FindWeather("dusk");
+                var clear = VortexEditor.Claude.Tools.EnvironmentTools.FindWeather("clear");
+                if (storm != null && clear != null && dusk != null)
+                {
+                    VortexEditor.Claude.Tools.EnvironmentTools.ApplyWeather(scene, storm, 1f);
+                    Look(cam, At(ter, 30f, -4f, 1.8f), new Vector3(95f, WaterLevel + 2f, -60f));   // beside the player: the sand sheets run past
+                    await SmokeRegistry.Settle(3500);
+                    await CameraSkySmoke.Sample("oasis_sandstorm.bmp", 0.5, 0.5);
+                    VortexEditor.Claude.Tools.EnvironmentTools.ApplyWeather(scene, dusk, 1f);
+                    Look(cam, At(ter, 205f, 150f, 42f), new Vector3(0f, WaterLevel - 2f, -8f));
+                    await SmokeRegistry.Settle(1200);
+                    await CameraSkySmoke.Sample("oasis_dusk.bmp", 0.5, 0.5);
+                    VortexEditor.Claude.Tools.EnvironmentTools.ApplyWeather(scene, clear, 1f);
+                    EditorViewportSession.RequestResubmit();
+                }
                 log.Log("oasis capture: wide / shore / east lake / dunes / top captured; " + FoliageService.LastInstancesDrawn + " instances in the last frame, " + FoliageService.LastDrawCalls + " draws");
                 return true;
             }
             finally
             {
                 if (gridWas && !EditorViewportService.Instance.IsGridVisible) EditorViewportService.Instance.ToggleGrid();
+                EditorViewportService.Instance.AreGizmosVisible = gizmosWere;
                 cam.SetPositionAndRotation(px, py, pz, yaw0, pitch0);
                 EditorViewportSession.RequestResubmit();
             }
