@@ -389,8 +389,8 @@ namespace VortexEditor.Shell
                 specs.Add(new Spec { Type = types[k], Candidates = 0, X0 = ox0, Z0 = oz0, X1 = ox1, Z1 = oz1, Prob = (x, z, hw, ny) =>
                     hw < 0.8f || hw > 14f || ny < 0.85f || Proximity(x, z) > 1.2f ? 0f : 0.45f * grove(x + 50f, z - 30f) });
             }
-            specs.Add(new Spec { Type = types[9], Candidates = 500, X0 = -256f, Z0 = -256f, X1 = 256f, Z1 = 256f, Prob = (x, z, hw, ny) => hw < 0.5f || ny < 0.8f ? 0f : (Proximity(x, z) < 1.3f ? 0.5f : 0.07f) });
-            specs.Add(new Spec { Type = types[10], Candidates = 500, X0 = -256f, Z0 = -256f, X1 = 256f, Z1 = 256f, Prob = (x, z, hw, ny) => hw < 0.5f || ny < 0.8f ? 0f : (Proximity(x, z) < 1.3f ? 0.5f : 0.06f) });
+            specs.Add(new Spec { Type = types[9], Candidates = 220, X0 = -256f, Z0 = -256f, X1 = 256f, Z1 = 256f, Prob = (x, z, hw, ny) => hw < 0.5f || ny < 0.8f ? 0f : (Proximity(x, z) < 1.3f ? 0.5f : 0.07f) });
+            specs.Add(new Spec { Type = types[10], Candidates = 350, X0 = -256f, Z0 = -256f, X1 = 256f, Z1 = 256f, Prob = (x, z, hw, ny) => hw < 0.5f || ny < 0.8f ? 0f : (Proximity(x, z) < 1.3f ? 0.5f : 0.06f) });
             specs.Add(new Spec { Type = types[11], Candidates = 2500, X0 = -256f, Z0 = -256f, X1 = 256f, Z1 = 256f, Prob = (x, z, hw, ny) => hw < 0.4f || ny < 0.75f ? 0f : (Proximity(x, z) < 1.4f ? 0.55f : 0.12f) * grove(x * 1.5f, z * 1.5f) });
             specs.Add(new Spec { Type = types[12], Candidates = 500, X0 = -256f, Z0 = -256f, X1 = 256f, Z1 = 256f, Prob = (x, z, hw, ny) => hw < 0.6f || ny < 0.8f ? 0f : (Proximity(x, z) < 1.3f ? 0.35f : 0.08f) });
             // the desert plain: quiver trees, succulents, dead wood (not on the dune slip faces, not on the escarpment's face)
