@@ -487,6 +487,19 @@ namespace VortexEditor.Shell
             float px = cam.PositionX, py = cam.PositionY, pz = cam.PositionZ, yaw0 = cam.Yaw, pitch0 = cam.Pitch;
             bool gridWas = EditorViewportService.Instance.IsGridVisible, gizmosWere = EditorViewportService.Instance.AreGizmosVisible;
             bool playing = false;
+            var win = EditorCommands.Window;
+            double winW = win != null ? win.Width : 0, winH = win != null ? win.Height : 0;
+            if (win != null)
+            {
+                try
+                {
+                    var screen = win.Screens?.ScreenFromWindow(win) ?? win.Screens?.Primary;
+                    double sw = screen != null ? screen.WorkingArea.Width / screen.Scaling : 1600, sh = screen != null ? screen.WorkingArea.Height / screen.Scaling : 1000;
+                    win.Position = new Avalonia.PixelPoint(0, 0);
+                    win.Width = Math.Max(winW, Math.Min(sw, 2400)); win.Height = Math.Max(winH, Math.Min(sh, 1500));
+                }
+                catch { }
+            }
             try
             {
                 SelectionService.Instance.ClearSelection();
@@ -555,13 +568,8 @@ namespace VortexEditor.Shell
                         Editor.Core.Services.Decals.DecalService.Spawn(left ? "Assets/Materials/Decals/Footprint_Sand_L.vmat" : "Assets/Materials/Decals/Footprint_Sand_R.vmat",
                             new NVec3(fx, fy, fz), n, new NVec3(0.165f, 1.5f, 0.33f), 0f, yaw, 0.78f, 0.7f, 0.6f, 0.9f, 1, 0.5f, 70f, 1);
                     }
-                    {
-                        float tx = p0.X - 1.2f, tz = p0.Z + 2.5f, ty; NVec3 tn;
-                        if (TerrainService.TryHeight(ter, tx, tz, out ty) && TerrainService.TryNormal(ter, tx, tz, out tn))
-                            Editor.Core.Services.Decals.DecalService.Spawn("Assets/Materials/Decals/BulletHole_Concrete.vmat", new NVec3(tx, ty, tz), tn, new NVec3(0.6f, 1.5f, 0.6f), 0f, 0f, 1f, 0.2f, 0.2f, 1f, 0, 0.5f, 0f, 2);
-                    }
-                    log.Log("oasis capture: " + Editor.Core.Services.Decals.DecalService.SpawnedCount + " decals spawned for the footprint picture");
-                    Look(cam, At(ter, -16.5f, -62.5f, 1.5f), new Vector3(p0.X + dirX * 3f, p0.Y, p0.Z + dirZ * 3f));
+                    log.Log("oasis capture: " + Editor.Core.Services.Decals.DecalService.SpawnedCount + " footprints stamped for the picture");
+                    Look(cam, At(ter, -17.2f, -63.5f, 1.2f), new Vector3(p0.X + dirX * 2.5f, p0.Y, p0.Z + dirZ * 2.5f));
                     await SmokeRegistry.Settle(3000);
                     await CameraSkySmoke.Sample("oasis_footprints.bmp", 0.5, 0.5);
                     Editor.Core.Services.Decals.DecalService.Clear();
@@ -607,6 +615,7 @@ namespace VortexEditor.Shell
             finally
             {
                 if (playing) { EditorCommands.Stop(); await SmokeRegistry.Settle(600); }
+                if (win != null && winW > 0 && winH > 0) { try { win.Width = winW; win.Height = winH; } catch { } }
                 if (gridWas && !EditorViewportService.Instance.IsGridVisible) EditorViewportService.Instance.ToggleGrid();
                 EditorViewportService.Instance.AreGizmosVisible = gizmosWere;
                 cam.SetPositionAndRotation(px, py, pz, yaw0, pitch0);
