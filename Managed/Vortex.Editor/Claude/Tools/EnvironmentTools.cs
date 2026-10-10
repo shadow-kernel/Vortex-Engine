@@ -107,7 +107,7 @@ namespace VortexEditor.Claude.Tools
             [Description("Fog on / off")] bool? fog = null,
             [Description("Fog density (exp², per metre)")] float fog_density = -1f,
             [Description("Fog colour [r, g, b]")] float[] fog_color = null,
-            [Description("Height (m) up to which the fog is uniform")] float fog_height_y = float.NaN,
+            [Description("Height (m) up to which the fog is uniform")] float? fog_height_y = null,
             [Description("Height falloff per metre above it (0 = no height fog)")] float fog_height_falloff = -1f,
             [Description("SSAO on / off")] bool? ao = null,
             [Description("SSAO radius (m)")] float ao_radius = -1f,
@@ -119,10 +119,10 @@ namespace VortexEditor.Claude.Tools
             [Description("Volumetric density")] float volumetric_density = -1f,
             [Description("Volumetric sun strength (god rays)")] float volumetric_sun = -1f,
             [Description("Colour grading on / off")] bool? grading = null,
-            [Description("Grading exposure (stops, 0 = neutral)")] float exposure = float.NaN,
+            [Description("Grading exposure (stops, 0 = neutral)")] float? exposure = null,
             [Description("Grading contrast (1 = neutral)")] float contrast = -1f,
             [Description("Grading saturation (1 = neutral)")] float saturation = -1f,
-            [Description("Grading temperature (-1 cool .. 1 warm)")] float temperature = float.NaN,
+            [Description("Grading temperature (-1 cool .. 1 warm)")] float? temperature = null,
             [Description("Vignette on / off")] bool? vignette = null,
             [Description("Vignette intensity")] float vignette_intensity = -1f,
             [Description("Only report")] bool dry_run = false)
@@ -133,7 +133,7 @@ namespace VortexEditor.Claude.Tools
             if (fog.HasValue) st.FogEnabled = fog.Value;
             if (fog_density >= 0f) st.FogDensity = fog_density;
             if (fog_color != null && fog_color.Length >= 3) { st.FogR = fog_color[0]; st.FogG = fog_color[1]; st.FogB = fog_color[2]; }
-            if (!float.IsNaN(fog_height_y)) st.FogHeightY = fog_height_y;
+            if (fog_height_y.HasValue) st.FogHeightY = fog_height_y.Value;
             if (fog_height_falloff >= 0f) st.FogHeightFalloff = fog_height_falloff;
             if (ao.HasValue) st.AoEnabled = ao.Value;
             if (ao_radius >= 0f) st.AoRadius = ao_radius;
@@ -145,10 +145,10 @@ namespace VortexEditor.Claude.Tools
             if (volumetric_density >= 0f) st.VolumetricDensity = volumetric_density;
             if (volumetric_sun >= 0f) st.VolumetricSun = volumetric_sun;
             if (grading.HasValue) st.GradeEnabled = grading.Value;
-            if (!float.IsNaN(exposure)) st.Exposure = exposure;
+            if (exposure.HasValue) st.Exposure = exposure.Value;
             if (contrast >= 0f) st.Contrast = contrast;
             if (saturation >= 0f) st.Saturation = saturation;
-            if (!float.IsNaN(temperature)) st.Temperature = temperature;
+            if (temperature.HasValue) st.Temperature = temperature.Value;
             if (vignette.HasValue) st.VignetteEnabled = vignette.Value;
             if (vignette_intensity >= 0f) st.VignetteIntensity = vignette_intensity;
             st.Apply();
