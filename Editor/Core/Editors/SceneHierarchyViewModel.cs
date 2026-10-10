@@ -145,6 +145,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
         public ICommand CreateDecalCommand { get; }
         public ICommand CreateTerrainCommand { get; }
         public ICommand CreateFoliageCommand { get; }
+        public ICommand CreateWaterCommand { get; }
         #endregion
 
         #region UI Commands
@@ -198,6 +199,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             CreateDecalCommand = new RelayCommand(_ => CreateDecal());
             CreateTerrainCommand = new RelayCommand(_ => CreateTerrain());
             CreateFoliageCommand = new RelayCommand(_ => CreateFoliage());
+            CreateWaterCommand = new RelayCommand(_ => CreateWater());
 
             // UI
             CreateUICanvasCommand = new RelayCommand(_ => CreateUIElement("Canvas"));
@@ -448,6 +450,17 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             if (_selectedScene == null) return;
             var entity = new GameEntity(_selectedScene, "Foliage");
             entity.AddComponent(new Editor.ECS.Components.Rendering.Foliage(entity));
+            _selectedScene.AddEntity(entity);
+            SelectedEntity = entity;
+            SelectionService.Instance.RequestFocus(entity);
+        }
+
+        /// <summary>A 64 m body of water (#200) at the origin's height — lower it into a basin or raise the ground around it.</summary>
+        private void CreateWater()
+        {
+            if (_selectedScene == null) return;
+            var entity = new GameEntity(_selectedScene, "Water");
+            entity.AddComponent(new Editor.ECS.Components.Rendering.Water(entity));
             _selectedScene.AddEntity(entity);
             SelectedEntity = entity;
             SelectionService.Instance.RequestFocus(entity);

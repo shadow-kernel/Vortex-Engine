@@ -58,6 +58,7 @@ namespace VortexEditor.Panels.Inspector
                 case Editor.ECS.Components.Rendering.Decal _: return ("Image", "VxPinkBrush");
                 case Editor.ECS.Components.Rendering.Terrain _: return ("World", "VxGreenBrush");
                 case Editor.ECS.Components.Rendering.Foliage _: return ("Layers", "VxGreenBrush");
+                case Editor.ECS.Components.Rendering.Water _: return ("World", "VxTealBrush");
                 case AudioSource _: case AudioListener _: case ReverbZone _: return ("Audio", "VxGreenBrush");
                 case Animator _: case BoneAttachment _: case TwoBoneIk _: case HandPose _: case LookAtIk _: case FootIk _: return ("Bone", "VxPinkBrush");
                 default: return ("Gear", "VxTextSecondaryBrush");

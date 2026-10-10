@@ -52,6 +52,7 @@ namespace Editor.Core.Serialization
             typeof(Editor.ECS.Components.Rendering.Terrain),   // #124
             typeof(Editor.ECS.Components.Rendering.Foliage),   // #125
             typeof(Editor.ECS.Components.Rendering.FoliageType),
+            typeof(Editor.ECS.Components.Rendering.Water),     // #200
             
             // Lighting
             typeof(Light),

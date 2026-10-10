@@ -151,10 +151,12 @@ def fetch_texture(project, asset_id, res, size_m, log):
     name = info.get("name", asset_id)
     out_dir = os.path.join(project, "Assets", "Textures", asset_id)
     found = {}
+    lower = {k.lower(): k for k in files}   # Poly Haven spells the map keys "Diffuse", "nor_gl", "Rough", "AO", "Displacement"
     for slot, keys in MAP_KEYS.items():
         for k in keys:
-            if k in files:
-                fmt, entry = pick(files, k, res, ("jpg", "png"))
+            real = lower.get(k)
+            if real:
+                fmt, entry = pick(files, real, res, ("jpg", "png"))
                 if entry:
                     dest = os.path.join(out_dir, os.path.basename(entry["url"]))
                     download(entry["url"], dest, entry.get("size"))
@@ -177,7 +179,7 @@ def fetch_texture(project, asset_id, res, size_m, log):
     vmat = {
         "Name": asset_id, "Version": "2.0", "BaseColor": [1, 1, 1, 1],
         "Metallic": 0, "Roughness": 1 if "roughness" in found or "arm" in found else 0.85, "AmbientOcclusion": 1, "NormalStrength": 1, "HeightScale": 0.0,
-        "UseDirectXNormals": "nor_dx" in found.get("normal", "") or "nor_gl" not in found.get("normal", ""),
+        "UseDirectXNormals": "nor_dx" in found.get("normal", "").lower(),
         "EmissiveStrength": 0.0, "TwoSided": False, "BlendMode": "Opaque", "CastShadows": True, "ReceiveShadows": True,
         "AlbedoTexture": rel_tex(found["albedo"]),
         "UVTiling": [1, 1], "UVOffset": [0, 0], "RealWorldSize": [real, real],

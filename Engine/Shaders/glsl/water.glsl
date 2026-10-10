@@ -1,0 +1,190 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// Water shader (#200) — Vulkan twin of water.hlsl / water.metal for the custom material-shader route (one file, compiled
+// per stage with -DVORTEX_VERTEX_STAGE / -DVORTEX_FRAGMENT_STAGE). The surface mesh carries the ground depth in uv.x;
+// see water.hlsl for the per-material inputs.
+
+#define PI 3.14159265359
+#ifdef VORTEX_VERTEX_STAGE
+#define SET_UNIFORM 1
+#include "standard_common.glsl"
+#include "standard_vsout.glsl"
+
+layout(location = 0) in vec3 a_pos;
+layout(location = 1) in vec3 a_norm;
+layout(location = 2) in vec2 a_uv;
+layout(location = 3) in vec4 a_iw0;
+layout(location = 4) in vec4 a_iw1;
+layout(location = 5) in vec4 a_iw2;
+layout(location = 6) in vec4 a_iw3;
+
+void main()
+{
+	vec4 tint = vec4(1.0 + a_iw0.w, 1.0 + a_iw1.w, 1.0 + a_iw2.w, a_iw3.w);
+	mat4 world = mat4(vec4(a_iw0.xyz, 0.0), vec4(a_iw1.xyz, 0.0), vec4(a_iw2.xyz, 0.0), vec4(a_iw3.xyz, 1.0));
+	vec4 world_pos = world * vec4(a_pos, 1.0);
+	v_world_pos = world_pos.xyz;
+	gl_Position = frame.view_projection * world_pos;
+	mat3 world3 = mat3(a_iw0.xyz, a_iw1.xyz, a_iw2.xyz);
+	v_norm = normalize(world3 * a_norm);
+	v_uv = a_uv;
+	v_tangent = vec3(1.0, 0.0, 0.0);
+	v_bitangent = vec3(0.0, 0.0, 1.0);
+	v_tint = tint;
+}
+
+#else
+
+#define SET_UNIFORM 3
+#define VORTEX_NEED_PER_OBJECT
+#define VORTEX_NEED_LIGHTS
+#define VORTEX_VSOUT_IN
+#include "common.glsl"
+#include "standard_common.glsl"
+#include "standard_vsout.glsl"
+
+layout(location = 0) out vec4 o_color;
+
+layout(set = 2, binding = 0) uniform sampler2D       u_albedo;
+layout(set = 2, binding = 1) uniform sampler2D       u_normal;
+layout(set = 2, binding = 2) uniform sampler2D       u_metallic;
+layout(set = 2, binding = 3) uniform sampler2D       u_roughness;
+layout(set = 2, binding = 4) uniform sampler2D       u_ao;
+layout(set = 2, binding = 5) uniform sampler2D       u_height;
+layout(set = 2, binding = 6) uniform sampler2DShadow u_spot_shadow;
+layout(set = 2, binding = 7) uniform sampler2DShadow u_csm_shadow;
+layout(set = 2, binding = 8) uniform sampler2DShadow u_point_shadow;
+layout(set = 2, binding = 9) uniform sampler2D       u_ssao;
+
+float fog_optical_depth(float density, float height_y, float k, vec3 cam, vec3 world_pos)
+{
+	vec3 delta = world_pos - cam;
+	float dist = length(delta);
+	if (k <= 0.0) { float d = density * dist; return -log2(max(exp2(-d * d), 1e-6)); }
+	float ya = cam.y - height_y, yb = world_pos.y - height_y;
+	if (ya <= 0.0 && yb <= 0.0) return density * dist;
+	float t0 = 0.0, t1 = 1.0;
+	if (ya <= 0.0) t0 = -ya / (yb - ya);
+	else if (yb <= 0.0) t1 = ya / (ya - yb);
+	float above = (t1 - t0) * dist, below = dist - above;
+	float hya = max(ya, 0.0), hyb = max(yb, 0.0), dyv = hyb - hya;
+	float mean_density = abs(dyv) > 1e-3 ? (exp(-k * hya) - exp(-k * hyb)) / (k * dyv) : exp(-k * hya);
+	return density * (below + above * mean_density);
+}
+
+vec3 apply_fog(vec3 color, vec3 world_pos)
+{
+	if (frame.fog_density <= 0.0) return color;
+	float optical = fog_optical_depth(frame.fog_density, frame.fog_height_y, frame.fog_height_falloff, frame.camera_position, world_pos);
+	float f = 1.0 - exp2(-optical);
+	return mix(color, frame.fog_color, saturate(f));
+}
+
+float sample_cascade_shadow(vec3 wp)
+{
+	int count = int(lights.dir_shadow_params.z);
+	if (count <= 0) return 1.0;
+	for (int c = 0; c < 3; ++c)
+	{
+		if (c >= count) break;
+		vec4 sp = lights.cascade_vp[c] * vec4(wp, 1.0);
+		if (sp.w <= 0.0) continue;
+		vec3 ndc = sp.xyz / sp.w;
+		vec2 suv = ndc.xy * vec2(0.5, -0.5) + 0.5;
+		if (min(suv.x, suv.y) < 0.02 || max(suv.x, suv.y) > 0.98 || ndc.z > 1.0 || ndc.z < 0.0) continue;
+		float t = frame.shadow_map_texel;
+		suv = clamp(suv, vec2(t * 1.5), vec2(1.0 - t * 1.5)) * 0.5;
+		suv += vec2((c & 1) != 0 ? 0.5 : 0.0, (c & 2) != 0 ? 0.5 : 0.0);
+		float bias = lights.dir_shadow_params.y * (1.0 + float(c));
+		float atlas_texel = t * 0.5;
+		float lit = 0.0;
+		for (int y = -1; y <= 1; ++y)
+			for (int x = -1; x <= 1; ++x)
+				lit += texture(u_csm_shadow, vec3(suv + vec2(float(x), float(y)) * atlas_texel, ndc.z - bias));
+		return mix(1.0, lit / 9.0, saturate(lights.dir_shadow_params.x));
+	}
+	return 1.0;
+}
+
+vec3 wave_normal(vec2 p, float t, float height)
+{
+	vec2 d1 = normalize(vec2(1.0, 0.6)), d2 = normalize(vec2(-0.7, 1.0)), d3 = normalize(vec2(0.3, -1.0)), d4 = normalize(vec2(-1.0, -0.4));
+	float a1 = 0.55, a2 = 0.35, a3 = 0.22, a4 = 0.10;
+	float f1 = 1.0, f2 = 1.7, f3 = 2.9, f4 = 7.3;
+	float s1 = 0.9, s2 = 1.3, s3 = 1.9, s4 = 3.1;
+	float c1 = cos(dot(d1, p) * f1 + t * s1), c2 = cos(dot(d2, p) * f2 + t * s2), c3 = cos(dot(d3, p) * f3 + t * s3), c4 = cos(dot(d4, p) * f4 + t * s4);
+	float dx = a1 * f1 * d1.x * c1 + a2 * f2 * d2.x * c2 + a3 * f3 * d3.x * c3 + a4 * f4 * d4.x * c4;
+	float dz = a1 * f1 * d1.y * c1 + a2 * f2 * d2.y * c2 + a3 * f3 * d3.y * c3 + a4 * f4 * d4.y * c4;
+	return normalize(vec3(-dx * height, 1.0, -dz * height));
+}
+
+float hash2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float noise2(vec2 p)
+{
+	vec2 i = floor(p), f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	return mix(mix(hash2(i), hash2(i + vec2(1, 0)), f.x), mix(hash2(i + vec2(0, 1)), hash2(i + vec2(1, 1)), f.x), f.y);
+}
+
+void main()
+{
+	float depth = max(v_uv.x, 0.0);
+	vec3 deep = obj.base_color.rgb, shallow = v_tint.rgb;
+	float reflection = saturate(obj.base_color.a);
+	float absorb = max(obj.normal_strength, 0.1);
+	float wave_scale = max(obj.uv_tiling.x, 0.1), wave_speed = max(obj.uv_tiling.y, 0.0);
+	float t = obj.height_scale * wave_speed;
+	float foam_width = obj.emissive_strength;
+	float rough = clamp(obj.roughness, 0.01, 1.0);
+	vec3 cam_pos = frame.camera_position;
+
+	vec2 p = v_world_pos.xz / wave_scale;
+	vec3 N = wave_normal(p, t, obj.alpha_cutoff);
+	vec3 V = normalize(cam_pos - v_world_pos);
+	float NdotV = max(dot(N, V), 0.0);
+	float fresnel = 0.02 + 0.98 * pow(1.0 - NdotV, 5.0);
+
+	float body = 1.0 - exp(-depth / absorb);
+	vec3 water = mix(shallow, deep, body);
+
+	vec3 sky_color = frame.env_sky.w > 0.5 ? frame.env_sky.rgb : vec3(0.5, 0.55, 0.7);
+	vec3 horizon = frame.env_sky.w > 0.5 ? frame.env_horizon.rgb : vec3(0.6, 0.62, 0.68);
+	vec3 L = normalize(-frame.light_direction);
+	float shadow = sample_cascade_shadow(v_world_pos);
+	vec3 sun = frame.light_color * frame.directional_intensity * shadow;
+	vec3 lit = water * (horizon * frame.ambient_strength * 1.2 + sun * (0.12 + 0.28 * saturate(dot(N, L))));
+
+	vec3 R = reflect(-V, N);
+	vec3 sky_refl;
+	if (frame.env_sky.w > 0.5)
+		sky_refl = R.y >= 0.0 ? mix(frame.env_horizon.rgb, frame.env_sky.rgb, pow(saturate(R.y), 0.5)) : mix(frame.env_horizon.rgb, frame.env_ground.rgb, pow(saturate(-R.y), 0.6));
+	else
+		sky_refl = mix(horizon, sky_color, saturate(R.y)) * 0.8;
+	sky_refl *= max(frame.ambient_strength, 0.3) * 1.3;
+	vec3 color = mix(lit, sky_refl, fresnel * reflection);
+
+	vec3 H = normalize(V + L);
+	float spec_pow = mix(1400.0, 24.0, rough);
+	float spec = pow(max(dot(N, H), 0.0), spec_pow) * (spec_pow + 8.0) / (8.0 * PI) * 0.06;
+	color += sun * spec * mix(0.4, 1.0, fresnel);
+
+	float foam = 0.0;
+	if (foam_width > 0.0)
+	{
+		float n = noise2(p * 6.0 + vec2(t * 0.35, -t * 0.2)) * 0.6 + noise2(p * 17.0 - vec2(t * 0.5, t * 0.3)) * 0.4;
+		float band = saturate(1.0 - depth / foam_width);
+		foam = saturate(band * band * (0.35 + 0.9 * n) * 1.4);
+	}
+	vec3 foam_color = vec3(0.92, 0.94, 0.92) * (horizon * frame.ambient_strength + sun * 0.9);
+	color = mix(color, foam_color, foam * 0.85);
+
+	float alpha = saturate(depth / 0.3) * mix(0.5, 0.97, saturate(depth / absorb));
+	alpha = max(alpha, foam * 0.95 * saturate(depth / 0.08));
+
+	color = apply_fog(color, v_world_pos);
+	color = aces_tonemap(color);
+	color = pow(max(color, 0.0), vec3(1.0 / 2.2));
+	o_color = vec4(color, alpha);
+}
+
+#endif
