@@ -538,12 +538,28 @@ namespace VortexEditor.Shell
                     VortexEditor.Claude.Tools.EnvironmentTools.ApplyWeather(scene, clear, 1f);
                     EditorViewportSession.RequestResubmit();
                 }
+                // one of the infected up close, in the editor: a prefab instance on the shore, removed again after the picture
+                GameEntity shown = null;
+                try { shown = PrefabService.Instance.InstantiatePrefab("Assets/Prefabs/Zombie.ventity", scene, null, false); } catch { }
+                if (shown != null)
+                {
+                    var spot = At(ter, -10f, -52f, 0f);
+                    shown.Transform.LocalPosition = spot;
+                    shown.Transform.LocalRotation = new Vector3(0f, 200f, 0f);
+                    EditorViewportSession.RequestResubmit();
+                    await SmokeRegistry.Settle(1500);
+                    Look(cam, At(ter, spot.X + 1.2f, spot.Z - 4.2f, 1.6f), new Vector3(spot.X, spot.Y + 1.1f, spot.Z));   // eye height over the ground there
+                    await SmokeRegistry.Settle(800);
+                    await CameraSkySmoke.Sample("oasis_infected.bmp", 0.5, 0.5);
+                    EditorCommands.DeleteEntities(new List<GameEntity> { shown });
+                    EditorViewportSession.RequestResubmit();
+                }
                 // the infected in play: the director spawns its first wave a moment after Start
                 var player = TemplateSetupSmoke.Find(scene, e => e.Name == "Player" || e.Tag == "Player");
                 if (player != null && NavigationService.Available)
                 {
                     EditorCommands.Play(); playing = true;
-                    await SmokeRegistry.Settle(4500);
+                    await SmokeRegistry.Settle(6500);    // the first wave spawns ahead of the player ~1.5 s in and sprints at them
                     GameEntity nearest = null; float best = float.MaxValue;
                     var pp = TransformMath.WorldPosition(player);
                     foreach (var e in scene.Entities)
@@ -553,14 +569,8 @@ namespace VortexEditor.Shell
                         if (d < best) { best = d; nearest = e; }
                     }
                     int count = 0; foreach (var e in scene.Entities) if (e != null && e.Name.StartsWith("Zombie", StringComparison.Ordinal) && e.GetComponent<Script>() != null) count++;
-                    if (nearest != null)
-                    {
-                        var zp = TransformMath.WorldPosition(nearest);
-                        var dir = new Vector3(pp.X - zp.X, 0f, pp.Z - zp.Z); float len = (float)Math.Sqrt(dir.X * dir.X + dir.Z * dir.Z); if (len < 0.01f) { dir = new Vector3(0f, 0f, 1f); len = 1f; }
-                        Look(cam, new Vector3(zp.X + dir.X / len * 6f, zp.Y + 2.2f, zp.Z + dir.Z / len * 6f), new Vector3(zp.X, zp.Y + 1.2f, zp.Z));
-                        await SmokeRegistry.Settle(600);
-                        await CameraSkySmoke.Sample("oasis_zombie.bmp", 0.5, 0.5);
-                    }
+                    // the game camera renders in play: the infected come into the player's view on their own
+                    await CameraSkySmoke.Sample("oasis_zombie.bmp", 0.5, 0.5);
                     log.Log("oasis capture: " + count + " zombies in play, nearest " + (nearest != null ? best.ToString("0") + " m from the player" : "none"));
                 }
                 log.Log("oasis capture: wide / shore / east lake / dunes / top captured; " + FoliageService.LastInstancesDrawn + " instances in the last frame, " + FoliageService.LastDrawCalls + " draws");
