@@ -1053,6 +1053,15 @@ namespace Editor.Core.Services.AI
                     if (e.Children != null) foreach (var c in e.Children) Visit(c);
                     return;
                 }
+                var waterComp = e.GetComponent<Editor.ECS.Components.Rendering.Water>();
+                if (waterComp != null && waterComp.IsEnabled)
+                {
+                    // #200: the deep part of a lake blocks the navmesh — agents wade the shallows, not the lake bed
+                    var deep = Editor.Core.Services.Water.WaterService.DeepBoxes(e);
+                    foreach (var b in deep)
+                        AddBox(SysMat.Identity, new SysVec(b.centre.X, b.centre.Y, b.centre.Z), new SysVec(b.half.X, b.half.Y, b.half.Z), SysQuat.Identity);
+                    if (deep.Count > 0) _contributors.Add(e);
+                }
                 var foliageComp = e.GetComponent<Editor.ECS.Components.Rendering.Foliage>();
                 if (foliageComp != null && foliageComp.IsEnabled)
                 {
