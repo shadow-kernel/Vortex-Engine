@@ -7,6 +7,7 @@ using Editor.Core.Data;
 using Editor.Core.Editing;
 using Editor.Core.Foliage;
 using Editor.Core.Services;
+using Editor.Core.Services.AI;
 using Editor.Core.Services.Foliage;
 using Editor.Core.Services.Terrain;
 using Editor.Core.Terrain;
@@ -202,6 +203,10 @@ namespace VortexEditor.Shell
             weather.AddComponentDirect(new Editor.ECS.Components.Audio.AudioSource(weather) { AudioClipPath = "Assets/Audio/wind_desert_loop.wav", Loop = true, PlayOnAwake = false, Volume = 0f, SpatialBlend = 0f });
             weather.AddComponentDirect(new Script(weather, "Assets/Scripts/World/Weather.cs"));
 
+            // ---- the infected: a director that spawns them on the navmesh around the player (Z calls a wave) ----
+            var zombies = scene.CreateEntity("Zombies");
+            zombies.AddComponentDirect(new Script(zombies, "Assets/Scripts/AI/ZombieDirector.cs"));
+
             // ---- the air: warm haze that thins with height, a touch of bloom and AO, no vignette ----
             var st = scene.Settings;
             st.FogEnabled = true; st.FogDensity = 0.0021f; st.FogHeightY = -4f; st.FogHeightFalloff = 0.025f;
@@ -210,6 +215,16 @@ namespace VortexEditor.Shell
             st.BloomEnabled = true; st.BloomThreshold = 0.95f; st.BloomIntensity = 0.3f; st.BloomScatter = 0.6f;
             st.VolumetricEnabled = false;
             st.Apply();
+
+            // ---- the navmesh: the whole oasis walkable for the zombies (the terrain is ground, the trunks and rocks obstacles) ----
+            if (NavigationService.Available)
+            {
+                var t0 = DateTime.UtcNow;
+                var bake = NavigationService.BakeScene(scene, NavigationService.SettingsFor(scene), save: true, load: true);
+                if (bake.Success) log.Log("oasis setup: navmesh " + bake.Stats.PolyCount + " polygons in " + (DateTime.UtcNow - t0).TotalSeconds.ToString("0") + " s");
+                else log.LogWarning("oasis setup: navmesh bake failed — " + bake.Message);
+            }
+            else log.LogWarning("oasis setup: no Recast in this build — the zombies have no navmesh");
 
             SceneService.Instance.SaveScene(scene);
             ProjectService.Instance.SaveProject(project);
@@ -469,6 +484,7 @@ namespace VortexEditor.Shell
             var cam = EditorCameraController.Instance;
             float px = cam.PositionX, py = cam.PositionY, pz = cam.PositionZ, yaw0 = cam.Yaw, pitch0 = cam.Pitch;
             bool gridWas = EditorViewportService.Instance.IsGridVisible, gizmosWere = EditorViewportService.Instance.AreGizmosVisible;
+            bool playing = false;
             try
             {
                 SelectionService.Instance.ClearSelection();
@@ -522,11 +538,37 @@ namespace VortexEditor.Shell
                     VortexEditor.Claude.Tools.EnvironmentTools.ApplyWeather(scene, clear, 1f);
                     EditorViewportSession.RequestResubmit();
                 }
+                // the infected in play: the director spawns its first wave a moment after Start
+                var player = TemplateSetupSmoke.Find(scene, e => e.Name == "Player" || e.Tag == "Player");
+                if (player != null && NavigationService.Available)
+                {
+                    EditorCommands.Play(); playing = true;
+                    await SmokeRegistry.Settle(4500);
+                    GameEntity nearest = null; float best = float.MaxValue;
+                    var pp = TransformMath.WorldPosition(player);
+                    foreach (var e in scene.Entities)
+                    {
+                        if (e == null || !e.Name.StartsWith("Zombie", StringComparison.Ordinal) || e.GetComponent<Script>() == null) continue;
+                        var zp = TransformMath.WorldPosition(e); float d = TemplateSetupSmoke.Dist(zp, pp);
+                        if (d < best) { best = d; nearest = e; }
+                    }
+                    int count = 0; foreach (var e in scene.Entities) if (e != null && e.Name.StartsWith("Zombie", StringComparison.Ordinal) && e.GetComponent<Script>() != null) count++;
+                    if (nearest != null)
+                    {
+                        var zp = TransformMath.WorldPosition(nearest);
+                        var dir = new Vector3(pp.X - zp.X, 0f, pp.Z - zp.Z); float len = (float)Math.Sqrt(dir.X * dir.X + dir.Z * dir.Z); if (len < 0.01f) { dir = new Vector3(0f, 0f, 1f); len = 1f; }
+                        Look(cam, new Vector3(zp.X + dir.X / len * 6f, zp.Y + 2.2f, zp.Z + dir.Z / len * 6f), new Vector3(zp.X, zp.Y + 1.2f, zp.Z));
+                        await SmokeRegistry.Settle(600);
+                        await CameraSkySmoke.Sample("oasis_zombie.bmp", 0.5, 0.5);
+                    }
+                    log.Log("oasis capture: " + count + " zombies in play, nearest " + (nearest != null ? best.ToString("0") + " m from the player" : "none"));
+                }
                 log.Log("oasis capture: wide / shore / east lake / dunes / top captured; " + FoliageService.LastInstancesDrawn + " instances in the last frame, " + FoliageService.LastDrawCalls + " draws");
                 return true;
             }
             finally
             {
+                if (playing) { EditorCommands.Stop(); await SmokeRegistry.Settle(600); }
                 if (gridWas && !EditorViewportService.Instance.IsGridVisible) EditorViewportService.Instance.ToggleGrid();
                 EditorViewportService.Instance.AreGizmosVisible = gizmosWere;
                 cam.SetPositionAndRotation(px, py, pz, yaw0, pitch0);
