@@ -269,6 +269,7 @@ namespace vortex::graphics::sdlgpu
 			m_sky_color = sky; m_horizon_color = horizon; m_ground_color = ground;
 		}
 		void set_skybox_solid_color(const DirectX::XMFLOAT3& color) { m_sky_color = m_horizon_color = m_ground_color = color; }
+		void set_sky_light(const float* sh27, bool on) { if (sh27) memcpy(m_sky_sh, sh27, sizeof(m_sky_sh)); m_sky_sh_on = on && sh27 != nullptr; }
 		void set_skybox_sun(const DirectX::XMFLOAT3& direction, const DirectX::XMFLOAT3& color, float intensity)
 		{
 			m_sun_direction = direction; m_sun_color = color; m_sun_intensity = intensity;
@@ -421,8 +422,15 @@ namespace vortex::graphics::sdlgpu
 			DirectX::XMFLOAT4 dir_shadow_params;
 			DirectX::XMFLOAT4 point_shadows[2];
 			DirectX::XMFLOAT4X4 point_face_vp[12];
+			// sky light (IBL step 1) @2304: SH9 irradiance per channel, rgb = coefficient, w of [0] = on
+			DirectX::XMFLOAT4 sky_sh[9];
 		};
-		static_assert(sizeof(LightBufferData) == 2304, "LightBufferData must byte-match standard.metal");
+		static_assert(sizeof(LightBufferData) == 2448, "LightBufferData must byte-match standard.metal");
+		// the sky light's SH9 into the light buffer's tail (rgb = coefficient k, w of [0] = on)
+		void fill_sky_light(LightBufferData& L) const
+		{
+			for (int k = 0; k < 9; ++k) L.sky_sh[k] = { m_sky_sh[k * 3], m_sky_sh[k * 3 + 1], m_sky_sh[k * 3 + 2], (k == 0 && m_sky_sh_on) ? 1.0f : 0.0f };
+		}
 
 		struct SkinParams { u32 bone_base; u32 padding[3]; };
 		struct GridConstants
@@ -800,6 +808,8 @@ namespace vortex::graphics::sdlgpu
 		SkyboxMode m_skybox_mode{ SkyboxMode::Gradient };
 		id::id_type m_sky_texture{ id::invalid_id };
 		float m_sky_exposure{ 1.0f };
+		float m_sky_sh[27]{};
+		bool m_sky_sh_on{ false };
 		float m_sky_rotation{ 0.0f };
 		DirectX::XMFLOAT3 m_sky_color{ 0.3f, 0.5f, 0.85f };
 		DirectX::XMFLOAT3 m_horizon_color{ 0.7f, 0.8f, 0.9f };

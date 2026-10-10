@@ -334,6 +334,7 @@ namespace vortex::graphics::dx12
 			const DirectX::XMFLOAT3& horizon_color,
 			const DirectX::XMFLOAT3& ground_color);
 		void set_skybox_solid_color(const DirectX::XMFLOAT3& color);
+		void set_sky_light(const float* sh27, bool on) { if (sh27) memcpy(m_sky_sh, sh27, sizeof(m_sky_sh)); m_sky_sh_on = on && sh27 != nullptr; }
 		void set_skybox_sun(const DirectX::XMFLOAT3& direction, const DirectX::XMFLOAT3& color, float intensity);
 
 		// Camera projection settings
@@ -730,6 +731,9 @@ namespace vortex::graphics::dx12
 		// Light constant buffer
 		ComPtr<ID3D12Resource> m_light_cb;
 		void* m_light_cb_mapped{ nullptr };
+		// Sky light (image-based lighting, step 1): SH9 irradiance per channel, appended to the light buffer @2304
+		float m_sky_sh[27]{};
+		bool m_sky_sh_on{ false };
 
 		// Render queue - double buffered for thread safety
 		std::vector<RenderItem> m_render_queue;

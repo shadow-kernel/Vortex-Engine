@@ -132,6 +132,7 @@ layout(set = SET_UNIFORM, binding = 2, std140) uniform LightBufferBlock
 	vec4       dir_shadow_params;
 	vec4       point_shadows[2];
 	mat4       point_face_vp[12];
+	vec4       sky_sh[9];                       // @2304  sky light: SH9 irradiance per channel, w of [0] = on
 } lights;
 
 layout(location = 0) in vec3 v_world_pos;
@@ -304,6 +305,30 @@ void clamp_grad(inout vec2 dx, inout vec2 dy)
 	if (gl > max_g) { float s = max_g / gl; dx *= s; dy *= s; }
 }
 
+// Sky light (IBL step 1): E(n)/π from the SH9 irradiance baked off the sky picture (cosine-lobe weights 1, 2/3, 1/4)
+vec3 sky_irradiance(vec3 n)
+{
+	float x = n.x, y = n.y, z = n.z;
+	vec3 e = lights.sky_sh[0].rgb * 0.282095;
+	e += (2.0 / 3.0) * (lights.sky_sh[1].rgb * (0.488603 * y) + lights.sky_sh[2].rgb * (0.488603 * z) + lights.sky_sh[3].rgb * (0.488603 * x));
+	e += 0.25 * (lights.sky_sh[4].rgb * (1.092548 * x * y) + lights.sky_sh[5].rgb * (1.092548 * y * z) + lights.sky_sh[6].rgb * (0.315392 * (3.0 * z * z - 1.0))
+	           + lights.sky_sh[7].rgb * (1.092548 * x * z) + lights.sky_sh[8].rgb * (0.546274 * (x * x - y * y)));
+	return max(e, vec3(0.0));
+}
+
+// Macro variation: a 2-octave value noise over the world XZ scales the blended albedo by ±9 % (no extra samples)
+float macro_hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float macro_noise(vec2 p)
+{
+	vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+	return mix(mix(macro_hash(i), macro_hash(i + vec2(1, 0)), f.x), mix(macro_hash(i + vec2(0, 1)), macro_hash(i + vec2(1, 1)), f.x), f.y);
+}
+float macro_variation(vec2 world_xz)
+{
+	float n = 0.65 * macro_noise(world_xz * 0.025) + 0.35 * macro_noise(world_xz * 0.11 + 7.3);
+	return 0.91 + 0.18 * n;
+}
+
 void main()
 {
 	vec3 cam_pos = frame.camera_position;
@@ -333,6 +358,7 @@ void main()
 		if (obj.has_roughness_texture != 0u) rough += wi * textureGrad(u_roughness, a, dx, dy).r;
 	}
 	albedo *= v_tint.rgb;
+	albedo *= macro_variation(v_world_pos.xz);
 	float roughness = max(obj.has_roughness_texture != 0u ? rough : obj.roughness, 0.04);
 	float metallic = 0.0;
 	float ao = obj.ao;
@@ -431,6 +457,7 @@ void main()
 	vec3 ground_color = vec3(0.15, 0.15, 0.18);
 	float sky_amount = dot(N, vec3(0.0, 1.0, 0.0)) * 0.5 + 0.5;
 	vec3 hemisphere = mix(ground_color, sky_color, sky_amount);
+	if (lights.sky_sh[0].w > 0.5) hemisphere = sky_irradiance(N);   // the real sky: blue from above, the ground's bounce from below
 	vec3 ambient = hemisphere * frame.ambient_strength * albedo * ao;
 
 	vec3 R = reflect(-V, N);

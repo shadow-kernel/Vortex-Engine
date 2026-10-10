@@ -134,6 +134,9 @@ cbuffer LightBuffer : register(b2)
     // point lights x 6 perspective faces in the t9 atlas (4x3 grid of 1024² tiles).
     float4 PointShadows[2];              // x = point-light index (-1 = unused), y strength, z bias, w unused
     row_major float4x4 PointFaceVP[12];  // shadow slot p, face f (+X,-X,+Y,-Y,+Z,-Z) -> [p*6+f]
+    // Sky light (IBL step 1) — appended @2304 (buffer grown to 2448 / 2560 aligned): SH9 irradiance per channel,
+    // rgb = coefficient k (basis order Y00, Y1-1, Y10, Y11, Y2-2, Y2-1, Y20, Y21, Y22), w of [0] = 1 when set.
+    float4 SkySh[9];
 };
 
 Texture2D AlbedoTexture    : register(t0);
@@ -375,6 +378,19 @@ void CotangentFrame(float3 N, float3 p, float2 uv, inout float3 T, inout float3 
     B = b * k;
 }
 
+// Sky light (IBL step 1): the diffuse radiance a surface facing n receives from the sky, from the SH9 irradiance baked
+// off the scene's sky picture — E(n)/π with the cosine-lobe weights (1, 2/3, 1/4 per band). Normalised by the baker to
+// the old hemisphere level, so AmbientStrength keeps its meaning and the picture adds colour and direction.
+float3 SkyIrradiance(float3 n)
+{
+    float x = n.x, y = n.y, z = n.z;
+    float3 e = SkySh[0].rgb * 0.282095;
+    e += (2.0 / 3.0) * (SkySh[1].rgb * (0.488603 * y) + SkySh[2].rgb * (0.488603 * z) + SkySh[3].rgb * (0.488603 * x));
+    e += 0.25 * (SkySh[4].rgb * (1.092548 * x * y) + SkySh[5].rgb * (1.092548 * y * z) + SkySh[6].rgb * (0.315392 * (3.0 * z * z - 1.0))
+               + SkySh[7].rgb * (1.092548 * x * z) + SkySh[8].rgb * (0.546274 * (x * x - y * y)));
+    return max(e, 0.0);
+}
+
 float4 PSMain(PS_IN input) : SV_TARGET
 {
     // Texture repeat scale: multiply UVs so a small tiling texture repeats across a large surface instead of being
@@ -551,6 +567,7 @@ float4 PSMain(PS_IN input) : SV_TARGET
     float3 groundColor = float3(0.15, 0.15, 0.18);
     float skyAmount = dot(N, float3(0, 1, 0)) * 0.5 + 0.5;
     float3 hemisphereLight = lerp(groundColor, skyColor, skyAmount);
+    if (SkySh[0].w > 0.5) hemisphereLight = SkyIrradiance(N);   // the real sky: blue from above, the ground's bounce from below
 
     float3 ambient = hemisphereLight * AmbientStrength * albedo * ao * (1.0 - metallic);
 
