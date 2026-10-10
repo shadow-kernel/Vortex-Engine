@@ -49,6 +49,7 @@ namespace Editor.Core.Serialization
             typeof(Skybox),
             typeof(ParticleSystem),   // VFX #116
             typeof(Decal),            // #120
+            typeof(Editor.ECS.Components.Rendering.Terrain),   // #124
             
             // Lighting
             typeof(Light),

@@ -15,6 +15,7 @@ set(VORTEX_API_SOURCES
 	Api/ImporterApi.cpp
 	Api/InputApi.cpp
 	Api/DecalApi.cpp
+	Api/TerrainApi.cpp
 	Api/LightingApi.cpp
 	Api/MeshRendererApi.cpp
 	Api/ParticleApi.cpp

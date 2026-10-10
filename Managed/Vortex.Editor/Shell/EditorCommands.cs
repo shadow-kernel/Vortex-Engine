@@ -585,6 +585,7 @@ namespace VortexEditor.Shell
         public static GameEntity CreateAudioSource(Scene scene = null) => RunVm(scene, Vm.CreateAudioSourceCommand);
         public static GameEntity CreateReverbZone(Scene scene = null) => RunVm(scene, Vm.CreateReverbZoneCommand);
         public static GameEntity CreateDecal(Scene scene = null) => RunVm(scene, Vm.CreateDecalCommand);
+        public static GameEntity CreateTerrain(Scene scene = null) => RunVm(scene, Vm.CreateTerrainCommand);
         public static GameEntity CreateUI(string kind, Scene scene = null)
         {
             switch (kind)

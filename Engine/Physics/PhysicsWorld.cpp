@@ -36,6 +36,7 @@ JPH_SUPPRESS_WARNINGS
 #include <Jolt/Physics/Collision/Shape/CompoundShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/CylinderShape.h>
+#include <Jolt/Physics/Collision/Shape/HeightFieldShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/OffsetCenterOfMassShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
@@ -1439,6 +1440,30 @@ namespace vortex::physics {
 			0.05f, 0.05f, is_trigger, layer, 0, 1.0f);
 	}
 
+	u32 create_heightfield_body(u64 entity_id, const f32* heights, s32 sample_count,
+		const f32* pos, const f32* quat, f32 cell_size, f32 friction, f32 restitution, s32 layer)
+	{
+		if (!g_world || !heights || sample_count < 2 || !(cell_size > 0.0f)) return 0;
+
+		// Jolt wants sample_count to be a multiple of the block size (and at least two blocks). A terrain with 2^k + 1
+		// samples (257, 513, ...) is padded by one row / column of "no collision" samples — the padding never collides.
+		const u32 block = 2;
+		const u32 n = (u32)sample_count;
+		u32 padded = (n + block - 1) / block * block;
+		if (padded < 2 * block) padded = 2 * block;
+		std::vector<float> samples((size_t)padded * padded, JPH::HeightFieldShapeConstants::cNoCollisionValue);
+		for (u32 z = 0; z < n; ++z)
+			for (u32 x = 0; x < n; ++x)
+				samples[(size_t)z * padded + x] = heights[(size_t)z * n + x];
+
+		JPH::HeightFieldShapeSettings settings(samples.data(), JPH::Vec3::sZero(), JPH::Vec3(cell_size, 1.0f, cell_size), padded);
+		settings.mBlockSize = block;
+		settings.mBitsPerSample = 8;   // compressed per block of mBlockSize² samples: millimetre precision on anything but cliffs
+		JPH::ShapeRefC shape = finish(settings, "height field");
+		return add_body(*g_world, entity_id, shape, pos, quat, motion_static, 0.0f, friction, restitution,
+			0.05f, 0.05f, false, layer, 0, 1.0f);
+	}
+
 	u32 create_compound_body(u64 entity_id, const f32* children, s32 count,
 		const f32* pos, const f32* quat, s32 motion, f32 mass,
 		f32 friction, f32 restitution, f32 linear_damping, f32 angular_damping,
@@ -2166,6 +2191,7 @@ namespace vortex::physics {
 
 	u32 create_body(u64, s32, const f32*, const f32*, const f32*, s32, f32, f32, f32, f32, f32, bool, s32, u32, f32) { return 0; }
 	u32 create_mesh_body(u64, const f32*, s32, const u32*, s32, const f32*, const f32*, const f32*, bool, s32, f32, f32, f32, bool, s32) { return 0; }
+	u32 create_heightfield_body(u64, const f32*, s32, const f32*, const f32*, f32, f32, f32, s32) { return 0; }
 	u32 create_compound_body(u64, const f32*, s32, const f32*, const f32*, s32, f32, f32, f32, f32, f32, bool, s32, u32, f32) { return 0; }
 	void destroy_body(u32) {}
 	bool body_valid(u32) { return false; }

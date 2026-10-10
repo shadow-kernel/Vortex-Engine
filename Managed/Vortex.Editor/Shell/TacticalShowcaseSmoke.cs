@@ -5,6 +5,8 @@ using System.Threading.Tasks;
 using Editor.Core.Data;
 using Editor.Core.Services;
 using Editor.Core.Services.AI;
+using Editor.Core.Services.Terrain;
+using Editor.Core.Terrain;
 using Editor.Core.Viewport;
 using Editor.ECS;
 using Editor.ECS.Components.Lighting;
@@ -133,6 +135,54 @@ namespace VortexEditor.Shell
             lamp.AddComponentDirect(new Light(lamp, LightType.Spot) { Range = 12f, Intensity = 40f, SpotAngle = 55f, InnerSpotAngle = 35f, ColorR = 1f, ColorG = 0.93f, ColorB = 0.8f, ShadowType = ShadowType.Soft });
             _made++;
 
+            // ---- v3.4 World: the terrain plot — the largest square of open ground nothing is built on, hills on it,
+            //      the rim flush with the range floor ----
+            Vector3 plot; float plotHalf;
+            if (FindPlot(scene, start, new List<Vector3> { lab, vfx }, rng, out plot, out plotHalf))
+            {
+                float size = plotHalf * 2f;
+                float k = plotHalf / 16f;   // the hills scale with the plot (designed for 32 m)
+                var ter = scene.CreateEntity("Showcase Terrain");
+                ter.Transform.LocalPosition = new Vector3(plot.X - size * 0.5f, plot.Y + 0.02f, plot.Z - size * 0.5f);
+                var tc = new Editor.ECS.Components.Rendering.Terrain(ter)
+                {
+                    Size = size, Resolution = size >= 24f ? 65 : 33, LodDistance = 40f, Collision = true,
+                    Layer0Material = "Assets/Materials/Gen/brown_mud_dry_2x10.vmat", Layer0Tile = 3f,
+                    Layer1Material = "Assets/Materials/Gen/coast_sand_01_45x50_t1.15.vmat", Layer1Tile = 4f,
+                    Layer2Material = "Assets/Materials/Gen/concrete_floor_02_1.7x0.5.vmat", Layer2Tile = 2f,
+                    Layer3Tile = 2f,   // layer 3 stays the flat rock grey
+                    DataPath = "Assets/Terrain/Showcase_Terrain.vterrain"
+                };
+                ter.AddComponentDirect(tc);
+                TerrainData data; float cell;
+                if (TerrainService.TryGetData(ter, out data, out cell))
+                {
+                    float c = (data.Resolution - 1) * 0.5f, spm = k / cell;   // the centre sample, (scaled) samples per metre
+                    float hk = Math.Min(1f, k);
+                    data.Raise(c - 5f * spm, c - 3f * spm, 7f * spm, 2.8f * hk, 0.2f);
+                    data.Raise(c + 6f * spm, c + 2f * spm, 5.5f * spm, 1.9f * hk, 0.3f);
+                    data.Raise(c + 1f * spm, c + 7f * spm, 4f * spm, 1.2f * hk, 0.4f);
+                    data.Raise(c - 2f * spm, c + 1f * spm, 4f * spm, -0.9f * hk, 0.3f);   // a dip to shoot from
+                    for (int i = 0; i < 3; i++) data.Smooth(c, c, 11f * spm, 0.6f, 0f);
+                    data.Paint(c - 5f * spm, c - 3f * spm, 3.5f * spm, 1, 1f, 0.3f);   // sand on the tops
+                    data.Paint(c + 6f * spm, c + 2f * spm, 3f * spm, 1, 1f, 0.3f);
+                    int res = data.Resolution;
+                    for (int z = 0; z < res; z++)
+                        for (int x = 0; x < res; x++)
+                        {
+                            int o = (z * res + x) * 4;
+                            float rim = Math.Max(Math.Abs(x - c), Math.Abs(z - c)) / c;
+                            if (rim > 0.82f) { data.Splat[o] = 0; data.Splat[o + 1] = 0; data.Splat[o + 2] = 255; data.Splat[o + 3] = 0; }   // concrete apron
+                            else if (data.Normal(x, z, cell).Y < 0.86f) { data.Splat[o] = 40; data.Splat[o + 1] = 0; data.Splat[o + 2] = 0; data.Splat[o + 3] = 215; }   // rock on the steep slopes
+                        }
+                    TerrainService.MarkDirty(ter, new SampleRect { X0 = 0, Z0 = 0, X1 = res - 1, Z1 = res - 1 }, true, true);
+                    TerrainService.Save(ter);
+                }
+                _made++;
+                log.Log("tactical showcase setup: terrain plot at " + TemplateSetupSmoke.F(plot) + " (" + size + " m, " + tc.Resolution + " samples, " + (tc.DataPath ?? "") + ")");
+            }
+            else log.LogWarning("tactical showcase setup: no open ground for the terrain plot — skipped");
+
             // ---- scene settings: the fog the lamp and the sun can be seen in ----
             var st = scene.Settings;
             st.VolumetricEnabled = true; st.VolumetricDensity = 0.025f; st.VolumetricAnisotropy = 0.55f; st.VolumetricDistance = 60f;
@@ -145,6 +195,63 @@ namespace VortexEditor.Shell
             EditorCommands.SaveScene(scene);
             log.Log("tactical showcase setup: " + _made + " entities placed, navmesh " + rebake.Stats.PolyCount + " polygons, scene saved — copy Range.vscene and Range.vnav back into the template");
             return true;
+        }
+
+        /// <summary>The biggest square (7 .. 16 m half size) of reachable, level floor within 8 .. 60 m of the start that no
+        /// built structure stands on (every mesh's world box, except the ground-sized ones) and that keeps 6 m from the
+        /// other stations — the terrain plot. The best of 600 navmesh samples.</summary>
+        private static bool FindPlot(Scene scene, Vector3 start, List<Vector3> away, Random rng, out Vector3 plot, out float half)
+        {
+            plot = start; half = 0f;
+            var boxes = new List<(Vector3 c, Vector3 h)>();
+            foreach (var e in scene.Entities) CollectBoxes(e, boxes);
+            float best = 0f;
+            for (int tries = 0; tries < 400 && best < 16f; tries++)
+            {
+                Vector3 p;
+                if (!NavigationService.RandomPointAround(start, 8f + (float)rng.NextDouble() * 52f, out p)) continue;
+                for (float h = 16f; h >= 7f; h -= 1.5f)
+                {
+                    if (h <= best) break;
+                    bool clear = true;
+                    foreach (var a in away) if (Math.Abs(a.X - p.X) < h + 6f && Math.Abs(a.Z - p.Z) < h + 6f) { clear = false; break; }
+                    if (!clear) continue;
+                    foreach (var b in boxes)
+                    {
+                        if (b.h.X > 40f || b.h.Z > 40f) continue;                 // the ground / the sky
+                        if (b.c.Y + b.h.Y < p.Y + 0.15f) continue;               // below the floor
+                        if (Math.Abs(b.c.X - p.X) < b.h.X + h + 0.5f && Math.Abs(b.c.Z - p.Z) < b.h.Z + h + 0.5f) { clear = false; break; }
+                    }
+                    if (!clear) continue;
+                    // every 2.5 m across the square must be reachable, level floor (a wall or a pit through the plot fails here;
+                    // the merged range model is one mesh the box test above cannot see)
+                    int n = Math.Max(2, (int)Math.Ceiling(2f * h / 2.5f));
+                    for (int gz = 0; gz <= n && clear; gz++)
+                        for (int gx = 0; gx <= n && clear; gx++)
+                        {
+                            var w = new Vector3(p.X - h + 2f * h * gx / n, p.Y, p.Z - h + 2f * h * gz / n);
+                            Vector3 r;
+                            if (!NavigationService.RandomPointAround(w, 0.6f, out r) || Math.Abs(r.Y - p.Y) > 0.3f || TemplateSetupSmoke.Dist(r, w) > 0.9f) clear = false;
+                        }
+                    if (!clear) continue;
+                    best = h; plot = p; half = h;
+                    break;
+                }
+            }
+            return best > 0f;
+        }
+
+        private static void CollectBoxes(GameEntity e, List<(Vector3 c, Vector3 h)> boxes)
+        {
+            if (e == null || !e.IsActive) return;
+            bool skip = e.Name == "Player" || e.Tag == "Player" || e.Name == "Showcase" || e.Name.StartsWith("Showcase ", StringComparison.Ordinal);
+            if (!skip && e.GetComponent<MeshRenderer>() != null)
+            {
+                Vector3f c, h;
+                if (SceneRenderService.Instance.TryGetWorldPickBounds(e, out c, out h))
+                    boxes.Add((new Vector3(c.X, c.Y, c.Z), new Vector3(Math.Abs(h.X), Math.Abs(h.Y), Math.Abs(h.Z))));
+            }
+            if (e.Children != null) foreach (var ch in e.Children) CollectBoxes(ch, boxes);
         }
 
         // A reachable floor spot with open ground around it (the samples at 2.5 m must be reachable and level).
@@ -196,11 +303,31 @@ namespace VortexEditor.Shell
                 await CameraSkySmoke.Sample("showcase_lab.bmp", 0.5, 0.5);
                 Look(cam, vfx + new Vector3(0.2f, 1.9f, 5.8f), vfx + new Vector3(-0.6f, 1.0f, 0.3f));
                 await CameraSkySmoke.Sample("showcase_vfx.bmp", 0.5, 0.5);
+                // v3.4: the terrain plot — from the plot's own ground towards the big hill, then straight down from above
+                // (with a few craters dug the way the weapon digs them: Terrain.Deform works in edit mode too)
+                var terrainEntity = TemplateSetupSmoke.Find(scene, e => e.Name == "Showcase Terrain");
+                Vector3 terrainCentre = default(Vector3);
+                if (terrainEntity != null)
+                {
+                    SelectionService.Instance.ClearSelection();   // no transform gizmo in the shot
+                    var tc = terrainEntity.GetComponent<Editor.ECS.Components.Rendering.Terrain>();
+                    float half = tc != null ? tc.Size * 0.5f : 16f;
+                    var corner = TransformMath.WorldPosition(terrainEntity);
+                    terrainCentre = corner + new Vector3(half, 0f, half);
+                    for (int i = 0; i < 4; i++) Vortex.Terrain.Deform(new Vortex.Vector3(terrainCentre.X + 2f + i * 2.2f, terrainCentre.Y, terrainCentre.Z + 6f - (i % 2) * 3f), 1.3f, 0.4f);
+                    await SmokeRegistry.Settle(300);
+                    float eyeY; if (!TerrainService.TryHeight(terrainEntity, terrainCentre.X + 6f, terrainCentre.Z + 9f, out eyeY)) eyeY = terrainCentre.Y;
+                    Look(cam, new Vector3(terrainCentre.X + 6f, eyeY + 2.2f, terrainCentre.Z + 9f), terrainCentre + new Vector3(-5f, 1.6f, -3f));
+                    await CameraSkySmoke.Sample("showcase_terrain.bmp", 0.5, 0.5);
+                    Look(cam, terrainCentre + new Vector3(0f, 34f, -0.5f), terrainCentre);
+                    await CameraSkySmoke.Sample("showcase_terrain_top.bmp", 0.5, 0.5);
+                }
                 EditorCommands.Play(); playing = true;
                 await SmokeRegistry.Settle(2200);
                 Look(cam, lab + new Vector3(0.5f, 3.6f, 9.5f), lab + new Vector3(0f, 0.6f, 0f));
                 await CameraSkySmoke.Sample("showcase_lab_play.bmp", 0.5, 0.5);
-                log.Log("tactical showcase capture: lab at " + TemplateSetupSmoke.F(lab) + ", VFX corner at " + TemplateSetupSmoke.F(vfx) + " captured (edit + play)");
+                log.Log("tactical showcase capture: lab at " + TemplateSetupSmoke.F(lab) + ", VFX corner at " + TemplateSetupSmoke.F(vfx)
+                    + (terrainEntity != null ? ", terrain at " + TemplateSetupSmoke.F(terrainCentre) : ", no terrain") + " captured (edit + play)");
                 return true;
             }
             finally
