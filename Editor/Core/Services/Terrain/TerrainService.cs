@@ -630,6 +630,7 @@ namespace Editor.Core.Services.Terrain
             var l = WorldToLocal(e, new Vector3(wx, 0f, wz));
             if (l.X < 0f || l.Z < 0f || l.X > rt.Size || l.Z > rt.Size) return false;
             float cell = rt.CellSize;
+            if (rt.Data.IsHoleAt(l.X / cell, l.Z / cell)) return false;   // a hole: no ground here (the cave mesh under it is the ground)
             float h = rt.Data.SampleHeight(l.X / cell, l.Z / cell);
             y = LocalToWorld(e, new Vector3(l.X, h, l.Z)).Y;
             return true;

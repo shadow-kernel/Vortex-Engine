@@ -76,7 +76,7 @@ namespace VortexEditor.Claude.Tools
             if (point == null || point.Length != 2) throw new ToolError("point is [x, z].");
             if (radius <= 0f) throw new ToolError("radius must be positive.");
             string o = (op ?? "").Trim().ToLowerInvariant();
-            if (o != "raise" && o != "lower" && o != "smooth" && o != "flatten") throw new ToolError("op is raise, lower, smooth or flatten.");
+            if (o != "raise" && o != "lower" && o != "smooth" && o != "flatten" && o != "hole" && o != "fill") throw new ToolError("op is raise, lower, smooth, flatten, hole or fill.");
             var centres = new List<(float x, float z)> { (point[0], point[1]) };
             if (points != null) foreach (var p in points) if (p != null && p.Length == 2) centres.Add((p[0], p[1]));
             var e = ResolveTerrain(terrain, centres[0].x, centres[0].z);
@@ -94,6 +94,8 @@ namespace VortexEditor.Claude.Tools
                     case "raise": rect = rect.Union(data.Raise(cx, cz, r, amount, hardness)); break;
                     case "lower": rect = rect.Union(data.Raise(cx, cz, r, -amount, hardness)); break;
                     case "smooth": rect = rect.Union(data.Smooth(cx, cz, r, Math.Max(0f, Math.Min(1f, amount)), hardness)); break;
+                    case "hole": rect = rect.Union(data.SetHoleDisc(cx, cz, r, true)); break;    // cut the terrain away (a cave mouth, a pit): the mesh, the collision and the navmesh leave the cells out
+                    case "fill": rect = rect.Union(data.SetHoleDisc(cx, cz, r, false)); break;
                     default:
                     {
                         var lt = TerrainService.WorldToLocal(e, new Vector3(c.x, amount, c.z));

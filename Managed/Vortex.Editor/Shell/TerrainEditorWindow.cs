@@ -47,8 +47,8 @@ namespace VortexEditor.Shell
         }
         public static TerrainEditorWindow Current => _open;
 
-        private enum MapTool { Raise, Lower, Smooth, Flatten, Noise, Paint }
-        private static readonly string[] ToolNames = { "Raise", "Lower", "Smooth", "Flatten", "Noise", "Paint" };
+        private enum MapTool { Raise, Lower, Smooth, Flatten, Noise, Paint, Hole }
+        private static readonly string[] ToolNames = { "Raise", "Lower", "Smooth", "Flatten", "Noise", "Paint", "Hole" };
         private static readonly string[] LayerNames = { "Layer 1", "Layer 2", "Layer 3", "Layer 4" };
         private static readonly Color[] LayerColors = { Avalonia.Media.Color.FromRgb(214, 178, 110), Avalonia.Media.Color.FromRgb(140, 110, 80), Avalonia.Media.Color.FromRgb(120, 120, 120), Avalonia.Media.Color.FromRgb(96, 150, 70) };
 
@@ -223,7 +223,7 @@ namespace VortexEditor.Shell
             // the 3D brush follows: a stroke in the viewport uses the same tool
             try
             {
-                TerrainToolService.SetTool(t == MapTool.Paint ? TerrainTool.Paint : t == MapTool.Smooth ? TerrainTool.Smooth : t == MapTool.Flatten ? TerrainTool.Flatten : t == MapTool.Lower ? TerrainTool.Lower : TerrainTool.Raise);
+                TerrainToolService.SetTool(t == MapTool.Paint ? TerrainTool.Paint : t == MapTool.Smooth ? TerrainTool.Smooth : t == MapTool.Flatten ? TerrainTool.Flatten : t == MapTool.Lower ? TerrainTool.Lower : t == MapTool.Hole ? TerrainTool.Hole : TerrainTool.Raise);
             }
             catch { }
             PropertyRows.RefreshAll();
@@ -619,6 +619,7 @@ namespace VortexEditor.Shell
                 case MapTool.Smooth: rect = data.Smooth(sx, sz, r, Math.Min(1f, strength * 0.8f), hardness); break;
                 case MapTool.Flatten: rect = data.Flatten(sx, sz, r, _flattenTarget, Math.Min(1f, strength), hardness); break;
                 case MapTool.Noise: rect = Noise(data, sx, sz, r, strength * 0.6f, hardness, cell); break;
+                case MapTool.Hole: rect = data.SetHoleDisc(sx, sz, r, !shift); break;   // Shift fills
                 default: rect = data.Paint(sx, sz, r, _paintLayer, strength, hardness); break;
             }
             _strokeRect = _strokeRect.Union(rect);
