@@ -31,6 +31,8 @@ namespace Editor.Core.Services
         public static void Mount(string vpakPath)
         {
             _files = VortexPak.Read(vpakPath);
+            // the native texture importer reads a model's own textures (a glTF's images) through this when they are not on disk
+            try { Editor.DllWrapper.VortexAPI.SetAssetReader(ReadForNative); } catch { }
             _root = Path.GetDirectoryName(Path.GetFullPath(vpakPath));
         }
 
@@ -51,6 +53,7 @@ namespace Editor.Core.Services
         public static void Unmount()
         {
             _files = null;
+            try { Editor.DllWrapper.VortexAPI.SetAssetReader(null); } catch { }
             _root = null;
             _layers.Clear();
         }
@@ -91,6 +94,19 @@ namespace Editor.Core.Services
             using (var ms = new MemoryStream(b))
             using (var sr = new StreamReader(ms, System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: true))
                 return sr.ReadToEnd();
+        }
+
+        /// <summary>The native importer's reader: the pak's bytes for a path the disk does not have (size, then the copy).</summary>
+        private static int ReadForNative(IntPtr pathUtf8, IntPtr buffer, int capacity)
+        {
+            try
+            {
+                string path = System.Runtime.InteropServices.Marshal.PtrToStringUTF8(pathUtf8);
+                if (string.IsNullOrEmpty(path) || !TryGetBytes(path, out var bytes) || bytes == null) return -1;
+                if (capacity > 0 && buffer != IntPtr.Zero) System.Runtime.InteropServices.Marshal.Copy(bytes, 0, buffer, Math.Min(capacity, bytes.Length));
+                return bytes.Length;
+            }
+            catch { return -1; }
         }
 
         private static string ToKey(string path)

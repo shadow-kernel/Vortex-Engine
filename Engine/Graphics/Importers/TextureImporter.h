@@ -44,6 +44,14 @@ namespace vortex::graphics
 		/// </summary>
 		static ImageData import_from_file(const std::string& filepath, bool flip_vertically = false);
 
+		/// <summary>A reader for files that are NOT on disk: a shipped game's asset pak lives in managed memory, and a model
+		/// imported from it names its own textures by path (a glTF's images) — every one of them came up white. The managed
+		/// layer registers the reader when it mounts the pak; import_from_file asks it for any path the disk does not have.
+		/// Returns the file's size and copies up to `capacity` bytes, or -1 when the path is unknown.</summary>
+		typedef int (*AssetReadFn)(const char* path, unsigned char* buffer, int capacity);
+		static void set_asset_reader(AssetReadFn fn);
+		static bool read_asset(const std::string& path, std::vector<u8>& out);
+
 		/// <summary>
 		/// Import an image from an in-memory buffer (for packed/encrypted asset paks loaded into RAM).
 		/// </summary>
