@@ -196,6 +196,9 @@ namespace VortexEditor.Panels.Inspector
             catch (Exception ex) { EditorCommands.Fail("Import heightmap", ex); }
         }
 
+        /// <summary>The export dialog for other windows (the Terrain Editor).</summary>
+        internal static Task ExportHeightmapFor(Editor.ECS.GameEntity entity) => ExportHeightmap(entity);
+
         private static async Task ExportHeightmap(Editor.ECS.GameEntity entity)
         {
             try

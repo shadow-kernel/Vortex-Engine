@@ -440,6 +440,21 @@ float4 PSMain(PS_IN input) : SV_TARGET
     color = ApplyFog(color, input.worldPos);
     color = TonemapScene(color * (SceneExposure > 0.0 ? SceneExposure : 0.5), Tonemapper);   // the scene exposure, then the curve
     color = pow(max(color, 0.0), 1.0 / 2.2);
+    // Under the surface (#200): the camera is below the water — the underside of the surface: the world above through it,
+    // total internal reflection towards grazing angles (see water.metal)
+    if (CameraPosition.y < input.worldPos.y - 0.02)
+    {
+        float up = saturate(dot(N, -V));
+        float tir = 1.0 - smoothstep(0.58, 0.78, up);
+        if (haveScene)
+        {
+            float2 dimU = float2(scw, sch);
+            float2 uvU = clamp(input.pos.xy / dimU + N.xz * 0.08, 0.5 / dimU, 1.0 - 0.5 / dimU);
+            float3 above = SceneColor.SampleLevel(ScreenSampler, uvU, 0).rgb;
+            return float4(lerp(above, lerp(color, horizon, 0.45), 0.15 + 0.85 * tir), 1.0);
+        }
+        return float4(lerp(color, horizon, 0.45), 0.8);
+    }
     if (haveScene)
     {
         // Refraction (#200): the opaque picture behind the surface, bent by the ripples (less in the shallows and far away),

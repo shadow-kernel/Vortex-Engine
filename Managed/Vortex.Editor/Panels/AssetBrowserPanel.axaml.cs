@@ -1424,7 +1424,8 @@ namespace VortexEditor.Panels
             {
                 SelectionService.Instance.SelectedEntity = user;
                 SelectionService.Instance.RequestFocus(user);
-                EditorCommands.Toast((terrain ? "Terrain" : "Foliage") + " \"" + user.Name + "\" selected — " + (terrain ? "sculpt, paint, import and export in the Inspector" : "paint and erase with the brush in the Inspector"));
+                if (terrain) { EditorWindows.TerrainEditor(user); return; }
+                EditorCommands.Toast("Foliage \"" + user.Name + "\" selected — paint and erase with the brush in the Inspector");
             }
             catch (Exception ex) { EditorCommands.Fail("Select", ex); }
         }

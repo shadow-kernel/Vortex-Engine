@@ -445,6 +445,8 @@ float3 LayerMean(int k)
 float MacroVariation(float2 worldXZ)
 {
     float n = 0.65 * MacroNoise(worldXZ * 0.025) + 0.35 * MacroNoise(worldXZ * 0.11 + 7.3);
+    // and a 500 m term for the distance: the near terms average out in the mips, the far dunes read as flat clay without it
+    n = lerp(n, MacroNoise(worldXZ * 0.002 + 1.7), 0.45);
     return 0.86 + 0.28 * n;
 }
 

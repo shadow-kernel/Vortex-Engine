@@ -111,6 +111,7 @@ namespace Editor.Core.Services.Water
             LastSubmitted = 0;
             if (scene?.Entities == null || !VortexAPI.TerrainApiAvailable) return;
             foreach (var e in scene.Entities) SubmitRecursive(e, playLike);
+            UnderwaterLook(scene, playLike);
             for (int i = _graveyard.Count - 1; i >= 0; i--)
             {
                 if (_frame - _graveyard[i].frame <= GraveFrames) continue;
@@ -162,7 +163,7 @@ namespace Editor.Core.Services.Water
                     string shader = VortexAPI.BuiltinMaterialShaderPath("water");
                     if (!string.IsNullOrEmpty(shader)) VortexAPI.SetMaterialShader((int)rt.Material, shader);
                     VortexAPI.SetMaterialBlendModeValue(rt.Material, 1);
-                    VortexAPI.SetMaterialTwoSided(rt.Material, false);
+                    VortexAPI.SetMaterialTwoSided(rt.Material, true);   // the underside renders too: the surface seen from below (#200)
                 }
                 _runtimes[e] = rt;
             }
@@ -237,6 +238,44 @@ namespace Editor.Core.Services.Water
                 return true;
             }
             return false;
+        }
+
+        // ---- the underwater look (#200): while the view camera is under a surface, the air's fog gives way to the water's —
+        // dense, blue-green, no sun glow; back to the scene's fog the frame the camera surfaces. Games can set their own
+        // through Atmosphere.SetFog; this is the default that makes diving read as diving.
+        private static bool _underwaterFog;
+        /// <summary>True while the view camera is below a water surface (the editor camera, or the game camera in play).</summary>
+        public static bool CameraUnderwater { get; private set; }
+        public static float UnderwaterDensity = 0.075f;
+        public static Vector3 UnderwaterColor = new Vector3(0.04f, 0.19f, 0.17f);
+
+        private static void UnderwaterLook(Scene scene, bool playLike)
+        {
+            bool under = false;
+            try
+            {
+                var cam = TerrainService.CameraPosition(scene, playLike);
+                under = _runtimes.Count > 0 && IsUnderwater(cam, 0.05f);
+            }
+            catch { under = false; }
+            CameraUnderwater = under;
+            if (under == _underwaterFog) return;
+            _underwaterFog = under;
+            try
+            {
+                if (under)
+                {
+                    VortexAPI.SetFog(UnderwaterColor.X, UnderwaterColor.Y, UnderwaterColor.Z, UnderwaterDensity, 10000f, 0f);
+                    VortexAPI.SetFogSunGlowStrength(0f);
+                }
+                else if (scene?.Settings != null)
+                {
+                    var st = scene.Settings;
+                    VortexAPI.SetFog(st.FogR, st.FogG, st.FogB, st.FogEnabled ? st.FogDensity : 0f, st.FogHeightY, st.FogHeightFalloff);
+                    VortexAPI.SetFogSunGlowStrength(st.FogEnabled ? st.FogSunGlow : 0f);
+                }
+            }
+            catch { }
         }
 
         public static bool IsUnderwater(Vector3 position, float margin = 0f)

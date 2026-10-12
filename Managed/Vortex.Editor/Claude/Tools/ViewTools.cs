@@ -40,6 +40,20 @@ namespace VortexEditor.Claude.Tools
             return ToolResult.Text(info).WithImage(shot.Data, shot.MimeType);
         }
 
+        [McpServerTool(Name = "set_geometric_lod", Idempotent = true)]
+        [Description("Sets the renderer's geometric LOD thresholds for instanced meshes (foliage, props): distant instances draw a decimated mesh. " +
+                     "mid / far are multiples of the model's radius at which LOD 1 / LOD 2 start (engine default 16 / 40). Smaller = faster, coarser.")]
+        public static object SetGeometricLod(
+            [Description("LOD 1 distance in radii (e.g. 16)")] float mid,
+            [Description("LOD 2 distance in radii (e.g. 40)")] float far,
+            [Description("Off = every instance at full detail")] bool enabled = true)
+        {
+            if (mid <= 0f || far <= mid) throw new ToolError("mid must be positive and far larger than mid.");
+            Editor.DllWrapper.VortexAPI.GeometricLod(enabled, mid, far);
+            EditorViewportSession.RequestResubmit();
+            return new { enabled, mid, far };
+        }
+
         [McpServerTool(Name = "focus_camera", ReadOnly = true)]
         [Description("Moves the editor camera (edit mode): frame entities (fits them in view), or look from position at look_at. " +
                      "Returns the camera position. Does not change the scene.")]
