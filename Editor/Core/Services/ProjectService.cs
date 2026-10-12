@@ -129,6 +129,8 @@ namespace Editor.Core.Services
             var project = new ProjectData(manifest.Id, projectPath, manifest.Name)
             {
                 LastModified = manifest.LastModified,
+                Version = string.IsNullOrWhiteSpace(manifest.Version) ? "1.0.0" : manifest.Version,   // #471: round-tripped
+                CreatedAt = manifest.CreatedAt,
                 Settings = manifest.Settings ?? new ProjectSettings(),
                 ImagePath = manifest.ThumbnailPath,
                 StartSceneId = manifest.StartSceneId // round-trip the boot scene so editor saves preserve it
@@ -398,6 +400,7 @@ namespace Editor.Core.Services
                 {
                     Id = project.Id,
                     LastModified = project.LastModified,
+                    Version = string.IsNullOrWhiteSpace(project.Version) ? "1.0.0" : project.Version,   // #471: the project's own version survives a save
                     ThumbnailPath = project.ImagePath,
                     LastOpenSceneId = project.ActiveScene?.Id,
                     StartSceneId = project.StartSceneId, // the game's boot scene (persisted choice; null ⇒ first)
@@ -406,6 +409,7 @@ namespace Editor.Core.Services
                     FormatVersion = Editor.Core.EngineInfo.CurrentProjectFormatVersion,
                     Settings = project.Settings ?? new ProjectSettings(),
                 };
+                if (project.CreatedAt.HasValue) manifest.CreatedAt = project.CreatedAt.Value;   // #471: the original creation date, not the save time
 
                 // Füge Szenen-Referenzen hinzu
                 foreach (var scene in project.Scenes)

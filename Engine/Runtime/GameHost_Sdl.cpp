@@ -162,6 +162,12 @@ namespace vortex::runtime
 				update_client_size();
 				g_pending_w = e.window.data1; g_pending_h = e.window.data2;
 				g_resize_pending = g_pending_w > 0 && g_pending_h > 0;
+				{
+					int ww = 0, wh = 0, pw = 0, ph = 0;
+					SDL_GetWindowSize(g_window, &ww, &wh); SDL_GetWindowSizeInPixels(g_window, &pw, &ph);
+					platform::debug_output((std::string("[gamehost] pixel size changed: event ") + std::to_string(g_pending_w) + "x" + std::to_string(g_pending_h)
+						+ " window " + std::to_string(ww) + "x" + std::to_string(wh) + " pt / " + std::to_string(pw) + "x" + std::to_string(ph) + " px\n").c_str());
+				}
 				break;
 			case SDL_EVENT_WINDOW_RESIZED:
 				update_client_size();
@@ -285,7 +291,26 @@ namespace vortex::runtime
 	void GameHost::set_resolution(uint32_t w, uint32_t h)
 	{
 		if (!g_window || g_fullscreen || w == 0 || h == 0) return;
-		SDL_SetWindowSize(g_window, (int)w, (int)h);
+		// the settings menu means PIXELS (as on Windows); SDL_SetWindowSize takes points, so on a Retina display 1920 x 1080
+		// would have made a 3840 x 2160 px window — divide by the pixel density, and never exceed the display's usable area
+		float density = SDL_GetWindowPixelDensity(g_window);
+		if (!(density > 0.0f)) density = 1.0f;
+		int pw = (int)((float)w / density + 0.5f), ph = (int)((float)h / density + 0.5f);
+		SDL_Rect usable{};
+		SDL_DisplayID did = SDL_GetDisplayForWindow(g_window);
+		if (did != 0 && SDL_GetDisplayUsableBounds(did, &usable) && usable.w > 64 && usable.h > 64)
+		{
+			if (pw > usable.w) pw = usable.w;
+			if (ph > usable.h - 28) ph = usable.h - 28;   // the title bar
+		}
+		SDL_SetWindowSize(g_window, pw, ph);
+		// let the window manager settle the real size before the next frame, then take the drawable as it is: a resize
+		// applied with a stale size left an unrendered strip along the bottom edge
+		SDL_SyncWindow(g_window);
+		int rpw = 0, rph = 0;
+		SDL_GetWindowSizeInPixels(g_window, &rpw, &rph);
+		if (rpw > 0 && rph > 0) { g_pending_w = rpw; g_pending_h = rph; g_resize_pending = true; }
+		update_client_size();
 	}
 
 	bool GameHost::run_utf8(uint32_t width, uint32_t height, const char* title_utf8)

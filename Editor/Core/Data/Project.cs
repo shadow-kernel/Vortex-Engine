@@ -20,6 +20,10 @@ namespace Editor.Core.Data
         /// <summary>Game settings from the manifest (company, product, default resolution, v-sync, ...).</summary>
         [IgnoreDataMember]
         public ProjectSettings Settings { get; set; } = new ProjectSettings();
+        /// <summary>The project's own version ("1.53.6") and creation date as read from project.vortex — carried through so a
+        /// save keeps them (#471: every save reset them to "1.0.0" and now).</summary>
+        public string Version { get; set; } = "1.0.0";
+        public DateTime? CreatedAt { get; set; }
 
         [DataMember(Name = "lastModified", Order = 10)]
         public DateTime LastModified

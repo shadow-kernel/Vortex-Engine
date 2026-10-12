@@ -82,6 +82,19 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void SetMaterialAOTexture(long materialId, long textureId);
 
+        /// <summary>The reader the native texture importer asks for files that are not on disk — the shipped game's
+        /// in-RAM asset pak (AssetVfs registers it on mount). Returns the file's size and copies up to capacity bytes, -1 = unknown.</summary>
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public delegate int AssetReadCallback(IntPtr pathUtf8, IntPtr buffer, int capacity);
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SetAssetReader")]
+        private static extern void SetAssetReaderNative(AssetReadCallback fn);
+        private static AssetReadCallback _assetReader;   // kept alive: the native side holds the raw pointer
+        public static void SetAssetReader(AssetReadCallback fn)
+        {
+            _assetReader = fn;
+            try { SetAssetReaderNative(fn); } catch (EntryPointNotFoundException) { }
+        }
+
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SetMaterialTextureChannels")]
         private static extern void SetMaterialTextureChannelsNative(long materialId, int metallic, int roughness, int ao);
 

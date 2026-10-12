@@ -1,3 +1,5 @@
+#include <filesystem>
+#include <vector>
 #include "TextureImporter.h"
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -44,9 +46,40 @@ namespace vortex::graphics
 		return r;
 	}
 
+	namespace
+	{
+		TextureImporter::AssetReadFn s_asset_reader = nullptr;
+		bool file_on_disk(const std::string& path)
+		{
+			std::error_code ec;
+			return !path.empty() && std::filesystem::exists(path, ec) && !ec;
+		}
+	}
+
+	void TextureImporter::set_asset_reader(AssetReadFn fn) { s_asset_reader = fn; }
+
+	bool TextureImporter::read_asset(const std::string& path, std::vector<u8>& out)
+	{
+		out.clear();
+		if (!s_asset_reader || path.empty()) return false;
+		const int size = s_asset_reader(path.c_str(), nullptr, 0);
+		if (size <= 0) return false;
+		out.resize((size_t)size);
+		const int got = s_asset_reader(path.c_str(), out.data(), size);
+		if (got != size) { out.clear(); return false; }
+		return true;
+	}
+
 	ImageData TextureImporter::import_from_file(const std::string& filepath, bool flip_vertically)
 	{
 	ImageData result;
+	// not on disk: a shipped game's pak (the managed reader), else nothing
+	if (!file_on_disk(filepath))
+	{
+		std::vector<u8> bytes;
+		if (read_asset(filepath, bytes)) return import_from_memory(bytes.data(), (u64)bytes.size(), flip_vertically);
+		return result;
+	}
 	if (stbi_is_hdr(filepath.c_str()))
 	{
 		stbi_set_flip_vertically_on_load_thread(flip_vertically ? 1 : 0);

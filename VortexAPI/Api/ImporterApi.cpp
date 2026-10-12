@@ -1,3 +1,4 @@
+#include "Graphics/Importers/TextureImporter.h"
 #include "../ApiCommon.h"
 #if VORTEX_HAS_DX12
 #include <windows.h>
@@ -151,6 +152,13 @@ EDITOR_INTERFACE int ImportModelFromCache(
 		out_texture_ids[i] = result.submeshes[i].texture_id;
 	}
 	return count;
+}
+
+// The reader for files that are not on disk (the shipped game's in-RAM asset pak): the managed layer registers it when
+// it mounts the pak, and every texture a model names by path (a glTF's own images) is read through it. null = off.
+EDITOR_INTERFACE void SetAssetReader(graphics::TextureImporter::AssetReadFn fn)
+{
+	graphics::TextureImporter::set_asset_reader(fn);
 }
 
 // In-memory texture import (packed/encrypted asset pak loaded into RAM — no file on disk).

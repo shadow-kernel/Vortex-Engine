@@ -56,6 +56,9 @@ fragment float4 SkyPS(SkyOut in [[stage_in]], constant SkyboxConstants& c [[buff
             // 1 / sin(elevation)), the sun glows in it, the zenith keeps its blue
             float h = max(y, 0.0);
             float f = 1.0 - exp(-c.haze.w * 40.0 / (h + 0.04));
+            // below the horizon the picture holds a blurred ground that read as a blue sea once the world ended under a high
+            // camera: that half is the haze (it follows the sky's own horizon), blended in over the first few degrees
+            f = max(f, smoothstep(0.0, 0.08, -y));
             float mu = saturate(dot(dir, normalize(-c.glow_dir.xyz)));
             float3 hz = c.haze.rgb + c.glow_color.rgb * (c.glow_dir.w * (0.12 * mu * mu + 0.88 * pow(mu, 10.0)));
             sky = mix(sky, hz, f);
