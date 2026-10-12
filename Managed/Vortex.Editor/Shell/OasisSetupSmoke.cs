@@ -112,7 +112,7 @@ namespace VortexEditor.Shell
             var sun = scene.CreateEntity("Sun");
             // the late afternoon of the syferfontein pure sky (18.2° up, azimuth 216° — tools/hdri-analyze.py): long palm shadows,
             // the sun's glow in the haze; the goegap noon stays the "noon" weather preset
-            sun.Transform.LocalRotation = new Vector3(18.19f, -144.05f, 0f);
+            sun.Transform.LocalRotation = new Vector3(26f, -144.05f, 0f);   // 8° above the picture's sun: the flat sand as bright as the reference's (sRGB ~200 instead of 148), the far faces the same colour as the ground
             sun.AddComponentDirect(new Light(sun, LightType.Directional) { Intensity = 8f, ColorR = 1f, ColorG = 0.84f, ColorB = 0.62f, ShadowType = ShadowType.Soft });   // at 18° a flat floor gets only 0.31 of the sun — the ambient has to stay well under that or the shade is as bright as the sun (it was, at 5.5 / 0.9). A late sun, but not orange: the sand must stay golden, not pink
 
             // ---- the sky: the desert HDRI; the gradient colours are its environment (reflections, the lakes' sky) ----
@@ -265,7 +265,7 @@ namespace VortexEditor.Shell
             st.TaaEnabled = true;         // temporal AA (#141): the far fronds' sparkle settles
             st.Sharpen = 0.45f;           // contrast-adaptive sharpening: the detail TAA softens comes back
             st.BounceStrength = 1.2f; st.BounceR = 0.62f; st.BounceG = 0.40f; st.BounceB = 0.20f;   // the sand's warm bounce into the shadows: the reference's shade is orange-brown; at 1.0 the sky's blue won and the grove floor turned grey
-            st.SceneExposure = 1.7f;   // stops before the tonemapper: the low sun needs more aperture than noon; 2.2 pushed the sunlit sand into the tonemapper's shoulder (pale pink), 2.6 clipped the crowns
+            st.SceneExposure = 1.9f;   // stops before the tonemapper: the low sun needs more aperture than noon; 2.2 pushed the sunlit sand into the tonemapper's shoulder (pale pink), 2.6 clipped the crowns
             st.FogEnabled = true; st.FogDensity = 0.00015f;   // squared distance form: 1.5 % at 1 km, 9 % at 2.5 km — the far dunes keep the ground's colour   // at 0.0010 the air swallowed 63 % of a dune 1 km out — the reference's dunes are saturated to the horizon st.FogHeightY = -4f; st.FogHeightFalloff = 0.012f;
             st.FogR = 1f; st.FogG = 1f; st.FogB = 1f; st.FogFromSky = true; st.FogSunGlow = 0.2f;   // the haze is the sky's own horizon (SkyHaze): the far dunes stand in the sky they fade into   // the reference's distance is peach, not blue-white   // the reference's far dunes fade to a neutral, slightly cool white — a warm haze turned them salmon
             st.GradeEnabled = true; st.Exposure = 0f; st.Contrast = 1.06f; st.Saturation = 1.05f;   // a light touch: the grade only reaches the viewport once SetPostMainView is on (the oasis capture turns it on) — at 1.22 the sky went navy and the sand neon st.Temperature = 0.0f; st.Tint = 0.0f;   // the reference is NOT saturated: the sand golden, the palms olive, the shadows warm
