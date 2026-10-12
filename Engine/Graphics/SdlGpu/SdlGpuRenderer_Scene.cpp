@@ -827,7 +827,7 @@ namespace vortex::graphics::sdlgpu
 		auto& reg = ResourceRegistry::instance();
 		Texture* white = reg.white_texture();
 		SDL_GPUTexture* white_tex = white ? white->texture() : nullptr;
-		SDL_GPUTextureSamplerBinding bindings[13];
+		SDL_GPUTextureSamplerBinding bindings[15];
 		for (auto& b : bindings) { b.texture = white_tex; b.sampler = m_sampler_linear_wrap; }
 		bindings[9] = { m_ssao_current ? m_ssao_current : white_tex, m_sampler_linear_clamp };   // blurred SSAO (slot 9)
 		{
@@ -839,6 +839,14 @@ namespace vortex::graphics::sdlgpu
 		// texture (1 px wide = "no copy" for the shader) and the shadow dummy before the transparent pass made the copies
 		bindings[11] = { (m_scene_copy_valid && m_scene_color_copy) ? m_scene_color_copy : white_tex, m_sampler_linear_clamp };
 		bindings[12] = { (m_scene_copy_valid && m_scene_depth_copy) ? m_scene_depth_copy : (m_shadow_dummy ? m_shadow_dummy : white_tex), m_sampler_point_clamp };
+		{
+			// the world radiance cache (Lumen step 1, slots 13 / 14): the two probe textures, linear-clamp; the white texture
+			// fails the shaders' header check, so an unset cache means "the sky light"
+			Texture* ga = (m_gi_vol_a != id::invalid_id) ? reg.get_texture(m_gi_vol_a) : nullptr;
+			Texture* gb = (m_gi_vol_b != id::invalid_id) ? reg.get_texture(m_gi_vol_b) : nullptr;
+			bindings[13] = { ga && ga->is_valid() && ga->texture() ? ga->texture() : white_tex, m_sampler_linear_clamp };
+			bindings[14] = { gb && gb->is_valid() && gb->texture() ? gb->texture() : white_tex, m_sampler_linear_clamp };
+		}
 		// Shadow atlases (slots 6..8) with the comparison sampler; the shaders only sample them when a light
 		// asks. A missing atlas falls back to the 1x1 depth texture, NOT to white_tex: these slots are declared
 		// as comparison-sampled depth textures, and a colour texture with a plain sampler is not a legal
@@ -892,7 +900,7 @@ namespace vortex::graphics::sdlgpu
 		// buffer and never see slot 1; custom material vertex shaders are created with two (get_or_compile_pipeline).
 		// Skinned draws push their SkinParams into vertex slot 1 after this call, so they stay unaffected.
 		SDL_PushGPUVertexUniformData(cmd, 1, &obj, sizeof(PerObjectConstants));
-		SDL_BindGPUFragmentSamplers(pass, 0, bindings, 13);
+		SDL_BindGPUFragmentSamplers(pass, 0, bindings, 15);
 	}
 
 	void SdlGpuRenderer::draw_mesh(SDL_GPURenderPass* pass, Mesh* mesh, u32 instance_base, u32 instance_count)

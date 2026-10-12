@@ -100,6 +100,10 @@ namespace Editor.Core.Data
         [DataMember(Name = "fogFromSky", Order = 94)] public bool FogFromSky { get; set; }
         /// <summary>Contrast-adaptive sharpening after the anti-aliasing (0 = off .. 1): the detail TAA / FXAA soften comes back.</summary>
         [DataMember(Name = "sharpen", Order = 95)] public float Sharpen { get; set; }
+        /// <summary>The world radiance cache (Lumen step 1): probes around the camera that remember the light from beyond the
+        /// screen — the sky where it is open, the sand's bounce under a palm, the dark under a canopy (Metal / Vulkan).</summary>
+        [DataMember(Name = "giWorld", Order = 96)] public bool GiWorldEnabled { get; set; }
+        [DataMember(Name = "giWorldStrength", Order = 97)] public float GiWorldStrength { get; set; } = 1.0f;
         // ---- The editor's view (EditorViewState): where the scene camera stood when the scene was saved — a scene opens there,
         // Home returns there. Editor data only; a scene saved before this has none (viewSet false) and starts at the classic default. ----
         [DataMember(Name = "viewSet", Order = 100)] public bool EditorViewSet { get; set; }
@@ -117,6 +121,7 @@ namespace Editor.Core.Data
         private void RestoreDefaults(StreamingContext context)
         {
             FogDensity = 0.08f; FogR = 0.02f; FogG = 0.025f; FogB = 0.035f;
+            GiWorldStrength = 1f;   // a scene saved before the world cache: full strength when it is switched on
             BounceR = 0.55f; BounceG = 0.40f; BounceB = 0.26f;
             GiStrength = 1.0f; GiRadius = 2.5f;
             VignetteIntensity = 0.8f; VignetteSmoothness = 0.5f; VignetteRoundness = 1.0f;
@@ -138,6 +143,7 @@ namespace Editor.Core.Data
             DllWrapper.VortexAPI.SetPostAntiAlias(AntiAliasEnabled);
             DllWrapper.VortexAPI.SetPostTemporalAA(TaaEnabled);
             DllWrapper.VortexAPI.SetPostSharpen(Sharpen);
+            Services.Gi.RadianceCache.Enabled = GiWorldEnabled; Services.Gi.RadianceCache.Strength = GiWorldStrength;
             DllWrapper.VortexAPI.SetFogSunGlowStrength(FogEnabled ? FogSunGlow : 0f);
             DllWrapper.VortexAPI.SetPostVignette(VignetteEnabled, VignetteIntensity, VignetteSmoothness,
                 VignetteRoundness, VignetteR, VignetteG, VignetteB);

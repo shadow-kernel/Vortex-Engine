@@ -513,6 +513,44 @@ static inline float3 decode_env(float3 c)
     float3 hi = 1.0 / max(1.0 - t, 0.0625);
     return (c.x <= 0.75 && c.y <= 0.75 && c.z <= 0.75) ? lo : max(lo, hi);
 }
+
+// ---- the world radiance cache (Lumen step 1, #257 step 3): SH L1 probes around the camera in two RGBA8 textures ----
+// A = (sqrt(L0.rgb / scale), L1.x), B = (L1.y, L1.z, valid, -), L1 for the luminance (the chroma comes from L0). The
+// volume is laid out as y-slices of nz + 1 rows (one padding row each, so bilinear never crosses a slice); the last row
+// is the header in plain bytes: origin in cells (16 bit + 32768), cell sizes x100, dims, strength x64, log2 scale x16 + 128,
+// magic 90. A missing cache (the white texture) fails the magic and the sky light stands in.
+static inline float3 gi_volume(texture2d<float> ta, sampler sa, texture2d<float> tb, sampler sb, float3 wp, float3 n, float3 fallback)
+{
+    uint W = ta.get_width(), H = ta.get_height();
+    if (W < 4 || H < 4) return fallback;
+    uint hy = H - 1;
+    float4 h0 = ta.read(uint2(0, hy)) * 255.0, h1 = ta.read(uint2(1, hy)) * 255.0, h2 = ta.read(uint2(2, hy)) * 255.0, h3 = ta.read(uint2(3, hy)) * 255.0;
+    if (abs(h3.a - 90.0) > 0.5) return fallback;
+    float cxz = (h1.z + h1.w * 256.0) * 0.01, cy = (h2.x + h2.y * 256.0) * 0.01;
+    float3 cellv = float3(cxz, cy, cxz);
+    float3 origin = float3(h0.x + h0.y * 256.0 - 32768.0, h0.z + h0.w * 256.0 - 32768.0, h1.x + h1.y * 256.0 - 32768.0) * cellv;
+    float nx = h2.z, ny = h2.w, nz = h3.x;
+    float strength = h3.y / 64.0;
+    float scale = exp2((h3.z - 128.0) / 16.0);
+    float3 p = (wp - origin) / cellv - 0.5;
+    float3 edge = min(p + 1.0, float3(nx, ny, nz) - p);
+    float w = saturate(min(edge.x, min(edge.y, edge.z)));
+    if (w <= 0.0) return fallback;
+    p = clamp(p, float3(0.0), float3(nx - 1.0, ny - 1.0, nz - 1.0));
+    float y0 = floor(p.y), t = p.y - y0, y1 = min(y0 + 1.0, ny - 1.0);
+    float rows = (float)H;
+    float2 uv0 = float2((p.x + 0.5) / nx, (y0 * (nz + 1.0) + p.z + 0.5) / rows);
+    float2 uv1 = float2(uv0.x, (y1 * (nz + 1.0) + p.z + 0.5) / rows);
+    float4 A = mix(ta.sample(sa, uv0), ta.sample(sa, uv1), t);
+    float4 B = mix(tb.sample(sb, uv0), tb.sample(sb, uv1), t);
+    float3 L0 = A.rgb * A.rgb * scale;
+    float3 L1 = (float3(A.a, B.r, B.g) * 2.0 - 1.0) * scale;
+    float lum = max(dot(L0, float3(0.2126, 0.7152, 0.0722)), 1e-4);
+    float3 E = 0.886227 * L0 + 1.023327 * dot(L1, n) * (L0 / lum);
+    E = max(E, 0.0) * strength;
+    return mix(fallback, E, w * B.b);
+}
+
 static inline float3 sample_env(texture2d<float> env_tex, sampler env_smp, float3 R, float roughness, float mips)
 {
     float lod = saturate(roughness) * max(mips - 1.0, 0.0);
@@ -533,7 +571,9 @@ fragment float4 PSMain(VSOut in [[stage_in]],
                        depth2d<float>   csm_shadow    [[texture(7)]], sampler csm_smp       [[sampler(7)]],
                        depth2d<float>   point_shadow  [[texture(8)]], sampler point_smp     [[sampler(8)]],
                        texture2d<float> ssao_tex      [[texture(9)]], sampler ssao_smp      [[sampler(9)]],
-                       texture2d<float> env_tex       [[texture(10)]], sampler env_smp       [[sampler(10)]])
+                       texture2d<float> env_tex       [[texture(10)]], sampler env_smp       [[sampler(10)]],
+                       texture2d<float> gi_a          [[texture(13)]], sampler gi_a_smp      [[sampler(13)]],
+                       texture2d<float> gi_b          [[texture(14)]], sampler gi_b_smp      [[sampler(14)]])
 {
     float2 tiling = (obj.uv_tiling.x > 0.0 && obj.uv_tiling.y > 0.0) ? obj.uv_tiling : float2(1.0, 1.0);
     float2 uv = in.uv * tiling;
@@ -679,7 +719,9 @@ fragment float4 PSMain(VSOut in [[stage_in]],
     float sky_amount = dot(N, float3(0.0, 1.0, 0.0)) * 0.5 + 0.5;
     float3 hemisphere = mix(ground_color, sky_color, sky_amount);
     if (lights.sky_sh[0].w > 0.5) hemisphere = sky_irradiance(lights, N);   // the real sky: blue from above, the ground's bounce from below
-    float3 ambient = hemisphere * frame.ambient_strength * albedo * ao * (1.0 - metallic);
+    // the world radiance cache replaces the sky light where it has probes (its probes hold the sky and the bounces)
+    float3 amb_irr = gi_volume(gi_a, gi_a_smp, gi_b, gi_b_smp, in.world_pos, N, hemisphere * frame.ambient_strength);
+    float3 ambient = amb_irr * albedo * ao * (1.0 - metallic);
     if (frame.ssao_enabled > 0.5)
     {
         float2 auv = in.pos.xy * float2(frame.ssao_padding[0], frame.ssao_padding[1]);

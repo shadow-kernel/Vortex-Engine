@@ -1061,6 +1061,8 @@ namespace Editor.DllWrapper
         private static extern void SetPostFxTemporalAA([MarshalAs(UnmanagedType.I1)] bool enabled);
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void SetPostFxSharpen(float strength);
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SetGiVolume")]
+        private static extern void SetGiVolumeNative(long textureA, long textureB);
 
         /// <summary>Anti-aliasing (FXAA 3.11 console variant) in the post pass on the LDR picture — nine taps, no history, the
         /// cheap edge smoothing until temporal AA. Persistent like the other post effects.</summary>
@@ -1081,6 +1083,13 @@ namespace Editor.DllWrapper
         public static void SetPostSharpen(float strength)
         {
             try { SetPostFxSharpen(strength); } catch { }
+        }
+
+        /// <summary>The world radiance cache (Lumen step 1): two RGBA8 probe textures (RadianceCache) bound at the lit
+        /// shaders' slots 13 / 14 on Metal / Vulkan; invalid ids = off (the sky light stands in).</summary>
+        public static void SetGiVolume(long textureA, long textureB)
+        {
+            try { SetGiVolumeNative(textureA, textureB); } catch { }
         }
 
         /// <summary>Post-FX bloom (#30): soft-knee bright-pass -> progressive mip chain -> additive

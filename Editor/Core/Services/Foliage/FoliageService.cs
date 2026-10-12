@@ -456,6 +456,24 @@ namespace Editor.Core.Services.Foliage
         }
 
         /// <summary>Drop every instance of a type (or all with -1).</summary>
+        /// <summary>Every placed instance of every foliage entity the service has seen (world position, scale, its type) —
+        /// the radiance cache voxelizes them as a trunk and a crown.</summary>
+        public static void ForEachInstance(Scene scene, Action<System.Numerics.Vector3, float, FoliageType> visit)
+        {
+            foreach (var kv in _runtimes)
+            {
+                var rt = kv.Value;
+                if (rt?.Data == null || rt.Component == null) continue;
+                foreach (var type in rt.Component.Types)
+                {
+                    if (type == null) continue;
+                    var layer = rt.Data.Layer(type.Name, false);
+                    if (layer == null) continue;
+                    foreach (var inst in layer.Instances) visit(inst.Position, inst.Scale, type);
+                }
+            }
+        }
+
         public static int ClearInstances(GameEntity e, int typeIndex)
         {
             var f = e?.GetComponent<Editor.ECS.Components.Rendering.Foliage>();

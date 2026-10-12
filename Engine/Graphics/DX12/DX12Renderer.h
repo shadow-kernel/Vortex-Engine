@@ -338,6 +338,8 @@ namespace vortex::graphics::dx12
 		void set_skybox_mode(SkyboxMode mode);
 		// Equirect texture sky (#326): the registry texture the fullscreen sky pass samples in SkyboxMode::Texture.
 		void set_environment_map(id::id_type texture, int mips) { m_env_map = texture; m_env_mips = mips; }
+		// the world radiance cache (Lumen step 1): kept, not bound yet on DX12 (the lit shaders use the sky light)
+		void set_gi_volume(id::id_type a, id::id_type b) { m_gi_vol_a = a; m_gi_vol_b = b; }
 		D3D12_GPU_DESCRIPTOR_HANDLE env_map_srv() const;
 		// hdr: 0 = an 8-bit picture shown as it is; 1 = a float picture shown the classic way (gamma-encoded, clamped at white);
 		// 2 = a float picture run through the scene exposure + the tonemapper like the lit surfaces
@@ -870,6 +872,7 @@ namespace vortex::graphics::dx12
 		DirectX::XMFLOAT3 m_env_ground{ 0.25f, 0.25f, 0.28f };
 		// the sky as a reflection (IBL step 2): a registry equirect with mips, bound at t11 while valid
 		id::id_type m_env_map{ id::invalid_id };
+		id::id_type m_gi_vol_a{ id::invalid_id }, m_gi_vol_b{ id::invalid_id };
 		int m_env_mips{ 0 };
 		float m_grid_spacing{ 1.0f };
 		float m_grid_major_interval{ 10.0f };
