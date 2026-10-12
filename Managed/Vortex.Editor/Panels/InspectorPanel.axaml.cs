@@ -737,6 +737,7 @@ namespace VortexEditor.Panels
             C<AudioSource>("Audio", "Audio Source", "Audio", "VxGreenBrush", x => new AudioSource(x), "audio sound source clip music");
             C<AudioListener>("Audio", "Audio Listener", "Audio", "VxGreenBrush", x => new AudioListener(x), "audio listener ears");
             C<ReverbZone>("Audio", "Reverb Zone", "Audio", "VxGreenBrush", x => new ReverbZone(x), "audio reverb zone echo");
+            C<Editor.ECS.Components.World.Area>("World", "Area", "World", "VxTealBrush", x => new Editor.ECS.Components.World.Area(x), "area zone region volume cave trigger no-fly safe village biome", "zones with events");
             C<Animator>("Animation", "Animator", "Bone", "VxPinkBrush", x => new Animator(x), "animation animator clips skeleton");
             C<BoneAttachment>("Animation", "Bone Attachment", "Bone", "VxPinkBrush", x => new BoneAttachment(x), "bone socket attachment weapon hand");
             C<TwoBoneIk>("Animation", "Two-Bone IK", "Bone", "VxPinkBrush", x => new TwoBoneIk(x), "ik inverse kinematics arm hand", "support hand");

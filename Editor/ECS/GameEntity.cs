@@ -48,6 +48,7 @@ namespace Editor.ECS
     [KnownType(typeof(Components.Audio.AudioSource))]
     [KnownType(typeof(Components.Audio.AudioListener))]
     [KnownType(typeof(Components.Audio.ReverbZone))]
+    [KnownType(typeof(Components.World.Area))]
     [KnownType(typeof(Components.Animation.Animator))]
     [KnownType(typeof(Components.Animation.BoneAttachment))]
     [KnownType(typeof(Components.Animation.TwoBoneIk))]

@@ -77,6 +77,9 @@ namespace Editor.Core.Serialization
             typeof(AudioListener),
             typeof(ReverbZone),
 
+            // World
+            typeof(Editor.ECS.Components.World.Area),
+
             // Animation
             typeof(Editor.ECS.Components.Animation.Animator),
             typeof(Editor.ECS.Components.Animation.AnimatorClipEntry),

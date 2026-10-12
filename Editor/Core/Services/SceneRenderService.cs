@@ -975,6 +975,8 @@ namespace Editor.Core.Services
                 foreach (var entity in scene.Entities)
                     SubmitColliderGizmosRecursive(entity, selected);
 
+            SubmitAreaGizmos(selected);   // every Area's outline, selected or not (the selected one bright)
+
             if (selected == null) return;
             var transform = selected.Transform;
             if (transform == null) return;
@@ -1024,6 +1026,7 @@ namespace Editor.Core.Services
             var decal = selected.GetComponent<ECS.Components.Rendering.Decal>();
             if (decal != null && decal.IsEnabled)
                 VortexAPI.RenderDecalGizmo(Decals.DecalService.BoxWorld(selected, decal));   // the projection box (#120)
+            SubmitAreaGizmos(selected);   // every Area's outline (the selected one bright)
             Editor.Core.Services.Terrain.TerrainToolService.SubmitGizmo();   // the terrain brush under the cursor (#124)
             Editor.Core.Services.Foliage.FoliageToolService.SubmitGizmo();   // the foliage brush (#125)
 
@@ -1285,6 +1288,36 @@ namespace Editor.Core.Services
         public float[] WorldMatrixOf(GameEntity entity)
         {
             try { return BuildWorldMatrixWithParent(entity); } catch { return entity?.Transform != null ? BuildWorldMatrix(entity.Transform) : null; }
+        }
+
+        /// <summary>The Area (zone) components' outlines: in the editor every area faintly in its colour and the selected one
+        /// bright; in play only the ones that ask (DrawInGame). The shape follows the entity's world matrix.</summary>
+        private void SubmitAreaGizmos(GameEntity selected)
+        {
+            var scene = Data.ProjectData.Current?.ActiveScene;
+            if (scene == null) return;
+            bool play = IsPlayLike;
+            string projectPath = Data.ProjectData.Current?.Path;
+            void Walk(GameEntity e)
+            {
+                if (e == null) return;
+                if (e.ActiveInHierarchy)
+                {
+                    var a = e.GetComponent<ECS.Components.World.Area>();
+                    if (a != null && a.IsEnabled && (!play || a.DrawInGame))
+                    {
+                        try
+                        {
+                            var d = a.Resolve(projectPath);
+                            var m = WorldMatrixOf(e);
+                            if (d != null && m != null) VortexAPI.RenderAreaGizmo(m, (int)d.Shape, d.SizeX, d.SizeY, d.SizeZ, d.ColorR, d.ColorG, d.ColorB, ReferenceEquals(e, selected));
+                        }
+                        catch { }
+                    }
+                }
+                if (e.Children != null) foreach (var c in e.Children) Walk(c);
+            }
+            foreach (var root in scene.Entities) Walk(root);
         }
 
         private MeshBoundsInfo GetMeshBoundsAndCenter(string meshPath)

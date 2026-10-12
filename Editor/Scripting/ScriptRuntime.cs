@@ -716,8 +716,10 @@ namespace Editor.Scripting
         public void Begin(Scene scene, System.Reflection.Assembly overrideAsm)
         {
             End();
+            try { Editor.Core.Services.Areas.AreaService.Reset(); Vortex.Areas.ClearHandlers(); } catch { }
             if (scene?.Entities == null) return;
             _currentScene = scene;   // remembered so hot-reload can re-begin the same scene
+            try { var srs = Editor.Core.Services.SceneRenderService.Instance; Editor.Core.Services.Areas.AreaService.Refresh(scene, e => srs?.WorldMatrixOf(e)); } catch { }   // Areas.Count is right in Start
 
             Vortex.VortexBehaviour.Host = this;
             Vortex.Input.Host = this;
@@ -864,6 +866,8 @@ namespace Editor.Scripting
             // physics step, so a NavAgent's move of this frame is what the physics world and LateUpdate see (#108).
             try { Editor.Core.Services.AI.AiRuntime.Tick(dt); }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] AI tick error: " + ex.Message); }
+            try { TickAreas(dt); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] areas tick error: " + ex.Message); }
             try { Editor.Core.Services.Physics.PhysicsService.Step(dt); }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] physics step error: " + ex.Message); }
 
@@ -965,6 +969,72 @@ namespace Editor.Scripting
         /// the character contacts use — OnCollisionEnter for a solid first touch, OnTriggerEnter/Stay/Exit for
         /// sensor overlaps — on BOTH entities' behaviours, each seeing the other as the TriggerHit. The player
         /// character is not a physics body, so nothing here duplicates what CollisionService.StepEvents reports.</summary>
+        // ---- areas (zones): the Area components tracked against the scripted entities every tick ----
+        private void TickAreas(float dt)
+        {
+            var scene = Editor.Core.Data.ProjectData.Current?.ActiveScene;
+            if (scene == null) return;
+            var srs = Editor.Core.Services.SceneRenderService.Instance;
+            Editor.Core.Services.Areas.AreaService.Dispatch = DispatchArea;
+            Editor.Core.Services.Areas.AreaService.Refresh(scene, e => srs?.WorldMatrixOf(e));
+            Editor.Core.Services.Areas.AreaService.Tick(dt, _behavioursByEntity.Keys, e =>
+            {
+                float[] m = null;
+                try { m = srs?.WorldMatrixOf(e); } catch { }
+                if (m != null && m.Length >= 16) return new System.Numerics.Vector3(m[12], m[13], m[14]);
+                if (e.Transform == null) return null;
+                var p = e.Transform.LocalPosition; return new System.Numerics.Vector3(p.X, p.Y, p.Z);
+            });
+        }
+
+        private void DispatchArea(GameEntity e, Editor.Core.Services.Areas.AreaInstance a, int kind, float dt)
+        {
+            var info = AreaInfoFor(a);
+            if (_behavioursByEntity.TryGetValue(e, out var b) && b != null)
+            {
+                try
+                {
+                    if (kind == 0) b.OnAreaEnter(info); else if (kind == 1) b.OnAreaStay(info, dt); else b.OnAreaExit(info);
+                }
+                catch (Exception ex) { LogScriptError(kind == 0 ? "OnAreaEnter" : (kind == 1 ? "OnAreaStay" : "OnAreaExit"), b, ex); }
+            }
+            long id = HandleForEntity(e);
+            try { if (kind == 0) Vortex.Areas.RaiseEntered(id, info); else if (kind == 2) Vortex.Areas.RaiseExited(id, info); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] area event handler: " + ex.Message); }
+        }
+
+        private Vortex.AreaInfo AreaInfoFor(Editor.Core.Services.Areas.AreaInstance a)
+        {
+            var d = a.Definition;
+            return new Vortex.AreaInfo(HandleForEntity(a.Entity), string.IsNullOrEmpty(a.Entity?.Name) ? d.Name : a.Entity.Name, d.Tags.ToArray(), d.Priority,
+                new Vortex.Vector3(a.WorldPosition.X, a.WorldPosition.Y, a.WorldPosition.Z), new System.Collections.Generic.Dictionary<string, string>(d.Properties, StringComparer.OrdinalIgnoreCase));
+        }
+        private Vortex.AreaInfo[] ToInfos(System.Collections.Generic.List<Editor.Core.Services.Areas.AreaInstance> list)
+        {
+            var r = new Vortex.AreaInfo[list.Count];
+            for (int i = 0; i < list.Count; i++) r[i] = AreaInfoFor(list[i]);
+            return r;
+        }
+        internal bool AreaIsInside(long entity, string tag)
+        {
+            if (!_entitiesById.TryGetValue(entity, out var e)) return false;
+            foreach (var a in Editor.Core.Services.Areas.AreaService.Of(e)) if (string.IsNullOrEmpty(tag) || a.HasTag(tag)) return true;
+            return false;
+        }
+        internal Vortex.AreaInfo[] AreasOf(long entity)
+        {
+            if (!_entitiesById.TryGetValue(entity, out var e)) return new Vortex.AreaInfo[0];
+            return ToInfos(Editor.Core.Services.Areas.AreaService.Of(e));
+        }
+        internal Vortex.AreaInfo[] AreasAt(Vortex.Vector3 p) => ToInfos(Editor.Core.Services.Areas.AreaService.At(new System.Numerics.Vector3(p.X, p.Y, p.Z)));
+        internal bool AreaPointInside(Vortex.Vector3 p, string tag) => Editor.Core.Services.Areas.AreaService.IsInside(new System.Numerics.Vector3(p.X, p.Y, p.Z), tag);
+        internal Vortex.AreaInfo AreaFind(string nameOrTag) { var a = Editor.Core.Services.Areas.AreaService.Find(nameOrTag); return a != null ? AreaInfoFor(a) : null; }
+        internal void AreaTrack(long entity, bool on)
+        {
+            if (!_entitiesById.TryGetValue(entity, out var e)) return;
+            if (on) Editor.Core.Services.Areas.AreaService.Track(e); else Editor.Core.Services.Areas.AreaService.Untrack(e);
+        }
+
         private void OnPhysicsContact(Editor.Core.Services.Physics.PhysicsContactEvent c)
         {
             if (!_active || c.EntityA == null || c.EntityB == null) return;
@@ -1112,6 +1182,7 @@ namespace Editor.Scripting
         /// <summary>Stop all behaviours.</summary>
         public void End()
         {
+            try { Editor.Core.Services.Areas.AreaService.Reset(); Vortex.Areas.ClearHandlers(); } catch { }
             for (int i = 0; i < _behaviours.Count; i++)
             {
                 try { _behaviours[i].OnDestroy(); } catch (Exception ex) { LogScriptError("OnDestroy", _behaviours[i], ex); }   // #322
