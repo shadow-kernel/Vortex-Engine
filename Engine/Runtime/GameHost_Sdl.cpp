@@ -285,7 +285,19 @@ namespace vortex::runtime
 	void GameHost::set_resolution(uint32_t w, uint32_t h)
 	{
 		if (!g_window || g_fullscreen || w == 0 || h == 0) return;
-		SDL_SetWindowSize(g_window, (int)w, (int)h);
+		// the settings menu means PIXELS (as on Windows); SDL_SetWindowSize takes points, so on a Retina display 1920 x 1080
+		// would have made a 3840 x 2160 px window — divide by the pixel density, and never exceed the display's usable area
+		float density = SDL_GetWindowPixelDensity(g_window);
+		if (!(density > 0.0f)) density = 1.0f;
+		int pw = (int)((float)w / density + 0.5f), ph = (int)((float)h / density + 0.5f);
+		SDL_Rect usable{};
+		SDL_DisplayID did = SDL_GetDisplayForWindow(g_window);
+		if (did != 0 && SDL_GetDisplayUsableBounds(did, &usable) && usable.w > 64 && usable.h > 64)
+		{
+			if (pw > usable.w) pw = usable.w;
+			if (ph > usable.h - 28) ph = usable.h - 28;   // the title bar
+		}
+		SDL_SetWindowSize(g_window, pw, ph);
 	}
 
 	bool GameHost::run_utf8(uint32_t width, uint32_t height, const char* title_utf8)
