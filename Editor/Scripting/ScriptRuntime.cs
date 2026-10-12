@@ -2130,6 +2130,10 @@ namespace Editor.Scripting
         /// outside play mode (the world lighting cache opens walk-in meshes with it).</summary>
         public static float[] MeshTriangles(string meshPath) => ResolveMeshTriangles(meshPath);
 
+        /// <summary>A model changed on disk (SceneRenderService.InvalidateModel): forget its cached triangles, so collision and
+        /// the world lighting cache read the new mesh (in edit mode the cache was only cleared when play stopped).</summary>
+        public static void ForgetMeshTriangles() { _triCache.Clear(); }
+
         private static float[] ResolveMeshTriangles(string meshPath)
         {
             if (string.IsNullOrEmpty(meshPath) || meshPath.StartsWith("Primitive:", System.StringComparison.OrdinalIgnoreCase)) return null;

@@ -183,6 +183,9 @@ namespace Editor.Core.Services.Gi
 
         private static readonly Dictionary<string, (Vector3 size, Vector3 centre)> _boundsByPath = new Dictionary<string, (Vector3, Vector3)>();
 
+        /// <summary>A model changed on disk: measure the boxes again.</summary>
+        public static void ForgetBounds() { lock (_boundsByPath) _boundsByPath.Clear(); }
+
         /// <summary>A mesh's local box (size, centre). The render service answers by path, but a placed model's parts
         /// ("model.gltf#submeshN") are not always in its path caches and come back as the 1 m default — every rock, cliff
         /// and cave was a 1 m cube in the cache. Then the collision triangles (the same disk cache physics uses) give the

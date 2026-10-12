@@ -321,6 +321,7 @@ namespace Editor.Core.Services
         public static void InvalidateModel(string modelPath)
         {
             if (string.IsNullOrEmpty(modelPath)) return;
+            try { Editor.Scripting.ScriptRuntime.ForgetMeshTriangles(); Gi.RadianceCache.ForgetBounds(); } catch { }   // collision + the lighting cache read the new file
             string target = NormalizeModelPath(modelPath);
             var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var k in _submeshMeshCache.Keys) if (SameModel(k, target)) keys.Add(k);

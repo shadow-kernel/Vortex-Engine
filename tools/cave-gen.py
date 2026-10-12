@@ -134,7 +134,10 @@ def main():
         floor_x = []
         for s in range(segs + 1):
             ang = 2 * math.pi * s / segs                      # 0 = right, pi/2 = up (ceiling), pi = left, 3pi/2 = floor
-            nz = fbm(s / segs * 64.0 / 6.0, v_tex * 1.3 + ri * 0.15)   # rocky bulges, periodic around the tube
+            # rocky bulges: the noise is read on a circle around the tube (cos / sin of the angle), so the ring closes on
+            # itself — reading it along the angle left the first and the last vertex at different radii: a crack along
+            # the whole tunnel that showed the sky
+            nz = fbm(4.0 + math.cos(ang) * 1.8 + v_tex * 0.55, 4.0 + math.sin(ang) * 1.8 + v_tex * 1.3 + ri * 0.05)
             rr = r * (1.0 + a.rough * nz) * (1.0 - 0.18 * max(0.0, -math.sin(ang)))   # a little flatter at the bottom
             px = c[0] + right[0] * math.cos(ang) * rr + up[0] * math.sin(ang) * rr
             py = c[1] + right[1] * math.cos(ang) * rr + up[1] * math.sin(ang) * rr
