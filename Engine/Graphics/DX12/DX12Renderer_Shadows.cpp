@@ -60,6 +60,18 @@ namespace vortex::graphics::dx12
 			return true;
 		}
 
+		// The smallest caster worth drawing into an ORTHOGRAPHIC shadow tile (the sun's cascades): two texels of radius. Pebbles,
+		// litter and grass under that size made no visible shadow there but filled the shared instance budget, and the far
+		// cascades dropped whole trees for them (#363). Perspective tiles (spots, point faces) return 0: their texel size
+		// depends on the distance.
+		float shadow_min_caster_radius(const DirectX::XMFLOAT4X4& vp, unsigned tile_size)
+		{
+			if (fabsf(vp._14) > 1e-5f || fabsf(vp._24) > 1e-5f || fabsf(vp._34) > 1e-5f || tile_size == 0) return 0.f;
+			const float len = sqrtf(vp._11 * vp._11 + vp._21 * vp._21 + vp._31 * vp._31);   // NDC per metre along x
+			if (len <= 0.f) return 0.f;
+			return 2.f * (2.f / (len * (float)tile_size));   // 2 texels; one texel is 2 / (len * size) metres
+		}
+
 		// Spot light view-projection: FOV = the FULL outer cone angle (SpotAngle travels end-to-end in
 		// degrees; the shader gates at cos(angle/2), so the full angle IS the perspective FOV). Far
 		// plane = range (attenuation + the dist<range gate zero the light beyond it anyway).
@@ -578,11 +590,11 @@ namespace vortex::graphics::dx12
 		// ---- cull one tile's casters (shared by spot, cascade and point tiles) ----
 		// Own pack per tile: the scene's instance packing is keyed to the MAIN camera frustum and
 		// runs later — the wall BEHIND the player must still cast into the light frustum.
-		auto pack_casters = [&](const ShadowFrustum& fr)
+		auto pack_casters = [&](const ShadowFrustum& fr, float min_r)
 		{
 			casters.clear();
 			for (const auto& c : all)
-				if (sphere_in_shadow_frustum(fr, c.cx, c.cy, c.cz, c.r)) casters.push_back(c);
+				if (c.r >= min_r && sphere_in_shadow_frustum(fr, c.cx, c.cy, c.cz, c.r)) casters.push_back(c);
 			// The tiles share one instance buffer. A tile over budget keeps its LARGEST casters (the shadows one sees from
 			// afar) instead of the first in queue order, and the drop is reported once the frame is packed.
 			const u32 room = vb_used < MAX_SHADOW_INSTANCES ? MAX_SHADOW_INSTANCES - vb_used : 0;
@@ -690,7 +702,7 @@ namespace vortex::graphics::dx12
 
 			for (u32 c = 0; c < m_csm_count; ++c)
 			{
-				pack_casters(extract_shadow_frustum(m_csm_vp[c]));
+				pack_casters(extract_shadow_frustum(m_csm_vp[c]), shadow_min_caster_radius(m_csm_vp[c], SHADOW_TILE_SIZE));
 				draw_tile((c & 1) * SHADOW_TILE_SIZE, ((c >> 1) & 1) * SHADOW_TILE_SIZE,
 					SHADOW_TILE_SIZE, MAX_SHADOW_SPOTS + c);
 			}
@@ -726,7 +738,7 @@ namespace vortex::graphics::dx12
 
 			for (u32 t = 0; t < m_shadow_spot_count; ++t)
 			{
-				pack_casters(extract_shadow_frustum(m_shadow_spots[t].vp));
+				pack_casters(extract_shadow_frustum(m_shadow_spots[t].vp), 0.f);
 				draw_tile((t & 1) * SHADOW_TILE_SIZE, ((t >> 1) & 1) * SHADOW_TILE_SIZE, SHADOW_TILE_SIZE, t);
 			}
 
@@ -764,7 +776,7 @@ namespace vortex::graphics::dx12
 			{
 				for (u32 f = 0; f < 6; ++f)
 				{
-					pack_casters(extract_shadow_frustum(m_shadow_points[p].face_vp[f]));
+					pack_casters(extract_shadow_frustum(m_shadow_points[p].face_vp[f]), 0.f);
 					const u32 tile = p * 6 + f;
 					draw_tile((tile % POINT_ATLAS_COLS) * POINT_SHADOW_TILE,
 						(tile / POINT_ATLAS_COLS) * POINT_SHADOW_TILE,
