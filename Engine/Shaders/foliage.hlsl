@@ -203,6 +203,47 @@ SamplerState LinearSampler : register(s0);
 SamplerComparisonState ShadowSampler : register(s1);
 SamplerState ScreenSampler : register(s2);   // linear/clamp for screen-space textures (SSAO)
 
+// ---- the world radiance cache (Lumen step 1, #257 step 3) on DX12: t14 / t15, see standard.metal's gi_volume ----
+// A = (sqrt(L0.rgb / scale), L1.x), B = (L1.y, L1.z, valid, -), laid out as y-slices with a padding row each and a header row
+// at the end (origin in cells, cell sizes x100, dims, strength x64, log2 scale x16 + 128, magic 90). Only valid probes count
+// (an invalid one sits inside rock or the ground and is stored as zero), and the lookup moves half a cell along the normal
+// so a surface reads the probes on its open side. The white texture (no cache) fails the magic: the sky light stands in.
+Texture2D GiVolA : register(t14);
+Texture2D GiVolB : register(t15);
+float3 GiVolume(float3 wp, float3 n, float3 fallback)
+{
+    uint W, H; GiVolA.GetDimensions(W, H);
+    if (W < 4 || H < 4) return fallback;
+    int hy = (int)H - 1;
+    float4 h0 = GiVolA.Load(int3(0, hy, 0)) * 255.0, h1 = GiVolA.Load(int3(1, hy, 0)) * 255.0;
+    float4 h2 = GiVolA.Load(int3(2, hy, 0)) * 255.0, h3 = GiVolA.Load(int3(3, hy, 0)) * 255.0;
+    if (abs(h3.a - 90.0) > 0.5) return fallback;
+    float cxz = (h1.z + h1.w * 256.0) * 0.01, cy = (h2.x + h2.y * 256.0) * 0.01;
+    float3 cellv = float3(cxz, cy, cxz);
+    float3 origin = float3(h0.x + h0.y * 256.0 - 32768.0, h0.z + h0.w * 256.0 - 32768.0, h1.x + h1.y * 256.0 - 32768.0) * cellv;
+    float nx = h2.z, ny = h2.w, nz = h3.x;
+    float strength = h3.y / 64.0;
+    float scale = exp2((h3.z - 128.0) / 16.0);
+    float3 p = (wp + n * (0.5 * cxz) - origin) / cellv - 0.5;
+    float3 edge = min(p + 1.0, float3(nx, ny, nz) - p);
+    float w = saturate(min(edge.x, min(edge.y, edge.z)));
+    if (w <= 0.0) return fallback;
+    p = clamp(p, float3(0.0, 0.0, 0.0), float3(nx - 1.0, ny - 1.0, nz - 1.0));
+    float y0 = floor(p.y), t = p.y - y0, y1 = min(y0 + 1.0, ny - 1.0);
+    float rows = (float)H;
+    float2 uv0 = float2((p.x + 0.5) / nx, (y0 * (nz + 1.0) + p.z + 0.5) / rows);
+    float2 uv1 = float2(uv0.x, (y1 * (nz + 1.0) + p.z + 0.5) / rows);
+    float4 A = lerp(GiVolA.SampleLevel(ScreenSampler, uv0, 0), GiVolA.SampleLevel(ScreenSampler, uv1, 0), t);
+    float4 B = lerp(GiVolB.SampleLevel(ScreenSampler, uv0, 0), GiVolB.SampleLevel(ScreenSampler, uv1, 0), t);
+    float v = B.b, iv = 1.0 / max(v, 0.2);
+    float3 L0 = (A.rgb * iv) * (A.rgb * iv) * scale;
+    float3 L1 = (float3(A.a, B.r, B.g) * 2.0 - 1.0) * scale * iv;
+    float lum = max(dot(L0, float3(0.2126, 0.7152, 0.0722)), 1e-4);
+    float3 E = 0.886227 * L0 + 1.023327 * dot(L1, n) * (L0 / lum);
+    E = max(E, 0.0) * strength;
+    return lerp(fallback, E, w * saturate(v * 5.0));
+}
+
 // 1 = fully lit, 0 = fully shadowed (scaled by strength). Hard shadows via a single hardware-PCF
 // comparison tap (SampleCmpLevelZero) — a soft PCF kernel is a later upgrade (ShadowMapTexel is
 // already plumbed for it). `slot` picks the 2x2 atlas tile this spot rendered its depth into.
@@ -703,7 +744,11 @@ float4 PSMain(PS_IN input, bool isFront : SV_IsFrontFace) : SV_TARGET
     float3 hemisphereLight = lerp(groundColor, skyColor, skyAmount);
     if (SkySh[0].w > 0.5) hemisphereLight = SkyIrradiance(N);   // the real sky: blue from above, the ground's bounce from below
 
-    float3 ambient = hemisphereLight * AmbientStrength * albedo * ao * (1.0 - metallic);
+    // the world radiance cache replaces the sky light where it has probes; how open the point is to the sky (exactly 1
+    // without a cache) fades the screen-space bounce and the sky reflection deep in a cave
+    float3 ambIrr = GiVolume(input.worldPos, N, hemisphereLight * AmbientStrength);
+    float skyOpen = smoothstep(0.08, 0.45, dot(ambIrr, float3(0.2126, 0.7152, 0.0722)) / max(dot(hemisphereLight * AmbientStrength, float3(0.2126, 0.7152, 0.0722)), 1e-4));
+    float3 ambient = ambIrr * albedo * ao * (1.0 - metallic);
 
     // Subtle rim for metals only
     float rimFresnel = pow(saturate(1.0 - NdotV), 5.0);
@@ -732,7 +777,7 @@ float4 PSMain(PS_IN input, bool isFront : SV_IsFrontFace) : SV_TARGET
     }
 
     float3 envFresnel = F0 + (max(float3(1.0 - roughness, 1.0 - roughness, 1.0 - roughness), F0) - F0) * pow(1.0 - NdotV, 5.0);
-    float3 specularAmbient = envColor * envFresnel * ao;
+    float3 specularAmbient = envColor * envFresnel * ao * skyOpen;
 
     ambient += specularAmbient + rimLight;
 
@@ -746,7 +791,7 @@ float4 PSMain(PS_IN input, bool isFront : SV_IsFrontFace) : SV_TARGET
         float4 ss = SsaoTex.Sample(ScreenSampler, aoUV);
         ambient *= ss.a;
         // screen-space GI (#257 step 1): one bounce of the lit world (sqrt-encoded radiance, x4 range) onto this surface
-        if (GiStrength > 0.0) ambient += ss.rgb * ss.rgb * 4.0 * albedo * (1.0 - metallic) * ss.a;
+        if (GiStrength > 0.0) ambient += ss.rgb * ss.rgb * 4.0 * albedo * (1.0 - metallic) * ss.a * skyOpen;
     }
 
     float3 color = ambient + Lo;
