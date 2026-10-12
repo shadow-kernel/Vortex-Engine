@@ -481,7 +481,8 @@ vec3 gi_volume(vec3 wp, vec3 n, vec3 fallback)
 	float nx = h2.z, ny = h2.w, nz = h3.x;
 	float strength = h3.y / 64.0;
 	float scale = exp2((h3.z - 128.0) / 16.0);
-	vec3 p = (wp - origin) / cellv - 0.5;
+	// half a cell along the normal: a surface reads the probes on its open side (a cave wall the cave's air)
+	vec3 p = (wp + n * (0.5 * cxz) - origin) / cellv - 0.5;
 	vec3 edge = min(p + 1.0, vec3(nx, ny, nz) - p);
 	float w = clamp(min(edge.x, min(edge.y, edge.z)), 0.0, 1.0);
 	if (w <= 0.0) return fallback;
@@ -492,12 +493,14 @@ vec3 gi_volume(vec3 wp, vec3 n, vec3 fallback)
 	vec2 uv1 = vec2(uv0.x, (y1 * (nz + 1.0) + p.z + 0.5) / rows);
 	vec4 A = mix(texture(u_gi_a, uv0), texture(u_gi_a, uv1), t);
 	vec4 B = mix(texture(u_gi_b, uv0), texture(u_gi_b, uv1), t);
-	vec3 L0 = A.rgb * A.rgb * scale;
-	vec3 L1 = (vec3(A.a, B.r, B.g) * 2.0 - 1.0) * scale;
+	// only the valid probes count (an invalid one, inside rock or the ground, is stored as zero); too few: the sky light
+	float v = B.b, iv = 1.0 / max(v, 0.2);
+	vec3 L0 = (A.rgb * iv) * (A.rgb * iv) * scale;
+	vec3 L1 = (vec3(A.a, B.r, B.g) * 2.0 - 1.0) * scale * iv;
 	float lum = max(dot(L0, vec3(0.2126, 0.7152, 0.0722)), 1e-4);
 	vec3 E = 0.886227 * L0 + 1.023327 * dot(L1, n) * (L0 / lum);
 	E = max(E, vec3(0.0)) * strength;
-	return mix(fallback, E, w * B.b);
+	return mix(fallback, E, w * clamp(v * 5.0, 0.0, 1.0));
 }
 
 void main()

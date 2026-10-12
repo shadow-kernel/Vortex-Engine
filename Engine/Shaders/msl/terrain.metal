@@ -453,7 +453,9 @@ static inline float3 gi_volume(texture2d<float> ta, sampler sa, texture2d<float>
     float nx = h2.z, ny = h2.w, nz = h3.x;
     float strength = h3.y / 64.0;
     float scale = exp2((h3.z - 128.0) / 16.0);
-    float3 p = (wp - origin) / cellv - 0.5;
+    // half a cell along the normal: a surface reads the probes on its open side (a cave wall the cave's air, not the
+    // rock behind it)
+    float3 p = (wp + n * (0.5 * cxz) - origin) / cellv - 0.5;
     float3 edge = min(p + 1.0, float3(nx, ny, nz) - p);
     float w = saturate(min(edge.x, min(edge.y, edge.z)));
     if (w <= 0.0) return fallback;
@@ -464,12 +466,15 @@ static inline float3 gi_volume(texture2d<float> ta, sampler sa, texture2d<float>
     float2 uv1 = float2(uv0.x, (y1 * (nz + 1.0) + p.z + 0.5) / rows);
     float4 A = mix(ta.sample(sa, uv0), ta.sample(sa, uv1), t);
     float4 B = mix(tb.sample(sb, uv0), tb.sample(sb, uv1), t);
-    float3 L0 = A.rgb * A.rgb * scale;
-    float3 L1 = (float3(A.a, B.r, B.g) * 2.0 - 1.0) * scale;
+    // only the valid probes count: an invalid one (inside rock or the ground) is stored as zero, so dividing by the
+    // interpolated validity averages the valid ones; with too few of them the sky light stands in
+    float v = B.b, iv = 1.0 / max(v, 0.2);
+    float3 L0 = (A.rgb * iv) * (A.rgb * iv) * scale;
+    float3 L1 = (float3(A.a, B.r, B.g) * 2.0 - 1.0) * scale * iv;
     float lum = max(dot(L0, float3(0.2126, 0.7152, 0.0722)), 1e-4);
     float3 E = 0.886227 * L0 + 1.023327 * dot(L1, n) * (L0 / lum);
     E = max(E, 0.0) * strength;
-    return mix(fallback, E, w * B.b);
+    return mix(fallback, E, w * saturate(v * 5.0));
 }
 
 static inline float3 sample_env(texture2d<float> env_tex, sampler env_smp, float3 R, float roughness, float mips)

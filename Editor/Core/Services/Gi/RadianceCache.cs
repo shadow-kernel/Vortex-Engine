@@ -49,12 +49,16 @@ namespace Editor.Core.Services.Gi
 
         private struct Plant { public Vector3 Pos; public float TrunkR, TrunkH, CrownR, CrownRy, CrownY; public bool Bush; }
         private struct Box { public Vector3 Min, Max; }
+        /// <summary>A mesh one can walk into (it carries a non-convex Mesh Collider): its world-space triangles. The voxelizer
+        /// keeps its INSIDE open and its walls solid, so a cave or a house gets dark inside instead of lit like the open ground.</summary>
+        private sealed class Hollow { public Vector3 Min, Max; public float[] Tris; public int X0, Y0, Z0, X1, Y1, Z1; public bool[] Inside; }
         private sealed class Snapshot
         {
             public Vector3 VOrigin;                 // the voxel grid's corner (metres)
             public float[] Heights;                 // VX x VZ terrain heights at the voxel columns' centres (NaN = no terrain)
             public readonly List<Plant> Plants = new List<Plant>();
             public readonly List<Box> Boxes = new List<Box>();
+            public readonly List<Hollow> Hollows = new List<Hollow>();
             public Vector3 SunDir; public Vector3 SunCol; public float SunI; public float Ambient; public float[] Sky; public bool SkyOn;
             public Vector3 Origin;                  // the probe grid's corner (metres)
         }
@@ -140,7 +144,7 @@ namespace Editor.Core.Services.Gi
                 if (!e.ActiveInHierarchy) continue;
                 var mr = e.GetComponent<MeshRenderer>();
                 if (mr == null || string.IsNullOrEmpty(mr.MeshPath) || e.Transform == null) continue;
-                var b = SceneRenderService.Instance.MeshBounds(mr.MeshPath); var c = SceneRenderService.Instance.MeshCenter(mr.MeshPath);
+                LocalBounds(mr.MeshPath, out var b, out var c);
                 var m = SceneRenderService.Instance.WorldMatrixOf(e);
                 if (m == null || m.Length < 16) continue;
                 // the world scale from the matrix's columns, the translation from its last column
@@ -148,11 +152,68 @@ namespace Editor.Core.Services.Gi
                 var wp = new Vector3(m[12], m[13], m[14]);
                 var half = new Vector3(Math.Abs(b.X * sc.X), Math.Abs(b.Y * sc.Y), Math.Abs(b.Z * sc.Z)) * 0.5f;
                 var centre = new Vector3(wp.X + c.X * sc.X, wp.Y + c.Y * sc.Y, wp.Z + c.Z * sc.Z);
+                // a walk-in mesh (a cave, a tunnel, a room: it has a non-convex Mesh Collider) is voxelized by its triangles so
+                // its inside stays open — only when the box is big enough to stand in; a box would fill it solid
+                if (IsWalkIn(e) && half.Y > 0.9f && Math.Max(half.X, half.Z) > 0.9f)
+                {
+                    float[] local = null;
+                    try { local = (Physics.CollisionService.MeshTriangleProvider ?? Editor.Scripting.ScriptRuntime.MeshTriangles)(mr.MeshPath); } catch { }   // the provider is installed at play start; edit mode reads the same source
+                    if (local != null && local.Length >= 9 && local.Length <= 3 * 3 * 200000)
+                    {
+                        var tris = new float[local.Length];
+                        var mn = new Vector3(float.MaxValue); var mx = new Vector3(float.MinValue);
+                        for (int i = 0; i + 2 < local.Length; i += 3)
+                        {
+                            float x = local[i], y = local[i + 1], z = local[i + 2];
+                            // rows = the axis images, the last row the translation (WorldMatrixOf's layout)
+                            float wx = x * m[0] + y * m[4] + z * m[8] + m[12], wy = x * m[1] + y * m[5] + z * m[9] + m[13], wz = x * m[2] + y * m[6] + z * m[10] + m[14];
+                            tris[i] = wx; tris[i + 1] = wy; tris[i + 2] = wz;
+                            mn = Vector3.Min(mn, new Vector3(wx, wy, wz)); mx = Vector3.Max(mx, new Vector3(wx, wy, wz));
+                        }
+                        s.Hollows.Add(new Hollow { Min = mn, Max = mx, Tris = tris });
+                        continue;
+                    }
+                }
                 if (half.X > 40f || half.Z > 40f || half.Y > 40f) continue;   // a sky dome or a floor plane is not an occluder here
                 if (centre.X + half.X < minX || centre.X - half.X > maxX || centre.Z + half.Z < minZ || centre.Z - half.Z > maxZ) continue;
                 s.Boxes.Add(new Box { Min = centre - half, Max = centre + half });
             }
             return s;
+        }
+
+        private static readonly Dictionary<string, (Vector3 size, Vector3 centre)> _boundsByPath = new Dictionary<string, (Vector3, Vector3)>();
+
+        /// <summary>A mesh's local box (size, centre). The render service answers by path, but a placed model's parts
+        /// ("model.gltf#submeshN") are not always in its path caches and come back as the 1 m default — every rock, cliff
+        /// and cave was a 1 m cube in the cache. Then the collision triangles (the same disk cache physics uses) give the
+        /// real box, kept per path.</summary>
+        private static void LocalBounds(string meshPath, out Vector3 size, out Vector3 centre)
+        {
+            if (_boundsByPath.TryGetValue(meshPath, out var known)) { size = known.size; centre = known.centre; return; }
+            size = SceneRenderService.Instance.MeshBounds(meshPath); centre = SceneRenderService.Instance.MeshCenter(meshPath);
+            bool fallback = Math.Abs(size.X - 1f) < 1e-6f && Math.Abs(size.Y - 1f) < 1e-6f && Math.Abs(size.Z - 1f) < 1e-6f
+                            && !meshPath.StartsWith("Primitive:", StringComparison.OrdinalIgnoreCase);
+            if (!fallback) { _boundsByPath[meshPath] = (size, centre); return; }
+            float[] t = null;
+            try { t = (Physics.CollisionService.MeshTriangleProvider ?? Editor.Scripting.ScriptRuntime.MeshTriangles)(meshPath); } catch { }
+            if (t == null || t.Length < 9) return;   // not loadable (yet): ask again next build
+            var mn = new Vector3(float.MaxValue); var mx = new Vector3(float.MinValue);
+            for (int i = 0; i + 2 < t.Length; i += 3) { var v = new Vector3(t[i], t[i + 1], t[i + 2]); mn = Vector3.Min(mn, v); mx = Vector3.Max(mx, v); }
+            size = mx - mn; centre = (mn + mx) * 0.5f;
+            _boundsByPath[meshPath] = (size, centre);
+        }
+
+        /// <summary>A mesh one can walk into: it — or the model root it is a part of — carries an enabled, non-convex Mesh
+        /// Collider (a cave or a building placed as a model keeps the collider on its root, the meshes on child entities).</summary>
+        private static bool IsWalkIn(GameEntity e)
+        {
+            for (var cur = e; cur != null; cur = cur.Parent)
+            {
+                var mc = cur.GetComponent<Editor.ECS.Components.Physics.MeshCollider>();
+                if (mc != null && mc.IsEnabled) return !mc.Convex;
+                if (cur != e && cur.GetComponent<MeshRenderer>() != null) return false;   // a mesh parent is not a model root
+            }
+            return false;
         }
 
         private static void Walk(GameEntity e, List<GameEntity> into)
@@ -205,14 +266,9 @@ namespace Editor.Core.Services.Gi
                         }
                         L0[k] = c0; L1[k] = c1; valid[k] = true;
                     }
-            // an invalid probe takes its upper neighbour's light, so the lerp at the ground does not darken
-            for (int iy = 0; iy < NY - 1; iy++)
-                for (int iz = 0; iz < NZ; iz++)
-                    for (int ix = 0; ix < NX; ix++)
-                    {
-                        int k = (iy * NZ + iz) * NX + ix, up = ((iy + 1) * NZ + iz) * NX + ix;
-                        if (!valid[k] && valid[up]) { L0[k] = L0[up]; L1[k] = L1[up]; }
-                    }
+            // an invalid probe (inside rock, under the ground) stays zero: the shaders weight the probes by validity, so a
+            // surface near the ground or a cave wall reads only the probes in the open (they used to copy the upper
+            // neighbour's light — through a hill that was the sky's)
             Encode(s, L0, L1, valid);
             LastProbes = count; LastBuildMs = sw.Elapsed.TotalMilliseconds;
         }
@@ -243,6 +299,102 @@ namespace Editor.Core.Services.Gi
                 int y0 = Clamp((int)Math.Floor((b.Min.Y - s.VOrigin.Y) / VCell), 0, VY - 1), y1 = Clamp((int)Math.Floor((b.Max.Y - s.VOrigin.Y) / VCell), 0, VY - 1);
                 int z0 = Clamp((int)Math.Floor((b.Min.Z - s.VOrigin.Z) / VCell), 0, VZ - 1), z1 = Clamp((int)Math.Floor((b.Max.Z - s.VOrigin.Z) / VCell), 0, VZ - 1);
                 for (int y = y0; y <= y1; y++) for (int z = z0; z <= z1; z++) for (int x = x0; x <= x1; x++) vox[(y * VZ + z) * VX + x] = KMesh;
+            }
+            // the walk-in meshes: first every inside becomes air, then every wall becomes solid (in that order, so one
+            // hollow's opening never erases another one's wall)
+            foreach (var h in s.Hollows) OpenInside(s, vox, h);
+            foreach (var h in s.Hollows) RasterWalls(s, vox, h);
+        }
+
+        /// <summary>Open the inside of a hollow mesh in the voxel grid: a voxel is inside when the mesh's surface lies on at
+        /// least five of its six sides (along +x, -x, +y, -y, +z, -z — one side may stay open: the mouth). No winding is
+        /// needed, so a cave's inward walls and its outward rock shell both count, and the terrain's column fill around a
+        /// buried cave stays where the mesh does not enclose.</summary>
+        private static void OpenInside(Snapshot s, byte[] vox, Hollow h)
+        {
+            h.X0 = Clamp((int)Math.Floor((h.Min.X - s.VOrigin.X) / VCell), 0, VX - 1); h.X1 = Clamp((int)Math.Floor((h.Max.X - s.VOrigin.X) / VCell), 0, VX - 1);
+            h.Y0 = Clamp((int)Math.Floor((h.Min.Y - s.VOrigin.Y) / VCell), 0, VY - 1); h.Y1 = Clamp((int)Math.Floor((h.Max.Y - s.VOrigin.Y) / VCell), 0, VY - 1);
+            h.Z0 = Clamp((int)Math.Floor((h.Min.Z - s.VOrigin.Z) / VCell), 0, VZ - 1); h.Z1 = Clamp((int)Math.Floor((h.Max.Z - s.VOrigin.Z) / VCell), 0, VZ - 1);
+            if (h.X1 < h.X0 || h.Y1 < h.Y0 || h.Z1 < h.Z0) return;
+            int w = h.X1 - h.X0 + 1, hh = h.Y1 - h.Y0 + 1, d = h.Z1 - h.Z0 + 1;
+            var hits = new byte[w * hh * d];
+            var t = h.Tris; int n = t.Length / 9;
+            float[] org = { s.VOrigin.X, s.VOrigin.Y, s.VOrigin.Z };
+            int[] lo = { h.X0, h.Y0, h.Z0 }, hi = { h.X1, h.Y1, h.Z1 };
+            var bMin = new float[n]; var bMax = new float[n]; var cMin = new float[n]; var cMax = new float[n];
+            var xs = new List<float>(16);
+            var ijk = new int[3];
+            for (int a = 0; a < 3; a++)
+            {
+                int b = (a + 1) % 3, c = (a + 2) % 3;
+                for (int i = 0; i < n; i++)
+                {
+                    int o = i * 9;
+                    bMin[i] = Math.Min(t[o + b], Math.Min(t[o + 3 + b], t[o + 6 + b])); bMax[i] = Math.Max(t[o + b], Math.Max(t[o + 3 + b], t[o + 6 + b]));
+                    cMin[i] = Math.Min(t[o + c], Math.Min(t[o + 3 + c], t[o + 6 + c])); cMax[i] = Math.Max(t[o + c], Math.Max(t[o + 3 + c], t[o + 6 + c]));
+                }
+                for (int ib = lo[b]; ib <= hi[b]; ib++)
+                    for (int ic = lo[c]; ic <= hi[c]; ic++)
+                    {
+                        float pb = org[b] + (ib + 0.5f) * VCell, pc = org[c] + (ic + 0.5f) * VCell;
+                        xs.Clear();
+                        for (int i = 0; i < n; i++)
+                        {
+                            if (pb < bMin[i] || pb > bMax[i] || pc < cMin[i] || pc > cMax[i]) continue;
+                            int o = i * 9;
+                            // the row (b = pb, c = pc) through the triangle: barycentrics in the b-c plane, then the value along a
+                            float u0 = t[o + b], v0 = t[o + c], u1 = t[o + 3 + b], v1 = t[o + 3 + c], u2 = t[o + 6 + b], v2 = t[o + 6 + c];
+                            float det = (u1 - u0) * (v2 - v0) - (v1 - v0) * (u2 - u0);
+                            if (Math.Abs(det) < 1e-9f) continue;
+                            float l1 = ((pb - u0) * (v2 - v0) - (pc - v0) * (u2 - u0)) / det;
+                            float l2 = ((u1 - u0) * (pc - v0) - (v1 - v0) * (pb - u0)) / det;
+                            if (l1 < 0f || l2 < 0f || l1 + l2 > 1f) continue;
+                            xs.Add(t[o + a] + l1 * (t[o + 3 + a] - t[o + a]) + l2 * (t[o + 6 + a] - t[o + a]));
+                        }
+                        if (xs.Count == 0) continue;
+                        float first = float.MaxValue, last = float.MinValue;
+                        foreach (var x in xs) { if (x < first) first = x; if (x > last) last = x; }
+                        ijk[b] = ib; ijk[c] = ic;
+                        for (int ia = lo[a]; ia <= hi[a]; ia++)
+                        {
+                            float pa = org[a] + (ia + 0.5f) * VCell;
+                            ijk[a] = ia;
+                            int k = ((ijk[1] - h.Y0) * d + (ijk[2] - h.Z0)) * w + (ijk[0] - h.X0);
+                            hits[k] += (byte)((first < pa ? 1 : 0) + (last > pa ? 1 : 0));
+                        }
+                    }
+            }
+            h.Inside = new bool[hits.Length];
+            for (int y = h.Y0; y <= h.Y1; y++) for (int z = h.Z0; z <= h.Z1; z++) for (int x = h.X0; x <= h.X1; x++)
+            {
+                int k = ((y - h.Y0) * d + (z - h.Z0)) * w + (x - h.X0);
+                if (hits[k] >= 5) { h.Inside[k] = true; vox[(y * VZ + z) * VX + x] = Empty; }
+            }
+        }
+
+        /// <summary>A hollow mesh's walls: every triangle sampled half a voxel apart marks the voxels it passes through as
+        /// solid — except the ones inside it (there the wall sits on the voxel's far side).</summary>
+        private static void RasterWalls(Snapshot s, byte[] vox, Hollow h)
+        {
+            if (h.Inside == null) return;
+            int w = h.X1 - h.X0 + 1, d = h.Z1 - h.Z0 + 1;
+            var t = h.Tris; int n = t.Length / 9;
+            for (int i = 0; i < n; i++)
+            {
+                int o = i * 9;
+                var a = new Vector3(t[o], t[o + 1], t[o + 2]); var e1 = new Vector3(t[o + 3], t[o + 4], t[o + 5]) - a; var e2 = new Vector3(t[o + 6], t[o + 7], t[o + 8]) - a;
+                int nu = Math.Max(1, (int)Math.Ceiling(e1.Length() / (VCell * 0.5f))), nv = Math.Max(1, (int)Math.Ceiling(e2.Length() / (VCell * 0.5f)));
+                for (int iu = 0; iu <= nu; iu++)
+                    for (int iv = 0; iv <= nv; iv++)
+                    {
+                        float u = iu / (float)nu, v = iv / (float)nv;
+                        if (u + v > 1f) continue;
+                        var p = a + e1 * u + e2 * v;
+                        int x = (int)Math.Floor((p.X - s.VOrigin.X) / VCell), y = (int)Math.Floor((p.Y - s.VOrigin.Y) / VCell), z = (int)Math.Floor((p.Z - s.VOrigin.Z) / VCell);
+                        if (x < h.X0 || y < h.Y0 || z < h.Z0 || x > h.X1 || y > h.Y1 || z > h.Z1) continue;
+                        if (h.Inside[((y - h.Y0) * d + (z - h.Z0)) * w + (x - h.X0)]) continue;
+                        vox[(y * VZ + z) * VX + x] = KMesh;
+                    }
             }
         }
 
@@ -284,8 +436,12 @@ namespace Editor.Core.Services.Gi
 
         /// <summary>Walk the voxels along a ray (Amanatides &amp; Woo). Returns the kind hit, the hit point and the face normal; Empty = left the grid or ran out.</summary>
         private static byte March(Snapshot s, byte[] vox, Vector3 o, Vector3 d, float maxLen, out Vector3 hit, out Vector3 normal)
+            => March(s, vox, o, d, maxLen, out hit, out normal, out _);
+
+        /// <param name="ranOut">true when the ray used up its length inside the grid (it did not leave it).</param>
+        private static byte March(Snapshot s, byte[] vox, Vector3 o, Vector3 d, float maxLen, out Vector3 hit, out Vector3 normal, out bool ranOut)
         {
-            hit = o; normal = Vector3.UnitY;
+            hit = o; normal = Vector3.UnitY; ranOut = false;
             float lx = (o.X - s.VOrigin.X) / VCell, ly = (o.Y - s.VOrigin.Y) / VCell, lz = (o.Z - s.VOrigin.Z) / VCell;
             int x = (int)Math.Floor(lx), y = (int)Math.Floor(ly), z = (int)Math.Floor(lz);
             int sx = d.X > 0f ? 1 : -1, sy = d.Y > 0f ? 1 : -1, sz = d.Z > 0f ? 1 : -1;
@@ -302,7 +458,7 @@ namespace Editor.Core.Services.Gi
                 if (tmx < tmy && tmx < tmz) { t = tmx; tmx += tdx; x += sx; axis = 0; }
                 else if (tmy < tmz) { t = tmy; tmy += tdy; y += sy; axis = 1; }
                 else { t = tmz; tmz += tdz; z += sz; axis = 2; }
-                if (t > maxLen) return Empty;
+                if (t > maxLen) { ranOut = true; return Empty; }
                 if (x < 0 || y < 0 || z < 0 || x >= VX || y >= VY || z >= VZ) return Empty;
                 byte k = vox[(y * VZ + z) * VX + x];
                 if (k != Empty)
@@ -328,8 +484,8 @@ namespace Editor.Core.Services.Gi
         /// <summary>The radiance arriving at a probe from direction d.</summary>
         private static Vector3 Trace(Snapshot s, byte[] vox, Vector3 p, Vector3 d)
         {
-            byte k = March(s, vox, p, d, RayLength, out var hit, out var n);
-            if (k == Empty) return SkyRadiance(s, d);
+            byte k = March(s, vox, p, d, RayLength, out var hit, out var n, out bool ranOut);
+            if (k == Empty) return ranOut && Underground(s, p + d * RayLength) ? Vector3.Zero : SkyRadiance(s, d);
             var albedo = Albedo[k];
             // the sun on the hit, through a shadow ray
             Vector3 E = Vector3.Zero;
@@ -343,9 +499,36 @@ namespace Editor.Core.Services.Gi
                     if (sh == Empty) E += s.SunCol * (s.SunI * ndl);
                 }
             }
-            // the sky on the hit (its irradiance for that normal, scaled by how open that kind of surface is)
-            E += SkyIrradiance(s, n) * (s.Ambient * SkyVis[k]);
+            // the sky on the hit (its irradiance for that normal, scaled by how open that kind of surface is), times how much
+            // of the sky the hit sees: three rays around the normal, tilted up — inside a cave or under a crown they are
+            // blocked and almost nothing stays (a ray that runs out under the ground counts as blocked)
+            E += SkyIrradiance(s, n) * (s.Ambient * SkyVis[k] * SkyOpen(s, vox, hit + n * 0.6f, n));
             return albedo * (E * (1f / (float)Math.PI));
+        }
+
+        /// <summary>Below the terrain's surface (the voxel columns' heights): a ray that ends there ran along a tunnel.</summary>
+        private static bool Underground(Snapshot s, Vector3 p)
+        {
+            int x = (int)Math.Floor((p.X - s.VOrigin.X) / VCell), z = (int)Math.Floor((p.Z - s.VOrigin.Z) / VCell);
+            if (x < 0 || z < 0 || x >= VX || z >= VZ) return false;
+            float h = s.Heights[z * VX + x];
+            return !float.IsNaN(h) && p.Y < h - 1f;
+        }
+
+        /// <summary>How much sky a surface point sees: 0.04 .. 1 from three rays around its normal, tilted up.</summary>
+        private static float SkyOpen(Snapshot s, byte[] vox, Vector3 o, Vector3 n)
+        {
+            // a frame around the normal: the up-tilted normal and two rays leaning to its sides
+            var up = Vector3.Normalize(n + new Vector3(0f, 0.7f, 0f));
+            var side = Vector3.Cross(up, Math.Abs(up.Y) < 0.95f ? Vector3.UnitY : Vector3.UnitX);
+            side = side.LengthSquared() > 1e-6f ? Vector3.Normalize(side) : Vector3.UnitX;
+            int free = 0;
+            for (int i = 0; i < 3; i++)
+            {
+                var d = i == 0 ? up : Vector3.Normalize(up + side * (i == 1 ? 0.8f : -0.8f));
+                if (March(s, vox, o, d, ShadowLength, out _, out _, out bool ranOut) == Empty && !(ranOut && Underground(s, o + d * ShadowLength))) free++;
+            }
+            return 0.04f + 0.96f * free / 3f;
         }
 
         /// <summary>The sky's radiance in a direction: its irradiance there over pi (the shaders use the same SH).</summary>

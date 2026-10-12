@@ -190,6 +190,38 @@ namespace VortexTests
             finally { CollisionService.Clear(); CollisionService.MeshTriangleProvider = oldProvider; }
         }
 
+        /// <summary>A placed model keeps its meshes on child entities (one per part); a Mesh Collider on the model's root must
+        /// collide with those (the cave whose floor the player fell through: "Mesh Collider has no mesh").</summary>
+        [Test]
+        public static void MeshColliderOnAModelRootUsesItsParts(TestContext t)
+        {
+            var scene = new Editor.Core.Data.Scene { Name = "Cave" };
+            var cave = new GameEntity(scene, "Cave");
+            cave.Transform.LocalPosition = new Vector3(10f, 0, 0);
+            cave.AddComponentDirect(new Editor.ECS.Components.Physics.MeshCollider(cave));
+            var floor = new GameEntity(scene, "cave-1");
+            floor.Transform.LocalPosition = new Vector3(0, 3f, 0);   // the part sits 3 m up inside the model
+            floor.AddComponentDirect(new Editor.ECS.Components.Rendering.MeshRenderer(floor) { MeshPath = "Assets/cave.gltf#submesh1" });
+            cave.AddChild(floor);
+            scene.Entities.Add(cave);
+            var slab = Terrain(8, 4f, 0f);   // a flat 4 x 4 m slab from the part's origin
+            var oldProvider = CollisionService.MeshTriangleProvider;
+            CollisionService.MeshTriangleProvider = path => path.EndsWith("#submesh1") ? slab : null;
+            try
+            {
+                CollisionService.Build(scene);
+                t.True(CollisionService.RaycastDown(new Vector3(12f, 10f, 2f), 20f, out var hit, out _) && Math.Abs(hit.Y - 3f) < 1e-3f,
+                       "the part's floor collides where the part is (y = " + hit.Y + ")");
+                t.False(CollisionService.RaycastDown(new Vector3(2f, 10f, 2f), 20f, out _, out _), "nothing where the model is not");
+                var jolt = Editor.Core.Services.Physics.PhysicsService.ChildMeshTriangles(cave);
+                t.True(jolt != null && jolt.Length == slab.Length, "the Jolt path takes the same triangles");
+                float minY = float.MaxValue, maxY = float.MinValue;
+                for (int i = 1; jolt != null && i < jolt.Length; i += 3) { minY = Math.Min(minY, jolt[i]); maxY = Math.Max(maxY, jolt[i]); }
+                t.True(Math.Abs(minY - 3f) < 1e-3f && Math.Abs(maxY - 3f) < 1e-3f, "… in the root's local space (y = " + minY + " .. " + maxY + ")");
+            }
+            finally { CollisionService.Clear(); CollisionService.MeshTriangleProvider = oldProvider; }
+        }
+
         private static float Dist(Vector3 a, Vector3 b)
         {
             float dx = a.X - b.X, dy = a.Y - b.Y, dz = a.Z - b.Z;
