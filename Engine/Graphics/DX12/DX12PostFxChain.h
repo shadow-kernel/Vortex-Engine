@@ -52,6 +52,7 @@ namespace vortex::graphics::dx12
 			// Color grading (#31)
 			bool grade{ false };
 			bool fxaa{ false };              // FXAA 3.11 (console variant) on the LDR picture — the cheap anti-aliasing until TAA
+			bool taa{ false };               // temporal anti-aliasing (#141): accepted, not resolved on DX12 yet (Metal / Vulkan do)
 			float exposure{ 0.0f };          // EV stops (2^EV); 0 = neutral
 			float contrast{ 1.0f };          // 1 = neutral
 			float saturation{ 1.0f };        // 1 = neutral, 0 = greyscale

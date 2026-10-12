@@ -262,10 +262,11 @@ namespace VortexEditor.Shell
             var st = scene.Settings;
             st.Tonemapper = 1;         // PBR Neutral: the sand stays orange, the sky blue — the ACES fit washed both towards white
             st.AntiAliasEnabled = true;   // FXAA: the fronds and the ripples stop flickering
+            st.TaaEnabled = true;         // temporal AA (#141): the far fronds' sparkle settles
             st.BounceStrength = 1.2f; st.BounceR = 0.62f; st.BounceG = 0.40f; st.BounceB = 0.20f;   // the sand's warm bounce into the shadows: the reference's shade is orange-brown; at 1.0 the sky's blue won and the grove floor turned grey
             st.SceneExposure = 1.7f;   // stops before the tonemapper: the low sun needs more aperture than noon; 2.2 pushed the sunlit sand into the tonemapper's shoulder (pale pink), 2.6 clipped the crowns
             st.FogEnabled = true; st.FogDensity = 0.0004f;   // at 0.0010 the air swallowed 63 % of a dune 1 km out — the reference's dunes are saturated to the horizon st.FogHeightY = -4f; st.FogHeightFalloff = 0.012f;
-            st.FogR = 0.70f; st.FogG = 0.62f; st.FogB = 0.52f; st.FogSunGlow = 0.2f;   // the reference's distance is peach, not blue-white   // the reference's far dunes fade to a neutral, slightly cool white — a warm haze turned them salmon
+            st.FogR = 0.60f; st.FogG = 0.65f; st.FogB = 0.72f; st.FogSunGlow = 0.2f;   // the reference's distance is peach, not blue-white   // the reference's far dunes fade to a neutral, slightly cool white — a warm haze turned them salmon
             st.GradeEnabled = true; st.Exposure = 0f; st.Contrast = 1.06f; st.Saturation = 1.05f;   // a light touch: the grade only reaches the viewport once SetPostMainView is on (the oasis capture turns it on) — at 1.22 the sky went navy and the sand neon st.Temperature = 0.0f; st.Tint = 0.0f;   // the reference is NOT saturated: the sand golden, the palms olive, the shadows warm
             st.AoEnabled = true; st.AoRadius = 0.8f; st.AoIntensity = 0.9f;
             st.GiEnabled = true; st.GiStrength = 0.6f; st.GiRadius = 3.0f;   // screen-space GI: the sand's light on the trunks and the undergrowth

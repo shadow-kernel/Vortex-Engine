@@ -523,6 +523,11 @@ void main()
 		for (int k = 0; k < 4; ++k)
 			if (w[k] > 0.002)
 				mean += w[k] * srgb_to_linear(textureLod(u_albedo, vec2(float(k & 1) + 0.5, float(k >> 1) + 0.5) * 0.5, max(amips - 2.0, 0.0)).rgb);
+		// not one flat colour: the layer at a 60x larger tiling gives the distance broad dune-sized patches of its own
+		vec2 ab = atlas_uv(p * tiles_per_metre[0] / 60.0 + vec2(0.37, 0.11), 0);
+		vec3 broad_far = srgb_to_linear(textureLod(u_albedo, ab, 2.0).rgb);
+		float lum_far = dot(broad_far, vec3(0.299, 0.587, 0.114)), lum_mean = dot(layer_mean(0), vec3(0.299, 0.587, 0.114));
+		mean *= mix(1.0, lum_far / max(lum_mean, 0.02), 0.6);
 		albedo = mix(albedo, mean, far_w);
 		nm *= 1.0 - far_w;
 	}

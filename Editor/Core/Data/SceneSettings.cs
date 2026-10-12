@@ -93,6 +93,8 @@ namespace Editor.Core.Data
         [DataMember(Name = "giOn", Order = 90)] public bool GiEnabled { get; set; }
         [DataMember(Name = "giStrength", Order = 91)] public float GiStrength { get; set; } = 1.0f;
         [DataMember(Name = "giRadius", Order = 92)] public float GiRadius { get; set; } = 2.5f;
+        /// <summary>Temporal anti-aliasing (#141): the previous frame reprojected and blended — stable foliage, no sparkle at distance.</summary>
+        [DataMember(Name = "taaOn", Order = 93)] public bool TaaEnabled { get; set; }
         // ---- The editor's view (EditorViewState): where the scene camera stood when the scene was saved — a scene opens there,
         // Home returns there. Editor data only; a scene saved before this has none (viewSet false) and starts at the classic default. ----
         [DataMember(Name = "viewSet", Order = 100)] public bool EditorViewSet { get; set; }
@@ -130,6 +132,7 @@ namespace Editor.Core.Data
             DllWrapper.VortexAPI.SetSceneExposureStops(SceneExposure);
             DllWrapper.VortexAPI.SetTonemapperMode(Tonemapper);
             DllWrapper.VortexAPI.SetPostAntiAlias(AntiAliasEnabled);
+            DllWrapper.VortexAPI.SetPostTemporalAA(TaaEnabled);
             DllWrapper.VortexAPI.SetFogSunGlowStrength(FogEnabled ? FogSunGlow : 0f);
             DllWrapper.VortexAPI.SetPostVignette(VignetteEnabled, VignetteIntensity, VignetteSmoothness,
                 VignetteRoundness, VignetteR, VignetteG, VignetteB);

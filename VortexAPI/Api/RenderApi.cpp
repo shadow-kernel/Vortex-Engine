@@ -659,6 +659,13 @@ EDITOR_INTERFACE void SetPostFxAntiAlias(bool enabled)
 	graphics::Renderer::instance().postfx().params().fxaa = enabled;
 }
 
+// Temporal anti-aliasing (#141): the previous frame reprojected and blended, clamped to the neighbourhood. Metal / Vulkan
+// resolve it in SdlGpuRenderer::record_taa; DirectX 12 accepts the flag and resolves nothing yet (FXAA stays its anti-aliasing).
+EDITOR_INTERFACE void SetPostFxTemporalAA(bool enabled)
+{
+	graphics::Renderer::instance().postfx().params().taa = enabled;
+}
+
 EDITOR_INTERFACE void SetPostFxColorGrade(bool enabled, float exposure, float contrast, float saturation,
 	float temperature, float tint)
 {

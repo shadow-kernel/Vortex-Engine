@@ -1057,12 +1057,21 @@ namespace Editor.DllWrapper
 
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void SetPostFxAntiAlias([MarshalAs(UnmanagedType.I1)] bool enabled);
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetPostFxTemporalAA([MarshalAs(UnmanagedType.I1)] bool enabled);
 
         /// <summary>Anti-aliasing (FXAA 3.11 console variant) in the post pass on the LDR picture — nine taps, no history, the
         /// cheap edge smoothing until temporal AA. Persistent like the other post effects.</summary>
         public static void SetPostAntiAlias(bool enabled)
         {
             try { SetPostFxAntiAlias(enabled); } catch { }
+        }
+
+        /// <summary>Temporal anti-aliasing (#141) on the final picture: the previous frame reprojected and blended, clamped to
+        /// the neighbourhood (Metal / Vulkan; DirectX 12 accepts the flag, FXAA stays its anti-aliasing until its pass lands).</summary>
+        public static void SetPostTemporalAA(bool enabled)
+        {
+            try { SetPostFxTemporalAA(enabled); } catch { }
         }
 
         /// <summary>Post-FX bloom (#30): soft-knee bright-pass -> progressive mip chain -> additive

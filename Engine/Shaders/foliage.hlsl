@@ -613,6 +613,9 @@ float4 PSMain(PS_IN input, bool isFront : SV_IsFrontFace) : SV_TARGET
         // leaves: the diffuse term wraps round the thin blade and the sun shines through it (translucency)
         float NdotLw = saturate((dot(N, L) + 0.4) / 1.4);
         float3 trans = albedo * radiance * (0.45 * saturate(-dot(N, L)) + 0.6 * pow(saturate(dot(V, -L)), 2.0)) * (1.0 - metallic);   // a leaf lit from behind glows (diffuse transmission) and a forward lobe towards the sun
+        // far away a frond is thinner than a pixel: its highlight and glow would only sparkle — both fade out beyond 50 m
+        float farFade = saturate(1.0 - (length(CameraPosition - input.worldPos) - 50.0) / 120.0);
+        spec *= farFade; trans *= lerp(0.25, 1.0, farFade);
         Lo += (kD * albedo / PI) * radiance * NdotLw + spec * radiance * NdotL + trans / PI;
     }
 

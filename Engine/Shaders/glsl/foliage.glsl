@@ -406,6 +406,9 @@ void main()
 		// leaves: the diffuse term wraps round the thin blade and the sun shines through it (translucency)
 		float NdotLw = clamp((dot(N, L) + 0.4) / 1.4, 0.0, 1.0);
 		vec3 trans = albedo * radiance * (0.45 * clamp(-dot(N, L), 0.0, 1.0) + 0.6 * pow(clamp(dot(V, -L), 0.0, 1.0), 2.0)) * (1.0 - metallic);   // a leaf lit from behind glows (diffuse transmission) and a forward lobe towards the sun
+		// far away a frond is thinner than a pixel: its highlight and glow would only sparkle — both fade out beyond 50 m
+		float far_fade = clamp(1.0 - (length(frame.camera_position - v_world_pos) - 50.0) / 120.0, 0.0, 1.0);
+		spec *= far_fade; trans *= mix(0.25, 1.0, far_fade);
 		Lo += ((kD * albedo / PI) * radiance * NdotLw + spec * radiance * NdotL + trans / PI) * sun_shadow;
 	}
 

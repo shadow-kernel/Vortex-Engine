@@ -664,6 +664,16 @@ namespace VortexEditor.Shell
         }
 
         internal GameEntity ShownTerrain => _entity;
+        internal void ShowTab(int index) { _tabs.SelectedIndex = Math.Max(0, Math.Min(5, index)); }
+        internal void ShowLayersMap(bool layers) { _showLayers = layers; _mapDirty = true; }
+        internal void RedrawNow() { RedrawMap(); }
+        /// <summary>Smoke / tour hook: the window as a PNG.</summary>
+        internal void CaptureTo(string path)
+        {
+            var bmp = new RenderTargetBitmap(new PixelSize((int)(Bounds.Width * RenderScaling), (int)(Bounds.Height * RenderScaling)), new Vector(96 * RenderScaling, 96 * RenderScaling));
+            bmp.Render(this);
+            bmp.Save(path);
+        }
         internal void SelectTool(int tool) => SetTool((MapTool)Math.Max(0, Math.Min(5, tool)));
 
         private void UpdateFacts()

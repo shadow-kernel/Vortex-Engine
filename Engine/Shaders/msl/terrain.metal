@@ -522,6 +522,11 @@ fragment float4 PSMain(VSOut in [[stage_in]],
         for (int k = 0; k < 4; ++k)
             if (w[k] > 0.002)
                 mean += w[k] * srgb_to_linear(albedo_tex.sample(albedo_smp, float2((float)(k & 1) + 0.5, (float)(k >> 1) + 0.5) * 0.5, level(max(amips - 2.0, 0.0))).rgb);
+        // not one flat colour: the layer at a 60x larger tiling gives the distance broad dune-sized patches of its own
+        float2 ab = atlas_uv(p * tiles_per_metre[0] / 60.0 + float2(0.37, 0.11), 0);
+        float3 broad_far = srgb_to_linear(albedo_tex.sample(albedo_smp, ab, level(2.0)).rgb);
+        float lum_far = dot(broad_far, float3(0.299, 0.587, 0.114)), lum_mean = dot(layer_mean(albedo_tex, albedo_smp, 0), float3(0.299, 0.587, 0.114));
+        mean *= mix(1.0, lum_far / max(lum_mean, 0.02), 0.6);
         albedo = mix(albedo, mean, far_w);
         nm *= 1.0 - far_w;
     }
