@@ -229,6 +229,13 @@ static inline float3 f_schlick(float VdotH, float3 F0)
 {
     return F0 + (1.0 - F0) * pow(1.0 - VdotH, 5.0);
 }
+// Rough surfaces lose their grazing Fresnel peak (their micro-facets shadow each other): the reflectance at 90 degrees falls
+// with roughness. Sand, bark and leaves seen at a glancing angle keep their colour instead of turning into one pale sheen of
+// the sun — the distance was one colour, and the far fronds flashed white.
+static inline float3 f_schlick_rough(float VdotH, float3 F0, float roughness)
+{
+    return F0 + (max(float3(1.0 - roughness), F0) - F0) * pow(1.0 - VdotH, 5.0);
+}
 
 static inline float3 srgb_to_linear(float3 color)
 {
@@ -522,6 +529,11 @@ fragment float4 PSMain(VSOut in [[stage_in]],
         for (int k = 0; k < 4; ++k)
             if (w[k] > 0.002)
                 mean += w[k] * srgb_to_linear(albedo_tex.sample(albedo_smp, float2((float)(k & 1) + 0.5, (float)(k >> 1) + 0.5) * 0.5, level(max(amips - 2.0, 0.0))).rgb);
+        // not one flat colour: the layer at a 60x larger tiling gives the distance broad dune-sized patches of its own
+        float2 ab = atlas_uv(p * tiles_per_metre[0] / 60.0 + float2(0.37, 0.11), 0);
+        float3 broad_far = srgb_to_linear(albedo_tex.sample(albedo_smp, ab, level(2.0)).rgb);
+        float lum_far = dot(broad_far, float3(0.299, 0.587, 0.114)), lum_mean = dot(layer_mean(albedo_tex, albedo_smp, 0), float3(0.299, 0.587, 0.114));
+        mean *= mix(1.0, lum_far / max(lum_mean, 0.02), 0.6);
         albedo = mix(albedo, mean, far_w);
         nm *= 1.0 - far_w;
     }
@@ -557,7 +569,7 @@ fragment float4 PSMain(VSOut in [[stage_in]],
         float VdotH = max(dot(V, H), 0.0);
         float D = d_ggx(NdotH, roughness);
         float G = g_smith(NdotV, NdotL, roughness);
-        float3 F = f_schlick(VdotH, F0);
+        float3 F = f_schlick_rough(VdotH, F0, roughness);
         float3 spec = (D * G * F) / (4.0 * NdotV * NdotL + 0.0001);
         float3 kD = (1.0 - F) * (1.0 - metallic);
         float3 radiance = float3(frame.light_color) * frame.directional_intensity;
@@ -582,7 +594,7 @@ fragment float4 PSMain(VSOut in [[stage_in]],
             float3 radiance = float3(lights.point_lights[li].color) * lights.point_lights[li].intensity * atten;
             float D = d_ggx(NdotH, roughness);
             float G = g_smith(NdotV, NdotL, roughness);
-            float3 F = f_schlick(VdotH, F0);
+            float3 F = f_schlick_rough(VdotH, F0, roughness);
             float3 spec = (D * G * F) / (4.0 * NdotV * NdotL + 0.0001);
             float3 kD = (1.0 - F) * (1.0 - metallic);
             Lo += (kD * albedo / PI + spec) * radiance * NdotL;
@@ -616,7 +628,7 @@ fragment float4 PSMain(VSOut in [[stage_in]],
                 float3 radiance = float3(lights.spot_lights[j].color) * lights.spot_lights[j].intensity * atten;
                 float D = d_ggx(NdotH, roughness);
                 float G = g_smith(NdotV, NdotL, roughness);
-                float3 F = f_schlick(VdotH, F0);
+                float3 F = f_schlick_rough(VdotH, F0, roughness);
                 float3 spec = (D * G * F) / (4.0 * NdotV * NdotL + 0.0001);
                 float3 kD = (1.0 - F) * (1.0 - metallic);
                 Lo += (kD * albedo / PI + spec) * radiance * NdotL;

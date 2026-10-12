@@ -87,6 +87,8 @@ namespace vortex::graphics::sdlgpu
 			float ca_strength{ 0.35f }, ca_falloff{ 1.2f };
 			bool grade{ false };
 			bool fxaa{ false };   // FXAA on the LDR picture
+			bool taa{ false };    // temporal anti-aliasing (#141): the previous frame reprojected and blended, clamped to the neighbourhood
+			float sharpen{ 0.0f };   // contrast-adaptive sharpening after the anti-aliasing, 0 = off .. 1
 			float exposure{ 0.0f }, contrast{ 1.0f }, saturation{ 1.0f }, temperature{ 0.0f }, tint{ 0.0f };
 			bool bloom{ false };
 			float bloom_threshold{ 0.75f }, bloom_knee{ 0.5f }, bloom_intensity{ 0.7f }, bloom_scatter{ 0.65f };
@@ -95,7 +97,7 @@ namespace vortex::graphics::sdlgpu
 		Params& params() { return m_params; }
 		const Params& params() const { return m_params; }
 		bool bloom_requested() const { return m_params.bloom; }
-		bool active() const { return m_params.vignette || m_params.grain || m_params.ca || m_params.grade || m_params.fxaa || m_params.debug_invert || m_params.bloom; }
+		bool active() const { return m_params.vignette || m_params.grain || m_params.ca || m_params.grade || m_params.fxaa || m_params.taa || m_params.debug_invert || m_params.bloom; }
 		void set_main_view_enabled(bool enabled) { m_main_view = enabled; }
 		bool main_view_enabled() const { return m_main_view; }
 	private:
@@ -474,6 +476,12 @@ namespace vortex::graphics::sdlgpu
 			float grade1[4]; float grade2[4]; float bloom[4];
 		};
 		static_assert(sizeof(PostFxCB) == 112, "PostFxCB must byte-match postfx.metal");
+		struct TaaCB
+		{
+			DirectX::XMFLOAT4X4 reproj;   // this frame's NDC (x, y, depth, 1) -> the previous frame's clip space
+			float texel[2]; float blend; float valid;
+		};
+		static_assert(sizeof(TaaCB) == 80, "TaaCB must byte-match taa.metal");
 
 		// A view = camera matrices + the lighting snapshot the passes read.
 		struct FrameView
@@ -566,6 +574,12 @@ namespace vortex::graphics::sdlgpu
 			GpuTarget present;   // window-resolution composite + overlay target (BGRA8)
 			GpuTarget postfx;    // post-FX input when the chain is active
 			u32 last_w{ 0 }, last_h{ 0 };
+			// temporal anti-aliasing (#141): the resolved picture of the last frame (history) and this frame's output, swapped
+			SDL_GPUTexture* taa_history{ nullptr };
+			SDL_GPUTexture* taa_out{ nullptr };
+			u32 taa_w{ 0 }, taa_h{ 0 };
+			bool taa_valid{ false };
+			DirectX::XMFLOAT4X4 taa_prev_vp{};
 		};
 
 		struct CustomShader { std::string path; unsigned long long mtime{ 0 }; };
@@ -608,6 +622,9 @@ namespace vortex::graphics::sdlgpu
 			bool depth, bool blend);
 		bool create_dynamic_buffers();
 		bool ensure_target(GpuTarget& target, u32 w, u32 h, bool with_depth, bool readback);
+		// temporal anti-aliasing (#141): resolve surface.postfx.color against the surface's history into surface.taa_out
+		bool record_taa(SDL_GPUCommandBuffer* cmd, WindowSurface& surface, const FrameView& view, u32 w, u32 h);
+		void release_taa(WindowSurface& surface);
 		void release_target(GpuTarget& target);
 		void release_pipeline_set(PipelineSet& set);
 		void wait_idle();
@@ -699,6 +716,7 @@ namespace vortex::graphics::sdlgpu
 		SDL_GPUShader* m_vs_blit{ nullptr };
 		SDL_GPUShader* m_fs_blit{ nullptr };
 		SDL_GPUShader* m_fs_postfx{ nullptr };
+		SDL_GPUShader* m_fs_taa{ nullptr };
 		PipelineSet m_pipelines;                 // stride 32
 		PipelineSet m_pipelines_skinned_stride;  // stride 52, rigid shading (bind pose / no palette)
 		SDL_GPUGraphicsPipeline* m_pipeline_skinned{ nullptr };
@@ -707,6 +725,7 @@ namespace vortex::graphics::sdlgpu
 		SDL_GPUGraphicsPipeline* m_pipeline_skybox{ nullptr };
 		SDL_GPUGraphicsPipeline* m_pipeline_blit{ nullptr };
 		SDL_GPUGraphicsPipeline* m_pipeline_postfx{ nullptr };
+		SDL_GPUGraphicsPipeline* m_pipeline_taa{ nullptr };
 		SDL_GPUSampler* m_sampler_linear_wrap{ nullptr };
 		SDL_GPUSampler* m_sampler_linear_clamp{ nullptr };
 		std::unordered_map<u32, CustomShader> m_custom_shaders;

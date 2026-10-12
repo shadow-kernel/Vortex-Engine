@@ -32,6 +32,21 @@ float hash21(vec2 p)
 
 // FXAA 3.11 (the console variant): nine samples, no history — see postfx.hlsl
 float fxaa_luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
+
+// Contrast-adaptive sharpening (the AMD CAS core): the cross of four neighbours around the anti-aliased pixel, weighted by how
+// much head-room the local contrast leaves — flat sand and already-crisp edges stay, the soft mush TAA / FXAA leave gets its
+// detail back. strength 0..1 (bloom.y), applied after the anti-aliasing and before bloom / grain / grading.
+vec3 cas_sharpen(vec2 uv, vec2 texel, vec3 e, float strength)
+{
+	vec3 a = texture(u_src, uv + vec2(-texel.x, 0.0)).rgb, b = texture(u_src, uv + vec2(texel.x, 0.0)).rgb;
+	vec3 cc = texture(u_src, uv + vec2(0.0, -texel.y)).rgb, d = texture(u_src, uv + vec2(0.0, texel.y)).rgb;
+	vec3 mn = min(min(min(a, b), min(cc, d)), e), mx = max(max(max(a, b), max(cc, d)), e);
+	vec3 amp = sqrt(clamp(min(mn, 1.0 - mx) / max(mx, vec3(1e-4)), 0.0, 1.0));
+	float peak = -1.0 / mix(8.0, 5.0, clamp(strength, 0.0, 1.0));
+	vec3 w = amp * peak;
+	return clamp(((a + b + cc + d) * w + e) / (4.0 * w + 1.0), 0.0, 1.0);
+}
+
 vec3 fxaa(vec2 uv, vec2 texel)
 {
 	vec3 rgbM = texture(u_src, uv).rgb;
@@ -75,6 +90,9 @@ void main()
 	{
 		col = texture(u_src, uv).rgb;
 	}
+
+	if (c.bloom.y > 0.001)
+		col = cas_sharpen(uv, c.texel_size, col, c.bloom.y);
 
 	if ((c.flags & 32u) != 0u)
 		col += texture(u_bloom, uv).rgb * c.bloom.x;

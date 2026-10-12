@@ -64,7 +64,9 @@ fragment float4 SsaoPS(FsOut in [[stage_in]], constant SsaoCB& c [[buffer(0)]],
                        depth2d<float> csm [[texture(2)]], sampler csmp [[sampler(2)]])
 {
     float d = depth.sample(smp, in.uv);
-    if (d >= 0.9999) return float4(1.0);
+    // the sky, and the ground beyond ~1 km (depth 0.9999 at a 0.1 m near plane): no occlusion and NO bounce — rgb = 1 read as a
+    // full white bounce, four times the albedo, and the far dunes were one pale wall
+    if (d >= 0.9999) return float4(0.0, 0.0, 0.0, 1.0);
     float3 P = view_pos(depth, smp, c, in.uv);
     float3 N = normalize(cross(dfdy(P), dfdx(P)));
     float pix_radius = clamp(c.proj_scale * c.radius / max(P.z, 0.1), 2.0, 64.0);
@@ -84,7 +86,11 @@ fragment float4 SsaoPS(FsOut in [[stage_in]], constant SsaoCB& c [[buffer(0)]],
 
     // ---- screen-space GI: cosine-weighted rays against the same depth, radiance from the previous frame reprojected ----
     float3 gi = float3(0.0);
-    if (c.gi_strength > 0.0 && c.prev_valid > 0.5)
+    // The trace stops at 300 m: beyond ~250 m the half-res depth's error passes the hit threshold, every ray "hits" and the
+    // gather feeds last frame's own colour back until the distance is one pale wall (the far dunes). The threshold grows
+    // with the depth for the same reason.
+    float gi_far = saturate(1.0 - (P.z - 120.0) / 180.0);
+    if (c.gi_strength > 0.0 && c.prev_valid > 0.5 && gi_far > 0.0)
     {
         float3 up = abs(N.y) < 0.99 ? float3(0, 1, 0) : float3(1, 0, 0);
         float3 T = normalize(cross(up, N)), B = cross(N, T);
@@ -108,7 +114,7 @@ fragment float4 SsaoPS(FsOut in [[stage_in]], constant SsaoCB& c [[buffer(0)]],
                 if (sd >= 0.9999) continue;
                 float3 S = view_pos(depth, smp, c, uv);
                 float dz = pos.z - S.z;
-                if (dz > 0.03 && dz < step * 2.5)
+                if (dz > max(0.03, P.z * 0.0005) && dz < step * 2.5)
                 {
                     if (dot(normalize(S - P), N) < 0.2) break;   // grazing the surface itself (a slope): not a bounce
                     float4 pc = c.view_to_prev_clip * float4(S, 1.0);
@@ -125,14 +131,16 @@ fragment float4 SsaoPS(FsOut in [[stage_in]], constant SsaoCB& c [[buffer(0)]],
                 }
             }
         }
-        gi *= c.gi_strength / (float)DIRS;
+        gi *= c.gi_strength * gi_far / (float)DIRS;
         float gl = dot(gi, float3(0.2126, 0.7152, 0.0722));
         gi = mix(float3(gl), gi, 0.65);   // a bounce is never as saturated as the albedo squared suggests
     }
     // ---- the bounce from the sun's shadow map (#257 step 2): every point the sun sees is a Lambertian emitter of the ground's
     // colour; a disk of them around the receiver in the cascade is gathered with the full geometric term, their normals from
     // the map's own depth gradient. Off-screen sand lights the shaded floor and the trunks — what the screen trace cannot see.
-    if (c.gi_strength > 0.0 && c.rsm_flux.w > 0.0)
+    // Faded out with the trace, and never gathered from closer than one texel of the map: in the last cascade a far
+    // receiver's twelve samples all fall on its own texel, and the half-metre clamp made that self-gather hundreds of units.
+    if (c.gi_strength > 0.0 && c.rsm_flux.w > 0.0 && gi_far > 0.0)
     {
         float4 lp = c.view_to_rsm * float4(P, 1.0);
         if (lp.w > 0.001)
@@ -145,6 +153,7 @@ fragment float4 SsaoPS(FsOut in [[stage_in]], constant SsaoCB& c [[buffer(0)]],
                 const int K = 12;
                 float area = 3.14159265 * Rm * Rm / (float)K;
                 float tx = c.rsm_tile.w / c.rsm_tile.z;   // one atlas texel in tile uv
+                float mpt = Rm / max(R, 1e-5) * tx;        // metres per texel of this cascade
                 float3 E = float3(0.0);
                 float ang = hash12(in.pos.xy * 1.7 + 3.1) * 6.2831853;
                 for (int k = 0; k < K; ++k)
@@ -168,12 +177,12 @@ fragment float4 SsaoPS(FsOut in [[stage_in]], constant SsaoCB& c [[buffer(0)]],
                     Nk *= rsqrt(nl);
                     if (dot(Nk, L) < 0.0) Nk = -Nk;   // the sun sees it, so it faces the sun
                     float3 w = X - P;
-                    float d2 = max(dot(w, w), 0.25);
+                    float d2 = max(dot(w, w), max(0.25, mpt * mpt));
                     w *= rsqrt(d2);
                     float g = max(dot(N, w), 0.0) * max(dot(Nk, -w), 0.0) * max(dot(Nk, L), 0.0);
                     E += g * (area / d2);
                 }
-                gi += c.rsm_flux.rgb * E * (c.gi_strength / 3.14159265);
+                gi += c.rsm_flux.rgb * E * (c.gi_strength * gi_far / 3.14159265);
             }
         }
     }

@@ -71,7 +71,9 @@ float Hash12(float2 p)
 float4 PSMain(VS_OUT i) : SV_TARGET
 {
     float d = Src.SampleLevel(Smp, i.uv, 0).r;
-    if (d >= 0.9999) return 1.0;   // sky / no geometry -> unoccluded
+    // the sky, and the ground beyond ~1 km (depth 0.9999 at a 0.1 m near plane): no occlusion and NO bounce — rgb = 1 read as a
+    // full white bounce, four times the albedo, and the far dunes were one pale wall
+    if (d >= 0.9999) return float4(0.0, 0.0, 0.0, 1.0);
 
     float3 P = ViewPos(i.uv);
     // Normal from position derivatives — no G-buffer needed. Faceted on curved surfaces at
@@ -103,7 +105,11 @@ float4 PSMain(VS_OUT i) : SV_TARGET
     // ---- screen-space GI: a few cosine-weighted rays from P against the same depth; a hit's radiance comes from the
     // previous frame's picture, reprojected (the LDR output decoded back to pre-tonemap radiance) ----
     float3 gi = float3(0.0, 0.0, 0.0);
-    if (GiStrength > 0.0 && PrevValid > 0.5)
+    // The trace stops at 300 m: beyond ~250 m the half-res depth's error passes the hit threshold, every ray "hits" and the
+    // gather feeds last frame's own colour back until the distance is one pale wall (the far dunes). The threshold grows
+    // with the depth for the same reason.
+    float giFar = saturate(1.0 - (P.z - 120.0) / 180.0);
+    if (GiStrength > 0.0 && PrevValid > 0.5 && giFar > 0.0)
     {
         float3 up = abs(N.y) < 0.99 ? float3(0, 1, 0) : float3(1, 0, 0);
         float3 T = normalize(cross(up, N)), B = cross(N, T);
@@ -130,7 +136,7 @@ float4 PSMain(VS_OUT i) : SV_TARGET
                 if (sd >= 0.9999) continue;
                 float3 S = ViewPos(uv);
                 float dz = pos.z - S.z;
-                if (dz > 0.03 && dz < step * 2.5)
+                if (dz > max(0.03, P.z * 0.0005) && dz < step * 2.5)
                 {
                     if (dot(normalize(S - P), N) < 0.2) break;   // grazing the surface itself (a slope): not a bounce
                     float4 pc = mul(float4(S, 1.0), ViewToPrevClip);
@@ -148,14 +154,16 @@ float4 PSMain(VS_OUT i) : SV_TARGET
                 }
             }
         }
-        gi *= GiStrength / (float)DIRS;
+        gi *= GiStrength * giFar / (float)DIRS;
         float gl = dot(gi, float3(0.2126, 0.7152, 0.0722));
         gi = lerp(float3(gl, gl, gl), gi, 0.65);   // a bounce is never as saturated as the albedo squared suggests
     }
     // ---- the bounce from the sun's shadow map (#257 step 2): every point the sun sees is a Lambertian emitter of the ground's
     // colour; a disk of them around the receiver in the cascade is gathered with the full geometric term, their normals from
     // the map's own depth gradient. Off-screen sand lights the shaded floor and the trunks — what the screen trace cannot see.
-    if (GiStrength > 0.0 && RsmFlux.w > 0.0)
+    // Faded out with the trace, and never gathered from closer than one texel of the map: in the last cascade a far
+    // receiver's twelve samples all fall on its own texel, and the half-metre clamp made that self-gather hundreds of units.
+    if (GiStrength > 0.0 && RsmFlux.w > 0.0 && giFar > 0.0)
     {
         float4 lp = mul(float4(P, 1.0), ViewToRsm);
         if (lp.w > 0.001)
@@ -168,6 +176,7 @@ float4 PSMain(VS_OUT i) : SV_TARGET
                 const int K = 12;
                 float area = 3.14159265 * Rm * Rm / (float)K;
                 float tx = RsmTile.w / RsmTile.z;   // one atlas texel in tile uv
+                float mpt = Rm / max(R, 1e-5) * tx;  // metres per texel of this cascade
                 float3 E = float3(0.0, 0.0, 0.0);
                 float ang = Hash12(i.pos.xy * 1.7 + 3.1) * 6.2831853;
                 [unroll]
@@ -192,12 +201,12 @@ float4 PSMain(VS_OUT i) : SV_TARGET
                     Nk *= rsqrt(nl);
                     if (dot(Nk, L) < 0.0) Nk = -Nk;   // the sun sees it, so it faces the sun
                     float3 w = X - P;
-                    float d2 = max(dot(w, w), 0.25);
+                    float d2 = max(dot(w, w), max(0.25, mpt * mpt));
                     w *= rsqrt(d2);
                     float g = max(dot(N, w), 0.0) * max(dot(Nk, -w), 0.0) * max(dot(Nk, L), 0.0);
                     E += g * (area / d2);
                 }
-                gi += RsmFlux.rgb * E * (GiStrength / 3.14159265);
+                gi += RsmFlux.rgb * E * (GiStrength * giFar / 3.14159265);
             }
         }
     }

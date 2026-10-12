@@ -485,6 +485,7 @@ namespace vortex::graphics::sdlgpu
 		m_vs_blit = create_shader("postfx", "BlitVS", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 0);
 		m_fs_blit = create_shader("postfx", "BlitPS", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0, 0);
 		m_fs_postfx = create_shader("postfx", "PostFxPS", SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 0, 1);
+		m_fs_taa = create_shader("taa", "TaaPS", SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 0, 1);
 		return m_vs_standard && m_fs_standard && m_vs_grid && m_fs_grid && m_vs_sky && m_fs_sky && m_vs_blit && m_fs_blit && m_fs_postfx;
 	}
 
@@ -616,6 +617,7 @@ namespace vortex::graphics::sdlgpu
 		if (!ensure_postfx_resources()) log("SSAO/bloom unavailable on this device");
 		m_pipeline_blit = create_fullscreen_pipeline(m_vs_blit, m_fs_blit, m_present_format, false, false);
 		m_pipeline_postfx = create_fullscreen_pipeline(m_vs_blit, m_fs_postfx, m_present_format, false, false);
+		m_pipeline_taa = m_fs_taa ? create_fullscreen_pipeline(m_vs_blit, m_fs_taa, m_scene_format, false, false) : nullptr;   // optional: without the shader the picture is simply not resolved
 		if (!m_pipeline_skinned) log("skinned pipeline unavailable — skinned meshes render in bind pose");
 		return m_pipeline_grid && m_pipeline_skybox && m_pipeline_blit && m_pipeline_postfx;
 	}
@@ -688,6 +690,60 @@ namespace vortex::graphics::sdlgpu
 		return true;
 	}
 
+	// Temporal anti-aliasing (#141), the plain version: every pixel takes the previous resolved frame, reprojected through
+	// the depth and the previous view-projection (the camera's motion), clamps it to this frame's 3x3 neighbourhood (no
+	// ghosting of what changed) and blends 88 % of it with 12 % of the new frame. No projection jitter yet — the picture
+	// gains stability (foliage, thin fronds, specular sparkle at distance) rather than sub-pixel resolution.
+	bool SdlGpuRenderer::record_taa(SDL_GPUCommandBuffer* cmd, WindowSurface& surface, const FrameView& view, u32 w, u32 h)
+	{
+		if (!cmd || !m_device || !m_pipeline_taa || !surface.postfx.color || w < 16 || h < 16) return false;
+		if (!surface.taa_history || !surface.taa_out || surface.taa_w != w || surface.taa_h != h)
+		{
+			release_taa(surface);
+			SDL_GPUTextureCreateInfo ci{};
+			ci.type = SDL_GPU_TEXTURETYPE_2D;
+			ci.width = w; ci.height = h;
+			ci.layer_count_or_depth = 1; ci.num_levels = 1;
+			ci.format = m_scene_format;
+			ci.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+			surface.taa_history = SDL_CreateGPUTexture(m_device, &ci);
+			surface.taa_out = SDL_CreateGPUTexture(m_device, &ci);
+			surface.taa_w = w; surface.taa_h = h; surface.taa_valid = false;
+			if (!surface.taa_history || !surface.taa_out) { release_taa(surface); return false; }
+		}
+		// last frame's result becomes this frame's history; this frame writes the other texture
+		if (surface.taa_valid) std::swap(surface.taa_history, surface.taa_out);
+		using namespace DirectX;
+		TaaCB cb{};
+		XMStoreFloat4x4(&cb.reproj, XMLoadFloat4x4(&view.inverse_view_projection) * XMLoadFloat4x4(&surface.taa_prev_vp));
+		cb.texel[0] = 1.0f / (float)w; cb.texel[1] = 1.0f / (float)h;
+		cb.blend = 0.12f; cb.valid = surface.taa_valid ? 1.0f : 0.0f;
+		SDL_GPUColorTargetInfo color{};
+		color.texture = surface.taa_out; color.load_op = SDL_GPU_LOADOP_DONT_CARE; color.store_op = SDL_GPU_STOREOP_STORE;
+		SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &color, 1, nullptr);
+		if (!pass) return false;
+		SDL_BindGPUGraphicsPipeline(pass, m_pipeline_taa);
+		SDL_GPUViewport vp{ 0, 0, (float)w, (float)h, 0.0f, 1.0f };
+		SDL_SetGPUViewport(pass, &vp);
+		SDL_GPUTextureSamplerBinding bindings[3] = { { surface.postfx.color, m_sampler_linear_clamp }, { surface.taa_history, m_sampler_linear_clamp }, { surface.scene.depth, m_sampler_linear_clamp } };
+		SDL_BindGPUFragmentSamplers(pass, 0, bindings, 3);
+		SDL_PushGPUFragmentUniformData(cmd, 0, &cb, sizeof(cb));
+		SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+		SDL_EndGPURenderPass(pass);
+		++m_draw_call_count; ++m_post_draw_count;
+		// taa_out holds this frame's resolved picture (the composite reads it); next frame it is swapped in as the history
+		surface.taa_prev_vp = view.view_projection;
+		surface.taa_valid = true;
+		return true;
+	}
+
+	void SdlGpuRenderer::release_taa(WindowSurface& surface)
+	{
+		if (surface.taa_history) { SDL_ReleaseGPUTexture(m_device, surface.taa_history); surface.taa_history = nullptr; }
+		if (surface.taa_out) { SDL_ReleaseGPUTexture(m_device, surface.taa_out); surface.taa_out = nullptr; }
+		surface.taa_w = surface.taa_h = 0; surface.taa_valid = false;
+	}
+
 	void SdlGpuRenderer::release_target(GpuTarget& target)
 	{
 		if (m_device)
@@ -739,7 +795,7 @@ namespace vortex::graphics::sdlgpu
 		m_pipeline_cache.clear();
 		release_pipeline_set(m_pipelines);
 		release_pipeline_set(m_pipelines_skinned_stride);
-		SDL_GPUGraphicsPipeline** singles[] = { &m_pipeline_skinned, &m_pipeline_skinned_m, &m_pipeline_grid, &m_pipeline_skybox, &m_pipeline_blit, &m_pipeline_postfx };
+		SDL_GPUGraphicsPipeline** singles[] = { &m_pipeline_skinned, &m_pipeline_skinned_m, &m_pipeline_grid, &m_pipeline_skybox, &m_pipeline_blit, &m_pipeline_postfx, &m_pipeline_taa };
 		for (auto** p : singles) { if (*p) SDL_ReleaseGPUGraphicsPipeline(m_device, *p); *p = nullptr; }
 		SDL_GPUShader** shaders[] = { &m_vs_standard, &m_vs_skinned, &m_fs_standard, &m_vs_grid, &m_fs_grid, &m_vs_sky, &m_fs_sky, &m_vs_blit, &m_fs_blit, &m_fs_postfx };
 		for (auto** s : shaders) { if (*s) SDL_ReleaseGPUShader(m_device, *s); *s = nullptr; }
@@ -751,7 +807,7 @@ namespace vortex::graphics::sdlgpu
 		if (m_bone_buffer) SDL_ReleaseGPUBuffer(m_device, m_bone_buffer);
 		if (m_bone_transfer) SDL_ReleaseGPUTransferBuffer(m_device, m_bone_transfer);
 		m_instance_buffer = nullptr; m_instance_transfer = nullptr; m_bone_buffer = nullptr; m_bone_transfer = nullptr;
-		release_target(m_main.scene); release_target(m_main.present); release_target(m_main.postfx);
+		release_target(m_main.scene); release_target(m_main.present); release_target(m_main.postfx); release_taa(m_main);
 		if (m_main.window)
 		{
 			SDL_ReleaseWindowFromGPUDevice(m_device, m_main.window);   // removes the Metal view from the host view
@@ -857,13 +913,17 @@ namespace vortex::graphics::sdlgpu
 			cb.grain_ca[0] = p.grain_intensity; cb.grain_ca[1] = p.grain_size; cb.grain_ca[2] = p.ca_strength; cb.grain_ca[3] = p.ca_falloff;
 			cb.grade1[0] = p.exposure; cb.grade1[1] = p.contrast; cb.grade1[2] = p.saturation; cb.grade1[3] = p.temperature;
 			cb.grade2[0] = p.tint;
-			cb.bloom[0] = p.bloom_intensity;
+			cb.bloom[0] = p.bloom_intensity; cb.bloom[1] = p.sharpen;
 			if (p.bloom && m_post_ready)
 			{
 				record_bloom(cmd, surface.scene.color, rw, rh);
 				if (m_bloom_result) cb.flags |= 32u;
 			}
-			fullscreen_blit(cmd, surface.postfx.color, surface.present.color, w, h, m_pipeline_postfx, &cb, m_bloom_result);
+			// temporal anti-aliasing (#141): the frame is resolved against the last one before the grade / FXAA / vignette
+			SDL_GPUTexture* post_src = surface.postfx.color;
+			if (p.taa && m_pipeline_taa && record_taa(cmd, surface, view, w, h)) { post_src = surface.taa_out; cb.flags &= ~64u; }   // TAA resolved it: no FXAA on top (a second blur)
+			else surface.taa_valid = false;
+			fullscreen_blit(cmd, post_src, surface.present.color, w, h, m_pipeline_postfx, &cb, m_bloom_result);
 		}
 		else
 		{
@@ -1020,7 +1080,7 @@ namespace vortex::graphics::sdlgpu
 	{
 		if (!m_game.window) return;
 		wait_idle();
-		release_target(m_game.scene); release_target(m_game.present); release_target(m_game.postfx);
+		release_target(m_game.scene); release_target(m_game.present); release_target(m_game.postfx); release_taa(m_game);
 		SDL_ReleaseWindowFromGPUDevice(m_device, m_game.window);
 		if (m_game.owns_window) SDL_DestroyWindow(m_game.window);
 		m_game.window = nullptr;

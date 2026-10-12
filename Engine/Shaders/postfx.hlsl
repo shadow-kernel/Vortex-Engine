@@ -15,7 +15,7 @@ cbuffer PostFx : register(b0)
     float4 GrainCA;        // x grain intensity, y grain size (px), z CA strength, w CA radial falloff
     float4 Grade1;         // x exposure (stops), y contrast, z saturation, w temperature (-1..1)
     float4 Grade2;         // x tint (-1..1 green<->magenta), yzw reserved
-    float4 BloomP;         // x bloom composite intensity, yzw reserved
+    float4 BloomP;         // x bloom composite intensity, y sharpen strength (0 = off), zw reserved
 };
 
 Texture2D    Src      : register(t0);
@@ -50,6 +50,21 @@ float Hash21(float2 p)
 // FXAA 3.11 (the console variant): the luma of the 3x3 neighbourhood picks the edge direction, two taps along it blend the
 // edge, two wider taps are kept only while they stay inside the local luma range — nine samples, no history.
 float FxaaLuma(float3 c) { return dot(c, float3(0.299, 0.587, 0.114)); }
+
+// Contrast-adaptive sharpening (the AMD CAS core): the cross of four neighbours around the anti-aliased pixel, weighted by how
+// much head-room the local contrast leaves — flat sand and already-crisp edges stay, the soft mush TAA / FXAA leave gets its
+// detail back. strength 0..1 (BloomP.y), applied after the anti-aliasing and before bloom / grain / grading.
+float3 CasSharpen(float2 uv, float3 e, float strength)
+{
+    float3 a = Src.Sample(Smp, uv + float2(-TexelSize.x, 0.0)).rgb, b = Src.Sample(Smp, uv + float2(TexelSize.x, 0.0)).rgb;
+    float3 cc = Src.Sample(Smp, uv + float2(0.0, -TexelSize.y)).rgb, d = Src.Sample(Smp, uv + float2(0.0, TexelSize.y)).rgb;
+    float3 mn = min(min(min(a, b), min(cc, d)), e), mx = max(max(max(a, b), max(cc, d)), e);
+    float3 amp = sqrt(saturate(min(mn, 1.0 - mx) / max(mx, 1e-4)));
+    float peak = -1.0 / lerp(8.0, 5.0, saturate(strength));
+    float3 w = amp * peak;
+    return saturate(((a + b + cc + d) * w + e) / (4.0 * w + 1.0));
+}
+
 float3 Fxaa(float2 uv)
 {
     float3 rgbM = Src.Sample(Smp, uv).rgb;
@@ -96,6 +111,11 @@ float4 PSMain(VS_OUT i) : SV_TARGET
     {
         col = Src.Sample(Smp, uv).rgb;
     }
+
+    if (BloomP.y > 0.001)
+
+        col = CasSharpen(uv, col, BloomP.y);
+
 
     if (Flags & 32)
     {

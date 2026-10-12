@@ -63,7 +63,9 @@ namespace VortexEditor.Panels
             Sections.Children.Add(Section("Exposure", "The camera's aperture: scene exposure in stops BEFORE the tonemapper. +1 doubles the light the ACES curve receives — brightens a sunlit world without the clipping of the grading exposure. 0 = the classic look.", null, null,
                 Slider("Stops", "−3 … +4 stops; a sunlit desert wants +1.5 … +2.5, a night scene −1", -3, 4, s => s.SceneExposure, (s, v) => s.SceneExposure = v),
                 Choice("Tonemapper", "ACES: the classic filmic curve — bright saturated colours drift towards white. PBR Neutral (Khronos): keeps hue and saturation, a sunlit desert stays orange.", new[] { "ACES", "PBR Neutral" }, s => s.Tonemapper, (s, v) => s.Tonemapper = v)));
-            Sections.Children.Add(Section("Anti-aliasing", "FXAA on the final picture: smooth edges on fronds, grass and ripples (nine taps, no history, ~0.3 ms). Temporal AA comes with the AAA rendering milestone.", s => s.AntiAliasEnabled, (s, v) => s.AntiAliasEnabled = v));
+            Sections.Children.Add(Section("Anti-aliasing", "FXAA on the final picture: smooth edges on fronds, grass and ripples (nine taps, no history, ~0.3 ms).", s => s.AntiAliasEnabled, (s, v) => s.AntiAliasEnabled = v));
+            Sections.Children.Add(Section("Temporal AA", "The previous frame reprojected through the depth and blended in (88 %), read with a bicubic kernel and clamped to the neighbourhood: foliage, thin fronds and specular sparkle at distance settle down. FXAA is skipped while TAA resolves the frame. Metal and Vulkan; on DirectX 12 the flag is accepted and FXAA stays its anti-aliasing until the pass lands there.", s => s.TaaEnabled, (s, v) => s.TaaEnabled = v,
+                Slider("Sharpen", "Contrast-adaptive sharpening after the anti-aliasing (0 = off): gives back the detail TAA / FXAA soften — 0.3–0.5 for a crisp picture, no ringing on edges that are already sharp. Works with TAA off too.", 0, 1, s => s.Sharpen, (s, v) => s.Sharpen = v)));
             Sections.Children.Add(Section("Global Illumination", "Dynamic GI, step 1 (screen space): one bounce of the lit world traced against the depth with the previous frame's light — sunlit sand warms the palm trunks, a lit wall lights the floor beside it. Needs SSAO on; ~0.4 ms at half resolution. The world-space probe cache and ray tracing follow.", s => s.GiEnabled, (s, v) => s.GiEnabled = v,
                 Slider("Strength", "1 = a physical diffuse bounce", 0, 3, s => s.GiStrength, (s, v) => s.GiStrength = v),
                 Slider("Radius (m)", "How far a bounce ray travels", 0.5, 10, s => s.GiRadius, (s, v) => s.GiRadius = v)));
@@ -75,6 +77,7 @@ namespace VortexEditor.Panels
                 Slider("Height Y", null, -20, 20, s => s.FogHeightY, (s, v) => s.FogHeightY = v),
                 Slider("Ground Mist", "0 = uniform distance fog; higher = mist hugging the ground below Height Y", 0, 2, s => s.FogHeightFalloff, (s, v) => s.FogHeightFalloff = v),
                 Slider("Sun Glow", "Aerial perspective: the sun's glow scattered in the haze when looking towards it (0 = off, 0.3–0.6 a desert noon, 1–2 a low sun)", 0, 3, s => s.FogSunGlow, (s, v) => s.FogSunGlow = v),
+                Check("From Sky", "The haze takes the sky's own colour just above the horizon (the scene's HDR or gradient) and Color becomes a tint on it — the distance fades into the sky it stands against. Off = Color as given.", s => s.FogFromSky, (s, v) => s.FogFromSky = v),
                 ColorRow("Color", s => (s.FogR, s.FogG, s.FogB), (s, c) => { s.FogR = c.r; s.FogG = c.g; s.FogB = c.b; })));
             Sections.Children.Add(Section("Volumetric Fog", "Ray-marched fog (#119): light scattered towards the camera from the fog colour, the sun and every point / spot light — visible cones and shafts. Uses the Fog height and colour above; works with Fog off.", s => s.VolumetricEnabled, (s, v) => s.VolumetricEnabled = v,
                 Slider("Density", "Scattering per metre — 0.01 a haze, 0.03 fog, 0.1 a thick cellar", 0, 0.25, s => s.VolumetricDensity, (s, v) => s.VolumetricDensity = v),
@@ -134,6 +137,21 @@ namespace VortexEditor.Panels
             card.Child = stack;
             _refreshers.Add(() => { var st = Settings; if (st == null || get == null) return; sw.IsChecked = get(st); body.Opacity = get(st) ? 1 : 0.55; });
             return card;
+        }
+
+        private Control Check(string label, string tip, Func<SceneSettings, bool> get, Action<SceneSettings, bool> set)
+        {
+            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("92,*"), Classes = { "proprow" } };
+            var lbl = new TextBlock { Text = label, Classes = { "label", "small" } };
+            if (tip != null) ToolTip.SetTip(lbl, tip);
+            row.Children.Add(lbl);
+            var cb = new CheckBox { MinHeight = 22, Margin = new Thickness(4, 0) };
+            if (tip != null) ToolTip.SetTip(cb, tip);
+            Grid.SetColumn(cb, 1);
+            cb.IsCheckedChanged += (s, e) => { if (_loading) return; var st = Settings; if (st == null) return; set(st, cb.IsChecked == true); Apply(); };
+            row.Children.Add(cb);
+            _refreshers.Add(() => { var st = Settings; if (st == null) return; cb.IsChecked = get(st); });
+            return row;
         }
 
         private Control Slider(string label, string tip, double min, double max, Func<SceneSettings, float> get, Action<SceneSettings, float> set)

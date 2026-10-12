@@ -1966,11 +1966,20 @@ namespace Vortex
         /// ray, so a camera high above the layer sees only the fog the ray actually crosses and a camera inside it sees
         /// the full density. The sky is never fogged. Colors are linear 0..1 (keep them DARK for horror).</summary>
         public static void SetFog(float density, float heightY = 0f, float heightFalloff = 0f,
-                                  float r = 0.02f, float g = 0.025f, float b = 0.035f)
-            { Editor.DllWrapper.VortexAPI.SetFog(r, g, b, density, heightY, heightFalloff); }
+                                  float r = 0.02f, float g = 0.025f, float b = 0.035f, bool fromSky = false)
+            { Editor.Core.Services.SkyHaze.Set(fromSky, r, g, b, density, heightY, heightFalloff); }
 
         /// <summary>Turn fog off.</summary>
-        public static void ClearFog() { Editor.DllWrapper.VortexAPI.SetFog(0f, 0f, 0f, 0f, 0f, 0f); }
+        public static void ClearFog() { Editor.Core.Services.SkyHaze.Set(false, 0f, 0f, 0f, 0f, 0f, 0f); }
+
+        /// <summary>The sky's own radiance just above the horizon, as the haze uses it when <see cref="SetFog"/> is called with
+        /// <c>fromSky: true</c> (the colour is then a tint on it). False without a sky. Lets a script blend a sky-following
+        /// preset into an explicit colour without a jump.</summary>
+        public static bool SkyHorizon(out float r, out float g, out float b)
+        {
+            r = Editor.Core.Services.SkyHaze.HorizonR; g = Editor.Core.Services.SkyHaze.HorizonG; b = Editor.Core.Services.SkyHaze.HorizonB;
+            return Editor.Core.Services.SkyHaze.HorizonKnown;
+        }
 
         /// <summary>Scene exposure in stops BEFORE the tonemapper — the camera's aperture. 0 = the scene's classic look, +1
         /// doubles the light the ACES curve receives (a sunlit desert: +1.5 … +2.5, a night: −1). Unlike the LDR grading

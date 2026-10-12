@@ -105,6 +105,13 @@ vec3 f_schlick(float VdotH, vec3 F0)
 {
 	return F0 + (1.0 - F0) * pow(1.0 - VdotH, 5.0);
 }
+// Rough surfaces lose their grazing Fresnel peak (their micro-facets shadow each other): the reflectance at 90 degrees falls
+// with roughness. Sand, bark and leaves seen at a glancing angle keep their colour instead of turning into one pale sheen of
+// the sun — the distance was one colour, and the far fronds flashed white.
+vec3 f_schlick_rough(float VdotH, vec3 F0, float roughness)
+{
+	return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(1.0 - VdotH, 5.0);
+}
 
 vec3 srgb_to_linear(vec3 color)
 {
@@ -398,7 +405,7 @@ void main()
 		float VdotH = max(dot(V, H), 0.0);
 		float D = d_ggx(NdotH, roughness);
 		float G = g_smith(NdotV, NdotL, roughness);
-		vec3 F = f_schlick(VdotH, F0);
+		vec3 F = f_schlick_rough(VdotH, F0, roughness);
 		vec3 spec = (D * G * F) / (4.0 * NdotV * NdotL + 0.0001);
 		vec3 kD = (1.0 - F) * (1.0 - metallic);
 		vec3 radiance = frame.light_color * frame.directional_intensity;
@@ -406,6 +413,9 @@ void main()
 		// leaves: the diffuse term wraps round the thin blade and the sun shines through it (translucency)
 		float NdotLw = clamp((dot(N, L) + 0.4) / 1.4, 0.0, 1.0);
 		vec3 trans = albedo * radiance * (0.45 * clamp(-dot(N, L), 0.0, 1.0) + 0.6 * pow(clamp(dot(V, -L), 0.0, 1.0), 2.0)) * (1.0 - metallic);   // a leaf lit from behind glows (diffuse transmission) and a forward lobe towards the sun
+		// far away a frond is thinner than a pixel: its highlight and glow would only sparkle — both fade out beyond 50 m
+		float far_fade = clamp(1.0 - (length(frame.camera_position - v_world_pos) - 50.0) / 120.0, 0.0, 1.0);
+		spec *= far_fade; trans *= mix(0.25, 1.0, far_fade);
 		Lo += ((kD * albedo / PI) * radiance * NdotLw + spec * radiance * NdotL + trans / PI) * sun_shadow;
 	}
 
@@ -426,7 +436,7 @@ void main()
 			vec3 radiance = lights.point_lights[i].color * lights.point_lights[i].intensity * atten;
 			float D = d_ggx(NdotH, roughness);
 			float G = g_smith(NdotV, NdotL, roughness);
-			vec3 F = f_schlick(VdotH, F0);
+			vec3 F = f_schlick_rough(VdotH, F0, roughness);
 			vec3 spec = (D * G * F) / (4.0 * NdotV * NdotL + 0.0001);
 			vec3 kD = (1.0 - F) * (1.0 - metallic);
 			Lo += (kD * albedo / PI + spec) * radiance * NdotL;
@@ -460,7 +470,7 @@ void main()
 				vec3 radiance = lights.spot_lights[j].color * lights.spot_lights[j].intensity * atten;
 				float D = d_ggx(NdotH, roughness);
 				float G = g_smith(NdotV, NdotL, roughness);
-				vec3 F = f_schlick(VdotH, F0);
+				vec3 F = f_schlick_rough(VdotH, F0, roughness);
 				vec3 spec = (D * G * F) / (4.0 * NdotV * NdotL + 0.0001);
 				vec3 kD = (1.0 - F) * (1.0 - metallic);
 				Lo += (kD * albedo / PI + spec) * radiance * NdotL;
