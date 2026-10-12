@@ -2486,7 +2486,7 @@ namespace Editor.Core.Services
             if (!_hasSkybox)
             {
                 if (ScriptSky != null) { ApplyScriptSky(ScriptSky); SubmitSkyLight(ScriptSky); }   // a scripted sky needs no Skybox component (#349)
-                else { VortexAPI.EnableSkybox(false); VortexAPI.SetSkyLight(null, false); PushEnvironmentMap(null); }
+                else { VortexAPI.EnableSkybox(false); VortexAPI.SetSkyLight(null, false); PushEnvironmentMap(null); SkyHaze.SetHorizon(false, 0f, 0f, 0f); }
                 VortexAPI.SetAmbientLightStrength(ScriptAmbientOverride ?? 0.35f);  // 0.35 matches the engine header default
             }
         }
@@ -2512,6 +2512,25 @@ namespace Editor.Core.Services
                     c = SkyLight.FromGradient(skybox.TopColorR * e, skybox.TopColorG * e, skybox.TopColorB * e, skybox.HorizonColorR * e, skybox.HorizonColorG * e, skybox.HorizonColorB * e, skybox.BottomColorR * e, skybox.BottomColorG * e, skybox.BottomColorB * e);
             }
             catch { c = null; }
+            // the haze that follows the sky (SkyHaze): the picture's horizon band, else the gradient's horizon
+            try
+            {
+                float hr = 0f, hg = 0f, hb = 0f; bool known = false;
+                if ((skybox.SkyboxType == SkyboxType.Texture || skybox.SkyboxType == SkyboxType.Cubemap) && !string.IsNullOrEmpty(skybox.TexturePath))
+                {
+                    var projectPath = Data.ProjectData.Current?.Path ?? "";
+                    var full = System.IO.Path.IsPathRooted(skybox.TexturePath) ? skybox.TexturePath : System.IO.Path.Combine(projectPath, skybox.TexturePath);
+                    known = SkyLight.HorizonColor(full, e, out hr, out hg, out hb);
+                }
+                if (!known)
+                {
+                    if (skybox.SkyboxType == SkyboxType.SolidColor) { hr = skybox.TopColorR * e; hg = skybox.TopColorG * e; hb = skybox.TopColorB * e; }
+                    else { hr = skybox.HorizonColorR * e; hg = skybox.HorizonColorG * e; hb = skybox.HorizonColorB * e; }
+                    known = true;
+                }
+                SkyHaze.SetHorizon(known, hr, hg, hb);
+            }
+            catch { }
             // the ground bounce: the sun's light off the ground into the shadows (scene settings)
             try
             {
@@ -2555,6 +2574,21 @@ namespace Editor.Core.Services
                     c = SkyLight.FromGradient(g[0], g[1], g[2], g[3], g[4], g[5], g[6], g[7], g[8]);
             }
             catch { c = null; }
+            // the haze that follows the sky (SkyHaze)
+            try
+            {
+                float hr = 0f, hg = 0f, hb = 0f; bool known = false;
+                if (!string.IsNullOrEmpty(s.TexturePath))
+                {
+                    var projectPath = Data.ProjectData.Current?.Path ?? "";
+                    var full = System.IO.Path.IsPathRooted(s.TexturePath) ? s.TexturePath : System.IO.Path.Combine(projectPath, s.TexturePath);
+                    known = SkyLight.HorizonColor(full, s.Exposure, out hr, out hg, out hb);
+                }
+                var hg9 = s.Gradient;
+                if (!known && hg9 != null && hg9.Length >= 9) { hr = hg9[3]; hg = hg9[4]; hb = hg9[5]; known = true; }
+                SkyHaze.SetHorizon(known, hr, hg, hb);
+            }
+            catch { }
             // the ground bounce: the sun's light off the ground into the shadows (scene settings)
             try
             {

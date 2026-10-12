@@ -76,6 +76,7 @@ namespace VortexEditor.Panels
                 Slider("Height Y", null, -20, 20, s => s.FogHeightY, (s, v) => s.FogHeightY = v),
                 Slider("Ground Mist", "0 = uniform distance fog; higher = mist hugging the ground below Height Y", 0, 2, s => s.FogHeightFalloff, (s, v) => s.FogHeightFalloff = v),
                 Slider("Sun Glow", "Aerial perspective: the sun's glow scattered in the haze when looking towards it (0 = off, 0.3–0.6 a desert noon, 1–2 a low sun)", 0, 3, s => s.FogSunGlow, (s, v) => s.FogSunGlow = v),
+                Check("From Sky", "The haze takes the sky's own colour just above the horizon (the scene's HDR or gradient) and Color becomes a tint on it — the distance fades into the sky it stands against. Off = Color as given.", s => s.FogFromSky, (s, v) => s.FogFromSky = v),
                 ColorRow("Color", s => (s.FogR, s.FogG, s.FogB), (s, c) => { s.FogR = c.r; s.FogG = c.g; s.FogB = c.b; })));
             Sections.Children.Add(Section("Volumetric Fog", "Ray-marched fog (#119): light scattered towards the camera from the fog colour, the sun and every point / spot light — visible cones and shafts. Uses the Fog height and colour above; works with Fog off.", s => s.VolumetricEnabled, (s, v) => s.VolumetricEnabled = v,
                 Slider("Density", "Scattering per metre — 0.01 a haze, 0.03 fog, 0.1 a thick cellar", 0, 0.25, s => s.VolumetricDensity, (s, v) => s.VolumetricDensity = v),
@@ -135,6 +136,21 @@ namespace VortexEditor.Panels
             card.Child = stack;
             _refreshers.Add(() => { var st = Settings; if (st == null || get == null) return; sw.IsChecked = get(st); body.Opacity = get(st) ? 1 : 0.55; });
             return card;
+        }
+
+        private Control Check(string label, string tip, Func<SceneSettings, bool> get, Action<SceneSettings, bool> set)
+        {
+            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("92,*"), Classes = { "proprow" } };
+            var lbl = new TextBlock { Text = label, Classes = { "label", "small" } };
+            if (tip != null) ToolTip.SetTip(lbl, tip);
+            row.Children.Add(lbl);
+            var cb = new CheckBox { MinHeight = 22, Margin = new Thickness(4, 0) };
+            if (tip != null) ToolTip.SetTip(cb, tip);
+            Grid.SetColumn(cb, 1);
+            cb.IsCheckedChanged += (s, e) => { if (_loading) return; var st = Settings; if (st == null) return; set(st, cb.IsChecked == true); Apply(); };
+            row.Children.Add(cb);
+            _refreshers.Add(() => { var st = Settings; if (st == null) return; cb.IsChecked = get(st); });
+            return row;
         }
 
         private Control Slider(string label, string tip, double min, double max, Func<SceneSettings, float> get, Action<SceneSettings, float> set)

@@ -95,6 +95,9 @@ namespace Editor.Core.Data
         [DataMember(Name = "giRadius", Order = 92)] public float GiRadius { get; set; } = 2.5f;
         /// <summary>Temporal anti-aliasing (#141): the previous frame reprojected and blended — stable foliage, no sparkle at distance.</summary>
         [DataMember(Name = "taaOn", Order = 93)] public bool TaaEnabled { get; set; }
+        /// <summary>The haze follows the sky (SkyHaze): the fog colour becomes a tint on the sky's own radiance just above the
+        /// horizon, so the distance fades into the sky it stands against instead of a hand-picked white.</summary>
+        [DataMember(Name = "fogFromSky", Order = 94)] public bool FogFromSky { get; set; }
         // ---- The editor's view (EditorViewState): where the scene camera stood when the scene was saved — a scene opens there,
         // Home returns there. Editor data only; a scene saved before this has none (viewSet false) and starts at the classic default. ----
         [DataMember(Name = "viewSet", Order = 100)] public bool EditorViewSet { get; set; }
@@ -127,8 +130,7 @@ namespace Editor.Core.Data
         /// <summary>Push every setting into the renderer (persistent frame state, same-frame visible).</summary>
         public void Apply()
         {
-            DllWrapper.VortexAPI.SetFog(FogR, FogG, FogB, FogEnabled ? FogDensity : 0f,
-                FogHeightY, FogHeightFalloff);
+            Services.SkyHaze.Set(FogFromSky, FogR, FogG, FogB, FogEnabled ? FogDensity : 0f, FogHeightY, FogHeightFalloff);
             DllWrapper.VortexAPI.SetSceneExposureStops(SceneExposure);
             DllWrapper.VortexAPI.SetTonemapperMode(Tonemapper);
             DllWrapper.VortexAPI.SetPostAntiAlias(AntiAliasEnabled);

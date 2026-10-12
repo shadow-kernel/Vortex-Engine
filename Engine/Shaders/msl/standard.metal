@@ -332,6 +332,13 @@ static inline float3 f_schlick(float VdotH, float3 F0)
 {
     return F0 + (1.0 - F0) * pow(1.0 - VdotH, 5.0);
 }
+// Rough surfaces lose their grazing Fresnel peak (their micro-facets shadow each other): the reflectance at 90 degrees falls
+// with roughness. Sand, bark and leaves seen at a glancing angle keep their colour instead of turning into one pale sheen of
+// the sun — the distance was one colour, and the far fronds flashed white.
+static inline float3 f_schlick_rough(float VdotH, float3 F0, float roughness)
+{
+    return F0 + (max(float3(1.0 - roughness), F0) - F0) * pow(1.0 - VdotH, 5.0);
+}
 
 static inline float3 srgb_to_linear(float3 color)
 {
@@ -600,7 +607,7 @@ fragment float4 PSMain(VSOut in [[stage_in]],
         float VdotH = max(dot(V, H), 0.0);
         float D = d_ggx(NdotH, roughness);
         float G = g_smith(NdotV, NdotL, roughness);
-        float3 F = f_schlick(VdotH, F0);
+        float3 F = f_schlick_rough(VdotH, F0, roughness);
         float3 spec = (D * G * F) / (4.0 * NdotV * NdotL + 0.0001);
         float3 kD = (1.0 - F) * (1.0 - metallic);
         float3 radiance = float3(frame.light_color) * frame.directional_intensity;
@@ -625,7 +632,7 @@ fragment float4 PSMain(VSOut in [[stage_in]],
             float3 radiance = float3(lights.point_lights[i].color) * lights.point_lights[i].intensity * atten;
             float D = d_ggx(NdotH, roughness);
             float G = g_smith(NdotV, NdotL, roughness);
-            float3 F = f_schlick(VdotH, F0);
+            float3 F = f_schlick_rough(VdotH, F0, roughness);
             float3 spec = (D * G * F) / (4.0 * NdotV * NdotL + 0.0001);
             float3 kD = (1.0 - F) * (1.0 - metallic);
             Lo += (kD * albedo / PI + spec) * radiance * NdotL;
@@ -659,7 +666,7 @@ fragment float4 PSMain(VSOut in [[stage_in]],
                 float3 radiance = float3(lights.spot_lights[j].color) * lights.spot_lights[j].intensity * atten;
                 float D = d_ggx(NdotH, roughness);
                 float G = g_smith(NdotV, NdotL, roughness);
-                float3 F = f_schlick(VdotH, F0);
+                float3 F = f_schlick_rough(VdotH, F0, roughness);
                 float3 spec = (D * G * F) / (4.0 * NdotV * NdotL + 0.0001);
                 float3 kD = (1.0 - F) * (1.0 - metallic);
                 Lo += (kD * albedo / PI + spec) * radiance * NdotL;

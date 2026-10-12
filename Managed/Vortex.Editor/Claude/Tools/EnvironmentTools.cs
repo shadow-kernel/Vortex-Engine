@@ -106,7 +106,8 @@ namespace VortexEditor.Claude.Tools
         public static object SetEnvironment(
             [Description("Fog on / off")] bool? fog = null,
             [Description("Fog density (exp², per metre)")] float fog_density = -1f,
-            [Description("Fog colour [r, g, b]")] float[] fog_color = null,
+            [Description("Fog colour [r, g, b] (a tint on the sky's horizon colour while fog_from_sky is on)")] float[] fog_color = null,
+            [Description("The haze follows the sky: its colour is the sky's own radiance just above the horizon times fog_color — the distance fades into the sky it stands against")] bool? fog_from_sky = null,
             [Description("Height (m) up to which the fog is uniform")] float? fog_height_y = null,
             [Description("Height falloff per metre above it (0 = no height fog)")] float fog_height_falloff = -1f,
             [Description("Aerial perspective: the sun's glow in the fog when looking towards it (0 = off, 0.3–0.6 a desert noon, 1–2 a low sun)")] float? fog_sun_glow = null,
@@ -146,6 +147,7 @@ namespace VortexEditor.Claude.Tools
             if (fog_height_y.HasValue) st.FogHeightY = fog_height_y.Value;
             if (fog_height_falloff >= 0f) st.FogHeightFalloff = fog_height_falloff;
             if (fog_sun_glow.HasValue) st.FogSunGlow = fog_sun_glow.Value;
+            if (fog_from_sky.HasValue) st.FogFromSky = fog_from_sky.Value;
             if (scene_exposure.HasValue) st.SceneExposure = scene_exposure.Value;
             if (!string.IsNullOrEmpty(tonemapper)) st.Tonemapper = tonemapper.Trim().ToLowerInvariant().StartsWith("neutral") ? 1 : 0;
             if (anti_alias.HasValue) st.AntiAliasEnabled = anti_alias.Value;
@@ -185,7 +187,7 @@ namespace VortexEditor.Claude.Tools
         public sealed class WeatherPreset
         {
             public string Name;
-            public float FogDensity, FogHeightY, FogFalloff; public float[] FogColor;
+            public float FogDensity, FogHeightY, FogFalloff; public float[] FogColor; public bool FogFromSky;   // FogColor is a tint on the sky's horizon when FogFromSky
             public float SunIntensity; public float[] SunColor;
             public float SkyExposure, Ambient, Wind;
             public float SceneExposure, FogSunGlow;   // stops before the tonemapper; the sun's glow in the fog
@@ -196,11 +198,11 @@ namespace VortexEditor.Claude.Tools
 
         public static readonly WeatherPreset[] WeatherPresets =
         {
-            new WeatherPreset { Name = "clear",     FogDensity = 0.0004f, FogHeightY = -4f, FogFalloff = 0.012f, FogColor = new[] { 0.60f, 0.65f, 0.72f }, SunIntensity = 8f, SunColor = new[] { 1f, 0.84f, 0.62f },  SkyExposure = 0.4f, Ambient = 0.55f, Wind = 0.5f, SceneExposure = 1.7f, FogSunGlow = 0.2f, Sky = "Assets/Skies/syferfontein_18d_clear_puresky_2k.hdr", SunPitch = 18.19f, SunYaw = -144.05f },
-            new WeatherPreset { Name = "noon",      FogDensity = 0.0011f, FogHeightY = -4f, FogFalloff = 0.012f, FogColor = new[] { 0.40f, 0.43f, 0.50f }, SunIntensity = 5.5f, SunColor = new[] { 1f, 0.93f, 0.82f },  SkyExposure = 1.0f, Ambient = 1.0f, Wind = 0.5f, SceneExposure = 1.7f, FogSunGlow = 0.45f, Sky = "Assets/Skies/goegap_2k.hdr", SunPitch = 46.32f, SunYaw = -141.24f },
+            new WeatherPreset { Name = "clear",     FogDensity = 0.0004f, FogHeightY = -4f, FogFalloff = 0.012f, FogColor = new[] { 1f, 1f, 1f }, FogFromSky = true, SunIntensity = 8f, SunColor = new[] { 1f, 0.84f, 0.62f },  SkyExposure = 0.4f, Ambient = 0.55f, Wind = 0.5f, SceneExposure = 1.7f, FogSunGlow = 0.2f, Sky = "Assets/Skies/syferfontein_18d_clear_puresky_2k.hdr", SunPitch = 18.19f, SunYaw = -144.05f },
+            new WeatherPreset { Name = "noon",      FogDensity = 0.0011f, FogHeightY = -4f, FogFalloff = 0.012f, FogColor = new[] { 1f, 1f, 1f }, FogFromSky = true, SunIntensity = 5.5f, SunColor = new[] { 1f, 0.93f, 0.82f },  SkyExposure = 1.0f, Ambient = 1.0f, Wind = 0.5f, SceneExposure = 1.7f, FogSunGlow = 0.45f, Sky = "Assets/Skies/goegap_2k.hdr", SunPitch = 46.32f, SunYaw = -141.24f },
             new WeatherPreset { Name = "haze",      FogDensity = 0.0032f, FogHeightY = 2f,  FogFalloff = 0.02f,  FogColor = new[] { 0.46f, 0.44f, 0.42f }, SunIntensity = 4.6f, SunColor = new[] { 1f, 0.88f, 0.72f },  SkyExposure = 0.9f, Ambient = 0.95f,  Wind = 1.1f, SceneExposure = 1.5f, FogSunGlow = 0.8f, Haze = true, Sky = "Assets/Skies/goegap_2k.hdr", SunPitch = 46.32f, SunYaw = -141.24f },
             new WeatherPreset { Name = "sandstorm", FogDensity = 0.012f,  FogHeightY = 12f, FogFalloff = 0.012f, FogColor = new[] { 0.42f, 0.32f, 0.20f }, SunIntensity = 2.4f, SunColor = new[] { 1f, 0.74f, 0.48f },  SkyExposure = 0.6f,  Ambient = 1.0f,  Wind = 2.6f, SceneExposure = 1.2f, FogSunGlow = 0.6f, Haze = true, Storm = true, SunPitch = 46.32f, SunYaw = -141.24f, SkyTop = new[] { 0.62f, 0.50f, 0.36f }, SkyHorizon = new[] { 0.80f, 0.64f, 0.44f }, SkyBottom = new[] { 0.66f, 0.50f, 0.34f } },
-            new WeatherPreset { Name = "dusk",      FogDensity = 0.0022f, FogHeightY = -2f, FogFalloff = 0.025f, FogColor = new[] { 0.34f, 0.26f, 0.22f }, SunIntensity = 3.6f, SunColor = new[] { 1f, 0.64f, 0.38f },  SkyExposure = 1.0f,  Ambient = 0.9f,  Wind = 0.4f, SceneExposure = 1.3f, FogSunGlow = 1.6f, Sky = "Assets/Skies/rogland_sunset_2k.hdr", SunPitch = 12.57f, SunYaw = -144.05f },
+            new WeatherPreset { Name = "dusk",      FogDensity = 0.0022f, FogHeightY = -2f, FogFalloff = 0.025f, FogColor = new[] { 1f, 1f, 1f }, FogFromSky = true, SunIntensity = 3.6f, SunColor = new[] { 1f, 0.64f, 0.38f },  SkyExposure = 1.0f,  Ambient = 0.9f,  Wind = 0.4f, SceneExposure = 1.3f, FogSunGlow = 1.6f, Sky = "Assets/Skies/rogland_sunset_2k.hdr", SunPitch = 12.57f, SunYaw = -144.05f },
         };
 
         public static WeatherPreset FindWeather(string name)
@@ -216,7 +218,7 @@ namespace VortexEditor.Claude.Tools
             var st = scene.Settings;
             float k = Math.Max(0f, Math.Min(2f, intensity));
             st.FogEnabled = true; st.FogDensity = p.FogDensity * k; st.FogHeightY = p.FogHeightY; st.FogHeightFalloff = p.FogFalloff;
-            st.FogR = p.FogColor[0]; st.FogG = p.FogColor[1]; st.FogB = p.FogColor[2];
+            st.FogR = p.FogColor[0]; st.FogG = p.FogColor[1]; st.FogB = p.FogColor[2]; st.FogFromSky = p.FogFromSky;
             st.FogSunGlow = p.FogSunGlow; st.SceneExposure = p.SceneExposure;
             st.Apply();
             foreach (var e in SceneModel.All(scene))
@@ -293,7 +295,7 @@ namespace VortexEditor.Claude.Tools
             exposure = new { scene_stops = st.SceneExposure, tonemapper = st.Tonemapper == 1 ? "neutral" : "aces", anti_alias = st.AntiAliasEnabled, temporal_aa = st.TaaEnabled },
             bounce = new { strength = st.BounceStrength, color = new[] { st.BounceR, st.BounceG, st.BounceB } },
             gi = new { on = st.GiEnabled, strength = st.GiStrength, radius = st.GiRadius, mode = "screen-space" },
-            fog = new { on = st.FogEnabled, density = st.FogDensity, color = new[] { st.FogR, st.FogG, st.FogB }, height_y = st.FogHeightY, height_falloff = st.FogHeightFalloff, sun_glow = st.FogSunGlow },
+            fog = new { on = st.FogEnabled, density = st.FogDensity, color = new[] { st.FogR, st.FogG, st.FogB }, from_sky = st.FogFromSky, height_y = st.FogHeightY, height_falloff = st.FogHeightFalloff, sun_glow = st.FogSunGlow },
             ao = new { on = st.AoEnabled, radius = st.AoRadius, intensity = st.AoIntensity },
             bloom = new { on = st.BloomEnabled, threshold = st.BloomThreshold, intensity = st.BloomIntensity },
             volumetric = new { on = st.VolumetricEnabled, density = st.VolumetricDensity, sun = st.VolumetricSun },

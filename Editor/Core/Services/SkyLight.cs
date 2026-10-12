@@ -84,6 +84,42 @@ namespace Editor.Core.Services
 
         private static string Select3(this float[] a) { var s = new string[a.Length]; for (int i = 0; i < a.Length; i++) s[i] = a[i].ToString("0.000", System.Globalization.CultureInfo.InvariantCulture); return string.Join(",", s); }
 
+        private static readonly Dictionary<string, float[]> _horizon = new Dictionary<string, float[]>();
+
+        /// <summary>The sky's mean radiance in the band just above the horizon (elevation 0 – 7°), the sun clamped out, times
+        /// the exposure — in the units the skybox is drawn with, so the haze that follows the sky (SkyHaze) is exactly what
+        /// the distance stands against. False when the picture cannot be read. Cached by path.</summary>
+        public static bool HorizonColor(string fullPath, float exposure, out float r, out float g, out float b)
+        {
+            r = g = b = 0f;
+            string key = "hz|" + fullPath + "|" + (File.Exists(fullPath) ? File.GetLastWriteTimeUtc(fullPath).Ticks : 0);
+            float[] c;
+            if (!_horizon.TryGetValue(key, out c))
+            {
+                float[] rgb; int w, h;
+                if (!LoadEquirect(fullPath, out rgb, out w, out h) || w < 1 || h < 2) return false;
+                int y0 = (int)(h * 0.46f), y1 = Math.Max(y0 + 1, (int)(h * 0.50f));
+                // the band's mean luminance first, then every texel clamped to 6× it: the sun's disc and its glow stay the
+                // directional light's job, as in the SH projection
+                double lum = 0; int n = 0;
+                for (int y = y0; y < y1; y++) for (int x = 0; x < w; x++) { int o = (y * w + x) * 3; lum += 0.2126 * rgb[o] + 0.7152 * rgb[o + 1] + 0.0722 * rgb[o + 2]; n++; }
+                float cap = (float)(6.0 * lum / Math.Max(n, 1));
+                double sr = 0, sg = 0, sb = 0;
+                for (int y = y0; y < y1; y++)
+                    for (int x = 0; x < w; x++)
+                    {
+                        int o = (y * w + x) * 3; float pr = rgb[o], pg = rgb[o + 1], pb = rgb[o + 2];
+                        float l = 0.2126f * pr + 0.7152f * pg + 0.0722f * pb;
+                        if (l > cap && l > 0f) { float k = cap / l; pr *= k; pg *= k; pb *= k; }
+                        sr += pr; sg += pg; sb += pb;
+                    }
+                c = new[] { (float)(sr / Math.Max(n, 1)), (float)(sg / Math.Max(n, 1)), (float)(sb / Math.Max(n, 1)) };
+                _horizon[key] = c;
+            }
+            r = c[0] * exposure; g = c[1] * exposure; b = c[2] * exposure;
+            return true;
+        }
+
         // ---------------------------------------------------------------- projection
 
         /// <summary>Project a linear equirect (w × h × rgb) onto SH9 with the cosine-lobe weights (Ramamoorthi &amp; Hanrahan),
