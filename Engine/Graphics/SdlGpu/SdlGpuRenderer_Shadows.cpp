@@ -51,6 +51,18 @@ namespace vortex::graphics::sdlgpu
 			return true;
 		}
 
+		// The smallest caster worth drawing into an ORTHOGRAPHIC shadow tile (the sun's cascades): two texels of radius. Pebbles,
+		// litter and grass under that size made no visible shadow there but filled the shared instance budget, and the far
+		// cascades dropped whole trees for them (#363). Perspective tiles (spots, point faces) return 0: their texel size
+		// depends on the distance.
+		float shadow_min_caster_radius(const DirectX::XMFLOAT4X4& vp, unsigned tile_size)
+		{
+			if (fabsf(vp._14) > 1e-5f || fabsf(vp._24) > 1e-5f || fabsf(vp._34) > 1e-5f || tile_size == 0) return 0.f;
+			const float len = sqrtf(vp._11 * vp._11 + vp._21 * vp._21 + vp._31 * vp._31);   // NDC per metre along x
+			if (len <= 0.f) return 0.f;
+			return 2.f * (2.f / (len * (float)tile_size));   // 2 texels; one texel is 2 / (len * size) metres
+		}
+
 		bool build_spot_vp(const SdlGpuRenderer::SpotLightData& s, DirectX::XMFLOAT4X4& out)
 		{
 			using namespace DirectX;
@@ -400,9 +412,10 @@ namespace vortex::graphics::sdlgpu
 		auto pack = [&](const XMFLOAT4X4& vp, u32 x, u32 y, u32 size, std::vector<ShadowTile>& tiles)
 		{
 			const ShadowFrustum fr = extract_shadow_frustum(vp);
+			const float min_r = shadow_min_caster_radius(vp, size);
 			auto& casters = m_shadow_tile_casters; casters.clear();
 			for (const auto& c : all)
-				if (sphere_in_shadow_frustum(fr, c.cx, c.cy, c.cz, c.r)) casters.push_back(c);
+				if (c.r >= min_r && sphere_in_shadow_frustum(fr, c.cx, c.cy, c.cz, c.r)) casters.push_back(c);
 			// The tiles share one instance buffer. A tile over budget keeps its LARGEST casters (the shadows one sees from
 			// afar) instead of the first in queue order, and the drop is reported below.
 			const u32 room = vb_used < MAX_SHADOW_INSTANCES ? MAX_SHADOW_INSTANCES - vb_used : 0;
