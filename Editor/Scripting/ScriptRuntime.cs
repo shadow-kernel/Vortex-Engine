@@ -2126,6 +2126,14 @@ namespace Editor.Scripting
         // Edge-accurate mesh colliders: resolve an imported model's real triangles (native export), VFS-aware + cached.
         private static readonly System.Collections.Generic.Dictionary<string, float[]> _triCache =
             new System.Collections.Generic.Dictionary<string, float[]>(System.StringComparer.OrdinalIgnoreCase);
+        /// <summary>A model's local collision triangles (flat x, y, z …) — the same source the collision world uses, also
+        /// outside play mode (the world lighting cache opens walk-in meshes with it).</summary>
+        public static float[] MeshTriangles(string meshPath) => ResolveMeshTriangles(meshPath);
+
+        /// <summary>A model changed on disk (SceneRenderService.InvalidateModel): forget its cached triangles, so collision and
+        /// the world lighting cache read the new mesh (in edit mode the cache was only cleared when play stopped).</summary>
+        public static void ForgetMeshTriangles() { _triCache.Clear(); }
+
         private static float[] ResolveMeshTriangles(string meshPath)
         {
             if (string.IsNullOrEmpty(meshPath) || meshPath.StartsWith("Primitive:", System.StringComparison.OrdinalIgnoreCase)) return null;

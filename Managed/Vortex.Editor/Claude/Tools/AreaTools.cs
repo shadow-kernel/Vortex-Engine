@@ -62,7 +62,13 @@ namespace VortexEditor.Claude.Tools
             if (properties != null) a.Properties = string.Join("\n", properties.Select(kv => kv.Key + "=" + kv.Value));
             if (color != null && color.Length >= 3) { a.ColorR = color[0]; a.ColorG = color[1]; a.ColorB = color[2]; }
             a.Priority = priority;
-            if (!string.IsNullOrEmpty(file)) a.DataPath = file;
+            if (!string.IsNullOrEmpty(file))
+            {
+                string full = System.IO.Path.IsPathRooted(file) ? file : System.IO.Path.Combine(ProjectData.Current?.Path ?? "", file);
+                if (!System.IO.File.Exists(full)) throw new ToolError("No area file '" + file + "'.");
+                a.DataPath = file;
+                a.ApplyDefinition(a.Resolve(ProjectData.Current?.Path));   // the file's values, as the game will use them
+            }
             e.AddComponent(a);
             SceneModel.SetTransform(e, pos, SceneModel.Vec(rotation, "rotation"), null);
             ToolContext.UndoLabel = "create area " + e.Name;
@@ -95,7 +101,18 @@ namespace VortexEditor.Claude.Tools
             }
             if (color != null && color.Length >= 3) { a.ColorR = color[0]; a.ColorG = color[1]; a.ColorB = color[2]; }
             if (priority.HasValue) a.Priority = priority.Value;
-            if (file != null) a.DataPath = file;
+            if (file != null)
+            {
+                a.DataPath = file;
+                // a linked file wins at run time (AreaService resolves it): show its values here too, so the outline and the
+                // inspector match what the game will use
+                if (file.Length > 0)
+                {
+                    string full = System.IO.Path.IsPathRooted(file) ? file : System.IO.Path.Combine(ProjectData.Current?.Path ?? "", file);
+                    if (!System.IO.File.Exists(full)) throw new ToolError("No area file '" + file + "'.");
+                    a.ApplyDefinition(a.Resolve(ProjectData.Current?.Path));
+                }
+            }
             if (track_all.HasValue) a.TrackAll = track_all.Value;
             ToolContext.UndoLabel = "edit area " + e.Name;
             return Describe(e, a);

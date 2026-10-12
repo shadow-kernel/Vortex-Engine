@@ -110,6 +110,49 @@ namespace VortexTests
         }
 
         [Test]
+        public static void SkirtsStayShallowInsideAndSkipHoles(TestContext t)
+        {
+            // The crack between LOD polylines is exact on the samples: a spike two samples in is fully open against the
+            // every-fourth polyline, a straight line has no crack at all.
+            t.True(Math.Abs(TerrainMeshBuilder.CrackDepth(i => i == 2 ? 10f : 0f) - 10f) < 1e-5f, "a spike opens its full height");
+            t.True(TerrainMeshBuilder.CrackDepth(i => 0.7f * i) < 1e-4f, "a straight slope opens no crack");
+
+            // A long even slope: inside the terrain every LOD agrees, so a skirt is only the margin deep — a tunnel dug under
+            // the hill must not meet a curtain hanging down by the chunk's whole height range (the cave mouth's striped wall).
+            var d = new TerrainData(129);
+            for (int z = 0; z < 129; z++) for (int x = 0; x < 129; x++) d.Set(x, z, 0.4f * z);
+            var inner = TerrainMeshBuilder.Build(d, 1, 1, 0, 1f);
+            float gridMin = float.MaxValue, skirtMin = float.MaxValue;
+            for (int i = 0; i < inner.VertexCount; i++)
+            {
+                float y = inner.Vertices[i * 8 + 1];
+                if (i < 33 * 33) gridMin = Math.Min(gridMin, y); else skirtMin = Math.Min(skirtMin, y);
+            }
+            t.True(skirtMin >= gridMin - 0.5f - 1e-4f, "an inner chunk's skirt hangs only the margin below its edge (" + (gridMin - skirtMin) + " m)");
+            var edge = TerrainMeshBuilder.Build(d, 0, 1, 0, 1f);
+            t.True(edge.Min.Y < 32f * 0.4f - 12f, "the terrain's outer border keeps the deep skirt (" + edge.Min.Y + ")");
+
+            // A hole across the seam between chunks 0 and 1 (x = 32): no skirt hangs from the edge vertices beside it.
+            var h = new TerrainData(65);
+            h.SetHoleDisc(32f, 16f, 3f, true);
+            var m = TerrainMeshBuilder.Build(h, 0, 0, 0, 1f);
+            uint rim = (uint)(16 * 33 + 32);   // grid vertex (x 32, z 16): on the seam, inside the hole
+            bool skirtAtHole = false;
+            for (int i = 0; i + 2 < m.Indices.Length; i += 3)
+            {
+                uint a = m.Indices[i], b = m.Indices[i + 1], c = m.Indices[i + 2];
+                bool hasRim = a == rim || b == rim || c == rim;
+                bool hasSkirt = a >= 33 * 33 || b >= 33 * 33 || c >= 33 * 33;
+                if (hasRim && hasSkirt) skirtAtHole = true;
+            }
+            t.True(!skirtAtHole, "no skirt along the seam where the hole cuts it");
+            t.True(m.TriangleCount < 32 * 32 * 2 + 4 * 32 * 4, "the hole's cells and skirt segments are left out (" + m.TriangleCount + ")");
+            bool inRange = true;
+            foreach (var i in m.Indices) if (i >= m.VertexCount) inRange = false;
+            t.True(inRange, "indices stay inside the vertex buffer with a hole");
+        }
+
+        [Test]
         public static void ResolutionSnapsToLegalValues(TestContext t)
         {
             t.True(Editor.ECS.Components.Rendering.Terrain.SnapResolution(100) == 129, "100 -> 129");

@@ -1005,8 +1005,50 @@ namespace Editor.Core.Services.Physics
                     return new Shape { Kind = Kind.Tris, Tris = tris, Min = mn, Max = mx, Grid = TriGrid.Build(tris, mn, mx) };
                 }
             }
+            // a placed model's root (no mesh of its own, its parts on child entities): the children's meshes, so a Mesh
+            // Collider on the model works the way it reads (a cave, a building)
+            if (string.IsNullOrEmpty(mp) && MeshTriangleProvider != null && !IsKinematicMover(e))
+            {
+                var soup = new List<V3>();
+                CollectChildTris(e, soup);
+                if (soup.Count >= 3)
+                {
+                    var tris = soup.ToArray();
+                    var mn = new V3(1e30f, 1e30f, 1e30f); var mx = new V3(-1e30f, -1e30f, -1e30f);
+                    foreach (var v in tris) { mn = new V3(Math.Min(mn.X, v.X), Math.Min(mn.Y, v.Y), Math.Min(mn.Z, v.Z)); mx = new V3(Math.Max(mx.X, v.X), Math.Max(mx.Y, v.Y), Math.Max(mx.Z, v.Z)); }
+                    return new Shape { Kind = Kind.Tris, Tris = tris, Min = mn, Max = mx, Grid = TriGrid.Build(tris, mn, mx) };
+                }
+            }
             // last resort: mesh AABB as a box (approximate) — better than no collision
             return null;
+        }
+
+        /// <summary>World triangles of the meshes under <paramref name="parent"/> that carry no collider of their own (a
+        /// child with one is its own shape, its subtree too).</summary>
+        private static void CollectChildTris(GameEntity parent, List<V3> into)
+        {
+            if (parent.Children == null) return;
+            foreach (var ch in parent.Children)
+            {
+                if (ch == null || !ch.IsActive) continue;
+                bool own = false;
+                var cols = ch.GetComponents<Collider>();
+                if (cols != null) foreach (var c in cols) if (c != null) { own = true; break; }
+                if (own) continue;
+                var mr = ch.GetComponent<MeshRenderer>();
+                if (mr != null && mr.IsEnabled && !string.IsNullOrEmpty(mr.MeshPath) && !mr.MeshPath.StartsWith("Primitive:", StringComparison.OrdinalIgnoreCase))
+                {
+                    float[] raw = null;
+                    try { raw = MeshTriangleProvider(mr.MeshPath); } catch { }
+                    if (raw != null && raw.Length >= 9)
+                    {
+                        WorldTransform(ch, out var cpos, out var crot, out var cscale);
+                        for (int i = 0; i + 2 < raw.Length; i += 3)
+                            into.Add(cpos + RotY(new V3(raw[i] * cscale.X, raw[i + 1] * cscale.Y, raw[i + 2] * cscale.Z), crot.Y));
+                    }
+                }
+                CollectChildTris(ch, into);
+            }
         }
 
         /// <summary>#362: the entity (or an ancestor) is driven by a kinematic Rigidbody — its mesh shape will move

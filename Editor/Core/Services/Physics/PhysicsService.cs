@@ -1187,10 +1187,20 @@ namespace Editor.Core.Services.Physics
         private static Body CreateMeshBody(GameEntity e, ulong entityId, string meshPath, SysVec center, bool convex, int motion,
             float mass, float friction, float restitution, bool isTrigger, int layer, SysVec pos, SysQuat rot, SysVec scale)
         {
-            if (string.IsNullOrEmpty(meshPath)) { Warn(e, "Mesh Collider has no mesh (set a Mesh Renderer or a mesh path)"); return null; }
             float[] tris = null;
-            try { tris = CollisionService.MeshTriangleProvider?.Invoke(meshPath); } catch { }
-            if (tris == null || tris.Length < 9) { Warn(e, "Mesh Collider: no triangles for '" + meshPath + "'"); return null; }
+            if (string.IsNullOrEmpty(meshPath))
+            {
+                // a placed model's root: its meshes sit on child entities (one per part) — the collider takes those, in the
+                // root's local space, so "add a Mesh Collider to the model" works the way it reads (a cave, a building)
+                tris = ChildMeshTriangles(e);
+                if (tris == null) { Warn(e, "Mesh Collider has no mesh (set a Mesh Renderer or a mesh path, or put it on a model whose parts have meshes)"); return null; }
+                meshPath = e.Name + " (child meshes)";
+            }
+            else
+            {
+                try { tris = CollisionService.MeshTriangleProvider?.Invoke(meshPath); } catch { }
+                if (tris == null || tris.Length < 9) { Warn(e, "Mesh Collider: no triangles for '" + meshPath + "'"); return null; }
+            }
             if (!convex && motion != MotionStatic)
             {
                 // Triangle meshes can only be static in Jolt — a moving mesh collider simulates as its convex hull.
@@ -1218,6 +1228,46 @@ namespace Editor.Core.Services.Physics
                 CenterOffset = center, LastPos = bodyPos, LastRot = rot, PrevPos = bodyPos, PrevRot = rot,
                 BoundsCenter = (mn + mx) * 0.5f, BoundsHalf = (mx - mn) * 0.5f
             };
+        }
+
+        /// <summary>The triangles of every mesh under a model's root that has no collider of its own (flat x, y, z …), in the
+        /// root's local, unscaled space; null when there are none. A child with its own collider is its own body, its subtree
+        /// too.</summary>
+        public static float[] ChildMeshTriangles(GameEntity root)
+        {
+            var provider = CollisionService.MeshTriangleProvider;
+            if (root == null || provider == null || root.Children == null || root.Children.Count == 0) return null;
+            if (!SysMat.Invert(Animation.BoneSocketService.EntityWorld(root), out var toRoot)) return null;
+            var all = new List<float>();
+            void Walk(GameEntity parent)
+            {
+                foreach (var ch in parent.Children)
+                {
+                    if (ch == null || !ch.IsActive) continue;
+                    bool own = false;
+                    var cols = ch.GetComponents<Collider>();
+                    if (cols != null) foreach (var c in cols) if (c != null) { own = true; break; }
+                    if (own) continue;
+                    var mr = ch.GetComponent<MeshRenderer>();
+                    if (mr != null && mr.IsEnabled && !string.IsNullOrEmpty(mr.MeshPath) && !mr.MeshPath.StartsWith("Primitive:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        float[] t = null;
+                        try { t = provider(mr.MeshPath); } catch { }
+                        if (t != null && t.Length >= 9)
+                        {
+                            var m = Animation.BoneSocketService.EntityWorld(ch) * toRoot;
+                            for (int i = 0; i + 2 < t.Length; i += 3)
+                            {
+                                var v = SysVec.Transform(new SysVec(t[i], t[i + 1], t[i + 2]), m);
+                                all.Add(v.X); all.Add(v.Y); all.Add(v.Z);
+                            }
+                        }
+                    }
+                    Walk(ch);
+                }
+            }
+            Walk(root);
+            return all.Count >= 9 ? all.ToArray() : null;
         }
 
         private static bool TryPrimitive(Collider c, SysVec scale, out ChildShape cs)
