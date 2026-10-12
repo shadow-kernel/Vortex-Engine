@@ -1269,6 +1269,24 @@ namespace Editor.Core.Services
         /// <summary>
         /// Get bounds and center for a mesh path
         /// </summary>
+        /// <summary>A model's local bounds size (and centre offset) as the placement code uses them — for the radiance
+        /// cache's voxelizer. (1, 1, 1) / zero when the model is not loaded.</summary>
+        public System.Numerics.Vector3 MeshBounds(string meshPath)
+        {
+            try { var b = GetMeshBoundsAndCenter(meshPath); return new System.Numerics.Vector3(b.Size.X, b.Size.Y, b.Size.Z); }
+            catch { return System.Numerics.Vector3.One; }
+        }
+        public System.Numerics.Vector3 MeshCenter(string meshPath)
+        {
+            try { var b = GetMeshBoundsAndCenter(meshPath); return new System.Numerics.Vector3(b.Center.X, b.Center.Y, b.Center.Z); }
+            catch { return System.Numerics.Vector3.Zero; }
+        }
+        /// <summary>An entity's world matrix (column-major 16 floats, parents applied) for the radiance cache's boxes.</summary>
+        public float[] WorldMatrixOf(GameEntity entity)
+        {
+            try { return BuildWorldMatrixWithParent(entity); } catch { return entity?.Transform != null ? BuildWorldMatrix(entity.Transform) : null; }
+        }
+
         private MeshBoundsInfo GetMeshBoundsAndCenter(string meshPath)
         {
             var info = new MeshBoundsInfo
@@ -2419,7 +2437,9 @@ namespace Editor.Core.Services
         private bool _hasSceneLights = false;
         private bool _hasDirectionalLight = false;
         // the sun as last submitted (the sky light's ground bounce reads it): colour × intensity and the direction's y
-        private float _sunR = 1f, _sunG = 1f, _sunB = 1f, _sunIntensity = 0f, _sunDirY = -1f;
+        private float _sunR = 1f, _sunG = 1f, _sunB = 1f, _sunIntensity = 0f, _sunDirY = -1f, _sunDirX = 0f, _sunDirZ = 0f;
+        private SkyLight.Coefficients _lastSkyLight;
+        private float _lastAmbientStrength = 0.35f;
         /// <summary>With <see cref="DebugThirdPersonView"/>: render the first-person viewmodel (layer 1) as world
         /// geometry and hide the third-person body — for inspecting the FP arms + weapon from outside
         /// (VM_DBGCAM_FP=1 in the standalone player).</summary>
@@ -2487,8 +2507,21 @@ namespace Editor.Core.Services
             {
                 if (ScriptSky != null) { ApplyScriptSky(ScriptSky); SubmitSkyLight(ScriptSky); }   // a scripted sky needs no Skybox component (#349)
                 else { VortexAPI.EnableSkybox(false); VortexAPI.SetSkyLight(null, false); PushEnvironmentMap(null); SkyHaze.SetHorizon(false, 0f, 0f, 0f); }
-                VortexAPI.SetAmbientLightStrength(ScriptAmbientOverride ?? 0.35f);  // 0.35 matches the engine header default
+                _lastAmbientStrength = ScriptAmbientOverride ?? 0.35f;
+                VortexAPI.SetAmbientLightStrength(_lastAmbientStrength);  // 0.35 matches the engine header default
             }
+            // the world radiance cache (Lumen step 1): rebuilt around the camera on a worker thread, uploaded here
+            try
+            {
+                float cx = 0f, cy = 0f, cz = 0f;
+                if (IsPlayLike && PlayCameraHelper.TryGetMainCameraWorld(Data.ProjectData.Current?.ActiveScene, out var camPos, out _, out _)) { cx = camPos.X; cy = camPos.Y; cz = camPos.Z; }
+                else { var ec = EditorCameraController.Instance; cx = ec?.PositionX ?? 0f; cy = ec?.PositionY ?? 0f; cz = ec?.PositionZ ?? 0f; }
+                Gi.RadianceCache.Tick(scene, new System.Numerics.Vector3(cx, cy, cz), new System.Numerics.Vector3(_sunDirX, _sunDirY, _sunDirZ),
+                    new System.Numerics.Vector3(_sunR, _sunG, _sunB), _hasDirectionalLight ? _sunIntensity : 0f,
+                    _lastSkyLight?.Sh, _lastSkyLight != null, _lastAmbientStrength);
+            }
+            catch { }
+
         }
 
         // ---- the sky light (IBL step 1): the Skybox component's picture or gradient, or a script's sky, as SH9 irradiance ----
@@ -2616,6 +2649,7 @@ namespace Editor.Core.Services
 
         private void PushSkyLight(SkyLight.Coefficients c)
         {
+            _lastSkyLight = c;
             string key = c != null ? c.Key : "";
             if (key == _skyLightKey) return;   // the renderer keeps the last coefficients; only changes go over the boundary
             _skyLightKey = key;
@@ -2720,7 +2754,8 @@ namespace Editor.Core.Services
                 var (ambientR, ambientG, ambientB) = skybox.GetAmbientColor();
                 float ambientBrightness = Math.Max(Math.Max(ambientR, ambientG), ambientB);
                 ambientBrightness = Math.Max(ambientBrightness, 0.2f);
-                VortexAPI.SetAmbientLightStrength(ScriptAmbientOverride ?? ambientBrightness);
+                _lastAmbientStrength = ScriptAmbientOverride ?? ambientBrightness;
+                VortexAPI.SetAmbientLightStrength(_lastAmbientStrength);
             }
 
             var light = entity.GetComponent<ECS.Components.Lighting.Light>();
@@ -2753,7 +2788,7 @@ namespace Editor.Core.Services
                     {
                         case ECS.Components.Lighting.LightType.Directional:
                             _hasDirectionalLight = true;
-                            _sunR = light.ColorR; _sunG = light.ColorG; _sunB = light.ColorB; _sunIntensity = light.Intensity; _sunDirY = dirY;
+                            _sunR = light.ColorR; _sunG = light.ColorG; _sunB = light.ColorB; _sunIntensity = light.Intensity; _sunDirY = dirY; _sunDirX = dirX; _sunDirZ = dirZ;
                             // CSM (#24): ShadowType != None turns on the sun's cascade pass. Bias mapping:
                             // the component's legacy 0.05 default scales by 0.016 to land on the tuned
                             // CSM NDC bias (0.0008); user tweaks stay proportional (same idea as spots).

@@ -114,6 +114,8 @@ namespace VortexEditor.Claude.Tools
             [Description("Anti-aliasing (FXAA) on / off")] bool? anti_alias = null,
             [Description("Temporal anti-aliasing on / off (the previous frame reprojected and blended; Metal / Vulkan)")] bool? temporal_aa = null,
             [Description("Contrast-adaptive sharpening after the anti-aliasing, 0 = off .. 1 (0.3–0.5 crisp)")] float sharpen = -1f,
+            [Description("The world radiance cache on / off (Lumen step 1: probes around the camera with the light from beyond the screen; Metal / Vulkan)")] bool? gi_world = null,
+            [Description("The world cache's strength, 0 .. 2 (1 = as measured)")] float gi_world_strength = -1f,
             [Description("Screen-space global illumination on / off (one bounce of the lit world; needs SSAO on)")] bool? gi = null,
             [Description("GI strength (1 = a physical diffuse bounce)")] float gi_strength = -1f,
             [Description("GI trace radius in metres")] float gi_radius = -1f,
@@ -154,6 +156,8 @@ namespace VortexEditor.Claude.Tools
             if (anti_alias.HasValue) st.AntiAliasEnabled = anti_alias.Value;
             if (temporal_aa.HasValue) st.TaaEnabled = temporal_aa.Value;
             if (sharpen >= 0f) st.Sharpen = Math.Min(1f, sharpen);
+            if (gi_world.HasValue) st.GiWorldEnabled = gi_world.Value;
+            if (gi_world_strength >= 0f) st.GiWorldStrength = Math.Min(2f, gi_world_strength);
             if (gi.HasValue) st.GiEnabled = gi.Value;
             if (gi_strength >= 0f) st.GiStrength = gi_strength;
             if (gi_radius >= 0f) st.GiRadius = gi_radius;
@@ -296,7 +300,7 @@ namespace VortexEditor.Claude.Tools
         {
             exposure = new { scene_stops = st.SceneExposure, tonemapper = st.Tonemapper == 1 ? "neutral" : "aces", anti_alias = st.AntiAliasEnabled, temporal_aa = st.TaaEnabled, sharpen = st.Sharpen },
             bounce = new { strength = st.BounceStrength, color = new[] { st.BounceR, st.BounceG, st.BounceB } },
-            gi = new { on = st.GiEnabled, strength = st.GiStrength, radius = st.GiRadius, mode = "screen-space" },
+            gi = new { on = st.GiEnabled, strength = st.GiStrength, radius = st.GiRadius, mode = "screen-space", world = st.GiWorldEnabled, world_strength = st.GiWorldStrength, world_probes = Editor.Core.Services.Gi.RadianceCache.LastProbes, world_build_ms = Math.Round(Editor.Core.Services.Gi.RadianceCache.LastBuildMs, 1) },
             fog = new { on = st.FogEnabled, density = st.FogDensity, color = new[] { st.FogR, st.FogG, st.FogB }, from_sky = st.FogFromSky, height_y = st.FogHeightY, height_falloff = st.FogHeightFalloff, sun_glow = st.FogSunGlow },
             ao = new { on = st.AoEnabled, radius = st.AoRadius, intensity = st.AoIntensity },
             bloom = new { on = st.BloomEnabled, threshold = st.BloomThreshold, intensity = st.BloomIntensity },

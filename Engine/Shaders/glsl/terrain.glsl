@@ -155,6 +155,8 @@ layout(set = 2, binding = 7) uniform sampler2DShadow u_csm_shadow;
 layout(set = 2, binding = 8) uniform sampler2DShadow u_point_shadow;
 layout(set = 2, binding = 9) uniform sampler2D       u_ssao;
 layout(set = 2, binding = 10) uniform sampler2D      u_env;    // the sky as a reflection (IBL step 2)
+layout(set = 2, binding = 13) uniform sampler2D      u_gi_a;   // the world radiance cache (Lumen step 1), probes A
+layout(set = 2, binding = 14) uniform sampler2D      u_gi_b;   // ... probes B
 
 float  saturate(float x) { return clamp(x, 0.0, 1.0); }
 vec2   saturate(vec2  x) { return clamp(x, vec2(0.0), vec2(1.0)); }
@@ -463,6 +465,41 @@ vec3 sample_env(vec3 R, float roughness, float mips)
 	return decode_env(textureLod(u_env, env_uv(R), lod).rgb);
 }
 
+
+// ---- the world radiance cache (Lumen step 1, #257 step 3): see standard.metal's gi_volume ----
+vec3 gi_volume(vec3 wp, vec3 n, vec3 fallback)
+{
+	ivec2 sz = textureSize(u_gi_a, 0);
+	if (sz.x < 4 || sz.y < 4) return fallback;
+	int hy = sz.y - 1;
+	vec4 h0 = texelFetch(u_gi_a, ivec2(0, hy), 0) * 255.0, h1 = texelFetch(u_gi_a, ivec2(1, hy), 0) * 255.0;
+	vec4 h2 = texelFetch(u_gi_a, ivec2(2, hy), 0) * 255.0, h3 = texelFetch(u_gi_a, ivec2(3, hy), 0) * 255.0;
+	if (abs(h3.a - 90.0) > 0.5) return fallback;
+	float cxz = (h1.z + h1.w * 256.0) * 0.01, cy = (h2.x + h2.y * 256.0) * 0.01;
+	vec3 cellv = vec3(cxz, cy, cxz);
+	vec3 origin = vec3(h0.x + h0.y * 256.0 - 32768.0, h0.z + h0.w * 256.0 - 32768.0, h1.x + h1.y * 256.0 - 32768.0) * cellv;
+	float nx = h2.z, ny = h2.w, nz = h3.x;
+	float strength = h3.y / 64.0;
+	float scale = exp2((h3.z - 128.0) / 16.0);
+	vec3 p = (wp - origin) / cellv - 0.5;
+	vec3 edge = min(p + 1.0, vec3(nx, ny, nz) - p);
+	float w = clamp(min(edge.x, min(edge.y, edge.z)), 0.0, 1.0);
+	if (w <= 0.0) return fallback;
+	p = clamp(p, vec3(0.0), vec3(nx - 1.0, ny - 1.0, nz - 1.0));
+	float y0 = floor(p.y), t = p.y - y0, y1 = min(y0 + 1.0, ny - 1.0);
+	float rows = float(sz.y);
+	vec2 uv0 = vec2((p.x + 0.5) / nx, (y0 * (nz + 1.0) + p.z + 0.5) / rows);
+	vec2 uv1 = vec2(uv0.x, (y1 * (nz + 1.0) + p.z + 0.5) / rows);
+	vec4 A = mix(texture(u_gi_a, uv0), texture(u_gi_a, uv1), t);
+	vec4 B = mix(texture(u_gi_b, uv0), texture(u_gi_b, uv1), t);
+	vec3 L0 = A.rgb * A.rgb * scale;
+	vec3 L1 = (vec3(A.a, B.r, B.g) * 2.0 - 1.0) * scale;
+	float lum = max(dot(L0, vec3(0.2126, 0.7152, 0.0722)), 1e-4);
+	vec3 E = 0.886227 * L0 + 1.023327 * dot(L1, n) * (L0 / lum);
+	E = max(E, vec3(0.0)) * strength;
+	return mix(fallback, E, w * B.b);
+}
+
 void main()
 {
 	vec3 cam_pos = frame.camera_position;
@@ -640,7 +677,9 @@ void main()
 	float sky_amount = dot(N, vec3(0.0, 1.0, 0.0)) * 0.5 + 0.5;
 	vec3 hemisphere = mix(ground_color, sky_color, sky_amount);
 	if (lights.sky_sh[0].w > 0.5) hemisphere = sky_irradiance(N);   // the real sky: blue from above, the ground's bounce from below
-	vec3 ambient = hemisphere * frame.ambient_strength * albedo * ao;
+	// the world radiance cache replaces the sky light where it has probes (its probes hold the sky and the bounces)
+	vec3 amb_irr = gi_volume(v_world_pos, N, hemisphere * frame.ambient_strength);
+	vec3 ambient = amb_irr * albedo * ao;
 
 	vec3 R = reflect(-V, N);
 	vec3 env_color;

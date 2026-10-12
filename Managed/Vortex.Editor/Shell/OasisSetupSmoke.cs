@@ -264,6 +264,7 @@ namespace VortexEditor.Shell
             st.AntiAliasEnabled = true;   // FXAA: the fronds and the ripples stop flickering
             st.TaaEnabled = true;         // temporal AA (#141): the far fronds' sparkle settles
             st.Sharpen = 0.45f;           // contrast-adaptive sharpening: the detail TAA softens comes back
+            st.GiWorldEnabled = true; st.GiWorldStrength = 1f;   // the world radiance cache (Lumen step 1): the light under the canopy and the sand's bounce from beyond the screen
             st.BounceStrength = 1.2f; st.BounceR = 0.62f; st.BounceG = 0.40f; st.BounceB = 0.20f;   // the sand's warm bounce into the shadows: the reference's shade is orange-brown; at 1.0 the sky's blue won and the grove floor turned grey
             st.SceneExposure = 1.9f;   // stops before the tonemapper: the low sun needs more aperture than noon; 2.2 pushed the sunlit sand into the tonemapper's shoulder (pale pink), 2.6 clipped the crowns
             st.FogEnabled = true; st.FogDensity = 0.00015f;   // squared distance form: 1.5 % at 1 km, 9 % at 2.5 km — the far dunes keep the ground's colour   // at 0.0010 the air swallowed 63 % of a dune 1 km out — the reference's dunes are saturated to the horizon st.FogHeightY = -4f; st.FogHeightFalloff = 0.012f;

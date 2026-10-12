@@ -70,6 +70,14 @@ EDITOR_INTERFACE void SetSkyLight(const float* sh27, int enabled)
 
 // The sky as a REFLECTION (IBL step 2): a registry texture holding a linear equirect of the sky with a mip chain; the
 // PBR shaders sample it by roughness for their environment specular, the water for its sky. invalid id = off.
+// The world radiance cache (Lumen step 1, #257 step 3): two RGBA8 registry textures of SH L1 probes around the camera
+// (RadianceCache.cs builds them on the CPU), bound at the lit shaders' slots 13 / 14 on Metal / Vulkan; invalid ids = off.
+// DirectX 12 keeps the ids and binds nothing yet (its lit shaders fall back to the sky light).
+EDITOR_INTERFACE void SetGiVolume(id::id_type texture_a, id::id_type texture_b)
+{
+	graphics::Renderer::instance().set_gi_volume(texture_a, texture_b);
+}
+
 EDITOR_INTERFACE void SetEnvironmentMap(id::id_type texture_id, int mip_count)
 {
 	graphics::Renderer::instance().set_environment_map(texture_id, mip_count);
