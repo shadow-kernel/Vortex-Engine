@@ -346,7 +346,7 @@ namespace VortexEditor.Claude.Tools
 
         [McpServerTool(Name = "paint_foliage", Destructive = false)]
         [Description("Paints instances of a Foliage type inside discs: centre [x, z] and radius in metres, strength 0..1 × the type's density. " +
-                     "Instances land on terrains and mesh tops, keep the type's spacing and slope limits. Deterministic for a seed. Several discs: points [[x, z], ...]. One undo step.")]
+                     "Instances land on terrains and on meshes (their real triangles), keep the type's spacing and slope limits; from_y paints below a height (a cave floor). Deterministic for a seed. Several discs: points [[x, z], ...]. One undo step.")]
         public static object PaintFoliage(
             [Description("The Foliage entity (id, name or path)")] string foliage,
             [Description("The type name (empty = every type by weight)")] string type,
@@ -355,11 +355,13 @@ namespace VortexEditor.Claude.Tools
             [Description("0..1 (default 1)")] float strength = 1f,
             [Description("Random seed (default 1)")] int seed = 1,
             [Description("More disc centres [[x, z], ...]")] float[][] points = null,
-            [Description("Only report the candidate count")] bool dry_run = false)
+            [Description("Only report the candidate count")] bool dry_run = false,
+            [Description("Paint the surfaces below this height (world Y) instead of what the sky sees — a cave's floor under a hill, the ground under an overhang or an arch")] float? from_y = null)
         {
             var e = SceneModel.Resolve(foliage) ?? throw new ToolError("No entity '" + foliage + "'.");
             var f = e.GetComponent<Foliage>() ?? throw new ToolError("'" + e.Name + "' has no Foliage component.");
             if (f.Types.Count == 0) throw new ToolError("The layer has no types — add_foliage_type first.");
+            float fy = from_y ?? float.NaN;
             if (point == null || point.Length != 2) throw new ToolError("point is [x, z].");
             if (radius <= 0f || radius > 2000f) throw new ToolError("radius must be 0–2000 metres.");
             int typeIndex = -1;
@@ -380,14 +382,14 @@ namespace VortexEditor.Claude.Tools
             foreach (var c in centres)
             {
                 var centre = new Vector3(c.x, 0f, c.z);
-                if (typeIndex >= 0) placed += FoliageService.Paint(e, typeIndex, centre, radius, strength, s++);
+                if (typeIndex >= 0) placed += FoliageService.Paint(e, typeIndex, centre, radius, strength, s++, fy);
                 else
                 {
                     float total = f.Types.Sum(t => Math.Max(0f, t.Weight));
                     for (int i = 0; i < f.Types.Count; i++)
                     {
                         float share = total > 0f ? Math.Max(0f, f.Types[i].Weight) / total : 1f / f.Types.Count;
-                        if (share > 0f) placed += FoliageService.Paint(e, i, centre, radius, strength * share * f.Types.Count, s++);
+                        if (share > 0f) placed += FoliageService.Paint(e, i, centre, radius, strength * share * f.Types.Count, s++, fy);
                     }
                 }
             }

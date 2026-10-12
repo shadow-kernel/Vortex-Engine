@@ -1,4 +1,4 @@
-// SSAO for the SDL GPU backend (ssao.hlsl): half-res depth prepass -> Alchemy-style AO -> 4-tap blur.
+// SSAO for the SDL GPU backend (ssao.hlsl): half-res depth prepass -> Alchemy-style AO -> 4x4 box blur.
 // SsaoCB is byte-matched to the C++ SsaoCB; the result darkens only the ambient term in standard.metal.
 #include <metal_stdlib>
 using namespace metal;
@@ -58,6 +58,16 @@ static inline float hash12(float2 p)
     return fract(p.x * p.y);
 }
 
+// A 4x4 Bayer matrix (#cave checker): every 4x4 block of pixels holds each of 16 rotations exactly once, and the 4x4 box
+// blur that follows averages them all — 16x the directions. The white-noise hash left blotches that the old 4-tap blur
+// (point taps on texel corners: four single texels) kept as a checker pattern, worst where the bounce is the only light.
+constant uint kBayer4[16] = { 0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5 };
+static inline float bayer4(float2 p)
+{
+    uint2 q = uint2(p) & 3u;
+    return ((float)kBayer4[q.y * 4u + q.x] + 0.5) / 16.0;
+}
+
 fragment float4 SsaoPS(FsOut in [[stage_in]], constant SsaoCB& c [[buffer(0)]],
                        depth2d<float> depth [[texture(0)]], sampler smp [[sampler(0)]],
                        texture2d<float> prev_color [[texture(1)]], sampler psmp [[sampler(1)]],
@@ -71,7 +81,7 @@ fragment float4 SsaoPS(FsOut in [[stage_in]], constant SsaoCB& c [[buffer(0)]],
     float3 N = normalize(cross(dfdy(P), dfdx(P)));
     float pix_radius = clamp(c.proj_scale * c.radius / max(P.z, 0.1), 2.0, 64.0);
     const int TAPS = 12;
-    float rot = hash12(in.pos.xy) * 6.2831853;
+    float rot = bayer4(in.pos.xy) * 6.2831853;
     float occlusion = 0.0;
     for (int k = 0; k < TAPS; ++k)
     {
@@ -94,7 +104,7 @@ fragment float4 SsaoPS(FsOut in [[stage_in]], constant SsaoCB& c [[buffer(0)]],
     {
         float3 up = abs(N.y) < 0.99 ? float3(0, 1, 0) : float3(1, 0, 0);
         float3 T = normalize(cross(up, N)), B = cross(N, T);
-        float h2 = hash12(in.pos.yx + 7.31);
+        float h2 = bayer4(in.pos.yx + float2(1.0, 2.0));
         const int DIRS = 6, STEPS = 6;
         for (int k = 0; k < DIRS; ++k)
         {
@@ -155,7 +165,7 @@ fragment float4 SsaoPS(FsOut in [[stage_in]], constant SsaoCB& c [[buffer(0)]],
                 float tx = c.rsm_tile.w / c.rsm_tile.z;   // one atlas texel in tile uv
                 float mpt = Rm / max(R, 1e-5) * tx;        // metres per texel of this cascade
                 float3 E = float3(0.0);
-                float ang = hash12(in.pos.xy * 1.7 + 3.1) * 6.2831853;
+                float ang = bayer4(in.pos.xy + float2(2.0, 3.0)) * 6.2831853;
                 for (int k = 0; k < K; ++k)
                 {
                     float a = ang + (float)k * 2.3999632;
@@ -192,10 +202,10 @@ fragment float4 SsaoPS(FsOut in [[stage_in]], constant SsaoCB& c [[buffer(0)]],
 fragment float4 SsaoBlurPS(FsOut in [[stage_in]], constant SsaoCB& c [[buffer(0)]],
                            texture2d<float> src [[texture(0)]], sampler smp [[sampler(0)]])
 {
+    // a 4x4 box: exactly one Bayer block of SsaoPS, so every rotation is averaged (the sampler is point/clamp)
     float4 s = float4(0.0);
-    s += src.sample(smp, in.uv + c.texel * float2(-0.5, -0.5));
-    s += src.sample(smp, in.uv + c.texel * float2( 1.5, -0.5));
-    s += src.sample(smp, in.uv + c.texel * float2(-0.5,  1.5));
-    s += src.sample(smp, in.uv + c.texel * float2( 1.5,  1.5));
-    return s * 0.25;   // rgb = GI, a = AO
+    for (int y = -1; y <= 2; ++y)
+        for (int x = -1; x <= 2; ++x)
+            s += src.sample(smp, in.uv + c.texel * float2((float)x, (float)y));
+    return s * (1.0 / 16.0);   // rgb = GI, a = AO
 }

@@ -1,5 +1,5 @@
 #version 450
-// SSAO 4-tap blur (ssao.metal SsaoBlurPS).
+// SSAO 4x4 box blur (ssao.metal SsaoBlurPS).
 layout(location = 0) in  vec2 v_uv;
 layout(location = 0) out vec4 o_color;
 
@@ -24,10 +24,10 @@ layout(set = 3, binding = 0, std140) uniform SsaoCB
 
 void main()
 {
+	// a 4x4 box: exactly one Bayer block of SsaoPS, so every rotation is averaged (the sampler is point/clamp)
 	vec4 s = vec4(0.0);
-	s += texture(u_src, v_uv + c.texel * vec2(-0.5, -0.5));
-	s += texture(u_src, v_uv + c.texel * vec2( 1.5, -0.5));
-	s += texture(u_src, v_uv + c.texel * vec2(-0.5,  1.5));
-	s += texture(u_src, v_uv + c.texel * vec2( 1.5,  1.5));
-	o_color = s * 0.25;   // rgb = GI, a = AO
+	for (int y = -1; y <= 2; ++y)
+		for (int x = -1; x <= 2; ++x)
+			s += texture(u_src, v_uv + c.texel * vec2(float(x), float(y)));
+	o_color = s * (1.0 / 16.0);   // rgb = GI, a = AO
 }

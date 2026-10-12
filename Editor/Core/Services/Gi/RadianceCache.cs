@@ -32,6 +32,7 @@ namespace Editor.Core.Services.Gi
         private const float RebuildSeconds = 0.9f, RebuildMoveMetres = 6f;
 
         public static bool Enabled { get; set; }
+        private static readonly bool _log = Environment.GetEnvironmentVariable("VORTEX_GI_LOG") == "1";   // VORTEX_GI_LOG=1: what the cache does, every ~2 s
         public static float Strength { get; set; } = 1f;
         /// <summary>Probes traced by the last build (diagnostics).</summary>
         public static int LastProbes { get; private set; }
@@ -67,6 +68,8 @@ namespace Editor.Core.Services.Gi
         public static void Tick(Scene scene, Vector3 cam, Vector3 sunDir, Vector3 sunCol, float sunI, float[] sky27, bool skyOn, float ambient)
         {
             _frame++;
+            if (_log && (_frame % 120) == 1)
+                Console.WriteLine("[gi] tick: enabled=" + Enabled + " scene=" + (scene != null) + " cam=" + cam + " texture=" + (_texA != ID.INVALID_ID) + " job=" + (_job != null) + " last build " + LastBuildMs.ToString("0") + " ms, " + LastProbes + " probes");
             // the textures of a build two frames back are safe to free (the GPU has moved on)
             for (int i = _graveyard.Count - 1; i >= 0; i--)
                 if (_frame - _graveyard[i].frame > 3) { try { VortexAPI.DeleteTexture(_graveyard[i].a); VortexAPI.DeleteTexture(_graveyard[i].b); } catch { } _graveyard.RemoveAt(i); }
@@ -272,6 +275,31 @@ namespace Editor.Core.Services.Gi
             // an invalid probe (inside rock, under the ground) stays zero: the shaders weight the probes by validity, so a
             // surface near the ground or a cave wall reads only the probes in the open (they used to copy the upper
             // neighbour's light — through a hill that was the sky's)
+            if (_log)
+            {
+                // VORTEX_GI_LOG: the walk-in meshes found, the voxels they opened, and the probes inside them against the open air
+                int nIn = 0, vIn = 0, nOut = 0, insideVox = 0; double lIn = 0, lOut = 0;
+                foreach (var h in s.Hollows) if (h.Inside != null) foreach (var b in h.Inside) if (b) insideVox++;
+                for (int iy = 0; iy < NY; iy++) for (int iz = 0; iz < NZ; iz++) for (int ix = 0; ix < NX; ix++)
+                {
+                    int k = (iy * NZ + iz) * NX + ix;
+                    var p = s.Origin + new Vector3((ix + 0.5f) * CellXZ, (iy + 0.5f) * CellY, (iz + 0.5f) * CellXZ);
+                    bool inH = false;
+                    foreach (var h in s.Hollows)
+                    {
+                        if (h.Inside == null) continue;
+                        int x = (int)Math.Floor((p.X - s.VOrigin.X) / VCell), y = (int)Math.Floor((p.Y - s.VOrigin.Y) / VCell), z = (int)Math.Floor((p.Z - s.VOrigin.Z) / VCell);
+                        if (x < h.X0 || y < h.Y0 || z < h.Z0 || x > h.X1 || y > h.Y1 || z > h.Z1) continue;
+                        int w = h.X1 - h.X0 + 1, d = h.Z1 - h.Z0 + 1;
+                        if (h.Inside[((y - h.Y0) * d + (z - h.Z0)) * w + (x - h.X0)]) { inH = true; break; }
+                    }
+                    float lum = 0.2126f * L0[k].X + 0.7152f * L0[k].Y + 0.0722f * L0[k].Z;
+                    if (inH) { nIn++; if (valid[k]) { vIn++; lIn += lum; } } else if (valid[k]) { nOut++; lOut += lum; }
+                }
+                Console.WriteLine("[gi] build: " + s.Hollows.Count + " walk-in mesh(es), " + insideVox + " voxels opened, " + s.Boxes.Count + " boxes, " + s.Plants.Count
+                    + " plants; probes inside " + nIn + " (valid " + vIn + ", mean L0 " + (vIn > 0 ? lIn / vIn : 0).ToString("0.000") + "), outside valid " + nOut
+                    + " (mean L0 " + (nOut > 0 ? lOut / nOut : 0).ToString("0.000") + "), sun " + s.SunI.ToString("0.00") + ", sky " + s.SkyOn + ", ambient " + s.Ambient.ToString("0.00"));
+            }
             Encode(s, L0, L1, valid);
             LastProbes = count; LastBuildMs = sw.Elapsed.TotalMilliseconds;
         }

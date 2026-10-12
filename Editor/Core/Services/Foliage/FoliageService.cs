@@ -358,41 +358,139 @@ namespace Editor.Core.Services.Foliage
             return layer?.Count ?? 0;
         }
 
-        /// <summary>The surface under a world XZ: the terrains first, then the tops of mesh bounding boxes (platforms, roofs,
-        /// a floor). False over nothing.</summary>
-        public static bool TrySurface(Scene scene, float x, float z, out Vector3 position, out Vector3 normal)
+        /// <summary>The surface under a world XZ. From the sky (<paramref name="fromY"/> NaN): the terrains first, then the
+        /// meshes (their real triangles). From a height (<paramref name="fromY"/> set): the first surface below it, terrain or
+        /// mesh — a cave's floor under a hill, the ground under an overhang (a terrain whose surface lies above that height is
+        /// the rock around the cave and does not count). False over nothing.</summary>
+        public static bool TrySurface(Scene scene, float x, float z, out Vector3 position, out Vector3 normal, float fromY = float.NaN)
         {
             position = default(Vector3); normal = Vector3.UnitY;
-            Vector3 hit; GameEntity terrain;
-            if (TerrainService.Raycast(new Vector3(x, 2000f, z), new Vector3(0f, -1f, 0f), 4000f, out hit, out terrain))
+            bool fromSky = float.IsNaN(fromY);
+            float top = fromSky ? 2000f : fromY;
+            var o = new Vector3(x, top, z); var down = new Vector3(0f, -1f, 0f);
+            Vector3 th; GameEntity terrain;
+            bool haveTerrain = TerrainService.Raycast(o, down, 4000f, out th, out terrain);
+            if (haveTerrain && !fromSky && th.Y >= top - 0.01f) haveTerrain = false;   // under the terrain's surface: inside the rock
+            if (fromSky && haveTerrain)
             {
-                position = hit;
+                position = th;
                 Vector3 n;
                 if (TerrainService.TryNormal(terrain, x, z, out n)) normal = n;
                 return true;
             }
-            if (scene != null)
+            Vector3 mh = default(Vector3), mn = Vector3.UnitY; GameEntity me;
+            bool haveMesh = scene != null && MeshRaycast(scene, o, down, 4000f, out mh, out mn, out me);
+            if (haveMesh && (!haveTerrain || mh.Y >= th.Y)) { position = mh; normal = mn; return true; }
+            if (haveTerrain)
             {
-                try
-                {
-                    var ray = new Ray { Origin = new Vector3f(x, 2000f, z), Direction = new Vector3f(0f, -1f, 0f) };
-                    var hits = RaycastService.Instance.RaycastAll(ray, scene);
-                    if (hits != null && hits.Count > 0)
-                    {
-                        // the highest box top wins
-                        float best = float.MinValue; bool any = false;
-                        foreach (var h in hits)
-                        {
-                            if (h.Entity != null && (h.Entity.GetComponent<Editor.ECS.Components.Rendering.Foliage>() != null
-                                                     || h.Entity.GetComponent<Editor.ECS.Components.Rendering.Terrain>() != null)) continue;
-                            if (h.Point.Y > best) { best = h.Point.Y; any = true; }
-                        }
-                        if (any) { position = new Vector3(x, best, z); return true; }
-                    }
-                }
-                catch { }
+                position = th;
+                Vector3 n;
+                if (TerrainService.TryNormal(terrain, x, z, out n)) normal = n;
+                return true;
             }
             return false;
+        }
+
+        // ---- exact rays against the scene's meshes (their collision triangles in world space, cached per entity) ----
+        private sealed class MeshSoup { public string Path; public float[] Matrix; public float[] Tris; public Vector3 Min, Max; }
+        private static readonly Dictionary<Guid, MeshSoup> _soups = new Dictionary<Guid, MeshSoup>();
+        private static Scene _soupScene;
+
+        /// <summary>A model changed on disk: rebuild the cached triangles.</summary>
+        public static void ForgetMeshes() { _soups.Clear(); }
+
+        /// <summary>The nearest hit of a ray on the scene's static meshes — their real triangles (the collision mesh the
+        /// physics uses), not their boxes, so a brush or a painted plant lands on a cave's floor, a rock's top, under an arch.
+        /// Foliage and terrains are left out. The normal faces the ray.</summary>
+        public static bool MeshRaycast(Scene scene, Vector3 o, Vector3 d, float maxDist, out Vector3 hit, out Vector3 normal, out GameEntity hitEntity)
+        {
+            hit = default(Vector3); normal = Vector3.UnitY; hitEntity = null;
+            if (scene?.Entities == null) return false;
+            if (!ReferenceEquals(scene, _soupScene)) { _soups.Clear(); _soupScene = scene; }
+            var provider = Physics.CollisionService.MeshTriangleProvider ?? Editor.Scripting.ScriptRuntime.MeshTriangles;
+            float best = maxDist;
+            var stack = new Stack<GameEntity>();
+            foreach (var r in scene.Entities) stack.Push(r);
+            while (stack.Count > 0)
+            {
+                var e = stack.Pop();
+                if (e == null || !e.IsActive) continue;
+                if (e.Children != null) foreach (var c in e.Children) stack.Push(c);
+                if (e.GetComponent<Editor.ECS.Components.Rendering.Foliage>() != null || e.GetComponent<Editor.ECS.Components.Rendering.Terrain>() != null) continue;
+                var mr = e.GetComponent<MeshRenderer>();
+                if (mr == null || !mr.IsEnabled || string.IsNullOrEmpty(mr.MeshPath) || mr.MeshPath.StartsWith("Primitive:", StringComparison.OrdinalIgnoreCase)) continue;
+                float[] m;
+                try { m = SceneRenderService.Instance.WorldMatrixOf(e); } catch { continue; }
+                if (m == null || m.Length < 16) continue;
+                MeshSoup soup;
+                if (!_soups.TryGetValue(e.Id, out soup) || soup.Path != mr.MeshPath || !SameMatrix(soup.Matrix, m))
+                {
+                    float[] local = null;
+                    try { local = provider(mr.MeshPath); } catch { }
+                    if (local == null || local.Length < 9) { _soups.Remove(e.Id); continue; }
+                    soup = new MeshSoup { Path = mr.MeshPath, Matrix = (float[])m.Clone(), Tris = new float[local.Length] };
+                    var mn = new Vector3(float.MaxValue); var mx = new Vector3(float.MinValue);
+                    for (int i = 0; i + 2 < local.Length; i += 3)
+                    {
+                        float x = local[i], y = local[i + 1], z = local[i + 2];
+                        // rows = the axis images, the last row the translation (WorldMatrixOf's layout)
+                        var w = new Vector3(x * m[0] + y * m[4] + z * m[8] + m[12], x * m[1] + y * m[5] + z * m[9] + m[13], x * m[2] + y * m[6] + z * m[10] + m[14]);
+                        soup.Tris[i] = w.X; soup.Tris[i + 1] = w.Y; soup.Tris[i + 2] = w.Z;
+                        mn = Vector3.Min(mn, w); mx = Vector3.Max(mx, w);
+                    }
+                    soup.Min = mn; soup.Max = mx;
+                    _soups[e.Id] = soup;
+                }
+                if (!RayBox(o, d, soup.Min, soup.Max, best)) continue;
+                var t = soup.Tris;
+                for (int i = 0; i + 8 < t.Length; i += 9)
+                {
+                    var a = new Vector3(t[i], t[i + 1], t[i + 2]);
+                    var e1 = new Vector3(t[i + 3], t[i + 4], t[i + 5]) - a;
+                    var e2 = new Vector3(t[i + 6], t[i + 7], t[i + 8]) - a;
+                    var pv = Vector3.Cross(d, e2);
+                    float det = Vector3.Dot(e1, pv);
+                    if (Math.Abs(det) < 1e-9f) continue;
+                    float inv = 1f / det;
+                    var tv = o - a;
+                    float u = Vector3.Dot(tv, pv) * inv;
+                    if (u < 0f || u > 1f) continue;
+                    var qv = Vector3.Cross(tv, e1);
+                    float v = Vector3.Dot(d, qv) * inv;
+                    if (v < 0f || u + v > 1f) continue;
+                    float dist = Vector3.Dot(e2, qv) * inv;
+                    if (dist <= 1e-4f || dist >= best) continue;
+                    best = dist; hitEntity = e; hit = o + d * dist;
+                    var n = Vector3.Cross(e1, e2);
+                    float nl = n.Length();
+                    n = nl > 1e-9f ? n / nl : Vector3.UnitY;
+                    normal = Vector3.Dot(n, d) > 0f ? -n : n;
+                }
+            }
+            return hitEntity != null;
+        }
+
+        private static bool SameMatrix(float[] a, float[] b)
+        {
+            if (a == null || b == null || a.Length != b.Length) return false;
+            for (int i = 0; i < a.Length; i++) if (Math.Abs(a[i] - b[i]) > 1e-5f) return false;
+            return true;
+        }
+
+        private static bool RayBox(Vector3 o, Vector3 d, Vector3 mn, Vector3 mx, float maxDist)
+        {
+            float t0 = 0f, t1 = maxDist;
+            for (int k = 0; k < 3; k++)
+            {
+                float oo = k == 0 ? o.X : (k == 1 ? o.Y : o.Z), dd = k == 0 ? d.X : (k == 1 ? d.Y : d.Z);
+                float lo = k == 0 ? mn.X : (k == 1 ? mn.Y : mn.Z), hi = k == 0 ? mx.X : (k == 1 ? mx.Y : mx.Z);
+                if (Math.Abs(dd) < 1e-9f) { if (oo < lo || oo > hi) return false; continue; }
+                float a = (lo - oo) / dd, b = (hi - oo) / dd;
+                if (a > b) { var tmp = a; a = b; b = tmp; }
+                if (a > t0) t0 = a; if (b < t1) t1 = b;
+                if (t0 > t1) return false;
+            }
+            return true;
         }
 
         /// <summary>
@@ -400,7 +498,9 @@ namespace Editor.Core.Services.Foliage
         /// candidates, each kept when the surface is flat enough and no instance of the type stands within the minimum
         /// spacing. Deterministic per <paramref name="seed"/>. Returns the number placed.
         /// </summary>
-        public static int Paint(GameEntity e, int typeIndex, Vector3 centre, float radius, float strength, int seed)
+        /// <param name="fromY">NaN: the surfaces seen from the sky. A height: the surfaces below it — paint a cave's floor
+        /// under a hill, the ground under an overhang.</param>
+        public static int Paint(GameEntity e, int typeIndex, Vector3 centre, float radius, float strength, int seed, float fromY = float.NaN)
         {
             var f = e?.GetComponent<Editor.ECS.Components.Rendering.Foliage>();
             if (f == null || typeIndex < 0 || typeIndex >= f.Types.Count || radius <= 0f) return 0;
@@ -420,7 +520,7 @@ namespace Editor.Core.Services.Foliage
                 float x = centre.X + (float)(Math.Cos(a) * r), z = centre.Z + (float)(Math.Sin(a) * r);
                 if (type.MinSpacing > 0f && layer.AnyWithin(new Vector3(x, 0f, z), type.MinSpacing)) continue;
                 Vector3 pos, normal;
-                if (!TrySurface(scene, x, z, out pos, out normal)) continue;
+                if (!TrySurface(scene, x, z, out pos, out normal, fromY)) continue;
                 if (normal.Y < slopeCos) continue;
                 float scale = type.MinScale + (float)rng.NextDouble() * Math.Max(0f, type.MaxScale - type.MinScale);
                 float yaw = (float)(rng.NextDouble() * 360.0);

@@ -3,7 +3,7 @@
 //   PSMain  Alchemy/McGuire-style AO: reconstruct the view-space position from depth, derive the
 //           normal from position derivatives, take a per-pixel-rotated spiral of taps and
 //           accumulate the angle-weighted, distance-falloff occlusion.
-//   PSBlur  4-tap box blur (the spiral's rotation noise averages out; cheap and cache-friendly).
+//   PSBlur  4x4 box blur over one Bayer block (all 16 rotations of the spiral averaged; cheap and cache-friendly).
 // The result darkens ONLY the ambient/indirect term in standard.hlsl (t10) — direct light, fog
 // and emissive stay untouched.
 
@@ -68,6 +68,16 @@ float Hash12(float2 p)
     return frac(p.x * p.y);
 }
 
+// A 4x4 Bayer matrix (#cave checker): every 4x4 block of pixels holds each of 16 rotations exactly once, and the 4x4 box
+// blur that follows averages them all — 16x the directions. The white-noise hash left blotches that the old 4-tap blur
+// (point taps on texel corners: four single texels) kept as a checker pattern, worst where the bounce is the only light.
+static const uint kBayer4[16] = { 0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5 };
+float Bayer4(float2 p)
+{
+    uint2 q = uint2(p) & 3u;
+    return ((float)kBayer4[q.y * 4u + q.x] + 0.5) / 16.0;
+}
+
 float4 PSMain(VS_OUT i) : SV_TARGET
 {
     float d = Src.SampleLevel(Smp, i.uv, 0).r;
@@ -85,7 +95,7 @@ float4 PSMain(VS_OUT i) : SV_TARGET
     pixRadius = clamp(pixRadius, 2.0, 64.0);
 
     const int TAPS = 12;
-    float rot = Hash12(i.pos.xy) * 6.2831853;
+    float rot = Bayer4(i.pos.xy) * 6.2831853;
     float occlusion = 0.0;
     [unroll]
     for (int k = 0; k < TAPS; ++k)
@@ -113,7 +123,7 @@ float4 PSMain(VS_OUT i) : SV_TARGET
     {
         float3 up = abs(N.y) < 0.99 ? float3(0, 1, 0) : float3(1, 0, 0);
         float3 T = normalize(cross(up, N)), B = cross(N, T);
-        float h2 = Hash12(i.pos.yx + 7.31);
+        float h2 = Bayer4(i.pos.yx + float2(1.0, 2.0));
         const int DIRS = 6, STEPS = 6;
         float hits = 0.0;
         [unroll]
@@ -178,7 +188,7 @@ float4 PSMain(VS_OUT i) : SV_TARGET
                 float tx = RsmTile.w / RsmTile.z;   // one atlas texel in tile uv
                 float mpt = Rm / max(R, 1e-5) * tx;  // metres per texel of this cascade
                 float3 E = float3(0.0, 0.0, 0.0);
-                float ang = Hash12(i.pos.xy * 1.7 + 3.1) * 6.2831853;
+                float ang = Bayer4(i.pos.xy + float2(2.0, 3.0)) * 6.2831853;
                 [unroll]
                 for (int k = 0; k < K; ++k)
                 {
@@ -215,10 +225,10 @@ float4 PSMain(VS_OUT i) : SV_TARGET
 
 float4 PSBlur(VS_OUT i) : SV_TARGET
 {
+    // a 4x4 box: exactly one Bayer block of PSMain, so every rotation is averaged (the sampler is point/clamp)
     float4 s = float4(0.0, 0.0, 0.0, 0.0);
-    s += Src.SampleLevel(Smp, i.uv + TexelSize * float2(-0.5, -0.5), 0);
-    s += Src.SampleLevel(Smp, i.uv + TexelSize * float2( 1.5, -0.5), 0);
-    s += Src.SampleLevel(Smp, i.uv + TexelSize * float2(-0.5,  1.5), 0);
-    s += Src.SampleLevel(Smp, i.uv + TexelSize * float2( 1.5,  1.5), 0);
-    return s * 0.25;   // rgb = GI, a = AO
+    [unroll] for (int y = -1; y <= 2; ++y)
+        [unroll] for (int x = -1; x <= 2; ++x)
+            s += Src.SampleLevel(Smp, i.uv + TexelSize * float2((float)x, (float)y), 0);
+    return s * (1.0 / 16.0);   // rgb = GI, a = AO
 }
