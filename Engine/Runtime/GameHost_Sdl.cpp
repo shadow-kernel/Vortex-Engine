@@ -162,6 +162,12 @@ namespace vortex::runtime
 				update_client_size();
 				g_pending_w = e.window.data1; g_pending_h = e.window.data2;
 				g_resize_pending = g_pending_w > 0 && g_pending_h > 0;
+				{
+					int ww = 0, wh = 0, pw = 0, ph = 0;
+					SDL_GetWindowSize(g_window, &ww, &wh); SDL_GetWindowSizeInPixels(g_window, &pw, &ph);
+					platform::debug_output((std::string("[gamehost] pixel size changed: event ") + std::to_string(g_pending_w) + "x" + std::to_string(g_pending_h)
+						+ " window " + std::to_string(ww) + "x" + std::to_string(wh) + " pt / " + std::to_string(pw) + "x" + std::to_string(ph) + " px\n").c_str());
+				}
 				break;
 			case SDL_EVENT_WINDOW_RESIZED:
 				update_client_size();
@@ -298,6 +304,13 @@ namespace vortex::runtime
 			if (ph > usable.h - 28) ph = usable.h - 28;   // the title bar
 		}
 		SDL_SetWindowSize(g_window, pw, ph);
+		// let the window manager settle the real size before the next frame, then take the drawable as it is: a resize
+		// applied with a stale size left an unrendered strip along the bottom edge
+		SDL_SyncWindow(g_window);
+		int rpw = 0, rph = 0;
+		SDL_GetWindowSizeInPixels(g_window, &rpw, &rph);
+		if (rpw > 0 && rph > 0) { g_pending_w = rpw; g_pending_h = rph; g_resize_pending = true; }
+		update_client_size();
 	}
 
 	bool GameHost::run_utf8(uint32_t width, uint32_t height, const char* title_utf8)

@@ -27,6 +27,7 @@ void main()
 			// aerial perspective on the sky: the horizon whitens into the scene's haze, the sun glows in it, the zenith keeps its blue
 			float h = max(y, 0.0);
 			float f = 1.0 - exp(-c.haze.w * 40.0 / (h + 0.04));
+			f = max(f, smoothstep(0.0, 0.08, -y));   // below the horizon: the haze, not the picture's blurred ground (see skybox.metal)
 			float mu = saturate(dot(dir, normalize(-c.glow_dir.xyz)));
 			vec3 hz = c.haze.rgb + c.glow_color.rgb * (c.glow_dir.w * (0.12 * mu * mu + 0.88 * pow(mu, 10.0)));
 			sky = mix(sky, hz, f);

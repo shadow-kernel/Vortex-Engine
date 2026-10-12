@@ -63,6 +63,7 @@ float4 SkyPS(VS_OUT input) : SV_TARGET
             // 1 / sin(elevation)), the sun glows in it, the zenith keeps its blue
             float h = max(y, 0.0);
             float f = 1.0 - exp(-Haze.w * 40.0 / (h + 0.04));
+            f = max(f, smoothstep(0.0, 0.08, -y));   // below the horizon: the haze, not the picture's blurred ground (see skybox.metal)
             float mu = saturate(dot(dir, normalize(-GlowDir.xyz)));
             float3 hz = Haze.rgb + GlowColor.rgb * (GlowDir.w * (0.12 * mu * mu + 0.88 * pow(mu, 10.0)));
             sky = lerp(sky, hz, f);

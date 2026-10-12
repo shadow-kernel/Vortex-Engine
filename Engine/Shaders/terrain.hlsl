@@ -557,11 +557,10 @@ float4 PSMain(PS_IN input) : SV_TARGET
         for (int k = 0; k < 4; ++k)
             if (w[k] > 0.002)
                 mean += w[k] * SRGBToLinear(AlbedoTexture.SampleLevel(LinearSampler, float2((float)(k & 1) + 0.5, (float)(k >> 1) + 0.5) * 0.5, max(amips - 2.0, 0.0)).rgb);
-        // not one flat colour: the layer at a 60x larger tiling gives the distance broad dune-sized patches of its own
-        float2 ab = AtlasUV(p * tilesPerMetre[0] / 60.0 + float2(0.37, 0.11), 0);
-        float3 broadFar = SRGBToLinear(AlbedoTexture.SampleLevel(LinearSampler, ab, 2.0).rgb);
-        float lumFar = dot(broadFar, float3(0.299, 0.587, 0.114)), lumMean = dot(LayerMean(0), float3(0.299, 0.587, 0.114));
-        mean *= lerp(1.0, lumFar / max(lumMean, 0.02), 0.6);
+        // not one flat colour: an isotropic noise gives the distance broad dune-sized patches (the layer at a 60x tiling
+        // did it before and its ripples became parallel bands seen from a height)
+        float lumFar = 0.78 + 0.44 * MacroNoise(p * 0.012 + 4.2);
+        mean *= lerp(1.0, lumFar, 0.6);
         albedo = lerp(albedo, mean, farW);
         nm *= 1.0 - farW;
     }
