@@ -1059,6 +1059,8 @@ namespace Editor.DllWrapper
         private static extern void SetPostFxAntiAlias([MarshalAs(UnmanagedType.I1)] bool enabled);
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void SetPostFxTemporalAA([MarshalAs(UnmanagedType.I1)] bool enabled);
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void SetPostFxSharpen(float strength);
 
         /// <summary>Anti-aliasing (FXAA 3.11 console variant) in the post pass on the LDR picture — nine taps, no history, the
         /// cheap edge smoothing until temporal AA. Persistent like the other post effects.</summary>
@@ -1072,6 +1074,13 @@ namespace Editor.DllWrapper
         public static void SetPostTemporalAA(bool enabled)
         {
             try { SetPostFxTemporalAA(enabled); } catch { }
+        }
+
+        /// <summary>Contrast-adaptive sharpening (the AMD CAS core) after the anti-aliasing, 0 = off .. 1: gives back the detail
+        /// TAA / FXAA soften without ringing on edges that are already crisp. Persistent like the other post effects.</summary>
+        public static void SetPostSharpen(float strength)
+        {
+            try { SetPostFxSharpen(strength); } catch { }
         }
 
         /// <summary>Post-FX bloom (#30): soft-knee bright-pass -> progressive mip chain -> additive

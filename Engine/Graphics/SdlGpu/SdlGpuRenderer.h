@@ -88,6 +88,7 @@ namespace vortex::graphics::sdlgpu
 			bool grade{ false };
 			bool fxaa{ false };   // FXAA on the LDR picture
 			bool taa{ false };    // temporal anti-aliasing (#141): the previous frame reprojected and blended, clamped to the neighbourhood
+			float sharpen{ 0.0f };   // contrast-adaptive sharpening after the anti-aliasing, 0 = off .. 1
 			float exposure{ 0.0f }, contrast{ 1.0f }, saturation{ 1.0f }, temperature{ 0.0f }, tint{ 0.0f };
 			bool bloom{ false };
 			float bloom_threshold{ 0.75f }, bloom_knee{ 0.5f }, bloom_intensity{ 0.7f }, bloom_scatter{ 0.65f };

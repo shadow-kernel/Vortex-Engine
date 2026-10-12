@@ -666,6 +666,12 @@ EDITOR_INTERFACE void SetPostFxTemporalAA(bool enabled)
 	graphics::Renderer::instance().postfx().params().taa = enabled;
 }
 
+// Contrast-adaptive sharpening (the AMD CAS core) after the anti-aliasing, 0 = off .. 1: the detail TAA / FXAA soften.
+EDITOR_INTERFACE void SetPostFxSharpen(float strength)
+{
+	graphics::Renderer::instance().postfx().params().sharpen = strength < 0.0f ? 0.0f : (strength > 1.0f ? 1.0f : strength);
+}
+
 EDITOR_INTERFACE void SetPostFxColorGrade(bool enabled, float exposure, float contrast, float saturation,
 	float temperature, float tint)
 {

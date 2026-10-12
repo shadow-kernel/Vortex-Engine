@@ -16,6 +16,30 @@ struct TaaCB
     float2 texel; float blend; float valid;
 };
 
+
+// The history read with a Catmull-Rom kernel (nine texels, five bilinear fetches): a bilinear tap re-blurs the history a
+// little every frame and the picture went soft; the cubic keeps the detail the clamp lets through.
+static inline float3 sample_history(texture2d<float> tex, sampler smp, float2 uv, float2 texel)
+{
+    float2 size = 1.0 / texel;
+    float2 pos = uv * size;
+    float2 center = floor(pos - 0.5) + 0.5;
+    float2 f = pos - center;
+    float2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
+    float2 w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
+    float2 w2 = f * (0.5 + f * (2.0 - 1.5 * f));
+    float2 w3 = f * f * (-0.5 + 0.5 * f);
+    float2 w12 = w1 + w2;
+    float2 off12 = w2 / w12;
+    float2 p0 = (center - 1.0) * texel, p3 = (center + 2.0) * texel, p12 = (center + off12) * texel;
+    float3 r = tex.sample(smp, float2(p12.x, p0.y)).rgb * (w12.x * w0.y);
+    r += tex.sample(smp, float2(p0.x, p12.y)).rgb * (w0.x * w12.y);
+    r += tex.sample(smp, float2(p12.x, p12.y)).rgb * (w12.x * w12.y);
+    r += tex.sample(smp, float2(p3.x, p12.y)).rgb * (w3.x * w12.y);
+    r += tex.sample(smp, float2(p12.x, p3.y)).rgb * (w12.x * w3.y);
+    return max(r, 0.0);
+}
+
 fragment float4 TaaPS(BlitOut in [[stage_in]], constant TaaCB& c [[buffer(0)]],
                       texture2d<float> cur [[texture(0)]], sampler cur_smp [[sampler(0)]],
                       texture2d<float> hist [[texture(1)]], sampler hist_smp [[sampler(1)]],
@@ -42,7 +66,7 @@ fragment float4 TaaPS(BlitOut in [[stage_in]], constant TaaCB& c [[buffer(0)]],
         float2 puv = float2(pc.x / pc.w * 0.5 + 0.5, 0.5 - pc.y / pc.w * 0.5);
         if (puv.x >= 0.0 && puv.x <= 1.0 && puv.y >= 0.0 && puv.y <= 1.0)
         {
-            h = clamp(hist.sample(hist_smp, puv).rgb, mn, mx);
+            h = clamp(sample_history(hist, hist_smp, puv, c.texel), mn, mx);
         }
         else w = 1.0;
     }

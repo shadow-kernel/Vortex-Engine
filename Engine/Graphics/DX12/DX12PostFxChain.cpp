@@ -480,7 +480,7 @@ namespace vortex::graphics::dx12
 			cb.grade1[2] = m_params.saturation;
 			cb.grade1[3] = m_params.temperature;
 			cb.grade2[0] = m_params.tint;
-			cb.bloom[0] = m_params.bloom_intensity;
+			cb.bloom[0] = m_params.bloom_intensity; cb.bloom[1] = m_params.sharpen;
 			memcpy(m_cb_mapped, &cb, sizeof(cb));
 
 			PassCB tb{};

@@ -36,8 +36,23 @@ struct PostFxCB
     float4 grain_ca;         // grain intensity, grain size, ca strength, ca falloff
     float4 grade1;           // exposure, contrast, saturation, temperature
     float4 grade2;           // tint, reserved...
-    float4 bloom;            // composite intensity, reserved...
+    float4 bloom;            // composite intensity, sharpen strength (0 = off), reserved...
 };
+
+
+// Contrast-adaptive sharpening (the AMD CAS core): the cross of four neighbours around the anti-aliased pixel, weighted by how
+// much head-room the local contrast leaves — flat sand and already-crisp edges stay, the soft mush TAA / FXAA leave gets its
+// detail back. strength 0..1 (bloom.y), applied after the anti-aliasing and before bloom / grain / grading.
+static inline float3 cas_sharpen(texture2d<float> src, sampler smp, float2 uv, float2 texel, float3 e, float strength)
+{
+    float3 a = src.sample(smp, uv + float2(-texel.x, 0.0)).rgb, b = src.sample(smp, uv + float2(texel.x, 0.0)).rgb;
+    float3 cc = src.sample(smp, uv + float2(0.0, -texel.y)).rgb, d = src.sample(smp, uv + float2(0.0, texel.y)).rgb;
+    float3 mn = min(min(min(a, b), min(cc, d)), e), mx = max(max(max(a, b), max(cc, d)), e);
+    float3 amp = sqrt(saturate(min(mn, 1.0 - mx) / max(mx, 1e-4)));
+    float peak = -1.0 / mix(8.0, 5.0, saturate(strength));
+    float3 w = amp * peak;
+    return saturate(((a + b + cc + d) * w + e) / (4.0 * w + 1.0));
+}
 
 static inline float hash21(float2 p)
 {
@@ -93,6 +108,8 @@ fragment float4 PostFxPS(BlitOut in [[stage_in]], constant PostFxCB& c [[buffer(
     {
         col = src.sample(smp, uv).rgb;
     }
+    if (c.bloom.y > 0.001)
+        col = cas_sharpen(src, smp, uv, c.texel_size, col, c.bloom.y);
 
     if (c.flags & 32u)
         col += bloom_tex.sample(bloom_smp, uv).rgb * c.bloom.x;

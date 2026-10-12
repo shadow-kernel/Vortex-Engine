@@ -98,6 +98,8 @@ namespace Editor.Core.Data
         /// <summary>The haze follows the sky (SkyHaze): the fog colour becomes a tint on the sky's own radiance just above the
         /// horizon, so the distance fades into the sky it stands against instead of a hand-picked white.</summary>
         [DataMember(Name = "fogFromSky", Order = 94)] public bool FogFromSky { get; set; }
+        /// <summary>Contrast-adaptive sharpening after the anti-aliasing (0 = off .. 1): the detail TAA / FXAA soften comes back.</summary>
+        [DataMember(Name = "sharpen", Order = 95)] public float Sharpen { get; set; }
         // ---- The editor's view (EditorViewState): where the scene camera stood when the scene was saved — a scene opens there,
         // Home returns there. Editor data only; a scene saved before this has none (viewSet false) and starts at the classic default. ----
         [DataMember(Name = "viewSet", Order = 100)] public bool EditorViewSet { get; set; }
@@ -135,6 +137,7 @@ namespace Editor.Core.Data
             DllWrapper.VortexAPI.SetTonemapperMode(Tonemapper);
             DllWrapper.VortexAPI.SetPostAntiAlias(AntiAliasEnabled);
             DllWrapper.VortexAPI.SetPostTemporalAA(TaaEnabled);
+            DllWrapper.VortexAPI.SetPostSharpen(Sharpen);
             DllWrapper.VortexAPI.SetFogSunGlowStrength(FogEnabled ? FogSunGlow : 0f);
             DllWrapper.VortexAPI.SetPostVignette(VignetteEnabled, VignetteIntensity, VignetteSmoothness,
                 VignetteRoundness, VignetteR, VignetteG, VignetteB);

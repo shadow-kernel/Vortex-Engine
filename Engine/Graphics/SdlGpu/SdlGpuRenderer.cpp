@@ -913,7 +913,7 @@ namespace vortex::graphics::sdlgpu
 			cb.grain_ca[0] = p.grain_intensity; cb.grain_ca[1] = p.grain_size; cb.grain_ca[2] = p.ca_strength; cb.grain_ca[3] = p.ca_falloff;
 			cb.grade1[0] = p.exposure; cb.grade1[1] = p.contrast; cb.grade1[2] = p.saturation; cb.grade1[3] = p.temperature;
 			cb.grade2[0] = p.tint;
-			cb.bloom[0] = p.bloom_intensity;
+			cb.bloom[0] = p.bloom_intensity; cb.bloom[1] = p.sharpen;
 			if (p.bloom && m_post_ready)
 			{
 				record_bloom(cmd, surface.scene.color, rw, rh);
@@ -921,7 +921,7 @@ namespace vortex::graphics::sdlgpu
 			}
 			// temporal anti-aliasing (#141): the frame is resolved against the last one before the grade / FXAA / vignette
 			SDL_GPUTexture* post_src = surface.postfx.color;
-			if (p.taa && m_pipeline_taa && record_taa(cmd, surface, view, w, h)) post_src = surface.taa_out;
+			if (p.taa && m_pipeline_taa && record_taa(cmd, surface, view, w, h)) { post_src = surface.taa_out; cb.flags &= ~64u; }   // TAA resolved it: no FXAA on top (a second blur)
 			else surface.taa_valid = false;
 			fullscreen_blit(cmd, post_src, surface.present.color, w, h, m_pipeline_postfx, &cb, m_bloom_result);
 		}
