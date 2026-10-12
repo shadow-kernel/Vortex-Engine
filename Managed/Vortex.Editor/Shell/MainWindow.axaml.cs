@@ -214,6 +214,37 @@ namespace VortexEditor.Shell
                         }, TimeSpan.FromMilliseconds(400));
                     }
                     DispatcherTimer.RunOnce(() => ProbeClick(1), TimeSpan.FromMilliseconds(500));
+                    void ProbeChord()
+                    {
+                        // Fire while aiming: the right button held, the left one pressed and released INSIDE that chord. The
+                        // toolkit reports a second button as a pointer MOVE, not a press — the game never saw that left click.
+                        double cx = ev.Bounds.Width / 2, cy = ev.Bounds.Height / 2;
+                        VortexEditor.Viewport.MacViewProbe.MouseButton(ev.NativeHandle, cx, cy, true, true);
+                        DispatcherTimer.RunOnce(() =>
+                        {
+                            VortexEditor.Viewport.MacViewProbe.MouseButton(ev.NativeHandle, cx, cy, false, true);
+                            DispatcherTimer.RunOnce(() =>
+                            {
+                                bool fire = Editor.Core.Input.HostInput.IsKeyDown(0x01), aim = Editor.Core.Input.HostInput.IsKeyDown(0x02);
+                                VortexEditor.Viewport.MacViewProbe.MouseButton(ev.NativeHandle, cx, cy, false, false);
+                                DispatcherTimer.RunOnce(() =>
+                                {
+                                    bool fireUp = !Editor.Core.Input.HostInput.IsKeyDown(0x01), stillAim = Editor.Core.Input.HostInput.IsKeyDown(0x02);
+                                    VortexEditor.Viewport.MacViewProbe.MouseButton(ev.NativeHandle, cx, cy, true, false);
+                                    DispatcherTimer.RunOnce(() =>
+                                    {
+                                        bool aimUp = !Editor.Core.Input.HostInput.IsKeyDown(0x02);
+                                        string r = "aim+fire: LButton=" + fire + " RButton=" + aim + ", fire released: LButton up=" + fireUp + " RButton held=" + stillAim + ", aim released=" + aimUp;
+                                        if (fire && aim && fireUp && stillAim && aimUp) log.Log("SMOKE OK   chorded mouse buttons reach Input.GetKey (" + r + ")");
+                                        else log.LogError("SMOKE FAIL chorded mouse buttons (fire while aiming) do not reach Input.GetKey (" + r + ")");
+                                        if (System.Environment.GetEnvironmentVariable("VORTEX_SMOKE_PLAYFIRE") == "1") SmokePlayFire(ev);
+                                        else if (System.Environment.GetEnvironmentVariable("VORTEX_SMOKE_FULL") == "1") SmokeFull(scene);
+                                        _smokeInteractPending = false;
+                                    }, TimeSpan.FromMilliseconds(200));
+                                }, TimeSpan.FromMilliseconds(200));
+                            }, TimeSpan.FromMilliseconds(200));
+                        }, TimeSpan.FromMilliseconds(200));
+                    }
                     void ProbeMouseButtons()
                     {
                         // Mouse buttons must reach the game's key state (Input.GetKey("LButton"/"RButton") = fire / aim).
@@ -235,9 +266,7 @@ namespace VortexEditor.Shell
                                     string r = "LButton down=" + lDown + " up=" + lUp + ", RButton down=" + rDown + " up=" + rUp;
                                     if (lDown && lUp && rDown && rUp) log.Log("SMOKE OK   mouse buttons reach Input.GetKey (" + r + ")");
                                     else log.LogError("SMOKE FAIL mouse buttons do not reach Input.GetKey (" + r + ")");
-                                    if (System.Environment.GetEnvironmentVariable("VORTEX_SMOKE_PLAYFIRE") == "1") SmokePlayFire(ev);
-                                    else if (System.Environment.GetEnvironmentVariable("VORTEX_SMOKE_FULL") == "1") SmokeFull(scene);
-                                    _smokeInteractPending = false;
+                                    ProbeChord();
                                 }, TimeSpan.FromMilliseconds(200));
                             }, TimeSpan.FromMilliseconds(200));
                         }, TimeSpan.FromMilliseconds(200));
@@ -294,7 +323,29 @@ namespace VortexEditor.Shell
                                             string r = "LButton down=" + lDown + " up=" + lUp + ", RButton down=" + rDown + " up=" + rUp;
                                             if (lDown && lUp && rDown && rUp) log.Log("SMOKE OK   mouse buttons reach Input.GetKey (" + r + ")");
                                             else log.LogError("SMOKE FAIL mouse buttons do not reach Input.GetKey (" + r + ")");
-                                            ContinueWin();
+                                            // fire while aiming: the left button pressed and released while the right one is held — a chord
+                                            // the toolkit reports as pointer moves, not presses
+                                            VortexEditor.Viewport.Win32ViewportInput.MouseButton(ev, top, true, true);
+                                            WaitFor(() => Editor.Core.Input.HostInput.IsKeyDown(0x02), aim =>
+                                            {
+                                                VortexEditor.Viewport.Win32ViewportInput.MouseButton(ev, top, false, true, otherHeld: true);
+                                                WaitFor(() => Editor.Core.Input.HostInput.IsKeyDown(0x01), fire =>
+                                                {
+                                                    VortexEditor.Viewport.Win32ViewportInput.MouseButton(ev, top, false, false, otherHeld: true);
+                                                    WaitFor(() => !Editor.Core.Input.HostInput.IsKeyDown(0x01), fireUp =>
+                                                    {
+                                                        bool stillAim = Editor.Core.Input.HostInput.IsKeyDown(0x02);
+                                                        VortexEditor.Viewport.Win32ViewportInput.MouseButton(ev, top, true, false);
+                                                        WaitFor(() => !Editor.Core.Input.HostInput.IsKeyDown(0x02), aimUp =>
+                                                        {
+                                                            string c = "aim+fire: RButton=" + aim + " LButton=" + fire + ", fire released: LButton up=" + fireUp + " RButton held=" + stillAim + ", aim released=" + aimUp;
+                                                            if (aim && fire && fireUp && stillAim && aimUp) log.Log("SMOKE OK   chorded mouse buttons reach Input.GetKey (" + c + ")");
+                                                            else log.LogError("SMOKE FAIL chorded mouse buttons (fire while aiming) do not reach Input.GetKey (" + c + ")");
+                                                            ContinueWin();
+                                                        });
+                                                    });
+                                                });
+                                            });
                                         });
                                     });
                                 });

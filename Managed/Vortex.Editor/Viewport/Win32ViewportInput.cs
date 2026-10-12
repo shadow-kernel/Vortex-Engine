@@ -111,14 +111,16 @@ namespace VortexEditor.Viewport
             return PostMessageW(target, WM_LBUTTONDOWN, (IntPtr)1, lp) && PostMessageW(target, WM_LBUTTONUP, IntPtr.Zero, lp);
         }
 
-        /// <summary>Press or release a mouse button over the viewport's centre (the game's LButton / RButton).</summary>
-        public static bool MouseButton(EngineViewport view, IntPtr topLevel, bool right, bool down)
+        /// <summary>Press or release a mouse button over the viewport's centre (the game's LButton / RButton).
+        /// <paramref name="otherHeld"/>: the other button is held through this event (a chord, e.g. fire while aiming) —
+        /// a real message then carries it in wParam (MK_LBUTTON 1 / MK_RBUTTON 2), and so does this one.</summary>
+        public static bool MouseButton(EngineViewport view, IntPtr topLevel, bool right, bool down, bool otherHeld = false)
         {
             IntPtr target = TargetAtCenter(view, out POINT p);
             if (target == IntPtr.Zero || GetAncestor(target, GA_ROOT) != topLevel) return false;
             uint msg = right ? (down ? WM_RBUTTONDOWN : WM_RBUTTONUP) : (down ? WM_LBUTTONDOWN : WM_LBUTTONUP);
-            IntPtr keys = (IntPtr)(down ? (right ? 2 : 1) : 0);
-            return PostMessageW(target, msg, keys, MakeLParam(p.X, p.Y));
+            int keys = (down ? (right ? 2 : 1) : 0) | (otherHeld ? (right ? 1 : 2) : 0);
+            return PostMessageW(target, msg, (IntPtr)keys, MakeLParam(p.X, p.Y));
         }
 
         private static IntPtr MakeLParam(int x, int y) => (IntPtr)((y << 16) | (x & 0xFFFF));
