@@ -247,10 +247,22 @@ namespace VortexEditor.Viewport
                 var raw = e.GetPosition(this);
                 Trace($"pressed kind={e.GetCurrentPoint(this).Properties.PointerUpdateKind} local=({raw.X:0},{raw.Y:0}) bounds={Bounds.Width:0}x{Bounds.Height:0}");
             }
-            if (!TryLocalPoint(e, out var p)) { _hasFocus = false; Trace("  -> outside bounds, ignored"); return; }
-            var props = e.GetCurrentPoint(this).Properties;
-            int b = ButtonIndex(props.PointerUpdateKind);
-            if (b < 0) return;
+            if (PressButton(e, ButtonIndex(e.GetCurrentPoint(this).Properties.PointerUpdateKind))) e.Handled = true;
+        }
+
+        private void TopLevelPointerReleased(object sender, PointerReleasedEventArgs e)
+        {
+            ReleaseButton(e, ButtonIndex(e.GetCurrentPoint(this).Properties.PointerUpdateKind));
+        }
+
+        /// <summary>One mouse button went down (a first button: PointerPressed; a second one while another is held: a
+        /// PointerMoved, see <see cref="TopLevelPointerMoved"/>). Ignored outside the viewport. True when it was taken.</summary>
+        private bool PressButton(PointerEventArgs e, int b, bool chord = false)
+        {
+            // a first press outside un-arms the viewport's keys; a chorded one (the cursor drifted out while flying with the
+            // right button) leaves them alone
+            if (!TryLocalPoint(e, out var p)) { if (!chord) _hasFocus = false; Trace("  -> outside bounds, ignored"); return false; }
+            if (b < 0) return false;
             // The game reads mouse buttons through the same key-state set as the keyboard (HostInput.KeyDown): without
             // this, Input.GetKey("LButton") / ("RButton") was always false in editor play — no firing, no aiming.
             int bvk = ButtonVk(b);
@@ -262,16 +274,17 @@ namespace VortexEditor.Viewport
             var m = e.KeyModifiers;
             Trace($"  -> session.OnPointerDown(button={b})");
             _session.OnPointerDown(b, p.X, p.Y, m.HasFlag(KeyModifiers.Alt), m.HasFlag(KeyModifiers.Control) || m.HasFlag(KeyModifiers.Meta), m.HasFlag(KeyModifiers.Shift));
-            e.Handled = true;
+            return true;
         }
 
-        private void TopLevelPointerReleased(object sender, PointerReleasedEventArgs e)
+        /// <summary>One mouse button went up — always taken, even outside the viewport (no stuck trigger).</summary>
+        private void ReleaseButton(PointerEventArgs e, int b)
         {
-            var p = e.GetPosition(this);
-            int b = ButtonIndex(e.GetCurrentPoint(this).Properties.PointerUpdateKind);
             if (b < 0) return;
+            var p = e.GetPosition(this);
             int bvk = ButtonVk(b);
-            if (bvk != 0) ButtonUp(bvk);   // always, even when released outside the viewport (no stuck trigger)
+            if (bvk != 0) ButtonUp(bvk);
+            Trace($"  -> session.OnPointerUp(button={b})");
             _session.OnPointerUp(b, p.X, p.Y);
         }
 
@@ -282,7 +295,20 @@ namespace VortexEditor.Viewport
         {
             var p = e.GetPosition(this);
             bool inside = p.X >= 0 && p.Y >= 0 && p.X < Bounds.Width && p.Y < Bounds.Height;
-            if (_trace) Trace($"moved local=({p.X:0},{p.Y:0}) inside={inside} fly={_session.IsFlyMode}");
+            var kind = e.GetCurrentPoint(this).Properties.PointerUpdateKind;
+            if (_trace) Trace($"moved local=({p.X:0},{p.Y:0}) inside={inside} fly={_session.IsFlyMode} kind={kind}");
+            // A CHORDED button — pressed while another one is already held, or released while another one stays held —
+            // does not raise PointerPressed / PointerReleased: Avalonia follows the W3C pointer-event rule (pressed only
+            // for the first button down, released only for the last one up) and reports every change in between as a
+            // PointerMoved whose PointerUpdateKind names the button. Without this, the left click while the right button
+            // was held (fire while aiming) never reached the game, and a button released during a chord stayed down.
+            int changed = ButtonIndex(kind);
+            if (changed >= 0)
+            {
+                bool down = kind == PointerUpdateKind.LeftButtonPressed || kind == PointerUpdateKind.RightButtonPressed || kind == PointerUpdateKind.MiddleButtonPressed;
+                Trace($"  chord: button {changed} {(down ? "down" : "up")}");
+                if (down) PressButton(e, changed, chord: true); else ReleaseButton(e, changed);
+            }
             _pointerInside = inside;
             if (!inside && !_session.IsFlyMode && !_session.IsMouseCaptured) return;
             _lastPointer = p;
