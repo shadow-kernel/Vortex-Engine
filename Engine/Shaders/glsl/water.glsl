@@ -326,6 +326,23 @@ void main()
 	color = apply_fog(color, v_world_pos);
 	color = tonemap_scene(color, frame.scene_exposure, frame.tonemapper);
 	color = pow(max(color, 0.0), vec3(1.0 / 2.2));
+	// Under the surface (#200): the camera is below the water — the underside of the surface: the world above through it,
+	// total internal reflection towards grazing angles (see water.metal)
+	if (frame.camera_position.y < v_world_pos.y - 0.02)
+	{
+		float up = clamp(dot(N, -V), 0.0, 1.0);
+		float tir = 1.0 - smoothstep(0.58, 0.78, up);
+		if (have_scene)
+		{
+			vec2 dimU = vec2(textureSize(u_scene_color, 0));
+			vec2 uvU = clamp(gl_FragCoord.xy / dimU + N.xz * 0.08, vec2(0.5) / dimU, 1.0 - vec2(0.5) / dimU);
+			vec3 above = textureLod(u_scene_color, uvU, 0.0).rgb;
+			o_color = vec4(mix(above, mix(color, horizon, 0.45), 0.15 + 0.85 * tir), 1.0);
+			return;
+		}
+		o_color = vec4(mix(color, horizon, 0.45), 0.8);
+		return;
+	}
 	if (have_scene)
 	{
 		// Refraction (#200): the opaque picture behind the surface, bent by the ripples (less in the shallows and far away),

@@ -429,6 +429,22 @@ fragment float4 PSMain(VSOut in [[stage_in]],
     color = apply_fog(frame, color, in.world_pos);
     color = tonemap_scene(color * (frame.scene_exposure > 0.0 ? frame.scene_exposure : 0.5), frame.tonemapper);   // the scene exposure, then the curve
     color = pow(max(color, 0.0), 1.0 / 2.2);
+    // Under the surface (#200): the camera is below the water — this is the underside of the surface. Through it the world
+    // above, bent by the ripples; towards grazing angles total internal reflection hands back the water's own colour (the
+    // mirror-like ceiling of a lake seen from below). Without the scene copy: the water colour, translucent.
+    if (cam_pos.y < in.world_pos.y - 0.02)
+    {
+        float up = saturate(dot(N, -V));
+        float tir = 1.0 - smoothstep(0.58, 0.78, up);
+        if (have_scene)
+        {
+            float2 dimU = float2(scene_color.get_width(), scene_color.get_height());
+            float2 uvU = clamp(in.pos.xy / dimU + N.xz * 0.08, 0.5 / dimU, 1.0 - 0.5 / dimU);
+            float3 above = scene_color.sample(scene_smp, uvU, level(0)).rgb;
+            return float4(mix(above, mix(color, horizon, 0.45), 0.15 + 0.85 * tir), 1.0);
+        }
+        return float4(mix(color, horizon, 0.45), 0.8);
+    }
     if (have_scene)
     {
         // Refraction (#200): the opaque picture behind the surface, bent by the ripples (less in the shallows and far away),

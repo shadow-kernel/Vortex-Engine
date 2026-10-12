@@ -409,6 +409,8 @@ static inline float3 layer_mean(texture2d<float> tex, sampler smp, int k)
 static inline float macro_variation(float2 world_xz)
 {
     float n = 0.65 * macro_noise(world_xz * 0.025) + 0.35 * macro_noise(world_xz * 0.11 + 7.3);
+    // and a 500 m term for the distance: the near terms average out in the mips, the far dunes read as flat clay without it
+    n = mix(n, macro_noise(world_xz * 0.002 + 1.7), 0.45);
     return 0.86 + 0.28 * n;
 }
 
