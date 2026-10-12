@@ -40,6 +40,48 @@ namespace Editor.Core.Terrain
         public float[] Heights { get; private set; }
         /// <summary>Splat weights, 4 bytes per sample (layers 0..3), index (z * Resolution + x) * 4. Layer 0 full by default.</summary>
         public byte[] Splat { get; private set; }
+        /// <summary>Holes (#caves): one byte per sample, index z * Resolution + x; a cell is a hole when its minimum-corner
+        /// sample is set — the mesh, the collision and the navmesh leave it out, the height query and the raycast look
+        /// through it, so a cave mesh under the terrain can be entered. Null = no holes.</summary>
+        public byte[] Holes { get; private set; }
+        public bool HasHoles { get { if (Holes == null) return false; for (int i = 0; i < Holes.Length; i++) if (Holes[i] != 0) return true; return false; } }
+        /// <summary>Is the cell whose minimum corner is sample (x, z) a hole?</summary>
+        public bool IsHole(int x, int z) => Holes != null && Holes[ClampIndex(z) * Resolution + ClampIndex(x)] != 0;
+        /// <summary>Is the cell under local sample coordinates a hole (for the height query / raycast)?</summary>
+        public bool IsHoleAt(float sx, float sz)
+        {
+            if (Holes == null) return false;
+            int x = (int)Math.Floor(sx), z = (int)Math.Floor(sz);
+            if (x < 0 || z < 0 || x >= Resolution - 1 || z >= Resolution - 1) return false;
+            return Holes[z * Resolution + x] != 0;
+        }
+        /// <summary>Is any cell of the stride x stride block at (x0, z0) a hole (a coarse LOD cell)?</summary>
+        public bool IsHoleBlock(int x0, int z0, int stride)
+        {
+            if (Holes == null) return false;
+            int x1 = Math.Min(Resolution - 2, x0 + stride - 1), z1 = Math.Min(Resolution - 2, z0 + stride - 1);
+            for (int z = z0; z <= z1; z++) for (int x = x0; x <= x1; x++) if (Holes[z * Resolution + x] != 0) return true;
+            return false;
+        }
+        /// <summary>Cut (or fill) a disc of holes: every cell within the radius (samples) around the centre.</summary>
+        public SampleRect SetHoleDisc(float cx, float cz, float radius, bool hole)
+        {
+            if (Holes == null) { if (!hole) return SampleRect.Empty; Holes = new byte[Resolution * Resolution]; }
+            var r = BrushRect(cx, cz, radius);
+            int n = Resolution;
+            for (int z = r.Z0; z <= r.Z1; z++)
+                for (int x = r.X0; x <= r.X1; x++)
+                {
+                    float dx = x + 0.5f - cx, dz = z + 0.5f - cz;
+                    if (dx * dx + dz * dz > radius * radius) continue;
+                    if (x >= n - 1 || z >= n - 1) continue;
+                    Holes[z * n + x] = hole ? (byte)1 : (byte)0;
+                }
+            // the triangles of a cell reach the next sample: the rebuild has to cover it
+            r.X1 = Math.Min(n - 1, r.X1 + 1); r.Z1 = Math.Min(n - 1, r.Z1 + 1);
+            return r;
+        }
+        public void ClearHoles() { Holes = null; }
 
         private float _minH, _maxH;
         private bool _rangeDirty = true;
@@ -303,7 +345,7 @@ namespace Editor.Core.Terrain
 
             Vector3 p = origin + direction * t0;
             float above = p.Y - SampleHeight(p.X * inv, p.Z * inv);
-            if (above <= 0f) { hit = p; return true; }   // starts under the surface: the entry point counts
+            if (above <= 0f && !IsHoleAt(p.X * inv, p.Z * inv)) { hit = p; return true; }   // starts under the surface: the entry point counts
             float t = t0;
             while (t < t1)
             {
@@ -322,7 +364,8 @@ namespace Editor.Core.Terrain
                     }
                     hit = origin + direction * hi;
                     hit.Y = SampleHeight(hit.X * inv, hit.Z * inv);
-                    return true;
+                    // a hole (#caves): the ray goes on through the cut cell and may hit the terrain again beyond it
+                    if (!IsHoleAt(hit.X * inv, hit.Z * inv)) return true;
                 }
                 t = tn;
             }
@@ -367,9 +410,11 @@ namespace Editor.Core.Terrain
                 w.Write(Magic);
                 w.Write(Version);
                 w.Write(Resolution);
-                w.Write(1);   // flags: bit 0 = splat present
+                bool holes = HasHoles;
+                w.Write(1 | (holes ? 2 : 0));   // flags: bit 0 = splat present, bit 1 = holes present (one byte per sample, after the splat)
                 for (int i = 0; i < Heights.Length; i++) w.Write(Heights[i]);
                 w.Write(Splat);
+                if (holes) w.Write(Holes);
                 return ms.ToArray();
             }
         }
@@ -401,6 +446,11 @@ namespace Editor.Core.Terrain
                 {
                     var s = r.ReadBytes(res * res * 4);
                     if (s.Length == res * res * 4) d.Splat = s;
+                }
+                if ((flags & 2) != 0)
+                {
+                    var h = r.ReadBytes(res * res);
+                    if (h.Length == res * res) d.Holes = h;
                 }
                 d._rangeDirty = true;
                 return d;

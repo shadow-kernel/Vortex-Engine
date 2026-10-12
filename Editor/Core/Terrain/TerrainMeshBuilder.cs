@@ -72,9 +72,12 @@ namespace Editor.Core.Terrain
                 }
             }
             int k = 0;
+            bool holes = data.Holes != null;
             for (int j = 0; j < cells; j++)
                 for (int i = 0; i < cells; i++)
                 {
+                    // a hole (#caves): the cell's two triangles are left out — at a coarser LOD when any fine cell under it is cut
+                    if (holes && data.IsHoleBlock(baseX + i * stride, baseZ + j * stride, stride)) continue;
                     uint a = (uint)(j * verts + i), b = a + 1, c = a + (uint)verts, d = c + 1;
                     idx[k++] = a; idx[k++] = c; idx[k++] = b;
                     idx[k++] = b; idx[k++] = c; idx[k++] = d;
@@ -109,6 +112,8 @@ namespace Editor.Core.Terrain
 
             float x0 = baseX * cellSize, z0 = baseZ * cellSize;
             float x1 = Math.Min(res - 1, baseX + ChunkCells) * cellSize, z1 = Math.Min(res - 1, baseZ + ChunkCells) * cellSize;
+            if (k < idx.Length) Array.Resize(ref idx, k);   // holes left cells out: no degenerate triangles behind them
+
             return new TerrainChunkMesh
             {
                 Vertices = v,
@@ -142,6 +147,7 @@ namespace Editor.Core.Terrain
                 for (int i = 0; i < cells; i++)
                 {
                     int x0 = i * stride, x1 = Math.Min(res - 1, x0 + stride);
+                    if (data.Holes != null && data.IsHoleBlock(x0, z0, stride)) continue;   // a hole: nothing to collide with, nothing to walk on
                     float ax = x0 * cellSize, az = z0 * cellSize, bx = x1 * cellSize, bz = z1 * cellSize;
                     float ha = data.Get(x0, z0), hb = data.Get(x1, z0), hc = data.Get(x0, z1), hd = data.Get(x1, z1);
                     // (a, c, b) and (b, c, d) like the render mesh
@@ -149,6 +155,7 @@ namespace Editor.Core.Terrain
                     tris[k++] = bx; tris[k++] = hb; tris[k++] = az;   tris[k++] = ax; tris[k++] = hc; tris[k++] = bz;   tris[k++] = bx; tris[k++] = hd; tris[k++] = bz;
                 }
             }
+            if (k < tris.Length) Array.Resize(ref tris, k);   // holes left cells out
             return tris;
         }
     }

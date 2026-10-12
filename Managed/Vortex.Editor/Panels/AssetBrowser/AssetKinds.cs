@@ -7,7 +7,7 @@ namespace VortexEditor.Panels.AssetBrowser
     public enum AssetKind
     {
         Folder, ParentFolder, Primitive, Model, Texture, Material, Shader, Script, Scene, Prefab,
-        AudioClip, SoundContainer, AnimationClip, UiScreen, Font, Text, BuiltInMaterial, BuiltInTexture, Vfx, BehaviorTree, Terrain, Foliage, Other
+        AudioClip, SoundContainer, AnimationClip, UiScreen, Font, Text, BuiltInMaterial, BuiltInTexture, Vfx, BehaviorTree, Terrain, Foliage, Area, Other
     }
 
     /// <summary>
@@ -56,6 +56,7 @@ namespace VortexEditor.Panels.AssetBrowser
                 case ".vfx": return AssetKind.Vfx;
                 case ".vbt": return AssetKind.BehaviorTree;
                 case ".vterrain": return AssetKind.Terrain;
+                case ".varea": return AssetKind.Area;
                 case ".vfoliage": return AssetKind.Foliage;
             }
             return AssetKind.Other;

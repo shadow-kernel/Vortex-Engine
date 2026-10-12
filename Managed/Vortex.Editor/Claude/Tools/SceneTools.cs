@@ -208,7 +208,7 @@ namespace VortexEditor.Claude.Tools
         internal static readonly string[] Kinds =
         {
             "empty", "folder", "cube", "sphere", "capsule", "cylinder", "plane", "quad",
-            "point_light", "spot_light", "directional_light", "camera", "audio_source", "reverb_zone",
+            "point_light", "spot_light", "directional_light", "camera", "audio_source", "reverb_zone", "area",
         };
 
         [McpServerTool(Name = "create_entity", Destructive = false)]
@@ -270,6 +270,12 @@ namespace VortexEditor.Claude.Tools
                     var r = scene.CreateEntity("Reverb Zone");
                     r.AddComponent(new ReverbZone(r));
                     return r;
+                }
+                case "area":
+                {
+                    var a = scene.CreateEntity("Area");
+                    a.AddComponent(new Editor.ECS.Components.World.Area(a));
+                    return a;
                 }
                 default: throw new ToolError("Unknown kind '" + kind + "'. Valid: " + string.Join(", ", Kinds) + ".");
             }

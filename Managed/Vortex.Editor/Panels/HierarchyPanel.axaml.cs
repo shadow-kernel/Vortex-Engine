@@ -328,6 +328,7 @@ namespace VortexEditor.Panels
             yield return Sub("Audio",
                 Item("Audio Source", () => EditorCommands.CreateAudioSource(scene)),
                 Item("Reverb Zone", () => EditorCommands.CreateReverbZone(scene)));
+            yield return Item("Area (Zone)", () => EditorCommands.CreateArea(scene));
             var ui = new MenuItem { Header = "UI" };
             foreach (var k in new[] { "Canvas", "Text", "Image", "Button" }) { var kk = k; ui.Items.Add(Item(k, () => EditorCommands.CreateUI(kk, scene))); }
             yield return ui;

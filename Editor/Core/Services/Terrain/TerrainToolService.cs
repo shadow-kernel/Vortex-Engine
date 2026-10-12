@@ -11,7 +11,7 @@ using Quaternion = System.Numerics.Quaternion;
 
 namespace Editor.Core.Services.Terrain
 {
-    public enum TerrainTool { None = 0, Raise = 1, Lower = 2, Smooth = 3, Flatten = 4, Paint = 5 }
+    public enum TerrainTool { None = 0, Raise = 1, Lower = 2, Smooth = 3, Flatten = 4, Paint = 5, Hole = 6 }   // Hole: cut the terrain away (Shift fills it back) — a cave mouth, a pit, a tunnel entrance
 
     /// <summary>
     /// The viewport terrain tools (#124): while a tool is active and the selected entity is a terrain, the left mouse
@@ -70,8 +70,11 @@ namespace Editor.Core.Services.Terrain
         /// <summary>A tool is chosen and the selection is a terrain: the viewport routes the left button here.</summary>
         public static bool Active => Tool != TerrainTool.None && SelectedTerrain() != null;
 
+        private static bool _strokeShift;   // the Hole tool: Shift fills the hole back
+
         private static TerrainTool Effective(bool shift, bool ctrl)
         {
+            _strokeShift = shift;
             if (Tool == TerrainTool.None) return TerrainTool.None;
             if (ctrl) return TerrainTool.Smooth;
             if (shift)
@@ -169,6 +172,7 @@ namespace Editor.Core.Services.Terrain
                     break;
                 }
                 case TerrainTool.Paint: rect = data.Paint(cx, cz, r, PaintLayer, 0.45f * s, Hardness); heights = false; break;
+                case TerrainTool.Hole: rect = data.SetHoleDisc(cx, cz, r, !_strokeShift); break;   // Shift fills the hole back
                 default: return;
             }
             _strokeRect = _strokeRect.Union(rect);

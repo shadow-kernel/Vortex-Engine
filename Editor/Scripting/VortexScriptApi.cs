@@ -324,6 +324,27 @@ namespace Vortex
         public TriggerHit(long id, string name, string tag) { EntityId = id; Name = name ?? ""; Tag = tag ?? ""; }
     }
 
+    /// <summary>An area (zone) of the world as a script sees it: the Area component's entity, its name, its tags ("cave",
+    /// "no-fly") and its free properties. Passed to OnAreaEnter / OnAreaStay / OnAreaExit and returned by <see cref="Areas"/>.
+    /// The engine never interprets a tag — a cave is a cave because your script says so.</summary>
+    public sealed class AreaInfo
+    {
+        public long EntityId { get; }
+        public string Name { get; }
+        public string[] Tags { get; }
+        public int Priority { get; }
+        public Vector3 Position { get; }
+        private readonly System.Collections.Generic.Dictionary<string, string> _props;
+        public AreaInfo(long entityId, string name, string[] tags, int priority, Vector3 position, System.Collections.Generic.Dictionary<string, string> props)
+        { EntityId = entityId; Name = name ?? ""; Tags = tags ?? new string[0]; Priority = priority; Position = position; _props = props ?? new System.Collections.Generic.Dictionary<string, string>(StringComparer.OrdinalIgnoreCase); }
+        public bool HasTag(string tag) { if (string.IsNullOrEmpty(tag)) return false; tag = tag.Trim().ToLowerInvariant(); foreach (var t in Tags) if (t == tag) return true; return false; }
+        /// <summary>A property as text ("ambient" → "cave_drips"), or the default when the area has none.</summary>
+        public string Get(string key, string defaultValue = null) { string v; return key != null && _props.TryGetValue(key, out v) ? v : defaultValue; }
+        public bool GetBool(string key, bool defaultValue = false) { var v = Get(key); if (v == null) return defaultValue; v = v.Trim().ToLowerInvariant(); return v == "true" || v == "1" || v == "yes" || v == "on"; }
+        public float GetFloat(string key, float defaultValue = 0f) { var v = Get(key); float f; return v != null && float.TryParse(v, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out f) ? f : defaultValue; }
+        public override string ToString() { return Name + " [" + string.Join(", ", Tags) + "]"; }
+    }
+
     /// <summary>Result of <see cref="Physics.Raycast(Vector3, Vector3, float, out RaycastHit, int)"/> —
     /// where the ray hit, the surface normal, and WHO was hit.</summary>
     public struct RaycastHit
@@ -654,6 +675,12 @@ namespace Vortex
 
         /// <summary>Called once when another character first enters this entity's TRIGGER collider.</summary>
         public virtual void OnTriggerEnter(TriggerHit other) { }
+        /// <summary>This entity entered an Area (a zone: a cave, a no-fly zone, a village — whatever its tags say). Once.</summary>
+        public virtual void OnAreaEnter(AreaInfo area) { }
+        /// <summary>Every tick while this entity is inside the area (dt = the tick's seconds).</summary>
+        public virtual void OnAreaStay(AreaInfo area, float dt) { }
+        /// <summary>This entity left the area (also when the area is disabled or deleted while it was inside).</summary>
+        public virtual void OnAreaExit(AreaInfo area) { }
         /// <summary>Called every tick while another character stays inside this entity's TRIGGER collider.</summary>
         public virtual void OnTriggerStay(TriggerHit other) { }
         /// <summary>Called once when another character leaves this entity's TRIGGER collider.</summary>
@@ -1957,6 +1984,47 @@ namespace Vortex
     /// <summary>Scene atmosphere for game scripts (Welle A #27): exp2 distance fog with optional ground
     /// mist. The flashlight cone visibly "cuts" into the fog. Setting persists until changed — call once
     /// in Start(). <c>Atmosphere.SetFog(density: 0.14f, heightY: 1.2f, heightFalloff: 0.6f, r: 0.016f, g: 0.02f, b: 0.027f);</c></summary>
+    /// <summary>
+    /// The areas (zones) of the world — Area components placed in the scene, as big as a level, moved and turned like any
+    /// entity, with tags and free properties. Ask who is where: <c>Areas.IsInside(EntityId, "cave")</c>,
+    /// <c>Areas.Of(EntityId)</c> for the areas an entity stands in (highest priority first), <c>Areas.At(point)</c> for a
+    /// point in the world. The engine raises OnAreaEnter / OnAreaStay / OnAreaExit on every behaviour of a tracked entity
+    /// (every scripted entity, plus anything you <see cref="Track"/>), and the global <see cref="Entered"/> / <see cref="Exited"/>
+    /// events for a manager. Example — no flying in a cave:
+    /// <code>
+    /// public override void OnAreaEnter(AreaInfo a) { if (a.HasTag("cave") || !a.GetBool("flightAllowed", true)) _canFly = false; }
+    /// public override void OnAreaExit(AreaInfo a)  { _canFly = !Areas.IsInside(EntityId, "cave"); }
+    /// </code>
+    /// </summary>
+    public static class Areas
+    {
+        /// <summary>(entity, area) when an entity enters / leaves an area. Subscribe in Start, unsubscribe in OnDestroy.</summary>
+        public static event Action<long, AreaInfo> Entered;
+        public static event Action<long, AreaInfo> Exited;
+        internal static void RaiseEntered(long e, AreaInfo a) { var h = Entered; if (h != null) h(e, a); }
+        internal static void RaiseExited(long e, AreaInfo a) { var h = Exited; if (h != null) h(e, a); }
+        internal static void ClearHandlers() { Entered = null; Exited = null; }
+
+        /// <summary>True while the entity stands in an area with the tag (null / empty = any area).</summary>
+        public static bool IsInside(long entity, string tag = null) { return Editor.Scripting.ScriptRuntime.Instance.AreaIsInside(entity, tag); }
+        /// <summary>The areas the entity stands in, highest priority first (empty when none).</summary>
+        public static AreaInfo[] Of(long entity) { return Editor.Scripting.ScriptRuntime.Instance.AreasOf(entity); }
+        /// <summary>THE area the entity stands in — the highest priority one — or null.</summary>
+        public static AreaInfo Current(long entity) { var a = Of(entity); return a.Length > 0 ? a[0] : null; }
+        /// <summary>The areas containing a point of the world, highest priority first.</summary>
+        public static AreaInfo[] At(Vector3 point) { return Editor.Scripting.ScriptRuntime.Instance.AreasAt(point); }
+        /// <summary>True when the point lies in an area with the tag (null / empty = any area).</summary>
+        public static bool IsPointInside(Vector3 point, string tag = null) { return Editor.Scripting.ScriptRuntime.Instance.AreaPointInside(point, tag); }
+        /// <summary>An area by its entity name, its definition's name or a tag — or null.</summary>
+        public static AreaInfo Find(string nameOrTag) { return Editor.Scripting.ScriptRuntime.Instance.AreaFind(nameOrTag); }
+        /// <summary>Track an entity without behaviours (a camera rig, a vehicle, a projectile): it gets no callbacks of its own,
+        /// but <see cref="Of"/> / <see cref="IsInside"/> know where it is and the global events fire for it.</summary>
+        public static void Track(long entity) { Editor.Scripting.ScriptRuntime.Instance.AreaTrack(entity, true); }
+        public static void Untrack(long entity) { Editor.Scripting.ScriptRuntime.Instance.AreaTrack(entity, false); }
+        /// <summary>How many areas the live scene has.</summary>
+        public static int Count { get { return Editor.Core.Services.Areas.AreaService.AreaCount; } }
+    }
+
     public static class Atmosphere
     {
         /// <summary>Enable fog: <paramref name="density"/> &gt; 0 (try 0.05–0.2 for a cellar, 0.005–0.02 outdoors).

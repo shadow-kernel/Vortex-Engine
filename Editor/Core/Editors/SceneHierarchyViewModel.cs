@@ -142,6 +142,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
         public ICommand CreateCameraCommand { get; }
         public ICommand CreateAudioSourceCommand { get; }
         public ICommand CreateReverbZoneCommand { get; }
+        public ICommand CreateAreaCommand { get; }
         public ICommand CreateDecalCommand { get; }
         public ICommand CreateTerrainCommand { get; }
         public ICommand CreateFoliageCommand { get; }
@@ -196,6 +197,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             CreateCameraCommand = new RelayCommand(_ => CreateCamera());
             CreateAudioSourceCommand = new RelayCommand(_ => CreateAudioSource());
             CreateReverbZoneCommand = new RelayCommand(_ => CreateReverbZone());
+            CreateAreaCommand = new RelayCommand(_ => CreateArea());
             CreateDecalCommand = new RelayCommand(_ => CreateDecal());
             CreateTerrainCommand = new RelayCommand(_ => CreateTerrain());
             CreateFoliageCommand = new RelayCommand(_ => CreateFoliage());
@@ -416,6 +418,17 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             if (_selectedScene == null) return;
             var entity = new GameEntity(_selectedScene, "Reverb Zone");
             entity.AddComponent(new ReverbZone(entity));
+            _selectedScene.AddEntity(entity);
+            SelectedEntity = entity;
+            SelectionService.Instance.RequestFocus(entity);
+        }
+
+        /// <summary>An Area (zone): a 20 x 10 x 20 m box at the origin to move, turn and scale — tags and properties in the inspector.</summary>
+        private void CreateArea()
+        {
+            if (_selectedScene == null) return;
+            var entity = new GameEntity(_selectedScene, "Area");
+            entity.AddComponent(new Editor.ECS.Components.World.Area(entity));
             _selectedScene.AddEntity(entity);
             SelectedEntity = entity;
             SelectionService.Instance.RequestFocus(entity);
