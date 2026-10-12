@@ -525,13 +525,16 @@ void main()
 	if (lights.sky_sh[0].w > 0.5) hemisphere = sky_irradiance(N);   // the real sky: blue from above, the ground's bounce from below
 	// the world radiance cache replaces the sky light where it has probes (its probes hold the sky and the bounces)
 	vec3 amb_irr = gi_volume(v_world_pos, N, hemisphere * frame.ambient_strength);
+	// how open this point is to the sky, from the world cache (exactly 1 without one): deep in a cave the screen-space
+	// bounce and the sky reflection fade (they lit cave walls through the rock)
+	float sky_open = smoothstep(0.08, 0.45, dot(amb_irr, vec3(0.2126, 0.7152, 0.0722)) / max(dot(hemisphere * frame.ambient_strength, vec3(0.2126, 0.7152, 0.0722)), 1e-4));
 	vec3 ambient = amb_irr * albedo * ao * (1.0 - metallic);
 	if (frame.ssao_enabled > 0.5)
 	{
 		vec2 auv = gl_FragCoord.xy * vec2(frame.ssao_padding0, frame.ssao_padding1);
 		vec4 ss = texture(u_ssao, auv);
 		ambient *= ss.a;
-		if (frame.gi_strength > 0.0) ambient += ss.rgb * ss.rgb * 4.0 * albedo * (1.0 - metallic) * ss.a;   // screen-space GI (#257 step 1)
+		if (frame.gi_strength > 0.0) ambient += ss.rgb * ss.rgb * 4.0 * albedo * (1.0 - metallic) * ss.a * sky_open;   // screen-space GI (#257 step 1)
 	}
 
 	float rim_fresnel = pow(saturate(1.0 - NdotV), 5.0);
@@ -560,7 +563,7 @@ void main()
 		env_color = mix(env_color, env_color * 0.2, roughness * roughness);
 	}
 	vec3 env_fresnel = F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(1.0 - NdotV, 5.0);
-	vec3 specular_ambient = env_color * env_fresnel * ao;
+	vec3 specular_ambient = env_color * env_fresnel * ao * sky_open;
 	ambient += specular_ambient + rim_light;
 
 	vec3 color = ambient + Lo;
