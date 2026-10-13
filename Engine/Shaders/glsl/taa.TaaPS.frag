@@ -1,6 +1,6 @@
 #version 450
 // Temporal anti-aliasing (#141): see taa.metal — the previous resolved frame reprojected, clamped to the 3x3 neighbourhood,
-// blended 88 / 12 with the new frame.
+// blended 88 / 12 with the new frame; this frame's colour rebuilt at the pixel centre from the jittered samples.
 layout(location = 0) in  vec2 v_uv;
 layout(location = 0) out vec4 o_color;
 
@@ -12,6 +12,7 @@ layout(set = 3, binding = 0, std140) uniform TaaCB
 {
 	mat4 reproj;
 	vec2 texel; float blend; float valid;
+	vec4 jitter;   // xy: how far this frame's samples sit off their pixel centres (uv); zw unused
 } c;
 
 
@@ -41,15 +42,19 @@ vec3 sample_history(vec2 uv, vec2 texel)
 void main()
 {
 	vec2 uv = v_uv;
-	vec3 c0 = texture(u_cur, uv).rgb;
-	vec3 mn = c0, mx = c0;
+	vec2 jp = c.jitter.xy / c.texel;
+	vec3 mn = vec3(1e5), mx = vec3(-1e5), sum = vec3(0.0);
+	float wsum = 0.0;
 	for (int y = -1; y <= 1; ++y)
 		for (int x = -1; x <= 1; ++x)
 		{
-			if (x == 0 && y == 0) continue;
 			vec3 n = texture(u_cur, uv + vec2(x, y) * c.texel).rgb;
 			mn = min(mn, n); mx = max(mx, n);
+			vec2 d = vec2(x, y) - jp;
+			float wk = exp(-2.29 * dot(d, d));
+			sum += n * wk; wsum += wk;
 		}
+	vec3 c0 = any(notEqual(c.jitter.xy, vec2(0.0))) ? sum / max(wsum, 1e-4) : texture(u_cur, uv).rgb;   // no jitter: the plain TAA
 	float z = texture(u_depth, uv).r;
 	vec4 pc = c.reproj * vec4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, z, 1.0);
 	float w = c.blend;

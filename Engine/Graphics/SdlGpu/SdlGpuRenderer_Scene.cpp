@@ -619,7 +619,7 @@ namespace vortex::graphics::sdlgpu
 	SdlGpuParticles::View SdlGpuRenderer::particle_view(const FrameView& view) const
 	{
 		SdlGpuParticles::View p{};
-		p.view_projection = view.view_projection;
+		p.view_projection = view.frame.view_projection;   // the raster matrix (TAA jitter included): particles line up with the depth they test against
 		p.viewmodel_projection = view.viewmodel.view_projection;
 		p.eye = view.eye; p.right = view.right; p.up = view.up; p.forward = view.forward;
 		p.near_clip = view.near_clip; p.far_clip = view.far_clip; p.ortho = view.ortho;
@@ -722,7 +722,9 @@ namespace vortex::graphics::sdlgpu
 			if (dx)
 			{
 				SdlGpuDecals::View dv{};
-				dv.view_projection = view.view_projection; dv.inv_view_projection = view.inverse_view_projection; dv.eye = view.eye;
+				// the raster matrix and its inverse (TAA jitter included): a decal reads the depth this frame wrote
+				dv.view_projection = view.frame.view_projection; dv.eye = view.eye;
+				DirectX::XMStoreFloat4x4(&dv.inv_view_projection, DirectX::XMMatrixInverse(nullptr, DirectX::XMLoadFloat4x4(&view.frame.view_projection)));
 				dv.near_clip = view.near_clip; dv.far_clip = view.far_clip; dv.ortho = view.ortho;
 				m_decals.draw(cmd, target.color, target.depth, target.width, target.height, dv, penv);
 			}
