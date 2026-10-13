@@ -29,6 +29,9 @@ def main():
     ap.add_argument("--rough", type=float, default=0.22, help="wall noise amplitude as a factor of the radius")
     ap.add_argument("--shell", type=float, default=0.2, help="the outer rock shell covers the mouth up to this t along the tunnel (0 = none)")
     ap.add_argument("--shell-offset", type=float, default=1.2, help="how thick the mouth's rock lip is (m)")
+    ap.add_argument("--skylight", type=float, default=-1.0, help="a shaft in the ceiling at this t (0..1) up to the surface: light falls in (-1 = none)")
+    ap.add_argument("--skylight-radius", type=float, default=2.2, help="the shaft's opening radius (m)")
+    ap.add_argument("--skylight-top", type=float, default=None, help="local y of the ground above the shaft (the placement script measures it)")
     ap.add_argument("--rings", type=int, default=40)
     ap.add_argument("--segs", type=int, default=28)
     ap.add_argument("--tile", type=float, default=3.0, help="metres per texture repeat")
@@ -89,6 +92,10 @@ def main():
     chambers = []
     for c in range(max(0, min(3, a.chambers))):
         chambers.append((rnd.uniform(0.35, 0.8), rnd.uniform(1.5, 1.9), rnd.uniform(0.08, 0.14)))   # position, size factor, width
+    def floor_radius(t):
+        u = min(1.0, max(0.0, t))
+        r = a.radius * (1.0 + 0.12 * math.sin(u * 9.0 + 2.0))
+        return r * (1.0 - 0.45 * max(0.0, (u - 0.94) / 0.06) ** 1.2)
     def radius_at(t):
         r = a.radius * (1.0 + 0.12 * math.sin(t * 9.0 + 2.0))
         for (tc, f, w) in chambers:
@@ -104,10 +111,11 @@ def main():
 
     # the rings: ring 0 sits --apron metres OUTSIDE the mouth (the collar that hides the terrain hole's edge), the last at -L
     rings = a.rings
-    ts = [-(a.apron / L) * (1.0 - r / 3.0) for r in range(3)] + [r / (rings - 1) for r in range(rings)] + [1.02, 1.04, 1.055]
+    ts = [-(a.apron / L) * (1.0 - r / 3.0) for r in range(3)] + [r / (rings - 1) for r in range(rings)]
     ts = sorted(set(ts))
     ring_rows = []          # per ring: list of (angle, vertex index) for the wall ring (segs + 1, closed)
     ring_centres = []       # per ring: the axis point
+    skylight_info = {}
     floor_rows = []         # per ring: the floor strip's vertex indices (across)
     floor_pts = []          # walkable floor points for planting (local)
     arc = 0.0
@@ -124,7 +132,9 @@ def main():
         right = (-f[2], 0.0, f[0]); up = (0.0, 1.0, 0.0)
         r = radius_at(t if t > 1.0 else tc)
         if t < 0: r = radius_at(0.0) * (1.0 + 0.35 * (-t * L / max(0.1, a.apron)))    # the collar opens further outside
-        floor_y = c[1] - r * 0.62 if t >= 0 else centre(0)[1] - radius_at(0.0) * 0.62
+        # the floor follows the tunnel's NOMINAL radius — not the mouth's flare or a chamber's bulge: with the flare it ramped
+        # up 3.5 m into the mouth and, seen from outside at eye level, one looked under it at the hill behind
+        floor_y = c[1] - floor_radius(t) * 0.62 if t >= 0 else centre(0)[1] - floor_radius(0.0) * 0.62
         floor_y -= 0.0 if t >= 0 else 0.25 * (-t * L / max(0.1, a.apron))              # the apron floor dips to meet the ground
         if prev_c is not None: arc += math.dist(prev_c, c)
         prev_c = c
@@ -162,6 +172,12 @@ def main():
             if 0.02 <= t <= 0.97 and abs(u) < 0.8: floor_pts.append([round(c[0] + dx, 2), round(floor_y + bump, 2), round(c[2] + dz, 2)])
         floor_rows.append(fr)
 
+    # the skylight: where along the tunnel and above which point of the axis (x, axis y, z)
+    sky = None
+    if 0.0 <= a.skylight <= 1.0:
+        cs = centre(a.skylight); sky = (cs[0], cs[1], cs[2])
+    opened = []   # vertices of the left-out ceiling quads (the opening's rim heights)
+
     # ---------------------------------------------------------------- the faces (counter-clockwise seen from INSIDE)
     def tri(prim, i0, i1, i2):
         p0, p1, p2 = P[i0], P[i1], P[i2]
@@ -175,6 +191,8 @@ def main():
             # orientation: the face normal must point towards the tube axis between the two rings
             i0, i1, i2, i3 = A[s], A[s + 1], B[s + 1], B[s]
             ca = [(P[i0][k] + P[i1][k] + P[i2][k] + P[i3][k]) / 4 for k in range(3)]
+            if sky is not None and math.hypot(ca[0] - sky[0], ca[2] - sky[2]) < a.skylight_radius and ca[1] > sky[1]:
+                opened.extend([i0, i1, i2, i3]); continue   # the shaft's opening in the ceiling
             cc = [(ring_centres[ri][k] + ring_centres[ri + 1][k]) * 0.5 for k in range(3)]
             to_axis = (cc[0] - ca[0], cc[1] - ca[1], cc[2] - ca[2])
             e1 = (P[i2][0] - P[i0][0], P[i2][1] - P[i0][1], P[i2][2] - P[i0][2]); e2 = (P[i1][0] - P[i0][0], P[i1][1] - P[i0][1], P[i1][2] - P[i0][2])
@@ -232,24 +250,98 @@ def main():
             if nz >= 0: tri("walls", i0, i2, i1); tri("walls", i0, i3, i2)
             else: tri("walls", i0, i1, i2); tri("walls", i0, i2, i3)
 
-    # the far end: a cap fan to a centre point (a rock wall), facing the mouth
-    last = ring_rows[-1]; cl = centre(ts[-1])
-    cap = vertex((cl[0], cl[1] - 0.1, cl[2] - 0.3), (0.0, 0.0, 1.0), (0.5, arc / a.tile))
-    for s in range(segs):
-        i0, i1 = last[s], last[s + 1]
-        e1 = (P[i1][0] - P[cap][0], P[i1][1] - P[cap][1], P[i1][2] - P[cap][2]); e2 = (P[i0][0] - P[cap][0], P[i0][1] - P[cap][1], P[i0][2] - P[cap][2])
-        nz = e1[0] * e2[1] - e1[1] * e2[0]
-        if nz >= 0: tri("walls", cap, i1, i0)
-        else: tri("walls", cap, i0, i1)
-    # the floor's far end closes with the cap too (a wedge from the last floor row to the cap point, in the floor's uv space)
-    FL = floor_rows[-1]
-    fcap = vertex(P[cap], (0.0, 1.0, 0.0), (P[cap][0] / a.tile, P[cap][2] / a.tile))
-    for k in range(len(FL) - 1):
-        i0, i1 = FL[k], FL[k + 1]
-        e1 = (P[i1][0] - P[fcap][0], P[i1][1] - P[fcap][1], P[i1][2] - P[fcap][2]); e2 = (P[i0][0] - P[fcap][0], P[i0][1] - P[fcap][1], P[i0][2] - P[fcap][2])
-        ny = e1[2] * e2[0] - e1[0] * e2[2]
-        if ny >= 0: tri("floor", fcap, i0, i1)
-        else: tri("floor", fcap, i1, i0)
+    # the skylight's chimney: a rough tube from just under the ceiling up to the ground above (inward faces), a little wider
+    # than the opening so no crack shows past it, and a flat rock rim on top that hides the terrain hole's edge
+    if sky is not None and opened:
+        Rc = a.skylight_radius + 0.8
+        ceil_lo = min(P[i][1] for i in opened)
+        y_b = ceil_lo - 0.4
+        y_t = a.skylight_top if a.skylight_top is not None else max(P[i][1] for i in opened) + 8.0
+        nseg_c = 20
+        nring = max(3, int(math.ceil((y_t - y_b) / 1.0)))
+        crows = []
+        for k in range(nring + 1):
+            y = y_b + (y_t - y_b) * k / nring
+            row = []
+            for sidx in range(nseg_c + 1):
+                ang = 2 * math.pi * sidx / nseg_c
+                nzv = fbm(11.0 + math.cos(ang) * 1.5 + y * 0.21, 13.0 + math.sin(ang) * 1.5 + y * 0.17)
+                rr = Rc * (1.0 + 0.16 * nzv) * (1.0 + 0.18 * k / nring)          # rough, a little wider towards the top
+                p = (sky[0] + math.cos(ang) * rr, y, sky[2] + math.sin(ang) * rr)
+                row.append(vertex(p, (-math.cos(ang), 0.0, -math.sin(ang)), (sidx / nseg_c * (2 * math.pi * Rc / a.tile), y / a.tile)))
+            crows.append(row)
+        for k in range(nring):
+            for sidx in range(nseg_c):
+                i0, i1, i2, i3 = crows[k][sidx], crows[k][sidx + 1], crows[k + 1][sidx + 1], crows[k + 1][sidx]
+                ca = [(P[i0][q] + P[i1][q] + P[i2][q] + P[i3][q]) / 4 for q in range(3)]
+                to_axis = (sky[0] - ca[0], 0.0, sky[2] - ca[2])
+                e1 = (P[i2][0] - P[i0][0], P[i2][1] - P[i0][1], P[i2][2] - P[i0][2]); e2 = (P[i1][0] - P[i0][0], P[i1][1] - P[i0][1], P[i1][2] - P[i0][2])
+                n = (e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0])
+                if n[0] * to_axis[0] + n[2] * to_axis[2] >= 0: tri("walls", i0, i2, i1); tri("walls", i0, i3, i2)
+                else: tri("walls", i0, i1, i2); tri("walls", i0, i2, i3)
+        # the rim: from the chimney's top ring out to a ragged outer edge that dips into the ground, facing up
+        top = crows[-1]
+        inner = [vertex(P[top[sidx]], (0.0, 1.0, 0.0), (P[top[sidx]][0] / a.tile, P[top[sidx]][2] / a.tile)) for sidx in range(nseg_c + 1)]
+        outer = []
+        for sidx in range(nseg_c + 1):
+            ang = 2 * math.pi * sidx / nseg_c
+            q = P[top[sidx]]
+            ro = math.hypot(q[0] - sky[0], q[2] - sky[2]) + 1.6 + 0.5 * fbm(17.0 + math.cos(ang) * 1.2, 19.0 + math.sin(ang) * 1.2)
+            p = (sky[0] + math.cos(ang) * ro, y_t - 0.7, sky[2] + math.sin(ang) * ro)
+            outer.append(vertex(p, (0.0, 1.0, 0.0), (p[0] / a.tile, p[2] / a.tile)))
+        for sidx in range(nseg_c):
+            i0, i1, i2, i3 = inner[sidx], inner[sidx + 1], outer[sidx + 1], outer[sidx]
+            e1 = (P[i2][0] - P[i0][0], P[i2][1] - P[i0][1], P[i2][2] - P[i0][2]); e2 = (P[i1][0] - P[i0][0], P[i1][1] - P[i0][1], P[i1][2] - P[i0][2])
+            ny = e1[2] * e2[0] - e1[0] * e2[2]
+            if ny <= 0: tri("walls", i0, i2, i1); tri("walls", i0, i3, i2)
+            else: tri("walls", i0, i1, i2); tri("walls", i0, i2, i3)
+        skylight_info.update({"x": sky[0], "z": sky[2], "radius": Rc, "rim": Rc + 1.6, "ceiling": ceil_lo, "top": y_t})
+
+    # the far end: a rock wall that bulges away from the tunnel — rings from the last tube ring in to a centre point, pushed
+    # along the axis like a shallow dome, with rocky noise. Its own planar uvs (across the end) keep the texture from
+    # pinching where the rings meet (the old fan of shrinking rings squeezed it into a star); below the floor it lies flat
+    ce = ring_centres[-1]
+    ca_, cb_ = centre(0.99), centre(1.01)
+    fe = (cb_[0] - ca_[0], 0.0, cb_[2] - ca_[2]); fl_ = math.hypot(fe[0], fe[2]) or 1.0; fe = (fe[0] / fl_, 0.0, fe[2] / fl_)
+    re_ = (-fe[2], 0.0, fe[0])
+    r_end = radius_at(1.0)
+    floor_end = ce[1] - r_end * 0.62
+    inside = (ce[0] - fe[0] * 3.0, ce[1], ce[2] - fe[2] * 3.0)   # a point back in the tunnel: the end wall faces it
+    def end_uv(p):
+        return ((p[0] - ce[0]) * re_[0] + (p[2] - ce[2]) * re_[2]) / a.tile + 0.37, (p[1] - ce[1]) / a.tile + 0.61
+    def face_in(i0, i1, i2, prim="walls"):
+        p0, p1, p2 = P[i0], P[i1], P[i2]
+        e1 = (p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]); e2 = (p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2])
+        n = (e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0])
+        c = ((p0[0] + p1[0] + p2[0]) / 3, (p0[1] + p1[1] + p2[1]) / 3, (p0[2] + p1[2] + p2[2]) / 3)
+        to_in = (inside[0] - c[0], inside[1] - c[1], inside[2] - c[2])
+        if n[0] * to_in[0] + n[1] * to_in[1] + n[2] * to_in[2] >= 0: prims[prim] += [i0, i1, i2]
+        else: prims[prim] += [i0, i2, i1]
+    K = 5
+    prev = []
+    for sidx in range(segs + 1):   # the last tube ring again, with the end's uvs (a crease, so the uv seam does not show)
+        q = P[ring_rows[-1][sidx]]
+        prev.append(vertex(q, (-fe[0], 0.0, -fe[2]), end_uv(q)))
+    for k in range(1, K + 1):
+        f = 1.0 - k / K                                   # 0.8 .. 0: how far out from the centre
+        depth = r_end * 0.55 * (1.0 - f * f)              # the dome: flat at the rim, deepest in the middle
+        row = []
+        for sidx in range(segs + 1):
+            q = P[ring_rows[-1][sidx % segs]]
+            ox, oy, oz = q[0] - ce[0], q[1] - ce[1], q[2] - ce[2]
+            ang = 2 * math.pi * sidx / segs
+            bump = 0.35 * r_end * 0.25 * fbm(7.0 + math.cos(ang) * 1.3 * f + k * 0.4, 9.0 + math.sin(ang) * 1.3 * f) if k < K else 0.0
+            d = depth + bump
+            p = (ce[0] + ox * f + fe[0] * d, ce[1] + oy * f, ce[2] + oz * f + fe[2] * d)
+            if p[1] < floor_end: p = (p[0], floor_end + 0.02, p[2])
+            row.append(vertex(p, (-fe[0], 0.0, -fe[2]), end_uv(p)))
+        if k < K:
+            for sidx in range(segs):
+                face_in(prev[sidx], prev[sidx + 1], row[sidx + 1]); face_in(prev[sidx], row[sidx + 1], row[sidx])
+        else:
+            for sidx in range(segs):   # the innermost "ring" is the centre point (all its vertices coincide): a fan
+                face_in(prev[sidx], prev[sidx + 1], row[0])
+        prev = row
 
     # ---------------------------------------------------------------- smooth normals from the faces (area weighted)
     acc = [[0.0, 0.0, 0.0] for _ in P]
@@ -353,7 +445,7 @@ def main():
     with open(a.out, "w", encoding="utf-8") as f: json.dump(gltf, f, indent=1)
     if a.points:
         path = [[round(ring_centres[i][0], 2), round(ring_centres[i][1], 2), round(ring_centres[i][2], 2), round(radius_at(ts[i]), 2), round(ts[i], 3)] for i in range(len(ts))]
-        with open(a.points, "w", encoding="utf-8") as f: json.dump({"floor": floor_pts, "mouth": [centre(0)[0], 0.0, 0.0], "end": list(centre(1.0)), "path": path}, f)
+        with open(a.points, "w", encoding="utf-8") as f: json.dump({"floor": floor_pts, "mouth": [centre(0)[0], 0.0, 0.0], "end": list(centre(1.0)), "path": path, "skylight": skylight_info}, f)
     tris = sum(len(v) for v in prims.values()) // 3
     mouth_floor = min(P[i][1] for i in floor_rows[[i for i, t in enumerate(ts) if t >= 0][0]])
     print(f"mouth floor at local y {mouth_floor:.2f}: place the entity {-mouth_floor:.2f} m above the ground in front of the mouth")

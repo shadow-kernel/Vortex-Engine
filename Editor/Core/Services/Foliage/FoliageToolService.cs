@@ -60,7 +60,8 @@ namespace Editor.Core.Services.Foliage
         /// <summary>1 paint (cyan), 2 erase (amber) — the brush disc colour.</summary>
         public static int BrushKind() => Tool == FoliageTool.Erase ? 2 : 1;
 
-        /// <summary>The surface point under a viewport position: terrains first, then the nearest mesh box.</summary>
+        /// <summary>The surface point under a viewport position: the nearest of the terrains and the meshes' triangles.</summary>
+        private static bool _hitOnMesh;   // the last cursor hit lies on a mesh (a cave floor): paint from just above it
         public static bool CursorHit(float nx, float ny, float aspect, out Vector3 hit)
         {
             hit = default(Vector3);
@@ -71,18 +72,18 @@ namespace Editor.Core.Services.Foliage
             Vector3 th; bool haveTerrain = TerrainService.Raycast(o, d, 5000f, out th, out terrain);
             float best = haveTerrain ? Vector3.Distance(o, th) : float.MaxValue;
             if (haveTerrain) hit = th;
+            _hitOnMesh = false;
             var scene = ProjectData.Current?.ActiveScene;
             if (scene != null)
             {
                 try
                 {
-                    var hits = RaycastService.Instance.RaycastAll(ray, scene);
-                    foreach (var h in hits)
+                    // the meshes' real triangles (a cave's floor, a rock's top), not their boxes
+                    Vector3 mh, mn; GameEntity me;
+                    if (FoliageService.MeshRaycast(scene, o, Vector3.Normalize(d), Math.Min(best, 5000f), out mh, out mn, out me))
                     {
-                        if (h.Entity == null) continue;
-                        if (h.Entity.GetComponent<Editor.ECS.Components.Rendering.Foliage>() != null || h.Entity.GetComponent<Editor.ECS.Components.Rendering.Terrain>() != null) continue;
-                        if (h.Distance < best) { best = h.Distance; hit = new Vector3(h.Point.X, h.Point.Y, h.Point.Z); }
-                        break;   // sorted by distance
+                        float md = Vector3.Distance(o, mh);
+                        if (md < best) { best = md; hit = mh; _hitOnMesh = true; }
                     }
                 }
                 catch { }
@@ -144,8 +145,11 @@ namespace Editor.Core.Services.Foliage
             {
                 if (f.Types.Count == 0) return;
                 float s = Math.Max(0.02f, Math.Min(1f, Strength)) * 0.35f;
+                // on a mesh (a cave's floor under a hill) the brush paints the surfaces below a point just above the hit;
+                // on a terrain, as before, what the sky sees
+                float fromY = _hitOnMesh ? hit.Y + Radius * 1.5f + 3f : float.NaN;
                 if (TypeIndex >= 0 && TypeIndex < f.Types.Count)
-                    FoliageService.Paint(e, TypeIndex, hit, Radius, s, _seed++);
+                    FoliageService.Paint(e, TypeIndex, hit, Radius, s, _seed++, fromY);
                 else
                 {
                     // every type at once: each gets a share of the brush, the weights decide the share
@@ -155,7 +159,7 @@ namespace Editor.Core.Services.Foliage
                     {
                         float share = total > 0f ? Math.Max(0f, f.Types[i].Weight) / total : 1f / f.Types.Count;
                         if (share <= 0f) continue;
-                        FoliageService.Paint(e, i, hit, Radius, s * share * f.Types.Count, _seed++);
+                        FoliageService.Paint(e, i, hit, Radius, s * share * f.Types.Count, _seed++, fromY);
                     }
                 }
             }

@@ -49,6 +49,16 @@ float hash12(vec2 p)
 	return fract(p.x * p.y);
 }
 
+// A 4x4 Bayer matrix (#cave checker): every 4x4 block of pixels holds each of 16 rotations exactly once, and the 4x4 box
+// blur that follows averages them all — 16x the directions. The white-noise hash left blotches that the old 4-tap blur
+// (point taps on texel corners: four single texels) kept as a checker pattern, worst where the bounce is the only light.
+const uint kBayer4[16] = uint[16](0u, 8u, 2u, 10u, 12u, 4u, 14u, 6u, 3u, 11u, 1u, 9u, 15u, 7u, 13u, 5u);
+float bayer4(vec2 p)
+{
+	uvec2 q = uvec2(p) & 3u;
+	return (float(kBayer4[q.y * 4u + q.x]) + 0.5) / 16.0;
+}
+
 void main()
 {
 	float d = texture(u_depth, v_uv).r;
@@ -59,7 +69,7 @@ void main()
 	vec3 N = normalize(cross(dFdy(P), dFdx(P)));
 	float pix_radius = clamp(c.proj_scale * c.radius / max(P.z, 0.1), 2.0, 64.0);
 	const int TAPS = 12;
-	float rot = hash12(gl_FragCoord.xy) * 6.2831853;
+	float rot = bayer4(gl_FragCoord.xy) * 6.2831853;
 	float occlusion = 0.0;
 	for (int k = 0; k < TAPS; ++k)
 	{
@@ -82,7 +92,7 @@ void main()
 	{
 		vec3 up = abs(N.y) < 0.99 ? vec3(0, 1, 0) : vec3(1, 0, 0);
 		vec3 T = normalize(cross(up, N)), B = cross(N, T);
-		float h2 = hash12(gl_FragCoord.yx + 7.31);
+		float h2 = bayer4(gl_FragCoord.yx + vec2(1.0, 2.0));
 		const int DIRS = 6, STEPS = 6;
 		for (int k = 0; k < DIRS; ++k)
 		{
@@ -143,7 +153,7 @@ void main()
 				float tx = c.rsm_tile.w / c.rsm_tile.z;   // one atlas texel in tile uv
 				float mpt = Rm / max(R, 1e-5) * tx;        // metres per texel of this cascade
 				vec3 E = vec3(0.0);
-				float ang = hash12(gl_FragCoord.xy * 1.7 + 3.1) * 6.2831853;
+				float ang = bayer4(gl_FragCoord.xy + vec2(2.0, 3.0)) * 6.2831853;
 				for (int k = 0; k < K; ++k)
 				{
 					float a = ang + float(k) * 2.3999632;
