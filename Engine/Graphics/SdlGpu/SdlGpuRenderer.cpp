@@ -690,10 +690,11 @@ namespace vortex::graphics::sdlgpu
 		return true;
 	}
 
-	// Temporal anti-aliasing (#141), the plain version: every pixel takes the previous resolved frame, reprojected through
-	// the depth and the previous view-projection (the camera's motion), clamps it to this frame's 3x3 neighbourhood (no
-	// ghosting of what changed) and blends 88 % of it with 12 % of the new frame. No projection jitter yet — the picture
-	// gains stability (foliage, thin fronds, specular sparkle at distance) rather than sub-pixel resolution.
+	// Temporal anti-aliasing (#141): every pixel takes the previous resolved frame, reprojected through the depth and the
+	// previous view-projection (the camera's motion), clamps it to this frame's 3x3 neighbourhood (no ghosting of what
+	// changed) and blends 88 % of it with 12 % of the new frame. The scene is rasterised a sub-pixel off every frame
+	// (apply_taa_jitter), so the history gathers real sub-pixel coverage: edges, thin fronds and grass blades resolve
+	// instead of stair-stepping.
 	bool SdlGpuRenderer::record_taa(SDL_GPUCommandBuffer* cmd, WindowSurface& surface, const FrameView& view, u32 w, u32 h)
 	{
 		if (!cmd || !m_device || !m_pipeline_taa || !surface.postfx.color || w < 16 || h < 16) return false;
@@ -718,6 +719,7 @@ namespace vortex::graphics::sdlgpu
 		XMStoreFloat4x4(&cb.reproj, XMLoadFloat4x4(&view.inverse_view_projection) * XMLoadFloat4x4(&surface.taa_prev_vp));
 		cb.texel[0] = 1.0f / (float)w; cb.texel[1] = 1.0f / (float)h;
 		cb.blend = 0.12f; cb.valid = surface.taa_valid ? 1.0f : 0.0f;
+		cb.jitter[0] = surface.taa_jitter_uv[0]; cb.jitter[1] = surface.taa_jitter_uv[1];
 		SDL_GPUColorTargetInfo color{};
 		color.texture = surface.taa_out; color.load_op = SDL_GPU_LOADOP_DONT_CARE; color.store_op = SDL_GPU_STOREOP_STORE;
 		SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &color, 1, nullptr);
@@ -735,6 +737,38 @@ namespace vortex::graphics::sdlgpu
 		surface.taa_prev_vp = view.view_projection;
 		surface.taa_valid = true;
 		return true;
+	}
+
+	namespace
+	{
+		// the radical inverse of i in base b: the Halton sequence (base 2 / 3 = a well spread 2D point set)
+		float halton(u32 i, u32 b)
+		{
+			float f = 1.0f, r = 0.0f;
+			while (i > 0) { f /= (float)b; r += f * (float)(i % b); i /= b; }
+			return r;
+		}
+	}
+
+	// TAA jitter: the world and the first-person layer are rasterised up to half a render pixel off their centres, a new
+	// Halton (2, 3) offset every frame over a cycle of 8. The resolve weighs this frame's samples by where they really sit
+	// (taa.metal), so the history converges to the pixel's coverage rather than one point sample. Only the raster
+	// matrices move: frustum culling, the TAA reprojection, the GI history and the sky keep view.view_projection.
+	// VORTEX_NO_TAA_JITTER=1 turns it off (the plain TAA of v3.4.x).
+	void SdlGpuRenderer::apply_taa_jitter(WindowSurface& surface, FrameView& view, u32 render_w, u32 render_h, bool on)
+	{
+		using namespace DirectX;
+		surface.taa_jitter_uv[0] = surface.taa_jitter_uv[1] = 0.0f;
+		static const bool disabled = platform::env_flag("VORTEX_NO_TAA_JITTER");
+		if (!on || disabled || render_w < 16 || render_h < 16) return;
+		const u32 i = (surface.taa_frame++ & 7u) + 1u;
+		const float jx = halton(i, 2) - 0.5f, jy = halton(i, 3) - 0.5f;   // render pixels, x right / y down
+		// NDC: x right, y up — a translation after the projection shifts the picture by (dx, dy) whatever the depth
+		const XMMATRIX T = XMMatrixTranslation(2.0f * jx / (float)render_w, -2.0f * jy / (float)render_h, 0.0f);
+		XMStoreFloat4x4(&view.frame.view_projection, XMLoadFloat4x4(&view.frame.view_projection) * T);
+		XMStoreFloat4x4(&view.viewmodel.view_projection, XMLoadFloat4x4(&view.viewmodel.view_projection) * T);
+		surface.taa_jitter_uv[0] = jx / (float)render_w;
+		surface.taa_jitter_uv[1] = jy / (float)render_h;
 	}
 
 	void SdlGpuRenderer::release_taa(WindowSurface& surface)
@@ -896,7 +930,8 @@ namespace vortex::graphics::sdlgpu
 		}
 
 		FrameView view = build_main_view(rw, rh);
-		if (slot == 0) m_frame_constants = view.frame;
+		if (slot == 0) m_frame_constants = view.frame;   // the unjittered matrices persist
+		apply_taa_jitter(surface, view, rw, rh, post_on && m_postfx.params().taa && m_pipeline_taa != nullptr);
 		record_scene(cmd, surface.scene, view, m_skybox_enabled, m_grid_visible, true, 0, true);
 
 		// Composite the scene into the present target (render-scale upscale), through the post chain if active.

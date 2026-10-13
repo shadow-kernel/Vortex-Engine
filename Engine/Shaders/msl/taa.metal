@@ -1,6 +1,8 @@
-// Temporal anti-aliasing (#141), the plain version: the previous resolved frame reprojected through this frame's depth and
-// the previous view-projection, clamped to this frame's 3x3 neighbourhood, blended 88 / 12 with the new frame. Runs on the
-// LDR picture before the grade / FXAA / vignette (SdlGpuRenderer::record_taa). No projection jitter yet.
+// Temporal anti-aliasing (#141): the previous resolved frame reprojected through this frame's depth and the previous
+// view-projection, clamped to this frame's 3x3 neighbourhood, blended 88 / 12 with the new frame. Runs on the LDR picture
+// before the grade / FXAA / vignette (SdlGpuRenderer::record_taa). The scene is rasterised a sub-pixel off every frame
+// (SdlGpuRenderer::apply_taa_jitter); this frame's colour at the pixel centre is rebuilt from the 3x3 samples weighted by
+// where they really sit, so the history gathers the pixel's coverage instead of one wobbling point sample.
 #include <metal_stdlib>
 using namespace metal;
 
@@ -14,6 +16,7 @@ struct TaaCB
 {
     float4x4 reproj;   // this frame's NDC (x, y, depth, 1) -> the previous frame's clip space
     float2 texel; float blend; float valid;
+    float4 jitter;     // xy: how far this frame's samples sit off their pixel centres (uv); zw unused
 };
 
 
@@ -46,16 +49,23 @@ fragment float4 TaaPS(BlitOut in [[stage_in]], constant TaaCB& c [[buffer(0)]],
                       depth2d<float> depth [[texture(2)]], sampler depth_smp [[sampler(2)]])
 {
     float2 uv = in.uv;
-    float3 c0 = cur.sample(cur_smp, uv).rgb;
-    // the neighbourhood box the history may not leave (what changed since last frame is not ghosted)
-    float3 mn = c0, mx = c0;
+    // the neighbourhood box the history may not leave (what changed since last frame is not ghosted), and this frame's
+    // colour at the pixel centre: each sample sits `jitter` off its own centre, weighted by its distance in pixels
+    // (the Blackman-Harris fit exp(-2.29 d^2)) — without jitter the centre sample dominates
+    float2 jp = c.jitter.xy / c.texel;
+    float3 mn = float3(1e5), mx = float3(-1e5), sum = float3(0.0);
+    float wsum = 0.0;
     for (int y = -1; y <= 1; ++y)
         for (int x = -1; x <= 1; ++x)
         {
-            if (x == 0 && y == 0) continue;
             float3 n = cur.sample(cur_smp, uv + float2(x, y) * c.texel).rgb;
             mn = min(mn, n); mx = max(mx, n);
+            float2 d = float2(x, y) - jp;
+            float wk = exp(-2.29 * dot(d, d));
+            sum += n * wk; wsum += wk;
         }
+    // no jitter (VORTEX_NO_TAA_JITTER): the centre sample as it is, the plain TAA
+    float3 c0 = any(c.jitter.xy != 0.0) ? sum / max(wsum, 1e-4) : cur.sample(cur_smp, uv).rgb;
     // where this pixel was last frame
     float z = depth.sample(depth_smp, uv);
     float4 pc = c.reproj * float4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, z, 1.0);

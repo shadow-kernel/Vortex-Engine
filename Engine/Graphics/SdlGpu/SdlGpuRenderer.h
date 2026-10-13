@@ -482,8 +482,9 @@ namespace vortex::graphics::sdlgpu
 		{
 			DirectX::XMFLOAT4X4 reproj;   // this frame's NDC (x, y, depth, 1) -> the previous frame's clip space
 			float texel[2]; float blend; float valid;
+			float jitter[4];              // xy: how far this frame's samples sit off their pixel centres (uv); zw unused
 		};
-		static_assert(sizeof(TaaCB) == 80, "TaaCB must byte-match taa.metal");
+		static_assert(sizeof(TaaCB) == 96, "TaaCB must byte-match taa.metal");
 
 		// A view = camera matrices + the lighting snapshot the passes read.
 		struct FrameView
@@ -582,6 +583,9 @@ namespace vortex::graphics::sdlgpu
 			u32 taa_w{ 0 }, taa_h{ 0 };
 			bool taa_valid{ false };
 			DirectX::XMFLOAT4X4 taa_prev_vp{};
+			// the sub-pixel jitter (Halton 2,3 over 8 frames): the frame counter and this frame's offset in uv
+			u32 taa_frame{ 0 };
+			float taa_jitter_uv[2]{ 0.0f, 0.0f };
 		};
 
 		struct CustomShader { std::string path; unsigned long long mtime{ 0 }; };
@@ -627,6 +631,9 @@ namespace vortex::graphics::sdlgpu
 		// temporal anti-aliasing (#141): resolve surface.postfx.color against the surface's history into surface.taa_out
 		bool record_taa(SDL_GPUCommandBuffer* cmd, WindowSurface& surface, const FrameView& view, u32 w, u32 h);
 		void release_taa(WindowSurface& surface);
+		// moves the scene's raster matrices (world + first-person layer) a sub-pixel step for the TAA resolve; culling, the
+		// reprojection and the GI history keep the unjittered ones
+		void apply_taa_jitter(WindowSurface& surface, FrameView& view, u32 render_w, u32 render_h, bool on);
 		void release_target(GpuTarget& target);
 		void release_pipeline_set(PipelineSet& set);
 		void wait_idle();
