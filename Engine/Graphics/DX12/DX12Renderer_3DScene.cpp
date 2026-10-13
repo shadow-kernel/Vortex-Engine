@@ -740,6 +740,13 @@ namespace vortex::graphics::dx12
 			const D3D12_GPU_DESCRIPTOR_HANDLE sd = m_scene_depth_srv.ptr ? m_scene_depth_srv : fallback;
 			if (sc.ptr != 0) m_command_list->SetGraphicsRootDescriptorTable(15, sc);
 			if (sd.ptr != 0) m_command_list->SetGraphicsRootDescriptorTable(16, sd);
+			// t14 / t15: the world radiance cache (Lumen step 1) — the white texture without one
+			Texture* ga = (m_gi_vol_a != id::invalid_id) ? rg.get_texture(m_gi_vol_a) : nullptr;
+			Texture* gb = (m_gi_vol_b != id::invalid_id) ? rg.get_texture(m_gi_vol_b) : nullptr;
+			const D3D12_GPU_DESCRIPTOR_HANDLE gva = (ga && ga->is_valid()) ? ga->srv_gpu() : fallback;
+			const D3D12_GPU_DESCRIPTOR_HANDLE gvb = (gb && gb->is_valid()) ? gb->srv_gpu() : fallback;
+			if (gva.ptr != 0) m_command_list->SetGraphicsRootDescriptorTable(17, gva);
+			if (gvb.ptr != 0) m_command_list->SetGraphicsRootDescriptorTable(18, gvb);
 		}
 	}
 
@@ -800,6 +807,12 @@ namespace vortex::graphics::dx12
 		if (m_ssao_current_srv.ptr != 0)
 			m_command_list->SetGraphicsRootDescriptorTable(13, m_ssao_current_srv); // t10 (#32)
 		{ auto env = env_map_srv(); if (env.ptr != 0) m_command_list->SetGraphicsRootDescriptorTable(14, env); } // t11 (IBL step 2)
+		{
+			// t14 / t15: the standard PS reads the world radiance cache -> the tables must be bound; the white texture fails
+			// the shader's header check, so gizmos keep the plain sky light
+			auto& rg = ResourceRegistry::instance(); Texture* white = rg.get_texture(rg.default_white_texture());
+			if (white && white->is_valid() && white->srv_gpu().ptr != 0) { m_command_list->SetGraphicsRootDescriptorTable(17, white->srv_gpu()); m_command_list->SetGraphicsRootDescriptorTable(18, white->srv_gpu()); }
+		}
 		m_command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
 		auto& reg = ResourceRegistry::instance();

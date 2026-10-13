@@ -276,9 +276,14 @@ namespace vortex::graphics::dx12
 					m_command_list->SetGraphicsRootDescriptorTable(13, m_ssao_current_srv); // t10 (#32)
 				{ auto env = env_map_srv(); if (env.ptr != 0) m_command_list->SetGraphicsRootDescriptorTable(14, env); } // t11 (IBL step 2)
 				{
-					// t12 / t13 (#200): no scene copies in a preview — the white fallback makes the water blend plainly
+					// t12 / t13 (#200): no scene copies in a preview — the white fallback makes the water blend plainly.
+					// t14 / t15: no world radiance cache in a preview either — white fails the header check, the sky light stands in.
 					auto& rg = ResourceRegistry::instance(); Texture* white = rg.get_texture(rg.default_white_texture());
-					if (white && white->is_valid() && white->srv_gpu().ptr != 0) { m_command_list->SetGraphicsRootDescriptorTable(15, white->srv_gpu()); m_command_list->SetGraphicsRootDescriptorTable(16, white->srv_gpu()); }
+					if (white && white->is_valid() && white->srv_gpu().ptr != 0)
+					{
+						m_command_list->SetGraphicsRootDescriptorTable(15, white->srv_gpu()); m_command_list->SetGraphicsRootDescriptorTable(16, white->srv_gpu());
+						m_command_list->SetGraphicsRootDescriptorTable(17, white->srv_gpu()); m_command_list->SetGraphicsRootDescriptorTable(18, white->srv_gpu());
+					}
 				}
 				m_command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 			
