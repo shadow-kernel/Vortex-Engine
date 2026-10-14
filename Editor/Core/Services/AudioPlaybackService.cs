@@ -34,6 +34,9 @@ namespace Editor.Core.Services
             /// <summary>Script called Pause() — ResumeAll (editor un-pause) must NOT
             /// override a deliberate script pause.</summary>
             public bool ScriptPaused;
+            /// <summary>The voice was (re)started and no tick has pushed it yet — a fade now belongs to the "start silent,
+            /// then fade in" idiom (#404, <see cref="PlanFade"/>).</summary>
+            public bool FreshStart;
             /// <summary>Container roll of the CURRENT voice — the per-frame property
             /// push must keep multiplying these in or the variation gets stomped.</summary>
             public float RolledVolumeScale = 1f;
@@ -162,11 +165,17 @@ namespace Editor.Core.Services
                     {
                         PushProperties(b);
                     }
+                    b.FreshStart = false;   // pushed (or not playing): a later fade is no longer part of a start (#404)
                 }
 
-                // Prune finished one-shots so the pause/stop lists stay small.
+                // One-shots: prune the finished ones (the pause/stop lists stay small); the rest get the same reverb
+                // send as a component voice — their own mix x how deep the listener sits in reverb zones (#496).
                 for (int i = _oneShots.Count - 1; i >= 0; i--)
-                    if (!VortexAudio.IsVoiceValid(_oneShots[i])) _oneShots.RemoveAt(i);
+                {
+                    var s = _oneShots[i];
+                    if (!VortexAudio.IsVoiceValid(s.Handle)) { _oneShots.RemoveAt(i); continue; }
+                    if (s.ReverbMix > 0f) VortexAudio.SetVoiceReverbSend(s.Handle, s.ReverbMix * _zoneWeight);
+                }
             }
             catch (Exception ex)
             {
@@ -187,7 +196,7 @@ namespace Editor.Core.Services
             foreach (var b in _bindings) VortexAudio.PauseVoice(b.Handle);
             VortexAudio.PauseVoice(_musicCurrent);
             VortexAudio.PauseVoice(_musicPrevious);
-            foreach (var h in _oneShots) VortexAudio.PauseVoice(h);
+            foreach (var s in _oneShots) VortexAudio.PauseVoice(s.Handle);
         }
 
         public void ResumeAll()
@@ -200,7 +209,7 @@ namespace Editor.Core.Services
             }
             VortexAudio.ResumeVoice(_musicCurrent);
             VortexAudio.ResumeVoice(_musicPrevious);
-            foreach (var h in _oneShots) VortexAudio.ResumeVoice(h);
+            foreach (var s in _oneShots) VortexAudio.ResumeVoice(s.Handle);
         }
 
         /// <summary>Stop every component voice and forget the scene. Play is non-destructive:
@@ -221,8 +230,10 @@ namespace Editor.Core.Services
             _musicCurrent = VortexAudio.InvalidVoice;
             _musicPrevious = VortexAudio.InvalidVoice;
             _musicCurrentClip = null;
-            foreach (var h in _oneShots) VortexAudio.StopVoice(h);
+            foreach (var s in _oneShots) VortexAudio.StopVoice(s.Handle);
             _oneShots.Clear();
+            _warnedInaudibleFades.Clear();
+            _notedScaledZones.Clear();
             _zones.Clear();
             _zoneWeight = 0f;
             _lastDecay = _lastWet = _lastPredelay = -1f;
@@ -371,6 +382,7 @@ namespace Editor.Core.Services
             var b = FindBinding(source);
             if (b == null || b.Handle == VortexAudio.InvalidVoice) return;
             VortexAudio.FadeVoice(b.Handle, 0f, 0f);          // snap envelope to 0
+            BeginAudibleFade(b, 1f, "FadeIn");                // just (re)started: at Volume 0 it fades in to full volume (#404)
             VortexAudio.FadeVoice(b.Handle, 1f, seconds);     // glide up
         }
 
@@ -389,19 +401,68 @@ namespace Editor.Core.Services
         public void ScriptFadeTo(AudioSource source, float target, float seconds)
         {
             var b = FindBinding(source);
-            if (b != null) VortexAudio.FadeVoice(b.Handle, target, seconds);
+            if (b == null || b.Handle == VortexAudio.InvalidVoice) return;
+            BeginAudibleFade(b, target, "FadeTo");            // the "start silent, then fade in" idiom takes the level over (#404)
+            VortexAudio.FadeVoice(b.Handle, target, seconds);
         }
 
-        /// <summary>In-flight one-shot handles: tracked so Pause/Stop/scene switches
-        /// silence them with everything else, pruned as they finish. Scripts still
-        /// never see a handle.</summary>
-        private readonly List<ulong> _oneShots = new List<ulong>();
+        /// <summary>What a fade towards <paramref name="target"/> does with the source's own level (#404). The envelope
+        /// multiplies Volume, so the natural "start silent, then fade in" — Volume = 0; Play(); FadeTo(0.95f, 4f) — stayed
+        /// silent forever. That idiom, and only that one (a source started at Volume 0 whose voice no tick has pushed yet, i.e.
+        /// Play() earlier in the same frame — FadeIn always is), takes the level over: Volume becomes 1 and the envelope
+        /// carries the whole level, so it ends at 0.95 (FadeIn at full volume). Any later fade composes with Volume as it
+        /// always did — a radio muted with Volume = 0 stays silent when a dialogue system ducks everything with FadeTo(0.3f)
+        /// — and a fade that cannot be heard (Volume 0 or Mute) warns once per source.</summary>
+        internal enum FadeStart { Composed, TakesOverLevel, SilentVolume, Muted }
+
+        internal static FadeStart PlanFade(AudioSource source, float target, bool freshStart)
+        {
+            if (!(target > 0f)) return FadeStart.Composed;   // fading down / out: Volume decides nothing
+            if (source.Mute) return FadeStart.Muted;
+            if (source.Volume > 0f) return FadeStart.Composed;
+            return freshStart ? FadeStart.TakesOverLevel : FadeStart.SilentVolume;
+        }
+
+        /// <summary>Sources whose fade could not be heard (Volume 0 or Mute) — warned once per play session.</summary>
+        private readonly HashSet<AudioSource> _warnedInaudibleFades = new HashSet<AudioSource>();
+
+        private void BeginAudibleFade(SourceBinding b, float target, string what)
+        {
+            var plan = PlanFade(b.Source, target, b.FreshStart);
+            if (plan == FadeStart.TakesOverLevel)
+            {
+                // silent first (the envelope at 0), so raising Volume can never click; Stop restores the authored Volume
+                VortexAudio.FadeVoice(b.Handle, 0f, 0f);
+                b.Source.Volume = 1f;
+                VortexAudio.SetVoiceVolume(b.Handle, b.RolledVolumeScale);
+            }
+            else if ((plan == FadeStart.Muted || plan == FadeStart.SilentVolume) && _warnedInaudibleFades.Add(b.Source))
+            {
+                ConsoleService.Instance.LogWarning("[Audio] " + what + " on '" + (b.Entity?.Name ?? "?") + "' cannot be heard: " +
+                    (plan == FadeStart.Muted ? "its Audio Source is muted (Mute) — the fade envelope multiplies the source's level."
+                                             : "its Volume is 0 — the fade envelope multiplies the source's level. (To start silent and fade in: " +
+                                               "Volume = 0, Play() and the fade in the same frame.)"));
+            }
+        }
+
+        /// <summary>An in-flight one-shot: its voice and its own reverb mix (#496) — the per-frame send is that mix x the
+        /// listener's zone weight, exactly like a component voice's ReverbZoneMix.</summary>
+        private struct OneShot { public ulong Handle; public float ReverbMix; }
+
+        /// <summary>In-flight one-shots: tracked so Pause/Stop/scene switches silence them with everything else and
+        /// their reverb send follows the listener, pruned as they finish. Scripts still never see a handle.</summary>
+        private readonly List<OneShot> _oneShots = new List<OneShot>();
+
+        /// <summary>Reverb mix of a one-shot that does not choose one (#496): a positional (3D) one-shot is a sound in
+        /// the world and reverberates in Reverb Zones like an Audio Source with the default Reverb Zone Mix (1); a flat
+        /// (2D) one-shot — UI clicks, stingers — stays dry, as it always did.</summary>
+        public const float DefaultOneShotReverbMix = 1f, DefaultOneShot2DReverbMix = 0f;
 
         /// <summary>Fire-and-forget positional one-shot — no entity needed. The voice
         /// auto-returns to the pool when finished; no handle leaks to scripts.</summary>
-        public void PlayOneShot(string clip, float x, float y, float z, float volume, float pitch)
+        public void PlayOneShot(string clip, float x, float y, float z, float volume, float pitch, float reverbMix = DefaultOneShotReverbMix)
         {
-            var h = StartOneShot(clip, volume, pitch);
+            var h = StartOneShot(clip, volume, pitch, reverbMix);
             if (h != VortexAudio.InvalidVoice)
             {
                 VortexAudio.SetVoiceSpatial(h, 1f, 1f, 500f, 0, 1f, 0f);
@@ -409,12 +470,23 @@ namespace Editor.Core.Services
             }
         }
 
-        public void PlayOneShot2D(string clip, float volume, float pitch)
+        public void PlayOneShot2D(string clip, float volume, float pitch, float reverbMix = DefaultOneShot2DReverbMix)
         {
-            StartOneShot(clip, volume, pitch);
+            StartOneShot(clip, volume, pitch, reverbMix);
         }
 
-        private ulong StartOneShot(string clip, float volume, float pitch)
+        /// <summary>Diagnostics (smoke checks): the live one-shots' voices with their reverb mix, and the listener's
+        /// blended reverb-zone weight (0..1) of the last tick.</summary>
+        internal List<(ulong Handle, float ReverbMix)> OneShotsForDiagnostics()
+        {
+            var list = new List<(ulong, float)>();
+            foreach (var s in _oneShots) list.Add((s.Handle, s.ReverbMix));
+            return list;
+        }
+
+        internal float ListenerZoneWeight => _zoneWeight;
+
+        private ulong StartOneShot(string clip, float volume, float pitch, float reverbMix)
         {
             if (!_active || string.IsNullOrEmpty(clip) || _failedPaths.Contains(clip))
                 return VortexAudio.InvalidVoice;
@@ -440,8 +512,10 @@ namespace Editor.Core.Services
                 _failedPaths.Add(clip);
                 return VortexAudio.InvalidVoice;
             }
-            var h = VortexAudio.PlayVoice(path, volume, pitch, 0f, false, 128);
-            if (h != VortexAudio.InvalidVoice) _oneShots.Add(h);
+            // The send starts with the voice: a shot or a step is often over before the next tick could set it (#496).
+            float mix = reverbMix > 0f ? Math.Min(1f, reverbMix) : 0f;   // NaN -> dry
+            var h = VortexAudio.PlayVoice(path, volume, pitch, 0f, false, 128, reverbSend: mix * _zoneWeight);
+            if (h != VortexAudio.InvalidVoice) _oneShots.Add(new OneShot { Handle = h, ReverbMix = mix });
             return h;
         }
 
@@ -562,7 +636,12 @@ namespace Editor.Core.Services
 
             var zone = e.GetComponent<ReverbZone>();
             if (zone != null)
+            {
                 _zones.Add(new ZoneBinding { Zone = zone, Entity = e });
+                // a scaled zone is bigger or smaller than it was before #497: say so once per play session
+                string note = ScaledZoneNote(zone, e);
+                if (note != null && _notedScaledZones.Add(zone)) ConsoleService.Instance.Log(note);
+            }
 
             var listener = e.GetComponent<AudioListener>();
             if (listener != null && listener.IsEnabled)
@@ -634,13 +713,15 @@ namespace Editor.Core.Services
                 b.Source.OutputBus,
                 // Steam Audio v2 (#21): only meaningful for 3D sources; ignored unless SA is enabled + available.
                 hrtf: b.Source.EnableHrtf && b.Source.SpatialBlend > 0f,
-                occlusion: b.Source.EnableOcclusion && b.Source.EnableHrtf && b.Source.SpatialBlend > 0f);
+                occlusion: b.Source.EnableOcclusion && b.Source.EnableHrtf && b.Source.SpatialBlend > 0f,
+                reverbSend: b.Source.ReverbZoneMix * _zoneWeight);   // from the first sample, as PushProperties keeps it (#496)
             b.RolledVolumeScale = volumeScale;
             b.RolledPitchScale = pitchScale;
 
             if (b.Handle != VortexAudio.InvalidVoice)
             {
                 b.NextStartTick = 0;
+                b.FreshStart = true;
                 PushProperties(b);
             }
             else
@@ -687,9 +768,7 @@ namespace Editor.Core.Services
 
             foreach (var zb in _zones)
             {
-                if (zb.Zone == null || !zb.Zone.IsEnabled || zb.Entity == null || !zb.Entity.IsActive) continue;
-                var center = ReadWorldPosition(zb.Entity);
-                float w = ZoneWeight(zb.Zone, center, listenerPos);
+                float w = ZoneWeight(zb.Zone, zb.Entity, listenerPos);
                 if (w <= 0f) continue;
                 totalWeight += w;
                 decay += zb.Zone.DecayTime * w;
@@ -717,22 +796,40 @@ namespace Editor.Core.Services
             }
         }
 
-        /// <summary>1 inside the shape, easing to 0 at boundary + falloff.</summary>
-        private static float ZoneWeight(ReverbZone zone, ECS.Vector3 center, ECS.Vector3 p)
+        /// <summary>How deep <paramref name="p"/> sits in the zone: 1 inside its shape, easing to 0 at boundary + falloff;
+        /// 0 while the zone does not count — component disabled, or the entity inactive in the HIERARCHY (a zone under a
+        /// deactivated parent used to reverberate on, #497).</summary>
+        internal static float ZoneWeight(ReverbZone zone, GameEntity entity, ECS.Vector3 p)
+        {
+            if (zone == null || !zone.IsEnabled || entity == null || !entity.ActiveInHierarchy) return 0f;
+            return ZoneWeight(zone, ECS.TransformMath.World(entity), p);
+        }
+
+        /// <summary>The zone's shape lives in the entity's world matrix, like an Area or a collider (#497): a Box is
+        /// BoxExtents (half sizes, local units) scaled, rotated and placed by the entity and its parents — an oriented
+        /// box; a Sphere's Radius scales with the largest world axis (as sphere colliders do). Falloff stays world
+        /// metres, measured per box axis. Max(0.01, size) — not Abs — exactly as the gizmo draws it
+        /// (VortexAPI.RenderReverbZoneGizmo), so the drawn shape is the audible one.</summary>
+        internal static float ZoneWeight(ReverbZone zone, float[] world, ECS.Vector3 p)
         {
             float outside;
             if (zone.Shape == (int)ReverbZoneShape.Box)
             {
+                var inv = ECS.TransformMath.InverseAffine(world);
+                if (inv == null) return 0f;   // a zero scale: no volume
+                var l = ECS.TransformMath.TransformPoint(inv, p);   // the point in the zone's own frame
                 var ex = zone.BoxExtents;
-                float dx = Math.Abs(p.X - center.X) - Math.Max(0.01f, ex.X);
-                float dy = Math.Abs(p.Y - center.Y) - Math.Max(0.01f, ex.Y);
-                float dz = Math.Abs(p.Z - center.Z) - Math.Max(0.01f, ex.Z);
+                // local units -> world metres along each box axis (its world length), so the falloff is in metres
+                float dx = (Math.Abs(l.X) - Math.Max(0.01f, ex.X)) * AxisLength(world, 0);
+                float dy = (Math.Abs(l.Y) - Math.Max(0.01f, ex.Y)) * AxisLength(world, 1);
+                float dz = (Math.Abs(l.Z) - Math.Max(0.01f, ex.Z)) * AxisLength(world, 2);
                 outside = Math.Max(dx, Math.Max(dy, dz)); // <= 0 means inside
             }
             else
             {
-                float ddx = p.X - center.X, ddy = p.Y - center.Y, ddz = p.Z - center.Z;
-                outside = (float)Math.Sqrt(ddx * ddx + ddy * ddy + ddz * ddz) - Math.Max(0.01f, zone.Radius);
+                float ddx = p.X - world[12], ddy = p.Y - world[13], ddz = p.Z - world[14];
+                float scale = Math.Max(AxisLength(world, 0), Math.Max(AxisLength(world, 1), AxisLength(world, 2)));
+                outside = (float)Math.Sqrt(ddx * ddx + ddy * ddy + ddz * ddz) - Math.Max(0.01f, zone.Radius) * scale;
             }
 
             if (outside <= 0f) return 1f;
@@ -740,6 +837,27 @@ namespace Editor.Core.Services
             if (outside >= falloff) return 0f;
             float t = 1f - outside / falloff;
             return t * t * (3f - 2f * t); // smoothstep — no click at the door
+        }
+
+        /// <summary>World length of a matrix row (row 0/1/2 = the entity's x/y/z axis with its world scale).</summary>
+        internal static float AxisLength(float[] m, int row)
+            => (float)Math.Sqrt(m[row * 4] * m[row * 4] + m[row * 4 + 1] * m[row * 4 + 1] + m[row * 4 + 2] * m[row * 4 + 2]);
+
+        /// <summary>Zones whose scale note was logged this play session.</summary>
+        private readonly HashSet<ReverbZone> _notedScaledZones = new HashSet<ReverbZone>();
+
+        /// <summary>A console note for a zone in a scaled transform (#497): its box / sphere now scales with the entity and its
+        /// parents, so a zone in an existing scene can be bigger or smaller than before. Null when its world scale is 1.</summary>
+        internal static string ScaledZoneNote(ReverbZone zone, GameEntity entity)
+        {
+            if (zone == null || entity == null) return null;
+            var m = ECS.TransformMath.World(entity);
+            float sx = AxisLength(m, 0), sy = AxisLength(m, 1), sz = AxisLength(m, 2);
+            if (Math.Abs(sx - 1f) < 1e-3f && Math.Abs(sy - 1f) < 1e-3f && Math.Abs(sz - 1f) < 1e-3f) return null;
+            string Num(float v) => v.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+            return "[Audio] Reverb Zone '" + entity.Name + "' sits in a scaled transform (world scale " + Num(sx) + ", " + Num(sy) + ", " + Num(sz) +
+                   "): its " + (zone.Shape == (int)ReverbZoneShape.Box ? "box" : "sphere") + " scales with the entity and its parents, like a " +
+                   "collider (#497) — the gizmo shows where it reverberates.";
         }
 
         private ECS.Vector3 _listenerPos;

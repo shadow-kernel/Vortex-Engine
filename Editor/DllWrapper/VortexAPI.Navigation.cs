@@ -93,6 +93,12 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc)]
         public static extern void NavClearBakeResult();
 
+        /// <summary>Notes of the last bake (#451) — tiles baked with a coarser cell height, geometry left without navmesh,
+        /// failed tiles: '\n'-separated UTF-8 sentences. Returns the byte length; <paramref name="output"/> null = query it.
+        /// Throws EntryPointNotFound on an older library.</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern int NavGetBakeNotes([In, Out] byte[] output, int maxBytes);
+
         /// <summary>Replaces the loaded navmesh (every agent is dropped). 0 = rejected (not a .vnav / wrong version).</summary>
         [DllImport(_dllName, CallingConvention = _cc)]
         public static extern int NavLoad(byte[] data, int size);

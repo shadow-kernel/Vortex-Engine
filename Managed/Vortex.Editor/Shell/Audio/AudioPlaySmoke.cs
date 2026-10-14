@@ -22,7 +22,158 @@ namespace VortexEditor.Shell.Audio
         private const string Prefab = "Assets/Prefabs/SmokeHum.ventity";
 
         [ModuleInitializer]
-        internal static void Register() => SmokeRegistry.Add("audio play: a spawned prefab's sound starts, Destroy stops it", Run);
+        internal static void Register()
+        {
+            SmokeRegistry.Add("audio play: a spawned prefab's sound starts, Destroy stops it", Run);
+            SmokeRegistry.Add("audio play: one-shots get the reverb send inside a Reverb Zone", OneShotReverb);
+            SmokeRegistry.Add("audio play: a fade on a Volume 0 source is heard, get_scripting_api tells how fades compose", FadeFromSilence);
+        }
+
+        /// <summary>#404: the issue's "start silent, then fade in" — Volume 0, Play(), FadeTo(0.95) in one frame — on a music-bus
+        /// source is audible on the Music bus and leaves Volume 1 with the envelope at 0.95; a radio that has been playing at
+        /// Volume 0 stays silent when it is ducked later (one warning), so does a muted source (one warning); the scripting
+        /// reference (get_scripting_api AudioSource) states the rule. Without an audio device the bus level is not measured;
+        /// without any engine voice only the reference is checked.</summary>
+        private static async Task<bool> FadeFromSilence()
+        {
+            var log = ConsoleService.Instance;
+            string root = ProjectData.Current?.Path;
+            var scene = ProjectData.Current?.ActiveScene;
+            if (root == null || scene == null) return false;
+            string api = VortexEditor.Claude.Tools.ScriptTools.GetScriptingApi("AudioSource");
+            bool documented = api.Contains("Volume × the fade envelope") && api.Contains("absolute level") && api.Contains("same frame");
+            if (!documented) log.LogError("fade from silence: get_scripting_api AudioSource does not explain the fade rule:\n" + api);
+
+            string wav = Path.Combine(root, Clip.Replace('/', Path.DirectorySeparatorChar));
+            GameEntity music = null, muted = null, radio = null;
+            bool started = false;
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(wav));
+                WriteTone(wav, 440, 1.0);
+                AudioSource Source(GameEntity e, string name)
+                {
+                    var s = e?.GetComponent<AudioSource>();
+                    if (s == null) return null;
+                    e.Name = name;
+                    s.AudioClipPath = Clip; s.Loop = true; s.PlayOnAwake = false; s.SpatialBlend = 0f; s.OutputBus = VortexAudio.BusMusic; s.Volume = 0f;
+                    return s;
+                }
+                music = EditorCommands.CreateAudioSource(scene);
+                var src = Source(music, "SmokeMusic");
+                muted = EditorCommands.CreateAudioSource(scene);
+                var mutedSrc = Source(muted, "SmokeMuted");
+                radio = EditorCommands.CreateAudioSource(scene);
+                var radioSrc = Source(radio, "SmokeRadio");
+                if (src == null || mutedSrc == null || radioSrc == null) { log.LogError("fade from silence: no Audio Source was created"); return false; }
+                mutedSrc.Volume = 1f; mutedSrc.Mute = true; mutedSrc.OutputBus = VortexAudio.BusSfx;
+                radioSrc.OutputBus = VortexAudio.BusSfx;
+
+                EditorCommands.Play();
+                started = PlayModeService.Instance.State == PlayState.Playing;
+                if (!started) { log.LogError("fade from silence: play mode did not start"); return false; }
+                await Task.Delay(200);
+                var svc = AudioPlaybackService.Instance;
+                svc.ScriptPlay(radioSrc);            // a radio muted with Volume = 0 that has been playing a while …
+                svc.ScriptPlay(src);                 // what Vortex.AudioSource.Play / FadeTo call: start silent, then fade in
+                svc.ScriptFadeTo(src, 0.95f, 0.2f);
+                svc.ScriptPlay(mutedSrc);
+                svc.ScriptFadeTo(mutedSrc, 1f, 0.2f);
+                svc.ScriptFadeTo(mutedSrc, 0.5f, 0.2f);   // warned once, not twice
+                bool device = VortexAudio.HasDevice(), voices = svc.ScriptIsPlaying(src);
+                if (!voices && !device)
+                {
+                    log.Log("fade from silence: no audio engine voice on this machine (no device) — only the scripting reference is checked; documented=" + documented);
+                    return documented;
+                }
+                await Task.Delay(250);               // … ticks pass …
+                svc.ScriptFadeTo(radioSrc, 0.3f, 0.2f);   // … then a dialogue system ducks everything: the radio stays silent
+                svc.ScriptFadeTo(radioSrc, 0.3f, 0.2f);
+                float peak = 0f;
+                for (int i = 0; i < 20 && peak < 0.05f && device; i++)
+                {
+                    await Task.Delay(100);
+                    VortexAudio.GetBusLevels(VortexAudio.BusMusic, out peak, out _);
+                }
+                await Task.Delay(300);   // the warnings reach the Console on the UI thread
+                int Warnings(GameEntity e) => log.Entries.Count(x => x.Message != null && x.Message.Contains("cannot be heard") && x.Message.Contains("'" + e.Name + "'"));
+                int mutedWarnings = Warnings(muted), radioWarnings = Warnings(radio);
+                log.Log("fade from silence: music bus peak " + peak.ToString("0.000") + " (device=" + device + "), Volume now " + src.Volume +
+                        ", playing=" + svc.ScriptIsPlaying(src) + "; radio Volume " + radioSrc.Volume + "; warnings muted=" + mutedWarnings +
+                        " radio=" + radioWarnings + ", documented=" + documented);
+                return documented && Math.Abs(src.Volume - 1f) < 1e-6f && svc.ScriptIsPlaying(src) && (peak > 0.05f || !device)
+                       && radioSrc.Volume == 0f && mutedWarnings == 1 && radioWarnings == 1;
+            }
+            catch (Exception ex) { log.LogError("fade from silence: " + ex.Message); return false; }
+            finally
+            {
+                if (started) EditorCommands.Stop();
+                var gone = new System.Collections.Generic.List<GameEntity>();
+                if (music != null) gone.Add(music);
+                if (muted != null) gone.Add(muted);
+                if (radio != null) gone.Add(radio);
+                if (gone.Count > 0) EditorCommands.DeleteEntities(gone);
+                foreach (var f in new[] { wav, wav + ".vmeta" })
+                    try { if (File.Exists(f)) File.Delete(f); } catch { }
+            }
+        }
+
+        /// <summary>#496: inside a wet Reverb Zone a 3D one-shot gets the send of an Audio Source with Reverb Zone Mix 1 from
+        /// its first sample, a 2D one-shot stays dry unless given a mix, and the sends follow the zone while the shots play
+        /// (zone switched off → 0). Without an audio engine (CI) no voice starts — then only the zone weight is checked.</summary>
+        private static async Task<bool> OneShotReverb()
+        {
+            var log = ConsoleService.Instance;
+            string root = ProjectData.Current?.Path;
+            var scene = ProjectData.Current?.ActiveScene;
+            if (root == null || scene == null) return false;
+            string wav = Path.Combine(root, Clip.Replace('/', Path.DirectorySeparatorChar));
+            GameEntity zoneEntity = null;
+            bool started = false;
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(wav));
+                WriteTone(wav, 330, 2.0);
+                zoneEntity = EditorCommands.CreateReverbZone(scene);
+                var zone = zoneEntity?.GetComponent<ReverbZone>();
+                if (zone == null) { log.LogError("one-shot reverb: no Reverb Zone was created"); return false; }
+                zone.Shape = (int)ReverbZoneShape.Sphere; zone.Radius = 5000f; zone.Falloff = 1f; zone.WetLevel = 1f; zone.DecayTime = 3f;
+
+                EditorCommands.Play();
+                started = PlayModeService.Instance.State == PlayState.Playing;
+                if (!started) { log.LogError("one-shot reverb: play mode did not start"); return false; }
+                await Task.Delay(300);
+                var svc = AudioPlaybackService.Instance;
+                float weight = svc.ListenerZoneWeight;
+                int before = svc.OneShotsForDiagnostics().Count;
+                Vortex.Audio.PlayOneShot(Clip, new Vortex.Vector3(0f, 1f, 0f));
+                Vortex.Audio.PlayOneShot2D(Clip);
+                Vortex.Audio.PlayOneShot2D(Clip, 1f, 1f, 0.5f);
+                var shots = svc.OneShotsForDiagnostics();
+                if (shots.Count < before + 3)
+                {
+                    log.Log("one-shot reverb: listener zone weight " + weight + ", no voices started (device=" + VortexAudio.HasDevice() + ")");
+                    return weight > 0.99f && !VortexAudio.HasDevice();
+                }
+                var mine = shots.GetRange(shots.Count - 3, 3);
+                float s3d = VortexAudio.GetVoiceReverbSend(mine[0].Handle), s2d = VortexAudio.GetVoiceReverbSend(mine[1].Handle), s2dMix = VortexAudio.GetVoiceReverbSend(mine[2].Handle);
+                zone.IsEnabled = false;   // the listener leaves the room: the sends of the shots still playing follow
+                await Task.Delay(250);
+                float a3d = VortexAudio.GetVoiceReverbSend(mine[0].Handle), a2dMix = VortexAudio.GetVoiceReverbSend(mine[2].Handle);
+                log.Log("one-shot reverb: zone weight " + weight + "; sends at start 3D=" + s3d + " 2D=" + s2d + " 2D(mix 0.5)=" + s2dMix +
+                        "; after the zone went off 3D=" + a3d + " 2D(mix 0.5)=" + a2dMix);
+                return weight > 0.99f && Math.Abs(s3d - 1f) < 0.01f && Math.Abs(s2d) < 0.001f && Math.Abs(s2dMix - 0.5f) < 0.01f
+                       && Math.Abs(a3d) < 0.001f && Math.Abs(a2dMix) < 0.001f;
+            }
+            catch (Exception ex) { log.LogError("one-shot reverb: " + ex.Message); return false; }
+            finally
+            {
+                if (started) EditorCommands.Stop();
+                if (zoneEntity != null) EditorCommands.DeleteEntities(new System.Collections.Generic.List<GameEntity> { zoneEntity });
+                foreach (var f in new[] { wav, wav + ".vmeta" })
+                    try { if (File.Exists(f)) File.Delete(f); } catch { }
+            }
+        }
 
         private static async Task<bool> Run()
         {

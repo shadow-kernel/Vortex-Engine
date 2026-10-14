@@ -272,7 +272,9 @@ namespace VortexEditor.Shell
                     string notes = geo.Notes.Count > 0 ? "  (" + geo.Notes.Count + " note(s) in the Console)" : "";
                     foreach (var n in geo.Notes) ConsoleService.Instance.LogWarning("[Navigation] " + n);
                     SetStatus("Baked " + result.Message + (result.Path != null ? " → " + EditorKit.ToProjectRelative(result.Path) : " (NOT saved)") + notes, result.Path == null);
-                    ConsoleService.Instance.Log("[Navigation] baked '" + _scene.Name + "': " + result.Message);
+                    // a bake that left part of the level coarser or without navmesh (#451) is a warning, not a plain success
+                    string line = "[Navigation] baked '" + _scene.Name + "': " + result.Message;
+                    if (result.Warnings.Count > 0) ConsoleService.Instance.LogWarning(line); else ConsoleService.Instance.Log(line);
                     EditorCommands.Toast("NavMesh baked");
                 }
                 else SetStatus(result.Message, result.Error != -3);
@@ -307,6 +309,7 @@ namespace VortexEditor.Shell
         internal static void RegisterSmoke()
         {
             SmokeRegistry.Add("navigation: bake an in-memory test level + path around a wall", BakeTestLevel);
+            SmokeRegistry.Add("navigation: a level taller than 819 m keeps its high floor, a too-tall tile is reported", BakeTallLevel);
             SmokeRegistry.Add("navigation: bake the active scene + a path between two reachable points", BakeActiveScene);
             SmokeRegistry.Add("navigation window: opens, bakes, captures", WindowSmoke);
         }
@@ -346,6 +349,48 @@ namespace VortexEditor.Shell
             // leave the editor's own navmesh as it was
             if (previous != null) NavigationService.LoadForScene(previous); else NavigationService.Unload();
             return ok;
+        }
+
+        /// <summary>#451: floors 1000 m apart (more than the 819 m one heightfield column holds at Cell Height 0.1) both get
+        /// navmesh at their own height; a 1500 m pillar is taller than a column on its own — its tile is baked coarser and
+        /// the result says so (Warnings + Message).</summary>
+        private static bool BakeTallLevel()
+        {
+            if (!NavigationService.Available) { ConsoleService.Instance.LogWarning("[smoke] navigation unavailable: " + NavigationService.UnavailableReason); return false; }
+            var previous = NavigationService.LoadedScene;
+            try
+            {
+                Scene Level(params (Editor.ECS.Vector3 pos, Editor.ECS.Vector3 size)[] boxes)
+                {
+                    var scene = new Scene();
+                    foreach (var (pos, size) in boxes)
+                    {
+                        var e = new GameEntity("Box");
+                        e.Transform.LocalPosition = pos;
+                        e.Components.Add(new BoxCollider(e) { Size = size });
+                        scene.Entities.Add(e);
+                    }
+                    return scene;
+                }
+                var settings = NavigationService.DefaultSettings();   // Cell Height 0.1
+                var floors = Level((new Editor.ECS.Vector3(0, -0.2f, 0), new Editor.ECS.Vector3(20, 0.4f, 20)),
+                                   (new Editor.ECS.Vector3(100, 999.8f, 0), new Editor.ECS.Vector3(20, 0.4f, 20)));
+                var r = NavigationService.BakeScene(floors, settings, save: false, load: true);
+                bool high = r.Success && NavigationService.SamplePosition(new Editor.ECS.Vector3(100, 1000, 0), 1f, out var hit) && Math.Abs(hit.Y - 1000f) < 0.3f;
+                var corners = new List<Editor.ECS.Vector3>();
+                bool path = high && NavigationService.CalculatePath(new Editor.ECS.Vector3(95, 1000, -5), new Editor.ECS.Vector3(105, 1000, 5), corners) == NavPathStatus.Complete;
+                ConsoleService.Instance.Log("[smoke] floors at 0 and 1000 m: " + r.Message + ", high floor sampled=" + high + ", path=" + path);
+
+                var pillar = Level((new Editor.ECS.Vector3(0, -0.2f, 0), new Editor.ECS.Vector3(20, 0.4f, 20)),
+                                   (new Editor.ECS.Vector3(3, 750, 3), new Editor.ECS.Vector3(4, 1500, 4)));
+                var p = NavigationService.BakeScene(pillar, settings, save: false, load: true);
+                bool top = p.Success && NavigationService.SamplePosition(new Editor.ECS.Vector3(3, 1500, 3), 1f, out var topHit) && Math.Abs(topHit.Y - 1500f) < 0.5f;
+                bool reported = p.Warnings.Count > 0 && p.Message.Contains("coarser Cell Height");
+                ConsoleService.Instance.Log("[smoke] 1500 m pillar: " + p.Message + ", top sampled=" + top + ", reported=" + reported);
+                return r.Success && r.Warnings.Count == 0 && high && path && top && reported;
+            }
+            catch (Exception ex) { ConsoleService.Instance.LogError("[smoke] tall level: " + ex.Message); return false; }
+            finally { if (previous != null) NavigationService.LoadForScene(previous); else NavigationService.Unload(); }
         }
 
         private static bool BakeActiveScene()

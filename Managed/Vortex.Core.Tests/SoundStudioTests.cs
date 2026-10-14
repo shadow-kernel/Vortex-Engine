@@ -238,6 +238,201 @@ namespace VortexTests
             finally { Key("stability", null); }
         }
 
+        [Test]
+        public static async Task StabilityTakesTheTls13TransportAndTlsFailuresSayWhy(TestContext t)
+        {
+            var fake = Setup(t);
+            Key("stability", "sk-stab-test");
+            Key("elevenlabs", "xi-test");
+            try
+            {
+                // #403: api.stability.ai only speaks TLS 1.3 — every Stability request is marked for the TLS 1.3 client,
+                // the other backends' requests are not
+                var marks = new List<(string host, bool tls13)>();
+                HttpResponseMessage Audio(HttpRequestMessage r)
+                {
+                    lock (marks) marks.Add((r.RequestUri.Host, r.Options.TryGetValue(StoreHttp.Tls13Option, out bool m) && m));
+                    var ok = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(new byte[] { 0xFF, 0xFB, 9 }) };
+                    ok.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("audio/mpeg");
+                    return ok;
+                }
+                fake.Routes.Add(("https://api.stability.ai/", Audio));
+                fake.Routes.Add(("https://api.elevenlabs.io/", Audio));
+                var b = StabilityAudioBackend.Audio25();
+                await b.GenerateAsync(new SoundRequest { Prompt = "drone" }, t.Path("out"), CancellationToken.None);
+                await new ElevenLabsBackend().GenerateAsync(new SoundRequest { Prompt = "door" }, t.Path("out"), CancellationToken.None);
+                t.True(marks.Count == 2 && marks[0].host == "api.stability.ai" && marks[0].tls13, "the Stability request asks for TLS 1.3");
+                t.True(!marks[1].tls13, "ElevenLabs keeps the classic client");
+
+                // the refused handshake as HttpClient reports it on macOS: the cause sits two inner exceptions down
+                fake.Routes.Clear();
+                fake.Routes.Add(("https://api.stability.ai/", r => throw new HttpRequestException("The SSL connection could not be established, see inner exception.",
+                    new System.Security.Authentication.AuthenticationException("Authentication failed, see inner exception.", new Exception("bad protocol version")))));
+                string err = null;
+                try { await b.GenerateAsync(new SoundRequest { Prompt = "drone" }, t.Path("out"), CancellationToken.None); }
+                catch (Exception ex) { err = StoreHttp.Describe(ex); }
+                t.True(err != null && err.Contains("could not be established") && err.Contains("bad protocol version") && !err.Contains("see inner exception"),
+                    "the real cause is in the message: " + err);
+                t.True(err.Contains("share no TLS version"), "and what it means: " + err);
+                t.Equal("Stability AI rejected the API key (x).", StoreHttp.Describe(new SoundGenException("Stability AI rejected the API key (x).")), "own messages stay as they are");
+            }
+            finally { Key("stability", null); Key("elevenlabs", null); }
+        }
+
+        [Test]
+        public static void Tls13RequestsTakeCurlOnlyOnMacOS(TestContext t)
+        {
+            // #403: the transport decision — curl for a TLS-1.3-only request on macOS, .NET's client for everything else
+            t.True(StoreHttp.GoesThroughCurl(needsTls13: true, testTransport: false, macOS: true, curlPresent: true), "TLS-1.3-only request on macOS: curl");
+            t.False(StoreHttp.GoesThroughCurl(false, false, true, true), "an ordinary request on macOS stays on .NET's client");
+            t.False(StoreHttp.GoesThroughCurl(true, false, false, true), "Windows / Linux: .NET's TLS negotiates 1.3 itself");
+            t.False(StoreHttp.GoesThroughCurl(true, true, true, true), "the tests' fake transport wins");
+            t.False(StoreHttp.GoesThroughCurl(true, false, true, false), "no curl: .NET's client, and the failure says why");
+        }
+
+        [Test]
+        public static void NoProjectEnablesNetworkFrameworkTls(TestContext t)
+        {
+            // #403: .NET's Network.framework TLS is a process-wide switch, and in .NET 10.0.12 it fails every second resumed
+            // TLS 1.2 connection of every client in the process (store, Claude, game scripts in play) — nothing may turn it on
+            string root = Editor.Core.Native.NativeLoader.FindRepositoryRoot();
+            if (root == null) { Console.WriteLine("        skipped: not run from the repository"); return; }
+            var hits = new List<string>();
+            string Rel(string f) => f.Substring(root.Length).TrimStart('/', '\\');
+            foreach (var f in Directory.GetFiles(Path.Combine(root, "Managed"), "*", SearchOption.AllDirectories))
+            {
+                string n = Path.GetFileName(f), rel = Rel(f).Replace('\\', '/');
+                bool built = rel.Contains("/bin/") || rel.Contains("/obj/");
+                bool project = !built && (n.EndsWith(".csproj") || n.EndsWith(".props") || n.EndsWith(".targets") || n == "runtimeconfig.template.json");
+                bool editorConfig = built && n == "Vortex.Editor.runtimeconfig.json";   // the editor as built, where there is one
+                if ((project || editorConfig) && File.ReadAllText(f).Contains("UseNetworkFramework")) hits.Add(rel);
+            }
+            foreach (var f in Directory.GetFiles(root, "Directory.Build.*")) if (File.ReadAllText(f).Contains("UseNetworkFramework")) hits.Add(Rel(f));
+            t.True(hits.Count == 0, "System.Net.Security.UseNetworkFramework is set in: " + string.Join(", ", hits));
+        }
+
+        [Test]
+        public static async Task CurlCommandLineCarriesNoSecrets(TestContext t)
+        {
+            // #403: the key and the body never reach curl's command line (the process list); certificates stay checked
+            var h = new CurlHttpHandler();
+            var form = new MultipartFormDataContent();
+            form.Add(new StringContent("rain on a tin roof"), "prompt");
+            var req = new HttpRequestMessage(HttpMethod.Post, "https://api.stability.ai/v2beta/audio/stable-audio-2/text-to-audio") { Content = form };
+            req.Headers.TryAddWithoutValidation("Authorization", "Bearer sk-very-secret");
+            req.Headers.TryAddWithoutValidation("X-Note", "a\nInjected: yes");
+            await form.LoadIntoBufferAsync();
+            var args = h.Arguments(req, "/tmp/x/body", "/tmp/x/headers", "/tmp/x/response");
+            string line = string.Join(" ", args);
+            t.Equal("--disable", args[0], "~/.curlrc is never read (it could switch certificate checks off)");
+            t.False(line.Contains("sk-very-secret") || line.Contains("rain on a tin roof"), "neither the key nor the body is on the command line: " + line);
+            t.True(line.Contains("--header @-") && line.Contains("--data-binary @/tmp/x/body"), "headers from stdin, the body from its file");
+            t.True(line.Contains("--proto =https") && !line.Contains("--insecure") && !args.Contains("-k"), "https only, certificates checked");
+            t.Equal("https://api.stability.ai/v2beta/audio/stable-audio-2/text-to-audio", args[args.Count - 1], "the URL comes last");
+            string headers = CurlHttpHandler.HeaderLines(req);
+            t.True(headers.Contains("Authorization: Bearer sk-very-secret\n"), "the key goes through stdin");
+            t.True(headers.Contains("Content-Type: multipart/form-data; boundary="), "the body's content type");
+            t.False(headers.Contains("\nInjected: yes"), "a line break inside a value cannot add a header");
+            t.True(headers.EndsWith("Expect:\n"), "no 100-continue round trip");
+            var getArgs = h.Arguments(new HttpRequestMessage(HttpMethod.Get, "https://api.stability.ai/v2beta/audio/results/x"), null, "h", "o");
+            t.False(getArgs.Contains("--data-binary") || getArgs.Contains("--request"), "a GET sends no body and needs no --request");
+        }
+
+        private sealed class NetworkFrameworkException : Exception { public NetworkFrameworkException(string m) : base(m) { } }
+
+        [Test]
+        public static void CurlFailuresReadLikeDotNets(TestContext t)
+        {
+            // #403: curl's exit codes become the exceptions .NET would throw, so Describe explains both transports alike
+            var tls = CurlHttpHandler.Failure(35, "curl: (35) LibreSSL/3.3.6: error:1404B42E:SSL routines:ST_CONNECT:tlsv1 alert protocol version\n");
+            t.True(tls is HttpRequestException && tls.InnerException is System.Security.Authentication.AuthenticationException, "a refused handshake reads as .NET's");
+            string d = StoreHttp.Describe(tls);
+            t.True(d.Contains("could not be established") && d.Contains("alert protocol version") && d.Contains("share no TLS version")
+                   && !d.Contains("see inner exception"), "the cause and what it means: " + d);
+            t.True(CurlHttpHandler.Failure(60, "curl: (60) SSL certificate problem: unable to get local issuer certificate").InnerException
+                   is System.Security.Authentication.AuthenticationException, "a rejected certificate is a TLS failure too");
+            var dns = CurlHttpHandler.Failure(6, "curl: (6) Could not resolve host: api.stability.ai");
+            t.True(dns.InnerException is IOException && StoreHttp.Describe(dns).Contains("Could not resolve host: api.stability.ai"), StoreHttp.Describe(dns));
+            t.True(CurlHttpHandler.Failure(28, "curl: (28) Operation timed out").InnerException is TimeoutException, "a time-out");
+            // .NET's own Network.framework TLS words a refused version differently (should anything in the process use it)
+            var nf = new HttpRequestException("The SSL connection could not be established, see inner exception.",
+                new NetworkFrameworkException("Network Framework error: protocol version (domain TLS)"));
+            t.True(StoreHttp.Describe(nf).Contains("share no TLS version"), StoreHttp.Describe(nf));
+        }
+
+        [Test]
+        public static async Task CurlTransportCarriesRequestAndAnswer(TestContext t)
+        {
+            // #403 end to end where it runs: macOS's curl against a local listener (plain http here; the editor allows https only)
+            if (!OperatingSystem.IsMacOS() || !File.Exists(CurlHttpHandler.DefaultPath)) { Console.WriteLine("        skipped: needs macOS's " + CurlHttpHandler.DefaultPath); return; }
+            var listener = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            try
+            {
+                string head = null; byte[] body = null;
+                var server = Task.Run(async () =>
+                {
+                    using var client = await listener.AcceptTcpClientAsync();
+                    var s = client.GetStream();
+                    var bytes = new List<byte>();
+                    var one = new byte[1];
+                    while (!(bytes.Count >= 4 && bytes[bytes.Count - 4] == 13 && bytes[bytes.Count - 3] == 10 && bytes[bytes.Count - 2] == 13 && bytes[bytes.Count - 1] == 10))
+                    {
+                        if (await s.ReadAsync(one, 0, 1) == 0) break;
+                        bytes.Add(one[0]);
+                    }
+                    head = Encoding.ASCII.GetString(bytes.ToArray());
+                    var m = System.Text.RegularExpressions.Regex.Match(head, @"Content-Length:\s*(\d+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                    body = new byte[m.Success ? int.Parse(m.Groups[1].Value) : 0];
+                    for (int got = 0; got < body.Length;) { int n = await s.ReadAsync(body, got, body.Length - got); if (n == 0) break; got += n; }
+                    await s.WriteAsync(Encoding.ASCII.GetBytes("HTTP/1.1 201 Created\r\nContent-Type: audio/mpeg\r\nContent-Length: 3\r\nX-Probe: yes\r\nConnection: close\r\n\r\n"));
+                    await s.WriteAsync(new byte[] { 0xFF, 0xFB, 9 });
+                });
+                using var http = new HttpClient(new CurlHttpHandler { Protocols = "=http" });
+                var form = new MultipartFormDataContent();
+                form.Add(new StringContent("slow dark drone"), "prompt");
+                form.Add(new StringContent("mp3"), "output_format");
+                string sent = await form.ReadAsStringAsync();
+                var req = new HttpRequestMessage(HttpMethod.Post, "http://127.0.0.1:" + port + "/v2beta/audio/stable-audio-2/text-to-audio") { Content = form };
+                req.Headers.TryAddWithoutValidation("Authorization", "Bearer sk-test");
+                req.Headers.TryAddWithoutValidation("Accept", "audio/*");
+                using var resp = await http.SendAsync(req);
+                await server;
+                t.True(head.StartsWith("POST /v2beta/audio/stable-audio-2/text-to-audio HTTP/1.1\r\n"), "method and path: " + head.Split('\r')[0]);
+                t.True(head.Contains("Authorization: Bearer sk-test\r\n") && head.Contains("Accept: audio/*\r\n"), "the headers arrived (through stdin)");
+                t.True(head.Contains("Content-Type: multipart/form-data; boundary="), "the multipart content type");
+                t.False(head.Contains("Expect:"), "no 100-continue");
+                t.Equal(sent, Encoding.UTF8.GetString(body), "the body, byte for byte");
+                t.Equal(HttpStatusCode.Created, resp.StatusCode, "the status");
+                t.Equal("audio/mpeg", resp.Content.Headers.ContentType?.MediaType, "the content type");
+                t.True(resp.Headers.TryGetValues("X-Probe", out var probe) && probe.First() == "yes", "the other headers");
+                t.Equal(3, (await resp.Content.ReadAsByteArrayAsync()).Length, "the body");
+
+                // a cancelled request ends curl at once
+                var silent = Task.Run(async () => { using var c = await listener.AcceptTcpClientAsync(); await Task.Delay(5000); });
+                using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(400));
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                bool cancelled = false;
+                try { await http.GetAsync("http://127.0.0.1:" + port + "/slow", cts.Token); } catch (OperationCanceledException) { cancelled = true; }
+                t.True(cancelled && sw.ElapsedMilliseconds < 3000, "cancelled after " + sw.ElapsedMilliseconds + " ms");
+            }
+            finally { listener.Stop(); }
+        }
+
+        [Test]
+        public static async Task StabilityHostAnswersOverTls13Live(TestContext t)
+        {
+            // #403, live and credential-free (VORTEX_STORE_LIVE=1): a plain GET to the API host — no key, no body — gets an HTTP
+            // answer instead of a refused handshake: through curl on macOS, .NET's own TLS elsewhere
+            if (Environment.GetEnvironmentVariable("VORTEX_STORE_LIVE") != "1") { Console.WriteLine("        (skipped — set VORTEX_STORE_LIVE=1)"); return; }
+            StoreHttp.Handler = null;
+            using var req = StoreHttp.RequireTls13(new HttpRequestMessage(HttpMethod.Get, "https://api.stability.ai/"));
+            using var resp = await StoreHttp.SendAsync(req, HttpCompletionOption.ResponseContentRead, CancellationToken.None);
+            Console.WriteLine("        api.stability.ai answered HTTP " + (int)resp.StatusCode);
+            t.True((int)resp.StatusCode >= 200 && (int)resp.StatusCode < 500, "an HTTP answer: " + (int)resp.StatusCode);
+        }
+
         private static string Sse(params string[] events) => string.Join("", events.Select(e => "event: x\ndata: " + e + "\n\n"));
 
         [Test]

@@ -19,7 +19,10 @@
     <DefineConstants>$(DefineConstants);VORTEX_CORE</DefineConstants>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <NoWarn>$(NoWarn);CS0618;CS0649;CS0169;CS0414;CS1591;CS8632;CA1416;SYSLIB0011;SYSLIB0050;SYSLIB0051</NoWarn>
-    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <!-- Vortex.Core.xml ships next to the assembly: get_scripting_api (MCP) prints the scripting API's summaries under
+         the signatures (ScriptApiDocs, #404) and script IDEs show them on hover. Doc-comment lint stays quiet. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS0419;CS1570;CS1571;CS1572;CS1573;CS1574;CS1580;CS1581;CS1584;CS1587;CS1658;CS1710;CS1711;CS1712;CS1723;CS1734;CS1735</NoWarn>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
 

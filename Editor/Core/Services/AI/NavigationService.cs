@@ -66,6 +66,10 @@ namespace Editor.Core.Services.AI
         public NavBakeStats Stats;
         /// <summary>Where the .vnav was written (null when not saved).</summary>
         public string Path;
+        /// <summary>What the bake could not do as asked although it may have produced a navmesh (#451): tiles baked with a
+        /// coarser cell height, geometry left without navmesh, tiles that failed — one sentence each, also appended to
+        /// <see cref="Message"/>.</summary>
+        public readonly List<string> Warnings = new List<string>();
     }
 
     /// <summary>
@@ -285,7 +289,9 @@ namespace Editor.Core.Services.AI
             }
             catch (Exception ex) { r.Error = -4; r.Message = "Bake failed: " + ex.Message; return r; }
             r.Stats = stats;
-            if (size <= 0) { r.Error = size; r.Message = ErrorText(size); return r; }
+            ReadBakeNotes(r);
+            string warnings = r.Warnings.Count > 0 ? " Warning: " + string.Join(" ", r.Warnings) : "";
+            if (size <= 0) { r.Error = size; r.Message = ErrorText(size) + warnings; return r; }
             var data = new byte[size];
             int got = VortexAPI.NavGetBakeResult(data, size);
             try { VortexAPI.NavClearBakeResult(); } catch { }
@@ -294,8 +300,25 @@ namespace Editor.Core.Services.AI
             r.Success = true;
             r.Message = string.Format(System.Globalization.CultureInfo.InvariantCulture,
                 "{0} polygons in {1} tiles, {2:0.0} ms ({3} triangles + {4} solid boxes from {5} entities)",
-                stats.PolyCount, stats.TileCount, stats.BakeMs, stats.InputTriangles, stats.InputBoxes, geometry.EntityCount);
+                stats.PolyCount, stats.TileCount, stats.BakeMs, stats.InputTriangles, stats.InputBoxes, geometry.EntityCount) + warnings;
             return r;
+        }
+
+        /// <summary>The native bake's notes (#451) into <see cref="NavBakeResult.Warnings"/>: a bake that baked part of the
+        /// level coarser — or not at all — says so instead of reporting a plain success.</summary>
+        private static void ReadBakeNotes(NavBakeResult r)
+        {
+            try
+            {
+                int n = VortexAPI.NavGetBakeNotes(null, 0);
+                if (n <= 0) return;
+                var buf = new byte[n + 1];
+                int got = Math.Max(0, Math.Min(n, VortexAPI.NavGetBakeNotes(buf, buf.Length)));
+                foreach (var line in System.Text.Encoding.UTF8.GetString(buf, 0, got).Split('\n'))
+                    if (!string.IsNullOrWhiteSpace(line)) r.Warnings.Add(line.Trim());
+            }
+            catch (EntryPointNotFoundException) { }   // an engine library from before the notes
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Navigation] bake notes: " + ex.Message); }
         }
 
         /// <summary>Gather, bake, save next to the scene and load — synchronously (the Navigation window does the same on a

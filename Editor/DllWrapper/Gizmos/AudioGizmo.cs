@@ -8,8 +8,8 @@ namespace Editor.DllWrapper
     /// (+falloff shell) for a selected ReverbZone. Shapes go through the gizmo WIRE pass (one draw per whole
     /// sphere — thin GPU wireframe lines, not fat tube segments), all materials are UNLIT so the colors stay
     /// bright and readable from every angle. Submitted every edit-mode frame, so inspector edits and entity
-    /// drags update live. The zone box is drawn axis-aligned because the runtime weight test
-    /// (AudioPlaybackService.ZoneWeight) is axis-aligned.</summary>
+    /// drags update live. The zone is drawn in its entity's world matrix (rotated + scaled), exactly as the
+    /// runtime weight test (AudioPlaybackService.ZoneWeight) measures it (#497).</summary>
     public static partial class VortexAPI
     {
         private static bool _audioGizmosInitialized;
@@ -74,19 +74,6 @@ namespace Editor.DllWrapper
                 d, 0, 0, 0,
                 0, d, 0, 0,
                 0, 0, d, 0,
-                cx, cy, cz, 1
-            });
-        }
-
-        // Axis-aligned wireframe-net box (_gizmoCube is a unit cube -> scale = full extents).
-        private static void AudioWireBox(float cx, float cy, float cz, float hx, float hy, float hz, long material)
-        {
-            if (_gizmoCube == ID.INVALID_ID || material == ID.INVALID_ID) return;
-            SubmitGizmoWireForRendering(_gizmoCube, material, new float[]
-            {
-                hx * 2f, 0, 0, 0,
-                0, hy * 2f, 0, 0,
-                0, 0, hz * 2f, 0,
                 cx, cy, cz, 1
             });
         }
@@ -203,28 +190,56 @@ namespace Editor.DllWrapper
                 AudioWireSphere(cx, cy, cz, maxDist, _audioMaxMaterial);
         }
 
-        /// <summary>Boundary (cyan) + falloff shell (muted teal) for the selected ReverbZone.
-        /// shape: 0 = sphere (radius), 1 = box (half extents). Axis-aligned by design.</summary>
-        public static void RenderReverbZoneGizmo(float cx, float cy, float cz, int shape,
-            float radius, float hx, float hy, float hz, float falloff)
+        /// <summary>Boundary (cyan) + falloff shell (muted teal) for the selected ReverbZone, in the zone entity's world
+        /// matrix <paramref name="world"/> (row-major, rows = the entity's scaled axes, 12..14 = position — TransformMath).
+        /// shape: 0 = sphere (radius x the largest world axis), 1 = oriented box (half extents in local units); the
+        /// falloff shell lies <paramref name="falloff"/> world metres outside along every box axis. Mirrors the runtime
+        /// weight test (AudioPlaybackService.ZoneWeight, #497) — including the Max(0.01, size) clamp — so the drawn
+        /// shape is exactly the audible one.</summary>
+        public static void RenderReverbZoneGizmo(float[] world, int shape, float radius, float hx, float hy, float hz, float falloff)
         {
+            if (world == null || world.Length < 16) return;
             EnsureAudioGizmoResources();
+            float lx = AxisLen(world, 0), ly = AxisLen(world, 1), lz = AxisLen(world, 2);
 
             if (shape == 1)
             {
-                AudioWireBox(cx, cy, cz, hx, hy, hz, _reverbZoneMaterial);
+                if (lx < 1e-6f || ly < 1e-6f || lz < 1e-6f) return;   // a zero scale: the zone has no volume
+                float[] half = { Math.Max(0.01f, hx) * lx, Math.Max(0.01f, hy) * ly, Math.Max(0.01f, hz) * lz };   // world metres
+                AudioWireOrientedBox(world, half, 0f, _reverbZoneMaterial);
                 if (falloff > 0.01f)
-                    AudioWireBox(cx, cy, cz, hx + falloff, hy + falloff, hz + falloff, _reverbFalloffMaterial);
+                    AudioWireOrientedBox(world, half, falloff, _reverbFalloffMaterial);
             }
             else
             {
-                // Clamp exactly like the runtime weight test (ZoneWeight: max(0.01, radius)), and build the
-                // falloff shell on the CLAMPED radius so both surfaces match what is audible.
-                float r = Math.Max(0.01f, radius);
-                AudioWireSphere(cx, cy, cz, r, _reverbZoneMaterial);
+                // Clamp exactly like the runtime weight test (ZoneWeight: max(0.01, radius) x largest scale), and build
+                // the falloff shell on the CLAMPED radius so both surfaces match what is audible.
+                float r = Math.Max(0.01f, radius) * Math.Max(lx, Math.Max(ly, lz));
+                AudioWireSphere(world[12], world[13], world[14], r, _reverbZoneMaterial);
                 if (falloff > 0.01f)
-                    AudioWireSphere(cx, cy, cz, r + falloff, _reverbFalloffMaterial);
+                    AudioWireSphere(world[12], world[13], world[14], r + falloff, _reverbFalloffMaterial);
             }
+        }
+
+        private static float AxisLen(float[] m, int row)
+            => (float)Math.Sqrt(m[row * 4] * m[row * 4] + m[row * 4 + 1] * m[row * 4 + 1] + m[row * 4 + 2] * m[row * 4 + 2]);
+
+        // Wireframe-net box along the world matrix's (unit) axes: half sizes in world metres, grown by `grow` metres per
+        // axis (the falloff shell). _gizmoCube is a unit cube -> each row is unit axis x full size.
+        private static void AudioWireOrientedBox(float[] world, float[] half, float grow, long material)
+        {
+            if (_gizmoCube == ID.INVALID_ID || material == ID.INVALID_ID) return;
+            var m = new float[16];
+            for (int row = 0; row < 3; row++)
+            {
+                float len = AxisLen(world, row);
+                float size = 2f * (half[row] + grow) / len;
+                m[row * 4] = world[row * 4] * size;
+                m[row * 4 + 1] = world[row * 4 + 1] * size;
+                m[row * 4 + 2] = world[row * 4 + 2] * size;
+            }
+            m[12] = world[12]; m[13] = world[13]; m[14] = world[14]; m[15] = 1f;
+            SubmitGizmoWireForRendering(_gizmoCube, material, m);
         }
     }
 }

@@ -16,6 +16,8 @@ namespace Editor.ECS.Components.Audio
     /// reverb takes on this zone's character (decay/wet/pre-delay). Crossing the
     /// boundary blends over the falloff distance; overlapping zones blend by weight.
     /// A source's contribution to the reverb is scaled by its own ReverbZoneMix.
+    /// The zone sits in its entity's world transform like an Area or a collider and
+    /// counts only while the entity is active in the hierarchy (#497).
     /// </summary>
     [DataContract(Name = "ReverbZone", Namespace = "")]
     public class ReverbZone : Component
@@ -40,7 +42,7 @@ namespace Editor.ECS.Components.Audio
             set => SetProperty(ref _shape, value, nameof(Shape));
         }
 
-        /// <summary>Sphere radius (world units).</summary>
+        /// <summary>Sphere radius (local units: scaled by the entity's largest world scale axis, as a sphere collider is).</summary>
         [DataMember(Name = "radius", Order = 11)]
         public float Radius
         {
@@ -48,7 +50,8 @@ namespace Editor.ECS.Components.Audio
             set => SetProperty(ref _radius, value, nameof(Radius));
         }
 
-        /// <summary>Box HALF extents (world units) around the entity position.</summary>
+        /// <summary>Box HALF extents in the entity's local units: the entity's (and its parents') scale and rotation
+        /// apply, so the box is the oriented box the gizmo draws (#497).</summary>
         [DataMember(Name = "boxExtents", Order = 12)]
         public Vector3 BoxExtents
         {
@@ -56,7 +59,7 @@ namespace Editor.ECS.Components.Audio
             set => SetProperty(ref _boxExtents, value, nameof(BoxExtents));
         }
 
-        /// <summary>Blend distance beyond the boundary: full effect inside, silence
+        /// <summary>Blend distance (world metres) beyond the boundary: full effect inside, silence
         /// at boundary + falloff. Prevents clicks when walking through the door.</summary>
         [DataMember(Name = "falloff", Order = 13)]
         public float Falloff
