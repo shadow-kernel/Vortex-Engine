@@ -94,6 +94,9 @@ namespace vortex::graphics
 		std::vector<SkeletonBoneData> bones;
 		std::vector<AnimationClipData> animations;
 		bool has_skeleton() const { return !bones.empty(); }
+		// What the import could not reproduce, one message each (e.g. a material whose maps need different UV transforms,
+		// #470); the editor shows them in its console.
+		std::vector<std::string> warnings;
 
 		bool is_valid() const { return !submeshes.empty(); }
 		void clear()
@@ -104,6 +107,7 @@ namespace vortex::graphics
 			nodes.clear();
 			bones.clear();
 			animations.clear();
+			warnings.clear();
 		}
 	};
 
@@ -145,6 +149,12 @@ namespace vortex::graphics
 		/// turn a self-contained .glb into a model folder with a real textures/ subfolder.
 		/// </summary>
 		static std::vector<std::string> extract_embedded_textures(const std::string& filepath, const std::string& out_dir);
+
+		/// <summary>
+		/// The warnings of the most recent import_from_file / import_from_memory on the calling thread (#470), so a
+		/// caller that only gets ids back (the editor's model import) can still show them.
+		/// </summary>
+		static const std::vector<std::string>& last_warnings();
 
 	private:
 	static void calculate_bounds(ImportedModelData& data);

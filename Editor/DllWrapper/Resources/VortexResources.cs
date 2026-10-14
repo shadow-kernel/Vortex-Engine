@@ -406,6 +406,41 @@ namespace Editor.DllWrapper
             public long TextureId { get; set; }
         }
 
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int GetLastModelImportWarnings([In, Out] byte[] outText, int maxLen);
+
+        /// <summary>The warnings of the most recent model import on this thread (#470): what the importer could not
+        /// reproduce, e.g. a glTF material whose maps need different UV transforms. Empty when there were none.</summary>
+        public static string[] LastModelImportWarnings()
+        {
+            try
+            {
+                int needed = GetLastModelImportWarnings(null, 0);
+                if (needed <= 0) return Array.Empty<string>();
+                var buf = new byte[needed];
+                GetLastModelImportWarnings(buf, needed);
+                int len = Array.IndexOf(buf, (byte)0);
+                return System.Text.Encoding.UTF8.GetString(buf, 0, len < 0 ? buf.Length : len).Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            }
+            catch (EntryPointNotFoundException) { return Array.Empty<string>(); }
+        }
+
+        private static readonly System.Collections.Generic.HashSet<string> _reportedImportWarnings = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+
+        /// <summary>Show the import's warnings in the console (#470), naming the model — once per model and message, however
+        /// often thumbnails, previews and the scene import it again.</summary>
+        private static void ReportImportWarnings(string filepath)
+        {
+            string[] warnings;
+            try { warnings = LastModelImportWarnings(); } catch { return; }
+            foreach (var w in warnings)
+            {
+                string line = "Model import " + System.IO.Path.GetFileName(filepath) + ": " + w;
+                lock (_reportedImportWarnings) { if (!_reportedImportWarnings.Add(line)) continue; }
+                try { Editor.Core.Services.ConsoleService.Instance.LogWarning(line); } catch { }
+            }
+        }
+
         /// <summary>
         /// Import a model with separate meshes and materials for each submesh
         /// </summary>
@@ -417,6 +452,7 @@ namespace Editor.DllWrapper
             var textureIds = new long[maxSubmeshes];
 
             int count = ImportModelWithMaterials(filepath, meshIds, materialIds, textureIds, maxSubmeshes);
+            ReportImportWarnings(filepath);
 
             var result = new SubmeshImportData[count];
             for (int i = 0; i < count; i++)
@@ -449,6 +485,7 @@ namespace Editor.DllWrapper
             int count;
             try { count = ImportModelWithMaterialsCached(filepath, cacheDir, meshIds, materialIds, textureIds, maxSubmeshes, out cached); }
             catch (EntryPointNotFoundException) { return ImportModelWithMaterialsFromFile(filepath); }
+            ReportImportWarnings(filepath);
 
             var result = new SubmeshImportData[count];
             for (int i = 0; i < count; i++)

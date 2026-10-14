@@ -406,6 +406,22 @@ EDITOR_INTERFACE int GetModelMaterialAlpha(const char* filepath,
 	return count;
 }
 
+// The warnings of the most recent model import on the calling thread (#470) — a glTF material whose maps need different
+// UV transforms, … — one per line, so the editor shows them in its console right after an import call. Returns the
+// buffer size they need including the terminator (0 = none); with out = null or max_len <= 0 it is only a size query.
+EDITOR_INTERFACE int GetLastModelImportWarnings(char* out, int max_len)
+{
+	std::string all;
+	for (const auto& w : graphics::ModelImporter::last_warnings())
+	{
+		if (!all.empty()) all += '\n';
+		all += w;
+	}
+	if (all.empty()) return 0;
+	if (out && max_len > 0) strncpy_s(out, max_len, all.c_str(), _TRUNCATE);
+	return static_cast<int>(all.size()) + 1;
+}
+
 // Per-submesh albedo source (#453), for the placement's texture-folder fallback: 0 = the material has no albedo map
 // (colour only: never textured from the folder), 1 = it names one (the folder may stand in only when that file cannot
 // be loaded), 2 = the file has no material for the submesh (e.g. an OBJ without .mtl). Returns the submesh count.

@@ -86,6 +86,100 @@ namespace vortex::graphics
 			for (u32 i = 0; i < node->mNumChildren; ++i)
 				collect_nodes(node->mChildren[i], self, data);
 		}
+
+		// ---- glTF KHR_texture_transform (#470) ----
+		// The engine samples every map of a material with ONE UV set, the vertex UVs, so a texture's offset / rotation /
+		// scale is baked into them. Assimp's glTF2 importer stores the extension as an aiUVTransform rewritten for its
+		// own pivot convention, and aiProcess_FlipUVs flips that once more (translation.y and rotation negated);
+		// aiProcess_TransformUVCoords bakes it wrongly into our flipped UVs (only a pure offset came out right, and maps
+		// with different transforms collapsed every vertex onto one UV). So the glTF values are recovered from it and
+		// applied as the glTF spec defines them, uv' = offset + R(rotation) * (scale * uv) with R = [c s; -s c], to the
+		// UVs in glTF's own convention — which the two V flips (Assimp's glTF reader, aiProcess_FlipUVs) restore.
+		struct UvTransform { bool has{ false }; float ox{ 0.0f }, oy{ 0.0f }, rotation{ 0.0f }, sx{ 1.0f }, sy{ 1.0f }; };
+
+		UvTransform gltf_uv_transform(const aiMaterial* mat, aiTextureType type)
+		{
+			UvTransform x;
+			aiUVTransform t;
+			if (mat->Get(AI_MATKEY_UVTRANSFORM(type, 0), t) != AI_SUCCESS) return x;
+			const float c = cosf(t.mRotation), s = sinf(t.mRotation);
+			x.has = true;
+			x.rotation = t.mRotation;
+			x.sx = t.mScaling.x;
+			x.sy = t.mScaling.y;
+			// inverse of glTF2Importer: translation = (sx/2 (1 - c + s) + offset.x, sy/2 (s + c - 1) + 1 - sy - offset.y),
+			// with translation.y negated by aiProcess_FlipUVs
+			x.ox = t.mTranslation.x - 0.5f * x.sx * (1.0f - c + s);
+			x.oy = t.mTranslation.y + 0.5f * x.sy * (s + c - 1.0f) + 1.0f - x.sy;
+			return x;
+		}
+
+		void apply_uv_transform(const UvTransform& x, float& u, float& v)
+		{
+			const float c = cosf(x.rotation), s = sinf(x.rotation);
+			const float su = x.sx * u, sv = x.sy * v;
+			u = x.ox + c * su + s * sv;
+			v = x.oy - s * su + c * sv;
+		}
+
+		bool same_transform(const UvTransform& a, const UvTransform& b)
+		{
+			if (a.has != b.has) return false;
+			if (!a.has) return true;
+			auto eq = [](float p, float q) { return fabsf(p - q) <= 1e-5f * (std::max)(1.0f, (std::max)(fabsf(p), fabsf(q))); };
+			return eq(a.ox, b.ox) && eq(a.oy, b.oy) && eq(a.rotation, b.rotation) && eq(a.sx, b.sx) && eq(a.sy, b.sy);
+		}
+
+		// the UV set a texture slot reads (glTF texCoord); a set the mesh does not have counts as set 0
+		int uv_source(const aiMaterial* mat, aiTextureType type, const aiMesh* mesh)
+		{
+			int set = 0;
+			mat->Get(AI_MATKEY_UVWSRC(type, 0), set);
+			return (set >= 0 && set < AI_MAX_NUMBER_OF_TEXTURECOORDS && mesh->mTextureCoords[set]) ? set : 0;
+		}
+
+		bool same_uvs(const aiMesh* mesh, int a, int b)
+		{
+			if (a == b) return true;
+			const aiVector3D* p = mesh->mTextureCoords[a];
+			const aiVector3D* q = mesh->mTextureCoords[b];
+			if (!p || !q) return false;
+			for (u32 i = 0; i < mesh->mNumVertices; ++i)
+				if (fabsf(p[i].x - q[i].x) > 1e-6f || fabsf(p[i].y - q[i].y) > 1e-6f) return false;
+			return true;
+		}
+
+		// The UV set and transform a glTF mesh's vertex UVs carry: those of its base colour map, or of the first map present
+		// when there is none. A map that needs another transform, or a UV set with other data, is sampled with them too —
+		// one warning per material says so (#470).
+		void plan_gltf_uvs(const aiMaterial* mat, const aiMesh* mesh, int& set, UvTransform& xf, ImportedModelData& data)
+		{
+			static const aiTextureType slots[] = { aiTextureType_DIFFUSE, aiTextureType_NORMALS, aiTextureType_METALNESS,
+				aiTextureType_DIFFUSE_ROUGHNESS, aiTextureType_AMBIENT_OCCLUSION, aiTextureType_LIGHTMAP, aiTextureType_EMISSIVE };
+			static const char* slot_names[] = { "base colour", "normal", "metallic", "roughness", "occlusion", "occlusion", "emissive" };
+			constexpr int slot_count = sizeof(slots) / sizeof(slots[0]);
+			int primary = -1;
+			for (int i = 0; i < slot_count && primary < 0; ++i)
+				if (mat->GetTextureCount(slots[i]) > 0) primary = i;
+			if (primary < 0) return;   // untextured: the UVs stay as they are
+			set = uv_source(mat, slots[primary], mesh);
+			xf = gltf_uv_transform(mat, slots[primary]);
+
+			bool conflict = false;
+			for (int i = 0; i < slot_count && !conflict; ++i)
+			{
+				if (i == primary || mat->GetTextureCount(slots[i]) == 0) continue;
+				conflict = !same_uvs(mesh, set, uv_source(mat, slots[i], mesh)) || !same_transform(xf, gltf_uv_transform(mat, slots[i]));
+			}
+			if (!conflict) return;
+			aiString name;
+			mat->Get(AI_MATKEY_NAME, name);
+			const std::string warning = "glTF material '" + std::string(name.C_Str()) + "': its texture maps use different UV "
+				"transforms or UV sets (KHR_texture_transform / texCoord); the engine samples every map with one UV set, so all of "
+				"them use the " + slot_names[primary] + " map's";
+			for (const auto& w : data.warnings) if (w == warning) return;
+			data.warnings.push_back(warning);
+		}
 	}
 
 	// Build the node hierarchy + compact bone palette. Only runs its full work when the scene actually
@@ -251,6 +345,16 @@ namespace vortex::graphics
 			normal_m.Inverse().Transpose();
 		}
 
+		// glTF: the vertex UVs are the base colour map's UV set with its KHR_texture_transform baked in (#470) — a
+		// Sketchfab scan quantises its UVs into 0..1/16 and scales every map by 16; read raw, every island sampled a
+		// neighbouring piece of the atlas
+		const aiScene* scene = static_cast<const aiScene*>(scene_ptr);
+		int uv_set = 0;
+		UvTransform uv_xf;
+		if (data.gltf && scene && mesh->mMaterialIndex < scene->mNumMaterials)
+			plan_gltf_uvs(scene->mMaterials[mesh->mMaterialIndex], mesh, uv_set, uv_xf, data);
+		const aiVector3D* uvs = mesh->mTextureCoords[uv_set] ? mesh->mTextureCoords[uv_set] : mesh->mTextureCoords[0];
+
 		result.vertices.reserve(mesh->mNumVertices);
 		for (u32 i = 0; i < mesh->mNumVertices; i++)
 		{
@@ -275,10 +379,12 @@ namespace vortex::graphics
 				vertex.normal = { 0.0f, 1.0f, 0.0f };
 			}
 
-			if (mesh->mTextureCoords[0])
+			if (uvs)
 			{
-				vertex.uv.x = mesh->mTextureCoords[0][i].x;
-				vertex.uv.y = mesh->mTextureCoords[0][i].y;
+				float u = uvs[i].x, v = uvs[i].y;
+				if (uv_xf.has) apply_uv_transform(uv_xf, u, v);
+				vertex.uv.x = u;
+				vertex.uv.y = v;
 			}
 			else
 			{

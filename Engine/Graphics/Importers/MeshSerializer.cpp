@@ -126,8 +126,9 @@ namespace vortex::graphics
 		// build_model_result reads from each submesh besides its geometry. A cache of another version is not used: the
 		// model is imported again and the cache rewritten.
 		//   v2: blend mode, alpha cutoff and two-sidedness (#441) — a v1 cache would bring glTF cut-outs back opaque
+		//   v3: the submesh UVs carry the glTF KHR_texture_transform (#470) — older ones hold the raw, scrambled UVs
 		constexpr u32 kCacheMagic = 0x434D4D56;   // "VMMC"
-		constexpr u32 kCacheVersion = 2;
+		constexpr u32 kCacheVersion = 3;
 		constexpr u32 kMaxString = 1u << 16;
 		constexpr u32 kMaxSubmeshes = 4096;
 
