@@ -213,14 +213,15 @@ namespace vortex::physics {
 
 		// Skips some bodies — the caller's own colliders and character capsule for a ray that must not hit its caller
 		// (#406 / #418), a character's own colliders for its move (#417). Filtering (instead of stepping past hits) also
-		// works when the query starts deep inside such a body. The list is short (one entity's bodies), scanned linearly.
+		// works when the query starts deep inside such a body. The ids are sorted (ignored_body_ids): an ignored Foliage
+		// entity brings one body per colliding instance.
 		class ignore_bodies_filter final : public JPH::BodyFilter
 		{
 		public:
 			explicit ignore_bodies_filter(const std::vector<JPH::BodyID>& ids) : _ids{ ids } {}
 			bool ShouldCollide(const JPH::BodyID& id) const override
 			{
-				return std::find(_ids.begin(), _ids.end(), id) == _ids.end();
+				return _ids.empty() || !std::binary_search(_ids.begin(), _ids.end(), id);
 			}
 		private:
 			const std::vector<JPH::BodyID>& _ids;
@@ -832,8 +833,8 @@ namespace vortex::physics {
 			return slot && slot->character ? slot : nullptr;
 		}
 
-		// Body ids of the bodies (handles) and character capsules (character handles) a query must skip; stale handles
-		// are dropped.
+		// Body ids of the bodies (handles) and character capsules (character handles) a query must skip, sorted for
+		// ignore_bodies_filter; stale handles are dropped.
 		std::vector<JPH::BodyID> ignored_body_ids(const u32* bodies, s32 body_count, const u32* characters, s32 character_count)
 		{
 			std::vector<JPH::BodyID> ids;
@@ -843,6 +844,7 @@ namespace vortex::physics {
 			if (characters)
 				for (s32 i = 0; i < character_count; ++i)
 					if (const character_slot* slot = find_character(characters[i])) ids.push_back(slot->character->GetInnerBodyID());
+			std::sort(ids.begin(), ids.end());
 			return ids;
 		}
 

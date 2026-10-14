@@ -616,7 +616,6 @@ namespace Editor.Core.Services.Physics
                 {
                     if (s == null) continue;
                     if (s.Owner != null && (layerMask & (1 << (s.Owner.Layer & 31))) == 0) continue;
-                    if (ignore != null && IsUnder(s.Owner, ignore)) continue;
                     float t; V3 n;
                     bool got;
                     if (s.Kind == Kind.Tris && s.Tris != null)
@@ -628,7 +627,10 @@ namespace Editor.Core.Services.Physics
                     else if (s.Kind == Kind.Box) got = RayObb(o, d, s, bestT, out t, out n);
                     else if (s.Kind == Kind.Sphere) got = RaySphere(o, d, s.Center, s.Radius, bestT, out t, out n);
                     else got = RayCapsule(o, d, s.A, s.B, s.Radius, bestT, out t, out n);
-                    if (got && t < bestT) { bestT = t; best = s; bestN = n; }
+                    // the ignored subtree is asked only about a hit that would be the closest (#406: after the shape test —
+                    // a parent walk per shape cost a third of the cast)
+                    if (!got || t >= bestT || (ignore != null && IsUnder(s.Owner, ignore))) continue;
+                    bestT = t; best = s; bestN = n;
                 }
             }
             if (best == null) return false;
@@ -1646,8 +1648,8 @@ namespace Editor.Core.Services.Physics
                     {
                         var s = _dynamic[di];
                         if (s.Owner == null) continue;
-                        if (cc.Owner != null && IsUnder(s.Owner, cc.Owner)) continue;
                         if (!AabbOverlap(capMin, capMax, s.Min, s.Max)) continue;
+                        if (cc.Owner != null && IsUnder(s.Owner, cc.Owner)) continue;   // #417 (after the cheap box test)
                         if (!CapsuleOverlapsShape(cc, s)) continue;
                         var key = (cid, -1 - (int)(s.BodyId & 0x7FFFFFFF));
                         _curSolid.Add(key);

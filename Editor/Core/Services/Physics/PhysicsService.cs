@@ -95,7 +95,7 @@ namespace Editor.Core.Services.Physics
             public int Motion;
             public int Layer;
             public bool IsTrigger;
-            public bool Secondary;        // the sensor twin of an entity whose primary body is solid
+            public bool Secondary;        // a further body of the entity: a sensor twin, a foliage instance after the first
             public SysVec CenterOffset;   // scaled local offset entity origin -> body origin (mesh bodies with a Center)
             public SysVec BoundsCenter;   // centre of the shape bounds in the body frame
             public SysVec BoundsHalf;     // half extents of the shape bounds in the body frame
@@ -127,6 +127,9 @@ namespace Editor.Core.Services.Physics
         }
 
         private static readonly Dictionary<GameEntity, Body> _byEntity = new Dictionary<GameEntity, Body>();
+        // #406: the handles of EVERY solid body of an entity — a Foliage entity has one per colliding instance — for the
+        // ignore lists of rays and characters (_byEntity holds one body per entity)
+        private static readonly Dictionary<GameEntity, List<uint>> _solidBodiesOf = new Dictionary<GameEntity, List<uint>>();
         private static readonly Dictionary<uint, Body> _byId = new Dictionary<uint, Body>();
         private static readonly List<Body> _bodies = new List<Body>();
         private static readonly List<CollisionService.DynamicBody> _publish = new List<CollisionService.DynamicBody>();
@@ -235,6 +238,7 @@ namespace Editor.Core.Services.Physics
             _jointsDirty = false;
             _scene = null;
             _byEntity.Clear(); _byId.Clear(); _bodies.Clear(); _publish.Clear(); _pushes.Clear(); _stayThisFrame.Clear();
+            _solidBodiesOf.Clear();
             ClearJoltCharacters();
             _accumulator = 0f;
             LastStepCount = 0;
@@ -597,10 +601,11 @@ namespace Editor.Core.Services.Physics
         private static bool _rayExUnavailable;
         private static uint[] _ignoreBodies = new uint[16], _ignoreChars = new uint[4];
 
-        /// <summary>The body handles of <paramref name="root"/> and everything under it — their colliders' bodies and the
-        /// parts of their ragdolls — into <paramref name="ids"/> (grown as needed); returns the count. Handles, not engine
-        /// entity ids: an entity loaded from a scene file has no unique engine id (they all read 0), so an id filter would
-        /// skip every body. (Sensor twins are left out: triggers never block a ray or a character.)</summary>
+        /// <summary>The body handles of <paramref name="root"/> and everything under it — all of their colliders' bodies
+        /// (every instance body of a Foliage entity) and the parts of their ragdolls — into <paramref name="ids"/> (grown as
+        /// needed); returns the count. Handles, not engine entity ids: an entity loaded from a scene file has no unique
+        /// engine id (they all read 0), so an id filter would skip every body. (Sensor twins are left out: triggers never
+        /// block a ray or a character.)</summary>
         private static int SubtreeBodies(GameEntity root, ref uint[] ids)
         {
             int n = 0;
@@ -611,8 +616,16 @@ namespace Editor.Core.Services.Physics
         private static void CollectBodies(GameEntity e, ref uint[] ids, ref int n)
         {
             if (e == null) return;
-            if (_byEntity.TryGetValue(e, out var b)) Append(ref ids, ref n, b.Id);
+            if (_solidBodiesOf.TryGetValue(e, out var list))
+                for (int i = 0; i < list.Count; i++) Append(ref ids, ref n, list[i]);
             if (e.Children != null) foreach (var c in e.Children) CollectBodies(c, ref ids, ref n);
+        }
+
+        /// <summary>Test hook (#406): how many body handles a ray or a character that ignores <paramref name="root"/> skips.</summary>
+        internal static int IgnoredBodyCount(GameEntity root)
+        {
+            var ids = new uint[16];
+            return root != null ? SubtreeBodies(root, ref ids) : 0;
         }
 
         /// <summary>The handles of the "jolt" characters that belong to <paramref name="root"/> or an entity under it.</summary>
@@ -1046,6 +1059,7 @@ namespace Editor.Core.Services.Physics
                 }
                 _byEntity.Remove(e);
             }
+            _solidBodiesOf.Remove(e);
             if (e.Children != null) foreach (var c in e.Children) RemoveRecursive(c);
         }
 
@@ -1191,6 +1205,11 @@ namespace Editor.Core.Services.Physics
             _bodies.Add(b);
             _byId[b.Id] = b;
             if (!secondary) _byEntity[e] = b;
+            if (!b.IsTrigger)
+            {
+                if (!_solidBodiesOf.TryGetValue(e, out var ids)) _solidBodiesOf[e] = ids = new List<uint>(1);
+                ids.Add(b.Id);
+            }
         }
 
         /// <summary>Create one body from a group of colliders (null = derive from the MeshRenderer).</summary>

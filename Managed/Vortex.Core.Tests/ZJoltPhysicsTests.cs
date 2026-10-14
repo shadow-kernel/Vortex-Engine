@@ -1,12 +1,15 @@
 using System;
 using System.Collections.Generic;
 using Editor.Core.Data;
+using Editor.Core.Foliage;
 using Editor.Core.Services.AI;
+using Editor.Core.Services.Foliage;
 using Editor.Core.Services.Physics;
 using Editor.DllWrapper;
 using Editor.ECS;
 using Editor.ECS.Components.AI;
 using Editor.ECS.Components.Physics;
+using Editor.ECS.Components.Rendering;
 
 namespace VortexTests
 {
@@ -232,6 +235,41 @@ namespace VortexTests
                 }
             }
             finally { ClearWorlds(); CollisionService.MeshTriangleProvider = oldProvider; }
+        }
+
+        /// <summary>#406 review: a ray that ignores a Foliage entity passes EVERY trunk body of it (the Jolt ignore list held
+        /// only the entity's first body), like the managed cast.</summary>
+        [Test]
+        public static void IgnoringAFoliageEntitySkipsEveryTrunk(TestContext t)
+        {
+            if (!Jolt()) return;
+            var s = new Scene { Name = "Grove" };
+            PhysicsRaycastTests.Add(s, null, "Floor", new Vector3(0, -0.5f, 0), e => e.AddComponentDirect(new BoxCollider(e) { Size = new Vector3(40f, 1f, 40f) }));
+            var grove = PhysicsRaycastTests.Add(s, null, "Grove", new Vector3(0, 0, 0), e =>
+            {
+                var f = new Foliage(e);
+                f.Types.Add(new FoliageType { Name = "Tree", Collision = 1, CollisionRadius = 0.3f, CollisionHeight = 4f });
+                e.AddComponentDirect(f);
+            });
+            var target = PhysicsRaycastTests.Add(s, null, "Target", new Vector3(0, 1f, 12f), e => e.AddComponentDirect(new BoxCollider(e)));
+            PhysicsRaycastTests.AsLoaded(s);
+            try
+            {
+                t.True(FoliageService.TryGetData(grove, out var data), "the grove's foliage data");
+                var trees = data.Layer("Tree", true);
+                for (int i = 0; i < 3; i++) trees.Add(new FoliageInstance(new System.Numerics.Vector3(0f, 0f, 3f + 3f * i), System.Numerics.Quaternion.Identity, 1f));
+                BuildWorlds(s);
+                t.Equal(5, PhysicsService.BodyCount, "floor + three trunks + target");
+                t.Equal(3, PhysicsService.IgnoredBodyCount(grove), "ignoring the grove skips its three trunk bodies");
+                var o = new Vector3(0, 1f, 0); var fwd = new Vector3(0, 0, 1);
+                t.True(PhysicsService.Raycast(o, fwd, 20f, out _, out _, out var e, out float d) && e == grove && Math.Abs(d - 2.7f) < 0.02f,
+                       "a ray hits the first trunk (" + e?.Name + " at " + d + ")");
+                t.True(PhysicsService.Raycast(o, fwd, 20f, out _, out _, out e, out d, PhysicsService.SolidLayerMask, grove) && e == target && Math.Abs(d - 11.5f) < 0.02f,
+                       "Jolt: ignoring the grove passes every trunk (" + e?.Name + " at " + d + ")");
+                t.True(CollisionService.Raycast(o, fwd, 20f, ~0, out _, out _, out e, out d, grove) && e == target && Math.Abs(d - 11.5f) < 0.02f,
+                       "managed: the same (" + e?.Name + " at " + d + ")");
+            }
+            finally { ClearWorlds(); FoliageService.Clear(); }
         }
 
         /// <summary>#407 with the "jolt" controller: a switched-off owner gets no Jolt character, and a ragdolled one neither
