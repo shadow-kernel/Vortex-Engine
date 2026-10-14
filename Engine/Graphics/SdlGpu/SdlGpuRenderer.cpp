@@ -940,7 +940,7 @@ namespace vortex::graphics::sdlgpu
 			return;
 		}
 
-		FrameView view = build_main_view(rw, rh);
+		FrameView view = build_main_view(rw, rh, slot);
 		if (slot == 0) m_frame_constants = view.frame;   // the unjittered matrices persist
 		apply_taa_jitter(surface, view, rw, rh, post_on && m_postfx.params().taa && m_pipeline_taa != nullptr);
 		record_scene(cmd, surface.scene, view, m_skybox_enabled, m_grid_visible, true, 0, true);
@@ -1428,6 +1428,7 @@ namespace vortex::graphics::sdlgpu
 		wait_idle();
 		release_target(*it->second);
 		m_render_targets.erase(it);
+		m_target_light_views.erase(target_id);   // its light choice (#416)
 	}
 
 	bool SdlGpuRenderer::resize_render_target(u32 target_id, u32 width, u32 height)
@@ -1446,7 +1447,7 @@ namespace vortex::graphics::sdlgpu
 
 		SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(m_device);
 		if (!cmd) return;
-		FrameView view = build_camera_view(camera, target.width, target.height);
+		FrameView view = build_camera_view(camera, target.width, target.height, target_id);
 		record_scene(cmd, target, view, true, render_grid, render_gizmos, m_particles.consume_target_world(), false);
 		SDL_SubmitGPUCommandBuffer(cmd);
 	}

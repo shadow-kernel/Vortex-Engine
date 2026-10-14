@@ -199,49 +199,50 @@ namespace vortex::graphics::sdlgpu
 		m_dir_shadow_distance = shadow_distance > 5.0f ? shadow_distance : 5.0f;
 	}
 
-	namespace
-	{
-		// Lights beyond the shader's slots are chosen by relevance to the camera, not by submission order (#335):
-		// intensity weighted by how deep the camera sits inside the light's range sphere and, outside it, by how
-		// close that sphere is. The brightest nearby lights win; far dim ones drop out.
-		template<class L>
-		void keep_most_relevant(std::vector<L>& lights, size_t cap, const DirectX::XMFLOAT3& eye)
-		{
-			if (lights.size() <= cap) return;
-			std::vector<std::pair<float, size_t>> order;
-			order.reserve(lights.size());
-			for (size_t i = 0; i < lights.size(); ++i)
-			{
-				const L& l = lights[i];
-				const float dx = l.position.x - eye.x, dy = l.position.y - eye.y, dz = l.position.z - eye.z;
-				const float d = sqrtf(dx * dx + dy * dy + dz * dz);
-				float inside = l.range > 0.0f ? 1.0f - d / l.range : 1.0f;
-				if (inside < 0.0f) inside = 0.0f;
-				float nearness = l.range > 0.0f ? l.range / (d + 1e-3f) : 1.0f;
-				if (nearness > 1.0f) nearness = 1.0f;
-				order.push_back({ l.intensity * (inside + nearness), i });
-			}
-			std::stable_sort(order.begin(), order.end(), [](const std::pair<float, size_t>& a, const std::pair<float, size_t>& b) { return a.first > b.first; });
-			std::vector<L> kept;
-			kept.reserve(cap);
-			for (size_t i = 0; i < cap; ++i) kept.push_back(lights[order[i].second]);
-			lights.swap(kept);
-		}
-	}
-
-	// every submitted light is kept here; prioritize_lights() picks the ones that fit the shader slots (#335)
+	// every submitted light is kept here, never cut; select_lights() picks the ones that hold the shader slots, per view and
+	// frame (#335, #416)
 	void SdlGpuRenderer::add_point_light(const PointLightData& light) { if (m_point_lights.size() < MAX_SUBMITTED_LIGHTS) m_point_lights.push_back(light); }
 	void SdlGpuRenderer::add_spot_light(const SpotLightData& light) { if (m_spot_lights.size() < MAX_SUBMITTED_LIGHTS) m_spot_lights.push_back(light); }
 
-	void SdlGpuRenderer::prioritize_lights()
+	// Lights beyond the shader's slots are chosen by relevance to the camera, not by submission order (#335) — since #416 from
+	// ALL submitted lights on every rendered frame, so a camera that moves between two scene submits is followed, and with the
+	// view's choice held still by hysteresis and its changes faded (lighting::LightSelector, the same on DX12).
+	void SdlGpuRenderer::select_lights(LightViewState& state, const FrameView& v)
 	{
+		const auto now = std::chrono::steady_clock::now();
+		const float dt = state.primed ? std::chrono::duration<float>(now - state.last).count() : 0.0f;
+		const lighting::Viewer viewer = lighting::make_viewer(v.eye, v.view_projection);
+		const DirectX::XMFLOAT3 dir = lighting::view_direction(viewer);
+		// the view's first frame, a cut, a teleport or a whip-around: start over, the chosen lights show at once
+		const bool snap = !state.primed || lighting::camera_cut(state.eye, state.forward, v.eye, dir);
+		state.last = now; state.eye = v.eye; state.forward = dir; state.primed = true;
+		auto& c = m_light_candidates;
+		c.clear();
+		for (const PointLightData& p : m_point_lights)
+		{
+			bool in_view = true;
+			const float score = lighting::point_light_score(p.position, p.range, p.intensity, viewer, &in_view);
+			c.push_back({ p.id ? p.id : lighting::fallback_light_id(1, p.color, p.range, 0.0f), score,
+				p.cast_shadows != 0 && p.shadow_strength > 0.0f, in_view });
+		}
+		state.points.update(c.data(), (u32)c.size(), MAX_POINT_LIGHTS, MAX_SHADOW_POINTS, dt, snap);
+		m_view_points = state.points.selected();
+		c.clear();
+		for (const SpotLightData& s : m_spot_lights)
+		{
+			const bool aimed = s.direction.x * s.direction.x + s.direction.y * s.direction.y + s.direction.z * s.direction.z > 1e-6f;
+			bool in_view = true;
+			const float score = lighting::spot_light_score(s.position, s.direction, s.range, s.spot_angle, s.intensity, viewer, &in_view);
+			c.push_back({ s.id ? s.id : lighting::fallback_light_id(2, s.color, s.range, s.spot_angle), score,
+				s.cast_shadows != 0 && s.shadow_strength > 0.0f && aimed, in_view });
+		}
+		state.spots.update(c.data(), (u32)c.size(), MAX_SPOT_LIGHTS, MAX_SHADOW_SPOTS, dt, snap);
+		m_view_spots = state.spots.selected();
 		const size_t points = m_point_lights.size(), spots = m_spot_lights.size();
-		if (points <= MAX_POINT_LIGHTS && spots <= MAX_SPOT_LIGHTS) return;
-		keep_most_relevant(m_point_lights, MAX_POINT_LIGHTS, m_camera_position);
-		keep_most_relevant(m_spot_lights, MAX_SPOT_LIGHTS, m_camera_position);
-		if (m_light_cap_log++ % 600 == 0)
+		if ((points > MAX_POINT_LIGHTS || spots > MAX_SPOT_LIGHTS) && m_light_cap_log++ % 600 == 0)
 			platform::debug_output(("[sdlgpu] lights: " + std::to_string(points) + " point / " + std::to_string(spots) + " spot submitted, "
-				+ std::to_string(MAX_POINT_LIGHTS) + " / " + std::to_string(MAX_SPOT_LIGHTS) + " fit — the brightest near the camera are used (#335)\n").c_str());
+				+ std::to_string(MAX_POINT_LIGHTS) + " / " + std::to_string(MAX_SPOT_LIGHTS) + " fit — the most relevant for the camera hold the slots, "
+				"changes fade over 0.5 s (#335, #416)\n").c_str());
 	}
 
 	void SdlGpuRenderer::set_fog(const DirectX::XMFLOAT3& color, float density, float height_y, float height_falloff)
@@ -253,33 +254,42 @@ namespace vortex::graphics::sdlgpu
 		m_frame_constants.fog_mode = 0;
 	}
 
-	void SdlGpuRenderer::fill_light_buffer()
+	void SdlGpuRenderer::fill_light_buffer(LightViewState& lights, FrameView& v)
 	{
 		using namespace DirectX;
-		prioritize_lights();
+		select_lights(lights, v);
 		LightBufferData& L = m_light_data;
 		memset(&L, 0, sizeof(L));
-		for (size_t i = 0; i < m_point_lights.size() && i < MAX_POINT_LIGHTS; ++i)
+		// the view's lights in slot order, a light entering or leaving the slots faded (#416)
+		for (size_t k = 0; k < m_view_points.size() && k < MAX_POINT_LIGHTS; ++k)
 		{
-			L.point_lights[i].position = m_point_lights[i].position;
-			L.point_lights[i].range = m_point_lights[i].range;
-			L.point_lights[i].color = m_point_lights[i].color;
-			L.point_lights[i].intensity = m_point_lights[i].intensity;
+			const lighting::Selected& sel = m_view_points[k];
+			if (sel.index >= m_point_lights.size()) continue;
+			const PointLightData& p = m_point_lights[sel.index];
+			L.point_lights[k].position = p.position;
+			L.point_lights[k].range = p.range;
+			L.point_lights[k].color = p.color;
+			L.point_lights[k].intensity = p.intensity * sel.fade;
 		}
-		for (size_t i = 0; i < m_spot_lights.size() && i < MAX_SPOT_LIGHTS; ++i)
+		for (size_t k = 0; k < m_view_spots.size() && k < MAX_SPOT_LIGHTS; ++k)
 		{
-			GPUSpotLight& s = L.spot_lights[i];
-			s.position = m_spot_lights[i].position; s.range = m_spot_lights[i].range;
-			XMFLOAT3 dir = m_spot_lights[i].direction;
+			const lighting::Selected& sel = m_view_spots[k];
+			if (sel.index >= m_spot_lights.size()) continue;
+			const SpotLightData& sp = m_spot_lights[sel.index];
+			GPUSpotLight& s = L.spot_lights[k];
+			s.position = sp.position; s.range = sp.range;
+			XMFLOAT3 dir = sp.direction;
 			float len = sqrtf(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
 			if (len > 0.0001f) { dir.x /= len; dir.y /= len; dir.z /= len; }
 			s.direction = dir;
-			s.spot_angle = m_spot_lights[i].spot_angle;
-			s.color = m_spot_lights[i].color;
-			s.intensity = m_spot_lights[i].intensity;
-			s.inner_spot_angle = m_spot_lights[i].inner_spot_angle;
+			s.spot_angle = sp.spot_angle;
+			s.color = sp.color;
+			s.intensity = sp.intensity * sel.fade;
+			s.inner_spot_angle = sp.inner_spot_angle;
 			s.shadow_slot = -1.0f;   // prepare_shadow_pass assigns the atlas tiles after the view is known
 		}
+		v.frame.point_light_count = (u32)(std::min)(m_view_points.size(), (size_t)MAX_POINT_LIGHTS);
+		v.frame.spot_light_count = (u32)(std::min)(m_view_spots.size(), (size_t)MAX_SPOT_LIGHTS);
 		XMFLOAT4X4 ident; XMStoreFloat4x4(&ident, XMMatrixIdentity());
 		for (auto& m : L.shadow_vp) m = ident;
 		for (auto& m : L.cascade_vp) m = ident;
@@ -290,7 +300,7 @@ namespace vortex::graphics::sdlgpu
 		fill_sky_light(L);
 	}
 
-	SdlGpuRenderer::FrameView SdlGpuRenderer::build_main_view(u32 width, u32 height)
+	SdlGpuRenderer::FrameView SdlGpuRenderer::build_main_view(u32 width, u32 height, int slot)
 	{
 		using namespace DirectX;
 		FrameView v{};
@@ -311,13 +321,12 @@ namespace vortex::graphics::sdlgpu
 		v.frame.directional_intensity = m_directional_intensity;
 		v.frame.light_color = m_light_color;
 		v.frame.ambient_strength = m_ambient_strength;
-		v.frame.point_light_count = (u32)(std::min)(m_point_lights.size(), (size_t)MAX_POINT_LIGHTS);
-		v.frame.spot_light_count = (u32)(std::min)(m_spot_lights.size(), (size_t)MAX_SPOT_LIGHTS);
 		v.frame.ssao_enabled = 0.0f;
 		v.frame.gi_strength = 0.0f;
 		fill_environment(v.frame);
 		v.frame.shadow_map_texel = 1.0f / (float)SHADOW_TILE_SIZE;
 		v.eye = m_camera_position;
+		fill_light_buffer(m_light_views[slot == 1 ? 1 : 0], v);   // this surface's light choice + the light counts (#416)
 
 		v.viewmodel = v.frame;
 		XMMATRIX vm_proj = XMMatrixPerspectiveFovLH(XMConvertToRadians(m_viewmodel_fov), aspect, VIEWMODEL_NEAR, VIEWMODEL_FAR);
@@ -327,11 +336,10 @@ namespace vortex::graphics::sdlgpu
 		v.frame.camera_clip = { v.near_clip, v.far_clip, 0.0f, 0.0f };
 		v.tan_half_y = tanf(XMConvertToRadians(m_fov_degrees) * 0.5f);
 		v.tan_half_x = v.tan_half_y * aspect;
-		fill_light_buffer();
 		return v;
 	}
 
-	SdlGpuRenderer::FrameView SdlGpuRenderer::build_camera_view(const ViewportCamera& camera, u32 width, u32 height)
+	SdlGpuRenderer::FrameView SdlGpuRenderer::build_camera_view(const ViewportCamera& camera, u32 width, u32 height, u32 target_id)
 	{
 		using namespace DirectX;
 		FrameView v{};
@@ -354,20 +362,19 @@ namespace vortex::graphics::sdlgpu
 		v.frame.directional_intensity = m_directional_intensity;
 		v.frame.light_color = m_light_color;
 		v.frame.ambient_strength = m_ambient_strength;
-		v.frame.point_light_count = (u32)(std::min)(m_point_lights.size(), (size_t)MAX_POINT_LIGHTS);
-		v.frame.spot_light_count = (u32)(std::min)(m_spot_lights.size(), (size_t)MAX_SPOT_LIGHTS);
 		v.frame.ssao_enabled = 0.0f;
 		v.frame.gi_strength = 0.0f;
 		fill_environment(v.frame);
 		v.frame.shadow_map_texel = 1.0f / (float)SHADOW_TILE_SIZE;
 		v.eye = camera.position;
+		// the target's own light choice (#416): a camera preview never disturbs the main view's hysteresis and fades
+		fill_light_buffer(m_target_light_views[target_id], v);
 		v.viewmodel = v.frame;
 		camera_basis(camera.position, camera.target, camera.up, v.right, v.up, v.forward);
 		v.near_clip = camera.near_clip; v.far_clip = camera.far_clip; v.ortho = camera.orthographic;
 		v.frame.camera_clip = { v.near_clip, v.far_clip, 0.0f, 0.0f };
 		if (camera.orthographic) { v.tan_half_y = camera.ortho_size * 0.5f; v.tan_half_x = v.tan_half_y * aspect; }
 		else { v.tan_half_y = tanf(XMConvertToRadians(camera.fov_degrees) * 0.5f); v.tan_half_x = v.tan_half_y * aspect; }
-		fill_light_buffer();
 		return v;
 	}
 
@@ -606,6 +613,12 @@ namespace vortex::graphics::sdlgpu
 		m_budget_stats.bone_matrices_used = m_bone_budget.used;
 		m_budget_stats.bone_matrices_capacity = m_bone_budget.capacity;
 		m_budget_stats.skinned_bind_pose_fallbacks = m_bone_budget.fallbacks;
+		const LightViewState& lights = m_light_views[0];   // #416: the main surface's light choice
+		m_budget_stats.point_lights_submitted = (u32)m_point_lights.size();
+		m_budget_stats.spot_lights_submitted = (u32)m_spot_lights.size();
+		m_budget_stats.point_lights_shown = (u32)lights.points.selected().size();
+		m_budget_stats.spot_lights_shown = (u32)lights.spots.selected().size();
+		m_budget_stats.light_slot_changes = lights.points.entered() + lights.points.left() + lights.spots.entered() + lights.spots.left();
 		if (m_bone_budget.fallbacks > 0)
 		{
 			const auto now = std::chrono::steady_clock::now();

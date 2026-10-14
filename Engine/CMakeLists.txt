@@ -24,6 +24,7 @@ set(VORTEX_ENGINE_CORE_SOURCES
 	Graphics/Importers/ModelImporter_Process.cpp
 	Graphics/Importers/TextureImporter.cpp
 	Graphics/Importers/TextureCompress.cpp
+	Graphics/Lighting/LightSelection.cpp
 	Graphics/Particles/ParticleJson.cpp
 	Graphics/Particles/ParticleSystem.cpp
 	Graphics/Skinning/BonePalettes.cpp

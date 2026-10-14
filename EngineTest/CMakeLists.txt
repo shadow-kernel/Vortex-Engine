@@ -37,7 +37,7 @@ target_include_directories(VortexGeometryTest PRIVATE "${CMAKE_SOURCE_DIR}/Engin
 target_compile_definitions(VortexGeometryTest PRIVATE TEST_GEOMETRY=1)
 target_link_libraries(VortexGeometryTest PRIVATE vortex::engine)
 
-# Render budgets (#415): the bone-palette sharing and budget the renderers run, headless.
+# Render budgets (#415, #416): the bone-palette sharing / budget and the light selection the renderers run, headless.
 add_executable(VortexRenderBudgetTest Main.cpp)
 target_include_directories(VortexRenderBudgetTest PRIVATE "${CMAKE_SOURCE_DIR}/Engine/Common")
 target_compile_definitions(VortexRenderBudgetTest PRIVATE TEST_RENDER_BUDGETS=1)

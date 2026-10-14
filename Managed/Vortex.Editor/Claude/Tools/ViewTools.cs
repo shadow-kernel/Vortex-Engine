@@ -224,11 +224,12 @@ namespace VortexEditor.Claude.Tools
         }
 
         [McpServerTool(Name = "engine_stats", ReadOnly = true)]
-        [Description("Renderer statistics of the last frame: FPS, draw calls (total, and split into main pass / shadow atlases / SSAO prepass), indices drawn by the main pass (vertices), instances tested/drawn by culling, entity count, the live GPU resource counts (meshes incl. LOD meshes, materials, textures) — a count that only grows is a leak — and the bone-palette budget of animated characters: bone matrices used / capacity per frame and the skinned draws in view that fell back to the bind pose because it was full.")]
+        [Description("Renderer statistics of the last frame: FPS, draw calls (total, and split into main pass / shadow atlases / SSAO prepass), indices drawn by the main pass (vertices), instances tested/drawn by culling, entity count, the live GPU resource counts (meshes incl. LOD meshes, materials, textures) — a count that only grows is a leak — the bone-palette budget of animated characters (bone matrices used / capacity per frame, skinned draws in view that fell back to the bind pose because it was full) and the light budget (point / spot lights submitted and holding one of the 16 / 8 shader slots, lights that got or gave up a slot last frame).")]
         public static object EngineStats()
         {
             VortexAPI.TryGetResourceCounts(out int meshes, out int materials, out int textures);
             VortexAPI.TryGetBonePaletteStats(out int boneUsed, out int boneCapacity, out int bindPoseFallbacks);
+            VortexAPI.TryGetLightBudgetStats(out int pointsSubmitted, out int spotsSubmitted, out int pointsShown, out int spotsShown, out int lightChanges);
             int draws = VortexAPI.DrawCalls, shadowDraws = VortexAPI.DrawCallsShadow, postDraws = VortexAPI.DrawCallsPost;
             return new
             {
@@ -246,6 +247,12 @@ namespace VortexEditor.Claude.Tools
                 bone_matrices_used = boneUsed,
                 bone_matrices_capacity = boneCapacity,
                 skinned_bind_pose_fallbacks = bindPoseFallbacks,
+                // #416: the most relevant lights hold the shader slots, changes fade instead of popping
+                point_lights_submitted = pointsSubmitted,
+                point_lights_shown = pointsShown,
+                spot_lights_submitted = spotsSubmitted,
+                spot_lights_shown = spotsShown,
+                light_slot_changes = lightChanges,
                 play_state = PlayModeService.Instance.State.ToString(),
             };
         }

@@ -374,6 +374,12 @@ namespace vortex::graphics::dx12
 		m_budget_stats.bone_matrices_used = m_bone_budget.used;
 		m_budget_stats.bone_matrices_capacity = m_bone_budget.capacity;
 		m_budget_stats.skinned_bind_pose_fallbacks = m_bone_budget.fallbacks;
+		const LightViewState& lights = m_light_views[0];   // #416: the editor frame's light choice
+		m_budget_stats.point_lights_submitted = (u32)m_point_lights.size();
+		m_budget_stats.spot_lights_submitted = (u32)m_spot_lights.size();
+		m_budget_stats.point_lights_shown = (u32)lights.points.selected().size();
+		m_budget_stats.spot_lights_shown = (u32)lights.spots.selected().size();
+		m_budget_stats.light_slot_changes = lights.points.entered() + lights.points.left() + lights.spots.entered() + lights.spots.left();
 		if (m_bone_budget.fallbacks > 0)
 		{
 			const auto now = std::chrono::steady_clock::now();

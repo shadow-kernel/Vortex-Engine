@@ -16,6 +16,7 @@
 #include "DX12FrameRing.h"
 #include "../Decals/Decals.h"
 #include "../Skinning/BonePalettes.h"   // the palette stage + per-view budget shared with the SDL GPU backend (#415)
+#include "../Lighting/LightSelection.h"  // the light budget shared with the SDL GPU backend (#416)
 #include "DX12UpscalePipeline.h"
 #include "DX12PostFxChain.h"
 #include "DX12MotionVectorPipeline.h"
@@ -184,7 +185,7 @@ namespace vortex::graphics::dx12
 		// Multi-light system
 		static constexpr u32 MAX_POINT_LIGHTS = 16;
 		static constexpr u32 MAX_SPOT_LIGHTS = 8;
-		static constexpr u32 MAX_SUBMITTED_LIGHTS = 1024;   // kept per frame; the most relevant fill the slots above (#335)
+		static constexpr u32 MAX_SUBMITTED_LIGHTS = 1024;   // kept per frame; the most relevant fill the slots above (#335, #416)
 		
 		struct PointLightData
 		{
@@ -192,12 +193,14 @@ namespace vortex::graphics::dx12
 			float range;
 			DirectX::XMFLOAT3 color;
 			float intensity;
-			// Point shadows (#25): the first MAX_SHADOW_POINTS submitted point lights with
-			// cast_shadows get a 6-face cube block in the point shadow atlas. CPU-side only;
-			// the 32-byte GPUPointLight ABI is untouched (shadow data travels in the b2 tail).
+			// Point shadows (#25): MAX_SHADOW_POINTS of the chosen point lights with cast_shadows get a
+			// 6-face cube block in the point shadow atlas — the most relevant, kept unless clearly
+			// outranked (#416). CPU-side only; the 32-byte GPUPointLight ABI is untouched (shadow data
+			// travels in the b2 tail).
 			u32 cast_shadows{ 0 };
 			float shadow_strength{ 1.0f };
 			float shadow_bias{ 0.0015f };
+			u64 id{ 0 };   // stable identity for the light budget (#416): the entity; 0 = derived from the light's look
 		};
 		
 		struct SpotLightData
@@ -209,13 +212,14 @@ namespace vortex::graphics::dx12
 			DirectX::XMFLOAT3 color;
 			float intensity;
 			float inner_spot_angle;
-			// Spot shadows (#23): the FIRST submitted spot with cast_shadows != 0 becomes this frame's
-			// shadow-casting light (ONE shadow map in v1 — the flashlight). CPU-side only; the 64-byte
-			// GPUSpotLight ABI is untouched.
+			// Spot shadows (#23): up to MAX_SHADOW_SPOTS of the chosen spots with cast_shadows != 0 get a
+			// tile of the shadow atlas — the most relevant, kept unless clearly outranked (#416). CPU-side
+			// only; the 64-byte GPUSpotLight ABI is untouched.
 			u32 cast_shadows{ 0 };
 			float shadow_strength{ 1.0f };   // 0..1 — how dark the occluded area gets
 			float shadow_bias{ 0.0015f };    // receiver-side depth-comparison bias
 			u32 shadow_resolution{ 2048 };   // shadow-map size in texels
+			u64 id{ 0 };   // stable identity for the light budget (#416): the entity; 0 = derived from the light's look
 		};
 		
 		void clear_lights();
@@ -453,9 +457,14 @@ namespace vortex::graphics::dx12
 		// Cull stats (per frame): instances examined vs actually drawn — proves cull effectiveness on big maps.
 		int get_instances_tested() const { return m_instances_tested; }
 		int get_instances_drawn() const { return m_instances_drawn; }
-		// The frame budgets of the main view (#415): bone matrices in the GPU palette buffer / its capacity, and the
-		// skinned draws in view that had no room for their palette (drawn in the bind pose).
-		struct BudgetStats { u32 bone_matrices_used{ 0 }, bone_matrices_capacity{ MAX_BONE_MATRICES_PER_FRAME }, skinned_bind_pose_fallbacks{ 0 }; };
+		// The frame budgets of the main view: bone matrices in the GPU palette buffer / its capacity, and the skinned draws in
+		// view that had no room for their palette (drawn in the bind pose, #415); the point / spot lights submitted and holding
+		// a shader slot, and the lights that got or gave up a slot in the last frame (#416).
+		struct BudgetStats
+		{
+			u32 bone_matrices_used{ 0 }, bone_matrices_capacity{ MAX_BONE_MATRICES_PER_FRAME }, skinned_bind_pose_fallbacks{ 0 };
+			u32 point_lights_submitted{ 0 }, spot_lights_submitted{ 0 }, point_lights_shown{ 0 }, spot_lights_shown{ 0 }, light_slot_changes{ 0 };
+		};
 		const BudgetStats& budget_stats() const { return m_budget_stats; }
 
 		// ============== Multi-Viewport Rendering ==============
@@ -502,6 +511,12 @@ namespace vortex::graphics::dx12
 		/// Check if a render target exists.
 		/// </summary>
 		bool has_render_target(u32 target_id) const;
+		// The target's light choice has no fade in progress (#416): a view rendered only on demand renders on until it is.
+		bool render_target_settled(u32 target_id) const
+		{
+			auto it = m_target_light_views.find(target_id);
+			return it == m_target_light_views.end() || (it->second.points.settled() && it->second.spots.settled());
+		}
 
 	private:
 		DX12Renderer() = default;
@@ -514,9 +529,23 @@ namespace vortex::graphics::dx12
 		bool create_constant_buffers();
 		bool create_grid_resources();
 		bool create_skybox_resources();
-		void update_per_frame_constants();
-		// Keep the MAX_POINT_LIGHTS / MAX_SPOT_LIGHTS most relevant lights for this camera (#335); a no-op below the caps.
-		void prioritize_lights();
+		void update_per_frame_constants(int view_slot = 0);   // view_slot: 0 = the editor frame, 1 = the game window (its own light choice)
+		// The light budget of one view (#416): which submitted lights hold the shader slots and the shadow maps, with the
+		// hysteresis and fades kept from frame to frame. Every view has its own, so a preview never disturbs the main view.
+		struct LightViewState
+		{
+			lighting::LightSelector points, spots;
+			std::chrono::steady_clock::time_point last{};
+			DirectX::XMFLOAT3 eye{}, forward{};
+			bool primed{ false };
+		};
+		// The view's choice of lights from ALL submitted ones (the lists are never cut), every frame (#335, #416) ->
+		// m_view_points / m_view_spots. The same rule as the SDL GPU backend (Engine/Graphics/Lighting/LightSelection.h).
+		void select_lights(LightViewState& lights, const DirectX::XMFLOAT3& eye, const DirectX::XMFLOAT4X4& view_projection);
+		LightViewState m_light_views[2];                               // the editor frame, the game window
+		std::unordered_map<u32, LightViewState> m_target_light_views;  // per secondary render target
+		std::vector<lighting::Candidate> m_light_candidates;           // scratch
+		std::vector<lighting::Selected> m_view_points, m_view_spots;   // the recorded view's lights in slot order (light CB + shadows)
 		u32 m_light_cap_log{ 0 };
 		void wait_for_previous_frame();
 
@@ -927,7 +956,7 @@ namespace vortex::graphics::dx12
 		u32 m_next_render_target_id{ 1 };
 		
 		// Helper for rendering to a specific target
-		void render_scene_to_target(DX12RenderTarget* target, const ViewportCamera& camera, bool render_grid, bool render_gizmos = false);
+		void render_scene_to_target(DX12RenderTarget* target, const ViewportCamera& camera, bool render_grid, bool render_gizmos, LightViewState& lights);
 
 		// Render-scale: (re)create m_scaled_rt at w x h (R8G8B8A8) when the scale/window size changes; idles the
 		// GPU first since the RT may be in flight. Returns false if creation failed (caller falls back to direct).

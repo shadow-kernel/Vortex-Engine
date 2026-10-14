@@ -61,7 +61,7 @@ namespace vortex::graphics::dx12
 		m_active_width = m_game_swapchain.width();
 		m_active_height = m_game_swapchain.height();
 
-		update_per_frame_constants();
+		update_per_frame_constants(1);   // the game window's own light choice (#416)
 		// GPU idle after the flush — safe to write either buffer half; the palettes placed for the game camera (#415)
 		upload_staged_bone_palettes(m_frame_constants.view_projection, m_camera_position);
 
