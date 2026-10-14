@@ -89,7 +89,9 @@ namespace Vortex
         public static int Save() { return FoliageService.SaveAll(ProjectData.Current?.ActiveScene); }
 
         /// <summary>An entity by handle: the script runtime's table (Find, Scene.Find, a behaviour's EntityId), else an engine
-        /// id of the active scene (editor tools, smokes).</summary>
+        /// id of the active scene (editor tools, smokes). Two id spaces meet here, and a number that is both resolves as the
+        /// handle. Find hands out handles outside play too — an engine id can be 0, the "none" of every script call — so an
+        /// edit-mode Find leaves one handle per layer in the runtime's table until the next play session clears it.</summary>
         internal static Editor.ECS.GameEntity Resolve(long handle)
         {
             if (handle == 0) return null;
