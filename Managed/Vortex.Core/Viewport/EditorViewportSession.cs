@@ -84,6 +84,9 @@ namespace Editor.Core.Viewport
         public VuiCanvas PreviewCanvas { get; set; }
         public event Action<bool> FlyModeChanged;
         public event Action<bool> CursorCaptureChanged;
+        /// <summary>The camera the viewport looks through changed (null: the free editor camera) — the toolbar's camera
+        /// picker follows it, also when a tool switched back to the editor camera (#444).</summary>
+        public event Action<GameEntity> ViewThroughChanged;
 
         public bool IsInitialized => _initialized;
         public bool IsPlaying => PlayModeService.Instance.IsPlaying;
@@ -128,7 +131,8 @@ namespace Editor.Core.Viewport
             var before = CurrentView;
             if (PlayModeService.Instance.IsPlaying) return before;
             if (PlayModeService.Instance.IsGameView) PlayModeService.Instance.SetGameView(false);   // → OnGameViewChanged
-            if (CameraService.Instance.IsGameCameraActive) ViewThroughCamera(null);
+            // a camera picked in the toolbar blocks the editor camera's input even where it does not drive the render
+            if (_viewingThroughGameCamera || CameraService.Instance.IsGameCameraActive) ViewThroughCamera(null);
             ReapplyEditorCamera();
             return before;
         }
@@ -650,6 +654,7 @@ namespace Editor.Core.Viewport
                 _viewingThroughGameCamera = false;
                 CameraService.Instance.SwitchToEditorCamera();
                 SetCursorHidden(false);
+                ViewThroughChanged?.Invoke(null);
                 return;
             }
             var cam = cameraEntity.GetComponent<Editor.ECS.Components.Rendering.Camera>();
@@ -657,6 +662,7 @@ namespace Editor.Core.Viewport
             CameraService.Instance.SwitchToGameCamera(cameraEntity.Id);
             _viewingThroughGameCamera = true;
             _sceneDirty = true;
+            ViewThroughChanged?.Invoke(cameraEntity);
         }
 
         // ------------------------------------------------------------------------------------------ play mode

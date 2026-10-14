@@ -75,6 +75,7 @@ namespace VortexEditor.Claude.Tools
         /// frame would put that camera back over the pose a tool sets. Returns a note when the view changed, else null.</summary>
         private static string UseEditorCamera()
         {
+            if (PlayModeService.Instance.IsPlaying) return null;   // the game drives the view, nothing is switched
             bool gameView = PlayModeService.Instance.IsGameView;
             var before = EditorViewportSession.Main?.UseEditorCamera() ?? EditorViewportSession.ViewSource.EditorCamera;
             if (gameView) return "switched the viewport from the Game view (the scene's main camera) to the Scene view, so the editor camera renders";

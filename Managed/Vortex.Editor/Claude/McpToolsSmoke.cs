@@ -260,7 +260,18 @@ namespace VortexEditor.Claude
                 double apart = ImageDifference(topDown, framed);
                 SaveCapture(topDown, "mcp_editor_camera_top_down.jpg");
                 SaveCapture(framed, "mcp_editor_camera_framed.jpg");
+                if (apart < 0) return Fail("a capture came without a readable image");
                 if (apart < 4) return Fail("captures 280 m apart must differ (mean difference " + apart.ToString("0.0", CultureInfo.InvariantCulture) + " of 255)");
+                // a camera picked in the toolbar: focus_camera hands the view back to the free camera, and the picker says so
+                var mainCam = PlayCameraHelper.FindMainCameraEntity(project.ActiveScene);
+                var picker = EditorCommands.Window?.ViewportPanel?.CameraSelector;
+                Editor.Core.Viewport.EditorViewportSession.Main.ViewThroughCamera(mainCam);
+                await Task.Delay(150);
+                bool listed = picker != null && (picker.SelectedItem?.ToString() ?? "").Contains(mainCam.Name);
+                await C("focus_camera", new JsonObject { ["entities"] = new JsonArray(cubeId) });
+                await Task.Delay(150);
+                if (Editor.Core.Viewport.EditorViewportSession.Main.IsViewingThroughGameCamera) return Fail("focus_camera should stop looking through " + mainCam.Name);
+                if (listed && picker.SelectedIndex != 0) return Fail("the camera picker should be back on the free camera, not " + picker.SelectedItem);
 
                 // ================= play mode (#90): enter, the game camera's image, stats, exit
                 PlayModeService.Instance.EnterGameViewForPlay();   // as ▶ does: the Game view while playing, the Scene view after (#444)
@@ -298,6 +309,8 @@ namespace VortexEditor.Claude
                 var pshot = await Raw("capture_viewport", new JsonObject { ["max_size"] = 512 });
                 bool playImage = (pshot["content"] as JsonArray)?.Any(c => (string)c["type"] == "image") == true;
                 if (!playImage || McpTestClient.Text(pshot).IndexOf("play mode", StringComparison.OrdinalIgnoreCase) < 0) return Fail("capture_viewport in play mode: " + McpTestClient.Text(pshot));
+                string playFocus = McpTestClient.Text(await Raw("capture_viewport", new JsonObject { ["max_size"] = 256, ["focus"] = new JsonArray(cubeId) }));
+                if (playFocus.Contains("switched") || !PlayModeService.Instance.IsGameView) return Fail("capture_viewport(focus) while playing switches nothing and must not say so: " + playFocus);
                 var stats = await C("engine_stats", new JsonObject());
                 if ((string)stats["play_state"] != "Playing" || stats["draw_calls"] == null) return Fail("engine_stats: " + stats.ToJsonString());
                 var stop = await C("exit_play_mode", new JsonObject());
@@ -306,7 +319,8 @@ namespace VortexEditor.Claude
 
                 log.Log("mcp tools: OK — " + ToolCatalog.All.Count + " tools; material, grid (12), scatter (8, resting on the tiles), scripts with line-accurate errors, " +
                         "script fields read + set, a subfolder script by its name, " + Path.GetFileName(crate) + " + prefab, audio + mixer + generated " + Path.GetFileName(genPath) +
-                        " + container " + Path.GetFileName(scPath) + ", Game view vs editor camera (captures " + apart.ToString("0.0", CultureInfo.InvariantCulture) + " apart), play mode (capture, stats, exit)");
+                        " + container " + Path.GetFileName(scPath) + ", Game view vs editor camera (captures " + apart.ToString("0.0", CultureInfo.InvariantCulture) + " apart, camera picker " +
+                        (listed ? "followed" : "not checked: the camera is not listed") + "), play mode (capture, stats, exit)");
                 return true;
             }
             catch (Exception ex) { return Fail(ex.GetType().Name + ": " + ex.Message); }
@@ -340,24 +354,30 @@ namespace VortexEditor.Claude
             try { Directory.CreateDirectory(SmokeRegistry.CaptureDir); File.WriteAllBytes(Path.Combine(SmokeRegistry.CaptureDir, name), bytes); } catch { }
         }
 
-        /// <summary>Mean absolute RGB difference (0–255) of two capture_viewport images of the same size; -1 when they cannot be compared.</summary>
+        /// <summary>Mean absolute RGB difference (0–255) of two capture_viewport images, compared at one common size: the
+        /// viewport may change its height between two captures (a toolbar row comes and goes after a view switch), and on a
+        /// slow machine the second capture can catch the other size. -1 when an answer carries no decodable image.</summary>
         private static double ImageDifference(JsonNode a, JsonNode b)
         {
-            static SKBitmap Decode(JsonNode shot) { var bytes = ImageOf(shot); return bytes == null ? null : SKBitmap.Decode(bytes); }
+            const int Size = 96;
+            static SKBitmap Decode(JsonNode shot)
+            {
+                var bytes = ImageOf(shot);
+                using var full = bytes == null ? null : SKBitmap.Decode(bytes);
+                return full?.Resize(new SKImageInfo(Size, Size, SKColorType.Bgra8888, SKAlphaType.Opaque), SKFilterQuality.Medium);
+            }
             using var x = Decode(a);
             using var y = Decode(b);
-            if (x == null || y == null || x.Width != y.Width || x.Height != y.Height) return -1;
+            if (x == null || y == null) return -1;
             double sum = 0;
-            long n = 0;
-            for (int j = 0; j < x.Height; j += 2)
-                for (int i = 0; i < x.Width; i += 2)
+            for (int j = 0; j < Size; j++)
+                for (int i = 0; i < Size; i++)
                 {
                     var p = x.GetPixel(i, j);
                     var q = y.GetPixel(i, j);
                     sum += Math.Abs(p.Red - q.Red) + Math.Abs(p.Green - q.Green) + Math.Abs(p.Blue - q.Blue);
-                    n += 3;
                 }
-            return n == 0 ? -1 : sum / n;
+            return sum / (3.0 * Size * Size);
         }
     }
 }

@@ -65,6 +65,7 @@ namespace VortexEditor.Panels
             PlayModeService.Instance.GameViewChanged += a => Dispatcher.UIThread.Post(SyncPlayState);
             Engine.Session.FlyModeChanged += fly => Dispatcher.UIThread.Post(() => { FlyBadge.IsVisible = fly; FlyText.Text = "FLY · " + EditorCameraController.Instance.MoveSpeed.ToString("0.#") + " m/s"; });
             Engine.Session.StatusUpdated += (st, res) => Dispatcher.UIThread.Post(() => StatusChanged?.Invoke(st, res));
+            Engine.Session.ViewThroughChanged += cam => Dispatcher.UIThread.Post(() => SyncCameraPicker(cam));
             EditorSession.Instance.ProjectOpened += _ => Dispatcher.UIThread.Post(RefreshCameraList);
             SceneService.Instance.SceneLoaded += (s, sc) => Dispatcher.UIThread.Post(RefreshCameraList);
             SyncToggles(); SyncTools(); SyncPlayState();
@@ -271,6 +272,20 @@ namespace VortexEditor.Panels
             if (cam != null) items.Add(new CameraChoice { Label = (cam.IsMainCamera ? "★ " : "") + e.Name, Entity = e });
             if (e.Children != null) foreach (var c in e.Children) AddCameras(c, items);
         }
+        /// <summary>The picker shows the camera the viewport looks through, also when a tool or a menu switched it — after
+        /// focus_camera it read "★ Main Camera" while the free camera drove the view (#444).</summary>
+        private void SyncCameraPicker(GameEntity cam)
+        {
+            if (!(CameraSelector.ItemsSource is List<CameraChoice> items) || items.Count == 0) return;
+            var current = CameraSelector.SelectedItem as CameraChoice;
+            int index = cam == null ? 0 : items.FindIndex(c => ReferenceEquals(c.Entity, cam));
+            if (index < 0 || ReferenceEquals(items[index], current)) return;
+            if (cam == null && (current == null || current.Entity == null)) return;   // Free Camera or the FP preview already
+            _syncing = true;
+            CameraSelector.SelectedIndex = index;
+            _syncing = false;
+        }
+
         private void OnCameraSelected(object s, SelectionChangedEventArgs e)
         {
             if (_syncing || !(CameraSelector.SelectedItem is CameraChoice ch)) return;
