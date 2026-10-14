@@ -155,7 +155,7 @@ namespace Editor.Scripting
             if (e.IsActive == active) return true;   // no-op guard: a re-add would duplicate collision shapes
             if (!_activeChanged.ContainsKey(e)) _activeChanged[e] = e.IsActive;   // restore on play end
             e.IsActive = active;
-            try { e.SyncEngineStateRecursive(active); } catch { }
+            try { e.SyncEngineState(); } catch { }   // under an inactive parent it stays out of the engine
             // #51: collision + audio follow the active state (previously a documented limitation —
             // a deactivated door/monster stayed solid and kept emitting).
             try
@@ -570,7 +570,7 @@ namespace Editor.Scripting
                 {
                     try { ApplyRenderLayerRecursive(weapon, comp.SocketRenderLayer); } catch { }
                 }
-                try { weapon.SyncEngineStateRecursive(true); } catch { }
+                try { weapon.SyncEngineState(); } catch { }
                 try { Editor.Core.Services.Physics.CollisionService.AddEntityShapes(weapon); } catch { }
                 try { Editor.Core.Services.Physics.PhysicsService.AddEntity(weapon); } catch { }
                 try { Editor.Core.Services.AudioPlaybackService.Instance.AddEntity(weapon); } catch { }   // audio began before the sockets
@@ -733,7 +733,7 @@ namespace Editor.Scripting
                     var list = r.Parent != null ? r.Parent.Children : _currentScene?.Entities;
                     if (list != null && !list.Contains(r.Entity))
                         list.Insert(Math.Min(Math.Max(r.Index, 0), list.Count), r.Entity);
-                    r.Entity.SyncEngineStateRecursive(r.Entity.IsActive);
+                    r.Entity.SyncEngineState();
                 }
                 catch { }
             }
@@ -741,11 +741,25 @@ namespace Editor.Scripting
 
             foreach (var kv in _activeChanged)
             {
-                try { kv.Key.IsActive = kv.Value; kv.Key.SyncEngineStateRecursive(kv.Value); } catch { }
+                // the setter re-registers the entity with the engine — only for one still in the scene: a runtime spawn a
+                // script switched off is gone by now (removed above, or destroyed), and re-registering it put a native
+                // entity into the engine outside any scene, one leak per such spawn and play session
+                try { if (InLiveHierarchy(kv.Key)) kv.Key.IsActive = kv.Value; else kv.Key.SetActiveFlagOnly(kv.Value); } catch { }
             }
             _activeChanged.Clear();
 
             Editor.Core.Services.SceneRenderService.RuntimeDirty = Editor.Core.Services.SceneRenderService.StaticDirty = true;   // structural (#364 A)
+        }
+
+        /// <summary>True when the entity hangs in its scene: every level of it is in its parent's or the scene's list.</summary>
+        private static bool InLiveHierarchy(GameEntity e)
+        {
+            for (var x = e; x != null; x = x.Parent)
+            {
+                var list = x.Parent != null ? x.Parent.Children : x.Scene?.Entities;
+                if (list == null || !list.Contains(x)) return false;
+            }
+            return true;
         }
 
         /// <summary>Last compile diagnostics (empty on success) — surfaced to the user.</summary>

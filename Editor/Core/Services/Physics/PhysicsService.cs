@@ -1740,6 +1740,9 @@ namespace Editor.Core.Services.Physics
         private static GameEntity FindByEntityId(ulong entityId)
         {
             long id = unchecked((long)entityId);
+            // a body made for an entity that was not registered with the engine carries INVALID_ID — it names no entity
+            // (matching it would hand the hit to the first other unregistered entity)
+            if (!Editor.Utilities.ID.IsValid(id)) return null;
             for (int i = 0; i < _bodies.Count; i++)
                 if (_bodies[i].Entity != null && _bodies[i].Entity.EntityId == id) return _bodies[i].Entity;
             return null;

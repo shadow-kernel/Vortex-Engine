@@ -123,3 +123,17 @@ if(VORTEX_RENDER_TESTS)
 		PASS_REGULAR_EXPRESSION "ALL PASSED"
 		TIMEOUT 120)
 endif()
+
+# Game entities (headless): unique ids also on reused slots, each transform on its own entity, removing entities (a
+# whole scene's worth, in any order) never touching another, mesh-renderer slots handed out once.
+add_executable(VortexEntityTest TestEntities.cpp)
+target_include_directories(VortexEntityTest PRIVATE "${CMAKE_SOURCE_DIR}/Engine/Common")
+target_link_libraries(VortexEntityTest PRIVATE vortex::engine)
+if(NOT MSVC)
+	target_compile_options(VortexEntityTest PRIVATE -Wall -Wno-unused-parameter)
+endif()
+add_test(NAME EntityTest COMMAND VortexEntityTest)
+set_tests_properties(EntityTest PROPERTIES
+	FAIL_REGULAR_EXPRESSION "FAILURES!"
+	PASS_REGULAR_EXPRESSION "ALL PASSED"
+	TIMEOUT 120)

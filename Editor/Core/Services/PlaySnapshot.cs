@@ -94,13 +94,15 @@ namespace Editor.Core.Services
                 try { r(); } catch { /* a component torn down with its entity */ }
             }
             _restore.Clear();
-            // an entity that had been destroyed or moved away is in the engine again — with its active flag already back
+            // an entity that had been destroyed or moved away is in the engine again — with its active flag already back, while
+            // its parent and its scene are active (SyncEngineState, like every other place an entity is put; one without a
+            // scene stays out instead of being registered outside any scene)
             if (putBack != null)
             {
                 PutBack = putBack.Count;
                 foreach (var e in putBack)
                 {
-                    try { e.SyncEngineStateRecursive(e.Parent?.ActiveInHierarchy ?? (e.Scene?.IsActive ?? true)); } catch { }
+                    try { e.SyncEngineState(); } catch { }
                 }
             }
             RestoreSettings();

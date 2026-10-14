@@ -274,9 +274,8 @@ namespace Editor.Core.Data
                 throw new ArgumentNullException(nameof(entity));
 
             entity.Scene = this;
-            var command = new CollectionAddCommand<GameEntity>(Entities, entity, "Entities");
+            var command = new AddEntityCommand(Entities, entity, "Entities");   // registers it with the engine; undo unregisters it
             UndoRedoManager.Instance.Execute(command);
-			entity.SyncEngineStateRecursive(IsActive);
             IsDirty = true;
         }
 
@@ -291,8 +290,7 @@ namespace Editor.Core.Data
             if (!Entities.Contains(entity))
                 return;
 
-			entity.SyncEngineStateRecursive(false);
-            var command = new CollectionRemoveCommand<GameEntity>(Entities, entity, "Entities");
+            var command = new RemoveEntityCommand(Entities, entity, "Entities");   // unregisters it; undo registers it again
             UndoRedoManager.Instance.Execute(command);
             try { Services.SceneRenderService.Instance.RemoveEntityTree(entity); } catch { }   // its own meshes/materials go (#358)
 

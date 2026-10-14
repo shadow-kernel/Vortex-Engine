@@ -215,11 +215,13 @@ namespace Editor.DllWrapper
 
         public static void RemoveGameEntity(GameEntity gameEntity)
         {
+            if (!ID.IsValid(gameEntity.EntityId)) return;   // never registered: there is nothing of its own to remove
             RemoveGameEntity(gameEntity.EntityId);
         }
 
         public static void RemoveGameEntity(GameEntity gameEntity, SceneHandle sceneHandle)
         {
+            if (!ID.IsValid(gameEntity.EntityId)) return;   // never registered: there is nothing of its own to remove
             if (sceneHandle.IsValid)
             {
                 RemoveGameEntityInScene(sceneHandle.Id, gameEntity.EntityId);
