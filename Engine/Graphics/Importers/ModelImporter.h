@@ -42,6 +42,7 @@ namespace vortex::graphics
 	// absent) — emission = factor * strength * emissive_texture. Other formats leave it black.
 	float emissive_color[3]{ 0.0f, 0.0f, 0.0f };
 	float emissive_strength{ 1.0f };
+	bool emits() const { return emissive_strength > 0.0f && (emissive_color[0] > 0.0f || emissive_color[1] > 0.0f || emissive_color[2] > 0.0f); }
 	// What the submesh's material says about its albedo (#453), for the texture-folder scans: 0 = no albedo map (a
 	// colour-only material — never textured by a scan), 1 = it names a map (a scan may stand in when that file is
 	// missing), 2 = the file has no material for it (Assimp's placeholder, e.g. an OBJ without .mtl — a scan may).
