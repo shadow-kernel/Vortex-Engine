@@ -460,8 +460,7 @@ namespace Editor.Core.Claude
             var handler = StoreHttp.Handler;
             if (handler != null) return new HttpClient(handler, disposeHandler: false) { Timeout = System.Threading.Timeout.InfiniteTimeSpan };
             lock (Gate)
-                // HttpTls.Classic: SecureTransport on macOS as always — the editor's Network.framework TLS is for TLS-1.3-only hosts (#403)
-                return _shared ??= new HttpClient(HttpTls.Classic(new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5) }))
+                return _shared ??= new HttpClient(new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5) })
                 {
                     Timeout = System.Threading.Timeout.InfiniteTimeSpan,
                 };

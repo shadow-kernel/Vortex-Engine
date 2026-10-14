@@ -31,8 +31,7 @@ namespace Editor.Core.Services.Update
 
         private static HttpClient CreateClient()
         {
-            var c = Editor.Core.Assets.Store.HttpTls.NewClient();   // TLS as always on macOS (#403)
-            c.Timeout = TimeSpan.FromSeconds(30);
+            var c = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
             c.DefaultRequestHeaders.UserAgent.ParseAdd("Vortex-Engine-Updater");
             c.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
             return c;

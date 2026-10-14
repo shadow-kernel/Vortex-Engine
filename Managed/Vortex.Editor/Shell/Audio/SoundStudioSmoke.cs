@@ -5,6 +5,7 @@ using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using Editor.Core.Assets;
 using Editor.Core.Assets.Library;
+using Editor.Core.Assets.Store;
 using Editor.Core.Audio.SoundStudio;
 using Editor.Core.Data;
 using Editor.Core.Services;
@@ -25,10 +26,13 @@ namespace VortexEditor.Shell.Audio
             var log = ConsoleService.Instance;
             bool Fail(string why) { log.LogError("sound studio smoke: " + why); return false; }
             if (ProjectData.Current == null) return Fail("no project");
-            // #403: Stable Audio's host speaks only TLS 1.3, which macOS's default TLS lacks — the editor's runtimeconfig turns
-            // on .NET's Network.framework TLS (Vortex.Editor.csproj); without it both Stability backends fail on macOS
-            if (OperatingSystem.IsMacOS() && !(AppContext.TryGetSwitch("System.Net.Security.UseNetworkFramework", out bool nf) && nf))
-                return Fail("the editor runs without System.Net.Security.UseNetworkFramework: Stable Audio cannot connect on macOS (#403)");
+            // #403: Stable Audio's host speaks only TLS 1.3, which .NET's TLS on macOS lacks — those requests go through curl
+            // there. .NET's process-wide Network.framework TLS must stay off: in .NET 10 it breaks every second resumed TLS 1.2
+            // connection of every other client (the store, Claude, scripts).
+            if (AppContext.TryGetSwitch("System.Net.Security.UseNetworkFramework", out bool nf) && nf)
+                return Fail("the editor runs with System.Net.Security.UseNetworkFramework on (#403)");
+            if (OperatingSystem.IsMacOS() && !File.Exists(CurlHttpHandler.DefaultPath))
+                return Fail("no " + CurlHttpHandler.DefaultPath + ": Stable Audio cannot connect on macOS (#403)");
             var w = SoundStudioWindow.Open();
             try
             {
