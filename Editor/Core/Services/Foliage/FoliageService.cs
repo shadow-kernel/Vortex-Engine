@@ -305,7 +305,8 @@ namespace Editor.Core.Services.Foliage
             if (string.IsNullOrWhiteSpace(f.DataPath)) f.DataPath = DefaultDataPath(e);
             string abs = TerrainService.ResolvePath(f.DataPath);
             if (abs == null) return false;
-            try { rt.Data.Save(abs); rt.Unsaved = false; return true; }
+            bool created = !File.Exists(abs);
+            try { rt.Data.Save(abs); rt.Unsaved = false; PlaySession.NoteWrite(abs, created); return true; }   // a layer made in play takes its file along (#423)
             catch (Exception ex) { Log("Foliage save failed: " + ex.Message); return false; }
         }
 

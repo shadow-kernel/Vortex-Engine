@@ -102,7 +102,8 @@ namespace VortexEditor.Claude.Tools
         [McpServerTool(Name = "set_environment", Idempotent = true)]
         [Description("Sets the scene's environment settings (saved with the scene): exp² distance fog with optional height fog, SSAO, bloom, volumetric fog, " +
                      "colour grading, vignette, the scene exposure (stops before the tonemapper) and the fog's sun glow. Every argument is optional — only the ones given change. Fog density 0.002 ≈ a 500 m desert haze, 0.02 a wood, " +
-                     "0.08 a dungeon; height fog thins above fog_height_y by exp(-falloff·Δy). One undo step.")]
+                     "0.08 a dungeon; height fog thins above fog_height_y by exp(-falloff·Δy). One undo step. In play mode the change lasts until " +
+                     "Stop, and it re-applies the whole environment: post effects a script set at runtime are replaced by the scene's values.")]
         public static object SetEnvironment(
             [Description("Fog on / off")] bool? fog = null,
             [Description("Fog density (exp², per metre)")] float fog_density = -1f,
@@ -183,7 +184,7 @@ namespace VortexEditor.Claude.Tools
             scene.IsDirty = true;
             ToolContext.UndoLabel = "environment";
             Editor.Core.Viewport.EditorViewportSession.RequestResubmit();
-            return Info(st);
+            return Info(st);   // in play the tool host adds runtime_only: Stop restores the environment (#479)
         }
 
         // ------------------------------------------------------------------ weather

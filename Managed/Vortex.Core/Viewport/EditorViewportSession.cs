@@ -1,8 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using Editor.Core.Data;
+using Editor.Core.Editing;
 using Editor.Core.Input;
 using Editor.Core.Services;
+using Editor.Core.UndoRedo;
 using Editor.DllWrapper;
 using Editor.ECS;
 using Editor.Scripting;
@@ -280,6 +283,10 @@ namespace Editor.Core.Viewport
                     var acts = VuiStack.Instance.ConsumeFiredActions();
                     if (acts != null) ScriptRuntime.Instance.InvokeUiActions(acts);
                 }
+
+                // a script's Application.Quit() — from Update, LateUpdate, a coroutine or a UI button — stops play here,
+                // after the whole tick, through the same Stop as the toolbar and exit_play_mode (#410)
+                if (ScriptRuntime.Instance.ConsumeQuitRequest()) EditorSession.Instance.Stop();
             }
             else
             {
@@ -818,6 +825,8 @@ namespace Editor.Core.Viewport
             EnsurePlayerControllerOnMainCamera(scene);
             AudioPreviewService.Instance.Stop();
             AudioPlaybackService.Instance.BeginPlay(scene);
+            VuiStack.Instance.Reset();   // a session starts without screens, like the standalone player (#477)
+            PlaySession.Begin();         // from here on: which files play writes (#423)
             // the play view's UI frame before any Start(): UI.Width / Height / Scale are real from a script's first line —
             // the per-tick feed comes one frame later, so Start() saw zeros (first play) or the last session's size (#454)
             var f = UiFrame(_host, _pointerX, _pointerY);
@@ -898,10 +907,22 @@ namespace Editor.Core.Viewport
             _transformSnapshot.Clear();
             _colorSnapshot.Clear();
             var scene = _currentScene ?? ProjectData.Current?.ActiveScene;
-            _componentSnapshot = PlaySnapshot.Take(scene);
+            // every loaded scene, not just the played one: a tool or the hierarchy may edit another one while playing (#423)
+            var scenes = new List<Scene>();
+            if (scene != null) scenes.Add(scene);
+            var project = ProjectData.Current;
+            if (project?.Scenes != null)
+                foreach (var s in project.Scenes) if (s != null && s.IsLoaded && !scenes.Contains(s)) scenes.Add(s);
+            _componentSnapshot = PlaySnapshot.Take(scenes);
+            _undoAtPlay = UndoRedoManager.Instance.SaveHistory();
             if (scene?.Entities != null)
                 foreach (var e in scene.Entities) SnapshotTransformRecursive(e);
         }
+
+        private UndoRedoManager.History _undoAtPlay;
+
+        /// <summary>Whether Stop puts this scene back: it was loaded when play started (#423). False outside play.</summary>
+        public static bool RevertsOnStop(Scene scene) => Main?._componentSnapshot?.Covers(scene) == true;
 
         private void SnapshotTransformRecursive(GameEntity e)
         {
@@ -920,9 +941,18 @@ namespace Editor.Core.Viewport
             _simActive = false;
             AudioPlaybackService.Instance.EndPlay();
             ScriptRuntime.Instance.End();
+            ScriptRuntime.Instance.ConsumeQuitRequest();   // play is stopping anyway: no quit may carry over (#410)
+            VuiStack.Instance.Reset();   // the session's screens go with its scripts, and its cached canvases (#477)
+            PlaySession.End();
             VortexAPI.ClearAllRigidbodies();
-            _componentSnapshot?.Restore();   // after OnDestroy: lights scripts changed
+            var snapshot = _componentSnapshot;
             _componentSnapshot = null;
+            snapshot?.Restore();   // after OnDestroy: whatever play changed in the loaded scenes
+            // the undo steps made while playing describe the scenes Stop just put back: undoing one afterwards re-broke the
+            // hierarchy (#423) — like Unity, they go with the session
+            int undoDropped = UndoRedoManager.Instance.RestoreHistory(_undoAtPlay);
+            _undoAtPlay = null;
+            AfterPlay(snapshot, undoDropped);
             foreach (var s in _transformSnapshot)
             {
                 if (s.ent?.Transform == null) continue;
@@ -940,6 +970,90 @@ namespace Editor.Core.Viewport
                 _hasCamSnap = false;
             }
             _sceneDirty = true;
+        }
+
+        /// <summary>What Stop does beyond the snapshot (#423): prefabs written while playing re-sync their instances (the
+        /// snapshot put the pre-play ones back), data files play created for entities that are gone are deleted, no selection
+        /// points at a removed entity, and one Console line says what was removed and reverted — and that files written while
+        /// playing stay on disk (play edits made in the hierarchy, by drag and drop, paste or duplicate are gone too).</summary>
+        private static void AfterPlay(PlaySnapshot snap, int undoDropped)
+        {
+            var project = ProjectData.Current;
+            int prefabs = 0;
+            foreach (var path in PlaySession.Written())
+            {
+                if (!path.EndsWith(PrefabService.PrefabExtension, StringComparison.OrdinalIgnoreCase)) continue;
+                try { PrefabService.Instance.ReloadInstancesFromPrefab(path); prefabs++; }
+                catch (Exception ex) { ConsoleService.Instance.LogWarning("Stop: could not re-sync the instances of " + Path.GetFileName(path) + ": " + ex.Message); }
+            }
+            var loaded = new List<Scene>();
+            if (project?.Scenes != null) foreach (var s in project.Scenes) if (s != null && s.IsLoaded) loaded.Add(s);
+            var deleted = PlaySession.DeleteOrphanedDataFiles(loaded, out string kept);
+            DropSelectionOfRemoved(snap);
+
+            var parts = new List<string>();
+            if (snap != null && snap.Removed.Count > 0)
+            {
+                var names = new List<string>();
+                foreach (var e in snap.Removed) names.Add(e.Name);
+                parts.Add("removed " + Count(snap.Removed.Count, "entity", "entities") + " added while playing (" + Few(names) + ")");
+            }
+            if (snap != null && snap.PutBack > 0) parts.Add("put back " + Count(snap.PutBack, "entity", "entities") + " moved or deleted while playing");
+            if (snap != null && snap.SettingsReverted.Count > 0)
+            {
+                var names = new List<string>();
+                foreach (var s in snap.SettingsReverted) names.Add("'" + s.Name + "'");
+                parts.Add("reverted the environment of " + string.Join(", ", names));
+            }
+            if (undoDropped > 0) parts.Add("dropped " + Count(undoDropped, "undo step", "undo steps") + " made while playing");
+            if (prefabs > 0) parts.Add("re-synced the instances of " + Count(prefabs, "prefab", "prefabs") + " saved while playing");
+            if (deleted.Count > 0)
+            {
+                var names = new List<string>();
+                foreach (var f in deleted) names.Add(Path.GetFileName(f));
+                parts.Add("deleted " + Count(deleted.Count, "data file", "data files") + " created for them (" + Few(names) + ")");
+            }
+            if (kept != null) parts.Add(kept);
+            var stay = PlaySession.FilesWrittenSince(project?.Path, PlaySession.StartedUtc);
+            if (parts.Count == 0 && stay.Count == 0) return;
+            string files = "files written while playing stay on disk";
+            if (stay.Count > 0)
+            {
+                var names = new List<string>();
+                foreach (var f in stay) names.Add(Path.GetFileName(f));
+                files += " (" + stay.Count + ": " + Few(names) + ")";
+            }
+            ConsoleService.Instance.Log("Stop: " + (parts.Count > 0 ? string.Join("; ", parts) + "; " : "") + files + ".");
+        }
+
+        private static string Count(int n, string one, string many) => n + " " + (n == 1 ? one : many);
+
+        private static string Few(List<string> names) => names.Count <= 3 ? string.Join(", ", names) : string.Join(", ", names.GetRange(0, 3)) + ", …";
+
+        /// <summary>An entity created while playing is gone after the restore (#423) — and so is every selection of it or of
+        /// something under it: the primary selection, the hierarchy's multi-selection and each scene's own (a stale entry made
+        /// Duplicate add a copy after Stop).</summary>
+        private static void DropSelectionOfRemoved(PlaySnapshot snap)
+        {
+            if (snap == null || snap.Removed.Count == 0) return;
+            var removed = new HashSet<GameEntity>(snap.Removed, ReferenceEqualityComparer.Instance);
+            bool Gone(GameEntity e)
+            {
+                for (int depth = 0; e != null && depth < 512; e = e.Parent, depth++) if (removed.Contains(e)) return true;
+                return false;
+            }
+            try
+            {
+                var hierarchy = EditorSession.Instance.Hierarchy;
+                if (hierarchy.SelectedEntities != null)
+                    foreach (var e in new List<GameEntity>(hierarchy.SelectedEntities)) if (Gone(e)) hierarchy.RemoveFromSelection(e);
+                if (Gone(hierarchy.SelectedEntity)) hierarchy.SelectedEntity = null;
+            }
+            catch { }
+            if (Gone(SelectionService.Instance.SelectedEntity)) SelectionService.Instance.ClearSelection();
+            var project = ProjectData.Current;
+            if (project?.Scenes != null)
+                foreach (var s in project.Scenes) if (s != null && Gone(s.SelectedEntity)) s.SelectedEntity = null;
         }
 
         private void ApplyMainCameraView() => PlayCameraHelper.ApplyMainCamera(_currentScene ?? ProjectData.Current?.ActiveScene);
