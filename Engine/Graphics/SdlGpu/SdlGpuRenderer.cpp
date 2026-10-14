@@ -118,7 +118,17 @@ namespace vortex::graphics::sdlgpu
 		sci.address_mode_u = sci.address_mode_v = sci.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
 		sci.enable_anisotropy = false; sci.max_anisotropy = 1.0f;
 		m_sampler_linear_clamp = SDL_CreateGPUSampler(m_device, &sci);
-		if (!m_sampler_linear_wrap || !m_sampler_linear_clamp) { log("sampler creation failed"); shutdown(); return false; }
+		// the point sampler of the scene-depth copy slot (#200): normally made with the post effects, but those need the shadow
+		// pipeline — without shadows (VORTEX_NO_SHADOWS, or a device that cannot make them) it was null and the first scene
+		// draw crashed binding it
+		if (!m_sampler_point_clamp)
+		{
+			SDL_GPUSamplerCreateInfo pci{};
+			pci.min_filter = SDL_GPU_FILTER_NEAREST; pci.mag_filter = SDL_GPU_FILTER_NEAREST; pci.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;
+			pci.address_mode_u = pci.address_mode_v = pci.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+			m_sampler_point_clamp = SDL_CreateGPUSampler(m_device, &pci);
+		}
+		if (!m_sampler_linear_wrap || !m_sampler_linear_clamp || !m_sampler_point_clamp) { log("sampler creation failed"); shutdown(); return false; }
 		// The shadow slots are comparison-sampled depth textures in every scene pipeline, so their sampler and
 		// a stand-in depth texture must exist before the first frame, with or without shadow atlases.
 		if (!create_shadow_fallback()) { shutdown(); return false; }
@@ -835,7 +845,8 @@ namespace vortex::graphics::sdlgpu
 		for (auto** s : shaders) { if (*s) SDL_ReleaseGPUShader(m_device, *s); *s = nullptr; }
 		if (m_sampler_linear_wrap) SDL_ReleaseGPUSampler(m_device, m_sampler_linear_wrap);
 		if (m_sampler_linear_clamp) SDL_ReleaseGPUSampler(m_device, m_sampler_linear_clamp);
-		m_sampler_linear_wrap = m_sampler_linear_clamp = nullptr;
+		if (m_sampler_point_clamp) SDL_ReleaseGPUSampler(m_device, m_sampler_point_clamp);
+		m_sampler_linear_wrap = m_sampler_linear_clamp = m_sampler_point_clamp = nullptr;
 		if (m_instance_buffer) SDL_ReleaseGPUBuffer(m_device, m_instance_buffer);
 		if (m_instance_transfer) SDL_ReleaseGPUTransferBuffer(m_device, m_instance_transfer);
 		if (m_bone_buffer) SDL_ReleaseGPUBuffer(m_device, m_bone_buffer);

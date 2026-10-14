@@ -126,10 +126,13 @@ namespace vortex::graphics::sdlgpu
 		m_pipeline_bloom_down = create_post_pipeline(m_vs_bloom, m_fs_bloom_down, m_scene_format, false);
 		m_pipeline_bloom_up = create_post_pipeline(m_vs_bloom, m_fs_bloom_up, m_scene_format, true);
 		if (!m_pipeline_ssao || !m_pipeline_ssao_blur || !m_pipeline_bloom_prefilter || !m_pipeline_bloom_down || !m_pipeline_bloom_up) { destroy_postfx_resources(); return false; }
-		SDL_GPUSamplerCreateInfo sci{};
-		sci.min_filter = SDL_GPU_FILTER_NEAREST; sci.mag_filter = SDL_GPU_FILTER_NEAREST; sci.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;
-		sci.address_mode_u = sci.address_mode_v = sci.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
-		m_sampler_point_clamp = SDL_CreateGPUSampler(m_device, &sci);
+		if (!m_sampler_point_clamp)
+		{
+			SDL_GPUSamplerCreateInfo sci{};
+			sci.min_filter = SDL_GPU_FILTER_NEAREST; sci.mag_filter = SDL_GPU_FILTER_NEAREST; sci.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;
+			sci.address_mode_u = sci.address_mode_v = sci.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+			m_sampler_point_clamp = SDL_CreateGPUSampler(m_device, &sci);
+		}
 		SDL_GPUBufferCreateInfo bci{}; bci.usage = SDL_GPU_BUFFERUSAGE_VERTEX; bci.size = SSAO_MAX_INSTANCES * 64;
 		m_ssao_instance_buffer = SDL_CreateGPUBuffer(m_device, &bci);
 		SDL_GPUTransferBufferCreateInfo tci{}; tci.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD; tci.size = SSAO_MAX_INSTANCES * 64;
@@ -151,7 +154,7 @@ namespace vortex::graphics::sdlgpu
 		rel_p(m_pipeline_ssao); rel_p(m_pipeline_ssao_blur); rel_p(m_pipeline_bloom_prefilter); rel_p(m_pipeline_bloom_down); rel_p(m_pipeline_bloom_up);
 		auto rel_s = [&](SDL_GPUShader*& s) { if (s) { SDL_ReleaseGPUShader(m_device, s); s = nullptr; } };
 		rel_s(m_vs_ssao); rel_s(m_fs_ssao); rel_s(m_fs_ssao_blur); rel_s(m_vs_bloom); rel_s(m_fs_bloom_prefilter); rel_s(m_fs_bloom_down); rel_s(m_fs_bloom_up);
-		if (m_sampler_point_clamp) { SDL_ReleaseGPUSampler(m_device, m_sampler_point_clamp); m_sampler_point_clamp = nullptr; }
+		// m_sampler_point_clamp stays: every scene draw binds it (the scene-depth copy slot), post effects or not — shutdown frees it
 		if (m_ssao_instance_buffer) { SDL_ReleaseGPUBuffer(m_device, m_ssao_instance_buffer); m_ssao_instance_buffer = nullptr; }
 		if (m_ssao_instance_transfer) { SDL_ReleaseGPUTransferBuffer(m_device, m_ssao_instance_transfer); m_ssao_instance_transfer = nullptr; }
 		m_ssao_current = nullptr; m_bloom_result = nullptr;
