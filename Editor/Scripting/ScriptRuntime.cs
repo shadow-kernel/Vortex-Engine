@@ -1054,6 +1054,9 @@ namespace Editor.Scripting
             try { Editor.Core.Services.AI.AiRuntime.SubmitDebugDraw(); } catch { }           // navmesh / agent paths / patrol routes / vision cones
             RenderDebugConsole();
 
+            // play stopped during this tick: no pose may land in the restored edit scene (#410)
+            if (!_active) return;
+
             // Skeletal animation: advance every Animator AFTER behaviours ran, so a same-frame
             // PlayAnimation() takes effect immediately. This is the one tick all three play drivers share.
             // Bone sockets apply right after — animation -> sockets -> (submit reads final transforms).
@@ -2338,6 +2341,14 @@ namespace Editor.Scripting
         public string ConsumePendingScene() { var s = _pendingScene; _pendingScene = null; return s; }
         public string PendingScene { get { return _pendingScene; } } // diagnostic peek
 
+        // --- deferred quit of in-editor play (#410): Application.Quit() used to stop play right away, from inside the
+        // behaviour's Update — End() and the play-snapshot restore ran in the middle of the tick, and the rest of the tick
+        // (physics, LateUpdate, the animation and bone-socket pass) then wrote play-time poses into the restored edit
+        // scene. Now it only asks; the editor's viewport stops play after the whole tick, through the toolbar's Stop.
+        private bool _quitRequested;
+        /// <summary>True once after a script asked to quit in-editor play (Application.Quit); the caller stops play.</summary>
+        public bool ConsumeQuitRequest() { bool q = _quitRequested; _quitRequested = false; return q; }
+
         // --- mouse mode (game-controlled via Vortex.Cursor; the GameWindow enforces capture) ---
         private bool _cursorLocked; // default false: free cursor (menus/lobby) until a script locks it
         void Vortex.IScriptHost.SetCursorLocked(bool locked) { _cursorLocked = locked; }
@@ -2389,8 +2400,8 @@ namespace Editor.Scripting
                 // native loop (g_running=false); RunGameHost then returns and BootPlayer calls Shutdown() to exit.
                 if (Editor.Core.Services.PlayModeService.Instance.NativeGameHostRunning)
                     Editor.DllWrapper.VortexAPI.RequestGameHostExit();
-                else
-                    Editor.Core.Services.PlayModeService.Instance.Stop(); // in-editor play: just stop, don't kill the editor
+                else if (Editor.Core.Services.PlayModeService.Instance.IsPlaying)
+                    _quitRequested = true;   // in-editor play: stop after this tick (#410), don't kill the editor
             }
             catch { }
         }

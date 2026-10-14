@@ -1,3 +1,4 @@
+using System;
 using System.Linq;
 using Editor.Core.Data;
 using Editor.Core.Services;
@@ -6,11 +7,13 @@ using Editor.ECS.Components;
 using Editor.ECS.Components.Lighting;
 using Editor.ECS.Components.Physics;
 using Editor.ECS.Components.Rendering;
+using Editor.Scripting;
 
 namespace VortexTests
 {
     /// <summary>Play is non-destructive (#318, #345): the snapshot taken at Play puts every serialized property, the
-    /// component set and the hierarchy back on Stop — not just lights and transforms.</summary>
+    /// component set and the hierarchy back on Stop — not just lights and transforms. A script's quit stops play only
+    /// after the tick (#410).</summary>
     public static class PlaySnapshotTests
     {
         private static GameEntity Entity(string name, GameEntity parent = null)
@@ -80,6 +83,39 @@ namespace VortexTests
             light.PropertyChanged += (s, a) => writes++;
             snap.Restore();
             t.Equal(0, writes, "an unchanged component is not touched on Stop");
+        }
+
+        // ------------------------------------------------------------------ #410: a script's quit waits for the tick
+
+        [Test]
+        public static void ScriptQuitStopsPlayOnlyAfterTheTick(TestContext t)
+        {
+            var pms = PlayModeService.Instance;
+            var runtime = ScriptRuntime.Instance;
+            var host = Vortex.Application.Host;
+            int stops = 0;
+            EventHandler<PlayState> onState = (s, st) => { if (st == PlayState.Editing) stops++; };
+            pms.StateChanged += onState;
+            try
+            {
+                pms.Play();
+                Vortex.Application.Host = runtime;
+                Vortex.Application.Quit();   // what a behaviour's Update, a coroutine or a UI button calls
+                t.Equal(PlayState.Playing, pms.State, "Application.Quit inside the tick does not stop play there (#410)");
+                t.Equal(0, stops, "no Stop (and no snapshot restore) runs in the middle of the tick");
+                t.True(runtime.ConsumeQuitRequest(), "the host sees the request after the tick and stops play");
+                t.False(runtime.ConsumeQuitRequest(), "once");
+                pms.Stop();
+                Vortex.Application.Quit();   // OnDestroy at Stop: play is over, nothing is asked for the next session
+                t.False(runtime.ConsumeQuitRequest(), "a quit outside play is not kept");
+            }
+            finally
+            {
+                pms.StateChanged -= onState;
+                Vortex.Application.Host = host;
+                if (pms.State != PlayState.Editing) pms.Stop();
+                runtime.ConsumeQuitRequest();
+            }
         }
     }
 }

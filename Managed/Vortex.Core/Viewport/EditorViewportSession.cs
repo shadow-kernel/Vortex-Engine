@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Editor.Core.Data;
+using Editor.Core.Editing;
 using Editor.Core.Input;
 using Editor.Core.Services;
 using Editor.DllWrapper;
@@ -280,6 +281,10 @@ namespace Editor.Core.Viewport
                     var acts = VuiStack.Instance.ConsumeFiredActions();
                     if (acts != null) ScriptRuntime.Instance.InvokeUiActions(acts);
                 }
+
+                // a script's Application.Quit() — from Update, LateUpdate, a coroutine or a UI button — stops play here,
+                // after the whole tick, through the same Stop as the toolbar and exit_play_mode (#410)
+                if (ScriptRuntime.Instance.ConsumeQuitRequest()) EditorSession.Instance.Stop();
             }
             else
             {
@@ -920,6 +925,7 @@ namespace Editor.Core.Viewport
             _simActive = false;
             AudioPlaybackService.Instance.EndPlay();
             ScriptRuntime.Instance.End();
+            ScriptRuntime.Instance.ConsumeQuitRequest();   // play is stopping anyway: no quit may carry over (#410)
             VortexAPI.ClearAllRigidbodies();
             _componentSnapshot?.Restore();   // after OnDestroy: lights scripts changed
             _componentSnapshot = null;
