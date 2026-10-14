@@ -56,7 +56,10 @@ namespace Editor.Core.Services
         /// <summary>Clips that natively failed to decode (or have malformed paths) —
         /// permanent for the session, never retried per frame.</summary>
         private readonly HashSet<string> _failedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        private GameEntity _listenerEntity;
+        /// <summary>Every entity with an Audio Listener, in hierarchy order (spawned ones after). The ears follow the first
+        /// enabled one that is active in the hierarchy, so switching camera rigs on and off moves the listener with them.</summary>
+        private readonly List<GameEntity> _listeners = new List<GameEntity>();
+        private bool _warnedMultipleListeners;
         private bool _occlusionPending;
         private bool _active;
         private bool _paused;
@@ -96,8 +99,7 @@ namespace Editor.Core.Services
             try
             {
                 if (scene?.Entities == null) return;
-                bool warnedMultipleListeners = false;
-                foreach (var e in scene.Entities) CollectRecursive(e, ref warnedMultipleListeners);
+                foreach (var e in scene.Entities) CollectRecursive(e);
 
                 foreach (var b in _bindings)
                 {
@@ -144,10 +146,7 @@ namespace Editor.Core.Services
                         else b.NextStartTick = Environment.TickCount + RetryCooldownMs;
                     }
 
-                    bool shouldPlay = b.WantsPlay
-                        && b.Entity.IsActive
-                        && b.Source.IsEnabled
-                        && !string.IsNullOrEmpty(b.Source.AudioClipPath);
+                    bool shouldPlay = ShouldPlay(b.WantsPlay, b.Source, b.Entity);
 
                     if (shouldPlay && b.Handle == VortexAudio.InvalidVoice)
                     {
@@ -222,7 +221,8 @@ namespace Editor.Core.Services
                 RestoreBinding(b); // play is non-destructive — undo script writes
             }
             _bindings.Clear();
-            _listenerEntity = null;
+            _listeners.Clear();
+            _warnedMultipleListeners = false;
             _active = false;
             _paused = false;
             VortexAudio.StopVoice(_musicCurrent);
@@ -268,8 +268,7 @@ namespace Editor.Core.Services
             try
             {
                 int before = _bindings.Count;
-                bool warned = true;   // a second listener in a spawned prefab is ignored quietly
-                CollectRecursive(e, ref warned);
+                CollectRecursive(e);
                 for (int i = before; i < _bindings.Count; i++) _bindings[i].WantsPlay = _bindings[i].Source.PlayOnAwake;
             }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Audio] AddEntity failed: " + ex.Message); }
@@ -294,7 +293,7 @@ namespace Editor.Core.Services
                     _bindings.RemoveAt(i);
                 }
                 _zones.RemoveAll(z => gone.Contains(z.Entity));
-                if (_listenerEntity != null && gone.Contains(_listenerEntity)) _listenerEntity = null;
+                _listeners.RemoveAll(gone.Contains);
             }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Audio] RemoveEntity failed: " + ex.Message); }
         }
@@ -622,7 +621,7 @@ namespace Editor.Core.Services
                 _musicPrevious = VortexAudio.InvalidVoice;
         }
 
-        private void CollectRecursive(GameEntity e, ref bool warnedMultipleListeners)
+        private void CollectRecursive(GameEntity e)
         {
             if (e == null) return;
 
@@ -644,22 +643,10 @@ namespace Editor.Core.Services
             }
 
             var listener = e.GetComponent<AudioListener>();
-            if (listener != null && listener.IsEnabled)
-            {
-                if (_listenerEntity == null)
-                {
-                    _listenerEntity = e;
-                }
-                else if (!warnedMultipleListeners)
-                {
-                    warnedMultipleListeners = true;
-                    System.Diagnostics.Debug.WriteLine(
-                        "[Audio] Multiple active AudioListeners — using '" + _listenerEntity.Name + "', ignoring '" + e.Name + "'.");
-                }
-            }
+            if (listener != null) _listeners.Add(e);   // enabled or not: a script may switch it on later
 
             if (e.Children != null)
-                foreach (var c in e.Children) CollectRecursive(c, ref warnedMultipleListeners);
+                foreach (var c in e.Children) CollectRecursive(c);
         }
 
         private void StartVoice(SourceBinding b)
@@ -796,6 +783,29 @@ namespace Editor.Core.Services
             }
         }
 
+        /// <summary>Whether a component voice should run: wanted (Play On Awake or a script's Play), the Audio Source enabled
+        /// with a clip, and its entity active in the HIERARCHY — a source under a deactivated parent used to play on, the
+        /// same gap #497 closed for Reverb Zones.</summary>
+        internal static bool ShouldPlay(bool wantsPlay, AudioSource source, GameEntity entity)
+            => wantsPlay && source != null && source.IsEnabled && !string.IsNullOrEmpty(source.AudioClipPath)
+               && entity != null && entity.ActiveInHierarchy;
+
+        /// <summary>The ears: the first entity with an enabled Audio Listener that is active in the hierarchy, or null (the
+        /// main camera hears then). <paramref name="activeCount"/> says how many listeners are active at once.</summary>
+        internal static GameEntity ActiveListener(IReadOnlyList<GameEntity> listeners, out int activeCount)
+        {
+            GameEntity first = null;
+            activeCount = 0;
+            foreach (var e in listeners)
+            {
+                var l = e?.GetComponent<AudioListener>();
+                if (l == null || !l.IsEnabled || !e.ActiveInHierarchy) continue;
+                activeCount++;
+                first ??= e;
+            }
+            return first;
+        }
+
         /// <summary>How deep <paramref name="p"/> sits in the zone: 1 inside its shape, easing to 0 at boundary + falloff;
         /// 0 while the zone does not count — component disabled, or the entity inactive in the HIERARCHY (a zone under a
         /// deactivated parent used to reverberate on, #497).</summary>
@@ -867,8 +877,14 @@ namespace Editor.Core.Services
             // The AudioListener entity drives the ears; without one, fall back to the main
             // camera so 3D audio still behaves sensibly in camera-only scenes.
             Editor.ECS.Components.Transform t = null;
-            if (_listenerEntity?.Transform != null && _listenerEntity.IsActive)
-                t = _listenerEntity.Transform;
+            var ears = ActiveListener(_listeners, out int activeCount);
+            if (activeCount > 1 && !_warnedMultipleListeners)
+            {
+                _warnedMultipleListeners = true;
+                System.Diagnostics.Debug.WriteLine("[Audio] Multiple active AudioListeners — using '" + ears.Name + "'.");
+            }
+            if (ears?.Transform != null)
+                t = ears.Transform;
             else
                 t = PlayCameraHelper.FindMainCamera(ProjectData.Current?.ActiveScene);
             if (t == null) return;
