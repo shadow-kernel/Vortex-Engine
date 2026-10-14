@@ -515,7 +515,10 @@ namespace Editor.Core.Services.AI
             for (int i = 0; i < _agentList.Count; i++)
             {
                 var r = _agentList[i];
-                bool live = r.Agent != null && r.Agent.IsEnabled && r.Entity != null && r.Entity.ActiveInHierarchy && InRunScene(r.Entity);
+                // a limp agent (#407: a ragdoll at or under it) leaves the crowd like a switched-off one — no pose writes, no
+                // capsule (Ragdoll.Activate removed it) — and rejoins where the body ended once the ragdoll is over
+                bool live = r.Agent != null && r.Agent.IsEnabled && r.Entity != null && r.Entity.ActiveInHierarchy && InRunScene(r.Entity)
+                    && !RagdollService.ActiveAtOrUnder(r.Entity);
                 if (!live)
                 {
                     if (r.Handle != 0) { try { VortexAPI.NavAgentRemove(r.Handle); } catch { } r.Handle = 0; }
@@ -571,7 +574,8 @@ namespace Editor.Core.Services.AI
                     if (r.HasColliders) { try { CollisionService.RemoveEntityShapes(r.Entity); } catch { } }   // never collide with itself
                     var delta = nav - r.LastFeet;
                     var from = new Vector3(r.LastFeet.X, r.LastFeet.Y, r.LastFeet.Z);
-                    var res = CollisionService.MoveCharacter(from, r.Agent.Radius, r.Agent.Height, new Vector3(delta.X, delta.Y, delta.Z), out _, r.SelfId);
+                    var res = CollisionService.MoveCharacter(from, r.Agent.Radius, r.Agent.Height, new Vector3(delta.X, delta.Y, delta.Z), out _, r.SelfId,
+                        owner: r.Entity);
                     var resolved = new SysVec(res.X, res.Y, res.Z);
                     if (Math.Abs(resolved.Y - nav.Y) > 1.0f) resolved = nav;   // off the navmesh vertically: trust the navmesh
                     float dx = resolved.X - nav.X, dz = resolved.Z - nav.Z;

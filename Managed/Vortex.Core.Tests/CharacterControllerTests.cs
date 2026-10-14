@@ -29,10 +29,10 @@ namespace VortexTests
             return guard;
         }
 
-        private static Vector3 Fall(Vector3 feet, long id, int frames, out bool grounded)
+        private static Vector3 Fall(Vector3 feet, long id, int frames, out bool grounded, GameEntity owner = null)
         {
             grounded = false;
-            for (int i = 0; i < frames; i++) feet = CollisionService.MoveCharacter(feet, R, H, new Vector3(0, -9.81f * Dt, 0), out grounded, id);
+            for (int i = 0; i < frames; i++) feet = CollisionService.MoveCharacter(feet, R, H, new Vector3(0, -9.81f * Dt, 0), out grounded, id, owner: owner);
             return feet;
         }
 
@@ -42,35 +42,35 @@ namespace VortexTests
             var s = new Scene { Name = "Guards" };
             Floor(s);
             var guard = Guard(s, out _);
-            const long guardId = 21, otherId = 22, unknownId = 99;   // 21 is the guard's handle; 99 names no entity
+            const long guardId = 21, otherId = 22, unknownId = 99;   // 21 is the guard's handle (its script passes it); 99 is custom
             try
             {
                 CollisionService.Build(s);
-                CollisionService.CharacterOwnerResolver = id => id == guardId ? guard : null;
 
-                // the bug: an id that names no entity still collides with the collider it stands in — shoved up out of it
+                // the bug: a character without an owner collides with the collider it stands in — shoved up out of it
                 var anon = Fall(new Vector3(0, 0, 0), unknownId, 30, out _);
                 t.True(anon.Y > 0.3f, "without an owner the capsule is pushed out of the collider it starts in (y = " + anon.Y + ")");
                 CollisionService.RemoveCharacter(unknownId);
 
                 // the guard's own id: its capsule collider and its hitbox child are no obstacles
-                var p = Fall(new Vector3(0, 0, 0), guardId, 30, out bool grounded);
+                var p = Fall(new Vector3(0, 0, 0), guardId, 30, out bool grounded, guard);
                 t.True(Math.Abs(p.Y) < 0.02f && Math.Abs(p.X) < 1e-3f && Math.Abs(p.Z) < 1e-3f && grounded,
                        "the guard stays on the floor inside its own collider (" + p.X + ", " + p.Y + ", " + p.Z + ")");
-                p = CollisionService.MoveCharacter(p, R, H, new Vector3(0.1f, -0.01f, 0.05f), out _, guardId);
+                p = CollisionService.MoveCharacter(p, R, H, new Vector3(0.1f, -0.01f, 0.05f), out _, guardId, owner: guard);
                 t.True(Math.Abs(p.X - 0.1f) < 1e-3f && Math.Abs(p.Z - 0.05f) < 1e-3f, "… and walks out of it freely (" + p.X + ", " + p.Z + ")");
-                t.False(CollisionService.CapsuleOverlaps(new Vector3(0, 0.02f, 0), R, H - 0.02f, guardId), "CanStand ignores the guard's own collider");
+                t.False(CollisionService.CapsuleOverlaps(new Vector3(0, 0.02f, 0), R, H - 0.02f, guardId), "CanStand ignores the guard's own collider (its registered owner)");
                 t.True(CollisionService.CapsuleOverlaps(new Vector3(0, 0.02f, 0), R, H - 0.02f, otherId), "… but not for anyone else");
 
                 // other characters and rays still collide with the guard's collider (its capsule registration removed,
                 // so only the collider can stop them)
                 CollisionService.RemoveCharacter(guardId);
+                t.False(CollisionService.CapsuleOverlaps(new Vector3(0, 0.02f, 0), R, H - 0.02f, 0, owner: guard), "an explicit owner skips its colliders without a registration");
                 var q = CollisionService.MoveCharacter(new Vector3(2f, 0, 0), R, H, new Vector3(-3f, 0, 0), out _, otherId);
                 t.True(q.X > 2 * R - 0.05f, "another character is stopped by the guard's collider (x = " + q.X + ")");
                 t.True(CollisionService.Raycast(new Vector3(0, 1f, -3f), new Vector3(0, 0, 1), 10f, ~0, out _, out _, out var hit, out _) && hit == guard,
                        "a ray still hits the guard's collider");
             }
-            finally { CollisionService.Clear(); CollisionService.CharacterOwnerResolver = null; }
+            finally { CollisionService.Clear(); }
         }
 
         [Test]
@@ -87,8 +87,7 @@ namespace VortexTests
             try
             {
                 CollisionService.Build(s);
-                CollisionService.CharacterOwnerResolver = id => id == guardId ? guard : null;
-                Fall(new Vector3(0, 0, 0), guardId, 2, out _);
+                Fall(new Vector3(0, 0, 0), guardId, 2, out _, guard);
                 CollisionService.RegisterCharacter(otherId, new Vector3(0.5f, 0, 0), R, H);   // another character pressing into the guard's collider
                 CollisionService.StepEvents(enter, stay, exit, collide);
                 foreach (var c in collide)
@@ -96,7 +95,7 @@ namespace VortexTests
                 t.True(collide.Exists(c => c.CharacterId == guardId && c.Other?.Name == "Floor"), "the guard still touches the floor");
                 t.True(collide.Exists(c => c.CharacterId == otherId && c.Other == guard), "another character touching the guard's collider gets OnCollisionEnter");
             }
-            finally { CollisionService.Clear(); CollisionService.CharacterOwnerResolver = null; }
+            finally { CollisionService.Clear(); }
         }
 
         /// <summary>#407: a registered capsule goes with Physics.RemoveCharacter, with its destroyed / deactivated subtree
@@ -116,8 +115,7 @@ namespace VortexTests
             try
             {
                 CollisionService.Build(s);
-                CollisionService.CharacterOwnerResolver = id => id == hg ? guard : id == hcar ? car : id == hp ? passenger : null;
-                Fall(new Vector3(0, 0, 0), hg, 2, out _);
+                Fall(new Vector3(0, 0, 0), hg, 2, out _, guard);
                 var b = CollisionService.MoveCharacter(new Vector3(2f, 0, 0), R, H, new Vector3(-3f, 0, 0), out _, hb);
                 t.True(b.X > 2 * R - 0.05f, "the guard's capsule blocks another character (x = " + b.X + ")");
 
@@ -127,7 +125,7 @@ namespace VortexTests
                 t.True(b.X < -1f, "the other character walks through the spot (x = " + b.X + ")");
                 t.False(CollisionService.CapsuleOverlaps(new Vector3(0, 0.02f, 0), R, H - 0.02f, anonymous), "CanStand at the old spot");
 
-                Fall(new Vector3(0, 0, 0), hg, 1, out _);
+                Fall(new Vector3(0, 0, 0), hg, 1, out _, guard);
                 t.True(CollisionService.HasCharacter(hg), "the next MoveCharacter registers the guard again");
                 b = CollisionService.MoveCharacter(b, R, H, new Vector3(3f, 0, 0), out _, hb);
                 t.True(b.X < -2 * R + 0.05f, "… and it blocks again (x = " + b.X + ")");
@@ -135,19 +133,166 @@ namespace VortexTests
                 CollisionService.RegisterCharacter(anonymous, new Vector3(-5f, 0, 0), R, H);
                 t.Equal(1, PhysicsService.RemoveCharactersIn(guard), "destroying / deactivating the guard removes its character");
                 t.False(CollisionService.HasCharacter(hg), "… the guard's capsule is gone");
-                t.True(CollisionService.HasCharacter(anonymous), "… a character whose id names no entity stays");
+                t.True(CollisionService.HasCharacter(anonymous), "… a character without an owner stays");
 
-                Fall(new Vector3(0, 0, 0), hg, 1, out _);
+                Fall(new Vector3(0, 0, 0), hg, 1, out _, guard);
                 t.Equal(1, PhysicsService.RemoveCharacterOf(model), "a ragdoll of the model removes the capsule its root registered");
                 t.False(CollisionService.HasCharacter(hg), "… the guard's capsule is gone");
 
-                CollisionService.RegisterCharacter(hcar, new Vector3(10f, 0, 0), 1f, 2f);
-                CollisionService.RegisterCharacter(hp, new Vector3(10f, 0.5f, 0), R, H);
+                CollisionService.RegisterCharacter(hcar, new Vector3(10f, 0, 0), 1f, 2f, car);
+                CollisionService.RegisterCharacter(hp, new Vector3(10f, 0.5f, 0), R, H, passenger);
                 t.Equal(1, PhysicsService.RemoveCharacterOf(passengerModel), "a passenger's ragdoll removes the nearest character above it");
                 t.False(CollisionService.HasCharacter(hp), "… the passenger's");
                 t.True(CollisionService.HasCharacter(hcar), "… not the car's");
             }
-            finally { CollisionService.Clear(); CollisionService.CharacterOwnerResolver = null; }
+            finally { CollisionService.Clear(); }
+        }
+
+        /// <summary>#407: a behaviour keeps running (and calling MoveCharacter) while its entity is switched off, and the
+        /// root of a ragdolled character keeps moving its capsule — neither may bring back the capsule that SetActive(false)
+        /// / Ragdoll.Activate removed. The move itself is still resolved; characters without an owner are unaffected.</summary>
+        [Test]
+        public static void InactiveOrLimpOwnersRegisterNoCharacter(TestContext t)
+        {
+            var s = new Scene { Name = "Limp" };
+            Floor(s);
+            var squad = Add(s, null, "Squad", new Vector3(0, 0, 0), null);
+            var guard = Add(s, squad, "Guard", new Vector3(0, 0, 0), null);
+            var model = Add(s, guard, "GuardModel", new Vector3(0, 0, 0), null);
+            const long gid = 21, custom = 7;
+            try
+            {
+                CollisionService.Build(s);
+                guard.SetActiveFlagOnly(false);
+                var p = Fall(new Vector3(0, 0.5f, 0), gid, 30, out bool grounded, guard);
+                t.False(CollisionService.HasCharacter(gid), "a switched-off owner registers no capsule");
+                t.True(Math.Abs(p.Y) < 0.02f && grounded, "… while its move is still resolved (y = " + p.Y + ")");
+                CollisionService.RegisterCharacter(gid, p, R, H, guard);
+                t.False(CollisionService.HasCharacter(gid), "… nor through RegisterCharacter (the Jolt route)");
+                guard.SetActiveFlagOnly(true);
+                squad.SetActiveFlagOnly(false);
+                Fall(p, gid, 1, out _, guard);
+                t.False(CollisionService.HasCharacter(gid), "an owner under a switched-off ancestor registers none");
+                squad.SetActiveFlagOnly(true);
+
+                // Ragdoll.Activate on the model removed the capsule; the root's script goes on calling MoveCharacter
+                RagdollService.TestMarkActive(model, true);
+                Fall(p, gid, 3, out _, guard);
+                t.False(CollisionService.HasCharacter(gid), "an owner with an active ragdoll under it registers none");
+                t.True(CollisionService.MayRegister(null), "a character without an owner always may");
+                Fall(p, custom, 1, out _);
+                t.True(CollisionService.HasCharacter(custom), "… and registers as before");
+                RagdollService.TestMarkActive(model, false);
+                Fall(p, gid, 1, out _, guard);
+                t.True(CollisionService.HasCharacter(gid), "once the ragdoll is over the owner's next move registers it again");
+            }
+            finally { RagdollService.TestMarkActive(model, false); CollisionService.Clear(); }
+        }
+
+        // Scripts for the owner rules through the real runtime: a custom characterId, a script's own EntityId (from Update,
+        // from Physics.CanStand, from an OnMessage of a second script on the same entity).
+        private const string OwnerScripts = @"
+using Vortex;
+
+public class LevelScript : VortexBehaviour { }
+
+public class CustomIdWalker : VortexBehaviour
+{
+    public Vector3 Feet = new Vector3(-5f, 0.3f, 0f);
+    public bool Grounded;
+    public override void Update(float dt)
+    {
+        Feet = Physics.MoveCharacter(Feet, 0.35f, 1.8f, new Vector3(0f, -0.1f, 0f), 1);   // a custom id
+        Grounded = Physics.Grounded;
+    }
+}
+
+public class OwnIdWalker : VortexBehaviour
+{
+    public Vector3 Feet;
+    public bool Room;
+    public override void Start() { Feet = Position; }
+    public override void Update(float dt)
+    {
+        Feet = Physics.MoveCharacter(Feet, 0.35f, 1.8f, new Vector3(0f, -0.1f, 0f), EntityId);
+        Room = Physics.CanStand(Feet, 0.35f, 1.8f, EntityId);
+    }
+}
+
+public class Sidekick : VortexBehaviour
+{
+    public Vector3 Feet;
+    public override void Start() { Feet = Position; }
+    public override void OnMessage(string message, object arg)
+    {
+        if (message == ""step"") Feet = Physics.MoveCharacter(Feet, 0.35f, 1.8f, new Vector3(0f, -0.1f, 0f), EntityId);
+    }
+}
+";
+
+        private static object Field(object o, string name) => o.GetType().GetField(name).GetValue(o);
+
+        private static GameEntity Scripted(Scene s, GameEntity parent, string name, Vector3 pos, bool capsule, params string[] classes)
+            => Add(s, parent, name, pos, e =>
+            {
+                if (capsule) e.AddComponentDirect(new CapsuleCollider(e) { Radius = R, Height = H, Center = new Vector3(0, 0.9f, 0) });
+                foreach (var cls in classes) e.AddComponentDirect(new Editor.ECS.Components.Scripting.Script(e, "Assets/Scripts/" + cls + ".cs"));
+            });
+
+        /// <summary>#406 review: a characterId names an entity ONLY when it is the EntityId of the script that is running —
+        /// a custom id equal to some other entity's handle (1 = the scripted "Level" root here) used to make that entity
+        /// the owner, its floor child no obstacle, and the capsule fell through the floor.</summary>
+        [Test]
+        public static void CustomCharacterIdsBelongToNoEntity(TestContext t)
+        {
+            var file = t.Write("Scripts/Owners.cs", OwnerScripts);
+            var asm = Editor.Scripting.RoslynScriptCompiler.Compile(new[] { file }, out var log);
+            if (asm == null) throw new TestFailure("the test scripts do not compile: " + log);
+            var s = new Scene { Name = "Owners" };
+            var level = Scripted(s, null, "Level", new Vector3(0, 0, 0), false, "LevelScript");
+            Add(s, level, "Floor", new Vector3(0, -0.5f, 0), e => e.AddComponentDirect(new BoxCollider(e) { Size = new Vector3(40f, 1f, 40f) }));
+            var player = Scripted(s, null, "Player", new Vector3(-5f, 0, 0), false, "CustomIdWalker");
+            var guard = Scripted(s, null, "Guard", new Vector3(5f, 0, 0), true, "OwnIdWalker");
+            var twin = Scripted(s, null, "Twin", new Vector3(10f, 0, 0), true, "LevelScript", "Sidekick");
+            var rt = Editor.Scripting.ScriptRuntime.Instance;
+            try
+            {
+                rt.Begin(s, asm);
+                t.Equal(1L, rt.HandleForEntity(level), "the Level root holds handle 1 — the walker's custom id");
+                for (int i = 0; i < 30; i++) rt.Update(Dt);
+
+                var walker = rt.BehavioursOf(player)[0];
+                var feet = (Vortex.Vector3)Field(walker, "Feet");
+                t.True(Math.Abs(feet.Y) < 0.02f && (bool)Field(walker, "Grounded"), "a custom id 1 stands on the Level's floor (y = " + feet.Y + ")");
+                var owned = new List<long>();
+                CollisionService.CharacterIdsOwnedBy(o => o == level, owned);
+                t.Equal(0, owned.Count, "… and its capsule does not belong to the Level");
+
+                var own = rt.BehavioursOf(guard)[0];
+                feet = (Vortex.Vector3)Field(own, "Feet");
+                t.True(Math.Abs(feet.Y) < 0.02f && Math.Abs(feet.X - 5f) < 1e-3f && Math.Abs(feet.Z) < 1e-3f,
+                       "a script's own EntityId: the guard stays inside its own collider (" + feet.X + ", " + feet.Y + ", " + feet.Z + ")");
+                t.True((bool)Field(own, "Room"), "… Physics.CanStand with its EntityId ignores its own collider");
+                owned.Clear(); CollisionService.CharacterIdsOwnedBy(o => o == guard, owned);
+                t.True(owned.Count == 1 && owned[0] == own.EntityId, "… and the capsule belongs to the guard");
+
+                // the second script of an entity, from OnMessage: the shared EntityId names the entity too
+                long twinId = rt.BehavioursOf(twin)[0].EntityId;
+                for (int i = 0; i < 10; i++) rt.SendEntityMessage(twinId, "step", null);
+                feet = (Vortex.Vector3)Field(rt.BehavioursOf(twin)[1], "Feet");
+                t.True(Math.Abs(feet.Y) < 0.02f && Math.Abs(feet.X - 10f) < 1e-3f, "a second script of an entity, from OnMessage, owns the capsule too (" + feet.X + ", " + feet.Y + ")");
+
+                // outside any script callback the same id is a custom one: shoved out of the guard's collider
+                var outside = new Vortex.Vector3(5f, 0f, 0f);
+                for (int i = 0; i < 10; i++) outside = Vortex.Physics.MoveCharacter(outside, R, H, new Vortex.Vector3(0f, -0.1f, 0f), own.EntityId);
+                t.True(outside.Y > 0.3f || Math.Abs(outside.X - 5f) > 0.3f || Math.Abs(outside.Z) > 0.3f,
+                       "called from outside a script, the guard's id names no owner (" + outside.X + ", " + outside.Y + ", " + outside.Z + ")");
+
+                // #418 without a Jolt world: Physics.OverlapPoint answers from the collision world
+                var inGuard = Vortex.Physics.OverlapPoint(new Vortex.Vector3(5f, 1f, 0.1f));
+                t.True(inGuard.Length == 1 && inGuard[0] == own.EntityId, "Physics.OverlapPoint without Jolt finds the guard's collider (" + inGuard.Length + ")");
+            }
+            finally { rt.End(); }
         }
 
         /// <summary>Triangles the character world holds (every box is 12) — counts shapes, so a re-add that duplicated
@@ -327,7 +472,6 @@ namespace VortexTests
             try
             {
                 CollisionService.Build(s);
-                CollisionService.CharacterOwnerResolver = id => id == guardId ? guard : null;
                 CollisionService.SetDynamicBodies(new List<CollisionService.DynamicBody>
                 {
                     new CollisionService.DynamicBody
@@ -337,11 +481,11 @@ namespace VortexTests
                     }
                 });
                 CollisionService.CharacterContacts.Clear();
-                var p = Fall(new Vector3(0, 0, 0), guardId, 10, out _);
+                var p = Fall(new Vector3(0, 0, 0), guardId, 10, out _, guard);
                 t.True(Math.Abs(p.Y) < 0.02f && Math.Abs(p.X) < 1e-3f && Math.Abs(p.Z) < 1e-3f, "the guard is not pushed by its own body (" + p.X + ", " + p.Y + ", " + p.Z + ")");
                 t.Equal(0, CollisionService.CharacterContacts.Count, "no push against its own body is recorded");
             }
-            finally { CollisionService.Clear(); CollisionService.CharacterOwnerResolver = null; }
+            finally { CollisionService.Clear(); }
         }
     }
 }

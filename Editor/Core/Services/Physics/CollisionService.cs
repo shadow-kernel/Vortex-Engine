@@ -342,7 +342,8 @@ namespace Editor.Core.Services.Physics
 
         // Dynamic character capsules (multiplayer): each character auto-registers when it moves, so OTHER characters
         // collide against it — you can't walk through another player's character. Keyed by a caller id (e.g. entity id).
-        // Owner (#417) = the entity the id names (see OwnerOf): its own colliders never block or touch the character.
+        // Owner (#417) = the entity the character moves, when the caller knows it (a script passing its own EntityId):
+        // its own colliders never block or touch the character, and it goes with that entity (#407).
         private struct CharCap { public V3 Feet; public float R, H; public GameEntity Owner; }
         private static readonly Dictionary<long, CharCap> _chars = new Dictionary<long, CharCap>();
         /// <summary>Drop a character's capsule (#407: PhysicsService.RemoveCharacter also drops its Jolt character). True
@@ -358,25 +359,22 @@ namespace Editor.Core.Services.Physics
         /// <summary>Is a character capsule registered under the id?</summary>
         public static bool HasCharacter(long id) => _chars.ContainsKey(id);
         /// <summary>#187: record a character's capsule (feet, radius, total height) that something else resolved —
-        /// the Jolt character route — so trigger volumes and the managed characters of other scripts still see it.</summary>
-        public static void RegisterCharacter(long id, Vector3 feet, float radius, float height)
+        /// the Jolt character route — so trigger volumes and the managed characters of other scripts still see it.
+        /// <paramref name="owner"/> = the entity the character moves (null = anonymous). Nothing is recorded for an owner
+        /// that may not have a character (<see cref="MayRegister"/>).</summary>
+        public static void RegisterCharacter(long id, Vector3 feet, float radius, float height, GameEntity owner = null)
         {
-            if (id == 0) return;
-            _chars[id] = new CharCap { Feet = From(feet), R = Math.Max(0.05f, radius), H = height, Owner = OwnerOf(id) };
+            if (id == 0 || !MayRegister(owner)) return;
+            _chars[id] = new CharCap { Feet = From(feet), R = Math.Max(0.05f, radius), H = height, Owner = owner };
         }
         public static void ClearCharacters() { _chars.Clear(); }
 
-        /// <summary>Resolves a characterId to the entity it moves — the script runtime installs its handle lookup at play
-        /// start (a behaviour passes its own EntityId). Null, or an id that is no entity's handle, = no entity: the
-        /// character is then anonymous, as before.</summary>
-        public static Func<long, GameEntity> CharacterOwnerResolver;
-
-        /// <summary>The entity a characterId moves (null when unknown, see <see cref="CharacterOwnerResolver"/>).</summary>
-        public static GameEntity OwnerOf(long characterId)
-        {
-            if (characterId == 0 || CharacterOwnerResolver == null) return null;
-            try { return CharacterOwnerResolver(characterId); } catch { return null; }
-        }
+        /// <summary>#407: may a character of <paramref name="owner"/> be registered? Not while the owner is switched off
+        /// (itself or an ancestor) or limp (a ragdoll at or under it) — its behaviour or a Nav Agent still calling
+        /// MoveCharacter must not bring back the capsule that Scene.SetActive(false) / Ragdoll.Activate removed. An
+        /// anonymous character (null) always may.</summary>
+        public static bool MayRegister(GameEntity owner)
+            => owner == null || (ActiveInHierarchy(owner) && !RagdollService.ActiveAtOrUnder(owner));
 
         /// <summary>True when <paramref name="e"/> is <paramref name="root"/> or one of its descendants.</summary>
         internal static bool IsUnder(GameEntity e, GameEntity root)
@@ -865,7 +863,7 @@ namespace Editor.Core.Services.Physics
 
         /// <summary>The entity and all its ancestors are active (the scene's own active flag is not consulted: the play world
         /// is built from the scene that is playing).</summary>
-        private static bool ActiveInHierarchy(GameEntity e)
+        internal static bool ActiveInHierarchy(GameEntity e)
         {
             for (var p = e; p != null; p = p.Parent) if (!p.IsActive) return false;
             return true;
@@ -1297,8 +1295,10 @@ namespace Editor.Core.Services.Physics
 
         /// <summary>Same, but <paramref name="selfId"/> registers this character's capsule so OTHER characters can't
         /// walk through it (multiplayer). Pass a stable id (e.g. the entity id); 0 = anonymous (no registration).
-        /// When the id names an entity (<see cref="OwnerOf"/>), that entity's own colliders and its children's are
-        /// no obstacles for it (#417) — a character can carry a solid collider to be hit by rays.
+        /// <paramref name="owner"/> (#417) = the entity the character moves, when the caller knows it: that entity's own
+        /// colliders and its children's are no obstacles for it — a character can carry a solid collider to be hit by
+        /// rays — and the registration goes with the entity (#407; none while the owner is switched off or limp, see
+        /// <see cref="MayRegister"/>). Null = an anonymous character, as before.
         /// Stair-step + slope handling (#48): <paramref name="stepHeight"/> is the tallest ledge auto-climbed
         /// (0 disables); <paramref name="maxSlopeDeg"/> is the steepest walkable slope — steeper surfaces act
         /// like walls (slide, no climb, never grounded).</summary>
@@ -1309,18 +1309,18 @@ namespace Editor.Core.Services.Physics
         public static float CharacterMaxSlopeDeg = 50f;
 
         public static Vector3 MoveCharacter(Vector3 feet, float radius, float height, Vector3 displacement, out bool grounded, long selfId,
-            float stepHeight = -1f, float maxSlopeDeg = -1f)
+            float stepHeight = -1f, float maxSlopeDeg = -1f, GameEntity owner = null)
         {
             if (stepHeight < 0f) stepHeight = CharacterStepHeight;
             if (maxSlopeDeg < 0f) maxSlopeDeg = CharacterMaxSlopeDeg;
             grounded = false;
             radius = Math.Max(0.05f, radius);
             float segLen = Math.Max(0f, height - 2f * radius);
-            var owner = OwnerOf(selfId);
+            bool register = selfId != 0 && MayRegister(owner);
             if (!IsBuilt || (_world.Count == 0 && _chars.Count == 0 && _dynamic.Count == 0))
             {
                 var np = new Vector3(feet.X + displacement.X, feet.Y + displacement.Y, feet.Z + displacement.Z);
-                if (selfId != 0) _chars[selfId] = new CharCap { Feet = From(np), R = radius, H = height, Owner = owner };
+                if (register) _chars[selfId] = new CharCap { Feet = From(np), R = radius, H = height, Owner = owner };
                 return np;
             }
             if (maxSlopeDeg < 10f) maxSlopeDeg = 10f; else if (maxSlopeDeg > 85f) maxSlopeDeg = 85f;
@@ -1422,19 +1422,18 @@ namespace Editor.Core.Services.Physics
 
             grounded = g;
             _curOwner = null;
-            if (selfId != 0) _chars[selfId] = new CharCap { Feet = p, R = radius, H = height, Owner = owner };
+            if (register) _chars[selfId] = new CharCap { Feet = p, R = radius, H = height, Owner = owner };
             return To(p);
         }
 
         /// <summary>#105: does a character capsule (feet, radius, total height) overlap anything solid — level
         /// colliders, simulated rigid bodies, OTHER characters — by more than <paramref name="skin"/>? A probe only:
         /// nothing is moved, no contact is recorded. <c>Physics.CanStand</c> asks this with the standing height before
-        /// a crouched character rises; <paramref name="selfId"/> excludes the asking character's own capsule and, when
-        /// it names an entity, that entity's own colliders (#417).</summary>
-        public static bool CapsuleOverlaps(Vector3 feet, float radius, float height, long selfId = 0, float skin = 0.01f)
+        /// a crouched character rises; <paramref name="selfId"/> excludes the asking character's own capsule, and
+        /// <paramref name="owner"/> (or the owner the character was registered with) its own colliders (#417).</summary>
+        public static bool CapsuleOverlaps(Vector3 feet, float radius, float height, long selfId = 0, float skin = 0.01f, GameEntity owner = null)
         {
             if (!IsBuilt) return false;
-            var owner = OwnerOf(selfId);
             if (owner == null && selfId != 0 && _chars.TryGetValue(selfId, out var self)) owner = self.Owner;
             float r = Math.Max(0.05f, radius);
             float segLen = Math.Max(0f, height - 2f * r);

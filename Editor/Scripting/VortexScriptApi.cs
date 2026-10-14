@@ -1279,10 +1279,11 @@ namespace Vortex
         }
 
         /// <summary>As above, but <paramref name="characterId"/> (e.g. your entity's EntityId) registers this
-        /// character so OTHER characters can't walk through it — for multiplayer / multiple actors. When the id is an
-        /// entity's EntityId, that entity's own colliders and its children's are no obstacles for the character, in both
-        /// controllers (#417): give a guard a solid Collider so rays hit it, it still walks freely (other characters and
-        /// rays still collide with that collider; it raises no OnCollisionEnter against itself).
+        /// character so OTHER characters can't walk through it — for multiplayer / multiple actors. When the id is the
+        /// calling script's own EntityId, that entity's own colliders and its children's are no obstacles for the character,
+        /// in both controllers (#417): give a guard a solid Collider so rays hit it, it still walks freely (other characters
+        /// and rays still collide with that collider; it raises no OnCollisionEnter against itself). Any other id is a
+        /// custom one: the character belongs to no entity and every collider blocks it (#406).
         /// <para>Lifetime (#407): the registered capsule stays where the last move left it until play stops — or until the
         /// entity (or an ancestor) is destroyed or deactivated, it (or the model under it) becomes a ragdoll, or
         /// <see cref="RemoveCharacter"/> is called. The next MoveCharacter with the id registers it again.</para></summary>
@@ -1325,9 +1326,9 @@ namespace Vortex
         /// <para>Rays and characters (#406): with "managed" a character is no physics body — rays and
         /// <see cref="OverlapSphere"/> never hit it (give it a Collider to make it shootable). With "jolt" every character
         /// is a capsule body: <see cref="Raycast(Vector3, Vector3, float, out RaycastHit, int)"/> (default mask),
-        /// OverlapSphere and <see cref="OverlapPoint"/> hit it and report the entity whose EntityId the script passed to
-        /// MoveCharacter (an id that is no entity's handle reports nothing), and a ray with that entity as ignoreEntity
-        /// passes through its capsule — even from inside it.</para></summary>
+        /// OverlapSphere and <see cref="OverlapPoint"/> hit it and report the entity of the script that passed its own
+        /// EntityId to MoveCharacter (a custom id reports nothing), and a ray with that entity as ignoreEntity passes
+        /// through its capsule — even from inside it.</para></summary>
         public static void SetCharacterController(string controller)
         {
             bool jolt = controller != null && (controller.Trim().ToLowerInvariant() == "jolt" || controller.Trim().ToLowerInvariant() == "v2");
@@ -1353,7 +1354,7 @@ namespace Vortex
         /// stand-up ceiling check: before a crouched character rises, ask with the STANDING height — false means a
         /// ceiling, a table top or another character is in the way, so stay crouched this frame. Tests the level
         /// colliders, simulated props and other characters; <paramref name="characterId"/> excludes your own capsule
-        /// and, when it is an entity's EntityId, that entity's own colliders (pass what you pass to
+        /// and, when it is your script's own EntityId, your entity's own colliders (pass what you pass to
         /// <see cref="MoveCharacter(Vector3, float, float, Vector3, long)"/>). Works with both controllers. Without a
         /// collision world → true.</summary>
         public static bool CanStand(Vector3 feet, float radius, float height, long characterId = 0)
@@ -1361,7 +1362,8 @@ namespace Vortex
             // a 2 cm lift keeps the floor the character stands on out of the test — only what is ABOVE counts
             var probe = new Vector3(feet.X, feet.Y + 0.02f, feet.Z);
             return !Editor.Core.Services.Physics.CollisionService.CapsuleOverlaps(
-                new Editor.ECS.Vector3(probe.X, probe.Y, probe.Z), radius, height - 0.02f, characterId);
+                new Editor.ECS.Vector3(probe.X, probe.Y, probe.Z), radius, height - 0.02f, characterId,
+                owner: Editor.Scripting.ScriptRuntime.Instance?.CharacterOwner(characterId));
         }
 
         /// <summary>Ray straight DOWN from <paramref name="from"/> (up to <paramref name="maxDist"/>) against the world

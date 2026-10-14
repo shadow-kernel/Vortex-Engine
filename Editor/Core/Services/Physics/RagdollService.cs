@@ -250,6 +250,23 @@ namespace Editor.Core.Services.Physics
 
         public static bool IsActive(GameEntity entity) => entity != null && _active.ContainsKey(entity);
 
+        /// <summary>#407: is a ragdoll active on <paramref name="root"/> or an entity under it (the skinned model of a
+        /// character whose root moves the capsule)? Such a character is limp and gets no capsule.</summary>
+        internal static bool ActiveAtOrUnder(GameEntity root)
+        {
+            if (root == null || _active.Count == 0) return false;
+            foreach (var e in _active.Keys) if (CollisionService.IsUnder(e, root)) return true;
+            return false;
+        }
+
+        /// <summary>Test hook: mark an entity as an active ragdoll without bodies (for the rules that ask "is it limp?").</summary>
+        internal static void TestMarkActive(GameEntity e, bool active)
+        {
+            if (e == null) return;
+            if (active) _active[e] = new Instance { Entity = e, MeshEntity = e, Parts = new Part[0] };
+            else _active.Remove(e);
+        }
+
         /// <summary>#406: append the part bodies of every active ragdoll at or under <paramref name="root"/> to
         /// <paramref name="ids"/> (from index <paramref name="n"/>); returns the new count — a ray that ignores a
         /// character passes through its limbs too.</summary>

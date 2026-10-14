@@ -1,9 +1,11 @@
 using System;
+using System.Collections.Generic;
 using Editor.Core.Data;
 using Editor.Core.Services.AI;
 using Editor.Core.Services.Physics;
 using Editor.DllWrapper;
 using Editor.ECS;
+using Editor.ECS.Components.AI;
 using Editor.ECS.Components.Physics;
 
 namespace VortexTests
@@ -38,7 +40,6 @@ namespace VortexTests
         {
             PhysicsService.Clear();
             CollisionService.Clear();
-            CollisionService.CharacterOwnerResolver = null;
             PhysicsNative.Shutdown();   // no native worker threads left behind
         }
 
@@ -233,6 +234,96 @@ namespace VortexTests
             finally { ClearWorlds(); CollisionService.MeshTriangleProvider = oldProvider; }
         }
 
+        /// <summary>#407 with the "jolt" controller: a switched-off owner gets no Jolt character, and a ragdolled one neither
+        /// gets one back from its script's next MoveCharacter nor keeps a leftover.</summary>
+        [Test]
+        public static void InactiveOrLimpOwnersGetNoJoltCharacter(TestContext t)
+        {
+            if (!Jolt()) return;
+            var s = new Scene { Name = "LimpJolt" };
+            PhysicsRaycastTests.Add(s, null, "Floor", new Vector3(0, -0.5f, 0), e => e.AddComponentDirect(new BoxCollider(e) { Size = new Vector3(40f, 1f, 40f) }));
+            var guard = PhysicsRaycastTests.Add(s, null, "Guard", new Vector3(0, 0, 0), null);
+            var model = PhysicsRaycastTests.Add(s, guard, "GuardModel", new Vector3(0, 0, 0), null);
+            PhysicsRaycastTests.AsLoaded(s);
+            const long gid = 61;
+            var feet = new Vector3(0, 0.3f, 0);
+            void Move(int frames)
+            {
+                for (int i = 0; i < frames; i++)
+                {
+                    feet = PhysicsService.MoveCharacterJolt(feet, 0.35f, 1.8f, new Vector3(0, -0.1f, 0), PhysicsService.FixedStep, out _, gid, 0.35f, 50f, guard);
+                    PhysicsService.Step(PhysicsService.FixedStep);
+                }
+            }
+            try
+            {
+                BuildWorlds(s);
+                PhysicsService.JoltCharacters = true;
+                guard.SetActiveFlagOnly(false);
+                Move(5);
+                t.True(PhysicsService.JoltCharacterCount == 0 && !CollisionService.HasCharacter(gid), "a switched-off owner gets no Jolt character and no capsule");
+                t.True(Math.Abs(feet.Y) < 0.02f, "… while its move is resolved (y = " + feet.Y + ")");
+                guard.SetActiveFlagOnly(true);
+                Move(1);
+                t.True(PhysicsService.JoltCharacterCount == 1 && CollisionService.HasCharacter(gid), "switched on, the next move creates it");
+
+                RagdollService.TestMarkActive(model, true);
+                t.Equal(1, PhysicsService.RemoveCharacterOf(model), "Ragdoll.Activate's removal");
+                Move(5);
+                t.True(PhysicsService.JoltCharacterCount == 0 && !CollisionService.HasCharacter(gid), "the root's script moving on brings no character back");
+                RagdollService.TestMarkActive(model, false);
+                Move(1);
+                t.Equal(1, PhysicsService.JoltCharacterCount, "after the ragdoll the next move creates it again");
+                RagdollService.TestMarkActive(model, true);   // limp again, the character still there
+                Move(1);
+                t.True(PhysicsService.JoltCharacterCount == 0 && !CollisionService.HasCharacter(gid), "a limp owner's move takes a leftover character out");
+            }
+            finally { RagdollService.TestMarkActive(model, false); ClearWorlds(); }
+        }
+
+        /// <summary>#407 review: a Nav Agent whose model became a ragdoll leaves the crowd — its capsule (removed by
+        /// Ragdoll.Activate) does not come back from the crowd's MoveCharacter and the crowd stops writing its pose — and
+        /// rejoins where the body lies once the ragdoll is over.</summary>
+        [Test]
+        public static void RagdolledNavAgentsLeaveTheCrowd(TestContext t)
+        {
+            if (!Jolt()) return;   // loads the engine library
+            if (!NavigationNative.Available) NavigationNative.ResetProbe();   // probed by an earlier test before the library was registered
+            if (!NavigationService.Available) { Console.WriteLine("    (skipped: no navigation — " + NavigationNative.Reason + ")"); return; }
+            var s = new Scene { Name = "Patrol", IsActive = true };   // the playing scene: agents of an inactive one stand still
+            PhysicsRaycastTests.Add(s, null, "Floor", new Vector3(0, -0.5f, 0), e => e.AddComponentDirect(new BoxCollider(e) { Size = new Vector3(40f, 1f, 40f) }));
+            var bot = PhysicsRaycastTests.Add(s, null, "Bot", new Vector3(-5f, 0, 0), e =>
+                e.AddComponentDirect(new NavAgent(e) { ResolveCollisions = true, Radius = 0.4f, Height = 1.8f, Speed = 3f }));
+            var model = PhysicsRaycastTests.Add(s, bot, "BotModel", new Vector3(0, 0, 0), null);
+            PhysicsRaycastTests.AsLoaded(s);
+            var owned = new List<long>();
+            int Capsules() { owned.Clear(); CollisionService.CharacterIdsOwnedBy(o => o == bot, owned); return owned.Count; }
+            void Run(int frames) { for (int i = 0; i < frames; i++) NavigationService.Tick(1f / 60f); }
+            try
+            {
+                CollisionService.Build(s);
+                var bake = NavigationService.BakeScene(s, NavigationService.DefaultSettings(), save: false, load: true);
+                t.True(bake.Success, "navmesh baked (" + bake.Message + ")");
+                NavigationService.Begin(s);
+                t.True(NavigationService.SetDestination(bot, new Vector3(8f, 0, 0)), "the bot walks to x 8");
+                Run(30);
+                float x0 = bot.Transform.LocalPosition.X;
+                t.True(x0 > -4.9f && Capsules() == 1, "the walking agent moves (x = " + x0 + ") with its capsule");
+
+                RagdollService.TestMarkActive(model, true);
+                PhysicsService.RemoveCharacterOf(model);   // what Ragdoll.Activate does
+                Run(30);
+                t.Equal(0, Capsules(), "a ragdolled agent's capsule does not come back");
+                t.True(Math.Abs(bot.Transform.LocalPosition.X - x0) < 1e-4f, "… and the crowd no longer moves the body (x = " + bot.Transform.LocalPosition.X + ")");
+
+                RagdollService.TestMarkActive(model, false);
+                Run(30);
+                t.True(Capsules() == 1 && bot.Transform.LocalPosition.X > x0 + 0.2f,
+                       "after the ragdoll it rejoins and walks on with its capsule (x = " + bot.Transform.LocalPosition.X + ")");
+            }
+            finally { RagdollService.TestMarkActive(model, false); NavigationService.End(); NavigationService.Unload(); ClearWorlds(); }
+        }
+
         /// <summary>#418: the opt-in "is this point inside something?" query.</summary>
         [Test]
         public static void OverlapPointFindsWhatContainsThePoint(TestContext t)
@@ -272,11 +363,10 @@ namespace VortexTests
             try
             {
                 BuildWorlds(s);
-                CollisionService.CharacterOwnerResolver = id => id == ha ? a : id == hb ? b : null;
                 PhysicsService.JoltCharacters = true;
                 var down = new Vector3(0, -0.05f, 0);
-                var pa = PhysicsService.MoveCharacterJolt(new Vector3(0, 0, 0), 0.35f, 1.8f, down, PhysicsService.FixedStep, out _, ha, 0.35f, 50f);
-                var pb = PhysicsService.MoveCharacterJolt(new Vector3(0, 0, 6f), 0.35f, 1.8f, down, PhysicsService.FixedStep, out _, hb, 0.35f, 50f);
+                var pa = PhysicsService.MoveCharacterJolt(new Vector3(0, 0, 0), 0.35f, 1.8f, down, PhysicsService.FixedStep, out _, ha, 0.35f, 50f, a);
+                var pb = PhysicsService.MoveCharacterJolt(new Vector3(0, 0, 6f), 0.35f, 1.8f, down, PhysicsService.FixedStep, out _, hb, 0.35f, 50f, b);
                 PhysicsService.Step(PhysicsService.FixedStep);
                 t.Equal(2, PhysicsService.JoltCharacterCount, "two Jolt characters");
 
@@ -302,10 +392,9 @@ namespace VortexTests
             try
             {
                 BuildWorlds(s);
-                CollisionService.CharacterOwnerResolver = id => id == ha ? a : id == hb ? b : null;
                 t.False(PhysicsService.JoltCharacters, "(managed controller)");
-                CollisionService.MoveCharacter(new Vector3(0, 0, 0), 0.35f, 1.8f, new Vector3(0, -0.05f, 0), out _, ha);
-                CollisionService.MoveCharacter(new Vector3(0, 0, 6f), 0.35f, 1.8f, new Vector3(0, -0.05f, 0), out _, hb);
+                CollisionService.MoveCharacter(new Vector3(0, 0, 0), 0.35f, 1.8f, new Vector3(0, -0.05f, 0), out _, ha, owner: a);
+                CollisionService.MoveCharacter(new Vector3(0, 0, 6f), 0.35f, 1.8f, new Vector3(0, -0.05f, 0), out _, hb, owner: b);
                 t.False(PhysicsService.Raycast(new Vector3(0, 1f, -3f), new Vector3(0, 0, 1), 20f, out _, out _, out _, out _),
                         "with the managed controller a ray never hits a character");
             }
@@ -326,9 +415,8 @@ namespace VortexTests
             try
             {
                 BuildWorlds(s);
-                CollisionService.CharacterOwnerResolver = id => id == hFirst ? first : null;
                 PhysicsService.JoltCharacters = true;
-                PhysicsService.MoveCharacterJolt(new Vector3(0, 0, 0), 0.35f, 1.8f, new Vector3(0, -0.05f, 0), PhysicsService.FixedStep, out _, hFirst, 0.35f, 50f);
+                PhysicsService.MoveCharacterJolt(new Vector3(0, 0, 0), 0.35f, 1.8f, new Vector3(0, -0.05f, 0), PhysicsService.FixedStep, out _, hFirst, 0.35f, 50f, first);
                 PhysicsService.MoveCharacterJolt(new Vector3(0, 0, 4f), 0.35f, 1.8f, new Vector3(0, -0.05f, 0), PhysicsService.FixedStep, out _, hAnon, 0.35f, 50f);
                 PhysicsService.Step(PhysicsService.FixedStep);
                 var o = new Vector3(0, 1f, 2f);
@@ -360,13 +448,13 @@ namespace VortexTests
             GameEntity FirstHit() => PhysicsService.Raycast(behindA, fwd, 20f, out _, out _, out var e, out _) ? e : null;
             void Move(long id, Vector3 feet)
             {
-                PhysicsService.MoveCharacterJolt(feet, 0.35f, 1.8f, new Vector3(0, -0.05f, 0), PhysicsService.FixedStep, out _, id, 0.35f, 50f);
+                PhysicsService.MoveCharacterJolt(feet, 0.35f, 1.8f, new Vector3(0, -0.05f, 0), PhysicsService.FixedStep, out _, id, 0.35f, 50f,
+                    id == ha ? a : id == hb ? b : null);
                 PhysicsService.Step(PhysicsService.FixedStep);
             }
             try
             {
                 BuildWorlds(s);
-                CollisionService.CharacterOwnerResolver = id => id == ha ? a : id == hb ? b : null;
                 PhysicsService.JoltCharacters = true;
                 Move(ha, new Vector3(0, 0, 0));
                 Move(hb, new Vector3(0, 0, 6f));
@@ -448,14 +536,14 @@ namespace VortexTests
             {
                 BuildWorlds(s);
                 t.Equal(4, PhysicsService.BodyCount, "floor + three guard bodies");
-                CollisionService.CharacterOwnerResolver = id => id == hs ? still : id == hm ? moving : null;
                 PhysicsService.JoltCharacters = true;
                 Vector3 Run(Vector3 feet, long id)
                 {
+                    var owner = id == hs ? still : id == hm ? moving : null;   // the guards' scripts pass their own EntityId
                     for (int i = 0; i < 30; i++)
                     {
                         feet = PhysicsService.MoveCharacterJolt(feet, 0.35f, 1.8f, new Vector3(0, -9.81f * PhysicsService.FixedStep, 0), PhysicsService.FixedStep,
-                            out _, id, 0.35f, 50f);
+                            out _, id, 0.35f, 50f, owner);
                         PhysicsService.Step(PhysicsService.FixedStep);
                     }
                     return feet;

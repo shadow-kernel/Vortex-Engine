@@ -1505,14 +1505,20 @@ namespace Editor.Core.Services.Physics
         /// teleport (respawn, scene start) and moves it there first. The character is registered with
         /// <see cref="CollisionService"/> too, so trigger volumes and the managed characters of other scripts still
         /// see it. Falls back to the managed controller when the Jolt world is not built.
-        /// #406: when <paramref name="selfId"/> is an entity's handle (<see cref="CollisionService.OwnerOf"/>), rays and
-        /// overlaps that hit the capsule report that entity. #417: its own bodies (and its children's) are no obstacles
-        /// for the character.</summary>
+        /// <paramref name="owner"/> = the entity the character moves, when the caller knows it (#406: rays and overlaps that
+        /// hit the capsule report that entity; #417: its own bodies and its children's are no obstacles for the character;
+        /// #407: no Jolt character while the owner is switched off or limp — the move is resolved by the managed controller
+        /// without registering anything, see <see cref="CollisionService.MayRegister"/>).</summary>
         public static Vector3 MoveCharacterJolt(Vector3 feet, float radius, float height, Vector3 move, float dt,
-            out bool grounded, long selfId, float stepHeight, float maxSlopeDeg)
+            out bool grounded, long selfId, float stepHeight, float maxSlopeDeg, GameEntity owner = null)
         {
             if (!IsBuilt)
-                return CollisionService.MoveCharacter(feet, radius, height, move, out grounded, selfId, stepHeight, maxSlopeDeg);
+                return CollisionService.MoveCharacter(feet, radius, height, move, out grounded, selfId, stepHeight, maxSlopeDeg, owner);
+            if (!CollisionService.MayRegister(owner))
+            {
+                if (selfId != 0) RemoveCharacter(selfId);   // (the deactivation / the ragdoll removed it already; a leftover goes too)
+                return CollisionService.MoveCharacter(feet, radius, height, move, out grounded, selfId, stepHeight, maxSlopeDeg, owner);
+            }
             grounded = false;
             radius = Math.Max(0.05f, radius);
             height = Math.Max(2f * radius, height);
@@ -1536,7 +1542,7 @@ namespace Editor.Core.Services.Physics
                 try { h = VortexAPI.PhysicsCharacterCreate(radius, height, _chPos, maxSlopeDeg, stepHeight, mass); }
                 catch (Exception ex) { if (!_joltCharWarned) { _joltCharWarned = true; Log("[Physics] Jolt character unavailable (" + ex.Message + ") — using the managed controller"); } }
                 if (h == 0)
-                    return CollisionService.MoveCharacter(feet, radius, height, move, out grounded, selfId, stepHeight, maxSlopeDeg);
+                    return CollisionService.MoveCharacter(feet, radius, height, move, out grounded, selfId, stepHeight, maxSlopeDeg, owner);
                 c = new JoltChar { Handle = h, R = radius, H = height, Step = stepHeight, Slope = maxSlopeDeg, Mass = mass, LastPos = feet };
                 _joltChars[selfId] = c;
             }
@@ -1549,7 +1555,7 @@ namespace Editor.Core.Services.Physics
                     VortexAPI.PhysicsCharacterSetPosition(c.Handle, _chPos);
                 }
             }
-            c.Owner = CollisionService.OwnerOf(selfId);
+            c.Owner = owner;
 
             _chVel[0] = move.X / dt; _chVel[1] = move.Y / dt; _chVel[2] = move.Z / dt;
             int g;
@@ -1569,7 +1575,7 @@ namespace Editor.Core.Services.Physics
             if (float.IsNaN(p.X) || float.IsNaN(p.Y) || float.IsNaN(p.Z)) { p = new Vector3(feet.X + move.X, feet.Y + move.Y, feet.Z + move.Z); }
             grounded = g != 0;
             c.LastPos = p;
-            CollisionService.RegisterCharacter(selfId, p, radius, height);
+            CollisionService.RegisterCharacter(selfId, p, radius, height, owner);
             return p;
         }
 
