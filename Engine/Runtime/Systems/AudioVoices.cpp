@@ -380,8 +380,8 @@ namespace vortex::runtime::audio {
 		target->stream_decoder = stream_decoder;
 
 		// Reverb send plumbing: re-route sound -> splitter, splitter bus 0 (dry) to
-		// where the sound was headed, bus 1 (wet, gain 0 until the zone service says
-		// otherwise) into the global reverb. Send is PRE-fader (per-voice).
+		// where the sound was headed, bus 1 (wet, at the caller's initial send until the
+		// zone service says otherwise) into the global reverb. Send is PRE-fader (per-voice).
 		target->splitter_alive = false;
 		ma_node* reverb = (ma_node*)reverb_node();
 		if (reverb)
@@ -394,7 +394,9 @@ namespace vortex::runtime::audio {
 				ma_node_attach_output_bus(&target->sound, 0, &target->splitter, 0);
 				ma_node_attach_output_bus(&target->splitter, 0, dry_target, 0);
 				ma_node_attach_output_bus(&target->splitter, 1, reverb, 0);
-				ma_node_set_output_bus_volume(&target->splitter, 1, 0.0f);
+				// set before ma_sound_start: a short one-shot gets its send from the first sample (#496)
+				const f32 send = params.reverb_send > 0.0f ? (params.reverb_send < 1.0f ? params.reverb_send : 1.0f) : 0.0f;
+				ma_node_set_output_bus_volume(&target->splitter, 1, send);
 				target->splitter_alive = true;
 			}
 		}
@@ -601,6 +603,14 @@ namespace vortex::runtime::audio {
 				ma_node_set_output_bus_volume(&slot->splitter, 1, s);
 			}
 		}
+	}
+
+	f32 voice_get_reverb_send(voice_handle handle)
+	{
+		std::lock_guard<std::mutex> lock(g_voices_mutex);
+		voice_slot* slot = resolve(handle);
+		if (!slot || !slot->splitter_alive) return -1.0f;
+		return ma_node_get_output_bus_volume(&slot->splitter, 1);
 	}
 
 	void voice_set_spatial(voice_handle handle, const voice_spatial& spatial)

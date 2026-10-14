@@ -171,6 +171,11 @@ namespace vortex::navigation {
 	void bake_cancel();                                    // the running bake stops at the next tile
 	s32  bake_result_copy(u8* out, s32 max_bytes);         // copies the last result; null / 0 = query the size
 	void bake_result_clear();
+	// What the user should know about the last bake although it produced a navmesh (#451): tiles baked with a coarser
+	// cell height because their geometry is taller than one heightfield column holds, geometry that could not be
+	// baked, tiles that failed. One sentence per line ('\n'-separated, UTF-8, NUL-terminated when it fits); empty when
+	// there is nothing to say. Returns the length in bytes; null / 0 = query it. Reset by every bake().
+	s32  bake_notes_copy(char* out, s32 max_bytes);
 
 	// ---- Runtime world --------------------------------------------------------------------------------------
 	bool available();                                      // Recast/Detour compiled in

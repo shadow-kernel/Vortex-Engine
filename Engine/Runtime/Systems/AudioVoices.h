@@ -29,6 +29,9 @@ namespace vortex::runtime::audio {
 		// Ignored unless Steam Audio is available; the voice falls back to the v1 spatializer.
 		bool hrtf{ false };
 		bool occlusion{ false };
+		// Reverb send 0..1 from the first sample on (#496): a one-shot that is over before the bridge's next
+		// per-frame voice_set_reverb_send would otherwise stay dry — a gunshot's transient is what the room answers.
+		f32 reverb_send{ 0.0f };
 	};
 
 	// 3D properties mirrored from the AudioSource component. Stored per voice by
@@ -70,6 +73,8 @@ namespace vortex::runtime::audio {
 	// Reverb send gain 0..1 (reverbZoneMix x listener zone weight) — no-op while
 	// the reverb node is down.
 	void voice_set_reverb_send(voice_handle handle, f32 send);
+	// The current reverb send (diagnostics, tests); -1 for a stale handle or while the reverb node is down.
+	f32 voice_get_reverb_send(voice_handle handle);
 
 	// Fade envelope (issue #17): a sample-accurate multiplier ON TOP of the voice
 	// volume (final gain = volume x bus x envelope — no write conflicts, no zipper).
