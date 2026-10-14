@@ -6,7 +6,8 @@ using Editor.ECS.Components.Audio;
 
 namespace VortexTests
 {
-    /// <summary>The audio bridge's rules that need no audio device: where a Reverb Zone counts (#497).</summary>
+    /// <summary>The audio bridge's rules that need no audio device: where a Reverb Zone counts (#497), when an Audio
+    /// Source plays and which Audio Listener hears.</summary>
     public static class AudioTests
     {
         private static GameEntity Entity(string name, GameEntity parent = null, Vector3? pos = null, Vector3? rot = null, Vector3? scale = null)
@@ -55,6 +56,77 @@ namespace VortexTests
             zone = ZoneIn(Entity("Group"), out e);
             zone.IsEnabled = false;
             t.Equal(0f, AudioPlaybackService.ZoneWeight(zone, e, p), "the component is disabled");
+        }
+
+        [Test]
+        public static void SourcePlaysOnlyWhileActiveInTheHierarchy(TestContext t)
+        {
+            AudioSource SourceIn(GameEntity parent, out GameEntity e)
+            {
+                e = Entity("Radio", parent);
+                var s = new AudioSource(e, "Assets/Audio/radio.wav");
+                e.Components.Add(s);
+                return s;
+            }
+
+            var src = SourceIn(Entity("Group"), out var e);
+            t.True(AudioPlaybackService.ShouldPlay(true, src, e), "an active source with a clip plays");
+            t.False(AudioPlaybackService.ShouldPlay(false, src, e), "not wanted (no Play On Awake, no Play())");
+
+            var act = Entity("Act 2");
+            src = SourceIn(act, out e);
+            act.IsActive = false;
+            t.False(AudioPlaybackService.ShouldPlay(true, src, e), "the source's parent is inactive");
+
+            var outer = Entity("World");
+            src = SourceIn(Entity("Act 3", outer), out e);
+            outer.IsActive = false;
+            t.False(AudioPlaybackService.ShouldPlay(true, src, e), "an ancestor two levels up is inactive");
+
+            src = SourceIn(Entity("Group"), out e);
+            e.IsActive = false;
+            t.False(AudioPlaybackService.ShouldPlay(true, src, e), "the source's own entity is inactive");
+
+            src = SourceIn(Entity("Group"), out e);
+            src.IsEnabled = false;
+            t.False(AudioPlaybackService.ShouldPlay(true, src, e), "the component is disabled");
+
+            src = SourceIn(Entity("Group"), out e);
+            src.AudioClipPath = "";
+            t.False(AudioPlaybackService.ShouldPlay(true, src, e), "no clip");
+        }
+
+        [Test]
+        public static void EarsFollowTheFirstListenerActiveInTheHierarchy(TestContext t)
+        {
+            GameEntity ListenerIn(string name, GameEntity parent)
+            {
+                var e = Entity(name, parent);
+                e.Components.Add(new AudioListener(e));
+                return e;
+            }
+
+            var cutsceneRig = Entity("Cutscene Rig");
+            var cutscene = ListenerIn("Cutscene Camera", cutsceneRig);
+            var player = ListenerIn("Player Camera", Entity("Player"));
+            var listeners = new[] { cutscene, player };
+
+            cutsceneRig.IsActive = false;
+            t.Equal(player, AudioPlaybackService.ActiveListener(listeners, out int n), "the cutscene rig is off: the player's camera hears");
+            t.Equal(1, n, "one listener active");
+
+            var rig2 = Entity("Cutscene Rig 2");
+            var cutscene2 = ListenerIn("Cutscene Camera 2", rig2);
+            t.Equal(cutscene2, AudioPlaybackService.ActiveListener(new[] { cutscene2, player }, out n), "both active: the first in hierarchy order");
+            t.Equal(2, n, "two listeners active at once");
+
+            cutscene2.GetComponent<AudioListener>().IsEnabled = false;
+            t.Equal(player, AudioPlaybackService.ActiveListener(new[] { cutscene2, player }, out n), "a disabled listener does not hear");
+
+            var lone = ListenerIn("Lone", Entity("Off"));
+            lone.Parent.IsActive = false;
+            t.Equal(null, AudioPlaybackService.ActiveListener(new[] { lone }, out n), "no active listener: the main camera hears");
+            t.Equal(0, n, "none active");
         }
 
         [Test]
