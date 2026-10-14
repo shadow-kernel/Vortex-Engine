@@ -19,9 +19,9 @@ namespace VortexEditor.Claude
     /// <summary>
     /// Editor smoke check "mcp tools": the tool sets beyond the scene basics, end to end over MCP — materials (create,
     /// edit, assign, undo restores the file), world macros (grid, deterministic scatter, align, bulk edit, measure,
-    /// one undo step each), scripts (write → compile errors with line/column → fix → attach with fields, API lookup),
-    /// assets (list, place a model, save a prefab) and audio (search, AudioSource, mixer, procedural generation).
-    /// Everything is undone / removed afterwards.
+    /// one undo step each), scripts (write → compile errors with line/column → fix → attach with fields, a subfolder
+    /// script by its bare name and an ambiguous name (#456, #494), API lookup), assets (list, place a model, save a
+    /// prefab) and audio (search, AudioSource, mixer, procedural generation). Everything is undone / removed afterwards.
     /// </summary>
     internal static class McpToolsSmoke
     {
@@ -39,6 +39,7 @@ namespace VortexEditor.Claude
             if (!await McpHost.StartAsync(port)) return Fail("server did not start: " + McpHost.LastError);
             int undoBefore = UndoRedoManager.Instance.UndoCount;
             var cleanup = new List<string>();
+            var cleanupDirs = new List<string>();
             using var http = new HttpClient { BaseAddress = new Uri("http://127.0.0.1:" + port), Timeout = TimeSpan.FromSeconds(60) };
             async Task<JsonNode> C(string tool, JsonObject args) => McpTestClient.Json(await McpTestClient.Call(http, tool, args));
             async Task<JsonNode> Raw(string tool, JsonObject args) => await McpTestClient.Call(http, tool, args);
@@ -135,6 +136,27 @@ namespace VortexEditor.Claude
                     || (bool)(await C("write_script", new JsonObject { ["script"] = "McpLate", ["code"] = lateSrc }))["compiles"] != true) return Fail("the multi-script probes do not compile");
                 var att2 = await C("attach_script", new JsonObject { ["entity"] = cubeId, ["script"] = "McpWobble", ["fields"] = new JsonObject { ["Speed"] = 7 } });
                 if ((bool?)att2["added"] != true || cubeEntity.Components.OfType<Script>().Count() != 2) return Fail("a second script on the entity: " + att2.ToJsonString());
+                // #456 / #494: a script in a subfolder is found by its bare name; two scripts of one name are listed, not picked
+                var sub = await C("write_script", new JsonObject { ["script"] = "McpSub/McpSubSpinner.cs", ["code"] = good.Replace("McpSpinner", "McpSubSpinner") });
+                cleanup.Add(Path.Combine(project.Path, "Assets", "Scripts", "McpSub", "McpSubSpinner.cs"));
+                cleanupDirs.Add(Path.Combine(project.Path, "Assets", "Scripts", "McpSub"));
+                if ((string)sub["path"] != "Assets/Scripts/McpSub/McpSubSpinner.cs" || (bool)sub["compiles"] != true) return Fail("write_script into a subfolder: " + sub.ToJsonString());
+                var byName = await C("read_script", new JsonObject { ["script"] = "McpSubSpinner" });
+                if ((string)byName["path"] != "Assets/Scripts/McpSub/McpSubSpinner.cs") return Fail("read_script by bare name: " + byName.ToJsonString());
+                var subAtt = await C("attach_script", new JsonObject { ["entity"] = (string)light1["id"], ["script"] = "McpSubSpinner", ["fields"] = new JsonObject { ["Speed"] = 10 } });
+                if ((string)subAtt["script"] != "Assets/Scripts/McpSub/McpSubSpinner.cs" || (bool?)subAtt["added"] != true) return Fail("attach_script by bare name: " + subAtt.ToJsonString());
+                var twin = await C("write_script", new JsonObject { ["script"] = "McpSub2/McpSubSpinner.cs", ["code"] = "namespace McpTwin\n{\n    public class McpSubSpinner : Vortex.VortexBehaviour { }\n}\n" });
+                cleanup.Add(Path.Combine(project.Path, "Assets", "Scripts", "McpSub2", "McpSubSpinner.cs"));
+                cleanupDirs.Add(Path.Combine(project.Path, "Assets", "Scripts", "McpSub2"));
+                if (twin["note"] == null || (bool)twin["compiles"] != true) return Fail("a second script of one name should come with a note: " + twin.ToJsonString());
+                var ambiguous = await Raw("edit_script", new JsonObject { ["script"] = "McpSubSpinner", ["old_text"] = "Speed", ["new_text"] = "Speed" });
+                string ambText = McpTestClient.Text(ambiguous);
+                if ((bool?)ambiguous["isError"] != true || !ambText.Contains("Assets/Scripts/McpSub/McpSubSpinner.cs") || !ambText.Contains("Assets/Scripts/McpSub2/McpSubSpinner.cs"))
+                    return Fail("an ambiguous script name must list every candidate: " + ambText);
+                await C("undo", new JsonObject());   // the twin goes again
+                if (File.Exists(Path.Combine(project.Path, "Assets", "Scripts", "McpSub2", "McpSubSpinner.cs"))) return Fail("undo did not remove the second script");
+                var missing = await Raw("read_script", new JsonObject { ["script"] = "McpSubSpiner" });
+                if ((bool?)missing["isError"] != true || !McpTestClient.Text(missing).Contains("McpSub/McpSubSpinner.cs")) return Fail("a misspelt name should suggest the script: " + McpTestClient.Text(missing));
                 var api = McpTestClient.Text(await McpTestClient.Call(http, "get_scripting_api", new JsonObject { ["topic"] = "Input" }));
                 if (!api.Contains("GetKey(")) return Fail("get_scripting_api Input: " + api);
                 var escape = await Raw("write_script", new JsonObject { ["script"] = "../Materials/Evil", ["code"] = "class X {}" });
@@ -217,7 +239,9 @@ namespace VortexEditor.Claude
                 var stop = await C("exit_play_mode", new JsonObject());
                 if ((string)stop["state"] != "Editing") return Fail("exit_play_mode: " + stop.ToJsonString());
 
-                log.Log("mcp tools: OK — " + ToolCatalog.All.Count + " tools; material, grid (12), scatter (8, resting on the tiles), scripts with line-accurate errors, " + Path.GetFileName(crate) + " + prefab, audio + mixer + generated " + Path.GetFileName(genPath) + " + container " + Path.GetFileName(scPath) + ", play mode (capture, stats, exit)");
+                log.Log("mcp tools: OK — " + ToolCatalog.All.Count + " tools; material, grid (12), scatter (8, resting on the tiles), scripts with line-accurate errors, " +
+                        "a subfolder script by its name, " + Path.GetFileName(crate) + " + prefab, audio + mixer + generated " + Path.GetFileName(genPath) +
+                        " + container " + Path.GetFileName(scPath) + ", play mode (capture, stats, exit)");
                 return true;
             }
             catch (Exception ex) { return Fail(ex.GetType().Name + ": " + ex.Message); }
@@ -230,6 +254,8 @@ namespace VortexEditor.Claude
                     try { if (File.Exists(f)) File.Delete(f); } catch { }
                     try { if (File.Exists(f + ".vmeta")) File.Delete(f + ".vmeta"); } catch { }
                 }
+                foreach (var d in cleanupDirs)
+                    try { if (Directory.Exists(d) && !Directory.EnumerateFileSystemEntries(d).Any()) Directory.Delete(d); } catch { }
                 await McpHost.StopAsync();
             }
         }
