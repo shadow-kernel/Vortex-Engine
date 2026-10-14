@@ -52,7 +52,6 @@ namespace vortex::graphics::dx12
 		// The command list + queue are shared with the editor frame; finish all prior GPU work before
 		// reusing them. Simple full sync — perf is not the priority for the play window.
 		m_command_queue.flush();
-		upload_staged_bone_palettes();   // GPU idle after the flush — safe to write either buffer half
 
 		// Target the game window's own swapchain + depth at its own size, using the CURRENT camera
 		// (the caller sets the game's main camera before calling this).
@@ -62,7 +61,9 @@ namespace vortex::graphics::dx12
 		m_active_width = m_game_swapchain.width();
 		m_active_height = m_game_swapchain.height();
 
-		update_per_frame_constants();
+		update_per_frame_constants(1);   // the game window's own light choice (#416)
+		// GPU idle after the flush — safe to write either buffer half; the palettes placed for the game camera (#415)
+		upload_staged_bone_palettes(m_frame_constants.view_projection, m_camera_position);
 
 		m_game_cmd_allocator->Reset();
 		auto* pso = m_render_queue.empty() ? m_pipeline.pipeline_state() :
@@ -207,17 +208,19 @@ namespace vortex::graphics::dx12
 		if (color) item.color = { color[0], color[1], color[2], color[3] };
 		memcpy(&item.world_matrix, world_matrix, sizeof(DirectX::XMFLOAT4X4));
 
-		// Stage the palette; the offset is in MATRICES (root SRV binds at the active half's VA + offset * 64).
-		u32 offset = (u32)(m_bone_submit.size() / 16);
-		if (offset + bone_count > MAX_BONE_MATRICES_PER_FRAME)
+		// Stage the palette; offsets are in MATRICES (root SRV binds at the active half's VA + offset * 64). Every submesh
+		// of a character hands over the same palette: the stage keeps one copy (#415). What does not fit the GPU buffer is
+		// no longer cut here in submission (= hierarchy) order — upload_staged_bone_palettes decides per view.
+		const u32 palette = m_bone_submit.add(bone_matrices, bone_count);
+		if (palette == skinning::NO_PALETTE)
 		{
-			// Palette half full — submit as rigid (bind pose) instead of overrunning.
+			// the stage's ceiling — submit as rigid (bind pose, counted) instead of overrunning
 			m_submit_queue.push_back(with_winding(item));
 			return;
 		}
-		item.bone_offset = offset;
+		item.palette = palette;
+		item.bone_offset = m_bone_submit.palettes()[palette].offset;
 		item.bone_count = bone_count;
-		m_bone_submit.insert(m_bone_submit.end(), bone_matrices, bone_matrices + (size_t)bone_count * 16);
 		m_submit_queue.push_back(with_winding(item));
 	}
 

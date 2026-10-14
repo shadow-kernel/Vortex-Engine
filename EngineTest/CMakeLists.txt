@@ -37,7 +37,14 @@ target_include_directories(VortexGeometryTest PRIVATE "${CMAKE_SOURCE_DIR}/Engin
 target_compile_definitions(VortexGeometryTest PRIVATE TEST_GEOMETRY=1)
 target_link_libraries(VortexGeometryTest PRIVATE vortex::engine)
 
+# Render budgets (#415, #416): the bone-palette sharing / budget and the light selection the renderers run, headless.
+add_executable(VortexRenderBudgetTest Main.cpp)
+target_include_directories(VortexRenderBudgetTest PRIVATE "${CMAKE_SOURCE_DIR}/Engine/Common")
+target_compile_definitions(VortexRenderBudgetTest PRIVATE TEST_RENDER_BUDGETS=1)
+target_link_libraries(VortexRenderBudgetTest PRIVATE vortex::engine)
+
 if(NOT MSVC)
+	target_compile_options(VortexRenderBudgetTest PRIVATE -Wall -Wno-unused-parameter)
 	target_compile_options(VortexGeometryTest PRIVATE -Wall -Wno-unused-parameter)
 	target_compile_options(VortexParticleTest PRIVATE -Wall -Wno-unused-parameter)
 	target_compile_options(EngineTest PRIVATE -Wall -Wno-unused-parameter)
@@ -67,6 +74,12 @@ set_tests_properties(PhysicsSmokeTest PROPERTIES
 
 add_test(NAME GeometryTest COMMAND VortexGeometryTest)
 set_tests_properties(GeometryTest PROPERTIES
+	FAIL_REGULAR_EXPRESSION "FAILURES!"
+	PASS_REGULAR_EXPRESSION "ALL PASSED"
+	TIMEOUT 60)
+
+add_test(NAME RenderBudgetTest COMMAND VortexRenderBudgetTest)
+set_tests_properties(RenderBudgetTest PROPERTIES
 	FAIL_REGULAR_EXPRESSION "FAILURES!"
 	PASS_REGULAR_EXPRESSION "ALL PASSED"
 	TIMEOUT 60)

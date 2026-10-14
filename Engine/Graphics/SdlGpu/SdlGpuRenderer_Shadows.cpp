@@ -260,11 +260,13 @@ namespace vortex::graphics::sdlgpu
 		for (u32 i = 0; i < MAX_SPOT_LIGHTS; ++i) { L.spot_lights[i].shadow_slot = -1.0f; L.spot_lights[i].shadow_strength = 0.0f; L.spot_lights[i].shadow_bias = 0.0f; }
 		if (!m_shadows_ready) return;
 
-		// ---- spot tiles ----
+		// ---- spot tiles ---- the view's spots (slot order = the light buffer's order) that hold one of the shadow maps: a
+		// map stays with its light unless another one clearly outranks it (#416)
 		const bool no_spot = platform::env_flag("VORTEX_NO_SPOT_SHADOWS");
-		for (size_t i = 0; i < m_spot_lights.size() && i < MAX_SPOT_LIGHTS && m_shadow_spot_count < MAX_SHADOW_SPOTS && !no_spot; ++i)
+		for (size_t i = 0; i < m_view_spots.size() && i < MAX_SPOT_LIGHTS && m_shadow_spot_count < MAX_SHADOW_SPOTS && !no_spot; ++i)
 		{
-			const SpotLightData& s = m_spot_lights[i];
+			if (!m_view_spots[i].shadow || m_view_spots[i].index >= m_spot_lights.size()) continue;
+			const SpotLightData& s = m_spot_lights[m_view_spots[i].index];
 			if (!s.cast_shadows || s.shadow_strength <= 0.0f) continue;
 			XMFLOAT4X4 vp;
 			if (!build_spot_vp(s, vp)) continue;
@@ -272,7 +274,8 @@ namespace vortex::graphics::sdlgpu
 			slot.spot_index = (int)i; slot.vp = vp;
 			L.shadow_vp[m_shadow_spot_count] = vp;
 			L.spot_lights[i].shadow_slot = (float)m_shadow_spot_count;
-			L.spot_lights[i].shadow_strength = s.shadow_strength < 0.0f ? 0.0f : (s.shadow_strength > 1.0f ? 1.0f : s.shadow_strength);
+			// over budget a map changes hands with its shadow faded out (#416); within the budget the fade is 1
+			L.spot_lights[i].shadow_strength = (s.shadow_strength < 0.0f ? 0.0f : (s.shadow_strength > 1.0f ? 1.0f : s.shadow_strength)) * m_view_spots[i].shadow_fade;
 			L.spot_lights[i].shadow_bias = s.shadow_bias;
 			m_shadow_spot_count++;
 		}
@@ -347,13 +350,15 @@ namespace vortex::graphics::sdlgpu
 		{
 			static const XMVECTORF32 kDirs[6] = { { { { 1, 0, 0, 0 } } }, { { { -1, 0, 0, 0 } } }, { { { 0, 1, 0, 0 } } }, { { { 0, -1, 0, 0 } } }, { { { 0, 0, 1, 0 } } }, { { { 0, 0, -1, 0 } } } };
 			static const XMVECTORF32 kUps[6] = { { { { 0, 1, 0, 0 } } }, { { { 0, 1, 0, 0 } } }, { { { 0, 0, -1, 0 } } }, { { { 0, 0, 1, 0 } } }, { { { 0, 1, 0, 0 } } }, { { { 0, 1, 0, 0 } } } };
-			for (size_t i = 0; i < m_point_lights.size() && i < MAX_POINT_LIGHTS && m_shadow_point_count < MAX_SHADOW_POINTS; ++i)
+			// the view's point lights holding one of the cube shadow maps (#416), by their index in the light buffer
+			for (size_t i = 0; i < m_view_points.size() && i < MAX_POINT_LIGHTS && m_shadow_point_count < MAX_SHADOW_POINTS; ++i)
 			{
-				const PointLightData& pl = m_point_lights[i];
+				if (!m_view_points[i].shadow || m_view_points[i].index >= m_point_lights.size()) continue;
+				const PointLightData& pl = m_point_lights[m_view_points[i].index];
 				if (!pl.cast_shadows || pl.shadow_strength <= 0.0f) continue;
 				ShadowPoint& spn = m_shadow_points[m_shadow_point_count];
 				spn.light_index = (int)i;
-				spn.strength = pl.shadow_strength < 0.0f ? 0.0f : (pl.shadow_strength > 1.0f ? 1.0f : pl.shadow_strength);
+				spn.strength = (pl.shadow_strength < 0.0f ? 0.0f : (pl.shadow_strength > 1.0f ? 1.0f : pl.shadow_strength)) * m_view_points[i].shadow_fade;   // see the spots
 				spn.bias = pl.shadow_bias > 0.0f ? pl.shadow_bias : 0.0015f;
 				XMVECTOR pos = XMLoadFloat3(&pl.position);
 				const float farZ = pl.range > 0.1f ? pl.range : 0.1f;

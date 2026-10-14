@@ -11,9 +11,9 @@
 // bytes wide, the tail fits exactly).
 //
 //  prepare_shadow_pass()  CPU side, inside update_per_frame_constants BEFORE the CB uploads:
-//                         collects the first 4 submitted spots with cast_shadows (submit order =
-//                         scene order — deterministic and user-controllable), builds their VPs and
-//                         primes the per-tile b0 clones for the depth passes.
+//                         collects the view's spots holding one of the 4 shadow maps (the most
+//                         relevant with cast_shadows, kept unless clearly outranked — #416), builds
+//                         their VPs and primes the per-tile b0 clones for the depth passes.
 //  render_shadow_pass()   GPU side, right after the command-list reset: one atlas clear, then per
 //                         shadow spot a cone-culled caster pack + instanced depth-only draws into
 //                         its tile. The atlas then transitions to PSR for every scene pass (t7).
@@ -343,15 +343,19 @@ namespace vortex::graphics::dx12
 			{ { { 0, 1,  0, 0 } } }, { { { 0, 1, 0, 0 } } },
 		};
 
-		for (size_t i = 0; i < m_point_lights.size() && i < MAX_POINT_LIGHTS
+		// the view's point lights holding one of the cube shadow maps (#416: kept unless clearly outranked), by their
+		// index in the light buffer
+		for (size_t i = 0; i < m_view_points.size() && i < MAX_POINT_LIGHTS
 			&& m_shadow_point_count < MAX_SHADOW_POINTS; ++i)
 		{
-			const PointLightData& pl = m_point_lights[i];
+			if (!m_view_points[i].shadow || m_view_points[i].index >= m_point_lights.size()) continue;
+			const PointLightData& pl = m_point_lights[m_view_points[i].index];
 			if (!pl.cast_shadows || pl.shadow_strength <= 0.0f) continue;
 
 			ShadowPoint& spn = m_shadow_points[m_shadow_point_count];
 			spn.light_index = (int)i;
-			spn.strength = pl.shadow_strength < 0.0f ? 0.0f : (pl.shadow_strength > 1.0f ? 1.0f : pl.shadow_strength);
+			// over budget a map changes hands with its shadow faded out (#416); within the budget the fade is 1
+			spn.strength = (pl.shadow_strength < 0.0f ? 0.0f : (pl.shadow_strength > 1.0f ? 1.0f : pl.shadow_strength)) * m_view_points[i].shadow_fade;
 			spn.bias = pl.shadow_bias > 0.0f ? pl.shadow_bias : 0.0015f;
 
 			XMVECTOR pos = XMLoadFloat3(&pl.position);
@@ -501,11 +505,13 @@ namespace vortex::graphics::dx12
 			if (n > 0 && n < sizeof(buf) && buf[0] == '1') return;
 		}
 
-		// Collect up to MAX_SHADOW_SPOTS shadow-requesting spots in SUBMIT (= scene) order. Both the
-		// flashlight AND authored scene spots get a tile; extras beyond 4 simply render unshadowed.
-		for (size_t i = 0; i < m_spot_lights.size() && i < MAX_SPOT_LIGHTS && m_shadow_spot_count < MAX_SHADOW_SPOTS; ++i)
+		// The view's spots (slot order = the light buffer's order) that hold one of the MAX_SHADOW_SPOTS shadow maps: both
+		// the flashlight AND authored scene spots get a tile, and a map stays with its spot unless another one clearly
+		// outranks it (#416); extras simply render unshadowed.
+		for (size_t i = 0; i < m_view_spots.size() && i < MAX_SPOT_LIGHTS && m_shadow_spot_count < MAX_SHADOW_SPOTS; ++i)
 		{
-			const SpotLightData& s = m_spot_lights[i];
+			if (!m_view_spots[i].shadow || m_view_spots[i].index >= m_spot_lights.size()) continue;
+			const SpotLightData& s = m_spot_lights[m_view_spots[i].index];
 			if (!s.cast_shadows || s.shadow_strength <= 0.0f) continue;
 
 			XMFLOAT4X4 vp;

@@ -93,6 +93,36 @@ namespace VortexTests
         }
 
         [Test]
+        public static void LightIdFollowsTheEntity(TestContext t)
+        {
+            // #416: the renderer keeps a light's slot, fade and shadow map by this id from frame to frame
+            var scene = new Editor.Core.Data.Scene { Name = "Street" };
+            var a = new GameEntity(scene, "Lamp A");
+            var b = new GameEntity(scene, "Lamp B");
+            scene.Entities.Add(a);
+            scene.Entities.Add(b);
+            ulong ia = SceneRenderService.LightIdOf(a);
+            t.True(ia != 0, "never 0 (0 tells the renderer there is no id)");
+            t.Equal(ia, SceneRenderService.LightIdOf(a), "the same entity gives the same id every frame");
+            t.True(ia != SceneRenderService.LightIdOf(b), "another entity, another id");
+            a.Name = "Lamp A (renamed)";
+            t.Equal(ia, SceneRenderService.LightIdOf(a), "a rename keeps it");
+            var back = Editor.Core.Serialization.DataSerializer.FromBinary<Editor.Core.Data.Scene>(Editor.Core.Serialization.DataSerializer.ToBinary(scene));
+            t.Equal(ia, SceneRenderService.LightIdOf(back.Entities[0]), "a save and load keeps it");
+            a.RegenerateIds();   // copy / paste
+            t.True(SceneRenderService.LightIdOf(a) != ia, "a pasted copy is a light of its own");
+
+            // entities without a saved id (an old scene, a spawn that never got one) do not share one: each keeps its own
+            var c = new GameEntity(scene, "Old Lamp C") { Id = System.Guid.Empty };
+            var d = new GameEntity(scene, "Old Lamp D") { Id = System.Guid.Empty };
+            ulong ic = SceneRenderService.LightIdOf(c), id = SceneRenderService.LightIdOf(d);
+            t.True(ic != 0 && id != 0, "never 0 without a saved id either");
+            t.True(ic != id, "two entities without a saved id are two lights");
+            t.Equal(ic, SceneRenderService.LightIdOf(c), "and each keeps its id frame after frame");
+            t.True(ic != SceneRenderService.LightIdOf(b), "distinct from the saved ids");
+        }
+
+        [Test]
         public static void LocalMatrixMatchesTheTransform(TestContext t)
         {
             var tr = new Transform { LocalPosition = new Vector3(1, 2, 3), LocalRotation = new Vector3(0, 0, 0), LocalScale = new Vector3(2, 3, 4) };
