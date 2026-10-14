@@ -25,6 +25,10 @@ namespace VortexEditor.Shell.Audio
             var log = ConsoleService.Instance;
             bool Fail(string why) { log.LogError("sound studio smoke: " + why); return false; }
             if (ProjectData.Current == null) return Fail("no project");
+            // #403: Stable Audio's host speaks only TLS 1.3, which macOS's default TLS lacks — the editor's runtimeconfig turns
+            // on .NET's Network.framework TLS (Vortex.Editor.csproj); without it both Stability backends fail on macOS
+            if (OperatingSystem.IsMacOS() && !(AppContext.TryGetSwitch("System.Net.Security.UseNetworkFramework", out bool nf) && nf))
+                return Fail("the editor runs without System.Net.Security.UseNetworkFramework: Stable Audio cannot connect on macOS (#403)");
             var w = SoundStudioWindow.Open();
             try
             {

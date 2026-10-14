@@ -883,7 +883,8 @@ namespace VortexEditor.Shell
         {
             try
             {
-                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
+                using var http = Editor.Core.Assets.Store.HttpTls.NewClient();   // TLS as always on macOS (#403)
+                http.Timeout = TimeSpan.FromSeconds(8);
                 http.DefaultRequestHeaders.UserAgent.ParseAdd("VortexEditor/" + Editor.Core.EngineInfo.VersionString);
                 var json = await http.GetStringAsync("https://api.github.com/repos/" + Editor.Core.EngineInfo.RepoOwner + "/" + Editor.Core.EngineInfo.RepoName + "/releases/latest");
                 using var doc = System.Text.Json.JsonDocument.Parse(json);

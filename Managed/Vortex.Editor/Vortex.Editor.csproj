@@ -41,6 +41,14 @@
     <ProjectReference Include="../Vortex.Claude/Vortex.Claude.csproj" />
   </ItemGroup>
 
+  <!-- macOS (#403): .NET's default TLS there (SecureTransport) has no TLS 1.3, and api.stability.ai speaks nothing else.
+       This lets a client connection that asks for TLS 1.3 run through Network.framework (the runtime reads the switch
+       once, at the first TLS handshake, so it has to be set at start). Only the TLS-1.3-only hosts ask for it — every
+       other client stays on SecureTransport (HttpTls in Vortex.Core). Ignored on Windows and Linux. -->
+  <ItemGroup>
+    <RuntimeHostConfigurationOption Include="System.Net.Security.UseNetworkFramework" Value="true" />
+  </ItemGroup>
+
   <ItemGroup>
     <AvaloniaResource Include="Assets/**" />
   </ItemGroup>

@@ -22,7 +22,7 @@ namespace Editor.Core.Assets.Store
     /// </summary>
     public static class StoreHttp
     {
-        private static HttpClient _client;
+        private static HttpClient _client, _tls13Client;
         private static HttpMessageHandler _handler;
         private static readonly object Gate = new object();
         private static readonly Dictionary<string, DateTime> LastRequest = new Dictionary<string, DateTime>();
@@ -34,7 +34,7 @@ namespace Editor.Core.Assets.Store
         public static HttpMessageHandler Handler
         {
             get => _handler;
-            set { lock (Gate) { _handler = value; _client?.Dispose(); _client = null; } }
+            set { lock (Gate) { _handler = value; _client?.Dispose(); _client = null; _tls13Client?.Dispose(); _tls13Client = null; } }
         }
 
         /// <summary>Override for the cache folder (tests); default = the asset library's store-cache folder.</summary>
@@ -42,24 +42,74 @@ namespace Editor.Core.Assets.Store
 
         public static string CacheRoot => CacheRootOverride ?? Path.Combine(GlobalAssetDatabase.Instance.Root, "store-cache");
 
-        private static HttpClient Client
+        private static HttpClient Client => GetClient(ref _client, tls13: false);
+
+        /// <summary>The client for hosts that only speak TLS 1.3 (#403, see <see cref="HttpTls"/>); tests share the fake handler.</summary>
+        private static HttpClient Tls13Client => GetClient(ref _tls13Client, tls13: true);
+
+        private static HttpClient GetClient(ref HttpClient client, bool tls13)
         {
-            get
+            lock (Gate)
             {
-                lock (Gate)
+                if (client != null) return client;
+                HttpMessageHandler h = _handler;
+                if (h == null)
                 {
-                    if (_client != null) return _client;
-                    var h = _handler ?? new SocketsHttpHandler
+                    var sockets = new SocketsHttpHandler
                     {
                         AllowAutoRedirect = true,
                         MaxAutomaticRedirections = 8,
                         AutomaticDecompression = DecompressionMethods.All,
                         PooledConnectionLifetime = TimeSpan.FromMinutes(5),
                     };
-                    _client = new HttpClient(h, disposeHandler: _handler == null) { Timeout = TimeSpan.FromMinutes(30) };
-                    return _client;
+                    h = tls13 ? HttpTls.Tls13Only(sockets) : HttpTls.Classic(sockets);
                 }
+                client = new HttpClient(h, disposeHandler: _handler == null) { Timeout = TimeSpan.FromMinutes(30) };
+                return client;
             }
+        }
+
+        /// <summary>Requests marked with this option go through the TLS 1.3 client (<see cref="RequireTls13"/>).</summary>
+        public static readonly HttpRequestOptionsKey<bool> Tls13Option = new HttpRequestOptionsKey<bool>("Vortex.Tls13Only");
+
+        /// <summary>Mark a request to a host that only speaks TLS 1.3 (api.stability.ai, #403): <see cref="SendAsync"/> sends it
+        /// through Network.framework on macOS, where the default TLS stops at 1.2.</summary>
+        public static HttpRequestMessage RequireTls13(HttpRequestMessage req)
+        {
+            req.Options.Set(Tls13Option, true);
+            return req;
+        }
+
+        /// <summary>One readable sentence for a failed request (#403): the whole cause chain. HttpClient's TLS failures say
+        /// only "The SSL connection could not be established, see inner exception" — the cause ("bad protocol version")
+        /// sits two levels down, where neither the Sound Studio nor the MCP tools looked.</summary>
+        public static string Describe(Exception ex)
+        {
+            if (ex == null) return "";
+            var parts = new List<string>();
+            for (var e = ex; e != null; e = e.InnerException)
+            {
+                string m = (e.Message ?? "").Trim();
+                int see = m.IndexOf(", see inner exception", StringComparison.OrdinalIgnoreCase);
+                if (see < 0) see = m.IndexOf("; see inner exception", StringComparison.OrdinalIgnoreCase);
+                if (see >= 0) m = m.Substring(0, see);
+                m = m.TrimEnd('.', ' ');
+                if (m.Length > 0 && !parts.Contains(m)) parts.Add(m);
+            }
+            string text = string.Join(": ", parts);
+            bool tls = false, protocol = false;
+            for (var e = ex; e != null; e = e.InnerException)
+            {
+                if (e is System.Security.Authentication.AuthenticationException) tls = true;
+                string m = e.Message ?? "";
+                // the server refused our versions ("bad protocol version") / our TLS stack lacks the asked one (TLS 1.3 on SecureTransport)
+                if (m.IndexOf("protocol version", StringComparison.OrdinalIgnoreCase) >= 0
+                    || m.IndexOf("security protocol is not supported", StringComparison.OrdinalIgnoreCase) >= 0) protocol = true;
+            }
+            if (tls && protocol)
+                text += " — the server and this connection share no TLS version" +
+                        (OperatingSystem.IsMacOS() ? "; on macOS TLS 1.3 only works through Network.framework (System.Net.Security.UseNetworkFramework, see HttpTls)" : "");
+            return text.EndsWith("?", StringComparison.Ordinal) || text.EndsWith("!", StringComparison.Ordinal) ? text : text + ".";
         }
 
         /// <summary>Wait until the provider may send its next request (one request in flight per provider at a time
@@ -193,11 +243,13 @@ namespace Editor.Core.Assets.Store
         public static async Task<JsonDocument> GetJsonAsync(IAssetProvider p, string url, TimeSpan ttl, CancellationToken ct, bool authenticated = true)
             => JsonDocument.Parse(await GetTextAsync(p, url, ttl, ct, authenticated).ConfigureAwait(false));
 
-        /// <summary>Send a request with the shared client (User-Agent added) — the sound backends use it.</summary>
+        /// <summary>Send a request with the shared client (User-Agent added) — the sound backends use it. A request marked
+        /// with <see cref="RequireTls13"/> takes the TLS 1.3 client.</summary>
         public static Task<HttpResponseMessage> SendAsync(HttpRequestMessage req, HttpCompletionOption option, CancellationToken ct)
         {
             if (!req.Headers.Contains("User-Agent")) req.Headers.TryAddWithoutValidation("User-Agent", UserAgent);
-            return Client.SendAsync(req, option, ct);
+            bool tls13 = req.Options.TryGetValue(Tls13Option, out bool t) && t;
+            return (tls13 ? Tls13Client : Client).SendAsync(req, option, ct);
         }
 
         /// <summary>POST JSON (sound generation backends); never cached.</summary>
@@ -297,6 +349,40 @@ namespace Editor.Core.Assets.Store
         }
 
         public static string UrlEncode(string s) => Uri.EscapeDataString(s ?? "");
+    }
+
+    /// <summary>
+    /// TLS on macOS (#403). .NET's default TLS there is Apple's SecureTransport, which has no TLS 1.3, so a host that only
+    /// speaks TLS 1.3 (api.stability.ai) refuses the handshake ("bad protocol version"). .NET 10 can run a client
+    /// connection through Network.framework instead — TLS 1.3, certificates validated by .NET exactly as before. It is
+    /// switched on per process (System.Net.Security.UseNetworkFramework, in the editor's runtimeconfig — the runtime reads
+    /// it once, at the first TLS handshake) and then taken by every connection that allows TLS 1.3, while a connection
+    /// limited to TLS 1.2 stays on SecureTransport. Network.framework fails every second (resumed) TLS 1.2 connection in
+    /// .NET 10 (seen with 10.0.12: a NullReferenceException in the certificate check), so only TLS-1.3-only hosts go there
+    /// (<see cref="Tls13Only"/>, pinned to 1.3);
+    /// every other client of the editor keeps SecureTransport and TLS 1.2 as before (<see cref="Classic"/>). Windows and
+    /// Linux are untouched: their TLS stacks negotiate 1.3 on their own.
+    /// </summary>
+    public static class HttpTls
+    {
+        /// <summary>An ordinary client (store, ElevenLabs, fal, Claude, GitHub): on macOS limited to TLS 1.2, which keeps it
+        /// on SecureTransport even in a process that enabled Network.framework.</summary>
+        public static SocketsHttpHandler Classic(SocketsHttpHandler h)
+        {
+            if (OperatingSystem.IsMacOS()) h.SslOptions.EnabledSslProtocols = System.Security.Authentication.SslProtocols.Tls12;
+            return h;
+        }
+
+        /// <summary>A client for hosts that only speak TLS 1.3: on macOS pinned to TLS 1.3, which routes it through
+        /// Network.framework when the process enabled it.</summary>
+        public static SocketsHttpHandler Tls13Only(SocketsHttpHandler h)
+        {
+            if (OperatingSystem.IsMacOS()) h.SslOptions.EnabledSslProtocols = System.Security.Authentication.SslProtocols.Tls13;
+            return h;
+        }
+
+        /// <summary>A plain <c>new HttpClient()</c> for an ordinary host (see <see cref="Classic"/>).</summary>
+        public static HttpClient NewClient() => new HttpClient(Classic(new SocketsHttpHandler()));
     }
 
     /// <summary>

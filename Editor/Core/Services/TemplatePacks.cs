@@ -89,7 +89,7 @@ namespace Editor.Core.Services
 
         private static HttpClient NewClient()
         {
-            var c = Handler != null ? new HttpClient(Handler, false) : new HttpClient();
+            var c = Handler != null ? new HttpClient(Handler, false) : Editor.Core.Assets.Store.HttpTls.NewClient();   // TLS as always on macOS (#403)
             c.Timeout = TimeSpan.FromHours(2);
             c.DefaultRequestHeaders.UserAgent.ParseAdd("VortexEngine/" + EngineInfo.VersionString);
             return c;

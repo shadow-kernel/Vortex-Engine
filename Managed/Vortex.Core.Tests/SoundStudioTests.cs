@@ -238,6 +238,66 @@ namespace VortexTests
             finally { Key("stability", null); }
         }
 
+        [Test]
+        public static async Task StabilityTakesTheTls13TransportAndTlsFailuresSayWhy(TestContext t)
+        {
+            var fake = Setup(t);
+            Key("stability", "sk-stab-test");
+            Key("elevenlabs", "xi-test");
+            try
+            {
+                // #403: api.stability.ai only speaks TLS 1.3 — every Stability request is marked for the TLS 1.3 client,
+                // the other backends' requests are not
+                var marks = new List<(string host, bool tls13)>();
+                HttpResponseMessage Audio(HttpRequestMessage r)
+                {
+                    lock (marks) marks.Add((r.RequestUri.Host, r.Options.TryGetValue(StoreHttp.Tls13Option, out bool m) && m));
+                    var ok = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(new byte[] { 0xFF, 0xFB, 9 }) };
+                    ok.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("audio/mpeg");
+                    return ok;
+                }
+                fake.Routes.Add(("https://api.stability.ai/", Audio));
+                fake.Routes.Add(("https://api.elevenlabs.io/", Audio));
+                var b = StabilityAudioBackend.Audio25();
+                await b.GenerateAsync(new SoundRequest { Prompt = "drone" }, t.Path("out"), CancellationToken.None);
+                await new ElevenLabsBackend().GenerateAsync(new SoundRequest { Prompt = "door" }, t.Path("out"), CancellationToken.None);
+                t.True(marks.Count == 2 && marks[0].host == "api.stability.ai" && marks[0].tls13, "the Stability request asks for TLS 1.3");
+                t.True(!marks[1].tls13, "ElevenLabs keeps the classic client");
+
+                // the refused handshake as HttpClient reports it on macOS: the cause sits two inner exceptions down
+                fake.Routes.Clear();
+                fake.Routes.Add(("https://api.stability.ai/", r => throw new HttpRequestException("The SSL connection could not be established, see inner exception.",
+                    new System.Security.Authentication.AuthenticationException("Authentication failed, see inner exception.", new Exception("bad protocol version")))));
+                string err = null;
+                try { await b.GenerateAsync(new SoundRequest { Prompt = "drone" }, t.Path("out"), CancellationToken.None); }
+                catch (Exception ex) { err = StoreHttp.Describe(ex); }
+                t.True(err != null && err.Contains("could not be established") && err.Contains("bad protocol version") && !err.Contains("see inner exception"),
+                    "the real cause is in the message: " + err);
+                t.True(err.Contains("share no TLS version"), "and what it means: " + err);
+                t.Equal("Stability AI rejected the API key (x).", StoreHttp.Describe(new SoundGenException("Stability AI rejected the API key (x).")), "own messages stay as they are");
+            }
+            finally { Key("stability", null); Key("elevenlabs", null); }
+        }
+
+        [Test]
+        public static void TlsTransportsPerPlatform(TestContext t)
+        {
+            // #403: on macOS the classic client is held at TLS 1.2 (SecureTransport, as always) and the TLS-1.3-only one at
+            // 1.3 (Network.framework once the process enabled it); Windows and Linux keep the OS defaults for both
+            var classic = HttpTls.Classic(new SocketsHttpHandler()).SslOptions.EnabledSslProtocols;
+            var tls13 = HttpTls.Tls13Only(new SocketsHttpHandler()).SslOptions.EnabledSslProtocols;
+            if (OperatingSystem.IsMacOS())
+            {
+                t.Equal(System.Security.Authentication.SslProtocols.Tls12, classic, "classic client on macOS");
+                t.Equal(System.Security.Authentication.SslProtocols.Tls13, tls13, "TLS 1.3 client on macOS");
+            }
+            else
+            {
+                t.Equal(System.Security.Authentication.SslProtocols.None, classic, "classic client: OS default");
+                t.Equal(System.Security.Authentication.SslProtocols.None, tls13, "TLS 1.3 client: OS default");
+            }
+        }
+
         private static string Sse(params string[] events) => string.Join("", events.Select(e => "event: x\ndata: " + e + "\n\n"));
 
         [Test]
