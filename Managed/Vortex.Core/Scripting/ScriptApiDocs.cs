@@ -18,7 +18,8 @@ namespace Editor.Scripting
     /// </summary>
     public static class ScriptApiDocs
     {
-        private static Dictionary<string, string> _summaries;
+        /// <summary>Each assembly's summaries by doc id, read once from its own doc file.</summary>
+        private static readonly Dictionary<Assembly, Dictionary<string, string>> _summaries = new Dictionary<Assembly, Dictionary<string, string>>();
         private static readonly object Gate = new object();
 
         /// <summary>The summary of a type or member as plain text, code samples kept on their own lines; null when it has none.</summary>
@@ -31,27 +32,32 @@ namespace Editor.Scripting
             return docs != null && docs.TryGetValue(id, out var s) ? s : null;
         }
 
+        /// <summary>Forget every loaded doc file (tests).</summary>
+        internal static void Forget() { lock (Gate) _summaries.Clear(); }
+
         private static Dictionary<string, string> Load(Assembly asm)
         {
+            if (asm == null) return null;
             lock (Gate)
             {
-                if (_summaries != null) return _summaries;
-                _summaries = new Dictionary<string, string>(StringComparer.Ordinal);
+                if (_summaries.TryGetValue(asm, out var docs)) return docs;
+                docs = new Dictionary<string, string>(StringComparer.Ordinal);
+                _summaries[asm] = docs;
                 try
                 {
                     string file = DocFile(asm);
-                    if (file == null) return _summaries;
+                    if (file == null) return docs;
                     foreach (var m in XDocument.Load(file).Root?.Element("members")?.Elements("member") ?? Enumerable.Empty<XElement>())
                     {
                         string name = (string)m.Attribute("name");
                         var summary = m.Element("summary");
                         if (name == null || summary == null) continue;
                         string text = Render(summary);
-                        if (text.Length > 0) _summaries[name] = text;
+                        if (text.Length > 0) docs[name] = text;
                     }
                 }
                 catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptApiDocs] " + ex.Message); }
-                return _summaries;
+                return docs;
             }
         }
 
