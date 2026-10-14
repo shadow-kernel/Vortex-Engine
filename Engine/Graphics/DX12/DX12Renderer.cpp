@@ -319,17 +319,78 @@ namespace vortex::graphics::dx12
 	}
 
 
-	void DX12Renderer::upload_staged_bone_palettes()
+	void DX12Renderer::upload_staged_bone_palettes(const DirectX::XMFLOAT4X4& view_projection, const DirectX::XMFLOAT3& eye)
 	{
-		if (!m_bone_upload_pending) return;
+		prepare_bone_budget(view_projection, eye);
+		// Fits: the stage went up already unless a swap brought new palettes. Over budget the packed buffer belongs to
+		// this view's camera, so it goes up on every call (#415).
+		if (!m_bone_budget.compacted && !m_bone_upload_pending) return;
 		m_bone_upload_pending = false;
-		if (!m_bone_vb_mapped || m_bone_render.empty()) return;
+		const float* src = m_bone_budget.compacted ? m_bone_packed.data() : m_bone_render.data();
+		const size_t floats = m_bone_budget.compacted ? m_bone_packed.size() : (size_t)m_bone_render.matrix_count() * 16;
+		if (!m_bone_vb_mapped || floats == 0) return;
 		// Flip halves: the half we write was last used TWO uploads ago — the caller's fence wait/flush
 		// guarantees that frame has finished, so the write can never tear an in-flight read.
 		m_bone_active_half ^= 1u;
-		size_t bytes = (std::min)(m_bone_render.size() * sizeof(float), (size_t)MAX_BONE_MATRICES_PER_FRAME * 64);
-		memcpy((u8*)m_bone_vb_mapped + (size_t)m_bone_active_half * MAX_BONE_MATRICES_PER_FRAME * 64,
-			m_bone_render.data(), bytes);
+		size_t bytes = (std::min)(floats * sizeof(float), (size_t)MAX_BONE_MATRICES_PER_FRAME * 64);
+		memcpy((u8*)m_bone_vb_mapped + (size_t)m_bone_active_half * MAX_BONE_MATRICES_PER_FRAME * 64, src, bytes);
+	}
+
+	// #415: the palettes' places in the GPU buffer for a view. Normally they all fit: the stage is the buffer. Over budget
+	// the palettes of the characters in view go first, nearest first (the first-person layer always), packed into
+	// m_bone_packed — the farthest / off-screen characters draw in the bind pose instead of whichever came last in the
+	// hierarchy. The same rule as the SDL GPU backend (Engine/Graphics/Skinning/BonePalettes.h).
+	void DX12Renderer::prepare_bone_budget(const DirectX::XMFLOAT4X4& view_projection, const DirectX::XMFLOAT3& eye)
+	{
+		using namespace DirectX;
+		m_bone_uses.clear();
+		if (m_bone_render.matrix_count() > MAX_BONE_MATRICES_PER_FRAME)
+		{
+			// the sphere around each skinned draw, as the cull sees it (the bind-pose bounds doubled: animated poses leave them)
+			auto& reg = ResourceRegistry::instance();
+			for (const RenderItem& item : m_render_queue)
+			{
+				if (item.palette == NO_BONES) continue;
+				float mnx = 0, mny = 0, mnz = 0, mxx = 1, mxy = 1, mxz = 1;
+				Mesh* mp = reg.get_mesh(item.mesh_id);
+				if (mp && mp->is_valid()) { mp->get_min(mnx, mny, mnz); mp->get_max(mxx, mxy, mxz); }
+				const float bx = mxx - mnx, by = mxy - mny, bz = mxz - mnz;
+				const float local_r = sqrtf(bx * bx + by * by + bz * bz);
+				const XMFLOAT4X4& W = item.world_matrix;
+				const XMVECTOR wc = XMVector3TransformCoord(XMVectorSet((mnx + mxx) * 0.5f, (mny + mxy) * 0.5f, (mnz + mxz) * 0.5f, 1.f), XMLoadFloat4x4(&W));
+				const float sx = sqrtf(W._11 * W._11 + W._12 * W._12 + W._13 * W._13);
+				const float sy = sqrtf(W._21 * W._21 + W._22 * W._22 + W._23 * W._23);
+				const float sz = sqrtf(W._31 * W._31 + W._32 * W._32 + W._33 * W._33);
+				const float maxScale = sx > sy ? (sx > sz ? sx : sz) : (sy > sz ? sy : sz);
+				m_bone_uses.push_back({ item.palette, XMVectorGetX(wc), XMVectorGetY(wc), XMVectorGetZ(wc), local_r * maxScale + 0.05f, item.layer != 0 });
+			}
+		}
+		m_bone_budget = skinning::assign_palette_budget(m_bone_render, m_bone_uses, view_frustum(view_projection), eye,
+			MAX_BONE_MATRICES_PER_FRAME, m_bone_gpu_offset, m_bone_packed);
+	}
+
+	void DX12Renderer::note_budget_stats()
+	{
+		m_budget_stats.bone_matrices_used = m_bone_budget.used;
+		m_budget_stats.bone_matrices_capacity = m_bone_budget.capacity;
+		m_budget_stats.skinned_bind_pose_fallbacks = m_bone_budget.fallbacks;
+		const LightViewState& lights = m_light_views[0];   // #416: the editor frame's light choice
+		m_budget_stats.point_lights_submitted = (u32)m_point_lights.size();
+		m_budget_stats.spot_lights_submitted = (u32)m_spot_lights.size();
+		m_budget_stats.point_lights_shown = (u32)lights.points.selected().size();
+		m_budget_stats.spot_lights_shown = (u32)lights.spots.selected().size();
+		m_budget_stats.light_slot_changes = lights.points.entered() + lights.points.left() + lights.spots.entered() + lights.spots.left();
+		if (m_bone_budget.fallbacks > 0)
+		{
+			const auto now = std::chrono::steady_clock::now();
+			if (now - m_bone_budget_logged > std::chrono::seconds(5))
+			{
+				m_bone_budget_logged = now;
+				OutputDebugStringA(("bone palettes: " + std::to_string(m_bone_render.matrix_count()) + " matrices submitted, "
+					+ std::to_string(m_bone_budget.used) + " of " + std::to_string(m_bone_budget.capacity) + " fit — "
+					+ std::to_string(m_bone_budget.fallbacks) + " skinned draw(s) in view use the bind pose: the farthest / off-screen characters (#415)\n").c_str());
+			}
+		}
 	}
 
 
@@ -663,11 +724,12 @@ namespace vortex::graphics::dx12
 		// Only wait if GPU hasn't finished with this buffer yet
 		m_command_queue.wait_for_fence_value(m_frame_fence_values[idx]);
 
-		// Bone palettes: now that the 2-frames-back work is provably done, upload this frame's staged
-		// palettes into the buffer half that frame used (the in-flight previous frame reads the other half).
-		upload_staged_bone_palettes();
-
 		update_per_frame_constants();   // aspect from swapchain dims — a UNIFORM render-scale keeps it matching
+		// Bone palettes: now that the 2-frames-back work is provably done, upload this frame's staged
+		// palettes into the buffer half that frame used (the in-flight previous frame reads the other half),
+		// placed for this camera (#415: over budget the farthest / off-screen characters fall back first).
+		upload_staged_bone_palettes(m_frame_constants.view_projection, m_camera_position);
+		note_budget_stats();
 		// Particles (#117): retire last frame's GPU memory, hand finished collision readbacks to the simulation, then let
 		// the frame driver (the managed ParticleService callback, or the automatic world-0 update) step it before anything
 		// is gathered. Same order as the SDL GPU backend.

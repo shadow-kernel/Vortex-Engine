@@ -30,14 +30,16 @@ EDITOR_INTERFACE void SetDirectionalShadowSoftness(float texels)
 	graphics::Renderer::instance().set_directional_shadow_softness(texels);
 }
 
-// Add a point light (max 16 per frame). Shadow params (#25): castShadows != 0 requests a 6-face
-// cube block in the point shadow atlas — the renderer takes the first two such lights per frame.
+// Add a point light for this frame — any number: the renderer gives its 16 shader slots to the most relevant ones per view
+// (#335, #416). Shadow params (#25): castShadows != 0 requests a 6-face cube block in the point shadow atlas (two per
+// view). lightId (#416) is the light's stable identity — the entity — so the renderer can keep its slot from frame to
+// frame and fade it in / out when the budget changes; 0 = derived from the light's look.
 // Internal ABI: changed in lockstep with the editor's P/Invoke (both live in this repo).
-EDITOR_INTERFACE void AddPointLight(
+EDITOR_INTERFACE void AddPointLightWithId(
 	float posX, float posY, float posZ,
 	float colorR, float colorG, float colorB,
 	float intensity, float range,
-	int castShadows, float shadowStrength, float shadowBias)
+	int castShadows, float shadowStrength, float shadowBias, uint64_t lightId)
 {
 	graphics::Renderer::PointLightData light{};
 	light.position = { posX, posY, posZ };
@@ -47,20 +49,32 @@ EDITOR_INTERFACE void AddPointLight(
 	light.cast_shadows = castShadows != 0 ? 1u : 0u;
 	light.shadow_strength = shadowStrength;
 	light.shadow_bias = shadowBias;
+	light.id = lightId;
 
 	graphics::Renderer::instance().add_point_light(light);
 }
 
-// Add a spot light (max 8 per frame). Shadow params (#23): castShadows != 0 requests THIS spot as the
-// frame's shadow-casting light — the renderer takes the FIRST such spot (one shadow map in v1, the
-// flashlight). Internal ABI: changed in lockstep with the editor's P/Invoke (both live in this repo).
-EDITOR_INTERFACE void AddSpotLight(
+// The same without an identity (older hosts): the renderer derives one from the light's look.
+EDITOR_INTERFACE void AddPointLight(
+	float posX, float posY, float posZ,
+	float colorR, float colorG, float colorB,
+	float intensity, float range,
+	int castShadows, float shadowStrength, float shadowBias)
+{
+	AddPointLightWithId(posX, posY, posZ, colorR, colorG, colorB, intensity, range, castShadows, shadowStrength, shadowBias, 0);
+}
+
+// Add a spot light for this frame — any number: the renderer gives its 8 shader slots to the most relevant ones per view
+// (#335, #416), the spot cone counting. Shadow params (#23): castShadows != 0 requests one of the spot shadow maps (four
+// per view, kept by the spots that hold them unless clearly outranked). lightId (#416): the stable identity (the entity),
+// 0 = derived from the light's look. Internal ABI: changed in lockstep with the editor's P/Invoke (both live in this repo).
+EDITOR_INTERFACE void AddSpotLightWithId(
 	float posX, float posY, float posZ,
 	float dirX, float dirY, float dirZ,
 	float colorR, float colorG, float colorB,
 	float intensity, float range,
 	float spotAngle, float innerSpotAngle,
-	int castShadows, float shadowStrength, float shadowBias, int shadowResolution)
+	int castShadows, float shadowStrength, float shadowBias, int shadowResolution, uint64_t lightId)
 {
 	graphics::Renderer::SpotLightData light{};
 	light.position = { posX, posY, posZ };
@@ -74,8 +88,34 @@ EDITOR_INTERFACE void AddSpotLight(
 	light.shadow_strength = shadowStrength;
 	light.shadow_bias = shadowBias;
 	light.shadow_resolution = shadowResolution > 0 ? (u32)shadowResolution : 2048u;
+	light.id = lightId;
 
 	graphics::Renderer::instance().add_spot_light(light);
+}
+
+// The same without an identity (older hosts): the renderer derives one from the light's look.
+EDITOR_INTERFACE void AddSpotLight(
+	float posX, float posY, float posZ,
+	float dirX, float dirY, float dirZ,
+	float colorR, float colorG, float colorB,
+	float intensity, float range,
+	float spotAngle, float innerSpotAngle,
+	int castShadows, float shadowStrength, float shadowBias, int shadowResolution)
+{
+	AddSpotLightWithId(posX, posY, posZ, dirX, dirY, dirZ, colorR, colorG, colorB, intensity, range, spotAngle, innerSpotAngle,
+		castShadows, shadowStrength, shadowBias, shadowResolution, 0);
+}
+
+// The light budget of the main view's last frame (#416): point / spot lights submitted, those holding one of the shader's
+// 16 point / 8 spot slots, and the lights that got or gave up a slot in that frame.
+EDITOR_INTERFACE void GetLightBudgetStats(int* pointsSubmitted, int* spotsSubmitted, int* pointsShown, int* spotsShown, int* slotChanges)
+{
+	const auto& s = graphics::Renderer::instance().budget_stats();
+	if (pointsSubmitted) *pointsSubmitted = (int)s.point_lights_submitted;
+	if (spotsSubmitted) *spotsSubmitted = (int)s.spot_lights_submitted;
+	if (pointsShown) *pointsShown = (int)s.point_lights_shown;
+	if (spotsShown) *spotsShown = (int)s.spot_lights_shown;
+	if (slotChanges) *slotChanges = (int)s.light_slot_changes;
 }
 
 // Set ambient light strength

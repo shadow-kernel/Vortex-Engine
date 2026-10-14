@@ -629,6 +629,17 @@ EDITOR_INTERFACE int GetInstancesDrawn()
 	return graphics::Renderer::instance().get_instances_drawn();
 }
 
+// The bone-palette budget of the main view's last frame (#415): bone matrices in the GPU palette buffer (one copy per
+// character, its submeshes share it), the buffer's capacity, and the skinned draws in view that had no room for their
+// palette and were drawn in the bind pose (the farthest / off-screen characters).
+EDITOR_INTERFACE void GetBonePaletteStats(int* used, int* capacity, int* bindPoseFallbacks)
+{
+	const auto& s = graphics::Renderer::instance().budget_stats();
+	if (used) *used = (int)s.bone_matrices_used;
+	if (capacity) *capacity = (int)s.bone_matrices_capacity;
+	if (bindPoseFallbacks) *bindPoseFallbacks = (int)s.skinned_bind_pose_fallbacks;
+}
+
 // Generic render-distance cull (world units; 0 = disabled). Driven by the game's graphics settings.
 EDITOR_INTERFACE void SetRenderDistance(float distance)
 {

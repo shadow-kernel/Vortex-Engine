@@ -23,6 +23,8 @@
 #include "../Decals/Decals.h"
 #include "SdlGpuVolumetrics.h"
 #include "../Volumetrics/Volumetrics.h"
+#include "../Skinning/BonePalettes.h"
+#include "../Lighting/LightSelection.h"
 #include <SDL3/SDL.h>
 #include <chrono>
 #include <memory>
@@ -36,7 +38,7 @@ namespace vortex::graphics::sdlgpu
 	constexpr u32 MAX_RENDER_OBJECTS = 262144;
 	constexpr u32 MAX_DRAW_RUNS = 8192;
 	constexpr u32 MAX_RENDER_TARGETS = 8;
-	constexpr u32 MAX_BONE_MATRICES = 65536;
+	constexpr u32 MAX_BONE_MATRICES = skinning::MAX_BONE_MATRICES_PER_FRAME;   // the per-frame palette budget, the same on DX12 (#415)
 	constexpr u32 NO_BONES = 0xFFFFFFFFu;
 	constexpr u32 MAX_GIZMO_ITEMS = 512;
 
@@ -56,6 +58,7 @@ namespace vortex::graphics::sdlgpu
 		DirectX::XMFLOAT4 color{ 1.0f, 1.0f, 1.0f, 1.0f };   // per-instance tint (#331), multiplied with the material's base colour
 		u32 bone_offset{ NO_BONES };
 		u32 bone_count{ 0 };
+		u32 palette{ NO_BONES };   // skinned: the palette's index in the frame's stage (#415), shared by the character's submeshes
 		u32 layer{ 0 };
 		u32 mirrored{ 0 };   // det(world) < 0: the instance is wound the other way (#334), set at submit
 	};
@@ -166,7 +169,7 @@ namespace vortex::graphics::sdlgpu
 
 		static constexpr u32 MAX_POINT_LIGHTS = 16;
 		static constexpr u32 MAX_SPOT_LIGHTS = 8;
-		static constexpr u32 MAX_SUBMITTED_LIGHTS = 1024;   // kept per frame; the most relevant fill the slots above (#335)
+		static constexpr u32 MAX_SUBMITTED_LIGHTS = 1024;   // kept per frame; the most relevant fill the slots above (#335, #416)
 
 		struct PointLightData
 		{
@@ -177,6 +180,7 @@ namespace vortex::graphics::sdlgpu
 			u32 cast_shadows{ 0 };
 			float shadow_strength{ 1.0f };
 			float shadow_bias{ 0.0015f };
+			u64 id{ 0 };   // stable identity for the light budget (#416): the entity; 0 = derived from the light's look
 		};
 
 		struct SpotLightData
@@ -192,6 +196,7 @@ namespace vortex::graphics::sdlgpu
 			float shadow_strength{ 1.0f };
 			float shadow_bias{ 0.0015f };
 			u32 shadow_resolution{ 2048 };
+			u64 id{ 0 };   // stable identity for the light budget (#416): the entity; 0 = derived from the light's look
 		};
 
 		void clear_lights();
@@ -345,6 +350,15 @@ namespace vortex::graphics::sdlgpu
 		int get_vertex_count() const { return m_vertex_count; }
 		int get_instances_tested() const { return m_instances_tested; }
 		int get_instances_drawn() const { return m_instances_drawn; }
+		// The frame budgets of the main view: bone matrices in the GPU palette buffer / its capacity, and the skinned draws in
+		// view that had no room for their palette (drawn in the bind pose, #415); the point / spot lights submitted and holding
+		// a shader slot, and the lights that got or gave up a slot in the last frame (#416).
+		struct BudgetStats
+		{
+			u32 bone_matrices_used{ 0 }, bone_matrices_capacity{ MAX_BONE_MATRICES }, skinned_bind_pose_fallbacks{ 0 };
+			u32 point_lights_submitted{ 0 }, spot_lights_submitted{ 0 }, point_lights_shown{ 0 }, spot_lights_shown{ 0 }, light_slot_changes{ 0 };
+		};
+		const BudgetStats& budget_stats() const { return m_budget_stats; }
 
 		// Secondary render targets (thumbnails, extra viewports) with CPU readback (BGRA8, row pitch = width*4).
 		u32 create_render_target(u32 width, u32 height);
@@ -355,6 +369,12 @@ namespace vortex::graphics::sdlgpu
 		const void* read_render_target_pixels(u32 target_id, u32& out_width, u32& out_height, u32& out_row_pitch);
 		void release_render_target_pixels(u32 target_id);
 		bool has_render_target(u32 target_id) const { return m_render_targets.find(target_id) != m_render_targets.end(); }
+		// The target's light choice has no fade in progress (#416): a view rendered only on demand renders on until it is.
+		bool render_target_settled(u32 target_id) const
+		{
+			auto it = m_target_light_views.find(target_id);
+			return it == m_target_light_views.end() || (it->second.points.settled() && it->second.spots.settled());
+		}
 
 		// Particles (VFX, Graphics/Particles): the scene views draw world 0; ParticleSetNextTargetWorld picks the
 		// world of the next render_to_target (SdlGpuParticles.h).
@@ -543,6 +563,7 @@ namespace vortex::graphics::sdlgpu
 			u32 lodCount[4]{ 0, 0, 0, 0 };
 			bool skinned{ false };
 			u32 boneOffset{ 0 }; u32 boneCount{ 0 };
+			u32 palette{ NO_BONES };   // the item's palette in m_bone_render; its place in the GPU buffer is m_bone_gpu_offset[palette] (#415)
 			u32 layer{ 0 };
 			bool mirrored{ false };   // every instance of the run has a negative-determinant world matrix (#334)
 		};
@@ -655,14 +676,27 @@ namespace vortex::graphics::sdlgpu
 		bool download_target(GpuTarget& target);
 
 		// ---- scene helpers (SdlGpuRenderer_Scene.cpp) ----
-		FrameView build_main_view(u32 width, u32 height);
-		FrameView build_camera_view(const ViewportCamera& camera, u32 width, u32 height);
-		void fill_light_buffer();
-		// Keep the MAX_POINT_LIGHTS / MAX_SPOT_LIGHTS most relevant lights for this camera (#335); a no-op below the caps.
-		void prioritize_lights();
+		// The light budget of one view (#416): which submitted lights hold the shader slots and the shadow maps, with the
+		// hysteresis and fades kept from frame to frame. Every view has its own, so a preview never disturbs the main view.
+		struct LightViewState
+		{
+			lighting::LightSelector points, spots;
+			std::chrono::steady_clock::time_point last{};
+			DirectX::XMFLOAT3 eye{}, forward{};
+			bool primed{ false };
+		};
+		FrameView build_main_view(u32 width, u32 height, int slot);   // slot 0 = the main surface, 1 = the game window
+		FrameView build_camera_view(const ViewportCamera& camera, u32 width, u32 height, u32 target_id);
+		void fill_light_buffer(LightViewState& lights, FrameView& view);
+		// The view's choice of lights from ALL submitted ones (the lists are never cut), every frame (#335, #416) ->
+		// m_view_points / m_view_spots.
+		void select_lights(LightViewState& lights, const FrameView& view);
 		u32 m_light_cap_log{ 0 };
 		void upload_staged_bone_palettes();
 		void prepare_scene(const FrameView& view);   // sort + cull + pack (CPU) into the staging vectors
+		// #415: which palettes get room in the GPU buffer for this view (all of them unless over budget) -> m_bone_gpu_offset
+		void prepare_bone_budget(const FrameView& view);
+		void note_budget_stats();   // the main view's budgets -> budget_stats(), a rate-limited log line when one overflows
 		void upload_dynamic(SDL_GPUCommandBuffer* cmd);
 		void record_scene(SDL_GPUCommandBuffer* cmd, GpuTarget& target, const FrameView& view, bool draw_skybox, bool draw_grid, bool draw_gizmos,
 			int particle_world = -1, bool particle_depth_capture = false);
@@ -753,7 +787,16 @@ namespace vortex::graphics::sdlgpu
 		SDL_GPUTransferBuffer* m_bone_transfer{ nullptr };
 		std::vector<float> m_instance_staging;   // packed per-instance world matrices for this frame (16 floats each)
 		u32 m_instance_count{ 0 };
-		std::vector<float> m_bone_submit, m_bone_render;
+		// Bone palettes (#415): staged once per character (its submeshes share the copy), swapped with the render queue.
+		// prepare_bone_budget places them in the GPU buffer per view: the stage as it is when it fits (uploaded once per
+		// swap), otherwise packed by relevance into m_bone_packed (uploaded per view) — the rest draw in the bind pose.
+		skinning::PaletteStage m_bone_submit, m_bone_render;
+		std::vector<u32> m_bone_gpu_offset;                 // per palette of m_bone_render: matrix offset in the GPU buffer, or NO_PALETTE
+		std::vector<float> m_bone_packed;                   // the GPU buffer's content while over budget
+		std::vector<skinning::PaletteUse> m_bone_uses;      // scratch: the skinned draws of the view
+		skinning::PaletteBudget m_bone_budget;              // the last prepared view's result
+		BudgetStats m_budget_stats;
+		std::chrono::steady_clock::time_point m_bone_budget_logged{};
 		bool m_bone_upload_pending{ false };
 		bool m_bone_dirty{ false };
 
@@ -797,6 +840,10 @@ namespace vortex::graphics::sdlgpu
 		float m_dir_shadow_softness{ 1.0f };   // the sun's PCF radius in shadow texels (1 = the 3x3 box, Light ▸ Soft = 4)
 		std::vector<PointLightData> m_point_lights;
 		std::vector<SpotLightData> m_spot_lights;
+		LightViewState m_light_views[2];                               // the main surface, the game window (#416)
+		std::unordered_map<u32, LightViewState> m_target_light_views;  // per secondary render target
+		std::vector<lighting::Candidate> m_light_candidates;           // scratch
+		std::vector<lighting::Selected> m_view_points, m_view_spots;   // the recorded view's lights in slot order (shadow pass)
 		PerFrameConstants m_frame_constants{};
 		LightBufferData m_light_data{};
 
