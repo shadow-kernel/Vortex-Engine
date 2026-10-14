@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using Editor.Core.Data;
 using Editor.Core.Services;
@@ -405,6 +406,43 @@ namespace VortexTests
                 t.Equal(listed.Count, listed.Distinct().Count(), "no entity is listed twice (an undo after Stop used to do that)");
             }
             finally { undo.RestoreHistory(outer); }
+        }
+
+        [Test]
+        public static void DataFilesMadeWhilePlayingGoWithTheirEntity(TestContext t)
+        {
+            string orphan = t.Write("Assets/Terrain/PlayTerrain.vterrain", "heights");
+            t.Write("Assets/Terrain/PlayTerrain.vterrain.vmeta", "meta");
+            string used = t.Write("Assets/Foliage/Grass.vfoliage", "instances");
+            string older = t.Write("Assets/Areas/Cave.varea", "{}");
+            string material = t.Write("Assets/Materials/Rust.vmat", "{}");
+            var grass = Entity("Grass");
+            grass.Components.Add(new Foliage(grass) { DataPath = used });
+            var scene = SceneOf(grass);
+            try
+            {
+                PlaySession.Begin();
+                PlaySession.NoteWrite(orphan, true);     // create_terrain while playing: its entity is gone after Stop
+                PlaySession.NoteWrite(used, true);       // a layer still in a scene keeps its file
+                PlaySession.NoteWrite(older, false);     // a file that was there before Play is never deleted
+                PlaySession.NoteWrite(material, true);   // not a data file: it stays (the Stop line names it)
+                PlaySession.End();
+                t.True(PlaySession.CreatedDataFile(orphan) && !PlaySession.CreatedDataFile(older) && !PlaySession.CreatedDataFile(material), "what play created is known");
+                var deleted = PlaySession.DeleteOrphanedDataFiles(new[] { scene }, out string kept);
+                t.True(deleted.Count == 1 && !File.Exists(orphan) && !File.Exists(orphan + ".vmeta"), "the orphaned terrain data goes, with its .vmeta");
+                t.True(File.Exists(used) && File.Exists(older) && File.Exists(material) && kept == null, "everything else stays");
+
+                // a scene saved while playing may refer to them: then nothing is deleted, and Stop says why
+                string second = t.Write("Assets/Terrain/Second.vterrain", "heights");
+                PlaySession.Begin();
+                PlaySession.NoteWrite(second, true);
+                PlaySession.NoteWrite(t.Path("Assets", "Scenes", "Main.vscene"), true);
+                PlaySession.End();
+                deleted = PlaySession.DeleteOrphanedDataFiles(new[] { scene }, out kept);
+                t.True(deleted.Count == 0 && File.Exists(second) && kept != null, "kept while a scene saved in play may use it");
+                t.True(PlaySession.FilesWrittenSince(t.Dir, DateTime.UtcNow.AddMinutes(-5)).Exists(f => f.EndsWith("Rust.vmat")), "the files written are found by their time stamps");
+            }
+            finally { PlaySession.End(); }
         }
     }
 }

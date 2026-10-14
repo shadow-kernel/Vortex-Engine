@@ -444,8 +444,10 @@ namespace Editor.Core.Services
 
             var saved = entity.PrefabPath;
             entity.PrefabPath = null;
+            bool created = !File.Exists(file);
             try { DataSerializer.SaveAsJson(entity, file); }
             finally { entity.PrefabPath = saved; }
+            PlaySession.NoteWrite(file, created);   // Stop re-syncs the instances of a prefab written while playing (#423)
         }
 
         /// <summary>Rewrite absolute under-project asset paths to project-relative on the whole subtree.

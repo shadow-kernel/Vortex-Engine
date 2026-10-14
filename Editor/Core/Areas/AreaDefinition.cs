@@ -84,7 +84,9 @@ namespace Editor.Core.Areas
         public void Save(string path)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path));
+            bool created = !File.Exists(path);
             File.WriteAllText(path, ToJson());
+            Services.PlaySession.NoteWrite(path, created);   // a file saved in play for an area Stop reverts goes with it (#423)
         }
 
         /// <summary>"cave, no-fly" ↔ the tag list.</summary>
