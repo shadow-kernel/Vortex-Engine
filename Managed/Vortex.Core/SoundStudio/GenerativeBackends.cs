@@ -298,7 +298,9 @@ namespace Editor.Core.Audio.SoundStudio
             req.Headers.TryAddWithoutValidation("Accept", "audio/*");
             req.Headers.TryAddWithoutValidation("stability-client-id", "VortexEngine");
             req.Headers.TryAddWithoutValidation("stability-client-version", Editor.Core.EngineInfo.VersionString);
-            return req;
+            // api.stability.ai only speaks TLS 1.3, which .NET's TLS on macOS lacks: every request failed with "The SSL
+            // connection could not be established" there (#403) — StoreHttp sends this one through curl on macOS
+            return StoreHttp.RequireTls13(req);
         }
 
         /// <summary>Stability's error bodies are {"id", "name", "errors": [...]}: one sentence for the studio.</summary>

@@ -22,7 +22,7 @@ namespace Editor.Core.Assets.Store
     /// </summary>
     public static class StoreHttp
     {
-        private static HttpClient _client;
+        private static HttpClient _client, _curlClient;
         private static HttpMessageHandler _handler;
         private static readonly object Gate = new object();
         private static readonly Dictionary<string, DateTime> LastRequest = new Dictionary<string, DateTime>();
@@ -60,6 +60,71 @@ namespace Editor.Core.Assets.Store
                     return _client;
                 }
             }
+        }
+
+        /// <summary>curl (<see cref="CurlHttpHandler"/>) for the TLS-1.3-only hosts on macOS (#403).</summary>
+        private static HttpClient CurlClient
+        {
+            get { lock (Gate) return _curlClient ??= new HttpClient(new CurlHttpHandler(), disposeHandler: true) { Timeout = TimeSpan.FromMinutes(30) }; }
+        }
+
+        /// <summary>Requests marked with this option need TLS 1.3 (<see cref="RequireTls13"/>).</summary>
+        public static readonly HttpRequestOptionsKey<bool> Tls13Option = new HttpRequestOptionsKey<bool>("Vortex.Tls13Only");
+
+        /// <summary>Mark a request to a host that only speaks TLS 1.3 (api.stability.ai, #403): on macOS, where .NET's own TLS
+        /// stops at 1.2, <see cref="SendAsync"/> sends it through curl (<see cref="CurlHttpHandler"/>); elsewhere .NET's TLS
+        /// negotiates 1.3 itself.</summary>
+        public static HttpRequestMessage RequireTls13(HttpRequestMessage req)
+        {
+            req.Options.Set(Tls13Option, true);
+            return req;
+        }
+
+        /// <summary>The transport decision (#403): curl only for a request that needs TLS 1.3, on macOS, with curl present,
+        /// and never while tests have swapped the transport (<see cref="Handler"/>) — every other request takes .NET's client.</summary>
+        internal static bool GoesThroughCurl(bool needsTls13, bool testTransport, bool macOS, bool curlPresent)
+            => needsTls13 && !testTransport && macOS && curlPresent;
+
+        private static bool GoesThroughCurl(HttpRequestMessage req)
+            => GoesThroughCurl(req.Options.TryGetValue(Tls13Option, out bool t) && t, _handler != null, OperatingSystem.IsMacOS(),
+                               File.Exists(CurlHttpHandler.DefaultPath));
+
+        /// <summary>One readable sentence for a failed request (#403): the whole cause chain. HttpClient's TLS failures say
+        /// only "The SSL connection could not be established, see inner exception" — the cause ("bad protocol version")
+        /// sits two levels down, where neither the Sound Studio nor the MCP tools looked.</summary>
+        public static string Describe(Exception ex)
+        {
+            if (ex == null) return "";
+            var parts = new List<string>();
+            for (var e = ex; e != null; e = e.InnerException)
+            {
+                string m = (e.Message ?? "").Trim();
+                int see = m.IndexOf(", see inner exception", StringComparison.OrdinalIgnoreCase);
+                if (see < 0) see = m.IndexOf("; see inner exception", StringComparison.OrdinalIgnoreCase);
+                if (see >= 0) m = m.Substring(0, see);
+                m = m.TrimEnd('.', ' ');
+                if (m.Length > 0 && !parts.Contains(m)) parts.Add(m);
+            }
+            string text = string.Join(": ", parts);
+            bool tls = false, protocol = false;
+            for (var e = ex; e != null; e = e.InnerException)
+            {
+                string m = e.Message ?? "";
+                // .NET's TLS (SecureTransport, Network.framework) and curl's (mapped by CurlHttpHandler.Failure) report a failed
+                // handshake differently
+                if (e is System.Security.Authentication.AuthenticationException || e.GetType().Name.IndexOf("NetworkFramework", StringComparison.Ordinal) >= 0
+                    || m.IndexOf("domain TLS", StringComparison.OrdinalIgnoreCase) >= 0) tls = true;
+                // the server refused our versions (SecureTransport "bad protocol version", LibreSSL / OpenSSL "alert protocol
+                // version", "wrong version number") / our stack lacks the asked one (TLS 1.3 on SecureTransport)
+                if (m.IndexOf("protocol version", StringComparison.OrdinalIgnoreCase) >= 0
+                    || m.IndexOf("security protocol is not supported", StringComparison.OrdinalIgnoreCase) >= 0
+                    || m.IndexOf("wrong version number", StringComparison.OrdinalIgnoreCase) >= 0
+                    || m.IndexOf("unsupported protocol", StringComparison.OrdinalIgnoreCase) >= 0) protocol = true;
+            }
+            if (tls && protocol)
+                text += " — the server and this connection share no TLS version" +
+                        (OperatingSystem.IsMacOS() ? "; .NET's own TLS stops at 1.2 on macOS, so a TLS-1.3-only host needs StoreHttp.RequireTls13 (curl)" : "");
+            return text.EndsWith("?", StringComparison.Ordinal) || text.EndsWith("!", StringComparison.Ordinal) ? text : text + ".";
         }
 
         /// <summary>Wait until the provider may send its next request (one request in flight per provider at a time
@@ -193,11 +258,12 @@ namespace Editor.Core.Assets.Store
         public static async Task<JsonDocument> GetJsonAsync(IAssetProvider p, string url, TimeSpan ttl, CancellationToken ct, bool authenticated = true)
             => JsonDocument.Parse(await GetTextAsync(p, url, ttl, ct, authenticated).ConfigureAwait(false));
 
-        /// <summary>Send a request with the shared client (User-Agent added) — the sound backends use it.</summary>
+        /// <summary>Send a request with the shared client (User-Agent added) — the sound backends use it. A request marked
+        /// with <see cref="RequireTls13"/> goes through curl on macOS.</summary>
         public static Task<HttpResponseMessage> SendAsync(HttpRequestMessage req, HttpCompletionOption option, CancellationToken ct)
         {
             if (!req.Headers.Contains("User-Agent")) req.Headers.TryAddWithoutValidation("User-Agent", UserAgent);
-            return Client.SendAsync(req, option, ct);
+            return (GoesThroughCurl(req) ? CurlClient : Client).SendAsync(req, option, ct);
         }
 
         /// <summary>POST JSON (sound generation backends); never cached.</summary>

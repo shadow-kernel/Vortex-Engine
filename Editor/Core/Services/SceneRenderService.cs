@@ -1019,12 +1019,11 @@ namespace Editor.Core.Services
             if (audioSrc != null && audioSrc.IsEnabled)
                 VortexAPI.RenderAudioRangeSpheres(pos.X, pos.Y, pos.Z, audioSrc.MinDistance, audioSrc.MaxDistance);
             var reverbZone = selected.GetComponent<ECS.Components.Audio.ReverbZone>();
-            if (reverbZone != null && reverbZone.IsEnabled)
-                // Max(0.01, extent) — NOT Abs — mirrors the runtime test (ZoneWeight), so the drawn box is
-                // exactly the audible one even for hand-edited negative extents.
-                VortexAPI.RenderReverbZoneGizmo(pos.X, pos.Y, pos.Z, reverbZone.Shape, reverbZone.Radius,
-                    Math.Max(0.01f, reverbZone.BoxExtents.X), Math.Max(0.01f, reverbZone.BoxExtents.Y), Math.Max(0.01f, reverbZone.BoxExtents.Z),
-                    reverbZone.Falloff);
+            if (reverbZone != null && reverbZone.IsEnabled && selected.ActiveInHierarchy)
+                // The world matrix the runtime test (AudioPlaybackService.ZoneWeight) uses — position, rotation and scale
+                // of the entity and its parents (#497) — so the drawn shape is exactly the audible one.
+                VortexAPI.RenderReverbZoneGizmo(ECS.TransformMath.World(selected), reverbZone.Shape, reverbZone.Radius,
+                    reverbZone.BoxExtents.X, reverbZone.BoxExtents.Y, reverbZone.BoxExtents.Z, reverbZone.Falloff);
             var decal = selected.GetComponent<ECS.Components.Rendering.Decal>();
             if (decal != null && decal.IsEnabled)
                 VortexAPI.RenderDecalGizmo(Decals.DecalService.BoxWorld(selected, decal));   // the projection box (#120)

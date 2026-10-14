@@ -330,7 +330,7 @@ namespace VortexEditor.Shell.Audio
             }
             catch (OperationCanceledException) { SetStatus("Stopped.", false); }
             catch (HttpRequestException ex) { SetStatus(NetworkProblem(ex), true); }
-            catch (Exception ex) { SetStatus(ex.Message, true); }
+            catch (Exception ex) { SetStatus(StoreHttp.Describe(ex), true); }
             finally { Busy = false; _generate.IsEnabled = true; UpdateCosts(); }
         }
 
@@ -361,12 +361,16 @@ namespace VortexEditor.Shell.Audio
             }
             catch (OperationCanceledException) { SetStatus("Stopped.", false); }
             catch (HttpRequestException ex) { SetStatus(NetworkProblem(ex), true); }
-            catch (Exception ex) { SetStatus(ex.Message, true); }
+            catch (Exception ex) { SetStatus(StoreHttp.Describe(ex), true); }
             finally { Busy = false; _generate.IsEnabled = true; UpdateCosts(); }
         }
 
+        /// <summary>The whole cause chain (#403): a TLS failure's reason sits two inner exceptions down, and "check the internet
+        /// connection" is the wrong advice for a server that refuses the handshake.</summary>
         private static string NetworkProblem(HttpRequestException ex)
-            => "No connection to the service (" + (ex.InnerException?.Message ?? ex.Message) + "). Check the internet connection and try again.";
+            => ex.InnerException is System.Security.Authentication.AuthenticationException
+                ? "The secure connection to the service failed: " + StoreHttp.Describe(ex)
+                : "No connection to the service (" + StoreHttp.Describe(ex).TrimEnd('.') + "). Check the internet connection and try again.";
 
         private async Task Refine()
         {

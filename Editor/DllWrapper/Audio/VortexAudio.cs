@@ -54,7 +54,7 @@ namespace Editor.DllWrapper
 
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern ulong AudioPlayVoice([MarshalAs(UnmanagedType.LPUTF8Str)] string path,
-            float volume, float pitch, float pan, int loop, int priority, int stream, int outBus, int hrtf, int occlusion);
+            float volume, float pitch, float pan, int loop, int priority, int stream, int outBus, int hrtf, int occlusion, float reverbSend);
 
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void AudioSteamSetEnabled(int enabled);
@@ -88,6 +88,9 @@ namespace Editor.DllWrapper
 
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void AudioSetVoiceReverbSend(ulong handle, float send);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern float AudioGetVoiceReverbSend(ulong handle);
 
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void AudioFadeVoice(ulong handle, float target, float seconds, int stopWhenDone);
@@ -166,12 +169,13 @@ namespace Editor.DllWrapper
         /// <summary>Starts a voice; returns InvalidVoice when the clip can't be decoded
         /// or every pooled voice outranks this request (priority 0 = most important).
         /// stream = decode on demand (music/long ambience) instead of full pre-decode.
-        /// bus routes the voice through a mixer bus (default SFX).</summary>
+        /// bus routes the voice through a mixer bus (default SFX). reverbSend = the reverb send (0..1) from the
+        /// first sample on, before the per-frame SetVoiceReverbSend takes over (#496).</summary>
         public static ulong PlayVoice(string path, float volume, float pitch, float pan, bool loop, int priority, bool stream = false, int bus = BusSfx,
-            bool hrtf = false, bool occlusion = false)
+            bool hrtf = false, bool occlusion = false, float reverbSend = 0f)
         {
             if (string.IsNullOrEmpty(path)) return InvalidVoice;
-            return AudioPlayVoice(path, volume, pitch, pan, loop ? 1 : 0, priority, stream ? 1 : 0, bus, hrtf ? 1 : 0, occlusion ? 1 : 0);
+            return AudioPlayVoice(path, volume, pitch, pan, loop ? 1 : 0, priority, stream ? 1 : 0, bus, hrtf ? 1 : 0, occlusion ? 1 : 0, reverbSend);
         }
 
         /// <summary>Steam Audio v2 (#21) project master switch. Off by default; turning it on lazily initializes
@@ -205,6 +209,11 @@ namespace Editor.DllWrapper
         {
             if (handle != InvalidVoice) AudioSetVoiceReverbSend(handle, send);
         }
+
+        /// <summary>The voice's current reverb send (diagnostics, smoke checks); -1 for a stale handle or while the
+        /// reverb node is down.</summary>
+        public static float GetVoiceReverbSend(ulong handle)
+            => handle != InvalidVoice ? AudioGetVoiceReverbSend(handle) : -1f;
 
         /// <summary>Sample-accurate fade envelope on top of the voice volume. Retargets
         /// smoothly mid-fade; stopWhenDone frees the voice after the fade (FadeOut).</summary>
