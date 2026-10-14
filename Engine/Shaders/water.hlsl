@@ -65,7 +65,9 @@ cbuffer PerObject : register(b1)
     uint HasHeightTexture;
     float HeightScale;
     float AlphaCutoff;
-    float3 _Pad0;
+    uint HasEmissiveTexture; // @148 — #450: the emissive map at t16
+    float2 UVOffset;         // @152 — #448: every map is sampled at uv * tiling + offset
+    float4 EmissiveColor;    // @160 — #450: a lit material's emission, colour x strength (w unused)
 };
 
 struct PointLight { float3 position; float range; float3 color; float intensity; };
@@ -91,6 +93,8 @@ Texture2D CsmShadowMap     : register(t8);
 Texture2D EnvMap           : register(t11);   // the sky as a reflection (IBL step 2)
 Texture2D SceneColor       : register(t12);   // the opaque colour so far (display-encoded), copied before the transparents (#200)
 Texture2D SceneDepth       : register(t13);   // its depth (window z): the refraction's occlusion test and the SSR march
+SamplerState LinearSampler : register(s0);    // the root signature's anisotropic wrap sampler: SampleEnv reads the sky
+                                              // reflection with it (it was used without a declaration, so FXC rejected the shader)
 SamplerState ScreenSampler : register(s2);    // linear / clamp
 SamplerComparisonState ShadowSampler : register(s1);
 
