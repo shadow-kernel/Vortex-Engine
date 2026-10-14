@@ -760,8 +760,17 @@ namespace Editor.Core.Services.Physics
             => new V3(a.Y * b.Z - a.Z * b.Y, a.Z * b.X - a.X * b.Z, a.X * b.Y - a.Y * b.X);
 
         /// <summary>Incrementally add a (runtime-spawned) entity subtree's colliders to the built world —
-        /// unlike a full Build() this does NOT reset trigger overlap state, so no phantom Enter events.</summary>
-        public static void AddEntityShapes(GameEntity e) { if (IsBuilt && e != null) AddRecursive(e); }
+        /// unlike a full Build() this does NOT reset trigger overlap state, so no phantom Enter events. Nothing is added
+        /// under an inactive ancestor (#443): the subtree joins when that ancestor is activated.</summary>
+        public static void AddEntityShapes(GameEntity e) { if (IsBuilt && e != null && ActiveInHierarchy(e)) AddRecursive(e); }
+
+        /// <summary>The entity and all its ancestors are active (the scene's own active flag is not consulted: the play world
+        /// is built from the scene that is playing).</summary>
+        private static bool ActiveInHierarchy(GameEntity e)
+        {
+            for (var p = e; p != null; p = p.Parent) if (!p.IsActive) return false;
+            return true;
+        }
 
         /// <summary>Remove every collider shape owned by the given entity subtree (runtime Destroy).
         /// <paramref name="includeChildren"/> false removes only the entity's OWN shapes (PhysicsService takes a
@@ -790,7 +799,7 @@ namespace Editor.Core.Services.Physics
 
         private static void UpdateRecursive(GameEntity e)
         {
-            if (e == null) return;
+            if (e == null || !e.IsActive) return;   // #443: an inactive subtree has no shapes and gets none while it moves
             var col = e.GetComponent<Collider>();
             bool enabled = col != null && col.IsEnabled;
             _byOwner.TryGetValue(e, out var owned);
@@ -850,7 +859,10 @@ namespace Editor.Core.Services.Physics
 
         private static void AddRecursive(GameEntity e)
         {
-            if (e == null) return;
+            // #443: an entity that is inactive (itself or through an ancestor) takes no part in the character world, like
+            // the Jolt bodies (PhysicsService.AddRecursive) — a level part saved inactive must not hold invisible walls and
+            // floors. SetEntityActive adds the subtree when it is switched on.
+            if (e == null || !e.IsActive) return;
             var terrain = e.GetComponent<Editor.ECS.Components.Rendering.Terrain>();
             if (terrain != null && terrain.IsEnabled && terrain.Collision) AddTerrainShape(e);   // #124
             var foliage = e.GetComponent<Editor.ECS.Components.Rendering.Foliage>();

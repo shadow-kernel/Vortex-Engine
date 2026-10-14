@@ -255,6 +255,35 @@ namespace VortexTests
             finally { ClearWorlds(); }
         }
 
+        /// <summary>#443: the Jolt world builds no bodies for an inactive level part (as before), and a child switched on
+        /// while its ancestor is still inactive joins neither world; switching the ancestor on brings it in.</summary>
+        [Test]
+        public static void NothingJoinsUnderAnInactiveAncestor(TestContext t)
+        {
+            if (!Jolt()) return;
+            var s = new Scene { Name = "Acts" };
+            var floor = PhysicsRaycastTests.Add(s, null, "Floor", new Vector3(0, -0.5f, 0), e => e.AddComponentDirect(new BoxCollider(e) { Size = new Vector3(40f, 1f, 40f) }));
+            var act = PhysicsRaycastTests.Add(s, null, "Area_3_Rome", new Vector3(0, 0, 0), null);
+            var wall = PhysicsRaycastTests.Add(s, act, "Col_PalazziR_N", new Vector3(0, 10f, 0), e => e.AddComponentDirect(new BoxCollider(e) { Size = new Vector3(18f, 20f, 20f) }));
+            PhysicsRaycastTests.AsLoaded(s);
+            act.SetActiveFlagOnly(false);
+            try
+            {
+                BuildWorlds(s);
+                t.Equal(1, PhysicsService.BodyCount, "only the floor has a body");
+                PhysicsService.AddEntity(wall);
+                CollisionService.AddEntityShapes(wall);
+                t.Equal(1, PhysicsService.BodyCount, "a child switched on under the inactive act gets no body");
+                t.False(CollisionService.CapsuleOverlaps(new Vector3(0, 0.02f, 0), 0.3f, 1.78f), "… and no shape: CanStand inside it");
+                act.SetActiveFlagOnly(true);
+                CollisionService.AddEntityShapes(act);
+                PhysicsService.AddEntity(act);
+                t.Equal(2, PhysicsService.BodyCount, "switching the act on adds the wall's body");
+                t.True(CollisionService.CapsuleOverlaps(new Vector3(0, 0.02f, 0), 0.3f, 1.78f), "… and its shape");
+            }
+            finally { ClearWorlds(); }
+        }
+
         /// <summary>#417 with Physics.SetCharacterController("jolt"): the CharacterVirtual passes through the bodies of the
         /// entity its characterId names — a static collider and a kinematic Rigidbody + collider — while a character whose id
         /// names no entity is still shoved out of a collider it stands in.</summary>

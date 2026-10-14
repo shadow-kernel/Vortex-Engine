@@ -246,7 +246,7 @@ namespace Editor.Core.Services.Physics
         /// <see cref="CollisionService.AddEntityShapes"/> so dynamic entities can be taken out of the static world again.</summary>
         public static void AddEntity(GameEntity root)
         {
-            if (!IsBuilt || root == null) return;
+            if (!IsBuilt || root == null || !ActiveInHierarchy(root)) return;   // #443: nothing joins under an inactive ancestor
             AddRecursive(root);
             CollectJoints(root);
             CreatePendingJoints(root);

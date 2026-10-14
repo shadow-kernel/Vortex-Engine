@@ -8,7 +8,7 @@ using Editor.ECS.Components.Physics;
 namespace VortexTests
 {
     /// <summary>The managed character controller (Physics.MoveCharacter) against the collision world: the moving entity's
-    /// own colliders (#417), the lifetime of registered characters (#407).</summary>
+    /// own colliders (#417), the lifetime of registered characters (#407), inactive level parts (#443).</summary>
     public static class CharacterControllerTests
     {
         private const float Dt = 1f / 60f;
@@ -147,6 +147,61 @@ namespace VortexTests
                 t.True(CollisionService.HasCharacter(hcar), "… not the car's");
             }
             finally { CollisionService.Clear(); CollisionService.CharacterOwnerResolver = null; }
+        }
+
+        /// <summary>Triangles the character world holds (every box is 12) — counts shapes, so a re-add that duplicated
+        /// them would show.</summary>
+        private static int WorldTriangles()
+            => CollisionService.ExportOcclusionGeometry(out _, out var idx) ? idx.Length / 3 : 0;
+
+        /// <summary>#443: a level part saved inactive (the act roots of a multi-act game) and an entity that is itself
+        /// inactive hold no collision: characters fall past them and rays miss them, until the part is switched on —
+        /// once, without duplicates — and they leave again when it is switched off.</summary>
+        [Test]
+        public static void InactiveCollidersTakeNoPart(TestContext t)
+        {
+            var s = new Scene { Name = "Acts" };
+            Floor(s);
+            var act = Add(s, null, "Area_6_Desert", new Vector3(0, 0, 0), null);
+            var edge = Add(s, act, "EdgeWall", new Vector3(0, 40f, 0), e => e.AddComponentDirect(new BoxCollider(e) { Size = new Vector3(2f, 80f, 100f) }));
+            var sub = Add(s, act, "Props", new Vector3(0, 0, 0), null);
+            Add(s, sub, "Crate", new Vector3(3f, 0.5f, 0), e => e.AddComponentDirect(new BoxCollider(e)));
+            var oldWall = Add(s, null, "OldMI6_WW", new Vector3(8f, 2.1f, 0), e => e.AddComponentDirect(new BoxCollider(e) { Size = new Vector3(0.3f, 4.2f, 23f) }));
+            act.SetActiveFlagOnly(false);
+            oldWall.SetActiveFlagOnly(false);
+            try
+            {
+                CollisionService.Build(s);
+                t.Equal(12, WorldTriangles(), "only the floor is in the world");
+                var p = new Vector3(0, 90f, 0);
+                for (int i = 0; i < 200; i++) p = CollisionService.MoveCharacter(p, R, H, new Vector3(0, -1f, 0), out _, 0);
+                t.True(Math.Abs(p.Y) < 0.05f, "the character falls past the inactive act's edge wall onto the floor (y = " + p.Y + ")");
+                t.False(CollisionService.Raycast(new Vector3(0, 100f, 0), new Vector3(0, -1, 0), 99f, ~0, out _, out _, out _, out _),
+                        "a ray misses the inactive wall (it would hit its top at y 80)");
+                var w = CollisionService.MoveCharacter(new Vector3(6f, 0, 0), R, H, new Vector3(5f, 0, 0), out _, 0);
+                t.True(w.X > 10f, "the character walks through the inactive entity's wall (x = " + w.X + ")");
+
+                // a child switched on under the still inactive act joins nothing (SetActive on the child alone)
+                CollisionService.AddEntityShapes(edge);
+                t.Equal(12, WorldTriangles(), "nothing joins while an ancestor is inactive");
+
+                // Scene.SetActive(act, true): the act's colliders join once
+                act.SetActiveFlagOnly(true);
+                CollisionService.AddEntityShapes(act);
+                t.Equal(36, WorldTriangles(), "the act's wall and crate joined");
+                p = new Vector3(0, 90f, 0);
+                for (int i = 0; i < 200; i++) p = CollisionService.MoveCharacter(p, R, H, new Vector3(0, -1f, 0), out _, 0);
+                t.True(Math.Abs(p.Y - 80f) < 0.05f, "now the character lands on the wall (y = " + p.Y + ")");
+
+                // Scene.SetActive(act, false) and on again: no duplicates
+                act.SetActiveFlagOnly(false);
+                CollisionService.RemoveEntityShapes(act);
+                t.Equal(12, WorldTriangles(), "switched off, the act's colliders left");
+                act.SetActiveFlagOnly(true);
+                CollisionService.AddEntityShapes(act);
+                t.Equal(36, WorldTriangles(), "switched on again, they are back once");
+            }
+            finally { CollisionService.Clear(); }
         }
 
         /// <summary>A guard with a Rigidbody: its collider is a simulated body published to the character world (the
