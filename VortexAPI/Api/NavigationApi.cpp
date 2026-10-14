@@ -88,6 +88,9 @@ EDITOR_INTERFACE float   NavGetBakeProgress(void) { return nav::bake_progress();
 EDITOR_INTERFACE void    NavCancelBake(void)      { nav::bake_cancel(); }
 EDITOR_INTERFACE int32_t NavGetBakeResult(uint8_t* out, int32_t maxBytes) { return nav::bake_result_copy(out, maxBytes); }   // null = size
 EDITOR_INTERFACE void    NavClearBakeResult(void) { nav::bake_result_clear(); }
+// Notes of the last bake (#451): coarser tiles, geometry without navmesh, failed tiles — '\n'-separated UTF-8, NUL-terminated
+// when it fits; returns the length (null = query it).
+EDITOR_INTERFACE int32_t NavGetBakeNotes(char* out, int32_t maxBytes) { return nav::bake_notes_copy(out, maxBytes); }
 
 // ---- The loaded navmesh ----
 

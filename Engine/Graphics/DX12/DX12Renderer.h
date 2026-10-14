@@ -15,6 +15,8 @@
 #include "../Volumetrics/Volumetrics.h"
 #include "DX12FrameRing.h"
 #include "../Decals/Decals.h"
+#include "../Skinning/BonePalettes.h"   // the palette stage + per-view budget shared with the SDL GPU backend (#415)
+#include "../Lighting/LightSelection.h"  // the light budget shared with the SDL GPU backend (#416)
 #include "DX12UpscalePipeline.h"
 #include "DX12PostFxChain.h"
 #include "DX12MotionVectorPipeline.h"
@@ -51,12 +53,13 @@ namespace vortex::graphics::dx12
 	// Maximum number of secondary render targets
 	constexpr u32 MAX_RENDER_TARGETS = 8;
 
-	// Bone-palette capacity (float4x4 matrices) for GPU skinning. 65536 x 64 B = 4 MB persistently-mapped
-	// UPLOAD buffer, split into TWO halves that alternate per upload: the CPU always writes the half the
-	// in-flight frames are NOT reading (uploads happen after the frame-start fence wait, which guarantees
-	// the 2-frames-back user of the same half has finished) — no torn palettes on animated characters.
-	constexpr u32 MAX_BONE_MATRICES = 65536;
-	constexpr u32 MAX_BONE_MATRICES_PER_FRAME = MAX_BONE_MATRICES / 2;   // per-half capacity (~250 chars x 128 bones)
+	// Bone-palette capacity (float4x4 matrices) for GPU skinning: one frame holds MAX_BONE_MATRICES_PER_FRAME (65536,
+	// the same budget as the SDL GPU backend, #415). The persistently-mapped UPLOAD buffer holds TWO such halves (8 MB)
+	// that alternate per upload: the CPU always writes the half the in-flight frames are NOT reading (uploads happen
+	// after the frame-start fence wait, which guarantees the 2-frames-back user of the same half has finished) — no
+	// torn palettes on animated characters.
+	constexpr u32 MAX_BONE_MATRICES_PER_FRAME = skinning::MAX_BONE_MATRICES_PER_FRAME;   // per-half capacity (~1100 chars x 58 bones)
+	constexpr u32 MAX_BONE_MATRICES = 2 * MAX_BONE_MATRICES_PER_FRAME;
 
 	// RenderItem.bone_offset value that marks a RIGID (non-skinned) item.
 	constexpr u32 NO_BONES = 0xFFFFFFFFu;
@@ -83,6 +86,7 @@ namespace vortex::graphics::dx12
 		// NO_BONES = rigid item (the default; every existing submit path is untouched).
 		u32 bone_offset{ NO_BONES };
 		u32 bone_count{ 0 };
+		u32 palette{ NO_BONES };   // skinned: the palette's index in the frame's stage (#415), shared by the character's submeshes
 		// Render layer (#175): 0 = world, 1 = first-person VIEWMODEL — drawn in a second pass after a
 		// depth clear with its own projection, excluded from shadow casting + SSAO + frustum cull.
 		u32 layer{ 0 };
@@ -181,7 +185,7 @@ namespace vortex::graphics::dx12
 		// Multi-light system
 		static constexpr u32 MAX_POINT_LIGHTS = 16;
 		static constexpr u32 MAX_SPOT_LIGHTS = 8;
-		static constexpr u32 MAX_SUBMITTED_LIGHTS = 1024;   // kept per frame; the most relevant fill the slots above (#335)
+		static constexpr u32 MAX_SUBMITTED_LIGHTS = 1024;   // kept per frame; the most relevant fill the slots above (#335, #416)
 		
 		struct PointLightData
 		{
@@ -189,12 +193,14 @@ namespace vortex::graphics::dx12
 			float range;
 			DirectX::XMFLOAT3 color;
 			float intensity;
-			// Point shadows (#25): the first MAX_SHADOW_POINTS submitted point lights with
-			// cast_shadows get a 6-face cube block in the point shadow atlas. CPU-side only;
-			// the 32-byte GPUPointLight ABI is untouched (shadow data travels in the b2 tail).
+			// Point shadows (#25): MAX_SHADOW_POINTS of the chosen point lights with cast_shadows get a
+			// 6-face cube block in the point shadow atlas — the most relevant, kept unless clearly
+			// outranked (#416). CPU-side only; the 32-byte GPUPointLight ABI is untouched (shadow data
+			// travels in the b2 tail).
 			u32 cast_shadows{ 0 };
 			float shadow_strength{ 1.0f };
 			float shadow_bias{ 0.0015f };
+			u64 id{ 0 };   // stable identity for the light budget (#416): the entity; 0 = derived from the light's look
 		};
 		
 		struct SpotLightData
@@ -206,13 +212,14 @@ namespace vortex::graphics::dx12
 			DirectX::XMFLOAT3 color;
 			float intensity;
 			float inner_spot_angle;
-			// Spot shadows (#23): the FIRST submitted spot with cast_shadows != 0 becomes this frame's
-			// shadow-casting light (ONE shadow map in v1 — the flashlight). CPU-side only; the 64-byte
-			// GPUSpotLight ABI is untouched.
+			// Spot shadows (#23): up to MAX_SHADOW_SPOTS of the chosen spots with cast_shadows != 0 get a
+			// tile of the shadow atlas — the most relevant, kept unless clearly outranked (#416). CPU-side
+			// only; the 64-byte GPUSpotLight ABI is untouched.
 			u32 cast_shadows{ 0 };
 			float shadow_strength{ 1.0f };   // 0..1 — how dark the occluded area gets
 			float shadow_bias{ 0.0015f };    // receiver-side depth-comparison bias
 			u32 shadow_resolution{ 2048 };   // shadow-map size in texels
+			u64 id{ 0 };   // stable identity for the light budget (#416): the entity; 0 = derived from the light's look
 		};
 		
 		void clear_lights();
@@ -450,6 +457,15 @@ namespace vortex::graphics::dx12
 		// Cull stats (per frame): instances examined vs actually drawn — proves cull effectiveness on big maps.
 		int get_instances_tested() const { return m_instances_tested; }
 		int get_instances_drawn() const { return m_instances_drawn; }
+		// The frame budgets of the main view: bone matrices in the GPU palette buffer / its capacity, and the skinned draws in
+		// view that had no room for their palette (drawn in the bind pose, #415); the point / spot lights submitted and holding
+		// a shader slot, and the lights that got or gave up a slot in the last frame (#416).
+		struct BudgetStats
+		{
+			u32 bone_matrices_used{ 0 }, bone_matrices_capacity{ MAX_BONE_MATRICES_PER_FRAME }, skinned_bind_pose_fallbacks{ 0 };
+			u32 point_lights_submitted{ 0 }, spot_lights_submitted{ 0 }, point_lights_shown{ 0 }, spot_lights_shown{ 0 }, light_slot_changes{ 0 };
+		};
+		const BudgetStats& budget_stats() const { return m_budget_stats; }
 
 		// ============== Multi-Viewport Rendering ==============
 		
@@ -495,6 +511,12 @@ namespace vortex::graphics::dx12
 		/// Check if a render target exists.
 		/// </summary>
 		bool has_render_target(u32 target_id) const;
+		// The target's light choice has no fade in progress (#416): a view rendered only on demand renders on until it is.
+		bool render_target_settled(u32 target_id) const
+		{
+			auto it = m_target_light_views.find(target_id);
+			return it == m_target_light_views.end() || (it->second.points.settled() && it->second.spots.settled());
+		}
 
 	private:
 		DX12Renderer() = default;
@@ -507,9 +529,23 @@ namespace vortex::graphics::dx12
 		bool create_constant_buffers();
 		bool create_grid_resources();
 		bool create_skybox_resources();
-		void update_per_frame_constants();
-		// Keep the MAX_POINT_LIGHTS / MAX_SPOT_LIGHTS most relevant lights for this camera (#335); a no-op below the caps.
-		void prioritize_lights();
+		void update_per_frame_constants(int view_slot = 0);   // view_slot: 0 = the editor frame, 1 = the game window (its own light choice)
+		// The light budget of one view (#416): which submitted lights hold the shader slots and the shadow maps, with the
+		// hysteresis and fades kept from frame to frame. Every view has its own, so a preview never disturbs the main view.
+		struct LightViewState
+		{
+			lighting::LightSelector points, spots;
+			std::chrono::steady_clock::time_point last{};
+			DirectX::XMFLOAT3 eye{}, forward{};
+			bool primed{ false };
+		};
+		// The view's choice of lights from ALL submitted ones (the lists are never cut), every frame (#335, #416) ->
+		// m_view_points / m_view_spots. The same rule as the SDL GPU backend (Engine/Graphics/Lighting/LightSelection.h).
+		void select_lights(LightViewState& lights, const DirectX::XMFLOAT3& eye, const DirectX::XMFLOAT4X4& view_projection);
+		LightViewState m_light_views[2];                               // the editor frame, the game window
+		std::unordered_map<u32, LightViewState> m_target_light_views;  // per secondary render target
+		std::vector<lighting::Candidate> m_light_candidates;           // scratch
+		std::vector<lighting::Selected> m_view_points, m_view_spots;   // the recorded view's lights in slot order (light CB + shadows)
 		u32 m_light_cap_log{ 0 };
 		void wait_for_previous_frame();
 
@@ -713,18 +749,29 @@ namespace vortex::graphics::dx12
 		void* m_per_object_cb_mapped{ nullptr };
 		ComPtr<ID3D12Resource> m_instance_vb;          // per-instance world matrices (GPU instancing)
 		void* m_instance_vb_mapped{ nullptr };
-		// Bone palettes for GPU skinning: staged CPU-side per submit batch (m_bone_submit), swapped with the
-		// render queue, then uploaded into the ALTERNATE half of the persistently-mapped buffer AFTER the
-		// frame fence wait (see MAX_BONE_MATRICES_PER_FRAME) — root SRV param 8 points into the active half.
+		// Bone palettes for GPU skinning: staged CPU-side per submit batch (m_bone_submit) — ONE copy per character, its
+		// submeshes share it (#415) — swapped with the render queue, then uploaded into the ALTERNATE half of the
+		// persistently-mapped buffer AFTER the frame fence wait (see MAX_BONE_MATRICES_PER_FRAME) — root SRV param 8
+		// points into the active half at m_bone_gpu_offset[palette].
 		ComPtr<ID3D12Resource> m_bone_vb;
 		void* m_bone_vb_mapped{ nullptr };
-		std::vector<float> m_bone_submit;   // guarded by m_queue_mutex (like m_submit_queue)
-		std::vector<float> m_bone_render;
+		skinning::PaletteStage m_bone_submit;   // guarded by m_queue_mutex (like m_submit_queue)
+		skinning::PaletteStage m_bone_render;
+		std::vector<u32> m_bone_gpu_offset;                 // per palette of m_bone_render: matrix offset in the active half, or NO_PALETTE
+		std::vector<float> m_bone_packed;                   // the active half's content while over budget
+		std::vector<skinning::PaletteUse> m_bone_uses;      // scratch: the skinned draws of the view
+		skinning::PaletteBudget m_bone_budget;              // the last upload's result
+		BudgetStats m_budget_stats;
+		std::chrono::steady_clock::time_point m_bone_budget_logged{};
 		bool m_bone_upload_pending{ false };   // set by swap_render_queue; consumed by upload_staged_bone_palettes
 		u32 m_bone_active_half{ 0 };           // which buffer half the CURRENT render queue's offsets point into
-		// Upload staged palettes into the inactive half + flip. Callers must guarantee that half is not
-		// referenced by any still-executing frame (after the frame fence wait, or after a full flush).
-		void upload_staged_bone_palettes();
+		// Place this frame's palettes for the view (view_projection, eye) and upload them into the inactive half + flip.
+		// Normally they all fit: the stage goes up once per swap. Over budget (#415) the characters in view go first, nearest
+		// first, re-packed on every call. Callers must guarantee that half is not referenced by any still-executing frame
+		// (after the frame fence wait, or after a full flush).
+		void upload_staged_bone_palettes(const DirectX::XMFLOAT4X4& view_projection, const DirectX::XMFLOAT3& eye);
+		void prepare_bone_budget(const DirectX::XMFLOAT4X4& view_projection, const DirectX::XMFLOAT3& eye);
+		void note_budget_stats();   // the main view's budgets -> budget_stats(), a rate-limited log line when one overflows
 		D3D12_GPU_VIRTUAL_ADDRESS bone_palette_base_va() const
 		{
 			return m_bone_vb->GetGPUVirtualAddress() + (UINT64)m_bone_active_half * MAX_BONE_MATRICES_PER_FRAME * 64;
@@ -816,6 +863,7 @@ namespace vortex::graphics::dx12
 			bool skinned{ false };
 			u32 boneOffset{ 0 };
 			u32 boneCount{ 0 };
+			u32 palette{ NO_BONES };   // the item's palette in m_bone_render; its place in the GPU buffer is m_bone_gpu_offset[palette] (#415)
 			// #175: runs are layer-homogeneous (layer is the primary sort key + a run-break condition);
 			// viewmodel runs cluster at the tail and draw in the second (depth-cleared, own-proj) pass.
 			u32 layer{ 0 };
@@ -908,7 +956,7 @@ namespace vortex::graphics::dx12
 		u32 m_next_render_target_id{ 1 };
 		
 		// Helper for rendering to a specific target
-		void render_scene_to_target(DX12RenderTarget* target, const ViewportCamera& camera, bool render_grid, bool render_gizmos = false);
+		void render_scene_to_target(DX12RenderTarget* target, const ViewportCamera& camera, bool render_grid, bool render_gizmos, LightViewState& lights);
 
 		// Render-scale: (re)create m_scaled_rt at w x h (R8G8B8A8) when the scale/window size changes; idles the
 		// GPU first since the RT may be in flight. Returns false if creation failed (caller falls back to direct).

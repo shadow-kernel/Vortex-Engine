@@ -58,6 +58,15 @@ namespace vortex::graphics
 		static ImageData import_from_memory(const u8* data, u64 length, bool flip_vertically = false);
 
 		/// <summary>
+		/// Does the image have a texel that is not fully opaque (#441)? An image without an alpha channel (JPEG, an RGB or
+		/// grey PNG, a palette without transparency) answers from its header; one with an alpha channel is decoded and its
+		/// alpha scanned. The file variant reads the disk or the asset reader and remembers its answer per file version
+		/// (path, size, write time). `known` is false when the image cannot be read.
+		/// </summary>
+		static bool has_translucent_texels(const std::string& filepath, bool& known);
+		static bool has_translucent_texels(const u8* data, u64 length, bool& known);
+
+		/// <summary>
 		/// Check if a file format is supported.
 		/// </summary>
 		static bool is_format_supported(const std::string& extension);

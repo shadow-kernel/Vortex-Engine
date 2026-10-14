@@ -268,11 +268,13 @@ namespace Editor.Core.Services.Build
         }
 
         /// <summary>Files of a runtime folder that must not ship: logs and crash dumps left behind by development runs.</summary>
-        private static bool IsRuntimeJunk(string file, RuntimePack pack)
+        internal static bool IsRuntimeJunk(string file, RuntimePack pack)
         {
             string n = Path.GetFileName(file);
             return n.EndsWith(".log", StringComparison.OrdinalIgnoreCase) || n.EndsWith(".dmp", StringComparison.OrdinalIgnoreCase)
-                || n.Equals("player.vortex", StringComparison.OrdinalIgnoreCase) || n.Equals("Assets.vpak", StringComparison.OrdinalIgnoreCase);
+                || n.Equals("player.vortex", StringComparison.OrdinalIgnoreCase) || n.Equals("Assets.vpak", StringComparison.OrdinalIgnoreCase)
+                // an assembly's XML API docs (Vortex.Core.xml, 1 MB — a dev-tree player build carries it, #404): editor-only
+                || (n.EndsWith(".xml", StringComparison.OrdinalIgnoreCase) && File.Exists(Path.ChangeExtension(file, ".dll")));
         }
 
         private static bool IsManagedAssembly(string path)

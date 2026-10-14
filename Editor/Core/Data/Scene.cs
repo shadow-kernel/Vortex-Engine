@@ -259,8 +259,10 @@ namespace Editor.Core.Data
 
             // the editor's view travels with the scene: whoever opens it next starts where it was saved from
             try { if (ReferenceEquals(ProjectData.Current?.ActiveScene, this)) Services.EditorViewState.Capture(this); } catch { }
+            bool created = !File.Exists(FilePath);
             Serialization.DataSerializer.SaveAsBinary(this, FilePath);
             IsDirty = false;
+            Services.PlaySession.NoteWrite(FilePath, created);   // a scene saved while playing may refer to data files play created (#423)
         }
 
         /// <summary>

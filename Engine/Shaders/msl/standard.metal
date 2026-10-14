@@ -567,6 +567,7 @@ static inline float3 sample_env(texture2d<float> env_tex, sampler env_smp, float
 }
 
 fragment float4 PSMain(VSOut in [[stage_in]],
+                       bool isFront [[front_facing]],
                        constant PerFrame& frame [[buffer(0)]],
                        constant PerObject& obj [[buffer(1)]],
                        constant LightBuffer& lights [[buffer(2)]],
@@ -591,6 +592,7 @@ fragment float4 PSMain(VSOut in [[stage_in]],
     float3 cam_pos = float3(frame.camera_position);
 
     float3 Ng = normalize(in.norm);
+    if (!isFront) Ng = -Ng;   // two-sided materials (TwoSided, glTF doubleSided): a back face is lit on its own side, like the foliage shader
     float3 T = normalize(in.tangent), B = normalize(in.bitangent);
     cotangent_frame(Ng, in.world_pos, uv, T, B);   // outside any branch: it needs derivatives
 

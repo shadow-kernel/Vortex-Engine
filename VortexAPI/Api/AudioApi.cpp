@@ -41,7 +41,8 @@ EDITOR_INTERFACE s32 AudioGetWaveform(const char* path, f32* peaks, s32 bin_coun
 	return runtime::audio::clip_waveform(path, peaks, (u32)bin_count) ? 1 : 0;
 }
 
-EDITOR_INTERFACE u64 AudioPlayVoice(const char* path, f32 volume, f32 pitch, f32 pan, s32 loop, s32 priority, s32 stream, s32 out_bus, s32 hrtf, s32 occlusion)
+// reverb_send: the voice's reverb send from its first sample (#496) — reverbZoneMix x listener zone weight, 0..1.
+EDITOR_INTERFACE u64 AudioPlayVoice(const char* path, f32 volume, f32 pitch, f32 pan, s32 loop, s32 priority, s32 stream, s32 out_bus, s32 hrtf, s32 occlusion, f32 reverb_send)
 {
 	runtime::audio::voice_params params{};
 	params.volume = volume;
@@ -53,6 +54,7 @@ EDITOR_INTERFACE u64 AudioPlayVoice(const char* path, f32 volume, f32 pitch, f32
 	params.bus = out_bus;
 	params.hrtf = hrtf != 0;              // Steam Audio HRTF (#21), opt-in; no-op unless SA is available
 	params.occlusion = occlusion != 0;
+	params.reverb_send = reverb_send;
 	return runtime::audio::voice_play(path, params);
 }
 
@@ -123,6 +125,12 @@ EDITOR_INTERFACE void AudioSetReverbParams(f32 decay_seconds, f32 wet_level, f32
 EDITOR_INTERFACE void AudioSetVoiceReverbSend(u64 handle, f32 send)
 {
 	runtime::audio::voice_set_reverb_send(handle, send);
+}
+
+// The voice's current reverb send (diagnostics / smoke checks); -1 = stale handle or no reverb node.
+EDITOR_INTERFACE f32 AudioGetVoiceReverbSend(u64 handle)
+{
+	return runtime::audio::voice_get_reverb_send(handle);
 }
 
 // ---- fade envelopes (issue #17): sample-accurate multiplier on top of volume.

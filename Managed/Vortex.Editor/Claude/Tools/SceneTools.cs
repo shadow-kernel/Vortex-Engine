@@ -179,7 +179,8 @@ namespace VortexEditor.Claude.Tools
 
         [McpServerTool(Name = "get_entity", ReadOnly = true, Idempotent = true)]
         [Description("Everything about one entity: transform (local, plus world position under a parent), every component with its " +
-                     "editable properties (the names set_component_properties accepts), children, prefab link.")]
+                     "editable properties (the names set_component_properties accepts), children, prefab link. A Script also lists its " +
+                     "behaviour's public fields under fields (this entity's value: its override, else the code default; overridden_fields names the overrides).")]
         public static object GetEntity([Description("Entity id, path or name")] string entity)
         {
             var e = SceneModel.Resolve(entity);
@@ -319,7 +320,11 @@ namespace VortexEditor.Claude.Tools
         {
             if (props.ValueKind != JsonValueKind.Object) throw new ToolError("properties must be an object {\"name\": value}.");
             var done = new List<string>();
-            foreach (var p in props.EnumerateObject()) done.Add(ComponentProps.Set(c, p.Name, p.Value));
+            foreach (var p in props.EnumerateObject())
+            {
+                string set = ComponentProps.Set(c, p.Name, p.Value);
+                if (set != null) done.Add(set);   // null: a key get_entity shows for reading only (#405)
+            }
             return done;
         }
 
@@ -399,7 +404,7 @@ namespace VortexEditor.Claude.Tools
             [Description("Static (never moves; batched)")] bool? @static = null)
         {
             var e = SceneModel.Resolve(entity);
-            bool playing = PlayModeService.Instance.State == PlayState.Playing;
+            bool playing = SceneModel.Playing;   // paused too (#423)
             if (!string.IsNullOrWhiteSpace(name)) SceneModel.Set(e, "Name", () => e.Name, v => e.Name = v, name.Trim());
             if (tag != null) SceneModel.Set(e, "Tag", () => e.Tag, v => e.Tag = v, tag);
             if (active.HasValue)
@@ -410,7 +415,7 @@ namespace VortexEditor.Claude.Tools
                 else SceneModel.Set(e, "Active", () => e.IsActive, v => e.IsActive = v, active.Value);
             }
             if (@static.HasValue) SceneModel.Set(e, "Static", () => e.IsStatic, v => e.IsStatic = v, @static.Value);
-            return playing ? new { runtime_only = true, note = "play mode: live only, reverted on Stop", entity = SceneModel.Brief(e) } : SceneModel.Brief(e);
+            return SceneModel.Brief(e);   // in play the tool host adds runtime_only (#423), the shape stays
         }
 
         [McpServerTool(Name = "parent_entity")]
@@ -494,7 +499,9 @@ namespace VortexEditor.Claude.Tools
         [McpServerTool(Name = "set_component_properties", Idempotent = true)]
         [Description("Sets properties of an entity's component: {\"intensity\": 2.5, \"light_type\": \"Spot\", \"color\": \"#ff8800\"}. " +
                      "Names as get_entity shows them (snake_case or PascalCase); enums take their names; vectors [x, y, z]; " +
-                     "'enabled' turns the component on/off. Errors list the valid names and values.")]
+                     "'enabled' turns the component on/off. On a Script the behaviour's public fields are set the same way " +
+                     "({\"Speed\": 2.5} or {\"fields\": {…}}; null or the code default resets a field to the code default), and the properties " +
+                     "get_entity shows can be sent back as they are. Errors list the valid names and values.")]
         public static object SetComponentProperties(
             [Description("Entity id, path or name")] string entity,
             [Description("Component type, e.g. Light")] string component,
@@ -505,9 +512,8 @@ namespace VortexEditor.Claude.Tools
             var c = ComponentProps.On(e, component, index);
             var done = SetProps(c, properties);
             ToolContext.UndoLabel = "edit " + c.GetType().Name + " of " + e.Name;
-            bool playing = PlayModeService.Instance.State == PlayState.Playing;
-            return new { entity = SceneModel.ShortId(e), type = c.GetType().Name, set = done, properties = ComponentProps.Values(c),
-                runtime_only = playing ? true : (bool?)null, note = playing ? "play mode: live only, reverted on Stop" : null };
+            // in play the tool host adds runtime_only (#423)
+            return new { entity = SceneModel.ShortId(e), type = c.GetType().Name, set = done, properties = ComponentProps.Values(c) };
         }
 
         // ================================================================== selection

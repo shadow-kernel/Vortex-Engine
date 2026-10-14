@@ -140,7 +140,9 @@ namespace Editor.Core.Services
                 throw new ArgumentNullException(nameof(entity));
 
             // Prefabs sollen f�r Nutzer lesbar sein -> JSON speichern
+            bool created = !System.IO.File.Exists(filePath);
             DataSerializer.SaveAsJson(entity, filePath);
+            PlaySession.NoteWrite(filePath, created);   // Stop re-syncs the instances of a prefab written while playing (#423)
         }
 
         /// <summary>

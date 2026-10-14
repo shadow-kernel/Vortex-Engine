@@ -115,6 +115,7 @@ namespace Editor.Core.Editing
         {
             if (PlayModeService.Instance.IsPlaying) Stop();
             var project = ProjectData.Current;
+            try { Editor.UI.Vui.VuiStack.Instance.Reset(); } catch { }   // no screen or cached canvas of this project survives it (#477)
             try { SelectionService.Instance.ClearSelection(); } catch { }
             try { SceneRenderService.Instance.ClearAllRenderables(); } catch { }
             try { SceneRenderService.EvictModelsUnusedBy(null); } catch { }   // every model of the closed project (#358)

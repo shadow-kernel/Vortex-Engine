@@ -241,6 +241,12 @@ namespace vortex::runtime
 	bool GameHost::mouse_down() { return g_mdown; }
 	int  GameHost::client_width() { return g_cw; }
 	int  GameHost::client_height() { return g_ch; }
+	// SDL measures the window (and the mouse) in points and the drawable in pixels: 2 on a Retina display (#454)
+	float GameHost::pixel_density()
+	{
+		const float d = g_window ? SDL_GetWindowPixelDensity(g_window) : 0.0f;
+		return d > 0.0f ? d : 1.0f;
+	}
 
 	bool GameHost::key_down(int vk)
 	{

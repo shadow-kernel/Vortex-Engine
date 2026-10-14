@@ -10,6 +10,7 @@ using Editor.Core.UndoRedo;
 using Editor.Core.UndoRedo.Commands;
 using Editor.ECS;
 using Editor.ECS.Components;
+using Editor.ECS.Components.Scripting;
 
 namespace VortexEditor.Claude
 {
@@ -23,6 +24,10 @@ namespace VortexEditor.Claude
         public static ProjectData Project => ProjectData.Current ?? throw new ToolError("No project is open in the Vortex editor. Ask the user to open one.");
 
         public static Scene ActiveScene => Project.ActiveScene ?? throw new ToolError("The project has no active scene. Use list_scenes and open_scene.");
+
+        /// <summary>The game runs or is paused: Stop puts the scenes back as they were before Play (#318, #423), so a scene
+        /// edit made now only lasts until exit_play_mode (the tool host says so with runtime_only).</summary>
+        public static bool Playing => Editor.Core.Services.PlayModeService.Instance.IsPlaying;
 
         /// <summary>Scenes to search: the active one first, then the other loaded scenes.</summary>
         public static IEnumerable<Scene> SearchScenes()
@@ -260,7 +265,14 @@ namespace VortexEditor.Claude
                 ?? throw new ToolError(c.GetType().Name + " has no editable property '" + name + "'. Properties: " + string.Join(", ", props.Select(p => SnakeName(p.Name))));
         }
 
-        /// <summary>All editable values of a component, for get_entity.</summary>
+        private static bool HasProperty(Component c, string name)
+        {
+            string n = Norm(name);
+            if (n == "enabled") n = "isenabled";
+            return Editable(c.GetType()).Any(p => Norm(p.Name) == n);
+        }
+
+        /// <summary>All editable values of a component, for get_entity — a Script adds its behaviour's public fields (#405).</summary>
         public static Dictionary<string, object> Values(Component c)
         {
             var d = new Dictionary<string, object>();
@@ -268,6 +280,7 @@ namespace VortexEditor.Claude
             {
                 try { d[SnakeName(p.Name)] = ToJson(p.GetValue(c)); } catch { }
             }
+            if (c is Script sc) { try { ScriptFields.Describe(sc, d); } catch { } }
             return d;
         }
 
@@ -295,6 +308,8 @@ namespace VortexEditor.Claude
                 }
                 return "color";
             }
+            // a Script's other names are its behaviour's public fields (#405): {"Speed": 2} or {"fields": {"Speed": 2}}
+            if (c is Script sc && !HasProperty(c, name)) return ScriptFields.SetFromProperties(sc, name, value);
             var p = FindProperty(c, name);
             object converted = Convert(value, p.PropertyType, p.Name);
             SceneModel.Set<object>(c, p.Name, () => p.GetValue(c), x => p.SetValue(c, x), converted);

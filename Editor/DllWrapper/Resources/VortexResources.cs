@@ -406,6 +406,41 @@ namespace Editor.DllWrapper
             public long TextureId { get; set; }
         }
 
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int GetLastModelImportWarnings([In, Out] byte[] outText, int maxLen);
+
+        /// <summary>The warnings of the most recent model import on this thread (#470): what the importer could not
+        /// reproduce, e.g. a glTF material whose maps need different UV transforms. Empty when there were none.</summary>
+        public static string[] LastModelImportWarnings()
+        {
+            try
+            {
+                int needed = GetLastModelImportWarnings(null, 0);
+                if (needed <= 0) return Array.Empty<string>();
+                var buf = new byte[needed];
+                GetLastModelImportWarnings(buf, needed);
+                int len = Array.IndexOf(buf, (byte)0);
+                return System.Text.Encoding.UTF8.GetString(buf, 0, len < 0 ? buf.Length : len).Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            }
+            catch (EntryPointNotFoundException) { return Array.Empty<string>(); }
+        }
+
+        private static readonly System.Collections.Generic.HashSet<string> _reportedImportWarnings = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+
+        /// <summary>Show the import's warnings in the console (#470), naming the model — once per model and message, however
+        /// often thumbnails, previews and the scene import it again.</summary>
+        private static void ReportImportWarnings(string filepath)
+        {
+            string[] warnings;
+            try { warnings = LastModelImportWarnings(); } catch { return; }
+            foreach (var w in warnings)
+            {
+                string line = "Model import " + System.IO.Path.GetFileName(filepath) + ": " + w;
+                lock (_reportedImportWarnings) { if (!_reportedImportWarnings.Add(line)) continue; }
+                try { Editor.Core.Services.ConsoleService.Instance.LogWarning(line); } catch { }
+            }
+        }
+
         /// <summary>
         /// Import a model with separate meshes and materials for each submesh
         /// </summary>
@@ -417,6 +452,7 @@ namespace Editor.DllWrapper
             var textureIds = new long[maxSubmeshes];
 
             int count = ImportModelWithMaterials(filepath, meshIds, materialIds, textureIds, maxSubmeshes);
+            ReportImportWarnings(filepath);
 
             var result = new SubmeshImportData[count];
             for (int i = 0; i < count; i++)
@@ -449,6 +485,7 @@ namespace Editor.DllWrapper
             int count;
             try { count = ImportModelWithMaterialsCached(filepath, cacheDir, meshIds, materialIds, textureIds, maxSubmeshes, out cached); }
             catch (EntryPointNotFoundException) { return ImportModelWithMaterialsFromFile(filepath); }
+            ReportImportWarnings(filepath);
 
             var result = new SubmeshImportData[count];
             for (int i = 0; i < count; i++)
@@ -728,15 +765,68 @@ namespace Editor.DllWrapper
             }
         }
 
-        /// <summary>Per-submesh PBR material properties (base color + metallic + roughness) from the native import.</summary>
-        public class SubmeshMaterialProps { public float[] BaseColor = { 0.8f, 0.8f, 0.8f, 1f }; public float Metallic = 0f; public float Roughness = 0.5f; }
+        /// <summary>Per-submesh PBR material properties (base color + metallic + roughness) and the glTF alpha mode and
+        /// sidedness (#441) from the native import.</summary>
+        public class SubmeshMaterialProps
+        {
+            public float[] BaseColor = { 0.8f, 0.8f, 0.8f, 1f }; public float Metallic = 0f; public float Roughness = 0.5f;
+            /// <summary>Engine blend mode: 0 opaque, 1 alpha blend (glTF BLEND), 3 alpha test (glTF MASK).</summary>
+            public int BlendMode;
+            /// <summary>The cutoff of an alpha-test (MASK) material — glTF alphaCutoff, 0.5 by default; 0 otherwise.</summary>
+            public float AlphaCutoff;
+            /// <summary>glTF doubleSided: drawn without back-face culling.</summary>
+            public bool TwoSided;
+            /// <summary>glTF emissiveFactor (RGB, black = no emission — the glTF default) (#450).</summary>
+            public float[] EmissiveColor = { 0f, 0f, 0f };
+            /// <summary>glTF KHR_materials_emissive_strength (1 when the file has none) (#450).</summary>
+            public float EmissiveStrength = 1f;
+
+            /// <summary>True when the material emits light: a non-black emissiveFactor and a strength above 0.</summary>
+            public bool Emits => EmissiveColor != null && EmissiveColor.Length >= 3 && EmissiveStrength > 0f
+                                 && (EmissiveColor[0] > 0f || EmissiveColor[1] > 0f || EmissiveColor[2] > 0f);
+
+            /// <summary>Write the imported surface into a sidecar material: base colour, PBR factors, the blend mode,
+            /// cutoff and sidedness a glTF asks for (#441) — so MASK foliage stays cut out once a .vmat drives it — and its
+            /// emission (#450) with glTF's meaning, emission = EmissiveColor * EmissiveStrength * EmissiveTexture: a
+            /// black emissiveFactor writes no emission even when the material has an emissive map.</summary>
+            public void ApplyTo(Editor.Core.Assets.VortexMaterial v)
+            {
+                if (v == null) return;
+                if (BaseColor != null && BaseColor.Length >= 4) v.BaseColor = BaseColor;
+                v.Metallic = Metallic;
+                v.Roughness = Roughness;
+                v.BlendMode = Editor.Core.Assets.VortexMaterial.BlendModeName(BlendMode);
+                if (BlendMode == 3) v.AlphaCutoff = AlphaCutoff;
+                v.TwoSided = TwoSided;
+                if (Emits)
+                {
+                    v.EmissiveColor = new[] { EmissiveColor[0], EmissiveColor[1], EmissiveColor[2] };
+                    v.EmissiveStrength = EmissiveStrength;
+                }
+                else
+                {
+                    v.EmissiveColor = new[] { 0f, 0f, 0f };
+                    v.EmissiveStrength = 0f;
+                }
+            }
+        }
 
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern int GetModelMaterialProps(
             [MarshalAs(UnmanagedType.LPStr)] string filepath,
             [In, Out] float[] outBaseColors, [In, Out] float[] outMetallic, [In, Out] float[] outRoughness, int maxSubmeshes);
 
-        /// <summary>Interpret each submesh's real material (base color + metallic + roughness) so the editor shows it.</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int GetModelMaterialAlpha(
+            [MarshalAs(UnmanagedType.LPStr)] string filepath,
+            [In, Out] int[] outBlendMode, [In, Out] float[] outAlphaCutoff, [In, Out] int[] outTwoSided, int maxSubmeshes);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int GetModelMaterialEmissive(
+            [MarshalAs(UnmanagedType.LPStr)] string filepath, [In, Out] float[] outRgb, [In, Out] float[] outStrength, int maxSubmeshes);
+
+        /// <summary>Interpret each submesh's real material (base color + metallic + roughness, glTF alpha mode,
+        /// sidedness and emission) so the editor shows it.</summary>
         public static SubmeshMaterialProps[] GetSubmeshMaterialProps(string filepath, int maxSubmeshes = 64)
         {
             try
@@ -746,17 +836,53 @@ namespace Editor.DllWrapper
                 var rough = new float[maxSubmeshes];
                 int count = GetModelMaterialProps(filepath, bc, met, rough, maxSubmeshes);
                 if (count < 0) count = 0;
+                var blend = new int[maxSubmeshes];
+                var cutoff = new float[maxSubmeshes];
+                var twoSided = new int[maxSubmeshes];
+                int alphaCount = 0;
+                try { alphaCount = GetModelMaterialAlpha(filepath, blend, cutoff, twoSided, maxSubmeshes); }
+                catch (EntryPointNotFoundException) { alphaCount = 0; }   // an older engine: opaque, as it imported
+                var emissive = new float[maxSubmeshes * 3];
+                var strength = new float[maxSubmeshes];
+                int emissiveCount = 0;
+                try { emissiveCount = GetModelMaterialEmissive(filepath, emissive, strength, maxSubmeshes); }
+                catch (EntryPointNotFoundException) { emissiveCount = 0; }   // an older engine: no emission, as it imported
                 var result = new SubmeshMaterialProps[count];
                 for (int i = 0; i < count; i++)
                     result[i] = new SubmeshMaterialProps
                     {
                         BaseColor = new[] { bc[i * 4], bc[i * 4 + 1], bc[i * 4 + 2], bc[i * 4 + 3] },
                         Metallic = met[i],
-                        Roughness = rough[i]
+                        Roughness = rough[i],
+                        BlendMode = i < alphaCount ? blend[i] : 0,
+                        AlphaCutoff = i < alphaCount ? cutoff[i] : 0f,
+                        TwoSided = i < alphaCount && twoSided[i] != 0,
+                        EmissiveColor = i < emissiveCount ? new[] { emissive[i * 3], emissive[i * 3 + 1], emissive[i * 3 + 2] } : new[] { 0f, 0f, 0f },
+                        EmissiveStrength = i < emissiveCount ? strength[i] : 1f
                     };
                 return result;
             }
             catch { return new SubmeshMaterialProps[0]; }
+        }
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int GetModelAlbedoSources([MarshalAs(UnmanagedType.LPStr)] string filepath, [In, Out] int[] outSource, int maxSubmeshes);
+
+        /// <summary>Per submesh, what its material says about an albedo map (#453): 0 = none (a colour-only material),
+        /// 1 = it names one (the file may be missing), 2 = the file has no material for it (an OBJ without .mtl). Null
+        /// when the engine cannot tell (an older build).</summary>
+        public static int[] GetSubmeshAlbedoSources(string filepath, int maxSubmeshes = 64)
+        {
+            if (string.IsNullOrEmpty(filepath) || maxSubmeshes <= 0) return null;
+            try
+            {
+                var sources = new int[maxSubmeshes];
+                int count = GetModelAlbedoSources(filepath, sources, maxSubmeshes);
+                if (count < 0) count = 0;
+                if (count < sources.Length) Array.Resize(ref sources, count);
+                return sources;
+            }
+            catch (EntryPointNotFoundException) { return null; }
         }
 
         [DllImport(_dllName, CallingConvention = _cc)]

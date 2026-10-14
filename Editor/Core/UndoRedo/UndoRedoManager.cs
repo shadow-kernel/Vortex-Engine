@@ -391,6 +391,37 @@ namespace Editor.Core.UndoRedo
             OnStateChanged();
         }
 
+        /// <summary>The undo and redo history as it is now, for <see cref="RestoreHistory"/>.</summary>
+        public sealed class History
+        {
+            internal IUndoableCommand[] Undo, Redo;   // newest first
+        }
+
+        /// <summary>Remember the undo and redo history (editor play keeps it at Play, #423).</summary>
+        public History SaveHistory() => new History { Undo = _undoStack.ToArray(), Redo = _redoStack.ToArray() };
+
+        /// <summary>
+        /// Put a history from <see cref="SaveHistory"/> back and return how many steps it drops. Stop restores the scenes
+        /// of Play, and the steps recorded while playing describe a scene that is gone: undoing one afterwards re-broke the
+        /// restored hierarchy (a re-parent listed the entity twice, a delete duplicated it, an add removed whatever sat at
+        /// its old index). Like Unity, play-time steps go with the play session (#423).
+        /// </summary>
+        public int RestoreHistory(History saved)
+        {
+            if (saved == null) return 0;
+            var keep = new HashSet<IUndoableCommand>(saved.Undo, ReferenceEqualityComparer.Instance);
+            keep.UnionWith(saved.Redo);
+            int dropped = 0;
+            foreach (var c in _undoStack) if (!keep.Contains(c)) dropped++;
+            foreach (var c in _redoStack) if (!keep.Contains(c)) dropped++;
+            _undoStack.Clear();
+            for (int i = saved.Undo.Length - 1; i >= 0; i--) _undoStack.Push(saved.Undo[i]);
+            _redoStack.Clear();
+            for (int i = saved.Redo.Length - 1; i >= 0; i--) _redoStack.Push(saved.Redo[i]);
+            OnStateChanged();
+            return dropped;
+        }
+
         /// <summary>
         /// Gibt eine Liste aller Undo-Befehle zurück (neueste zuerst).
         /// </summary>

@@ -1,8 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using Editor.Core.Data;
+using Editor.Core.Editing;
 using Editor.Core.Input;
 using Editor.Core.Services;
+using Editor.Core.UndoRedo;
 using Editor.DllWrapper;
 using Editor.ECS;
 using Editor.Scripting;
@@ -84,6 +87,9 @@ namespace Editor.Core.Viewport
         public VuiCanvas PreviewCanvas { get; set; }
         public event Action<bool> FlyModeChanged;
         public event Action<bool> CursorCaptureChanged;
+        /// <summary>The camera the viewport looks through changed (null: the free editor camera) — the toolbar's camera
+        /// picker follows it, also when a tool switched back to the editor camera (#444).</summary>
+        public event Action<GameEntity> ViewThroughChanged;
 
         public bool IsInitialized => _initialized;
         public bool IsPlaying => PlayModeService.Instance.IsPlaying;
@@ -93,6 +99,50 @@ namespace Editor.Core.Viewport
         public bool IsMouseCaptured => _mouseCaptured;
         public EditorCameraController Camera => _camera;
         public int CurrentFps => VortexAPI.CurrentFPS;
+
+        /// <summary>What the viewport renders through (#444).</summary>
+        public enum ViewSource
+        {
+            /// <summary>The free editor camera (<see cref="Camera"/>).</summary>
+            EditorCamera,
+            /// <summary>Edit mode in the Game view: the scene's main camera, re-applied every frame.</summary>
+            GameView,
+            /// <summary>An engine camera chosen in <see cref="CameraService"/> (a scene camera looked through).</summary>
+            SceneCamera,
+            /// <summary>Play: the game drives the view.</summary>
+            Game,
+        }
+
+        /// <summary>The camera the next frame renders through — the same choice <see cref="Tick"/> makes, so a tool can say
+        /// what an image shows instead of assuming the editor camera (#444). The Game view of a scene without a main
+        /// camera leaves the editor camera's view in place.</summary>
+        public ViewSource CurrentView
+        {
+            get
+            {
+                if (PlayModeService.Instance.State == PlayState.Playing) return ViewSource.Game;
+                if (_gameViewMode) return PlayCameraHelper.FindMainCameraEntity(_currentScene ?? ProjectData.Current?.ActiveScene) != null ? ViewSource.GameView : ViewSource.EditorCamera;
+                return CameraService.Instance.IsGameCameraActive ? ViewSource.SceneCamera : ViewSource.EditorCamera;
+            }
+        }
+
+        /// <summary>Let the editor camera drive the edit-mode view (#444): leaves the Game view (the Scene tab) and stops
+        /// looking through a scene camera — otherwise every frame puts that camera back over a pose a tool just set.
+        /// Returns what drove the view before (<see cref="ViewSource.EditorCamera"/>: nothing changed). Not while playing.</summary>
+        public ViewSource UseEditorCamera()
+        {
+            var before = CurrentView;
+            if (PlayModeService.Instance.IsPlaying) return before;
+            if (PlayModeService.Instance.IsGameView) PlayModeService.Instance.SetGameView(false);   // → OnGameViewChanged
+            // a camera picked in the toolbar blocks the editor camera's input even where it does not drive the render
+            if (_viewingThroughGameCamera || CameraService.Instance.IsGameCameraActive) ViewThroughCamera(null);
+            ReapplyEditorCamera();
+            return before;
+        }
+
+        /// <summary>Push the editor camera's pose to the renderer again (the Game view left the main camera's there).</summary>
+        private void ReapplyEditorCamera() =>
+            _camera.SetFromEntityTransform(_camera.PositionX, _camera.PositionY, _camera.PositionZ, _camera.Pitch, _camera.Yaw, _camera.Roll);
 
         public Scene CurrentScene
         {
@@ -209,8 +259,8 @@ namespace Editor.Core.Viewport
                 if (uw > 1 && uh > 1)
                 {
                     if (!_playGridHidden) { _savedGrid = VortexAPI.IsGridVisible; VortexAPI.ShowGrid(false); _playGridHidden = true; }
-                    FeedEditorUI((float)uw, (float)uh);
-                    VortexAPI.UIBegin((float)uw, (float)uh);
+                    FeedEditorUI();
+                    VortexAPI.UIBegin((float)uw, (float)uh);   // the same point space the scripts see (#454)
                 }
 
                 VortexAPI.StepEngineRuntime(dt);
@@ -233,6 +283,10 @@ namespace Editor.Core.Viewport
                     var acts = VuiStack.Instance.ConsumeFiredActions();
                     if (acts != null) ScriptRuntime.Instance.InvokeUiActions(acts);
                 }
+
+                // a script's Application.Quit() — from Update, LateUpdate, a coroutine or a UI button — stops play here,
+                // after the whole tick, through the same Stop as the toolbar and exit_play_mode (#410)
+                if (ScriptRuntime.Instance.ConsumeQuitRequest()) EditorSession.Instance.Stop();
             }
             else
             {
@@ -607,6 +661,7 @@ namespace Editor.Core.Viewport
                 _viewingThroughGameCamera = false;
                 CameraService.Instance.SwitchToEditorCamera();
                 SetCursorHidden(false);
+                ViewThroughChanged?.Invoke(null);
                 return;
             }
             var cam = cameraEntity.GetComponent<Editor.ECS.Components.Rendering.Camera>();
@@ -614,6 +669,7 @@ namespace Editor.Core.Viewport
             CameraService.Instance.SwitchToGameCamera(cameraEntity.Id);
             _viewingThroughGameCamera = true;
             _sceneDirty = true;
+            ViewThroughChanged?.Invoke(cameraEntity);
         }
 
         // ------------------------------------------------------------------------------------------ play mode
@@ -621,6 +677,9 @@ namespace Editor.Core.Viewport
         private void OnGameViewChanged(bool active)
         {
             _gameViewMode = active;
+            // back to the Scene view while editing: the renderer still holds the main camera's pose (the editor camera only
+            // pushes its own when it moves) — show the editor camera at once (#444)
+            if (!active && !PlayModeService.Instance.IsPlaying) ReapplyEditorCamera();
             PublishStatus();
         }
 
@@ -715,14 +774,21 @@ namespace Editor.Core.Viewport
             _host?.SetCursorHidden(hidden);
         }
 
-        private void FeedEditorUI(float renderW, float renderH)
+        /// <summary>The play view's UI frame (#454): the viewport's LOGICAL size and the pointer as the shell reports it —
+        /// Avalonia DIPs, i.e. points on macOS — the unit the standalone player reports too (its window's points), plus the
+        /// device pixels per point. Never the render size: on a Retina display that is twice as large, the editor's
+        /// UI.Width would differ from the player's and a HUD laid out in it would shrink to half.</summary>
+        internal static (float W, float H, float MouseX, float MouseY, float Scale) UiFrame(IViewportHost host, double pointerX, double pointerY)
         {
-            float mx = 0f, my = 0f;
-            if (_host != null && _host.Width > 1)
-            {
-                mx = (float)(_pointerX * (renderW / _host.Width));
-                my = (float)(_pointerY * (renderH / _host.Height));
-            }
+            if (host == null || host.Width <= 1 || host.Height <= 1) return (0f, 0f, 0f, 0f, 1f);
+            double s = host.Scaling > 0 ? host.Scaling : 1.0;
+            return ((float)host.Width, (float)host.Height, (float)pointerX, (float)pointerY, (float)s);
+        }
+
+        private void FeedEditorUI()
+        {
+            var f = UiFrame(_host, _pointerX, _pointerY);
+            float mx = f.MouseX, my = f.MouseY;
             bool down = _lmbDown;
             bool pressed = down && !_lmbPrevEd;
             _lmbPrevEd = down;
@@ -735,7 +801,7 @@ namespace Editor.Core.Viewport
                 if (held && !_navPrev[i] && _uiKeyCount < _uiKeys.Length) _uiKeys[_uiKeyCount++] = _navVks[i];
                 _navPrev[i] = held;
             }
-            ScriptRuntime.Instance.SetUIFrame(renderW, renderH, mx, my, down, pressed);
+            ScriptRuntime.Instance.SetUIFrame(f.W, f.H, mx, my, down, pressed, f.Scale);
         }
 
         private void BeginPlaySimulation()
@@ -759,7 +825,13 @@ namespace Editor.Core.Viewport
             EnsurePlayerControllerOnMainCamera(scene);
             AudioPreviewService.Instance.Stop();
             AudioPlaybackService.Instance.BeginPlay(scene);
-            ScriptRuntime.Instance.Begin(scene);
+            VuiStack.Instance.Reset();   // a session starts without screens, like the standalone player (#477)
+            PlaySession.Begin();         // from here on: which files play writes (#423)
+            // the play view's UI frame before any Start(): UI.Width / Height / Scale are real from a script's first line —
+            // the per-tick feed comes one frame later, so Start() saw zeros (first play) or the last session's size (#454)
+            var f = UiFrame(_host, _pointerX, _pointerY);
+            ScriptRuntime.Instance.SetUIFrame(f.W, f.H, f.MouseX, f.MouseY, false, false, f.Scale);
+            ScriptRuntime.Instance.BeginPlaySession(scene);   // a new session reads the saves from disk again (#452)
         }
 
         private void EnsurePlayerControllerOnMainCamera(Scene scene)
@@ -835,10 +907,22 @@ namespace Editor.Core.Viewport
             _transformSnapshot.Clear();
             _colorSnapshot.Clear();
             var scene = _currentScene ?? ProjectData.Current?.ActiveScene;
-            _componentSnapshot = PlaySnapshot.Take(scene);
+            // every loaded scene, not just the played one: a tool or the hierarchy may edit another one while playing (#423)
+            var scenes = new List<Scene>();
+            if (scene != null) scenes.Add(scene);
+            var project = ProjectData.Current;
+            if (project?.Scenes != null)
+                foreach (var s in project.Scenes) if (s != null && s.IsLoaded && !scenes.Contains(s)) scenes.Add(s);
+            _componentSnapshot = PlaySnapshot.Take(scenes);
+            _undoAtPlay = UndoRedoManager.Instance.SaveHistory();
             if (scene?.Entities != null)
                 foreach (var e in scene.Entities) SnapshotTransformRecursive(e);
         }
+
+        private UndoRedoManager.History _undoAtPlay;
+
+        /// <summary>Whether Stop puts this scene back: it was loaded when play started (#423). False outside play.</summary>
+        public static bool RevertsOnStop(Scene scene) => Main?._componentSnapshot?.Covers(scene) == true;
 
         private void SnapshotTransformRecursive(GameEntity e)
         {
@@ -857,9 +941,18 @@ namespace Editor.Core.Viewport
             _simActive = false;
             AudioPlaybackService.Instance.EndPlay();
             ScriptRuntime.Instance.End();
+            ScriptRuntime.Instance.ConsumeQuitRequest();   // play is stopping anyway: no quit may carry over (#410)
+            VuiStack.Instance.Reset();   // the session's screens go with its scripts, and its cached canvases (#477)
+            PlaySession.End();
             VortexAPI.ClearAllRigidbodies();
-            _componentSnapshot?.Restore();   // after OnDestroy: lights scripts changed
+            var snapshot = _componentSnapshot;
             _componentSnapshot = null;
+            snapshot?.Restore();   // after OnDestroy: whatever play changed in the loaded scenes
+            // the undo steps made while playing describe the scenes Stop just put back: undoing one afterwards re-broke the
+            // hierarchy (#423) — like Unity, they go with the session
+            int undoDropped = UndoRedoManager.Instance.RestoreHistory(_undoAtPlay);
+            _undoAtPlay = null;
+            AfterPlay(snapshot, undoDropped);
             foreach (var s in _transformSnapshot)
             {
                 if (s.ent?.Transform == null) continue;
@@ -877,6 +970,90 @@ namespace Editor.Core.Viewport
                 _hasCamSnap = false;
             }
             _sceneDirty = true;
+        }
+
+        /// <summary>What Stop does beyond the snapshot (#423): prefabs written while playing re-sync their instances (the
+        /// snapshot put the pre-play ones back), data files play created for entities that are gone are deleted, no selection
+        /// points at a removed entity, and one Console line says what was removed and reverted — and that files written while
+        /// playing stay on disk (play edits made in the hierarchy, by drag and drop, paste or duplicate are gone too).</summary>
+        private static void AfterPlay(PlaySnapshot snap, int undoDropped)
+        {
+            var project = ProjectData.Current;
+            int prefabs = 0;
+            foreach (var path in PlaySession.Written())
+            {
+                if (!path.EndsWith(PrefabService.PrefabExtension, StringComparison.OrdinalIgnoreCase)) continue;
+                try { PrefabService.Instance.ReloadInstancesFromPrefab(path); prefabs++; }
+                catch (Exception ex) { ConsoleService.Instance.LogWarning("Stop: could not re-sync the instances of " + Path.GetFileName(path) + ": " + ex.Message); }
+            }
+            var loaded = new List<Scene>();
+            if (project?.Scenes != null) foreach (var s in project.Scenes) if (s != null && s.IsLoaded) loaded.Add(s);
+            var deleted = PlaySession.DeleteOrphanedDataFiles(loaded, out string kept);
+            DropSelectionOfRemoved(snap);
+
+            var parts = new List<string>();
+            if (snap != null && snap.Removed.Count > 0)
+            {
+                var names = new List<string>();
+                foreach (var e in snap.Removed) names.Add(e.Name);
+                parts.Add("removed " + Count(snap.Removed.Count, "entity", "entities") + " added while playing (" + Few(names) + ")");
+            }
+            if (snap != null && snap.PutBack > 0) parts.Add("put back " + Count(snap.PutBack, "entity", "entities") + " moved or deleted while playing");
+            if (snap != null && snap.SettingsReverted.Count > 0)
+            {
+                var names = new List<string>();
+                foreach (var s in snap.SettingsReverted) names.Add("'" + s.Name + "'");
+                parts.Add("reverted the environment of " + string.Join(", ", names));
+            }
+            if (undoDropped > 0) parts.Add("dropped " + Count(undoDropped, "undo step", "undo steps") + " made while playing");
+            if (prefabs > 0) parts.Add("re-synced the instances of " + Count(prefabs, "prefab", "prefabs") + " saved while playing");
+            if (deleted.Count > 0)
+            {
+                var names = new List<string>();
+                foreach (var f in deleted) names.Add(Path.GetFileName(f));
+                parts.Add("deleted " + Count(deleted.Count, "data file", "data files") + " created for them (" + Few(names) + ")");
+            }
+            if (kept != null) parts.Add(kept);
+            var stay = PlaySession.FilesWrittenSince(project?.Path, PlaySession.StartedUtc);
+            if (parts.Count == 0 && stay.Count == 0) return;
+            string files = "files written while playing stay on disk";
+            if (stay.Count > 0)
+            {
+                var names = new List<string>();
+                foreach (var f in stay) names.Add(Path.GetFileName(f));
+                files += " (" + stay.Count + ": " + Few(names) + ")";
+            }
+            ConsoleService.Instance.Log("Stop: " + (parts.Count > 0 ? string.Join("; ", parts) + "; " : "") + files + ".");
+        }
+
+        private static string Count(int n, string one, string many) => n + " " + (n == 1 ? one : many);
+
+        private static string Few(List<string> names) => names.Count <= 3 ? string.Join(", ", names) : string.Join(", ", names.GetRange(0, 3)) + ", …";
+
+        /// <summary>An entity created while playing is gone after the restore (#423) — and so is every selection of it or of
+        /// something under it: the primary selection, the hierarchy's multi-selection and each scene's own (a stale entry made
+        /// Duplicate add a copy after Stop).</summary>
+        private static void DropSelectionOfRemoved(PlaySnapshot snap)
+        {
+            if (snap == null || snap.Removed.Count == 0) return;
+            var removed = new HashSet<GameEntity>(snap.Removed, ReferenceEqualityComparer.Instance);
+            bool Gone(GameEntity e)
+            {
+                for (int depth = 0; e != null && depth < 512; e = e.Parent, depth++) if (removed.Contains(e)) return true;
+                return false;
+            }
+            try
+            {
+                var hierarchy = EditorSession.Instance.Hierarchy;
+                if (hierarchy.SelectedEntities != null)
+                    foreach (var e in new List<GameEntity>(hierarchy.SelectedEntities)) if (Gone(e)) hierarchy.RemoveFromSelection(e);
+                if (Gone(hierarchy.SelectedEntity)) hierarchy.SelectedEntity = null;
+            }
+            catch { }
+            if (Gone(SelectionService.Instance.SelectedEntity)) SelectionService.Instance.ClearSelection();
+            var project = ProjectData.Current;
+            if (project?.Scenes != null)
+                foreach (var s in project.Scenes) if (s != null && Gone(s.SelectedEntity)) s.SelectedEntity = null;
         }
 
         private void ApplyMainCameraView() => PlayCameraHelper.ApplyMainCamera(_currentScene ?? ProjectData.Current?.ActiveScene);

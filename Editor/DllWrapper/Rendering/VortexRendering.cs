@@ -125,6 +125,7 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostMouseDown")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool GameHostMouseDownNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostClientWidth")] private static extern int GameHostClientWidthNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostClientHeight")] private static extern int GameHostClientHeightNative();
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostPixelDensity")] private static extern float GameHostPixelDensityNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostKeyDown")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool GameHostKeyDownNative(int vk);
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SetGameHostMouseCaptured")] private static extern void SetGameHostMouseCapturedNative([MarshalAs(UnmanagedType.I1)] bool captured);
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostMouseCaptured")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool GameHostMouseCapturedNative();
@@ -164,6 +165,16 @@ namespace Editor.DllWrapper
         public static bool GameHostMouseDown() => GameHostMouseDownNative();
         public static int GameHostClientWidth() => GameHostClientWidthNative();
         public static int GameHostClientHeight() => GameHostClientHeightNative();
+        private static bool _noPixelDensity;
+        /// <summary>Device pixels per client unit of the game window (2 on a Retina display, 1 on Win32) — UI.Scale in the
+        /// player (#454). 1 when the native library predates the export.</summary>
+        public static float GameHostPixelDensity()
+        {
+            if (_noPixelDensity) return 1f;
+            try { float d = GameHostPixelDensityNative(); return d > 0f && float.IsFinite(d) ? d : 1f; }
+            catch (System.EntryPointNotFoundException) { _noPixelDensity = true; return 1f; }
+            catch { return 1f; }
+        }
         public static bool GameHostKeyDown(int vk) => GameHostKeyDownNative(vk);
         /// <summary>FPS mouse-look: capture hides + re-centers the cursor (delta via GameHostMouseDX/DY); release frees it for menus.</summary>
         public static void SetGameHostMouseCaptured(bool captured) => SetGameHostMouseCapturedNative(captured);
@@ -564,6 +575,35 @@ namespace Editor.DllWrapper
             get { try { return GetPostDrawCallCount(); } catch { return 0; } }
         }
 
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void GetBonePaletteStats(out int used, out int capacity, out int bindPoseFallbacks);
+
+        /// <summary>The bone-palette budget of the main view's last frame (#415): bone matrices in the GPU palette buffer
+        /// (one copy per character — its submeshes share it), the buffer's capacity, and the skinned draws in view that
+        /// were drawn in the bind pose because the budget was full (the farthest / off-screen characters). False with an
+        /// engine library that predates the export.</summary>
+        public static bool TryGetBonePaletteStats(out int used, out int capacity, out int bindPoseFallbacks)
+        {
+            used = capacity = bindPoseFallbacks = 0;
+            try { GetBonePaletteStats(out used, out capacity, out bindPoseFallbacks); return true; }
+            catch (System.EntryPointNotFoundException) { return false; }
+            catch (System.DllNotFoundException) { return false; }
+        }
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void GetLightBudgetStats(out int pointsSubmitted, out int spotsSubmitted, out int pointsShown, out int spotsShown, out int slotChanges);
+
+        /// <summary>The light budget of the main view's last frame (#416): point / spot lights submitted, those holding one of
+        /// the shader's 16 point / 8 spot slots (the most relevant for the camera, fading in / out when the choice changes),
+        /// and the lights that got or gave up a slot in that frame. False with an engine library that predates the export.</summary>
+        public static bool TryGetLightBudgetStats(out int pointsSubmitted, out int spotsSubmitted, out int pointsShown, out int spotsShown, out int slotChanges)
+        {
+            pointsSubmitted = spotsSubmitted = pointsShown = spotsShown = slotChanges = 0;
+            try { GetLightBudgetStats(out pointsSubmitted, out spotsSubmitted, out pointsShown, out spotsShown, out slotChanges); return true; }
+            catch (System.EntryPointNotFoundException) { return false; }
+            catch (System.DllNotFoundException) { return false; }
+        }
+
         /// <summary>
         /// Get vertex count from the engine.
         /// </summary>
@@ -745,6 +785,10 @@ namespace Editor.DllWrapper
         private static extern bool HasRenderTarget(uint targetId);
 
         [DllImport(_dllName, CallingConvention = _cc)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        private static extern bool IsRenderTargetSettled(uint targetId);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void RenderToTarget(uint targetId, ref ViewportCameraDesc camera,
             [MarshalAs(UnmanagedType.I1)] bool renderGrid, [MarshalAs(UnmanagedType.I1)] bool renderGizmos);
 
@@ -790,6 +834,15 @@ namespace Editor.DllWrapper
         public static bool HasSecondaryRenderTarget(uint targetId)
         {
             try { return HasRenderTarget(targetId); } catch { return false; }
+        }
+
+        /// <summary>
+        /// False while a light of the target's view is still fading in or out (the light budget, #416): a view rendered only
+        /// when its camera moves keeps rendering until this is true. True with an engine library that predates the export.
+        /// </summary>
+        public static bool IsSecondaryRenderTargetSettled(uint targetId)
+        {
+            try { return IsRenderTargetSettled(targetId); } catch { return true; }
         }
 
         /// <summary>
@@ -858,6 +911,25 @@ namespace Editor.DllWrapper
             float intensity, float range,
             float spotAngle, float innerSpotAngle,
             int castShadows, float shadowStrength, float shadowBias, int shadowResolution);
+
+        // #416: the same with the light's stable identity (the entity), for the renderer's light budget
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void AddPointLightWithId(
+            float posX, float posY, float posZ,
+            float colorR, float colorG, float colorB,
+            float intensity, float range,
+            int castShadows, float shadowStrength, float shadowBias, ulong lightId);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void AddSpotLightWithId(
+            float posX, float posY, float posZ,
+            float dirX, float dirY, float dirZ,
+            float colorR, float colorG, float colorB,
+            float intensity, float range,
+            float spotAngle, float innerSpotAngle,
+            int castShadows, float shadowStrength, float shadowBias, int shadowResolution, ulong lightId);
+
+        private static bool _lightIdMissing;   // an older engine library without the ...WithId exports
 
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void SetAmbientStrength(float strength);
@@ -940,17 +1012,29 @@ namespace Editor.DllWrapper
         }
 
         /// <summary>
-        /// Add a point light to the scene. Maximum 16 per frame. Shadow params (#25): castShadows
-        /// requests 6-face cube shadows — the renderer shadows the first two such lights per frame.
+        /// Add a point light to the scene for this frame — any number: the renderer gives its 16 slots to the lights most
+        /// relevant to the camera (#335). Shadow params (#25): castShadows requests 6-face cube shadows (two per view).
+        /// <paramref name="lightId"/> (#416) is the light's stable identity — the entity's (SceneRenderService.LightIdOf) — so
+        /// the renderer keeps its slot from frame to frame and fades it when the budget changes; 0 = derived from its look.
         /// </summary>
         public static void SubmitPointLight(
             float posX, float posY, float posZ,
             float colorR, float colorG, float colorB,
             float intensity, float range,
-            bool castShadows = false, float shadowStrength = 1.0f, float shadowBias = 0.0015f)
+            bool castShadows = false, float shadowStrength = 1.0f, float shadowBias = 0.0015f, ulong lightId = 0)
         {
             try
             {
+                if (!_lightIdMissing)
+                {
+                    try
+                    {
+                        AddPointLightWithId(posX, posY, posZ, colorR, colorG, colorB, intensity, range,
+                            castShadows ? 1 : 0, shadowStrength, shadowBias, lightId);
+                        return;
+                    }
+                    catch (System.EntryPointNotFoundException) { _lightIdMissing = true; }
+                }
                 AddPointLight(posX, posY, posZ, colorR, colorG, colorB, intensity, range,
                     castShadows ? 1 : 0, shadowStrength, shadowBias);
             }
@@ -958,9 +1042,10 @@ namespace Editor.DllWrapper
         }
 
         /// <summary>
-        /// Add a spot light to the scene. Maximum 8 per frame. Shadow params (#23): castShadows requests
-        /// this spot as the frame's shadow-casting light — the renderer takes the FIRST such spot (one
-        /// shadow map in v1: the flashlight). Defaults keep every existing caller shadow-free.
+        /// Add a spot light to the scene for this frame — any number: the renderer gives its 8 slots to the lights most
+        /// relevant to the camera, the cone counting (#335, #416). Shadow params (#23): castShadows requests one of the four
+        /// spot shadow maps per view, which stay with the spots holding them unless clearly outranked. Defaults keep every
+        /// existing caller shadow-free. <paramref name="lightId"/> (#416): the light's stable identity, see SubmitPointLight.
         /// </summary>
         public static void SubmitSpotLight(
             float posX, float posY, float posZ,
@@ -969,10 +1054,21 @@ namespace Editor.DllWrapper
             float intensity, float range,
             float spotAngle, float innerSpotAngle,
             bool castShadows = false, float shadowStrength = 1.0f,
-            float shadowBias = 0.0015f, int shadowResolution = 2048)
+            float shadowBias = 0.0015f, int shadowResolution = 2048, ulong lightId = 0)
         {
             try
             {
+                if (!_lightIdMissing)
+                {
+                    try
+                    {
+                        AddSpotLightWithId(posX, posY, posZ, dirX, dirY, dirZ,
+                            colorR, colorG, colorB, intensity, range, spotAngle, innerSpotAngle,
+                            castShadows ? 1 : 0, shadowStrength, shadowBias, shadowResolution, lightId);
+                        return;
+                    }
+                    catch (System.EntryPointNotFoundException) { _lightIdMissing = true; }
+                }
                 AddSpotLight(posX, posY, posZ, dirX, dirY, dirZ,
                     colorR, colorG, colorB, intensity, range, spotAngle, innerSpotAngle,
                     castShadows ? 1 : 0, shadowStrength, shadowBias, shadowResolution);

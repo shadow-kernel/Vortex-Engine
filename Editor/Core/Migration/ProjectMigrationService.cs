@@ -131,8 +131,13 @@ namespace Editor.Core.Migration
             if (m == null) return;
             m.FormatVersion = Current;
             m.EngineVersion = Editor.Core.EngineInfo.VersionString;
+            // a file without the dates reads them as 0001-01-01, which the serializer cannot write east of UTC: the stamp
+            // failed silently and the upgrade was offered again on every open
+            if (m.LastModified == default) m.LastModified = DateTime.Now;
+            if (m.CreatedAt == default) m.CreatedAt = m.LastModified;
             if (!string.IsNullOrEmpty(manifestPath))
-                try { DataSerializer.SaveAsJson(m, manifestPath); } catch { }
+                // merged into the file, so the keys the engine does not know survive the upgrade (#414)
+                try { Editor.Core.Services.ProjectService.WriteManifest(manifestPath, DataSerializer.ToJson(m), baseline: null); } catch { }
         }
 
         // ---- backup / restore ----

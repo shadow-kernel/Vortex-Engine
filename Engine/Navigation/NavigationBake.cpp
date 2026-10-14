@@ -100,6 +100,21 @@ namespace vortex::navigation {
 		std::atomic<s32> g_tiles_total{ 0 };
 		std::mutex g_result_mutex;
 		std::vector<u8> g_result;
+		std::string g_notes;   // bake_notes_copy (guarded by g_result_mutex)
+
+		// A note for the user (bake_notes_copy) — also written to the log.
+		void note(const char* fmt, ...)
+		{
+			char text[512];
+			va_list args;
+			va_start(args, fmt);
+			std::vsnprintf(text, sizeof(text), fmt, args);
+			va_end(args);
+			log("bake: %s", text);
+			std::lock_guard<std::mutex> lock(g_result_mutex);
+			if (!g_notes.empty()) g_notes.push_back('\n');
+			g_notes += text;
+		}
 
 		constexpr f32 k_pi{ 3.14159265358979f };
 
@@ -224,6 +239,55 @@ namespace vortex::navigation {
 			return hi > lo && hi < 3.0e38f && lo > -3.0e38f;
 		}
 
+		// y range of the part of triangle (a, b, c) inside the xz rectangle [x0, x1] x [z0, z1] (Sutherland-Hodgman
+		// against its four sides), i.e. exactly the heights Recast rasterises into a heightfield with these xz bounds.
+		// Grows [ymin, ymax]; false when no part of the triangle is inside.
+		bool clipped_y_range(const f32* a, const f32* b, const f32* c, f32 x0, f32 x1, f32 z0, f32 z1, f32& ymin, f32& ymax)
+		{
+			constexpr int cap = 16;   // a triangle cut by four half planes has at most 7 corners; the rest is float slack
+			f32 buf[2][cap * 3];
+			f32* in = buf[0];
+			f32* out = buf[1];
+			for (int k = 0; k < 3; ++k) { in[k] = a[k]; in[3 + k] = b[k]; in[6 + k] = c[k]; }
+			int n = 3;
+			const int axis[4] = { 0, 0, 2, 2 };
+			const f32 bound[4] = { x0, x1, z0, z1 };
+			const f32 side[4] = { 1.0f, -1.0f, 1.0f, -1.0f };   // +1 keeps v >= bound, -1 keeps v <= bound
+			for (int p = 0; p < 4 && n > 0; ++p)
+			{
+				int m = 0;
+				for (int i = 0; i < n && m < cap - 1; ++i)
+				{
+					const f32* u = &in[i * 3];
+					const f32* v = &in[((i + 1) % n) * 3];
+					const f32 du = (u[axis[p]] - bound[p]) * side[p];
+					const f32 dv = (v[axis[p]] - bound[p]) * side[p];
+					if (du >= 0.0f) { out[m * 3] = u[0]; out[m * 3 + 1] = u[1]; out[m * 3 + 2] = u[2]; ++m; }
+					if ((du >= 0.0f) != (dv >= 0.0f))
+					{
+						const f32 t = du / (du - dv);
+						for (int k = 0; k < 3; ++k) out[m * 3 + k] = u[k] + (v[k] - u[k]) * t;
+						++m;
+					}
+				}
+				n = m;
+				std::swap(in, out);
+			}
+			if (n == 0) return false;
+			for (int i = 0; i < n; ++i)
+			{
+				ymin = std::min(ymin, in[i * 3 + 1]);
+				ymax = std::max(ymax, in[i * 3 + 1]);
+			}
+			return true;
+		}
+
+		// Recast stores span heights in RC_SPAN_HEIGHT_BITS (13) bits: one heightfield column holds RC_SPAN_MAX_HEIGHT
+		// (8191) cells of the cell height — 819 m at the default 0.1 m (#451). A height window keeps this many cells
+		// spare below that limit (the top span's ceil and float slack).
+		constexpr int k_window_margin_cells{ 2 };
+		constexpr f32 k_max_cell_height{ 10.0f };   // the coarsest cell height sane() accepts
+
 		struct bake_job
 		{
 			bake_settings s;
@@ -233,6 +297,7 @@ namespace vortex::navigation {
 			f32 tile_world;                        // tile side in metres
 			s32 max_polys_per_tile;
 			f32 walkable_cos;
+			bool tile_windows{ false };            // #451: the level is taller than one heightfield column holds
 
 			const f32* verts;
 			const s32* tris;
@@ -248,9 +313,80 @@ namespace vortex::navigation {
 				s32 polys{ 0 }, verts{ 0 }, detail_tris{ 0 };
 				bool failed{ false };
 				std::string error;
+				// #451 (tile height windows): the height of the tile's geometry, the coarser cell height it needed
+				// (0 = the bake's own) and whether geometry above its window was left out (taller than any cell height fits)
+				f32 geometry_height{ 0.0f };
+				f32 cell_height{ 0.0f };
+				f32 cut_above{ 0.0f };
+				bool cut{ false };
 			};
 			std::vector<tile_out> out;
 		};
+
+		// The height window of one tile (#451): the y range of the geometry inside the tile's heightfield, on the bake's
+		// cell-height lattice (counted from the bake's lowest point, so neighbouring tiles quantise every height alike).
+		// A tile whose own geometry is still taller than a heightfield column holds is built with a whole multiple of
+		// the cell height (and the agent limits in those cells). Fills cfg; false when none of the tile's geometry
+		// reaches into its heightfield.
+		bool fit_tile_window(const bake_job& job, const std::vector<s32>& tri_list, const std::vector<s32>& box_list,
+			rcConfig& cfg, bake_job::tile_out& result)
+		{
+			f32 ymin = 3.0e38f, ymax = -3.0e38f;
+			bool any = false;
+			for (s32 t : tri_list)
+			{
+				const s32* ti = &job.tris[t * 3];
+				if (clipped_y_range(&job.verts[ti[0] * 3], &job.verts[ti[1] * 3], &job.verts[ti[2] * 3],
+					cfg.bmin[0], cfg.bmax[0], cfg.bmin[2], cfg.bmax[2], ymin, ymax)) any = true;
+			}
+			for (s32 bi : box_list)
+			{
+				// a convex solid: its interior spans lie between its faces, so the faces bound the column fill too
+				const solid_box& b = job.boxes[bi];
+				for (int t = 0; t < 12; ++t)
+				{
+					const f32* v = &b.tri_verts[t * 9];
+					if (clipped_y_range(v, v + 3, v + 6, cfg.bmin[0], cfg.bmax[0], cfg.bmin[2], cfg.bmax[2], ymin, ymax)) any = true;
+				}
+			}
+			ymin = std::max(ymin, job.bmin[1]);
+			ymax = std::min(ymax, job.bmax[1]);
+			if (!any || ymin > ymax) return false;
+
+			const f32 ch = job.s.cell_height;
+			const int max_cells = RC_SPAN_MAX_HEIGHT - k_window_margin_cells;
+			const int k_max = std::max(1, (int)std::floor(k_max_cell_height / ch + 1.0e-3f));
+			int k = std::min(k_max, std::max(1, (int)std::ceil((ymax - ymin) / (ch * (f32)max_cells))));
+			f32 chk = ch, y0 = ymin;
+			int cells = 0;
+			for (;;)
+			{
+				chk = ch * (f32)k;
+				y0 = job.bmin[1] + std::floor((ymin - job.bmin[1]) / chk) * chk;
+				cells = std::max(4, (int)std::ceil((ymax - y0) / chk));
+				if (cells <= max_cells || k >= k_max) break;
+				++k;   // the lattice alignment cost the last cell
+			}
+			result.geometry_height = ymax - ymin;
+			if (cells > max_cells)
+			{
+				// taller than any cell height fits: the window keeps the lowest part, the rest is reported
+				cells = max_cells;
+				result.cut = true;
+				result.cut_above = y0 + (f32)cells * chk;
+			}
+			cfg.bmin[1] = y0;
+			cfg.bmax[1] = y0 + (f32)cells * chk;
+			if (k > 1)
+			{
+				cfg.ch = chk;
+				cfg.walkableHeight = std::max(3, (int)std::ceil(job.s.agent_height / chk));
+				cfg.walkableClimb = std::min(cfg.walkableHeight - 1, (int)std::floor(job.s.agent_max_climb / chk));
+				cfg.detailSampleMaxError = chk * job.s.detail_sample_max_error;
+				result.cell_height = chk;
+			}
+			return true;
+		}
 
 		void build_tile(bake_job& job, s32 tx, s32 tz, bake_job::tile_out& result)
 		{
@@ -271,6 +407,8 @@ namespace vortex::navigation {
 			cfg.bmin[2] -= cfg.borderSize * cfg.cs;
 			cfg.bmax[0] += cfg.borderSize * cfg.cs;
 			cfg.bmax[2] += cfg.borderSize * cfg.cs;
+			// #451: a level taller than one heightfield column bakes every tile in its own height window
+			if (job.tile_windows && !fit_tile_window(job, tri_list, box_list, cfg, result)) return;
 
 			rcHeightfield* solid = rcAllocHeightfield();
 			rcCompactHeightfield* chf = nullptr;
@@ -502,6 +640,10 @@ namespace vortex::navigation {
 		g_cancel = false;
 		g_tiles_done = 0;
 		g_tiles_total = 0;
+		{
+			std::lock_guard<std::mutex> lock(g_result_mutex);
+			g_notes.clear();
+		}
 
 		const auto t0 = std::chrono::steady_clock::now();
 		bake_job job{};
@@ -612,6 +754,17 @@ namespace vortex::navigation {
 		cfg.detailSampleDist = s.detail_sample_dist < 0.9f ? 0.0f : s.cell_size * s.detail_sample_dist;
 		cfg.detailSampleMaxError = s.cell_height * s.detail_sample_max_error;
 
+		// #451: one heightfield column holds RC_SPAN_MAX_HEIGHT cells of the cell height (819 m at 0.1 m). Every tile
+		// used to span the whole level's height, so in a taller level everything that high above the lowest geometry
+		// was lost — Recast squashes such triangles onto the column's top cell, the box fill skipped them — while the
+		// bake reported success. Such a level bakes every tile in its own height window instead (fit_tile_window); a
+		// level that fits keeps the one shared window, unchanged.
+		const int column_cells = RC_SPAN_MAX_HEIGHT - k_window_margin_cells;
+		job.tile_windows = job.bmax[1] - job.bmin[1] > (f32)column_cells * s.cell_height;
+		if (job.tile_windows)
+			log("bake: the level spans %.1f m of height, more than %d x Cell Height %.2f = %.1f m - every tile gets its own height window",
+				job.bmax[1] - job.bmin[1], column_cells, s.cell_height, (f32)column_cells * s.cell_height);
+
 		// Bin the geometry into the tiles whose (border-expanded) bounds it overlaps.
 		const f32 border = cfg.borderSize * cfg.cs;
 		job.tile_tris.assign((size_t)tile_total, {});
@@ -685,14 +838,24 @@ namespace vortex::navigation {
 		st.tiles_z = job.tiles_z;
 		st.input_triangles = (s32)tri_index.size();
 		st.input_boxes = (s32)job.boxes.size();
-		s32 failed = 0;
+		s32 failed = 0, first_failed = -1;
+		s32 coarse = 0, tallest = -1, cut = 0, first_cut = -1;
+		f32 coarsest = 0.0f;
 		size_t total = sizeof(format::file_header);
 		for (s32 i = 0; i < tile_total; ++i)
 		{
 			const auto& o = job.out[(size_t)i];
+			if (o.cell_height > 0.0f)
+			{
+				++coarse;
+				coarsest = std::max(coarsest, o.cell_height);
+				if (tallest < 0 || o.geometry_height > job.out[(size_t)tallest].geometry_height) tallest = i;
+			}
+			if (o.cut && cut++ == 0) first_cut = i;
 			if (o.failed)
 			{
 				if (failed++ < 8) log("bake: tile (%d, %d) failed: %s", i % job.tiles_x, i / job.tiles_x, o.error.c_str());
+				if (first_failed < 0) first_failed = i;
 				continue;
 			}
 			if (o.data.empty()) continue;
@@ -701,6 +864,32 @@ namespace vortex::navigation {
 			st.vert_count += o.verts;
 			st.detail_tri_count += o.detail_tris;
 			total += sizeof(format::tile_header) + (size_t)format::padded((s32)o.data.size());
+		}
+		// What the user has to hear about even when the bake succeeds (bake_notes_copy -> the result message).
+		if (coarse > 0)
+		{
+			const auto& t = job.out[(size_t)tallest];
+			note("%d tile(s) span more height than one heightfield column holds (%d x Cell Height %.2f = %.0f m) and were baked "
+				"with a coarser Cell Height (up to %.2f m), so steps and ceilings are measured that coarsely there; the tallest, "
+				"tile (%d, %d), spans %.0f m. Raise the Cell Height to bake the whole level with one precision.",
+				coarse, column_cells, s.cell_height, (f32)column_cells * s.cell_height, coarsest,
+				tallest % job.tiles_x, tallest / job.tiles_x, t.geometry_height);
+			if (coarsest > s.agent_max_climb)
+				note("At Cell Height %.2f agents cannot climb any step in those tiles (Agent Max Climb %.2f m is smaller).",
+					coarsest, s.agent_max_climb);
+		}
+		if (cut > 0)
+		{
+			const auto& t = job.out[(size_t)first_cut];
+			note("%d tile(s) are taller than %d cells even at Cell Height %.0f m: tile (%d, %d) spans %.0f m and has no navmesh "
+				"above y = %.1f.", cut, column_cells, k_max_cell_height, first_cut % job.tiles_x, first_cut / job.tiles_x,
+				t.geometry_height, t.cut_above);
+		}
+		if (failed > 0)
+		{
+			const auto& t = job.out[(size_t)first_failed];
+			note("%d tile(s) failed to build and have no navmesh; tile (%d, %d): %s", failed,
+				first_failed % job.tiles_x, first_failed / job.tiles_x, t.error.c_str());
 		}
 		if (st.tile_count == 0)
 		{
@@ -773,6 +962,17 @@ namespace vortex::navigation {
 		std::lock_guard<std::mutex> lock(g_result_mutex);
 		std::vector<u8>().swap(g_result);
 	}
+
+	s32 bake_notes_copy(char* out, s32 max_bytes)
+	{
+		std::lock_guard<std::mutex> lock(g_result_mutex);
+		const s32 size = (s32)g_notes.size();
+		if (!out || max_bytes <= 0) return size;
+		const s32 n = std::min(size, max_bytes - 1);
+		if (n > 0) std::memcpy(out, g_notes.data(), (size_t)n);
+		out[n] = '\0';
+		return n;
+	}
 }
 
 #else // !VORTEX_HAS_RECAST — the stub (Visual Studio projects, -DVORTEX_ENABLE_RECAST=OFF)
@@ -788,6 +988,7 @@ namespace vortex::navigation {
 	void bake_cancel() {}
 	s32  bake_result_copy(u8*, s32) { return 0; }
 	void bake_result_clear() {}
+	s32  bake_notes_copy(char* out, s32 max_bytes) { if (out && max_bytes > 0) out[0] = '\0'; return 0; }
 }
 
 #endif

@@ -55,6 +55,8 @@ namespace VortexEditor.Shell
             Session.Toast += m => ShowToast(m);
             Session.Error += m => Dispatcher.UIThread.Post(async () => await Dialogs.Alert("Vortex", m));
             PlayModeService.Instance.StateChanged += (s, st) => Dispatcher.UIThread.Post(SyncPlayButtons);
+            // Stop put the scenes' values back into the same objects (#478): the panels show them again
+            PlayModeService.Instance.StateChanged += (s, st) => { if (st == PlayState.Editing) Dispatcher.UIThread.Post(() => { Environment.Refresh(); Inspector.Refresh(); }); };
             PlayModeService.Instance.GameViewChanged += g => Dispatcher.UIThread.Post(() => { TabGame.IsChecked = g; TabScene.IsChecked = !g; });
             UndoRedoManager.Instance.StateChanged += (s, e) => Dispatcher.UIThread.Post(SyncUndoText);
             Claude.McpHost.StatusChanged += SyncClaudeStatus;
@@ -711,8 +713,8 @@ namespace VortexEditor.Shell
             if (PlayModeService.Instance.State == PlayState.Playing) EditorCommands.Stop();
             else
             {
-                // ▶ plays in the viewport and switches to the Game view (WPF parity); ▶ while paused resumes.
-                if (PlayModeService.Instance.State == PlayState.Editing) { PlayModeService.Instance.IsExternalWindow = false; PlayModeService.Instance.SetGameView(true); }
+                // ▶ plays in the viewport and switches to the Game view (WPF parity) until ■ (#444); ▶ while paused resumes.
+                if (PlayModeService.Instance.State == PlayState.Editing) { PlayModeService.Instance.IsExternalWindow = false; PlayModeService.Instance.EnterGameViewForPlay(); }
                 EditorCommands.Play();
             }
         }
@@ -721,7 +723,7 @@ namespace VortexEditor.Shell
         private void OnPlayMenu(object s, RoutedEventArgs e)
         {
             var m = new MenuFlyout();
-            var a = new MenuItem { Header = "Play in Viewport" }; a.Click += (x, y) => { if (PlayModeService.Instance.IsPlaying) EditorCommands.Stop(); PlayModeService.Instance.IsExternalWindow = false; PlayModeService.Instance.SetGameView(true); EditorCommands.Play(); };
+            var a = new MenuItem { Header = "Play in Viewport" }; a.Click += (x, y) => { if (PlayModeService.Instance.IsPlaying) EditorCommands.Stop(); PlayModeService.Instance.IsExternalWindow = false; PlayModeService.Instance.EnterGameViewForPlay(); EditorCommands.Play(); };
             var b = new MenuItem { Header = "Play in Standalone Player" }; b.Click += (x, y) => EditorCommands.PlayInNewWindow();
             var c = new MenuItem { Header = "Game View (without playing)" }; c.Click += (x, y) => PlayModeService.Instance.SetGameView(true);
             var d = new MenuItem { Header = "Release Mode (hide the play banner)", ToggleType = MenuItemToggleType.CheckBox, IsChecked = PlayModeService.Instance.IsReleaseMode }; d.Click += (x, y) => EditorCommands.ToggleReleaseMode();

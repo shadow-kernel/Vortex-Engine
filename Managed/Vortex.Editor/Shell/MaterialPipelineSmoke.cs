@@ -44,7 +44,10 @@ namespace VortexEditor.Shell
                     m.Save(Path.Combine(project, rel));
                 }
                 Vmat(opaqueRel, "Opaque", false, true);
-                Vmat(cutRel, "AlphaTest", true, true);
+                // one-sided on purpose: with TwoSided the hole in the thin cube's front face shows the inside of its far face, whose
+                // opaque half sits right behind the hole and is lit like the front (a back face uses its own normal) — the check
+                // would see green either way. One-sided, the far face's inside is culled and the background shows through the cut.
+                Vmat(cutRel, "AlphaTest", false, true);
                 Vmat(twoSidedRel, "Opaque", true, false, unlitRed: true);
 
                 // the entities first (creating one re-frames the editor camera), then the camera, then the captures

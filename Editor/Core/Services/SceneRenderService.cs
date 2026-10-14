@@ -322,6 +322,7 @@ namespace Editor.Core.Services
         {
             if (string.IsNullOrEmpty(modelPath)) return;
             try { Editor.Scripting.ScriptRuntime.ForgetMeshTriangles(); Gi.RadianceCache.ForgetBounds(); Foliage.FoliageService.ForgetMeshes(); } catch { }   // collision + the lighting cache read the new file
+            try { Core.Animation.AnimationService.Instance.InvalidateSkeleton(modelPath); } catch { }   // and the rig: new bones, new bind pose (#419)
             string target = NormalizeModelPath(modelPath);
             var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var k in _submeshMeshCache.Keys) if (SameModel(k, target)) keys.Add(k);
@@ -1018,12 +1019,11 @@ namespace Editor.Core.Services
             if (audioSrc != null && audioSrc.IsEnabled)
                 VortexAPI.RenderAudioRangeSpheres(pos.X, pos.Y, pos.Z, audioSrc.MinDistance, audioSrc.MaxDistance);
             var reverbZone = selected.GetComponent<ECS.Components.Audio.ReverbZone>();
-            if (reverbZone != null && reverbZone.IsEnabled)
-                // Max(0.01, extent) — NOT Abs — mirrors the runtime test (ZoneWeight), so the drawn box is
-                // exactly the audible one even for hand-edited negative extents.
-                VortexAPI.RenderReverbZoneGizmo(pos.X, pos.Y, pos.Z, reverbZone.Shape, reverbZone.Radius,
-                    Math.Max(0.01f, reverbZone.BoxExtents.X), Math.Max(0.01f, reverbZone.BoxExtents.Y), Math.Max(0.01f, reverbZone.BoxExtents.Z),
-                    reverbZone.Falloff);
+            if (reverbZone != null && reverbZone.IsEnabled && selected.ActiveInHierarchy)
+                // The world matrix the runtime test (AudioPlaybackService.ZoneWeight) uses — position, rotation and scale
+                // of the entity and its parents (#497) — so the drawn shape is exactly the audible one.
+                VortexAPI.RenderReverbZoneGizmo(ECS.TransformMath.World(selected), reverbZone.Shape, reverbZone.Radius,
+                    reverbZone.BoxExtents.X, reverbZone.BoxExtents.Y, reverbZone.BoxExtents.Z, reverbZone.Falloff);
             var decal = selected.GetComponent<ECS.Components.Rendering.Decal>();
             if (decal != null && decal.IsEnabled)
                 VortexAPI.RenderDecalGizmo(Decals.DecalService.BoxWorld(selected, decal));   // the projection box (#120)
@@ -2498,6 +2498,32 @@ namespace Editor.Core.Services
         }
         public static SkyOverride ScriptSky;
 
+        /// <summary>The identity a light keeps in the renderer's light budget from frame to frame (#416): its entity's saved id
+        /// folded to 64 bits — the same while the entity lives, whatever the light does (moves, flickers, changes colour), so
+        /// the renderer can hold its slot and fade it instead of switching it. An entity without a saved id (Guid.Empty: an old
+        /// scene, a spawn that never got one) gets an id of its own for this session instead of one shared with every other such
+        /// light. Never 0 (0 = "no identity").</summary>
+        internal static ulong LightIdOf(GameEntity entity)
+        {
+            if (entity.Id == System.Guid.Empty)
+                return _sessionLightIds.GetValue(entity, _ => new SessionLightId(System.Threading.Interlocked.Increment(ref _nextSessionLightId))).Value;
+            System.Span<byte> b = stackalloc byte[16];
+            entity.Id.TryWriteBytes(b);
+            ulong id = System.Buffers.Binary.BinaryPrimitives.ReadUInt64LittleEndian(b)
+                     ^ (System.Buffers.Binary.BinaryPrimitives.ReadUInt64LittleEndian(b.Slice(8)) * 0x9E3779B97F4A7C15UL);
+            return id != 0 ? id : 1;
+        }
+
+        private sealed class SessionLightId
+        {
+            public readonly ulong Value;
+            // a counter, spread over 64 bits so it cannot meet the GUID-derived ids in practice
+            public SessionLightId(long n) { ulong v = (ulong)n * 0xD1B54A32D192ED03UL; Value = v != 0 ? v : 1; }
+        }
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<GameEntity, SessionLightId> _sessionLightIds =
+            new System.Runtime.CompilerServices.ConditionalWeakTable<GameEntity, SessionLightId>();
+        private static long _nextSessionLightId;
+
         /// <summary>
         /// Submit all lights in the scene to the renderer.
         /// </summary>
@@ -2846,7 +2872,8 @@ namespace Editor.Core.Services
                                 light.Intensity, light.Range,
                                 light.ShadowType != ECS.Components.Lighting.ShadowType.None,
                                 light.ShadowStrength,
-                                light.ShadowBias * 0.03f);
+                                light.ShadowBias * 0.03f,
+                                LightIdOf(entity));
                             break;
 
                         case ECS.Components.Lighting.LightType.Spot:
@@ -2864,7 +2891,8 @@ namespace Editor.Core.Services
                                 light.ShadowType != ECS.Components.Lighting.ShadowType.None,
                                 light.ShadowStrength,
                                 light.ShadowBias * 0.03f,
-                                light.ShadowResolution);
+                                light.ShadowResolution,
+                                LightIdOf(entity));
                             break;
                     }
                 }

@@ -165,6 +165,9 @@ namespace Editor.DllWrapper
         public static void SetEntityTransform(long entityId, Vector3 position, Vector3 rotationEuler, Vector3 scale)
         {
             if (!ID.IsValid(entityId)) return;
+            // never hand a NaN / infinity to the native quaternion + matrix math (#455) — the Transform component already
+            // refuses them (and warns); this is the last managed stop before the engine
+            if (!Finite(position) || !Finite(rotationEuler) || !Finite(scale)) return;
 
             var descriptor = new GameEntityDescriptor();
             descriptor.Transform.Position = position;
@@ -172,6 +175,8 @@ namespace Editor.DllWrapper
             descriptor.Transform.Scale = scale;
             SetGameEntityTransform(entityId, descriptor);
         }
+
+        private static bool Finite(Vector3 v) => float.IsFinite(v.X) && float.IsFinite(v.Y) && float.IsFinite(v.Z);
 
         /// <summary>Register an entity as a gravity-affected dynamic body (AABB half-extents) for play.</summary>
         public static void RegisterRigidbody(long entityId, bool useGravity, float hx, float hy, float hz)
