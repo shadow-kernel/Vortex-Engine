@@ -265,5 +265,101 @@ namespace VortexTests
             }
             finally { scene.DeactivateEntities(); scene.ReleaseEngineScene(); }
         }
+
+        /// <summary>A native entity that is gone reads the origin (GetEntityPosition answers zeros for a dead id).</summary>
+        private static bool Gone(long nativeId) => ID.IsValid(nativeId) && VortexAPI.ReadEntityPosition(nativeId).X == 0f
+            && VortexAPI.ReadEntityPosition(nativeId).Y == 0f && VortexAPI.ReadEntityPosition(nativeId).Z == 0f;
+
+        [Test]
+        public static void DeleteAndUndoTakeTheNativeTwinOutAndBack(TestContext t)
+        {
+            if (!Native()) return;
+            var scene = Loaded(out var crate, out var lid, out var barrel);
+            var old = ProjectData.Current;
+            try
+            {
+                scene.ActivateEntities();
+                ProjectData.Current = new ProjectData { Name = "p" };
+                ProjectData.Current.ActiveScene = scene;
+                var undo = UndoRedoManager.Instance;
+
+                // Delete (the hierarchy, the Claude tools) and its undo
+                long twin = barrel.EntityId;
+                undo.Execute(new DeleteEntitiesCommand(new[] { barrel }));
+                t.True(barrel.EntityId == ID.INVALID_ID && Gone(twin), "a deleted loaded entity's native twin is gone");
+                scene.DeactivateEntities(); scene.ActivateEntities();
+                t.True(Gone(twin) && barrel.EntityId == ID.INVALID_ID, "also after the scene was deactivated and activated again");
+                undo.Undo();
+                t.True(scene.Entities.Contains(barrel) && Unique(crate, lid, barrel) && At(barrel, 4, 5, 6), "undo: back in the scene and in the engine");
+                long crateTwin = crate.EntityId, lidTwin = lid.EntityId;
+                undo.Execute(new DeleteEntitiesCommand(new[] { crate }));
+                t.True(Gone(crateTwin) && Gone(lidTwin) && lid.EntityId == ID.INVALID_ID, "deleting a parent takes its children's twins too");
+                undo.Undo();
+                t.True(Unique(crate, lid, barrel) && At(lid, 0, 1, 0), "and undo brings them back");
+
+                // undo / redo of create, Create Child and a prefab placement
+                var made = scene.CreateEntity("Made");
+                made.Transform.LocalPosition = new Vector3(-1, -1, -1);
+                long madeTwin = made.EntityId;
+                undo.Undo();
+                t.True(!scene.Entities.Contains(made) && made.EntityId == ID.INVALID_ID && Gone(madeTwin), "an undone create leaves the engine");
+                undo.Redo();
+                t.True(scene.Entities.Contains(made) && Unique(crate, lid, barrel, made) && At(made, -1, -1, -1), "redo: registered again");
+
+                var kid = new GameEntity(scene, "Kid");
+                kid.Transform.LocalPosition = new Vector3(3, 3, 3);
+                barrel.AddChild(kid);
+                long kidTwin = kid.EntityId;
+                t.True(Unique(crate, lid, barrel, made, kid), "Create Child registers the child");
+                undo.Undo();
+                t.True(kid.EntityId == ID.INVALID_ID && Gone(kidTwin), "an undone Create Child leaves the engine");
+                undo.Redo();
+                t.True(Unique(crate, lid, barrel, made, kid) && At(kid, 3, 3, 3), "redo: registered again");
+                barrel.RemoveChild(kid);
+                t.Equal(ID.INVALID_ID, kid.EntityId, "RemoveChild unregisters it");
+                undo.Undo();
+                t.True(ReferenceEquals(kid.Parent, barrel) && Unique(crate, lid, barrel, made, kid), "its undo puts it back under its parent, registered");
+
+                string prefab = t.Write("Crate.ventity", DataSerializer.ToJson(crate));
+                var instance = PrefabService.Instance.InstantiatePrefab(prefab, scene);   // placed by the user: undoable
+                long instanceTwin = instance.EntityId, instanceChildTwin = instance.Children[0].EntityId;
+                t.True(Unique(crate, lid, barrel, made, kid, instance, instance.Children[0]), "a placed prefab instance is registered");
+                undo.Undo();
+                t.True(!scene.Entities.Contains(instance) && Gone(instanceTwin) && Gone(instanceChildTwin), "an undone prefab placement leaves the engine, children too");
+                undo.Redo();
+                t.True(Unique(crate, lid, barrel, made, kid, instance, instance.Children[0]), "redo: registered again");
+            }
+            finally
+            {
+                ProjectData.Current = old;
+                scene.DeactivateEntities(); scene.ReleaseEngineScene();
+            }
+        }
+
+        [Test]
+        public static void ClosingTheProjectTakesItsScenesOutOfTheEngine(TestContext t)
+        {
+            if (!Native()) return;
+            var scene = Loaded(out var crate, out var lid, out var barrel);
+            var old = ProjectData.Current;
+            try
+            {
+                scene.ActivateEntities();
+                var project = new ProjectData { Name = "p" };
+                project.Scenes.Add(scene);
+                project.ActiveScene = scene;
+                ProjectData.Current = project;
+                long[] twins = { crate.EntityId, lid.EntityId, barrel.EntityId };
+                Editor.Core.Editing.EditorSession.Instance.CloseProject(keepLastProject: true);
+                t.True(new[] { crate, lid, barrel }.All(e => e.EntityId == ID.INVALID_ID), "every entity of the closed project is unregistered");
+                t.True(twins.All(Gone), "their native twins are gone");
+                t.False(scene.EngineHandle.IsValid, "and the engine scene is released");
+            }
+            finally
+            {
+                ProjectData.Current = old;
+                scene.DeactivateEntities(); scene.ReleaseEngineScene();
+            }
+        }
     }
 }

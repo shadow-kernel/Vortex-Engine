@@ -118,6 +118,13 @@ namespace Editor.Core.Editing
             try { SelectionService.Instance.ClearSelection(); } catch { }
             try { SceneRenderService.Instance.ClearAllRenderables(); } catch { }
             try { SceneRenderService.EvictModelsUnusedBy(null); } catch { }   // every model of the closed project (#358)
+            // its scenes leave the engine: every entity of a loaded scene owns a native entity, and the engine scenes go
+            if (project?.Scenes != null)
+                foreach (var s in project.Scenes)
+                {
+                    if (s == null) continue;
+                    try { s.DeactivateEntities(); s.ReleaseEngineScene(); } catch { }
+                }
             project?.Unload();
             ProjectData.Current = null;
             Hierarchy.SetProject(null);

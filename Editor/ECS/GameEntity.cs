@@ -576,12 +576,10 @@ namespace Editor.ECS
 
             child.Parent = this;
             child.Scene = Scene;
-            int before = Children.Count;
-            var command = new CollectionAddCommand<GameEntity>(Children, child, "Children");
-            UndoRedoManager.Instance.Execute(command);
             // like Scene.AddEntity: a child put into a live scene is registered with the engine at once ("Create Child",
-            // a multi-submesh model), not only at the next scene activation (a nested command is dropped: no add, no sync)
-            if (Children.Count > before) child.SyncEngineState();
+            // a multi-submesh model), not only at the next scene activation — and an undo takes it out again
+            var command = new AddEntityCommand(Children, child, "Children");
+            UndoRedoManager.Instance.Execute(command);
         }
 
         /// <summary>
@@ -595,11 +593,8 @@ namespace Editor.ECS
             if (!Children.Contains(child))
                 return;
 
-            int before = Children.Count;
-            var command = new CollectionRemoveCommand<GameEntity>(Children, child, "Children");
+            var command = new RemoveEntityCommand(Children, child, "Children");   // like Scene.RemoveEntity: out of the engine too
             UndoRedoManager.Instance.Execute(command);
-            // like Scene.RemoveEntity: out of the hierarchy, out of the engine
-            if (Children.Count < before) child.SyncEngineStateRecursive(false);
             child.Parent = null;
         }
 

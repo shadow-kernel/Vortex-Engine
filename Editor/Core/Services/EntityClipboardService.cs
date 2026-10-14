@@ -369,6 +369,8 @@ namespace Editor.Core.Services
                 {
                     info.Scene.Entities.Remove(info.Entity);
                 }
+                // out of the engine too: every entity of a loaded scene owns a native entity, which stayed behind
+                info.Entity.SyncEngineStateRecursive(false);
                 try { SceneRenderService.Instance.RemoveEntityTree(info.Entity); } catch { }   // #358 (undo re-creates on submit)
             }
         }
@@ -401,6 +403,7 @@ namespace Editor.Core.Services
                         info.Scene.Entities.Add(info.Entity);
                     }
                 }
+                info.Entity.SyncEngineState();   // back in the scene, back in the engine (while it is active there)
             }
         }
 
