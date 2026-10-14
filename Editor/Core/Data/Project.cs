@@ -22,9 +22,14 @@ namespace Editor.Core.Data
         public ProjectSettings Settings { get; set; } = new ProjectSettings();
         /// <summary>The project's own version ("1.53.6") and creation date as read from project.vortex — carried through so a
         /// save keeps them (#471, #414: every save reset them to "1.0.0" and now). A new project is created now; CreatedAt
-        /// is null only for a file without one, and the next save stamps it.</summary>
+        /// is null for a file without one (which stays without one).</summary>
         public string Version { get; set; } = "1.0.0";
         public DateTime? CreatedAt { get; set; }
+
+        /// <summary>project.vortex as the editor last read or wrote it (the manifest JSON it built then): a save writes only
+        /// what changed since, so a value changed in the file meanwhile — a release script's version bump — survives (#414).</summary>
+        [IgnoreDataMember]
+        internal string ManifestBaseline { get; set; }
 
         [DataMember(Name = "lastModified", Order = 10)]
         public DateTime LastModified

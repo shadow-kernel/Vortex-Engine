@@ -211,12 +211,14 @@ namespace Editor.Core.Services
                 project.ActiveScene = project.Scenes[0];
             }
 
+            // what the editor read: a save writes only what changes from here (#414) — the shipped game never saves
+            if (!AssetVfs.IsMounted) RememberManifest(project);
             return project;
         }
 
         /// <summary>The project as its manifest describes it, without its scenes. The project's own version and creation
         /// date are carried along so a save writes them back unchanged (#471, #414); a file without createdAt reads as
-        /// 0001-01-01, which is no date (the save would fail on it) — the first save stamps one.</summary>
+        /// 0001-01-01, which is no date (the serializer cannot even write it east of UTC) — so none.</summary>
         internal static ProjectData FromManifest(ProjectManifest manifest, string projectPath) => new ProjectData(manifest.Id, projectPath, manifest.Name)
         {
             LastModified = manifest.LastModified,
@@ -400,14 +402,16 @@ namespace Editor.Core.Services
         /// <summary>
         /// Speichert das Projekt-Manifest (ohne Szenen-Inhalte)
         /// </summary>
-        private void SaveManifest(ProjectData project)
+        private void SaveManifest(ProjectData project) => SaveManifestFile(project);
+
+        /// <summary>Write the project's project.vortex (#414): the manifest the editor holds, merged into the file on disk
+        /// (<see cref="ProjectManifestJson"/>) so the file keeps what the editor did not change and every key it does not
+        /// know; then that manifest is the new baseline.</summary>
+        internal static void SaveManifestFile(ProjectData project)
         {
             try
             {
                 var manifestPath = Path.Combine(project.Path, ManifestFileName);
-                // #414: update the manifest that is on disk instead of writing a new one, so what the editor does not
-                // own stays as it is
-                var manifest = ManifestForSave(project, ReadManifest(manifestPath));
 
                 // Ensure directory exists
                 var dir = Path.GetDirectoryName(manifestPath);
@@ -415,8 +419,10 @@ namespace Editor.Core.Services
                 {
                     Directory.CreateDirectory(dir);
                 }
-                
-                DataSerializer.SaveAsJson(manifest, manifestPath);
+
+                string mine = DataSerializer.ToJson(ManifestFor(project));
+                WriteManifest(manifestPath, mine, project.ManifestBaseline);
+                project.ManifestBaseline = mine;
                 System.Diagnostics.Debug.WriteLine($"Saved manifest to: {manifestPath}");
             }
             catch (Exception ex)
@@ -426,43 +432,56 @@ namespace Editor.Core.Services
             }
         }
 
-        /// <summary>project.vortex as it is on disk, or null when there is none yet or it does not parse (the save then
-        /// writes a new one, as before).</summary>
-        private static ProjectManifest ReadManifest(string manifestPath)
+        /// <summary>Write <paramref name="manifestJson"/> (a manifest as DataSerializer writes it) to project.vortex, merged into
+        /// the file that is there (#414): keys the engine does not know and values that did not change since
+        /// <paramref name="baseline"/> keep the file's text. The file's byte order mark and line endings stay; a merge that
+        /// fails writes the manifest as it is rather than failing the save.</summary>
+        internal static void WriteManifest(string manifestPath, string manifestJson, string baseline)
         {
-            try { return File.Exists(manifestPath) ? DataSerializer.FromJson<ProjectManifest>(File.ReadAllText(manifestPath, System.Text.Encoding.UTF8)) : null; }
-            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[SaveManifest] " + manifestPath + " is not readable, a new manifest is written: " + ex.Message); return null; }
+            string text = manifestJson;
+            bool bom = true;   // a new file: as DataSerializer.SaveAsJson writes it
+            if (File.Exists(manifestPath))
+            {
+                var bytes = File.ReadAllBytes(manifestPath);
+                bom = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF;
+                string disk = new System.Text.UTF8Encoding(false).GetString(bytes, bom ? 3 : 0, bytes.Length - (bom ? 3 : 0));
+                try { text = ProjectManifestJson.Merge(manifestJson, disk, baseline); }
+                catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[SaveManifest] merge failed, the manifest is written as the editor holds it: " + ex.Message); }
+            }
+            File.WriteAllText(manifestPath, text, new System.Text.UTF8Encoding(bom));
         }
 
-        /// <summary>
-        /// The manifest a save writes (#414): the one on disk (<paramref name="onDisk"/>, null for a new project) with the
-        /// fields the editor owns set from the project — id, name, thumbnail, start and last scene, the scene list, the
-        /// settings, the modification time and the engine stamps. Everything else stays as the file has it: the project's
-        /// own version and creation date (carried through <see cref="ProjectData"/> since #471), each scene entry's
-        /// loadOnStart, and keys the engine does not know (<see cref="ProjectManifest.ExtensionData"/>). A project
-        /// without a creation date gets the file's or now, and keeps it for the next save of the session.
-        /// </summary>
-        internal static ProjectManifest ManifestForSave(ProjectData project, ProjectManifest onDisk)
+        /// <summary>Remember the manifest as the editor reads it now: a later save compares with it to write only what the
+        /// editor changed and keep what changed in the file meanwhile — a release script's version bump (#414).</summary>
+        internal static void RememberManifest(ProjectData project)
         {
-            var manifest = onDisk ?? new ProjectManifest(project.Name);
-            manifest.Id = project.Id;
-            manifest.Name = project.Name;
-            manifest.LastModified = project.LastModified;
-            manifest.Version = !string.IsNullOrWhiteSpace(project.Version) ? project.Version
-                             : !string.IsNullOrWhiteSpace(onDisk?.Version) ? onDisk.Version : "1.0.0";
-            if (!project.CreatedAt.HasValue) project.CreatedAt = onDisk != null && onDisk.CreatedAt != default ? onDisk.CreatedAt : DateTime.Now;
-            manifest.CreatedAt = project.CreatedAt.Value;
-            manifest.ThumbnailPath = project.ImagePath;
-            manifest.LastOpenSceneId = project.ActiveScene?.Id;
-            manifest.StartSceneId = project.StartSceneId; // the game's boot scene (persisted choice; null ⇒ first)
-            // Stamp the version the project was saved with, so the migration gate can check it on open.
-            manifest.EngineVersion = Editor.Core.EngineInfo.VersionString;
-            manifest.FormatVersion = Editor.Core.EngineInfo.CurrentProjectFormatVersion;
-            manifest.Settings = project.Settings ?? new ProjectSettings();
+            try { project.ManifestBaseline = DataSerializer.ToJson(ManifestFor(project)); }
+            catch (Exception ex) { project.ManifestBaseline = null; System.Diagnostics.Debug.WriteLine("[LoadProject] no manifest baseline: " + ex.Message); }
+        }
 
-            // Füge Szenen-Referenzen hinzu — a scene keeps its entry from the file (loadOnStart, keys the engine does not know)
-            var entries = manifest.Scenes ?? new List<SceneReference>();
-            manifest.Scenes = new List<SceneReference>();
+        /// <summary>The manifest of the project as the editor holds it: id, name, the project's own version and creation date
+        /// (#471), thumbnail, start and last scene, the scene list, the settings, the modification time and the engine stamps.
+        /// A project without a creation date (a file without one) is given the current time, and keeps it.</summary>
+        internal static ProjectManifest ManifestFor(ProjectData project)
+        {
+            if (!project.CreatedAt.HasValue) project.CreatedAt = DateTime.Now;
+            var manifest = new ProjectManifest(project.Name)
+            {
+                Id = project.Id,
+                // 0001-01-01 (a file without lastModified, before the first save) cannot be written east of UTC
+                LastModified = project.LastModified == default ? DateTime.Now : project.LastModified,
+                Version = string.IsNullOrWhiteSpace(project.Version) ? "1.0.0" : project.Version,   // #471: the project's own version survives a save
+                CreatedAt = project.CreatedAt.Value,
+                ThumbnailPath = project.ImagePath,
+                LastOpenSceneId = project.ActiveScene?.Id,
+                StartSceneId = project.StartSceneId, // the game's boot scene (persisted choice; null ⇒ first)
+                // Stamp the version the project was saved with, so the migration gate can check it on open.
+                EngineVersion = Editor.Core.EngineInfo.VersionString,
+                FormatVersion = Editor.Core.EngineInfo.CurrentProjectFormatVersion,
+                Settings = project.Settings ?? new ProjectSettings(),
+            };
+
+            // Füge Szenen-Referenzen hinzu
             foreach (var scene in project.Scenes)
             {
                 // Reference the ACTUAL on-disk file (its real name), NOT a name-derived guess. SaveScene writes
@@ -473,13 +492,7 @@ namespace Editor.Core.Services
                 var relativePath = !string.IsNullOrEmpty(scene.FilePath)
                     ? Path.GetFileName(scene.FilePath)
                     : $"{SanitizeFileName(scene.Name)}.vscene";
-                var entry = entries.FirstOrDefault(r => r != null && r.Id == scene.Id);
-                if (entry != null) entries.Remove(entry);
-                else entry = new SceneReference();
-                entry.Id = scene.Id;
-                entry.Name = scene.Name;
-                entry.RelativePath = relativePath;
-                manifest.Scenes.Add(entry);
+                manifest.Scenes.Add(new SceneReference(scene.Id, scene.Name, relativePath));
 
                 // Fallback only: if no start scene was ever chosen, default to the first scene.
                 if (manifest.StartSceneId == null)

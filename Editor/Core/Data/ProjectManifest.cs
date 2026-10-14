@@ -7,15 +7,13 @@ namespace Editor.Core.Data
     /// <summary>
     /// Leichtgewichtiges Projekt-Manifest das nur Metadaten und Referenzen enth�lt.
     /// Die eigentlichen Szenen werden in separaten .vscene Dateien gespeichert.
-    /// Keys the engine does not know (a release tool's, a newer engine's) are read into <see cref="ExtensionData"/> and
-    /// written back where they were, so an editor save keeps them (#414) — likewise in each scene entry and the settings.
+    /// Keys this class does not know survive an editor save because the save merges into the file at the JSON level
+    /// (ProjectManifestJson, #414) — not through IExtensibleDataObject, whose XML infoset cannot write JSON names such as
+    /// "$schema" or "release notes" back (every save then threw).
     /// </summary>
     [DataContract(Name = "ProjectManifest", Namespace = "")]
-    public class ProjectManifest : IExtensibleDataObject
+    public class ProjectManifest
     {
-        /// <summary>The file's keys this class has no member for (#414).</summary>
-        public ExtensionDataObject ExtensionData { get; set; }
-
         /// <summary>
         /// Eindeutige Projekt-ID
         /// </summary>
@@ -107,11 +105,8 @@ namespace Editor.Core.Data
     /// Referenz zu einer Szene (ohne den Inhalt)
     /// </summary>
     [DataContract(Name = "SceneReference", Namespace = "")]
-    public class SceneReference : IExtensibleDataObject
+    public class SceneReference
     {
-        /// <summary>The entry's keys this class has no member for (#414).</summary>
-        public ExtensionDataObject ExtensionData { get; set; }
-
         /// <summary>
         /// Eindeutige Szenen-ID
         /// </summary>
@@ -150,11 +145,8 @@ namespace Editor.Core.Data
     /// Projekt-Einstellungen
     /// </summary>
     [DataContract(Name = "ProjectSettings", Namespace = "")]
-    public class ProjectSettings : IExtensibleDataObject
+    public class ProjectSettings
     {
-        /// <summary>The settings' keys this class has no member for (#414).</summary>
-        public ExtensionDataObject ExtensionData { get; set; }
-
         /// <summary>
         /// Unternehmen/Entwickler Name
         /// </summary>
