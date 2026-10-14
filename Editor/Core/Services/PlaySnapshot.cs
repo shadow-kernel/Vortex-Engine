@@ -16,7 +16,7 @@ namespace Editor.Core.Services
     /// path, an IK weight, a light's flicker, a script's field values — whatever the scene file would have saved, as
     /// deep copies (#478). The hierarchy comes back exactly (#423): an entity added while playing goes again, wherever
     /// it was put and whoever added it (a script, the hierarchy, the Claude tools); a re-parented one returns to its old
-    /// parent and slot; a destroyed one comes back.
+    /// parent and slot; a destroyed one comes back. So do the scene's environment settings (#479).
     /// </summary>
     public sealed class PlaySnapshot
     {
@@ -36,6 +36,9 @@ namespace Editor.Core.Services
         private readonly Dictionary<GameEntity, Home> _homes = new Dictionary<GameEntity, Home>(ReferenceEqualityComparer.Instance);
         private readonly List<GameEntity> _removed = new List<GameEntity>();
 
+        private SceneSettings _settings;
+        private Func<bool> _settingsBack;
+
         /// <summary>The entities the last <see cref="Restore"/> removed because they were added while playing (the top of
         /// each removed subtree) — e.g. so the editor can drop a selection that points into one.</summary>
         public IReadOnlyList<GameEntity> Removed => _removed;
@@ -47,6 +50,8 @@ namespace Editor.Core.Services
             if (scene?.Entities != null)
             {
                 snap.TakeList(null, scene.Entities);
+                snap._settings = scene.Settings;
+                snap._settingsBack = Capture(snap._settings, typeof(SceneSettings));
             }
             return snap;
         }
@@ -69,6 +74,7 @@ namespace Editor.Core.Services
                 {
                     try { e.SyncEngineStateRecursive(e.Parent?.ActiveInHierarchy ?? (e.Scene?.IsActive ?? true)); } catch { }
                 }
+            RestoreSettings();
         }
 
         private void TakeList(GameEntity owner, IList<GameEntity> list)
@@ -89,7 +95,7 @@ namespace Editor.Core.Services
         {
             var entityProps = Capture(e, typeof(GameEntity));
             var authored = new List<Component>(e.Components);
-            var componentProps = new List<Action>(authored.Count);
+            var componentProps = new List<Func<bool>>(authored.Count);
             foreach (var c in authored) componentProps.Add(c == null ? null : Capture(c, c.GetType()));
             bool wasActive = e.IsActive;
 
@@ -229,9 +235,25 @@ namespace Editor.Core.Services
             return putBack;
         }
 
-        /// <summary>An action that writes the object's serialized properties back to what they are now — deep copies, so
-        /// a later in-place edit of a value cannot reach the snapshot (#478).</summary>
-        private static Action Capture(object target, Type type)
+        /// <summary>The scene's environment (fog, post effects, exposure, anti-aliasing, GI …) as it was at Take (#479) —
+        /// set_environment, the Environment panel or a script may have changed it while playing. The renderer gets the
+        /// authored values again: ScriptRuntime.End re-applied the play-time ones just before.</summary>
+        private void RestoreSettings()
+        {
+            if (_scene == null || _settings == null) return;
+            bool changed = false;
+            try
+            {
+                if (!ReferenceEquals(_scene.Settings, _settings)) { _scene.Settings = _settings; changed = true; }
+                if (_settingsBack()) changed = true;
+            }
+            catch { }
+            if (changed) { try { _scene.Settings.Apply(); } catch { } }
+        }
+
+        /// <summary>A function that writes the object's serialized properties back to what they are now — deep copies, so
+        /// a later in-place edit of a value cannot reach the snapshot (#478) — and tells whether it changed anything.</summary>
+        private static Func<bool> Capture(object target, Type type)
         {
             var props = Props(type);
             var values = new object[props.Length];
@@ -241,13 +263,15 @@ namespace Editor.Core.Services
             }
             return () =>
             {
+                bool changed = false;
                 for (int i = 0; i < props.Length; i++)
                 {
                     object current;
                     try { current = props[i].GetValue(target); } catch { continue; }
                     if (Same(current, values[i])) continue;
-                    try { props[i].SetValue(target, Clone(values[i])); } catch { }
+                    try { props[i].SetValue(target, Clone(values[i])); changed = true; } catch { }
                 }
+                return changed;
             };
         }
 

@@ -17,8 +17,8 @@ namespace VortexTests
 {
     /// <summary>Play is non-destructive (#318, #345): the snapshot taken at Play puts every serialized property, the
     /// component set and the hierarchy back on Stop — not just lights and transforms. Stop gives back exactly the edit
-    /// scene of Play: added entities go, re-parented ones return (#423), values edited in place come back (#478); a
-    /// script's quit stops play only after the tick (#410).</summary>
+    /// scene of Play: added entities go, re-parented ones return (#423), values edited in place come back (#478), so do
+    /// the environment settings (#479); a script's quit stops play only after the tick (#410).</summary>
     public static class PlaySnapshotTests
     {
         private static GameEntity Entity(string name, GameEntity parent = null)
@@ -225,6 +225,33 @@ namespace VortexTests
             script.SetFieldValue("DebugYaw", "12");
             again.Restore();
             t.Equal("-999", script.GetFieldValue("DebugYaw"), "a second play session is restored as well");
+        }
+
+        // ------------------------------------------------------------------ #479: the environment settings
+
+        [Test]
+        public static void EnvironmentSettingsComeBack(TestContext t)
+        {
+            var scene = SceneOf(Entity("Floor"));
+            var st = scene.Settings;
+            st.TaaEnabled = false; st.Sharpen = 0f; st.Tonemapper = 0; st.GiWorldEnabled = false; st.FogEnabled = true; st.FogDensity = 0.002f;
+
+            var snap = PlaySnapshot.Take(scene);
+            // set_environment(temporal_aa: true, sharpen: 0.4, tonemapper: neutral, gi_world: true), set_weather, the Environment panel
+            st.TaaEnabled = true; st.Sharpen = 0.4f; st.Tonemapper = 1; st.GiWorldEnabled = true; st.FogDensity = 0.012f; st.BloomEnabled = true;
+            snap.Restore();
+
+            t.False(st.TaaEnabled, "temporal AA off again (#479)");
+            t.Equal(0f, st.Sharpen, "sharpen back");
+            t.Equal(0, st.Tonemapper, "the tonemapper back");
+            t.False(st.GiWorldEnabled, "the world cache off again");
+            t.Equal(0.002f, st.FogDensity, "the fog back");
+            t.False(st.BloomEnabled, "bloom off again");
+
+            var snap2 = PlaySnapshot.Take(scene);
+            scene.Settings = new SceneSettings { FogEnabled = false };   // the whole block replaced
+            snap2.Restore();
+            t.True(ReferenceEquals(scene.Settings, st) && st.FogEnabled, "the scene's own settings object is back");
         }
 
         // ------------------------------------------------------------------ #410: a script's quit waits for the tick
