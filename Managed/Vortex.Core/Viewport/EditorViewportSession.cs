@@ -759,7 +759,7 @@ namespace Editor.Core.Viewport
             EnsurePlayerControllerOnMainCamera(scene);
             AudioPreviewService.Instance.Stop();
             AudioPlaybackService.Instance.BeginPlay(scene);
-            ScriptRuntime.Instance.Begin(scene);
+            ScriptRuntime.Instance.BeginPlaySession(scene);   // a new session reads the saves from disk again (#452)
         }
 
         private void EnsurePlayerControllerOnMainCamera(Scene scene)

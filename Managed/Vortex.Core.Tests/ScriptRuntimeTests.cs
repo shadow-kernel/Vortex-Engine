@@ -58,6 +58,15 @@ public class Caller : VortexBehaviour
 {
     public override void Update(float dt) { if (Scene.Find(""Npc"") != 0) SendMessage(Scene.Find(""Npc""), ""ping""); }
 }
+
+public class SaveProbe : VortexBehaviour
+{
+    public override void Start()
+    {
+        Probe.Log.Add(""slot="" + Save.CurrentSlot + "" credits="" + Save.GetInt(""credits"", 0));
+        Save.SetInt(""credits"", 100);
+    }
+}
 ";
 
         private static Assembly Compile(TestContext t)
@@ -165,6 +174,48 @@ public class Caller : VortexBehaviour
                 t.Equal("Health", rt.LiveBehaviourOf(npc, health)?.GetType().Name, "the component maps to its behaviour");
             }
             finally { rt.End(); }
+        }
+
+        [Test]
+        public static void EveryPlaySessionReadsTheSaveFromDisk(TestContext t)
+        {
+            // #452: Save's cache and slot used to outlive editor play sessions — a save edited or deleted between two runs
+            // was ignored and written back over by the next Flush
+            var asm = Compile(t);
+            var scene = new Scene { Name = "Saves" };
+            var gm = new GameEntity(scene, "GameManager");
+            AddScript(gm, "SaveProbe");
+            scene.Entities.Add(gm);
+            string slot0 = Vortex.Save.SlotPath(0), slot2 = Vortex.Save.SlotPath(2);
+            string appData = Environment.GetEnvironmentVariable("VORTEX_APPDATA_DIR");
+            t.True(!string.IsNullOrEmpty(appData) && slot0.StartsWith(appData, StringComparison.Ordinal), "saves of automated runs stay in their app-data folder: " + slot0);
+            foreach (var f in new[] { slot0, slot2 }) if (File.Exists(f)) File.Delete(f);
+            var rt = ScriptRuntime.Instance;
+            try
+            {
+                rt.BeginPlaySession(scene, asm);                          // play 1 starts from nothing …
+                t.Equal("slot=0 credits=0", Log(asm).LastOrDefault(), "a new game");
+                rt.End();                                                 // … and Stop writes credits = 100
+                t.True(File.ReadAllText(slot0).Contains("credits\ti:100"), "Stop flushed the save");
+
+                File.WriteAllText(slot0, "credits\ti:5\n");               // edited on disk between the runs
+                rt.BeginPlaySession(scene, asm);
+                t.Equal("slot=0 credits=5", Log(asm).LastOrDefault(), "play 2 reads the edited file, not play 1's cache");
+                Vortex.Save.UseSlot(2);
+                rt.Begin(scene, asm);                                     // a scene switch inside the session …
+                t.Equal("slot=2 credits=0", Log(asm).LastOrDefault(), "… keeps the slot the game chose");
+                rt.End();
+
+                File.Delete(slot0);                                       // deleted between the runs ("new game")
+                rt.BeginPlaySession(scene, asm);
+                t.Equal("slot=0 credits=0", Log(asm).LastOrDefault(), "play 3 starts on slot 0 and sees the file is gone");
+                t.Equal(0, Vortex.Save.CurrentSlot, "slot 0 at the start of a session");
+            }
+            finally
+            {
+                rt.End();
+                foreach (var f in new[] { slot0, slot2 }) try { if (File.Exists(f)) File.Delete(f); } catch { }
+            }
         }
     }
 }

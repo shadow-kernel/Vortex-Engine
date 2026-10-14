@@ -1055,12 +1055,6 @@ namespace Vortex
         public static void Clear() { _subs.Clear(); }
     }
 
-    /// <summary>
-    /// Persistent save data (#40) — PlayerPrefs-style key/value storage plus save SLOTS, stored per game
-    /// under %APPDATA%\VortexGames\&lt;project&gt;. Works identically in editor play and shipped builds.
-    /// Values auto-flush to disk on scene switch and play end; call <see cref="Flush"/> after a checkpoint
-    /// to be crash-safe. Slots: <c>Save.UseSlot(2)</c> switches the active file (slot 0 is the default).
-    /// </summary>
     /// <summary>Project asset text I/O for data-driven scripts (e.g. a weapon reading its ".vsocket" hand
     /// placement authored in the Socket Editor). Paths are project-relative; dev reads/writes loose files, a
     /// shipped pak is read-only.</summary>
@@ -1075,13 +1069,33 @@ namespace Vortex
             { return Host != null && Host.AssetWriteText(projectRelativePath, text); }
     }
 
+    /// <summary>
+    /// Persistent save data (#40) — PlayerPrefs-style key/value storage plus save SLOTS, stored per game
+    /// under %APPDATA%\VortexGames\&lt;project&gt;. Works identically in editor play and shipped builds: every play
+    /// session starts from the file on disk with slot 0 active, like a game that was just launched (#452).
+    /// Values auto-flush to disk on scene switch and play end; call <see cref="Flush"/> after a checkpoint
+    /// to be crash-safe. Slots: <c>Save.UseSlot(2)</c> switches the active file (slot 0 is the default).
+    /// </summary>
     public static class Save
     {
         private static Dictionary<string, string> _data;   // typed values as "i:", "f:", "s:" strings
         private static int _slot;
         private static bool _dirty;
 
+        /// <summary>The active save slot (0 at the start of every play session).</summary>
         public static int CurrentSlot { get { return _slot; } }
+
+        /// <summary>A new play session starts (the editor's Play, a game launch): write what is still pending, then drop
+        /// the cache and go back to slot 0, so the session reads the file as it is on disk NOW (#452). The cache lives in
+        /// the engine assembly and used to outlive editor play sessions: a save edited or deleted between two runs was
+        /// ignored, and the next Flush wrote the stale data back over it. Scene switches keep the cache and the slot.</summary>
+        internal static void BeginSession()
+        {
+            Flush();
+            _data = null;
+            _dirty = false;
+            _slot = 0;
+        }
 
         /// <summary>Switch the active save slot (loads that slot's file; creates it on first write).</summary>
         public static void UseSlot(int slot)
@@ -1161,12 +1175,14 @@ namespace Vortex
             return _data;
         }
 
-        private static string SlotPath(int slot)
+        internal static string SlotPath(int slot)
         {
             string game = "Game";
             try { game = Editor.Core.Data.ProjectData.Current?.Name ?? "Game"; } catch { }
             foreach (var c in System.IO.Path.GetInvalidFileNameChars()) game = game.Replace(c, '_');
-            var root = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            // the user's app-data folder — VORTEX_APPDATA_DIR moves it for automated runs (tests, smoke checks) the way it
+            // moves the editor's own state, so they never touch a real save
+            var root = Editor.Core.Services.EditorPaths.AppDataRoot();
             return System.IO.Path.Combine(root, "VortexGames", game, "save_slot" + slot + ".dat");
         }
 

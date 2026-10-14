@@ -742,6 +742,17 @@ namespace Editor.Scripting
 
         public void Begin(Scene scene) { Begin(scene, null); }
 
+        /// <summary>Start a PLAY SESSION on <paramref name="scene"/> — the editor's Play, the player's boot: what a freshly
+        /// launched game starts with is reset first (the save cache and slot are read from disk again, #452), then the
+        /// scripts begin. A scene switch or a hot reload inside the session calls <see cref="Begin(Scene)"/> and keeps it.</summary>
+        public void BeginPlaySession(Scene scene) { BeginPlaySession(scene, null); }
+
+        public void BeginPlaySession(Scene scene, System.Reflection.Assembly overrideAsm)
+        {
+            try { Vortex.Save.BeginSession(); } catch { }   // writes what the last session left pending, then forgets it
+            Begin(scene, overrideAsm);
+        }
+
         /// <summary>(Re)start the scripts on <paramref name="scene"/>. <paramref name="overrideAsm"/> lets the dev
         /// hot-reload inject a freshly-compiled assembly instead of re-reading disk.</summary>
         public void Begin(Scene scene, System.Reflection.Assembly overrideAsm)

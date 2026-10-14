@@ -163,7 +163,7 @@ namespace Vortex.Player
             PlayModeService.Instance.SetGameView(true);
             PlayModeService.Instance.Play();
             if (scene != null) AudioPlaybackService.Instance.BeginPlay(scene);
-            if (scene != null) ScriptRuntime.Instance.Begin(scene);
+            if (scene != null) ScriptRuntime.Instance.BeginPlaySession(scene);
 
             _tick = Tick;
             VortexAPI.SetGameTickCallback(_tick);
