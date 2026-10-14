@@ -233,6 +233,7 @@ namespace Editor.Core.Services
             foreach (var s in _oneShots) VortexAudio.StopVoice(s.Handle);
             _oneShots.Clear();
             _warnedInaudibleFades.Clear();
+            _notedScaledZones.Clear();
             _zones.Clear();
             _zoneWeight = 0f;
             _lastDecay = _lastWet = _lastPredelay = -1f;
@@ -635,7 +636,12 @@ namespace Editor.Core.Services
 
             var zone = e.GetComponent<ReverbZone>();
             if (zone != null)
+            {
                 _zones.Add(new ZoneBinding { Zone = zone, Entity = e });
+                // a scaled zone is bigger or smaller than it was before #497: say so once per play session
+                string note = ScaledZoneNote(zone, e);
+                if (note != null && _notedScaledZones.Add(zone)) ConsoleService.Instance.Log(note);
+            }
 
             var listener = e.GetComponent<AudioListener>();
             if (listener != null && listener.IsEnabled)
@@ -836,6 +842,23 @@ namespace Editor.Core.Services
         /// <summary>World length of a matrix row (row 0/1/2 = the entity's x/y/z axis with its world scale).</summary>
         internal static float AxisLength(float[] m, int row)
             => (float)Math.Sqrt(m[row * 4] * m[row * 4] + m[row * 4 + 1] * m[row * 4 + 1] + m[row * 4 + 2] * m[row * 4 + 2]);
+
+        /// <summary>Zones whose scale note was logged this play session.</summary>
+        private readonly HashSet<ReverbZone> _notedScaledZones = new HashSet<ReverbZone>();
+
+        /// <summary>A console note for a zone in a scaled transform (#497): its box / sphere now scales with the entity and its
+        /// parents, so a zone in an existing scene can be bigger or smaller than before. Null when its world scale is 1.</summary>
+        internal static string ScaledZoneNote(ReverbZone zone, GameEntity entity)
+        {
+            if (zone == null || entity == null) return null;
+            var m = ECS.TransformMath.World(entity);
+            float sx = AxisLength(m, 0), sy = AxisLength(m, 1), sz = AxisLength(m, 2);
+            if (Math.Abs(sx - 1f) < 1e-3f && Math.Abs(sy - 1f) < 1e-3f && Math.Abs(sz - 1f) < 1e-3f) return null;
+            string Num(float v) => v.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+            return "[Audio] Reverb Zone '" + entity.Name + "' sits in a scaled transform (world scale " + Num(sx) + ", " + Num(sy) + ", " + Num(sz) +
+                   "): its " + (zone.Shape == (int)ReverbZoneShape.Box ? "box" : "sphere") + " scales with the entity and its parents, like a " +
+                   "collider (#497) — the gizmo shows where it reverberates.";
+        }
 
         private ECS.Vector3 _listenerPos;
 

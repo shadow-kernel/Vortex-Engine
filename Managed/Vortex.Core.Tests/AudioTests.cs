@@ -84,6 +84,22 @@ namespace VortexTests
         }
 
         [Test]
+        public static void ScaledZonesAreNamedInANote(TestContext t)
+        {
+            // #497 changes the size of zones in scaled transforms in existing scenes: play names each of them once
+            var plain = Entity("Plain Room", pos: new Vector3(5, 0, 0), rot: new Vector3(0, 30, 0));
+            t.True(AudioPlaybackService.ScaledZoneNote(Zone(plain, (int)ReverbZoneShape.Box, new Vector3(4, 3, 4)), plain) == null,
+                "a moved and turned zone at scale 1 needs no note");
+            var act = Entity("Act 1", scale: new Vector3(2, 1, 2));
+            var hall = Entity("Hall", act);
+            string note = AudioPlaybackService.ScaledZoneNote(Zone(hall, (int)ReverbZoneShape.Box, new Vector3(4, 3, 4)), hall);
+            t.True(note != null && note.Contains("'Hall'") && note.Contains("world scale 2, 1, 2") && note.Contains("box"), "a zone under a scaled parent: " + note);
+            var dome = Entity("Dome", scale: new Vector3(0.5f, 0.5f, 0.5f));
+            string sphere = AudioPlaybackService.ScaledZoneNote(Zone(dome, (int)ReverbZoneShape.Sphere, new Vector3(1, 1, 1)), dome);
+            t.True(sphere != null && sphere.Contains("'Dome'") && sphere.Contains("sphere"), "a scaled sphere zone: " + sphere);
+        }
+
+        [Test]
         public static void SphereZoneScalesWithTheLargestAxis(TestContext t)
         {
             var e = Entity("Dome", pos: new Vector3(0, 10, 0), scale: new Vector3(1, 3, 1));
