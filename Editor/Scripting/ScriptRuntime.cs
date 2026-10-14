@@ -750,7 +750,35 @@ namespace Editor.Scripting
         public void BeginPlaySession(Scene scene, System.Reflection.Assembly overrideAsm)
         {
             try { Vortex.Save.BeginSession(); } catch { }   // writes what the last session left pending, then forgets it
+            Editor.ECS.Components.Transform.NonFiniteWarningEpoch++;   // a NaN written again in this session is reported again (#455)
             Begin(scene, overrideAsm);
+        }
+
+        /// <summary>"PlayerController.Update" — the innermost frame of the running game scripts on the current stack, or
+        /// null when the engine, a tool or the inspector is the caller. Lets a warning about a bad value name the script
+        /// that produced it (#455). Walks the stack: for rare warnings only.</summary>
+        internal static string ScriptFrameOfCaller()
+        {
+            var asm = _instance?._scriptAsm;
+            if (asm == null) return null;
+            try
+            {
+                var st = new System.Diagnostics.StackTrace(1, false);
+                for (int i = 0; i < st.FrameCount; i++)
+                {
+                    var m = st.GetFrame(i)?.GetMethod();
+                    var t = m?.DeclaringType;
+                    if (t == null || t.Assembly != asm) continue;
+                    string name = m.Name;
+                    // a coroutine or lambda body sits in a compiler-made nested type ("<Scare>d__3") or method ("<Update>b__0")
+                    for (; t.DeclaringType != null && t.Name.StartsWith("<", StringComparison.Ordinal); t = t.DeclaringType)
+                        if (t.Name.IndexOf('>') > 1) name = t.Name.Substring(1, t.Name.IndexOf('>') - 1);
+                    if (name.StartsWith("<", StringComparison.Ordinal) && name.IndexOf('>') > 1) name = name.Substring(1, name.IndexOf('>') - 1);
+                    return t.Name + "." + name;
+                }
+            }
+            catch { }
+            return null;
         }
 
         /// <summary>(Re)start the scripts on <paramref name="scene"/>. <paramref name="overrideAsm"/> lets the dev
@@ -1255,6 +1283,7 @@ namespace Editor.Scripting
             _coroutines.Clear();
             _invokes.Clear();
             _debugShapes.Clear();
+            _nonFiniteMoveWarned.Clear();
             Vortex.Debug.ConsoleVisible = false;
             try { Vortex.Debug.ClearLines(); } catch { }
             try { Vortex.Events.Clear(); } catch { }
@@ -2281,6 +2310,16 @@ namespace Editor.Scripting
 
         Vortex.Vector3 Vortex.IScriptHost.MoveCharacter(Vortex.Vector3 feet, float radius, float height, Vortex.Vector3 move, out bool grounded, long selfId)
         {
+            // a NaN or an infinity from the game's math must not reach the collision world or Jolt's native character (#455):
+            // a non-finite move is no move this frame; a non-finite position or capsule skips the step (feet come back as given)
+            if (!IsFinite(move)) { WarnNonFiniteMove(selfId, "move " + move); move = Vortex.Vector3.Zero; }
+            if (!IsFinite(feet) || !float.IsFinite(radius) || !float.IsFinite(height))
+            {
+                WarnNonFiniteMove(selfId, IsFinite(feet) ? "capsule (radius " + radius.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    + ", height " + height.ToString(System.Globalization.CultureInfo.InvariantCulture) + ")" : "feet position " + feet);
+                grounded = false;
+                return feet;
+            }
             var f = new Editor.ECS.Vector3(feet.X, feet.Y, feet.Z);
             var m = new Editor.ECS.Vector3(move.X, move.Y, move.Z);
             Editor.ECS.Vector3 r;
@@ -2290,6 +2329,24 @@ namespace Editor.Scripting
             else
                 r = Editor.Core.Services.Physics.CollisionService.MoveCharacter(f, radius, height, m, out grounded, selfId);
             return new Vortex.Vector3(r.X, r.Y, r.Z);
+        }
+
+        private static bool IsFinite(Vortex.Vector3 v) => float.IsFinite(v.X) && float.IsFinite(v.Y) && float.IsFinite(v.Z);
+
+        private readonly HashSet<long> _nonFiniteMoveWarned = new HashSet<long>();   // characters warned about this run (#455)
+
+        private void WarnNonFiniteMove(long selfId, string what)
+        {
+            if (!_nonFiniteMoveWarned.Add(selfId)) return;
+            try
+            {
+                var e = FindEntityByHandle(selfId);
+                string writer = ScriptFrameOfCaller();
+                Editor.Core.Services.ConsoleService.Instance.LogWarning("Physics.MoveCharacter: ignored a non-finite " + what
+                    + (e != null ? " for '" + e.Name + "'" : selfId != 0 ? " for character " + selfId : "") + (writer != null ? ", called by " + writer : "")
+                    + " — the character does not move this frame. (Shown once per character.)");
+            }
+            catch { }
         }
 
         string Vortex.IScriptHost.GroundTag(Vortex.Vector3 origin, float maxDist)

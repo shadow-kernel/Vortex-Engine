@@ -398,7 +398,10 @@ namespace Vortex
         internal static IScriptHost Host;
 
         /// <summary>LOCAL (parent-relative) position of this behaviour's entity (read/write). For an entity under a
-        /// moved parent read <see cref="Scene.WorldPositionOf"/> / write <see cref="Scene.SetWorldPose"/> (#354).</summary>
+        /// moved parent read <see cref="Scene.WorldPositionOf"/> / write <see cref="Scene.SetWorldPose"/> (#354).
+        /// A value with a NaN or an infinity in it is ignored — the entity keeps its last valid position and the Console
+        /// warns once, naming the entity and the script (#455); the same holds for Rotation, Scale and every Scene
+        /// transform setter.</summary>
         public Vector3 Position
         {
             get => Host != null ? Host.GetPosition(EntityId) : Vector3.Zero;
@@ -1260,7 +1263,8 @@ namespace Vortex
 
         /// <summary>Move a character capsule (feet = the entity/eye base, radius, total height) by <paramref name="move"/>
         /// and return the collision-resolved feet position. Call it each frame with your desired displacement
-        /// (input + gravity). No collision world yet → returns feet+move unchanged.</summary>
+        /// (input + gravity). No collision world yet → returns feet+move unchanged. A move with a NaN or an infinity in it
+        /// counts as no move this frame (a non-finite feet position comes back unchanged), with one Console warning (#455).</summary>
         public static Vector3 MoveCharacter(Vector3 feet, float radius, float height, Vector3 move)
         {
             return MoveCharacter(feet, radius, height, move, 0);

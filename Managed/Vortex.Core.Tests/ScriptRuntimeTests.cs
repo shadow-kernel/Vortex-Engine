@@ -11,10 +11,11 @@ using Editor.Scripting;
 namespace VortexTests
 {
     /// <summary>The scripting runtime with real compiled behaviours (no window, no GPU): every Script component of an
-    /// entity runs its own behaviour (#408).</summary>
+    /// entity runs its own behaviour (#408), every play session reads the saves from disk (#452), a NaN never reaches a
+    /// transform (#455).</summary>
     public static class ScriptRuntimeTests
     {
-        // Two behaviours that log what happens to them into Probe.Log (read back by reflection: the classes live in the
+        // Behaviours that log what happens to them into Probe.Log (read back by reflection: the classes live in the
         // runtime-compiled script assembly, not in this one).
         private const string Scripts = @"
 using System.Collections.Generic;
@@ -65,6 +66,20 @@ public class SaveProbe : VortexBehaviour
     {
         Probe.Log.Add(""slot="" + Save.CurrentSlot + "" credits="" + Save.GetInt(""credits"", 0));
         Save.SetInt(""credits"", 100);
+    }
+}
+
+public class NanWriter : VortexBehaviour
+{
+    public Vector3 Moved;
+    public override void Update(float dt)
+    {
+        float zero = 0f;
+        var p = Position; p.X = zero / zero; Position = p;            // a 0/0 in game math
+        Rotation = new Vector3(float.NaN, 0f, 0f);
+        Scale = new Vector3(1f, 1f / zero, 1f);
+        Scene.SetWorldPositionOf(EntityId, new Vector3(float.PositiveInfinity, 1f, 1f));
+        Moved = Physics.MoveCharacter(Position, 0.3f, 1.8f, new Vector3(zero / zero, 0f, 0f), EntityId);
     }
 }
 ";
@@ -216,6 +231,70 @@ public class SaveProbe : VortexBehaviour
                 rt.End();
                 foreach (var f in new[] { slot0, slot2 }) try { if (File.Exists(f)) File.Delete(f); } catch { }
             }
+        }
+
+        private static List<string> WarningsAbout(string text) =>
+            Editor.Core.Services.ConsoleService.Instance.Entries
+                .Where(e => e.Level == Editor.Core.Services.LogLevel.Warning && e.Message.Contains(text)).Select(e => e.Message).ToList();
+
+        private static bool Same(Vector3 a, float x, float y, float z) => a.X == x && a.Y == y && a.Z == z;
+
+        [Test]
+        public static void NonFiniteTransformWritesAreIgnored(TestContext t)
+        {
+            // #455: a NaN / infinity used to go straight into SyncToEngine -> the native quaternion and matrix math
+            var scene = new Scene { Name = "NaN" };
+            var crate = new GameEntity(scene, "NanCrate");
+            var tr = crate.Transform;
+            tr.LocalPosition = new Vector3(1, 2, 3); tr.LocalRotation = new Vector3(0, 90, 0); tr.LocalScale = new Vector3(2, 2, 2);
+            tr.LocalPosition = new Vector3(float.NaN, 0, 0);
+            tr.LocalRotation = new Vector3(0, float.PositiveInfinity, 0);
+            tr.LocalScale = new Vector3(1, float.NegativeInfinity, 1);
+            tr.LocalEulerAngles = new Vector3(float.NaN, 5, 5);
+            tr.SetLocalPositionFromEngine(new Vector3(9, float.NaN, 9));
+            t.True(Same(tr.LocalPosition, 1, 2, 3), "the position keeps its last valid value (not the origin): " + tr.LocalPosition.X);
+            t.True(Same(tr.LocalRotation, 0, 90, 0), "the rotation too");
+            t.True(Same(tr.LocalScale, 2, 2, 2), "the scale too");
+            var warned = WarningsAbout("'NanCrate'");
+            t.Equal(3, warned.Count, "one warning per property: " + string.Join(" | ", warned));
+            t.True(warned.Any(w => w.Contains("position (NaN, 0, 0)")) && warned.Any(w => w.Contains("rotation")) && warned.Any(w => w.Contains("scale")),
+                "the warnings name the property and the value: " + string.Join(" | ", warned));
+            tr.LocalPosition = new Vector3(float.NaN, float.NaN, float.NaN);
+            t.Equal(3, WarningsAbout("'NanCrate'").Count, "no flood: once per entity and property");
+            tr.LocalPosition = new Vector3(4, 5, 6);
+            t.True(Same(tr.LocalPosition, 4, 5, 6), "finite values are taken as always");
+            Editor.ECS.Components.Transform.NonFiniteWarningEpoch++;   // a new play session
+            tr.LocalPosition = new Vector3(0, float.NaN, 0);
+            t.Equal(4, WarningsAbout("'NanCrate'").Count, "the next play session warns again");
+        }
+
+        [Test]
+        public static void AScriptWritingNaNKeepsTheGameRunning(TestContext t)
+        {
+            var asm = Compile(t);
+            var scene = new Scene { Name = "NaNPlay" };
+            var hero = new GameEntity(scene, "NanHero");
+            hero.Transform.LocalPosition = new Vector3(4, 5, 6);
+            AddScript(hero, "NanWriter");
+            scene.Entities.Add(hero);
+            var rt = ScriptRuntime.Instance;
+            try
+            {
+                rt.BeginPlaySession(scene, asm);
+                rt.Update(0.016f);
+                int firstFrame = WarningsAbout("NanHero").Count;
+                rt.Update(0.016f);
+                var tr = hero.Transform;
+                t.True(Same(tr.LocalPosition, 4, 5, 6) && Same(tr.LocalRotation, 0, 0, 0) && Same(tr.LocalScale, 1, 1, 1),
+                    "the entity keeps its transform: " + tr.LocalPosition.X + "," + tr.LocalPosition.Y + "," + tr.LocalPosition.Z);
+                var moved = (Vortex.Vector3)Field(rt.BehavioursOf(hero)[0], "Moved");
+                t.True(float.IsFinite(moved.X) && float.IsFinite(moved.Y) && float.IsFinite(moved.Z), "MoveCharacter with a NaN move answers a finite position: " + moved);
+                var warned = WarningsAbout("NanHero");
+                t.True(warned.Count >= 3 && warned.All(w => w.Contains("NanWriter.Update")), "the warnings name the entity and the script: " + string.Join(" | ", warned));
+                t.True(warned.Any(w => w.StartsWith("Physics.MoveCharacter", StringComparison.Ordinal)), "MoveCharacter says so too");
+                t.Equal(firstFrame, warned.Count, "nothing more on the second frame");
+            }
+            finally { rt.End(); }
         }
     }
 }
