@@ -15,7 +15,8 @@ namespace VortexEditor.Claude.Tools
     public static class EditorTools
     {
         [McpServerTool(Name = "get_editor_info", ReadOnly = true, Idempotent = true)]
-        [Description("What the Vortex editor has open: engine version, project, active scene, play state, selection, undo state. " +
+        [Description("What the Vortex editor has open: engine version, project, active scene, play state, the viewport's view (game_view: " +
+                     "the Game tab, where edit mode shows the main camera; viewport_camera: the camera that renders), selection, undo state. " +
                      "Call it first to check the connection.")]
         public static object GetEditorInfo()
         {
@@ -29,6 +30,8 @@ namespace VortexEditor.Claude.Tools
                 active_scene = p?.ActiveScene?.Name,
                 scenes = p?.Scenes.Count(s => s != null),
                 play_state = PlayModeService.Instance.State.ToString(),
+                game_view = PlayModeService.Instance.IsGameView,   // #444
+                viewport_camera = ViewTools.ViewportCamera(),
                 selection = EditorCommands.SelectedEntities().Select(e => SceneModel.ShortId(e) + " " + e.Name).ToArray(),
                 undo = undo.CanUndo ? undo.UndoName : null,
                 redo = undo.CanRedo ? undo.RedoName : null,

@@ -38,17 +38,59 @@ namespace VortexEditor.Claude
         internal static HashSet<Guid> Touched { get; private set; } = new HashSet<Guid>();
         internal static List<FileChange> Files { get; private set; } = new List<FileChange>();
 
+        /// <summary>The running call is a dry run: everything it changes is taken back afterwards, so it must not reach
+        /// anything the undo does not cover — the running game (#405).</summary>
+        public static bool DryRun { get; internal set; }
+
+        private static bool _running;
+        private static readonly List<(string Key, Action Run)> _afterSuccess = new List<(string, Action)>();
+
+        /// <summary>Run <paramref name="action"/> once the call has succeeded and its undo step stands — not after a failed
+        /// call (rolled back) or a dry run. One action per <paramref name="key"/> and call (#405: field values reach the
+        /// running behaviour once, after every field of the call was valid). Outside a call it runs at once.</summary>
+        public static void AfterSuccess(string key, Action action)
+        {
+            if (action == null) return;
+            if (!_running) { action(); return; }
+            if (_afterSuccess.Exists(a => a.Key == key)) return;
+            _afterSuccess.Add((key, action));
+        }
+
         /// <summary>The running call referenced or created this entity (dependency check of Revert).</summary>
         public static void Touch(GameEntity e) { if (e != null) Touched.Add(e.Id); }
 
         internal static void FileWritten(FileChange f) => Files.Add(f);
 
-        internal static void Begin(string origin)
+        internal static void Begin(string origin, bool dryRun)
+        {
+            Reset(origin);
+            DryRun = dryRun;
+            _running = true;
+        }
+
+        /// <summary>The call is over: its after-success actions run when it succeeded and was no dry run.</summary>
+        internal static void End(bool succeeded)
+        {
+            var actions = _afterSuccess.ToList();
+            bool run = succeeded && !DryRun;
+            Reset(null);
+            if (!run) return;
+            foreach (var a in actions)
+            {
+                try { a.Run(); }
+                catch (Exception ex) { ConsoleService.Instance.LogError("Claude tool: " + a.Key + " failed after the call: " + ex.Message); }
+            }
+        }
+
+        private static void Reset(string origin)
         {
             Origin = origin;
             UndoLabel = null;
             Touched = new HashSet<Guid>();
             Files = new List<FileChange>();
+            DryRun = false;
+            _running = false;
+            _afterSuccess.Clear();
         }
     }
 
@@ -227,7 +269,7 @@ namespace VortexEditor.Claude
             var op = new ToolOperation { Time = DateTime.Now, Tool = def.Name, Origin = origin, Arguments = Shorten(ToolJson.Serialize(args), 240), DryRun = dryRun };
             var undo = UndoRedoManager.Instance;
             bool grouped = !def.ReadOnly && !def.ManagesUndo;
-            ToolContext.Begin(origin);
+            ToolContext.Begin(origin, dryRun);
             HashSet<Guid> before = dryRun ? AllIds() : null;
             if (grouped) undo.BeginGroup("Claude: " + def.Title);
             ToolResult result;
@@ -269,7 +311,7 @@ namespace VortexEditor.Claude
             op.Result = result.Summary();
             op.IsError = result.IsError;
             op.Milliseconds = sw.Elapsed.TotalMilliseconds;
-            ToolContext.Begin(null);
+            ToolContext.End(succeeded: !result.IsError);
             OperationLog.Add(op);
             return result;
         }
