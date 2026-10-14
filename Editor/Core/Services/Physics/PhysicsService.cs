@@ -551,9 +551,14 @@ namespace Editor.Core.Services.Physics
         public const uint SolidLayerMask = (1u << LayerStatic) | (1u << LayerDynamic) | (1u << LayerCharacter) | (1u << LayerDebris);
 
         /// <summary>Closest solid hit along <paramref name="direction"/> (normalised inside). Returns the hit point,
-        /// unit normal, entity and distance. <paramref name="layerMask"/> is the OBJECT-layer mask (bit i = layer i).</summary>
+        /// unit normal, entity and distance. <paramref name="layerMask"/> is the OBJECT-layer mask (bit i = layer i).
+        /// A box / sphere / capsule / convex collider that contains the origin is not hit, meshes are hit from either
+        /// side and the normal faces the origin (#418). <paramref name="ignore"/> and every entity under it are never hit
+        /// (#406): its colliders, ragdoll parts and Jolt character capsule are filtered inside the cast, so a ray that
+        /// starts deep inside the caller still reports what is beyond it. A "jolt" character's capsule reports the entity
+        /// that moves it.</summary>
         public static bool Raycast(Vector3 origin, Vector3 direction, float maxDist, out Vector3 point, out Vector3 normal,
-            out GameEntity entity, out float distance, uint layerMask = SolidLayerMask)
+            out GameEntity entity, out float distance, uint layerMask = SolidLayerMask, GameEntity ignore = null)
         {
             point = origin; normal = new Vector3(0f, 1f, 0f); entity = null; distance = 0f;
             if (!IsBuilt || maxDist <= 0f) return false;
@@ -563,14 +568,66 @@ namespace Editor.Core.Services.Physics
             _f3b[0] = direction.X / len; _f3b[1] = direction.Y / len; _f3b[2] = direction.Z / len;
             float dist; ulong entId; uint body;
             int hit;
-            try { hit = VortexAPI.PhysicsRaycast(_f3a, _f3b, maxDist, layerMask, _f3c, _f4, out dist, out entId, out body); }
+            int ignoreBodies = ignore != null ? SubtreeBodies(ignore, ref _ignoreBodies) : 0;
+            int ignoreChars = ignore != null ? SubtreeCharacters(ignore, ref _ignoreChars) : 0;
+            try
+            {
+                if (!_rayExUnavailable)
+                    hit = VortexAPI.PhysicsRaycastEx(_f3a, _f3b, maxDist, layerMask, 0u, ignoreBodies > 0 ? _ignoreBodies : null, ignoreBodies,
+                        ignoreChars > 0 ? _ignoreChars : null, ignoreChars, _f3c, _f4, out dist, out entId, out body);
+                else
+                    hit = VortexAPI.PhysicsRaycast(_f3a, _f3b, maxDist, layerMask, _f3c, _f4, out dist, out entId, out body);
+            }
+            catch (EntryPointNotFoundException)
+            {
+                // an engine library from before #406 / #418: plain casts, no exclusion
+                _rayExUnavailable = true;
+                try { hit = VortexAPI.PhysicsRaycast(_f3a, _f3b, maxDist, layerMask, _f3c, _f4, out dist, out entId, out body); }
+                catch { return false; }
+            }
             catch { return false; }
             if (hit == 0) return false;
             point = new Vector3(_f3c[0], _f3c[1], _f3c[2]);
             normal = new Vector3(_f4[0], _f4[1], _f4[2]);
             distance = dist;
-            entity = EntityOfBody(body) ?? FindByEntityId(entId);
+            entity = EntityOfHit(body, entId);
             return true;
+        }
+
+        private static bool _rayExUnavailable;
+        private static uint[] _ignoreBodies = new uint[16], _ignoreChars = new uint[4];
+
+        /// <summary>The body handles of <paramref name="root"/> and everything under it — their colliders' bodies and the
+        /// parts of their ragdolls — into <paramref name="ids"/> (grown as needed); returns the count. Handles, not engine
+        /// entity ids: an entity loaded from a scene file has no unique engine id (they all read 0), so an id filter would
+        /// skip every body. (Sensor twins are left out: triggers never block a ray or a character.)</summary>
+        private static int SubtreeBodies(GameEntity root, ref uint[] ids)
+        {
+            int n = 0;
+            CollectBodies(root, ref ids, ref n);
+            return RagdollService.AppendBodies(root, ref ids, n);
+        }
+
+        private static void CollectBodies(GameEntity e, ref uint[] ids, ref int n)
+        {
+            if (e == null) return;
+            if (_byEntity.TryGetValue(e, out var b)) Append(ref ids, ref n, b.Id);
+            if (e.Children != null) foreach (var c in e.Children) CollectBodies(c, ref ids, ref n);
+        }
+
+        /// <summary>The handles of the "jolt" characters that belong to <paramref name="root"/> or an entity under it.</summary>
+        private static int SubtreeCharacters(GameEntity root, ref uint[] ids)
+        {
+            int n = 0;
+            foreach (var c in _joltChars.Values)
+                if (c.Owner != null && CollisionService.IsUnder(c.Owner, root)) Append(ref ids, ref n, c.Handle);
+            return n;
+        }
+
+        internal static void Append(ref uint[] ids, ref int n, uint id)
+        {
+            if (n == ids.Length) Array.Resize(ref ids, ids.Length * 2);
+            ids[n++] = id;
         }
 
         /// <summary>Every entity whose body overlaps the sphere (solid layers by default; deduplicated).</summary>
@@ -586,10 +643,44 @@ namespace Editor.Core.Services.Physics
             catch { return result; }
             for (int i = 0; i < n && i < ents.Length; i++)
             {
-                var e = EntityOfBody(bodies[i]) ?? FindByEntityId(ents[i]);
+                var e = EntityOfHit(bodies[i], ents[i]);
                 if (e != null && !result.Contains(e)) result.Add(e);
             }
             return result;
+        }
+
+        /// <summary>#418: every entity whose body CONTAINS the point — the "am I inside something?" question rays no longer
+        /// answer (a ray that starts inside a convex collider does not hit it). Convex colliders are solid, a closed mesh
+        /// contains what it encloses, a terrain contains nothing. Solid layers by default; deduplicated. Empty without a
+        /// physics world.</summary>
+        public static List<GameEntity> OverlapPoint(Vector3 point, uint layerMask = SolidLayerMask, int maxCount = 64)
+        {
+            var result = new List<GameEntity>();
+            if (!IsBuilt) return result;
+            var ents = new ulong[Math.Max(1, maxCount)];
+            var bodies = new uint[ents.Length];
+            _f3a[0] = point.X; _f3a[1] = point.Y; _f3a[2] = point.Z;
+            int n;
+            try { n = VortexAPI.PhysicsOverlapPoint(_f3a, layerMask, ents, bodies, ents.Length); }
+            catch { return result; }
+            for (int i = 0; i < n && i < ents.Length; i++)
+            {
+                var e = EntityOfHit(bodies[i], ents[i]);
+                if (e != null && !result.Contains(e)) result.Add(e);
+            }
+            return result;
+        }
+
+        /// <summary>The entity a query hit: a body of this service by its handle, a ragdoll part / anything else by the
+        /// entity id it carries — and body 0 with the character tag, a character's capsule (#406), by the entity that moves
+        /// that character (null for an anonymous one).</summary>
+        private static GameEntity EntityOfHit(uint body, ulong userData)
+        {
+            if (body != 0) return EntityOfBody(body) ?? FindByEntityId(userData);
+            if ((userData & VortexAPI.PhysicsCharacterUserData) == 0) return null;
+            uint character = unchecked((uint)userData);
+            foreach (var c in _joltChars.Values) if (c.Handle == character) return c.Owner;
+            return null;
         }
 
         // ------------------------------------------------------------------------------------------ joints (#103)
@@ -1396,6 +1487,7 @@ namespace Editor.Core.Services.Physics
             public uint Handle;
             public float R, H, Step, Slope, Mass;
             public Vector3 LastPos;
+            public GameEntity Owner;     // the entity the characterId moves (#406) — null for an anonymous id
         }
         private static readonly Dictionary<long, JoltChar> _joltChars = new Dictionary<long, JoltChar>();
         private static readonly float[] _chVel = new float[3], _chPos = new float[3], _chOut = new float[3], _chNrm = new float[3];
@@ -1412,7 +1504,9 @@ namespace Editor.Core.Services.Physics
         /// step / slope options change; a feet position that is not where the character ended last frame is a
         /// teleport (respawn, scene start) and moves it there first. The character is registered with
         /// <see cref="CollisionService"/> too, so trigger volumes and the managed characters of other scripts still
-        /// see it. Falls back to the managed controller when the Jolt world is not built.</summary>
+        /// see it. Falls back to the managed controller when the Jolt world is not built.
+        /// #406: when <paramref name="selfId"/> is an entity's handle (<see cref="CollisionService.OwnerOf"/>), rays and
+        /// overlaps that hit the capsule report that entity.</summary>
         public static Vector3 MoveCharacterJolt(Vector3 feet, float radius, float height, Vector3 move, float dt,
             out bool grounded, long selfId, float stepHeight, float maxSlopeDeg)
         {
@@ -1454,6 +1548,7 @@ namespace Editor.Core.Services.Physics
                     VortexAPI.PhysicsCharacterSetPosition(c.Handle, _chPos);
                 }
             }
+            c.Owner = CollisionService.OwnerOf(selfId);
 
             _chVel[0] = move.X / dt; _chVel[1] = move.Y / dt; _chVel[2] = move.Z / dt;
             int g;
@@ -1675,6 +1770,9 @@ namespace Editor.Core.Services.Physics
                         var kind = (PhysicsContactKind)c.Kind;
                         bool trigger = c.IsTrigger != 0;
                         if (!trigger && kind != PhysicsContactKind.Added) continue;   // solids: only the first touch has a script callback
+                        // A "jolt" character's inner body (no body handle) names its character since #406. Its touches stay
+                        // with CollisionService.StepEvents, which reports every character in both modes — no duplicates.
+                        if (c.BodyA == 0 || c.BodyB == 0) continue;
                         var a = EntityOfBody(c.BodyA) ?? FindByEntityId(c.EntityA);
                         var b = EntityOfBody(c.BodyB) ?? FindByEntityId(c.EntityB);
                         if (a == null || b == null || ReferenceEquals(a, b)) continue;

@@ -25,6 +25,7 @@ JPH_SUPPRESS_WARNINGS
 #include <Jolt/Physics/Character/CharacterVirtual.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
 #include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Collision/CollidePointResult.h>
 #include <Jolt/Physics/Collision/CollideShape.h>
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
 #include <Jolt/Physics/Collision/ContactListener.h>
@@ -207,6 +208,21 @@ namespace vortex::physics {
 			}
 		private:
 			u32 _mask;
+		};
+
+		// Skips some bodies — the caller's own colliders and character capsule for a ray that must not hit its caller
+		// (#406 / #418). Filtering (instead of stepping past hits) also works when the query starts deep inside such a
+		// body. The list is short (one entity's bodies), scanned linearly.
+		class ignore_bodies_filter final : public JPH::BodyFilter
+		{
+		public:
+			explicit ignore_bodies_filter(const std::vector<JPH::BodyID>& ids) : _ids{ ids } {}
+			bool ShouldCollide(const JPH::BodyID& id) const override
+			{
+				return std::find(_ids.begin(), _ids.end(), id) == _ids.end();
+			}
+		private:
+			const std::vector<JPH::BodyID>& _ids;
 		};
 
 		// ---- contact events ---------------------------------------------------------------------------
@@ -779,6 +795,20 @@ namespace vortex::physics {
 			if (!g_world) return nullptr;
 			character_slot* slot = resolve_slot(g_world->characters, handle);
 			return slot && slot->character ? slot : nullptr;
+		}
+
+		// Body ids of the bodies (handles) and character capsules (character handles) a query must skip; stale handles
+		// are dropped.
+		std::vector<JPH::BodyID> ignored_body_ids(const u32* bodies, s32 body_count, const u32* characters, s32 character_count)
+		{
+			std::vector<JPH::BodyID> ids;
+			if (bodies)
+				for (s32 i = 0; i < body_count; ++i)
+					if (const body_slot* slot = find_body(bodies[i])) ids.push_back(slot->id);
+			if (characters)
+				for (s32 i = 0; i < character_count; ++i)
+					if (const character_slot* slot = find_character(characters[i])) ids.push_back(slot->character->GetInnerBodyID());
+			return ids;
 		}
 
 		// ---- constraints ------------------------------------------------------------------------------------
@@ -1693,17 +1723,37 @@ namespace vortex::physics {
 	bool raycast(const f32* origin, const f32* dir, f32 max_dist, u32 layer_mask,
 		f32* out_point, f32* out_normal, f32* out_dist, u64* out_entity, u32* out_body)
 	{
+		return raycast_ex(origin, dir, max_dist, layer_mask, 0, nullptr, 0, nullptr, 0, out_point, out_normal, out_dist, out_entity, out_body);
+	}
+
+	bool raycast_ex(const f32* origin, const f32* dir, f32 max_dist, u32 layer_mask, u32 flags,
+		const u32* ignore_bodies, s32 ignore_body_count, const u32* ignore_characters, s32 ignore_character_count,
+		f32* out_point, f32* out_normal, f32* out_dist, u64* out_entity, u32* out_body)
+	{
 		const world* w = g_world;
 		if (!w || !origin || !dir || !finite(max_dist) || max_dist <= 0.0f) return false;
 		JPH::Vec3 direction = to_vec3(dir);
 		if (direction.LengthSq() < 1.0e-12f) return false;
 		direction = direction.Normalized();
 
+		// #418: the single-hit CastRay treats convex shapes as solid, so a ray that started inside a crate, a wall box or
+		// a character capsule "hit" it at distance 0 and hid everything behind it. Convex shapes the ray starts in are
+		// skipped now (no back faces), the way the managed collision world always answered; triangle meshes and height
+		// fields keep reporting back faces, so a ray inside a baked interior still hits its walls.
+		JPH::RayCastSettings settings;
+		settings.mTreatConvexAsSolid = (flags & raycast_solid) != 0;
+		settings.mBackFaceModeConvex = JPH::EBackFaceMode::IgnoreBackFaces;
+		settings.mBackFaceModeTriangles = JPH::EBackFaceMode::CollideWithBackFaces;
+
 		const JPH::RRayCast ray(to_vec3(origin), direction * max_dist);
-		JPH::RayCastResult hit;
+		JPH::ClosestHitCollisionCollector<JPH::CastRayCollector> collector;
 		const mask_bp_filter bp_filter(layer_mask);
 		const mask_object_filter object_filter(layer_mask);
-		if (!w->system.GetNarrowPhaseQuery().CastRay(ray, hit, bp_filter, object_filter)) return false;
+		const std::vector<JPH::BodyID> ignored = ignored_body_ids(ignore_bodies, ignore_body_count, ignore_characters, ignore_character_count);
+		const ignore_bodies_filter body_filter(ignored);
+		w->system.GetNarrowPhaseQuery().CastRay(ray, settings, collector, bp_filter, object_filter, body_filter);
+		if (!collector.HadHit()) return false;
+		const JPH::RayCastResult& hit = collector.mHit;
 
 		const JPH::Vec3 point = JPH::Vec3(ray.GetPointOnRay(hit.mFraction));
 		JPH::Vec3 normal = -direction;
@@ -1713,10 +1763,13 @@ namespace vortex::physics {
 			if (lock.Succeeded())
 			{
 				const JPH::Body& body = lock.GetBody();
-				normal = body.GetWorldSpaceSurfaceNormal(hit.mSubShapeID2, point);
+				// a solid hit at the origin has no surface: keep -direction there
+				if (hit.mFraction > 0.0f) normal = body.GetWorldSpaceSurfaceNormal(hit.mSubShapeID2, point);
 				entity = body.GetUserData();
 			}
 		}
+		// A triangle hit from behind reports the triangle's own normal: turn it to face the origin, like every other hit.
+		if (normal.Dot(direction) > 0.0f) normal = -normal;
 
 		store3(out_point, point);
 		store3(out_normal, normal);
@@ -1752,6 +1805,32 @@ namespace vortex::physics {
 			if (written >= max_count) break;
 			if (out_entities) out_entities[written] = w->system.GetBodyInterface().GetUserData(hit.mBodyID2);
 			if (out_bodies) out_bodies[written] = handle_of(*w, hit.mBodyID2);
+			++written;
+		}
+		return written;
+	}
+
+	s32 overlap_point(const f32* point, u32 layer_mask, u64* out_entities, u32* out_bodies, s32 max_count)
+	{
+		const world* w = g_world;
+		if (!w || !point || max_count <= 0) return 0;
+
+		JPH::AllHitCollisionCollector<JPH::CollidePointCollector> collector;
+		const mask_bp_filter bp_filter(layer_mask);
+		const mask_object_filter object_filter(layer_mask);
+		w->system.GetNarrowPhaseQuery().CollidePoint(JPH::RVec3(to_vec3(point)), collector, bp_filter, object_filter);
+
+		// One entry per body (compound / mesh shapes report several hits per body).
+		std::vector<u32> seen;
+		s32 written = 0;
+		for (const JPH::CollidePointResult& hit : collector.mHits)
+		{
+			const u32 key = hit.mBodyID.GetIndexAndSequenceNumber();
+			if (std::find(seen.begin(), seen.end(), key) != seen.end()) continue;
+			seen.push_back(key);
+			if (written >= max_count) break;
+			if (out_entities) out_entities[written] = w->system.GetBodyInterface().GetUserData(hit.mBodyID);
+			if (out_bodies) out_bodies[written] = handle_of(*w, hit.mBodyID);
 			++written;
 		}
 		return written;
@@ -1833,7 +1912,9 @@ namespace vortex::physics {
 		character_slot* slot = nullptr;
 		const u32 handle = allocate_slot(w->characters, w->free_characters, slot);
 		if (!slot) return 0;
-		slot->character = new JPH::CharacterVirtual(&settings, to_vec3(pos), JPH::Quat::sIdentity(), 0, &w->system);
+		// #406: the user data (Jolt copies it onto the inner body) names the character — a ray, overlap or contact on the
+		// capsule used to report entity 0, which named nobody
+		slot->character = new JPH::CharacterVirtual(&settings, to_vec3(pos), JPH::Quat::sIdentity(), character_user_data | handle, &w->system);
 		slot->step_height = std::max(sane(step_height, 0.3f), 0.0f);
 		return handle;
 	}
@@ -2220,7 +2301,9 @@ namespace vortex::physics {
 	f32  get_mass(u32) { return 0.0f; }
 
 	bool raycast(const f32*, const f32*, f32, u32, f32*, f32*, f32*, u64*, u32*) { return false; }
+	bool raycast_ex(const f32*, const f32*, f32, u32, u32, const u32*, s32, const u32*, s32, f32*, f32*, f32*, u64*, u32*) { return false; }
 	s32  overlap_sphere(const f32*, f32, u32, u64*, u32*, s32) { return 0; }
+	s32  overlap_point(const f32*, u32, u64*, u32*, s32) { return 0; }
 	s32  get_contacts(contact_event*, s32) { return 0; }
 
 	u32  character_create(f32, f32, const f32*, f32, f32, f32) { return 0; }

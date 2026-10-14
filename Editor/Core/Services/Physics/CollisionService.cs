@@ -339,6 +339,26 @@ namespace Editor.Core.Services.Physics
         }
         public static void ClearCharacters() { _chars.Clear(); }
 
+        /// <summary>Resolves a characterId to the entity it moves — the script runtime installs its handle lookup at play
+        /// start (a behaviour passes its own EntityId). Null, or an id that is no entity's handle, = no entity: the
+        /// character is then anonymous, as before.</summary>
+        public static Func<long, GameEntity> CharacterOwnerResolver;
+
+        /// <summary>The entity a characterId moves (null when unknown, see <see cref="CharacterOwnerResolver"/>).</summary>
+        public static GameEntity OwnerOf(long characterId)
+        {
+            if (characterId == 0 || CharacterOwnerResolver == null) return null;
+            try { return CharacterOwnerResolver(characterId); } catch { return null; }
+        }
+
+        /// <summary>True when <paramref name="e"/> is <paramref name="root"/> or one of its descendants.</summary>
+        internal static bool IsUnder(GameEntity e, GameEntity root)
+        {
+            if (root == null) return false;
+            for (var p = e; p != null; p = p.Parent) if (ReferenceEquals(p, root)) return true;
+            return false;
+        }
+
         /// <summary>Optional hook that returns an imported model's local-space triangles (flat float[] x,y,z…) for a
         /// MeshRenderer MeshPath. Set by the runtime (native mesh export). Null → imported models fall back to a box.</summary>
         public static Func<string, float[]> MeshTriangleProvider;
@@ -533,11 +553,15 @@ namespace Editor.Core.Services.Physics
         }
 
         /// <summary>General raycast (#35): closest SOLID-world hit along an arbitrary direction. Boxes test as
-        /// exact OBBs (ray transformed into box space), spheres analytically, mesh colliders per triangle
-        /// (Möller–Trumbore), capsules as their AABB. <paramref name="layerMask"/> filters by the owning
-        /// entity's Layer bit. Returns hit point, unit normal (facing the ray origin) and the hit entity.</summary>
+        /// exact OBBs (ray transformed into box space), spheres and capsules analytically, mesh colliders per triangle
+        /// (Möller–Trumbore). <paramref name="layerMask"/> filters by the owning entity's Layer bit. Returns hit point,
+        /// unit normal (facing the ray origin) and the hit entity.
+        /// Rays that start inside geometry (#418, the same contract as the Jolt cast): a box, sphere or capsule that
+        /// contains the origin is not hit; a mesh collider is a surface and is hit from either side (normal flipped
+        /// towards the origin). <paramref name="ignore"/> and everything under it are never hit (#406 / #418) — a ray
+        /// that starts deep inside the caller's own collider passes through it.</summary>
         public static bool Raycast(Vector3 origin, Vector3 direction, float maxDist, int layerMask,
-            out Vector3 hitPoint, out Vector3 hitNormal, out GameEntity hitEntity, out float hitDist)
+            out Vector3 hitPoint, out Vector3 hitNormal, out GameEntity hitEntity, out float hitDist, GameEntity ignore = null)
         {
             hitPoint = origin; hitNormal = new Vector3(0, 1, 0); hitEntity = null; hitDist = 0f;
             V3 o = From(origin);
@@ -552,6 +576,7 @@ namespace Editor.Core.Services.Physics
                 {
                     if (s == null) continue;
                     if (s.Owner != null && (layerMask & (1 << (s.Owner.Layer & 31))) == 0) continue;
+                    if (ignore != null && IsUnder(s.Owner, ignore)) continue;
                     float t; V3 n;
                     bool got;
                     if (s.Kind == Kind.Tris && s.Tris != null)
@@ -562,7 +587,7 @@ namespace Editor.Core.Services.Physics
                     }
                     else if (s.Kind == Kind.Box) got = RayObb(o, d, s, bestT, out t, out n);
                     else if (s.Kind == Kind.Sphere) got = RaySphere(o, d, s.Center, s.Radius, bestT, out t, out n);
-                    else got = RayAabbGeneric(o, d, s.Min, s.Max, bestT, out t, out n);   // capsule: coarse AABB
+                    else got = RayCapsule(o, d, s.A, s.B, s.Radius, bestT, out t, out n);
                     if (got && t < bestT) { bestT = t; best = s; bestN = n; }
                 }
             }
@@ -662,7 +687,7 @@ namespace Editor.Core.Services.Physics
         }
 
         /// <summary>Slab test: does the segment o + d·[0, maxDist] touch the box at all? True for an origin inside the box
-        /// (RayAabbGeneric wants an entry face and says no for those).</summary>
+        /// (an entry-face test would say no for those).</summary>
         private static bool RayTouchesAabb(V3 o, V3 d, V3 min, V3 max, float maxDist)
         {
             float tmin = 0f, tmax = maxDist;
@@ -684,28 +709,36 @@ namespace Editor.Core.Services.Physics
             return true;
         }
 
-        private static bool RayAabbGeneric(V3 o, V3 d, V3 min, V3 max, float maxDist, out float t, out V3 n)
+        /// <summary>Ray vs capsule (segment a-b, radius r), exact (#418): the managed cast tested capsules as their AABB, so a
+        /// ray past a capsule's rounded corner "hit" it and a ray starting in the AABB but outside the capsule skipped it —
+        /// the Jolt cast never did either. An origin inside the capsule is no hit (no entry face), like the other convex
+        /// shapes. The entry into the union of the side cylinder and the two end spheres is the earliest single entry.</summary>
+        private static bool RayCapsule(V3 o, V3 d, V3 a, V3 b, float r, float maxDist, out float t, out V3 n)
         {
             t = 0f; n = new V3(0, 1, 0);
-            float tmin = 0f, tmax = maxDist; int axis = -1; float sign = 1f;
-            float[] ov = { o.X, o.Y, o.Z }, dv = { d.X, d.Y, d.Z }, mn = { min.X, min.Y, min.Z }, mx = { max.X, max.Y, max.Z };
-            for (int i = 0; i < 3; i++)
+            if ((o - ClosestOnSeg(a, b, o)).Len() <= r) return false;
+            float best = float.MaxValue;
+            V3 ba = b - a, oa = o - a;
+            float baba = ba.Dot(ba), bard = ba.Dot(d), baoa = ba.Dot(oa);
+            float qa = baba - bard * bard;   // |ba|² · sin² (ray, axis): 0 for a ray along the axis (the caps decide)
+            if (baba > 1e-12f && qa > 1e-12f)
             {
-                if (dv[i] > -1e-8f && dv[i] < 1e-8f)
+                float qb = baba * d.Dot(oa) - baoa * bard;
+                float qc = baba * oa.Dot(oa) - baoa * baoa - r * r * baba;
+                float h = qb * qb - qa * qc;
+                if (h >= 0f)
                 {
-                    if (ov[i] < mn[i] || ov[i] > mx[i]) return false;
-                    continue;
+                    float tc = (-qb - (float)Math.Sqrt(h)) / qa;
+                    float y = baoa + tc * bard;   // position along the axis (0 at a, baba at b)
+                    if (tc >= 0f && y > 0f && y < baba) best = tc;
                 }
-                float inv = 1f / dv[i];
-                float t1 = (mn[i] - ov[i]) * inv, t2 = (mx[i] - ov[i]) * inv;
-                float lo = t1 < t2 ? t1 : t2, hi = t1 < t2 ? t2 : t1;
-                if (lo > tmin) { tmin = lo; axis = i; sign = dv[i] > 0f ? -1f : 1f; }
-                if (hi < tmax) tmax = hi;
-                if (tmin > tmax) return false;
             }
-            if (axis < 0) return false;
-            t = tmin;
-            n = axis == 0 ? new V3(sign, 0, 0) : axis == 1 ? new V3(0, sign, 0) : new V3(0, 0, sign);
+            if (RaySphere(o, d, a, r, maxDist, out float ta, out _) && ta < best) best = ta;
+            if (RaySphere(o, d, b, r, maxDist, out float tb, out _) && tb < best) best = tb;
+            if (best > maxDist) return false;
+            t = best;
+            V3 p = o + d * t;
+            n = (p - ClosestOnSeg(a, b, p)).Norm();
             return true;
         }
 

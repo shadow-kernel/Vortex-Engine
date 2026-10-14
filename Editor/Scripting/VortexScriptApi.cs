@@ -352,7 +352,8 @@ namespace Vortex
     {
         /// <summary>World-space hit point.</summary>
         public Vector3 Point;
-        /// <summary>Surface normal at the hit (unit length, faces the ray origin).</summary>
+        /// <summary>Surface normal at the hit (unit length, always faces the ray origin — a mesh hit from behind reports the
+        /// flipped triangle normal).</summary>
         public Vector3 Normal;
         /// <summary>Distance from the ray origin to the hit.</summary>
         public float Distance;
@@ -1300,7 +1301,13 @@ namespace Vortex
         /// feet, capsule, this frame's displacement in, resolved feet and <see cref="Grounded"/> out; the step height
         /// and slope limit from <see cref="SetCharacterOptions"/> apply to both. Call once in Start() — like the
         /// options it resets to "managed" on every scene load. Without a physics world (an engine build without
-        /// Jolt) "jolt" silently keeps the managed controller.</summary>
+        /// Jolt) "jolt" silently keeps the managed controller.
+        /// <para>Rays and characters (#406): with "managed" a character is no physics body — rays and
+        /// <see cref="OverlapSphere"/> never hit it (give it a Collider to make it shootable). With "jolt" every character
+        /// is a capsule body: <see cref="Raycast(Vector3, Vector3, float, out RaycastHit, int)"/> (default mask),
+        /// OverlapSphere and <see cref="OverlapPoint"/> hit it and report the entity whose EntityId the script passed to
+        /// MoveCharacter (an id that is no entity's handle reports nothing), and a ray with that entity as ignoreEntity
+        /// passes through its capsule — even from inside it.</para></summary>
         public static void SetCharacterController(string controller)
         {
             bool jolt = controller != null && (controller.Trim().ToLowerInvariant() == "jolt" || controller.Trim().ToLowerInvariant() == "v2");
@@ -1369,13 +1376,25 @@ namespace Vortex
         /// and fills <paramref name="hit"/> with point/normal/distance/entity on the closest hit.
         /// <paramref name="layerMask"/> filters by entity Layer bit (default: everything). The horror
         /// workhorse: line-of-sight checks, interaction rays, "what am I looking at".
-        /// <c>if (Physics.Raycast(eye, Forward, 3f, out var h) &amp;&amp; h.Tag == "Door") ...</c></summary>
+        /// <c>if (Physics.Raycast(eye, Forward, 3f, out var h) &amp;&amp; h.Tag == "Door") ...</c>
+        /// <para>What a ray hits: solid colliders (never triggers) and simulated props at their current pose. Characters
+        /// depend on the controller (<see cref="SetCharacterController"/>): with the default "managed" controller rays never
+        /// hit a character — give it a Collider to make it shootable (MoveCharacter ignores the mover's own colliders);
+        /// with "jolt" the character capsules are bodies and a hit reports the character's entity (EntityId, Name, Tag of
+        /// the entity whose EntityId was passed to MoveCharacter). A ray with an explicit layer mask casts against the
+        /// engine's own collision world, where characters are never hit.</para>
+        /// <para>Rays that start inside something (#418), the same on every path: a box, sphere, capsule or convex collider
+        /// that contains the origin is not hit — the ray reports what lies beyond it, never a hit at distance 0. A mesh
+        /// collider or terrain is a surface and is hit from either side. To ask "is this point inside a collider?" use
+        /// <see cref="OverlapPoint"/>.</para></summary>
         public static bool Raycast(Vector3 origin, Vector3 direction, float maxDist, out RaycastHit hit, int layerMask = ~0)
             => Raycast(origin, direction, maxDist, out hit, layerMask, 0);
 
         /// <summary>Raycast that passes THROUGH one entity (#341): <paramref name="ignoreEntity"/> — its handle, as
-        /// RaycastHit.EntityId / a behaviour's EntityId — and everything under it never count as the hit. The car's
-        /// ground probe ignores the car, the player's interaction ray ignores the player.
+        /// RaycastHit.EntityId / a behaviour's EntityId — and everything under it never count as the hit: its colliders,
+        /// its ragdoll and (with the "jolt" controller) its character capsule are left out of the cast, however deep
+        /// inside them the ray starts (#406 / #418). The car's ground probe ignores the car, the player's interaction ray
+        /// ignores the player, a guard's eye ray ignores the guard.
         /// <c>Physics.Raycast(wheel, Vector3.Down, 1f, out var h, ~0, EntityId)</c></summary>
         public static bool Raycast(Vector3 origin, Vector3 direction, float maxDist, out RaycastHit hit, int layerMask, long ignoreEntity)
         {
@@ -1386,41 +1405,38 @@ namespace Vortex
             if (dl < 1e-6f || maxDist <= 0f) return false;
             var unit = new Editor.ECS.Vector3(d.X / dl, d.Y / dl, d.Z / dl);
             var ignored = ignoreEntity != 0 ? Editor.Scripting.ScriptRuntime.Instance.FindEntityByHandle(ignoreEntity) : null;
-            float travelled = 0f;
-            // the ignored entity is stepped over: the cast resumes just past its hit, a few times at most
-            for (int attempt = 0; attempt < 4; attempt++)
-            {
-                Editor.ECS.Vector3 point, normal; Editor.ECS.GameEntity entity; float dist;
-                float remaining = maxDist - travelled;
-                if (remaining <= 0f) return false;
-                // Jolt casts against the live world (static level, simulated props at their CURRENT pose, triggers
-                // excluded). An explicit entity-layer mask keeps the managed cast (entity layers are not physics layers).
-                bool got = Editor.Core.Services.Physics.PhysicsService.IsBuilt && layerMask == ~0
-                    ? Editor.Core.Services.Physics.PhysicsService.Raycast(o, unit, remaining, out point, out normal, out entity, out dist)
-                    : Editor.Core.Services.Physics.CollisionService.Raycast(o, unit, remaining, layerMask, out point, out normal, out entity, out dist);
-                if (!got) return false;
-                if (ignored != null && entity != null && IsSelfOrUnder(entity, ignored))
-                {
-                    const float step = 0.01f;
-                    travelled += dist + step;
-                    o = new Editor.ECS.Vector3(point.X + unit.X * step, point.Y + unit.Y * step, point.Z + unit.Z * step);
-                    continue;
-                }
-                hit.Point = new Vector3(point.X, point.Y, point.Z);
-                hit.Normal = new Vector3(normal.X, normal.Y, normal.Z);
-                hit.Distance = travelled + dist;
-                hit.Name = entity != null ? (entity.Name ?? "") : "";
-                hit.Tag = entity != null ? (entity.Tag ?? "") : "";
-                hit.EntityId = entity != null ? Editor.Scripting.ScriptRuntime.Instance.HandleForEntity(entity) : 0;
-                return true;
-            }
-            return false;
+            Editor.ECS.Vector3 point, normal; Editor.ECS.GameEntity entity; float dist;
+            // Jolt casts against the live world (static level, simulated props at their CURRENT pose, triggers
+            // excluded). An explicit entity-layer mask keeps the managed cast (entity layers are not physics layers).
+            // The ignored entity is filtered INSIDE either cast (#406 / #418) — stepping past its hits could not leave a
+            // capsule or crate the ray started in.
+            bool got = Editor.Core.Services.Physics.PhysicsService.IsBuilt && layerMask == ~0
+                ? Editor.Core.Services.Physics.PhysicsService.Raycast(o, unit, maxDist, out point, out normal, out entity, out dist,
+                    Editor.Core.Services.Physics.PhysicsService.SolidLayerMask, ignored)
+                : Editor.Core.Services.Physics.CollisionService.Raycast(o, unit, maxDist, layerMask, out point, out normal, out entity, out dist, ignored);
+            if (!got) return false;
+            hit.Point = new Vector3(point.X, point.Y, point.Z);
+            hit.Normal = new Vector3(normal.X, normal.Y, normal.Z);
+            hit.Distance = dist;
+            hit.Name = entity != null ? (entity.Name ?? "") : "";
+            hit.Tag = entity != null ? (entity.Tag ?? "") : "";
+            hit.EntityId = entity != null ? Editor.Scripting.ScriptRuntime.Instance.HandleForEntity(entity) : 0;
+            return true;
         }
 
-        private static bool IsSelfOrUnder(Editor.ECS.GameEntity e, Editor.ECS.GameEntity root)
+        /// <summary>Every entity whose solid collider CONTAINS <paramref name="point"/> (#418) — "am I inside something?",
+        /// the question a ray no longer answers (a ray that starts inside a convex collider does not hit it). Box, sphere,
+        /// capsule and convex colliders are solid; a closed mesh contains what it encloses; a terrain contains nothing;
+        /// with the "jolt" controller a point inside a character capsule reports that character. Triggers are not
+        /// included. Empty without a physics-enabled build.
+        /// <c>bool buried = Physics.OverlapPoint(eye).Length &gt; 0;</c></summary>
+        public static long[] OverlapPoint(Vector3 point)
         {
-            for (var p = e; p != null; p = p.Parent) if (ReferenceEquals(p, root)) return true;
-            return false;
+            var hits = Editor.Core.Services.Physics.PhysicsService.OverlapPoint(new Editor.ECS.Vector3(point.X, point.Y, point.Z));
+            var result = new long[hits.Count];
+            var rt = Editor.Scripting.ScriptRuntime.Instance;
+            for (int i = 0; i < hits.Count; i++) result[i] = rt != null ? rt.HandleForEntity(hits[i]) : 0;
+            return result;
         }
 
         /// <summary>Raycast without hit details — "is something within maxDist in that direction?".</summary>

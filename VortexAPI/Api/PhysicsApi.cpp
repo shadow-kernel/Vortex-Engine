@@ -113,16 +113,36 @@ EDITOR_INTERFACE float   PhysicsGetMass(uint32_t body)                          
 
 // ---- Queries (layerMask bit i = object layer i included, default ~0) ----
 
+// Closest hit (#418): a convex shape that contains the origin is not hit; meshes / height fields are hit from either
+// side; the normal faces the origin.
 EDITOR_INTERFACE int32_t PhysicsRaycast(const float* origin, const float* dir /*unit*/, float maxDist, uint32_t layerMask,
 	float* outPoint, float* outNormal, float* outDist, uint64_t* outEntity, uint32_t* outBody)
 {
 	return phys::raycast(origin, dir, maxDist, layerMask, outPoint, outNormal, outDist, outEntity, outBody) ? 1 : 0;
 }
 
+// The same with flags (bit0 = convex shapes are solid: an origin inside one is a hit at distance 0) and the bodies (body
+// handles) and character capsules (character handles) the ray passes through (#406 / #418: the caller's own colliders
+// and capsule).
+EDITOR_INTERFACE int32_t PhysicsRaycastEx(const float* origin, const float* dir /*unit*/, float maxDist, uint32_t layerMask,
+	uint32_t flags, const uint32_t* ignoreBodies, int32_t ignoreBodyCount, const uint32_t* ignoreCharacters, int32_t ignoreCharacterCount,
+	float* outPoint, float* outNormal, float* outDist, uint64_t* outEntity, uint32_t* outBody)
+{
+	return phys::raycast_ex(origin, dir, maxDist, layerMask, flags, ignoreBodies, ignoreBodyCount, ignoreCharacters, ignoreCharacterCount,
+		outPoint, outNormal, outDist, outEntity, outBody) ? 1 : 0;
+}
+
 EDITOR_INTERFACE int32_t PhysicsOverlapSphere(const float* center, float radius, uint32_t layerMask,
 	uint64_t* outEntities, uint32_t* outBodies, int32_t maxCount)
 {
 	return phys::overlap_sphere(center, radius, layerMask, outEntities, outBodies, maxCount);
+}
+
+// Every body whose shape contains the point (#418), one entry per body; returns the count written.
+EDITOR_INTERFACE int32_t PhysicsOverlapPoint(const float* point, uint32_t layerMask,
+	uint64_t* outEntities, uint32_t* outBodies, int32_t maxCount)
+{
+	return phys::overlap_point(point, layerMask, outEntities, outBodies, maxCount);
 }
 
 // Returns the count written and drains those events from the queue.
@@ -132,6 +152,7 @@ EDITOR_INTERFACE int32_t PhysicsGetContacts(PhysicsContact* buffer, int32_t maxC
 }
 
 // ---- Character controller (Jolt CharacterVirtual, issue #105) ----
+// A query that hits a character's capsule (its inner body) reports body 0 and entity (1 << 63) | the character handle (#406).
 
 EDITOR_INTERFACE uint32_t PhysicsCharacterCreate(float radius, float height, const float* pos, float maxSlopeDeg, float stepHeight, float mass)
 {
@@ -148,6 +169,7 @@ EDITOR_INTERFACE void PhysicsCharacterMove(uint32_t c, const float* desiredVeloc
 {
 	phys::character_move(c, desiredVelocity, dt, outPos, outVelocity, outGrounded, outGroundNormal);
 }
+
 
 // ---- Constraints / joints (issue #103) ----
 // bodyA = the jointed body (valid handle), bodyB = the connected body or 0 = the world. Points / axes are WORLD

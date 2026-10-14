@@ -250,6 +250,21 @@ namespace Editor.Core.Services.Physics
 
         public static bool IsActive(GameEntity entity) => entity != null && _active.ContainsKey(entity);
 
+        /// <summary>#406: append the part bodies of every active ragdoll at or under <paramref name="root"/> to
+        /// <paramref name="ids"/> (from index <paramref name="n"/>); returns the new count — a ray that ignores a
+        /// character passes through its limbs too.</summary>
+        internal static int AppendBodies(GameEntity root, ref uint[] ids, int n)
+        {
+            if (root == null || _active.Count == 0) return n;
+            foreach (var inst in _active.Values)
+            {
+                if (!CollisionService.IsUnder(inst.Entity, root)) continue;
+                foreach (var part in inst.Parts)
+                    if (part != null && part.Body != 0) PhysicsService.Append(ref ids, ref n, part.Body);
+            }
+            return n;
+        }
+
         /// <summary>Must the entity's animator evaluate this frame even without a playing clip? (an active ragdoll, or
         /// one that starts at play start)</summary>
         public static bool NeedsPose(GameEntity entity)

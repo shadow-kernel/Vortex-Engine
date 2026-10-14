@@ -174,14 +174,28 @@ namespace Editor.DllWrapper
         #region Queries
 
         /// <summary>Closest hit along a unit direction. layerMask bit i = object layer i included (0 static,
-        /// 1 dynamic, 2 character, 3 trigger, 4 debris). Returns 1 on hit.</summary>
+        /// 1 dynamic, 2 character, 3 trigger, 4 debris). Returns 1 on hit. A convex shape that contains the origin is
+        /// not hit (#418); meshes are hit from either side; the normal faces the origin.</summary>
         [DllImport(_dllName, CallingConvention = _cc)]
         public static extern int PhysicsRaycast(float[] origin, float[] dir, float maxDist, uint layerMask,
+            [In, Out] float[] outPoint, [In, Out] float[] outNormal, out float outDist, out ulong outEntity, out uint outBody);
+
+        /// <summary><see cref="PhysicsRaycast"/> with flags (bit 0 = convex shapes are solid: an origin inside one is a
+        /// hit at distance 0) and the bodies (body handles) and character capsules (character handles) the ray passes
+        /// through (#406 / #418; null / 0 = none).</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern int PhysicsRaycastEx(float[] origin, float[] dir, float maxDist, uint layerMask, uint flags,
+            uint[] ignoreBodies, int ignoreBodyCount, uint[] ignoreCharacters, int ignoreCharacterCount,
             [In, Out] float[] outPoint, [In, Out] float[] outNormal, out float outDist, out ulong outEntity, out uint outBody);
 
         /// <summary>Every body overlapping a sphere (up to maxCount); returns the number written.</summary>
         [DllImport(_dllName, CallingConvention = _cc)]
         public static extern int PhysicsOverlapSphere(float[] center, float radius, uint layerMask,
+            [In, Out] ulong[] outEntities, [In, Out] uint[] outBodies, int maxCount);
+
+        /// <summary>Every body whose shape contains the point (#418), up to maxCount; returns the number written.</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern int PhysicsOverlapPoint(float[] point, uint layerMask,
             [In, Out] ulong[] outEntities, [In, Out] uint[] outBodies, int maxCount);
 
         /// <summary>Contact events since the previous drain (sensor AND solid contacts). Returns the count written.</summary>
@@ -200,6 +214,10 @@ namespace Editor.DllWrapper
 
         [DllImport(_dllName, CallingConvention = _cc)]
         public static extern void PhysicsCharacterSetPosition(uint character, float[] pos);
+
+        /// <summary>#406: a query that hits a character's capsule (its inner body) reports body 0 and this flag | the
+        /// character handle as its entity.</summary>
+        public const ulong PhysicsCharacterUserData = 1ul << 63;
 
         [DllImport(_dllName, CallingConvention = _cc)]
         public static extern void PhysicsCharacterMove(uint character, float[] desiredVelocity, float dt,

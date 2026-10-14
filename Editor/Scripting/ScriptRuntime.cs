@@ -875,6 +875,8 @@ namespace Editor.Scripting
             }
             if (Editor.Core.Services.Physics.CollisionService.MeshTriangleProvider == null)
                 Editor.Core.Services.Physics.CollisionService.MeshTriangleProvider = ResolveMeshTriangles;
+            // a characterId that is an entity handle (a behaviour's EntityId) names the entity the character moves (#406)
+            Editor.Core.Services.Physics.CollisionService.CharacterOwnerResolver = FindEntityByHandle;
 
             // Socket prefabs: spawn + attach the weapon(s) referenced by any BoneAttachment sockets BEFORE the
             // behaviour pass, so their scripts (and collision) come alive with the rest of the scene.
@@ -1390,6 +1392,7 @@ namespace Editor.Scripting
             _scriptOf.Clear();
             _behavioursByEntity.Clear();
             try { Editor.Core.Services.Physics.CollisionService.ResetEvents(); Editor.Core.Services.Physics.CollisionService.ClearCharacters(); } catch { }
+            Editor.Core.Services.Physics.CollisionService.CharacterOwnerResolver = null;
             try { Editor.Core.Services.Physics.PhysicsService.Clear(); Editor.Core.Services.Physics.PhysicsService.ContactHandler = null; } catch { }
             try { Editor.Core.Services.AI.AiRuntime.End(); } catch { }
             try { Editor.Core.Animation.AnimationService.Instance.ResetStates(); } catch { }
