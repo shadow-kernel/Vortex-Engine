@@ -58,6 +58,8 @@ namespace Editor.Core.Assets.Store
                     StandardInputEncoding = new UTF8Encoding(false),
                 };
                 foreach (var a in Arguments(request, bodyFile, headerFile, outFile)) psi.ArgumentList.Add(a);
+                // macOS's curl carries two TLS backends; its default (LibreSSL) is the one with TLS 1.3 — SecureTransport has none
+                psi.Environment.Remove("CURL_SSL_BACKEND");
 
                 using (var p = new Process { StartInfo = psi })
                 {
