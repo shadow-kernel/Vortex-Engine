@@ -728,15 +728,44 @@ namespace Editor.DllWrapper
             }
         }
 
-        /// <summary>Per-submesh PBR material properties (base color + metallic + roughness) from the native import.</summary>
-        public class SubmeshMaterialProps { public float[] BaseColor = { 0.8f, 0.8f, 0.8f, 1f }; public float Metallic = 0f; public float Roughness = 0.5f; }
+        /// <summary>Per-submesh PBR material properties (base color + metallic + roughness) and the glTF alpha mode and
+        /// sidedness (#441) from the native import.</summary>
+        public class SubmeshMaterialProps
+        {
+            public float[] BaseColor = { 0.8f, 0.8f, 0.8f, 1f }; public float Metallic = 0f; public float Roughness = 0.5f;
+            /// <summary>Engine blend mode: 0 opaque, 1 alpha blend (glTF BLEND), 3 alpha test (glTF MASK).</summary>
+            public int BlendMode;
+            /// <summary>The cutoff of an alpha-test (MASK) material — glTF alphaCutoff, 0.5 by default; 0 otherwise.</summary>
+            public float AlphaCutoff;
+            /// <summary>glTF doubleSided: drawn without back-face culling.</summary>
+            public bool TwoSided;
+
+            /// <summary>Write the imported surface into a sidecar material: base colour, PBR factors, and the blend mode,
+            /// cutoff and sidedness a glTF asks for (#441) — so MASK foliage stays cut out once a .vmat drives it.</summary>
+            public void ApplyTo(Editor.Core.Assets.VortexMaterial v)
+            {
+                if (v == null) return;
+                if (BaseColor != null && BaseColor.Length >= 4) v.BaseColor = BaseColor;
+                v.Metallic = Metallic;
+                v.Roughness = Roughness;
+                v.BlendMode = Editor.Core.Assets.VortexMaterial.BlendModeName(BlendMode);
+                if (BlendMode == 3) v.AlphaCutoff = AlphaCutoff;
+                v.TwoSided = TwoSided;
+            }
+        }
 
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern int GetModelMaterialProps(
             [MarshalAs(UnmanagedType.LPStr)] string filepath,
             [In, Out] float[] outBaseColors, [In, Out] float[] outMetallic, [In, Out] float[] outRoughness, int maxSubmeshes);
 
-        /// <summary>Interpret each submesh's real material (base color + metallic + roughness) so the editor shows it.</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int GetModelMaterialAlpha(
+            [MarshalAs(UnmanagedType.LPStr)] string filepath,
+            [In, Out] int[] outBlendMode, [In, Out] float[] outAlphaCutoff, [In, Out] int[] outTwoSided, int maxSubmeshes);
+
+        /// <summary>Interpret each submesh's real material (base color + metallic + roughness, glTF alpha mode and
+        /// sidedness) so the editor shows it.</summary>
         public static SubmeshMaterialProps[] GetSubmeshMaterialProps(string filepath, int maxSubmeshes = 64)
         {
             try
@@ -746,13 +775,22 @@ namespace Editor.DllWrapper
                 var rough = new float[maxSubmeshes];
                 int count = GetModelMaterialProps(filepath, bc, met, rough, maxSubmeshes);
                 if (count < 0) count = 0;
+                var blend = new int[maxSubmeshes];
+                var cutoff = new float[maxSubmeshes];
+                var twoSided = new int[maxSubmeshes];
+                int alphaCount = 0;
+                try { alphaCount = GetModelMaterialAlpha(filepath, blend, cutoff, twoSided, maxSubmeshes); }
+                catch (EntryPointNotFoundException) { alphaCount = 0; }   // an older engine: opaque, as it imported
                 var result = new SubmeshMaterialProps[count];
                 for (int i = 0; i < count; i++)
                     result[i] = new SubmeshMaterialProps
                     {
                         BaseColor = new[] { bc[i * 4], bc[i * 4 + 1], bc[i * 4 + 2], bc[i * 4 + 3] },
                         Metallic = met[i],
-                        Roughness = rough[i]
+                        Roughness = rough[i],
+                        BlendMode = i < alphaCount ? blend[i] : 0,
+                        AlphaCutoff = i < alphaCount ? cutoff[i] : 0f,
+                        TwoSided = i < alphaCount && twoSided[i] != 0
                     };
                 return result;
             }

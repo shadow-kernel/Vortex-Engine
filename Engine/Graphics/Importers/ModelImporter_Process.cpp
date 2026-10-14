@@ -441,6 +441,32 @@ namespace vortex::graphics
 			material->Get(AI_MATKEY_METALLIC_FACTOR, mat_metallic);
 			material->Get(AI_MATKEY_ROUGHNESS_FACTOR, mat_roughness);
 
+			// glTF alphaMode + doubleSided (#441): MASK cuts out below alphaCutoff (glTF default 0.5), BLEND blends. They were
+			// never read, so every leaf card, fence and window of a glTF imported opaque. Other formats carry no such keys.
+			u32 blend_mode = 0;
+			float alpha_cutoff = 0.0f;
+			bool two_sided = false;
+			if (data.gltf)
+			{
+				aiString alpha_mode;
+				if (material->Get(AI_MATKEY_GLTF_ALPHAMODE, alpha_mode) == AI_SUCCESS)
+				{
+					if (strcmp(alpha_mode.C_Str(), "MASK") == 0)
+					{
+						float cutoff = 0.5f;
+						material->Get(AI_MATKEY_GLTF_ALPHACUTOFF, cutoff);
+						blend_mode = 3;
+						alpha_cutoff = cutoff > 0.0f ? cutoff : 0.0f;
+					}
+					else if (strcmp(alpha_mode.C_Str(), "BLEND") == 0)
+					{
+						blend_mode = 1;
+					}
+				}
+				int double_sided = 0;
+				if (material->Get(AI_MATKEY_TWOSIDED, double_sided) == AI_SUCCESS) two_sided = double_sided != 0;
+			}
+
 			VORTEX_VLOG(("  Material " + std::to_string(i) + ": " + mat_name + "\n").c_str());
 
 			// Get diffuse texture path from material
@@ -520,6 +546,9 @@ namespace vortex::graphics
 					submesh.ao_channel = 0;
 					submesh.normal_opengl = data.gltf;
 					submesh.normal_is_bump = normal_is_bump;
+					submesh.blend_mode = blend_mode;
+					submesh.alpha_cutoff = alpha_cutoff;
+					submesh.two_sided = two_sided;
 
 					// Use material name if submesh name is empty
 					if (submesh.name.empty())

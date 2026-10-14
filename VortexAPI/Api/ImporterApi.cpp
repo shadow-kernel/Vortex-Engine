@@ -386,6 +386,26 @@ EDITOR_INTERFACE int GetModelMaterialProps(const char* filepath,
 	return count;
 }
 
+// Per-submesh glTF alpha mode and sidedness (#441), so the editor writes them into the sidecar .vmat files: the blend
+// mode in Material terms (0 opaque, 1 alpha blend = BLEND, 3 alpha test = MASK), the cutoff of a MASK material (0
+// otherwise) and doubleSided as 1/0. Null outputs are skipped. Returns the submesh count.
+EDITOR_INTERFACE int GetModelMaterialAlpha(const char* filepath,
+	int* out_blend_mode, float* out_alpha_cutoff, int* out_two_sided, int max_submeshes)
+{
+	if (!filepath || max_submeshes <= 0) return 0;
+	auto parsed = parsed_model(filepath);
+	const auto& model_data = *parsed;
+	int count = static_cast<int>((std::min)(model_data.submeshes.size(), static_cast<size_t>(max_submeshes)));
+	for (int i = 0; i < count; i++)
+	{
+		const auto& s = model_data.submeshes[i];
+		if (out_blend_mode)   out_blend_mode[i] = static_cast<int>(s.blend_mode);
+		if (out_alpha_cutoff) out_alpha_cutoff[i] = s.alpha_cutoff;
+		if (out_two_sided)    out_two_sided[i] = s.two_sided ? 1 : 0;
+	}
+	return count;
+}
+
 // Extract textures EMBEDDED in the model (e.g. a .glb that packs its PNG/JPG inside) into out_dir as real files,
 // filling out_names[i] with the written filename per embedded-texture index ("" if it couldn't be written).
 // Returns the number of embedded textures. Lets the importer give a self-contained .glb a real textures/ folder.

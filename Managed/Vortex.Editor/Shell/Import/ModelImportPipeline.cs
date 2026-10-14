@@ -60,9 +60,9 @@ namespace VortexEditor.Shell.AssetImport
     /// <summary>
     /// The import pipeline behind the Import dialog — the macOS port of the WPF ModelImportService (which is WPF-bound):
     /// a model lands in its own folder &lt;target&gt;/&lt;name&gt;/ with its companion files (.mtl / .bin / referenced images),
-    /// the textures next to it, one sidecar .vmat per submesh (materials/submesh_N.vmat, with the base colour, PBR factors
-    /// and the maps the importer found), its animation clips as .vanim files (animations/) and a .vmeta; other files are
-    /// copied with a .vmeta. Tags go to the AssetTagService. UI thread (native import).
+    /// the textures next to it, one sidecar .vmat per submesh (materials/submesh_N.vmat, with the base colour, PBR factors,
+    /// alpha mode and sidedness and the maps the importer found), its animation clips as .vanim files (animations/) and a
+    /// .vmeta; other files are copied with a .vmeta. Tags go to the AssetTagService. UI thread (native import).
     /// </summary>
     public static class ModelImportPipeline
     {
@@ -291,11 +291,8 @@ namespace VortexEditor.Shell.AssetImport
                     {
                         string smName = names != null && i < names.Length && !string.IsNullOrEmpty(names[i]) ? names[i] : "Submesh_" + i;
                         var v = new VortexMaterial { Name = smName };
-                        if (props != null && i < props.Length)
-                        {
-                            if (props[i].BaseColor != null && props[i].BaseColor.Length >= 4) v.BaseColor = props[i].BaseColor;
-                            v.Metallic = props[i].Metallic; v.Roughness = props[i].Roughness;
-                        }
+                        // base colour, PBR factors and the glTF alpha mode / sidedness (#441): a MASK leaf stays cut out
+                        if (props != null && i < props.Length) props[i].ApplyTo(v);
                         bool textured = false;
                         if (texSets != null && i < texSets.Length)
                         {

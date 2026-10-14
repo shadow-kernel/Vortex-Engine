@@ -123,9 +123,11 @@ namespace vortex::graphics
 	namespace
 	{
 		// materials.vmc: the material records of a cached model (#364 C), next to its submesh_N.vmesh files — what
-		// build_model_result reads from each submesh besides its geometry.
+		// build_model_result reads from each submesh besides its geometry. A cache of another version is not used: the
+		// model is imported again and the cache rewritten.
+		//   v2: blend mode, alpha cutoff and two-sidedness (#441) — a v1 cache would bring glTF cut-outs back opaque
 		constexpr u32 kCacheMagic = 0x434D4D56;   // "VMMC"
-		constexpr u32 kCacheVersion = 1;
+		constexpr u32 kCacheVersion = 2;
 		constexpr u32 kMaxString = 1u << 16;
 		constexpr u32 kMaxSubmeshes = 4096;
 
@@ -223,6 +225,9 @@ namespace vortex::graphics
 			put_str(f, sm.roughness_texture);
 			put_str(f, sm.ao_texture);
 			put_str(f, sm.emissive_texture);
+			put_u8(f, static_cast<u8>(sm.blend_mode));
+			put_f32(f, sm.alpha_cutoff);
+			put_u8(f, sm.two_sided ? 1 : 0);
 		}
 		f.close();
 		return f.good() ? written : 0;
@@ -252,12 +257,14 @@ namespace vortex::graphics
 			SubMeshData sm = std::move(one.submeshes[0]);
 
 			u8 flags[5]{};
+			u8 blend_mode = 0, two_sided = 0;
 			if (!get_u32(f, sm.material_index)
 				|| !get_f32(f, sm.base_color[0]) || !get_f32(f, sm.base_color[1]) || !get_f32(f, sm.base_color[2]) || !get_f32(f, sm.base_color[3])
 				|| !get_f32(f, sm.metallic) || !get_f32(f, sm.roughness)
 				|| !get_u8(f, flags[0]) || !get_u8(f, flags[1]) || !get_u8(f, flags[2]) || !get_u8(f, flags[3]) || !get_u8(f, flags[4])
 				|| !get_str(f, sm.diffuse_texture) || !get_str(f, sm.normal_texture) || !get_str(f, sm.metallic_texture)
-				|| !get_str(f, sm.roughness_texture) || !get_str(f, sm.ao_texture) || !get_str(f, sm.emissive_texture))
+				|| !get_str(f, sm.roughness_texture) || !get_str(f, sm.ao_texture) || !get_str(f, sm.emissive_texture)
+				|| !get_u8(f, blend_mode) || !get_f32(f, sm.alpha_cutoff) || !get_u8(f, two_sided))
 			{
 				out.clear();
 				return false;
@@ -267,6 +274,8 @@ namespace vortex::graphics
 			sm.ao_channel = flags[2];
 			sm.normal_opengl = flags[3] != 0;
 			sm.normal_is_bump = flags[4] != 0;
+			sm.blend_mode = blend_mode <= 3 ? blend_mode : 0;
+			sm.two_sided = two_sided != 0;
 
 			out.bounds_min.x = (std::min)(out.bounds_min.x, one.bounds_min.x); out.bounds_max.x = (std::max)(out.bounds_max.x, one.bounds_max.x);
 			out.bounds_min.y = (std::min)(out.bounds_min.y, one.bounds_min.y); out.bounds_max.y = (std::max)(out.bounds_max.y, one.bounds_max.y);

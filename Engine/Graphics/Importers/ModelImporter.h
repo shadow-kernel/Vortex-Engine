@@ -33,6 +33,11 @@ namespace vortex::graphics
 	u8 ao_channel{ 0 };
 	bool normal_opengl{ false };   // normal map uses the OpenGL (+Y) convention — glTF's convention
 	bool normal_is_bump{ false };  // "normal" came from a HEIGHT/bump slot (OBJ map_Bump): may be grayscale
+	// glTF alphaMode / alphaCutoff / doubleSided (#441) in Material terms: blend_mode 0 opaque, 1 alpha blend (BLEND),
+	// 3 alpha test (MASK) discarding below alpha_cutoff; two_sided = no back-face culling. Other formats stay opaque.
+	u32 blend_mode{ 0 };
+	float alpha_cutoff{ 0.0f };
+	bool two_sided{ false };
 	};
 
 	// ---- Skeletal animation data (green-field; see ANIMATION_SYSTEM_DESIGN.md) ----

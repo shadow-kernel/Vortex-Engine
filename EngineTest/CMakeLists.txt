@@ -37,8 +37,15 @@ target_include_directories(VortexGeometryTest PRIVATE "${CMAKE_SOURCE_DIR}/Engin
 target_compile_definitions(VortexGeometryTest PRIVATE TEST_GEOMETRY=1)
 target_link_libraries(VortexGeometryTest PRIVATE vortex::engine)
 
+# Model import (#441): small glTF / OBJ files through the Assimp importer and the import cache (headless).
+add_executable(VortexImportTest Main.cpp)
+target_include_directories(VortexImportTest PRIVATE "${CMAKE_SOURCE_DIR}/Engine/Common")
+target_compile_definitions(VortexImportTest PRIVATE TEST_IMPORT=1)
+target_link_libraries(VortexImportTest PRIVATE vortex::engine)
+
 if(NOT MSVC)
 	target_compile_options(VortexGeometryTest PRIVATE -Wall -Wno-unused-parameter)
+	target_compile_options(VortexImportTest PRIVATE -Wall -Wno-unused-parameter)
 	target_compile_options(VortexParticleTest PRIVATE -Wall -Wno-unused-parameter)
 	target_compile_options(EngineTest PRIVATE -Wall -Wno-unused-parameter)
 	target_compile_options(VortexRenderTest PRIVATE -Wall -Wno-unused-parameter)
@@ -76,6 +83,12 @@ set_tests_properties(NavigationSmokeTest PROPERTIES
 	FAIL_REGULAR_EXPRESSION "FAILURES!"
 	PASS_REGULAR_EXPRESSION "ALL PASSED"
 	TIMEOUT 120)
+
+add_test(NAME ImportTest COMMAND VortexImportTest)
+set_tests_properties(ImportTest PROPERTIES
+	FAIL_REGULAR_EXPRESSION "FAILURES!"
+	PASS_REGULAR_EXPRESSION "ALL PASSED"
+	TIMEOUT 60)
 
 # Gamepads for the .NET hosts: VortexAPI's PollGamepad driven by an SDL virtual gamepad (headless; SDL builds only).
 if(TARGET VortexAPI AND NOT VORTEX_ENABLE_DX12)

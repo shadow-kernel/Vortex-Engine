@@ -792,6 +792,10 @@ namespace vortex::graphics
 				mat->set_base_color({ submesh.base_color[0], submesh.base_color[1], submesh.base_color[2], submesh.base_color[3] });
 				mat->set_metallic(submesh.metallic);
 				mat->set_roughness(submesh.roughness);
+				// glTF MASK / BLEND / doubleSided (#441): cut-out leaves, glass and two-sided cards straight from the import
+				mat->set_blend_mode(submesh.blend_mode);
+				mat->set_alpha_cutoff(submesh.alpha_cutoff);
+				mat->set_double_sided(submesh.two_sided);
 			}
 			if (!submesh.diffuse_texture.empty())
 			{
