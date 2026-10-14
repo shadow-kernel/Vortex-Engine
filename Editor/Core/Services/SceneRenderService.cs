@@ -322,6 +322,7 @@ namespace Editor.Core.Services
         {
             if (string.IsNullOrEmpty(modelPath)) return;
             try { Editor.Scripting.ScriptRuntime.ForgetMeshTriangles(); Gi.RadianceCache.ForgetBounds(); Foliage.FoliageService.ForgetMeshes(); } catch { }   // collision + the lighting cache read the new file
+            try { Core.Animation.AnimationService.Instance.InvalidateSkeleton(modelPath); } catch { }   // and the rig: new bones, new bind pose (#419)
             string target = NormalizeModelPath(modelPath);
             var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var k in _submeshMeshCache.Keys) if (SameModel(k, target)) keys.Add(k);

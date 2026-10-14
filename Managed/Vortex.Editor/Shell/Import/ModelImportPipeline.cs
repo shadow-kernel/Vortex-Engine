@@ -369,7 +369,11 @@ namespace VortexEditor.Shell.AssetImport
                     string unique = safe; int n = 1;
                     while (!used.Add(unique)) unique = safe + "_" + n++;
                     var p = Path.Combine(animDir, unique + ".vanim");
-                    if (clip.Save(p)) { written++; r?.AnimationClips.Add(p); }
+                    if (clip.Save(p))
+                    {
+                        written++; r?.AnimationClips.Add(p);
+                        Editor.Core.Animation.AnimationService.Instance.InvalidateClip(p);   // a re-import overwrites it (#419)
+                    }
                 }
             }
             catch (Exception ex) { r?.Warnings.Add("Animation clips: " + ex.Message); }
