@@ -1790,7 +1790,8 @@ namespace Vortex
     /// Call these from a behaviour's Update each frame. Every coordinate and size (rects, text, lines, images, the mouse)
     /// is in UI POINTS with the origin top-left: the window's logical units — points on macOS, DIPs on Windows — the same
     /// in editor play and in the standalone player, so a HUD laid out once looks alike on a Retina and a standard
-    /// display (#454). <see cref="Scale"/> converts points to device pixels.
+    /// display (#454). <see cref="Scale"/> converts points to device pixels. Width, Height and Scale are valid from
+    /// Start() on: both hosts set the frame before the scripts start.
     /// This is the generic engine UI; a game builds its own lobby/HUD with it (no UI code in the engine).
     /// </summary>
     public static class UI

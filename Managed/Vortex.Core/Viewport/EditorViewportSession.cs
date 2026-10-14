@@ -766,6 +766,10 @@ namespace Editor.Core.Viewport
             EnsurePlayerControllerOnMainCamera(scene);
             AudioPreviewService.Instance.Stop();
             AudioPlaybackService.Instance.BeginPlay(scene);
+            // the play view's UI frame before any Start(): UI.Width / Height / Scale are real from a script's first line —
+            // the per-tick feed comes one frame later, so Start() saw zeros (first play) or the last session's size (#454)
+            var f = UiFrame(_host, _pointerX, _pointerY);
+            ScriptRuntime.Instance.SetUIFrame(f.W, f.H, f.MouseX, f.MouseY, false, false, f.Scale);
             ScriptRuntime.Instance.BeginPlaySession(scene);   // a new session reads the saves from disk again (#452)
         }
 

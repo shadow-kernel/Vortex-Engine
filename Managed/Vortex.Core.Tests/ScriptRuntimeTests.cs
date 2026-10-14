@@ -110,6 +110,15 @@ public class Witness : VortexBehaviour
     }
 }
 
+public class UiProbe : VortexBehaviour
+{
+    public override void Start()
+    {
+        var ci = System.Globalization.CultureInfo.InvariantCulture;
+        Probe.Log.Add(""ui "" + UI.Width.ToString(ci) + ""x"" + UI.Height.ToString(ci) + "" @"" + UI.Scale.ToString(ci));
+    }
+}
+
 public class ContactZone : VortexBehaviour
 {
     public override void OnTriggerEnter(TriggerHit other) { }
@@ -536,6 +545,23 @@ public class ContactZone : VortexBehaviour
                 t.True(Log(asm).Contains("Witness sees Health=False Loot=True"), "Health (destroyed first) is gone, Loot (still running) is found: " + string.Join(" | ", Log(asm)));
             }
             finally { rt.End(); }
+        }
+
+        [Test]
+        public static void UiFrameIsValidInStart(TestContext t)
+        {
+            // the hosts feed the UI frame before BeginPlaySession; nothing in Begin may reset it
+            var asm = Compile(t);
+            var scene = new Scene { Name = "UiStart" };
+            Entity(scene, "Hud", "UiProbe");
+            var rt = ScriptRuntime.Instance;
+            try
+            {
+                rt.SetUIFrame(800, 600, 1, 2, false, false, 2f);
+                rt.BeginPlaySession(scene, asm);
+                t.Equal("ui 800x600 @2", Log(asm).LastOrDefault(), "Start() reads the frame");
+            }
+            finally { rt.End(); rt.SetUIFrame(0, 0, 0, 0, false, false, 1f); }
         }
 
         [Test]

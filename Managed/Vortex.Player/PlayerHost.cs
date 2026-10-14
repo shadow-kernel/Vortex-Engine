@@ -38,6 +38,7 @@ namespace Vortex.Player
         private static InputScript _script;
         private static readonly Editor.Core.Viewport.DebugFreeCamera _debugCam = new Editor.Core.Viewport.DebugFreeCamera();
         private static bool _fullscreenApplied;
+        private static Editor.Core.Data.Scene _sceneToStart;   // the scripts start in the first tick, once the window exists
 
         private static int _gc0Last, _gc2Last;   // GC counts at the last FPS line
 
@@ -163,7 +164,9 @@ namespace Vortex.Player
             PlayModeService.Instance.SetGameView(true);
             PlayModeService.Instance.Play();
             if (scene != null) AudioPlaybackService.Instance.BeginPlay(scene);
-            if (scene != null) ScriptRuntime.Instance.BeginPlaySession(scene);
+            // The scripts start in the first tick of the game host, not here: only then does the window exist, so Start()
+            // reads the real UI.Width / Height / Scale (#454) — before, it saw zeros.
+            _sceneToStart = scene;
 
             _tick = Tick;
             VortexAPI.SetGameTickCallback(_tick);
@@ -307,6 +310,12 @@ namespace Vortex.Player
                 // the editor's play view; the pixel density turns them into pixels (UI.Scale, #454)
                 sr.SetUIFrame(cw, ch, mx, my, down, pressed, VortexAPI.GameHostPixelDensity());
                 VortexAPI.UIBegin(cw, ch);
+                if (_sceneToStart != null)
+                {
+                    var first = _sceneToStart;
+                    _sceneToStart = null;
+                    sr.BeginPlaySession(first);   // the first frame: the window and its UI frame are known now
+                }
 
                 if (_fpsT0 == DateTime.MinValue) _fpsT0 = DateTime.Now;
                 _frames++;
