@@ -389,7 +389,7 @@ namespace Editor.Core.Services.Physics
         /// MeshRenderer MeshPath. Set by the runtime (native mesh export). Null → imported models fall back to a box.</summary>
         public static Func<string, float[]> MeshTriangleProvider;
 
-        public static void Clear() { _world.Clear(); _triggers.Clear(); _byOwner.Clear(); _dynamic.Clear(); CharacterContacts.Clear(); _chars.Clear(); ResetEvents(); IsBuilt = false; }
+        public static void Clear() { _world.Clear(); _triggers.Clear(); _byOwner.Clear(); _dynamic.Clear(); CharacterContacts.Clear(); _chars.Clear(); _noShapeWarned.Clear(); ResetEvents(); IsBuilt = false; }
 
         /// <summary>Steam Audio v2 (#21): flatten the SOLID world colliders into a world-space triangle soup
         /// (vertex xyz array + per-triangle vertex indices) for the acoustic occlusion scene. Mesh colliders emit
@@ -846,7 +846,28 @@ namespace Editor.Core.Services.Physics
 
         private static void AddOwnShape(GameEntity e, Collider col)
         {
-            try { var s = BuildShape(e, col); if (s != null) AddShape(e, s, col.IsTrigger); } catch { }
+            Shape s = null;
+            try { s = BuildShape(e, col); } catch { }
+            if (s != null) AddShape(e, s, col.IsTrigger);
+            else WarnNoShape(e, col);
+        }
+
+        private static readonly HashSet<GameEntity> _noShapeWarned = new HashSet<GameEntity>();
+
+        /// <summary>#500: a collider that gives the character world nothing must not fail silently (a Mesh Collider whose own
+        /// Mesh Path was ignored let characters fall through a whole city). Once per entity and play session.</summary>
+        private static void WarnNoShape(GameEntity e, Collider col)
+        {
+            if (e == null || col == null || !_noShapeWarned.Add(e)) return;
+            string mesh = MeshSourceOf(e, col);
+            string why;
+            if (string.IsNullOrEmpty(mesh))
+                why = "it has no mesh — set its Mesh Path or give the entity a Mesh Renderer (a model root uses its parts' meshes, unless a kinematic Rigidbody moves it)";
+            else if (MeshTriangleProvider == null) return;   // no mesh loader wired (tools, tests): nothing could be read anyway
+            else why = "no triangles could be read from '" + mesh + "'";
+            var text = "[Collision] '" + (e.Name ?? "?") + "': " + col.DisplayName + " gives characters and raycasts nothing to collide with — " + why;
+            System.Diagnostics.Debug.WriteLine(text);
+            try { ConsoleService.Instance.LogWarning(text); } catch { }
         }
 
         private static void AddShape(GameEntity e, Shape s, bool trigger)
@@ -871,6 +892,7 @@ namespace Editor.Core.Services.Physics
             _dynamic.Clear();
             CharacterContacts.Clear();
             _chars.Clear();   // characters re-register on their next MoveCharacter — don't leak across scene switches / replays
+            _noShapeWarned.Clear();   // #500: each play session warns again
             ResetEvents();
             CharacterStepHeight = 0.35f;   // #48: back to stock — scripts re-apply their tuning in Start()
             CharacterMaxSlopeDeg = 50f;
@@ -1017,16 +1039,24 @@ namespace Editor.Core.Services.Physics
             }
             // Mesh collider (or a base Collider): primitives collide as exact analytic shapes; imported models as
             // real triangles; anything else falls back to the mesh's bounding box.
-            return BuildMeshShape(e, center, wrot, wscale, reuse);
+            return BuildMeshShape(e, col, center, wrot, wscale, reuse);
         }
 
         private static Shape Reuse(Shape reuse, Kind kind)
             => reuse != null && reuse.Kind == kind && reuse.Tris == null ? reuse : new Shape { Kind = kind };
 
-        private static Shape BuildMeshShape(GameEntity e, V3 center, Basis wrot, V3 wscale, Shape reuse)
+        /// <summary>#500: the mesh a mesh-type collider collides as — the Mesh Collider's own Mesh Path first (a collision
+        /// mesh that is not rendered), else the entity's renderer mesh. The same choice the Jolt bodies (PhysicsService)
+        /// and the navmesh bake make; empty when neither has one (a model root then uses its parts' meshes).</summary>
+        internal static string MeshSourceOf(GameEntity e, Collider col)
         {
-            var mr = e.GetComponent<MeshRenderer>();
-            string mp = mr?.MeshPath;
+            if (col is MeshCollider mc && !string.IsNullOrEmpty(mc.MeshPath)) return mc.MeshPath;
+            return e?.GetComponent<MeshRenderer>()?.MeshPath;
+        }
+
+        private static Shape BuildMeshShape(GameEntity e, Collider col, V3 center, Basis wrot, V3 wscale, Shape reuse)
+        {
+            string mp = MeshSourceOf(e, col);
             if (!string.IsNullOrEmpty(mp) && mp.StartsWith("Primitive:", StringComparison.OrdinalIgnoreCase))
             {
                 var prim = mp.Substring("Primitive:".Length).ToLowerInvariant();

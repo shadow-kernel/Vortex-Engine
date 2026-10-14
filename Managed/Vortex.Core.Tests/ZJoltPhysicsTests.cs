@@ -140,6 +140,39 @@ namespace VortexTests
             finally { ClearWorlds(); }
         }
 
+        /// <summary>#500: the Jolt body and the character world take a Mesh Collider's mesh from the same place — its own
+        /// Mesh Path over the rendered mesh — so Physics.Raycast on both paths and the character agree.</summary>
+        [Test]
+        public static void MeshColliderSourceIsTheSameInBothWorlds(TestContext t)
+        {
+            if (!Jolt()) return;
+            var s = new Scene { Name = "Visuals" };
+            var house = PhysicsRaycastTests.Add(s, null, "House", new Vector3(0, 0, 0), e =>
+            {
+                e.AddComponentDirect(new Editor.ECS.Components.Rendering.MeshRenderer(e) { MeshPath = "Assets/house.glb" });
+                e.AddComponentDirect(new MeshCollider(e) { MeshPath = "Assets/house_col.glb" });
+            });
+            var roof = PhysicsRaycastTests.Add(s, null, "Roof", new Vector3(30f, 0, 0), e => e.AddComponentDirect(new MeshCollider(e) { MeshPath = "Assets/house_col.glb" }));
+            PhysicsRaycastTests.AsLoaded(s);
+            var visual = CollisionGridTests.Slab(10f, 3f); var coarse = CollisionGridTests.Slab(10f, 5f);
+            var oldProvider = CollisionService.MeshTriangleProvider;
+            CollisionService.MeshTriangleProvider = path => path == "Assets/house.glb" ? visual : path == "Assets/house_col.glb" ? coarse : null;
+            try
+            {
+                BuildWorlds(s);
+                t.Equal(2, PhysicsService.BodyCount, "both mesh colliders have a Jolt body");
+                foreach (var x in new[] { 1f, 31f })
+                {
+                    var o = new Vector3(x, 10f, 0.3f);
+                    bool j = PhysicsService.Raycast(o, new Vector3(0, -1, 0), 20f, out _, out _, out var je, out float jd);
+                    bool m = CollisionService.Raycast(o, new Vector3(0, -1, 0), 20f, ~0, out _, out _, out var me, out float md);
+                    t.True(j && m && je == me && Math.Abs(jd - 5f) < 1e-3f && Math.Abs(md - 5f) < 1e-3f,
+                           "at x " + x + " both worlds hit the collision mesh at y 5 (Jolt " + jd + ", managed " + md + ")");
+                }
+            }
+            finally { ClearWorlds(); CollisionService.MeshTriangleProvider = oldProvider; }
+        }
+
         /// <summary>#418: the opt-in "is this point inside something?" query.</summary>
         [Test]
         public static void OverlapPointFindsWhatContainsThePoint(TestContext t)

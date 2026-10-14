@@ -1221,11 +1221,10 @@ namespace Editor.Core.Services.Physics
                 }
             }
 
-            var mr = e.GetComponent<MeshRenderer>();
             bool wantMesh = group == null || meshCol != null || (baseMeshCol != null && children.Count == 0);
             if (wantMesh)
             {
-                string meshPath = meshCol != null && !string.IsNullOrEmpty(meshCol.MeshPath) ? meshCol.MeshPath : mr?.MeshPath;
+                string meshPath = CollisionService.MeshSourceOf(e, (Collider)meshCol ?? baseMeshCol);   // #500: one choice for both worlds
                 var centerCol = (Collider)meshCol ?? baseMeshCol;
                 var center = centerCol != null ? Mul(ToSys(centerCol.Center), scale) : SysVec.Zero;
                 bool convex = meshCol != null ? meshCol.Convex : (baseMeshCol != null ? baseMeshCol.ColliderType == ColliderType.Convex : motion != MotionStatic);
