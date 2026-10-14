@@ -197,6 +197,10 @@ namespace vortex::physics {
 	// controller slides along walls, walks stairs (step_height), sticks to floors and pushes DYNAMIC bodies.
 	void character_move(u32 character, const f32* desired_velocity, f32 dt,
 		f32* out_pos, f32* out_velocity, s32* out_grounded, f32* out_ground_normal);
+	// #417: character_move that passes through the listed bodies (body handles: the moving entity's own colliders).
+	void character_move_ex(u32 character, const f32* desired_velocity, f32 dt,
+		const u32* ignore_bodies, s32 ignore_body_count,
+		f32* out_pos, f32* out_velocity, s32* out_grounded, f32* out_ground_normal);
 
 	// ---- Constraints / joints (issue #103) ---------------------------------------------------------------
 	// Handles are u32, 0 = invalid (same scheme as bodies). `body_a` is the jointed body (must be valid), `body_b`

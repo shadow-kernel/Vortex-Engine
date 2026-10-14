@@ -1491,7 +1491,8 @@ namespace Editor.Core.Services.Physics
         }
         private static readonly Dictionary<long, JoltChar> _joltChars = new Dictionary<long, JoltChar>();
         private static readonly float[] _chVel = new float[3], _chPos = new float[3], _chOut = new float[3], _chNrm = new float[3];
-        private static bool _joltCharWarned;
+        private static bool _joltCharWarned, _charMoveExUnavailable;
+        private static uint[] _charIgnoreBodies = new uint[16];
 
         /// <summary>Number of live Jolt characters (one per characterId the scripts moved this scene).</summary>
         public static int JoltCharacterCount => _joltChars.Count;
@@ -1506,7 +1507,8 @@ namespace Editor.Core.Services.Physics
         /// <see cref="CollisionService"/> too, so trigger volumes and the managed characters of other scripts still
         /// see it. Falls back to the managed controller when the Jolt world is not built.
         /// #406: when <paramref name="selfId"/> is an entity's handle (<see cref="CollisionService.OwnerOf"/>), rays and
-        /// overlaps that hit the capsule report that entity.</summary>
+        /// overlaps that hit the capsule report that entity. #417: its own bodies (and its children's) are no obstacles
+        /// for the character.</summary>
         public static Vector3 MoveCharacterJolt(Vector3 feet, float radius, float height, Vector3 move, float dt,
             out bool grounded, long selfId, float stepHeight, float maxSlopeDeg)
         {
@@ -1552,7 +1554,18 @@ namespace Editor.Core.Services.Physics
 
             _chVel[0] = move.X / dt; _chVel[1] = move.Y / dt; _chVel[2] = move.Z / dt;
             int g;
-            VortexAPI.PhysicsCharacterMove(c.Handle, _chVel, dt, _chPos, _chOut, out g, _chNrm);
+            // #417: the entity's own bodies (its collider, a hitbox child) are no obstacles for its character
+            int ignoreCount = c.Owner != null ? SubtreeBodies(c.Owner, ref _charIgnoreBodies) : 0;
+            if (ignoreCount > 0 && !_charMoveExUnavailable)
+            {
+                try { VortexAPI.PhysicsCharacterMoveEx(c.Handle, _chVel, dt, _charIgnoreBodies, ignoreCount, _chPos, _chOut, out g, _chNrm); }
+                catch (EntryPointNotFoundException)
+                {
+                    _charMoveExUnavailable = true;   // an engine library from before #417
+                    VortexAPI.PhysicsCharacterMove(c.Handle, _chVel, dt, _chPos, _chOut, out g, _chNrm);
+                }
+            }
+            else VortexAPI.PhysicsCharacterMove(c.Handle, _chVel, dt, _chPos, _chOut, out g, _chNrm);
             var p = new Vector3(_chPos[0], _chPos[1], _chPos[2]);
             if (float.IsNaN(p.X) || float.IsNaN(p.Y) || float.IsNaN(p.Z)) { p = new Vector3(feet.X + move.X, feet.Y + move.Y, feet.Z + move.Z); }
             grounded = g != 0;

@@ -1243,7 +1243,9 @@ namespace Vortex
     /// can't walk through walls/props/models, and you can't clip through even up close. <see cref="Grounded"/> is
     /// true when the last move ended resting on a surface (use it to reset jumping/gravity). Add Colliders to your
     /// level objects in the editor; the character itself needs no collider — you pass its capsule to MoveCharacter
-    /// each frame. Props with a Collider AND a Rigidbody (Dynamic) are simulated by the physics engine (Jolt): they
+    /// each frame. A character that should be hit by rays (shooting, interaction) may carry a solid Collider: pass your
+    /// EntityId as the characterId and MoveCharacter ignores that entity's own colliders (and its children's). Props
+    /// with a Collider AND a Rigidbody (Dynamic) are simulated by the physics engine (Jolt): they
     /// fall, stack, roll, get pushed by the character and react to <see cref="AddForce"/> / <see cref="AddImpulse"/>.
     /// </summary>
     public static class Physics
@@ -1277,7 +1279,10 @@ namespace Vortex
         }
 
         /// <summary>As above, but <paramref name="characterId"/> (e.g. your entity's EntityId) registers this
-        /// character so OTHER characters can't walk through it — for multiplayer / multiple actors.</summary>
+        /// character so OTHER characters can't walk through it — for multiplayer / multiple actors. When the id is an
+        /// entity's EntityId, that entity's own colliders and its children's are no obstacles for the character, in both
+        /// controllers (#417): give a guard a solid Collider so rays hit it, it still walks freely (other characters and
+        /// rays still collide with that collider; it raises no OnCollisionEnter against itself).</summary>
         public static Vector3 MoveCharacter(Vector3 feet, float radius, float height, Vector3 move, long characterId)
         {
             if (Host == null) return new Vector3(feet.X + move.X, feet.Y + move.Y, feet.Z + move.Z);
@@ -1333,8 +1338,9 @@ namespace Vortex
         /// stand-up ceiling check: before a crouched character rises, ask with the STANDING height — false means a
         /// ceiling, a table top or another character is in the way, so stay crouched this frame. Tests the level
         /// colliders, simulated props and other characters; <paramref name="characterId"/> excludes your own capsule
-        /// (pass what you pass to <see cref="MoveCharacter(Vector3, float, float, Vector3, long)"/>). Works with both
-        /// controllers. Without a collision world → true.</summary>
+        /// and, when it is an entity's EntityId, that entity's own colliders (pass what you pass to
+        /// <see cref="MoveCharacter(Vector3, float, float, Vector3, long)"/>). Works with both controllers. Without a
+        /// collision world → true.</summary>
         public static bool CanStand(Vector3 feet, float radius, float height, long characterId = 0)
         {
             // a 2 cm lift keeps the floor the character stands on out of the test — only what is ABOVE counts

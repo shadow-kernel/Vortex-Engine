@@ -277,6 +277,8 @@ namespace Editor.Core.Services.Physics
         // The move currently being resolved (set by MoveCharacter so Depenetrate can stamp it on recorded contacts).
         private static V3 _curMove;
         private static long _curCharId;
+        // #417: the entity the moving character belongs to — its own colliders (and its children's) are no obstacles.
+        private static GameEntity _curOwner;
 
         /// <summary>Replace the set of DYNAMIC shapes (simulated rigid bodies) with their current poses. Called by
         /// PhysicsService after every physics step; pass null/empty when there are no bodies. The static world
@@ -327,7 +329,8 @@ namespace Editor.Core.Services.Physics
 
         // Dynamic character capsules (multiplayer): each character auto-registers when it moves, so OTHER characters
         // collide against it — you can't walk through another player's character. Keyed by a caller id (e.g. entity id).
-        private struct CharCap { public V3 Feet; public float R, H; }
+        // Owner (#417) = the entity the id names (see OwnerOf): its own colliders never block or touch the character.
+        private struct CharCap { public V3 Feet; public float R, H; public GameEntity Owner; }
         private static readonly Dictionary<long, CharCap> _chars = new Dictionary<long, CharCap>();
         public static void RemoveCharacter(long id) { _chars.Remove(id); }
         /// <summary>#187: record a character's capsule (feet, radius, total height) that something else resolved —
@@ -335,7 +338,7 @@ namespace Editor.Core.Services.Physics
         public static void RegisterCharacter(long id, Vector3 feet, float radius, float height)
         {
             if (id == 0) return;
-            _chars[id] = new CharCap { Feet = From(feet), R = Math.Max(0.05f, radius), H = height };
+            _chars[id] = new CharCap { Feet = From(feet), R = Math.Max(0.05f, radius), H = height, Owner = OwnerOf(id) };
         }
         public static void ClearCharacters() { _chars.Clear(); }
 
@@ -1134,6 +1137,8 @@ namespace Editor.Core.Services.Physics
 
         /// <summary>Same, but <paramref name="selfId"/> registers this character's capsule so OTHER characters can't
         /// walk through it (multiplayer). Pass a stable id (e.g. the entity id); 0 = anonymous (no registration).
+        /// When the id names an entity (<see cref="OwnerOf"/>), that entity's own colliders and its children's are
+        /// no obstacles for it (#417) — a character can carry a solid collider to be hit by rays.
         /// Stair-step + slope handling (#48): <paramref name="stepHeight"/> is the tallest ledge auto-climbed
         /// (0 disables); <paramref name="maxSlopeDeg"/> is the steepest walkable slope — steeper surfaces act
         /// like walls (slide, no climb, never grounded).</summary>
@@ -1151,16 +1156,18 @@ namespace Editor.Core.Services.Physics
             grounded = false;
             radius = Math.Max(0.05f, radius);
             float segLen = Math.Max(0f, height - 2f * radius);
+            var owner = OwnerOf(selfId);
             if (!IsBuilt || (_world.Count == 0 && _chars.Count == 0 && _dynamic.Count == 0))
             {
                 var np = new Vector3(feet.X + displacement.X, feet.Y + displacement.Y, feet.Z + displacement.Z);
-                if (selfId != 0) _chars[selfId] = new CharCap { Feet = From(np), R = radius, H = height };
+                if (selfId != 0) _chars[selfId] = new CharCap { Feet = From(np), R = radius, H = height, Owner = owner };
                 return np;
             }
             if (maxSlopeDeg < 10f) maxSlopeDeg = 10f; else if (maxSlopeDeg > 85f) maxSlopeDeg = 85f;
             float slopeCos = (float)Math.Cos(maxSlopeDeg * Math.PI / 180.0);
             V3 p = From(feet); V3 disp = From(displacement);
             _curMove = disp; _curCharId = selfId;   // stamped onto pushes against rigid bodies (see DynamicContact)
+            _curOwner = owner;                      // #417: the mover's own colliders are skipped by Depenetrate
 
             float dlen = disp.Len();
             int steps = Math.Max(1, (int)Math.Ceiling(dlen / (radius * 0.5f)));
@@ -1215,7 +1222,7 @@ namespace Editor.Core.Services.Physics
                             if (gSet)
                             {
                                 if (Raycast(To(new V3(settle.X, settle.Y + radius, settle.Z)), new Vector3(0f, -1f, 0f),
-                                        stepHeight + radius + 0.2f, ~0, out _, out Vector3 gn, out _, out _))
+                                        stepHeight + radius + 0.2f, ~0, out _, out Vector3 gn, out _, out _, owner))
                                     walkable = gn.Y >= slopeCos;
                             }
                             // Accept only a REAL step-up: the settle must end higher than the plain (blocked) move
@@ -1254,17 +1261,21 @@ namespace Editor.Core.Services.Physics
             }
 
             grounded = g;
-            if (selfId != 0) _chars[selfId] = new CharCap { Feet = p, R = radius, H = height };
+            _curOwner = null;
+            if (selfId != 0) _chars[selfId] = new CharCap { Feet = p, R = radius, H = height, Owner = owner };
             return To(p);
         }
 
         /// <summary>#105: does a character capsule (feet, radius, total height) overlap anything solid — level
         /// colliders, simulated rigid bodies, OTHER characters — by more than <paramref name="skin"/>? A probe only:
         /// nothing is moved, no contact is recorded. <c>Physics.CanStand</c> asks this with the standing height before
-        /// a crouched character rises; <paramref name="selfId"/> excludes the asking character's own capsule.</summary>
+        /// a crouched character rises; <paramref name="selfId"/> excludes the asking character's own capsule and, when
+        /// it names an entity, that entity's own colliders (#417).</summary>
         public static bool CapsuleOverlaps(Vector3 feet, float radius, float height, long selfId = 0, float skin = 0.01f)
         {
             if (!IsBuilt) return false;
+            var owner = OwnerOf(selfId);
+            if (owner == null && selfId != 0 && _chars.TryGetValue(selfId, out var self)) owner = self.Owner;
             float r = Math.Max(0.05f, radius);
             float segLen = Math.Max(0f, height - 2f * r);
             V3 f = From(feet);
@@ -1280,6 +1291,7 @@ namespace Editor.Core.Services.Physics
                 {
                     var s = shapes[si];
                     if (!AabbOverlap(capMin, capMax, s.Min, s.Max)) continue;
+                    if (owner != null && IsUnder(s.Owner, owner)) continue;   // #417: never in its own way
                     float sr = ShapeRadius(s);
                     for (int k = 0; k < samples; k++)
                     {
@@ -1335,6 +1347,9 @@ namespace Editor.Core.Services.Physics
                 {
                     var s = shapes[si];
                     if (!AabbOverlap(capMin, capMax, s.Min, s.Max)) continue;
+                    // #417: the mover's own colliders (a capsule that makes it shootable, a hitbox child) would shove it
+                    // out of its own body — "dead centre: push straight up" put guards on top of their own capsule
+                    if (_curOwner != null && IsUnder(s.Owner, _curOwner)) continue;
                     for (int k = 0; k < samples; k++)
                     {
                         float t = samples == 1 ? 0f : (float)k / (samples - 1);
@@ -1458,6 +1473,7 @@ namespace Editor.Core.Services.Physics
                     {
                         var s = _world[wi];
                         if (!AabbOverlap(capMin, capMax, s.Min, s.Max)) continue;
+                        if (cc.Owner != null && IsUnder(s.Owner, cc.Owner)) continue;   // #417: no collision with itself
                         if (!CapsuleOverlapsShape(cc, s)) continue;
                         var key = (cid, wi);
                         _curSolid.Add(key);
@@ -1471,6 +1487,7 @@ namespace Editor.Core.Services.Physics
                     {
                         var s = _dynamic[di];
                         if (s.Owner == null) continue;
+                        if (cc.Owner != null && IsUnder(s.Owner, cc.Owner)) continue;
                         if (!AabbOverlap(capMin, capMax, s.Min, s.Max)) continue;
                         if (!CapsuleOverlapsShape(cc, s)) continue;
                         var key = (cid, -1 - (int)(s.BodyId & 0x7FFFFFFF));

@@ -211,8 +211,8 @@ namespace vortex::physics {
 		};
 
 		// Skips some bodies — the caller's own colliders and character capsule for a ray that must not hit its caller
-		// (#406 / #418). Filtering (instead of stepping past hits) also works when the query starts deep inside such a
-		// body. The list is short (one entity's bodies), scanned linearly.
+		// (#406 / #418), a character's own colliders for its move (#417). Filtering (instead of stepping past hits) also
+		// works when the query starts deep inside such a body. The list is short (one entity's bodies), scanned linearly.
 		class ignore_bodies_filter final : public JPH::BodyFilter
 		{
 		public:
@@ -1935,6 +1935,13 @@ namespace vortex::physics {
 	void character_move(u32 character, const f32* desired_velocity, f32 dt,
 		f32* out_pos, f32* out_velocity, s32* out_grounded, f32* out_ground_normal)
 	{
+		character_move_ex(character, desired_velocity, dt, nullptr, 0, out_pos, out_velocity, out_grounded, out_ground_normal);
+	}
+
+	void character_move_ex(u32 character, const f32* desired_velocity, f32 dt,
+		const u32* ignore_bodies, s32 ignore_body_count,
+		f32* out_pos, f32* out_velocity, s32* out_grounded, f32* out_ground_normal)
+	{
 		character_slot* slot = find_character(character);
 		if (!slot) return;
 		world* w = g_world;
@@ -1945,10 +1952,14 @@ namespace vortex::physics {
 		{
 			JPH::CharacterVirtual::ExtendedUpdateSettings settings;
 			settings.mWalkStairsStepUp = JPH::Vec3(0.0f, slot->step_height, 0.0f);
+			// #417: the moving entity's own colliders (a capsule that makes the character shootable, a hitbox child) are
+			// not obstacles — the character would otherwise be shoved out of its own body
+			const std::vector<JPH::BodyID> ignored = ignored_body_ids(ignore_bodies, ignore_body_count, nullptr, 0);
+			const ignore_bodies_filter body_filter(ignored);
 			c.ExtendedUpdate(dt, w->system.GetGravity(), settings,
 				w->system.GetDefaultBroadPhaseLayerFilter(JPH::ObjectLayer(layer_character)),
 				w->system.GetDefaultLayerFilter(JPH::ObjectLayer(layer_character)),
-				JPH::BodyFilter{}, JPH::ShapeFilter{}, w->temp_allocator);
+				body_filter, JPH::ShapeFilter{}, w->temp_allocator);
 		}
 
 		store3(out_pos, JPH::Vec3(c.GetPosition()));
@@ -2310,6 +2321,7 @@ namespace vortex::physics {
 	void character_destroy(u32) {}
 	void character_set_position(u32, const f32*) {}
 	void character_move(u32, const f32*, f32, f32*, f32*, s32*, f32*) {}
+	void character_move_ex(u32, const f32*, f32, const u32*, s32, f32*, f32*, s32*, f32*) {}
 
 	u32  create_hinge(u32, u32, const f32*, const f32*, const f32*, f32, f32, bool, f32, f32, f32) { return 0; }
 	u32  create_ball_joint(u32, u32, const f32*, const f32*, f32, f32, f32, bool, f32) { return 0; }

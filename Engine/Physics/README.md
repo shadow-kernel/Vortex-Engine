@@ -92,6 +92,9 @@ All entry points are `extern "C"` + `EDITOR_INTERFACE`, plain C types only. The 
   `stepHeight`). `outVelocity` is the velocity the controller used (desired velocity with components into steep
   slopes cancelled); when `outGrounded` is 1 the game should reset its vertical velocity before the next call.
   The character is moved in `PhysicsCharacterMove`, independent of `PhysicsStep`; call both once per fixed step.
+  `PhysicsCharacterMoveEx(c, desiredVelocity, dt, ignoreBodies, ignoreBodyCount, …)` (#417) is the same move with a
+  `BodyFilter` that passes through the listed bodies (handles) — the moving entity's own colliders, which would
+  otherwise push the character out of its own body.
 * **Debug lines**: `PhysicsGetDebugLines` fills `x0 y0 z0 x1 y1 z1` segments of every enabled joint first (see
   "Joints"), then every body's shape (boxes: 12 edges; spheres: 3 circles; capsules: rings + edges + cap arcs;
   cylinders: rings + edges; convex hulls: face edges; meshes and everything else: Jolt's triangle iterator, capped at

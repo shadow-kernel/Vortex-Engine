@@ -200,5 +200,49 @@ namespace VortexTests
             finally { ClearWorlds(); }
         }
 
+        /// <summary>#417 with Physics.SetCharacterController("jolt"): the CharacterVirtual passes through the bodies of the
+        /// entity its characterId names — a static collider and a kinematic Rigidbody + collider — while a character whose id
+        /// names no entity is still shoved out of a collider it stands in.</summary>
+        [Test]
+        public static void JoltCharacterIgnoresItsOwnColliders(TestContext t)
+        {
+            if (!Jolt()) return;
+            var s = new Scene { Name = "OwnColliders" };
+            var floor = PhysicsRaycastTests.Add(s, null, "Floor", new Vector3(0, -0.5f, 0), e => e.AddComponentDirect(new BoxCollider(e) { Size = new Vector3(40f, 1f, 40f) }));
+            GameEntity Guard(string name, float x, bool kinematic) => PhysicsRaycastTests.Add(s, null, name, new Vector3(x, 0, 0), e =>
+            {
+                e.AddComponentDirect(new CapsuleCollider(e) { Radius = 0.35f, Height = 1.8f, Center = new Vector3(0, 0.9f, 0) });
+                if (kinematic) e.AddComponentDirect(new Rigidbody(e) { BodyType = RigidbodyType.Kinematic });
+            });
+            var still = Guard("StaticGuard", 0f, false);
+            var moving = Guard("KinematicGuard", 5f, true);
+            var nobody = Guard("Pillar", 10f, false);
+            PhysicsRaycastTests.AsLoaded(s);
+            const long hs = 31, hm = 32, hAnon = 99;
+            try
+            {
+                BuildWorlds(s);
+                t.Equal(4, PhysicsService.BodyCount, "floor + three guard bodies");
+                CollisionService.CharacterOwnerResolver = id => id == hs ? still : id == hm ? moving : null;
+                PhysicsService.JoltCharacters = true;
+                Vector3 Run(Vector3 feet, long id)
+                {
+                    for (int i = 0; i < 30; i++)
+                    {
+                        feet = PhysicsService.MoveCharacterJolt(feet, 0.35f, 1.8f, new Vector3(0, -9.81f * PhysicsService.FixedStep, 0), PhysicsService.FixedStep,
+                            out _, id, 0.35f, 50f);
+                        PhysicsService.Step(PhysicsService.FixedStep);
+                    }
+                    return feet;
+                }
+                var ps = Run(new Vector3(0, 0, 0), hs);
+                t.True(Math.Abs(ps.Y) < 0.05f && Math.Abs(ps.X) < 0.02f && Math.Abs(ps.Z) < 0.02f, "inside its own static collider the guard stays on the floor (" + ps.X + ", " + ps.Y + ", " + ps.Z + ")");
+                var pm = Run(new Vector3(5f, 0, 0), hm);
+                t.True(Math.Abs(pm.Y) < 0.05f && Math.Abs(pm.X - 5f) < 0.02f && Math.Abs(pm.Z) < 0.02f, "… and inside its own kinematic body (" + pm.X + ", " + pm.Y + ", " + pm.Z + ")");
+                var pa = Run(new Vector3(10f, 0, 0), hAnon);
+                t.True(pa.Y > 0.3f || Math.Abs(pa.X - 10f) > 0.3f || Math.Abs(pa.Z) > 0.3f, "a character whose id names no entity is pushed out of the pillar (" + pa.X + ", " + pa.Y + ", " + pa.Z + ")");
+            }
+            finally { ClearWorlds(); }
+        }
     }
 }

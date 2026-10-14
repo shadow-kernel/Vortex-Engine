@@ -49,7 +49,7 @@ public:
 			run_quaternion_tests();   // (d) convention
 			run_character_tests();    // (e) CharacterVirtual
 			run_kinematic_and_query_tests();
-			run_query_contract_tests();   // rays from inside, ignored bodies, character identity (#406 / #418)
+			run_query_contract_tests();   // rays from inside, ignored entities, character identity (#406 / #417 / #418)
 			run_constraint_tests();   // (f)..(l) joints, issue #103
 			run_teardown_tests();
 		}
@@ -361,13 +361,13 @@ private:
 		check("stale handle is rejected after destroy (entity 0)", physics::body_entity(sphere) == 0);
 	}
 
-	// ---- query contract (#406 / #418) ----------------------------------------------------------------------------
+	// ---- query contract (#406 / #417 / #418) ----------------------------------------------------------------------
 	// Its own little world at x = -40 (nothing else is there): a ground slab, a 1 m crate the rays start in, a wall
 	// 3 m further, a closed triangle-mesh room, and a Jolt character. Everything is destroyed again at the end.
 
 	void run_query_contract_tests()
 	{
-		constexpr u64 k_floor = 8101, k_crate = 8102, k_wall = 8103, k_room = 8104;
+		constexpr u64 k_floor = 8101, k_crate = 8102, k_wall = 8103, k_room = 8104, k_self = 8105;
 		const f32 floor_half[3] = { 6.0f, 0.5f, 6.0f };
 		const f32 floor_pos[3] = { -40.0f, -0.5f, 0.0f };
 		const u32 floor = physics::create_body(k_floor, physics::shape_box, floor_half, floor_pos, k_identity,
@@ -459,13 +459,42 @@ private:
 		hit = physics::raycast_ex(west_of_hero, east, 10.0f, physics::layer_mask_all, physics::raycast_solid, nullptr, 0, ignore_hero, 1, p, n, &d, &entity, &body);
 		check("the character in the ignore list lets the ray through its capsule", !hit || entity != k_hero);
 
+		// (#417) a collider on the character's own entity: without the filter the controller is shoved up onto it,
+		// with the entity ignored it stays on the floor
+		const f32 self_half[3] = { 0.5f, 0.25f, 0.5f };
+		const f32 self_pos[3] = { -42.0f, 0.25f, 0.0f };
+		const u32 self_box = physics::create_body(k_self, physics::shape_box, self_half, self_pos, k_identity,
+			physics::motion_static, 0.0f, 0.5f, 0.0f, 0.0f, 0.0f, false, physics::layer_static, 0, 1.0f);
+		check("the character's own collider created", self_box != 0);
+		physics::step(k_dt, 1);
+		const f32 fall[3] = { 0.0f, -9.81f, 0.0f };
+		f32 pos[3]{}, vel[3]{}, gn[3]{}; s32 grounded = 0;
+		const u32 ignore_self[1] = { self_box };
+		for (int i = 0; i < 30; ++i)
+		{
+			physics::step(k_dt, 1);
+			physics::character_move_ex(hero, fall, k_dt, ignore_self, 1, pos, vel, &grounded, gn);
+		}
+		std::printf("[info] character over its own collider (ignored): pos (%.3f, %.3f, %.3f) grounded=%d\n", pos[0], pos[1], pos[2], grounded);
+		check("character_move_ex: the own collider is not an obstacle (stays on the floor)",
+			std::fabs(pos[1]) < 0.05f && std::fabs(pos[0] + 42.0f) < 0.02f && std::fabs(pos[2]) < 0.02f && grounded != 0);
+		for (int i = 0; i < 30; ++i)
+		{
+			physics::step(k_dt, 1);
+			physics::character_move(hero, fall, k_dt, pos, vel, &grounded, gn);
+		}
+		std::printf("[info] character over the same collider (not ignored): pos (%.3f, %.3f, %.3f)\n", pos[0], pos[1], pos[2]);
+		check("character_move: the same collider does block when not ignored", pos[1] > 0.3f || std::fabs(pos[0] + 42.0f) > 0.3f || std::fabs(pos[2]) > 0.3f);
+
 		// a destroyed character takes its inner body out of the world: nothing left to hit at its old spot
 		physics::character_destroy(hero);
 		physics::step(k_dt, 1);
+		const f32 hero_now[3] = { pos[0] - 3.0f, pos[1] + 1.2f, pos[2] };   // the same ray as above, at where it ended
 		entity = 0;
-		hit = physics::raycast(west_of_hero, east, 10.0f, physics::layer_mask_all, p, n, &d, &entity, &body);
+		hit = physics::raycast(hero_now, east, 10.0f, physics::layer_mask_all, p, n, &d, &entity, &body);
 		check("a destroyed character's capsule no longer blocks rays", !hit || entity != k_hero);
 
+		physics::destroy_body(self_box);
 		physics::destroy_body(room);
 		physics::destroy_body(wall);
 		physics::destroy_body(crate);

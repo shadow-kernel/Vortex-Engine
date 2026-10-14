@@ -170,6 +170,13 @@ EDITOR_INTERFACE void PhysicsCharacterMove(uint32_t c, const float* desiredVeloc
 	phys::character_move(c, desiredVelocity, dt, outPos, outVelocity, outGrounded, outGroundNormal);
 }
 
+// #417: the same, passing through the listed bodies (body handles: the moving entity's own colliders).
+EDITOR_INTERFACE void PhysicsCharacterMoveEx(uint32_t c, const float* desiredVelocity, float dt,
+	const uint32_t* ignoreBodies, int32_t ignoreBodyCount,
+	float* outPos, float* outVelocity, int32_t* outGrounded, float* outGroundNormal)
+{
+	phys::character_move_ex(c, desiredVelocity, dt, ignoreBodies, ignoreBodyCount, outPos, outVelocity, outGrounded, outGroundNormal);
+}
 
 // ---- Constraints / joints (issue #103) ----
 // bodyA = the jointed body (valid handle), bodyB = the connected body or 0 = the world. Points / axes are WORLD

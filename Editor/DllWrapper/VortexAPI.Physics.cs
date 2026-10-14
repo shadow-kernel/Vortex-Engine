@@ -223,6 +223,13 @@ namespace Editor.DllWrapper
         public static extern void PhysicsCharacterMove(uint character, float[] desiredVelocity, float dt,
             [In, Out] float[] outPos, [In, Out] float[] outVelocity, out int outGrounded, [In, Out] float[] outGroundNormal);
 
+        /// <summary>#417: <see cref="PhysicsCharacterMove"/> passing through the listed bodies (body handles: the moving
+        /// entity's own colliders).</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern void PhysicsCharacterMoveEx(uint character, float[] desiredVelocity, float dt,
+            uint[] ignoreBodies, int ignoreBodyCount,
+            [In, Out] float[] outPos, [In, Out] float[] outVelocity, out int outGrounded, [In, Out] float[] outGroundNormal);
+
         #endregion
 
         #region Constraints / joints (issue #103)
