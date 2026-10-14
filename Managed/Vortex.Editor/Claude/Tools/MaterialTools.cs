@@ -91,7 +91,9 @@ namespace VortexEditor.Claude.Tools
                      "(Opaque|AlphaBlend|AlphaTest|Additive), shader_type (StandardPBR|Unlit|Subsurface), two_sided, cast_shadows, receive_shadows, " +
                      "uv_tiling [u,v], uv_offset [u,v], real_world_size [w,h] metres, textures as project paths (albedo_texture, normal_texture, " +
                      "roughness_texture, metallic_texture, ao_texture, emissive_texture, height_texture, opacity_texture; \"\" removes), shader_asset " +
-                     "(a custom shader from write_shader; \"\" = the built-in PBR shader), footstep_sound.")]
+                     "(a custom shader from write_shader; \"\" = the built-in PBR shader), footstep_sound. Emission: a StandardPBR material glows " +
+                     "with emissive_color × emissive_strength (× emissive_texture) on top of its shading (strength 0 or a black colour = no glow); " +
+                     "an Unlit material glows with its albedo × emissive_strength and ignores emissive_color.")]
         public static object SetMaterialProperties(
             [Description("Project path of the .vmat")] string material,
             [Description("Properties {\"name\": value}")] JsonElement properties)
@@ -104,7 +106,20 @@ namespace VortexEditor.Claude.Tools
             ProjectFiles.Write(full, Serialize(m), Push);
             ToolContext.UndoLabel = "edit material " + Path.GetFileNameWithoutExtension(full);
             int users = UsageCounts().TryGetValue(ProjectFiles.Rel(full).ToLowerInvariant(), out int n) ? n : 0;
-            return new { path = ProjectFiles.Rel(full), set = done, used_by_in_scene = users };
+            return new { path = ProjectFiles.Rel(full), set = done, used_by_in_scene = users, note = EmissionNote(m, done) };
+        }
+
+        /// <summary>Say when an emission edit has no visible effect (#450) instead of accepting it silently.</summary>
+        private static string EmissionNote(VortexMaterial m, List<string> done)
+        {
+            bool touched = done.Exists(d => d.StartsWith("emissive", StringComparison.OrdinalIgnoreCase));
+            if (!touched) return null;
+            bool unlit = string.Equals(m.ShaderType, "Unlit", StringComparison.OrdinalIgnoreCase);
+            var c = m.EmissiveColor;
+            bool black = c == null || c.Length < 3 || c[0] + c[1] + c[2] <= 0f;
+            if (unlit && done.Contains("emissive_color")) return "Unlit materials glow with their albedo × emissive_strength; emissive_color only applies to StandardPBR.";
+            if (!unlit && (m.EmissiveStrength <= 0f || black)) return "No glow yet: a StandardPBR material emits emissive_color × emissive_strength, and one of them is zero.";
+            return null;
         }
 
         [McpServerTool(Name = "assign_material"), NoDryRun]

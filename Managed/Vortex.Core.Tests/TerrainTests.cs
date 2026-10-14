@@ -163,5 +163,59 @@ namespace VortexTests
             t.True(Math.Abs(c.CellSize - 1f) < 1e-6f, "128 m / 128 cells = 1 m");
             t.True(Math.Abs(TerrainData.Falloff(0f, 10f, 0f) - 1f) < 1e-6f && TerrainData.Falloff(10f, 10f, 0f) == 0f && Math.Abs(TerrainData.Falloff(5f, 10f, 0f) - 0.5f) < 1e-6f, "the falloff is 1 at the centre, 0 at the rim, ½ halfway");
         }
+
+        /// <summary>#447: a layer map larger than the atlas holds is area-filtered — a one-texel checkerboard shrunk ~4x becomes
+        /// an even grey (one bilinear tap per atlas texel left black / white patches: the sparkle on snow and rock).</summary>
+        [Test]
+        public static void LayerMapsShrinkWithAnAreaFilter(TestContext t)
+        {
+            const int sw = 256, sh = 256, tile = 64;
+            var src = new byte[sw * sh * 4];
+            for (int y = 0; y < sh; y++)
+                for (int x = 0; x < sw; x++)
+                {
+                    byte v = (byte)(((x + y) & 1) == 0 ? 0 : 255);
+                    int i = (y * sw + x) * 4; src[i] = v; src[i + 1] = v; src[i + 2] = v; src[i + 3] = 255;
+                }
+            var atlas = new byte[tile * 2 * tile * 2 * 4];
+            Editor.Core.Services.Terrain.TerrainService.Blit(atlas, 3, src, sw, sh, tile);   // the lower right quadrant
+            int lo = 255, hi = 0;
+            for (int y = 0; y < tile; y++)
+                for (int x = 0; x < tile; x++)
+                {
+                    int v = atlas[((tile + y) * tile * 2 + tile + x) * 4];
+                    lo = Math.Min(lo, v); hi = Math.Max(hi, v);
+                }
+            t.True(lo >= 107 && hi <= 148, "the shrunk checkerboard is an even grey (min " + lo + ", max " + hi + ")");
+            t.Equal(0, (int)atlas[0], "the other quadrants are untouched");
+
+            foreach (float scale in new[] { 4.27f, 1.067f, 0.5f })
+            {
+                var taps = Editor.Core.Services.Terrain.TerrainService.Taps(64, 2, scale, 256);
+                for (int d = 0; d < taps.Length; d++)
+                {
+                    float sum = 0f;
+                    foreach (var (index, weight) in taps[d]) { sum += weight; t.True(index >= 0 && index < 256 && weight >= -1e-6f, "taps stay in the source and are positive"); }
+                    t.True(Math.Abs(sum - 1f) < 1e-4f, "the weights of an atlas texel sum to 1 (scale " + scale + ", texel " + d + ": " + sum + ")");
+                }
+            }
+        }
+
+        /// <summary>#447: the layer resolution is a per-terrain setting — Auto (0) or the nearest of 512 / 1024 / 2048.</summary>
+        [Test]
+        public static void LayerResolutionSnapsAndPerTerrain(TestContext t)
+        {
+            t.Equal(0, Editor.ECS.Components.Rendering.Terrain.SnapLayerResolution(0), "0 stays Auto");
+            t.Equal(512, Editor.ECS.Components.Rendering.Terrain.SnapLayerResolution(300), "small values snap to 512");
+            t.Equal(1024, Editor.ECS.Components.Rendering.Terrain.SnapLayerResolution(1000), "1000 snaps to 1024");
+            t.Equal(2048, Editor.ECS.Components.Rendering.Terrain.SnapLayerResolution(4096), "large values snap to 2048");
+            var terrain = new Editor.ECS.Components.Rendering.Terrain(new Editor.ECS.GameEntity { Name = "T" }) { LayerResolution = 1024 };
+            if (Environment.GetEnvironmentVariable("VORTEX_TERRAIN_ATLAS") == null)
+            {
+                t.Equal(1024, Editor.Core.Services.Terrain.TerrainService.TileFor(terrain), "the terrain's own layer resolution wins over Auto");
+                terrain.LayerResolution = 0;
+                t.Equal(Editor.Core.Services.Terrain.TerrainService.AtlasTile, Editor.Core.Services.Terrain.TerrainService.TileFor(terrain), "Auto falls back to the default");
+            }
+        }
     }
 }

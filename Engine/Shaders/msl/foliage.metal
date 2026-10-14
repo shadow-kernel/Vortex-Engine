@@ -62,7 +62,9 @@ struct PerObject
     uint has_height_texture;           // @136
     float height_scale;                // @140
     float alpha_cutoff;                // @144 (#329: > 0 = AlphaTest cutoff)
-    float _pad0, _pad1, _pad2;
+    uint has_emissive_texture;         // @148 (#450: the emissive map at texture 15)
+    float2 uv_offset;                  // @152 (#448: every map is sampled at uv * tiling + offset)
+    float4 emissive_color;             // @160 (#450: a lit material's emission, colour x strength; w unused)
 };
 
 struct PointLight
@@ -254,7 +256,7 @@ fragment void ShadowPSCut(ShadowCutOut in [[stage_in]], constant PerObject& obj 
 {
     float2 tiling = (obj.uv_tiling.x > 0.0 && obj.uv_tiling.y > 0.0) ? obj.uv_tiling : float2(1.0, 1.0);
     float a = obj.base_color.a;
-    if (obj.has_albedo_texture != 0) a *= albedo_tex.sample(albedo_smp, in.uv * tiling).a;
+    if (obj.has_albedo_texture != 0) a *= albedo_tex.sample(albedo_smp, in.uv * tiling + obj.uv_offset).a;
     if (obj.alpha_cutoff > 0.0 && a < obj.alpha_cutoff) discard_fragment();
 }
 
@@ -518,9 +520,11 @@ static inline float3 sky_irradiance(constant LightBuffer& lights, float3 n)
 
 // The sky as a reflection (IBL step 2): an equirect of the sky with mips at texture(10), env_sky.w = 2 while bound,
 // env_horizon.w = its mip count; the baker's 8-bit soft compression (straight below 1, x / (1 + x) above) undone here.
-static inline float2 env_uv(float3 d)
+static inline float2 env_uv(float3 d, float rot)
 {
-    return float2(atan2(d.x, d.z) / (2.0 * 3.14159265) + 0.5, acos(clamp(d.y, -1.0, 1.0)) / 3.14159265);
+    // + the sky's rotation (frame.env_ground.w, radians, #446): the reflection map is baked unrotated, the skybox pass
+    // turns the visible sky by the same angle, so reflections line up with the sky behind them
+    return float2(atan2(d.x, d.z) / (2.0 * 3.14159265) + 0.5 + rot / (2.0 * 3.14159265), acos(clamp(d.y, -1.0, 1.0)) / 3.14159265);
 }
 static inline float3 decode_env(float3 c)
 {
@@ -572,10 +576,10 @@ static inline float3 gi_volume(texture2d<float> ta, sampler sa, texture2d<float>
     return mix(fallback, E, w * saturate(v * 5.0));
 }
 
-static inline float3 sample_env(texture2d<float> env_tex, sampler env_smp, float3 R, float roughness, float mips)
+static inline float3 sample_env(texture2d<float> env_tex, sampler env_smp, float3 R, float roughness, float mips, float rot)
 {
     float lod = saturate(roughness) * max(mips - 1.0, 0.0);
-    return decode_env(env_tex.sample(env_smp, env_uv(R), level(lod)).rgb);
+    return decode_env(env_tex.sample(env_smp, env_uv(R, rot), level(lod)).rgb);
 }
 
 fragment float4 PSMain(VSOut in [[stage_in]],
@@ -595,9 +599,10 @@ fragment float4 PSMain(VSOut in [[stage_in]],
                        texture2d<float> ssao_tex      [[texture(9)]], sampler ssao_smp      [[sampler(9)]],
                        texture2d<float> env_tex       [[texture(10)]], sampler env_smp       [[sampler(10)]],
                        texture2d<float> gi_a          [[texture(13)]], sampler gi_a_smp      [[sampler(13)]],
-                       texture2d<float> gi_b          [[texture(14)]], sampler gi_b_smp      [[sampler(14)]])
+                       texture2d<float> gi_b          [[texture(14)]], sampler gi_b_smp      [[sampler(14)]],
+                       texture2d<float> emissive_tex  [[texture(15)]], sampler emissive_smp  [[sampler(15)]])
 {
-    float2 uv = in.uv;   // the wind lives in uv_tiling: no texture tiling
+    float2 uv = in.uv + obj.uv_offset;   // the wind lives in uv_tiling: no texture tiling; the UV offset applies (#448)
 
     float3 cam_pos = float3(frame.camera_position);
 
@@ -768,7 +773,7 @@ fragment float4 PSMain(VSOut in [[stage_in]],
     float3 env_color;
     if (frame.env_sky.w > 1.5)
     {
-        env_color = sample_env(env_tex, env_smp, R, roughness, frame.env_horizon.w) * frame.ambient_strength;   // the real sky, blurred by roughness
+        env_color = sample_env(env_tex, env_smp, R, roughness, frame.env_horizon.w, frame.env_ground.w) * frame.ambient_strength;   // the real sky, blurred by roughness
     }
     else if (frame.env_sky.w > 0.5)
     {
@@ -789,7 +794,11 @@ fragment float4 PSMain(VSOut in [[stage_in]],
     float3 specular_ambient = env_color * env_fresnel * ao * sky_open;
     ambient += specular_ambient + rim_light;
 
-    float3 color = ambient + Lo;
+    // Emission of a lit material (#450): its colour x strength (x the emissive map), on top of the shading and before
+    // the fog and the tonemap, so a lit window glows, keeps its highlights, fades into fog and feeds the bloom
+    float3 emission = obj.emissive_color.rgb;
+    if (obj.has_emissive_texture != 0) emission *= srgb_to_linear(emissive_tex.sample(emissive_smp, uv).rgb);
+    float3 color = ambient + Lo + emission;
     color = apply_fog(frame, color, in.world_pos);
 
     // ACES filmic (RRT+ODT fit)

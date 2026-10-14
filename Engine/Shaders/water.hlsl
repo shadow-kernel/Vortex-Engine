@@ -65,7 +65,9 @@ cbuffer PerObject : register(b1)
     uint HasHeightTexture;
     float HeightScale;
     float AlphaCutoff;
-    float3 _Pad0;
+    uint HasEmissiveTexture; // @148 — #450: the emissive map at t16
+    float2 UVOffset;         // @152 — #448: every map is sampled at uv * tiling + offset
+    float4 EmissiveColor;    // @160 — #450: a lit material's emission, colour x strength (w unused)
 };
 
 struct PointLight { float3 position; float range; float3 color; float intensity; };
@@ -91,6 +93,8 @@ Texture2D CsmShadowMap     : register(t8);
 Texture2D EnvMap           : register(t11);   // the sky as a reflection (IBL step 2)
 Texture2D SceneColor       : register(t12);   // the opaque colour so far (display-encoded), copied before the transparents (#200)
 Texture2D SceneDepth       : register(t13);   // its depth (window z): the refraction's occlusion test and the SSR march
+SamplerState LinearSampler : register(s0);    // the root signature's anisotropic wrap sampler: SampleEnv reads the sky
+                                              // reflection with it (it was used without a declaration, so FXC rejected the shader)
 SamplerState ScreenSampler : register(s2);    // linear / clamp
 SamplerComparisonState ShadowSampler : register(s1);
 
@@ -288,7 +292,9 @@ float Noise2(float2 p)
 // its mip count. Radiance was soft-compressed into 8 bits by the baker (straight below 1, x / (1 + x) above) — undone here.
 float2 EnvUV(float3 d)
 {
-    return float2(atan2(d.x, d.z) / (2.0 * 3.14159265) + 0.5, acos(clamp(d.y, -1.0, 1.0)) / 3.14159265);
+    // + the sky's rotation (EnvGround.w / env_ground.w, radians, #446): the reflection map is baked unrotated, the skybox pass
+    // turns the visible sky by the same angle, so reflections line up with the sky behind them
+    return float2(atan2(d.x, d.z) / (2.0 * 3.14159265) + 0.5 + EnvGround.w / (2.0 * 3.14159265), acos(clamp(d.y, -1.0, 1.0)) / 3.14159265);
 }
 float3 DecodeEnv(float3 c)
 {

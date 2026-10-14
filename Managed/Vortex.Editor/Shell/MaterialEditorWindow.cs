@@ -336,7 +336,7 @@ namespace VortexEditor.Shell
                     () => Color.FromRgb(ColorMath.B(_mat.EmissiveColor[0]), ColorMath.B(_mat.EmissiveColor[1]), ColorMath.B(_mat.EmissiveColor[2])),
                     c => { _mat.EmissiveColor[0] = c.R / 255f; _mat.EmissiveColor[1] = c.G / 255f; _mat.EmissiveColor[2] = c.B / 255f; })));
                 s.Children.Add(PropertyRows.Row("Strength", PropertyRows.SliderRow(() => _mat.EmissiveStrength, v => Edit("emissivestr", () => _mat.EmissiveStrength = v), 0, 10)));
-                s.Children.Add(PropertyRows.Note("Strength sets the brightness of Unlit materials; the colour is saved with the material."));
+                s.Children.Add(PropertyRows.Note("Lit materials glow with Color × Strength (× the Emissive map) on top of their shading. Unlit materials glow with their base colour × Strength and ignore the colour."));
 
                 s.Children.Add(EditorKit.Section("Rendering"));
                 s.Children.Add(PropertyRows.Row("Two sided", PropertyRows.Bool(() => _mat.TwoSided, v => Edit("twosided", () => _mat.TwoSided = v))));

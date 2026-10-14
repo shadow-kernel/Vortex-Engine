@@ -294,7 +294,7 @@ namespace vortex::graphics
 	void Material::destroy()
 	{
 		m_valid = false;
-		m_albedo_texture = m_normal_texture = m_metallic_texture = m_roughness_texture = m_ao_texture = m_height_texture = nullptr;
+		m_albedo_texture = m_normal_texture = m_metallic_texture = m_roughness_texture = m_ao_texture = m_height_texture = m_emissive_texture = nullptr;
 	}
 
 	// ---------------------------------------------------------------------------------------------
@@ -476,6 +476,7 @@ namespace vortex::graphics
 			if (mat->roughness_texture() == from) mat->set_roughness_texture(to);
 			if (mat->ao_texture() == from) mat->set_ao_texture(to);
 			if (mat->height_texture() == from) mat->set_height_texture(to);
+			if (mat->emissive_texture() == from) mat->set_emissive_texture(to);
 		}
 	}
 

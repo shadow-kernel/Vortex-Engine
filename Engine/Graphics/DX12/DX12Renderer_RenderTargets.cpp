@@ -147,8 +147,10 @@ namespace vortex::graphics::dx12
 			const bool env_map = env_on > 0.5f && m_env_map != id::invalid_id && m_env_mips > 0;
 			frame_constants.env_sky = DirectX::XMFLOAT4(m_env_sky.x, m_env_sky.y, m_env_sky.z, env_map ? 2.0f : env_on);   // 2 = a reflection map is bound at t11
 			frame_constants.env_horizon = DirectX::XMFLOAT4(m_env_horizon.x, m_env_horizon.y, m_env_horizon.z, env_map ? (float)m_env_mips : 0.0f);
+			// w: a texture sky's rotation (radians, #446), as in the main view
+			const bool sky_rotated = env_map && m_skybox_mode == SkyboxMode::Texture && m_sky_texture != id::invalid_id;
+			frame_constants.env_ground = DirectX::XMFLOAT4(m_env_ground.x, m_env_ground.y, m_env_ground.z, sky_rotated ? m_sky_rotation : 0.0f);
 		}
-		frame_constants.env_ground = DirectX::XMFLOAT4(m_env_ground.x, m_env_ground.y, m_env_ground.z, 0.0f);
 		frame_constants.camera_clip = DirectX::XMFLOAT4(m_near_clip, m_far_clip, 0.0f, 0.0f);
 		if (m_light_cb_mapped)
 		{
@@ -371,6 +373,10 @@ namespace vortex::graphics::dx12
 					if (ao_tex && ao_tex->is_valid() && ao_tex->srv_gpu().ptr != 0) { obj_cb.has_ao_texture = props.has_ao_texture ? props.has_ao_texture : 1; m_command_list->SetGraphicsRootDescriptorTable(7, ao_tex->srv_gpu()); }
 					// UV tiling + height/parallax — so previews/thumbnails/game-window match the scene viewport.
 					obj_cb.uv_tiling = props.uv_tiling;
+					obj_cb.uv_offset = mat->uv_offset();   // #448
+					const auto& em = mat->emissive_color(); obj_cb.emissive_color = { em.x, em.y, em.z, 0.0f };   // lit emission (#450)
+					auto* emissive_tex = mat->emissive_texture();
+					if (emissive_tex && emissive_tex->is_valid() && emissive_tex->srv_gpu().ptr != 0) { obj_cb.has_emissive_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(19, emissive_tex->srv_gpu()); }
 					obj_cb.height_scale = props.height_scale;
 					auto* height_tex = mat->height_texture();
 					if (height_tex && height_tex->is_valid() && height_tex->srv_gpu().ptr != 0) { obj_cb.has_height_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(9, height_tex->srv_gpu()); }

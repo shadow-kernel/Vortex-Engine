@@ -118,7 +118,17 @@ namespace vortex::graphics::sdlgpu
 		sci.address_mode_u = sci.address_mode_v = sci.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
 		sci.enable_anisotropy = false; sci.max_anisotropy = 1.0f;
 		m_sampler_linear_clamp = SDL_CreateGPUSampler(m_device, &sci);
-		if (!m_sampler_linear_wrap || !m_sampler_linear_clamp) { log("sampler creation failed"); shutdown(); return false; }
+		// the point sampler of the scene-depth copy slot (#200): normally made with the post effects, but those need the shadow
+		// pipeline — without shadows (VORTEX_NO_SHADOWS, or a device that cannot make them) it was null and the first scene
+		// draw crashed binding it
+		if (!m_sampler_point_clamp)
+		{
+			SDL_GPUSamplerCreateInfo pci{};
+			pci.min_filter = SDL_GPU_FILTER_NEAREST; pci.mag_filter = SDL_GPU_FILTER_NEAREST; pci.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;
+			pci.address_mode_u = pci.address_mode_v = pci.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+			m_sampler_point_clamp = SDL_CreateGPUSampler(m_device, &pci);
+		}
+		if (!m_sampler_linear_wrap || !m_sampler_linear_clamp || !m_sampler_point_clamp) { log("sampler creation failed"); shutdown(); return false; }
 		// The shadow slots are comparison-sampled depth textures in every scene pipeline, so their sampler and
 		// a stand-in depth texture must exist before the first frame, with or without shadow atlases.
 		if (!create_shadow_fallback()) { shutdown(); return false; }
@@ -477,7 +487,7 @@ namespace vortex::graphics::sdlgpu
 	{
 		m_vs_standard = create_shader("standard", "VSMain", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 1);
 		m_vs_skinned = create_shader("standard", "VSSkinned", SDL_GPU_SHADERSTAGE_VERTEX, 0, 1, 2);
-		m_fs_standard = create_shader("standard", "PSMain", SDL_GPU_SHADERSTAGE_FRAGMENT, 15, 0, 3);
+		m_fs_standard = create_shader("standard", "PSMain", SDL_GPU_SHADERSTAGE_FRAGMENT, 16, 0, 3);   // 16 samplers: slot 15 = the emissive map (#450)
 		m_vs_grid = create_shader("grid", "GridVS", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 1);
 		m_fs_grid = create_shader("grid", "GridPS", SDL_GPU_SHADERSTAGE_FRAGMENT, 0, 0, 1);
 		m_vs_sky = create_shader("skybox", "SkyVS", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 1);
@@ -835,7 +845,8 @@ namespace vortex::graphics::sdlgpu
 		for (auto** s : shaders) { if (*s) SDL_ReleaseGPUShader(m_device, *s); *s = nullptr; }
 		if (m_sampler_linear_wrap) SDL_ReleaseGPUSampler(m_device, m_sampler_linear_wrap);
 		if (m_sampler_linear_clamp) SDL_ReleaseGPUSampler(m_device, m_sampler_linear_clamp);
-		m_sampler_linear_wrap = m_sampler_linear_clamp = nullptr;
+		if (m_sampler_point_clamp) SDL_ReleaseGPUSampler(m_device, m_sampler_point_clamp);
+		m_sampler_linear_wrap = m_sampler_linear_clamp = m_sampler_point_clamp = nullptr;
 		if (m_instance_buffer) SDL_ReleaseGPUBuffer(m_device, m_instance_buffer);
 		if (m_instance_transfer) SDL_ReleaseGPUTransferBuffer(m_device, m_instance_transfer);
 		if (m_bone_buffer) SDL_ReleaseGPUBuffer(m_device, m_bone_buffer);
@@ -1212,7 +1223,7 @@ namespace vortex::graphics::sdlgpu
 		{
 			// two vertex uniform buffers: PerFrame (0) and PerObject (1) — custom vertex shaders may read the material (#125)
 			SDL_GPUShader* vs = skinned ? m_vs_skinned : create_shader_from_code(vs_code, "VSMain", path, SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 2);
-			SDL_GPUShader* fs = create_shader_from_code(fs_code, "PSMain", path, SDL_GPU_SHADERSTAGE_FRAGMENT, 15, 0, 3);
+			SDL_GPUShader* fs = create_shader_from_code(fs_code, "PSMain", path, SDL_GPU_SHADERSTAGE_FRAGMENT, 16, 0, 3);
 			if (vs && fs)
 			{
 				wait_idle();
@@ -1329,7 +1340,7 @@ namespace vortex::graphics::sdlgpu
 		std::string vs_text = cap.text;
 		cap.text.clear();
 		SDL_ClearError();
-		SDL_GPUShader* fs = create_shader_from_code(fs_code, "PSMain", path, SDL_GPU_SHADERSTAGE_FRAGMENT, 15, 0, 3);
+		SDL_GPUShader* fs = create_shader_from_code(fs_code, "PSMain", path, SDL_GPU_SHADERSTAGE_FRAGMENT, 16, 0, 3);
 		// Metal compiles the whole source for each stage: report the same diagnostics once
 		if (!fs) errors += (!vs && cap.text == vs_text) ? std::string("PSMain: the same errors\n") : "PSMain: " + stage_error(cap) + "\n";
 		cap.text.clear();

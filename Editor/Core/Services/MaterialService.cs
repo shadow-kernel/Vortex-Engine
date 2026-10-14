@@ -341,6 +341,15 @@ namespace Editor.Core.Services
             VortexAPI.SetMaterialAsUnlit(mat, unlit);
             if (vmat.EmissiveStrength > 0f)
                 VortexAPI.SetMaterialEmissiveBrightness(mat, vmat.EmissiveStrength);
+            // Lit emission (#450): EmissiveColor × EmissiveStrength, added after the lighting (× the emissive map) so a
+            // lit window or a neon sign glows and is still shaded. Sent every time, 0 included, so clearing the colour or
+            // the strength switches it off. The unlit brightness above keeps its old rule (strength 0 there reads as 1).
+            var ec = vmat.EmissiveColor;
+            float es = Math.Max(0f, vmat.EmissiveStrength);
+            VortexAPI.SetMaterialEmission(mat,
+                Math.Max(0f, (ec != null && ec.Length > 0) ? ec[0] : 0f) * es,
+                Math.Max(0f, (ec != null && ec.Length > 1) ? ec[1] : 0f) * es,
+                Math.Max(0f, (ec != null && ec.Length > 2) ? ec[2] : 0f) * es);
 
             // Blend mode (#33): AlphaBlend/Additive route the material into the engine's sorted transparent pass;
             // AlphaTest (#329) stays in the opaque pass and discards fragments below the cutoff. TwoSided drops the
@@ -360,6 +369,9 @@ namespace Editor.Core.Services
             float tu = (tl != null && tl.Length > 0 && tl[0] > 0f) ? tl[0] : 1f;
             float tv = (tl != null && tl.Length > 1 && tl[1] > 0f) ? tl[1] : 1f;
             VortexAPI.SetMaterialTiling(mat, tu, tv);
+            // UV offset (#448): sampled at uv × tiling + offset — saved, edited and sent like the tiling
+            var of = vmat.UVOffset;
+            VortexAPI.SetMaterialOffset(mat, (of != null && of.Length > 0) ? of[0] : 0f, (of != null && of.Length > 1) ? of[1] : 0f);
 
             // Parallax/displacement depth (scalar) — applied even in the scalars-only path.
             VortexAPI.SetMaterialHeightDepth(mat, vmat.HeightScale);
@@ -389,6 +401,9 @@ namespace Editor.Core.Services
             BindMap(mat, roughnessMap, VortexAPI.SetMaterialRoughnessMap);
             BindMap(mat, aoMap, VortexAPI.SetMaterialAOMap);
             BindMap(mat, vmat.HeightTexture, VortexAPI.SetMaterialHeightMap);
+            // the emissive map (#450): cleared explicitly, so removing it in the editor stops the glow pattern at once
+            if (string.IsNullOrEmpty(vmat.EmissiveTexture) || ImportTextureCached(vmat.EmissiveTexture) < 0) VortexAPI.SetMaterialEmissiveMap(mat, -1);
+            else BindMap(mat, vmat.EmissiveTexture, VortexAPI.SetMaterialEmissiveMap);
         }
 
         private static string FirstMap(string a, string b, string c)

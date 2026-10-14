@@ -102,7 +102,9 @@ layout(set = SET_UNIFORM, binding = 1, std140) uniform PerObjectBlock
 	uint  has_height_texture;
 	float height_scale;
 	float alpha_cutoff;
-	float _pad0; float _pad1; float _pad2;
+	uint  has_emissive_texture;   // @148 (same layout as standard_common.glsl; unused here)
+	vec2  uv_offset;              // @152
+	vec4  emissive_color;         // @160
 } obj;
 
 struct PointLight
@@ -450,7 +452,9 @@ float macro_variation(vec2 world_xz)
 // env_horizon.w = its mip count; the baker's 8-bit soft compression (straight below 1, x / (1 + x) above) undone here.
 vec2 env_uv(vec3 d)
 {
-	return vec2(atan(d.x, d.z) / (2.0 * 3.14159265) + 0.5, acos(clamp(d.y, -1.0, 1.0)) / 3.14159265);
+	// + the sky's rotation (env_ground.w, radians, #446): the reflection map is baked unrotated, the skybox pass turns
+	// the visible sky by the same angle, so reflections line up with the sky behind them
+	return vec2(atan(d.x, d.z) / (2.0 * 3.14159265) + 0.5 + frame.env_ground.w / (2.0 * 3.14159265), acos(clamp(d.y, -1.0, 1.0)) / 3.14159265);
 }
 vec3 decode_env(vec3 c)
 {

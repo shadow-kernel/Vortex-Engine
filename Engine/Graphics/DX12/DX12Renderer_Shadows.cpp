@@ -653,6 +653,7 @@ namespace vortex::graphics::dx12
 						PerObjectConstants obj{};
 						const auto& props = casters[i].mat->properties();
 						obj.base_color = props.base_color; obj.uv_tiling = props.uv_tiling; obj.alpha_cutoff = props.alpha_cutoff;
+						obj.uv_offset = casters[i].mat->uv_offset();   // the cut-out follows the material's UV offset (#448)
 						Texture* at = casters[i].mat->albedo_texture();
 						if (at && at->is_valid() && at->srv_gpu().ptr != 0) { obj.has_albedo_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(3, at->srv_gpu()); }
 						memcpy((u8*)m_shadow_cut_cb_mapped + (size_t)cut_slot * 256, &obj, sizeof(obj));

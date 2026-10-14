@@ -13,6 +13,6 @@ void main()
 {
 	vec2 tiling = (obj.uv_tiling.x > 0.0 && obj.uv_tiling.y > 0.0) ? obj.uv_tiling : vec2(1.0, 1.0);
 	float a = obj.base_color.a;
-	if (obj.has_albedo_texture != 0u) a *= texture(u_albedo, v_uv * tiling).a;
+	if (obj.has_albedo_texture != 0u) a *= texture(u_albedo, v_uv * tiling + obj.uv_offset).a;
 	if (obj.alpha_cutoff > 0.0 && a < obj.alpha_cutoff) discard;
 }

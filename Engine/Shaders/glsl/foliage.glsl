@@ -81,6 +81,7 @@ layout(set = 2, binding = 9) uniform sampler2D       u_ssao;
 layout(set = 2, binding = 10) uniform sampler2D      u_env;    // the sky as a reflection (IBL step 2)
 layout(set = 2, binding = 13) uniform sampler2D      u_gi_a;   // the world radiance cache (Lumen step 1), probes A
 layout(set = 2, binding = 14) uniform sampler2D      u_gi_b;   // ... probes B
+layout(set = 2, binding = 15) uniform sampler2D      u_emissive;   // a lit material's emissive map (#450)
 
 // ---------------------------------------------------------------- BRDF
 float d_ggx(float NdotH, float roughness)
@@ -317,7 +318,9 @@ vec3 sky_irradiance(vec3 n)
 // env_horizon.w = its mip count; the baker's 8-bit soft compression (straight below 1, x / (1 + x) above) undone here.
 vec2 env_uv(vec3 d)
 {
-	return vec2(atan(d.x, d.z) / (2.0 * 3.14159265) + 0.5, acos(clamp(d.y, -1.0, 1.0)) / 3.14159265);
+	// + the sky's rotation (env_ground.w, radians, #446): the reflection map is baked unrotated, the skybox pass turns
+	// the visible sky by the same angle, so reflections line up with the sky behind them
+	return vec2(atan(d.x, d.z) / (2.0 * 3.14159265) + 0.5 + frame.env_ground.w / (2.0 * 3.14159265), acos(clamp(d.y, -1.0, 1.0)) / 3.14159265);
 }
 vec3 decode_env(vec3 c)
 {
@@ -372,7 +375,7 @@ vec3 gi_volume(vec3 wp, vec3 n, vec3 fallback)
 
 void main()
 {
-	vec2 uv = v_uv;   // the wind lives in uv_tiling: no texture tiling
+	vec2 uv = v_uv + obj.uv_offset;   // the wind lives in uv_tiling: no texture tiling; the UV offset applies (#448)
 
 	vec3 cam_pos = frame.camera_position;
 
@@ -566,7 +569,11 @@ void main()
 	vec3 specular_ambient = env_color * env_fresnel * ao * sky_open;
 	ambient += specular_ambient + rim_light;
 
-	vec3 color = ambient + Lo;
+	// Emission of a lit material (#450): its colour x strength (x the emissive map), on top of the shading and before
+	// the fog and the tonemap, so a lit window glows, keeps its highlights, fades into fog and feeds the bloom
+	vec3 emission = obj.emissive_color.rgb;
+	if (obj.has_emissive_texture != 0u) emission *= srgb_to_linear(texture(u_emissive, uv).rgb);
+	vec3 color = ambient + Lo + emission;
 	color = apply_fog(color, v_world_pos);
 
 	color = tonemap_scene(color, frame.scene_exposure, frame.tonemapper);

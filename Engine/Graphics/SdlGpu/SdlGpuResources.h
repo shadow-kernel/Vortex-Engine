@@ -154,6 +154,13 @@ namespace vortex::graphics
 		void set_unlit(bool is_unlit) { m_properties.is_unlit = is_unlit ? 1 : 0; }
 		void set_emissive_strength(float strength) { m_properties.emissive_strength = strength; }
 		void set_uv_tiling(float u, float v) { m_properties.uv_tiling = { u, v }; }
+		// UV offset (#448): the shaders sample uv * tiling + offset. Kept out of MaterialProperties (an 80-byte ABI).
+		void set_uv_offset(float u, float v) { m_uv_offset = { u, v }; }
+		const DirectX::XMFLOAT2& uv_offset() const { return m_uv_offset; }
+		// Emission of a LIT material (#450): colour already multiplied by its strength, added after the lighting
+		// (x the emissive map when one is bound). The unlit path keeps emissive_strength as its brightness.
+		void set_emissive_color(float r, float g, float b) { m_emissive_color = { r, g, b }; }
+		const DirectX::XMFLOAT3& emissive_color() const { return m_emissive_color; }
 		void set_height_scale(float value) { m_properties.height_scale = value; }
 		// AlphaTest (#329): fragments whose alpha falls below the cutoff are discarded (0 = off).
 		void set_alpha_cutoff(float cutoff) { m_properties.alpha_cutoff = cutoff < 0.0f ? 0.0f : cutoff; }
@@ -183,6 +190,7 @@ namespace vortex::graphics
 		u32 roughness_channel() const { return m_roughness_channel; }
 		u32 ao_channel() const { return m_ao_channel; }
 		void set_height_texture(Texture* texture) { m_height_texture = texture; }
+		void set_emissive_texture(Texture* texture) { m_emissive_texture = texture; }   // sRGB colour map (#450)
 
 		const MaterialProperties& properties() const { return m_properties; }
 		bool is_unlit() const { return m_properties.is_unlit != 0; }
@@ -195,6 +203,7 @@ namespace vortex::graphics
 		Texture* roughness_texture() const { return m_roughness_texture; }
 		Texture* ao_texture() const { return m_ao_texture; }
 		Texture* height_texture() const { return m_height_texture; }
+		Texture* emissive_texture() const { return m_emissive_texture; }
 
 		bool is_valid() const { return m_valid; }
 		const std::string& name() const { return m_name; }
@@ -212,6 +221,9 @@ namespace vortex::graphics
 		Texture* m_roughness_texture{ nullptr };
 		Texture* m_ao_texture{ nullptr };
 		Texture* m_height_texture{ nullptr };
+		Texture* m_emissive_texture{ nullptr };
+		DirectX::XMFLOAT2 m_uv_offset{ 0.0f, 0.0f };
+		DirectX::XMFLOAT3 m_emissive_color{ 0.0f, 0.0f, 0.0f };
 		u32 m_metallic_channel{ 0 }, m_roughness_channel{ 0 }, m_ao_channel{ 0 };
 	};
 

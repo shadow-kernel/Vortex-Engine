@@ -541,6 +541,7 @@ namespace vortex::graphics::sdlgpu
 						PerObjectConstants obj{};
 						const auto& props = seg.cut_mat->properties();
 						obj.base_color = props.base_color; obj.uv_tiling = props.uv_tiling; obj.alpha_cutoff = props.alpha_cutoff;
+						obj.uv_offset = seg.cut_mat->uv_offset();   // the cut-out follows the material's UV offset (#448)
 						Texture* at = seg.cut_mat->albedo_texture();
 						Texture* white = ResourceRegistry::instance().white_texture();
 						const bool has = at && at->is_valid();

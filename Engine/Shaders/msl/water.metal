@@ -60,7 +60,9 @@ struct PerObject
     uint has_height_texture;
     float height_scale;
     float alpha_cutoff;
-    float _pad0, _pad1, _pad2;
+    uint has_emissive_texture;         // @148 (#450: the emissive map at texture 15)
+    float2 uv_offset;                  // @152 (#448: every map is sampled at uv * tiling + offset)
+    float4 emissive_color;             // @160 (#450: a lit material's emission, colour x strength; w unused)
 };
 
 struct PointLight { packed_float3 position; float range; packed_float3 color; float intensity; };
@@ -266,9 +268,11 @@ static inline float noise2(float2 p)
 
 // The sky as a reflection (IBL step 2): an equirect of the sky with mips at texture(10), env_sky.w = 2 while bound,
 // env_horizon.w = its mip count; the baker's 8-bit soft compression (straight below 1, x / (1 + x) above) undone here.
-static inline float2 env_uv(float3 d)
+static inline float2 env_uv(float3 d, float rot)
 {
-    return float2(atan2(d.x, d.z) / (2.0 * 3.14159265) + 0.5, acos(clamp(d.y, -1.0, 1.0)) / 3.14159265);
+    // + the sky's rotation (frame.env_ground.w, radians, #446): the reflection map is baked unrotated, the skybox pass
+    // turns the visible sky by the same angle, so reflections line up with the sky behind them
+    return float2(atan2(d.x, d.z) / (2.0 * 3.14159265) + 0.5 + rot / (2.0 * 3.14159265), acos(clamp(d.y, -1.0, 1.0)) / 3.14159265);
 }
 static inline float3 decode_env(float3 c)
 {
@@ -277,10 +281,10 @@ static inline float3 decode_env(float3 c)
     float3 hi = 1.0 / max(1.0 - t, 0.0625);
     return (c.x <= 0.75 && c.y <= 0.75 && c.z <= 0.75) ? lo : max(lo, hi);
 }
-static inline float3 sample_env(texture2d<float> env_tex, sampler env_smp, float3 R, float roughness, float mips, float lod_min)
+static inline float3 sample_env(texture2d<float> env_tex, sampler env_smp, float3 R, float roughness, float mips, float lod_min, float rot)
 {
     float lod = max(saturate(roughness) * max(mips - 1.0, 0.0), lod_min);
-    return decode_env(env_tex.sample(env_smp, env_uv(R), level(lod)).rgb);
+    return decode_env(env_tex.sample(env_smp, env_uv(R, rot), level(lod)).rgb);
 }
 
 // Window z -> view-space distance for this view's perspective projection (near / far in camera_clip).
@@ -399,7 +403,7 @@ fragment float4 PSMain(VSOut in [[stage_in]],
         // the real sky in the water: never below the horizon (the picture's ground is not the lake's surroundings), and
         // blurred with distance — far away the per-pixel ripple slopes would only turn the sky's sharp horizon into stripes
         float lod_min = 4.0 * saturate((cam_dist - 40.0) / 160.0);
-        sky_refl = sample_env(env_tex, env_smp, float3(R.x, max(R.y, 0.02), R.z), rough, frame.env_horizon.w, lod_min);
+        sky_refl = sample_env(env_tex, env_smp, float3(R.x, max(R.y, 0.02), R.z), rough, frame.env_horizon.w, lod_min, frame.env_ground.w);
     }
     else if (frame.env_sky.w > 0.5)
         sky_refl = R.y >= 0.0 ? mix(frame.env_horizon.rgb, frame.env_sky.rgb, pow(saturate(R.y), 0.5)) : mix(frame.env_horizon.rgb, frame.env_ground.rgb, pow(saturate(-R.y), 0.6));

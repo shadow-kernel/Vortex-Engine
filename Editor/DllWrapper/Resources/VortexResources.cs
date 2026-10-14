@@ -125,6 +125,15 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void SetMaterialHeightTexture(long materialId, long textureId);
 
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SetMaterialUVOffset")]
+        private static extern void SetMaterialUVOffsetNative(long materialId, float u, float v);
+
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SetMaterialEmissiveColor")]
+        private static extern void SetMaterialEmissiveColorNative(long materialId, float r, float g, float b);
+
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SetMaterialEmissiveTexture")]
+        private static extern void SetMaterialEmissiveTextureNative(long materialId, long textureId);
+
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void SetMaterialHeightScale(long materialId, float scale);
 
@@ -213,6 +222,28 @@ namespace Editor.DllWrapper
         /// so a small tiling texture stays crisp on a large mesh instead of being stretched once.</summary>
         public static void SetMaterialTiling(long materialId, float u, float v)
             => SetMaterialUVTiling(materialId, u, v);
+
+        /// <summary>UV offset (#448): every map of the material is sampled at uv × tiling + offset, so one texture can
+        /// serve as an atlas or be cut into strips. 0,0 = no offset.</summary>
+        public static void SetMaterialOffset(long materialId, float u, float v)
+        {
+            try { SetMaterialUVOffsetNative(materialId, u, v); } catch (EntryPointNotFoundException) { }
+        }
+
+        /// <summary>Emission of a LIT (StandardPBR) material (#450): the colour multiplied by its strength, added to the
+        /// shaded colour before fog and tonemapping, so the surface glows and still takes the scene's lights; a bound
+        /// emissive map multiplies it per texel. Black = no emission. Unlit materials ignore it: they glow with their
+        /// albedo × <see cref="SetMaterialEmissiveBrightness"/>.</summary>
+        public static void SetMaterialEmission(long materialId, float r, float g, float b)
+        {
+            try { SetMaterialEmissiveColorNative(materialId, r, g, b); } catch (EntryPointNotFoundException) { }
+        }
+
+        /// <summary>The emissive map of a lit material (#450), an sRGB colour texture; an invalid id clears the slot.</summary>
+        public static void SetMaterialEmissiveMap(long materialId, long textureId)
+        {
+            try { SetMaterialEmissiveTextureNative(materialId, textureId); } catch (EntryPointNotFoundException) { }
+        }
 
         /// <summary>Assign a height/displacement map (grayscale) — the shader parallax-maps the surface so it reads
         /// with real depth. Pair with <see cref="SetMaterialHeightDepth"/> for the strength.</summary>

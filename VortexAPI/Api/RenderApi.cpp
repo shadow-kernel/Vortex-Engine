@@ -342,6 +342,31 @@ EDITOR_INTERFACE void SetMaterialUVTiling(id::id_type material_id, float u, floa
 	if (mat) mat->set_uv_tiling(u, v);
 }
 
+// UV offset (#448): every map is sampled at uv * tiling + offset (atlases, strips cut from one texture, scrolling).
+EDITOR_INTERFACE void SetMaterialUVOffset(id::id_type material_id, float u, float v)
+{
+	auto* mat = graphics::ResourceRegistry::instance().get_material(material_id);
+	if (mat) mat->set_uv_offset(u, v);
+}
+
+// Emission of a LIT material (#450): the colour already multiplied by its strength, added to the shaded colour before
+// fog and tonemapping (and multiplied by the emissive map when one is bound). Black = no emission. Unlit materials keep
+// SetMaterialEmissiveStrength as their brightness.
+EDITOR_INTERFACE void SetMaterialEmissiveColor(id::id_type material_id, float r, float g, float b)
+{
+	auto* mat = graphics::ResourceRegistry::instance().get_material(material_id);
+	if (mat) mat->set_emissive_color(r > 0.0f ? r : 0.0f, g > 0.0f ? g : 0.0f, b > 0.0f ? b : 0.0f);
+}
+
+// The emissive map (#450), an sRGB colour texture; an invalid or unknown texture id clears the slot.
+EDITOR_INTERFACE void SetMaterialEmissiveTexture(id::id_type material_id, id::id_type texture_id)
+{
+	auto* mat = graphics::ResourceRegistry::instance().get_material(material_id);
+	if (!mat) return;
+	auto* tex = texture_id != id::invalid_id ? graphics::ResourceRegistry::instance().get_texture(texture_id) : nullptr;
+	mat->set_emissive_texture(tex && tex->is_valid() ? tex : nullptr);
+}
+
 // Blend mode (#33): 0 = opaque, 1 = alpha blend, 2 = additive. Non-opaque materials draw in the
 // sorted back-to-front transparent pass with depth write off (the .vmat BlendMode finally renders).
 EDITOR_INTERFACE void SetMaterialBlendMode(id::id_type material_id, int mode)

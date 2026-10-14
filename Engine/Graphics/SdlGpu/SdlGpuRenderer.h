@@ -418,9 +418,12 @@ namespace vortex::graphics::sdlgpu
 			u32 has_albedo_texture, has_normal_texture, has_metallic_texture, has_roughness_texture;
 			u32 has_ao_texture, use_directx_normals, is_unlit; float emissive_strength;
 			DirectX::XMFLOAT2 uv_tiling; u32 has_height_texture; float height_scale;
-			float alpha_cutoff; float _pad0, _pad1, _pad2;   // @144: AlphaTest cutoff (#329), 0 = off
+			float alpha_cutoff;                     // @144: AlphaTest cutoff (#329), 0 = off
+			u32 has_emissive_texture;               // @148: the emissive map at sampler slot 15 (#450)
+			DirectX::XMFLOAT2 uv_offset;            // @152: every map is sampled at uv * tiling + offset (#448)
+			DirectX::XMFLOAT4 emissive_color;       // @160: a lit material's emission, colour x strength (#450); w unused
 		};
-		static_assert(sizeof(PerObjectConstants) == 160, "PerObjectConstants must byte-match standard.metal");
+		static_assert(sizeof(PerObjectConstants) == 176, "PerObjectConstants must byte-match standard.metal");
 
 		struct GPUPointLight { DirectX::XMFLOAT3 position; float range; DirectX::XMFLOAT3 color; float intensity; };
 		struct GPUSpotLight
@@ -675,7 +678,10 @@ namespace vortex::graphics::sdlgpu
 			const bool map = on > 0.5f && m_env_map != id::invalid_id && m_env_mips > 0;
 			f.env_sky = { m_sky_color.x, m_sky_color.y, m_sky_color.z, map ? 2.0f : on };   // 2 = a reflection map is bound at slot 10
 			f.env_horizon = { m_horizon_color.x, m_horizon_color.y, m_horizon_color.z, map ? (float)m_env_mips : 0.0f };
-			f.env_ground = { m_ground_color.x, m_ground_color.y, m_ground_color.z, 0.0f };
+			// w: a texture sky's rotation (radians, #446) — the reflection map is baked unrotated, the lookups add it like the
+			// skybox pass does, so reflections line up with the visible sky (a gradient sky has no rotation)
+			const bool rotated = map && m_skybox_mode == SkyboxMode::Texture && m_sky_texture != id::invalid_id;
+			f.env_ground = { m_ground_color.x, m_ground_color.y, m_ground_color.z, rotated ? m_sky_rotation : 0.0f };
 		}
 		void draw_grid(SDL_GPURenderPass* pass, SDL_GPUCommandBuffer* cmd, const FrameView& view);
 		void record_runs(SDL_GPURenderPass* pass, SDL_GPUCommandBuffer* cmd, size_t run_begin, size_t run_end, const FrameView& view, u32 phase = 3u);   // phase bits: 1 opaque, 2 transparent

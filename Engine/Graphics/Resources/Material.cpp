@@ -54,6 +54,8 @@ namespace vortex::graphics
 		m_metallic_texture = nullptr;
 		m_roughness_texture = nullptr;
 		m_ao_texture = nullptr;
+		m_height_texture = nullptr;
+		m_emissive_texture = nullptr;
 	}
 
 	void Material::set_base_color(const DirectX::XMFLOAT4& color)
