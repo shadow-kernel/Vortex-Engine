@@ -284,6 +284,7 @@ public class ContactZone : VortexBehaviour
         public static void NonFiniteTransformWritesAreIgnored(TestContext t)
         {
             // #455: a NaN / infinity used to go straight into SyncToEngine -> the native quaternion and matrix math
+            ScriptRuntime.ResetNonFiniteWarnings();
             var scene = new Scene { Name = "NaN" };
             var crate = new GameEntity(scene, "NanCrate");
             var tr = crate.Transform;
@@ -304,7 +305,7 @@ public class ContactZone : VortexBehaviour
             t.Equal(3, WarningsAbout("'NanCrate'").Count, "no flood: once per entity and property");
             tr.LocalPosition = new Vector3(4, 5, 6);
             t.True(Same(tr.LocalPosition, 4, 5, 6), "finite values are taken as always");
-            Editor.ECS.Components.Transform.NonFiniteWarningEpoch++;   // a new play session
+            ScriptRuntime.ResetNonFiniteWarnings();   // a new play session
             tr.LocalPosition = new Vector3(0, float.NaN, 0);
             t.Equal(4, WarningsAbout("'NanCrate'").Count, "the next play session warns again");
         }
@@ -572,6 +573,25 @@ public class ContactZone : VortexBehaviour
             t.True(ScriptRuntime.HandlesContact(asm.GetType("ContactZone")), "an OnTriggerEnter override");
             t.False(ScriptRuntime.HandlesContact(asm.GetType("Health")), "Health does not react to contact");
             t.False(ScriptRuntime.HandlesContact(null), "no type");
+        }
+
+        [Test]
+        public static void NonFiniteWarningsAreCappedPerSession(TestContext t)
+        {
+            // a spawner yielding a NaN per spawn: the first few are shown, the rest become one line when play stops
+            var asm = Compile(t);
+            var rt = ScriptRuntime.Instance;
+            try
+            {
+                rt.BeginPlaySession(new Scene { Name = "Cap" }, asm);
+                var scene = new Scene { Name = "Spawns" };
+                for (int i = 0; i < ScriptRuntime.NonFiniteWarningCap + 5; i++)
+                    new GameEntity(scene, "CapCrate" + i).Transform.LocalPosition = new Vector3(float.NaN, 0, 0);
+                t.Equal(ScriptRuntime.NonFiniteWarningCap, WarningsAbout("for 'CapCrate").Count, "only the first ones are shown");
+                rt.End();
+                t.Equal(1, WarningsAbout("…and 5 more non-finite").Count, "then one line counts the rest");
+            }
+            finally { rt.End(); }
         }
 
         [Test]

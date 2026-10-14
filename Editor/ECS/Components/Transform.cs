@@ -79,13 +79,15 @@ namespace Editor.ECS.Components
         /// <summary>A NaN or an infinity never becomes a transform value (#455): SyncToEngine would hand it to the engine's
         /// native quaternion / matrix math, which can crash the editor or the player — one 0/0 in a game script was enough.
         /// Such a write is ignored as a whole (the entity keeps its last valid value; never a jump to the origin), and one
-        /// warning per entity and property and play session names the entity and the script that wrote it.</summary>
+        /// warning per entity and property and play session names the entity and the script that wrote it — the first
+        /// few of a session; the rest are counted into one "…and N more" line when play stops.</summary>
         private bool Finite(Vector3 v, int bit, string property)
         {
             if (float.IsFinite(v.X) && float.IsFinite(v.Y) && float.IsFinite(v.Z)) return true;
             if (_nonFiniteEpoch != NonFiniteWarningEpoch) { _nonFiniteEpoch = NonFiniteWarningEpoch; _nonFiniteWarned = 0; }
             if ((_nonFiniteWarned & bit) != 0) return false;
             _nonFiniteWarned |= bit;
+            if (!Editor.Scripting.ScriptRuntime.TakeNonFiniteWarning()) return false;   // over the session's cap: counted only
             try
             {
                 var ci = System.Globalization.CultureInfo.InvariantCulture;

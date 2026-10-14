@@ -769,9 +769,42 @@ namespace Editor.Scripting
         public void BeginPlaySession(Scene scene, System.Reflection.Assembly overrideAsm)
         {
             try { Vortex.Save.BeginSession(); } catch { }   // forgets the last session's cache — the file on disk is the truth
-            Editor.ECS.Components.Transform.NonFiniteWarningEpoch++;   // a NaN written again in this session is reported again (#455)
+            ResetNonFiniteWarnings();                       // a NaN written again in this session is reported again (#455)
             _duplicateWarned.Clear();
             Begin(scene, overrideAsm);
+        }
+
+        internal static void ResetNonFiniteWarnings()
+        {
+            Editor.ECS.Components.Transform.NonFiniteWarningEpoch++;
+            _nonFiniteShown = _nonFiniteSuppressed = 0;
+        }
+
+        // ---- non-finite value warnings (#455): one per entity and property, and at most NonFiniteWarningCap per play
+        // session — a spawner producing a NaN per spawn must not flood the Console; End() reports the rest as one line ----
+        internal const int NonFiniteWarningCap = 8;
+        private static int _nonFiniteShown, _nonFiniteSuppressed;
+
+        /// <summary>May one more non-finite warning be shown this session? False counts it for End's "…and N more" line —
+        /// the caller then skips building the message (and its stack walk).</summary>
+        internal static bool TakeNonFiniteWarning()
+        {
+            if (_nonFiniteShown < NonFiniteWarningCap) { _nonFiniteShown++; return true; }
+            _nonFiniteSuppressed++;
+            return false;
+        }
+
+        private static void ReportSuppressedNonFinite()
+        {
+            if (_nonFiniteSuppressed <= 0) return;
+            int n = _nonFiniteSuppressed;
+            _nonFiniteSuppressed = 0;
+            try
+            {
+                Editor.Core.Services.ConsoleService.Instance.LogWarning("…and " + n + " more non-finite (NaN / infinite) value" + (n == 1 ? " was" : "s were")
+                    + " ignored — the first " + NonFiniteWarningCap + " of this play session are listed above.");
+            }
+            catch { }
         }
 
         /// <summary>"PlayerController.Update" — the innermost frame of the running game scripts on the current stack, or
@@ -1343,6 +1376,7 @@ namespace Editor.Scripting
             _invokes.Clear();
             _debugShapes.Clear();
             _nonFiniteMoveWarned.Clear();
+            ReportSuppressedNonFinite();
             Vortex.Debug.ConsoleVisible = false;
             try { Vortex.Debug.ClearLines(); } catch { }
             try { Vortex.Events.Clear(); } catch { }
@@ -2434,7 +2468,7 @@ namespace Editor.Scripting
 
         private void WarnNonFiniteMove(long selfId, string what)
         {
-            if (!_nonFiniteMoveWarned.Add(selfId)) return;
+            if (!_nonFiniteMoveWarned.Add(selfId) || !TakeNonFiniteWarning()) return;
             try
             {
                 var e = FindEntityByHandle(selfId);
