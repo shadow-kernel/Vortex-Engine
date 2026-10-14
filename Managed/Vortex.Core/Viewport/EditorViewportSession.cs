@@ -4,6 +4,7 @@ using Editor.Core.Data;
 using Editor.Core.Editing;
 using Editor.Core.Input;
 using Editor.Core.Services;
+using Editor.Core.UndoRedo;
 using Editor.DllWrapper;
 using Editor.ECS;
 using Editor.Scripting;
@@ -904,10 +905,22 @@ namespace Editor.Core.Viewport
             _transformSnapshot.Clear();
             _colorSnapshot.Clear();
             var scene = _currentScene ?? ProjectData.Current?.ActiveScene;
-            _componentSnapshot = PlaySnapshot.Take(scene);
+            // every loaded scene, not just the played one: a tool or the hierarchy may edit another one while playing (#423)
+            var scenes = new List<Scene>();
+            if (scene != null) scenes.Add(scene);
+            var project = ProjectData.Current;
+            if (project?.Scenes != null)
+                foreach (var s in project.Scenes) if (s != null && s.IsLoaded && !scenes.Contains(s)) scenes.Add(s);
+            _componentSnapshot = PlaySnapshot.Take(scenes);
+            _undoAtPlay = UndoRedoManager.Instance.SaveHistory();
             if (scene?.Entities != null)
                 foreach (var e in scene.Entities) SnapshotTransformRecursive(e);
         }
+
+        private UndoRedoManager.History _undoAtPlay;
+
+        /// <summary>Whether Stop puts this scene back: it was loaded when play started (#423). False outside play.</summary>
+        public static bool RevertsOnStop(Scene scene) => Main?._componentSnapshot?.Covers(scene) == true;
 
         private void SnapshotTransformRecursive(GameEntity e)
         {
@@ -929,9 +942,14 @@ namespace Editor.Core.Viewport
             ScriptRuntime.Instance.ConsumeQuitRequest();   // play is stopping anyway: no quit may carry over (#410)
             VuiStack.Instance.Reset();   // the session's screens go with its scripts, and its cached canvases (#477)
             VortexAPI.ClearAllRigidbodies();
-            _componentSnapshot?.Restore();   // after OnDestroy: lights scripts changed
-            DropSelectionOfRemoved(_componentSnapshot);
+            var snapshot = _componentSnapshot;
             _componentSnapshot = null;
+            snapshot?.Restore();   // after OnDestroy: whatever play changed in the loaded scenes
+            // the undo steps made while playing describe the scenes Stop just put back: undoing one afterwards re-broke the
+            // hierarchy (#423) — like Unity, they go with the session
+            UndoRedoManager.Instance.RestoreHistory(_undoAtPlay);
+            _undoAtPlay = null;
+            DropSelectionOfRemoved(snapshot);
             foreach (var s in _transformSnapshot)
             {
                 if (s.ent?.Transform == null) continue;
@@ -951,20 +969,30 @@ namespace Editor.Core.Viewport
             _sceneDirty = true;
         }
 
-        /// <summary>An entity created while playing (the hierarchy, create_entity) is gone after the restore (#423) — so is
-        /// the selection that still pointed at it or into it.</summary>
+        /// <summary>An entity created while playing is gone after the restore (#423) — and so is every selection of it or of
+        /// something under it: the primary selection, the hierarchy's multi-selection and each scene's own (a stale entry made
+        /// Duplicate add a copy after Stop).</summary>
         private static void DropSelectionOfRemoved(PlaySnapshot snap)
         {
-            var selected = SelectionService.Instance.SelectedEntity;
-            if (snap == null || selected == null || snap.Removed.Count == 0) return;
-            for (var e = selected; e != null; e = e.Parent)
-                for (int i = 0; i < snap.Removed.Count; i++)
-                    if (ReferenceEquals(snap.Removed[i], e))
-                    {
-                        SelectionService.Instance.ClearSelection();
-                        EditorSession.Instance.Hierarchy.ClearSelection();
-                        return;
-                    }
+            if (snap == null || snap.Removed.Count == 0) return;
+            var removed = new HashSet<GameEntity>(snap.Removed, ReferenceEqualityComparer.Instance);
+            bool Gone(GameEntity e)
+            {
+                for (int depth = 0; e != null && depth < 512; e = e.Parent, depth++) if (removed.Contains(e)) return true;
+                return false;
+            }
+            try
+            {
+                var hierarchy = EditorSession.Instance.Hierarchy;
+                if (hierarchy.SelectedEntities != null)
+                    foreach (var e in new List<GameEntity>(hierarchy.SelectedEntities)) if (Gone(e)) hierarchy.RemoveFromSelection(e);
+                if (Gone(hierarchy.SelectedEntity)) hierarchy.SelectedEntity = null;
+            }
+            catch { }
+            if (Gone(SelectionService.Instance.SelectedEntity)) SelectionService.Instance.ClearSelection();
+            var project = ProjectData.Current;
+            if (project?.Scenes != null)
+                foreach (var s in project.Scenes) if (s != null && Gone(s.SelectedEntity)) s.SelectedEntity = null;
         }
 
         private void ApplyMainCameraView() => PlayCameraHelper.ApplyMainCamera(_currentScene ?? ProjectData.Current?.ActiveScene);

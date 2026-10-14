@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using Editor.Core.Data;
 using Editor.Core.Services;
+using Editor.Core.UndoRedo;
+using Editor.Core.UndoRedo.Commands;
 using Editor.ECS;
 using Editor.ECS.Components;
 using Editor.ECS.Components.Animation;
@@ -145,6 +147,32 @@ namespace VortexTests
             t.Equal(4, Listed(scene).Count, "Room, Lamp, Crate and Floor — nothing else");
             t.True(snap.Removed.Contains(leak) && snap.Removed.Contains(probe) && snap.Removed.Contains(grid) && snap.Removed.Contains(loot), "the removed entities are reported");
             t.False(snap.Removed.Contains(tile), "a copy inside the removed group goes with it");
+            t.True(leak.Scene == null && leak.Parent == null && probe.Parent == null && grid.Scene == null && tile.Scene == null,
+                "a removed entity is out of every scene — a stale selection of it can no longer add a copy to one");
+            t.Equal(2, snap.PutBack, "the moved floor and the destroyed crate were put back");
+        }
+
+        [Test]
+        public static void EveryLoadedSceneComesBack(TestContext t)
+        {
+            var hall = Entity("Hall");
+            var played = SceneOf(hall);
+            var door = Entity("Door");
+            var lobby = SceneOf(door);
+            var later = new Scene { Name = "later" };
+            float fog = lobby.Settings.FogDensity;
+
+            var snap = PlaySnapshot.Take(new[] { played, lobby });
+            t.True(snap.Covers(played) && snap.Covers(lobby) && !snap.Covers(later), "Stop covers the scenes loaded at Play");
+            // create_entity(parent: an entity of the other loaded scene), a re-parent across the scenes, its environment
+            var sign = Entity("Sign", door); sign.Scene = lobby;
+            new MoveEntityCommand(hall, door).Execute();
+            lobby.Settings.FogDensity = fog + 1f;
+            snap.Restore();
+
+            t.Equal(0, door.Children.Count, "the entity made under the other scene's door is gone, the hall left it");
+            t.True(played.Entities.Count == 1 && played.Entities[0] == hall && hall.Scene == played && hall.Parent == null, "the hall is back in its own scene");
+            t.True(snap.Removed.Contains(sign) && lobby.Settings.FogDensity == fog && snap.SettingsReverted.Contains(lobby), "the other scene is put back too");
         }
 
         [Test]
@@ -206,6 +234,7 @@ namespace VortexTests
             var animator = new Animator(cam); animator.Clips.Add(new AnimatorClipEntry { Name = "Walk", Path = "Assets/Animations/Walk.vanim" }); cam.Components.Add(animator);
             var col = new BoxCollider(cam) { Material = new PhysicsMaterial { Friction = 0.5f } }; cam.Components.Add(col);
             var scene = SceneOf(cam);
+            var fields = script.FieldValues; var yaw = fields[0]; var clips = animator.Clips; var walk = clips[0]; var material = col.Material;
 
             var snap = PlaySnapshot.Take(scene);
             // attach_script / the Inspector's script card while playing: Script.SetFieldValue edits the stored entry in place
@@ -214,6 +243,7 @@ namespace VortexTests
             script.SetFieldValue("Speed", "4");                  // a field without an entry before Play
             animator.Clips[0].Path = "Assets/Animations/Run.vanim";
             col.Material.Friction = 0.9f;
+            col.Material = new PhysicsMaterial { Friction = 0.2f };   // edited, then replaced
             snap.Restore();
 
             t.Equal("-999", script.GetFieldValue("DebugYaw"), "a stored field edited in play is back (#478)");
@@ -221,12 +251,42 @@ namespace VortexTests
             t.Equal(null, script.GetFieldValue("Speed"), "a field first set in play is gone");
             t.Equal("Assets/Animations/Walk.vanim", animator.Clips[0].Path, "a clip slot edited in place is back");
             t.Equal(0.5f, col.Material.Friction, "a physics material edited in place is back");
+            // the very objects come back, not copies: the viewport and an open inspector card hold these
+            t.True(ReferenceEquals(script.FieldValues, fields) && ReferenceEquals(fields[0], yaw), "the same field list and entry");
+            t.True(ReferenceEquals(animator.Clips, clips) && ReferenceEquals(clips[0], walk), "the same clip list and slot");
+            t.True(ReferenceEquals(col.Material, material), "the collider's own material object, not the one set in play");
 
-            // the restored values are copies too: a second session edits them in place without reaching this snapshot
+            // a second session is restored as well
             var again = PlaySnapshot.Take(scene);
             script.SetFieldValue("DebugYaw", "12");
             again.Restore();
             t.Equal("-999", script.GetFieldValue("DebugYaw"), "a second play session is restored as well");
+        }
+
+        [Test]
+        public static void FoliageTypesComeBackIntoTheSameObjects(TestContext t)
+        {
+            var layer = Entity("Grass");
+            var foliage = new Foliage(layer);
+            var grass = Foliage.DefaultType("Grass", "Primitive:Sphere", true);
+            grass.WindStrength = 0.1f;
+            foliage.Types.Add(grass);
+            layer.Components.Add(foliage);
+            var scene = SceneOf(layer);
+            var types = foliage.Types;
+
+            var snap = PlaySnapshot.Take(scene);
+            int version = foliage.Version;
+            grass.WindStrength = 2f;   // a storm tuned while playing
+            foliage.Types.Add(Foliage.DefaultType("Rock", "Primitive:Cube", false));
+            snap.Restore();
+
+            t.True(ReferenceEquals(foliage.Types, types) && types.Count == 1 && ReferenceEquals(types[0], grass) && grass.WindStrength == 0.1f,
+                "the layer's own type object has its wind back — the foliage renderer and an open Foliage card hold it (#478)");
+            t.True(foliage.Version != version, "the foliage renderer is told to rebuild");
+            int unchanged = foliage.Version;
+            PlaySnapshot.Take(scene).Restore();
+            t.Equal(unchanged, foliage.Version, "an untouched layer is not rebuilt");
         }
 
         // ------------------------------------------------------------------ #479: the environment settings
@@ -312,6 +372,39 @@ namespace VortexTests
                 t.False(stack.HasActiveScreens, "Load alone shows nothing");
             }
             finally { stack.Reset(); }
+        }
+
+        // ------------------------------------------------------------------ #423: what Stop does beyond the scenes
+
+        [Test]
+        public static void UndoStepsMadeWhilePlayingAreDropped(TestContext t)
+        {
+            var undo = UndoRedoManager.Instance;
+            var outer = undo.SaveHistory();   // whatever ran before this test — put back at the end
+            try
+            {
+                var root = Entity("Root");
+                var a = Entity("A", root);
+                var b = Entity("B", root);
+                var scene = SceneOf(root);
+                undo.Execute(new MoveEntityCommand(b, null));   // an edit made before Play: B to the scene root
+                var editStep = undo.GetUndoHistory()[0];
+
+                var atPlay = undo.SaveHistory();
+                var snap = PlaySnapshot.Take(scene);
+                undo.Execute(new MoveEntityCommand(a, b));      // parent_entity while playing
+                undo.Execute(new CollectionAddCommand<GameEntity>(scene.Entities, new GameEntity("Leak"), "Entities"));   // a create
+                snap.Restore();
+                int dropped = undo.RestoreHistory(atPlay);
+
+                t.Equal(2, dropped, "the two steps made while playing are gone with the session");
+                t.True(ReferenceEquals(undo.GetUndoHistory()[0], editStep) && undo.RedoCount == 0, "the history is the one of Play");
+                undo.Undo();   // Ctrl+Z after Stop undoes the edit made before Play — not a play step against the restored scene
+                t.True(scene.Entities.Count == 1 && root.Children.Count == 2 && root.Children[1] == b, "B is back under Root, once");
+                var listed = Listed(scene);
+                t.Equal(listed.Count, listed.Distinct().Count(), "no entity is listed twice (an undo after Stop used to do that)");
+            }
+            finally { undo.RestoreHistory(outer); }
         }
     }
 }
