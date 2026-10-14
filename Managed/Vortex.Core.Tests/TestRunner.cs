@@ -56,6 +56,11 @@ namespace VortexTests
             // never touch the user's editor state or library
             Environment.SetEnvironmentVariable("VORTEX_APPDATA_DIR", System.IO.Path.Combine(root, "appdata"));
             Environment.SetEnvironmentVariable("VORTEX_ASSETDB_DIR", System.IO.Path.Combine(root, "assetdb-unused"));
+            // The engine library is found up front, the way the editor and the player find it (VORTEX_NATIVE_DIR, the
+            // repository's CMake build tree): parts of the core remember a MISSING library for the whole process (a
+            // MeshRenderer stops loading handles), so one first registered by a later test came too late for them.
+            // Without a built library every test runs as before.
+            try { Editor.Core.Native.NativeLoader.Register(); } catch { }
 
             var tests = typeof(TestRunner).Assembly.GetTypes()
                 .SelectMany(t => t.GetMethods(BindingFlags.Public | BindingFlags.Static))

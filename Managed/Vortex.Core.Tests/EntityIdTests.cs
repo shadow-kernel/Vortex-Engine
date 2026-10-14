@@ -460,5 +460,35 @@ namespace VortexTests
                 scene.DeactivateEntities(); scene.ReleaseEngineScene();
             }
         }
+
+        [Test]
+        public static void LoadedRenderersGetTheirOwnNativeComponents(TestContext t)
+        {
+            if (!Native()) return;
+            var s = new Scene { Name = "Yard" };
+            var a0 = EntityIdTests.Entity(s, "A", new Vector3(1, 0, 0));
+            a0.AddComponentDirect(new MeshRenderer(a0) { MeshPath = "Primitive:Cube" });
+            var b0 = EntityIdTests.Entity(s, "B", new Vector3(2, 0, 0));
+            b0.AddComponentDirect(new MeshRenderer(b0) { MeshPath = "Primitive:Sphere" });
+            var scene = DataSerializer.FromBinary<Scene>(DataSerializer.ToBinary(s));
+            var a = scene.Entities[0]; var b = scene.Entities[1];
+            var ra = a.GetComponent<MeshRenderer>(); var rb = b.GetComponent<MeshRenderer>();
+            // the resource manager is not started in a test process (no InitializeRuntime): give the renderers the mesh
+            // handles a started one hands out for their paths
+            var meshField = typeof(MeshRenderer).GetField("_meshHandle", BindingFlags.NonPublic | BindingFlags.Instance);
+            meshField.SetValue(ra, 1001L);
+            meshField.SetValue(rb, 1002L);
+            try
+            {
+                scene.ActivateEntities();
+                long ha = EntityIdTests.RendererHandle(ra), hb = EntityIdTests.RendererHandle(rb);
+                t.True(ID.IsValid(ha) && ID.IsValid(hb) && ha != hb, "two loaded renderers get two native renderer components (" + ha + ", " + hb + ")");
+                t.True(VortexAPI.GetMeshFromRenderer(ha) == 1001 && VortexAPI.GetMeshFromRenderer(hb) == 1002, "each component holds its own renderer's mesh");
+                a.IsActive = false;
+                t.Equal(ID.INVALID_ID, EntityIdTests.RendererHandle(ra), "deactivating an entity removes its renderer component");
+                t.Equal(1002L, VortexAPI.GetMeshFromRenderer(hb), "and leaves the other one alone");
+            }
+            finally { scene.DeactivateEntities(); scene.ReleaseEngineScene(); }
+        }
     }
 }
