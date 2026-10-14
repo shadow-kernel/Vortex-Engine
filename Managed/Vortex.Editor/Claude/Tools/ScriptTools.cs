@@ -232,9 +232,10 @@ namespace VortexEditor.Claude.Tools
             else if (ScriptFields.TypeOf(sc) == null)
                 note = "the class " + sc.ScriptClassName + " is not compiled yet (or the file has errors) — check compile_scripts";
             ToolContext.UndoLabel = (added ? "attach " : "set fields of ") + Path.GetFileNameWithoutExtension(rel) + " on " + e.Name;
-            // while playing (or paused, #423) THIS script's running behaviour takes the values now, and a new script starts
-            // now next to the ones the entity already runs (#345, #408); Stop reverts the scene to what it was before Play —
-            // the field values included (#478). A dry run is taken back afterwards, so it leaves the running game alone (#405).
+            // while playing THIS script's running behaviour takes the values now, and a new script starts now next to the ones
+            // the entity already runs (#345, #408) — while paused at the next tick that plays; Stop reverts the scene to what it
+            // was before Play, the field values included (#478), and the tool host adds runtime_only (#423). A dry run is taken
+            // back afterwards, so it leaves the running game alone (#405).
             bool playing = SceneModel.Playing;
             bool dryRun = ToolContext.DryRun;
             bool live = playing && !dryRun && (ScriptRuntime.Instance.ApplyFieldsToLiveBehaviour(e, sc) || ScriptRuntime.Instance.AttachAtRuntime(e, sc));
@@ -244,7 +245,7 @@ namespace VortexEditor.Claude.Tools
             else if (playing && !live && !dryRun)
                 note = (note == null ? "" : note + "; ") + "play mode: the script did not start (its class does not compile, or is not a concrete VortexBehaviour named like the file), so nothing changed live — and Stop reverts the change; set it after exit_play_mode to keep it";
             return new { entity = SceneModel.ShortId(e), script = rel, behaviour = sc.ScriptClassName, added, fields_set = set.Count > 0 ? set : null,
-                runtime_only = playing ? true : (bool?)null, live = playing ? live : (bool?)null, note };
+                live = playing ? live : (bool?)null, note };
         }
 
         // ================================================================== API reference

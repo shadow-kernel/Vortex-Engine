@@ -184,8 +184,7 @@ namespace VortexEditor.Claude.Tools
             scene.IsDirty = true;
             ToolContext.UndoLabel = "environment";
             Editor.Core.Viewport.EditorViewportSession.RequestResubmit();
-            // Stop restores the scene's environment as it was before Play (#479)
-            return SceneModel.Playing ? new { runtime_only = true, note = SceneModel.PlayNote, settings = Info(st) } : Info(st);
+            return Info(st);   // in play the tool host adds runtime_only: Stop restores the environment (#479)
         }
 
         // ------------------------------------------------------------------ weather

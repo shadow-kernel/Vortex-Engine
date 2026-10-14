@@ -99,13 +99,10 @@ namespace VortexEditor.Claude.Tools
             SceneModel.SetTransform(e, null, SceneModel.Vec(rotation, "rotation"), SceneModel.Vec(scale, "scale"));
             ToolContext.UndoLabel = "place " + e.Name;
             Bounds.Of(new[] { e }, out var min, out var max);
-            bool playing = SceneModel.Playing;   // Stop removes it again (#423)
             return new
             {
                 entity = SceneModel.Brief(e),
                 bounds = new { min = ToolJson.V(min), max = ToolJson.V(max), size = ToolJson.V(new Vector3(max.X - min.X, max.Y - min.Y, max.Z - min.Z)) },
-                runtime_only = playing ? true : (bool?)null,
-                note = playing ? SceneModel.PlayNote : null,
             };
         }
 
