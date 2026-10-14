@@ -19,9 +19,10 @@ namespace VortexEditor.Claude
     /// <summary>
     /// Editor smoke check "mcp tools": the tool sets beyond the scene basics, end to end over MCP — materials (create,
     /// edit, assign, undo restores the file), world macros (grid, deterministic scatter, align, bulk edit, measure,
-    /// one undo step each), scripts (write → compile errors with line/column → fix → attach with fields, a subfolder
-    /// script by its bare name and an ambiguous name (#456, #494), API lookup), assets (list, place a model, save a
-    /// prefab) and audio (search, AudioSource, mixer, procedural generation). Everything is undone / removed afterwards.
+    /// one undo step each), scripts (write → compile errors with line/column → fix → attach with fields, the fields read
+    /// back by get_entity and set by set_component_properties (#405), a subfolder script by its bare name and an
+    /// ambiguous name (#456, #494), API lookup), assets (list, place a model, save a prefab) and audio (search,
+    /// AudioSource, mixer, procedural generation). Everything is undone / removed afterwards.
     /// </summary>
     internal static class McpToolsSmoke
     {
@@ -136,6 +137,20 @@ namespace VortexEditor.Claude
                     || (bool)(await C("write_script", new JsonObject { ["script"] = "McpLate", ["code"] = lateSrc }))["compiles"] != true) return Fail("the multi-script probes do not compile");
                 var att2 = await C("attach_script", new JsonObject { ["entity"] = cubeId, ["script"] = "McpWobble", ["fields"] = new JsonObject { ["Speed"] = 7 } });
                 if ((bool?)att2["added"] != true || cubeEntity.Components.OfType<Script>().Count() != 2) return Fail("a second script on the entity: " + att2.ToJsonString());
+                // #405: get_entity reads the fields (overrides merged with the code defaults), set_component_properties writes
+                // them — the first Script, McpSpinner (component "Script", index 0)
+                var ge = await C("get_entity", new JsonObject { ["entity"] = cubeId });
+                var sp = (ge["components"] as JsonArray)?.FirstOrDefault(x => (string)x["type"] == "Script")?["properties"];
+                if ((double?)sp?["fields"]?["Speed"] != 45 || (double?)sp?["fields"]?["Axis"]?[0] != 1 || (sp?["overridden_fields"] as JsonArray)?.Count != 2)
+                    return Fail("get_entity should show the script's fields: " + ge.ToJsonString());
+                var scp = await C("set_component_properties", new JsonObject { ["entity"] = cubeId, ["component"] = "Script", ["properties"] = new JsonObject { ["speed"] = 30 } });
+                if (script.GetFieldValue("Speed") != "30" || (double?)scp["properties"]?["fields"]?["Speed"] != 30) return Fail("set_component_properties on a script field: " + scp.ToJsonString());
+                var reset = await C("set_component_properties", new JsonObject { ["entity"] = cubeId, ["component"] = "Script", ["properties"] = new JsonObject { ["fields"] = new JsonObject { ["Speed"] = null } } });
+                if (script.GetFieldValue("Speed") != null || (double?)reset["properties"]?["fields"]?["Speed"] != 90) return Fail("null should reset a field to its code default: " + reset.ToJsonString());
+                var badProp = await Raw("set_component_properties", new JsonObject { ["entity"] = cubeId, ["component"] = "Script", ["properties"] = new JsonObject { ["Sped"] = 1 } });
+                if ((bool?)badProp["isError"] != true || !McpTestClient.Text(badProp).Contains("Speed, Axis") || !McpTestClient.Text(badProp).Contains("script_path"))
+                    return Fail("an unknown Script name should list the fields and the properties: " + McpTestClient.Text(badProp));
+                await C("set_component_properties", new JsonObject { ["entity"] = cubeId, ["component"] = "Script", ["properties"] = new JsonObject { ["Speed"] = 45 } });   // as attached: the play checks expect it
                 // #456 / #494: a script in a subfolder is found by its bare name; two scripts of one name are listed, not picked
                 var sub = await C("write_script", new JsonObject { ["script"] = "McpSub/McpSubSpinner.cs", ["code"] = good.Replace("McpSpinner", "McpSubSpinner") });
                 cleanup.Add(Path.Combine(project.Path, "Assets", "Scripts", "McpSub", "McpSubSpinner.cs"));
@@ -240,7 +255,7 @@ namespace VortexEditor.Claude
                 if ((string)stop["state"] != "Editing") return Fail("exit_play_mode: " + stop.ToJsonString());
 
                 log.Log("mcp tools: OK — " + ToolCatalog.All.Count + " tools; material, grid (12), scatter (8, resting on the tiles), scripts with line-accurate errors, " +
-                        "a subfolder script by its name, " + Path.GetFileName(crate) + " + prefab, audio + mixer + generated " + Path.GetFileName(genPath) +
+                        "script fields read + set, a subfolder script by its name, " + Path.GetFileName(crate) + " + prefab, audio + mixer + generated " + Path.GetFileName(genPath) +
                         " + container " + Path.GetFileName(scPath) + ", play mode (capture, stats, exit)");
                 return true;
             }

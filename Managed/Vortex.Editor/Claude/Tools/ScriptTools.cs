@@ -207,7 +207,9 @@ namespace VortexEditor.Claude.Tools
 
         [McpServerTool(Name = "attach_script")]
         [Description("Adds a script to an entity (its behaviour runs in play mode) and sets public fields of the behaviour: " +
-                     "{\"Speed\": 2.5, \"Target\": \"Door\", \"Offset\": [0, 1, 0]} — numbers, bools, strings, enums by name, [x,y,z], arrays. One undo step.")]
+                     "{\"Speed\": 2.5, \"Target\": \"Door\", \"Offset\": [0, 1, 0]} — numbers, bools, strings, enums by name, [x,y,z], arrays; " +
+                     "null resets a field to its code default. On a script that is already attached it only sets the fields (as " +
+                     "set_component_properties on the Script does); get_entity shows them. One undo step.")]
         public static object AttachScript(
             [Description("Entity id, path or name")] string entity,
             [Description("Script name (found in any folder of Assets/Scripts) or path")] string script,
@@ -223,22 +225,10 @@ namespace VortexEditor.Claude.Tools
             var set = new List<string>();
             if (fields.HasValue && fields.Value.ValueKind == JsonValueKind.Object)
             {
-                var type = ScriptRuntime.Instance.GetScriptTypeForInspector(sc.ScriptClassName);
-                if (type == null) throw new ToolError("The script's class " + sc.ScriptClassName + " could not be compiled or found, so its fields are unknown — fix compile_scripts errors first (the class name must match the file name).");
-                foreach (var p in fields.Value.EnumerateObject())
-                {
-                    var f = type.GetField(p.Name, BindingFlags.Public | BindingFlags.Instance)
-                            ?? type.GetFields(BindingFlags.Public | BindingFlags.Instance).FirstOrDefault(x => ComponentProps.Norm(x.Name) == ComponentProps.Norm(p.Name))
-                            ?? throw new ToolError(type.Name + " has no public field '" + p.Name + "'. Fields: " + string.Join(", ", type.GetFields(BindingFlags.Public | BindingFlags.Instance).Where(x => ScriptRuntime.IsInspectableFieldType(x.FieldType)).Select(x => x.Name)));
-                    if (!ScriptRuntime.IsInspectableFieldType(f.FieldType)) throw new ToolError(f.Name + " (" + f.FieldType.Name + ") cannot be set from the editor.");
-                    string formatted = ScriptRuntime.FormatFieldValue(FieldValue(p.Value, f.FieldType, f.Name));
-                    string old = sc.GetFieldValue(f.Name);
-                    var target = sc; string fname = f.Name;
-                    UndoRedoManager.Instance.Execute(new Editor.Core.UndoRedo.Commands.ActionCommand("Set " + fname, () => target.SetFieldValue(fname, formatted), () => target.SetFieldValue(fname, old)));
-                    set.Add(f.Name);
-                }
+                // the one path for a behaviour's fields — set_component_properties on a Script takes it too (#405)
+                foreach (var p in fields.Value.EnumerateObject()) set.Add(ScriptFields.Set(sc, p.Name, p.Value));
             }
-            else if (ScriptRuntime.Instance.GetScriptTypeForInspector(sc.ScriptClassName) == null)
+            else if (ScriptFields.TypeOf(sc) == null)
                 note = "the class " + sc.ScriptClassName + " is not compiled yet (or the file has errors) — check compile_scripts";
             ToolContext.UndoLabel = (added ? "attach " : "set fields of ") + Path.GetFileNameWithoutExtension(rel) + " on " + e.Name;
             // while playing THIS script's running behaviour takes the values now, and a new script starts now next to the
@@ -252,25 +242,6 @@ namespace VortexEditor.Claude.Tools
                 note = (note == null ? "" : note + "; ") + "play mode: the script did not start (its class does not compile, or is not a concrete VortexBehaviour named like the file) — the change applies on the next Play";
             return new { entity = SceneModel.ShortId(e), script = rel, behaviour = sc.ScriptClassName, added, fields_set = set.Count > 0 ? set : null,
                 runtime_only = playing ? true : (bool?)null, live = playing ? live : (bool?)null, note };
-        }
-
-        private static object FieldValue(JsonElement v, Type t, string name)
-        {
-            if (t == typeof(Vortex.Vector3))
-            {
-                var e = (Editor.ECS.Vector3)ComponentProps.Convert(v, typeof(Editor.ECS.Vector3), name);
-                return new Vortex.Vector3(e.X, e.Y, e.Z);
-            }
-            if (t.IsArray)
-            {
-                if (v.ValueKind != JsonValueKind.Array) throw new ToolError(name + " expects an array.");
-                var et = t.GetElementType();
-                var items = v.EnumerateArray().Select(x => FieldValue(x, et, name)).ToList();
-                var arr = Array.CreateInstance(et, items.Count);
-                for (int i = 0; i < items.Count; i++) arr.SetValue(items[i], i);
-                return arr;
-            }
-            return ComponentProps.Convert(v, t, name);
         }
 
         // ================================================================== API reference

@@ -179,7 +179,8 @@ namespace VortexEditor.Claude.Tools
 
         [McpServerTool(Name = "get_entity", ReadOnly = true, Idempotent = true)]
         [Description("Everything about one entity: transform (local, plus world position under a parent), every component with its " +
-                     "editable properties (the names set_component_properties accepts), children, prefab link.")]
+                     "editable properties (the names set_component_properties accepts), children, prefab link. A Script also lists its " +
+                     "behaviour's public fields under fields (this entity's value: its override, else the code default; overridden_fields names the overrides).")]
         public static object GetEntity([Description("Entity id, path or name")] string entity)
         {
             var e = SceneModel.Resolve(entity);
@@ -494,7 +495,8 @@ namespace VortexEditor.Claude.Tools
         [McpServerTool(Name = "set_component_properties", Idempotent = true)]
         [Description("Sets properties of an entity's component: {\"intensity\": 2.5, \"light_type\": \"Spot\", \"color\": \"#ff8800\"}. " +
                      "Names as get_entity shows them (snake_case or PascalCase); enums take their names; vectors [x, y, z]; " +
-                     "'enabled' turns the component on/off. Errors list the valid names and values.")]
+                     "'enabled' turns the component on/off. On a Script the behaviour's public fields are set the same way " +
+                     "({\"Speed\": 2.5} or {\"fields\": {…}}; null resets a field to its code default). Errors list the valid names and values.")]
         public static object SetComponentProperties(
             [Description("Entity id, path or name")] string entity,
             [Description("Component type, e.g. Light")] string component,
