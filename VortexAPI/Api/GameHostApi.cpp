@@ -19,6 +19,8 @@ EDITOR_INTERFACE int  GameHostMouseY() { return runtime::GameHost::mouse_y(); }
 EDITOR_INTERFACE bool GameHostMouseDown() { return runtime::GameHost::mouse_down(); }
 EDITOR_INTERFACE int  GameHostClientWidth() { return runtime::GameHost::client_width(); }
 EDITOR_INTERFACE int  GameHostClientHeight() { return runtime::GameHost::client_height(); }
+// Device pixels per client unit (2 on a Retina window): the managed UI.Scale (#454).
+EDITOR_INTERFACE float GameHostPixelDensity() { return runtime::GameHost::pixel_density(); }
 EDITOR_INTERFACE bool GameHostKeyDown(int vk) { return runtime::GameHost::key_down(vk); }
 // FPS mouse-look capture (hide + re-center the cursor; report per-frame delta). Driven by the game.
 EDITOR_INTERFACE void SetGameHostMouseCaptured(bool captured) { runtime::GameHost::set_mouse_captured(captured); }

@@ -11,8 +11,8 @@ using Editor.Scripting;
 namespace VortexTests
 {
     /// <summary>The scripting runtime with real compiled behaviours (no window, no GPU): every Script component of an
-    /// entity runs its own behaviour (#408), every play session reads the saves from disk (#452), a NaN never reaches a
-    /// transform (#455).</summary>
+    /// entity runs its own behaviour (#408), every play session reads the saves from disk (#452), the UI works in points
+    /// on every host (#454), a NaN never reaches a transform (#455).</summary>
     public static class ScriptRuntimeTests
     {
         // Behaviours that log what happens to them into Probe.Log (read back by reflection: the classes live in the
@@ -295,6 +295,50 @@ public class NanWriter : VortexBehaviour
                 t.Equal(firstFrame, warned.Count, "nothing more on the second frame");
             }
             finally { rt.End(); }
+        }
+
+        /// <summary>An editor viewport as the Avalonia shell reports it: logical size, device pixels per unit.</summary>
+        private sealed class FakeViewport : Editor.Core.Viewport.IViewportHost
+        {
+            public double Width { get; set; }
+            public double Height { get; set; }
+            public double Scaling { get; set; }
+            public bool IsWindowActive => true;
+            public void SetCursorHidden(bool hidden) { }
+            public void WarpCursorToCenter() { }
+            public void FocusViewport() { }
+            public void ClearFocus() { }
+            public void ShowToast(string message) { }
+        }
+
+        [Test]
+        public static void UiSizeAndMouseAreInPointsOnEveryHost(TestContext t)
+        {
+            // #454: one unit for UI.Width/Height/MouseX/Y in editor play and the player — the window's points — plus the
+            // device pixels per point. A Retina play view 756 x 472 points (1512 x 944 pixels), the mouse at (100, 50):
+            var retina = new FakeViewport { Width = 756, Height = 472, Scaling = 2 };
+            var f = Editor.Core.Viewport.EditorViewportSession.UiFrame(retina, 100, 50);
+            t.True(f.W == 756f && f.H == 472f, "the editor feeds the viewport's logical size, not its render pixels: " + f.W + " x " + f.H);
+            t.True(f.MouseX == 100f && f.MouseY == 50f, "the pointer stays in points");
+            t.Equal(2f, f.Scale, "two device pixels per point");
+            t.Equal(1f, Editor.Core.Viewport.EditorViewportSession.UiFrame(new FakeViewport { Width = 800, Height = 600, Scaling = 0 }, 0, 0).Scale, "an unknown scaling counts as 1");
+
+            // what the scripts read, from either host
+            var rt = ScriptRuntime.Instance;
+            var oldHost = Vortex.UI.Host;
+            try
+            {
+                Vortex.UI.Host = rt;
+                rt.SetUIFrame(f.W, f.H, f.MouseX, f.MouseY, false, false, f.Scale);   // the editor's play view
+                t.True(Vortex.UI.Width == 756f && Vortex.UI.Height == 472f && Vortex.UI.MouseX == 100f && Vortex.UI.MouseY == 50f, "UI reads points");
+                t.Equal(1512f, Vortex.UI.Width * Vortex.UI.Scale, "the drawable's pixel width is Width * Scale");
+                rt.SetUIFrame(756, 472, 100, 50, false, false, 2f);                   // the player: window points + SDL's density
+                t.Equal(756f, Vortex.UI.Width, "the player reports the same width for the same window");
+                t.Equal(2f, Vortex.UI.Scale, "and the same scale");
+                rt.SetUIFrame(1280, 720, 0, 0, false, false, float.NaN);
+                t.Equal(1f, Vortex.UI.Scale, "a bad density reads as 1");
+            }
+            finally { Vortex.UI.Host = oldHost; rt.SetUIFrame(0, 0, 0, 0, false, false, 1f); }
         }
     }
 }

@@ -303,7 +303,9 @@ namespace Vortex.Player
                 _keyCount = 0;
                 for (int k; _keyCount < _vuiKeyBuf.Length && (k = VortexAPI.GameHostNextKeyPressed()) > 0;) { _vuiKeyBuf[_keyCount++] = k; HostInput.NotifyKeyDown(k); }
 
-                sr.SetUIFrame(cw, ch, mx, my, down, pressed);
+                // the window's client size and mouse are in points (SDL) / client units (Win32) — the UI's point space, as in
+                // the editor's play view; the pixel density turns them into pixels (UI.Scale, #454)
+                sr.SetUIFrame(cw, ch, mx, my, down, pressed, VortexAPI.GameHostPixelDensity());
                 VortexAPI.UIBegin(cw, ch);
 
                 if (_fpsT0 == DateTime.MinValue) _fpsT0 = DateTime.Now;

@@ -209,8 +209,8 @@ namespace Editor.Core.Viewport
                 if (uw > 1 && uh > 1)
                 {
                     if (!_playGridHidden) { _savedGrid = VortexAPI.IsGridVisible; VortexAPI.ShowGrid(false); _playGridHidden = true; }
-                    FeedEditorUI((float)uw, (float)uh);
-                    VortexAPI.UIBegin((float)uw, (float)uh);
+                    FeedEditorUI();
+                    VortexAPI.UIBegin((float)uw, (float)uh);   // the same point space the scripts see (#454)
                 }
 
                 VortexAPI.StepEngineRuntime(dt);
@@ -715,14 +715,21 @@ namespace Editor.Core.Viewport
             _host?.SetCursorHidden(hidden);
         }
 
-        private void FeedEditorUI(float renderW, float renderH)
+        /// <summary>The play view's UI frame (#454): the viewport's LOGICAL size and the pointer as the shell reports it —
+        /// Avalonia DIPs, i.e. points on macOS — the unit the standalone player reports too (its window's points), plus the
+        /// device pixels per point. Never the render size: on a Retina display that is twice as large, the editor's
+        /// UI.Width would differ from the player's and a HUD laid out in it would shrink to half.</summary>
+        internal static (float W, float H, float MouseX, float MouseY, float Scale) UiFrame(IViewportHost host, double pointerX, double pointerY)
         {
-            float mx = 0f, my = 0f;
-            if (_host != null && _host.Width > 1)
-            {
-                mx = (float)(_pointerX * (renderW / _host.Width));
-                my = (float)(_pointerY * (renderH / _host.Height));
-            }
+            if (host == null || host.Width <= 1 || host.Height <= 1) return (0f, 0f, 0f, 0f, 1f);
+            double s = host.Scaling > 0 ? host.Scaling : 1.0;
+            return ((float)host.Width, (float)host.Height, (float)pointerX, (float)pointerY, (float)s);
+        }
+
+        private void FeedEditorUI()
+        {
+            var f = UiFrame(_host, _pointerX, _pointerY);
+            float mx = f.MouseX, my = f.MouseY;
             bool down = _lmbDown;
             bool pressed = down && !_lmbPrevEd;
             _lmbPrevEd = down;
@@ -735,7 +742,7 @@ namespace Editor.Core.Viewport
                 if (held && !_navPrev[i] && _uiKeyCount < _uiKeys.Length) _uiKeys[_uiKeyCount++] = _navVks[i];
                 _navPrev[i] = held;
             }
-            ScriptRuntime.Instance.SetUIFrame(renderW, renderH, mx, my, down, pressed);
+            ScriptRuntime.Instance.SetUIFrame(f.W, f.H, mx, my, down, pressed, f.Scale);
         }
 
         private void BeginPlaySimulation()

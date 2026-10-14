@@ -162,6 +162,8 @@ namespace vortex::runtime
     bool GameHost::mouse_down() { return g_mdown; }
     int  GameHost::client_width() { return g_cw; }
     int  GameHost::client_height() { return g_ch; }
+    // The swapchain is created and resized from the client rect itself, so one client unit is one pixel of the image (#454).
+    float GameHost::pixel_density() { return 1.0f; }
     bool GameHost::key_down(int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; }
 
     int  GameHost::mouse_wheel() { int w = g_wheel_accum; g_wheel_accum = 0; return w; }

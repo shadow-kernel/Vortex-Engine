@@ -2199,16 +2199,23 @@ namespace Editor.Scripting
         bool Vortex.IScriptHost.GetCursorLocked() { return _cursorLocked; }
         public bool CursorLocked { get { return _cursorLocked; } }
 
-        // --- UI overlay frame state (fed by the runtime driver each frame: GameWindow / GamePreview) ---
-        private float _uiW, _uiH, _mouseX, _mouseY;
+        // --- UI overlay frame state (fed by the runtime driver each frame: the editor viewport / the player) ---
+        private float _uiW, _uiH, _mouseX, _mouseY, _uiScale = 1f;
         private bool _mouseDown, _mousePressed;
 
-        /// <summary>Called once per frame before Update() so scripts can draw UI + hit-test the mouse.</summary>
-        public void SetUIFrame(float width, float height, float mouseX, float mouseY, bool mouseDown, bool mousePressed)
+        /// <summary>Called once per frame before Update() so scripts can draw UI + hit-test the mouse. Size and mouse are in
+        /// UI POINTS, the host window's logical units — the editor viewport's layout size, the player window's client size —
+        /// the same unit UIBegin gets, on every host (#454); <paramref name="pixelsPerPoint"/> is how many device pixels one
+        /// point covers (2 on a Retina display).</summary>
+        public void SetUIFrame(float width, float height, float mouseX, float mouseY, bool mouseDown, bool mousePressed, float pixelsPerPoint)
         {
             _uiW = width; _uiH = height; _mouseX = mouseX; _mouseY = mouseY;
             _mouseDown = mouseDown; _mousePressed = mousePressed;
+            _uiScale = pixelsPerPoint > 0f && float.IsFinite(pixelsPerPoint) ? pixelsPerPoint : 1f;
         }
+
+        public void SetUIFrame(float width, float height, float mouseX, float mouseY, bool mouseDown, bool mousePressed)
+            => SetUIFrame(width, height, mouseX, mouseY, mouseDown, mousePressed, _uiScale);
 
         void Vortex.IScriptHost.UIRect(float x, float y, float w, float h, float r, float g, float b, float a, float radius)
             => Editor.DllWrapper.VortexAPI.UIRect(x, y, w, h, r, g, b, a, radius);
@@ -2222,6 +2229,7 @@ namespace Editor.Scripting
         float Vortex.IScriptHost.UIHeight() => _uiH;
         float Vortex.IScriptHost.UIMouseX() => _mouseX;
         float Vortex.IScriptHost.UIMouseY() => _mouseY;
+        float Vortex.IScriptHost.UIScale() => _uiScale;
         bool Vortex.IScriptHost.UIMouseDown() => _mouseDown;
         bool Vortex.IScriptHost.UIMousePressed() => _mousePressed;
 

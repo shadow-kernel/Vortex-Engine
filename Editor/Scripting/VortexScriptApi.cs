@@ -296,7 +296,7 @@ namespace Vortex
         string AssetReadText(string projectRelativePath);
         bool AssetWriteText(string projectRelativePath, string text);
 
-        // 2D UI overlay (immediate mode), coordinates in viewport pixels (top-left origin).
+        // 2D UI overlay (immediate mode), coordinates in UI points — the window's logical units (top-left origin, #454).
         void UIRect(float x, float y, float w, float h, float r, float g, float b, float a, float radius);
         void UIText(float x, float y, float w, float h, string text, float size, float r, float g, float b, float a, int align, int weight);
         void UILine(float x1, float y1, float x2, float y2, float r, float g, float b, float a, float thick);
@@ -305,6 +305,7 @@ namespace Vortex
         float UIHeight();
         float UIMouseX();
         float UIMouseY();
+        float UIScale();   // device pixels per UI point
         bool UIMouseDown();
         bool UIMousePressed();
     }
@@ -1782,19 +1783,28 @@ namespace Vortex
 
     /// <summary>
     /// Immediate-mode 2D UI drawn by the engine OVER the 3D (same swapchain — works over the live game).
-    /// Call these from a behaviour's Update each frame; coordinates are viewport pixels (top-left origin).
+    /// Call these from a behaviour's Update each frame. Every coordinate and size (rects, text, lines, images, the mouse)
+    /// is in UI POINTS with the origin top-left: the window's logical units — points on macOS, DIPs on Windows — the same
+    /// in editor play and in the standalone player, so a HUD laid out once looks alike on a Retina and a standard
+    /// display (#454). <see cref="Scale"/> converts points to device pixels.
     /// This is the generic engine UI; a game builds its own lobby/HUD with it (no UI code in the engine).
     /// </summary>
     public static class UI
     {
         internal static IScriptHost Host;
 
-        /// <summary>Viewport size in pixels.</summary>
+        /// <summary>Width of the game view in UI points (the window's logical width — a 1512-point Retina window reports
+        /// 1512 although it has 3024 pixels; the pixels are <c>Width * Scale</c>).</summary>
         public static float Width { get { return Host != null ? Host.UIWidth() : 0f; } }
+        /// <summary>Height of the game view in UI points (see <see cref="Width"/>).</summary>
         public static float Height { get { return Host != null ? Host.UIHeight() : 0f; } }
-        /// <summary>Mouse position in viewport pixels (top-left origin).</summary>
+        /// <summary>Mouse position in UI points (top-left origin) — the unit of <see cref="Width"/> and of every UI call.</summary>
         public static float MouseX { get { return Host != null ? Host.UIMouseX() : 0f; } }
         public static float MouseY { get { return Host != null ? Host.UIMouseY() : 0f; } }
+        /// <summary>Device pixels per UI point: 2 on a Retina (200 %) display, 1 on a standard one; the standalone player on
+        /// Windows draws its window at 1 (Windows scales it). The drawable is <c>UI.Width * UI.Scale</c> ×
+        /// <c>UI.Height * UI.Scale</c> pixels — what a render-resolution preset needs (#454).</summary>
+        public static float Scale { get { return Host != null ? Host.UIScale() : 1f; } }
         public static bool MouseDown { get { return Host != null && Host.UIMouseDown(); } }
 
         /// <summary>Filled rectangle (radius &gt; 0 = rounded).</summary>
@@ -1896,7 +1906,8 @@ namespace Vortex
         /// <summary>Field of view in degrees (the renderer-global projection FOV).</summary>
         public static void SetFieldOfView(float degrees) { Camera.SetFieldOfView(degrees); }
 
-        /// <summary>Window resolution (windowed only); resizes the client area + swapchain.</summary>
+        /// <summary>Window resolution (windowed only); resizes the client area + swapchain. In PIXELS — on a Retina display
+        /// the window becomes width / <see cref="UI.Scale"/> points wide, which is what <see cref="UI.Width"/> then reports.</summary>
         public static void SetResolution(int width, int height) { Editor.DllWrapper.VortexAPI.GameHostSetResolution(width, height); }
 
         /// <summary>Render scale 0.25..2.0 — the 3D scene renders into a scaled offscreen RT then upscales (perf).
