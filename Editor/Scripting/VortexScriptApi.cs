@@ -390,7 +390,8 @@ namespace Vortex
     /// </summary>
     public abstract class VortexBehaviour
     {
-        /// <summary>Engine id of the entity this behaviour is attached to (set by the runtime).</summary>
+        /// <summary>Script handle of the entity this behaviour is attached to (set by the runtime) — the same for every
+        /// script on that entity.</summary>
         public long EntityId { get; internal set; }
 
         /// <summary>The host the engine wires up so behaviours can affect the live game.</summary>
@@ -645,8 +646,8 @@ namespace Vortex
 
         // ---- Entity messaging (#38) + hierarchy (#39) ----
 
-        /// <summary>Send a message to the behaviour on another entity — its <see cref="OnMessage"/> is called
-        /// this frame. Target entities via <see cref="Scene.Find"/>/<see cref="Scene.FindByTag"/> or a TriggerHit/
+        /// <summary>Send a message to the behaviours on another entity — <see cref="OnMessage"/> of every script on it is
+        /// called this frame. Target entities via <see cref="Scene.Find"/>/<see cref="Scene.FindByTag"/> or a TriggerHit/
         /// RaycastHit EntityId. <c>SendMessage(door, "open");</c></summary>
         public void SendMessage(long targetEntity, string message, object arg = null)
             { Editor.Scripting.ScriptRuntime.Instance.SendEntityMessage(targetEntity, message, arg); }
@@ -952,10 +953,12 @@ namespace Vortex
         public static void SetRenderLayer(long entity, int layer)
             { Host?.SetRenderLayer(entity, layer); }
 
-        /// <summary>The behaviour instance running on an entity (null if none / wrong type) — lets scripts
-        /// talk to each other directly: <c>Scene.GetBehaviour&lt;DoorController&gt;(door)?.Open();</c></summary>
+        /// <summary>The behaviour of type T running on an entity (null if none) — lets scripts talk to each other
+        /// directly: <c>Scene.GetBehaviour&lt;DoorController&gt;(door)?.Open();</c>. An entity can run several scripts
+        /// (one per Script component); this returns the first one that is a T — also for a script's own entity:
+        /// <c>Scene.GetBehaviour&lt;Health&gt;(EntityId)</c>.</summary>
         public static T GetBehaviour<T>(long entity) where T : VortexBehaviour
-            { return Editor.Scripting.ScriptRuntime.Instance.BehaviourOf(entity) as T; }
+            { return Editor.Scripting.ScriptRuntime.Instance.BehaviourOf<T>(entity); }
 
         /// <summary>The Light component of ANY entity as a script handle (null if none) — drive scene
         /// lamps from a manager script, not just your own entity's light.</summary>

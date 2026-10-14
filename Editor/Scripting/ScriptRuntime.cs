@@ -13,8 +13,8 @@ namespace Editor.Scripting
     /// <summary>
     /// In-engine gameplay scripting runtime — the Unity/Unreal-style "compile + run" loop. On Play it
     /// compiles every Assets/Scripts/*.cs (via the in-box C# compiler, no extra dependencies) into one
-    /// assembly, instantiates the VortexBehaviour attached to each entity through its Script component,
-    /// and calls Start once + Update every tick (OnDestroy on Stop). Behaviours affect the live game
+    /// assembly, instantiates a VortexBehaviour for every Script component of every entity (#408: an entity
+    /// can run several), and calls Start once + Update every tick (OnDestroy on Stop). Behaviours affect the live game
     /// through this class (it is the IScriptHost: move entities, read input).
     /// </summary>
     public sealed class ScriptRuntime : Vortex.IScriptHost
@@ -22,15 +22,19 @@ namespace Editor.Scripting
         private static ScriptRuntime _instance;
         public static ScriptRuntime Instance => _instance ?? (_instance = new ScriptRuntime());
 
-        // Maps a UNIQUE per-behaviour handle -> the entity it's attached to. We assign our own handle
-        // (not the engine EntityId) because engine ids can collide/be invalid for editor entities; a
-        // collision previously made a script move the WRONG entity (e.g. the Ground instead of the camera).
+        // Maps a UNIQUE per-entity handle -> the entity. We assign our own handle (not the engine EntityId)
+        // because engine ids can collide/be invalid for editor entities; a collision previously made a script
+        // move the WRONG entity (e.g. the Ground instead of the camera).
         private readonly Dictionary<long, GameEntity> _entitiesById = new Dictionary<long, GameEntity>();
         private long _nextHandle;
         private readonly List<Vortex.VortexBehaviour> _behaviours = new List<Vortex.VortexBehaviour>();
-        // Reverse maps so collision/trigger events can be dispatched to the right behaviour.
-        private readonly Dictionary<long, Vortex.VortexBehaviour> _behavioursByHandle = new Dictionary<long, Vortex.VortexBehaviour>();
-        private readonly Dictionary<GameEntity, Vortex.VortexBehaviour> _behavioursByEntity = new Dictionary<GameEntity, Vortex.VortexBehaviour>();
+        // Every behaviour an entity runs, in the order of its Script components (#408): each Script component gets its
+        // own instance (own fields, Start/Update, callbacks) and they all share the entity's one handle, so EntityId,
+        // TriggerHit ids and MoveCharacter's selfId keep meaning the entity. Collision/trigger/area/message dispatch
+        // fans out over the list.
+        private readonly Dictionary<GameEntity, List<Vortex.VortexBehaviour>> _behavioursByEntity = new Dictionary<GameEntity, List<Vortex.VortexBehaviour>>();
+        // The Script component each running behaviour was made from, so field overrides reach the right instance (#408).
+        private readonly Dictionary<Vortex.VortexBehaviour, Script> _scriptOf = new Dictionary<Vortex.VortexBehaviour, Script>(ReferenceEqualityComparer.Instance);
         // Reusable buffers drained each tick from CollisionService (avoid per-frame allocation).
         private readonly List<Editor.Core.Services.Physics.CollisionService.Contact> _evEnter = new List<Editor.Core.Services.Physics.CollisionService.Contact>();
         private readonly List<Editor.Core.Services.Physics.CollisionService.Contact> _evStay = new List<Editor.Core.Services.Physics.CollisionService.Contact>();
@@ -125,11 +129,22 @@ namespace Editor.Scripting
         internal string EntityNameOf(long id) { return FindEntityByHandle(id)?.Name ?? ""; }
         internal string EntityTagOf(long id) { return FindEntityByHandle(id)?.Tag ?? ""; }
 
-        internal Vortex.VortexBehaviour BehaviourOf(long id)
+        /// <summary>The behaviours running on an entity, in Script-component order (#408) — empty for none.</summary>
+        internal IReadOnlyList<Vortex.VortexBehaviour> BehavioursOf(GameEntity e)
         {
-            if (_behavioursByHandle.TryGetValue(id, out var b) && b != null) return b;
-            var e = FindEntityByHandle(id);
-            return e != null && _behavioursByEntity.TryGetValue(e, out var b2) ? b2 : null;
+            return e != null && _behavioursByEntity.TryGetValue(e, out var list) ? list : (IReadOnlyList<Vortex.VortexBehaviour>)Array.Empty<Vortex.VortexBehaviour>();
+        }
+
+        internal IReadOnlyList<Vortex.VortexBehaviour> BehavioursOf(long id) => BehavioursOf(FindEntityByHandle(id));
+
+        /// <summary>The first behaviour of type T on an entity (#408: an entity can run several, so pick by type —
+        /// the old single lookup returned the entity's one behaviour and null when that was another class).</summary>
+        internal T BehaviourOf<T>(long id) where T : class
+        {
+            var list = BehavioursOf(id);
+            for (int i = 0; i < list.Count; i++)
+                if (list[i] is T t) return t;
+            return null;
         }
 
         internal bool SetEntityActive(long id, bool active)
@@ -230,11 +245,20 @@ namespace Editor.Scripting
 
         internal void SendEntityMessage(long targetId, string message, object arg)
         {
-            var b = BehaviourOf(targetId);
-            if (b == null) return;
-            try { b.OnMessage(message ?? "", arg); }
-            catch (Exception ex) { LogScriptError("OnMessage", b, ex); }
+            // every behaviour of the target hears it (#408); one destroyed by an earlier handler is skipped
+            var list = BehavioursOf(targetId);
+            for (int i = 0; i < list.Count; i++)
+            {
+                var b = list[i];
+                if (!IsLive(b)) continue;
+                try { b.OnMessage(message ?? "", arg); }
+                catch (Exception ex) { LogScriptError("OnMessage", b, ex); }
+            }
         }
+
+        /// <summary>Still running (not destroyed with its entity, play not ended) — dispatch over an entity's behaviours
+        /// checks it, since a handler of the first one may destroy the entity (#408).</summary>
+        private bool IsLive(Vortex.VortexBehaviour b) => b != null && _scriptOf.ContainsKey(b);
 
         // ---- coroutines + timers (#37) ----
 
@@ -604,25 +628,32 @@ namespace Editor.Scripting
             var e = FindEntityByHandle(id);
             if (e == null || _currentScene == null) return false;
 
-            // OnDestroy + unregister every behaviour in the subtree (and their coroutines/timers).
-            var doomed = new List<Vortex.VortexBehaviour>();
+            // OnDestroy + unregister every behaviour in the subtree — all of an entity's behaviours (#408) — and their
+            // coroutines/timers.
+            var doomed = new List<KeyValuePair<GameEntity, Vortex.VortexBehaviour[]>>();
             void Collect(GameEntity x)
             {
                 if (x == null) return;
-                if (_behavioursByEntity.TryGetValue(x, out var b) && b != null) doomed.Add(b);
+                if (_behavioursByEntity.TryGetValue(x, out var list) && list.Count > 0)
+                    doomed.Add(new KeyValuePair<GameEntity, Vortex.VortexBehaviour[]>(x, list.ToArray()));
                 if (x.Children != null) foreach (var c in x.Children) Collect(c);
             }
             Collect(e);
-            foreach (var b in doomed)
+            foreach (var kv in doomed)
             {
-                try { b.OnDestroy(); } catch (Exception ex) { LogScriptError("OnDestroy", b, ex); }
-                _behaviours.Remove(b);
-                _behavioursByHandle.Remove(b.EntityId);
-                var be = FindEntityByHandle(b.EntityId);
-                if (be != null) _behavioursByEntity.Remove(be);
-                StopAllCoroutines(b);
-                CancelInvokes(b);
+                foreach (var b in kv.Value)
+                {
+                    // unregistered BEFORE its OnDestroy: an OnDestroy that destroys the entity again skips it
+                    if (!_scriptOf.Remove(b)) continue;
+                    try { b.OnDestroy(); } catch (Exception ex) { LogScriptError("OnDestroy", b, ex); }
+                    _behaviours.Remove(b);
+                    StopAllCoroutines(b);
+                    CancelInvokes(b);
+                }
+                _behavioursByEntity.Remove(kv.Key);   // the list object stays intact for a dispatch in progress
             }
+            // an OnDestroy above destroyed this very entity (Scene.Destroy(EntityId)) — that inner call finished the job
+            if (!ReferenceEquals(FindEntityByHandle(id), e)) return true;
 
             try { Editor.Core.Services.Physics.CollisionService.RemoveEntityShapes(e); } catch { }
             try { Editor.Core.Services.Physics.PhysicsService.RemoveEntity(e); } catch { }
@@ -764,7 +795,7 @@ namespace Editor.Scripting
             try { Editor.Core.Services.Physics.PhysicsService.Build(scene); }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] physics build failed: " + ex.Message); }
             _entitiesById.Clear();
-            _behavioursByHandle.Clear();
+            _scriptOf.Clear();
             _behavioursByEntity.Clear();
             _nextHandle = 0;
             // the previous run's particles go NOW, before any Start() spawns new ones (#347)
@@ -914,15 +945,32 @@ namespace Editor.Scripting
 
         private bool _animEventsHooked;
 
-        /// <summary>Route an AnimEvent marker (footstep, attack hit, ...) to the entity's behaviour.</summary>
+        /// <summary>Route an AnimEvent marker (footstep, attack hit, ...) to the entity's behaviours (#408: every one).</summary>
         private void OnAnimationServiceEvent(GameEntity entity, string name)
         {
-            if (entity == null) return;
-            if (_behavioursByEntity.TryGetValue(entity, out var b) && b != null)
+            if (entity == null || !_behavioursByEntity.TryGetValue(entity, out var list)) return;
+            for (int i = 0; i < list.Count; i++)
             {
+                var b = list[i];
+                if (!IsLive(b)) continue;
                 try { b.OnAnimationEvent(name); }
                 catch (Exception ex) { LogScriptError("OnAnimationEvent", b, ex); }   // #322
             }
+        }
+
+        /// <summary>The behaviours whose EntityId is <paramref name="handle"/> — all of an entity's share one (#408). An
+        /// entity's other handle (one handed out before its scripts started, e.g. a NavAgent's) resolves to none, exactly
+        /// like the per-behaviour handle map this replaced.</summary>
+        private List<Vortex.VortexBehaviour> BehavioursWithHandle(long handle)
+        {
+            if (!_entitiesById.TryGetValue(handle, out var e) || e == null) return null;
+            return _behavioursByEntity.TryGetValue(e, out var list) && list.Count > 0 && list[0].EntityId == handle ? list : null;
+        }
+
+        private void InvokeAll(List<Vortex.VortexBehaviour> list, EvKind kind, Vortex.TriggerHit hit)
+        {
+            for (int i = 0; i < list.Count; i++)
+                if (IsLive(list[i])) Invoke(list[i], kind, hit);
         }
 
         private enum EvKind { Enter, Stay, Exit, Collision }
@@ -948,21 +996,15 @@ namespace Editor.Scripting
             if (charEnt == null) return;                                    // stale/unknown character — don't fire a phantom contact
             if (ReferenceEquals(charEnt, owner)) return;                    // never fire on self
 
-            _behavioursByHandle.TryGetValue(c.CharacterId, out var charBeh);
-            _behavioursByEntity.TryGetValue(owner, out var ownerBeh);
+            var charBehs = BehavioursWithHandle(c.CharacterId);
+            _behavioursByEntity.TryGetValue(owner, out var ownerBehs);
+            if (ownerBehs != null && ownerBehs.Count == 0) ownerBehs = null;
+            long ownerId = ownerBehs != null ? ownerBehs[0].EntityId : 0;   // "0 if it has no script" (TriggerHit.EntityId)
 
-            // Fire on the collider OWNER's behaviour (other = the character that touched it).
-            if (ownerBeh != null)
-            {
-                var hit = new Vortex.TriggerHit(c.CharacterId, charEnt?.Name, EntityTag(charEnt));
-                Invoke(ownerBeh, kind, hit);
-            }
-            // And on the touching CHARACTER's behaviour (other = the collider owner) so either side can react.
-            if (charBeh != null)
-            {
-                var hit = new Vortex.TriggerHit(ownerBeh?.EntityId ?? 0, owner.Name, EntityTag(owner));
-                Invoke(charBeh, kind, hit);
-            }
+            // Fire on the collider OWNER's behaviours (other = the character that touched it) — every one of them (#408).
+            if (ownerBehs != null) InvokeAll(ownerBehs, kind, new Vortex.TriggerHit(c.CharacterId, charEnt?.Name, EntityTag(charEnt)));
+            // And on the touching CHARACTER's behaviours (other = the collider owner) so either side can react.
+            if (charBehs != null) InvokeAll(charBehs, kind, new Vortex.TriggerHit(ownerId, owner.Name, EntityTag(owner)));
         }
 
         /// <summary>Physics v2 (#100): a contact between two simulated bodies. Delivered through the SAME callbacks
@@ -990,13 +1032,18 @@ namespace Editor.Scripting
         private void DispatchArea(GameEntity e, Editor.Core.Services.Areas.AreaInstance a, int kind, float dt)
         {
             var info = AreaInfoFor(a);
-            if (_behavioursByEntity.TryGetValue(e, out var b) && b != null)
+            if (_behavioursByEntity.TryGetValue(e, out var list))
             {
-                try
+                for (int i = 0; i < list.Count; i++)   // every behaviour of the entity (#408)
                 {
-                    if (kind == 0) b.OnAreaEnter(info); else if (kind == 1) b.OnAreaStay(info, dt); else b.OnAreaExit(info);
+                    var b = list[i];
+                    if (!IsLive(b)) continue;
+                    try
+                    {
+                        if (kind == 0) b.OnAreaEnter(info); else if (kind == 1) b.OnAreaStay(info, dt); else b.OnAreaExit(info);
+                    }
+                    catch (Exception ex) { LogScriptError(kind == 0 ? "OnAreaEnter" : (kind == 1 ? "OnAreaStay" : "OnAreaExit"), b, ex); }
                 }
-                catch (Exception ex) { LogScriptError(kind == 0 ? "OnAreaEnter" : (kind == 1 ? "OnAreaStay" : "OnAreaExit"), b, ex); }
             }
             long id = HandleForEntity(e);
             try { if (kind == 0) Vortex.Areas.RaiseEntered(id, info); else if (kind == 2) Vortex.Areas.RaiseExited(id, info); }
@@ -1053,10 +1100,11 @@ namespace Editor.Scripting
                 if (c.Kind != Editor.Core.Services.Physics.PhysicsContactKind.Added) return;
                 kind = EvKind.Collision;
             }
+            // both entities' behaviours, every one of them (#408)
             _behavioursByEntity.TryGetValue(c.EntityA, out var behA);
             _behavioursByEntity.TryGetValue(c.EntityB, out var behB);
-            if (behA != null) Invoke(behA, kind, new Vortex.TriggerHit(HandleForEntity(c.EntityB), c.EntityB.Name, EntityTag(c.EntityB)));
-            if (behB != null) Invoke(behB, kind, new Vortex.TriggerHit(HandleForEntity(c.EntityA), c.EntityA.Name, EntityTag(c.EntityA)));
+            if (behA != null && behA.Count > 0) InvokeAll(behA, kind, new Vortex.TriggerHit(HandleForEntity(c.EntityB), c.EntityB.Name, EntityTag(c.EntityB)));
+            if (behB != null && behB.Count > 0) InvokeAll(behB, kind, new Vortex.TriggerHit(HandleForEntity(c.EntityA), c.EntityA.Name, EntityTag(c.EntityA)));
         }
 
         private static string EntityTag(GameEntity e)
@@ -1205,7 +1253,7 @@ namespace Editor.Scripting
             _behaviours.Clear();
             _entitiesById.Clear();
             _handlesByEntity.Clear();
-            _behavioursByHandle.Clear();
+            _scriptOf.Clear();
             _behavioursByEntity.Clear();
             try { Editor.Core.Services.Physics.CollisionService.ResetEvents(); Editor.Core.Services.Physics.CollisionService.ClearCharacters(); } catch { }
             try { Editor.Core.Services.Physics.PhysicsService.Clear(); Editor.Core.Services.Physics.PhysicsService.ContactHandler = null; } catch { }
@@ -1329,70 +1377,113 @@ namespace Editor.Scripting
                 foreach (var c in e.Children) InstantiateRecursive(c, asm);
         }
 
-        /// <summary>The live behaviour of an entity re-reads its Script component's field overrides (#345): what
-        /// attach_script / the inspector set while playing reaches the running instance. False when the entity has
-        /// no running behaviour.</summary>
+        /// <summary>The live behaviours of an entity re-read their Script components' field overrides (#345): what
+        /// attach_script / the inspector set while playing reaches the running instances — each one its OWN Script's
+        /// values (#408). False when the entity has no running behaviour.</summary>
         public bool ApplyFieldsToLiveBehaviour(GameEntity e)
         {
-            if (e == null || !_behavioursByEntity.TryGetValue(e, out var b)) return false;
-            ApplySerializedFields(b, e.GetComponent<Script>());
+            if (e == null || !_behavioursByEntity.TryGetValue(e, out var list) || list.Count == 0) return false;
+            foreach (var b in list)
+                if (_scriptOf.TryGetValue(b, out var sc)) ApplySerializedFields(b, sc);
             return true;
         }
 
-        /// <summary>A Script added to an entity WHILE playing comes alive now (#345): instantiated from the running
-        /// assembly and started, the way a spawned entity's scripts are. False when nothing new could start (not
-        /// playing, no assembly, the entity already runs a behaviour, or the class does not compile).</summary>
-        public bool AttachAtRuntime(GameEntity e)
+        /// <summary>The behaviour made from <paramref name="script"/> re-reads that component's field overrides (#345) —
+        /// never another Script's behaviour on the same entity (#408). False when this Script has no running behaviour.</summary>
+        public bool ApplyFieldsToLiveBehaviour(GameEntity e, Script script)
         {
-            if (e == null || _scriptAsm == null || _behavioursByEntity.ContainsKey(e)) return false;
-            int before = _behaviours.Count;
-            InstantiateOne(e, _scriptAsm);
-            for (int i = before; i < _behaviours.Count; i++)
-            {
-                try { _behaviours[i].Start(); }
-                catch (Exception ex) { LogScriptError("Start", _behaviours[i], ex); }
-            }
-            return _behaviours.Count > before;
+            var b = LiveBehaviourOf(e, script);
+            if (b == null) return false;
+            ApplySerializedFields(b, script);
+            return true;
         }
 
+        /// <summary>The running behaviour made from this Script component of <paramref name="e"/>, or null (not playing,
+        /// the class does not compile, destroyed). Each Script component of an entity runs its own behaviour (#408).</summary>
+        public Vortex.VortexBehaviour LiveBehaviourOf(GameEntity e, Script script)
+        {
+            if (e == null || script == null || !_behavioursByEntity.TryGetValue(e, out var list)) return null;
+            foreach (var b in list)
+                if (_scriptOf.TryGetValue(b, out var sc) && ReferenceEquals(sc, script)) return b;
+            return null;
+        }
+
+        /// <summary>Scripts added to an entity WHILE playing come alive now (#345): every Script component without a
+        /// running behaviour is instantiated from the running assembly and started, the way a spawned entity's scripts
+        /// are — next to the behaviours the entity already runs (#408). False when nothing new could start (not playing,
+        /// no assembly, every Script already runs, or the class does not compile).</summary>
+        public bool AttachAtRuntime(GameEntity e) => AttachAtRuntime(e, null);
+
+        /// <summary>As <see cref="AttachAtRuntime(GameEntity)"/> for one Script component of the entity (null = every
+        /// one): true when it was started now.</summary>
+        public bool AttachAtRuntime(GameEntity e, Script script)
+        {
+            if (e == null || _scriptAsm == null) return false;
+            var started = new List<Vortex.VortexBehaviour>();
+            foreach (var sc in e.GetComponents<Script>())
+            {
+                if (script != null && !ReferenceEquals(sc, script)) continue;
+                if (LiveBehaviourOf(e, sc) != null) continue;   // already running — its fields go through ApplyFieldsToLiveBehaviour
+                var b = InstantiateScript(e, sc, _scriptAsm);
+                if (b != null) started.Add(b);
+            }
+            foreach (var b in started)
+            {
+                try { b.Start(); }
+                catch (Exception ex) { LogScriptError("Start", b, ex); }
+            }
+            return started.Count > 0;
+        }
+
+        /// <summary>Every Script component of the entity gets its own behaviour (#408) — the runtime used to take only the
+        /// first one (GetComponent) and silently drop the rest.</summary>
         private void InstantiateOne(GameEntity e, Assembly asm)
         {
-            var script = e.GetComponent<Script>();
-            if (script != null && !string.IsNullOrEmpty(script.ScriptClassName))
+            foreach (var script in e.GetComponents<Script>())   // a copy: a constructor can't upset the iteration
+                InstantiateScript(e, script, asm);
+        }
+
+        private Vortex.VortexBehaviour InstantiateScript(GameEntity e, Script script, Assembly asm)
+        {
+            if (script == null || string.IsNullOrEmpty(script.ScriptClassName)) return null;
+            var type = FindBehaviourType(asm, script.ScriptClassName);
+            if (type == null)
             {
-                var type = FindBehaviourType(asm, script.ScriptClassName);
-                if (type != null)
+                // Silent-death guard: the class is abstract, renamed, or not a VortexBehaviour —
+                // without this the component just never runs and nothing tells the user why.
+                try
                 {
-                    try
-                    {
-                        var behaviour = (Vortex.VortexBehaviour)Activator.CreateInstance(type);
-                        ApplySerializedFields(behaviour, script);   // #47: per-instance field overrides, before Start()
-                        // Assign a UNIQUE handle and map it to THIS entity — guarantees the behaviour can
-                        // only ever read/move its own entity (no engine-EntityId collisions).
-                        long handle = ++_nextHandle;
-                        behaviour.EntityId = handle;
-                        _entitiesById[handle] = e;
-                        _handlesByEntity[e] = handle;   // the behaviour handle IS the entity's canonical handle
-                        _behaviours.Add(behaviour);
-                        _behavioursByHandle[handle] = behaviour;
-                        _behavioursByEntity[e] = behaviour;
-                    }
-                    catch (Exception ex) { LogScriptError(script.ScriptClassName, "constructor", ex); }
+                    Editor.Core.Services.ConsoleService.Instance.LogError(
+                        "Script '" + script.ScriptClassName + "' on entity '" + e.Name + "' resolves to no runnable class. " +
+                        "The class must be CONCRETE (not abstract, e.g. not a Weapon base class), derive from VortexBehaviour, " +
+                        "and match the file name '" + script.ScriptClassName + ".cs'.");
                 }
+                catch { }
+                return null;
+            }
+            try
+            {
+                var behaviour = (Vortex.VortexBehaviour)Activator.CreateInstance(type);
+                ApplySerializedFields(behaviour, script);   // #47: per-instance field overrides, before Start()
+                long handle;
+                if (_behavioursByEntity.TryGetValue(e, out var list) && list.Count > 0)
+                    handle = list[0].EntityId;   // a further Script of the entity shares its handle (#408)
                 else
                 {
-                    // Silent-death guard: the class is abstract, renamed, or not a VortexBehaviour —
-                    // without this the component just never runs and nothing tells the user why.
-                    try
-                    {
-                        Editor.Core.Services.ConsoleService.Instance.LogError(
-                            "Script '" + script.ScriptClassName + "' on entity '" + e.Name + "' resolves to no runnable class. " +
-                            "The class must be CONCRETE (not abstract, e.g. not a Weapon base class), derive from VortexBehaviour, " +
-                            "and match the file name '" + script.ScriptClassName + ".cs'.");
-                    }
-                    catch { }
+                    // Assign a UNIQUE handle and map it to THIS entity — guarantees the behaviour can
+                    // only ever read/move its own entity (no engine-EntityId collisions).
+                    handle = ++_nextHandle;
+                    _entitiesById[handle] = e;
+                    _handlesByEntity[e] = handle;   // the behaviour handle IS the entity's canonical handle
+                    if (list == null) { list = new List<Vortex.VortexBehaviour>(1); _behavioursByEntity[e] = list; }
                 }
+                behaviour.EntityId = handle;
+                _behaviours.Add(behaviour);
+                list.Add(behaviour);
+                _scriptOf[behaviour] = script;
+                return behaviour;
             }
+            catch (Exception ex) { LogScriptError(script.ScriptClassName, "constructor", ex); return null; }
         }
 
         /// <summary>#111: a behaviour tree task class (<c>Vortex.BtTask</c> subclass) of the project's scripts by simple
