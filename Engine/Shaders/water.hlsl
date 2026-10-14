@@ -292,7 +292,9 @@ float Noise2(float2 p)
 // its mip count. Radiance was soft-compressed into 8 bits by the baker (straight below 1, x / (1 + x) above) — undone here.
 float2 EnvUV(float3 d)
 {
-    return float2(atan2(d.x, d.z) / (2.0 * 3.14159265) + 0.5, acos(clamp(d.y, -1.0, 1.0)) / 3.14159265);
+    // + the sky's rotation (EnvGround.w / env_ground.w, radians, #446): the reflection map is baked unrotated, the skybox pass
+    // turns the visible sky by the same angle, so reflections line up with the sky behind them
+    return float2(atan2(d.x, d.z) / (2.0 * 3.14159265) + 0.5 + EnvGround.w / (2.0 * 3.14159265), acos(clamp(d.y, -1.0, 1.0)) / 3.14159265);
 }
 float3 DecodeEnv(float3 c)
 {

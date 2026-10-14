@@ -520,9 +520,11 @@ static inline float3 sky_irradiance(constant LightBuffer& lights, float3 n)
 
 // The sky as a reflection (IBL step 2): an equirect of the sky with mips at texture(10), env_sky.w = 2 while bound,
 // env_horizon.w = its mip count; the baker's 8-bit soft compression (straight below 1, x / (1 + x) above) undone here.
-static inline float2 env_uv(float3 d)
+static inline float2 env_uv(float3 d, float rot)
 {
-    return float2(atan2(d.x, d.z) / (2.0 * 3.14159265) + 0.5, acos(clamp(d.y, -1.0, 1.0)) / 3.14159265);
+    // + the sky's rotation (frame.env_ground.w, radians, #446): the reflection map is baked unrotated, the skybox pass
+    // turns the visible sky by the same angle, so reflections line up with the sky behind them
+    return float2(atan2(d.x, d.z) / (2.0 * 3.14159265) + 0.5 + rot / (2.0 * 3.14159265), acos(clamp(d.y, -1.0, 1.0)) / 3.14159265);
 }
 static inline float3 decode_env(float3 c)
 {
@@ -574,10 +576,10 @@ static inline float3 gi_volume(texture2d<float> ta, sampler sa, texture2d<float>
     return mix(fallback, E, w * saturate(v * 5.0));
 }
 
-static inline float3 sample_env(texture2d<float> env_tex, sampler env_smp, float3 R, float roughness, float mips)
+static inline float3 sample_env(texture2d<float> env_tex, sampler env_smp, float3 R, float roughness, float mips, float rot)
 {
     float lod = saturate(roughness) * max(mips - 1.0, 0.0);
-    return decode_env(env_tex.sample(env_smp, env_uv(R), level(lod)).rgb);
+    return decode_env(env_tex.sample(env_smp, env_uv(R, rot), level(lod)).rgb);
 }
 
 fragment float4 PSMain(VSOut in [[stage_in]],
@@ -771,7 +773,7 @@ fragment float4 PSMain(VSOut in [[stage_in]],
     float3 env_color;
     if (frame.env_sky.w > 1.5)
     {
-        env_color = sample_env(env_tex, env_smp, R, roughness, frame.env_horizon.w) * frame.ambient_strength;   // the real sky, blurred by roughness
+        env_color = sample_env(env_tex, env_smp, R, roughness, frame.env_horizon.w, frame.env_ground.w) * frame.ambient_strength;   // the real sky, blurred by roughness
     }
     else if (frame.env_sky.w > 0.5)
     {

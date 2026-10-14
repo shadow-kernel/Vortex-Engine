@@ -147,8 +147,10 @@ namespace vortex::graphics::dx12
 			const bool env_map = env_on > 0.5f && m_env_map != id::invalid_id && m_env_mips > 0;
 			frame_constants.env_sky = DirectX::XMFLOAT4(m_env_sky.x, m_env_sky.y, m_env_sky.z, env_map ? 2.0f : env_on);   // 2 = a reflection map is bound at t11
 			frame_constants.env_horizon = DirectX::XMFLOAT4(m_env_horizon.x, m_env_horizon.y, m_env_horizon.z, env_map ? (float)m_env_mips : 0.0f);
+			// w: a texture sky's rotation (radians, #446), as in the main view
+			const bool sky_rotated = env_map && m_skybox_mode == SkyboxMode::Texture && m_sky_texture != id::invalid_id;
+			frame_constants.env_ground = DirectX::XMFLOAT4(m_env_ground.x, m_env_ground.y, m_env_ground.z, sky_rotated ? m_sky_rotation : 0.0f);
 		}
-		frame_constants.env_ground = DirectX::XMFLOAT4(m_env_ground.x, m_env_ground.y, m_env_ground.z, 0.0f);
 		frame_constants.camera_clip = DirectX::XMFLOAT4(m_near_clip, m_far_clip, 0.0f, 0.0f);
 		if (m_light_cb_mapped)
 		{
