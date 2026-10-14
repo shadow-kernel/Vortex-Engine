@@ -36,6 +36,8 @@ public:
 		alpha_modes();
 		other_formats_stay_opaque();
 		cache_keeps_alpha();
+		colour_only_materials_stay_untextured();
+		folder_fallback_only_where_wanted();
 		std::printf(m_failures ? "FAILURES!\n" : "ALL PASSED\n");
 	}
 
@@ -181,5 +183,73 @@ private:
 		}
 		ImportedModelData old;
 		check(!MeshSerializer::load_submeshes_from_dir(dir, old), "a version 1 cache is not used");
+	}
+
+	// #453: a glTF material without baseColorTexture keeps its colour — no image from the folder, not even a colour-named
+	// one, and the glTF default material (a primitive without "material") neither
+	void colour_only_materials_stay_untextured()
+	{
+		std::printf("colour-only materials (#453)\n");
+		const auto dir = m_dir / "car";
+		std::error_code ec;
+		std::filesystem::create_directories(dir, ec);
+		std::ofstream(dir / "paint_albedo.png", std::ios::binary) << "not really a png";   // what the folder scan looks for
+		std::ofstream(dir / "body.png", std::ios::binary) << "not really a png";
+		const std::string doc = gltf(
+			"{\"name\":\"Body\",\"pbrMetallicRoughness\":{\"baseColorTexture\":{\"index\":0}},\"normalTexture\":{\"index\":0}},"
+			"{\"name\":\"Rubber\",\"pbrMetallicRoughness\":{\"baseColorFactor\":[0.05,0.05,0.05,1]}}", 2,
+			"{\"source\":0}", "{\"uri\":\"body.png\"}");
+		const std::string path = (dir / "car.gltf").string();
+		std::ofstream(path, std::ios::binary) << doc;
+		const ImportedModelData d = ModelImporter::import_from_file(path);
+		const SubMeshData* body = by_material(d, "Body");
+		const SubMeshData* rubber = by_material(d, "Rubber");
+		check(body && body->albedo_source == 1 && body->diffuse_texture.find("body.png") != std::string::npos, "the textured material keeps its own map");
+		check(rubber && rubber->albedo_source == 0, "the colour-only material is reported as such");
+		check(rubber && rubber->diffuse_texture.empty(), "and gets no image from the folder");
+		check(rubber && near(rubber->base_color[0], 0.05f), "it keeps its base colour");
+
+		// a glTF of colour-only materials next to a colour-named image: the importer's own folder scan stays out too
+		const auto props = m_dir / "props";
+		std::filesystem::create_directories(props, ec);
+		std::ofstream(props / "wood_albedo.png", std::ios::binary) << "not really a png";
+		const std::string flat = (props / "flat.gltf").string();
+		std::ofstream(flat, std::ios::binary) << gltf("{\"name\":\"Red\",\"pbrMetallicRoughness\":{\"baseColorFactor\":[1,0,0,1]}},{\"name\":\"Blue\"}", 2);
+		const ImportedModelData f = ModelImporter::import_from_file(flat);
+		bool untextured = f.submeshes.size() == 2;
+		for (const auto& s : f.submeshes) untextured = untextured && s.diffuse_texture.empty() && s.albedo_source == 0;
+		check(untextured, "an all-colour glTF takes no image from its folder");
+	}
+
+	// #453: the folder scan stands in only for a map a material names but that is missing, or for a file without
+	// materials (an OBJ without .mtl) — in a stable order
+	void folder_fallback_only_where_wanted()
+	{
+		std::printf("folder fallback (#453)\n");
+		std::error_code ec;
+		const auto plain = m_dir / "plain";
+		std::filesystem::create_directories(plain, ec);
+		std::ofstream(plain / "b_albedo.png", std::ios::binary) << "x";
+		std::ofstream(plain / "a_albedo.png", std::ios::binary) << "x";
+		std::ofstream(plain / "embedded_other_0_albedo.png", std::ios::binary) << "x";   // another model's extracted map
+		const std::string bare = (plain / "bare.obj").string();
+		std::ofstream(bare, std::ios::binary) << "o Thing\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";
+		const ImportedModelData b = ModelImporter::import_from_file(bare);
+		check(b.submeshes.size() == 1 && b.submeshes[0].albedo_source == 2, "an OBJ without .mtl has no material from the file");
+		check(b.submeshes.size() == 1 && b.submeshes[0].diffuse_texture == (plain / "a_albedo.png").string(),
+			"it takes the first colour texture in name order, never an extracted one (" + (b.submeshes.empty() ? std::string() : b.submeshes[0].diffuse_texture) + ")");
+
+		const auto kit = m_dir / "kit";
+		std::filesystem::create_directories(kit, ec);
+		std::ofstream(kit / "wood_albedo.png", std::ios::binary) << "x";
+		std::ofstream(kit / "zz_albedo.png", std::ios::binary) << "x";   // the one the colour-only part used to get by index
+		std::ofstream(kit / "kit.mtl", std::ios::binary) << "newmtl Wood\nKd 1 1 1\nmap_Kd C:/Users/artist/textures/wood_final.png\nnewmtl Paint\nKd 0.8 0.1 0.1\n";
+		const std::string obj = (kit / "kit.obj").string();
+		std::ofstream(obj, std::ios::binary) << "mtllib kit.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nv 1 1 0\no Plank\nusemtl Wood\nf 1 2 3\no Panel\nusemtl Paint\nf 2 4 3\n";
+		const ImportedModelData k = ModelImporter::import_from_file(obj);
+		const SubMeshData* wood = by_material(k, "Wood");
+		const SubMeshData* paint = by_material(k, "Paint");
+		check(wood && wood->albedo_source == 1 && wood->diffuse_texture == (kit / "wood_albedo.png").string(), "a missing map is stood in for by the folder's texture");
+		check(paint && paint->albedo_source == 0 && paint->diffuse_texture.empty(), "the colour-only material next to it stays untextured");
 	}
 };

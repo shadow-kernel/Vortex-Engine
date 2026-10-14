@@ -42,6 +42,37 @@ namespace VortexTests
         }
 
         [Test]
+        public static void ColourOnlyMaterialsTakeNoFolderTexture(TestContext t)
+        {
+            // #453: the placement's folder fallback stands in only where the model wants an albedo it could not load
+            var sources = new[] { 0, 1, 2 };   // colour-only, names a map, no material in the file
+            t.False(AssetActions.MayUseFolderTexture("/p/car.fbx", sources, 0, false), "a colour-only material keeps its colour");
+            t.True(AssetActions.MayUseFolderTexture("/p/car.fbx", sources, 1, false), "a map the material names but the import could not load: rescued");
+            t.False(AssetActions.MayUseFolderTexture("/p/car.fbx", sources, 1, true), "...unless its own map is bound");
+            t.True(AssetActions.MayUseFolderTexture("/p/crate.obj", sources, 2, false), "an OBJ without .mtl has nothing else");
+            t.False(AssetActions.MayUseFolderTexture("/p/car.glb", sources, 1, false), "a glTF never takes a folder image");
+            t.False(AssetActions.MayUseFolderTexture("/p/car.gltf", null, 0, false), "not even from an engine that cannot tell");
+            t.True(AssetActions.MayUseFolderTexture("/p/old.fbx", null, 0, false), "other formats with an engine that cannot tell: as before");
+            t.False(AssetActions.MayUseFolderTexture("/p/car.fbx", sources, 5, false), "a submesh the engine did not report: no guess");
+        }
+
+        [Test]
+        public static void FolderTexturesSkipExtractedMapsInAStableOrder(TestContext t)
+        {
+            // #453: the embedded_<stem>_N images are the model's own normal / ORM / emissive maps (its albedo is bound by
+            // role) or another model's — never a stand-in; and the list does not depend on the file system's order
+            string dir = t.Path("Models", "Defender");
+            Directory.CreateDirectory(dir);
+            string model = Path.Combine(dir, "defender.glb");
+            File.WriteAllBytes(model, new byte[] { 1 });
+            foreach (var name in new[] { "embedded_defender_10.png", "embedded_defender_0.png", "embedded_tree_0.png", "zz_paint.png", "Body_albedo.png", "aa_decal.png", "Body_normal.png" })
+                File.WriteAllBytes(Path.Combine(dir, name), new byte[] { 1 });
+            var list = AssetActions.FindTexturesForModel(model);
+            var names = list.ConvertAll(Path.GetFileName);
+            t.Equal("Body_albedo.png|aa_decal.png|zz_paint.png", string.Join("|", names), "colour-named first, then the rest, each in name order; no extracted or normal maps");
+        }
+
+        [Test]
         public static void EngineBlendModesHaveVmatNames(TestContext t)
         {
             t.Equal("Opaque", VortexMaterial.BlendModeName(0), "0");

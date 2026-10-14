@@ -406,6 +406,19 @@ EDITOR_INTERFACE int GetModelMaterialAlpha(const char* filepath,
 	return count;
 }
 
+// Per-submesh albedo source (#453), for the placement's texture-folder fallback: 0 = the material has no albedo map
+// (colour only: never textured from the folder), 1 = it names one (the folder may stand in only when that file cannot
+// be loaded), 2 = the file has no material for the submesh (e.g. an OBJ without .mtl). Returns the submesh count.
+EDITOR_INTERFACE int GetModelAlbedoSources(const char* filepath, int* out_source, int max_submeshes)
+{
+	if (!filepath || !out_source || max_submeshes <= 0) return 0;
+	auto parsed = parsed_model(filepath);
+	const auto& model_data = *parsed;
+	int count = static_cast<int>((std::min)(model_data.submeshes.size(), static_cast<size_t>(max_submeshes)));
+	for (int i = 0; i < count; i++) out_source[i] = static_cast<int>(model_data.submeshes[i].albedo_source);
+	return count;
+}
+
 // Extract textures EMBEDDED in the model (e.g. a .glb that packs its PNG/JPG inside) into out_dir as real files,
 // filling out_names[i] with the written filename per embedded-texture index ("" if it couldn't be written).
 // Returns the number of embedded textures. Lets the importer give a self-contained .glb a real textures/ folder.

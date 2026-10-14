@@ -798,6 +798,26 @@ namespace Editor.DllWrapper
         }
 
         [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int GetModelAlbedoSources([MarshalAs(UnmanagedType.LPStr)] string filepath, [In, Out] int[] outSource, int maxSubmeshes);
+
+        /// <summary>Per submesh, what its material says about an albedo map (#453): 0 = none (a colour-only material),
+        /// 1 = it names one (the file may be missing), 2 = the file has no material for it (an OBJ without .mtl). Null
+        /// when the engine cannot tell (an older build).</summary>
+        public static int[] GetSubmeshAlbedoSources(string filepath, int maxSubmeshes = 64)
+        {
+            if (string.IsNullOrEmpty(filepath) || maxSubmeshes <= 0) return null;
+            try
+            {
+                var sources = new int[maxSubmeshes];
+                int count = GetModelAlbedoSources(filepath, sources, maxSubmeshes);
+                if (count < 0) count = 0;
+                if (count < sources.Length) Array.Resize(ref sources, count);
+                return sources;
+            }
+            catch (EntryPointNotFoundException) { return null; }
+        }
+
+        [DllImport(_dllName, CallingConvention = _cc)]
         private static extern int ExtractEmbeddedTextures(
             [MarshalAs(UnmanagedType.LPStr)] string filepath,
             [MarshalAs(UnmanagedType.LPStr)] string outDir,

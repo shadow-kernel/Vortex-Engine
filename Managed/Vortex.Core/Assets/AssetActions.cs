@@ -257,7 +257,9 @@ namespace Editor.Core.Assets
                         if (File.Exists(Path.Combine(projectPath, vmatRel))) mr.MaterialPath = vmatRel;
                     }
                     catch { }
-                    if (string.IsNullOrEmpty(mr.MaterialPath) && textures.Count > 0 && !HasOwnTexture(result[0].MaterialId)) BindTexture(mr, result[0].MaterialId, textures[0], projectPath);
+                    if (string.IsNullOrEmpty(mr.MaterialPath) && textures.Count > 0
+                        && MayUseFolderTexture(fullPath, AlbedoSources(fullPath, 1), 0, HasOwnTexture(result[0].MaterialId)))
+                        BindTexture(mr, result[0].MaterialId, textures[0], projectPath);
                     if (result[0].MaterialId >= 0) SceneRenderService.RegisterMaterialForMeshPath(entityPath, result[0].MaterialId);
                     entity.AddComponent(mr);
                     entity.Transform.LocalPosition = new Vector3(0, 0, 0);
@@ -280,6 +282,12 @@ namespace Editor.Core.Assets
             try { return VortexAPI.HasMaterialTexture(materialId); } catch { return false; }
         }
 
+        /// <summary><see cref="VortexAPI.GetSubmeshAlbedoSources"/>, or null when it cannot be read.</summary>
+        internal static int[] AlbedoSources(string fullModelPath, int submeshes)
+        {
+            try { return VortexAPI.GetSubmeshAlbedoSources(fullModelPath, Math.Max(submeshes, 1)); } catch { return null; }
+        }
+
         private static void BindTexture(MeshRenderer mr, long materialId, string texPath, string projectPath)
         {
             // a GRAPHICS texture id (cached per file): LoadTextureResource returned a resource-manager handle from
@@ -292,6 +300,7 @@ namespace Editor.Core.Assets
         {
             string fullModelPath = Path.IsPathRooted(relativePath) ? relativePath : Path.Combine(projectPath, relativePath);
             var textures = FindTexturesForModel(fullModelPath);
+            int[] albedo = textures.Count > 0 ? AlbedoSources(fullModelPath, submeshes.Length) : null;
             string[] names = VortexAPI.GetSubmeshNames(fullModelPath, submeshes.Length) ?? Array.Empty<string>();
             var parent = new GameEntity(scene, modelName);
             parent.Transform.LocalPosition = new Vector3(0, 0, 0);
@@ -309,7 +318,7 @@ namespace Editor.Core.Assets
                     if (File.Exists(Path.Combine(projectPath, vmatRel))) mr.MaterialPath = vmatRel;
                 }
                 catch { }
-                if (string.IsNullOrEmpty(mr.MaterialPath) && textures.Count > 0 && !HasOwnTexture(sm.MaterialId))
+                if (string.IsNullOrEmpty(mr.MaterialPath) && textures.Count > 0 && MayUseFolderTexture(fullModelPath, albedo, i, HasOwnTexture(sm.MaterialId)))
                 {
                     string tex = FindTextureForSubmesh(childName, textures);
                     if (!string.IsNullOrEmpty(tex)) BindTexture(mr, sm.MaterialId, tex, projectPath);
@@ -322,6 +331,9 @@ namespace Editor.Core.Assets
             return parent;
         }
 
+        /// <summary>Colour textures lying next to a model — the placement fallback for a submesh whose material wants an
+        /// albedo map the import could not load (see <see cref="MayUseFolderTexture"/>). Colour-named files first, each
+        /// group in name order, so the same folder always gives the same pick (#453).</summary>
         public static List<string> FindTexturesForModel(string modelPath)
         {
             var result = new List<string>();
@@ -329,9 +341,6 @@ namespace Editor.Core.Assets
             var dir = Path.GetDirectoryName(modelPath);
             if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return result;
             var color = new List<string>(); var other = new List<string>();
-            // the importer extracts a model's embedded images as embedded_<stem>_N: only this model's own ones count —
-            // the folder-wide scan bound a tree's leaf PNG to every other prop in the folder (#351)
-            string ownEmbedded = MeshRenderer.EmbeddedTexturePrefix(modelPath).ToLowerInvariant();
             foreach (var ext in new[] { "*.png", "*.jpg", "*.jpeg", "*.tga", "*.bmp", "*.dds" })
             {
                 try
@@ -339,7 +348,10 @@ namespace Editor.Core.Assets
                     foreach (var file in Directory.GetFiles(dir, ext))
                     {
                         var fn = Path.GetFileName(file).ToLowerInvariant();
-                        if (fn.StartsWith("embedded_") && !fn.StartsWith(ownEmbedded)) continue;
+                        // images the importer extracted from a model (embedded_<stem>_N) are never a stand-in: another model's
+                        // bound a tree's leaf PNG to every prop in the folder (#351), and this model's own are its maps,
+                        // already bound by their role — the others are its normal / ORM / emissive images (#453)
+                        if (fn.StartsWith("embedded_")) continue;
                         bool unwanted = fn.Contains("_nor") || fn.Contains("_normal") || fn.Contains("_nrm") || fn.Contains("normal.") || fn.Contains("_ao") || fn.Contains("_occ") || fn.Contains("occlusion")
                                         || fn.Contains("_rough") || fn.Contains("roughness") || fn.Contains("_metal") || fn.Contains("metallic") || fn.Contains("_spec") || fn.Contains("specular")
                                         || fn.Contains("_height") || fn.Contains("_disp") || fn.Contains("_emis") || fn.Contains("emission");
@@ -350,8 +362,25 @@ namespace Editor.Core.Assets
                 }
                 catch { }
             }
+            // Directory.GetFiles comes in the file system's order (hash order on APFS): two copies of a model picked
+            // different files (#453)
+            color.Sort(StringComparer.OrdinalIgnoreCase); other.Sort(StringComparer.OrdinalIgnoreCase);
             result.AddRange(color); result.AddRange(other);
             return result;
+        }
+
+        /// <summary>May the folder fallback (<see cref="FindTexturesForModel"/>) give submesh <paramref name="index"/> an
+        /// albedo (#453)? Only when its import material has none bound AND the model wants one: its material names a map
+        /// that could not be loaded, or the file has no material for it (an OBJ without .mtl). A colour-only material
+        /// keeps its colour, and a glTF never takes one — it describes all of its materials. <paramref name="albedoSources"/>
+        /// is <see cref="VortexAPI.GetSubmeshAlbedoSources"/> (null = an engine that cannot tell: the fallback as before).</summary>
+        public static bool MayUseFolderTexture(string modelPath, int[] albedoSources, int index, bool hasOwnTexture)
+        {
+            if (hasOwnTexture) return false;
+            string ext = Path.GetExtension(modelPath ?? "").ToLowerInvariant();
+            if (ext == ".gltf" || ext == ".glb") return false;
+            if (albedoSources == null) return true;
+            return index >= 0 && index < albedoSources.Length && albedoSources[index] != 0;
         }
 
         private static string FindTextureForSubmesh(string submeshName, List<string> textures)

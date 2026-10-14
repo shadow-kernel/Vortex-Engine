@@ -527,6 +527,12 @@ namespace vortex::graphics
 			// metallicRoughness, ORM/ARM) keeps roughness in G and metallic in B. Occlusion stays R (glTF spec).
 			const bool packed_mr = !metallic_path.empty() && metallic_path == roughness_path;
 
+			// #453: a material without an albedo map is colour-only and keeps its colour — only a map it names but that is
+			// missing, or no material from the file at all (Assimp's placeholder for an OBJ without .mtl), may be stood in
+			// for by a texture found next to the model. A glTF always describes its materials (its default one included).
+			const bool placeholder = !data.gltf && mat_name == AI_DEFAULT_MATERIAL_NAME;
+			const u8 albedo_source = !diffuse_path.empty() ? 1 : (placeholder ? 2 : 0);
+
 			// Assign textures to all submeshes using this material
 			for (auto& submesh : data.submeshes)
 			{
@@ -549,6 +555,7 @@ namespace vortex::graphics
 					submesh.blend_mode = blend_mode;
 					submesh.alpha_cutoff = alpha_cutoff;
 					submesh.two_sided = two_sided;
+					submesh.albedo_source = albedo_source;
 
 					// Use material name if submesh name is empty
 					if (submesh.name.empty())
@@ -561,8 +568,9 @@ namespace vortex::graphics
 			}
 		}
 		
-		// If no textures found in model, search in directory (disk only — skipped for in-memory/pak loads).
-		if (allow_disk_search)
+		// If no textures found in model, search in directory (disk only — skipped for in-memory/pak loads). Never for a glTF:
+		// it describes every material, and the scan gave its colour-only parts some image from the folder (#453).
+		if (allow_disk_search && !data.gltf)
 		{
 			bool has_valid_texture = false;
 			for (const auto& tex_path : data.texture_paths)
@@ -611,7 +619,8 @@ namespace vortex::graphics
 				bool is_bad = fnl.find("_nor") != std::string::npos || 
 				              fnl.find("_ao") != std::string::npos || 
 				              fnl.find("_rough") != std::string::npos ||
-				              fnl.find("_metal") != std::string::npos;
+				              fnl.find("_metal") != std::string::npos ||
+				              fnl.rfind("embedded_", 0) == 0;   // a model's own extracted maps, bound by their role (#453)
 				
 				if (is_img && is_col && !is_bad)
 				{
@@ -621,10 +630,20 @@ namespace vortex::graphics
 			}
 		}
 		
+		// directory order is the file system's (hash order on APFS): sorted, the same folder gives the same pick (#453)
+		std::sort(color_textures.begin(), color_textures.end());
+		
 		// Assign textures to submeshes
 		for (size_t i = 0; i < data.submeshes.size(); i++)
 		{
 			auto& submesh = data.submeshes[i];
+			
+			// only where the model wants a texture it does not have (#453): a map its material names but that is missing,
+			// or no material in the file — a colour-only material keeps its colour
+			std::error_code exists_error;
+			const bool wanted = submesh.albedo_source == 2
+				|| (submesh.albedo_source == 1 && !std::filesystem::is_regular_file(std::filesystem::path(submesh.diffuse_texture), exists_error));
+			if (!wanted) continue;
 			
 			// Try to match by name first
 			std::string search_name = submesh.name;

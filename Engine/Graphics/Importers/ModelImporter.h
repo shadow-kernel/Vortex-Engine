@@ -38,6 +38,10 @@ namespace vortex::graphics
 	u32 blend_mode{ 0 };
 	float alpha_cutoff{ 0.0f };
 	bool two_sided{ false };
+	// What the submesh's material says about its albedo (#453), for the texture-folder scans: 0 = no albedo map (a
+	// colour-only material — never textured by a scan), 1 = it names a map (a scan may stand in when that file is
+	// missing), 2 = the file has no material for it (Assimp's placeholder, e.g. an OBJ without .mtl — a scan may).
+	u8 albedo_source{ 0 };
 	};
 
 	// ---- Skeletal animation data (green-field; see ANIMATION_SYSTEM_DESIGN.md) ----
