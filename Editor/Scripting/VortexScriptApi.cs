@@ -1093,13 +1093,13 @@ namespace Vortex
         /// <summary>The active save slot (0 at the start of every play session).</summary>
         public static int CurrentSlot { get { return _slot; } }
 
-        /// <summary>A new play session starts (the editor's Play, a game launch): write what is still pending, then drop
-        /// the cache and go back to slot 0, so the session reads the file as it is on disk NOW (#452). The cache lives in
-        /// the engine assembly and used to outlive editor play sessions: a save edited or deleted between two runs was
-        /// ignored, and the next Flush wrote the stale data back over it. Scene switches keep the cache and the slot.</summary>
+        /// <summary>A new play session starts (the editor's Play, a game launch): drop the cache and go back to slot 0, so
+        /// the session reads the file as it is on disk NOW (#452). The cache lives in the engine assembly and used to
+        /// outlive editor play sessions: a save edited or deleted between two runs was ignored, and the next Flush wrote
+        /// the stale data back over it. Nothing is written here: the last session flushed on Stop, and if that write
+        /// failed, its leftovers must not overwrite what the user put on disk since. Scene switches keep cache and slot.</summary>
         internal static void BeginSession()
         {
-            Flush();
             _data = null;
             _dirty = false;
             _slot = 0;

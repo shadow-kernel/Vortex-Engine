@@ -547,5 +547,27 @@ public class ContactZone : VortexBehaviour
             t.False(ScriptRuntime.HandlesContact(asm.GetType("Health")), "Health does not react to contact");
             t.False(ScriptRuntime.HandlesContact(null), "no type");
         }
+
+        [Test]
+        public static void ANewSessionDoesNotWriteTheLastSessionsLeftovers(TestContext t)
+        {
+            // if Stop's flush failed, the next Play used to write the stale cache over a file the user edited meanwhile
+            var asm = Compile(t);
+            var scene = new Scene { Name = "Leftovers" };
+            string slot0 = Vortex.Save.SlotPath(0);
+            Directory.CreateDirectory(Path.GetDirectoryName(slot0));
+            File.WriteAllText(slot0, "credits\ti:1\n");
+            var rt = ScriptRuntime.Instance;
+            try
+            {
+                rt.BeginPlaySession(scene, asm);
+                Vortex.Save.SetInt("credits", 100);              // pending — as if Stop's write had failed
+                File.WriteAllText(slot0, "credits\ti:5\n");      // the user edits the save between the runs
+                rt.BeginPlaySession(scene, asm);
+                t.Equal("credits\ti:5\n", File.ReadAllText(slot0), "the edited file is left alone");
+                t.Equal(5, Vortex.Save.GetInt("credits"), "and is what the new session reads");
+            }
+            finally { rt.End(); try { File.Delete(slot0); } catch { } }
+        }
     }
 }

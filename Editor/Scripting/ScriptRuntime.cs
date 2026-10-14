@@ -768,7 +768,7 @@ namespace Editor.Scripting
 
         public void BeginPlaySession(Scene scene, System.Reflection.Assembly overrideAsm)
         {
-            try { Vortex.Save.BeginSession(); } catch { }   // writes what the last session left pending, then forgets it
+            try { Vortex.Save.BeginSession(); } catch { }   // forgets the last session's cache — the file on disk is the truth
             Editor.ECS.Components.Transform.NonFiniteWarningEpoch++;   // a NaN written again in this session is reported again (#455)
             _duplicateWarned.Clear();
             Begin(scene, overrideAsm);
