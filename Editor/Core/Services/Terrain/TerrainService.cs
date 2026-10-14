@@ -24,14 +24,16 @@ namespace Editor.Core.Services.Terrain
     /// </summary>
     public static class TerrainService
     {
-        /// <summary>Texels per layer in the 2x2 layer atlas (default 1024 = a 2048² atlas per map; <c>VORTEX_TERRAIN_ATLAS</c> = 512 /
-        /// 1024 / 2048 overrides it). 1024 keeps an 8 m sand tile sharp to ~50 m; 2048 costs four times the memory (3 × 64 MB + mips).</summary>
+        /// <summary>Texels per layer in the 2x2 layer atlas when a terrain leaves its Layer Resolution on Auto: 2048 (a 4096²
+        /// atlas per map) while textures are block compressed, 1024 when compression is off (VORTEX_TEXTURE_COMPRESSION=0).
+        /// <c>VORTEX_TERRAIN_ATLAS</c> = 256 / 512 / 1024 / 2048 overrides every terrain (a debugging switch).</summary>
         public static readonly int AtlasTile = ReadAtlasTile();
         public static readonly int AtlasSize = AtlasTile * 2;
+        private static readonly int EnvAtlasTile = ReadEnvAtlasTile();
         /// <summary>The atlas gutter the terrain shaders inset by (pad = 1/32 of a quadrant): the builder fills it with the WRAPPED
         /// texture, so the bilinear footprint and every mip up to the shader's cap stay seamless across tile repeats.</summary>
         public const int AtlasGutterDiv = 32;
-        private static int ReadAtlasTile()
+        private static int ReadEnvAtlasTile()
         {
             try
             {
@@ -40,9 +42,23 @@ namespace Editor.Core.Services.Terrain
                 if (!string.IsNullOrEmpty(s) && int.TryParse(s, out v) && (v == 256 || v == 512 || v == 1024 || v == 2048)) return v;
             }
             catch { }
+            return 0;
+        }
+        private static int ReadAtlasTile()
+        {
+            int env = ReadEnvAtlasTile();
+            if (env > 0) return env;
             // 2048 per layer (a 4096² atlas) once the atlas is block compressed; 1024 when compression is off (VORTEX_TEXTURE_COMPRESSION=0)
             try { if (Environment.GetEnvironmentVariable("VORTEX_TEXTURE_COMPRESSION") == "0") return 1024; } catch { }
             return 2048;
+        }
+        /// <summary>The layer resolution a terrain's atlas is built at (#447): the debugging override, else the terrain's own
+        /// Layer Resolution, else the Auto default.</summary>
+        internal static int TileFor(Editor.ECS.Components.Rendering.Terrain t)
+        {
+            if (EnvAtlasTile > 0) return EnvAtlasTile;
+            int own = t != null ? Editor.ECS.Components.Rendering.Terrain.SnapLayerResolution(t.LayerResolution) : 0;
+            return own > 0 ? own : AtlasTile;
         }
         private const int GraveFrames = 3;
 
@@ -195,7 +211,7 @@ namespace Editor.Core.Services.Terrain
         }
 
         private static string LayerKey(Editor.ECS.Components.Rendering.Terrain t)
-            => (t.Layer0Material ?? "") + "|" + t.Layer0Tile.ToString("R") + "|" + (t.Layer1Material ?? "") + "|" + t.Layer1Tile.ToString("R") + "|"
+            => TileFor(t) + "|" + (t.Layer0Material ?? "") + "|" + t.Layer0Tile.ToString("R") + "|" + (t.Layer1Material ?? "") + "|" + t.Layer1Tile.ToString("R") + "|"
              + (t.Layer2Material ?? "") + "|" + t.Layer2Tile.ToString("R") + "|" + (t.Layer3Material ?? "") + "|" + t.Layer3Tile.ToString("R");
 
         private static void Flush(Runtime rt)
@@ -258,9 +274,17 @@ namespace Editor.Core.Services.Terrain
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
             var t = rt.Component;
-            var albedo = new byte[AtlasSize * AtlasSize * 4];
-            var normal = new byte[AtlasSize * AtlasSize * 4];
-            var rough = new byte[AtlasSize * AtlasSize * 4];
+            int tile = TileFor(t), size = tile * 2;
+            int innerPx = tile - 2 * (tile / AtlasGutterDiv);
+            var albedo = new byte[size * size * 4];
+            var normal = new byte[size * size * 4];
+            var rough = new byte[size * size * 4];
+            var resampled = new List<string>();   // the layer maps a lot smaller or larger than the atlas holds (#447)
+            void Note(int layer, string map, int w, int h)
+            {
+                float k = Math.Max(w, h) / (float)innerPx;
+                if (k > 1.25f || k < 0.5f) resampled.Add("layer " + layer + " " + map + " " + w + "×" + h + (k > 1f ? " area-filtered down" : " scaled up") + " to " + innerPx + "²");
+            }
             float roughFallback = 0f; int roughCount = 0;
             bool directX = true;
             for (int i = 0; i < 4; i++)
@@ -287,13 +311,13 @@ namespace Editor.Core.Services.Terrain
                 if (mat != null && TryLoadImage(mat.AlbedoTexture, matDir, matRelDir, out px, out w, out h))
                 {
                     if (br != 1f || bg != 1f || bb != 1f) Multiply(px, br, bg, bb);
-                    Blit(albedo, i, px, w, h);
+                    Blit(albedo, i, px, w, h, tile); Note(i, "albedo", w, h);
                 }
-                else FillQuadrant(albedo, i, (byte)Math.Min(255, dc.r * br), (byte)Math.Min(255, dc.g * bg), (byte)Math.Min(255, dc.b * bb), 255, 10, i * 7919);
+                else FillQuadrant(albedo, i, (byte)Math.Min(255, dc.r * br), (byte)Math.Min(255, dc.g * bg), (byte)Math.Min(255, dc.b * bb), 255, 10, i * 7919, tile);
 
                 // normal map or flat
-                if (mat != null && TryLoadImage(mat.NormalTexture, matDir, matRelDir, out px, out w, out h)) Blit(normal, i, px, w, h);
-                else FillQuadrant(normal, i, 128, 128, 255, 255, 0, 0);
+                if (mat != null && TryLoadImage(mat.NormalTexture, matDir, matRelDir, out px, out w, out h)) { Blit(normal, i, px, w, h, tile); Note(i, "normal", w, h); }
+                else FillQuadrant(normal, i, 128, 128, 255, 255, 0, 0, tile);
 
                 // roughness: a dedicated map (R), else the G of a packed metallic-roughness / ORM map, else the scalar
                 string roughMap = mat?.RoughnessTexture;
@@ -306,21 +330,23 @@ namespace Editor.Core.Services.Terrain
                 if (mat != null && TryLoadImage(roughMap, matDir, matRelDir, out px, out w, out h))
                 {
                     if (channel != 0) ChannelToRed(px, channel);
-                    Blit(rough, i, px, w, h);
+                    Blit(rough, i, px, w, h, tile); Note(i, "roughness", w, h);
                 }
                 else
                 {
                     byte rv = (byte)Math.Max(0, Math.Min(255, (int)Math.Round((mat != null ? mat.Roughness : 0.9f) * 255f)));
-                    FillQuadrant(rough, i, rv, rv, rv, 255, 0, 0);
+                    FillQuadrant(rough, i, rv, rv, rv, 255, 0, 0, tile);
                 }
                 if (mat != null) { roughFallback += mat.Roughness; roughCount++; }
             }
 
             // block compressed (#179): albedo BC1, normal BC5 (the terrain shader rebuilds z), roughness BC4 — a 4096² atlas set is
             // ~38 MB instead of ~256 MB
-            long a = VortexAPI.CreateTextureFromPixels(AtlasSize, AtlasSize, albedo, false, true, VortexAPI.TextureKindColor);
-            long nrm = VortexAPI.CreateTextureFromPixels(AtlasSize, AtlasSize, normal, false, true, VortexAPI.TextureKindNormal);
-            long r = VortexAPI.CreateTextureFromPixels(AtlasSize, AtlasSize, rough, false, true, VortexAPI.TextureKindGray);
+            if (resampled.Count > 0)
+                try { ConsoleService.Instance.LogSystem("Terrain '" + (rt.Entity?.Name ?? "?") + "': layer resolution " + tile + " (" + innerPx + "² usable per layer) — " + string.Join("; ", resampled) + ". Change the terrain's Layer Resolution (512 / 1024 / 2048) or the maps' size to match."); } catch { }
+            long a = VortexAPI.CreateTextureFromPixels(size, size, albedo, false, true, VortexAPI.TextureKindColor);
+            long nrm = VortexAPI.CreateTextureFromPixels(size, size, normal, false, true, VortexAPI.TextureKindNormal);
+            long r = VortexAPI.CreateTextureFromPixels(size, size, rough, false, true, VortexAPI.TextureKindGray);
             if (rt.AlbedoAtlas != ID.INVALID_ID) _graveyard.Add((rt.AlbedoAtlas, true, _frame));
             if (rt.NormalAtlas != ID.INVALID_ID) _graveyard.Add((rt.NormalAtlas, true, _frame));
             if (rt.RoughnessAtlas != ID.INVALID_ID) _graveyard.Add((rt.RoughnessAtlas, true, _frame));
@@ -385,46 +411,86 @@ namespace Editor.Core.Services.Terrain
             for (int i = 0; i + 3 < px.Length; i += 4) px[i] = px[i + channel];
         }
 
-        /// <summary>Resample an RGBA image into quadrant <paramref name="q"/> of an atlas (bilinear, wraps for tiling textures).
-        /// The picture fills the quadrant's INNER region (inset by the shader's gutter) and the gutter around it holds the
-        /// wrapped continuation — so a tile repeat is seamless and no mip pulls the neighbouring layer in.</summary>
-        private static void Blit(byte[] atlas, int q, byte[] src, int sw, int sh)
+        /// <summary>Resample an RGBA image into quadrant <paramref name="q"/> of an atlas with <paramref name="tile"/> texels per
+        /// layer (wraps for tiling textures). The picture fills the quadrant's INNER region (inset by the shader's gutter) and the
+        /// gutter around it holds the wrapped continuation — so a tile repeat is seamless and no mip pulls the neighbouring layer
+        /// in. A larger picture is AREA-filtered (#447): every source texel counts by how much of the atlas texel it covers; one
+        /// bilinear tap per atlas texel skipped most texels of a 2K / 4K map and the terrain sparkled. A smaller one is scaled up
+        /// bilinearly.</summary>
+        internal static void Blit(byte[] atlas, int q, byte[] src, int sw, int sh, int tile)
         {
-            int ox = (q & 1) * AtlasTile, oy = (q >> 1) * AtlasTile;
-            int gutter = AtlasTile / AtlasGutterDiv;
-            float inner = AtlasTile - 2f * gutter;
-            float sx = sw / inner, sy = sh / inner;
-            System.Threading.Tasks.Parallel.For(0, AtlasTile, y =>
+            int size = tile * 2;
+            int ox = (q & 1) * tile, oy = (q >> 1) * tile;
+            int gutter = tile / AtlasGutterDiv;
+            float inner = tile - 2f * gutter;
+            var wx = Taps(tile, gutter, sw / inner, sw);
+            var wy = Taps(tile, gutter, sh / inner, sh);
+            System.Threading.Tasks.Parallel.For(0, tile, y =>
             {
-                float fy = (y - gutter + 0.5f) * sy - 0.5f;
-                int y0 = (int)Math.Floor(fy); float ty = fy - y0;
-                int ya = ((y0 % sh) + sh) % sh, yb = (((y0 + 1) % sh) + sh) % sh;
-                for (int x = 0; x < AtlasTile; x++)
+                var row = new float[tile * 4];
+                foreach (var (sy, wyk) in wy[y])
                 {
-                    float fx = (x - gutter + 0.5f) * sx - 0.5f;
-                    int x0 = (int)Math.Floor(fx); float tx = fx - x0;
-                    int xa = ((x0 % sw) + sw) % sw, xb = (((x0 + 1) % sw) + sw) % sw;
-                    int i00 = (ya * sw + xa) * 4, i10 = (ya * sw + xb) * 4, i01 = (yb * sw + xa) * 4, i11 = (yb * sw + xb) * 4;
-                    int o = ((oy + y) * AtlasSize + ox + x) * 4;
-                    for (int c = 0; c < 4; c++)
+                    int srow = sy * sw * 4;
+                    for (int x = 0; x < tile; x++)
                     {
-                        float v = (src[i00 + c] * (1f - tx) + src[i10 + c] * tx) * (1f - ty) + (src[i01 + c] * (1f - tx) + src[i11 + c] * tx) * ty;
-                        atlas[o + c] = (byte)(v + 0.5f);
+                        float r = 0f, g = 0f, b = 0f, a = 0f;
+                        foreach (var (sx, w) in wx[x])
+                        {
+                            int i = srow + sx * 4;
+                            r += src[i] * w; g += src[i + 1] * w; b += src[i + 2] * w; a += src[i + 3] * w;
+                        }
+                        int o = x * 4;
+                        row[o] += r * wyk; row[o + 1] += g * wyk; row[o + 2] += b * wyk; row[o + 3] += a * wyk;
                     }
                 }
+                int dst = ((oy + y) * size + ox) * 4;
+                for (int i = 0; i < row.Length; i++) atlas[dst + i] = (byte)Math.Min(255f, row[i] + 0.5f);
             });
         }
 
+        /// <summary>The source texels (wrapped) and weights, summing to 1, of each of <paramref name="count"/> atlas texels: a box
+        /// over the texel's footprint when the picture is shrunk (<paramref name="scale"/> = source texels per atlas texel > 1), a
+        /// two-tap tent when it is enlarged.</summary>
+        internal static (int index, float weight)[][] Taps(int count, int gutter, float scale, int sourceLength)
+        {
+            var taps = new (int index, float weight)[count][];
+            for (int d = 0; d < count; d++)
+            {
+                if (scale <= 1f)
+                {
+                    float f = (d - gutter + 0.5f) * scale - 0.5f;
+                    int i0 = (int)Math.Floor(f); float t = f - i0;
+                    taps[d] = new[] { (Wrap(i0, sourceLength), 1f - t), (Wrap(i0 + 1, sourceLength), t) };
+                    continue;
+                }
+                float a = (d - gutter) * scale, b = a + scale;
+                int lo = (int)Math.Floor(a), hi = (int)Math.Ceiling(b);
+                var list = new (int index, float weight)[hi - lo];
+                float sum = 0f;
+                for (int i = lo; i < hi; i++)
+                {
+                    float w = Math.Min(b, i + 1) - Math.Max(a, i);
+                    list[i - lo] = (Wrap(i, sourceLength), w); sum += w;
+                }
+                for (int k = 0; k < list.Length; k++) list[k].weight /= sum;
+                taps[d] = list;
+            }
+            return taps;
+        }
+
+        private static int Wrap(int i, int n) => ((i % n) + n) % n;
+
         /// <summary>Fill quadrant <paramref name="q"/> with a colour, optionally dithered by ±<paramref name="noise"/> so a flat
         /// default layer still shows its tiling.</summary>
-        private static void FillQuadrant(byte[] atlas, int q, byte r, byte g, byte b, byte a, int noise, int seed)
+        private static void FillQuadrant(byte[] atlas, int q, byte r, byte g, byte b, byte a, int noise, int seed, int tile)
         {
-            int ox = (q & 1) * AtlasTile, oy = (q >> 1) * AtlasTile;
+            int size = tile * 2;
+            int ox = (q & 1) * tile, oy = (q >> 1) * tile;
             uint s = (uint)seed * 2654435761u + 12345u;
-            for (int y = 0; y < AtlasTile; y++)
-                for (int x = 0; x < AtlasTile; x++)
+            for (int y = 0; y < tile; y++)
+                for (int x = 0; x < tile; x++)
                 {
-                    int o = ((oy + y) * AtlasSize + ox + x) * 4;
+                    int o = ((oy + y) * size + ox + x) * 4;
                     int d = 0;
                     if (noise > 0)
                     {

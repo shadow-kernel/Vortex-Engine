@@ -23,6 +23,7 @@ namespace Editor.ECS.Components.Rendering
         private bool _navigation = true;
         private string _layer0Material, _layer1Material, _layer2Material, _layer3Material;
         private float _layer0Tile = 4f, _layer1Tile = 4f, _layer2Tile = 4f, _layer3Tile = 4f;
+        private int _layerResolution;
 
         public Terrain() : base() { }
         public Terrain(GameEntity entity) : base(entity) { }
@@ -102,6 +103,15 @@ namespace Editor.ECS.Components.Rendering
         public float Layer2Tile { get => _layer2Tile; set => SetProperty(ref _layer2Tile, ClampTile(value), nameof(Layer2Tile)); }
         [DataMember(Name = "layer3Tile", Order = 27)]
         public float Layer3Tile { get => _layer3Tile; set => SetProperty(ref _layer3Tile, ClampTile(value), nameof(Layer3Tile)); }
+
+        /// <summary>Texels per layer in this terrain's layer atlas (#447): 0 = Auto (2048 while textures are block compressed,
+        /// else 1024), or 512 / 1024 / 2048. Larger layer maps are area-filtered down to it and the console says so; smaller ones
+        /// are scaled up. Memory: three atlases of (2 × this)² texels plus mips (block compressed: about 38 MB at 2048).</summary>
+        [DataMember(Name = "layerResolution", Order = 28)]
+        public int LayerResolution { get => _layerResolution; set => SetProperty(ref _layerResolution, SnapLayerResolution(value), nameof(LayerResolution)); }
+
+        /// <summary>0 (Auto) or the nearest of 512 / 1024 / 2048.</summary>
+        public static int SnapLayerResolution(int wanted) => wanted <= 0 ? 0 : wanted < 768 ? 512 : wanted < 1536 ? 1024 : 2048;
 
         public string LayerMaterial(int i) => i == 0 ? _layer0Material : i == 1 ? _layer1Material : i == 2 ? _layer2Material : _layer3Material;
         public float LayerTile(int i) => i == 0 ? _layer0Tile : i == 1 ? _layer1Tile : i == 2 ? _layer2Tile : _layer3Tile;
