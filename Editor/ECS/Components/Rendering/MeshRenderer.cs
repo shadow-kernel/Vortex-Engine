@@ -236,7 +236,7 @@ namespace Editor.ECS.Components.Rendering
         /// Indicates if this mesh has a pre-loaded material with textures
         /// </summary>
         [IgnoreDataMember]
-        public bool HasImportedMaterial => _materialHandle != ID.INVALID_ID && _materialHandle >= 0;
+        public bool HasImportedMaterial => _materialHandle > 0;   // material and resource ids start at 1: 0 is no material
 
         public MeshRenderer() : base() { }
         public MeshRenderer(GameEntity entity) : base(entity) { }
@@ -283,11 +283,16 @@ namespace Editor.ECS.Components.Rendering
         /// <summary>DataContractSerializer creates this component UNINITIALIZED: the handle of its native mesh-renderer
         /// component (not saved) read 0 — a valid id of ANOTHER renderer's native component — so a loaded renderer updated
         /// that one instead of creating its own and destroyed it when its entity was deactivated. Unset, like the owning
-        /// entity's EntityId, until the entity is registered with the engine.</summary>
+        /// entity's EntityId, until the entity is registered with the engine. The other unsaved handles start unset as
+        /// well (the reloads below fill them from the paths) instead of reading as handle 0.</summary>
         [OnDeserializing]
         internal void OnDeserializingMeshRenderer(StreamingContext context)
         {
+            _meshHandle = ID.INVALID_ID;
+            _materialHandle = ID.INVALID_ID;
             _rendererHandle = ID.INVALID_ID;
+            _textureHandle = ID.INVALID_ID;
+            _shaderHandle = ID.INVALID_ID;
         }
 
         [OnDeserialized]
@@ -590,6 +595,14 @@ namespace Editor.ECS.Components.Rendering
 
         public SpriteRenderer() : base() { }
         public SpriteRenderer(GameEntity entity) : base(entity) { }
+
+        /// <summary>DataContractSerializer creates this component UNINITIALIZED: the unsaved sprite handle would read as
+        /// handle 0 instead of none.</summary>
+        [OnDeserializing]
+        internal void OnDeserializingSpriteRenderer(StreamingContext context)
+        {
+            _spriteHandle = ID.INVALID_ID;
+        }
 
         [OnDeserialized]
         internal void OnDeserializedSpriteRenderer(StreamingContext context)

@@ -27,23 +27,32 @@ namespace VortexTests
             return e;
         }
 
-        private static long RendererHandle(MeshRenderer mr)
-            => (long)typeof(MeshRenderer).GetField("_rendererHandle", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(mr);
+        internal static long Handle(object component, string field)
+            => (long)component.GetType().GetField(field, BindingFlags.NonPublic | BindingFlags.Instance).GetValue(component);
+
+        internal static long RendererHandle(MeshRenderer mr) => Handle(mr, "_rendererHandle");
 
         [Test]
         public static void DeserializedEntitiesStartUnregistered(TestContext t)
         {
             var scene = new Scene { Name = "Yard" };
             var crate = Entity(scene, "Crate", new Vector3(1, 0, 0));
-            crate.AddComponentDirect(new MeshRenderer(crate) { MeshPath = "Primitive:Cube" });
-            Entity(scene, "Lid", new Vector3(0, 1, 0), crate);
+            crate.AddComponentDirect(new MeshRenderer(crate));   // no paths: nothing to load, every handle stays unset
+            Entity(scene, "Lid", new Vector3(0, 1, 0), crate).AddComponentDirect(new SpriteRenderer());
             Entity(scene, "Barrel", new Vector3(4, 0, 0));
 
             var back = DataSerializer.FromBinary<Scene>(DataSerializer.ToBinary(scene));
             var all = back.Entities.Concat(back.Entities.SelectMany(e => e.Children)).ToList();
             t.Equal(3, all.Count, "three entities loaded");
             t.True(all.All(e => e.EntityId == ID.INVALID_ID), "a loaded entity has no engine id until its scene registers it (was 0 for all of them)");
-            t.Equal(ID.INVALID_ID, RendererHandle(all[0].GetComponent<MeshRenderer>()), "nor a native mesh-renderer component (was 0 — another renderer's)");
+            var mr = all[0].GetComponent<MeshRenderer>();
+            t.Equal(ID.INVALID_ID, RendererHandle(mr), "nor a native mesh-renderer component (was 0 — another renderer's)");
+            foreach (var f in new[] { "_meshHandle", "_materialHandle", "_textureHandle", "_shaderHandle" })
+                t.Equal(ID.INVALID_ID, Handle(mr, f), "an unsaved " + f + " starts unset, not as handle 0");
+            t.False(mr.HasImportedMaterial, "no imported material without a material handle");
+            mr.MaterialHandle = 0;
+            t.False(mr.HasImportedMaterial, "material handle 0 is no material (material and resource ids start at 1)");
+            t.Equal(ID.INVALID_ID, Handle(all.First(e => e.Name == "Lid").GetComponent<SpriteRenderer>(), "_spriteHandle"), "nor the sprite handle");
 
             var json = DataSerializer.FromJson<GameEntity>(DataSerializer.ToJson(crate));   // the prefab / prefab-editor path
             t.True(json.EntityId == ID.INVALID_ID && json.Children[0].EntityId == ID.INVALID_ID, "a prefab instance starts unregistered too");
