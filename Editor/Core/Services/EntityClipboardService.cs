@@ -159,7 +159,9 @@ namespace Editor.Core.Services
                 {
                     // Neue IDs vergeben
                     entity.RegenerateIds();
-                    entity.Scene = targetScene;
+                    // the whole subtree: deserializing leaves the children with the root's then-null scene, and they would
+                    // register with the engine outside the scene (as PrefabService.InstantiatePrefab does it)
+                    SetSceneRecursive(entity, targetScene);
                 }
                 return entity;
             }
@@ -167,6 +169,12 @@ namespace Editor.Core.Services
             {
                 return null;
             }
+        }
+
+        private static void SetSceneRecursive(GameEntity e, Data.Scene scene)
+        {
+            e.Scene = scene;
+            foreach (var c in e.Children) SetSceneRecursive(c, scene);
         }
 
         /// <summary>
@@ -243,6 +251,7 @@ namespace Editor.Core.Services
                     {
                         entity.Scene?.Entities.Remove(entity);
                     }
+                    entity.SyncEngineStateRecursive(false);   // out of the scene, out of the engine (as Scene.RemoveEntity)
                 }
             }
 
@@ -255,11 +264,13 @@ namespace Editor.Core.Services
                 {
                     if (_parentEntity != null)
                     {
-                        _parentEntity.AddChild(newEntity);
+                        _parentEntity.AddChild(newEntity);   // registers it with the engine
                     }
                     else
                     {
                         _targetScene.Entities.Add(newEntity);
+                        // a pasted copy is a new entity: registered like a duplicate, with its own engine id
+                        newEntity.SyncEngineState();
                     }
                     _pastedEntities.Add(newEntity);
                 }
@@ -279,6 +290,7 @@ namespace Editor.Core.Services
                 {
                     _targetScene.Entities.Remove(entity);
                 }
+                entity.SyncEngineStateRecursive(false);
             }
 
             // Wenn Cut, stelle Original-Entities wieder her
@@ -308,6 +320,7 @@ namespace Editor.Core.Services
                             info.Scene.Entities.Add(info.Entity);
                         }
                     }
+                    info.Entity.SyncEngineState();   // back in the scene, back in the engine
                 }
             }
         }

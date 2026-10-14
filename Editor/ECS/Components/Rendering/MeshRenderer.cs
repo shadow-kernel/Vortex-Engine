@@ -280,6 +280,16 @@ namespace Editor.ECS.Components.Rendering
             return !file.StartsWith(EmbeddedTexturePrefix(model), StringComparison.OrdinalIgnoreCase);
         }
 
+        /// <summary>DataContractSerializer creates this component UNINITIALIZED: the handle of its native mesh-renderer
+        /// component (not saved) read 0 — a valid id of ANOTHER renderer's native component — so a loaded renderer updated
+        /// that one instead of creating its own and destroyed it when its entity was deactivated. Unset, like the owning
+        /// entity's EntityId, until the entity is registered with the engine.</summary>
+        [OnDeserializing]
+        internal void OnDeserializingMeshRenderer(StreamingContext context)
+        {
+            _rendererHandle = ID.INVALID_ID;
+        }
+
         [OnDeserialized]
         internal void OnDeserializedMeshRenderer(StreamingContext context)
         {

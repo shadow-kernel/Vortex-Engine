@@ -139,7 +139,7 @@ namespace Editor.Scripting
             if (e.IsActive == active) return true;   // no-op guard: a re-add would duplicate collision shapes
             if (!_activeChanged.ContainsKey(e)) _activeChanged[e] = e.IsActive;   // restore on play end
             e.IsActive = active;
-            try { e.SyncEngineStateRecursive(active); } catch { }
+            try { e.SyncEngineState(); } catch { }   // under an inactive parent it stays out of the engine
             // #51: collision + audio follow the active state (previously a documented limitation —
             // a deactivated door/monster stayed solid and kept emitting).
             try
@@ -530,7 +530,7 @@ namespace Editor.Scripting
                 {
                     try { ApplyRenderLayerRecursive(weapon, comp.SocketRenderLayer); } catch { }
                 }
-                try { weapon.SyncEngineStateRecursive(true); } catch { }
+                try { weapon.SyncEngineState(); } catch { }
                 try { Editor.Core.Services.Physics.CollisionService.AddEntityShapes(weapon); } catch { }
                 try { Editor.Core.Services.Physics.PhysicsService.AddEntity(weapon); } catch { }
                 try { Editor.Core.Services.AudioPlaybackService.Instance.AddEntity(weapon); } catch { }   // audio began before the sockets
@@ -683,7 +683,7 @@ namespace Editor.Scripting
                     var list = r.Parent != null ? r.Parent.Children : _currentScene?.Entities;
                     if (list != null && !list.Contains(r.Entity))
                         list.Insert(Math.Min(Math.Max(r.Index, 0), list.Count), r.Entity);
-                    r.Entity.SyncEngineStateRecursive(r.Entity.IsActive);
+                    r.Entity.SyncEngineState();
                 }
                 catch { }
             }
@@ -691,7 +691,7 @@ namespace Editor.Scripting
 
             foreach (var kv in _activeChanged)
             {
-                try { kv.Key.IsActive = kv.Value; kv.Key.SyncEngineStateRecursive(kv.Value); } catch { }
+                try { kv.Key.IsActive = kv.Value; kv.Key.SyncEngineState(); } catch { }
             }
             _activeChanged.Clear();
 
