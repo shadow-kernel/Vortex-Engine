@@ -376,6 +376,25 @@ private:
 		std::printf("[info] reverb tail: master rms %.4f after a dry stop, %.4f after a full-send stop (0.6 s later)\n", dry_after, wet_after);
 		check("reverb tail rings after the voice stops", wet_after > dry_after * 3.0f && wet_after > 0.002f);
 
+		// #496: a send handed to voice_play applies from the first sample — a one-shot that is over before anyone
+		// called voice_set_reverb_send still rings in the room.
+		voice_params shot = p;
+		shot.reverb_send = 1.0f;
+		v = voice_play(wav.c_str(), shot);
+		const f32 initial_send = voice_get_reverb_send(v);
+		tick_seconds(0.7f);   // the 0.5 s clip plays out and frees its voice
+		const bool shot_ended = !voice_is_valid(v);
+		tick_seconds(0.4f);
+		f32 shot_after = 0;
+		mixer_get_bus_levels(bus::master, nullptr, &shot_after);
+		std::printf("[info] one-shot started with send 1: send %.2f, master rms %.4f 0.6 s after it ended\n", initial_send, shot_after);
+		check("voice_play's reverb_send is the voice's send from the start", std::fabs(initial_send - 1.0f) < 1e-4f);
+		check("a one-shot started with a send rings in the reverb after it ended", shot_ended && shot_after > dry_after * 3.0f && shot_after > 0.002f);
+		v = voice_play(wav.c_str(), p);
+		check("a voice without a send starts dry; a stale handle reads -1", voice_get_reverb_send(v) == 0.0f && voice_get_reverb_send(invalid_voice) < 0.0f);
+		voice_stop(v);
+		tick_seconds(0.3f);
+
 		// Wet 0 shuts the reverb up even at full send (allow the master METER's own
 		// display decay to drain — it holds ~0.4 s of history after the dry stop).
 		reverb_set_params(3.0f, 0.0f, 0.0f);

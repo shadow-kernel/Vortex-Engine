@@ -2212,6 +2212,8 @@ namespace Vortex
     /// Game audio for scripts. Clip paths are project-relative ("Assets/Audio/scream.wav")
     /// and resolve identically in editor play mode and shipped .vpak builds. One-shots use
     /// pooled voices that auto-reclaim — nothing to hold on to or free.
+    /// Reverb Zones: while the listener stands in one, Audio Sources (by their Reverb Zone Mix)
+    /// and 3D one-shots reverberate; 2D one-shots stay dry unless given a reverbMix (#496).
     /// <code>
     /// // Jump-scare stinger when the player trips a trigger:
     /// public class ScareTrigger : VortexBehaviour
@@ -2228,13 +2230,28 @@ namespace Vortex
     public static class Audio
     {
         /// <summary>Play a positional (3D) one-shot at a world position — no entity needed.
-        /// Distance attenuation uses sensible defaults (min 1, max 500, logarithmic).</summary>
+        /// Distance attenuation uses sensible defaults (min 1, max 500, logarithmic). Inside a Reverb Zone it
+        /// reverberates like an Audio Source with Reverb Zone Mix 1; the overload with <c>reverbMix</c> chooses.</summary>
         public static void PlayOneShot(string clipPath, Vector3 position, float volume = 1f, float pitch = 1f)
             => Editor.Core.Services.AudioPlaybackService.Instance.PlayOneShot(clipPath, position.X, position.Y, position.Z, volume, pitch);
 
-        /// <summary>Play a flat 2D one-shot (UI clicks, stingers) — no position, no attenuation.</summary>
+        /// <summary>A positional one-shot with its own Reverb Zone send (#496): <paramref name="reverbMix"/> 0 = dry ..
+        /// 1 = the full room, scaled by how deep the listener stands in Reverb Zones — exactly an Audio Source's Reverb
+        /// Zone Mix. <c>Audio.PlayOneShot(shot, muzzle, 1f, 1f, 1f)</c></summary>
+        public static void PlayOneShot(string clipPath, Vector3 position, float volume, float pitch, float reverbMix)
+            => Editor.Core.Services.AudioPlaybackService.Instance.PlayOneShot(clipPath, position.X, position.Y, position.Z, volume, pitch, reverbMix);
+
+        /// <summary>Play a flat 2D one-shot (UI clicks, stingers) — no position, no attenuation. Stays dry inside Reverb
+        /// Zones; the overload with <c>reverbMix</c> sends a 2D sound that belongs in the room (the player's own steps or
+        /// shots) to the reverb.</summary>
         public static void PlayOneShot2D(string clipPath, float volume = 1f, float pitch = 1f)
             => Editor.Core.Services.AudioPlaybackService.Instance.PlayOneShot2D(clipPath, volume, pitch);
+
+        /// <summary>A flat 2D one-shot with a Reverb Zone send (#496): <paramref name="reverbMix"/> 0 = dry (the short
+        /// form's default) .. 1 = the full room, scaled by how deep the listener stands in Reverb Zones.
+        /// <c>Audio.PlayOneShot2D(myShot, 1f, 1f, 0.8f)</c></summary>
+        public static void PlayOneShot2D(string clipPath, float volume, float pitch, float reverbMix)
+            => Editor.Core.Services.AudioPlaybackService.Instance.PlayOneShot2D(clipPath, volume, pitch, reverbMix);
 
         /// <summary>Mixer bus volume by name ("Master", "Music", "SFX", "Ambience", "UI"),
         /// 0..1 — the settings-screen sliders call this. Applies in real time.</summary>

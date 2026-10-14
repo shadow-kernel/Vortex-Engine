@@ -164,9 +164,14 @@ namespace Editor.Core.Services
                     }
                 }
 
-                // Prune finished one-shots so the pause/stop lists stay small.
+                // One-shots: prune the finished ones (the pause/stop lists stay small); the rest get the same reverb
+                // send as a component voice — their own mix x how deep the listener sits in reverb zones (#496).
                 for (int i = _oneShots.Count - 1; i >= 0; i--)
-                    if (!VortexAudio.IsVoiceValid(_oneShots[i])) _oneShots.RemoveAt(i);
+                {
+                    var s = _oneShots[i];
+                    if (!VortexAudio.IsVoiceValid(s.Handle)) { _oneShots.RemoveAt(i); continue; }
+                    if (s.ReverbMix > 0f) VortexAudio.SetVoiceReverbSend(s.Handle, s.ReverbMix * _zoneWeight);
+                }
             }
             catch (Exception ex)
             {
@@ -187,7 +192,7 @@ namespace Editor.Core.Services
             foreach (var b in _bindings) VortexAudio.PauseVoice(b.Handle);
             VortexAudio.PauseVoice(_musicCurrent);
             VortexAudio.PauseVoice(_musicPrevious);
-            foreach (var h in _oneShots) VortexAudio.PauseVoice(h);
+            foreach (var s in _oneShots) VortexAudio.PauseVoice(s.Handle);
         }
 
         public void ResumeAll()
@@ -200,7 +205,7 @@ namespace Editor.Core.Services
             }
             VortexAudio.ResumeVoice(_musicCurrent);
             VortexAudio.ResumeVoice(_musicPrevious);
-            foreach (var h in _oneShots) VortexAudio.ResumeVoice(h);
+            foreach (var s in _oneShots) VortexAudio.ResumeVoice(s.Handle);
         }
 
         /// <summary>Stop every component voice and forget the scene. Play is non-destructive:
@@ -221,7 +226,7 @@ namespace Editor.Core.Services
             _musicCurrent = VortexAudio.InvalidVoice;
             _musicPrevious = VortexAudio.InvalidVoice;
             _musicCurrentClip = null;
-            foreach (var h in _oneShots) VortexAudio.StopVoice(h);
+            foreach (var s in _oneShots) VortexAudio.StopVoice(s.Handle);
             _oneShots.Clear();
             _zones.Clear();
             _zoneWeight = 0f;
@@ -392,16 +397,24 @@ namespace Editor.Core.Services
             if (b != null) VortexAudio.FadeVoice(b.Handle, target, seconds);
         }
 
-        /// <summary>In-flight one-shot handles: tracked so Pause/Stop/scene switches
-        /// silence them with everything else, pruned as they finish. Scripts still
-        /// never see a handle.</summary>
-        private readonly List<ulong> _oneShots = new List<ulong>();
+        /// <summary>An in-flight one-shot: its voice and its own reverb mix (#496) — the per-frame send is that mix x the
+        /// listener's zone weight, exactly like a component voice's ReverbZoneMix.</summary>
+        private struct OneShot { public ulong Handle; public float ReverbMix; }
+
+        /// <summary>In-flight one-shots: tracked so Pause/Stop/scene switches silence them with everything else and
+        /// their reverb send follows the listener, pruned as they finish. Scripts still never see a handle.</summary>
+        private readonly List<OneShot> _oneShots = new List<OneShot>();
+
+        /// <summary>Reverb mix of a one-shot that does not choose one (#496): a positional (3D) one-shot is a sound in
+        /// the world and reverberates in Reverb Zones like an Audio Source with the default Reverb Zone Mix (1); a flat
+        /// (2D) one-shot — UI clicks, stingers — stays dry, as it always did.</summary>
+        public const float DefaultOneShotReverbMix = 1f, DefaultOneShot2DReverbMix = 0f;
 
         /// <summary>Fire-and-forget positional one-shot — no entity needed. The voice
         /// auto-returns to the pool when finished; no handle leaks to scripts.</summary>
-        public void PlayOneShot(string clip, float x, float y, float z, float volume, float pitch)
+        public void PlayOneShot(string clip, float x, float y, float z, float volume, float pitch, float reverbMix = DefaultOneShotReverbMix)
         {
-            var h = StartOneShot(clip, volume, pitch);
+            var h = StartOneShot(clip, volume, pitch, reverbMix);
             if (h != VortexAudio.InvalidVoice)
             {
                 VortexAudio.SetVoiceSpatial(h, 1f, 1f, 500f, 0, 1f, 0f);
@@ -409,12 +422,23 @@ namespace Editor.Core.Services
             }
         }
 
-        public void PlayOneShot2D(string clip, float volume, float pitch)
+        public void PlayOneShot2D(string clip, float volume, float pitch, float reverbMix = DefaultOneShot2DReverbMix)
         {
-            StartOneShot(clip, volume, pitch);
+            StartOneShot(clip, volume, pitch, reverbMix);
         }
 
-        private ulong StartOneShot(string clip, float volume, float pitch)
+        /// <summary>Diagnostics (smoke checks): the live one-shots' voices with their reverb mix, and the listener's
+        /// blended reverb-zone weight (0..1) of the last tick.</summary>
+        internal List<(ulong Handle, float ReverbMix)> OneShotsForDiagnostics()
+        {
+            var list = new List<(ulong, float)>();
+            foreach (var s in _oneShots) list.Add((s.Handle, s.ReverbMix));
+            return list;
+        }
+
+        internal float ListenerZoneWeight => _zoneWeight;
+
+        private ulong StartOneShot(string clip, float volume, float pitch, float reverbMix)
         {
             if (!_active || string.IsNullOrEmpty(clip) || _failedPaths.Contains(clip))
                 return VortexAudio.InvalidVoice;
@@ -440,8 +464,10 @@ namespace Editor.Core.Services
                 _failedPaths.Add(clip);
                 return VortexAudio.InvalidVoice;
             }
-            var h = VortexAudio.PlayVoice(path, volume, pitch, 0f, false, 128);
-            if (h != VortexAudio.InvalidVoice) _oneShots.Add(h);
+            // The send starts with the voice: a shot or a step is often over before the next tick could set it (#496).
+            float mix = reverbMix > 0f ? Math.Min(1f, reverbMix) : 0f;   // NaN -> dry
+            var h = VortexAudio.PlayVoice(path, volume, pitch, 0f, false, 128, reverbSend: mix * _zoneWeight);
+            if (h != VortexAudio.InvalidVoice) _oneShots.Add(new OneShot { Handle = h, ReverbMix = mix });
             return h;
         }
 
@@ -634,7 +660,8 @@ namespace Editor.Core.Services
                 b.Source.OutputBus,
                 // Steam Audio v2 (#21): only meaningful for 3D sources; ignored unless SA is enabled + available.
                 hrtf: b.Source.EnableHrtf && b.Source.SpatialBlend > 0f,
-                occlusion: b.Source.EnableOcclusion && b.Source.EnableHrtf && b.Source.SpatialBlend > 0f);
+                occlusion: b.Source.EnableOcclusion && b.Source.EnableHrtf && b.Source.SpatialBlend > 0f,
+                reverbSend: b.Source.ReverbZoneMix * _zoneWeight);   // from the first sample, as PushProperties keeps it (#496)
             b.RolledVolumeScale = volumeScale;
             b.RolledPitchScale = pitchScale;
 

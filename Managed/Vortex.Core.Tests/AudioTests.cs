@@ -94,5 +94,40 @@ namespace VortexTests
             var fz = Zone(flat, (int)ReverbZoneShape.Box, new Vector3(5, 5, 5));
             t.Equal(0f, AudioPlaybackService.ZoneWeight(fz, flat, new Vector3(0, 0, 0)), "a box scaled to zero height has no volume");
         }
+
+        [Test]
+        public static void OneShotReverbMixDefaults(TestContext t)
+        {
+            // #496: a 3D one-shot reverberates like an Audio Source left at its default Reverb Zone Mix; 2D stays dry
+            t.Equal(new AudioSource().ReverbZoneMix, AudioPlaybackService.DefaultOneShotReverbMix, "3D one-shot mix = an Audio Source's default");
+            t.Equal(0f, AudioPlaybackService.DefaultOneShot2DReverbMix, "2D one-shots stay dry by default");
+        }
+
+        [Test]
+        public static void OneShotCallsOfEveryShapeStillCompile(TestContext t)
+        {
+            // the reverbMix overloads (#496) must leave every call scripts already make binding as before — no ambiguity
+            const string code = @"using Vortex;
+public class Shots : VortexBehaviour
+{
+    public override void Update(float dt)
+    {
+        Audio.PlayOneShot(""a.wav"", Position);
+        Audio.PlayOneShot(""a.wav"", Position, 0.5f);
+        Audio.PlayOneShot(""a.wav"", Position, 0.5f, 1.2f);
+        Audio.PlayOneShot(""a.wav"", Position, volume: 0.5f);
+        Audio.PlayOneShot(""a.wav"", Position, pitch: 0.9f);
+        Audio.PlayOneShot(""a.wav"", Position, 1f, 1f, 0.3f);
+        Audio.PlayOneShot(""a.wav"", Position, 1f, 1f, reverbMix: 0f);
+        Audio.PlayOneShot2D(""a.wav"");
+        Audio.PlayOneShot2D(""a.wav"", 0.5f);
+        Audio.PlayOneShot2D(""a.wav"", 0.5f, 1.2f);
+        Audio.PlayOneShot2D(""a.wav"", pitch: 0.9f);
+        Audio.PlayOneShot2D(""a.wav"", 1f, 1f, 0.8f);
+    }
+}";
+            var errors = Editor.Scripting.RoslynScriptCompiler.CheckSources(new[] { ("Shots.cs", code) });
+            t.True(errors.Count == 0, string.Join(" | ", errors.ConvertAll(e => e.Id + " " + e.Message)));
+        }
     }
 }
