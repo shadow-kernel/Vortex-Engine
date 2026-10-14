@@ -36,6 +36,7 @@ public:
 	void run() override
 	{
 		alpha_modes();
+		opaque_blend_is_opaque();
 		other_formats_stay_opaque();
 		cache_keeps_alpha();
 		colour_only_materials_stay_untextured();
@@ -145,20 +146,84 @@ private:
 			"{\"name\":\"Glass\",\"alphaMode\":\"BLEND\",\"pbrMetallicRoughness\":{\"baseColorFactor\":[0.8,0.9,1,0.4]}},"
 			"{\"name\":\"Plain\"},"
 			"{\"name\":\"Fence\",\"alphaMode\":\"MASK\"},"
-			"{\"name\":\"Solid\",\"alphaMode\":\"OPAQUE\",\"alphaCutoff\":0.7,\"doubleSided\":false}", 5));
+			"{\"name\":\"Solid\",\"alphaMode\":\"OPAQUE\",\"alphaCutoff\":0.7,\"doubleSided\":false},"
+			"{\"name\":\"Rock\",\"doubleSided\":true},"
+			"{\"name\":\"Pane\",\"alphaMode\":\"BLEND\",\"doubleSided\":true,\"pbrMetallicRoughness\":{\"baseColorFactor\":[1,1,1,0.3]}}", 7));
 		const ImportedModelData d = ModelImporter::import_from_file(path);
-		check(d.submeshes.size() == 5, "five quads imported (" + std::to_string(d.submeshes.size()) + ")");
+		check(d.submeshes.size() == 7, "seven quads imported (" + std::to_string(d.submeshes.size()) + ")");
 		const SubMeshData* leaves = by_material(d, "Leaves");
 		const SubMeshData* glass = by_material(d, "Glass");
 		const SubMeshData* plain = by_material(d, "Plain");
 		const SubMeshData* fence = by_material(d, "Fence");
 		const SubMeshData* solid = by_material(d, "Solid");
+		const SubMeshData* rock = by_material(d, "Rock");
+		const SubMeshData* pane = by_material(d, "Pane");
 		check(leaves && leaves->blend_mode == 3 && near(leaves->alpha_cutoff, 0.3f), "MASK cuts out at its alphaCutoff");
-		check(leaves && leaves->two_sided, "doubleSided draws both faces");
+		check(leaves && leaves->two_sided, "doubleSided draws both faces of a MASK material");
 		check(glass && glass->blend_mode == 1 && glass->alpha_cutoff == 0.0f && !glass->two_sided, "BLEND blends, one-sided");
+		check(pane && pane->blend_mode == 1 && pane->two_sided, "...and doubleSided draws both faces of a BLEND material");
 		check(plain && plain->blend_mode == 0 && plain->alpha_cutoff == 0.0f && !plain->two_sided, "no alphaMode = opaque");
 		check(fence && fence->blend_mode == 3 && near(fence->alpha_cutoff, 0.5f), "MASK without a cutoff uses the glTF default 0.5");
 		check(solid && solid->blend_mode == 0 && solid->alpha_cutoff == 0.0f, "OPAQUE ignores an alphaCutoff");
+		check(rock && rock->blend_mode == 0 && !rock->two_sided, "an OPAQUE material keeps back-face culling despite doubleSided");
+	}
+
+	// An uncompressed TGA (stb reads it; a glTF reader does not look at the format) of w x h texels, 24 or 32 bits.
+	static std::vector<unsigned char> tga(int w, int h, int bits, unsigned char alpha_left, unsigned char alpha_right)
+	{
+		std::vector<unsigned char> b(18, 0);
+		b[2] = 2;   // uncompressed true colour
+		b[12] = (unsigned char)(w & 255); b[13] = (unsigned char)(w >> 8);
+		b[14] = (unsigned char)(h & 255); b[15] = (unsigned char)(h >> 8);
+		b[16] = (unsigned char)bits;
+		b[17] = (unsigned char)(bits == 32 ? 8 : 0);
+		for (int y = 0; y < h; ++y)
+			for (int x = 0; x < w; ++x)
+			{
+				b.push_back(40); b.push_back(160); b.push_back(40);   // B G R
+				if (bits == 32) b.push_back(x < w / 2 ? alpha_left : alpha_right);
+			}
+		return b;
+	}
+
+	// #441 review: a BLEND that cannot show anything through — base colour alpha 1 and an albedo without a translucent
+	// texel — is drawn opaque (shadows, SSAO and depth stay); a translucent image or a factor below 1 keeps BLEND
+	void opaque_blend_is_opaque()
+	{
+		std::printf("BLEND that is really opaque (#441)\n");
+		const auto dir = m_dir / "blend";
+		std::error_code ec;
+		std::filesystem::create_directories(dir, ec);
+		auto put = [&](const char* name, const std::vector<unsigned char>& bytes) { std::ofstream(dir / name, std::ios::binary).write((const char*)bytes.data(), (std::streamsize)bytes.size()); };
+		put("rgb.tga", tga(8, 8, 24, 255, 255));
+		put("rgba_full.tga", tga(8, 8, 32, 255, 255));
+		put("rgba_holes.tga", tga(8, 8, 32, 0, 255));
+		const std::vector<unsigned char> holes = tga(8, 8, 32, 0, 255), full = tga(8, 8, 32, 255, 255);
+		const std::string mats =
+			"{\"name\":\"Crate\",\"alphaMode\":\"BLEND\",\"doubleSided\":true},"
+			"{\"name\":\"WireRgb\",\"alphaMode\":\"BLEND\",\"pbrMetallicRoughness\":{\"baseColorTexture\":{\"index\":0}}},"
+			"{\"name\":\"WireFull\",\"alphaMode\":\"BLEND\",\"pbrMetallicRoughness\":{\"baseColorTexture\":{\"index\":1}}},"
+			"{\"name\":\"Lace\",\"alphaMode\":\"BLEND\",\"pbrMetallicRoughness\":{\"baseColorTexture\":{\"index\":2}}},"
+			"{\"name\":\"Tinted\",\"alphaMode\":\"BLEND\",\"pbrMetallicRoughness\":{\"baseColorFactor\":[1,1,1,0.5],\"baseColorTexture\":{\"index\":0}}},"
+			"{\"name\":\"EmbeddedFull\",\"alphaMode\":\"BLEND\",\"pbrMetallicRoughness\":{\"baseColorTexture\":{\"index\":3}}},"
+			"{\"name\":\"EmbeddedHoles\",\"alphaMode\":\"BLEND\",\"pbrMetallicRoughness\":{\"baseColorTexture\":{\"index\":4}}}";
+		const std::string images =
+			"{\"uri\":\"rgb.tga\"},{\"uri\":\"rgba_full.tga\"},{\"uri\":\"rgba_holes.tga\"},"
+			"{\"uri\":\"data:image/png;base64," + base64(full) + "\"},{\"uri\":\"data:image/png;base64," + base64(holes) + "\"}";
+		const std::string textures = "{\"source\":0},{\"source\":1},{\"source\":2},{\"source\":3},{\"source\":4}";
+		const std::string path = (dir / "blend.gltf").string();
+		std::ofstream(path, std::ios::binary) << gltf(mats, 7, textures, images);
+		const ImportedModelData d = ModelImporter::import_from_file(path);
+		auto mode = [&](const char* name) { const SubMeshData* s = by_material(d, name); return s ? (int)s->blend_mode : -1; };
+		check(mode("Crate") == 0, "BLEND, alpha 1, no image: opaque");
+		const SubMeshData* crate = by_material(d, "Crate");
+		check(crate && crate->two_sided, "...keeping the doubleSided of a material the file marks BLEND");
+		check(mode("WireRgb") == 0, "BLEND, alpha 1, an image without an alpha channel: opaque");
+		check(mode("WireFull") == 0, "BLEND, alpha 1, an alpha channel of 255 everywhere: opaque");
+		check(mode("Lace") == 1, "an image with transparent texels keeps BLEND");
+		check(mode("Tinted") == 1, "a base colour alpha below 1 keeps BLEND");
+		check(mode("EmbeddedFull") == 0, "an embedded opaque image: opaque");
+		check(mode("EmbeddedHoles") == 1, "an embedded image with transparent texels keeps BLEND");
 	}
 
 	// formats without glTF alpha modes import as before: an OBJ material with "d 0.5" stays opaque and one-sided
@@ -191,10 +256,10 @@ private:
 				&& back.submeshes[i].two_sided == d.submeshes[i].two_sided;
 		check(same, "blend mode, cutoff and two-sidedness survive the cache");
 
-		// a cache written before the alpha state (v1), the texture transforms (v2, #470) or the emission (v3, #450) were
-		// stored: rejected, so the model is imported again
+		// a cache written before the alpha state (v1), the texture transforms (v2, #470), the emission (v3, #450) or the
+		// opaque-BLEND / doubleSided rules (v4) were stored: rejected, so the model is imported again
 		const auto vmc = std::filesystem::path(dir) / "materials.vmc";
-		for (u32 version = 1; version <= 3; ++version)
+		for (u32 version = 1; version <= 4; ++version)
 		{
 			{
 				std::fstream f(vmc, std::ios::in | std::ios::out | std::ios::binary);

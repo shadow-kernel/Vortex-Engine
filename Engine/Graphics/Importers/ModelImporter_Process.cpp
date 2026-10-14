@@ -1,5 +1,6 @@
 #include "../../Common/VerboseLog.h"
 #include "ModelImporter_Internal.h"
+#include "TextureImporter.h"   // has_translucent_texels: a BLEND that cannot show through (#441)
 #include <cctype>
 #include <cstdio>
 #include <cstring>
@@ -525,6 +526,28 @@ namespace vortex::graphics
 			return model_dir + raw;   // loose file on disk next to the model
 		};
 
+		// Does a material's albedo image have a texel that is not fully opaque (#441)? `raw` is the reference as the file
+		// names it, `resolved` what resolve_tex made of it. An embedded image is read from its extracted copy (the verdict
+		// is cached per file) or from the model; a file from disk or the shipped game's pak. Unreadable counts as yes.
+		auto albedo_translucent = [&](const std::string& raw, const std::string& resolved) -> bool {
+			if (raw.empty()) return false;
+			bool known = false, translucent = false;
+			if (const aiTexture* emb = scene->GetEmbeddedTexture(raw.c_str()))
+			{
+				if (emb->mHeight > 0)   // raw texels (ARGB8888)
+				{
+					for (u32 t = 0, n = emb->mWidth * emb->mHeight; t < n; ++t)
+						if (emb->pcData[t].a < 255) return true;
+					return false;
+				}
+				if (allow_disk_search) translucent = TextureImporter::has_translucent_texels(resolved, known);
+				if (!known) translucent = TextureImporter::has_translucent_texels(reinterpret_cast<const u8*>(emb->pcData), emb->mWidth, known);
+				return !known || translucent;
+			}
+			translucent = TextureImporter::has_translucent_texels(resolved, known);
+			return !known || translucent;
+		};
+
 		VORTEX_VLOG(("ModelImporter: Found " + std::to_string(scene->mNumMaterials) + " materials\n").c_str());
 
 		for (u32 i = 0; i < scene->mNumMaterials; i++)
@@ -549,12 +572,17 @@ namespace vortex::graphics
 
 			// glTF alphaMode + doubleSided (#441): MASK cuts out below alphaCutoff (glTF default 0.5), BLEND blends. They were
 			// never read, so every leaf card, fence and window of a glTF imported opaque. Other formats carry no such keys.
+			// doubleSided is honoured for the materials the file marks MASK or BLEND only: exporters write it on nearly every
+			// material (125 of the Open World template's 136), and an OPAQUE closed mesh drawn without back-face culling only
+			// costs GPU time — thousands of rock instances in the main pass. Opaque materials keep their culling.
 			u32 blend_mode = 0;
 			float alpha_cutoff = 0.0f;
 			bool two_sided = false;
+			bool gltf_blend = false;
 			if (data.gltf)
 			{
 				aiString alpha_mode;
+				bool see_through = false;   // MASK or BLEND in the file
 				if (material->Get(AI_MATKEY_GLTF_ALPHAMODE, alpha_mode) == AI_SUCCESS)
 				{
 					if (strcmp(alpha_mode.C_Str(), "MASK") == 0)
@@ -563,14 +591,17 @@ namespace vortex::graphics
 						material->Get(AI_MATKEY_GLTF_ALPHACUTOFF, cutoff);
 						blend_mode = 3;
 						alpha_cutoff = cutoff > 0.0f ? cutoff : 0.0f;
+						see_through = true;
 					}
 					else if (strcmp(alpha_mode.C_Str(), "BLEND") == 0)
 					{
 						blend_mode = 1;
+						gltf_blend = true;
+						see_through = true;
 					}
 				}
 				int double_sided = 0;
-				if (material->Get(AI_MATKEY_TWOSIDED, double_sided) == AI_SUCCESS) two_sided = double_sided != 0;
+				if (see_through && material->Get(AI_MATKEY_TWOSIDED, double_sided) == AI_SUCCESS) two_sided = double_sided != 0;
 			}
 
 			// glTF emission (#450): emissiveFactor (black by default: an emissive map alone does not glow) and
@@ -589,10 +620,12 @@ namespace vortex::graphics
 
 			// Get diffuse texture path from material
 			std::string diffuse_path;
+			std::string diffuse_raw;   // as the file names it ("*0" for an embedded image)
 			if (material->GetTextureCount(aiTextureType_DIFFUSE) > 0)
 			{
 			aiString tex_path;
 			material->GetTexture(aiTextureType_DIFFUSE, 0, &tex_path);
+			diffuse_raw = tex_path.C_Str();
 			diffuse_path = resolve_tex(tex_path.C_Str());
 			data.texture_paths.push_back(diffuse_path);
 			VORTEX_VLOG(("    Diffuse: " + diffuse_path + "\n").c_str());
@@ -650,6 +683,13 @@ namespace vortex::graphics
 			// for by a texture found next to the model. A glTF always describes its materials (its default one included).
 			const bool placeholder = !data.gltf && mat_name == AI_DEFAULT_MATERIAL_NAME;
 			const u8 albedo_source = !diffuse_path.empty() ? 1 : (placeholder ? 2 : 0);
+
+			// A BLEND that cannot show anything through is drawn opaque (#441): a base colour alpha of 1 and an albedo
+			// image without a translucent texel (none at all, no alpha channel, or an alpha of 255 everywhere). Exporters
+			// mark whole crates, fence wire and lamp glass BLEND whose alpha is 1 throughout, and the sorted transparent
+			// pass gives them no shadow, no SSAO and no depth. The image is decoded once per file version; the verdict is
+			// part of the import cache. Its doubleSided stays (the file marks it BLEND).
+			if (gltf_blend && ca >= 1.0f && !albedo_translucent(diffuse_raw, diffuse_path)) blend_mode = 0;
 
 			// Assign textures to all submeshes using this material
 			for (auto& submesh : data.submeshes)

@@ -128,8 +128,9 @@ namespace vortex::graphics
 		//   v2: blend mode, alpha cutoff and two-sidedness (#441) — a v1 cache would bring glTF cut-outs back opaque
 		//   v3: the submesh UVs carry the glTF KHR_texture_transform (#470) — older ones hold the raw, scrambled UVs
 		//   v4: the glTF emission, emissiveFactor + KHR_materials_emissive_strength (#450), kept for the import material
+		//   v5: an opaque BLEND is drawn opaque, doubleSided only for MASK / BLEND (#441) — a v4 cache holds the earlier rule
 		constexpr u32 kCacheMagic = 0x434D4D56;   // "VMMC"
-		constexpr u32 kCacheVersion = 4;
+		constexpr u32 kCacheVersion = 5;
 		constexpr u32 kMaxString = 1u << 16;
 		constexpr u32 kMaxSubmeshes = 4096;
 
