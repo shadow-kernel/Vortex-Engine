@@ -691,11 +691,25 @@ namespace Editor.Scripting
 
             foreach (var kv in _activeChanged)
             {
-                try { kv.Key.IsActive = kv.Value; kv.Key.SyncEngineState(); } catch { }
+                // the setter re-registers the entity with the engine — only for one still in the scene: a runtime spawn a
+                // script switched off is gone by now (removed above, or destroyed), and re-registering it put a native
+                // entity into the engine outside any scene, one leak per such spawn and play session
+                try { if (InLiveHierarchy(kv.Key)) kv.Key.IsActive = kv.Value; else kv.Key.SetActiveFlagOnly(kv.Value); } catch { }
             }
             _activeChanged.Clear();
 
             Editor.Core.Services.SceneRenderService.RuntimeDirty = Editor.Core.Services.SceneRenderService.StaticDirty = true;   // structural (#364 A)
+        }
+
+        /// <summary>True when the entity hangs in its scene: every level of it is in its parent's or the scene's list.</summary>
+        private static bool InLiveHierarchy(GameEntity e)
+        {
+            for (var x = e; x != null; x = x.Parent)
+            {
+                var list = x.Parent != null ? x.Parent.Children : x.Scene?.Entities;
+                if (list == null || !list.Contains(x)) return false;
+            }
+            return true;
         }
 
         /// <summary>Last compile diagnostics (empty on success) — surfaced to the user.</summary>

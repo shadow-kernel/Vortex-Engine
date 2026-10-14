@@ -409,5 +409,47 @@ namespace VortexTests
                 closed.DeactivateEntities(); closed.ReleaseEngineScene();
             }
         }
+
+        [Test]
+        public static void ASpawnSwitchedOffDuringPlayLeavesNoNativeEntity(TestContext t)
+        {
+            if (!Native()) return;
+            var scene = Loaded(out var crate, out var lid, out var barrel);
+            var old = ProjectData.Current;
+            var rt = Editor.Scripting.ScriptRuntime.Instance;
+            try
+            {
+                scene.ActivateEntities();
+                var project = new ProjectData { Name = "p", Path = t.Dir };
+                project.Scenes.Add(scene);
+                project.ActiveScene = scene;
+                ProjectData.Current = project;
+                string prefab = t.Write("Crate.ventity", DataSerializer.ToJson(crate));
+
+                rt.Begin(scene, typeof(ZEntityIdNativeTests).Assembly);   // play: no behaviours, the runtime alone
+                long kept = rt.InstantiatePrefabAt(prefab, new Vortex.Vector3(8, 0, 8), 0f);
+                long destroyed = rt.InstantiatePrefabAt(prefab, new Vortex.Vector3(9, 0, 9), 0f);
+                var a = rt.FindEntityByHandle(kept);
+                var b = rt.FindEntityByHandle(destroyed);
+                t.True(a != null && b != null && Unique(crate, lid, barrel, a, b), "runtime spawns are registered");
+                rt.SetEntityActive(kept, false);        // a script switches them off …
+                rt.SetEntityActive(destroyed, false);
+                rt.DestroyEntity(destroyed);            // … and destroys one of them
+                rt.End();                               // Stop
+
+                t.True(!scene.Entities.Contains(a) && !scene.Entities.Contains(b), "the spawns are gone after play");
+                t.True(a.EntityId == ID.INVALID_ID && b.EntityId == ID.INVALID_ID && a.Children[0].EntityId == ID.INVALID_ID,
+                    "and stay out of the engine: restoring their active flags did not re-register them outside the scene");
+                t.True(a.IsActive && b.IsActive, "their flags are back");
+                t.True(Unique(crate, lid, barrel), "the authored entities are registered as before");
+            }
+            finally
+            {
+                try { rt.End(); } catch { }
+                try { PhysicsNative.Shutdown(); } catch { }
+                ProjectData.Current = old;
+                scene.DeactivateEntities(); scene.ReleaseEngineScene();
+            }
+        }
     }
 }
