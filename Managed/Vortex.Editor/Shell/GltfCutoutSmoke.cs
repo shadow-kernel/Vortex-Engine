@@ -128,7 +128,9 @@ namespace VortexEditor.Shell
             float[] pos = { -0.5f, 0, -0.5f, 0.5f, 0, -0.5f, 0.5f, 0, 0.5f, -0.5f, 0, 0.5f };
             float[] nrm = { 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0 };
             float[] uv = { 0, 0, 1, 0, 1, 1, 0, 1 };
-            ushort[] idx = { 0, 1, 2, 0, 2, 3 };
+            // counter-clockwise seen from above, so the front face is the lit side its normals point to: a doubleSided
+            // material lights its back face with the normal reversed, as the glTF spec asks
+            ushort[] idx = { 0, 2, 1, 0, 3, 2 };
             int pb = pos.Length * 4, nb = nrm.Length * 4, ub = uv.Length * 4, ib = idx.Length * 2;
             var bytes = new byte[pb + nb + ub + ib];
             Buffer.BlockCopy(pos, 0, bytes, 0, pb);
