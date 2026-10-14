@@ -37,6 +37,8 @@ namespace VortexEditor.Claude
 
         internal static HashSet<Guid> Touched { get; private set; } = new HashSet<Guid>();
         internal static List<FileChange> Files { get; private set; } = new List<FileChange>();
+        /// <summary>The scenes of the entities the call touched — whether Stop reverts them decides its runtime_only (#423).</summary>
+        internal static HashSet<Scene> TouchedScenes { get; private set; } = new HashSet<Scene>();
 
         /// <summary>The running call is a dry run: everything it changes is taken back afterwards, so it must not reach
         /// anything the undo does not cover — the running game (#405).</summary>
@@ -57,7 +59,12 @@ namespace VortexEditor.Claude
         }
 
         /// <summary>The running call referenced or created this entity (dependency check of Revert).</summary>
-        public static void Touch(GameEntity e) { if (e != null) Touched.Add(e.Id); }
+        public static void Touch(GameEntity e)
+        {
+            if (e == null) return;
+            Touched.Add(e.Id);
+            if (e.Scene != null) TouchedScenes.Add(e.Scene);
+        }
 
         internal static void FileWritten(FileChange f) => Files.Add(f);
 
@@ -88,6 +95,7 @@ namespace VortexEditor.Claude
             UndoLabel = null;
             Touched = new HashSet<Guid>();
             Files = new List<FileChange>();
+            TouchedScenes = new HashSet<Scene>();
             DryRun = false;
             _running = false;
             _afterSuccess.Clear();
@@ -269,6 +277,8 @@ namespace VortexEditor.Claude
             var op = new ToolOperation { Time = DateTime.Now, Tool = def.Name, Origin = origin, Arguments = Shorten(ToolJson.Serialize(args), 240), DryRun = dryRun };
             var undo = UndoRedoManager.Instance;
             bool grouped = !def.ReadOnly && !def.ManagesUndo;
+            bool playingAtStart = PlayModeService.Instance.IsPlaying;
+            var startUtc = DateTime.UtcNow;
             ToolContext.Begin(origin, dryRun);
             HashSet<Guid> before = dryRun ? AllIds() : null;
             if (grouped) undo.BeginGroup("Claude: " + def.Title);
@@ -306,6 +316,9 @@ namespace VortexEditor.Claude
                 }
                 try { EditorCommands.AfterSceneEdit(); } catch { }
             }
+            // while the game runs every change says what Stop does with it — set here, once, for every tool (#423)
+            if (playingAtStart && PlayModeService.Instance.IsPlaying && !def.ReadOnly && !dryRun && !result.IsError)
+                result = PlayModeNote(result, startUtc);
             op.Entities = ToolContext.Touched;
             op.Files = dryRun || result.IsError ? new List<FileChange>() : ToolContext.Files;
             op.Result = result.Summary();
@@ -314,6 +327,48 @@ namespace VortexEditor.Claude
             ToolContext.End(succeeded: !result.IsError);
             OperationLog.Add(op);
             return result;
+        }
+
+        internal const string RevertedOnStop = "play mode: live only, reverted on Stop";
+
+        /// <summary>
+        /// A change made while the game runs or is paused says what Stop does with it (#423). runtime_only is true when Stop
+        /// takes all of it back — the play snapshot puts every scene that was loaded at Play back, and a data file play created
+        /// for an entity that goes is deleted with it — and false, with the reason, when part of it stays: files written, or a
+        /// scene that was only loaded while playing. Flat fields on an object result — runtime_only and play_note, beside a
+        /// tool's own note, which stays what the tool says (a warning, a hint) — and a second text block after any other
+        /// result, so a result has the shape it has in edit mode.
+        /// </summary>
+        internal static ToolResult PlayModeNote(ToolResult result, DateTime sinceUtc)
+        {
+            var project = ProjectData.Current;
+            var scenes = new HashSet<Scene>(ToolContext.TouchedScenes);
+            if (project?.ActiveScene != null) scenes.Add(project.ActiveScene);   // the scene the tools create in
+            var reasons = new List<string>();
+            foreach (var s in scenes)
+                if (!Editor.Core.Viewport.EditorViewportSession.RevertsOnStop(s)) reasons.Add("'" + s.Name + "' was loaded while playing — Stop does not put it back");
+            var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var f in ToolContext.Files) { try { if (f?.Path != null) files.Add(System.IO.Path.GetFullPath(f.Path)); } catch { } }
+            foreach (var f in PlaySession.FilesWrittenSince(project?.Path, sinceUtc)) files.Add(f);
+            var stays = files.Where(f => !PlaySession.CreatedDataFile(f)).Select(System.IO.Path.GetFileName).ToList();
+            if (stays.Count > 0)
+                reasons.Add(stays.Count + (stays.Count == 1 ? " file" : " files") + " written stay on disk (" + string.Join(", ", stays.Take(3)) + (stays.Count > 3 ? ", …" : "") + ")");
+            bool reverted = reasons.Count == 0;
+            string note = reverted ? RevertedOnStop : "play mode: Stop does not take all of this back — " + string.Join("; ", reasons);
+
+            var first = result.Content.FirstOrDefault(c => c.Text != null);
+            System.Text.Json.Nodes.JsonObject obj = null;
+            if (first != null) { try { obj = System.Text.Json.Nodes.JsonNode.Parse(first.Text) as System.Text.Json.Nodes.JsonObject; } catch { } }
+            var annotated = new ToolResult { IsError = result.IsError };
+            foreach (var c in result.Content)
+            {
+                if (obj == null || !ReferenceEquals(c, first)) { annotated.Content.Add(c); continue; }
+                obj["runtime_only"] = reverted;
+                obj["play_note"] = note;
+                annotated.Content.Add(new ToolContent { Text = obj.ToJsonString(ToolJson.Options) });
+            }
+            if (obj == null) annotated.Content.Add(new ToolContent { Text = "runtime_only: " + (reverted ? "true" : "false") + " — " + note });
+            return annotated;
         }
 
         private static bool IsTrue(object v) => v switch

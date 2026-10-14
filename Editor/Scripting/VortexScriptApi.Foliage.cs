@@ -21,10 +21,13 @@ namespace Vortex
         /// <summary>Foliage layers in the active scene.</summary>
         public static int Count { get { return FoliageService.Count; } }
 
-        /// <summary>The first Foliage entity of the active scene (0 when there is none).</summary>
+        /// <summary>The first Foliage entity of the active scene as an entity handle — the kind <c>Scene.Find</c> returns and
+        /// every other call here takes (0 when there is none).</summary>
         public static long Find()
         {
-            foreach (var e in Layers()) return e.EntityId;
+            // a script handle, not the engine id: every layer loaded with its scene used to report engine id 0, the
+            // "none" value, so Foliage.Erase(Foliage.Find(), …) did nothing in a game whose foliage came from its scene
+            foreach (var e in Layers()) return Editor.Scripting.ScriptRuntime.Instance.HandleForEntity(e);
             return 0;
         }
 
@@ -85,13 +88,17 @@ namespace Vortex
         /// <summary>Write every layer's instances to its data file.</summary>
         public static int Save() { return FoliageService.SaveAll(ProjectData.Current?.ActiveScene); }
 
-        /// <summary>An entity by handle: the script runtime's table while playing, else the scene itself (editor tools, smokes).</summary>
+        /// <summary>An entity by handle: the script runtime's table (Find, Scene.Find, a behaviour's EntityId), else an engine
+        /// id of the active scene (editor tools, smokes). Two id spaces meet here, and a number that is both resolves as the
+        /// handle. Find hands out handles outside play too — an engine id can be 0, the "none" of every script call — so an
+        /// edit-mode Find leaves one handle per layer in the runtime's table until the next play session clears it.</summary>
         internal static Editor.ECS.GameEntity Resolve(long handle)
         {
             if (handle == 0) return null;
             Editor.ECS.GameEntity e = null;
             try { e = Editor.Scripting.ScriptRuntime.Instance.FindEntityByHandle(handle); } catch { }
             if (e != null) return e;
+            if (!Editor.Utilities.ID.IsValid(handle)) return null;   // INVALID_ID is every unregistered entity's engine id
             var scene = ProjectData.Current?.ActiveScene;
             if (scene?.Entities == null) return null;
             var stack = new System.Collections.Generic.Stack<Editor.ECS.GameEntity>();

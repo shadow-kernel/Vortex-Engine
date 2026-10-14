@@ -158,6 +158,7 @@ namespace VortexEditor.Services
             if (subs != null && subs.Length > 1)
             {
                 var textures = CoreAssetActions.FindTexturesForModel(full);
+                var albedo = new Lazy<int[]>(() => CoreAssetActions.AlbedoSources(full, subs.Length));   // only when a part may use the folder
                 string[] names = null;
                 try { names = VortexAPI.GetSubmeshNames(full, subs.Length); } catch { }
                 for (int i = 0; i < subs.Length; i++)
@@ -168,7 +169,9 @@ namespace VortexEditor.Services
                     string submeshPath = rel + "#submesh" + i;
                     var mr = new MeshRenderer(child) { MeshPath = submeshPath, MaterialHandle = sm.MaterialId };
                     BindSubmeshVmat(mr, rel, i, projectPath);
-                    if (string.IsNullOrEmpty(mr.MaterialPath) && textures.Count > 0 && !HasOwnTexture(sm.MaterialId)) BindTexture(mr, sm.MaterialId, TextureForSubmesh(childName, textures));
+                    // a colour-only material keeps its colour; a glTF never takes a folder image (#453)
+                    if (string.IsNullOrEmpty(mr.MaterialPath) && textures.Count > 0 && CoreAssetActions.MayUseFolderTexture(full, () => albedo.Value, i, HasOwnTexture(sm.MaterialId)))
+                        BindTexture(mr, sm.MaterialId, TextureForSubmesh(childName, textures));
                     if (sm.MaterialId >= 0) SceneRenderService.RegisterMaterialForMeshPath(submeshPath, sm.MaterialId);
                     child.AddComponentDirect(mr);
                     child.Parent = root;             // raw wiring: the whole placement is ONE undo step
@@ -184,7 +187,9 @@ namespace VortexEditor.Services
                 if (string.IsNullOrEmpty(mr.MaterialPath) && !HasOwnTexture(matId))
                 {
                     var textures = CoreAssetActions.FindTexturesForModel(full);
-                    if (textures.Count > 0) BindTexture(mr, matId, textures[0]);
+                    // a colour-only material keeps its colour; a glTF never takes a folder image (#453)
+                    if (textures.Count > 0 && CoreAssetActions.MayUseFolderTexture(full, () => ext == ".vmesh" ? null : CoreAssetActions.AlbedoSources(full, 1), 0, false))
+                        BindTexture(mr, matId, textures[0]);
                 }
                 if (matId >= 0) SceneRenderService.RegisterMaterialForMeshPath(rel, matId);
                 root.AddComponentDirect(mr);

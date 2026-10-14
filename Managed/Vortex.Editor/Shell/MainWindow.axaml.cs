@@ -55,6 +55,8 @@ namespace VortexEditor.Shell
             Session.Toast += m => ShowToast(m);
             Session.Error += m => Dispatcher.UIThread.Post(async () => await Dialogs.Alert("Vortex", m));
             PlayModeService.Instance.StateChanged += (s, st) => Dispatcher.UIThread.Post(SyncPlayButtons);
+            // Stop put the scenes' values back into the same objects (#478): the panels show them again
+            PlayModeService.Instance.StateChanged += (s, st) => { if (st == PlayState.Editing) Dispatcher.UIThread.Post(() => { Environment.Refresh(); Inspector.Refresh(); }); };
             PlayModeService.Instance.GameViewChanged += g => Dispatcher.UIThread.Post(() => { TabGame.IsChecked = g; TabScene.IsChecked = !g; });
             UndoRedoManager.Instance.StateChanged += (s, e) => Dispatcher.UIThread.Post(SyncUndoText);
             Claude.McpHost.StatusChanged += SyncClaudeStatus;

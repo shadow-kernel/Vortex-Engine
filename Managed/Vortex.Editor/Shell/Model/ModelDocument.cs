@@ -43,6 +43,9 @@ namespace VortexEditor.Shell.ModelTools
         public float EmissiveStrength;
         public float[] EmissiveColor = { 0f, 0f, 0f };
         public bool TwoSided;
+        /// <summary>The .vmat BlendMode and cutoff — from the glTF's alphaMode / alphaCutoff (#441) or the saved sidecar.</summary>
+        public string BlendMode = "Opaque";
+        public float AlphaCutoff = 0.5f;
         public readonly List<TextureSlot> Slots = new List<TextureSlot>();
 
         /// <summary>The standard PBR map types, for the "Add Map" picker (same list as the Windows editor).</summary>
@@ -269,6 +272,16 @@ namespace VortexEditor.Shell.ModelTools
                         if (p.BaseColor != null && p.BaseColor.Length >= 3) m.BaseColor = new[] { p.BaseColor[0], p.BaseColor[1], p.BaseColor[2], p.BaseColor.Length > 3 ? p.BaseColor[3] : 1f };
                         m.Metallic = Clamp01(p.Metallic);
                         m.Roughness = Clamp01(p.Roughness);
+                        // glTF MASK / BLEND / doubleSided (#441): the preview and a first save keep cut-outs cut out
+                        m.BlendMode = VortexMaterial.BlendModeName(p.BlendMode);
+                        if (p.BlendMode == 3) m.AlphaCutoff = p.AlphaCutoff;
+                        m.TwoSided = p.TwoSided;
+                        // glTF emission (#450): emissiveFactor x KHR_materials_emissive_strength; a black factor emits nothing
+                        if (p.Emits)
+                        {
+                            m.EmissiveColor = new[] { p.EmissiveColor[0], p.EmissiveColor[1], p.EmissiveColor[2] };
+                            m.EmissiveStrength = p.EmissiveStrength;
+                        }
                     }
                     if (tex != null && i < tex.Length)
                     {
@@ -627,6 +640,8 @@ namespace VortexEditor.Shell.ModelTools
             m.EmissiveStrength = Math.Max(0f, v.EmissiveStrength);
             if (v.EmissiveColor != null && v.EmissiveColor.Length >= 3) m.EmissiveColor = new[] { v.EmissiveColor[0], v.EmissiveColor[1], v.EmissiveColor[2] };
             m.TwoSided = v.TwoSided;
+            m.BlendMode = string.IsNullOrWhiteSpace(v.BlendMode) ? "Opaque" : v.BlendMode;
+            m.AlphaCutoff = v.AlphaCutoff;
             foreach (var kv in MapsOf(v))
             {
                 var p = ResolveEmbeddedMarker(kv.Value);
@@ -653,8 +668,9 @@ namespace VortexEditor.Shell.ModelTools
         }
 
         /// <summary>
-        /// The .vmat a material saves as: the existing sidecar (so every field the Model Editor does not author — blend
-        /// mode, UV tiling, custom shader, footstep sound, shadows … — survives) overlaid with the editor's values and maps.
+        /// The .vmat a material saves as: the existing sidecar (so every field the Model Editor does not author — UV
+        /// tiling, custom shader, footstep sound, shadows … — survives) overlaid with the editor's values and maps. The
+        /// blend mode and cutoff come from the material too: the sidecar's when one was loaded, else the glTF's (#441).
         /// Texture paths are absolute; the caller makes them relative for saving.
         /// </summary>
         public VortexMaterial ComposeVmat(ModelMaterial m, string basePath)
@@ -671,6 +687,8 @@ namespace VortexEditor.Shell.ModelTools
             v.EmissiveStrength = m.EmissiveStrength;
             v.EmissiveColor = new[] { m.EmissiveColor[0], m.EmissiveColor[1], m.EmissiveColor[2] };
             v.TwoSided = m.TwoSided;
+            v.BlendMode = string.IsNullOrWhiteSpace(m.BlendMode) ? "Opaque" : m.BlendMode;
+            v.AlphaCutoff = m.AlphaCutoff;
             v.AlbedoTexture = m.GetTexture(TextureMapType.Albedo);
             v.NormalTexture = m.GetTexture(TextureMapType.Normal);
             v.MetallicTexture = m.GetTexture(TextureMapType.Metallic);

@@ -386,6 +386,73 @@ EDITOR_INTERFACE int GetModelMaterialProps(const char* filepath,
 	return count;
 }
 
+// Per-submesh glTF alpha mode and sidedness (#441), so the editor writes them into the sidecar .vmat files: the blend
+// mode in Material terms (0 opaque, 1 alpha blend = BLEND, 3 alpha test = MASK), the cutoff of a MASK material (0
+// otherwise) and doubleSided as 1/0. Null outputs are skipped. Returns the submesh count.
+EDITOR_INTERFACE int GetModelMaterialAlpha(const char* filepath,
+	int* out_blend_mode, float* out_alpha_cutoff, int* out_two_sided, int max_submeshes)
+{
+	if (!filepath || max_submeshes <= 0) return 0;
+	auto parsed = parsed_model(filepath);
+	const auto& model_data = *parsed;
+	int count = static_cast<int>((std::min)(model_data.submeshes.size(), static_cast<size_t>(max_submeshes)));
+	for (int i = 0; i < count; i++)
+	{
+		const auto& s = model_data.submeshes[i];
+		if (out_blend_mode)   out_blend_mode[i] = static_cast<int>(s.blend_mode);
+		if (out_alpha_cutoff) out_alpha_cutoff[i] = s.alpha_cutoff;
+		if (out_two_sided)    out_two_sided[i] = s.two_sided ? 1 : 0;
+	}
+	return count;
+}
+
+// Per-submesh glTF emission (#450), so the editor writes it into the sidecar .vmat files: emissiveFactor as RGB
+// (out_rgb is max_submeshes * 3 floats; black = no emission, the glTF default) and KHR_materials_emissive_strength (1
+// when absent). Other formats report black. Null outputs are skipped. Returns the submesh count.
+EDITOR_INTERFACE int GetModelMaterialEmissive(const char* filepath, float* out_rgb, float* out_strength, int max_submeshes)
+{
+	if (!filepath || max_submeshes <= 0) return 0;
+	auto parsed = parsed_model(filepath);
+	const auto& model_data = *parsed;
+	int count = static_cast<int>((std::min)(model_data.submeshes.size(), static_cast<size_t>(max_submeshes)));
+	for (int i = 0; i < count; i++)
+	{
+		const auto& s = model_data.submeshes[i];
+		if (out_rgb) { out_rgb[i * 3 + 0] = s.emissive_color[0]; out_rgb[i * 3 + 1] = s.emissive_color[1]; out_rgb[i * 3 + 2] = s.emissive_color[2]; }
+		if (out_strength) out_strength[i] = s.emissive_strength;
+	}
+	return count;
+}
+
+// The warnings of the most recent model import on the calling thread (#470) — a glTF material whose maps need different
+// UV transforms, … — one per line, so the editor shows them in its console right after an import call. Returns the
+// buffer size they need including the terminator (0 = none); with out = null or max_len <= 0 it is only a size query.
+EDITOR_INTERFACE int GetLastModelImportWarnings(char* out, int max_len)
+{
+	std::string all;
+	for (const auto& w : graphics::ModelImporter::last_warnings())
+	{
+		if (!all.empty()) all += '\n';
+		all += w;
+	}
+	if (all.empty()) return 0;
+	if (out && max_len > 0) strncpy_s(out, max_len, all.c_str(), _TRUNCATE);
+	return static_cast<int>(all.size()) + 1;
+}
+
+// Per-submesh albedo source (#453), for the placement's texture-folder fallback: 0 = the material has no albedo map
+// (colour only: never textured from the folder), 1 = it names one (the folder may stand in only when that file cannot
+// be loaded), 2 = the file has no material for the submesh (e.g. an OBJ without .mtl). Returns the submesh count.
+EDITOR_INTERFACE int GetModelAlbedoSources(const char* filepath, int* out_source, int max_submeshes)
+{
+	if (!filepath || !out_source || max_submeshes <= 0) return 0;
+	auto parsed = parsed_model(filepath);
+	const auto& model_data = *parsed;
+	int count = static_cast<int>((std::min)(model_data.submeshes.size(), static_cast<size_t>(max_submeshes)));
+	for (int i = 0; i < count; i++) out_source[i] = static_cast<int>(model_data.submeshes[i].albedo_source);
+	return count;
+}
+
 // Extract textures EMBEDDED in the model (e.g. a .glb that packs its PNG/JPG inside) into out_dir as real files,
 // filling out_names[i] with the written filename per embedded-texture index ("" if it couldn't be written).
 // Returns the number of embedded textures. Lets the importer give a self-contained .glb a real textures/ folder.

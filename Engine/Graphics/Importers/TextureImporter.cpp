@@ -1,4 +1,9 @@
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <mutex>
+#include <string>
+#include <unordered_map>
 #include <vector>
 #include "TextureImporter.h"
 
@@ -147,6 +152,72 @@ namespace vortex::graphics
 
 		stbi_image_free(pixels);
 		return result;
+	}
+
+	namespace
+	{
+		// 1 = an alpha channel with a texel below 255, 0 = opaque, -1 = unreadable. An image without an alpha channel
+		// answers from its header; stb reports a palette with a tRNS chunk as four channels.
+		int translucency(const u8* data, int length)
+		{
+			int w = 0, h = 0, comp = 0;
+			if (!data || length <= 0 || !stbi_info_from_memory(data, length, &w, &h, &comp)) return -1;
+			if (stbi_is_hdr_from_memory(data, length) || (comp != 2 && comp != 4)) return 0;
+			int dw = 0, dh = 0, dc = 0;
+			unsigned char* px = stbi_load_from_memory(data, length, &dw, &dh, &dc, 4);
+			if (!px) return -1;
+			int result = 0;
+			for (size_t i = 0, n = (size_t)dw * (size_t)dh; i < n; ++i)
+				if (px[i * 4 + 3] < 255) { result = 1; break; }
+			stbi_image_free(px);
+			return result;
+		}
+
+		std::mutex s_translucency_mutex;
+		std::unordered_map<std::string, bool> s_translucency;   // "<path>|<write time>|<size>" (disk) or "pak:<path>"
+	}
+
+	bool TextureImporter::has_translucent_texels(const u8* data, u64 length, bool& known)
+	{
+		const int r = translucency(data, static_cast<int>(length));
+		known = r >= 0;
+		return r > 0;
+	}
+
+	bool TextureImporter::has_translucent_texels(const std::string& filepath, bool& known)
+	{
+		known = false;
+		if (filepath.empty()) return false;
+		std::string key;
+		std::vector<u8> bytes;
+		if (file_on_disk(filepath))
+		{
+			std::error_code ec;
+			const auto size = std::filesystem::file_size(filepath, ec);
+			const auto time = std::filesystem::last_write_time(filepath, ec);
+			if (!ec) key = filepath + "|" + std::to_string((long long)time.time_since_epoch().count()) + "|" + std::to_string((unsigned long long)size);
+		}
+		else key = "pak:" + filepath;   // a shipped game's pak does not change while it runs
+		{
+			std::lock_guard<std::mutex> lock(s_translucency_mutex);
+			auto it = key.empty() ? s_translucency.end() : s_translucency.find(key);
+			if (it != s_translucency.end()) { known = true; return it->second; }
+		}
+		if (file_on_disk(filepath))
+		{
+			std::ifstream f(filepath, std::ios::binary);
+			bytes.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+		}
+		else read_asset(filepath, bytes);
+		const int r = translucency(bytes.data(), static_cast<int>(bytes.size()));
+		if (r < 0) return false;
+		known = true;
+		if (!key.empty())
+		{
+			std::lock_guard<std::mutex> lock(s_translucency_mutex);
+			s_translucency[key] = r > 0;
+		}
+		return r > 0;
 	}
 
 	bool TextureImporter::is_format_supported(const std::string& extension)

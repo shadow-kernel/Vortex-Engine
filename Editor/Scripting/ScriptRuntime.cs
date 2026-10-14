@@ -165,7 +165,7 @@ namespace Editor.Scripting
             if (e.IsActive == active) return true;   // no-op guard: a re-add would duplicate collision shapes
             if (!_activeChanged.ContainsKey(e)) _activeChanged[e] = e.IsActive;   // restore on play end
             e.IsActive = active;
-            try { e.SyncEngineStateRecursive(active); } catch { }
+            try { e.SyncEngineState(); } catch { }   // under an inactive parent it stays out of the engine
             // #51: collision + audio follow the active state (previously a documented limitation —
             // a deactivated door/monster stayed solid and kept emitting).
             try
@@ -591,7 +591,7 @@ namespace Editor.Scripting
                 {
                     try { ApplyRenderLayerRecursive(weapon, comp.SocketRenderLayer); } catch { }
                 }
-                try { weapon.SyncEngineStateRecursive(true); } catch { }
+                try { weapon.SyncEngineState(); } catch { }
                 try { Editor.Core.Services.Physics.CollisionService.AddEntityShapes(weapon); } catch { }
                 try { Editor.Core.Services.Physics.PhysicsService.AddEntity(weapon); } catch { }
                 try { Editor.Core.Services.AudioPlaybackService.Instance.AddEntity(weapon); } catch { }   // audio began before the sockets
@@ -757,7 +757,7 @@ namespace Editor.Scripting
                     var list = r.Parent != null ? r.Parent.Children : _currentScene?.Entities;
                     if (list != null && !list.Contains(r.Entity))
                         list.Insert(Math.Min(Math.Max(r.Index, 0), list.Count), r.Entity);
-                    r.Entity.SyncEngineStateRecursive(r.Entity.IsActive);
+                    r.Entity.SyncEngineState();
                 }
                 catch { }
             }
@@ -765,11 +765,25 @@ namespace Editor.Scripting
 
             foreach (var kv in _activeChanged)
             {
-                try { kv.Key.IsActive = kv.Value; kv.Key.SyncEngineStateRecursive(kv.Value); } catch { }
+                // the setter re-registers the entity with the engine — only for one still in the scene: a runtime spawn a
+                // script switched off is gone by now (removed above, or destroyed), and re-registering it put a native
+                // entity into the engine outside any scene, one leak per such spawn and play session
+                try { if (InLiveHierarchy(kv.Key)) kv.Key.IsActive = kv.Value; else kv.Key.SetActiveFlagOnly(kv.Value); } catch { }
             }
             _activeChanged.Clear();
 
             Editor.Core.Services.SceneRenderService.RuntimeDirty = Editor.Core.Services.SceneRenderService.StaticDirty = true;   // structural (#364 A)
+        }
+
+        /// <summary>True when the entity hangs in its scene: every level of it is in its parent's or the scene's list.</summary>
+        private static bool InLiveHierarchy(GameEntity e)
+        {
+            for (var x = e; x != null; x = x.Parent)
+            {
+                var list = x.Parent != null ? x.Parent.Children : x.Scene?.Entities;
+                if (list == null || !list.Contains(x)) return false;
+            }
+            return true;
         }
 
         /// <summary>Last compile diagnostics (empty on success) — surfaced to the user.</summary>
@@ -1026,6 +1040,19 @@ namespace Editor.Scripting
             Vortex.Time.DeltaTime = dt;
             Vortex.Input.PollGamepad();   // refresh controller state once per tick (scripts read Input.LeftStickX etc.)
             CompactBehaviours();          // drop what was destroyed since the last tick — never inside the loops below
+            if (_startPending.Count > 0)  // scripts attached while paused start before their first Update (#423)
+            {
+                var starting = _startPending.ToArray();
+                _startPending.Clear();
+                foreach (var b in starting)
+                {
+                    if (!IsLive(b)) continue;   // destroyed before it ever ran
+                    var prev = _dispatching; _dispatching = b;
+                    try { b.Start(); }
+                    catch (Exception ex) { LogScriptError("Start", b, ex); }
+                    finally { _dispatching = prev; }
+                }
+            }
             for (int i = 0; i < _behaviours.Count; i++)
             {
                 var b = _behaviours[i];
@@ -1083,6 +1110,9 @@ namespace Editor.Scripting
             try { Editor.Core.Services.Physics.PhysicsService.SubmitDebugDraw(); } catch { }   // View ▸ Physics Debug (#106)
             try { Editor.Core.Services.AI.AiRuntime.SubmitDebugDraw(); } catch { }           // navmesh / agent paths / patrol routes / vision cones
             RenderDebugConsole();
+
+            // play stopped during this tick: no pose may land in the restored edit scene (#410)
+            if (!_active) return;
 
             // Skeletal animation: advance every Animator AFTER behaviours ran, so a same-frame
             // PlayAnimation() takes effect immediately. This is the one tick all three play drivers share.
@@ -1426,6 +1456,7 @@ namespace Editor.Scripting
             _uiActions.Clear();
             _behaviours.Clear();
             _compactPending = false;
+            _startPending.Clear();
             _entitiesById.Clear();
             _handlesByEntity.Clear();
             _scriptOf.Clear();
@@ -1602,7 +1633,7 @@ namespace Editor.Scripting
         public bool AttachAtRuntime(GameEntity e) => AttachAtRuntime(e, null);
 
         /// <summary>As <see cref="AttachAtRuntime(GameEntity)"/> for one Script component of the entity (null = every
-        /// one): true when it was started now.</summary>
+        /// one): true when it was started now — while paused, it starts on the next tick that plays (#423).</summary>
         public bool AttachAtRuntime(GameEntity e, Script script)
         {
             if (e == null || _scriptAsm == null) return false;
@@ -1614,9 +1645,12 @@ namespace Editor.Scripting
                 var b = InstantiateScript(e, sc, _scriptAsm);
                 if (b != null) started.Add(b);
             }
+            // paused: nothing of the game may run now — Start waits for the next tick that plays (#423)
+            bool paused = Editor.Core.Services.PlayModeService.Instance.State == Editor.Core.Services.PlayState.Paused;
             foreach (var b in started)
             {
                 if (!IsLive(b)) continue;   // an earlier Start() destroyed the entity
+                if (paused) { _startPending.Add(b); continue; }
                 var prev = _dispatching; _dispatching = b;
                 try { b.Start(); }
                 catch (Exception ex) { LogScriptError("Start", b, ex); }
@@ -1624,6 +1658,8 @@ namespace Editor.Scripting
             }
             return started.Count > 0;
         }
+
+        private readonly List<Vortex.VortexBehaviour> _startPending = new List<Vortex.VortexBehaviour>();
 
         /// <summary>Every enabled Script component of the entity gets its own behaviour (#408) — the runtime used to take only
         /// the first one (GetComponent) and silently drop the rest.</summary>
@@ -2382,6 +2418,14 @@ namespace Editor.Scripting
         public string ConsumePendingScene() { var s = _pendingScene; _pendingScene = null; return s; }
         public string PendingScene { get { return _pendingScene; } } // diagnostic peek
 
+        // --- deferred quit of in-editor play (#410): Application.Quit() used to stop play right away, from inside the
+        // behaviour's Update — End() and the play-snapshot restore ran in the middle of the tick, and the rest of the tick
+        // (physics, LateUpdate, the animation and bone-socket pass) then wrote play-time poses into the restored edit
+        // scene. Now it only asks; the editor's viewport stops play after the whole tick, through the toolbar's Stop.
+        private bool _quitRequested;
+        /// <summary>True once after a script asked to quit in-editor play (Application.Quit); the caller stops play.</summary>
+        public bool ConsumeQuitRequest() { bool q = _quitRequested; _quitRequested = false; return q; }
+
         // --- mouse mode (game-controlled via Vortex.Cursor; the GameWindow enforces capture) ---
         private bool _cursorLocked; // default false: free cursor (menus/lobby) until a script locks it
         void Vortex.IScriptHost.SetCursorLocked(bool locked) { _cursorLocked = locked; }
@@ -2433,8 +2477,8 @@ namespace Editor.Scripting
                 // native loop (g_running=false); RunGameHost then returns and BootPlayer calls Shutdown() to exit.
                 if (Editor.Core.Services.PlayModeService.Instance.NativeGameHostRunning)
                     Editor.DllWrapper.VortexAPI.RequestGameHostExit();
-                else
-                    Editor.Core.Services.PlayModeService.Instance.Stop(); // in-editor play: just stop, don't kill the editor
+                else if (Editor.Core.Services.PlayModeService.Instance.IsPlaying)
+                    _quitRequested = true;   // in-editor play: stop after this tick (#410), don't kill the editor
             }
             catch { }
         }

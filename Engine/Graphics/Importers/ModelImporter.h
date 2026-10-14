@@ -33,6 +33,20 @@ namespace vortex::graphics
 	u8 ao_channel{ 0 };
 	bool normal_opengl{ false };   // normal map uses the OpenGL (+Y) convention — glTF's convention
 	bool normal_is_bump{ false };  // "normal" came from a HEIGHT/bump slot (OBJ map_Bump): may be grayscale
+	// glTF alphaMode / alphaCutoff / doubleSided (#441) in Material terms: blend_mode 0 opaque, 1 alpha blend (BLEND),
+	// 3 alpha test (MASK) discarding below alpha_cutoff; two_sided = no back-face culling. Other formats stay opaque.
+	u32 blend_mode{ 0 };
+	float alpha_cutoff{ 0.0f };
+	bool two_sided{ false };
+	// glTF emission (#450): emissiveFactor (black = none, the glTF default) and KHR_materials_emissive_strength (1 when
+	// absent) — emission = factor * strength * emissive_texture. Other formats leave it black.
+	float emissive_color[3]{ 0.0f, 0.0f, 0.0f };
+	float emissive_strength{ 1.0f };
+	bool emits() const { return emissive_strength > 0.0f && (emissive_color[0] > 0.0f || emissive_color[1] > 0.0f || emissive_color[2] > 0.0f); }
+	// What the submesh's material says about its albedo (#453), for the texture-folder scans: 0 = no albedo map (a
+	// colour-only material — never textured by a scan), 1 = it names a map (a scan may stand in when that file is
+	// missing), 2 = the file has no material for it (Assimp's placeholder, e.g. an OBJ without .mtl — a scan may).
+	u8 albedo_source{ 0 };
 	};
 
 	// ---- Skeletal animation data (green-field; see ANIMATION_SYSTEM_DESIGN.md) ----
@@ -85,6 +99,9 @@ namespace vortex::graphics
 		std::vector<SkeletonBoneData> bones;
 		std::vector<AnimationClipData> animations;
 		bool has_skeleton() const { return !bones.empty(); }
+		// What the import could not reproduce, one message each (e.g. a material whose maps need different UV transforms,
+		// #470); the editor shows them in its console.
+		std::vector<std::string> warnings;
 
 		bool is_valid() const { return !submeshes.empty(); }
 		void clear()
@@ -95,6 +112,7 @@ namespace vortex::graphics
 			nodes.clear();
 			bones.clear();
 			animations.clear();
+			warnings.clear();
 		}
 	};
 
@@ -136,6 +154,12 @@ namespace vortex::graphics
 		/// turn a self-contained .glb into a model folder with a real textures/ subfolder.
 		/// </summary>
 		static std::vector<std::string> extract_embedded_textures(const std::string& filepath, const std::string& out_dir);
+
+		/// <summary>
+		/// The warnings of the most recent import_from_file / import_from_memory on the calling thread (#470), so a
+		/// caller that only gets ids back (the editor's model import) can still show them.
+		/// </summary>
+		static const std::vector<std::string>& last_warnings();
 
 	private:
 	static void calculate_bounds(ImportedModelData& data);

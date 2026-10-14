@@ -57,6 +57,20 @@ namespace Editor.Core.Assets
         // Material settings
         public bool TwoSided { get; set; } = false;
         public string BlendMode { get; set; } = "Opaque"; // Opaque, AlphaBlend, AlphaTest, Additive
+
+        /// <summary>The <see cref="BlendMode"/> name of an engine blend mode (the native material's numbering): 0 Opaque,
+        /// 1 AlphaBlend, 2 Additive, 3 AlphaTest; anything else Opaque.</summary>
+        public static string BlendModeName(int engineBlendMode)
+        {
+            switch (engineBlendMode)
+            {
+                case 1: return "AlphaBlend";
+                case 2: return "Additive";
+                case 3: return "AlphaTest";
+                default: return "Opaque";
+            }
+        }
+
         public string ShaderType { get; set; } = "StandardPBR"; // StandardPBR, Unlit, Subsurface
         /// <summary>Optional path (project-relative) to a custom shader asset (.vshader or .hlsl) assigned in the
         /// Material Editor. Null = the built-in shader for ShaderType. Round-trips via System.Text.Json.</summary>

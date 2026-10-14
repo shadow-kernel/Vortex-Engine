@@ -28,7 +28,9 @@ namespace vortex::transform {
 			scales.emplace_back(transform_init_info.scale);
 		}
 
-		return component{ transform_id{ (id::id_type) positions.size() - 1 }};
+		// The slot is the entity's index — also when a removed entity's index is reused. (It returned the LAST slot, so
+		// a reused entity read another entity's transform while set_transform wrote its own.)
+		return component{ transform_id{ entity_index } };
 	}
 
 	void set_transform(game_entity::entity entity, const init_info& transform_init_info)

@@ -260,6 +260,7 @@ namespace vortex::graphics
 				maps.push_back(sm.diffuse_texture);
 				if (!sm.normal_is_bump) maps.push_back(sm.normal_texture);
 				maps.push_back(sm.metallic_texture); maps.push_back(sm.roughness_texture); maps.push_back(sm.ao_texture);
+				if (sm.emits()) maps.push_back(sm.emissive_texture);
 			}
 			prefetch_textures(maps);
 		}
@@ -293,6 +294,10 @@ namespace vortex::graphics
 				mat->set_base_color({ submesh.base_color[0], submesh.base_color[1], submesh.base_color[2], submesh.base_color[3] });
 				mat->set_metallic(submesh.metallic);
 				mat->set_roughness(submesh.roughness);
+				// glTF MASK / BLEND / doubleSided (#441): cut-out leaves, glass and two-sided cards straight from the import
+				mat->set_blend_mode(submesh.blend_mode);
+				mat->set_alpha_cutoff(submesh.alpha_cutoff);
+				mat->set_double_sided(submesh.two_sided);
 			}
 
 			// Load texture - ModelImporter already assigned the correct path
@@ -330,6 +335,14 @@ namespace vortex::graphics
 				if (auto* t = load(submesh.metallic_texture, "_metallic")) mat->set_metallic_texture(t);
 				if (auto* t = load(submesh.roughness_texture, "_roughness")) mat->set_roughness_texture(t);
 				if (auto* t = load(submesh.ao_texture, "_ao")) mat->set_ao_texture(t);
+				// glTF emission (#450): emissiveFactor x KHR_materials_emissive_strength, x the emissive map — a placed glTF
+				// glows without the import dialog's sidecar. A black factor emits nothing, so its map is not even uploaded.
+				if (submesh.emits())
+				{
+					const float s = submesh.emissive_strength;
+					mat->set_emissive_color(submesh.emissive_color[0] * s, submesh.emissive_color[1] * s, submesh.emissive_color[2] * s);
+					if (auto* t = load(submesh.emissive_texture, "_emissive")) mat->set_emissive_texture(t);
+				}
 			}
 
 			result.submeshes.push_back(sub_result);

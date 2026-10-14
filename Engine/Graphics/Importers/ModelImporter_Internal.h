@@ -7,6 +7,7 @@
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
 #include <assimp/config.h>   // AI_CONFIG_* importer property keys (FBX pivot collapsing)
+#include <assimp/GltfMaterial.h>   // AI_MATKEY_GLTF_ALPHAMODE / _ALPHACUTOFF (#441)
 #endif
 
 #include <algorithm>

@@ -119,12 +119,13 @@ namespace VortexEditor.Claude
                 var target = sc; string fname = f.Name;
                 UndoRedoManager.Instance.Execute(new ActionCommand("Set " + fname, () => target.SetFieldValue(fname, formatted), () => target.SetFieldValue(fname, old)));
             }
-            // the behaviour of THIS Script component — an entity can run several (#408)
+            // the behaviour of THIS Script component — an entity can run several (#408). Paused counts as playing: the paused
+            // behaviour holds the values when play goes on, as attach_script's do (#423); nothing of the game runs for it.
             var entity = sc.Entity;
-            if (live && entity != null && PlayModeService.Instance.State == PlayState.Playing)
+            if (live && entity != null && SceneModel.Playing)
                 ToolContext.AfterSuccess("live fields " + entity.Id + "/" + System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(sc), () =>
                 {
-                    if (PlayModeService.Instance.State == PlayState.Playing) ScriptRuntime.Instance.ApplyFieldsToLiveBehaviour(entity, sc);
+                    if (SceneModel.Playing) ScriptRuntime.Instance.ApplyFieldsToLiveBehaviour(entity, sc);
                 });
             return f.Name;
         }
