@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
+#include <string>
 #include <vector>
 
 using namespace vortex;
@@ -40,6 +41,7 @@ public:
 				run_query_tests();
 				run_serialization_tests();
 				run_crowd_tests();
+				run_tall_level_tests();   // replaces the loaded navmesh
 			}
 			run_error_tests();
 		}
@@ -128,6 +130,7 @@ private:
 		check("bake stats: polygons + input counted", stats.poly_count > 10 && stats.input_triangles == 6 && stats.input_boxes == 4);
 		check("bake progress reaches 1", navigation::bake_progress() >= 0.999f);
 		check("bake is fast (< 5 s)", stats.bake_ms < 5000.0f);
+		check("a level that fits one heightfield column leaves no bake notes", bake_notes().empty());
 
 		_blob.assign((size_t)size, 0);
 		check("bake_result_copy returns the whole blob", navigation::bake_result_copy(_blob.data(), size) == size
@@ -431,6 +434,95 @@ private:
 		const u32 w = navigation::agent_add(a0, &p);
 		navigation::load(_blob.data(), (s32)_blob.size());
 		check("reload drops agents", w != 0 && !navigation::agent_valid(w) && navigation::agent_count() == 0);
+	}
+
+	// ---- tall levels (#451) ---------------------------------------------------------------------------------------
+
+	static std::string bake_notes()
+	{
+		std::string s((size_t)std::max(0, navigation::bake_notes_copy(nullptr, 0)) + 1, '\0');
+		const s32 n = navigation::bake_notes_copy(s.data(), (s32)s.size());
+		s.resize((size_t)std::max(0, n));
+		return s;
+	}
+
+	// Bakes boxes (+ optional triangles) and loads the result; the blob size, or <= 0.
+	static s32 bake_and_load(const std::vector<f32>& verts, const std::vector<s32>& tris, const std::vector<f32>& boxes,
+		const navigation::bake_settings& s, navigation::bake_stats& st)
+	{
+		const s32 size = navigation::bake(verts.empty() ? nullptr : verts.data(), (s32)verts.size() / 3, tris.empty() ? nullptr : tris.data(),
+			(s32)tris.size() / 3, nullptr, boxes.empty() ? nullptr : boxes.data(), (s32)boxes.size() / navigation::box_floats, nullptr, &s, &st);
+		if (size <= 0) return size;
+		std::vector<u8> blob((size_t)size);
+		navigation::bake_result_copy(blob.data(), size);
+		return navigation::load(blob.data(), size) ? size : -100;
+	}
+
+	static bool on_navmesh_at(f32 x, f32 y, f32 z, f32 tolerance)
+	{
+		const f32 q[3] = { x, y, z };
+		f32 p[3]{};
+		return navigation::closest_point(q, nullptr, p) && std::fabs(p[1] - y) < tolerance && std::fabs(p[0] - x) < 0.2f && std::fabs(p[2] - z) < 0.2f;
+	}
+
+	static s32 path_status(f32 ax, f32 ay, f32 az, f32 bx, f32 by, f32 bz, f32* end_y = nullptr)
+	{
+		std::vector<f32> pts(256 * 3);
+		const f32 a[3] = { ax, ay, az }, b[3] = { bx, by, bz };
+		s32 status = -1;
+		const s32 n = navigation::find_path(a, b, nullptr, pts.data(), 256, &status);
+		if (end_y) *end_y = n > 0 ? pts[(size_t)(n - 1) * 3 + 1] : -1.0e9f;
+		return n > 0 ? status : navigation::path_invalid;
+	}
+
+	// One heightfield column holds RC_SPAN_MAX_HEIGHT (8191) cells of the cell height — 819 m at the default 0.1 m. The
+	// bake used to drop (squash onto the top cell) everything higher above the lowest geometry and still report success.
+	void run_tall_level_tests()
+	{
+		navigation::bake_settings s{};
+		navigation::default_settings(&s);   // cell 0.2, cell height 0.1, tiles of 48 cells
+		std::vector<f32> boxes;
+		auto box = [&](f32 cx, f32 cy, f32 cz, f32 hx, f32 hy, f32 hz) { boxes.insert(boxes.end(), { cx, cy, cz, hx, hy, hz, 0, 0, 0, 1 }); };
+		navigation::bake_stats st{};
+
+		// (a) the report's level: a floor at y = 0 and one 1000 m higher, 100 m to the side.
+		box(0.0f, -0.2f, 0.0f, 10.0f, 0.2f, 10.0f);
+		box(100.0f, 999.8f, 0.0f, 10.0f, 0.2f, 10.0f);
+		s32 size = bake_and_load({}, {}, boxes, s, st);
+		std::printf("[info] floors at 0 and 1000 m: %d bytes, %d polys in %d tiles; notes: \"%s\"\n", size, st.poly_count, st.tile_count, bake_notes().c_str());
+		check("tall level (floors at y 0 and 1000): bake succeeds", size > 0);
+		check("tall level: the upper floor has navmesh at its own height", on_navmesh_at(100.0f, 1000.0f, 0.0f, 0.3f));
+		check("tall level: the lower floor keeps its navmesh", on_navmesh_at(0.0f, 0.0f, 0.0f, 0.3f));
+		check("tall level: a path across the upper floor", path_status(95.0f, 1000.0f, -5.0f, 105.0f, 1000.0f, 5.0f) == navigation::path_complete);
+		check("tall level: nothing lost, no bake notes (each tile fits its own height window)", bake_notes().empty());
+
+		// (b) a tile that is itself taller than a column: a 4 x 4 m pillar from the floor up to y = 1500. That tile is
+		// built with a coarser cell height and the bake says so; the pillar top and the floor around it keep their navmesh.
+		boxes.clear();
+		box(0.0f, -0.2f, 0.0f, 10.0f, 0.2f, 10.0f);
+		box(3.0f, 750.0f, 3.0f, 2.0f, 750.0f, 2.0f);
+		size = bake_and_load({}, {}, boxes, s, st);
+		const std::string notes = bake_notes();
+		std::printf("[info] 1500 m pillar: %d bytes, %d polys in %d tiles; notes: \"%s\"\n", size, st.poly_count, st.tile_count, notes.c_str());
+		check("1500 m pillar: bake succeeds", size > 0);
+		check("1500 m pillar: its top has navmesh", on_navmesh_at(3.0f, 1500.0f, 3.0f, 0.4f));
+		check("1500 m pillar: the floor beside it (same tile) and further away keeps its navmesh",
+			on_navmesh_at(7.5f, 0.0f, 7.5f, 0.3f) && on_navmesh_at(-6.0f, 0.0f, -6.0f, 0.3f));
+		check("1500 m pillar: a path past it through the coarser tile", path_status(-8.0f, 0.0f, -8.0f, 8.0f, 0.0f, 8.0f) == navigation::path_complete);
+		check("1500 m pillar: the bake notes name the coarser cell height", notes.find("coarser Cell Height") != std::string::npos);
+
+		// (c) the regular test level plus a platform 1200 m up and away from it: every tile now gets its own height window,
+		// and the level's paths stay what they were.
+		std::vector<f32> level_boxes = _boxes;
+		level_boxes.insert(level_boxes.end(), { 40.0f, 1200.0f, 40.0f, 3.0f, 0.5f, 3.0f, 0, 0, 0, 1 });
+		size = bake_and_load(_verts, _tris, level_boxes, _settings, st);
+		std::printf("[info] test level + platform at 1200 m: %d bytes, %d polys in %d tiles\n", size, st.poly_count, st.tile_count);
+		check("windowed test level: bake succeeds", size > 0);
+		f32 end_y = 0.0f;
+		check("windowed test level: path around the wall", path_status(-5.0f, 0.0f, 0.0f, 5.0f, 0.0f, 0.0f) == navigation::path_complete);
+		check("windowed test level: path up the ramp onto the platform", path_status(0.0f, 0.0f, -10.0f, 10.0f, 2.0f, 10.0f, &end_y) == navigation::path_complete
+			&& std::fabs(end_y - 2.0f) < 0.35f);
+		check("windowed test level: the high platform has navmesh", on_navmesh_at(40.0f, 1200.5f, 40.0f, 0.3f));
 	}
 
 	void run_error_tests()

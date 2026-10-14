@@ -274,7 +274,8 @@ namespace VortexEditor.Claude.Tools
             Directory.CreateDirectory(outDir);
             GeneratedSound g;
             try { g = await b.GenerateAsync(req, outDir, ct); }
-            catch (Exception ex) when (!(ex is OperationCanceledException)) { throw new ToolError(b.Name + " could not generate the sound: " + ex.Message); }
+            // the whole cause chain: a TLS failure's reason sits two inner exceptions down (#403)
+            catch (Exception ex) when (!(ex is OperationCanceledException)) { throw new ToolError(b.Name + " could not generate the sound: " + StoreHttp.Describe(ex)); }
             if (g == null || string.IsNullOrEmpty(g.FilePath) || !File.Exists(g.FilePath)) throw new ToolError(b.Name + " returned no audio.");
             var recipe = SoundRecipe.From(g, prompt, "claude", null, null);
             var saved = await Task.Run(() => SoundStudioLibrary.Save(g, recipe, add_to_project, project.Path, project.Name, new[] { "Claude" }));

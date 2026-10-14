@@ -133,7 +133,8 @@ The engine is used for horror games and tactical shooters in the style of Call o
                     catch (OperationCanceledException) { throw; }
                     catch (Exception ex)
                     {
-                        toolResults.Add(new JsonObject { ["type"] = "tool_result", ["tool_use_id"] = id, ["is_error"] = true, ["content"] = ex.Message });
+                        // the whole cause chain, so Claude can tell a refused TLS handshake from a bad prompt (#403)
+                        toolResults.Add(new JsonObject { ["type"] = "tool_result", ["tool_use_id"] = id, ["is_error"] = true, ["content"] = StoreHttp.Describe(ex) });
                     }
                 }
                 _messages.Add(new JsonObject { ["role"] = "user", ["content"] = toolResults });
