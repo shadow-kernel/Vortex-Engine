@@ -66,6 +66,7 @@ namespace Editor.Core.Services.Physics
             public uint BodyId;           // physics body handle for DYNAMIC shapes (0 for the static world)
             public bool Dynamic;          // published per step by PhysicsService (a Jolt rigid body), not baked
             public bool Trigger;          // in _triggers (reports overlap) rather than _world (blocks)
+            public bool Surface;          // a terrain: triangles that enclose nothing (OverlapPoint)
 
             // #362 part two: a MOVABLE triangle shape — a MeshCollider under a kinematic Rigidbody (cars, lifts,
             // doors) — keeps its scaled local-space triangles and a grid over THEM, built once. A move re-transforms
@@ -594,17 +595,22 @@ namespace Editor.Core.Services.Physics
         /// unit normal (facing the ray origin) and the hit entity.
         /// Rays that start inside geometry (#418, the same contract as the Jolt cast): a box, sphere or capsule that
         /// contains the origin is not hit; a mesh collider is a surface and is hit from either side (normal flipped
-        /// towards the origin). <paramref name="ignore"/> and everything under it are never hit (#406 / #418) — a ray
-        /// that starts deep inside the caller's own collider passes through it.</summary>
+        /// towards the origin). An origin ON a surface (within <see cref="RaySurfaceSkin"/> of it) pointing into it hits it
+        /// at distance 0; pointing away it does not, for meshes too. <paramref name="ignore"/> and everything under it are
+        /// never hit (#406 / #418) — a ray that starts deep inside the caller's own collider passes through it.</summary>
         public static bool Raycast(Vector3 origin, Vector3 direction, float maxDist, int layerMask,
             out Vector3 hitPoint, out Vector3 hitNormal, out GameEntity hitEntity, out float hitDist, GameEntity ignore = null)
         {
             hitPoint = origin; hitNormal = new Vector3(0, 1, 0); hitEntity = null; hitDist = 0f;
-            V3 o = From(origin);
             V3 d = From(direction).Norm();
             if (d.Len() < 0.5f || maxDist <= 0f) return false;
+            // the cast starts RaySurfaceSkin behind the origin, so a ray that starts on a surface (a probe from a crate's
+            // top, a ledge point) still enters it; distances are measured from the origin itself, clamped at 0
+            V3 o = From(origin) - d * RaySurfaceSkin;
 
-            float bestT = maxDist; Shape best = null; V3 bestN = new V3(0, 1, 0);
+            // a surface exactly maxDist away still counts (Jolt's fraction 1 does): a hair of slack, the distance clamped
+            float reach = maxDist + RaySurfaceSkin;
+            float bestT = reach + reach * 1e-6f + 1e-6f; Shape best = null; V3 bestN = new V3(0, 1, 0);
             for (int list = 0; list < 2; list++)
             {
                 var shapes = list == 0 ? _world : _dynamic;   // static level + the simulated rigid bodies
@@ -619,7 +625,7 @@ namespace Editor.Core.Services.Physics
                     {
                         // the ray must enter the mesh's box before any triangle is worth testing (#362)
                         if (!RayTouchesAabb(o, d, s.Min, s.Max, bestT)) continue;
-                        got = RayTris(o, d, s, bestT, out t, out n);
+                        got = RayTris(o, d, s, bestT, out t, out n, 2f * RaySurfaceSkin);
                     }
                     else if (s.Kind == Kind.Box) got = RayObb(o, d, s, bestT, out t, out n);
                     else if (s.Kind == Kind.Sphere) got = RaySphere(o, d, s.Center, s.Radius, bestT, out t, out n);
@@ -629,16 +635,85 @@ namespace Editor.Core.Services.Physics
             }
             if (best == null) return false;
 
-            hitDist = bestT;
+            hitDist = Math.Min(maxDist, Math.Max(0f, bestT - RaySurfaceSkin));
             hitPoint = To(o + d * bestT);
             hitNormal = To(bestN);
             hitEntity = best.Owner;
             return true;
         }
 
+        /// <summary>How far behind its origin <see cref="Raycast"/> starts (1 mm, the Jolt cast's skin too): a ray that
+        /// starts on a surface still hits it.</summary>
+        public const float RaySurfaceSkin = 0.001f;
+
+        /// <summary>#418: every entity whose solid collider contains <paramref name="point"/> — the collision world's answer
+        /// to Physics.OverlapPoint when no Jolt world runs, with the Jolt query's contract: boxes, spheres and capsules
+        /// (foliage trunks too) contain their inside, a closed mesh contains what it encloses (an odd number of its
+        /// triangles straight above the point, as Jolt counts), a terrain contains nothing; triggers are left out. The
+        /// static colliders and the simulated bodies; one entry per entity. Characters are no part of this world.</summary>
+        public static List<GameEntity> OverlapPoint(Vector3 point)
+        {
+            var result = new List<GameEntity>();
+            if (!IsBuilt) return result;
+            V3 p = From(point);
+            for (int list = 0; list < 2; list++)
+            {
+                var shapes = list == 0 ? _world : _dynamic;
+                for (int i = 0; i < shapes.Count; i++)
+                {
+                    var s = shapes[i];
+                    if (s == null || s.Owner == null) continue;
+                    if (p.X < s.Min.X || p.Y < s.Min.Y || p.Z < s.Min.Z || p.X > s.Max.X || p.Y > s.Max.Y || p.Z > s.Max.Z) continue;
+                    if (!ContainsPoint(s, p) || result.Contains(s.Owner)) continue;
+                    result.Add(s.Owner);
+                }
+            }
+            return result;
+        }
+
+        private static bool ContainsPoint(Shape s, V3 p)
+        {
+            switch (s.Kind)
+            {
+                case Kind.Box:
+                {
+                    var d = p - s.Center;
+                    return Math.Abs(d.Dot(s.AxX)) <= s.Half.X && Math.Abs(d.Dot(s.AxY)) <= s.Half.Y && Math.Abs(d.Dot(s.AxZ)) <= s.Half.Z;
+                }
+                case Kind.Sphere: return (p - s.Center).Len() <= s.Radius;
+                case Kind.Capsule: return (p - ClosestOnSeg(s.A, s.B, p)).Len() <= s.Radius;
+                default:
+                {
+                    if (s.Surface || s.Tris == null) return false;
+                    // crossings of a ray straight up through the mesh, back faces included: odd = enclosed
+                    var up = new V3(0f, 1f, 0f);
+                    float len = s.Max.Y - p.Y + 0.01f;
+                    var tris = s.Tris; int crossings = 0;
+                    if (s.Grid != null)
+                    {
+                        var buf = s.QueryRay(p, up, len, out int cnt);
+                        for (int j = 0; j < cnt; j++)
+                        {
+                            int k = buf[j] * 3; float t = len; V3 n = up;
+                            if (TriRay(p, up, tris[k], tris[k + 1], tris[k + 2], ref t, ref n)) crossings++;
+                        }
+                    }
+                    else
+                        for (int k = 0; k + 2 < tris.Length; k += 3)
+                        {
+                            float t = len; V3 n = up;
+                            if (TriRay(p, up, tris[k], tris[k + 1], tris[k + 2], ref t, ref n)) crossings++;
+                        }
+                    return (crossings & 1) == 1;
+                }
+            }
+        }
+
         // Ray vs triangle soup — Möller–Trumbore per triangle, closest hit + geometric normal flipped
-        // to face the ray origin.
-        private static bool RayTris(V3 o, V3 d, Shape s, float maxDist, out float t, out V3 n)
+        // to face the ray origin. A triangle seen from BEHIND closer than backFaceZone is skipped: Raycast starts its ray
+        // a skin behind the caller's origin and passes two skins — such a triangle is the surface the origin lies on, the
+        // ray pointing away from its front (the floor under an upward ray), no hit, as for a box the ray leaves.
+        private static bool RayTris(V3 o, V3 d, Shape s, float maxDist, out float t, out V3 n, float backFaceZone = 0f)
         {
             t = maxDist; n = new V3(0, 1, 0); bool any = false;
             var tris = s.Tris;
@@ -646,17 +721,17 @@ namespace Editor.Core.Services.Physics
             {
                 var buf = s.QueryRay(o, d, maxDist, out int cnt);
                 DebugLastTriTests = cnt;
-                for (int j = 0; j < cnt; j++) { int i = buf[j] * 3; if (TriRay(o, d, tris[i], tris[i + 1], tris[i + 2], ref t, ref n)) any = true; }
+                for (int j = 0; j < cnt; j++) { int i = buf[j] * 3; if (TriRay(o, d, tris[i], tris[i + 1], tris[i + 2], ref t, ref n, backFaceZone)) any = true; }
             }
             else
             {
                 DebugLastTriTests = tris.Length / 3;
-                for (int i = 0; i + 2 < tris.Length; i += 3) if (TriRay(o, d, tris[i], tris[i + 1], tris[i + 2], ref t, ref n)) any = true;
+                for (int i = 0; i + 2 < tris.Length; i += 3) if (TriRay(o, d, tris[i], tris[i + 1], tris[i + 2], ref t, ref n, backFaceZone)) any = true;
             }
             return any;
         }
 
-        private static bool TriRay(V3 o, V3 d, V3 v0, V3 v1, V3 v2, ref float t, ref V3 n)
+        private static bool TriRay(V3 o, V3 d, V3 v0, V3 v1, V3 v2, ref float t, ref V3 n, float backFaceZone = 0f)
         {
             V3 e1 = v1 - v0, e2 = v2 - v0;
             V3 p = Cross(d, e2);
@@ -670,9 +745,11 @@ namespace Editor.Core.Services.Physics
             float hitT = e2.Dot(q) * inv;
             if (hitT >= 0f && hitT < t)
             {
-                t = hitT;
                 var tn = Cross(e1, e2).Norm();
-                n = tn.Dot(d) > 0f ? tn * -1f : tn;
+                bool back = tn.Dot(d) > 0f;
+                if (back && hitT < backFaceZone) return false;
+                t = hitT;
+                n = back ? tn * -1f : tn;
                 return true;
             }
             return false;
@@ -960,7 +1037,7 @@ namespace Editor.Core.Services.Physics
                     mn = new V3(Math.Min(mn.X, v.X), Math.Min(mn.Y, v.Y), Math.Min(mn.Z, v.Z));
                     mx = new V3(Math.Max(mx.X, v.X), Math.Max(mx.Y, v.Y), Math.Max(mx.Z, v.Z));
                 }
-                AddShape(e, new Shape { Kind = Kind.Tris, Tris = tris, Min = mn, Max = mx, Grid = TriGrid.Build(tris, mn, mx) }, false);
+                AddShape(e, new Shape { Kind = Kind.Tris, Tris = tris, Min = mn, Max = mx, Grid = TriGrid.Build(tris, mn, mx), Surface = true }, false);
             }
             catch { }
         }

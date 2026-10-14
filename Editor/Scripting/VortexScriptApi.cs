@@ -1405,9 +1405,10 @@ namespace Vortex
         /// the entity whose EntityId was passed to MoveCharacter). A ray with an explicit layer mask casts against the
         /// engine's own collision world, where characters are never hit.</para>
         /// <para>Rays that start inside something (#418), the same on every path: a box, sphere, capsule or convex collider
-        /// that contains the origin is not hit — the ray reports what lies beyond it, never a hit at distance 0. A mesh
-        /// collider or terrain is a surface and is hit from either side. To ask "is this point inside a collider?" use
-        /// <see cref="OverlapPoint"/>.</para></summary>
+        /// that contains the origin is not hit — the ray reports what lies beyond it. A ray that starts ON a surface (or
+        /// less than 1 mm inside it) and points into it hits it at distance 0 — a probe from the top of a crate finds the
+        /// crate. A mesh collider or terrain is a surface and is hit from either side. To ask "is this point inside a
+        /// collider?" use <see cref="OverlapPoint"/>.</para></summary>
         public static bool Raycast(Vector3 origin, Vector3 direction, float maxDist, out RaycastHit hit, int layerMask = ~0)
             => Raycast(origin, direction, maxDist, out hit, layerMask, 0);
 
@@ -1449,11 +1450,14 @@ namespace Vortex
         /// the question a ray no longer answers (a ray that starts inside a convex collider does not hit it). Box, sphere,
         /// capsule and convex colliders are solid; a closed mesh contains what it encloses; a terrain contains nothing;
         /// with the "jolt" controller a point inside a character capsule reports that character. Triggers are not
-        /// included. Empty without a physics-enabled build.
+        /// included. Without a physics-enabled build the collision world answers (the same rules, no characters).
         /// <c>bool buried = Physics.OverlapPoint(eye).Length &gt; 0;</c></summary>
         public static long[] OverlapPoint(Vector3 point)
         {
-            var hits = Editor.Core.Services.Physics.PhysicsService.OverlapPoint(new Editor.ECS.Vector3(point.X, point.Y, point.Z));
+            var p = new Editor.ECS.Vector3(point.X, point.Y, point.Z);
+            var hits = Editor.Core.Services.Physics.PhysicsService.IsBuilt
+                ? Editor.Core.Services.Physics.PhysicsService.OverlapPoint(p)
+                : Editor.Core.Services.Physics.CollisionService.OverlapPoint(p);
             var result = new long[hits.Count];
             var rt = Editor.Scripting.ScriptRuntime.Instance;
             for (int i = 0; i < hits.Count; i++) result[i] = rt != null ? rt.HandleForEntity(hits[i]) : 0;

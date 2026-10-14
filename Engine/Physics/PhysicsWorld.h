@@ -163,7 +163,8 @@ namespace vortex::physics {
 	// ---- Queries ----------------------------------------------------------------------------------------
 	// Closest hit along `dir`. Rays that start inside geometry (#418): a convex shape (box, sphere, capsule, cylinder,
 	// convex hull) that CONTAINS the origin is not hit — the ray reports what lies beyond it; triangle meshes and height
-	// fields are surfaces and are hit from either side. The normal always faces the origin. raycast() = raycast_ex()
+	// fields are surfaces and are hit from either side. An origin ON a surface (within 1 mm of it) pointing into it hits
+	// it at distance 0; pointing away it does not, for meshes too. The normal always faces the origin. raycast() = raycast_ex()
 	// without flags and without ignored entities.
 	bool raycast(const f32* origin, const f32* dir /*unit*/, f32 max_dist, u32 layer_mask,
 		f32* out_point, f32* out_normal, f32* out_dist, u64* out_entity, u32* out_body);

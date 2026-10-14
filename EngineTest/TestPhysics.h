@@ -429,6 +429,31 @@ private:
 		check("a ray inside a closed mesh hits its wall from behind", hit && entity == k_room && std::fabs(d - 0.8f) < 0.02f);
 		check("... and the back-face normal faces the origin", n[2] < -0.99f);
 
+		// a ray that starts ON a surface and points into it hits it at distance 0 (the cast starts 1 mm behind the origin);
+		// pointing away it does not, for boxes and meshes alike
+		const f32 down[3] = { 0.0f, -1.0f, 0.0f };
+		const f32 up[3] = { 0.0f, 1.0f, 0.0f };
+		const f32 on_crate[3] = { -40.0f, 1.0f, 0.0f };   // the crate's top face
+		hit = physics::raycast(on_crate, down, 10.0f, physics::layer_mask_all, p, n, &d, &entity, &body);
+		std::printf("[info] ray down from the crate's top: hit=%d entity=%llu dist=%.5f point y=%.4f normal y=%.2f\n",
+			hit ? 1 : 0, (unsigned long long)entity, d, p[1], n[1]);
+		check("a ray down from a box's top face hits the box at distance 0", hit && entity == k_crate && d < 1e-4f && n[1] > 0.99f && std::fabs(p[1] - 1.0f) < 1e-3f);
+		const f32 hair_inside[3] = { -40.0f, 0.9995f, 0.1f };
+		hit = physics::raycast(hair_inside, down, 10.0f, physics::layer_mask_all, p, n, &d, &entity, &body);
+		check("... from half a millimetre inside too (distance clamped at 0)", hit && entity == k_crate && d < 1e-4f);
+		const f32 cm_inside[3] = { -40.0f, 0.99f, 0.1f };
+		hit = physics::raycast(cm_inside, down, 10.0f, physics::layer_mask_all, p, n, &d, &entity, &body);
+		check("1 cm inside the box is inside: the ray reports the floor below it", hit && entity == k_floor && std::fabs(d - 0.99f) < 0.01f);
+		check("a ray up from the box's top face does not hit the box", !physics::raycast(on_crate, up, 10.0f, physics::layer_mask_all, p, n, &d, &entity, &body));
+		const f32 above_crate[3] = { -40.0f, 3.0f, 0.0f };
+		hit = physics::raycast(above_crate, down, 2.0f, physics::layer_mask_all, p, n, &d, &entity, &body);
+		check("a surface exactly max_dist away is still hit", hit && entity == k_crate && std::fabs(d - 2.0f) < 1e-3f);
+		const f32 on_roof[3] = { -36.0f, 2.0f, 0.2f };   // the room's ceiling (normal up)
+		hit = physics::raycast(on_roof, down, 10.0f, physics::layer_mask_all, p, n, &d, &entity, &body);
+		check("a ray down from a mesh's top face hits the mesh at distance 0", hit && entity == k_room && d < 1e-4f && n[1] > 0.99f);
+		check("a ray up from a mesh's top face does not hit it (a surface behind the origin, seen from behind)",
+			!physics::raycast(on_roof, up, 10.0f, physics::layer_mask_all, p, n, &d, &entity, &body));
+
 		// (#418) overlap_point: the "is this point inside something?" query that rays no longer answer
 		u64 ents[8]{}; u32 bods[8]{};
 		s32 found = physics::overlap_point(inside, physics::layer_mask_all, ents, bods, 8);

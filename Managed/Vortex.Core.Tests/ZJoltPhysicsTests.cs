@@ -17,6 +17,9 @@ namespace VortexTests
         private static bool Jolt()
         {
             try { Editor.Core.Native.NativeLoader.Register(); } catch { }
+            // a play session of an earlier test (ScriptRuntime.Begin builds the physics world) probed before the library
+            // was registered and cached "not found": ask again, or the whole class would skip in a full run
+            if (PhysicsNative.Probed && !PhysicsNative.Available) PhysicsNative.ResetProbe();
             if (PhysicsNative.Available) return true;
             Console.WriteLine("    (skipped: no native physics — " + PhysicsNative.Reason + ")");
             return false;
@@ -168,6 +171,63 @@ namespace VortexTests
                     bool m = CollisionService.Raycast(o, new Vector3(0, -1, 0), 20f, ~0, out _, out _, out var me, out float md);
                     t.True(j && m && je == me && Math.Abs(jd - 5f) < 1e-3f && Math.Abs(md - 5f) < 1e-3f,
                            "at x " + x + " both worlds hit the collision mesh at y 5 (Jolt " + jd + ", managed " + md + ")");
+                }
+            }
+            finally { ClearWorlds(); CollisionService.MeshTriangleProvider = oldProvider; }
+        }
+
+        /// <summary>A ray that starts ON a surface: both paths hit a box, a sphere, a capsule and a mesh at distance 0 when it
+        /// points into them, nothing when it points away, and treat 1 cm inside a box as inside (the cast starts 1 mm
+        /// behind the origin on both).</summary>
+        [Test]
+        public static void RaysStartingOnASurfaceAgreeOnBothPaths(TestContext t)
+        {
+            if (!Jolt()) return;
+            var scene = PhysicsRaycastTests.RaySceneOnAFloor(out var floor, out var crate, out var ball, out var pillar, out var room);
+            var oldProvider = CollisionService.MeshTriangleProvider;
+            CollisionService.MeshTriangleProvider = PhysicsRaycastTests.RoomProvider;
+            try
+            {
+                BuildWorlds(scene);
+                foreach (var r in PhysicsRaycastTests.SurfaceRays(floor, crate, ball, pillar, room))
+                {
+                    bool j = PhysicsService.Raycast(r.o, r.d, 50f, out var jp, out var jn, out var je, out float jd);
+                    bool m = CollisionService.Raycast(r.o, r.d, 50f, ~0, out _, out var mn, out var me, out float md);
+                    t.Equal(r.expect != null, j, r.what + ": Jolt hit (" + je?.Name + " at " + jd + ")");
+                    t.Equal(r.expect != null, m, r.what + ": managed hit (" + me?.Name + " at " + md + ")");
+                    if (r.expect == null || !j || !m) continue;
+                    t.True(je == r.expect && me == r.expect, r.what + ": both report " + r.expect.Name + " (Jolt " + je?.Name + ", managed " + me?.Name + ")");
+                    t.True(Math.Abs(jd - r.dist) < 2e-3f && Math.Abs(md - r.dist) < 2e-3f, r.what + ": both at " + r.dist + " (Jolt " + jd + ", managed " + md + ")");
+                    t.True(Dot(jn, r.d) < 0f && Dot(mn, r.d) < 0f, r.what + ": both normals face the origin");
+                }
+                var down = new Vector3(0, -1, 0);
+                t.True(PhysicsService.Raycast(new Vector3(0, 3f, 0), down, 2f, out _, out _, out var e, out float d) && e == crate && Math.Abs(d - 2f) < 2e-3f,
+                       "Jolt: a surface exactly maxDist away is still hit (" + d + ")");
+                t.False(PhysicsService.Raycast(new Vector3(0, 3.01f, 0), down, 2f, out _, out _, out _, out _), "… one 1 cm beyond it is not");
+            }
+            finally { ClearWorlds(); CollisionService.MeshTriangleProvider = oldProvider; }
+        }
+
+        /// <summary>#418: Physics.OverlapPoint without a Jolt world (the collision world's fallback) answers what the Jolt
+        /// query answers.</summary>
+        [Test]
+        public static void OverlapPointFallbackAgreesWithJolt(TestContext t)
+        {
+            if (!Jolt()) return;
+            var scene = PhysicsRaycastTests.RaySceneOnAFloor(out var floor, out var crate, out var ball, out var pillar, out var room);
+            PhysicsRaycastTests.Add(scene, null, "Zone", new Vector3(0, 1f, -6f), e => e.AddComponentDirect(new BoxCollider(e) { IsTrigger = true, Size = new Vector3(2f, 2f, 2f) }));
+            PhysicsRaycastTests.AsLoaded(scene);
+            var oldProvider = CollisionService.MeshTriangleProvider;
+            CollisionService.MeshTriangleProvider = PhysicsRaycastTests.RoomProvider;
+            try
+            {
+                BuildWorlds(scene);
+                foreach (var (p, expect, what) in PhysicsRaycastTests.OverlapPoints(floor, crate, ball, pillar, room))
+                {
+                    var j = PhysicsService.OverlapPoint(p);
+                    var m = CollisionService.OverlapPoint(p);
+                    t.True(expect == null ? j.Count == 0 && m.Count == 0 : j.Count == 1 && j[0] == expect && m.Count == 1 && m[0] == expect,
+                           what + ": " + (expect?.Name ?? "nothing") + " (Jolt " + string.Join(", ", j.ConvertAll(x => x.Name)) + "; managed " + string.Join(", ", m.ConvertAll(x => x.Name)) + ")");
                 }
             }
             finally { ClearWorlds(); CollisionService.MeshTriangleProvider = oldProvider; }

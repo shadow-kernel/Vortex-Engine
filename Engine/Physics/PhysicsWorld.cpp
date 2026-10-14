@@ -45,6 +45,7 @@ JPH_SUPPRESS_WARNINGS
 #include <Jolt/Physics/Collision/Shape/ScaledShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
+#include <Jolt/Physics/Collision/TransformedShape.h>
 #include <Jolt/Physics/Constraints/DistanceConstraint.h>
 #include <Jolt/Physics/Constraints/FixedConstraint.h>
 #include <Jolt/Physics/Constraints/HingeConstraint.h>
@@ -223,6 +224,40 @@ namespace vortex::physics {
 			}
 		private:
 			const std::vector<JPH::BodyID>& _ids;
+		};
+
+		// How far behind its origin a ray starts (raycast_ex): a ray that starts ON a surface still hits it.
+		constexpr f32 ray_surface_skin{ 0.001f };
+
+		// Closest hit of a ray cast that starts ray_surface_skin behind the caller's origin. A triangle (mesh, height
+		// field) seen from behind within the skin of the origin (on either side) is the surface the origin lies on, the
+		// ray pointing away from its front — the floor under an upward ray — so it is no hit, as for a box the ray leaves.
+		// Convex shapes report entry hits only.
+		class skin_ray_collector final : public JPH::CastRayCollector
+		{
+		public:
+			// back_fraction: the end of the origin's skin zone (two skins from the start of the cast) as a ray fraction
+			skin_ray_collector(const JPH::RRayCast& ray, f32 back_fraction) : _ray{ ray }, _back_fraction{ back_fraction } {}
+
+			void AddHit(const JPH::RayCastResult& hit) override
+			{
+				if (had_hit && hit.mFraction >= closest.mFraction) return;
+				if (hit.mFraction > 0.0f && hit.mFraction < _back_fraction)
+				{
+					const JPH::TransformedShape* shape = GetContext();
+					if (shape && shape->GetWorldSpaceSurfaceNormal(hit.mSubShapeID2, _ray.GetPointOnRay(hit.mFraction)).Dot(_ray.mDirection) > 0.0f)
+						return;
+				}
+				UpdateEarlyOutFraction(hit.mFraction);
+				closest = hit;
+				had_hit = true;
+			}
+
+			JPH::RayCastResult closest;
+			bool had_hit{ false };
+		private:
+			JPH::RRayCast _ray;
+			f32 _back_fraction;
 		};
 
 		// ---- contact events ---------------------------------------------------------------------------
@@ -1745,17 +1780,25 @@ namespace vortex::physics {
 		settings.mBackFaceModeConvex = JPH::EBackFaceMode::IgnoreBackFaces;
 		settings.mBackFaceModeTriangles = JPH::EBackFaceMode::CollideWithBackFaces;
 
-		const JPH::RRayCast ray(to_vec3(origin), direction * max_dist);
-		JPH::ClosestHitCollisionCollector<JPH::CastRayCollector> collector;
+		// A ray that starts ON a surface — a probe from a crate's top, a ledge point — must still hit it: with convex back
+		// faces ignored, an origin exactly on (or a hair inside) a box counted as inside. The cast starts ray_surface_skin
+		// behind the origin; the distance is measured from the origin itself and clamped at 0 (skin_ray_collector keeps
+		// the floor under an upward ray out).
+		const JPH::Vec3 from = to_vec3(origin);
+		const f32 length = max_dist + ray_surface_skin;
+		const JPH::RRayCast ray(from - direction * ray_surface_skin, direction * length);
+		skin_ray_collector collector(ray, 2.0f * ray_surface_skin / length);
 		const mask_bp_filter bp_filter(layer_mask);
 		const mask_object_filter object_filter(layer_mask);
 		const std::vector<JPH::BodyID> ignored = ignored_body_ids(ignore_bodies, ignore_body_count, ignore_characters, ignore_character_count);
 		const ignore_bodies_filter body_filter(ignored);
 		w->system.GetNarrowPhaseQuery().CastRay(ray, settings, collector, bp_filter, object_filter, body_filter);
-		if (!collector.HadHit()) return false;
-		const JPH::RayCastResult& hit = collector.mHit;
+		if (!collector.had_hit) return false;
+		const JPH::RayCastResult& hit = collector.closest;
+		const f32 along = hit.mFraction * length - ray_surface_skin;   // from the origin
 
-		const JPH::Vec3 point = JPH::Vec3(ray.GetPointOnRay(hit.mFraction));
+		// a solid hit at the start of the cast (raycast_solid, origin inside) is reported at the origin
+		const JPH::Vec3 point = hit.mFraction > 0.0f ? JPH::Vec3(ray.GetPointOnRay(hit.mFraction)) : from;
 		JPH::Vec3 normal = -direction;
 		u64 entity = 0;
 		{
@@ -1773,7 +1816,7 @@ namespace vortex::physics {
 
 		store3(out_point, point);
 		store3(out_normal, normal);
-		if (out_dist) *out_dist = hit.mFraction * max_dist;
+		if (out_dist) *out_dist = along > 0.0f ? along : 0.0f;
 		if (out_entity) *out_entity = entity;
 		if (out_body) *out_body = handle_of(*w, hit.mBodyID);
 		return true;

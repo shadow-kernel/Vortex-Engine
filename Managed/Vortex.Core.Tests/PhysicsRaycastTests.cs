@@ -138,6 +138,105 @@ namespace VortexTests
             finally { CollisionService.Clear(); }
         }
 
+        /// <summary>RayScene on a 40 m floor (top at y 0) — the crate, the room and the pillar stand on it.</summary>
+        internal static Scene RaySceneOnAFloor(out GameEntity floor, out GameEntity crate, out GameEntity ball, out GameEntity pillar, out GameEntity room)
+        {
+            var s = RayScene(out crate, out _, out _, out ball, out pillar, out room);
+            floor = Add(s, null, "Floor", new Vector3(0, -0.5f, 0), e => e.AddComponentDirect(new BoxCollider(e) { Size = new Vector3(40f, 1f, 40f) }));
+            AsLoaded(s);
+            return s;
+        }
+
+        /// <summary>The rays of <see cref="RaysStartingOnASurfaceHitIt"/>: origin, direction, the entity hit (null = none)
+        /// and its distance — the ZJolt test casts the same ones on the Jolt path.</summary>
+        internal static (Vector3 o, Vector3 d, GameEntity expect, float dist, string what)[] SurfaceRays(GameEntity floor, GameEntity crate,
+            GameEntity ball, GameEntity pillar, GameEntity room)
+        {
+            var down = new Vector3(0, -1, 0); var up = new Vector3(0, 1, 0);
+            return new (Vector3, Vector3, GameEntity, float, string)[]
+            {
+                (new Vector3(0, 1f, 0), down, crate, 0f, "down from the crate's top face"),
+                (new Vector3(0.2f, 0.9995f, 0.1f), down, crate, 0f, "down from half a millimetre inside the crate"),
+                (new Vector3(0.2f, 0.99f, 0.1f), down, floor, 0.99f, "down from 1 cm inside the crate (inside: the floor below)"),
+                (new Vector3(0, 1f, 0), up, null, 0f, "up from the crate's top face"),
+                (new Vector3(0, 0.5f, -0.5f), new Vector3(0, 0, 1), crate, 0f, "into the crate from its side face"),
+                (new Vector3(0, 0.5f, -0.5f), new Vector3(0, 0, -1), null, 0f, "away from the crate's side face"),
+                (new Vector3(5f, 1.5f, 0), down, ball, 0f, "down from the ball's top"),
+                (new Vector3(10f, 1.9f, 0), down, pillar, 0f, "down from the capsule's top"),
+                (new Vector3(15f, 2f, 0.2f), down, room, 0f, "down from the mesh room's roof"),
+                (new Vector3(15f, 2f, 0.2f), up, null, 0f, "up from the mesh room's roof"),
+                (new Vector3(3f, 0f, 3f), down, floor, 0f, "down from the floor's top face"),
+            };
+        }
+
+        /// <summary>A ray that starts ON a surface and points into it hits it at distance 0 (the cast starts 1 mm behind its
+        /// origin) — the probe of a mantle check from a crate's top. Pointing away it does not, for a mesh too; 1 cm inside a
+        /// box is inside (#418).</summary>
+        [Test]
+        public static void RaysStartingOnASurfaceHitIt(TestContext t)
+        {
+            var scene = RaySceneOnAFloor(out var floor, out var crate, out var ball, out var pillar, out var room);
+            var oldProvider = CollisionService.MeshTriangleProvider;
+            CollisionService.MeshTriangleProvider = RoomProvider;
+            try
+            {
+                CollisionService.Build(scene);
+                foreach (var r in SurfaceRays(floor, crate, ball, pillar, room))
+                {
+                    bool got = CollisionService.Raycast(r.o, r.d, 50f, ~0, out var p, out var n, out var e, out float d);
+                    t.Equal(r.expect != null, got, r.what + ": hit");
+                    if (r.expect == null || !got) continue;
+                    t.True(e == r.expect && Math.Abs(d - r.dist) < 1e-3f, r.what + ": " + r.expect.Name + " at " + r.dist + " (" + e?.Name + " at " + d + ")");
+                    t.True(n.X * r.d.X + n.Y * r.d.Y + n.Z * r.d.Z < -0.99f, r.what + ": the normal faces the origin");
+                    t.True(Math.Abs(p.X - (r.o.X + r.d.X * d)) < 2e-3f && Math.Abs(p.Y - (r.o.Y + r.d.Y * d)) < 2e-3f && Math.Abs(p.Z - (r.o.Z + r.d.Z * d)) < 2e-3f,
+                           r.what + ": the point is on the surface (" + p.X + ", " + p.Y + ", " + p.Z + ")");
+                }
+                t.True(CollisionService.Raycast(new Vector3(0, 3f, 0), new Vector3(0, -1, 0), 2f, ~0, out _, out _, out var hit, out float dist) && hit == crate && Math.Abs(dist - 2f) < 1e-3f,
+                       "a surface exactly maxDist away is still hit (" + dist + ")");
+                t.False(CollisionService.Raycast(new Vector3(0, 3.01f, 0), new Vector3(0, -1, 0), 2f, ~0, out _, out _, out _, out _), "… one 1 cm beyond it is not");
+            }
+            finally { CollisionService.Clear(); CollisionService.MeshTriangleProvider = oldProvider; }
+        }
+
+        /// <summary>#418 without a Jolt world (an engine build without physics): Physics.OverlapPoint is answered by the
+        /// collision world with the Jolt query's rules — the inside of boxes, spheres, capsules and a closed mesh; not a
+        /// trigger, not open air, not above the mesh.</summary>
+        [Test]
+        public static void OverlapPointWorksWithoutJolt(TestContext t)
+        {
+            var scene = RaySceneOnAFloor(out var floor, out var crate, out var ball, out var pillar, out var room);
+            var zone = Add(scene, null, "Zone", new Vector3(0, 1f, -6f), e => e.AddComponentDirect(new BoxCollider(e) { IsTrigger = true, Size = new Vector3(2f, 2f, 2f) }));
+            AsLoaded(scene);
+            var oldProvider = CollisionService.MeshTriangleProvider;
+            CollisionService.MeshTriangleProvider = RoomProvider;
+            try
+            {
+                CollisionService.Build(scene);
+                t.False(PhysicsService.IsBuilt, "(no Jolt world)");
+                foreach (var (p, expect, what) in OverlapPoints(floor, crate, ball, pillar, room))
+                {
+                    var found = CollisionService.OverlapPoint(p);
+                    t.True(expect == null ? found.Count == 0 : found.Count == 1 && found[0] == expect,
+                           what + ": " + (expect?.Name ?? "nothing") + " (found " + string.Join(", ", found.ConvertAll(x => x.Name)) + ")");
+                }
+            }
+            finally { CollisionService.Clear(); CollisionService.MeshTriangleProvider = oldProvider; }
+        }
+
+        /// <summary>Points of the OverlapPoint tests and the entity that contains each (null = none).</summary>
+        internal static (Vector3 p, GameEntity expect, string what)[] OverlapPoints(GameEntity floor, GameEntity crate, GameEntity ball, GameEntity pillar, GameEntity room)
+            => new (Vector3, GameEntity, string)[]
+            {
+                (new Vector3(0.2f, 0.4f, -0.1f), crate, "in the crate"),
+                (new Vector3(5.1f, 1.2f, 0.1f), ball, "in the ball"),
+                (new Vector3(10f, 1.6f, 0.1f), pillar, "in the capsule"),
+                (new Vector3(15f, 0.7f, 0.2f), room, "in the closed mesh room"),
+                (new Vector3(2f, -0.3f, 2f), floor, "in the floor slab"),
+                (new Vector3(2f, 0.5f, 0f), null, "in open air"),
+                (new Vector3(15f, 2.5f, 0.2f), null, "above the mesh room"),
+                (new Vector3(0f, 1f, -6f), null, "in a trigger zone"),
+            };
+
         /// <summary>#406 on the managed path: a perceiving guard carries a capsule collider (so it can be shot) and its eye
         /// sits inside it — the sight ray must neither stop at the guard's own collider nor at a collider it starts in.</summary>
         [Test]
