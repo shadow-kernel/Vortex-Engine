@@ -20,8 +20,10 @@ namespace Editor.Core.Animation
     {
         public static AnimationService Instance { get; } = new AnimationService();
 
-        private readonly Dictionary<string, VortexAnimClip> _clips = new Dictionary<string, VortexAnimClip>(StringComparer.OrdinalIgnoreCase);
-        private readonly Dictionary<string, SkeletonDef> _skeletons = new Dictionary<string, SkeletonDef>(StringComparer.OrdinalIgnoreCase);
+        // Path-keyed, and reloaded when the file changes on disk (#419): a clip rewritten by a script, git or "Extract
+        // Animations", a re-exported rig, a clip created after a failed Play. A shipped game's pak never changes.
+        private readonly Assets.FileStampCache<VortexAnimClip> _clips = new Assets.FileStampCache<VortexAnimClip>(VortexAnimClip.Load, () => Services.AssetVfs.IsMounted);
+        private readonly Assets.FileStampCache<SkeletonDef> _skeletons = new Assets.FileStampCache<SkeletonDef>(SkeletonDef.Load, () => Services.AssetVfs.IsMounted);
         private readonly Dictionary<Guid, AnimatorState> _states = new Dictionary<Guid, AnimatorState>();
         private readonly Dictionary<long, bool> _skinnedMeshCache = new Dictionary<long, bool>();
 
@@ -235,34 +237,51 @@ namespace Editor.Core.Animation
 
         // ------------------------------------------------------------------ caches
 
-        /// <summary>Load a clip by path (project-relative or absolute), cached. Null on failure.</summary>
+        /// <summary>Load a clip by path (project-relative or absolute), cached. Null on failure. A clip whose file changed
+        /// since it was loaded is read again, and a failed load is retried once the file appears or changes (#419) — a
+        /// "not found" no longer sticks for the whole session: the file is compared at most once a second, at once when
+        /// the asset watcher reports it, and on the first request of a new play session.</summary>
         public VortexAnimClip GetClip(string path)
         {
             if (string.IsNullOrEmpty(path)) return null;
             string full = ResolveAssetPath(path);
             if (full == null) return null;
-            if (_clips.TryGetValue(full, out var cached)) return cached;
-            var clip = VortexAnimClip.Load(full);
-            _clips[full] = clip;   // negative results cached too (avoids re-hitting disk every frame)
-            return clip;
+            return _clips.Get(full);
         }
 
-        /// <summary>Drop a clip from the cache (Keyframe Editor save / file change).</summary>
+        /// <summary>Drop a clip from the cache (Keyframe Editor save, the asset watcher, clip extraction).</summary>
         public void InvalidateClip(string path)
         {
             string full = ResolveAssetPath(path);
-            if (full != null) _clips.Remove(full);
+            if (full != null) _clips.Invalidate(full);
         }
 
-        /// <summary>Skeleton of a model (path with or without '#submeshN'), cached. Null when not skinned.</summary>
+        /// <summary>Skeleton of a model (path with or without '#submeshN'), cached. Null when not skinned. Re-read when
+        /// the model file changes (#419).</summary>
         public SkeletonDef GetSkeleton(string meshPath)
         {
             string full = ResolveModelPath(meshPath);
             if (full == null) return null;
-            if (_skeletons.TryGetValue(full, out var cached)) return cached;
-            var skel = SkeletonDef.Load(full);
-            _skeletons[full] = skel;
-            return skel;
+            return _skeletons.Get(full);
+        }
+
+        /// <summary>Drop a model's cached skeleton (path with or without '#submeshN'): the file was overwritten or its
+        /// import settings changed, so the next <see cref="GetSkeleton"/> reads the new rig (#419). Animators still posed
+        /// with the old skeleton start over with the new one — its bone palette no longer matches the re-imported mesh.</summary>
+        public void InvalidateSkeleton(string meshPath)
+        {
+            string full = ResolveModelPath(meshPath);
+            if (full == null) return;
+            var old = new List<SkeletonDef>();
+            if (!_skeletons.Invalidate(full, old) || old.Count == 0) return;
+            var stale = new List<Guid>();
+            foreach (var kv in _states) if (kv.Value.Skeleton != null && old.Contains(kv.Value.Skeleton)) stale.Add(kv.Key);
+            foreach (var id in stale)
+            {
+                var s = _states[id];
+                if (s.Group != null) s.Group.Members.Remove(s);
+                _states.Remove(id);
+            }
         }
 
         /// <summary>Is this registered mesh skinned? (interop result cached per mesh id).</summary>
@@ -275,12 +294,16 @@ namespace Editor.Core.Animation
             return s;
         }
 
-        /// <summary>Full playback/state reset (play start/stop, scene switch). Caches survive.</summary>
+        /// <summary>Full playback/state reset (play start/stop, scene switch). Caches survive, but every cached clip and
+        /// skeleton compares its file again on the next use (#419): a clip edited outside the editor plays from the next
+        /// run on, even when the asset watcher missed the change.</summary>
         public void ResetStates()
         {
             _states.Clear();
             _groups.Clear();
             HasActiveAnimators = false;
+            _clips.MarkAllStale();
+            _skeletons.MarkAllStale();
         }
 
         /// <summary>Scene switch: mesh ids are session-local and get re-imported — drop the skinned lookup.</summary>
@@ -3033,7 +3056,11 @@ namespace Editor.Core.Animation
                 string unique = safe; int suffix = 1;
                 while (!usedNames.Add(unique)) unique = safe + "_" + suffix++;
                 string outPath = System.IO.Path.Combine(animDir, unique + ".vanim");
-                if (clip.Save(outPath)) written.Add(outPath);
+                if (clip.Save(outPath))
+                {
+                    written.Add(outPath);
+                    Instance.InvalidateClip(outPath);   // a re-extract overwrites: the next Play reads the new keys (#419)
+                }
             }
             return written;
         }

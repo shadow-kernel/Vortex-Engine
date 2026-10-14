@@ -6,6 +6,13 @@
 
 namespace vortex::graphics
 {
+	namespace
+	{
+		thread_local std::vector<std::string> t_last_warnings;   // ModelImporter::last_warnings (#470)
+	}
+
+	const std::vector<std::string>& ModelImporter::last_warnings() { return t_last_warnings; }
+
 #ifdef VORTEX_USE_ASSIMP
 	namespace
 	{
@@ -35,6 +42,7 @@ namespace vortex::graphics
 	ImportedModelData ModelImporter::import_from_file(const std::string& filepath)
 	{
 		ImportedModelData result;
+		t_last_warnings.clear();
 
 		Assimp::Importer importer;
 		// FBX: collapse the $AssimpFbx$ pivot pseudo-node chains (Translation/PreRotation/...) into the
@@ -101,12 +109,14 @@ namespace vortex::graphics
 
 		VORTEX_VLOG(("ModelImporter: Loaded " + std::to_string(result.submeshes.size()) + " submeshes\n").c_str());
 
+		t_last_warnings = result.warnings;
 		return result;
 	}
 	ImportedModelData ModelImporter::import_from_memory(const u8* data, u64 length,
 		const std::string& ext_hint, const std::string& virtual_dir, bool left_handed)
 	{
 		ImportedModelData result;
+		t_last_warnings.clear();
 		if (!data || length == 0) return result;
 
 		Assimp::Importer importer;
@@ -144,6 +154,7 @@ namespace vortex::graphics
 		extract_materials((void*)scene, result, base + "model", /*allow_disk_search*/ false);
 
 		calculate_bounds(result);
+		t_last_warnings = result.warnings;
 		return result;
 	}
 #else
