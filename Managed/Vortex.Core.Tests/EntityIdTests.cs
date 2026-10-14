@@ -361,5 +361,53 @@ namespace VortexTests
                 scene.DeactivateEntities(); scene.ReleaseEngineScene();
             }
         }
+
+        [Test]
+        public static void ScenesThatAreNotOpenStayOutOfTheEngine(TestContext t)
+        {
+            if (!Native()) return;
+            var open = Loaded(out var crate, out _, out _);
+            var closed = Loaded(out var shed, out _, out _);   // loaded with the project, never opened
+            closed.Name = "Shed";
+            var old = ProjectData.Current;
+            try
+            {
+                open.ActivateEntities();
+                var project = new ProjectData { Name = "p", Path = t.Dir };
+                project.Scenes.Add(open);
+                project.Scenes.Add(closed);
+                project.ActiveScene = open;
+                ProjectData.Current = project;
+                bool Untouched() => !closed.IsActive && !closed.EngineHandle.IsValid && closed.Entities.All(e => e.EntityId == ID.INVALID_ID);
+
+                // the active flag of an entity there: no registration, and the scene is not activated
+                shed.IsActive = false;
+                shed.IsActive = true;
+                t.True(Untouched() && shed.EntityId == ID.INVALID_ID, "toggling a top-level entity of a scene that is not open leaves it and its scene alone");
+
+                // a prefab Apply re-creates the instances of every scene
+                string prefab = t.Write("Crate.ventity", DataSerializer.ToJson(crate));
+                var mine = PrefabService.Instance.InstantiatePrefab(prefab, open);
+                var theirs = PrefabService.Instance.InstantiatePrefab(prefab, closed, null, false);
+                t.True(Unique(mine) && theirs.EntityId == ID.INVALID_ID && Untouched(), "an instance placed into the scene that is not open stays unregistered");
+                t.True(PrefabService.Instance.ApplyToPrefab(mine), "Apply runs");
+                var fresh = closed.Entities.FirstOrDefault(e => e.IsPrefabInstance);
+                t.True(fresh != null && !ReferenceEquals(fresh, theirs), "Apply re-created the other scene's instance");
+                t.True(Untouched() && open.IsActive, "after Apply the other scene is still not open, its entities unregistered (it used to be activated)");
+
+                // deleting the prefab removes every instance; the undo puts them back — without opening the other scene
+                int n = PrefabService.Instance.OnPrefabDeleted(prefab);
+                t.True(n == 2 && !closed.Entities.Contains(fresh), "deleting the prefab removes both instances");
+                UndoRedoManager.Instance.Undo();
+                t.True(closed.Entities.Contains(fresh) && Untouched() && open.Entities.Any(e => e.IsPrefabInstance && ID.IsValid(e.EntityId)),
+                    "the undo restores both — the open scene's registered, the other scene still untouched");
+            }
+            finally
+            {
+                ProjectData.Current = old;
+                open.DeactivateEntities(); open.ReleaseEngineScene();
+                closed.DeactivateEntities(); closed.ReleaseEngineScene();
+            }
+        }
     }
 }

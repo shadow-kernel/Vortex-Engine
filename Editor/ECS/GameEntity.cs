@@ -119,7 +119,10 @@ namespace Editor.ECS
                 if (_isDeserializing)
                     return;
 
-                SyncEngineStateRecursive(Parent?.ActiveInHierarchy ?? true);
+                // The scene counts too: "Parent?.ActiveInHierarchy ?? true" registered a top-level entity of ANY scene, and
+                // one of a scene never opened this session activated that scene — its fog, exposure and post effects took
+                // over the editor viewport (a prefab Apply re-instantiating the instances of another scene did it).
+                SyncEngineState();
             }
         }
 
@@ -395,13 +398,13 @@ namespace Editor.ECS
 		}
 
 		/// <summary>Registers or unregisters this entity and its subtree after it was put into (or taken out of) a scene's
-		/// hierarchy: a valid, unique <see cref="EntityId"/> while it is active in an active scene, INVALID_ID otherwise.
-		/// Takes the parent's state from the hierarchy itself (the explicit <c>parentActive</c> callers passed the entity's
-		/// own flag, which registered a child of an inactive parent). An entity in no scene — an in-memory template of the
-		/// prefab editor or a model import — never enters the engine.</summary>
+		/// hierarchy or its active flag changed: a valid, unique <see cref="EntityId"/> while it is active in an active scene,
+		/// INVALID_ID otherwise. Takes the parent's and the scene's state from the hierarchy itself (the explicit
+		/// <c>parentActive</c> callers passed the entity's own flag, which registered a child of an inactive parent). An
+		/// entity in no scene — an in-memory template of the prefab editor or a model import — is never in the engine.</summary>
 		internal void SyncEngineState()
 		{
-			if (Scene == null) return;
+			if (Scene == null) { SyncEngineStateRecursive(false); return; }
 			SyncEngineStateRecursive(Parent != null ? Parent.ActiveInHierarchy : Scene.IsActive);
 		}
 
