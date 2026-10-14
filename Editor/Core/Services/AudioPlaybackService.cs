@@ -687,9 +687,7 @@ namespace Editor.Core.Services
 
             foreach (var zb in _zones)
             {
-                if (zb.Zone == null || !zb.Zone.IsEnabled || zb.Entity == null || !zb.Entity.IsActive) continue;
-                var center = ReadWorldPosition(zb.Entity);
-                float w = ZoneWeight(zb.Zone, center, listenerPos);
+                float w = ZoneWeight(zb.Zone, zb.Entity, listenerPos);
                 if (w <= 0f) continue;
                 totalWeight += w;
                 decay += zb.Zone.DecayTime * w;
@@ -717,22 +715,40 @@ namespace Editor.Core.Services
             }
         }
 
-        /// <summary>1 inside the shape, easing to 0 at boundary + falloff.</summary>
-        private static float ZoneWeight(ReverbZone zone, ECS.Vector3 center, ECS.Vector3 p)
+        /// <summary>How deep <paramref name="p"/> sits in the zone: 1 inside its shape, easing to 0 at boundary + falloff;
+        /// 0 while the zone does not count — component disabled, or the entity inactive in the HIERARCHY (a zone under a
+        /// deactivated parent used to reverberate on, #497).</summary>
+        internal static float ZoneWeight(ReverbZone zone, GameEntity entity, ECS.Vector3 p)
+        {
+            if (zone == null || !zone.IsEnabled || entity == null || !entity.ActiveInHierarchy) return 0f;
+            return ZoneWeight(zone, ECS.TransformMath.World(entity), p);
+        }
+
+        /// <summary>The zone's shape lives in the entity's world matrix, like an Area or a collider (#497): a Box is
+        /// BoxExtents (half sizes, local units) scaled, rotated and placed by the entity and its parents — an oriented
+        /// box; a Sphere's Radius scales with the largest world axis (as sphere colliders do). Falloff stays world
+        /// metres, measured per box axis. Max(0.01, size) — not Abs — exactly as the gizmo draws it
+        /// (VortexAPI.RenderReverbZoneGizmo), so the drawn shape is the audible one.</summary>
+        internal static float ZoneWeight(ReverbZone zone, float[] world, ECS.Vector3 p)
         {
             float outside;
             if (zone.Shape == (int)ReverbZoneShape.Box)
             {
+                var inv = ECS.TransformMath.InverseAffine(world);
+                if (inv == null) return 0f;   // a zero scale: no volume
+                var l = ECS.TransformMath.TransformPoint(inv, p);   // the point in the zone's own frame
                 var ex = zone.BoxExtents;
-                float dx = Math.Abs(p.X - center.X) - Math.Max(0.01f, ex.X);
-                float dy = Math.Abs(p.Y - center.Y) - Math.Max(0.01f, ex.Y);
-                float dz = Math.Abs(p.Z - center.Z) - Math.Max(0.01f, ex.Z);
+                // local units -> world metres along each box axis (its world length), so the falloff is in metres
+                float dx = (Math.Abs(l.X) - Math.Max(0.01f, ex.X)) * AxisLength(world, 0);
+                float dy = (Math.Abs(l.Y) - Math.Max(0.01f, ex.Y)) * AxisLength(world, 1);
+                float dz = (Math.Abs(l.Z) - Math.Max(0.01f, ex.Z)) * AxisLength(world, 2);
                 outside = Math.Max(dx, Math.Max(dy, dz)); // <= 0 means inside
             }
             else
             {
-                float ddx = p.X - center.X, ddy = p.Y - center.Y, ddz = p.Z - center.Z;
-                outside = (float)Math.Sqrt(ddx * ddx + ddy * ddy + ddz * ddz) - Math.Max(0.01f, zone.Radius);
+                float ddx = p.X - world[12], ddy = p.Y - world[13], ddz = p.Z - world[14];
+                float scale = Math.Max(AxisLength(world, 0), Math.Max(AxisLength(world, 1), AxisLength(world, 2)));
+                outside = (float)Math.Sqrt(ddx * ddx + ddy * ddy + ddz * ddz) - Math.Max(0.01f, zone.Radius) * scale;
             }
 
             if (outside <= 0f) return 1f;
@@ -741,6 +757,10 @@ namespace Editor.Core.Services
             float t = 1f - outside / falloff;
             return t * t * (3f - 2f * t); // smoothstep — no click at the door
         }
+
+        /// <summary>World length of a matrix row (row 0/1/2 = the entity's x/y/z axis with its world scale).</summary>
+        internal static float AxisLength(float[] m, int row)
+            => (float)Math.Sqrt(m[row * 4] * m[row * 4] + m[row * 4 + 1] * m[row * 4 + 1] + m[row * 4 + 2] * m[row * 4 + 2]);
 
         private ECS.Vector3 _listenerPos;
 
