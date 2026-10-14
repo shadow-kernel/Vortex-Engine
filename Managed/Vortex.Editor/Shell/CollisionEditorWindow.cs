@@ -362,10 +362,13 @@ namespace VortexEditor.Shell
         private void BuildColliderScriptSection(GameEntity ent, Collider col)
         {
             _body.Children.Add(AnimUi.MicroHeader("SCRIPT — reacts to contact", 14));
-            var script = ent.GetComponent<Script>();
+            var script = ContactScript(ent);
             string cur = script?.ScriptClassName;
             string evts = col.IsTrigger ? "OnTriggerEnter / OnTriggerStay / OnTriggerExit" : "OnCollisionEnter (fires when a character touches this solid — e.g. take damage on contact)";
-            _body.Children.Add(AnimUi.NoteBox(string.IsNullOrEmpty(cur) ? "Attach a script, then override " + evts + " to react when a character touches this collider." : "Attached: " + cur + "  —  override " + evts + " in it."));
+            var others = ent.GetComponents<Script>().Where(s => !ReferenceEquals(s, script)).Select(s => s.ScriptClassName).ToArray();
+            string note = string.IsNullOrEmpty(cur) ? "Attach a script, then override " + evts + " to react when a character touches this collider." : "Attached: " + cur + "  —  override " + evts + " in it.";
+            if (others.Length > 0) note += " The entity's other scripts (" + string.Join(", ", others) + ") stay as they are.";
+            _body.Children.Add(AnimUi.NoteBox(note));
             var row = new WrapPanel();
             var attach = new Button { Content = string.IsNullOrEmpty(cur) ? "Attach Script…" : "Change Script…", Margin = new Thickness(0, 0, 8, 6) };
             attach.Click += (s, e) => ShowScriptPicker(attach);
@@ -414,11 +417,31 @@ namespace VortexEditor.Shell
             menu.ShowAt(anchor);
         }
 
+        /// <summary>The Script this section is about: the first one whose class reacts to contact (OnTrigger… /
+        /// OnCollisionEnter); a lone script whose class can't be read right now (the scripts don't compile) counts too. An
+        /// entity can run several scripts (#408) — "Change Script…" and "Remove Script" act on this one only, never on an
+        /// unrelated script such as a Health next to an AI.</summary>
+        private static Script ContactScript(GameEntity ent)
+        {
+            if (ent == null) return null;
+            var scripts = ent.GetComponents<Script>();
+            foreach (var s in scripts)
+                if (Editor.Scripting.ScriptRuntime.HandlesContact(ScriptType(s))) return s;
+            return scripts.Length == 1 && ScriptType(scripts[0]) == null ? scripts[0] : null;
+        }
+
+        private static Type ScriptType(Script s)
+        {
+            try { return Editor.Scripting.ScriptRuntime.Instance.GetScriptTypeForInspector(s?.ScriptClassName); } catch { return null; }
+        }
+
         private void AttachScript(string rel)
         {
             if (_ent == null || string.IsNullOrEmpty(rel)) return;
-            var existing = _ent.GetComponent<Script>();
-            if (existing != null) RemoveComp(existing);
+            // already on the entity (this section's script or another one): nothing to add or replace
+            if (_ent.Components.OfType<Script>().Any(s => string.Equals((s.ScriptPath ?? "").Replace('\\', '/'), rel.Replace('\\', '/'), StringComparison.OrdinalIgnoreCase))) { Changed(true); return; }
+            var current = ContactScript(_ent);
+            if (current != null) RemoveComp(current);   // "Change Script…" swaps the contact script only
             AddComp(new Script(_ent, rel));
             Changed(true);
         }

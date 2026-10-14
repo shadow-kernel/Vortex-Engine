@@ -31,7 +31,7 @@ namespace Editor.ECS.Components
         public Vector3 LocalPosition
         {
             get => _localPosition;
-            set { if (SetProperty(ref _localPosition, value, nameof(LocalPosition))) SyncToEngine(); }
+            set { if (Finite(value, 1, "position") && SetProperty(ref _localPosition, value, nameof(LocalPosition))) SyncToEngine(); }
         }
 
         /// <summary>
@@ -41,7 +41,7 @@ namespace Editor.ECS.Components
         public Vector3 LocalRotation
         {
             get => _localRotation;
-            set { if (SetProperty(ref _localRotation, value, nameof(LocalRotation))) SyncToEngine(); }
+            set { if (Finite(value, 2, "rotation") && SetProperty(ref _localRotation, value, nameof(LocalRotation))) SyncToEngine(); }
         }
 
         /// <summary>
@@ -51,7 +51,7 @@ namespace Editor.ECS.Components
         public Vector3 LocalScale
         {
             get => _localScale;
-            set { if (SetProperty(ref _localScale, value, nameof(LocalScale))) SyncToEngine(); }
+            set { if (Finite(value, 4, "scale") && SetProperty(ref _localScale, value, nameof(LocalScale))) SyncToEngine(); }
         }
 
         #endregion
@@ -65,7 +65,40 @@ namespace Editor.ECS.Components
         public Vector3 LocalEulerAngles
         {
             get => _localRotation;
-            set { if (SetProperty(ref _localRotation, value, nameof(LocalEulerAngles))) SyncToEngine(); }
+            set { if (Finite(value, 2, "rotation") && SetProperty(ref _localRotation, value, nameof(LocalEulerAngles))) SyncToEngine(); }
+        }
+
+        #endregion
+
+        #region Non-finite guard (#455)
+
+        /// <summary>Bumped when a play session starts (ScriptRuntime.BeginPlaySession), so each session warns afresh.</summary>
+        internal static int NonFiniteWarningEpoch;
+        private int _nonFiniteWarned, _nonFiniteEpoch;   // bits 1 position, 2 rotation, 4 scale — warned in that epoch
+
+        /// <summary>A NaN or an infinity never becomes a transform value (#455): SyncToEngine would hand it to the engine's
+        /// native quaternion / matrix math, which can crash the editor or the player — one 0/0 in a game script was enough.
+        /// Such a write is ignored as a whole (the entity keeps its last valid value; never a jump to the origin), and one
+        /// warning per entity and property and play session names the entity and the script that wrote it — the first
+        /// few of a session; the rest are counted into one "…and N more" line when play stops.</summary>
+        private bool Finite(Vector3 v, int bit, string property)
+        {
+            if (float.IsFinite(v.X) && float.IsFinite(v.Y) && float.IsFinite(v.Z)) return true;
+            if (_nonFiniteEpoch != NonFiniteWarningEpoch) { _nonFiniteEpoch = NonFiniteWarningEpoch; _nonFiniteWarned = 0; }
+            if ((_nonFiniteWarned & bit) != 0) return false;
+            _nonFiniteWarned |= bit;
+            if (!Editor.Scripting.ScriptRuntime.TakeNonFiniteWarning()) return false;   // over the session's cap: counted only
+            try
+            {
+                var ci = System.Globalization.CultureInfo.InvariantCulture;
+                string writer = Editor.Scripting.ScriptRuntime.ScriptFrameOfCaller();
+                Editor.Core.Services.ConsoleService.Instance.LogWarning("Transform: ignored a non-finite " + property + " ("
+                    + v.X.ToString(ci) + ", " + v.Y.ToString(ci) + ", " + v.Z.ToString(ci) + ") for "
+                    + (Entity != null ? "'" + Entity.Name + "'" : "an entity") + (writer != null ? ", written by " + writer : "")
+                    + " — it keeps its last valid " + property + ". (Shown once per entity and property.)");
+            }
+            catch { }
+            return false;
         }
 
         #endregion
@@ -103,7 +136,7 @@ namespace Editor.ECS.Components
         /// </summary>
         public void SetLocalPositionFromEngine(Vector3 position)
         {
-            SetProperty(ref _localPosition, position, nameof(LocalPosition));
+            if (Finite(position, 1, "position")) SetProperty(ref _localPosition, position, nameof(LocalPosition));
         }
 
         #endregion

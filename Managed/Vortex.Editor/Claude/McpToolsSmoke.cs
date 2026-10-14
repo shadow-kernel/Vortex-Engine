@@ -125,6 +125,16 @@ namespace VortexEditor.Claude
                 if (script == null || script.GetFieldValue("Speed") != "45" || script.GetFieldValue("Axis") != "1,0,0") return Fail("attach_script: " + att.ToJsonString());
                 var badField = await Raw("attach_script", new JsonObject { ["entity"] = cubeId, ["script"] = "McpSpinner", ["fields"] = new JsonObject { ["Sped"] = 1 } });
                 if ((bool?)badField["isError"] != true || !McpTestClient.Text(badField).Contains("Speed")) return Fail("an unknown field should list the real ones");
+                // several scripts on one entity (#408): a second, different one next to McpSpinner (it runs on Play), and a
+                // third one written now and attached while playing (below) — both with a field named like McpSpinner's
+                const string wobbleSrc = "using Vortex;\n\npublic class McpWobble : VortexBehaviour\n{\n    public float Speed = 1f;\n    public int Starts;\n    public override void Start() { Starts++; }\n}\n";
+                const string lateSrc = "using Vortex;\n\npublic class McpLate : VortexBehaviour\n{\n    public float Speed = 1f;\n    public int Starts;\n    public override void Start() { Starts++; }\n}\n";
+                cleanup.Add(Path.Combine(project.Path, "Assets", "Scripts", "McpWobble.cs"));
+                cleanup.Add(Path.Combine(project.Path, "Assets", "Scripts", "McpLate.cs"));
+                if ((bool)(await C("write_script", new JsonObject { ["script"] = "McpWobble", ["code"] = wobbleSrc }))["compiles"] != true
+                    || (bool)(await C("write_script", new JsonObject { ["script"] = "McpLate", ["code"] = lateSrc }))["compiles"] != true) return Fail("the multi-script probes do not compile");
+                var att2 = await C("attach_script", new JsonObject { ["entity"] = cubeId, ["script"] = "McpWobble", ["fields"] = new JsonObject { ["Speed"] = 7 } });
+                if ((bool?)att2["added"] != true || cubeEntity.Components.OfType<Script>().Count() != 2) return Fail("a second script on the entity: " + att2.ToJsonString());
                 var api = McpTestClient.Text(await McpTestClient.Call(http, "get_scripting_api", new JsonObject { ["topic"] = "Input" }));
                 if (!api.Contains("GetKey(")) return Fail("get_scripting_api Input: " + api);
                 var escape = await Raw("write_script", new JsonObject { ["script"] = "../Materials/Evil", ["code"] = "class X {}" });
@@ -182,6 +192,23 @@ namespace VortexEditor.Claude
                 // ================= play mode (#90): enter, the game camera's image, stats, exit
                 var play = await C("enter_play_mode", new JsonObject { ["run_seconds"] = 1 });
                 if ((string)play["state"] != "Playing") return Fail("enter_play_mode: " + play.ToJsonString());
+                // #408: both scripts of the cube run, each with its own fields — the second one used to be dropped silently
+                var rt = Editor.Scripting.ScriptRuntime.Instance;
+                object FieldOf(string cls, string field)
+                {
+                    var b = rt.BehavioursOf(cubeEntity).FirstOrDefault(x => x.GetType().Name == cls);
+                    return b?.GetType().GetField(field)?.GetValue(b);
+                }
+                if (rt.BehavioursOf(cubeEntity).Count != 2 || FieldOf("McpWobble", "Starts") is not int ws1 || ws1 != 1 || (float?)FieldOf("McpWobble", "Speed") != 7f || (float?)FieldOf("McpSpinner", "Speed") != 45f)
+                    return Fail("both scripts of the cube must run with their own fields: " + rt.DebugBehaviourNames());
+                // a third script attached while playing starts next to them (live: true is true now), its field reaching it
+                // alone — not McpSpinner's or McpWobble's behaviour
+                var lateAtt = await C("attach_script", new JsonObject { ["entity"] = cubeId, ["script"] = "McpLate", ["fields"] = new JsonObject { ["Speed"] = 9 } });
+                if ((bool?)lateAtt["live"] != true || lateAtt["note"] != null || FieldOf("McpLate", "Starts") is not int ls || ls != 1 || (float?)FieldOf("McpLate", "Speed") != 9f)
+                    return Fail("attach_script in play mode on an entity that runs other scripts: " + lateAtt.ToJsonString() + " — " + rt.DebugBehaviourNames());
+                await C("attach_script", new JsonObject { ["entity"] = cubeId, ["script"] = "McpWobble", ["fields"] = new JsonObject { ["Speed"] = 8 } });
+                if ((float?)FieldOf("McpWobble", "Speed") != 8f || (float?)FieldOf("McpSpinner", "Speed") != 45f || (float?)FieldOf("McpLate", "Speed") != 9f || (int?)FieldOf("McpWobble", "Starts") != 1)
+                    return Fail("attach_script fields in play mode must reach that script's behaviour only: " + rt.DebugBehaviourNames());
                 var pshot = await Raw("capture_viewport", new JsonObject { ["max_size"] = 512 });
                 bool playImage = (pshot["content"] as JsonArray)?.Any(c => (string)c["type"] == "image") == true;
                 if (!playImage || McpTestClient.Text(pshot).IndexOf("play mode", StringComparison.OrdinalIgnoreCase) < 0) return Fail("capture_viewport in play mode: " + McpTestClient.Text(pshot));

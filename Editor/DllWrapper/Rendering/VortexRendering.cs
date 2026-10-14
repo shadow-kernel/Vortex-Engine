@@ -125,6 +125,7 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostMouseDown")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool GameHostMouseDownNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostClientWidth")] private static extern int GameHostClientWidthNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostClientHeight")] private static extern int GameHostClientHeightNative();
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostPixelDensity")] private static extern float GameHostPixelDensityNative();
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostKeyDown")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool GameHostKeyDownNative(int vk);
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SetGameHostMouseCaptured")] private static extern void SetGameHostMouseCapturedNative([MarshalAs(UnmanagedType.I1)] bool captured);
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GameHostMouseCaptured")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool GameHostMouseCapturedNative();
@@ -164,6 +165,16 @@ namespace Editor.DllWrapper
         public static bool GameHostMouseDown() => GameHostMouseDownNative();
         public static int GameHostClientWidth() => GameHostClientWidthNative();
         public static int GameHostClientHeight() => GameHostClientHeightNative();
+        private static bool _noPixelDensity;
+        /// <summary>Device pixels per client unit of the game window (2 on a Retina display, 1 on Win32) — UI.Scale in the
+        /// player (#454). 1 when the native library predates the export.</summary>
+        public static float GameHostPixelDensity()
+        {
+            if (_noPixelDensity) return 1f;
+            try { float d = GameHostPixelDensityNative(); return d > 0f && float.IsFinite(d) ? d : 1f; }
+            catch (System.EntryPointNotFoundException) { _noPixelDensity = true; return 1f; }
+            catch { return 1f; }
+        }
         public static bool GameHostKeyDown(int vk) => GameHostKeyDownNative(vk);
         /// <summary>FPS mouse-look: capture hides + re-centers the cursor (delta via GameHostMouseDX/DY); release frees it for menus.</summary>
         public static void SetGameHostMouseCaptured(bool captured) => SetGameHostMouseCapturedNative(captured);
