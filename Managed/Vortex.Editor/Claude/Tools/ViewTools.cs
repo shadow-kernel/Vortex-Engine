@@ -22,22 +22,75 @@ namespace VortexEditor.Claude.Tools
         // ================================================================== viewport
 
         [McpServerTool(Name = "capture_viewport", ReadOnly = true)]
-        [Description("Returns an image of the editor viewport as it is now (edit mode: the editor camera; play mode: the game). " +
-                     "Frame the subject first with focus_camera. Use it to check your work.")]
+        [Description("Returns an image of the editor viewport as it is now (edit mode: the editor camera — or the scene's main camera " +
+                     "while the Game view is on, which the text then says; play mode: the game). Frame the subject first with focus_camera " +
+                     "(or pass focus), which also makes the editor camera the one that renders. Use it to check your work.")]
         public static async Task<ToolResult> CaptureViewport(
             [Description("Longest side of the image in pixels (256–2048)")] int max_size = 1280,
             [Description("PNG instead of JPEG (exact pixels, larger)")] bool png = false,
             [Description("Frame these entities before capturing")] string[] focus = null,
             [Description("Keep the editor overlays (selection outline, move gizmo, light/camera icons) in the image")] bool gizmos = false)
         {
-            if (focus != null && focus.Length > 0) Frame(SceneModel.ResolveMany(focus), null);
+            string switched = null;
+            if (focus != null && focus.Length > 0)
+            {
+                var list = SceneModel.ResolveMany(focus);
+                switched = UseEditorCamera();
+                Frame(list, null);
+            }
             await Task.Delay(focus != null && focus.Length > 0 ? 120 : 0);
             var shot = await ViewportCapture.CaptureAsync(max_size, png, clean: !gizmos);
-            var cam = EditorViewportSession.Main?.Camera;
-            string mode = PlayModeService.Instance.IsPlaying ? "play mode (game camera)" : "edit mode (editor camera)";
-            string info = "Viewport " + shot.SourceWidth + "×" + shot.SourceHeight + " (sent " + shot.Width + "×" + shot.Height + "), " + mode +
-                          (cam != null && !PlayModeService.Instance.IsPlaying ? ", camera at [" + F(cam.PositionX) + ", " + F(cam.PositionY) + ", " + F(cam.PositionZ) + "] yaw " + F(cam.Yaw) + "° pitch " + F(cam.Pitch) + "°" : "");
+            string info = "Viewport " + shot.SourceWidth + "×" + shot.SourceHeight + " (sent " + shot.Width + "×" + shot.Height + "), " + RenderedView() +
+                          (switched != null ? " — " + switched : "");
             return ToolResult.Text(info).WithImage(shot.Data, shot.MimeType);
+        }
+
+        /// <summary>Which camera the frame was rendered through, for the text next to an image (#444): the editor camera's
+        /// pose only when the editor camera is the one that renders.</summary>
+        private static string RenderedView()
+        {
+            if (PlayModeService.Instance.IsPlaying) return "play mode (game camera)";
+            var session = EditorViewportSession.Main;
+            switch (session?.CurrentView ?? EditorViewportSession.ViewSource.EditorCamera)
+            {
+                case EditorViewportSession.ViewSource.GameView:
+                {
+                    var scene = ProjectData.Current?.ActiveScene;
+                    var main = PlayCameraHelper.FindMainCameraEntity(scene);
+                    PlayCameraHelper.TryGetMainCameraWorld(scene, out var p, out var r, out _);
+                    return "edit mode, Game view: the scene's main camera '" + main?.Name + "' at [" + F(p.X) + ", " + F(p.Y) + ", " + F(p.Z) + "] yaw " + F(r.Y) + "° pitch " + F(r.X) +
+                           "° — not the editor camera (focus_camera switches to it)";
+                }
+                case EditorViewportSession.ViewSource.SceneCamera:
+                    return "edit mode, looking through a scene camera — not the editor camera (focus_camera switches to it)";
+                default:
+                {
+                    var cam = session?.Camera;
+                    return "edit mode (editor camera)" + (cam != null ? ", camera at [" + F(cam.PositionX) + ", " + F(cam.PositionY) + ", " + F(cam.PositionZ) + "] yaw " + F(cam.Yaw) + "° pitch " + F(cam.Pitch) + "°" : "");
+                }
+            }
+        }
+
+        /// <summary>The editor camera renders from here on (#444): in the Game view, or looking through a scene camera, every
+        /// frame would put that camera back over the pose a tool sets. Returns a note when the view changed, else null.</summary>
+        private static string UseEditorCamera()
+        {
+            bool gameView = PlayModeService.Instance.IsGameView;
+            var before = EditorViewportSession.Main?.UseEditorCamera() ?? EditorViewportSession.ViewSource.EditorCamera;
+            if (gameView) return "switched the viewport from the Game view (the scene's main camera) to the Scene view, so the editor camera renders";
+            return before == EditorViewportSession.ViewSource.SceneCamera ? "stopped looking through a scene camera, so the editor camera renders" : null;
+        }
+
+        /// <summary>For get_editor_info (#444): which camera the viewport renders through.</summary>
+        internal static string ViewportCamera()
+        {
+            if (PlayModeService.Instance.IsPlaying) return "game (play mode)";
+            switch (EditorViewportSession.Main?.CurrentView ?? EditorViewportSession.ViewSource.EditorCamera)
+            {
+                case EditorViewportSession.ViewSource.GameView: return "main camera (Game view)";
+                case EditorViewportSession.ViewSource.SceneCamera: return "scene camera";
+                default: return "editor camera";
+            }
         }
 
         [McpServerTool(Name = "set_geometric_lod", Idempotent = true)]
@@ -56,7 +109,8 @@ namespace VortexEditor.Claude.Tools
 
         [McpServerTool(Name = "focus_camera", ReadOnly = true)]
         [Description("Moves the editor camera (edit mode): frame entities (fits them in view), or look from position at look_at. " +
-                     "Returns the camera position. Does not change the scene.")]
+                     "When the viewport shows the Game view (the scene's main camera) it switches to the Scene view, so this camera is the " +
+                     "one capture_viewport sees (the answer's note says so). Returns the camera position. Does not change the scene.")]
         public static object FocusCamera(
             [Description("Entities to frame")] string[] entities = null,
             [Description("Camera position [x, y, z]")] float[] position = null,
@@ -65,21 +119,24 @@ namespace VortexEditor.Claude.Tools
         {
             var session = EditorViewportSession.Main ?? throw new ToolError("The editor viewport is not running.");
             if (PlayModeService.Instance.IsPlaying) throw new ToolError("The game camera drives the view in play mode; exit_play_mode first.");
-            if (entities != null && entities.Length > 0) Frame(SceneModel.ResolveMany(entities), angles);
-            else if (position != null || look_at != null)
+            var list = entities != null && entities.Length > 0 ? SceneModel.ResolveMany(entities) : null;
+            Vector3? at = SceneModel.Vec(position, "position"), target = SceneModel.Vec(look_at, "look_at");
+            if (list == null && at == null && target == null) throw new ToolError("Give entities to frame, or a position and/or look_at.");
+            string switched = UseEditorCamera();   // #444: otherwise the Game view renders the main camera over the pose set here
+            if (list != null) Frame(list, angles);
+            else
             {
                 var cam = session.Camera;
-                var from = SceneModel.Vec(position, "position") ?? new Vector3(cam.PositionX, cam.PositionY, cam.PositionZ);
-                if (look_at != null)
+                var from = at ?? new Vector3(cam.PositionX, cam.PositionY, cam.PositionZ);
+                if (target != null)
                 {
-                    TransformMath.LookAngles(from, SceneModel.Vec(look_at, "look_at").Value, out float yaw, out float pitch);
+                    TransformMath.LookAngles(from, target.Value, out float yaw, out float pitch);
                     cam.SetPositionAndRotation(from.X, from.Y, from.Z, yaw, pitch);
                 }
                 else cam.SetPositionAndRotation(from.X, from.Y, from.Z, cam.Yaw, cam.Pitch);
             }
-            else throw new ToolError("Give entities to frame, or a position and/or look_at.");
             var c = session.Camera;
-            return new { position = new[] { R(c.PositionX), R(c.PositionY), R(c.PositionZ) }, yaw = R(c.Yaw), pitch = R(c.Pitch) };
+            return new { position = new[] { R(c.PositionX), R(c.PositionY), R(c.PositionZ) }, yaw = R(c.Yaw), pitch = R(c.Pitch), note = switched };
         }
 
         /// <summary>Point the editor camera at the entities' bounds from the current (or given) direction.</summary>

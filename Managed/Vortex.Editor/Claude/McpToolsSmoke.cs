@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -12,6 +13,7 @@ using Editor.Core.UndoRedo;
 using Editor.ECS.Components.Audio;
 using Editor.ECS.Components.Rendering;
 using Editor.ECS.Components.Scripting;
+using SkiaSharp;
 using VortexEditor.Shell;
 
 namespace VortexEditor.Claude
@@ -21,8 +23,10 @@ namespace VortexEditor.Claude
     /// edit, assign, undo restores the file), world macros (grid, deterministic scatter, align, bulk edit, measure,
     /// one undo step each), scripts (write → compile errors with line/column → fix → attach with fields, the fields read
     /// back by get_entity and set by set_component_properties (#405), a subfolder script by its bare name and an
-    /// ambiguous name (#456, #494), API lookup), assets (list, place a model, save a prefab) and audio (search,
-    /// AudioSource, mixer, procedural generation). Everything is undone / removed afterwards.
+    /// ambiguous name (#456, #494), API lookup), assets (list, place a model, save a prefab), audio (search,
+    /// AudioSource, mixer, procedural generation) and the Game view against the editor camera (#444: captures say which
+    /// camera rendered, focus switches to the editor camera, Stop returns to the Scene view). Everything is undone /
+    /// removed afterwards.
     /// </summary>
     internal static class McpToolsSmoke
     {
@@ -39,6 +43,7 @@ namespace VortexEditor.Claude
             int port = McpTestClient.FreePort();
             if (!await McpHost.StartAsync(port)) return Fail("server did not start: " + McpHost.LastError);
             int undoBefore = UndoRedoManager.Instance.UndoCount;
+            bool gameViewBefore = PlayModeService.Instance.IsGameView;
             var cleanup = new List<string>();
             var cleanupDirs = new List<string>();
             using var http = new HttpClient { BaseAddress = new Uri("http://127.0.0.1:" + port), Timeout = TimeSpan.FromSeconds(60) };
@@ -226,7 +231,32 @@ namespace VortexEditor.Claude
                 var aud = await C("audition_clip", new JsonObject { ["path"] = genPath, ["volume"] = 0 });
                 await C("stop_audition", new JsonObject());
 
+                // ================= #444: a Game view left on (as ▶ ■ used to leave it) — the text never claims the editor camera,
+                // focus_camera / capture_viewport(focus) switch to it, and two poses far apart give two different pictures
+                if (PlayCameraHelper.FindMainCameraEntity(project.ActiveScene) == null)
+                    await C("create_entity", new JsonObject { ["kind"] = "camera", ["name"] = "Mcp Main Camera", ["position"] = new JsonArray(0, 1.7, -8),
+                        ["components"] = new JsonArray(new JsonObject { ["type"] = "Camera", ["properties"] = new JsonObject { ["is_main_camera"] = true } }) });
+                PlayModeService.Instance.SetGameView(true);
+                await Task.Delay(150);
+                var info = await C("get_editor_info", new JsonObject());
+                if ((bool?)info["game_view"] != true || !((string)info["viewport_camera"] ?? "").Contains("main camera")) return Fail("get_editor_info should report the Game view: " + info.ToJsonString());
+                string gameText = McpTestClient.Text(await Raw("capture_viewport", new JsonObject { ["max_size"] = 256 }));
+                if (!gameText.Contains("Game view") || gameText.Contains("(editor camera)")) return Fail("a Game view capture must name the main camera: " + gameText);
+                var high = await C("focus_camera", new JsonObject { ["position"] = new JsonArray(0, 230, -25), ["look_at"] = new JsonArray(0, 0, -24) });
+                if (high["note"] == null || PlayModeService.Instance.IsGameView) return Fail("focus_camera should leave the Game view and say so: " + high.ToJsonString());
+                var topDown = await Raw("capture_viewport", new JsonObject { ["max_size"] = 256 });
+                if (!McpTestClient.Text(topDown).Contains("(editor camera), camera at [0, 230, -25]")) return Fail("capture after focus_camera: " + McpTestClient.Text(topDown));
+                PlayModeService.Instance.SetGameView(true);
+                await Task.Delay(150);
+                var framed = await Raw("capture_viewport", new JsonObject { ["max_size"] = 256, ["focus"] = new JsonArray(cubeId) });
+                if (PlayModeService.Instance.IsGameView || !McpTestClient.Text(framed).Contains("(editor camera)")) return Fail("capture_viewport(focus) should leave the Game view: " + McpTestClient.Text(framed));
+                double apart = ImageDifference(topDown, framed);
+                SaveCapture(topDown, "mcp_editor_camera_top_down.jpg");
+                SaveCapture(framed, "mcp_editor_camera_framed.jpg");
+                if (apart < 4) return Fail("captures 280 m apart must differ (mean difference " + apart.ToString("0.0", CultureInfo.InvariantCulture) + " of 255)");
+
                 // ================= play mode (#90): enter, the game camera's image, stats, exit
+                PlayModeService.Instance.EnterGameViewForPlay();   // as ▶ does: the Game view while playing, the Scene view after (#444)
                 var play = await C("enter_play_mode", new JsonObject { ["run_seconds"] = 1 });
                 if ((string)play["state"] != "Playing") return Fail("enter_play_mode: " + play.ToJsonString());
                 // #408: both scripts of the cube run, each with its own fields — the second one used to be dropped silently
@@ -253,15 +283,17 @@ namespace VortexEditor.Claude
                 if ((string)stats["play_state"] != "Playing" || stats["draw_calls"] == null) return Fail("engine_stats: " + stats.ToJsonString());
                 var stop = await C("exit_play_mode", new JsonObject());
                 if ((string)stop["state"] != "Editing") return Fail("exit_play_mode: " + stop.ToJsonString());
+                if (PlayModeService.Instance.IsGameView) return Fail("Stop should return to the Scene view play started from (#444)");
 
                 log.Log("mcp tools: OK — " + ToolCatalog.All.Count + " tools; material, grid (12), scatter (8, resting on the tiles), scripts with line-accurate errors, " +
                         "script fields read + set, a subfolder script by its name, " + Path.GetFileName(crate) + " + prefab, audio + mixer + generated " + Path.GetFileName(genPath) +
-                        " + container " + Path.GetFileName(scPath) + ", play mode (capture, stats, exit)");
+                        " + container " + Path.GetFileName(scPath) + ", Game view vs editor camera (captures " + apart.ToString("0.0", CultureInfo.InvariantCulture) + " apart), play mode (capture, stats, exit)");
                 return true;
             }
             catch (Exception ex) { return Fail(ex.GetType().Name + ": " + ex.Message); }
             finally
             {
+                if (PlayModeService.Instance.IsGameView != gameViewBefore) PlayModeService.Instance.SetGameView(gameViewBefore);
                 while (UndoRedoManager.Instance.UndoCount > undoBefore && UndoRedoManager.Instance.Undo()) { }
                 EditorCommands.AfterSceneEdit();
                 foreach (var f in cleanup)
@@ -273,6 +305,40 @@ namespace VortexEditor.Claude
                     try { if (Directory.Exists(d) && !Directory.EnumerateFileSystemEntries(d).Any()) Directory.Delete(d); } catch { }
                 await McpHost.StopAsync();
             }
+        }
+
+        private static byte[] ImageOf(JsonNode shot)
+        {
+            string data = (string)(shot?["content"] as JsonArray)?.FirstOrDefault(c => (string)c["type"] == "image")?["data"];
+            return data == null ? null : Convert.FromBase64String(data);
+        }
+
+        /// <summary>A capture into the smoke's --capture folder, to look at after the run.</summary>
+        private static void SaveCapture(JsonNode shot, string name)
+        {
+            var bytes = ImageOf(shot);
+            if (bytes == null || string.IsNullOrEmpty(SmokeRegistry.CaptureDir)) return;
+            try { Directory.CreateDirectory(SmokeRegistry.CaptureDir); File.WriteAllBytes(Path.Combine(SmokeRegistry.CaptureDir, name), bytes); } catch { }
+        }
+
+        /// <summary>Mean absolute RGB difference (0–255) of two capture_viewport images of the same size; -1 when they cannot be compared.</summary>
+        private static double ImageDifference(JsonNode a, JsonNode b)
+        {
+            static SKBitmap Decode(JsonNode shot) { var bytes = ImageOf(shot); return bytes == null ? null : SKBitmap.Decode(bytes); }
+            using var x = Decode(a);
+            using var y = Decode(b);
+            if (x == null || y == null || x.Width != y.Width || x.Height != y.Height) return -1;
+            double sum = 0;
+            long n = 0;
+            for (int j = 0; j < x.Height; j += 2)
+                for (int i = 0; i < x.Width; i += 2)
+                {
+                    var p = x.GetPixel(i, j);
+                    var q = y.GetPixel(i, j);
+                    sum += Math.Abs(p.Red - q.Red) + Math.Abs(p.Green - q.Green) + Math.Abs(p.Blue - q.Blue);
+                    n += 3;
+                }
+            return n == 0 ? -1 : sum / n;
         }
     }
 }
