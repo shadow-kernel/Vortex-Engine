@@ -544,7 +544,7 @@ float3 SampleEnv(float3 R, float roughness)
     return DecodeEnv(EnvMap.SampleLevel(LinearSampler, EnvUV(R), lod).rgb);
 }
 
-float4 PSMain(PS_IN input) : SV_TARGET
+float4 PSMain(PS_IN input, bool isFront : SV_IsFrontFace) : SV_TARGET
 {
     // Texture repeat scale: multiply UVs so a small tiling texture repeats across a large surface instead of being
     // stretched once (the "blurry ground" bug). Guard against an unset/zero tiling (e.g. a non-material draw) -> 1x.
@@ -553,6 +553,7 @@ float4 PSMain(PS_IN input) : SV_TARGET
 
     // Tangent frame for parallax + normal mapping (computed outside any branch: it needs derivatives).
     float3 Ng = normalize(input.norm);
+    if (!isFront) Ng = -Ng;   // two-sided materials (TwoSided, glTF doubleSided): a back face is lit on its own side, like the foliage shader
     float3 T = normalize(input.tangent);
     float3 B = normalize(input.bitangent);
     CotangentFrame(Ng, input.worldPos, uv, T, B);
