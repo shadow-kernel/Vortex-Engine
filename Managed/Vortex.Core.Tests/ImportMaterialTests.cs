@@ -79,14 +79,18 @@ namespace VortexTests
         {
             // #453: the placement's folder fallback stands in only where the model wants an albedo it could not load
             var sources = new[] { 0, 1, 2 };   // colour-only, names a map, no material in the file
-            t.False(AssetActions.MayUseFolderTexture("/p/car.fbx", sources, 0, false), "a colour-only material keeps its colour");
-            t.True(AssetActions.MayUseFolderTexture("/p/car.fbx", sources, 1, false), "a map the material names but the import could not load: rescued");
-            t.False(AssetActions.MayUseFolderTexture("/p/car.fbx", sources, 1, true), "...unless its own map is bound");
-            t.True(AssetActions.MayUseFolderTexture("/p/crate.obj", sources, 2, false), "an OBJ without .mtl has nothing else");
-            t.False(AssetActions.MayUseFolderTexture("/p/car.glb", sources, 1, false), "a glTF never takes a folder image");
-            t.False(AssetActions.MayUseFolderTexture("/p/car.gltf", null, 0, false), "not even from an engine that cannot tell");
-            t.True(AssetActions.MayUseFolderTexture("/p/old.fbx", null, 0, false), "other formats with an engine that cannot tell: as before");
-            t.False(AssetActions.MayUseFolderTexture("/p/car.fbx", sources, 5, false), "a submesh the engine did not report: no guess");
+            int asked = 0;
+            Func<int[]> parse = () => { asked++; return sources; };   // stands in for the model parse behind the sources
+            t.False(AssetActions.MayUseFolderTexture("/p/car.fbx", parse, 0, false), "a colour-only material keeps its colour");
+            t.True(AssetActions.MayUseFolderTexture("/p/car.fbx", parse, 1, false), "a map the material names but the import could not load: rescued");
+            t.True(AssetActions.MayUseFolderTexture("/p/crate.obj", parse, 2, false), "an OBJ without .mtl has nothing else");
+            t.False(AssetActions.MayUseFolderTexture("/p/car.fbx", parse, 5, false), "a submesh the engine did not report: no guess");
+            int before = asked;
+            t.False(AssetActions.MayUseFolderTexture("/p/car.fbx", parse, 1, true), "...unless its own map is bound");
+            t.False(AssetActions.MayUseFolderTexture("/p/car.glb", parse, 1, false), "a glTF never takes a folder image");
+            t.Equal(before, asked, "neither a part with its own map nor a glTF pays for the albedo sources (a model parse)");
+            t.False(AssetActions.MayUseFolderTexture("/p/car.gltf", () => null, 0, false), "not even from an engine that cannot tell");
+            t.True(AssetActions.MayUseFolderTexture("/p/old.fbx", () => null, 0, false), "other formats with an engine that cannot tell: as before");
         }
 
         [Test]

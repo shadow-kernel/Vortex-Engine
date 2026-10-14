@@ -315,7 +315,7 @@ private:
 		std::error_code ec;
 		const auto plain = m_dir / "plain";
 		std::filesystem::create_directories(plain, ec);
-		std::ofstream(plain / "b_albedo.png", std::ios::binary) << "x";
+		std::ofstream(plain / "B_albedo.png", std::ios::binary) << "x";   // before "a_..." in a case-sensitive order
 		std::ofstream(plain / "a_albedo.png", std::ios::binary) << "x";
 		std::ofstream(plain / "embedded_other_0_albedo.png", std::ios::binary) << "x";   // another model's extracted map
 		const std::string bare = (plain / "bare.obj").string();
@@ -323,7 +323,7 @@ private:
 		const ImportedModelData b = ModelImporter::import_from_file(bare);
 		check(b.submeshes.size() == 1 && b.submeshes[0].albedo_source == 2, "an OBJ without .mtl has no material from the file");
 		check(b.submeshes.size() == 1 && b.submeshes[0].diffuse_texture == (plain / "a_albedo.png").string(),
-			"it takes the first colour texture in name order, never an extracted one (" + (b.submeshes.empty() ? std::string() : b.submeshes[0].diffuse_texture) + ")");
+			"it takes the first colour texture in name order ignoring case, never an extracted one (" + (b.submeshes.empty() ? std::string() : b.submeshes[0].diffuse_texture) + ")");
 
 		const auto kit = m_dir / "kit";
 		std::filesystem::create_directories(kit, ec);

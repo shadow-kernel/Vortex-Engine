@@ -790,8 +790,17 @@ namespace vortex::graphics
 			}
 		}
 		
-		// directory order is the file system's (hash order on APFS): sorted, the same folder gives the same pick (#453)
-		std::sort(color_textures.begin(), color_textures.end());
+		// directory order is the file system's (hash order on APFS): sorted, the same folder gives the same pick (#453) —
+		// ignoring case like the editor's list (ordinal upper case, as .NET's OrdinalIgnoreCase), exact order on a tie
+		std::sort(color_textures.begin(), color_textures.end(), [](const std::string& a, const std::string& b) {
+			const size_t n = (std::min)(a.size(), b.size());
+			for (size_t k = 0; k < n; ++k)
+			{
+				const int ca = toupper((unsigned char)a[k]), cb = toupper((unsigned char)b[k]);
+				if (ca != cb) return ca < cb;
+			}
+			return a.size() != b.size() ? a.size() < b.size() : a < b;
+		});
 		
 		// Assign textures to submeshes
 		for (size_t i = 0; i < data.submeshes.size(); i++)

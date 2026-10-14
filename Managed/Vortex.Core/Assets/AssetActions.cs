@@ -140,58 +140,8 @@ namespace Editor.Core.Assets
         }
 
         // ------------------------------------------------------------------ import
-        /// <summary>
-        /// Import a model file into the project: copies the model (and the textures next to it) into
-        /// Assets/&lt;targetFolder&gt;/&lt;model name&gt;/, validates it with the native importer and writes one
-        /// .vmat per submesh (materials/submesh_N.vmat) so placement binds real materials. Returns the imported
-        /// model's absolute path.
-        /// </summary>
-        public static string ImportModel(string sourcePath, string targetFolderRelative = "Models") => ImportModel(sourcePath, targetFolderRelative, true);
-
-        /// <summary>leftHanded (#352): write the model's .vimport sidecar so the importer converts the right-handed
-        /// source into the engine's left-handed space — on by default for new imports; existing models keep theirs.</summary>
-        public static string ImportModel(string sourcePath, string targetFolderRelative, bool leftHanded)
-        {
-            var root = ProjectRoot; if (string.IsNullOrEmpty(root)) throw new InvalidOperationException("Open a project first.");
-            if (!File.Exists(sourcePath)) throw new FileNotFoundException(sourcePath);
-            string name = Path.GetFileNameWithoutExtension(sourcePath);
-            string destDir = Path.Combine(root, "Assets", targetFolderRelative.Replace('\\', '/').Trim('/').Replace("Assets/", ""), name);
-            Directory.CreateDirectory(destDir);
-            string dest = Path.Combine(destDir, Path.GetFileName(sourcePath));
-            File.Copy(sourcePath, dest, true);
-            if (leftHanded) ModelImportSettings.SaveLeftHanded(dest, true);   // read by the native import below (#352)
-            // Sidecar textures (and .mtl / .bin companions) from the source folder.
-            string srcDir = Path.GetDirectoryName(sourcePath);
-            foreach (var f in Directory.GetFiles(srcDir))
-            {
-                string ext = Path.GetExtension(f).ToLowerInvariant();
-                if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".tga" || ext == ".bmp" || ext == ".dds" || ext == ".mtl" || ext == ".bin")
-                {
-                    string t = Path.Combine(destDir, Path.GetFileName(f));
-                    if (!File.Exists(t)) File.Copy(f, t);
-                }
-            }
-            int submeshes = 0;
-            try { submeshes = VortexAPI.GetSubmeshCount(dest); } catch { }
-            if (submeshes <= 0) throw new InvalidOperationException("The model could not be read by the importer (" + Path.GetFileName(sourcePath) + ").");
-            var textures = FindTexturesForModel(dest);
-            string[] names = null; try { names = VortexAPI.GetSubmeshNames(dest, submeshes); } catch { }
-            string matDir = Path.Combine(destDir, "materials");
-            Directory.CreateDirectory(matDir);
-            for (int i = 0; i < submeshes; i++)
-            {
-                string vmat = Path.Combine(matDir, "submesh_" + i + ".vmat");
-                if (File.Exists(vmat)) continue;
-                string smName = names != null && i < names.Length ? names[i] : "Submesh_" + i;
-                var m = new VortexMaterial { Name = smName };
-                string tex = textures.Count > 0 ? FindTextureForSubmesh(smName, textures) : null;
-                if (!string.IsNullOrEmpty(tex)) m.AlbedoTexture = Path.GetRelativePath(matDir, tex).Replace('/', '\\');
-                m.Save(vmat);
-            }
-            EnsureAnimationClips(dest);   // #340
-            try { AssetDatabase.Instance.Refresh(); } catch { }
-            return dest;
-        }
+        // Models are imported by the Import dialog's pipeline (VortexEditor ModelImportPipeline): its sidecar .vmat files
+        // carry what the importer read per material (#441, #450, #453).
 
         private static readonly HashSet<string> _clipsChecked = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -258,7 +208,7 @@ namespace Editor.Core.Assets
                     }
                     catch { }
                     if (string.IsNullOrEmpty(mr.MaterialPath) && textures.Count > 0
-                        && MayUseFolderTexture(fullPath, AlbedoSources(fullPath, 1), 0, HasOwnTexture(result[0].MaterialId)))
+                        && MayUseFolderTexture(fullPath, () => AlbedoSources(fullPath, 1), 0, HasOwnTexture(result[0].MaterialId)))
                         BindTexture(mr, result[0].MaterialId, textures[0], projectPath);
                     if (result[0].MaterialId >= 0) SceneRenderService.RegisterMaterialForMeshPath(entityPath, result[0].MaterialId);
                     entity.AddComponent(mr);
@@ -300,7 +250,7 @@ namespace Editor.Core.Assets
         {
             string fullModelPath = Path.IsPathRooted(relativePath) ? relativePath : Path.Combine(projectPath, relativePath);
             var textures = FindTexturesForModel(fullModelPath);
-            int[] albedo = textures.Count > 0 ? AlbedoSources(fullModelPath, submeshes.Length) : null;
+            var albedo = new Lazy<int[]>(() => AlbedoSources(fullModelPath, submeshes.Length));   // only when a part may use the folder
             string[] names = VortexAPI.GetSubmeshNames(fullModelPath, submeshes.Length) ?? Array.Empty<string>();
             var parent = new GameEntity(scene, modelName);
             parent.Transform.LocalPosition = new Vector3(0, 0, 0);
@@ -318,7 +268,7 @@ namespace Editor.Core.Assets
                     if (File.Exists(Path.Combine(projectPath, vmatRel))) mr.MaterialPath = vmatRel;
                 }
                 catch { }
-                if (string.IsNullOrEmpty(mr.MaterialPath) && textures.Count > 0 && MayUseFolderTexture(fullModelPath, albedo, i, HasOwnTexture(sm.MaterialId)))
+                if (string.IsNullOrEmpty(mr.MaterialPath) && textures.Count > 0 && MayUseFolderTexture(fullModelPath, () => albedo.Value, i, HasOwnTexture(sm.MaterialId)))
                 {
                     string tex = FindTextureForSubmesh(childName, textures);
                     if (!string.IsNullOrEmpty(tex)) BindTexture(mr, sm.MaterialId, tex, projectPath);
@@ -373,14 +323,16 @@ namespace Editor.Core.Assets
         /// albedo (#453)? Only when its import material has none bound AND the model wants one: its material names a map
         /// that could not be loaded, or the file has no material for it (an OBJ without .mtl). A colour-only material
         /// keeps its colour, and a glTF never takes one — it describes all of its materials. <paramref name="albedoSources"/>
-        /// is <see cref="VortexAPI.GetSubmeshAlbedoSources"/> (null = an engine that cannot tell: the fallback as before).</summary>
-        public static bool MayUseFolderTexture(string modelPath, int[] albedoSources, int index, bool hasOwnTexture)
+        /// yields <see cref="VortexAPI.GetSubmeshAlbedoSources"/> (null = an engine that cannot tell: the fallback as
+        /// before); it is asked last, so a glTF or a part with its own map never pays the model parse behind it.</summary>
+        public static bool MayUseFolderTexture(string modelPath, Func<int[]> albedoSources, int index, bool hasOwnTexture)
         {
             if (hasOwnTexture) return false;
             string ext = Path.GetExtension(modelPath ?? "").ToLowerInvariant();
             if (ext == ".gltf" || ext == ".glb") return false;
-            if (albedoSources == null) return true;
-            return index >= 0 && index < albedoSources.Length && albedoSources[index] != 0;
+            var sources = albedoSources?.Invoke();
+            if (sources == null) return true;
+            return index >= 0 && index < sources.Length && sources[index] != 0;
         }
 
         private static string FindTextureForSubmesh(string submeshName, List<string> textures)
