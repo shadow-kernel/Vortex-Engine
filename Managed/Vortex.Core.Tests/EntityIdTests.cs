@@ -275,6 +275,31 @@ namespace VortexTests
             finally { scene.DeactivateEntities(); scene.ReleaseEngineScene(); }
         }
 
+        [Test]
+        public static void DeletedDuringPlayIsRegisteredAgainAfterStop(TestContext t)
+        {
+            if (!Native()) return;
+            var scene = Loaded(out var crate, out var lid, out var barrel);
+            // an entity in the scene's list without a scene of its own (no editor path makes one — a test helper does)
+            var floating = new GameEntity("Floating");
+            scene.Entities.Add(floating);
+            try
+            {
+                scene.ActivateEntities();
+                var snap = PlaySnapshot.Take(scene);
+                // while playing: the hierarchy's / the Claude tools' Delete takes them out of the engine (#423 puts them back)
+                UndoRedoManager.Instance.Execute(new DeleteEntitiesCommand(new[] { barrel, lid }));
+                scene.Entities.Remove(floating);
+                t.True(barrel.EntityId == ID.INVALID_ID && lid.EntityId == ID.INVALID_ID, "deleted while playing: out of the engine");
+                snap.Restore();   // Stop
+                t.True(scene.Entities.Contains(barrel) && crate.Children.Contains(lid), "Stop puts the deleted entities back");
+                t.True(Unique(crate, lid, barrel) && At(barrel, 4, 5, 6) && At(lid, 0, 1, 0), "and registers them again, each its own transform");
+                t.True(scene.Entities.Contains(floating) && floating.EntityId == ID.INVALID_ID,
+                    "one without a scene is put back but stays out of the engine (the old re-sync registered it outside any scene)");
+            }
+            finally { scene.DeactivateEntities(); scene.ReleaseEngineScene(); }
+        }
+
         /// <summary>A native entity that is gone reads the origin (GetEntityPosition answers zeros for a dead id).</summary>
         private static bool Gone(long nativeId) => ID.IsValid(nativeId) && VortexAPI.ReadEntityPosition(nativeId).X == 0f
             && VortexAPI.ReadEntityPosition(nativeId).Y == 0f && VortexAPI.ReadEntityPosition(nativeId).Z == 0f;
