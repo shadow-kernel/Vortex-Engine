@@ -15,6 +15,7 @@
 #include "../Volumetrics/Volumetrics.h"
 #include "DX12FrameRing.h"
 #include "../Decals/Decals.h"
+#include "../Skinning/BonePalettes.h"   // the palette stage + per-view budget shared with the SDL GPU backend (#415)
 #include "DX12UpscalePipeline.h"
 #include "DX12PostFxChain.h"
 #include "DX12MotionVectorPipeline.h"
@@ -51,12 +52,13 @@ namespace vortex::graphics::dx12
 	// Maximum number of secondary render targets
 	constexpr u32 MAX_RENDER_TARGETS = 8;
 
-	// Bone-palette capacity (float4x4 matrices) for GPU skinning. 65536 x 64 B = 4 MB persistently-mapped
-	// UPLOAD buffer, split into TWO halves that alternate per upload: the CPU always writes the half the
-	// in-flight frames are NOT reading (uploads happen after the frame-start fence wait, which guarantees
-	// the 2-frames-back user of the same half has finished) — no torn palettes on animated characters.
-	constexpr u32 MAX_BONE_MATRICES = 65536;
-	constexpr u32 MAX_BONE_MATRICES_PER_FRAME = MAX_BONE_MATRICES / 2;   // per-half capacity (~250 chars x 128 bones)
+	// Bone-palette capacity (float4x4 matrices) for GPU skinning: one frame holds MAX_BONE_MATRICES_PER_FRAME (65536,
+	// the same budget as the SDL GPU backend, #415). The persistently-mapped UPLOAD buffer holds TWO such halves (8 MB)
+	// that alternate per upload: the CPU always writes the half the in-flight frames are NOT reading (uploads happen
+	// after the frame-start fence wait, which guarantees the 2-frames-back user of the same half has finished) — no
+	// torn palettes on animated characters.
+	constexpr u32 MAX_BONE_MATRICES_PER_FRAME = skinning::MAX_BONE_MATRICES_PER_FRAME;   // per-half capacity (~1100 chars x 58 bones)
+	constexpr u32 MAX_BONE_MATRICES = 2 * MAX_BONE_MATRICES_PER_FRAME;
 
 	// RenderItem.bone_offset value that marks a RIGID (non-skinned) item.
 	constexpr u32 NO_BONES = 0xFFFFFFFFu;
@@ -83,6 +85,7 @@ namespace vortex::graphics::dx12
 		// NO_BONES = rigid item (the default; every existing submit path is untouched).
 		u32 bone_offset{ NO_BONES };
 		u32 bone_count{ 0 };
+		u32 palette{ NO_BONES };   // skinned: the palette's index in the frame's stage (#415), shared by the character's submeshes
 		// Render layer (#175): 0 = world, 1 = first-person VIEWMODEL — drawn in a second pass after a
 		// depth clear with its own projection, excluded from shadow casting + SSAO + frustum cull.
 		u32 layer{ 0 };
@@ -450,6 +453,10 @@ namespace vortex::graphics::dx12
 		// Cull stats (per frame): instances examined vs actually drawn — proves cull effectiveness on big maps.
 		int get_instances_tested() const { return m_instances_tested; }
 		int get_instances_drawn() const { return m_instances_drawn; }
+		// The frame budgets of the main view (#415): bone matrices in the GPU palette buffer / its capacity, and the
+		// skinned draws in view that had no room for their palette (drawn in the bind pose).
+		struct BudgetStats { u32 bone_matrices_used{ 0 }, bone_matrices_capacity{ MAX_BONE_MATRICES_PER_FRAME }, skinned_bind_pose_fallbacks{ 0 }; };
+		const BudgetStats& budget_stats() const { return m_budget_stats; }
 
 		// ============== Multi-Viewport Rendering ==============
 		
@@ -713,18 +720,29 @@ namespace vortex::graphics::dx12
 		void* m_per_object_cb_mapped{ nullptr };
 		ComPtr<ID3D12Resource> m_instance_vb;          // per-instance world matrices (GPU instancing)
 		void* m_instance_vb_mapped{ nullptr };
-		// Bone palettes for GPU skinning: staged CPU-side per submit batch (m_bone_submit), swapped with the
-		// render queue, then uploaded into the ALTERNATE half of the persistently-mapped buffer AFTER the
-		// frame fence wait (see MAX_BONE_MATRICES_PER_FRAME) — root SRV param 8 points into the active half.
+		// Bone palettes for GPU skinning: staged CPU-side per submit batch (m_bone_submit) — ONE copy per character, its
+		// submeshes share it (#415) — swapped with the render queue, then uploaded into the ALTERNATE half of the
+		// persistently-mapped buffer AFTER the frame fence wait (see MAX_BONE_MATRICES_PER_FRAME) — root SRV param 8
+		// points into the active half at m_bone_gpu_offset[palette].
 		ComPtr<ID3D12Resource> m_bone_vb;
 		void* m_bone_vb_mapped{ nullptr };
-		std::vector<float> m_bone_submit;   // guarded by m_queue_mutex (like m_submit_queue)
-		std::vector<float> m_bone_render;
+		skinning::PaletteStage m_bone_submit;   // guarded by m_queue_mutex (like m_submit_queue)
+		skinning::PaletteStage m_bone_render;
+		std::vector<u32> m_bone_gpu_offset;                 // per palette of m_bone_render: matrix offset in the active half, or NO_PALETTE
+		std::vector<float> m_bone_packed;                   // the active half's content while over budget
+		std::vector<skinning::PaletteUse> m_bone_uses;      // scratch: the skinned draws of the view
+		skinning::PaletteBudget m_bone_budget;              // the last upload's result
+		BudgetStats m_budget_stats;
+		std::chrono::steady_clock::time_point m_bone_budget_logged{};
 		bool m_bone_upload_pending{ false };   // set by swap_render_queue; consumed by upload_staged_bone_palettes
 		u32 m_bone_active_half{ 0 };           // which buffer half the CURRENT render queue's offsets point into
-		// Upload staged palettes into the inactive half + flip. Callers must guarantee that half is not
-		// referenced by any still-executing frame (after the frame fence wait, or after a full flush).
-		void upload_staged_bone_palettes();
+		// Place this frame's palettes for the view (view_projection, eye) and upload them into the inactive half + flip.
+		// Normally they all fit: the stage goes up once per swap. Over budget (#415) the characters in view go first, nearest
+		// first, re-packed on every call. Callers must guarantee that half is not referenced by any still-executing frame
+		// (after the frame fence wait, or after a full flush).
+		void upload_staged_bone_palettes(const DirectX::XMFLOAT4X4& view_projection, const DirectX::XMFLOAT3& eye);
+		void prepare_bone_budget(const DirectX::XMFLOAT4X4& view_projection, const DirectX::XMFLOAT3& eye);
+		void note_budget_stats();   // the main view's budgets -> budget_stats(), a rate-limited log line when one overflows
 		D3D12_GPU_VIRTUAL_ADDRESS bone_palette_base_va() const
 		{
 			return m_bone_vb->GetGPUVirtualAddress() + (UINT64)m_bone_active_half * MAX_BONE_MATRICES_PER_FRAME * 64;
@@ -816,6 +834,7 @@ namespace vortex::graphics::dx12
 			bool skinned{ false };
 			u32 boneOffset{ 0 };
 			u32 boneCount{ 0 };
+			u32 palette{ NO_BONES };   // the item's palette in m_bone_render; its place in the GPU buffer is m_bone_gpu_offset[palette] (#415)
 			// #175: runs are layer-homogeneous (layer is the primary sort key + a run-break condition);
 			// viewmodel runs cluster at the tail and draw in the second (depth-cleared, own-proj) pass.
 			u32 layer{ 0 };

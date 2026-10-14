@@ -224,10 +224,11 @@ namespace VortexEditor.Claude.Tools
         }
 
         [McpServerTool(Name = "engine_stats", ReadOnly = true)]
-        [Description("Renderer statistics of the last frame: FPS, draw calls (total, and split into main pass / shadow atlases / SSAO prepass), indices drawn by the main pass (vertices), instances tested/drawn by culling, entity count, and the live GPU resource counts (meshes incl. LOD meshes, materials, textures) — a count that only grows is a leak.")]
+        [Description("Renderer statistics of the last frame: FPS, draw calls (total, and split into main pass / shadow atlases / SSAO prepass), indices drawn by the main pass (vertices), instances tested/drawn by culling, entity count, the live GPU resource counts (meshes incl. LOD meshes, materials, textures) — a count that only grows is a leak — and the bone-palette budget of animated characters: bone matrices used / capacity per frame and the skinned draws in view that fell back to the bind pose because it was full.")]
         public static object EngineStats()
         {
             VortexAPI.TryGetResourceCounts(out int meshes, out int materials, out int textures);
+            VortexAPI.TryGetBonePaletteStats(out int boneUsed, out int boneCapacity, out int bindPoseFallbacks);
             int draws = VortexAPI.DrawCalls, shadowDraws = VortexAPI.DrawCallsShadow, postDraws = VortexAPI.DrawCallsPost;
             return new
             {
@@ -241,6 +242,10 @@ namespace VortexEditor.Claude.Tools
                 instances_drawn = VortexAPI.InstancesDrawn,
                 entities = ProjectData.Current?.ActiveScene != null ? SceneModel.All(ProjectData.Current.ActiveScene).Count() : 0,
                 meshes, materials, textures,
+                // #415: one palette per character (its submeshes share it); over budget the farthest / off-screen fall back
+                bone_matrices_used = boneUsed,
+                bone_matrices_capacity = boneCapacity,
+                skinned_bind_pose_fallbacks = bindPoseFallbacks,
                 play_state = PlayModeService.Instance.State.ToString(),
             };
         }

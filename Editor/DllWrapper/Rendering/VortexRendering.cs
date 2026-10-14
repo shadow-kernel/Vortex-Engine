@@ -575,6 +575,21 @@ namespace Editor.DllWrapper
             get { try { return GetPostDrawCallCount(); } catch { return 0; } }
         }
 
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void GetBonePaletteStats(out int used, out int capacity, out int bindPoseFallbacks);
+
+        /// <summary>The bone-palette budget of the main view's last frame (#415): bone matrices in the GPU palette buffer
+        /// (one copy per character — its submeshes share it), the buffer's capacity, and the skinned draws in view that
+        /// were drawn in the bind pose because the budget was full (the farthest / off-screen characters). False with an
+        /// engine library that predates the export.</summary>
+        public static bool TryGetBonePaletteStats(out int used, out int capacity, out int bindPoseFallbacks)
+        {
+            used = capacity = bindPoseFallbacks = 0;
+            try { GetBonePaletteStats(out used, out capacity, out bindPoseFallbacks); return true; }
+            catch (System.EntryPointNotFoundException) { return false; }
+            catch (System.DllNotFoundException) { return false; }
+        }
+
         /// <summary>
         /// Get vertex count from the engine.
         /// </summary>

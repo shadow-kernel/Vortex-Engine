@@ -23,6 +23,7 @@
 #include "../Decals/Decals.h"
 #include "SdlGpuVolumetrics.h"
 #include "../Volumetrics/Volumetrics.h"
+#include "../Skinning/BonePalettes.h"
 #include <SDL3/SDL.h>
 #include <chrono>
 #include <memory>
@@ -36,7 +37,7 @@ namespace vortex::graphics::sdlgpu
 	constexpr u32 MAX_RENDER_OBJECTS = 262144;
 	constexpr u32 MAX_DRAW_RUNS = 8192;
 	constexpr u32 MAX_RENDER_TARGETS = 8;
-	constexpr u32 MAX_BONE_MATRICES = 65536;
+	constexpr u32 MAX_BONE_MATRICES = skinning::MAX_BONE_MATRICES_PER_FRAME;   // the per-frame palette budget, the same on DX12 (#415)
 	constexpr u32 NO_BONES = 0xFFFFFFFFu;
 	constexpr u32 MAX_GIZMO_ITEMS = 512;
 
@@ -56,6 +57,7 @@ namespace vortex::graphics::sdlgpu
 		DirectX::XMFLOAT4 color{ 1.0f, 1.0f, 1.0f, 1.0f };   // per-instance tint (#331), multiplied with the material's base colour
 		u32 bone_offset{ NO_BONES };
 		u32 bone_count{ 0 };
+		u32 palette{ NO_BONES };   // skinned: the palette's index in the frame's stage (#415), shared by the character's submeshes
 		u32 layer{ 0 };
 		u32 mirrored{ 0 };   // det(world) < 0: the instance is wound the other way (#334), set at submit
 	};
@@ -345,6 +347,10 @@ namespace vortex::graphics::sdlgpu
 		int get_vertex_count() const { return m_vertex_count; }
 		int get_instances_tested() const { return m_instances_tested; }
 		int get_instances_drawn() const { return m_instances_drawn; }
+		// The frame budgets of the main view (#415): bone matrices in the GPU palette buffer / its capacity, and the
+		// skinned draws in view that had no room for their palette (drawn in the bind pose).
+		struct BudgetStats { u32 bone_matrices_used{ 0 }, bone_matrices_capacity{ MAX_BONE_MATRICES }, skinned_bind_pose_fallbacks{ 0 }; };
+		const BudgetStats& budget_stats() const { return m_budget_stats; }
 
 		// Secondary render targets (thumbnails, extra viewports) with CPU readback (BGRA8, row pitch = width*4).
 		u32 create_render_target(u32 width, u32 height);
@@ -543,6 +549,7 @@ namespace vortex::graphics::sdlgpu
 			u32 lodCount[4]{ 0, 0, 0, 0 };
 			bool skinned{ false };
 			u32 boneOffset{ 0 }; u32 boneCount{ 0 };
+			u32 palette{ NO_BONES };   // the item's palette in m_bone_render; its place in the GPU buffer is m_bone_gpu_offset[palette] (#415)
 			u32 layer{ 0 };
 			bool mirrored{ false };   // every instance of the run has a negative-determinant world matrix (#334)
 		};
@@ -663,6 +670,9 @@ namespace vortex::graphics::sdlgpu
 		u32 m_light_cap_log{ 0 };
 		void upload_staged_bone_palettes();
 		void prepare_scene(const FrameView& view);   // sort + cull + pack (CPU) into the staging vectors
+		// #415: which palettes get room in the GPU buffer for this view (all of them unless over budget) -> m_bone_gpu_offset
+		void prepare_bone_budget(const FrameView& view);
+		void note_budget_stats();   // the main view's budgets -> budget_stats(), a rate-limited log line when one overflows
 		void upload_dynamic(SDL_GPUCommandBuffer* cmd);
 		void record_scene(SDL_GPUCommandBuffer* cmd, GpuTarget& target, const FrameView& view, bool draw_skybox, bool draw_grid, bool draw_gizmos,
 			int particle_world = -1, bool particle_depth_capture = false);
@@ -753,7 +763,16 @@ namespace vortex::graphics::sdlgpu
 		SDL_GPUTransferBuffer* m_bone_transfer{ nullptr };
 		std::vector<float> m_instance_staging;   // packed per-instance world matrices for this frame (16 floats each)
 		u32 m_instance_count{ 0 };
-		std::vector<float> m_bone_submit, m_bone_render;
+		// Bone palettes (#415): staged once per character (its submeshes share the copy), swapped with the render queue.
+		// prepare_bone_budget places them in the GPU buffer per view: the stage as it is when it fits (uploaded once per
+		// swap), otherwise packed by relevance into m_bone_packed (uploaded per view) — the rest draw in the bind pose.
+		skinning::PaletteStage m_bone_submit, m_bone_render;
+		std::vector<u32> m_bone_gpu_offset;                 // per palette of m_bone_render: matrix offset in the GPU buffer, or NO_PALETTE
+		std::vector<float> m_bone_packed;                   // the GPU buffer's content while over budget
+		std::vector<skinning::PaletteUse> m_bone_uses;      // scratch: the skinned draws of the view
+		skinning::PaletteBudget m_bone_budget;              // the last prepared view's result
+		BudgetStats m_budget_stats;
+		std::chrono::steady_clock::time_point m_bone_budget_logged{};
 		bool m_bone_upload_pending{ false };
 		bool m_bone_dirty{ false };
 

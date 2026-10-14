@@ -72,7 +72,6 @@ namespace vortex::graphics::dx12
 		
 		// Ensure previous work is complete before rendering to secondary target
 		m_command_queue.flush();
-		upload_staged_bone_palettes();   // GPU idle — safe; previews then render the freshly-swapped pose
 		m_command_allocators[idx]->Reset();
 		
 		auto* pso = m_render_queue.empty() ? m_pipeline.pipeline_state() :
@@ -128,6 +127,9 @@ namespace vortex::graphics::dx12
 		// Update per-frame constants with this camera's view/proj
 		PerFrameConstants frame_constants = m_frame_constants;
 		XMStoreFloat4x4(&frame_constants.view_projection, vp_matrix);
+		// GPU idle (flushed above) — safe; previews then render the freshly-swapped pose, the palettes placed for THIS
+		// camera when the frame's palettes exceed the budget (#415)
+		upload_staged_bone_palettes(frame_constants.view_projection, camera.position);
 		frame_constants.camera_position = camera.position;
 
 		// Pull in the CURRENT lighting state. Offscreen previews (AssetPreviewRenderer) set ambient + directional
@@ -326,12 +328,14 @@ namespace vortex::graphics::dx12
 				// Keyframe Editor, Prefab Editor) show the posed character, not the bind pose.
 				{
 					ID3D12PipelineState* want_pso = default_pso;
-					const bool skinned_item = item.bone_offset != NO_BONES && m_pipeline_3d.skinned_pso() && m_bone_vb;
+					// the palette's place in the GPU buffer; none (over budget, #415) = the bind pose
+					const u32 bone_base = item.palette < m_bone_gpu_offset.size() ? m_bone_gpu_offset[item.palette] : skinning::NO_PALETTE;
+					const bool skinned_item = bone_base != skinning::NO_PALETTE && m_pipeline_3d.skinned_pso() && m_bone_vb;
 					if (skinned_item)
 					{
 						want_pso = m_pipeline_3d.skinned_pso();
 						m_command_list->SetGraphicsRootShaderResourceView(8,
-							bone_palette_base_va() + (UINT64)item.bone_offset * 64);
+							bone_palette_base_va() + (UINT64)bone_base * 64);
 					}
 					else
 					{

@@ -117,11 +117,13 @@ namespace vortex::graphics::sdlgpu
 		item.mesh_id = mesh; item.material_id = material; item.layer = layer;
 		if (color) item.color = { color[0], color[1], color[2], color[3] };
 		memcpy(&item.world_matrix, world_matrix, sizeof(DirectX::XMFLOAT4X4));
-		const u32 offset = (u32)(m_bone_submit.size() / 16);
-		if (offset + bone_count > MAX_BONE_MATRICES) { m_submit_queue.push_back(with_winding(item)); return; }   // palette full -> bind pose
-		item.bone_offset = offset;
+		// Every submesh of a character hands over the same palette: the stage keeps one copy (#415). What does not fit the
+		// GPU buffer is no longer cut here in submission (= hierarchy) order — prepare_bone_budget decides per view.
+		const u32 palette = m_bone_submit.add(bone_matrices, bone_count);
+		if (palette == skinning::NO_PALETTE) { m_submit_queue.push_back(with_winding(item)); return; }   // the stage's ceiling: bind pose (counted)
+		item.palette = palette;
+		item.bone_offset = m_bone_submit.palettes()[palette].offset;
 		item.bone_count = bone_count;
-		m_bone_submit.insert(m_bone_submit.end(), bone_matrices, bone_matrices + (size_t)bone_count * 16);
 		m_submit_queue.push_back(with_winding(item));
 	}
 
@@ -445,6 +447,7 @@ namespace vortex::graphics::sdlgpu
 					run.skinned = true;
 					run.boneOffset = m_render_queue[i].bone_offset;
 					run.boneCount = m_render_queue[i].bone_count;
+					run.palette = m_render_queue[i].palette;
 					run.localR *= 2.0f;
 				}
 				if (m_geo_lod_enabled && !skinnedRun)
@@ -565,12 +568,62 @@ namespace vortex::graphics::sdlgpu
 		append_gizmos(m_gizmo_render);
 		append_gizmos(m_gizmo_wire_render);
 		m_instance_count = globalBase + gizmoCount;
+		prepare_bone_budget(view);
+	}
+
+	// #415: the palettes' places in the GPU buffer for this view. Normally they all fit: the stage is the buffer, uploaded
+	// once per swap. Over budget the palettes of the characters in view go first, nearest first (the first-person layer
+	// always), packed into m_bone_packed and uploaded for this view — the farthest / off-screen characters draw in the
+	// bind pose instead of whichever came last in the hierarchy.
+	void SdlGpuRenderer::prepare_bone_budget(const FrameView& view)
+	{
+		using namespace DirectX;
+		m_bone_uses.clear();
+		if (m_bone_render.matrix_count() > MAX_BONE_MATRICES && !m_draw_runs.empty())
+		{
+			// the sphere around each skinned draw, as the cull sees it
+			const size_t n = (std::min)((std::min)(m_render_queue.size(), (size_t)MAX_RENDER_OBJECTS), m_item_run.size());
+			for (size_t k = 0; k < n; ++k)
+			{
+				const RenderItem& item = m_render_queue[k];
+				if (item.palette == NO_BONES) continue;
+				const DrawRun& run = m_draw_runs[m_item_run[k]];
+				const XMFLOAT4X4& W = item.world_matrix;
+				const XMVECTOR wc = XMVector3TransformCoord(XMVectorSet(run.lcx, run.lcy, run.lcz, 1.f), XMLoadFloat4x4(&W));
+				const float sx = sqrtf(W._11 * W._11 + W._12 * W._12 + W._13 * W._13);
+				const float sy = sqrtf(W._21 * W._21 + W._22 * W._22 + W._23 * W._23);
+				const float sz = sqrtf(W._31 * W._31 + W._32 * W._32 + W._33 * W._33);
+				const float maxScale = sx > sy ? (sx > sz ? sx : sz) : (sy > sz ? sy : sz);
+				m_bone_uses.push_back({ item.palette, XMVectorGetX(wc), XMVectorGetY(wc), XMVectorGetZ(wc), run.localR * maxScale + 0.05f, item.layer != 0 });
+			}
+		}
+		m_bone_budget = skinning::assign_palette_budget(m_bone_render, m_bone_uses, view_frustum(view.view_projection), view.eye,
+			MAX_BONE_MATRICES, m_bone_gpu_offset, m_bone_packed);
+	}
+
+	void SdlGpuRenderer::note_budget_stats()
+	{
+		m_budget_stats.bone_matrices_used = m_bone_budget.used;
+		m_budget_stats.bone_matrices_capacity = m_bone_budget.capacity;
+		m_budget_stats.skinned_bind_pose_fallbacks = m_bone_budget.fallbacks;
+		if (m_bone_budget.fallbacks > 0)
+		{
+			const auto now = std::chrono::steady_clock::now();
+			if (now - m_bone_budget_logged > std::chrono::seconds(5))
+			{
+				m_bone_budget_logged = now;
+				platform::debug_output(("[sdlgpu] bone palettes: " + std::to_string(m_bone_render.matrix_count()) + " matrices submitted, "
+					+ std::to_string(m_bone_budget.used) + " of " + std::to_string(m_bone_budget.capacity) + " fit — "
+					+ std::to_string(m_bone_budget.fallbacks) + " skinned draw(s) in view use the bind pose: the farthest / off-screen characters (#415)\n").c_str());
+			}
+		}
 	}
 
 	void SdlGpuRenderer::upload_dynamic(SDL_GPUCommandBuffer* cmd)
 	{
 		const bool upload_instances = m_instance_count > 0;
-		const bool upload_bones = m_bone_upload_pending && !m_bone_render.empty();
+		// over budget the packed buffer belongs to this view; otherwise the stage goes up once per swap (#415)
+		const bool upload_bones = m_bone_budget.compacted ? !m_bone_packed.empty() : (m_bone_upload_pending && m_bone_render.matrix_count() > 0);
 		if (!upload_instances && !upload_bones) return;
 		SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd);
 		if (upload_instances)
@@ -589,12 +642,14 @@ namespace vortex::graphics::sdlgpu
 		if (upload_bones)
 		{
 			m_bone_upload_pending = false;
-			const size_t floats = (std::min)(m_bone_render.size(), (size_t)MAX_BONE_MATRICES * 16);
+			const float* palettes = m_bone_budget.compacted ? m_bone_packed.data() : m_bone_render.data();
+			const size_t staged = m_bone_budget.compacted ? m_bone_packed.size() : (size_t)m_bone_render.matrix_count() * 16;
+			const size_t floats = (std::min)(staged, (size_t)MAX_BONE_MATRICES * 16);
 			const u32 bytes = (u32)(floats * sizeof(float));
 			void* mapped = SDL_MapGPUTransferBuffer(m_device, m_bone_transfer, true);
 			if (mapped)
 			{
-				memcpy(mapped, m_bone_render.data(), bytes);
+				memcpy(mapped, palettes, bytes);
 				SDL_UnmapGPUTransferBuffer(m_device, m_bone_transfer);
 				SDL_GPUTransferBufferLocation src{ m_bone_transfer, 0 };
 				SDL_GPUBufferRegion dst{ m_bone_buffer, 0, bytes };
@@ -957,7 +1012,9 @@ namespace vortex::graphics::sdlgpu
 			const bool two_sided = mat && (mat->properties().is_unlit || mat->double_sided());
 			SDL_GPUGraphicsPipeline* pipeline = m_wireframe_mode ? set.wireframe : (run.mirrored && set.opaque_m ? set.opaque_m : set.opaque);
 			bool skinned_draw = false;
-			if (run.skinned && m_pipeline_skinned && mesh->vertex_stride() == 52)
+			// the palette's place in this view's GPU buffer; none (over budget, #415) = the bind pose through the rigid pipelines
+			const u32 bone_base = (run.skinned && run.palette < m_bone_gpu_offset.size()) ? m_bone_gpu_offset[run.palette] : skinning::NO_PALETTE;
+			if (run.skinned && bone_base != skinning::NO_PALETTE && m_pipeline_skinned && mesh->vertex_stride() == 52)
 			{
 				pipeline = run.mirrored && m_pipeline_skinned_m ? m_pipeline_skinned_m : m_pipeline_skinned;
 				// a custom material shader applies to skinned meshes too (#332): engine skinning VS + its PSMain
@@ -984,7 +1041,7 @@ namespace vortex::graphics::sdlgpu
 			{
 				// after bind_material: it pushes the per-object constants into vertex slot 1 (custom vertex shaders), the
 				// skinning shader wants its SkinParams there
-				SkinParams sp{ run.boneOffset, { 0, 0, 0 } };
+				SkinParams sp{ bone_base, { 0, 0, 0 } };
 				SDL_PushGPUVertexUniformData(cmd, 1, &sp, sizeof(sp));
 			}
 

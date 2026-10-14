@@ -944,6 +944,7 @@ namespace vortex::graphics::sdlgpu
 		if (slot == 0) m_frame_constants = view.frame;   // the unjittered matrices persist
 		apply_taa_jitter(surface, view, rw, rh, post_on && m_postfx.params().taa && m_pipeline_taa != nullptr);
 		record_scene(cmd, surface.scene, view, m_skybox_enabled, m_grid_visible, true, 0, true);
+		if (slot == 0) note_budget_stats();   // engine_stats report the main view's budgets (#415)
 
 		// Composite the scene into the present target (render-scale upscale), through the post chain if active.
 		if (post_on && ensure_target(surface.postfx, w, h, false, false))

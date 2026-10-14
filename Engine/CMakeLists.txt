@@ -26,6 +26,7 @@ set(VORTEX_ENGINE_CORE_SOURCES
 	Graphics/Importers/TextureCompress.cpp
 	Graphics/Particles/ParticleJson.cpp
 	Graphics/Particles/ParticleSystem.cpp
+	Graphics/Skinning/BonePalettes.cpp
 	Input/InputSystem.cpp
 	Navigation/NavigationBake.cpp
 	Navigation/NavigationWorld.cpp

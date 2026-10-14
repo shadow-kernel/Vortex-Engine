@@ -18,6 +18,8 @@
     <ClInclude Include="Runtime\Systems\PhysicsSystem.h" />
     <ClInclude Include="Physics\PhysicsWorld.h" />
     <ClInclude Include="Graphics\Particles\ParticleSystem.h" />
+    <ClInclude Include="Graphics\ViewFrustum.h" />
+    <ClInclude Include="Graphics\Skinning\BonePalettes.h" />
     <ClInclude Include="Navigation\NavigationWorld.h" />
     <ClInclude Include="Navigation\NavigationFormat.h" />
     <ClInclude Include="Runtime\Systems\AudioSystem.h" />
@@ -90,6 +92,7 @@
     <ClCompile Include="Physics\PhysicsWorld.cpp" />
     <ClCompile Include="Graphics\Particles\ParticleJson.cpp" />
     <ClCompile Include="Graphics\Particles\ParticleSystem.cpp" />
+    <ClCompile Include="Graphics\Skinning\BonePalettes.cpp" />
     <ClCompile Include="Navigation\NavigationBake.cpp" />
     <ClCompile Include="Navigation\NavigationWorld.cpp" />
     <ClCompile Include="Runtime\Systems\AudioSystem.cpp" />
