@@ -99,6 +99,22 @@ namespace Editor.UI.Vui
         /// scripts re-Push their own HUD/menu in Start). Hides each so a later cached Load()+Show re-adds cleanly.</summary>
         public void Clear() { foreach (var c in _stack) if (c != null) c.Visible = false; _stack.Clear(); }
 
+        /// <summary>Back to the state of a fresh process, like the standalone player starts (#477): no screens, no open
+        /// confirm dialog, no cached canvases — the next Gui.Load reads its .vui again, so a play session never inherits
+        /// the previous one's screens (a template's pause menu over another game) or a canvas of another project, or
+        /// one changed at runtime or edited since — and no pending clicks, focus or tooltip. The editor calls this when
+        /// play starts and stops and when a project closes.</summary>
+        public void Reset()
+        {
+            VuiDialogs.Close();
+            Clear();
+            _loaded.Clear();
+            _firedActions.Clear();
+            _navCanvas = null; _navMode = false; _stickHeldSince = 0;
+            _tipElem = null;
+            LastConsumedInput = false;
+        }
+
         /// <summary>Topmost visible canvas's cursor-lock preference (HUD = locked mouse-look; menu = free cursor).</summary>
         public bool CursorLockedForTop()
         {

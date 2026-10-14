@@ -823,6 +823,7 @@ namespace Editor.Core.Viewport
             EnsurePlayerControllerOnMainCamera(scene);
             AudioPreviewService.Instance.Stop();
             AudioPlaybackService.Instance.BeginPlay(scene);
+            VuiStack.Instance.Reset();   // a session starts without screens, like the standalone player (#477)
             // the play view's UI frame before any Start(): UI.Width / Height / Scale are real from a script's first line —
             // the per-tick feed comes one frame later, so Start() saw zeros (first play) or the last session's size (#454)
             var f = UiFrame(_host, _pointerX, _pointerY);
@@ -926,6 +927,7 @@ namespace Editor.Core.Viewport
             AudioPlaybackService.Instance.EndPlay();
             ScriptRuntime.Instance.End();
             ScriptRuntime.Instance.ConsumeQuitRequest();   // play is stopping anyway: no quit may carry over (#410)
+            VuiStack.Instance.Reset();   // the session's screens go with its scripts, and its cached canvases (#477)
             VortexAPI.ClearAllRigidbodies();
             _componentSnapshot?.Restore();   // after OnDestroy: lights scripts changed
             DropSelectionOfRemoved(_componentSnapshot);

@@ -12,13 +12,15 @@ using Editor.ECS.Components.Rendering;
 using Editor.ECS.Components.Scripting;
 using Editor.Editors.WorldEditor.Components.SceneHierarchy;
 using Editor.Scripting;
+using Editor.UI.Vui;
 
 namespace VortexTests
 {
     /// <summary>Play is non-destructive (#318, #345): the snapshot taken at Play puts every serialized property, the
     /// component set and the hierarchy back on Stop — not just lights and transforms. Stop gives back exactly the edit
     /// scene of Play: added entities go, re-parented ones return (#423), values edited in place come back (#478), so do
-    /// the environment settings (#479); a script's quit stops play only after the tick (#410).</summary>
+    /// the environment settings (#479); a script's quit stops play only after the tick (#410), and no retained-UI screen
+    /// outlives the session (#477).</summary>
     public static class PlaySnapshotTests
     {
         private static GameEntity Entity(string name, GameEntity parent = null)
@@ -285,6 +287,31 @@ namespace VortexTests
                 if (pms.State != PlayState.Editing) pms.Stop();
                 runtime.ConsumeQuitRequest();
             }
+        }
+
+        // ------------------------------------------------------------------ #477: no screen outlives the session
+
+        [Test]
+        public static void ResetLeavesNoScreenOrCachedCanvas(TestContext t)
+        {
+            string path = t.Write("Assets/UI/PauseMenu.vui",
+                "{ \"vui\": 1, \"designW\": 1920, \"designH\": 1080, \"root\": { \"kind\": \"Panel\", \"id\": \"pauseRoot\", \"blocksInput\": true, \"blocksGameplay\": true } }");
+            var stack = VuiStack.Instance;
+            stack.Reset();
+            try
+            {
+                var pause = stack.Push(path);   // the template's PlayerController on ESC: Gui.Load("PauseMenu.vui").Show()
+                t.NotNull(pause, "the screen loads");
+                VuiDialogs.Confirm("Quit?", "", null, null);
+                t.True(stack.HasActiveScreens && stack.GameplayInputBlocked, "the screens are up");
+                stack.Reset();   // play stops / the project closes
+                t.False(stack.HasActiveScreens, "no screen survives (#477)");
+                t.False(stack.GameplayInputBlocked, "nothing keeps freezing gameplay input");
+                t.False(ReferenceEquals(pause, stack.Load(path)), "Gui.Load reads the .vui again instead of the old session's canvas");
+                stack.Reset();
+                t.False(stack.HasActiveScreens, "Load alone shows nothing");
+            }
+            finally { stack.Reset(); }
         }
     }
 }
