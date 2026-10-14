@@ -92,6 +92,54 @@ namespace VortexTests
             finally { ClearWorlds(); CollisionService.MeshTriangleProvider = oldProvider; }
         }
 
+        /// <summary>#498: a box with pitch, yaw and roll (and one under a rotated parent) is the same box in the character
+        /// world as the Jolt body — rays from above, below and the side meet both at the same distance.</summary>
+        [Test]
+        public static void RotatedBoxesMatchTheJoltBodies(TestContext t)
+        {
+            if (!Jolt()) return;
+            var s = new Scene { Name = "Rotated" };
+            var ramp = PhysicsRaycastTests.Add(s, null, "Ramp", new Vector3(0, 2f, 0), e =>
+            {
+                e.Transform.LocalRotation = new Vector3(25f, 30f, 10f);
+                e.AddComponentDirect(new BoxCollider(e) { Size = new Vector3(3f, 0.5f, 12f) });
+            });
+            var parent = PhysicsRaycastTests.Add(s, null, "Tilted", new Vector3(20f, 1f, 0), e => e.Transform.LocalRotation = new Vector3(-15f, 45f, 20f));
+            var child = PhysicsRaycastTests.Add(s, parent, "Plank", new Vector3(0, 0.5f, 3f), e =>
+            {
+                e.Transform.LocalRotation = new Vector3(0, 0, -30f);
+                e.AddComponentDirect(new BoxCollider(e) { Size = new Vector3(4f, 0.3f, 1f) });
+            });
+            PhysicsRaycastTests.AsLoaded(s);
+            try
+            {
+                BuildWorlds(s);
+                t.Equal(2, PhysicsService.BodyCount, "two box bodies");
+                int compared = 0;
+                for (int i = -4; i <= 4; i++)
+                    for (int k = -4; k <= 4; k++)
+                    {
+                        foreach (var (o, d) in new[]
+                        {
+                            (new Vector3(i * 0.5f, 20f, k * 1.5f), new Vector3(0, -1, 0)),
+                            (new Vector3(i * 0.5f, -10f, k * 1.5f), new Vector3(0, 1, 0)),
+                            (new Vector3(20f + i * 0.5f, 20f, k * 0.6f), new Vector3(0, -1, 0)),
+                            (new Vector3(-10f, 2f + i * 0.4f, k * 1.5f), new Vector3(1, 0, 0)),
+                        })
+                        {
+                            bool j = PhysicsService.Raycast(o, d, 40f, out _, out _, out var je, out float jd);
+                            bool m = CollisionService.Raycast(o, d, 40f, ~0, out _, out _, out var me, out float md);
+                            t.Equal(j, m, "Jolt and the character world agree on a hit from " + o.X + ", " + o.Y + ", " + o.Z);
+                            if (!j) continue;
+                            compared++;
+                            t.True(je == me && Math.Abs(jd - md) < 0.01f, "… on " + je?.Name + " at the same distance (Jolt " + jd + ", managed " + md + ")");
+                        }
+                    }
+                t.True(compared > 60, "most rays hit the rotated boxes (" + compared + ")");
+            }
+            finally { ClearWorlds(); }
+        }
+
         /// <summary>#418: the opt-in "is this point inside something?" query.</summary>
         [Test]
         public static void OverlapPointFindsWhatContainsThePoint(TestContext t)

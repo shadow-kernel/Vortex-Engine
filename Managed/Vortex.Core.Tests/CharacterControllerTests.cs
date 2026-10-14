@@ -8,7 +8,8 @@ using Editor.ECS.Components.Physics;
 namespace VortexTests
 {
     /// <summary>The managed character controller (Physics.MoveCharacter) against the collision world: the moving entity's
-    /// own colliders (#417), the lifetime of registered characters (#407), inactive level parts (#443).</summary>
+    /// own colliders (#417), the lifetime of registered characters (#407), inactive level parts (#443), rotated colliders
+    /// (#498).</summary>
     public static class CharacterControllerTests
     {
         private const float Dt = 1f / 60f;
@@ -200,6 +201,116 @@ namespace VortexTests
                 act.SetActiveFlagOnly(true);
                 CollisionService.AddEntityShapes(act);
                 t.Equal(36, WorldTriangles(), "switched on again, they are back once");
+            }
+            finally { CollisionService.Clear(); }
+        }
+
+        /// <summary>Paddi's ramp (#498): a 3 x 0.5 x 12 m BoxCollider pitched by <paramref name="deg"/> about X, rising toward
+        /// -z, the foot of its top face on a floor (top y 500) at z 210.</summary>
+        private static Scene RampScene(float deg, out GameEntity ramp)
+        {
+            var s = new Scene { Name = "Ramp" + deg };
+            Add(s, null, "Floor", new Vector3(1300f, 499.8f, 200f), e => e.AddComponentDirect(new BoxCollider(e) { Size = new Vector3(100f, 0.4f, 100f) }));
+            double r = deg * Math.PI / 180.0; float sin = (float)Math.Sin(r), cos = (float)Math.Cos(r);
+            ramp = Add(s, null, "Ramp", new Vector3(1270f, 500f + 6f * sin - 0.25f * cos, 210f - 6f * cos - 0.25f * sin), e =>
+            {
+                e.Transform.LocalRotation = new Vector3(deg, 0, 0);
+                e.AddComponentDirect(new BoxCollider(e) { Size = new Vector3(3f, 0.5f, 12f) });
+            });
+            return s;
+        }
+
+        /// <summary>Paddi's repro: 200 moves of (0, -0.05, -0.06) toward the ramp.</summary>
+        private static Vector3 WalkUp(Vector3 f)
+        {
+            for (int k = 0; k < 200; k++) f = CollisionService.MoveCharacter(f, 0.3f, 1.8f, new Vector3(0f, -0.05f, -0.06f), out _, 0);
+            return f;
+        }
+
+        /// <summary>#498: a pitched BoxCollider is an oriented box for the character too — the 10–30° ramps of the report
+        /// (walls or walk-through ghosts while only the yaw was kept) are walked up and stood on, a 60° one blocks.</summary>
+        [Test]
+        public static void PitchedBoxRampsAreWalkedUp(TestContext t)
+        {
+            foreach (float deg in new[] { 10f, 16f, 20f, 24f, 26f, 30f })
+            {
+                var s = RampScene(deg, out _);
+                try
+                {
+                    CollisionService.Build(s);
+                    var f = WalkUp(new Vector3(1270f, 500f, 212.5f));
+                    float surface = 500f + (210f - f.Z) * (float)Math.Tan(deg * Math.PI / 180.0);   // the top face under the capsule
+                    t.True(f.Z < 201f, deg + "°: the capsule walked up the ramp (z = " + f.Z + ")");
+                    t.True(f.Y > surface - 0.02f && f.Y < surface + 0.1f, deg + "°: it stands on the slope, not in it (y = " + f.Y + ", surface " + surface + ")");
+                }
+                finally { CollisionService.Clear(); }
+            }
+            var steep = RampScene(60f, out _);
+            try
+            {
+                CollisionService.Build(steep);
+                var f = WalkUp(new Vector3(1270f, 500f, 212.5f));
+                t.True(f.Z > 209.5f && f.Y < 500.4f, "60° (steeper than the 50° limit) blocks the capsule at the foot (" + f.Y + ", " + f.Z + ")");
+            }
+            finally { CollisionService.Clear(); }
+        }
+
+        /// <summary>#498: under a 30° ramp's high end there is head room; walking toward the foot the capsule is stopped by
+        /// the ramp's underside (the yaw-only slab floated above a 1.8 m capsule there).</summary>
+        [Test]
+        public static void PitchedRampUndersideBlocks(TestContext t)
+        {
+            var s = RampScene(30f, out _);
+            try
+            {
+                CollisionService.Build(s);
+                var f = new Vector3(1270f, 500f, 202f);
+                for (int k = 0; k < 100; k++) f = CollisionService.MoveCharacter(f, 0.3f, 1.8f, new Vector3(0f, -0.05f, 0.06f), out _, 0);
+                t.True(f.Z < 206.5f && Math.Abs(f.Y - 500f) < 0.05f, "the ramp's underside stops the capsule (z = " + f.Z + ", y = " + f.Y + ")");
+            }
+            finally { CollisionService.Clear(); }
+        }
+
+        /// <summary>#498: roll and yaw · pitch compose like the renderer (Rz · Rx · Ry), and a rotated parent places and turns
+        /// its children: what the character world holds is where the entities are drawn.</summary>
+        [Test]
+        public static void RotatedCollidersMatchTheirWorldPose(TestContext t)
+        {
+            // a 20° roll about Z: rises toward +x
+            var s = new Scene { Name = "Roll" };
+            Add(s, null, "Floor", new Vector3(0, -0.2f, 0), e => e.AddComponentDirect(new BoxCollider(e) { Size = new Vector3(60f, 0.4f, 60f) }));
+            double r20 = 20.0 * Math.PI / 180.0;
+            Add(s, null, "RollRamp", new Vector3(6f * (float)Math.Cos(r20) + 0.25f * (float)Math.Sin(r20), 6f * (float)Math.Sin(r20) - 0.25f * (float)Math.Cos(r20), 0), e =>
+            {
+                e.Transform.LocalRotation = new Vector3(0, 0, 20f);
+                e.AddComponentDirect(new BoxCollider(e) { Size = new Vector3(12f, 0.5f, 3f) });
+            });
+            // pitch 20° then yaw 90°: rises toward -x, its foot at x -10
+            Add(s, null, "YawPitchRamp", new Vector3(-10f - 6f * (float)Math.Cos(r20) - 0.25f * (float)Math.Sin(r20), 6f * (float)Math.Sin(r20) - 0.25f * (float)Math.Cos(r20), 20f), e =>
+            {
+                e.Transform.LocalRotation = new Vector3(20f, 90f, 0);
+                e.AddComponentDirect(new BoxCollider(e) { Size = new Vector3(3f, 0.5f, 12f) });
+            });
+            // a parent rolled 30° carries a small box 2 m along its local x
+            var parent = Add(s, null, "Tilted", new Vector3(0, 0, -20f), e => e.Transform.LocalRotation = new Vector3(0, 0, 30f));
+            Add(s, parent, "Knob", new Vector3(2f, 0, 0), e => e.AddComponentDirect(new BoxCollider(e) { Size = new Vector3(0.2f, 0.2f, 0.2f) }));
+            try
+            {
+                CollisionService.Build(s);
+                var f = new Vector3(-2f, 0, 0);
+                for (int k = 0; k < 150; k++) f = CollisionService.MoveCharacter(f, 0.3f, 1.8f, new Vector3(0.06f, -0.05f, 0f), out _, 0);
+                float surface = f.X * (float)Math.Tan(r20);
+                t.True(f.X > 6f && f.Y > surface - 0.02f && f.Y < surface + 0.1f, "up the rolled ramp along +x (" + f.X + ", " + f.Y + ", surface " + surface + ")");
+
+                f = new Vector3(-8f, 0, 20f);
+                for (int k = 0; k < 150; k++) f = CollisionService.MoveCharacter(f, 0.3f, 1.8f, new Vector3(-0.06f, -0.05f, 0f), out _, 0);
+                surface = (-10f - f.X) * (float)Math.Tan(r20);
+                t.True(f.X < -14f && f.Y > surface - 0.02f && f.Y < surface + 0.1f, "up the yawed + pitched ramp along -x (" + f.X + ", " + f.Y + ", surface " + surface + ")");
+
+                // the knob sits at (2 cos 30°, 2 sin 30°) = (1.73, 1.0), turned with its parent
+                t.True(CollisionService.RaycastDown(new Vector3(1.732f, 5f, -20f), 10f, out var hit, out _) && Math.Abs(hit.Y - (1f + 0.1f / (float)Math.Cos(Math.PI / 6))) < 0.02f,
+                       "a rotated parent places its child's collider (hit y = " + hit.Y + ")");
+                t.False(CollisionService.RaycastDown(new Vector3(2f, 5f, -20f), 4.5f, out _, out _), "… not where a yaw-only placement put it");
             }
             finally { CollisionService.Clear(); }
         }

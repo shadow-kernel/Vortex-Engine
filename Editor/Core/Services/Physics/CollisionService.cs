@@ -38,6 +38,18 @@ namespace Editor.Core.Services.Physics
         private static V3 From(Vector3 v) => new V3(v.X, v.Y, v.Z);
         private static Vector3 To(V3 v) => new Vector3(v.X, v.Y, v.Z);
 
+        // A world rotation as the world directions of the local X / Y / Z axes (unit, orthogonal). #498: collision shapes
+        // turn with the entity's FULL rotation — yaw, pitch and roll — exactly as the renderer, the Jolt bodies and the
+        // navmesh bake place them; a pitched box is a ramp, not a flat slab at the ramp's centre height.
+        private struct Basis
+        {
+            public V3 X, Y, Z;
+            public static Basis Identity => new Basis { X = new V3(1, 0, 0), Y = new V3(0, 1, 0), Z = new V3(0, 0, 1) };
+            public V3 Apply(V3 v) => X * v.X + Y * v.Y + Z * v.Z;                    // local -> world direction
+            public V3 Inverse(V3 v) => new V3(v.Dot(X), v.Dot(Y), v.Dot(Z));       // world -> local
+            public static Basis FromYaw(float deg) => new Basis { X = RotY(new V3(1, 0, 0), deg), Y = new V3(0, 1, 0), Z = RotY(new V3(0, 0, 1), deg) };
+        }
+
         private enum Kind { Box, Sphere, Capsule, Tris }
         private sealed class Shape
         {
@@ -58,17 +70,17 @@ namespace Editor.Core.Services.Physics
             // #362 part two: a MOVABLE triangle shape — a MeshCollider under a kinematic Rigidbody (cars, lifts,
             // doors) — keeps its scaled local-space triangles and a grid over THEM, built once. A move re-transforms
             // Tris in place (no allocation, the grid stays) and the grid queries map the world-space query into
-            // local space through Origin + Yaw. Static level geometry stays world-space (no second copy).
+            // local space through Origin + Rot. Static level geometry stays world-space (no second copy).
             public V3[] LocalTris;        // scaled, unrotated local triangles (movable shapes only)
             public V3 Origin;             // world position of the local origin (movable shapes)
-            public float Yaw;             // world yaw in degrees (movable shapes)
+            public Basis Rot;             // world rotation (movable shapes; #498: the full rotation — a car on a slope pitches)
             public V3 Scale;              // the world scale LocalTris were scaled with (a scale change rebuilds)
             public bool Movable => LocalTris != null;
 
             public int[] QueryRay(V3 o, V3 dir, float maxDist, out int count)
             {
                 if (LocalTris == null) return Grid.QueryRay(o, dir, maxDist, out count);
-                return Grid.QueryRay(RotY(o - Origin, -Yaw), RotY(dir, -Yaw), maxDist, out count);
+                return Grid.QueryRay(Rot.Inverse(o - Origin), Rot.Inverse(dir), maxDist, out count);
             }
 
             public int[] QueryBox(V3 qmin, V3 qmax, out int count)
@@ -79,7 +91,7 @@ namespace Editor.Core.Services.Physics
                 for (int i = 0; i < 8; i++)
                 {
                     var c = new V3((i & 1) != 0 ? qmax.X : qmin.X, (i & 2) != 0 ? qmax.Y : qmin.Y, (i & 4) != 0 ? qmax.Z : qmin.Z);
-                    var l = RotY(c - Origin, -Yaw);
+                    var l = Rot.Inverse(c - Origin);
                     mn = new V3(Math.Min(mn.X, l.X), Math.Min(mn.Y, l.Y), Math.Min(mn.Z, l.Z));
                     mx = new V3(Math.Max(mx.X, l.X), Math.Max(mx.Y, l.Y), Math.Max(mx.Z, l.Z));
                 }
@@ -443,8 +455,8 @@ namespace Editor.Core.Services.Physics
 
         /// <summary>Cast a ray straight DOWN from <paramref name="origin"/> up to <paramref name="maxDist"/> against the
         /// solid world colliders, and return the closest hit point + the owning entity's Tag (the surface material).
-        /// The standard "what am I standing on?" query — used for material-based footsteps. Box/sphere/capsule use their
-        /// world AABB (exact for the flat, axis-aligned floors this is meant for); mesh colliders use ray-vs-triangle.
+        /// The standard "what am I standing on?" query — used for material-based footsteps. Boxes are tested exactly (a
+        /// ramp too), spheres/capsules as their world AABB; mesh colliders use ray-vs-triangle.
         /// Returns false when nothing is under the point.</summary>
         public static bool RaycastDown(Vector3 origin, float maxDist, out Vector3 hit, out string tag)
         {
@@ -510,13 +522,23 @@ namespace Editor.Core.Services.Physics
                 {
                     if (s == null) continue;
                     float t;
-                    bool got = (s.Kind == Kind.Tris && s.Tris != null)
-                        ? RayDownTris(o, s, bestT, out t)
+                    bool got = (s.Kind == Kind.Tris && s.Tris != null) ? RayDownTris(o, s, bestT, out t)
+                        : s.Kind == Kind.Box ? RayDownBox(o, s, bestT, out t)
                         : RayDownAabb(o, s.Min, s.Max, bestT, out t);
                     if (got && t <= bestT) { bestT = t; best = s; }
                 }
             }
             return best;
+        }
+
+        // Downward ray vs an oriented box (#498: boxes keep their pitch and roll, and a ramp's AABB reaches far above its
+        // surface): its exact surface below the point, 0 when the point is inside it — what the AABB answered for level boxes.
+        private static bool RayDownBox(V3 o, Shape s, float maxDist, out float t)
+        {
+            t = 0f;
+            var d = o - s.Center;
+            if (Math.Abs(d.Dot(s.AxX)) <= s.Half.X && Math.Abs(d.Dot(s.AxY)) <= s.Half.Y && Math.Abs(d.Dot(s.AxZ)) <= s.Half.Z) return true;
+            return RayObb(o, new V3(0f, -1f, 0f), s, maxDist, out t, out _);
         }
 
         // Downward ray (dir = -Y) vs world AABB. Exact for axis-aligned boxes; misses in XZ => no hit; a point below
@@ -921,29 +943,35 @@ namespace Editor.Core.Services.Physics
             catch { }
         }
 
-        // ---- world transform (walk the parent chain; good enough for level geometry) ----
-        private static void WorldTransform(GameEntity e, out V3 pos, out V3 rotDeg, out V3 scale)
+        // ---- world transform (#498) ----
+        // The entity's world pose exactly as the renderer, the Jolt bodies and the navmesh bake see it. It used to be
+        // accumulated here with the rotation reduced to yaw ("level geometry"), so a pitched box became a flat slab at the
+        // ramp's centre height — a wall at the foot of a gentle ramp, a ghost under a steep one. BoneSocketService.
+        // EntityWorld composes the parent chain (S * Rz*Rx*Ry * T per level); its rows are the world directions of the
+        // local axes times the world scale: pos = the translation, scale = the row lengths, rot = the rows normalised.
+        private static void WorldTransform(GameEntity e, out V3 pos, out Basis rot, out V3 scale)
         {
-            pos = new V3(0, 0, 0); rotDeg = new V3(0, 0, 0); scale = new V3(1, 1, 1);
-            var chain = _chainBuf; chain.Clear();   // single-threaded (physics step / scene build) — one reusable buffer
-            for (var cur = e; cur != null; cur = cur.Parent) chain.Add(cur);
-            // apply from root down: accumulate scale + rotation(Y only, level geometry) + translate
-            var p = new V3(0, 0, 0); var sc = new V3(1, 1, 1); float yaw = 0f, pitch = 0f, roll = 0f;
-            for (int i = chain.Count - 1; i >= 0; i--)
-            {
-                var t = chain[i].GetComponent<Transform>();
-                if (t == null) continue;
-                var lp = t.LocalPosition; var lr = t.LocalRotation; var ls = t.LocalScale;
-                // rotate the child local offset by the current yaw before translating (level geometry is Y-up)
-                var off = RotY(new V3(lp.X * sc.X, lp.Y * sc.Y, lp.Z * sc.Z), yaw);
-                p = p + off;
-                sc = new V3(sc.X * ls.X, sc.Y * ls.Y, sc.Z * ls.Z);
-                yaw += lr.Y; pitch += lr.X; roll += lr.Z;
-            }
-            pos = p; scale = sc; rotDeg = new V3(pitch, yaw, roll);
+            var m = Animation.BoneSocketService.EntityWorld(e);
+            pos = new V3(m.M41, m.M42, m.M43);
+            V3 r0 = new V3(m.M11, m.M12, m.M13), r1 = new V3(m.M21, m.M22, m.M23), r2 = new V3(m.M31, m.M32, m.M33);
+            scale = new V3(r0.Len(), r1.Len(), r2.Len());
+            rot = Orthonormal(r0, r1, r2);
         }
 
-        private static readonly List<GameEntity> _chainBuf = new List<GameEntity>(8);
+        /// <summary>Unit, orthogonal axes from a world matrix's rows: a non-uniform parent scale under a rotated child shears
+        /// them (made orthogonal, the up axis kept), a zero-scale axis has no direction (rebuilt from the other two).</summary>
+        private static Basis Orthonormal(V3 x, V3 y, V3 z)
+        {
+            const float tiny = 1e-12f;
+            bool nx = x.Dot(x) < tiny, ny = y.Dot(y) < tiny, nz = z.Dot(z) < tiny;
+            if ((nx ? 1 : 0) + (ny ? 1 : 0) + (nz ? 1 : 0) > 1) return Basis.Identity;
+            if (nx) x = Cross(y, z); else if (ny) y = Cross(z, x); else if (nz) z = Cross(x, y);
+            var by = y.Norm();
+            var bx = (x - by * x.Dot(by)).Norm();
+            var bz = (z - bx * z.Dot(bx) - by * z.Dot(by)).Norm();
+            if (bx.Len() < 0.5f || by.Len() < 0.5f || bz.Len() < 0.5f) return Basis.Identity;
+            return new Basis { X = bx, Y = by, Z = bz };
+        }
 
         private static V3 RotY(V3 v, float deg)
         {
@@ -959,13 +987,13 @@ namespace Editor.Core.Services.Physics
         private static Shape BuildShape(GameEntity e, Collider col, Shape reuse)
         {
             WorldTransform(e, out var wpos, out var wrot, out var wscale);
-            var center = wpos + RotY(new V3(col.Center.X * wscale.X, col.Center.Y * wscale.Y, col.Center.Z * wscale.Z), wrot.Y);
+            var center = wpos + wrot.Apply(new V3(col.Center.X * wscale.X, col.Center.Y * wscale.Y, col.Center.Z * wscale.Z));
 
             if (col is BoxCollider box)
             {
                 var s = Reuse(reuse, Kind.Box); s.Center = center;
                 s.Half = new V3(Math.Abs(box.Size.X * 0.5f * wscale.X), Math.Abs(box.Size.Y * 0.5f * wscale.Y), Math.Abs(box.Size.Z * 0.5f * wscale.Z));
-                s.AxX = RotY(new V3(1, 0, 0), wrot.Y); s.AxY = new V3(0, 1, 0); s.AxZ = RotY(new V3(0, 0, 1), wrot.Y);
+                s.AxX = wrot.X; s.AxY = wrot.Y; s.AxZ = wrot.Z;   // #498: pitched / rolled boxes are ramps and slanted walls
                 Aabb(s); return s;
             }
             if (col is SphereCollider sph)
@@ -976,9 +1004,12 @@ namespace Editor.Core.Services.Physics
             }
             if (col is CapsuleCollider cap)
             {
-                float r = cap.Radius * Math.Max(Math.Abs(wscale.X), Math.Abs(wscale.Z));
-                float half = Math.Max(0f, cap.Height * 0.5f * Math.Abs(wscale.Y) - r);
-                V3 axis = cap.Direction == 0 ? new V3(1, 0, 0) : (cap.Direction == 2 ? new V3(0, 0, 1) : new V3(0, 1, 0));
+                // #498: the axis (Direction 0/1/2 = the entity's local X/Y/Z) turns with the entity; the radius scales with
+                // the two other axes, the length with its own (as the Jolt capsule is built)
+                float r, half; V3 axis;
+                if (cap.Direction == 0) { axis = wrot.X; r = cap.Radius * Math.Max(wscale.Y, wscale.Z); half = Math.Max(0f, cap.Height * 0.5f * wscale.X - r); }
+                else if (cap.Direction == 2) { axis = wrot.Z; r = cap.Radius * Math.Max(wscale.X, wscale.Y); half = Math.Max(0f, cap.Height * 0.5f * wscale.Z - r); }
+                else { axis = wrot.Y; r = cap.Radius * Math.Max(wscale.X, wscale.Z); half = Math.Max(0f, cap.Height * 0.5f * wscale.Y - r); }
                 var s = Reuse(reuse, Kind.Capsule); s.Radius = r; s.A = center - axis * half; s.B = center + axis * half;
                 s.Min = new V3(Math.Min(s.A.X, s.B.X) - r, Math.Min(s.A.Y, s.B.Y) - r, Math.Min(s.A.Z, s.B.Z) - r);
                 s.Max = new V3(Math.Max(s.A.X, s.B.X) + r, Math.Max(s.A.Y, s.B.Y) + r, Math.Max(s.A.Z, s.B.Z) + r);
@@ -992,7 +1023,7 @@ namespace Editor.Core.Services.Physics
         private static Shape Reuse(Shape reuse, Kind kind)
             => reuse != null && reuse.Kind == kind && reuse.Tris == null ? reuse : new Shape { Kind = kind };
 
-        private static Shape BuildMeshShape(GameEntity e, V3 center, V3 wrot, V3 wscale, Shape reuse)
+        private static Shape BuildMeshShape(GameEntity e, V3 center, Basis wrot, V3 wscale, Shape reuse)
         {
             var mr = e.GetComponent<MeshRenderer>();
             string mp = mr?.MeshPath;
@@ -1002,12 +1033,12 @@ namespace Editor.Core.Services.Physics
                 if (prim == "cube")
                 {
                     var s = Reuse(reuse, Kind.Box); s.Center = center; s.Half = new V3(0.5f * Math.Abs(wscale.X), 0.5f * Math.Abs(wscale.Y), 0.5f * Math.Abs(wscale.Z));
-                    s.AxX = RotY(new V3(1, 0, 0), wrot.Y); s.AxY = new V3(0, 1, 0); s.AxZ = RotY(new V3(0, 0, 1), wrot.Y); Aabb(s); return s;
+                    s.AxX = wrot.X; s.AxY = wrot.Y; s.AxZ = wrot.Z; Aabb(s); return s;
                 }
                 if (prim == "plane" || prim == "quad")
                 {
                     var s = Reuse(reuse, Kind.Box); s.Center = center; s.Half = new V3(0.5f * Math.Abs(wscale.X), 0.05f, 0.5f * Math.Abs(wscale.Z));
-                    s.AxX = RotY(new V3(1, 0, 0), wrot.Y); s.AxY = new V3(0, 1, 0); s.AxZ = RotY(new V3(0, 0, 1), wrot.Y); Aabb(s); return s;
+                    s.AxX = wrot.X; s.AxY = wrot.Y; s.AxZ = wrot.Z; Aabb(s); return s;
                 }
                 if (prim == "sphere")
                 {
@@ -1018,8 +1049,9 @@ namespace Editor.Core.Services.Physics
                 {
                     float r = 0.5f * Math.Max(Math.Abs(wscale.X), Math.Abs(wscale.Z));
                     float half = Math.Max(0f, 0.5f * Math.Abs(wscale.Y) - r);
-                    var s = Reuse(reuse, Kind.Capsule); s.Radius = r; s.A = center - new V3(0, half, 0); s.B = center + new V3(0, half, 0);
-                    s.Min = new V3(center.X - r, center.Y - r - half, center.Z - r); s.Max = new V3(center.X + r, center.Y + r + half, center.Z + r); return s;
+                    var s = Reuse(reuse, Kind.Capsule); s.Radius = r; s.A = center - wrot.Y * half; s.B = center + wrot.Y * half;
+                    s.Min = new V3(Math.Min(s.A.X, s.B.X) - r, Math.Min(s.A.Y, s.B.Y) - r, Math.Min(s.A.Z, s.B.Z) - r);
+                    s.Max = new V3(Math.Max(s.A.X, s.B.X) + r, Math.Max(s.A.Y, s.B.Y) + r, Math.Max(s.A.Z, s.B.Z) + r); return s;
                 }
             }
             // imported model -> real triangles if a provider is wired
@@ -1028,7 +1060,7 @@ namespace Editor.Core.Services.Physics
                 // a moved movable shape: same mesh, same scale — re-place the local triangles, nothing is rebuilt
                 if (reuse != null && reuse.Kind == Kind.Tris && reuse.LocalTris != null && SameScale(reuse.Scale, wscale))
                 {
-                    PlaceMovable(reuse, center, wrot.Y);
+                    PlaceMovable(reuse, center, wrot);
                     return reuse;
                 }
                 var raw = MeshTriangleProvider(mp);
@@ -1049,14 +1081,14 @@ namespace Editor.Core.Services.Physics
                             lmx = new V3(Math.Max(lmx.X, lv.X), Math.Max(lmx.Y, lv.Y), Math.Max(lmx.Z, lv.Z));
                         }
                         var ms = new Shape { Kind = Kind.Tris, Tris = tris, LocalTris = local, Scale = wscale, Grid = TriGrid.Build(local, lmn, lmx) };
-                        PlaceMovable(ms, center, wrot.Y);
+                        PlaceMovable(ms, center, wrot);
                         return ms;
                     }
                     var mn = new V3(1e30f, 1e30f, 1e30f); var mx = new V3(-1e30f, -1e30f, -1e30f);
                     for (int i = 0; i < triCount * 3; i++)
                     {
                         var lv = new V3(raw[i * 3] * wscale.X, raw[i * 3 + 1] * wscale.Y, raw[i * 3 + 2] * wscale.Z);
-                        var wv = center + RotY(lv, wrot.Y);
+                        var wv = center + wrot.Apply(lv);
                         tris[i] = wv;
                         mn = new V3(Math.Min(mn.X, wv.X), Math.Min(mn.Y, wv.Y), Math.Min(mn.Z, wv.Z));
                         mx = new V3(Math.Max(mx.X, wv.X), Math.Max(mx.Y, wv.Y), Math.Max(mx.Z, wv.Z));
@@ -1103,7 +1135,7 @@ namespace Editor.Core.Services.Physics
                     {
                         WorldTransform(ch, out var cpos, out var crot, out var cscale);
                         for (int i = 0; i + 2 < raw.Length; i += 3)
-                            into.Add(cpos + RotY(new V3(raw[i] * cscale.X, raw[i + 1] * cscale.Y, raw[i + 2] * cscale.Z), crot.Y));
+                            into.Add(cpos + crot.Apply(new V3(raw[i] * cscale.X, raw[i + 1] * cscale.Y, raw[i + 2] * cscale.Z)));
                     }
                 }
                 CollectChildTris(ch, into);
@@ -1126,16 +1158,14 @@ namespace Editor.Core.Services.Physics
             => Math.Abs(a.X - b.X) < 1e-5f && Math.Abs(a.Y - b.Y) < 1e-5f && Math.Abs(a.Z - b.Z) < 1e-5f;
 
         /// <summary>Transform a movable shape's local triangles into Tris (in place) for a new pose + world AABB.</summary>
-        private static void PlaceMovable(Shape s, V3 origin, float yawDeg)
+        private static void PlaceMovable(Shape s, V3 origin, Basis rot)
         {
-            s.Origin = origin; s.Yaw = yawDeg;
+            s.Origin = origin; s.Rot = rot;
             var local = s.LocalTris; var tris = s.Tris;
-            double r = yawDeg * Math.PI / 180.0; float c = (float)Math.Cos(r), sn = (float)Math.Sin(r);
             var mn = new V3(1e30f, 1e30f, 1e30f); var mx = new V3(-1e30f, -1e30f, -1e30f);
             for (int i = 0; i < local.Length; i++)
             {
-                var lv = local[i];
-                var wv = new V3(origin.X + lv.X * c + lv.Z * sn, origin.Y + lv.Y, origin.Z - lv.X * sn + lv.Z * c);
+                var wv = origin + rot.Apply(local[i]);
                 tris[i] = wv;
                 if (wv.X < mn.X) mn.X = wv.X; if (wv.Y < mn.Y) mn.Y = wv.Y; if (wv.Z < mn.Z) mn.Z = wv.Z;
                 if (wv.X > mx.X) mx.X = wv.X; if (wv.Y > mx.Y) mx.Y = wv.Y; if (wv.Z > mx.Z) mx.Z = wv.Z;
@@ -1433,7 +1463,7 @@ namespace Editor.Core.Services.Physics
                 // A contact on a box's TOP face — including its top edge, which the round capsule bottom hits
                 // with an almost horizontal normal when only a sliver of the step is under it (high frame rates
                 // move a centimetre per call) — counts as "landing on it" during the settle.
-                bool onTopFace = bestShape != null && bestShape.Kind == Kind.Box && bestPoint.Y >= bestShape.Max.Y - 0.002f;
+                bool onTopFace = bestShape != null && bestShape.Kind == Kind.Box && OnTopFace(bestShape, bestPoint);
                 if (settleVertical && (bestNormal.Y > 0.15f || onTopFace))
                 {
                     // Landing phase of a step-up: resolve the contact straight up so the capsule comes
@@ -1562,6 +1592,17 @@ namespace Editor.Core.Services.Physics
         }
 
         private static float ShapeRadius(Shape s) => s.Kind == Kind.Sphere || s.Kind == Kind.Capsule ? s.Radius : 0f;
+
+        /// <summary>Does <paramref name="p"/> (a point on the box) lie on the box face that points most upward — the top of
+        /// a level box (y = Max.Y), the walking surface of a pitched one (#498)?</summary>
+        private static bool OnTopFace(Shape s, V3 p)
+        {
+            V3 ax = s.AxX; float h = s.Half.X;
+            if (Math.Abs(s.AxY.Y) > Math.Abs(ax.Y)) { ax = s.AxY; h = s.Half.Y; }
+            if (Math.Abs(s.AxZ.Y) > Math.Abs(ax.Y)) { ax = s.AxZ; h = s.Half.Z; }
+            float up = ax.Y >= 0f ? 1f : -1f;
+            return (p - s.Center).Dot(ax) * up >= h - 0.002f;
+        }
 
         // maxDist bounds the search for a MeshCollider: the character only cares about triangles within the capsule
         // radius, so the grid can skip everything else (a triangle whose closest point is within maxDist of c has its
@@ -1694,8 +1735,8 @@ namespace Editor.Core.Services.Physics
                 mx = new V3(Math.Max(mx.X, v.X), Math.Max(mx.Y, v.Y), Math.Max(mx.Z, v.Z));
             }
             var s = new Shape { Kind = Kind.Tris, Tris = new V3[n], LocalTris = local, Scale = new V3(1, 1, 1), Grid = TriGrid.Build(local, mn, mx) };
-            PlaceMovable(s, org + new V3(7f, 1f, -3f), yawDeg + 137f);   // somewhere else first
-            PlaceMovable(s, org, yawDeg);                                  // then the pose under test (in place)
+            PlaceMovable(s, org + new V3(7f, 1f, -3f), Basis.FromYaw(yawDeg + 137f));   // somewhere else first
+            PlaceMovable(s, org, Basis.FromYaw(yawDeg));                                  // then the pose under test (in place)
             return RayTris(From(o), From(dir), s, maxDist, out tMovable, out _);
         }
 
