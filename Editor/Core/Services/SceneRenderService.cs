@@ -2498,6 +2498,32 @@ namespace Editor.Core.Services
         }
         public static SkyOverride ScriptSky;
 
+        /// <summary>The identity a light keeps in the renderer's light budget from frame to frame (#416): its entity's saved id
+        /// folded to 64 bits — the same while the entity lives, whatever the light does (moves, flickers, changes colour), so
+        /// the renderer can hold its slot and fade it instead of switching it. An entity without a saved id (Guid.Empty: an old
+        /// scene, a spawn that never got one) gets an id of its own for this session instead of one shared with every other such
+        /// light. Never 0 (0 = "no identity").</summary>
+        internal static ulong LightIdOf(GameEntity entity)
+        {
+            if (entity.Id == System.Guid.Empty)
+                return _sessionLightIds.GetValue(entity, _ => new SessionLightId(System.Threading.Interlocked.Increment(ref _nextSessionLightId))).Value;
+            System.Span<byte> b = stackalloc byte[16];
+            entity.Id.TryWriteBytes(b);
+            ulong id = System.Buffers.Binary.BinaryPrimitives.ReadUInt64LittleEndian(b)
+                     ^ (System.Buffers.Binary.BinaryPrimitives.ReadUInt64LittleEndian(b.Slice(8)) * 0x9E3779B97F4A7C15UL);
+            return id != 0 ? id : 1;
+        }
+
+        private sealed class SessionLightId
+        {
+            public readonly ulong Value;
+            // a counter, spread over 64 bits so it cannot meet the GUID-derived ids in practice
+            public SessionLightId(long n) { ulong v = (ulong)n * 0xD1B54A32D192ED03UL; Value = v != 0 ? v : 1; }
+        }
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<GameEntity, SessionLightId> _sessionLightIds =
+            new System.Runtime.CompilerServices.ConditionalWeakTable<GameEntity, SessionLightId>();
+        private static long _nextSessionLightId;
+
         /// <summary>
         /// Submit all lights in the scene to the renderer.
         /// </summary>
@@ -2846,7 +2872,8 @@ namespace Editor.Core.Services
                                 light.Intensity, light.Range,
                                 light.ShadowType != ECS.Components.Lighting.ShadowType.None,
                                 light.ShadowStrength,
-                                light.ShadowBias * 0.03f);
+                                light.ShadowBias * 0.03f,
+                                LightIdOf(entity));
                             break;
 
                         case ECS.Components.Lighting.LightType.Spot:
@@ -2864,7 +2891,8 @@ namespace Editor.Core.Services
                                 light.ShadowType != ECS.Components.Lighting.ShadowType.None,
                                 light.ShadowStrength,
                                 light.ShadowBias * 0.03f,
-                                light.ShadowResolution);
+                                light.ShadowResolution,
+                                LightIdOf(entity));
                             break;
                     }
                 }

@@ -8,8 +8,9 @@
 // a native window, renders a lit scene and captures it (CMake builds it as VortexRenderTest);
 // TEST_PHYSICS is the non-interactive Jolt smoke test (CMake builds it as VortexPhysicsTest);
 // TEST_PARTICLES the particle (VFX) test (VortexParticleTest); TEST_NAVIGATION the Recast/Detour test (VortexNavigationTest);
-// TEST_IMPORT the model importer test (VortexImportTest).
-#if !defined(TEST_AUDIO) && !defined(TEST_ECS) && !defined(TEST_RENDER) && !defined(TEST_PHYSICS) && !defined(TEST_PARTICLES) && !defined(TEST_NAVIGATION) && !defined(TEST_GEOMETRY) && !defined(TEST_IMPORT)
+// TEST_IMPORT the model importer test (VortexImportTest); TEST_RENDER_BUDGETS the renderers' frame budgets
+// (VortexRenderBudgetTest).
+#if !defined(TEST_AUDIO) && !defined(TEST_ECS) && !defined(TEST_RENDER) && !defined(TEST_PHYSICS) && !defined(TEST_PARTICLES) && !defined(TEST_NAVIGATION) && !defined(TEST_GEOMETRY) && !defined(TEST_IMPORT) && !defined(TEST_RENDER_BUDGETS)
 #define TEST_AUDIO 1
 #endif
 #ifndef TEST_AUDIO
@@ -36,6 +37,9 @@
 #ifndef TEST_IMPORT
 #define TEST_IMPORT 0
 #endif
+#ifndef TEST_RENDER_BUDGETS
+#define TEST_RENDER_BUDGETS 0
+#endif
 
 #if TEST_AUDIO
 #include "TestAudio.h"
@@ -53,6 +57,8 @@
 #include "TestGeometry.h"
 #elif TEST_IMPORT
 #include "TestImport.h"
+#elif TEST_RENDER_BUDGETS
+#include "TestRenderBudgets.h"
 #else
 #error "No test defined"
 #endif

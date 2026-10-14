@@ -73,7 +73,9 @@ namespace Editor.Core.Viewport
             if (EditorViewportSession.Main == null || !EditorViewportSession.Main.IsInitialized) return false;
             if (!EnsureTarget(w, h)) return false;
             var now = DateTime.Now;
-            bool moved = CameraMoved() || SceneRenderService.RuntimeDirty || PlayModeService.Instance.IsPlaying;
+            // a light of this view still fading (the light budget, #416) keeps it rendering, so it never stops half-faded
+            bool moved = CameraMoved() || SceneRenderService.RuntimeDirty || PlayModeService.Instance.IsPlaying
+                         || !VortexAPI.IsSecondaryRenderTargetSettled(_target);
             if (!_first && !moved) return false;
             if (!_first && (now - _last).TotalMilliseconds < RenderIntervalMs) return false;
             _last = now; _first = false;

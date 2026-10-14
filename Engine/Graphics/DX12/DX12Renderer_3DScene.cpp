@@ -257,6 +257,7 @@ namespace vortex::graphics::dx12
 					run.skinned = true;
 					run.boneOffset = m_render_queue[i].bone_offset;
 					run.boneCount = m_render_queue[i].bone_count;
+					run.palette = m_render_queue[i].palette;
 					run.localR *= 2.0f;   // animated poses leave the bind-pose bounds — inflate the cull sphere
 				}
 				if (m_geo_lod_enabled && !skinnedRun)
@@ -517,13 +518,15 @@ namespace vortex::graphics::dx12
 			// TwoSided and unlit materials cull nothing; everything else culls back faces, and a mirrored run (#334)
 			// takes the counter-clockwise twin so its front faces survive
 			const bool two_sided = mat && (mat->properties().is_unlit || mat->double_sided());
-			if (run.skinned && skinned_pso && m_bone_vb)
+			// the palette's place in this view's GPU buffer; none (over budget, #415) = the bind pose through the rigid PSOs
+			const u32 bone_base = (run.skinned && run.palette < m_bone_gpu_offset.size()) ? m_bone_gpu_offset[run.palette] : skinning::NO_PALETTE;
+			if (run.skinned && bone_base != skinning::NO_PALETTE && skinned_pso && m_bone_vb)
 			{
 				// a custom material shader applies to skinned meshes too (#332): engine skinning VS + its PSMain
 				ID3D12PipelineState* custom = custom_pso((u32)run.mat, 0, two_sided, run.mirrored, true);
 				m_command_list->SetPipelineState(custom ? custom : skinned_pso);
 				m_command_list->SetGraphicsRootShaderResourceView(8,
-					bone_palette_base_va() + (UINT64)run.boneOffset * 64);
+					bone_palette_base_va() + (UINT64)bone_base * 64);
 			}
 			else
 			{

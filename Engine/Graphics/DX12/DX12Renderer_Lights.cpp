@@ -11,10 +11,9 @@ namespace vortex::graphics::dx12
 	void DX12Renderer::set_ambient_strength(float s) { m_ambient_strength = s; }
 
 
-	void DX12Renderer::update_per_frame_constants()
+	void DX12Renderer::update_per_frame_constants(int view_slot)
 	{
 	using namespace DirectX;
-	prioritize_lights();   // #335: the slots go to the most relevant lights, not the first submitted
 	XMVECTOR eye = XMLoadFloat3(&m_camera_position);
 	XMVECTOR at = XMLoadFloat3(&m_camera_target);
 	XMVECTOR up = XMLoadFloat3(&m_camera_up);
@@ -27,13 +26,16 @@ namespace vortex::graphics::dx12
 	// Track last frame's VP (motion vectors + DLSS clipToPrevClip) before overwriting it.
 	m_prev_view_projection = m_frame_constants.view_projection;
 	XMStoreFloat4x4(&m_frame_constants.view_projection, vp);
+	// #335 / #416: this view's choice from ALL submitted lights, every frame, with its own hysteresis + fades (the editor
+	// frame and the game window keep separate ones)
+	select_lights(m_light_views[view_slot == 1 ? 1 : 0], m_camera_position, m_frame_constants.view_projection);
 	m_frame_constants.camera_position = m_camera_position;
 	m_frame_constants.light_direction = m_light_direction;
 	m_frame_constants.directional_intensity = m_directional_intensity;
 	m_frame_constants.light_color = m_light_color;
 	m_frame_constants.ambient_strength = m_ambient_strength;
-	m_frame_constants.point_light_count = static_cast<u32>(m_point_lights.size());
-	m_frame_constants.spot_light_count = static_cast<u32>(m_spot_lights.size());
+	m_frame_constants.point_light_count = static_cast<u32>(m_view_points.size());
+	m_frame_constants.spot_light_count = static_cast<u32>(m_view_spots.size());
 	// SSAO (#32): the standard PS samples t10 only when this is set; if a view's record_ssao
 	// can't run, its reserved t10 slot still holds a valid (stale/neutral) texture.
 	m_frame_constants.ssao_enabled = (m_ssao_enabled && m_ssao_pso) ? 1.0f : 0.0f;
@@ -76,31 +78,36 @@ namespace vortex::graphics::dx12
 	{
 	u8* ptr = static_cast<u8*>(m_light_cb_mapped);
 			
-	// Copy point lights
-	size_t point_light_size = m_point_lights.size() * sizeof(GPUPointLight);
-	if (point_light_size > 0)
-	{
-	for (size_t i = 0; i < m_point_lights.size() && i < MAX_POINT_LIGHTS; ++i)
+	// Copy point lights: the view's choice in slot order, a light entering or leaving the slots faded (#416)
+	for (size_t i = 0; i < m_view_points.size() && i < MAX_POINT_LIGHTS; ++i)
 	{
 		GPUPointLight gpu_light{};
-		gpu_light.position = m_point_lights[i].position;
-		gpu_light.range = m_point_lights[i].range;
-		gpu_light.color = m_point_lights[i].color;
-		gpu_light.intensity = m_point_lights[i].intensity;
+		const lighting::Selected& sel = m_view_points[i];
+		if (sel.index < m_point_lights.size())
+		{
+			const PointLightData& pl = m_point_lights[sel.index];
+			gpu_light.position = pl.position;
+			gpu_light.range = pl.range;
+			gpu_light.color = pl.color;
+			gpu_light.intensity = pl.intensity * sel.fade;
+		}
 		memcpy(ptr + i * sizeof(GPUPointLight), &gpu_light, sizeof(GPUPointLight));
 	}
-	}
 			
-	// Copy spot lights (after point lights)
+	// Copy spot lights (after point lights), the same way
 	u8* spot_ptr = ptr + MAX_POINT_LIGHTS * sizeof(GPUPointLight);
-	for (size_t i = 0; i < m_spot_lights.size() && i < MAX_SPOT_LIGHTS; ++i)
+	for (size_t i = 0; i < m_view_spots.size() && i < MAX_SPOT_LIGHTS; ++i)
 	{
 	GPUSpotLight gpu_light{};
-	gpu_light.position = m_spot_lights[i].position;
-	gpu_light.range = m_spot_lights[i].range;
+	gpu_light.shadow_slot = -1.0f;
+	const lighting::Selected& sel = m_view_spots[i];
+	if (sel.index >= m_spot_lights.size()) { memcpy(spot_ptr + i * sizeof(GPUSpotLight), &gpu_light, sizeof(GPUSpotLight)); continue; }
+	const SpotLightData& sl = m_spot_lights[sel.index];
+	gpu_light.position = sl.position;
+	gpu_light.range = sl.range;
 		
 	// Normalize direction
-	DirectX::XMFLOAT3 dir = m_spot_lights[i].direction;
+	DirectX::XMFLOAT3 dir = sl.direction;
 	float len = sqrtf(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
 	if (len > 0.0001f) {
 	dir.x /= len;
@@ -109,10 +116,10 @@ namespace vortex::graphics::dx12
 	}
 	gpu_light.direction = dir;
 		
-	gpu_light.spot_angle = m_spot_lights[i].spot_angle;
-	gpu_light.color = m_spot_lights[i].color;
-	gpu_light.intensity = m_spot_lights[i].intensity;
-	gpu_light.inner_spot_angle = m_spot_lights[i].inner_spot_angle;
+	gpu_light.spot_angle = sl.spot_angle;
+	gpu_light.color = sl.color;
+	gpu_light.intensity = sl.intensity * sel.fade;
+	gpu_light.inner_spot_angle = sl.inner_spot_angle;
 
 	// Spot shadows (#23): map this spot to its atlas tile (prepare_shadow_pass ran just above).
 	// slot -1 = no shadow for this spot; the shader skips the sample entirely.
@@ -124,9 +131,9 @@ namespace vortex::graphics::dx12
 		if (m_shadow_spots[t].spot_index == (int)i)
 		{
 			gpu_light.shadow_slot = (float)t;
-			float st = m_spot_lights[i].shadow_strength;
-			gpu_light.shadow_strength = st < 0.0f ? 0.0f : (st > 1.0f ? 1.0f : st);
-			gpu_light.shadow_bias = m_spot_lights[i].shadow_bias;
+			float st = sl.shadow_strength;
+			gpu_light.shadow_strength = (st < 0.0f ? 0.0f : (st > 1.0f ? 1.0f : st)) * sel.shadow_fade;   // a handover fades (#416)
+			gpu_light.shadow_bias = sl.shadow_bias;
 			break;
 		}
 	}
@@ -225,49 +232,50 @@ namespace vortex::graphics::dx12
 	}
 	
 
-	namespace
-	{
-		// Lights beyond the shader's slots are chosen by relevance to the camera, not by submission order (#335):
-		// intensity weighted by how deep the camera sits inside the light's range sphere and, outside it, by how
-		// close that sphere is. The brightest nearby lights win; far dim ones drop out.
-		template<class L>
-		void keep_most_relevant(std::vector<L>& lights, size_t cap, const DirectX::XMFLOAT3& eye)
-		{
-			if (lights.size() <= cap) return;
-			std::vector<std::pair<float, size_t>> order;
-			order.reserve(lights.size());
-			for (size_t i = 0; i < lights.size(); ++i)
-			{
-				const L& l = lights[i];
-				const float dx = l.position.x - eye.x, dy = l.position.y - eye.y, dz = l.position.z - eye.z;
-				const float d = sqrtf(dx * dx + dy * dy + dz * dz);
-				float inside = l.range > 0.0f ? 1.0f - d / l.range : 1.0f;
-				if (inside < 0.0f) inside = 0.0f;
-				float nearness = l.range > 0.0f ? l.range / (d + 1e-3f) : 1.0f;
-				if (nearness > 1.0f) nearness = 1.0f;
-				order.push_back({ l.intensity * (inside + nearness), i });
-			}
-			std::stable_sort(order.begin(), order.end(), [](const std::pair<float, size_t>& a, const std::pair<float, size_t>& b) { return a.first > b.first; });
-			std::vector<L> kept;
-			kept.reserve(cap);
-			for (size_t i = 0; i < cap; ++i) kept.push_back(lights[order[i].second]);
-			lights.swap(kept);
-		}
-	}
-
-	// every submitted light is kept here; prioritize_lights() picks the ones that fit the shader slots (#335)
+	// every submitted light is kept here, never cut; select_lights() picks the ones that hold the shader slots, per view and
+	// frame (#335, #416)
 	void DX12Renderer::add_point_light(const PointLightData& light) { if (m_point_lights.size() < MAX_SUBMITTED_LIGHTS) m_point_lights.push_back(light); }
 	void DX12Renderer::add_spot_light(const SpotLightData& light) { if (m_spot_lights.size() < MAX_SUBMITTED_LIGHTS) m_spot_lights.push_back(light); }
 
-	void DX12Renderer::prioritize_lights()
+	// Lights beyond the shader's slots are chosen by relevance to the camera, not by submission order (#335) — since #416 from
+	// ALL submitted lights on every rendered frame, so a camera that moves between two scene submits is followed, and with the
+	// view's choice held still by hysteresis and its changes faded (lighting::LightSelector, the same on SDL GPU).
+	void DX12Renderer::select_lights(LightViewState& state, const DirectX::XMFLOAT3& eye, const DirectX::XMFLOAT4X4& view_projection)
 	{
+		const auto now = std::chrono::steady_clock::now();
+		const float dt = state.primed ? std::chrono::duration<float>(now - state.last).count() : 0.0f;
+		const lighting::Viewer viewer = lighting::make_viewer(eye, view_projection);
+		const DirectX::XMFLOAT3 dir = lighting::view_direction(viewer);
+		// the view's first frame, a cut, a teleport or a whip-around: start over, the chosen lights show at once
+		const bool snap = !state.primed || lighting::camera_cut(state.eye, state.forward, eye, dir);
+		state.last = now; state.eye = eye; state.forward = dir; state.primed = true;
+		auto& c = m_light_candidates;
+		c.clear();
+		for (const PointLightData& p : m_point_lights)
+		{
+			bool in_view = true;
+			const float score = lighting::point_light_score(p.position, p.range, p.intensity, viewer, &in_view);
+			c.push_back({ p.id ? p.id : lighting::fallback_light_id(1, p.color, p.range, 0.0f), score,
+				p.cast_shadows != 0 && p.shadow_strength > 0.0f, in_view });
+		}
+		state.points.update(c.data(), (u32)c.size(), MAX_POINT_LIGHTS, MAX_SHADOW_POINTS, dt, snap);
+		m_view_points = state.points.selected();
+		c.clear();
+		for (const SpotLightData& s : m_spot_lights)
+		{
+			const bool aimed = s.direction.x * s.direction.x + s.direction.y * s.direction.y + s.direction.z * s.direction.z > 1e-6f;
+			bool in_view = true;
+			const float score = lighting::spot_light_score(s.position, s.direction, s.range, s.spot_angle, s.intensity, viewer, &in_view);
+			c.push_back({ s.id ? s.id : lighting::fallback_light_id(2, s.color, s.range, s.spot_angle), score,
+				s.cast_shadows != 0 && s.shadow_strength > 0.0f && aimed, in_view });
+		}
+		state.spots.update(c.data(), (u32)c.size(), MAX_SPOT_LIGHTS, MAX_SHADOW_SPOTS, dt, snap);
+		m_view_spots = state.spots.selected();
 		const size_t points = m_point_lights.size(), spots = m_spot_lights.size();
-		if (points <= MAX_POINT_LIGHTS && spots <= MAX_SPOT_LIGHTS) return;
-		keep_most_relevant(m_point_lights, MAX_POINT_LIGHTS, m_camera_position);
-		keep_most_relevant(m_spot_lights, MAX_SPOT_LIGHTS, m_camera_position);
-		if (m_light_cap_log++ % 600 == 0)
+		if ((points > MAX_POINT_LIGHTS || spots > MAX_SPOT_LIGHTS) && m_light_cap_log++ % 600 == 0)
 			OutputDebugStringA(("lights: " + std::to_string(points) + " point / " + std::to_string(spots) + " spot submitted, "
-				+ std::to_string(MAX_POINT_LIGHTS) + " / " + std::to_string(MAX_SPOT_LIGHTS) + " fit — the brightest near the camera are used (#335)\n").c_str());
+				+ std::to_string(MAX_POINT_LIGHTS) + " / " + std::to_string(MAX_SPOT_LIGHTS) + " fit — the most relevant for the camera hold the slots, "
+				"changes fade over 0.5 s (#335, #416)\n").c_str());
 	}
 	
 	// ============== Multi-Viewport Rendering ==============

@@ -45,6 +45,13 @@ EDITOR_INTERFACE bool HasRenderTarget(unsigned int target_id)
 	return vortex::graphics::Renderer::instance().has_render_target(target_id);
 }
 
+// #416: false while a light of the target's view is still fading in or out (the light budget) — a view that renders only
+// when its camera moves renders on until this is true, so it never stops half-faded.
+EDITOR_INTERFACE bool IsRenderTargetSettled(unsigned int target_id)
+{
+	return vortex::graphics::Renderer::instance().render_target_settled(target_id);
+}
+
 EDITOR_INTERFACE void RenderToTarget(unsigned int target_id, viewport_camera_desc* camera, bool render_grid, bool render_gizmos)
 {
 	if (!camera) return;

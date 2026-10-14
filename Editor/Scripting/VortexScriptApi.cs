@@ -2164,6 +2164,27 @@ namespace Vortex
         /// <summary>Geometric LOD on/off and its switch distances in multiples of each mesh's radius.</summary>
         public static void SetLod(bool enabled, float midRadii = 40f, float farRadii = 120f)
             => Editor.DllWrapper.VortexAPI.GeometricLod(enabled, midRadii, farRadii);
+
+        /// <summary>Bone matrices of the animated characters in the GPU palette buffer in the last frame (#415): one palette
+        /// per character, shared by all of its submeshes. Compare it with <see cref="BoneMatricesCapacity"/> in a debug overlay.</summary>
+        public static int BoneMatricesUsed
+        {
+            get { Editor.DllWrapper.VortexAPI.TryGetBonePaletteStats(out int used, out _, out _); return used; }
+        }
+
+        /// <summary>How many bone matrices the GPU palette buffer holds per frame (65536 — about 1100 characters of 58 bones).</summary>
+        public static int BoneMatricesCapacity
+        {
+            get { Editor.DllWrapper.VortexAPI.TryGetBonePaletteStats(out _, out int capacity, out _); return capacity; }
+        }
+
+        /// <summary>Skinned meshes in view that were drawn in the bind pose in the last frame because the bone palette buffer was
+        /// full (#415) — the farthest / off-screen characters lose their animation first. 0 = every animated character in view
+        /// animates.</summary>
+        public static int SkinnedBindPoseFallbacks
+        {
+            get { Editor.DllWrapper.VortexAPI.TryGetBonePaletteStats(out _, out _, out int fallbacks); return fallbacks; }
+        }
     }
 
     /// <summary>Screen post-effects for game scripts (#28/#29): vignette, animated film grain and

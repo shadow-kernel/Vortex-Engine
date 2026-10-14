@@ -31,6 +31,7 @@ namespace vortex::graphics::dx12
 		{
 			m_command_queue.flush(); // Ensure GPU is done with this target
 			m_render_targets.erase(it);
+			m_target_light_views.erase(target_id);   // its light choice (#416)
 			VORTEX_VLOG(("Destroyed render target ID " + std::to_string(target_id) + "\n").c_str());
 		}
 	}
@@ -57,11 +58,11 @@ namespace vortex::graphics::dx12
 		auto it = m_render_targets.find(target_id);
 		if (it == m_render_targets.end()) return;
 
-		render_scene_to_target(it->second.get(), camera, render_grid, render_gizmos);
+		render_scene_to_target(it->second.get(), camera, render_grid, render_gizmos, m_target_light_views[target_id]);
 	}
 
 
-	void DX12Renderer::render_scene_to_target(DX12RenderTarget* target, const ViewportCamera& camera, bool render_grid, bool render_gizmos)
+	void DX12Renderer::render_scene_to_target(DX12RenderTarget* target, const ViewportCamera& camera, bool render_grid, bool render_gizmos, LightViewState& lights)
 	{
 		using namespace DirectX;
 		
@@ -72,7 +73,6 @@ namespace vortex::graphics::dx12
 		
 		// Ensure previous work is complete before rendering to secondary target
 		m_command_queue.flush();
-		upload_staged_bone_palettes();   // GPU idle — safe; previews then render the freshly-swapped pose
 		m_command_allocators[idx]->Reset();
 		
 		auto* pso = m_render_queue.empty() ? m_pipeline.pipeline_state() :
@@ -128,6 +128,9 @@ namespace vortex::graphics::dx12
 		// Update per-frame constants with this camera's view/proj
 		PerFrameConstants frame_constants = m_frame_constants;
 		XMStoreFloat4x4(&frame_constants.view_projection, vp_matrix);
+		// GPU idle (flushed above) — safe; previews then render the freshly-swapped pose, the palettes placed for THIS
+		// camera when the frame's palettes exceed the budget (#415)
+		upload_staged_bone_palettes(frame_constants.view_projection, camera.position);
 		frame_constants.camera_position = camera.position;
 
 		// Pull in the CURRENT lighting state. Offscreen previews (AssetPreviewRenderer) set ambient + directional
@@ -138,8 +141,10 @@ namespace vortex::graphics::dx12
 		frame_constants.directional_intensity = m_directional_intensity;
 		frame_constants.light_color = m_light_color;
 		frame_constants.ambient_strength = m_ambient_strength;
-		frame_constants.point_light_count = static_cast<u32>((std::min)(m_point_lights.size(), static_cast<size_t>(MAX_POINT_LIGHTS)));
-		frame_constants.spot_light_count = static_cast<u32>((std::min)(m_spot_lights.size(), static_cast<size_t>(MAX_SPOT_LIGHTS)));
+		// the target's own light choice (#416): a camera preview never disturbs the main view's hysteresis and fades
+		select_lights(lights, camera.position, frame_constants.view_projection);
+		frame_constants.point_light_count = static_cast<u32>(m_view_points.size());
+		frame_constants.spot_light_count = static_cast<u32>(m_view_spots.size());
 		frame_constants.ssao_enabled = 0.0f;   // #32: previews never sample the main view's AO
 		frame_constants.gi_strength = 0.0f;
 		{
@@ -155,29 +160,40 @@ namespace vortex::graphics::dx12
 		if (m_light_cb_mapped)
 		{
 			u8* lptr = static_cast<u8*>(m_light_cb_mapped);
-			for (size_t i = 0; i < m_point_lights.size() && i < MAX_POINT_LIGHTS; ++i)
+			for (size_t i = 0; i < m_view_points.size() && i < MAX_POINT_LIGHTS; ++i)
 			{
 				GPUPointLight gl{};
-				gl.position = m_point_lights[i].position; gl.range = m_point_lights[i].range;
-				gl.color = m_point_lights[i].color; gl.intensity = m_point_lights[i].intensity;
+				const lighting::Selected& sel = m_view_points[i];
+				if (sel.index < m_point_lights.size())
+				{
+					const PointLightData& pl = m_point_lights[sel.index];
+					gl.position = pl.position; gl.range = pl.range;
+					gl.color = pl.color; gl.intensity = pl.intensity * sel.fade;
+				}
 				memcpy(lptr + i * sizeof(GPUPointLight), &gl, sizeof(GPUPointLight));
 			}
 			// Spot lights too (same layout as update_light_buffer: after the point block, direction
 			// normalized). spot_light_count was already written to b0 above, but the SPOT DATA region
 			// held stale bytes from the main loop — previews/secondary viewports lit spots wrongly.
 			u8* sptr = lptr + MAX_POINT_LIGHTS * sizeof(GPUPointLight);
-			for (size_t i = 0; i < m_spot_lights.size() && i < MAX_SPOT_LIGHTS; ++i)
+			for (size_t i = 0; i < m_view_spots.size() && i < MAX_SPOT_LIGHTS; ++i)
 			{
 				GPUSpotLight gs{};
-				gs.position = m_spot_lights[i].position; gs.range = m_spot_lights[i].range;
-				DirectX::XMFLOAT3 dir = m_spot_lights[i].direction;
-				float len = sqrtf(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
-				if (len > 0.0001f) { dir.x /= len; dir.y /= len; dir.z /= len; }
-				gs.direction = dir;
-				gs.spot_angle = m_spot_lights[i].spot_angle;
-				gs.color = m_spot_lights[i].color;
-				gs.intensity = m_spot_lights[i].intensity;
-				gs.inner_spot_angle = m_spot_lights[i].inner_spot_angle;
+				gs.shadow_slot = -1.0f;   // previews render spots unshadowed
+				const lighting::Selected& sel = m_view_spots[i];
+				if (sel.index < m_spot_lights.size())
+				{
+					const SpotLightData& sl = m_spot_lights[sel.index];
+					gs.position = sl.position; gs.range = sl.range;
+					DirectX::XMFLOAT3 dir = sl.direction;
+					float len = sqrtf(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+					if (len > 0.0001f) { dir.x /= len; dir.y /= len; dir.z /= len; }
+					gs.direction = dir;
+					gs.spot_angle = sl.spot_angle;
+					gs.color = sl.color;
+					gs.intensity = sl.intensity * sel.fade;
+					gs.inner_spot_angle = sl.inner_spot_angle;
+				}
 				memcpy(sptr + i * sizeof(GPUSpotLight), &gs, sizeof(GPUSpotLight));
 			}
 			// CSM (#24) + point shadows (#25): the shared light CB's tail still holds the MAIN
@@ -326,12 +342,14 @@ namespace vortex::graphics::dx12
 				// Keyframe Editor, Prefab Editor) show the posed character, not the bind pose.
 				{
 					ID3D12PipelineState* want_pso = default_pso;
-					const bool skinned_item = item.bone_offset != NO_BONES && m_pipeline_3d.skinned_pso() && m_bone_vb;
+					// the palette's place in the GPU buffer; none (over budget, #415) = the bind pose
+					const u32 bone_base = item.palette < m_bone_gpu_offset.size() ? m_bone_gpu_offset[item.palette] : skinning::NO_PALETTE;
+					const bool skinned_item = bone_base != skinning::NO_PALETTE && m_pipeline_3d.skinned_pso() && m_bone_vb;
 					if (skinned_item)
 					{
 						want_pso = m_pipeline_3d.skinned_pso();
 						m_command_list->SetGraphicsRootShaderResourceView(8,
-							bone_palette_base_va() + (UINT64)item.bone_offset * 64);
+							bone_palette_base_va() + (UINT64)bone_base * 64);
 					}
 					else
 					{
