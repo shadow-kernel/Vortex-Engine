@@ -236,7 +236,8 @@ namespace VortexEditor.Claude.Tools
             if (components.HasValue) AddComponents(e, components.Value);
             ToolContext.UndoLabel = "create " + e.Name;
             Select(e);
-            return SceneModel.Brief(e);
+            // in play the entity only lives until Stop, which removes it again (#423)
+            return SceneModel.Playing ? new { runtime_only = true, note = SceneModel.PlayNote, entity = SceneModel.Brief(e) } : SceneModel.Brief(e);
         }
 
         internal static GameEntity Make(Scene scene, string kind)
@@ -360,7 +361,8 @@ namespace VortexEditor.Claude.Tools
                     SceneModel.SetTransform(c, new Vector3(p.X + off.Value.X, p.Y + off.Value.Y, p.Z + off.Value.Z), null, null);
                 }
             ToolContext.UndoLabel = "duplicate " + (list.Count == 1 ? list[0].Name : list.Count + " entities");
-            return cmd.Copies.Select(SceneModel.Brief).ToArray();
+            var copies = cmd.Copies.Select(SceneModel.Brief).ToArray();
+            return SceneModel.Playing ? new { runtime_only = true, note = SceneModel.PlayNote, copies } : (object)copies;   // Stop removes them (#423)
         }
 
         // ================================================================== transform / hierarchy
@@ -404,7 +406,7 @@ namespace VortexEditor.Claude.Tools
             [Description("Static (never moves; batched)")] bool? @static = null)
         {
             var e = SceneModel.Resolve(entity);
-            bool playing = PlayModeService.Instance.State == PlayState.Playing;
+            bool playing = SceneModel.Playing;   // paused too (#423)
             if (!string.IsNullOrWhiteSpace(name)) SceneModel.Set(e, "Name", () => e.Name, v => e.Name = v, name.Trim());
             if (tag != null) SceneModel.Set(e, "Tag", () => e.Tag, v => e.Tag = v, tag);
             if (active.HasValue)
@@ -415,7 +417,7 @@ namespace VortexEditor.Claude.Tools
                 else SceneModel.Set(e, "Active", () => e.IsActive, v => e.IsActive = v, active.Value);
             }
             if (@static.HasValue) SceneModel.Set(e, "Static", () => e.IsStatic, v => e.IsStatic = v, @static.Value);
-            return playing ? new { runtime_only = true, note = "play mode: live only, reverted on Stop", entity = SceneModel.Brief(e) } : SceneModel.Brief(e);
+            return playing ? new { runtime_only = true, note = SceneModel.PlayNote, entity = SceneModel.Brief(e) } : SceneModel.Brief(e);
         }
 
         [McpServerTool(Name = "parent_entity")]
@@ -432,7 +434,9 @@ namespace VortexEditor.Claude.Tools
             if (!ReferenceEquals(e.Scene, p.Scene)) throw new ToolError("Parent and child must be in the same scene.");
             Reparent(e, p, keep_world);
             ToolContext.UndoLabel = "parent " + e.Name + " under " + p.Name;
-            return new { id = SceneModel.ShortId(e), path = SceneModel.PathOf(e), transform = SceneModel.TransformInfo(e) };
+            bool playing = SceneModel.Playing;   // Stop puts it back under its old parent (#423)
+            return new { id = SceneModel.ShortId(e), path = SceneModel.PathOf(e), transform = SceneModel.TransformInfo(e),
+                runtime_only = playing ? true : (bool?)null, note = playing ? SceneModel.PlayNote : null };
         }
 
         [McpServerTool(Name = "unparent_entity")]
@@ -445,7 +449,9 @@ namespace VortexEditor.Claude.Tools
             if (e.Parent == null) return new { id = SceneModel.ShortId(e), path = SceneModel.PathOf(e), note = "already at the scene root" };
             Reparent(e, null, keep_world);
             ToolContext.UndoLabel = "unparent " + e.Name;
-            return new { id = SceneModel.ShortId(e), path = SceneModel.PathOf(e), transform = SceneModel.TransformInfo(e) };
+            bool playing = SceneModel.Playing;   // Stop puts it back under its old parent (#423)
+            return new { id = SceneModel.ShortId(e), path = SceneModel.PathOf(e), transform = SceneModel.TransformInfo(e),
+                runtime_only = playing ? true : (bool?)null, note = playing ? SceneModel.PlayNote : null };
         }
 
         internal static void Reparent(GameEntity e, GameEntity newParent, bool keepWorld)
@@ -512,9 +518,9 @@ namespace VortexEditor.Claude.Tools
             var c = ComponentProps.On(e, component, index);
             var done = SetProps(c, properties);
             ToolContext.UndoLabel = "edit " + c.GetType().Name + " of " + e.Name;
-            bool playing = PlayModeService.Instance.State == PlayState.Playing;
+            bool playing = SceneModel.Playing;
             return new { entity = SceneModel.ShortId(e), type = c.GetType().Name, set = done, properties = ComponentProps.Values(c),
-                runtime_only = playing ? true : (bool?)null, note = playing ? "play mode: live only, reverted on Stop" : null };
+                runtime_only = playing ? true : (bool?)null, note = playing ? SceneModel.PlayNote : null };
         }
 
         // ================================================================== selection

@@ -928,6 +928,7 @@ namespace Editor.Core.Viewport
             ScriptRuntime.Instance.ConsumeQuitRequest();   // play is stopping anyway: no quit may carry over (#410)
             VortexAPI.ClearAllRigidbodies();
             _componentSnapshot?.Restore();   // after OnDestroy: lights scripts changed
+            DropSelectionOfRemoved(_componentSnapshot);
             _componentSnapshot = null;
             foreach (var s in _transformSnapshot)
             {
@@ -946,6 +947,22 @@ namespace Editor.Core.Viewport
                 _hasCamSnap = false;
             }
             _sceneDirty = true;
+        }
+
+        /// <summary>An entity created while playing (the hierarchy, create_entity) is gone after the restore (#423) — so is
+        /// the selection that still pointed at it or into it.</summary>
+        private static void DropSelectionOfRemoved(PlaySnapshot snap)
+        {
+            var selected = SelectionService.Instance.SelectedEntity;
+            if (snap == null || selected == null || snap.Removed.Count == 0) return;
+            for (var e = selected; e != null; e = e.Parent)
+                for (int i = 0; i < snap.Removed.Count; i++)
+                    if (ReferenceEquals(snap.Removed[i], e))
+                    {
+                        SelectionService.Instance.ClearSelection();
+                        EditorSession.Instance.Hierarchy.ClearSelection();
+                        return;
+                    }
         }
 
         private void ApplyMainCameraView() => PlayCameraHelper.ApplyMainCamera(_currentScene ?? ProjectData.Current?.ActiveScene);

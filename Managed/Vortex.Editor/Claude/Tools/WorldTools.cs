@@ -119,7 +119,8 @@ namespace VortexEditor.Claude.Tools
             var created = Spawn(source, spots, name ?? DefaultName(source) + " Scatter", parent, out var group, restOnSurface: true);
             ToolContext.UndoLabel = "scatter " + created.Count + " " + DefaultName(source);
             var result = (Dictionary<string, object>)Summary(group, created);
-            if (spots.Count < count) result["note"] = "placed " + spots.Count + " of " + count + " (min_distance / no surface)";
+            if (spots.Count < count)
+                result["note"] = "placed " + spots.Count + " of " + count + " (min_distance / no surface)" + (result.TryGetValue("note", out var play) ? "; " + play : "");
             return result;
         }
 
@@ -359,13 +360,15 @@ namespace VortexEditor.Claude.Tools
         private static object Summary(GameEntity group, List<GameEntity> created)
         {
             Bounds.Of(new[] { group }, out var mn, out var mx);
-            return new Dictionary<string, object>
+            var summary = new Dictionary<string, object>
             {
                 ["group"] = SceneModel.Brief(group),
                 ["created"] = created.Count,
                 ["bounds"] = new { min = ToolJson.V(mn), max = ToolJson.V(mx) },
                 ["first_ids"] = created.Take(20).Select(SceneModel.ShortId).ToArray(),
             };
+            if (SceneModel.Playing) { summary["runtime_only"] = true; summary["note"] = SceneModel.PlayNote; }   // Stop removes the group (#423)
+            return summary;
         }
 
         // ------------------------------------------------------------------ transform helpers

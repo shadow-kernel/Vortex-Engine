@@ -232,10 +232,10 @@ namespace VortexEditor.Claude.Tools
             else if (ScriptFields.TypeOf(sc) == null)
                 note = "the class " + sc.ScriptClassName + " is not compiled yet (or the file has errors) — check compile_scripts";
             ToolContext.UndoLabel = (added ? "attach " : "set fields of ") + Path.GetFileNameWithoutExtension(rel) + " on " + e.Name;
-            // while playing THIS script's running behaviour takes the values now, and a new script starts now next to the
-            // ones the entity already runs (#345, #408); Stop reverts the scene to what it was before Play. A dry run is
-            // taken back afterwards, so it leaves the running game alone (#405).
-            bool playing = PlayModeService.Instance.State == PlayState.Playing;
+            // while playing (or paused, #423) THIS script's running behaviour takes the values now, and a new script starts
+            // now next to the ones the entity already runs (#345, #408); Stop reverts the scene to what it was before Play.
+            // A dry run is taken back afterwards, so it leaves the running game alone (#405).
+            bool playing = SceneModel.Playing;
             bool dryRun = ToolContext.DryRun;
             bool live = playing && !dryRun && (ScriptRuntime.Instance.ApplyFieldsToLiveBehaviour(e, sc) || ScriptRuntime.Instance.AttachAtRuntime(e, sc));
             if (!live && !sc.IsEnabled)   // a switched-off Script never starts (#408 review)

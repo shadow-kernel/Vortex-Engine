@@ -25,6 +25,12 @@ namespace VortexEditor.Claude
 
         public static Scene ActiveScene => Project.ActiveScene ?? throw new ToolError("The project has no active scene. Use list_scenes and open_scene.");
 
+        /// <summary>The game runs or is paused: Stop puts the scene back as it was before Play (#318, #423), so a scene edit
+        /// made now only lasts until exit_play_mode — its result says so with runtime_only and <see cref="PlayNote"/>.</summary>
+        public static bool Playing => Editor.Core.Services.PlayModeService.Instance.IsPlaying;
+
+        public const string PlayNote = "play mode: live only, reverted on Stop";
+
         /// <summary>Scenes to search: the active one first, then the other loaded scenes.</summary>
         public static IEnumerable<Scene> SearchScenes()
         {

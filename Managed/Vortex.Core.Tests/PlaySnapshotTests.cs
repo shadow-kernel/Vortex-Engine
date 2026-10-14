@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Editor.Core.Data;
 using Editor.Core.Services;
@@ -7,13 +8,14 @@ using Editor.ECS.Components;
 using Editor.ECS.Components.Lighting;
 using Editor.ECS.Components.Physics;
 using Editor.ECS.Components.Rendering;
+using Editor.Editors.WorldEditor.Components.SceneHierarchy;
 using Editor.Scripting;
 
 namespace VortexTests
 {
     /// <summary>Play is non-destructive (#318, #345): the snapshot taken at Play puts every serialized property, the
-    /// component set and the hierarchy back on Stop — not just lights and transforms. A script's quit stops play only
-    /// after the tick (#410).</summary>
+    /// component set and the hierarchy back on Stop — not just lights and transforms. Stop gives back exactly the edit
+    /// scene of Play: added entities go, re-parented ones return (#423); a script's quit stops play only after the tick (#410).</summary>
     public static class PlaySnapshotTests
     {
         private static GameEntity Entity(string name, GameEntity parent = null)
@@ -22,6 +24,24 @@ namespace VortexTests
             e.Components.Add(new Transform { Entity = e });
             if (parent != null) parent.AddChild(e);
             return e;
+        }
+
+        /// <summary>A scene holding these roots; every entity knows its scene, as after loading.</summary>
+        private static Scene SceneOf(params GameEntity[] roots)
+        {
+            var scene = new Scene { Name = "s" };
+            void Own(GameEntity e) { e.Scene = scene; foreach (var c in e.Children) Own(c); }
+            foreach (var r in roots) { scene.Entities.Add(r); Own(r); }
+            return scene;
+        }
+
+        /// <summary>Every place an entity is listed in the scene (an entity listed twice shows up twice).</summary>
+        private static List<GameEntity> Listed(Scene scene)
+        {
+            var all = new List<GameEntity>();
+            void Walk(GameEntity e) { all.Add(e); foreach (var c in e.Children) Walk(c); }
+            foreach (var r in scene.Entities) Walk(r);
+            return all;
         }
 
         [Test]
@@ -62,13 +82,14 @@ namespace VortexTests
             a.Components.Remove(audioLike);                  // a component removed during play
             var added = new BoxCollider(b); b.Components.Add(added);   // one added
             root.Children.Remove(b);                         // an authored entity destroyed
-            var spawned = Entity("Spawned", root);           // a runtime spawn (the runtime removes it itself)
+            var spawned = Entity("Spawned", root);           // a spawn no ledger knows of (#423: it goes too)
             snap.Restore();
 
             t.True(a.Components.Contains(audioLike), "the removed component is back");
             t.False(b.Components.Contains(added), "the component added during play is gone");
             t.True(root.Children.Contains(b) && root.Children.IndexOf(b) == 1, "the destroyed entity is back in its slot");
-            t.True(root.Children.Contains(spawned), "a spawn the runtime owns is left alone");
+            t.False(root.Children.Contains(spawned), "an entity added during play is gone (#423)");
+            t.Equal(2, root.Children.Count, "exactly the authored children");
             t.Equal(1, a.Components.Count(c => c is Light), "no duplicates");
         }
 
@@ -83,6 +104,86 @@ namespace VortexTests
             light.PropertyChanged += (s, a) => writes++;
             snap.Restore();
             t.Equal(0, writes, "an unchanged component is not touched on Stop");
+        }
+
+        // ------------------------------------------------------------------ #423: the hierarchy comes back exactly
+
+        [Test]
+        public static void EntitiesAddedWhilePlayingGo(TestContext t)
+        {
+            var room = Entity("Room");
+            var lamp = Entity("Lamp", room);
+            var crate = Entity("Crate", room);
+            var floor = Entity("Floor");
+            var scene = SceneOf(room, floor);
+
+            var snap = PlaySnapshot.Take(scene);
+            // what create_entity / place_asset / duplicate_entities (a root), a child created in the hierarchy, and
+            // place_grid / scatter (a group with copies inside) do while playing
+            var leak = scene.CreateEntity("PlayLeak");
+            var probe = Entity("Probe", lamp);
+            var grid = Entity("Grid"); grid.Scene = scene; scene.Entities.Insert(0, grid);
+            var tile = Entity("Tile 1", grid);
+            new MoveEntityCommand(floor, grid).Execute();   // parent_entity(Floor, Grid): an authored entity into an added one
+            var loot = Entity("Loot", crate);               // added under an authored entity …
+            room.Children.Remove(crate);                    // … that is destroyed afterwards
+            snap.Restore();
+
+            t.Equal(2, scene.Entities.Count, "only the authored roots are left (create_entity / place_asset leaked before)");
+            t.True(scene.Entities[0] == room && scene.Entities[1] == floor, "the authored roots in their order");
+            t.Equal(0, lamp.Children.Count, "the child added under an authored entity is gone");
+            t.True(floor.Parent == null && !grid.Children.Contains(floor), "the authored entity put into the added group is back at the root, out of the group");
+            t.True(room.Children.Count == 2 && room.Children[1] == crate && crate.Children.Count == 0, "the destroyed crate is back — without what was added under it");
+            t.Equal(4, Listed(scene).Count, "Room, Lamp, Crate and Floor — nothing else");
+            t.True(snap.Removed.Contains(leak) && snap.Removed.Contains(probe) && snap.Removed.Contains(grid) && snap.Removed.Contains(loot), "the removed entities are reported");
+            t.False(snap.Removed.Contains(tile), "a copy inside the removed group goes with it");
+        }
+
+        [Test]
+        public static void ReparentedEntitiesGoBack(TestContext t)
+        {
+            var p1 = Entity("P1");
+            var a0 = Entity("A0", p1);
+            var a = Entity("A", p1);
+            var a2 = Entity("A2", p1);
+            var b = Entity("B");
+            var c = Entity("C", b);
+            var scene = SceneOf(p1, b);
+            var other = new Scene { Name = "other" };
+            var otherRoot = Entity("Other"); otherRoot.Scene = other; other.Entities.Add(otherRoot);
+
+            var snap = PlaySnapshot.Take(scene);
+            new MoveEntityCommand(a, b).Execute();                // parent_entity(A, B)
+            new MoveEntityCommand(c, null).Execute();             // unparent_entity(C)
+            p1.Children.Move(0, 1);                               // a reorder
+            new MoveEntityToSceneCommand(a2, other).Execute();    // dragged into another loaded scene
+            snap.Restore();
+
+            t.Equal(3, p1.Children.Count, "P1 has its three children again");
+            t.True(p1.Children[0] == a0 && p1.Children[1] == a && p1.Children[2] == a2, "each in its old slot");
+            t.True(a.Parent == p1 && a2.Parent == p1 && a2.Scene == scene, "parent and scene back");
+            t.True(b.Children.Count == 1 && b.Children[0] == c && c.Parent == b, "A left B, C is under B again");
+            t.True(scene.Entities.Count == 2 && scene.Entities[0] == p1 && scene.Entities[1] == b, "C is no longer a root");
+            t.True(other.Entities.Count == 1 && other.Entities[0] == otherRoot, "the other scene keeps only its own entity");
+            var listed = Listed(scene);
+            t.Equal(listed.Count, listed.Distinct().Count(), "no entity is listed twice (#423: a re-parented one was)");
+            t.Equal(0, snap.Removed.Count, "nothing authored is removed");
+        }
+
+        [Test]
+        public static void AnUnchangedHierarchyIsNotTouched(TestContext t)
+        {
+            var root = Entity("Root");
+            var a = Entity("A", root);
+            Entity("A1", a);
+            var b = Entity("B");
+            var scene = SceneOf(root, b);
+            var snap = PlaySnapshot.Take(scene);
+            int changes = 0;
+            scene.Entities.CollectionChanged += (s, e) => changes++;
+            foreach (var e in Listed(scene)) e.Children.CollectionChanged += (s, ev) => changes++;
+            snap.Restore();
+            t.Equal(0, changes, "a Stop without structural changes sends no collection change to the hierarchy");
         }
 
         // ------------------------------------------------------------------ #410: a script's quit waits for the tick
