@@ -173,6 +173,9 @@ namespace Editor.Scripting
             if (!active)
             {
                 try { StopAudioRecursive(e); } catch { }
+                // #407: the subtree's characters stop blocking (managed capsule + Jolt character); MoveCharacter after
+                // re-activation registers them again
+                try { Editor.Core.Services.Physics.PhysicsService.RemoveCharactersIn(e); } catch { }
             }
             Editor.Core.Services.SceneRenderService.RuntimeDirty = Editor.Core.Services.SceneRenderService.StaticDirty = true;   // structural (#364 A)
             return true;
@@ -676,6 +679,7 @@ namespace Editor.Scripting
 
             try { Editor.Core.Services.Physics.CollisionService.RemoveEntityShapes(e); } catch { }
             try { Editor.Core.Services.Physics.PhysicsService.RemoveEntity(e); } catch { }
+            try { Editor.Core.Services.Physics.PhysicsService.RemoveCharactersIn(e); } catch { }   // #407: no capsule left behind
             try { Editor.Core.Services.AudioPlaybackService.Instance.RemoveEntity(e); } catch { }   // its sounds stop with it
             try { e.SyncEngineStateRecursive(false); } catch { }
 

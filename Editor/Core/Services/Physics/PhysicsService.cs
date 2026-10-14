@@ -1574,6 +1574,58 @@ namespace Editor.Core.Services.Physics
             return p;
         }
 
+        /// <summary>#407: unregister the character <paramref name="id"/> — its managed capsule (other characters, CanStand,
+        /// trigger volumes) and, with the "jolt" controller, its Jolt character, whose capsule leaves the world with it (rays,
+        /// props and other characters no longer meet it). A later MoveCharacter with the same id creates it again. True when
+        /// anything was registered under the id.</summary>
+        public static bool RemoveCharacter(long id)
+        {
+            bool removed = CollisionService.RemoveCharacter(id);
+            if (_joltChars.TryGetValue(id, out var c))
+            {
+                _joltChars.Remove(id);
+                if (IsBuilt) { try { VortexAPI.PhysicsCharacterDestroy(c.Handle); } catch { } }
+                removed = true;
+            }
+            return removed;
+        }
+
+        /// <summary>#407: unregister every character that belongs to <paramref name="root"/> or an entity under it (runtime
+        /// Destroy / SetActive(false) of the subtree) — the characters whose characterId named one of those entities.
+        /// Returns how many were removed.</summary>
+        public static int RemoveCharactersIn(GameEntity root)
+        {
+            if (root == null) return 0;
+            var ids = CharacterIds(o => CollisionService.IsUnder(o, root));
+            foreach (var id in ids) RemoveCharacter(id);
+            return ids.Count;
+        }
+
+        /// <summary>#407: unregister the character(s) of the NEAREST entity at or above <paramref name="e"/> that moves one —
+        /// a ragdoll is activated on the skinned model, usually a child of the root whose behaviour registered the capsule
+        /// (and a passenger's ragdoll must not take the vehicle's capsule with it). Returns how many were removed.</summary>
+        public static int RemoveCharacterOf(GameEntity e)
+        {
+            for (var p = e; p != null; p = p.Parent)
+            {
+                var owner = p;
+                var ids = CharacterIds(o => ReferenceEquals(o, owner));
+                if (ids.Count == 0) continue;
+                foreach (var id in ids) RemoveCharacter(id);
+                return ids.Count;
+            }
+            return 0;
+        }
+
+        private static List<long> CharacterIds(Func<GameEntity, bool> ownerMatch)
+        {
+            var ids = new List<long>();
+            CollisionService.CharacterIdsOwnedBy(ownerMatch, ids);
+            foreach (var kv in _joltChars)
+                if (kv.Value.Owner != null && ownerMatch(kv.Value.Owner) && !ids.Contains(kv.Key)) ids.Add(kv.Key);
+            return ids;
+        }
+
         private static void ClearJoltCharacters()
         {
             // PhysicsClear() destroyed the native characters with the bodies; only the handles are dropped here

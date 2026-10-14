@@ -363,11 +363,17 @@ namespace Editor.Core.Services.Physics
                 try { CollisionService.RemoveEntityShapes(entity, true); } catch { }
                 inst.CollidersRemoved = true;
             }
-            // a character controller stops being one: its capsule must not keep blocking the spot it died on
+            // a character controller stops being one: its capsule must not keep blocking the spot it died on. #407: the
+            // capsule usually belongs to the character's ROOT (its behaviour calls MoveCharacter with its EntityId) while the
+            // ragdoll is the skinned model below it — drop the nearest character at or above the entity, the managed capsule
+            // and the Jolt character alike; an id registered under the entity's own handle goes too.
             try
             {
-                long handle = Editor.Scripting.ScriptRuntime.Instance?.HandleForEntity(entity) ?? 0;
-                if (handle != 0) CollisionService.RemoveCharacter(handle);
+                if (PhysicsService.RemoveCharacterOf(entity) == 0)
+                {
+                    long handle = Editor.Scripting.ScriptRuntime.Instance?.HandleForEntity(entity) ?? 0;
+                    if (handle != 0) PhysicsService.RemoveCharacter(handle);
+                }
             }
             catch { }
 

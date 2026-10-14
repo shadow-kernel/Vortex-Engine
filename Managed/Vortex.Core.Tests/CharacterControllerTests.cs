@@ -8,7 +8,7 @@ using Editor.ECS.Components.Physics;
 namespace VortexTests
 {
     /// <summary>The managed character controller (Physics.MoveCharacter) against the collision world: the moving entity's
-    /// own colliders (#417).</summary>
+    /// own colliders (#417), the lifetime of registered characters (#407).</summary>
     public static class CharacterControllerTests
     {
         private const float Dt = 1f / 60f;
@@ -94,6 +94,57 @@ namespace VortexTests
                     t.False(c.CharacterId == guardId && (c.Other == guard || c.Other == hitbox), "no OnCollisionEnter of the guard against its own " + c.Other.Name);
                 t.True(collide.Exists(c => c.CharacterId == guardId && c.Other?.Name == "Floor"), "the guard still touches the floor");
                 t.True(collide.Exists(c => c.CharacterId == otherId && c.Other == guard), "another character touching the guard's collider gets OnCollisionEnter");
+            }
+            finally { CollisionService.Clear(); CollisionService.CharacterOwnerResolver = null; }
+        }
+
+        /// <summary>#407: a registered capsule goes with Physics.RemoveCharacter, with its destroyed / deactivated subtree
+        /// (what ScriptRuntime calls) and with a ragdoll of the model under the root that moved it — and comes back with the
+        /// next MoveCharacter.</summary>
+        [Test]
+        public static void RemovedCharactersStopBlocking(TestContext t)
+        {
+            var s = new Scene { Name = "Lifetime" };
+            Floor(s);
+            var guard = Add(s, null, "Guard", new Vector3(0, 0, 0), null);
+            var model = Add(s, guard, "GuardModel", new Vector3(0, 0, 0), null);
+            var car = Add(s, null, "Car", new Vector3(10f, 0, 0), null);
+            var passenger = Add(s, car, "Passenger", new Vector3(0, 0, 0), null);
+            var passengerModel = Add(s, passenger, "PassengerModel", new Vector3(0, 0, 0), null);
+            const long hg = 21, hb = 22, hcar = 23, hp = 24, anonymous = 77;
+            try
+            {
+                CollisionService.Build(s);
+                CollisionService.CharacterOwnerResolver = id => id == hg ? guard : id == hcar ? car : id == hp ? passenger : null;
+                Fall(new Vector3(0, 0, 0), hg, 2, out _);
+                var b = CollisionService.MoveCharacter(new Vector3(2f, 0, 0), R, H, new Vector3(-3f, 0, 0), out _, hb);
+                t.True(b.X > 2 * R - 0.05f, "the guard's capsule blocks another character (x = " + b.X + ")");
+
+                t.True(PhysicsService.RemoveCharacter(hg), "Physics.RemoveCharacter removes the guard");
+                t.False(PhysicsService.RemoveCharacter(hg), "… and reports false when nothing is registered");
+                b = CollisionService.MoveCharacter(b, R, H, new Vector3(-3f, 0, 0), out _, hb);
+                t.True(b.X < -1f, "the other character walks through the spot (x = " + b.X + ")");
+                t.False(CollisionService.CapsuleOverlaps(new Vector3(0, 0.02f, 0), R, H - 0.02f, anonymous), "CanStand at the old spot");
+
+                Fall(new Vector3(0, 0, 0), hg, 1, out _);
+                t.True(CollisionService.HasCharacter(hg), "the next MoveCharacter registers the guard again");
+                b = CollisionService.MoveCharacter(b, R, H, new Vector3(3f, 0, 0), out _, hb);
+                t.True(b.X < -2 * R + 0.05f, "… and it blocks again (x = " + b.X + ")");
+
+                CollisionService.RegisterCharacter(anonymous, new Vector3(-5f, 0, 0), R, H);
+                t.Equal(1, PhysicsService.RemoveCharactersIn(guard), "destroying / deactivating the guard removes its character");
+                t.False(CollisionService.HasCharacter(hg), "… the guard's capsule is gone");
+                t.True(CollisionService.HasCharacter(anonymous), "… a character whose id names no entity stays");
+
+                Fall(new Vector3(0, 0, 0), hg, 1, out _);
+                t.Equal(1, PhysicsService.RemoveCharacterOf(model), "a ragdoll of the model removes the capsule its root registered");
+                t.False(CollisionService.HasCharacter(hg), "… the guard's capsule is gone");
+
+                CollisionService.RegisterCharacter(hcar, new Vector3(10f, 0, 0), 1f, 2f);
+                CollisionService.RegisterCharacter(hp, new Vector3(10f, 0.5f, 0), R, H);
+                t.Equal(1, PhysicsService.RemoveCharacterOf(passengerModel), "a passenger's ragdoll removes the nearest character above it");
+                t.False(CollisionService.HasCharacter(hp), "… the passenger's");
+                t.True(CollisionService.HasCharacter(hcar), "… not the car's");
             }
             finally { CollisionService.Clear(); CollisionService.CharacterOwnerResolver = null; }
         }

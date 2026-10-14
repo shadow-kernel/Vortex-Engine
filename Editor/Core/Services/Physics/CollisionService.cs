@@ -332,7 +332,18 @@ namespace Editor.Core.Services.Physics
         // Owner (#417) = the entity the id names (see OwnerOf): its own colliders never block or touch the character.
         private struct CharCap { public V3 Feet; public float R, H; public GameEntity Owner; }
         private static readonly Dictionary<long, CharCap> _chars = new Dictionary<long, CharCap>();
-        public static void RemoveCharacter(long id) { _chars.Remove(id); }
+        /// <summary>Drop a character's capsule (#407: PhysicsService.RemoveCharacter also drops its Jolt character). True
+        /// when one was registered under the id; its next MoveCharacter registers it again.</summary>
+        public static bool RemoveCharacter(long id) => _chars.Remove(id);
+        /// <summary>#407: the ids of the registered characters whose owner entity matches — the characters of a destroyed
+        /// or deactivated subtree. Characters whose id names no entity have no owner and never match.</summary>
+        public static void CharacterIdsOwnedBy(Func<GameEntity, bool> match, List<long> into)
+        {
+            foreach (var kv in _chars)
+                if (kv.Value.Owner != null && match(kv.Value.Owner) && !into.Contains(kv.Key)) into.Add(kv.Key);
+        }
+        /// <summary>Is a character capsule registered under the id?</summary>
+        public static bool HasCharacter(long id) => _chars.ContainsKey(id);
         /// <summary>#187: record a character's capsule (feet, radius, total height) that something else resolved —
         /// the Jolt character route — so trigger volumes and the managed characters of other scripts still see it.</summary>
         public static void RegisterCharacter(long id, Vector3 feet, float radius, float height)

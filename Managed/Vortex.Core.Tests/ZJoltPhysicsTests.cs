@@ -200,6 +200,61 @@ namespace VortexTests
             finally { ClearWorlds(); }
         }
 
+        /// <summary>#407 with the "jolt" controller: removing a character (Physics.RemoveCharacter, a destroyed / deactivated
+        /// subtree, a ragdoll of the model under the root) destroys its Jolt character — JoltCharacterCount drops and a ray
+        /// through its spot no longer hits — and the next MoveCharacter creates it again.</summary>
+        [Test]
+        public static void RemovedJoltCharactersLeaveTheWorld(TestContext t)
+        {
+            if (!Jolt()) return;
+            var s = new Scene { Name = "Lifetime" };
+            var floor = PhysicsRaycastTests.Add(s, null, "Floor", new Vector3(0, -0.5f, 0), e => e.AddComponentDirect(new BoxCollider(e) { Size = new Vector3(40f, 1f, 40f) }));
+            var a = PhysicsRaycastTests.Add(s, null, "GuardA", new Vector3(0, 0, 0), null);
+            var model = PhysicsRaycastTests.Add(s, a, "GuardAModel", new Vector3(0, 0, 0), null);
+            var b = PhysicsRaycastTests.Add(s, null, "GuardB", new Vector3(0, 0, 6f), null);
+            PhysicsRaycastTests.AsLoaded(s);
+            const long ha = 41, hb = 42;
+            var behindA = new Vector3(0, 1f, -3f);
+            var fwd = new Vector3(0, 0, 1);
+            GameEntity FirstHit() => PhysicsService.Raycast(behindA, fwd, 20f, out _, out _, out var e, out _) ? e : null;
+            void Move(long id, Vector3 feet)
+            {
+                PhysicsService.MoveCharacterJolt(feet, 0.35f, 1.8f, new Vector3(0, -0.05f, 0), PhysicsService.FixedStep, out _, id, 0.35f, 50f);
+                PhysicsService.Step(PhysicsService.FixedStep);
+            }
+            try
+            {
+                BuildWorlds(s);
+                CollisionService.CharacterOwnerResolver = id => id == ha ? a : id == hb ? b : null;
+                PhysicsService.JoltCharacters = true;
+                Move(ha, new Vector3(0, 0, 0));
+                Move(hb, new Vector3(0, 0, 6f));
+                t.Equal(2, PhysicsService.JoltCharacterCount, "two Jolt characters");
+                t.True(FirstHit() == a, "the ray from behind hits A");
+
+                t.True(PhysicsService.RemoveCharacter(ha), "Physics.RemoveCharacter(A)");
+                PhysicsService.Step(PhysicsService.FixedStep);
+                t.Equal(1, PhysicsService.JoltCharacterCount, "… destroys A's Jolt character");
+                t.False(CollisionService.HasCharacter(ha), "… and its managed capsule");
+                t.True(FirstHit() == b, "the ray now passes A's old spot and hits B (" + FirstHit()?.Name + ")");
+
+                Move(ha, new Vector3(0, 0, 0));
+                t.Equal(2, PhysicsService.JoltCharacterCount, "the next MoveCharacter creates A again");
+                t.True(FirstHit() == a, "… and rays hit it again");
+
+                t.Equal(1, PhysicsService.RemoveCharacterOf(model), "a ragdoll of A's model removes A's character");
+                PhysicsService.Step(PhysicsService.FixedStep);
+                t.True(PhysicsService.JoltCharacterCount == 1 && FirstHit() == b, "… from the Jolt world too");
+
+                Move(ha, new Vector3(0, 0, 0));
+                t.Equal(1, PhysicsService.RemoveCharactersIn(a), "destroying / deactivating A removes its character");
+                t.Equal(1, PhysicsService.RemoveCharactersIn(b), "… and B's");
+                PhysicsService.Step(PhysicsService.FixedStep);
+                t.True(PhysicsService.JoltCharacterCount == 0 && FirstHit() == null, "no Jolt character and nothing to hit left");
+            }
+            finally { ClearWorlds(); }
+        }
+
         /// <summary>#417 with Physics.SetCharacterController("jolt"): the CharacterVirtual passes through the bodies of the
         /// entity its characterId names — a static collider and a kinematic Rigidbody + collider — while a character whose id
         /// names no entity is still shoved out of a collider it stands in.</summary>

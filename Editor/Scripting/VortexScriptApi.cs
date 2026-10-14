@@ -1282,11 +1282,26 @@ namespace Vortex
         /// character so OTHER characters can't walk through it — for multiplayer / multiple actors. When the id is an
         /// entity's EntityId, that entity's own colliders and its children's are no obstacles for the character, in both
         /// controllers (#417): give a guard a solid Collider so rays hit it, it still walks freely (other characters and
-        /// rays still collide with that collider; it raises no OnCollisionEnter against itself).</summary>
+        /// rays still collide with that collider; it raises no OnCollisionEnter against itself).
+        /// <para>Lifetime (#407): the registered capsule stays where the last move left it until play stops — or until the
+        /// entity (or an ancestor) is destroyed or deactivated, it (or the model under it) becomes a ragdoll, or
+        /// <see cref="RemoveCharacter"/> is called. The next MoveCharacter with the id registers it again.</para></summary>
         public static Vector3 MoveCharacter(Vector3 feet, float radius, float height, Vector3 move, long characterId)
         {
             if (Host == null) return new Vector3(feet.X + move.X, feet.Y + move.Y, feet.Z + move.Z);
             bool g; var r = Host.MoveCharacter(feet, radius, height, move, out g, characterId); _grounded = g; return r;
+        }
+
+        /// <summary>Unregister a character (#407): the capsule MoveCharacter registered under <paramref name="characterId"/>
+        /// stops blocking other characters, <see cref="CanStand"/> and trigger volumes — and with the "jolt" controller its
+        /// Jolt character leaves the physics world (rays, props and other characters no longer meet it). For actors that
+        /// stop moving without being destroyed: parked, in a cutscene, pooled, hidden. Destroying or deactivating the
+        /// entity and Ragdoll.Activate do this on their own. A later MoveCharacter with the same id creates it again.
+        /// Returns true when a character was registered under the id.
+        /// <c>Physics.RemoveCharacter(EntityId);</c></summary>
+        public static bool RemoveCharacter(long characterId)
+        {
+            return Editor.Core.Services.Physics.PhysicsService.RemoveCharacter(characterId);
         }
 
         /// <summary>Stair-step + slope tuning (#48) for every MoveCharacter call. <paramref name="stepHeight"/> is
