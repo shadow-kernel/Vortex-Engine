@@ -16,6 +16,8 @@
     <RootNamespace>Vortex.Player</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- exported games carry no API docs (Vortex.Core.xml is for the editor's get_scripting_api and script IDEs) -->
+    <PublishReferencesDocumentationFiles>false</PublishReferencesDocumentationFiles>
   </PropertyGroup>
 
   <ItemGroup>
