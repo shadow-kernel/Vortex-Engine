@@ -51,6 +51,8 @@ namespace vortex::components::mesh_renderer
 		if (!id.is_valid() || id.value >= g_renderers.size()) return;
 
 		auto& data = g_renderers[id.value];
+		// already free: a second remove must not list the slot twice — two later renderers would share it
+		if (!id::is_valid(data.entity_id)) return;
 		g_entity_to_renderer.erase(data.entity_id);
 		data = {};
 		g_free_ids.push_back(id.value);
