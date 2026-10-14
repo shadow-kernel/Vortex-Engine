@@ -27,7 +27,8 @@ namespace VortexEditor.Claude
     /// exit_play_mode the hierarchies, the field and the environment are the ones of Play (#423, #478, #479), the terrain's
     /// data file is gone, the undo history is the one of Play, no selection holds a removed entity, no retained-UI screen is
     /// left (#477) and one Console line says what Stop did. A material written while playing stays (runtime_only false). A
-    /// script attached while paused starts only when play resumes. Then a behaviour quits from its Update: play stops after
+    /// script attached while paused starts only when play resumes; a field set while paused reaches the paused behaviour, a
+    /// dry run does not. Then a behaviour quits from its Update: play stops after
     /// the tick, through the toolbar's Stop (#410). Last, a prefab applied while playing re-syncs its instance after Stop.
     /// </summary>
     internal static class McpPlayModeSmoke
@@ -175,6 +176,18 @@ namespace VortexEditor.Claude
                 for (int i = 0; i < 50 && !Logged("[MCP PLAY START]"); i++) await Task.Delay(100);
                 if (!Logged("[MCP PLAY START]")) return Fail("the script attached while paused did not start after Resume");
                 PlayModeService.Instance.Pause();
+                // a field set while paused waits in the paused behaviour for the next tick, as attach_script's do (#405, #423);
+                // a dry run does not reach it
+                var probeEntity = SceneModel.Resolve(probe);
+                object ProbeMarker()
+                {
+                    var pb = Editor.Scripting.ScriptRuntime.Instance.BehavioursOf(probeEntity).FirstOrDefault(x => x.GetType().Name == "McpPlayProbe");
+                    return pb?.GetType().GetField("Marker")?.GetValue(pb);
+                }
+                var pausedSet = await C("set_component_properties", new JsonObject { ["entity"] = probe, ["component"] = "Script", ["properties"] = new JsonObject { ["Marker"] = 42 } });
+                if ((float?)ProbeMarker() != 42f || !RuntimeOnly(pausedSet)) return Fail("a field set while paused did not reach the paused behaviour: Marker " + ProbeMarker() + ", " + pausedSet.ToJsonString());
+                await C("set_component_properties", new JsonObject { ["entity"] = probe, ["component"] = "Script", ["properties"] = new JsonObject { ["Marker"] = 43 }, ["dry_run"] = true });
+                if ((float?)ProbeMarker() != 42f) return Fail("a dry run while paused reached the running game: Marker " + ProbeMarker());
                 var paused = await C("create_entity", new JsonObject { ["name"] = "Mcp Play Paused" });
                 if (!RuntimeOnly(paused)) return Fail("create_entity while paused does not say runtime_only (#423)");
                 var stop = await C("exit_play_mode", new JsonObject());
@@ -226,7 +239,7 @@ namespace VortexEditor.Claude
                 float intensity = instance?.GetComponent<Light>()?.Intensity ?? -1f;
                 if (Math.Abs(intensity - 7.25f) > 1e-3f) return Fail("the prefab saved while playing and its instance after Stop differ (instance intensity " + intensity + ")");
 
-                log.Log("mcp play mode: OK — " + (calls.Count + 3) + " tool edits in play (one in another loaded scene) said runtime_only and were gone after Stop with their terrain file, undo history and selection; a material written stayed (runtime_only false); a script attached while paused started on Resume; Application.Quit() stopped play after the tick; a prefab applied in play re-synced its instance");
+                log.Log("mcp play mode: OK — " + (calls.Count + 3) + " tool edits in play (one in another loaded scene) said runtime_only and were gone after Stop with their terrain file, undo history and selection; a material written stayed (runtime_only false); a script attached while paused started on Resume, a field set while paused reached the paused behaviour; Application.Quit() stopped play after the tick; a prefab applied in play re-synced its instance");
                 return true;
             }
             catch (Exception ex) { return Fail(ex.GetType().Name + ": " + ex.Message); }
