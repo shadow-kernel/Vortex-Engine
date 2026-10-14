@@ -330,6 +330,7 @@ void main()
 	vec3 cam_pos = frame.camera_position;
 
 	vec3 Ng = normalize(v_norm);
+	if (!gl_FrontFacing) Ng = -Ng;   // two-sided materials (TwoSided, glTF doubleSided): a back face is lit on its own side, like the foliage shader
 	vec3 T = normalize(v_tangent), B = normalize(v_bitangent);
 	cotangent_frame(Ng, v_world_pos, uv, T, B);   // outside any branch: it needs derivatives
 

@@ -266,8 +266,8 @@ public class PlayerController : VortexBehaviour
         if (Input.GetKey(""Right"")) _yaw   += 90f * dt;
         if (Input.GetKey(""Up""))    _pitch -= 90f * dt;
         if (Input.GetKey(""Down""))  _pitch += 90f * dt;
-        // Clamp pitch, wrap yaw, reject NaN/Inf BEFORE writing the transform — a bad Euler value would
-        // reach the native quaternion math and crash the engine on matrix normalize.
+        // Clamp pitch, wrap yaw. A NaN/Inf rotation would only be ignored by the engine (it keeps the last valid one and
+        // logs a warning), but a NaN would stay in _yaw/_pitch for good — so the look angles recover here.
         if (_pitch > 89f) _pitch = 89f; else if (_pitch < -89f) _pitch = -89f;
         _yaw %= 360f;
         if (float.IsNaN(_yaw)   || float.IsInfinity(_yaw))   _yaw   = 0f;
@@ -321,10 +321,6 @@ public class PlayerController : VortexBehaviour
         }
         _jumpHeld = jump;
 
-        // Finite-guard the position before it reaches the native transform (a NaN/Inf there crashes the engine).
-        if (float.IsNaN(p.X) || float.IsInfinity(p.X)) p.X = 0f;
-        if (float.IsNaN(p.Y) || float.IsInfinity(p.Y)) p.Y = eyeY;
-        if (float.IsNaN(p.Z) || float.IsInfinity(p.Z)) p.Z = 0f;
         Position = p;
     }
 }

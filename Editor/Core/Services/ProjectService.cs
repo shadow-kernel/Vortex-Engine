@@ -126,15 +126,7 @@ namespace Editor.Core.Services
             if (!AssetVfs.IsMounted) CompatibilityGate?.Invoke(projectPath, manifest, manifestPath);
 
             // Erstelle ProjectData aus Manifest
-            var project = new ProjectData(manifest.Id, projectPath, manifest.Name)
-            {
-                LastModified = manifest.LastModified,
-                Version = string.IsNullOrWhiteSpace(manifest.Version) ? "1.0.0" : manifest.Version,   // #471: round-tripped
-                CreatedAt = manifest.CreatedAt,
-                Settings = manifest.Settings ?? new ProjectSettings(),
-                ImagePath = manifest.ThumbnailPath,
-                StartSceneId = manifest.StartSceneId // round-trip the boot scene so editor saves preserve it
-            };
+            var project = FromManifest(manifest, projectPath);
 
             // Initialize asset database for this project
             AssetDatabase.Instance.Initialize(projectPath);
@@ -219,8 +211,23 @@ namespace Editor.Core.Services
                 project.ActiveScene = project.Scenes[0];
             }
 
+            // what the editor read: a save writes only what changes from here (#414) — the shipped game never saves
+            if (!AssetVfs.IsMounted) RememberManifest(project);
             return project;
         }
+
+        /// <summary>The project as its manifest describes it, without its scenes. The project's own version and creation
+        /// date are carried along so a save writes them back unchanged (#471, #414); a file without createdAt reads as
+        /// 0001-01-01, which is no date (the serializer cannot even write it east of UTC) — so none.</summary>
+        internal static ProjectData FromManifest(ProjectManifest manifest, string projectPath) => new ProjectData(manifest.Id, projectPath, manifest.Name)
+        {
+            LastModified = manifest.LastModified,
+            Version = string.IsNullOrWhiteSpace(manifest.Version) ? "1.0.0" : manifest.Version,
+            CreatedAt = manifest.CreatedAt == default ? (DateTime?)null : manifest.CreatedAt,
+            Settings = manifest.Settings ?? new ProjectSettings(),
+            ImagePath = manifest.ThumbnailPath,
+            StartSceneId = manifest.StartSceneId // round-trip the boot scene so editor saves preserve it
+        };
 
         /// <summary>
         /// L�dt ein Projekt im Legacy-Format und migriert es
@@ -304,6 +311,9 @@ namespace Editor.Core.Services
             var project = LoadProjectFromPath(projectPath);
             project.Id = Guid.NewGuid();
             project.Name = projectName;
+            // a new game starts at 1.0.0 on the day it is made, not at the template's version and creation date (#414)
+            project.Version = "1.0.0";
+            project.CreatedAt = DateTime.Now;
             AssetDatabase.Instance.Initialize(projectPath);
             SaveProject(project);
             System.Diagnostics.Debug.WriteLine($"Project created from template '{templateProjectDir}' at: {projectPath}");
@@ -392,55 +402,27 @@ namespace Editor.Core.Services
         /// <summary>
         /// Speichert das Projekt-Manifest (ohne Szenen-Inhalte)
         /// </summary>
-        private void SaveManifest(ProjectData project)
+        private void SaveManifest(ProjectData project) => SaveManifestFile(project);
+
+        /// <summary>Write the project's project.vortex (#414): the manifest the editor holds, merged into the file on disk
+        /// (<see cref="ProjectManifestJson"/>) so the file keeps what the editor did not change and every key it does not
+        /// know; then that manifest is the new baseline.</summary>
+        internal static void SaveManifestFile(ProjectData project)
         {
             try
             {
-                var manifest = new ProjectManifest(project.Name)
-                {
-                    Id = project.Id,
-                    LastModified = project.LastModified,
-                    Version = string.IsNullOrWhiteSpace(project.Version) ? "1.0.0" : project.Version,   // #471: the project's own version survives a save
-                    ThumbnailPath = project.ImagePath,
-                    LastOpenSceneId = project.ActiveScene?.Id,
-                    StartSceneId = project.StartSceneId, // the game's boot scene (persisted choice; null ⇒ first)
-                    // Stamp the version the project was saved with, so the migration gate can check it on open.
-                    EngineVersion = Editor.Core.EngineInfo.VersionString,
-                    FormatVersion = Editor.Core.EngineInfo.CurrentProjectFormatVersion,
-                    Settings = project.Settings ?? new ProjectSettings(),
-                };
-                if (project.CreatedAt.HasValue) manifest.CreatedAt = project.CreatedAt.Value;   // #471: the original creation date, not the save time
-
-                // Füge Szenen-Referenzen hinzu
-                foreach (var scene in project.Scenes)
-                {
-                    // Reference the ACTUAL on-disk file (its real name), NOT a name-derived guess. SaveScene writes
-                    // to scene.FilePath; if the file was renamed so its name no longer matches scene.Name, a
-                    // name-derived path here would point at a missing .vscene and the scene would silently vanish
-                    // on the next load (LoadProjectFromManifest skips refs whose file doesn't exist). Fall back to
-                    // the name only for a brand-new scene that hasn't been saved yet (FilePath still null).
-                    var relativePath = !string.IsNullOrEmpty(scene.FilePath)
-                        ? Path.GetFileName(scene.FilePath)
-                        : $"{SanitizeFileName(scene.Name)}.vscene";
-                    manifest.Scenes.Add(new SceneReference(scene.Id, scene.Name, relativePath));
-
-                    // Fallback only: if no start scene was ever chosen, default to the first scene.
-                    if (manifest.StartSceneId == null)
-                    {
-                        manifest.StartSceneId = scene.Id;
-                    }
-                }
-
                 var manifestPath = Path.Combine(project.Path, ManifestFileName);
-                
+
                 // Ensure directory exists
                 var dir = Path.GetDirectoryName(manifestPath);
                 if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
                 {
                     Directory.CreateDirectory(dir);
                 }
-                
-                DataSerializer.SaveAsJson(manifest, manifestPath);
+
+                string mine = DataSerializer.ToJson(ManifestFor(project));
+                WriteManifest(manifestPath, mine, project.ManifestBaseline);
+                project.ManifestBaseline = mine;
                 System.Diagnostics.Debug.WriteLine($"Saved manifest to: {manifestPath}");
             }
             catch (Exception ex)
@@ -448,6 +430,77 @@ namespace Editor.Core.Services
                 System.Diagnostics.Debug.WriteLine($"Error saving manifest: {ex.Message}");
                 throw;
             }
+        }
+
+        /// <summary>Write <paramref name="manifestJson"/> (a manifest as DataSerializer writes it) to project.vortex, merged into
+        /// the file that is there (#414): keys the engine does not know and values that did not change since
+        /// <paramref name="baseline"/> keep the file's text. The file's byte order mark and line endings stay; a merge that
+        /// fails writes the manifest as it is rather than failing the save.</summary>
+        internal static void WriteManifest(string manifestPath, string manifestJson, string baseline)
+        {
+            string text = manifestJson;
+            bool bom = true;   // a new file: as DataSerializer.SaveAsJson writes it
+            if (File.Exists(manifestPath))
+            {
+                var bytes = File.ReadAllBytes(manifestPath);
+                bom = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF;
+                string disk = new System.Text.UTF8Encoding(false).GetString(bytes, bom ? 3 : 0, bytes.Length - (bom ? 3 : 0));
+                try { text = ProjectManifestJson.Merge(manifestJson, disk, baseline); }
+                catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[SaveManifest] merge failed, the manifest is written as the editor holds it: " + ex.Message); }
+            }
+            File.WriteAllText(manifestPath, text, new System.Text.UTF8Encoding(bom));
+        }
+
+        /// <summary>Remember the manifest as the editor reads it now: a later save compares with it to write only what the
+        /// editor changed and keep what changed in the file meanwhile — a release script's version bump (#414).</summary>
+        internal static void RememberManifest(ProjectData project)
+        {
+            try { project.ManifestBaseline = DataSerializer.ToJson(ManifestFor(project)); }
+            catch (Exception ex) { project.ManifestBaseline = null; System.Diagnostics.Debug.WriteLine("[LoadProject] no manifest baseline: " + ex.Message); }
+        }
+
+        /// <summary>The manifest of the project as the editor holds it: id, name, the project's own version and creation date
+        /// (#471), thumbnail, start and last scene, the scene list, the settings, the modification time and the engine stamps.
+        /// A project without a creation date (a file without one) is given the current time, and keeps it.</summary>
+        internal static ProjectManifest ManifestFor(ProjectData project)
+        {
+            if (!project.CreatedAt.HasValue) project.CreatedAt = DateTime.Now;
+            var manifest = new ProjectManifest(project.Name)
+            {
+                Id = project.Id,
+                // 0001-01-01 (a file without lastModified, before the first save) cannot be written east of UTC
+                LastModified = project.LastModified == default ? DateTime.Now : project.LastModified,
+                Version = string.IsNullOrWhiteSpace(project.Version) ? "1.0.0" : project.Version,   // #471: the project's own version survives a save
+                CreatedAt = project.CreatedAt.Value,
+                ThumbnailPath = project.ImagePath,
+                LastOpenSceneId = project.ActiveScene?.Id,
+                StartSceneId = project.StartSceneId, // the game's boot scene (persisted choice; null ⇒ first)
+                // Stamp the version the project was saved with, so the migration gate can check it on open.
+                EngineVersion = Editor.Core.EngineInfo.VersionString,
+                FormatVersion = Editor.Core.EngineInfo.CurrentProjectFormatVersion,
+                Settings = project.Settings ?? new ProjectSettings(),
+            };
+
+            // Füge Szenen-Referenzen hinzu
+            foreach (var scene in project.Scenes)
+            {
+                // Reference the ACTUAL on-disk file (its real name), NOT a name-derived guess. SaveScene writes
+                // to scene.FilePath; if the file was renamed so its name no longer matches scene.Name, a
+                // name-derived path here would point at a missing .vscene and the scene would silently vanish
+                // on the next load (LoadProjectFromManifest skips refs whose file doesn't exist). Fall back to
+                // the name only for a brand-new scene that hasn't been saved yet (FilePath still null).
+                var relativePath = !string.IsNullOrEmpty(scene.FilePath)
+                    ? Path.GetFileName(scene.FilePath)
+                    : $"{SanitizeFileName(scene.Name)}.vscene";
+                manifest.Scenes.Add(new SceneReference(scene.Id, scene.Name, relativePath));
+
+                // Fallback only: if no start scene was ever chosen, default to the first scene.
+                if (manifest.StartSceneId == null)
+                {
+                    manifest.StartSceneId = scene.Id;
+                }
+            }
+            return manifest;
         }
 
         /// <summary>
@@ -537,7 +590,7 @@ namespace Editor.Core.Services
         /// <summary>
         /// Entfernt ung�ltige Zeichen aus Dateinamen
         /// </summary>
-        private string SanitizeFileName(string fileName)
+        private static string SanitizeFileName(string fileName)
         {
             var invalidChars = Path.GetInvalidFileNameChars();
             foreach (var c in invalidChars)

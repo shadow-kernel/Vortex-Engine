@@ -296,7 +296,7 @@ namespace Vortex
         string AssetReadText(string projectRelativePath);
         bool AssetWriteText(string projectRelativePath, string text);
 
-        // 2D UI overlay (immediate mode), coordinates in viewport pixels (top-left origin).
+        // 2D UI overlay (immediate mode), coordinates in UI points — the window's logical units (top-left origin, #454).
         void UIRect(float x, float y, float w, float h, float r, float g, float b, float a, float radius);
         void UIText(float x, float y, float w, float h, string text, float size, float r, float g, float b, float a, int align, int weight);
         void UILine(float x1, float y1, float x2, float y2, float r, float g, float b, float a, float thick);
@@ -305,6 +305,7 @@ namespace Vortex
         float UIHeight();
         float UIMouseX();
         float UIMouseY();
+        float UIScale();   // device pixels per UI point
         bool UIMouseDown();
         bool UIMousePressed();
     }
@@ -390,14 +391,22 @@ namespace Vortex
     /// </summary>
     public abstract class VortexBehaviour
     {
-        /// <summary>Engine id of the entity this behaviour is attached to (set by the runtime).</summary>
+        /// <summary>Script handle of the entity this behaviour is attached to (set by the runtime) — the same for every
+        /// script on that entity.</summary>
         public long EntityId { get; internal set; }
+
+        /// <summary>Set by the runtime when its OnDestroy is about to run (entity destroyed, play ended): from then on it
+        /// gets no Start/Update/callback any more and lookups skip it; the tick list drops it between ticks.</summary>
+        internal bool Destroyed;
 
         /// <summary>The host the engine wires up so behaviours can affect the live game.</summary>
         internal static IScriptHost Host;
 
         /// <summary>LOCAL (parent-relative) position of this behaviour's entity (read/write). For an entity under a
-        /// moved parent read <see cref="Scene.WorldPositionOf"/> / write <see cref="Scene.SetWorldPose"/> (#354).</summary>
+        /// moved parent read <see cref="Scene.WorldPositionOf"/> / write <see cref="Scene.SetWorldPose"/> (#354).
+        /// A value with a NaN or an infinity in it is ignored — the entity keeps its last valid position and the Console
+        /// warns once, naming the entity and the script (#455); the same holds for Rotation, Scale and every Scene
+        /// transform setter.</summary>
         public Vector3 Position
         {
             get => Host != null ? Host.GetPosition(EntityId) : Vector3.Zero;
@@ -645,8 +654,8 @@ namespace Vortex
 
         // ---- Entity messaging (#38) + hierarchy (#39) ----
 
-        /// <summary>Send a message to the behaviour on another entity — its <see cref="OnMessage"/> is called
-        /// this frame. Target entities via <see cref="Scene.Find"/>/<see cref="Scene.FindByTag"/> or a TriggerHit/
+        /// <summary>Send a message to the behaviours on another entity — <see cref="OnMessage"/> of every script on it is
+        /// called this frame. Target entities via <see cref="Scene.Find"/>/<see cref="Scene.FindByTag"/> or a TriggerHit/
         /// RaycastHit EntityId. <c>SendMessage(door, "open");</c></summary>
         public void SendMessage(long targetEntity, string message, object arg = null)
             { Editor.Scripting.ScriptRuntime.Instance.SendEntityMessage(targetEntity, message, arg); }
@@ -952,10 +961,12 @@ namespace Vortex
         public static void SetRenderLayer(long entity, int layer)
             { Host?.SetRenderLayer(entity, layer); }
 
-        /// <summary>The behaviour instance running on an entity (null if none / wrong type) — lets scripts
-        /// talk to each other directly: <c>Scene.GetBehaviour&lt;DoorController&gt;(door)?.Open();</c></summary>
+        /// <summary>The behaviour of type T running on an entity (null if none) — lets scripts talk to each other
+        /// directly: <c>Scene.GetBehaviour&lt;DoorController&gt;(door)?.Open();</c>. An entity can run several scripts
+        /// (one per Script component); this returns the first one that is a T — also for a script's own entity:
+        /// <c>Scene.GetBehaviour&lt;Health&gt;(EntityId)</c>.</summary>
         public static T GetBehaviour<T>(long entity) where T : VortexBehaviour
-            { return Editor.Scripting.ScriptRuntime.Instance.BehaviourOf(entity) as T; }
+            { return Editor.Scripting.ScriptRuntime.Instance.BehaviourOf<T>(entity); }
 
         /// <summary>The Light component of ANY entity as a script handle (null if none) — drive scene
         /// lamps from a manager script, not just your own entity's light.</summary>
@@ -1052,12 +1063,6 @@ namespace Vortex
         public static void Clear() { _subs.Clear(); }
     }
 
-    /// <summary>
-    /// Persistent save data (#40) — PlayerPrefs-style key/value storage plus save SLOTS, stored per game
-    /// under %APPDATA%\VortexGames\&lt;project&gt;. Works identically in editor play and shipped builds.
-    /// Values auto-flush to disk on scene switch and play end; call <see cref="Flush"/> after a checkpoint
-    /// to be crash-safe. Slots: <c>Save.UseSlot(2)</c> switches the active file (slot 0 is the default).
-    /// </summary>
     /// <summary>Project asset text I/O for data-driven scripts (e.g. a weapon reading its ".vsocket" hand
     /// placement authored in the Socket Editor). Paths are project-relative; dev reads/writes loose files, a
     /// shipped pak is read-only.</summary>
@@ -1072,13 +1077,33 @@ namespace Vortex
             { return Host != null && Host.AssetWriteText(projectRelativePath, text); }
     }
 
+    /// <summary>
+    /// Persistent save data (#40) — PlayerPrefs-style key/value storage plus save SLOTS, stored per game
+    /// under %APPDATA%\VortexGames\&lt;project&gt;. Works identically in editor play and shipped builds: every play
+    /// session starts from the file on disk with slot 0 active, like a game that was just launched (#452).
+    /// Values auto-flush to disk on scene switch and play end; call <see cref="Flush"/> after a checkpoint
+    /// to be crash-safe. Slots: <c>Save.UseSlot(2)</c> switches the active file (slot 0 is the default).
+    /// </summary>
     public static class Save
     {
         private static Dictionary<string, string> _data;   // typed values as "i:", "f:", "s:" strings
         private static int _slot;
         private static bool _dirty;
 
+        /// <summary>The active save slot (0 at the start of every play session).</summary>
         public static int CurrentSlot { get { return _slot; } }
+
+        /// <summary>A new play session starts (the editor's Play, a game launch): drop the cache and go back to slot 0, so
+        /// the session reads the file as it is on disk NOW (#452). The cache lives in the engine assembly and used to
+        /// outlive editor play sessions: a save edited or deleted between two runs was ignored, and the next Flush wrote
+        /// the stale data back over it. Nothing is written here: the last session flushed on Stop, and if that write
+        /// failed, its leftovers must not overwrite what the user put on disk since. Scene switches keep cache and slot.</summary>
+        internal static void BeginSession()
+        {
+            _data = null;
+            _dirty = false;
+            _slot = 0;
+        }
 
         /// <summary>Switch the active save slot (loads that slot's file; creates it on first write).</summary>
         public static void UseSlot(int slot)
@@ -1158,12 +1183,14 @@ namespace Vortex
             return _data;
         }
 
-        private static string SlotPath(int slot)
+        internal static string SlotPath(int slot)
         {
             string game = "Game";
             try { game = Editor.Core.Data.ProjectData.Current?.Name ?? "Game"; } catch { }
             foreach (var c in System.IO.Path.GetInvalidFileNameChars()) game = game.Replace(c, '_');
-            var root = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            // the user's app-data folder — VORTEX_APPDATA_DIR moves it for automated runs (tests, smoke checks) the way it
+            // moves the editor's own state, so they never touch a real save
+            var root = Editor.Core.Services.EditorPaths.AppDataRoot();
             return System.IO.Path.Combine(root, "VortexGames", game, "save_slot" + slot + ".dat");
         }
 
@@ -1241,7 +1268,8 @@ namespace Vortex
 
         /// <summary>Move a character capsule (feet = the entity/eye base, radius, total height) by <paramref name="move"/>
         /// and return the collision-resolved feet position. Call it each frame with your desired displacement
-        /// (input + gravity). No collision world yet → returns feet+move unchanged.</summary>
+        /// (input + gravity). No collision world yet → returns feet+move unchanged. A move with a NaN or an infinity in it
+        /// counts as no move this frame (a non-finite feet position comes back unchanged), with one Console warning (#455).</summary>
         public static Vector3 MoveCharacter(Vector3 feet, float radius, float height, Vector3 move)
         {
             return MoveCharacter(feet, radius, height, move, 0);
@@ -1759,19 +1787,29 @@ namespace Vortex
 
     /// <summary>
     /// Immediate-mode 2D UI drawn by the engine OVER the 3D (same swapchain — works over the live game).
-    /// Call these from a behaviour's Update each frame; coordinates are viewport pixels (top-left origin).
+    /// Call these from a behaviour's Update each frame. Every coordinate and size (rects, text, lines, images, the mouse)
+    /// is in UI POINTS with the origin top-left: the window's logical units — points on macOS, DIPs on Windows — the same
+    /// in editor play and in the standalone player, so a HUD laid out once looks alike on a Retina and a standard
+    /// display (#454). <see cref="Scale"/> converts points to device pixels. Width, Height and Scale are valid from
+    /// Start() on: both hosts set the frame before the scripts start.
     /// This is the generic engine UI; a game builds its own lobby/HUD with it (no UI code in the engine).
     /// </summary>
     public static class UI
     {
         internal static IScriptHost Host;
 
-        /// <summary>Viewport size in pixels.</summary>
+        /// <summary>Width of the game view in UI points (the window's logical width — a 1512-point Retina window reports
+        /// 1512 although it has 3024 pixels; the pixels are <c>Width * Scale</c>).</summary>
         public static float Width { get { return Host != null ? Host.UIWidth() : 0f; } }
+        /// <summary>Height of the game view in UI points (see <see cref="Width"/>).</summary>
         public static float Height { get { return Host != null ? Host.UIHeight() : 0f; } }
-        /// <summary>Mouse position in viewport pixels (top-left origin).</summary>
+        /// <summary>Mouse position in UI points (top-left origin) — the unit of <see cref="Width"/> and of every UI call.</summary>
         public static float MouseX { get { return Host != null ? Host.UIMouseX() : 0f; } }
         public static float MouseY { get { return Host != null ? Host.UIMouseY() : 0f; } }
+        /// <summary>Device pixels per UI point: 2 on a Retina (200 %) display, 1 on a standard one; the standalone player on
+        /// Windows draws its window at 1 (Windows scales it). The drawable is <c>UI.Width * UI.Scale</c> ×
+        /// <c>UI.Height * UI.Scale</c> pixels — what a render-resolution preset needs (#454).</summary>
+        public static float Scale { get { return Host != null ? Host.UIScale() : 1f; } }
         public static bool MouseDown { get { return Host != null && Host.UIMouseDown(); } }
 
         /// <summary>Filled rectangle (radius &gt; 0 = rounded).</summary>
@@ -1873,7 +1911,8 @@ namespace Vortex
         /// <summary>Field of view in degrees (the renderer-global projection FOV).</summary>
         public static void SetFieldOfView(float degrees) { Camera.SetFieldOfView(degrees); }
 
-        /// <summary>Window resolution (windowed only); resizes the client area + swapchain.</summary>
+        /// <summary>Window resolution (windowed only); resizes the client area + swapchain. In PIXELS — on a Retina display
+        /// the window becomes width / <see cref="UI.Scale"/> points wide, which is what <see cref="UI.Width"/> then reports.</summary>
         public static void SetResolution(int width, int height) { Editor.DllWrapper.VortexAPI.GameHostSetResolution(width, height); }
 
         /// <summary>Render scale 0.25..2.0 — the 3D scene renders into a scaled offscreen RT then upscales (perf).

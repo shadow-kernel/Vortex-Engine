@@ -35,7 +35,27 @@ namespace Editor.Core.Services
         /// <summary>Raised when the Game/Scene view selection changes (on the UI thread).</summary>
         public event Action<bool> GameViewChanged;
 
+        // ▶ switched to the Game view: Stop returns to the Scene view (#444)
+        private bool _sceneViewAfterPlay;
+
+        /// <summary>The user's (or a tool's) choice of the Game / Scene view; it stands after play stops.</summary>
         public void SetGameView(bool active)
+        {
+            _sceneViewAfterPlay = false;
+            ApplyGameView(active);
+        }
+
+        /// <summary>Play in the viewport shows the Game view while the game runs and the view from before once it stops
+        /// (#444): Stop used to leave the Game view on, so in edit mode the main camera kept covering the editor camera —
+        /// a capture after focus_camera showed the main camera's picture.</summary>
+        public void EnterGameViewForPlay()
+        {
+            bool wasSceneView = !IsGameView;
+            ApplyGameView(true);
+            _sceneViewAfterPlay = wasSceneView;
+        }
+
+        private void ApplyGameView(bool active)
         {
             if (IsGameView == active) return;
             IsGameView = active;
@@ -70,6 +90,11 @@ namespace Editor.Core.Services
             if (State == next) return;
             State = next;
             StateChanged?.Invoke(this, next);
+            if (next == PlayState.Editing && _sceneViewAfterPlay)
+            {
+                _sceneViewAfterPlay = false;
+                ApplyGameView(false);
+            }
         }
     }
 }

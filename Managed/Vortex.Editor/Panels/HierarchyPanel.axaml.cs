@@ -782,8 +782,9 @@ namespace VortexEditor.Panels
                 if (te == null) { EditorCommands.Toast("Drop a script onto an entity"); return null; }
                 if (full.EndsWith("VortexScripting.cs", StringComparison.OrdinalIgnoreCase)) return null;
                 string rel = ScriptingService.MakeRelative(project.Path, full);
-                var existing = te.GetComponent<Editor.ECS.Components.Scripting.Script>();
-                if (existing == null || !string.Equals(existing.ScriptPath, rel, StringComparison.OrdinalIgnoreCase))
+                // every Script component runs (#408): skip only a drop of a script the entity already carries — not just
+                // its first one
+                if (!te.Components.OfType<Editor.ECS.Components.Scripting.Script>().Any(s => string.Equals(s.ScriptPath, rel, StringComparison.OrdinalIgnoreCase)))
                     te.AddComponent(new Editor.ECS.Components.Scripting.Script(te, rel));
                 SelectionService.Instance.Select(te);
                 EditorCommands.Window?.Inspector?.Refresh();

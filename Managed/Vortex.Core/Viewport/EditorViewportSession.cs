@@ -84,6 +84,9 @@ namespace Editor.Core.Viewport
         public VuiCanvas PreviewCanvas { get; set; }
         public event Action<bool> FlyModeChanged;
         public event Action<bool> CursorCaptureChanged;
+        /// <summary>The camera the viewport looks through changed (null: the free editor camera) — the toolbar's camera
+        /// picker follows it, also when a tool switched back to the editor camera (#444).</summary>
+        public event Action<GameEntity> ViewThroughChanged;
 
         public bool IsInitialized => _initialized;
         public bool IsPlaying => PlayModeService.Instance.IsPlaying;
@@ -93,6 +96,50 @@ namespace Editor.Core.Viewport
         public bool IsMouseCaptured => _mouseCaptured;
         public EditorCameraController Camera => _camera;
         public int CurrentFps => VortexAPI.CurrentFPS;
+
+        /// <summary>What the viewport renders through (#444).</summary>
+        public enum ViewSource
+        {
+            /// <summary>The free editor camera (<see cref="Camera"/>).</summary>
+            EditorCamera,
+            /// <summary>Edit mode in the Game view: the scene's main camera, re-applied every frame.</summary>
+            GameView,
+            /// <summary>An engine camera chosen in <see cref="CameraService"/> (a scene camera looked through).</summary>
+            SceneCamera,
+            /// <summary>Play: the game drives the view.</summary>
+            Game,
+        }
+
+        /// <summary>The camera the next frame renders through — the same choice <see cref="Tick"/> makes, so a tool can say
+        /// what an image shows instead of assuming the editor camera (#444). The Game view of a scene without a main
+        /// camera leaves the editor camera's view in place.</summary>
+        public ViewSource CurrentView
+        {
+            get
+            {
+                if (PlayModeService.Instance.State == PlayState.Playing) return ViewSource.Game;
+                if (_gameViewMode) return PlayCameraHelper.FindMainCameraEntity(_currentScene ?? ProjectData.Current?.ActiveScene) != null ? ViewSource.GameView : ViewSource.EditorCamera;
+                return CameraService.Instance.IsGameCameraActive ? ViewSource.SceneCamera : ViewSource.EditorCamera;
+            }
+        }
+
+        /// <summary>Let the editor camera drive the edit-mode view (#444): leaves the Game view (the Scene tab) and stops
+        /// looking through a scene camera — otherwise every frame puts that camera back over a pose a tool just set.
+        /// Returns what drove the view before (<see cref="ViewSource.EditorCamera"/>: nothing changed). Not while playing.</summary>
+        public ViewSource UseEditorCamera()
+        {
+            var before = CurrentView;
+            if (PlayModeService.Instance.IsPlaying) return before;
+            if (PlayModeService.Instance.IsGameView) PlayModeService.Instance.SetGameView(false);   // → OnGameViewChanged
+            // a camera picked in the toolbar blocks the editor camera's input even where it does not drive the render
+            if (_viewingThroughGameCamera || CameraService.Instance.IsGameCameraActive) ViewThroughCamera(null);
+            ReapplyEditorCamera();
+            return before;
+        }
+
+        /// <summary>Push the editor camera's pose to the renderer again (the Game view left the main camera's there).</summary>
+        private void ReapplyEditorCamera() =>
+            _camera.SetFromEntityTransform(_camera.PositionX, _camera.PositionY, _camera.PositionZ, _camera.Pitch, _camera.Yaw, _camera.Roll);
 
         public Scene CurrentScene
         {
@@ -209,8 +256,8 @@ namespace Editor.Core.Viewport
                 if (uw > 1 && uh > 1)
                 {
                     if (!_playGridHidden) { _savedGrid = VortexAPI.IsGridVisible; VortexAPI.ShowGrid(false); _playGridHidden = true; }
-                    FeedEditorUI((float)uw, (float)uh);
-                    VortexAPI.UIBegin((float)uw, (float)uh);
+                    FeedEditorUI();
+                    VortexAPI.UIBegin((float)uw, (float)uh);   // the same point space the scripts see (#454)
                 }
 
                 VortexAPI.StepEngineRuntime(dt);
@@ -607,6 +654,7 @@ namespace Editor.Core.Viewport
                 _viewingThroughGameCamera = false;
                 CameraService.Instance.SwitchToEditorCamera();
                 SetCursorHidden(false);
+                ViewThroughChanged?.Invoke(null);
                 return;
             }
             var cam = cameraEntity.GetComponent<Editor.ECS.Components.Rendering.Camera>();
@@ -614,6 +662,7 @@ namespace Editor.Core.Viewport
             CameraService.Instance.SwitchToGameCamera(cameraEntity.Id);
             _viewingThroughGameCamera = true;
             _sceneDirty = true;
+            ViewThroughChanged?.Invoke(cameraEntity);
         }
 
         // ------------------------------------------------------------------------------------------ play mode
@@ -621,6 +670,9 @@ namespace Editor.Core.Viewport
         private void OnGameViewChanged(bool active)
         {
             _gameViewMode = active;
+            // back to the Scene view while editing: the renderer still holds the main camera's pose (the editor camera only
+            // pushes its own when it moves) — show the editor camera at once (#444)
+            if (!active && !PlayModeService.Instance.IsPlaying) ReapplyEditorCamera();
             PublishStatus();
         }
 
@@ -715,14 +767,21 @@ namespace Editor.Core.Viewport
             _host?.SetCursorHidden(hidden);
         }
 
-        private void FeedEditorUI(float renderW, float renderH)
+        /// <summary>The play view's UI frame (#454): the viewport's LOGICAL size and the pointer as the shell reports it —
+        /// Avalonia DIPs, i.e. points on macOS — the unit the standalone player reports too (its window's points), plus the
+        /// device pixels per point. Never the render size: on a Retina display that is twice as large, the editor's
+        /// UI.Width would differ from the player's and a HUD laid out in it would shrink to half.</summary>
+        internal static (float W, float H, float MouseX, float MouseY, float Scale) UiFrame(IViewportHost host, double pointerX, double pointerY)
         {
-            float mx = 0f, my = 0f;
-            if (_host != null && _host.Width > 1)
-            {
-                mx = (float)(_pointerX * (renderW / _host.Width));
-                my = (float)(_pointerY * (renderH / _host.Height));
-            }
+            if (host == null || host.Width <= 1 || host.Height <= 1) return (0f, 0f, 0f, 0f, 1f);
+            double s = host.Scaling > 0 ? host.Scaling : 1.0;
+            return ((float)host.Width, (float)host.Height, (float)pointerX, (float)pointerY, (float)s);
+        }
+
+        private void FeedEditorUI()
+        {
+            var f = UiFrame(_host, _pointerX, _pointerY);
+            float mx = f.MouseX, my = f.MouseY;
             bool down = _lmbDown;
             bool pressed = down && !_lmbPrevEd;
             _lmbPrevEd = down;
@@ -735,7 +794,7 @@ namespace Editor.Core.Viewport
                 if (held && !_navPrev[i] && _uiKeyCount < _uiKeys.Length) _uiKeys[_uiKeyCount++] = _navVks[i];
                 _navPrev[i] = held;
             }
-            ScriptRuntime.Instance.SetUIFrame(renderW, renderH, mx, my, down, pressed);
+            ScriptRuntime.Instance.SetUIFrame(f.W, f.H, mx, my, down, pressed, f.Scale);
         }
 
         private void BeginPlaySimulation()
@@ -759,7 +818,11 @@ namespace Editor.Core.Viewport
             EnsurePlayerControllerOnMainCamera(scene);
             AudioPreviewService.Instance.Stop();
             AudioPlaybackService.Instance.BeginPlay(scene);
-            ScriptRuntime.Instance.Begin(scene);
+            // the play view's UI frame before any Start(): UI.Width / Height / Scale are real from a script's first line —
+            // the per-tick feed comes one frame later, so Start() saw zeros (first play) or the last session's size (#454)
+            var f = UiFrame(_host, _pointerX, _pointerY);
+            ScriptRuntime.Instance.SetUIFrame(f.W, f.H, f.MouseX, f.MouseY, false, false, f.Scale);
+            ScriptRuntime.Instance.BeginPlaySession(scene);   // a new session reads the saves from disk again (#452)
         }
 
         private void EnsurePlayerControllerOnMainCamera(Scene scene)
