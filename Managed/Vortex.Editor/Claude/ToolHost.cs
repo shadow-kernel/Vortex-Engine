@@ -335,8 +335,9 @@ namespace VortexEditor.Claude
         /// A change made while the game runs or is paused says what Stop does with it (#423). runtime_only is true when Stop
         /// takes all of it back — the play snapshot puts every scene that was loaded at Play back, and a data file play created
         /// for an entity that goes is deleted with it — and false, with the reason, when part of it stays: files written, or a
-        /// scene that was only loaded while playing. Flat fields on an object result (a tool's own note is kept in front), a
-        /// second text block after any other, so a result has the shape it has in edit mode.
+        /// scene that was only loaded while playing. Flat fields on an object result — runtime_only and play_note, beside a
+        /// tool's own note, which stays what the tool says (a warning, a hint) — and a second text block after any other
+        /// result, so a result has the shape it has in edit mode.
         /// </summary>
         internal static ToolResult PlayModeNote(ToolResult result, DateTime sinceUtc)
         {
@@ -362,10 +363,8 @@ namespace VortexEditor.Claude
             foreach (var c in result.Content)
             {
                 if (obj == null || !ReferenceEquals(c, first)) { annotated.Content.Add(c); continue; }
-                string own = obj["note"] is System.Text.Json.Nodes.JsonValue v && v.TryGetValue(out string text) ? text : null;
                 obj["runtime_only"] = reverted;
-                if (obj["note"] != null && own == null) obj["play_note"] = note;   // a tool's own structured note stays as it is
-                else obj["note"] = string.IsNullOrEmpty(own) ? note : own + "; " + note;
+                obj["play_note"] = note;
                 annotated.Content.Add(new ToolContent { Text = obj.ToJsonString(ToolJson.Options) });
             }
             if (obj == null) annotated.Content.Add(new ToolContent { Text = "runtime_only: " + (reverted ? "true" : "false") + " — " + note });

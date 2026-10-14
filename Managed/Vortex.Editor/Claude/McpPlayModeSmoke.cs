@@ -162,7 +162,7 @@ namespace VortexEditor.Claude
                 var mat = await C("create_material", new JsonObject { ["name"] = "Mcp Play Rust", ["properties"] = new JsonObject { ["base_color"] = "#8a3b2a" } });
                 string matFile = Path.Combine(project.Path, (string)mat["path"]);
                 files.Add(matFile);
-                if (RuntimeOnly(mat) || !((string)mat["note"] ?? "").Contains("stay on disk")) return Fail("a file written while playing must not claim runtime_only: " + mat.ToJsonString());
+                if (RuntimeOnly(mat) || !((string)mat["play_note"] ?? "").Contains("stay on disk")) return Fail("a file written while playing must not claim runtime_only: " + mat.ToJsonString());
                 if (script.GetFieldValue("Marker") != "300") return Fail("attach_script did not set the field in play");
                 EditorCommands.SelectMany(new List<GameEntity> { SceneModel.Resolve((string)leak["id"]), SceneModel.Resolve(b) });
 
