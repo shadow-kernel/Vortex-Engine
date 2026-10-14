@@ -5,9 +5,11 @@ using Editor.Core.Data;
 using Editor.Core.Services;
 using Editor.ECS;
 using Editor.ECS.Components;
+using Editor.ECS.Components.Animation;
 using Editor.ECS.Components.Lighting;
 using Editor.ECS.Components.Physics;
 using Editor.ECS.Components.Rendering;
+using Editor.ECS.Components.Scripting;
 using Editor.Editors.WorldEditor.Components.SceneHierarchy;
 using Editor.Scripting;
 
@@ -15,7 +17,8 @@ namespace VortexTests
 {
     /// <summary>Play is non-destructive (#318, #345): the snapshot taken at Play puts every serialized property, the
     /// component set and the hierarchy back on Stop — not just lights and transforms. Stop gives back exactly the edit
-    /// scene of Play: added entities go, re-parented ones return (#423); a script's quit stops play only after the tick (#410).</summary>
+    /// scene of Play: added entities go, re-parented ones return (#423), values edited in place come back (#478); a
+    /// script's quit stops play only after the tick (#410).</summary>
     public static class PlaySnapshotTests
     {
         private static GameEntity Entity(string name, GameEntity parent = null)
@@ -98,12 +101,15 @@ namespace VortexTests
         {
             var e = Entity("E");
             var light = new Light(e) { Intensity = 2f }; e.Components.Add(light);
+            var script = new Script(e, "Assets/Scripts/Spinner.cs"); script.SetFieldValue("Speed", "45"); e.Components.Add(script);
             var scene = new Scene { Name = "s" }; scene.Entities.Add(e);
             var snap = PlaySnapshot.Take(scene);
             int writes = 0;
             light.PropertyChanged += (s, a) => writes++;
+            var fields = script.FieldValues;
             snap.Restore();
             t.Equal(0, writes, "an unchanged component is not touched on Stop");
+            t.True(ReferenceEquals(fields, script.FieldValues), "an unchanged field list is compared by value, not replaced");
         }
 
         // ------------------------------------------------------------------ #423: the hierarchy comes back exactly
@@ -184,6 +190,41 @@ namespace VortexTests
             foreach (var e in Listed(scene)) e.Children.CollectionChanged += (s, ev) => changes++;
             snap.Restore();
             t.Equal(0, changes, "a Stop without structural changes sends no collection change to the hierarchy");
+        }
+
+        // ------------------------------------------------------------------ #478: values changed in place
+
+        [Test]
+        public static void ValuesChangedInPlaceComeBack(TestContext t)
+        {
+            var cam = Entity("Camera");
+            var script = new Script(cam, "Assets/Scripts/ThirdPersonCamera.cs"); cam.Components.Add(script);
+            script.SetFieldValue("DebugYaw", "-999");
+            script.SetFieldValue("DebugPitch", "-999");
+            var animator = new Animator(cam); animator.Clips.Add(new AnimatorClipEntry { Name = "Walk", Path = "Assets/Animations/Walk.vanim" }); cam.Components.Add(animator);
+            var col = new BoxCollider(cam) { Material = new PhysicsMaterial { Friction = 0.5f } }; cam.Components.Add(col);
+            var scene = SceneOf(cam);
+
+            var snap = PlaySnapshot.Take(scene);
+            // attach_script / the Inspector's script card while playing: Script.SetFieldValue edits the stored entry in place
+            script.SetFieldValue("DebugYaw", "300");
+            script.SetFieldValue("DebugPitch", "-8");
+            script.SetFieldValue("Speed", "4");                  // a field without an entry before Play
+            animator.Clips[0].Path = "Assets/Animations/Run.vanim";
+            col.Material.Friction = 0.9f;
+            snap.Restore();
+
+            t.Equal("-999", script.GetFieldValue("DebugYaw"), "a stored field edited in play is back (#478)");
+            t.Equal("-999", script.GetFieldValue("DebugPitch"), "the second one too");
+            t.Equal(null, script.GetFieldValue("Speed"), "a field first set in play is gone");
+            t.Equal("Assets/Animations/Walk.vanim", animator.Clips[0].Path, "a clip slot edited in place is back");
+            t.Equal(0.5f, col.Material.Friction, "a physics material edited in place is back");
+
+            // the restored values are copies too: a second session edits them in place without reaching this snapshot
+            var again = PlaySnapshot.Take(scene);
+            script.SetFieldValue("DebugYaw", "12");
+            again.Restore();
+            t.Equal("-999", script.GetFieldValue("DebugYaw"), "a second play session is restored as well");
         }
 
         // ------------------------------------------------------------------ #410: a script's quit waits for the tick

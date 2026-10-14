@@ -13,15 +13,19 @@ namespace Editor.Core.Services
     /// Stop. The snapshot is generic (#318): for every entity it keeps its place in the hierarchy, its serialized
     /// properties (active, name, tag, layer, …), the set of components it had, and every [DataMember] property of
     /// every component — an AudioSource's volume, a renderer's or collider's enabled flag, a render layer, a material
-    /// path, an IK weight, a light's flicker — whatever the scene file would have saved. The hierarchy comes back
-    /// exactly (#423): an entity added while playing goes again, wherever it was put and whoever added it (a script,
-    /// the hierarchy, the Claude tools); a re-parented one returns to its old parent and slot; a destroyed one comes back.
+    /// path, an IK weight, a light's flicker, a script's field values — whatever the scene file would have saved, as
+    /// deep copies (#478). The hierarchy comes back exactly (#423): an entity added while playing goes again, wherever
+    /// it was put and whoever added it (a script, the hierarchy, the Claude tools); a re-parented one returns to its old
+    /// parent and slot; a destroyed one comes back.
     /// </summary>
     public sealed class PlaySnapshot
     {
+        private const int MaxDepth = 8;   // nesting a deep copy / comparison follows (a guard against cycles)
+
         private Scene _scene;
         private readonly List<Action> _restore = new List<Action>();   // per entity: its components and properties
         private static readonly Dictionary<Type, PropertyInfo[]> _props = new Dictionary<Type, PropertyInfo[]>();
+        private static readonly Dictionary<Type, Member[]> _plain = new Dictionary<Type, Member[]>();
         private static readonly object _propsLock = new object();
 
         // The hierarchy at Take (#423): every list — the scene's roots and each entity's children — with its members in
@@ -225,7 +229,8 @@ namespace Editor.Core.Services
             return putBack;
         }
 
-        /// <summary>An action that writes the object's serialized properties back to what they are now.</summary>
+        /// <summary>An action that writes the object's serialized properties back to what they are now — deep copies, so
+        /// a later in-place edit of a value cannot reach the snapshot (#478).</summary>
         private static Action Capture(object target, Type type)
         {
             var props = Props(type);
@@ -270,19 +275,67 @@ namespace Editor.Core.Services
             }
         }
 
-        /// <summary>Value types, strings and references as they are; arrays, lists and dictionaries as shallow copies,
-        /// so a script that fills or clears a collection does not reach into the snapshot.</summary>
-        private static object Clone(object v)
+        private sealed class Member { public Func<object, object> Get; public Action<object, object> Set; }
+
+        /// <summary>The [DataMember] properties and fields of a plain [DataContract] data class — a script's field value,
+        /// an Animator clip slot, a physics material, a foliage type — or null for any other type (entities, components
+        /// and scenes are references, never copies).</summary>
+        private static Member[] PlainData(Type t)
         {
-            if (v == null) return null;
-            if (v is string || v.GetType().IsValueType) return v;
-            if (v is Array a) return a.Clone();
-            if (v is IList list && !(v is Array))
+            lock (_propsLock)
+            {
+                if (_plain.TryGetValue(t, out var cached)) return cached;
+                Member[] result = null;
+                if (t.IsClass && !t.IsAbstract && t.GetCustomAttribute<DataContractAttribute>(false) != null
+                    && !typeof(GameEntity).IsAssignableFrom(t) && !typeof(Component).IsAssignableFrom(t) && !typeof(Scene).IsAssignableFrom(t))
+                {
+                    var list = new List<Member>();
+                    const BindingFlags declared = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
+                    for (var x = t; x != null && x != typeof(object); x = x.BaseType)
+                    {
+                        foreach (var p in x.GetProperties(declared))
+                        {
+                            if (p.GetCustomAttribute<DataMemberAttribute>() == null || !p.CanRead || !p.CanWrite || p.GetIndexParameters().Length != 0) continue;
+                            var prop = p;
+                            list.Add(new Member { Get = o => prop.GetValue(o), Set = (o, v) => prop.SetValue(o, v) });
+                        }
+                        foreach (var f in x.GetFields(declared))
+                        {
+                            if (f.GetCustomAttribute<DataMemberAttribute>() == null || f.IsInitOnly) continue;
+                            var field = f;
+                            list.Add(new Member { Get = o => field.GetValue(o), Set = (o, v) => field.SetValue(o, v) });
+                        }
+                    }
+                    result = list.ToArray();
+                }
+                _plain[t] = result;
+                return result;
+            }
+        }
+
+        /// <summary>A copy the live value cannot reach into (#478): value types and strings as they are; arrays, lists and
+        /// dictionaries element by element; a plain data object member by member. A script field edited in place
+        /// (Script.SetFieldValue changes the existing entry) used to change the snapshot's shallow copy as well, so Stop
+        /// saw nothing to restore.</summary>
+        private static object Clone(object v, int depth = 0)
+        {
+            if (v == null || v is string) return v;
+            var t = v.GetType();
+            if (t.IsValueType || depth > MaxDepth) return v;
+            if (v is Array a)
+            {
+                var copy = (Array)a.Clone();
+                var element = t.GetElementType();
+                if (!element.IsValueType && element != typeof(string) && a.Rank == 1 && a.GetLowerBound(0) == 0)
+                    for (int i = 0; i < copy.Length; i++) copy.SetValue(Clone(a.GetValue(i), depth + 1), i);
+                return copy;
+            }
+            if (v is IList list)
             {
                 try
                 {
-                    var copy = (IList)Activator.CreateInstance(v.GetType());
-                    foreach (var item in list) copy.Add(item);
+                    var copy = (IList)Activator.CreateInstance(t);
+                    foreach (var item in list) copy.Add(Clone(item, depth + 1));
                     return copy;
                 }
                 catch { return v; }
@@ -291,8 +344,19 @@ namespace Editor.Core.Services
             {
                 try
                 {
-                    var copy = (IDictionary)Activator.CreateInstance(v.GetType());
-                    foreach (DictionaryEntry kv in dict) copy[kv.Key] = kv.Value;
+                    var copy = (IDictionary)Activator.CreateInstance(t);
+                    foreach (DictionaryEntry kv in dict) copy[kv.Key] = Clone(kv.Value, depth + 1);
+                    return copy;
+                }
+                catch { return v; }
+            }
+            var members = PlainData(t);
+            if (members != null)
+            {
+                try
+                {
+                    var copy = Activator.CreateInstance(t, nonPublic: true);
+                    foreach (var m in members) m.Set(copy, Clone(m.Get(v), depth + 1));
                     return copy;
                 }
                 catch { return v; }
@@ -300,26 +364,42 @@ namespace Editor.Core.Services
             return v;
         }
 
-        private static bool Same(object a, object b)
+        /// <summary>Equal by value — through arrays, lists, dictionaries and plain data objects, so an element changed in
+        /// place is a change (#478).</summary>
+        private static bool Same(object a, object b, int depth = 0)
         {
             if (ReferenceEquals(a, b)) return true;
             if (a == null || b == null) return false;
-            if (a is Array aa && b is Array ba)
+            if (a is string || a.GetType().IsValueType || depth > MaxDepth) return Equals(a, b);
+            if (a.GetType() != b.GetType()) return false;
+            if (a is Array aa)
             {
-                if (aa.Length != ba.Length) return false;
-                for (int i = 0; i < aa.Length; i++) if (!Equals(aa.GetValue(i), ba.GetValue(i))) return false;
+                var ba = (Array)b;
+                if (aa.Length != ba.Length || aa.Rank != ba.Rank) return false;
+                for (int d = 0; d < aa.Rank; d++) if (aa.GetLength(d) != ba.GetLength(d)) return false;
+                var ea = aa.GetEnumerator();
+                var eb = ba.GetEnumerator();
+                while (ea.MoveNext()) { if (!eb.MoveNext() || !Same(ea.Current, eb.Current, depth + 1)) return false; }
                 return true;
             }
-            if (a is IList la && b is IList lb && !(a is string))
+            if (a is IList la)
             {
+                var lb = (IList)b;
                 if (la.Count != lb.Count) return false;
-                for (int i = 0; i < la.Count; i++) if (!Equals(la[i], lb[i])) return false;
+                for (int i = 0; i < la.Count; i++) if (!Same(la[i], lb[i], depth + 1)) return false;
                 return true;
             }
-            if (a is IDictionary da && b is IDictionary db)
+            if (a is IDictionary da)
             {
+                var db = (IDictionary)b;
                 if (da.Count != db.Count) return false;
-                foreach (DictionaryEntry kv in da) { if (!db.Contains(kv.Key) || !Equals(db[kv.Key], kv.Value)) return false; }
+                foreach (DictionaryEntry kv in da) { if (!db.Contains(kv.Key) || !Same(db[kv.Key], kv.Value, depth + 1)) return false; }
+                return true;
+            }
+            var members = PlainData(a.GetType());
+            if (members != null)
+            {
+                foreach (var m in members) if (!Same(m.Get(a), m.Get(b), depth + 1)) return false;
                 return true;
             }
             return Equals(a, b);
