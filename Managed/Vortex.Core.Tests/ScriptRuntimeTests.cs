@@ -82,6 +82,38 @@ public class NanWriter : VortexBehaviour
         Moved = Physics.MoveCharacter(Position, 0.3f, 1.8f, new Vector3(zero / zero, 0f, 0f), EntityId);
     }
 }
+
+public class Counter : VortexBehaviour
+{
+    public int Starts, Updates, LateUpdates;
+    public override void Start() { Starts++; }
+    public override void Update(float dt) { Updates++; }
+    public override void LateUpdate(float dt) { LateUpdates++; }
+}
+
+public class SelfDestructAI : VortexBehaviour
+{
+    public override void Update(float dt) { Scene.Destroy(EntityId); }
+    public override void OnDestroy() { Probe.Log.Add(""AI.OnDestroy""); }
+}
+
+public class Killer : VortexBehaviour
+{
+    public override void Start() { Scene.Destroy(Scene.Find(""Victim"")); }
+}
+
+public class Witness : VortexBehaviour
+{
+    public override void OnDestroy()
+    {
+        Probe.Log.Add(""Witness sees Health="" + (Scene.GetBehaviour<Health>(EntityId) != null) + "" Loot="" + (Scene.GetBehaviour<Loot>(EntityId) != null));
+    }
+}
+
+public class ContactZone : VortexBehaviour
+{
+    public override void OnTriggerEnter(TriggerHit other) { }
+}
 ";
 
         private static Assembly Compile(TestContext t)
@@ -339,6 +371,181 @@ public class NanWriter : VortexBehaviour
                 t.Equal(1f, Vortex.UI.Scale, "a bad density reads as 1");
             }
             finally { Vortex.UI.Host = oldHost; rt.SetUIFrame(0, 0, 0, 0, false, false, 1f); }
+        }
+
+        // ---------------------------------------------------------------- review follow-ups of #408 / #452 / #454 / #455
+
+        private static List<string> InfosAbout(string text) =>
+            Editor.Core.Services.ConsoleService.Instance.Entries
+                .Where(e => e.Level == Editor.Core.Services.LogLevel.Info && e.Message.Contains(text)).Select(e => e.Message).ToList();
+
+        private static GameEntity Entity(Scene scene, string name, params string[] scripts)
+        {
+            var e = new GameEntity(scene, name);
+            foreach (var s in scripts) AddScript(e, s);
+            scene.Entities.Add(e);
+            return e;
+        }
+
+        [Test]
+        public static void ADestroyInsideUpdateDoesNotCostOthersTheirFrame(TestContext t)
+        {
+            // an NPC [Health, Loot, AI] whose AI destroys the entity in Update: removing its three behaviours from the tick
+            // list mid-loop shifted it, so the next three behaviours skipped the frame
+            var asm = Compile(t);
+            var scene = new Scene { Name = "Destroy" };
+            var first = Entity(scene, "First", "Counter");
+            var npc = Entity(scene, "Npc", "Health", "Loot", "SelfDestructAI");
+            var after = new[] { Entity(scene, "A", "Counter"), Entity(scene, "B", "Counter"), Entity(scene, "C", "Counter"), Entity(scene, "D", "Counter") };
+            var rt = ScriptRuntime.Instance;
+            try
+            {
+                rt.BeginPlaySession(scene, asm);
+                var counters = new[] { first }.Concat(after).Select(e => rt.BehavioursOf(e)[0]).ToList();
+                rt.Update(0.016f);
+                foreach (var c in counters)
+                {
+                    t.Equal(1, (int)Field(c, "Updates"), "every other behaviour got its Update in the frame of the destroy");
+                    t.Equal(1, (int)Field(c, "LateUpdates"), "… and its LateUpdate");
+                }
+                var log = Log(asm);
+                t.Equal(1, log.Count(l => l == "Health.OnDestroy"), "Health.OnDestroy once");
+                t.Equal(1, log.Count(l => l == "Loot.OnDestroy"), "Loot.OnDestroy once");
+                t.Equal(1, log.Count(l => l == "AI.OnDestroy"), "AI.OnDestroy once");
+                rt.Update(0.016f);
+                foreach (var c in counters) t.Equal(2, (int)Field(c, "Updates"), "and the next frame as well");
+                t.Equal(0, rt.BehavioursOf(npc).Count, "the NPC runs nothing any more");
+            }
+            finally { rt.End(); }
+        }
+
+        [Test]
+        public static void AStartThatDestroysAnotherScriptedEntityDoesNotThrow(TestContext t)
+        {
+            // Begin's start loop walked a snapshot count by index; the destroy shrank the list and the catch re-read
+            // _behaviours[i] past its end, so an ArgumentOutOfRangeException escaped Begin
+            var asm = Compile(t);
+            var scene = new Scene { Name = "Killer" };
+            Entity(scene, "Hitman", "Killer");
+            Entity(scene, "Victim", "Health", "Loot");
+            var witness = Entity(scene, "Bystander", "Counter");
+            var rt = ScriptRuntime.Instance;
+            try
+            {
+                Exception thrown = null;
+                try { rt.BeginPlaySession(scene, asm); } catch (Exception ex) { thrown = ex; }
+                t.True(thrown == null, "Begin does not throw: " + thrown);
+                var log = Log(asm);
+                t.False(log.Any(l => l.StartsWith("Health.Start", StringComparison.Ordinal) || l.StartsWith("Loot.Start", StringComparison.Ordinal)), "the victim's scripts never start after their OnDestroy");
+                t.Equal(1, log.Count(l => l == "Health.OnDestroy"), "the victim's Health got OnDestroy once");
+                t.Equal(1, log.Count(l => l == "Loot.OnDestroy"), "and its Loot");
+                t.Equal(1, (int)Field(rt.BehavioursOf(witness)[0], "Starts"), "the bystander started once");
+                rt.Update(0.016f);
+                t.Equal(1, (int)Field(rt.BehavioursOf(witness)[0], "Updates"), "and ticks");
+            }
+            finally { rt.End(); }
+        }
+
+        [Test]
+        public static void ADisabledScriptDoesNotRun(TestContext t)
+        {
+            var asm = Compile(t);
+            var scene = new Scene { Name = "Disabled" };
+            var e = new GameEntity(scene, "Npc");
+            var mover = AddScript(e, "Mover"); mover.IsEnabled = false;   // switched off in the Inspector
+            AddScript(e, "Health");
+            scene.Entities.Add(e);
+            var rt = ScriptRuntime.Instance;
+            try
+            {
+                rt.BeginPlaySession(scene, asm);
+                t.Equal(1, rt.BehavioursOf(e).Count, "only the enabled script runs");
+                t.Equal("Health", rt.BehavioursOf(e)[0].GetType().Name, "… Health");
+                t.False(Log(asm).Any(l => l.StartsWith("Mover.Start", StringComparison.Ordinal)), "the disabled one never starts");
+                t.False(rt.AttachAtRuntime(e, mover), "attaching it live does not start it either");
+                mover.IsEnabled = true;
+                t.True(rt.AttachAtRuntime(e, mover), "once switched on, it starts");
+                t.Equal(2, rt.BehavioursOf(e).Count, "two behaviours now");
+            }
+            finally { rt.End(); }
+        }
+
+        [Test]
+        public static void AReplacedScriptComponentKeepsItsRunningBehaviour(TestContext t)
+        {
+            // attach_script after an undo / a prefab revert: the Script component is a NEW object for the same class — the
+            // running behaviour is re-linked to it, not joined by a second copy
+            var asm = Compile(t);
+            var scene = new Scene { Name = "Relink" };
+            var e = new GameEntity(scene, "Npc");
+            var old = AddScript(e, "Mover", "Speed", "2");
+            scene.Entities.Add(e);
+            var rt = ScriptRuntime.Instance;
+            try
+            {
+                rt.BeginPlaySession(scene, asm);
+                var running = rt.BehavioursOf(e)[0];
+                e.Components.Remove(old);
+                var fresh = AddScript(e, "Mover", "Speed", "9");
+                bool live = rt.ApplyFieldsToLiveBehaviour(e, fresh) || rt.AttachAtRuntime(e, fresh);   // what attach_script does
+                t.True(live, "the script counts as running");
+                t.Equal(1, rt.BehavioursOf(e).Count, "no second Mover");
+                t.True(ReferenceEquals(running, rt.LiveBehaviourOf(e, fresh)), "the running one now belongs to the new component");
+                t.Equal(9f, (float)Field(running, "Speed"), "and took its field values");
+                t.Equal(1, Log(asm).Count(l => l.StartsWith("Mover.Start", StringComparison.Ordinal)), "started once");
+                t.False(rt.AttachAtRuntime(e, fresh), "nothing to start");
+            }
+            finally { rt.End(); }
+        }
+
+        [Test]
+        public static void SeveralScriptsAndDuplicatesAreReportedAtPlayStart(TestContext t)
+        {
+            var asm = Compile(t);
+            var scene = new Scene { Name = "Report" };
+            Entity(scene, "ReportNpc", "Mover", "Health");
+            Entity(scene, "ReportDup", "Loot", "Loot");   // an old scene: the same script dropped twice
+            Entity(scene, "ReportSingle", "Health");
+            var rt = ScriptRuntime.Instance;
+            try
+            {
+                rt.BeginPlaySession(scene, asm);
+                t.Equal(1, InfosAbout("'ReportNpc' runs 2 scripts — Mover, Health").Count, "one line for the entity with two scripts");
+                t.Equal(0, InfosAbout("'ReportSingle'").Count, "nothing for a single script");
+                t.Equal(1, WarningsAbout("'ReportDup' carries the same script more than once (Loot ×2)").Count, "a warning for the duplicate");
+                rt.Begin(scene, asm);   // a scene switch / hot reload inside the session
+                t.Equal(1, WarningsAbout("'ReportDup' carries").Count, "the warning comes once per session");
+                rt.BeginPlaySession(scene, asm);
+                t.Equal(2, WarningsAbout("'ReportDup' carries").Count, "and again in the next session");
+            }
+            finally { rt.End(); }
+        }
+
+        [Test]
+        public static void GetBehaviourSkipsASiblingThatWasDestroyed(TestContext t)
+        {
+            // OnDestroy runs in component order; a later script asking for an earlier sibling must not get the dead one
+            var asm = Compile(t);
+            var scene = new Scene { Name = "Siblings" };
+            var e = Entity(scene, "Npc", "Health", "Witness", "Loot");
+            var rt = ScriptRuntime.Instance;
+            try
+            {
+                rt.BeginPlaySession(scene, asm);
+                Vortex.Scene.Destroy(rt.BehavioursOf(e)[0].EntityId);
+                t.True(Log(asm).Contains("Witness sees Health=False Loot=True"), "Health (destroyed first) is gone, Loot (still running) is found: " + string.Join(" | ", Log(asm)));
+            }
+            finally { rt.End(); }
+        }
+
+        [Test]
+        public static void ContactScriptsAreRecognised(TestContext t)
+        {
+            // the Collision Editor's script section acts on the script that reacts to contact, never on e.g. Health
+            var asm = Compile(t);
+            t.True(ScriptRuntime.HandlesContact(asm.GetType("ContactZone")), "an OnTriggerEnter override");
+            t.False(ScriptRuntime.HandlesContact(asm.GetType("Health")), "Health does not react to contact");
+            t.False(ScriptRuntime.HandlesContact(null), "no type");
         }
     }
 }

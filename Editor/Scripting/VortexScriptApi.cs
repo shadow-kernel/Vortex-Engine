@@ -395,6 +395,10 @@ namespace Vortex
         /// script on that entity.</summary>
         public long EntityId { get; internal set; }
 
+        /// <summary>Set by the runtime when its OnDestroy is about to run (entity destroyed, play ended): from then on it
+        /// gets no Start/Update/callback any more and lookups skip it; the tick list drops it between ticks.</summary>
+        internal bool Destroyed;
+
         /// <summary>The host the engine wires up so behaviours can affect the live game.</summary>
         internal static IScriptHost Host;
 

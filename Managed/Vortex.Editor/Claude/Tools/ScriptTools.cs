@@ -214,12 +214,12 @@ namespace VortexEditor.Claude.Tools
             // while playing THIS script's running behaviour takes the values now, and a new script starts now next to the
             // ones the entity already runs (#345, #408); Stop reverts the scene to what it was before Play
             bool playing = PlayModeService.Instance.State == PlayState.Playing;
-            bool live = false;
-            if (playing)
-            {
-                live = ScriptRuntime.Instance.ApplyFieldsToLiveBehaviour(e, sc) || ScriptRuntime.Instance.AttachAtRuntime(e, sc);
-                if (!live) note = (note == null ? "" : note + "; ") + "play mode: the script did not start (its class does not compile, or is not a concrete VortexBehaviour named like the file) — the change applies on the next Play";
-            }
+            bool live = playing && (ScriptRuntime.Instance.ApplyFieldsToLiveBehaviour(e, sc) || ScriptRuntime.Instance.AttachAtRuntime(e, sc));
+            if (!live && !sc.IsEnabled)   // a switched-off Script never starts (#408 review)
+                note = (note == null ? "" : note + "; ") + "the Script component is disabled (enabled: false), so it does not run — switch it on with "
+                     + "set_component_properties (enabled: true)" + (playing ? ", then attach_script again to start it while playing" : "");
+            else if (playing && !live)
+                note = (note == null ? "" : note + "; ") + "play mode: the script did not start (its class does not compile, or is not a concrete VortexBehaviour named like the file) — the change applies on the next Play";
             return new { entity = SceneModel.ShortId(e), script = rel, behaviour = sc.ScriptClassName, added, fields_set = set.Count > 0 ? set : null,
                 runtime_only = playing ? true : (bool?)null, live = playing ? live : (bool?)null, note };
         }
