@@ -96,6 +96,34 @@ namespace VortexTests
         }
 
         [Test]
+        public static void FadeOnASilentSourceTakesOverItsLevel(TestContext t)
+        {
+            // #404: the envelope multiplies Volume, so "Volume = 0; Play(); FadeTo(0.95f, 4f)" stayed silent forever
+            var silent = new AudioSource { Volume = 0f };
+            t.Equal(AudioPlaybackService.FadeStart.TakesOverLevel, AudioPlaybackService.PlanFade(silent, 0.95f), "Volume 0, fade up: the envelope carries the level");
+            t.Equal(AudioPlaybackService.FadeStart.TakesOverLevel, AudioPlaybackService.PlanFade(silent, 1f), "FadeIn on Volume 0");
+            t.Equal(AudioPlaybackService.FadeStart.Composed, AudioPlaybackService.PlanFade(silent, 0f), "fading to 0: nothing to take over");
+            t.Equal(AudioPlaybackService.FadeStart.Composed, AudioPlaybackService.PlanFade(new AudioSource { Volume = 0.4f }, 0.95f),
+                "any other Volume: the fade composes with it exactly as before (0.4 x 0.95)");
+            t.Equal(AudioPlaybackService.FadeStart.Muted, AudioPlaybackService.PlanFade(new AudioSource { Volume = 1f, Mute = true }, 0.95f), "Mute stays muted (warned)");
+            t.Equal(AudioPlaybackService.FadeStart.Composed, AudioPlaybackService.PlanFade(silent, float.NaN), "a NaN target changes nothing");
+        }
+
+        [Test]
+        public static void FadeRuleIsInTheScriptingReference(TestContext t)
+        {
+            // what get_scripting_api prints under the AudioSource members (#404)
+            string type = Editor.Scripting.ScriptApiDocs.Summary(typeof(Vortex.AudioSource)) ?? "";
+            string fadeTo = Editor.Scripting.ScriptApiDocs.Summary(typeof(Vortex.AudioSource).GetMethod("FadeTo")) ?? "";
+            string fadeIn = Editor.Scripting.ScriptApiDocs.Summary(typeof(Vortex.AudioSource).GetMethod("FadeIn")) ?? "";
+            string volume = Editor.Scripting.ScriptApiDocs.Summary(typeof(Vortex.AudioSource).GetProperty("Volume")) ?? "";
+            t.True(type.Contains("Volume × the fade envelope") && type.Contains("FadeTo(0.95f, 4f)"), "the class states the rule and the silent-start pattern: " + type);
+            t.True(fadeTo.Contains("Volume × envelope") && fadeTo.Contains("absolute level"), "FadeTo: " + fadeTo);
+            t.True(fadeIn.Contains("Volume 0"), "FadeIn: " + fadeIn);
+            t.True(volume.Contains("fade envelope"), "Volume: " + volume);
+        }
+
+        [Test]
         public static void OneShotReverbMixDefaults(TestContext t)
         {
             // #496: a 3D one-shot reverberates like an Audio Source left at its default Reverb Zone Mix; 2D stays dry

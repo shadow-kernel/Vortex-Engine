@@ -228,6 +228,7 @@ namespace Editor.Core.Services
             _musicCurrentClip = null;
             foreach (var s in _oneShots) VortexAudio.StopVoice(s.Handle);
             _oneShots.Clear();
+            _warnedMutedFades.Clear();
             _zones.Clear();
             _zoneWeight = 0f;
             _lastDecay = _lastWet = _lastPredelay = -1f;
@@ -376,6 +377,7 @@ namespace Editor.Core.Services
             var b = FindBinding(source);
             if (b == null || b.Handle == VortexAudio.InvalidVoice) return;
             VortexAudio.FadeVoice(b.Handle, 0f, 0f);          // snap envelope to 0
+            BeginAudibleFade(b, 1f, "FadeIn");                // a source at Volume 0 fades in to full volume (#404)
             VortexAudio.FadeVoice(b.Handle, 1f, seconds);     // glide up
         }
 
@@ -394,7 +396,44 @@ namespace Editor.Core.Services
         public void ScriptFadeTo(AudioSource source, float target, float seconds)
         {
             var b = FindBinding(source);
-            if (b != null) VortexAudio.FadeVoice(b.Handle, target, seconds);
+            if (b == null || b.Handle == VortexAudio.InvalidVoice) return;
+            BeginAudibleFade(b, target, "FadeTo");            // a source at Volume 0 fades to target as its level (#404)
+            VortexAudio.FadeVoice(b.Handle, target, seconds);
+        }
+
+        /// <summary>What a fade towards <paramref name="target"/> does with the source's own level (#404). The envelope
+        /// multiplies Volume, so a fade on a source at Volume 0 — the natural "start silent, then fade in" — stayed silent
+        /// forever. Such a fade now takes the level over: Volume becomes 1 and the envelope carries the whole level
+        /// (Volume = 0; Play(); FadeTo(0.95f, 4f) ends at 0.95, FadeIn at full volume). A fade on a source with any other
+        /// Volume composes with it exactly as before; a muted source stays muted.</summary>
+        internal enum FadeStart { Composed, TakesOverLevel, Muted }
+
+        internal static FadeStart PlanFade(AudioSource source, float target)
+        {
+            if (!(target > 0f)) return FadeStart.Composed;   // fading down / out: Volume decides nothing
+            if (source.Mute) return FadeStart.Muted;
+            return source.Volume > 0f ? FadeStart.Composed : FadeStart.TakesOverLevel;
+        }
+
+        /// <summary>Sources whose fade was inaudible because of Mute — warned once per play session.</summary>
+        private readonly HashSet<AudioSource> _warnedMutedFades = new HashSet<AudioSource>();
+
+        private void BeginAudibleFade(SourceBinding b, float target, string what)
+        {
+            switch (PlanFade(b.Source, target))
+            {
+                case FadeStart.TakesOverLevel:
+                    // silent first (the envelope at 0), so raising Volume can never click; Stop restores the authored Volume
+                    VortexAudio.FadeVoice(b.Handle, 0f, 0f);
+                    b.Source.Volume = 1f;
+                    VortexAudio.SetVoiceVolume(b.Handle, b.RolledVolumeScale);
+                    break;
+                case FadeStart.Muted:
+                    if (_warnedMutedFades.Add(b.Source))
+                        ConsoleService.Instance.LogWarning("[Audio] " + what + " on '" + (b.Entity?.Name ?? "?") +
+                            "' has no audible effect: its Audio Source is muted (Mute) — the fade envelope only scales the source's level.");
+                    break;
+            }
         }
 
         /// <summary>An in-flight one-shot: its voice and its own reverb mix (#496) — the per-frame send is that mix x the

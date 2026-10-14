@@ -26,6 +26,77 @@ namespace VortexEditor.Shell.Audio
         {
             SmokeRegistry.Add("audio play: a spawned prefab's sound starts, Destroy stops it", Run);
             SmokeRegistry.Add("audio play: one-shots get the reverb send inside a Reverb Zone", OneShotReverb);
+            SmokeRegistry.Add("audio play: a fade on a Volume 0 source is heard, get_scripting_api tells how fades compose", FadeFromSilence);
+        }
+
+        /// <summary>#404: the issue's "start silent, then fade in" — Volume 0, Play(), FadeTo(0.95) — on a music-bus source
+        /// is audible on the Music bus and leaves Volume 1 with the envelope at 0.95; a muted source logs one warning; the
+        /// scripting reference (get_scripting_api AudioSource) states the Volume × envelope rule.</summary>
+        private static async Task<bool> FadeFromSilence()
+        {
+            var log = ConsoleService.Instance;
+            string root = ProjectData.Current?.Path;
+            var scene = ProjectData.Current?.ActiveScene;
+            if (root == null || scene == null) return false;
+            string api = VortexEditor.Claude.Tools.ScriptTools.GetScriptingApi("AudioSource");
+            bool documented = api.Contains("Volume × the fade envelope") && api.Contains("absolute level");
+            if (!documented) log.LogError("fade from silence: get_scripting_api AudioSource does not explain the fade rule:\n" + api);
+
+            string wav = Path.Combine(root, Clip.Replace('/', Path.DirectorySeparatorChar));
+            GameEntity music = null, muted = null;
+            bool started = false;
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(wav));
+                WriteTone(wav, 440, 1.0);
+                AudioSource Source(GameEntity e)
+                {
+                    var s = e?.GetComponent<AudioSource>();
+                    if (s == null) return null;
+                    s.AudioClipPath = Clip; s.Loop = true; s.PlayOnAwake = false; s.SpatialBlend = 0f; s.OutputBus = VortexAudio.BusMusic; s.Volume = 0f;
+                    return s;
+                }
+                music = EditorCommands.CreateAudioSource(scene);
+                var src = Source(music);
+                muted = EditorCommands.CreateAudioSource(scene);
+                var mutedSrc = Source(muted);
+                if (src == null || mutedSrc == null) { log.LogError("fade from silence: no Audio Source was created"); return false; }
+                mutedSrc.Volume = 1f; mutedSrc.Mute = true; mutedSrc.OutputBus = VortexAudio.BusSfx;
+
+                EditorCommands.Play();
+                started = PlayModeService.Instance.State == PlayState.Playing;
+                if (!started) { log.LogError("fade from silence: play mode did not start"); return false; }
+                await Task.Delay(200);
+                var svc = AudioPlaybackService.Instance;
+                svc.ScriptPlay(src);                 // what Vortex.AudioSource.Play / FadeTo call
+                svc.ScriptFadeTo(src, 0.95f, 0.2f);
+                svc.ScriptPlay(mutedSrc);
+                svc.ScriptFadeTo(mutedSrc, 1f, 0.2f);
+                svc.ScriptFadeTo(mutedSrc, 0.5f, 0.2f);   // warned once, not twice
+                float peak = 0f;
+                for (int i = 0; i < 20 && peak < 0.05f; i++)
+                {
+                    await Task.Delay(100);
+                    VortexAudio.GetBusLevels(VortexAudio.BusMusic, out peak, out _);
+                }
+                await Task.Delay(300);   // the warnings reach the Console on the UI thread
+                int warnings = log.Entries.Count(e => e.Message != null && e.Message.Contains("has no audible effect") && e.Message.Contains("'" + muted.Name + "'"));
+                bool device = VortexAudio.HasDevice();
+                log.Log("fade from silence: music bus peak " + peak.ToString("0.000") + " (device=" + device + "), Volume now " + src.Volume +
+                        ", playing=" + svc.ScriptIsPlaying(src) + ", mute warnings " + warnings + ", documented=" + documented);
+                return documented && Math.Abs(src.Volume - 1f) < 1e-6f && svc.ScriptIsPlaying(src) && peak > 0.05f && warnings == 1;
+            }
+            catch (Exception ex) { log.LogError("fade from silence: " + ex.Message); return false; }
+            finally
+            {
+                if (started) EditorCommands.Stop();
+                var gone = new System.Collections.Generic.List<GameEntity>();
+                if (music != null) gone.Add(music);
+                if (muted != null) gone.Add(muted);
+                if (gone.Count > 0) EditorCommands.DeleteEntities(gone);
+                foreach (var f in new[] { wav, wav + ".vmeta" })
+                    try { if (File.Exists(f)) File.Delete(f); } catch { }
+            }
         }
 
         /// <summary>#496: inside a wet Reverb Zone a 3D one-shot gets the send of an Audio Source with Reverb Zone Mix 1 from
