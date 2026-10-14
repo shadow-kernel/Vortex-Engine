@@ -406,6 +406,24 @@ EDITOR_INTERFACE int GetModelMaterialAlpha(const char* filepath,
 	return count;
 }
 
+// Per-submesh glTF emission (#450), so the editor writes it into the sidecar .vmat files: emissiveFactor as RGB
+// (out_rgb is max_submeshes * 3 floats; black = no emission, the glTF default) and KHR_materials_emissive_strength (1
+// when absent). Other formats report black. Null outputs are skipped. Returns the submesh count.
+EDITOR_INTERFACE int GetModelMaterialEmissive(const char* filepath, float* out_rgb, float* out_strength, int max_submeshes)
+{
+	if (!filepath || max_submeshes <= 0) return 0;
+	auto parsed = parsed_model(filepath);
+	const auto& model_data = *parsed;
+	int count = static_cast<int>((std::min)(model_data.submeshes.size(), static_cast<size_t>(max_submeshes)));
+	for (int i = 0; i < count; i++)
+	{
+		const auto& s = model_data.submeshes[i];
+		if (out_rgb) { out_rgb[i * 3 + 0] = s.emissive_color[0]; out_rgb[i * 3 + 1] = s.emissive_color[1]; out_rgb[i * 3 + 2] = s.emissive_color[2]; }
+		if (out_strength) out_strength[i] = s.emissive_strength;
+	}
+	return count;
+}
+
 // The warnings of the most recent model import on the calling thread (#470) — a glTF material whose maps need different
 // UV transforms, … — one per line, so the editor shows them in its console right after an import call. Returns the
 // buffer size they need including the terminator (0 = none); with out = null or max_len <= 0 it is only a size query.

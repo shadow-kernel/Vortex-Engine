@@ -37,7 +37,7 @@ target_include_directories(VortexGeometryTest PRIVATE "${CMAKE_SOURCE_DIR}/Engin
 target_compile_definitions(VortexGeometryTest PRIVATE TEST_GEOMETRY=1)
 target_link_libraries(VortexGeometryTest PRIVATE vortex::engine)
 
-# Model import (#441 #453 #470): small glTF / OBJ files through the Assimp importer and the import cache (headless).
+# Model import (#441 #450 #453 #470): small glTF / OBJ files through the Assimp importer and the import cache (headless).
 add_executable(VortexImportTest Main.cpp)
 target_include_directories(VortexImportTest PRIVATE "${CMAKE_SOURCE_DIR}/Engine/Common")
 target_compile_definitions(VortexImportTest PRIVATE TEST_IMPORT=1)

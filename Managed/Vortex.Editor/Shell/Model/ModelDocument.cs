@@ -276,6 +276,12 @@ namespace VortexEditor.Shell.ModelTools
                         m.BlendMode = VortexMaterial.BlendModeName(p.BlendMode);
                         if (p.BlendMode == 3) m.AlphaCutoff = p.AlphaCutoff;
                         m.TwoSided = p.TwoSided;
+                        // glTF emission (#450): emissiveFactor x KHR_materials_emissive_strength; a black factor emits nothing
+                        if (p.Emits)
+                        {
+                            m.EmissiveColor = new[] { p.EmissiveColor[0], p.EmissiveColor[1], p.EmissiveColor[2] };
+                            m.EmissiveStrength = p.EmissiveStrength;
+                        }
                     }
                     if (tex != null && i < tex.Length)
                     {

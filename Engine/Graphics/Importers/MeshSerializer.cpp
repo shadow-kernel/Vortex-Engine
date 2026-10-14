@@ -127,8 +127,9 @@ namespace vortex::graphics
 		// model is imported again and the cache rewritten.
 		//   v2: blend mode, alpha cutoff and two-sidedness (#441) — a v1 cache would bring glTF cut-outs back opaque
 		//   v3: the submesh UVs carry the glTF KHR_texture_transform (#470) — older ones hold the raw, scrambled UVs
+		//   v4: the glTF emission, emissiveFactor + KHR_materials_emissive_strength (#450), kept for the import material
 		constexpr u32 kCacheMagic = 0x434D4D56;   // "VMMC"
-		constexpr u32 kCacheVersion = 3;
+		constexpr u32 kCacheVersion = 4;
 		constexpr u32 kMaxString = 1u << 16;
 		constexpr u32 kMaxSubmeshes = 4096;
 
@@ -229,6 +230,8 @@ namespace vortex::graphics
 			put_u8(f, static_cast<u8>(sm.blend_mode));
 			put_f32(f, sm.alpha_cutoff);
 			put_u8(f, sm.two_sided ? 1 : 0);
+			for (float c : sm.emissive_color) put_f32(f, c);
+			put_f32(f, sm.emissive_strength);
 		}
 		f.close();
 		return f.good() ? written : 0;
@@ -265,7 +268,9 @@ namespace vortex::graphics
 				|| !get_u8(f, flags[0]) || !get_u8(f, flags[1]) || !get_u8(f, flags[2]) || !get_u8(f, flags[3]) || !get_u8(f, flags[4])
 				|| !get_str(f, sm.diffuse_texture) || !get_str(f, sm.normal_texture) || !get_str(f, sm.metallic_texture)
 				|| !get_str(f, sm.roughness_texture) || !get_str(f, sm.ao_texture) || !get_str(f, sm.emissive_texture)
-				|| !get_u8(f, blend_mode) || !get_f32(f, sm.alpha_cutoff) || !get_u8(f, two_sided))
+				|| !get_u8(f, blend_mode) || !get_f32(f, sm.alpha_cutoff) || !get_u8(f, two_sided)
+				|| !get_f32(f, sm.emissive_color[0]) || !get_f32(f, sm.emissive_color[1]) || !get_f32(f, sm.emissive_color[2])
+				|| !get_f32(f, sm.emissive_strength))
 			{
 				out.clear();
 				return false;

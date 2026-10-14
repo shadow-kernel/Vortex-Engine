@@ -19,7 +19,8 @@ using namespace vortex::graphics;
 
 // Model import (VortexImportTest): small glTF / OBJ files written by the test, read through the engine's Assimp importer
 // and the import cache — glTF alpha modes (#441), colour-only materials and the texture-folder fallback (#453),
-// KHR_texture_transform and UV sets (#470). Headless; prints "ALL PASSED" or "FAILURES!" and exits non-zero.
+// KHR_texture_transform and UV sets (#470), emission (#450). Headless; prints "ALL PASSED" or "FAILURES!" and exits
+// non-zero.
 class engine_test : public test
 {
 public:
@@ -41,6 +42,7 @@ public:
 		folder_fallback_only_where_wanted();
 		texture_transforms();
 		texture_transform_conflicts();
+		emission();
 		std::printf(m_failures ? "FAILURES!\n" : "ALL PASSED\n");
 	}
 
@@ -189,10 +191,10 @@ private:
 				&& back.submeshes[i].two_sided == d.submeshes[i].two_sided;
 		check(same, "blend mode, cutoff and two-sidedness survive the cache");
 
-		// a cache written before the alpha state (v1) or the texture transforms (v2, #470) were stored: rejected, so the
-		// model is imported again
+		// a cache written before the alpha state (v1), the texture transforms (v2, #470) or the emission (v3, #450) were
+		// stored: rejected, so the model is imported again
 		const auto vmc = std::filesystem::path(dir) / "materials.vmc";
-		for (u32 version = 1; version <= 2; ++version)
+		for (u32 version = 1; version <= 3; ++version)
 		{
 			{
 				std::fstream f(vmc, std::ios::in | std::ios::out | std::ios::binary);
@@ -386,5 +388,40 @@ private:
 		check(lightmapped, "a map on a UV set with other data is warned about");
 		check(uv_error(by_material(s, "Lightmapped"), [](int k, float& u, float& v) { u = kUv[k][0]; v = kUv[k][1]; }) < 1e-6f, "...and the base colour's set is used");
 		check(uv_error(by_material(s, "SecondSet"), [](int k, float& u, float& v) { u = kUv1[k][0]; v = kUv1[k][1]; }) < 1e-6f, "a base colour on TEXCOORD_1 takes the vertex UVs from it");
+	}
+
+	// #450: glTF emissiveFactor and KHR_materials_emissive_strength reach the submesh (and the import cache)
+	void emission()
+	{
+		std::printf("glTF emission (#450)\n");
+		const std::string path = write("emission.gltf", gltf(
+			"{\"name\":\"Neon\",\"emissiveFactor\":[1,0.5,0.25],\"extensions\":{\"KHR_materials_emissive_strength\":{\"emissiveStrength\":4}}},"
+			"{\"name\":\"Lamp\",\"emissiveFactor\":[1,0.72,0.4]},"
+			"{\"name\":\"Screen\",\"emissiveTexture\":{\"index\":0}},"
+			"{\"name\":\"Dull\"}", 4, "{\"source\":0}", "{\"uri\":\"t.png\"}", "\"KHR_materials_emissive_strength\""));
+		ImportedModelData d = ModelImporter::import_from_file(path);
+		auto emits = [&](const char* name, float r, float g, float b, float strength)
+		{
+			const SubMeshData* s = by_material(d, name);
+			return s && near(s->emissive_color[0], r) && near(s->emissive_color[1], g) && near(s->emissive_color[2], b) && near(s->emissive_strength, strength);
+		};
+		check(emits("Neon", 1.0f, 0.5f, 0.25f, 4.0f), "emissiveFactor with KHR_materials_emissive_strength");
+		check(emits("Lamp", 1.0f, 0.72f, 0.4f, 1.0f), "emissiveFactor alone: strength 1");
+		check(emits("Screen", 0.0f, 0.0f, 0.0f, 1.0f), "an emissive map without a factor: black, it does not glow (glTF default)");
+		check(emits("Dull", 0.0f, 0.0f, 0.0f, 1.0f), "no emission");
+
+		const std::string dir = (m_dir / "cache_emission").string();
+		check(MeshSerializer::save_submeshes_to_dir(d, dir) == 4, "cached");
+		ImportedModelData back;
+		bool same = MeshSerializer::load_submeshes_from_dir(dir, back) && back.submeshes.size() == d.submeshes.size();
+		for (size_t i = 0; same && i < d.submeshes.size(); ++i)
+			same = back.submeshes[i].emissive_color[0] == d.submeshes[i].emissive_color[0] && back.submeshes[i].emissive_color[1] == d.submeshes[i].emissive_color[1]
+				&& back.submeshes[i].emissive_color[2] == d.submeshes[i].emissive_color[2] && back.submeshes[i].emissive_strength == d.submeshes[i].emissive_strength;
+		check(same, "the emission survives the import cache");
+
+		// other formats keep their old reading: an OBJ "Ke" is not taken over
+		write("glow.mtl", "newmtl Glow\nKd 1 1 1\nKe 1 0 0\n");
+		const ImportedModelData o = ModelImporter::import_from_file(write("glow.obj", "mtllib glow.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl Glow\nf 1 2 3\n"));
+		check(o.submeshes.size() == 1 && o.submeshes[0].emissive_color[0] == 0.0f, "an OBJ's emissive colour is left as before");
 	}
 };

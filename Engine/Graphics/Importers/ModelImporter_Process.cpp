@@ -573,6 +573,18 @@ namespace vortex::graphics
 				if (material->Get(AI_MATKEY_TWOSIDED, double_sided) == AI_SUCCESS) two_sided = double_sided != 0;
 			}
 
+			// glTF emission (#450): emissiveFactor (black by default: an emissive map alone does not glow) and
+			// KHR_materials_emissive_strength — the sidecar .vmat gets them as EmissiveColor / EmissiveStrength
+			float emissive[3] = { 0.0f, 0.0f, 0.0f };
+			float emissive_strength = 1.0f;
+			if (data.gltf)
+			{
+				aiColor3D e(0.0f, 0.0f, 0.0f);
+				if (material->Get(AI_MATKEY_COLOR_EMISSIVE, e) == AI_SUCCESS) { emissive[0] = e.r; emissive[1] = e.g; emissive[2] = e.b; }
+				float strength = 1.0f;
+				if (material->Get(AI_MATKEY_EMISSIVE_INTENSITY, strength) == AI_SUCCESS && strength >= 0.0f) emissive_strength = strength;
+			}
+
 			VORTEX_VLOG(("  Material " + std::to_string(i) + ": " + mat_name + "\n").c_str());
 
 			// Get diffuse texture path from material
@@ -661,6 +673,8 @@ namespace vortex::graphics
 					submesh.blend_mode = blend_mode;
 					submesh.alpha_cutoff = alpha_cutoff;
 					submesh.two_sided = two_sided;
+					submesh.emissive_color[0] = emissive[0]; submesh.emissive_color[1] = emissive[1]; submesh.emissive_color[2] = emissive[2];
+					submesh.emissive_strength = emissive_strength;
 					submesh.albedo_source = albedo_source;
 
 					// Use material name if submesh name is empty

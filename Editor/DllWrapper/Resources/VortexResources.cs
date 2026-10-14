@@ -776,9 +776,19 @@ namespace Editor.DllWrapper
             public float AlphaCutoff;
             /// <summary>glTF doubleSided: drawn without back-face culling.</summary>
             public bool TwoSided;
+            /// <summary>glTF emissiveFactor (RGB, black = no emission — the glTF default) (#450).</summary>
+            public float[] EmissiveColor = { 0f, 0f, 0f };
+            /// <summary>glTF KHR_materials_emissive_strength (1 when the file has none) (#450).</summary>
+            public float EmissiveStrength = 1f;
 
-            /// <summary>Write the imported surface into a sidecar material: base colour, PBR factors, and the blend mode,
-            /// cutoff and sidedness a glTF asks for (#441) — so MASK foliage stays cut out once a .vmat drives it.</summary>
+            /// <summary>True when the material emits light: a non-black emissiveFactor and a strength above 0.</summary>
+            public bool Emits => EmissiveColor != null && EmissiveColor.Length >= 3 && EmissiveStrength > 0f
+                                 && (EmissiveColor[0] > 0f || EmissiveColor[1] > 0f || EmissiveColor[2] > 0f);
+
+            /// <summary>Write the imported surface into a sidecar material: base colour, PBR factors, the blend mode,
+            /// cutoff and sidedness a glTF asks for (#441) — so MASK foliage stays cut out once a .vmat drives it — and its
+            /// emission (#450) with glTF's meaning, emission = EmissiveColor * EmissiveStrength * EmissiveTexture: a
+            /// black emissiveFactor writes no emission even when the material has an emissive map.</summary>
             public void ApplyTo(Editor.Core.Assets.VortexMaterial v)
             {
                 if (v == null) return;
@@ -788,6 +798,16 @@ namespace Editor.DllWrapper
                 v.BlendMode = Editor.Core.Assets.VortexMaterial.BlendModeName(BlendMode);
                 if (BlendMode == 3) v.AlphaCutoff = AlphaCutoff;
                 v.TwoSided = TwoSided;
+                if (Emits)
+                {
+                    v.EmissiveColor = new[] { EmissiveColor[0], EmissiveColor[1], EmissiveColor[2] };
+                    v.EmissiveStrength = EmissiveStrength;
+                }
+                else
+                {
+                    v.EmissiveColor = new[] { 0f, 0f, 0f };
+                    v.EmissiveStrength = 0f;
+                }
             }
         }
 
@@ -801,8 +821,12 @@ namespace Editor.DllWrapper
             [MarshalAs(UnmanagedType.LPStr)] string filepath,
             [In, Out] int[] outBlendMode, [In, Out] float[] outAlphaCutoff, [In, Out] int[] outTwoSided, int maxSubmeshes);
 
-        /// <summary>Interpret each submesh's real material (base color + metallic + roughness, glTF alpha mode and
-        /// sidedness) so the editor shows it.</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int GetModelMaterialEmissive(
+            [MarshalAs(UnmanagedType.LPStr)] string filepath, [In, Out] float[] outRgb, [In, Out] float[] outStrength, int maxSubmeshes);
+
+        /// <summary>Interpret each submesh's real material (base color + metallic + roughness, glTF alpha mode,
+        /// sidedness and emission) so the editor shows it.</summary>
         public static SubmeshMaterialProps[] GetSubmeshMaterialProps(string filepath, int maxSubmeshes = 64)
         {
             try
@@ -818,6 +842,11 @@ namespace Editor.DllWrapper
                 int alphaCount = 0;
                 try { alphaCount = GetModelMaterialAlpha(filepath, blend, cutoff, twoSided, maxSubmeshes); }
                 catch (EntryPointNotFoundException) { alphaCount = 0; }   // an older engine: opaque, as it imported
+                var emissive = new float[maxSubmeshes * 3];
+                var strength = new float[maxSubmeshes];
+                int emissiveCount = 0;
+                try { emissiveCount = GetModelMaterialEmissive(filepath, emissive, strength, maxSubmeshes); }
+                catch (EntryPointNotFoundException) { emissiveCount = 0; }   // an older engine: no emission, as it imported
                 var result = new SubmeshMaterialProps[count];
                 for (int i = 0; i < count; i++)
                     result[i] = new SubmeshMaterialProps
@@ -827,7 +856,9 @@ namespace Editor.DllWrapper
                         Roughness = rough[i],
                         BlendMode = i < alphaCount ? blend[i] : 0,
                         AlphaCutoff = i < alphaCount ? cutoff[i] : 0f,
-                        TwoSided = i < alphaCount && twoSided[i] != 0
+                        TwoSided = i < alphaCount && twoSided[i] != 0,
+                        EmissiveColor = i < emissiveCount ? new[] { emissive[i * 3], emissive[i * 3 + 1], emissive[i * 3 + 2] } : new[] { 0f, 0f, 0f },
+                        EmissiveStrength = i < emissiveCount ? strength[i] : 1f
                     };
                 return result;
             }

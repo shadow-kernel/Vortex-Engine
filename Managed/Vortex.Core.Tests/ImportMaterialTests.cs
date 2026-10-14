@@ -42,6 +42,39 @@ namespace VortexTests
         }
 
         [Test]
+        public static void GltfEmissionReachesTheSidecar(TestContext t)
+        {
+            // #450: emission = emissiveFactor x KHR_materials_emissive_strength (x the emissive map)
+            var neon = new VortexMaterial();
+            new VortexAPI.SubmeshMaterialProps { EmissiveColor = new[] { 1f, 0.5f, 0.25f }, EmissiveStrength = 4f }.ApplyTo(neon);
+            t.Equal(1f, neon.EmissiveColor[0], "EmissiveColor = emissiveFactor (r)");
+            t.Equal(0.5f, neon.EmissiveColor[1], "(g)");
+            t.Equal(0.25f, neon.EmissiveColor[2], "(b)");
+            t.Equal(4f, neon.EmissiveStrength, "EmissiveStrength = KHR_materials_emissive_strength");
+
+            var lamp = new VortexMaterial();
+            new VortexAPI.SubmeshMaterialProps { EmissiveColor = new[] { 1f, 0.72f, 0.4f } }.ApplyTo(lamp);
+            t.Equal(1f, lamp.EmissiveStrength, "a factor without the extension glows at strength 1");
+
+            // an emissive map with the default (black) factor does not glow in glTF: nothing is written
+            var screen = new VortexMaterial { EmissiveTexture = "screen.png" };
+            new VortexAPI.SubmeshMaterialProps { EmissiveStrength = 1f }.ApplyTo(screen);
+            t.Equal(0f, screen.EmissiveStrength, "a black emissiveFactor means no emission");
+            t.Equal(0f, screen.EmissiveColor[0] + screen.EmissiveColor[1] + screen.EmissiveColor[2], "and a black colour");
+            t.Equal("screen.png", screen.EmissiveTexture, "the map itself stays assigned");
+
+            var dark = new VortexMaterial();
+            new VortexAPI.SubmeshMaterialProps { EmissiveColor = new[] { 1f, 1f, 1f }, EmissiveStrength = 0f }.ApplyTo(dark);
+            t.Equal(0f, dark.EmissiveStrength, "strength 0 switches it off");
+
+            string path = t.Path("emissive.vmat");
+            t.True(neon.Save(path), "saved");
+            var back = VortexMaterial.Load(path);
+            t.Equal(4f, back.EmissiveStrength, "EmissiveStrength round-trips");
+            t.Equal(0.5f, back.EmissiveColor[1], "EmissiveColor round-trips");
+        }
+
+        [Test]
         public static void ColourOnlyMaterialsTakeNoFolderTexture(TestContext t)
         {
             // #453: the placement's folder fallback stands in only where the model wants an albedo it could not load
