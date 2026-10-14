@@ -320,7 +320,11 @@ namespace VortexEditor.Claude.Tools
         {
             if (props.ValueKind != JsonValueKind.Object) throw new ToolError("properties must be an object {\"name\": value}.");
             var done = new List<string>();
-            foreach (var p in props.EnumerateObject()) done.Add(ComponentProps.Set(c, p.Name, p.Value));
+            foreach (var p in props.EnumerateObject())
+            {
+                string set = ComponentProps.Set(c, p.Name, p.Value);
+                if (set != null) done.Add(set);   // null: a key get_entity shows for reading only (#405)
+            }
             return done;
         }
 
@@ -496,7 +500,8 @@ namespace VortexEditor.Claude.Tools
         [Description("Sets properties of an entity's component: {\"intensity\": 2.5, \"light_type\": \"Spot\", \"color\": \"#ff8800\"}. " +
                      "Names as get_entity shows them (snake_case or PascalCase); enums take their names; vectors [x, y, z]; " +
                      "'enabled' turns the component on/off. On a Script the behaviour's public fields are set the same way " +
-                     "({\"Speed\": 2.5} or {\"fields\": {…}}; null resets a field to its code default). Errors list the valid names and values.")]
+                     "({\"Speed\": 2.5} or {\"fields\": {…}}; null or the code default resets a field to the code default), and the properties " +
+                     "get_entity shows can be sent back as they are. Errors list the valid names and values.")]
         public static object SetComponentProperties(
             [Description("Entity id, path or name")] string entity,
             [Description("Component type, e.g. Light")] string component,

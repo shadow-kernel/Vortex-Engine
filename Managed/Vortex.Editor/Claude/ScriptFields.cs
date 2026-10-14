@@ -85,7 +85,10 @@ namespace VortexEditor.Claude
         /// behaviour's fields — {"Speed": 2} — and "fields" sets several at once, the shape get_entity shows.</summary>
         public static string SetFromProperties(Script sc, string name, JsonElement value)
         {
-            if (ComponentProps.Norm(name) == "fields")
+            string n = ComponentProps.Norm(name);
+            // what get_entity adds for reading, so its answer can be sent back as it is (#405 review)
+            if (n == "overriddenfields" || n == "fieldsnote") return null;
+            if (n == "fields")
             {
                 if (value.ValueKind != JsonValueKind.Object) throw new ToolError("fields expects an object {\"Field\": value}.");
                 return string.Join(", ", value.EnumerateObject().Select(p => Set(sc, p.Name, p.Value)));
@@ -97,23 +100,40 @@ namespace VortexEditor.Claude
             return Set(sc, name, value);
         }
 
-        /// <summary>Set one public field of the behaviour (undoable): a JSON value of the field's type; null drops the
-        /// entity's override, so the field follows the code default again. While playing, the running behaviour takes
-        /// the value at once (#345). Returns the field's name.</summary>
-        public static string Set(Script sc, string name, JsonElement value)
+        /// <summary>Set one public field of the behaviour (undoable): a JSON value of the field's type. A value equal to the
+        /// code default — or null — drops the entity's override, so the field follows the code again, as the Inspector
+        /// stores it; get_entity's whole fields object can come back without pinning every default. While playing, the
+        /// running behaviour takes the values once the call has succeeded (#345) — not field by field before the rest of
+        /// the call is checked, and never in a dry run; <paramref name="live"/> false leaves that to the caller. Returns
+        /// the field's name.</summary>
+        public static string Set(Script sc, string name, JsonElement value, bool live = true)
         {
             var type = TypeOf(sc) ?? throw new ToolError("The script's class " + sc.ScriptClassName + " could not be compiled or found, so its fields are unknown — fix compile_scripts errors first (the class name must match the file name).");
             var f = Find(type, name) ?? throw new ToolError(type.Name + " has no public field '" + name + "'. Fields: " + Names(type));
             if (!ScriptRuntime.IsInspectableFieldType(f.FieldType)) throw new ToolError(f.Name + " (" + f.FieldType.Name + ") cannot be set from the editor.");
             string formatted = value.ValueKind == JsonValueKind.Null || value.ValueKind == JsonValueKind.Undefined ? null : ScriptRuntime.FormatFieldValue(Convert(value, f.FieldType, f.Name));
+            if (formatted != null && formatted == DefaultText(type, f)) formatted = null;
             string old = sc.GetFieldValue(f.Name);
             if (formatted != old)
             {
                 var target = sc; string fname = f.Name;
                 UndoRedoManager.Instance.Execute(new ActionCommand("Set " + fname, () => target.SetFieldValue(fname, formatted), () => target.SetFieldValue(fname, old)));
             }
-            if (PlayModeService.Instance.State == PlayState.Playing && sc.Entity != null) ScriptRuntime.Instance.ApplyFieldsToLiveBehaviour(sc.Entity);
+            // the behaviour of THIS Script component — an entity can run several (#408)
+            var entity = sc.Entity;
+            if (live && entity != null && PlayModeService.Instance.State == PlayState.Playing)
+                ToolContext.AfterSuccess("live fields " + entity.Id + "/" + System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(sc), () =>
+                {
+                    if (PlayModeService.Instance.State == PlayState.Playing) ScriptRuntime.Instance.ApplyFieldsToLiveBehaviour(entity, sc);
+                });
             return f.Name;
+        }
+
+        /// <summary>The field's code default as the scene stores values, or null when the class cannot be created.</summary>
+        private static string DefaultText(Type type, FieldInfo f)
+        {
+            try { return ScriptRuntime.FormatFieldValue(f.GetValue(Activator.CreateInstance(type))); }
+            catch { return null; }
         }
 
         /// <summary>A JSON value as a field's type: numbers, bools, strings, enums by name, [x, y, z], arrays.</summary>

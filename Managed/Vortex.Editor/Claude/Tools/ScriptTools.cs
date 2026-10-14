@@ -208,7 +208,7 @@ namespace VortexEditor.Claude.Tools
         [McpServerTool(Name = "attach_script")]
         [Description("Adds a script to an entity (its behaviour runs in play mode) and sets public fields of the behaviour: " +
                      "{\"Speed\": 2.5, \"Target\": \"Door\", \"Offset\": [0, 1, 0]} — numbers, bools, strings, enums by name, [x,y,z], arrays; " +
-                     "null resets a field to its code default. On a script that is already attached it only sets the fields (as " +
+                     "null (or the code default's value) resets a field to its code default. On a script that is already attached it only sets the fields (as " +
                      "set_component_properties on the Script does); get_entity shows them. One undo step.")]
         public static object AttachScript(
             [Description("Entity id, path or name")] string entity,
@@ -225,20 +225,23 @@ namespace VortexEditor.Claude.Tools
             var set = new List<string>();
             if (fields.HasValue && fields.Value.ValueKind == JsonValueKind.Object)
             {
-                // the one path for a behaviour's fields — set_component_properties on a Script takes it too (#405)
-                foreach (var p in fields.Value.EnumerateObject()) set.Add(ScriptFields.Set(sc, p.Name, p.Value));
+                // the one path for a behaviour's fields — set_component_properties on a Script takes it too (#405); the
+                // running behaviour gets them below, once every field was valid
+                foreach (var p in fields.Value.EnumerateObject()) set.Add(ScriptFields.Set(sc, p.Name, p.Value, live: false));
             }
             else if (ScriptFields.TypeOf(sc) == null)
                 note = "the class " + sc.ScriptClassName + " is not compiled yet (or the file has errors) — check compile_scripts";
             ToolContext.UndoLabel = (added ? "attach " : "set fields of ") + Path.GetFileNameWithoutExtension(rel) + " on " + e.Name;
             // while playing THIS script's running behaviour takes the values now, and a new script starts now next to the
-            // ones the entity already runs (#345, #408); Stop reverts the scene to what it was before Play
+            // ones the entity already runs (#345, #408); Stop reverts the scene to what it was before Play. A dry run is
+            // taken back afterwards, so it leaves the running game alone (#405).
             bool playing = PlayModeService.Instance.State == PlayState.Playing;
-            bool live = playing && (ScriptRuntime.Instance.ApplyFieldsToLiveBehaviour(e, sc) || ScriptRuntime.Instance.AttachAtRuntime(e, sc));
+            bool dryRun = ToolContext.DryRun;
+            bool live = playing && !dryRun && (ScriptRuntime.Instance.ApplyFieldsToLiveBehaviour(e, sc) || ScriptRuntime.Instance.AttachAtRuntime(e, sc));
             if (!live && !sc.IsEnabled)   // a switched-off Script never starts (#408 review)
                 note = (note == null ? "" : note + "; ") + "the Script component is disabled (enabled: false), so it does not run — switch it on with "
                      + "set_component_properties (enabled: true)" + (playing ? ", then attach_script again to start it while playing" : "");
-            else if (playing && !live)
+            else if (playing && !live && !dryRun)
                 note = (note == null ? "" : note + "; ") + "play mode: the script did not start (its class does not compile, or is not a concrete VortexBehaviour named like the file) — the change applies on the next Play";
             return new { entity = SceneModel.ShortId(e), script = rel, behaviour = sc.ScriptClassName, added, fields_set = set.Count > 0 ? set : null,
                 runtime_only = playing ? true : (bool?)null, live = playing ? live : (bool?)null, note };

@@ -155,7 +155,14 @@ namespace VortexEditor.Claude
                 var badProp = await Raw("set_component_properties", new JsonObject { ["entity"] = cubeId, ["component"] = "Script", ["properties"] = new JsonObject { ["Sped"] = 1 } });
                 if ((bool?)badProp["isError"] != true || !McpTestClient.Text(badProp).Contains("Speed, Axis") || !McpTestClient.Text(badProp).Contains("script_path"))
                     return Fail("an unknown Script name should list the fields and the properties: " + McpTestClient.Text(badProp));
-                await C("set_component_properties", new JsonObject { ["entity"] = cubeId, ["component"] = "Script", ["properties"] = new JsonObject { ["Speed"] = 45 } });   // as attached: the play checks expect it
+                // get_entity's answer goes back as it is (read-only keys ignored) without pinning the defaults — Speed is at its
+                // code default here; then one edit, Speed back to 45 as attached (the play checks below expect it)
+                var shown = (await C("get_entity", new JsonObject { ["entity"] = cubeId }))["components"].AsArray().First(x => (string)x["type"] == "Script")["properties"].DeepClone().AsObject();
+                await C("set_component_properties", new JsonObject { ["entity"] = cubeId, ["component"] = "Script", ["properties"] = shown.DeepClone() });
+                if (script.GetFieldValue("Speed") != null || script.GetFieldValue("Axis") != "1,0,0") return Fail("sending get_entity's properties back must change nothing: Speed=" + script.GetFieldValue("Speed"));
+                shown["fields"]["Speed"] = 45;
+                await C("set_component_properties", new JsonObject { ["entity"] = cubeId, ["component"] = "Script", ["properties"] = shown });
+                if (script.GetFieldValue("Speed") != "45") return Fail("an edited get_entity answer: Speed=" + script.GetFieldValue("Speed"));
                 // #456 / #494: a script in a subfolder is found by its bare name; two scripts of one name are listed, not picked
                 var sub = await C("write_script", new JsonObject { ["script"] = "McpSub/McpSubSpinner.cs", ["code"] = good.Replace("McpSpinner", "McpSubSpinner") });
                 cleanup.Add(Path.Combine(project.Path, "Assets", "Scripts", "McpSub", "McpSubSpinner.cs"));
@@ -276,6 +283,18 @@ namespace VortexEditor.Claude
                 await C("attach_script", new JsonObject { ["entity"] = cubeId, ["script"] = "McpWobble", ["fields"] = new JsonObject { ["Speed"] = 8 } });
                 if ((float?)FieldOf("McpWobble", "Speed") != 8f || (float?)FieldOf("McpSpinner", "Speed") != 45f || (float?)FieldOf("McpLate", "Speed") != 9f || (int?)FieldOf("McpWobble", "Starts") != 1)
                     return Fail("attach_script fields in play mode must reach that script's behaviour only: " + rt.DebugBehaviourNames());
+                // #405: set_component_properties reaches the running behaviour of THAT Script component once the call succeeded —
+                // never a field of a failed call or a dry run
+                await C("set_component_properties", new JsonObject { ["entity"] = cubeId, ["component"] = "Script", ["properties"] = new JsonObject { ["Speed"] = 7 } });
+                if ((float?)FieldOf("McpSpinner", "Speed") != 7f || (float?)FieldOf("McpWobble", "Speed") != 8f || (float?)FieldOf("McpLate", "Speed") != 9f)
+                    return Fail("a field set while playing must reach that Script's behaviour only: " + rt.DebugBehaviourNames());
+                await C("set_component_properties", new JsonObject { ["entity"] = cubeId, ["component"] = "Script", ["index"] = 1, ["properties"] = new JsonObject { ["Speed"] = 6 } });
+                if ((float?)FieldOf("McpWobble", "Speed") != 6f || (float?)FieldOf("McpSpinner", "Speed") != 7f)
+                    return Fail("index 1 must reach the second Script's behaviour: McpWobble " + FieldOf("McpWobble", "Speed") + ", McpSpinner " + FieldOf("McpSpinner", "Speed"));
+                var halfSet = await Raw("set_component_properties", new JsonObject { ["entity"] = cubeId, ["component"] = "Script", ["properties"] = new JsonObject { ["Speed"] = 5, ["Sped"] = 1 } });
+                if ((bool?)halfSet["isError"] != true || (float?)FieldOf("McpSpinner", "Speed") != 7f) return Fail("a failed call reached the running game: Speed " + FieldOf("McpSpinner", "Speed"));
+                await C("set_component_properties", new JsonObject { ["entity"] = cubeId, ["component"] = "Script", ["properties"] = new JsonObject { ["Speed"] = 9 }, ["dry_run"] = true });
+                if ((float?)FieldOf("McpSpinner", "Speed") != 7f) return Fail("a dry run reached the running game: Speed " + FieldOf("McpSpinner", "Speed"));
                 var pshot = await Raw("capture_viewport", new JsonObject { ["max_size"] = 512 });
                 bool playImage = (pshot["content"] as JsonArray)?.Any(c => (string)c["type"] == "image") == true;
                 if (!playImage || McpTestClient.Text(pshot).IndexOf("play mode", StringComparison.OrdinalIgnoreCase) < 0) return Fail("capture_viewport in play mode: " + McpTestClient.Text(pshot));
