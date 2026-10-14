@@ -21,7 +21,8 @@ namespace Editor.Core.Data
         [IgnoreDataMember]
         public ProjectSettings Settings { get; set; } = new ProjectSettings();
         /// <summary>The project's own version ("1.53.6") and creation date as read from project.vortex — carried through so a
-        /// save keeps them (#471: every save reset them to "1.0.0" and now).</summary>
+        /// save keeps them (#471, #414: every save reset them to "1.0.0" and now). A new project is created now; CreatedAt
+        /// is null only for a file without one, and the next save stamps it.</summary>
         public string Version { get; set; } = "1.0.0";
         public DateTime? CreatedAt { get; set; }
 
@@ -99,6 +100,7 @@ namespace Editor.Core.Data
         public ProjectData(string path, string name) : base(path, name)
         {
             LastModified = DateTime.Now;
+            CreatedAt = LastModified;   // a new project (#414)
             _scenes = new ObservableCollection<Scene>();
             _scenes.Add(new Scene(this, "Default Scene"));
         }

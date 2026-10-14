@@ -7,10 +7,15 @@ namespace Editor.Core.Data
     /// <summary>
     /// Leichtgewichtiges Projekt-Manifest das nur Metadaten und Referenzen enth�lt.
     /// Die eigentlichen Szenen werden in separaten .vscene Dateien gespeichert.
+    /// Keys the engine does not know (a release tool's, a newer engine's) are read into <see cref="ExtensionData"/> and
+    /// written back where they were, so an editor save keeps them (#414) — likewise in each scene entry and the settings.
     /// </summary>
     [DataContract(Name = "ProjectManifest", Namespace = "")]
-    public class ProjectManifest
+    public class ProjectManifest : IExtensibleDataObject
     {
+        /// <summary>The file's keys this class has no member for (#414).</summary>
+        public ExtensionDataObject ExtensionData { get; set; }
+
         /// <summary>
         /// Eindeutige Projekt-ID
         /// </summary>
@@ -102,8 +107,11 @@ namespace Editor.Core.Data
     /// Referenz zu einer Szene (ohne den Inhalt)
     /// </summary>
     [DataContract(Name = "SceneReference", Namespace = "")]
-    public class SceneReference
+    public class SceneReference : IExtensibleDataObject
     {
+        /// <summary>The entry's keys this class has no member for (#414).</summary>
+        public ExtensionDataObject ExtensionData { get; set; }
+
         /// <summary>
         /// Eindeutige Szenen-ID
         /// </summary>
@@ -142,8 +150,11 @@ namespace Editor.Core.Data
     /// Projekt-Einstellungen
     /// </summary>
     [DataContract(Name = "ProjectSettings", Namespace = "")]
-    public class ProjectSettings
+    public class ProjectSettings : IExtensibleDataObject
     {
+        /// <summary>The settings' keys this class has no member for (#414).</summary>
+        public ExtensionDataObject ExtensionData { get; set; }
+
         /// <summary>
         /// Unternehmen/Entwickler Name
         /// </summary>
