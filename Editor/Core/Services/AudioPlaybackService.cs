@@ -34,6 +34,9 @@ namespace Editor.Core.Services
             /// <summary>Script called Pause() — ResumeAll (editor un-pause) must NOT
             /// override a deliberate script pause.</summary>
             public bool ScriptPaused;
+            /// <summary>The voice was (re)started and no tick has pushed it yet — a fade now belongs to the "start silent,
+            /// then fade in" idiom (#404, <see cref="PlanFade"/>).</summary>
+            public bool FreshStart;
             /// <summary>Container roll of the CURRENT voice — the per-frame property
             /// push must keep multiplying these in or the variation gets stomped.</summary>
             public float RolledVolumeScale = 1f;
@@ -162,6 +165,7 @@ namespace Editor.Core.Services
                     {
                         PushProperties(b);
                     }
+                    b.FreshStart = false;   // pushed (or not playing): a later fade is no longer part of a start (#404)
                 }
 
                 // One-shots: prune the finished ones (the pause/stop lists stay small); the rest get the same reverb
@@ -228,7 +232,7 @@ namespace Editor.Core.Services
             _musicCurrentClip = null;
             foreach (var s in _oneShots) VortexAudio.StopVoice(s.Handle);
             _oneShots.Clear();
-            _warnedMutedFades.Clear();
+            _warnedInaudibleFades.Clear();
             _zones.Clear();
             _zoneWeight = 0f;
             _lastDecay = _lastWet = _lastPredelay = -1f;
@@ -377,7 +381,7 @@ namespace Editor.Core.Services
             var b = FindBinding(source);
             if (b == null || b.Handle == VortexAudio.InvalidVoice) return;
             VortexAudio.FadeVoice(b.Handle, 0f, 0f);          // snap envelope to 0
-            BeginAudibleFade(b, 1f, "FadeIn");                // a source at Volume 0 fades in to full volume (#404)
+            BeginAudibleFade(b, 1f, "FadeIn");                // just (re)started: at Volume 0 it fades in to full volume (#404)
             VortexAudio.FadeVoice(b.Handle, 1f, seconds);     // glide up
         }
 
@@ -397,42 +401,46 @@ namespace Editor.Core.Services
         {
             var b = FindBinding(source);
             if (b == null || b.Handle == VortexAudio.InvalidVoice) return;
-            BeginAudibleFade(b, target, "FadeTo");            // a source at Volume 0 fades to target as its level (#404)
+            BeginAudibleFade(b, target, "FadeTo");            // the "start silent, then fade in" idiom takes the level over (#404)
             VortexAudio.FadeVoice(b.Handle, target, seconds);
         }
 
         /// <summary>What a fade towards <paramref name="target"/> does with the source's own level (#404). The envelope
-        /// multiplies Volume, so a fade on a source at Volume 0 — the natural "start silent, then fade in" — stayed silent
-        /// forever. Such a fade now takes the level over: Volume becomes 1 and the envelope carries the whole level
-        /// (Volume = 0; Play(); FadeTo(0.95f, 4f) ends at 0.95, FadeIn at full volume). A fade on a source with any other
-        /// Volume composes with it exactly as before; a muted source stays muted.</summary>
-        internal enum FadeStart { Composed, TakesOverLevel, Muted }
+        /// multiplies Volume, so the natural "start silent, then fade in" — Volume = 0; Play(); FadeTo(0.95f, 4f) — stayed
+        /// silent forever. That idiom, and only that one (a source started at Volume 0 whose voice no tick has pushed yet, i.e.
+        /// Play() earlier in the same frame — FadeIn always is), takes the level over: Volume becomes 1 and the envelope
+        /// carries the whole level, so it ends at 0.95 (FadeIn at full volume). Any later fade composes with Volume as it
+        /// always did — a radio muted with Volume = 0 stays silent when a dialogue system ducks everything with FadeTo(0.3f)
+        /// — and a fade that cannot be heard (Volume 0 or Mute) warns once per source.</summary>
+        internal enum FadeStart { Composed, TakesOverLevel, SilentVolume, Muted }
 
-        internal static FadeStart PlanFade(AudioSource source, float target)
+        internal static FadeStart PlanFade(AudioSource source, float target, bool freshStart)
         {
             if (!(target > 0f)) return FadeStart.Composed;   // fading down / out: Volume decides nothing
             if (source.Mute) return FadeStart.Muted;
-            return source.Volume > 0f ? FadeStart.Composed : FadeStart.TakesOverLevel;
+            if (source.Volume > 0f) return FadeStart.Composed;
+            return freshStart ? FadeStart.TakesOverLevel : FadeStart.SilentVolume;
         }
 
-        /// <summary>Sources whose fade was inaudible because of Mute — warned once per play session.</summary>
-        private readonly HashSet<AudioSource> _warnedMutedFades = new HashSet<AudioSource>();
+        /// <summary>Sources whose fade could not be heard (Volume 0 or Mute) — warned once per play session.</summary>
+        private readonly HashSet<AudioSource> _warnedInaudibleFades = new HashSet<AudioSource>();
 
         private void BeginAudibleFade(SourceBinding b, float target, string what)
         {
-            switch (PlanFade(b.Source, target))
+            var plan = PlanFade(b.Source, target, b.FreshStart);
+            if (plan == FadeStart.TakesOverLevel)
             {
-                case FadeStart.TakesOverLevel:
-                    // silent first (the envelope at 0), so raising Volume can never click; Stop restores the authored Volume
-                    VortexAudio.FadeVoice(b.Handle, 0f, 0f);
-                    b.Source.Volume = 1f;
-                    VortexAudio.SetVoiceVolume(b.Handle, b.RolledVolumeScale);
-                    break;
-                case FadeStart.Muted:
-                    if (_warnedMutedFades.Add(b.Source))
-                        ConsoleService.Instance.LogWarning("[Audio] " + what + " on '" + (b.Entity?.Name ?? "?") +
-                            "' has no audible effect: its Audio Source is muted (Mute) — the fade envelope only scales the source's level.");
-                    break;
+                // silent first (the envelope at 0), so raising Volume can never click; Stop restores the authored Volume
+                VortexAudio.FadeVoice(b.Handle, 0f, 0f);
+                b.Source.Volume = 1f;
+                VortexAudio.SetVoiceVolume(b.Handle, b.RolledVolumeScale);
+            }
+            else if ((plan == FadeStart.Muted || plan == FadeStart.SilentVolume) && _warnedInaudibleFades.Add(b.Source))
+            {
+                ConsoleService.Instance.LogWarning("[Audio] " + what + " on '" + (b.Entity?.Name ?? "?") + "' cannot be heard: " +
+                    (plan == FadeStart.Muted ? "its Audio Source is muted (Mute) — the fade envelope multiplies the source's level."
+                                             : "its Volume is 0 — the fade envelope multiplies the source's level. (To start silent and fade in: " +
+                                               "Volume = 0, Play() and the fade in the same frame.)"));
             }
         }
 
@@ -707,6 +715,7 @@ namespace Editor.Core.Services
             if (b.Handle != VortexAudio.InvalidVoice)
             {
                 b.NextStartTick = 0;
+                b.FreshStart = true;
                 PushProperties(b);
             }
             else

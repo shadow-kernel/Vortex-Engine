@@ -96,17 +96,25 @@ namespace VortexTests
         }
 
         [Test]
-        public static void FadeOnASilentSourceTakesOverItsLevel(TestContext t)
+        public static void OnlyStartingSilentThenFadingInTakesTheLevelOver(TestContext t)
         {
             // #404: the envelope multiplies Volume, so "Volume = 0; Play(); FadeTo(0.95f, 4f)" stayed silent forever
             var silent = new AudioSource { Volume = 0f };
-            t.Equal(AudioPlaybackService.FadeStart.TakesOverLevel, AudioPlaybackService.PlanFade(silent, 0.95f), "Volume 0, fade up: the envelope carries the level");
-            t.Equal(AudioPlaybackService.FadeStart.TakesOverLevel, AudioPlaybackService.PlanFade(silent, 1f), "FadeIn on Volume 0");
-            t.Equal(AudioPlaybackService.FadeStart.Composed, AudioPlaybackService.PlanFade(silent, 0f), "fading to 0: nothing to take over");
-            t.Equal(AudioPlaybackService.FadeStart.Composed, AudioPlaybackService.PlanFade(new AudioSource { Volume = 0.4f }, 0.95f),
-                "any other Volume: the fade composes with it exactly as before (0.4 x 0.95)");
-            t.Equal(AudioPlaybackService.FadeStart.Muted, AudioPlaybackService.PlanFade(new AudioSource { Volume = 1f, Mute = true }, 0.95f), "Mute stays muted (warned)");
-            t.Equal(AudioPlaybackService.FadeStart.Composed, AudioPlaybackService.PlanFade(silent, float.NaN), "a NaN target changes nothing");
+            t.Equal(AudioPlaybackService.FadeStart.TakesOverLevel, AudioPlaybackService.PlanFade(silent, 0.95f, freshStart: true),
+                "Play() and the fade in the same frame at Volume 0: the envelope carries the level");
+            t.Equal(AudioPlaybackService.FadeStart.TakesOverLevel, AudioPlaybackService.PlanFade(silent, 1f, freshStart: true), "FadeIn (always a fresh start) on Volume 0");
+            // a radio muted with Volume = 0 while it plays stays silent when a dialogue system ducks everything
+            t.Equal(AudioPlaybackService.FadeStart.SilentVolume, AudioPlaybackService.PlanFade(silent, 0.3f, freshStart: false),
+                "a source already playing at Volume 0: the fade multiplies 0 (and warns)");
+            t.Equal(AudioPlaybackService.FadeStart.Composed, AudioPlaybackService.PlanFade(silent, 0f, freshStart: true), "fading to 0: nothing to take over or warn about");
+            foreach (bool fresh in new[] { true, false })
+            {
+                t.Equal(AudioPlaybackService.FadeStart.Composed, AudioPlaybackService.PlanFade(new AudioSource { Volume = 0.001f }, 0.95f, fresh),
+                    "any non-zero Volume composes exactly as before (fresh=" + fresh + ")");
+                t.Equal(AudioPlaybackService.FadeStart.Muted, AudioPlaybackService.PlanFade(new AudioSource { Volume = 1f, Mute = true }, 0.95f, fresh),
+                    "Mute stays muted and warns (fresh=" + fresh + ")");
+            }
+            t.Equal(AudioPlaybackService.FadeStart.Composed, AudioPlaybackService.PlanFade(silent, float.NaN, true), "a NaN target changes nothing");
         }
 
         [Test]
@@ -117,10 +125,11 @@ namespace VortexTests
             string fadeTo = Editor.Scripting.ScriptApiDocs.Summary(typeof(Vortex.AudioSource).GetMethod("FadeTo")) ?? "";
             string fadeIn = Editor.Scripting.ScriptApiDocs.Summary(typeof(Vortex.AudioSource).GetMethod("FadeIn")) ?? "";
             string volume = Editor.Scripting.ScriptApiDocs.Summary(typeof(Vortex.AudioSource).GetProperty("Volume")) ?? "";
-            t.True(type.Contains("Volume × the fade envelope") && type.Contains("FadeTo(0.95f, 4f)"), "the class states the rule and the silent-start pattern: " + type);
-            t.True(fadeTo.Contains("Volume × envelope") && fadeTo.Contains("absolute level"), "FadeTo: " + fadeTo);
+            t.True(type.Contains("Volume × the fade envelope") && type.Contains("FadeTo(0.95f, 4f)") && type.Contains("same frame")
+                   && type.Contains("logs one warning"), "the class states the rule, the silent-start idiom and its limit: " + type);
+            t.True(fadeTo.Contains("Volume × envelope") && fadeTo.Contains("absolute level") && fadeTo.Contains("already playing at Volume 0"), "FadeTo: " + fadeTo);
             t.True(fadeIn.Contains("Volume 0"), "FadeIn: " + fadeIn);
-            t.True(volume.Contains("fade envelope"), "Volume: " + volume);
+            t.True(volume.Contains("fade envelope") && volume.Contains("right after Play()"), "Volume: " + volume);
         }
 
         [Test]

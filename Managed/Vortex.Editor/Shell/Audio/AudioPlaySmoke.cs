@@ -29,9 +29,11 @@ namespace VortexEditor.Shell.Audio
             SmokeRegistry.Add("audio play: a fade on a Volume 0 source is heard, get_scripting_api tells how fades compose", FadeFromSilence);
         }
 
-        /// <summary>#404: the issue's "start silent, then fade in" — Volume 0, Play(), FadeTo(0.95) — on a music-bus source
-        /// is audible on the Music bus and leaves Volume 1 with the envelope at 0.95; a muted source logs one warning; the
-        /// scripting reference (get_scripting_api AudioSource) states the Volume × envelope rule.</summary>
+        /// <summary>#404: the issue's "start silent, then fade in" — Volume 0, Play(), FadeTo(0.95) in one frame — on a music-bus
+        /// source is audible on the Music bus and leaves Volume 1 with the envelope at 0.95; a radio that has been playing at
+        /// Volume 0 stays silent when it is ducked later (one warning), so does a muted source (one warning); the scripting
+        /// reference (get_scripting_api AudioSource) states the rule. Without an audio device the bus level is not measured;
+        /// without any engine voice only the reference is checked.</summary>
         private static async Task<bool> FadeFromSilence()
         {
             var log = ConsoleService.Instance;
@@ -39,52 +41,68 @@ namespace VortexEditor.Shell.Audio
             var scene = ProjectData.Current?.ActiveScene;
             if (root == null || scene == null) return false;
             string api = VortexEditor.Claude.Tools.ScriptTools.GetScriptingApi("AudioSource");
-            bool documented = api.Contains("Volume × the fade envelope") && api.Contains("absolute level");
+            bool documented = api.Contains("Volume × the fade envelope") && api.Contains("absolute level") && api.Contains("same frame");
             if (!documented) log.LogError("fade from silence: get_scripting_api AudioSource does not explain the fade rule:\n" + api);
 
             string wav = Path.Combine(root, Clip.Replace('/', Path.DirectorySeparatorChar));
-            GameEntity music = null, muted = null;
+            GameEntity music = null, muted = null, radio = null;
             bool started = false;
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(wav));
                 WriteTone(wav, 440, 1.0);
-                AudioSource Source(GameEntity e)
+                AudioSource Source(GameEntity e, string name)
                 {
                     var s = e?.GetComponent<AudioSource>();
                     if (s == null) return null;
+                    e.Name = name;
                     s.AudioClipPath = Clip; s.Loop = true; s.PlayOnAwake = false; s.SpatialBlend = 0f; s.OutputBus = VortexAudio.BusMusic; s.Volume = 0f;
                     return s;
                 }
                 music = EditorCommands.CreateAudioSource(scene);
-                var src = Source(music);
+                var src = Source(music, "SmokeMusic");
                 muted = EditorCommands.CreateAudioSource(scene);
-                var mutedSrc = Source(muted);
-                if (src == null || mutedSrc == null) { log.LogError("fade from silence: no Audio Source was created"); return false; }
+                var mutedSrc = Source(muted, "SmokeMuted");
+                radio = EditorCommands.CreateAudioSource(scene);
+                var radioSrc = Source(radio, "SmokeRadio");
+                if (src == null || mutedSrc == null || radioSrc == null) { log.LogError("fade from silence: no Audio Source was created"); return false; }
                 mutedSrc.Volume = 1f; mutedSrc.Mute = true; mutedSrc.OutputBus = VortexAudio.BusSfx;
+                radioSrc.OutputBus = VortexAudio.BusSfx;
 
                 EditorCommands.Play();
                 started = PlayModeService.Instance.State == PlayState.Playing;
                 if (!started) { log.LogError("fade from silence: play mode did not start"); return false; }
                 await Task.Delay(200);
                 var svc = AudioPlaybackService.Instance;
-                svc.ScriptPlay(src);                 // what Vortex.AudioSource.Play / FadeTo call
+                svc.ScriptPlay(radioSrc);            // a radio muted with Volume = 0 that has been playing a while …
+                svc.ScriptPlay(src);                 // what Vortex.AudioSource.Play / FadeTo call: start silent, then fade in
                 svc.ScriptFadeTo(src, 0.95f, 0.2f);
                 svc.ScriptPlay(mutedSrc);
                 svc.ScriptFadeTo(mutedSrc, 1f, 0.2f);
                 svc.ScriptFadeTo(mutedSrc, 0.5f, 0.2f);   // warned once, not twice
+                bool device = VortexAudio.HasDevice(), voices = svc.ScriptIsPlaying(src);
+                if (!voices && !device)
+                {
+                    log.Log("fade from silence: no audio engine voice on this machine (no device) — only the scripting reference is checked; documented=" + documented);
+                    return documented;
+                }
+                await Task.Delay(250);               // … ticks pass …
+                svc.ScriptFadeTo(radioSrc, 0.3f, 0.2f);   // … then a dialogue system ducks everything: the radio stays silent
+                svc.ScriptFadeTo(radioSrc, 0.3f, 0.2f);
                 float peak = 0f;
-                for (int i = 0; i < 20 && peak < 0.05f; i++)
+                for (int i = 0; i < 20 && peak < 0.05f && device; i++)
                 {
                     await Task.Delay(100);
                     VortexAudio.GetBusLevels(VortexAudio.BusMusic, out peak, out _);
                 }
                 await Task.Delay(300);   // the warnings reach the Console on the UI thread
-                int warnings = log.Entries.Count(e => e.Message != null && e.Message.Contains("has no audible effect") && e.Message.Contains("'" + muted.Name + "'"));
-                bool device = VortexAudio.HasDevice();
+                int Warnings(GameEntity e) => log.Entries.Count(x => x.Message != null && x.Message.Contains("cannot be heard") && x.Message.Contains("'" + e.Name + "'"));
+                int mutedWarnings = Warnings(muted), radioWarnings = Warnings(radio);
                 log.Log("fade from silence: music bus peak " + peak.ToString("0.000") + " (device=" + device + "), Volume now " + src.Volume +
-                        ", playing=" + svc.ScriptIsPlaying(src) + ", mute warnings " + warnings + ", documented=" + documented);
-                return documented && Math.Abs(src.Volume - 1f) < 1e-6f && svc.ScriptIsPlaying(src) && peak > 0.05f && warnings == 1;
+                        ", playing=" + svc.ScriptIsPlaying(src) + "; radio Volume " + radioSrc.Volume + "; warnings muted=" + mutedWarnings +
+                        " radio=" + radioWarnings + ", documented=" + documented);
+                return documented && Math.Abs(src.Volume - 1f) < 1e-6f && svc.ScriptIsPlaying(src) && (peak > 0.05f || !device)
+                       && radioSrc.Volume == 0f && mutedWarnings == 1 && radioWarnings == 1;
             }
             catch (Exception ex) { log.LogError("fade from silence: " + ex.Message); return false; }
             finally
@@ -93,6 +111,7 @@ namespace VortexEditor.Shell.Audio
                 var gone = new System.Collections.Generic.List<GameEntity>();
                 if (music != null) gone.Add(music);
                 if (muted != null) gone.Add(muted);
+                if (radio != null) gone.Add(radio);
                 if (gone.Count > 0) EditorCommands.DeleteEntities(gone);
                 foreach (var f in new[] { wav, wav + ".vmeta" })
                     try { if (File.Exists(f)) File.Delete(f); } catch { }

@@ -2306,11 +2306,12 @@ namespace Vortex
     /// <see cref="VortexBehaviour.GetAudioSource"/>. Play/Stop/Pause/Resume control the
     /// component's voice; Volume/Pitch write through to the component, so inspector and
     /// script always agree. The audible level is Volume × the fade envelope (0..1, starts at 1):
-    /// FadeIn / FadeOut / FadeTo move the envelope, not Volume. One exception (#404): a fade
-    /// towards an audible level on a source whose Volume is 0 sets Volume to 1 first, so the
-    /// envelope alone carries the level — "start silent, then fade in" works as written:
-    /// <c>src.Volume = 0f; src.Play(); src.FadeTo(0.95f, 4f);</c> ends at 0.95.
-    /// A muted source (Mute in the inspector) stays silent; the fade logs a warning.
+    /// FadeIn / FadeOut / FadeTo move the envelope, not Volume. One exception (#404), the "start
+    /// silent, then fade in" idiom: a fade towards an audible level right after Play() — in the
+    /// same frame — on a source whose Volume is 0 sets Volume to 1 first, so the envelope alone
+    /// carries the level: <c>src.Volume = 0f; src.Play(); src.FadeTo(0.95f, 4f);</c> ends at 0.95.
+    /// A fade on a source that has been playing at Volume 0, or is muted (Mute in the inspector),
+    /// stays silent and logs one warning.
     /// </summary>
     public sealed class AudioSource
     {
@@ -2326,7 +2327,8 @@ namespace Vortex
 
         /// <summary>(Re)start silent and glide the fade envelope from 0 to 1 over <paramref name="seconds"/> —
         /// ambience swells, creeping dread. Ends at the source's Volume (level = Volume × envelope); a source at
-        /// Volume 0 gets Volume 1 first, so it fades in to full volume. Sample-accurate, no zipper noise.</summary>
+        /// Volume 0 gets Volume 1 first (FadeIn is a fresh start), so it fades in to full volume. Sample-accurate,
+        /// no zipper noise.</summary>
         public void FadeIn(float seconds) => Editor.Core.Services.AudioPlaybackService.Instance.ScriptFadeIn(_component, seconds);
 
         /// <summary>Glide the fade envelope to 0 over <paramref name="seconds"/>, then stop and free the voice.
@@ -2335,8 +2337,10 @@ namespace Vortex
 
         /// <summary>Glide the fade envelope (0..1) to <paramref name="target"/> over <paramref name="seconds"/> — the
         /// audible level is Volume × envelope: duck a heartbeat under dialogue, swell a drone. Retargets smoothly
-        /// mid-fade. On a source whose Volume is 0, <paramref name="target"/> is the absolute level: Volume becomes 1
-        /// and the envelope glides up from silence (<c>Volume = 0; Play(); FadeTo(0.95f, 4f)</c> ends at 0.95).</summary>
+        /// mid-fade. Right after Play() (same frame) on a source whose Volume is 0, <paramref name="target"/> is the
+        /// absolute level: Volume becomes 1 and the envelope glides up from silence (<c>Volume = 0; Play();
+        /// FadeTo(0.95f, 4f)</c> ends at 0.95). On a source already playing at Volume 0 the fade cannot be heard
+        /// (it multiplies 0) and logs a warning.</summary>
         public void FadeTo(float target, float seconds) => Editor.Core.Services.AudioPlaybackService.Instance.ScriptFadeTo(_component, target, seconds);
 
         /// <summary>Component enable toggle (#51): disabling stops playback immediately; the component
@@ -2352,7 +2356,7 @@ namespace Vortex
         }
 
         /// <summary>Live volume (0..1) — audible immediately while playing. The audible level is Volume × the fade
-        /// envelope (FadeIn / FadeOut / FadeTo); a fade towards an audible level on a source at Volume 0 sets it to 1.</summary>
+        /// envelope (FadeIn / FadeOut / FadeTo); only a fade right after Play() on a source at Volume 0 sets it to 1.</summary>
         public float Volume { get => _component.Volume; set => _component.Volume = value; }
         /// <summary>Live pitch — audible immediately while playing.</summary>
         public float Pitch { get => _component.Pitch; set => _component.Pitch = value; }
