@@ -55,9 +55,17 @@ namespace VortexTests
             t.Equal(null, svc.GetClip(path), "not there yet");
             t.Equal(null, svc.GetClip(path), "still not there");
             WriteClip(path, 5f, new DateTime(2026, 6, 1, 0, 0, 0, DateTimeKind.Utc));
+            svc.InvalidateClip(path);   // the asset watcher reports the new file
             var clip = svc.GetClip(path);
             t.NotNull(clip, "created after the failed request: the next one loads it (no restart)");
             t.Equal(5f, KeyX(clip), "with its keys");
+
+            // without the watcher: the next play session compares the file again
+            string late = t.Path("Assets", "Crowd", "Cheer.vanim");
+            t.Equal(null, svc.GetClip(late), "missing");
+            WriteClip(late, 6f, new DateTime(2026, 6, 4, 0, 0, 0, DateTimeKind.Utc));
+            svc.ResetStates();   // Play pressed again
+            t.Equal(6f, KeyX(svc.GetClip(late)), "loads in the next run");
 
             // a half-written file fails to parse; once it is complete it loads
             string partial = t.Path("Assets", "Crowd", "Run.vanim");
@@ -65,7 +73,26 @@ namespace VortexTests
             File.SetLastWriteTimeUtc(partial, new DateTime(2026, 6, 2, 0, 0, 0, DateTimeKind.Utc));
             t.Equal(null, svc.GetClip(partial), "an unreadable clip is no clip");
             WriteClip(partial, 7f, new DateTime(2026, 6, 3, 0, 0, 0, DateTimeKind.Utc));
+            svc.InvalidateClip(partial);
             t.Equal(7f, KeyX(svc.GetClip(partial)), "the finished file loads");
+        }
+
+        [Test]
+        public static void AMissIsComparedAtMostOncePerInterval(TestContext t)
+        {
+            // a rigid model under an Animator asks for its (missing) skeleton every frame: no stat per request — the miss is
+            // trusted like a hit until the interval has passed, the file is invalidated or the run starts again
+            string model = t.Path("Assets", "Props", "Crate.glb");
+            int loads = 0;
+            var cache = new FileStampCache<string>(p => { loads++; return File.Exists(p) ? File.ReadAllText(p) : null; }) { RecheckMs = long.MaxValue };
+            t.Equal(null, cache.Get(model), "no skeleton");
+            Directory.CreateDirectory(Path.GetDirectoryName(model));
+            File.WriteAllText(model, "rig");
+            for (int i = 0; i < 100; i++) t.Equal(null, cache.Get(model), "the miss is trusted within the interval");
+            t.Equal(1, loads, "one load for a hundred requests");
+            cache.MarkAllStale();
+            t.Equal("rig", cache.Get(model), "a stale miss compares the file and loads it");
+            t.Equal(2, loads, "two loads");
         }
 
         [Test]

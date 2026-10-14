@@ -239,7 +239,8 @@ namespace Editor.Core.Animation
 
         /// <summary>Load a clip by path (project-relative or absolute), cached. Null on failure. A clip whose file changed
         /// since it was loaded is read again, and a failed load is retried once the file appears or changes (#419) — a
-        /// "not found" no longer sticks for the whole session.</summary>
+        /// "not found" no longer sticks for the whole session: the file is compared at most once a second, at once when
+        /// the asset watcher reports it, and on the first request of a new play session.</summary>
         public VortexAnimClip GetClip(string path)
         {
             if (string.IsNullOrEmpty(path)) return null;
@@ -271,10 +272,10 @@ namespace Editor.Core.Animation
         {
             string full = ResolveModelPath(meshPath);
             if (full == null) return;
-            var old = _skeletons.Peek(full);
-            if (!_skeletons.Invalidate(full) || old == null) return;
+            var old = new List<SkeletonDef>();
+            if (!_skeletons.Invalidate(full, old) || old.Count == 0) return;
             var stale = new List<Guid>();
-            foreach (var kv in _states) if (ReferenceEquals(kv.Value.Skeleton, old)) stale.Add(kv.Key);
+            foreach (var kv in _states) if (kv.Value.Skeleton != null && old.Contains(kv.Value.Skeleton)) stale.Add(kv.Key);
             foreach (var id in stale)
             {
                 var s = _states[id];
