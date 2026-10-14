@@ -96,7 +96,12 @@ namespace vortex::graphics
 		// with different transforms collapsed every vertex onto one UV). So the glTF values are recovered from it and
 		// applied as the glTF spec defines them, uv' = offset + R(rotation) * (scale * uv) with R = [c s; -s c], to the
 		// UVs in glTF's own convention — which the two V flips (Assimp's glTF reader, aiProcess_FlipUVs) restore.
-		struct UvTransform { bool has{ false }; float ox{ 0.0f }, oy{ 0.0f }, rotation{ 0.0f }, sx{ 1.0f }, sy{ 1.0f }; };
+		struct UvTransform
+		{
+			bool has{ false };
+			float ox{ 0.0f }, oy{ 0.0f }, rotation{ 0.0f }, sx{ 1.0f }, sy{ 1.0f };
+			float cos_r{ 1.0f }, sin_r{ 0.0f };   // of rotation, once per material instead of per vertex
+		};
 
 		UvTransform gltf_uv_transform(const aiMaterial* mat, aiTextureType type)
 		{
@@ -104,23 +109,27 @@ namespace vortex::graphics
 			aiUVTransform t;
 			if (mat->Get(AI_MATKEY_UVTRANSFORM(type, 0), t) != AI_SUCCESS) return x;
 			const float c = cosf(t.mRotation), s = sinf(t.mRotation);
-			x.has = true;
 			x.rotation = t.mRotation;
+			x.cos_r = c;
+			x.sin_r = s;
 			x.sx = t.mScaling.x;
 			x.sy = t.mScaling.y;
 			// inverse of glTF2Importer: translation = (sx/2 (1 - c + s) + offset.x, sy/2 (s + c - 1) + 1 - sy - offset.y),
 			// with translation.y negated by aiProcess_FlipUVs
 			x.ox = t.mTranslation.x - 0.5f * x.sx * (1.0f - c + s);
 			x.oy = t.mTranslation.y + 0.5f * x.sy * (s + c - 1.0f) + 1.0f - x.sy;
+			// an explicit identity (offset 0, rotation 0, scale 1) is no transform: nothing to apply, and no warning against a
+			// map of the same material that has none
+			const float eps = 1e-6f;
+			x.has = !(fabsf(x.ox) < eps && fabsf(x.oy) < eps && fabsf(x.rotation) < eps && fabsf(x.sx - 1.0f) < eps && fabsf(x.sy - 1.0f) < eps);
 			return x;
 		}
 
 		void apply_uv_transform(const UvTransform& x, float& u, float& v)
 		{
-			const float c = cosf(x.rotation), s = sinf(x.rotation);
 			const float su = x.sx * u, sv = x.sy * v;
-			u = x.ox + c * su + s * sv;
-			v = x.oy - s * su + c * sv;
+			u = x.ox + x.cos_r * su + x.sin_r * sv;
+			v = x.oy - x.sin_r * su + x.cos_r * sv;
 		}
 
 		bool same_transform(const UvTransform& a, const UvTransform& b)

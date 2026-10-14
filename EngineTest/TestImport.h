@@ -442,6 +442,14 @@ private:
 		check(scan == 0, "the scan's material is not warned about");
 		check(ModelImporter::last_warnings() == d.warnings, "the warnings stay readable after the import (for the editor's console)");
 
+		// an explicit identity transform is no transform: the UVs stay, and a map of the same material without one is no conflict
+		const std::string identity = transform_json(0.0f, 0.0f, 0.0f, 1.0f, 1.0f);
+		const ImportedModelData idm = ModelImporter::import_from_file(write("identity.gltf", gltf(
+			"{\"name\":\"Identity\",\"pbrMetallicRoughness\":{\"baseColorTexture\":{\"index\":0," + identity + "}},\"normalTexture\":{\"index\":0}}", 1,
+			"{\"source\":0}", "{\"uri\":\"t.png\"}", "\"KHR_texture_transform\"")));
+		check(idm.warnings.empty(), "an explicit identity next to a map without a transform: no warning");
+		check(uv_error(by_material(idm, "Identity"), [](int k, float& u, float& v) { u = kUv[k][0]; v = kUv[k][1]; }) < 1e-6f, "...and the UVs as stored");
+
 		// lightmapped: the base colour on set 0, the occlusion map on set 1 with other data — it gets set 0 too, so warn;
 		// and a base colour that reads set 1 takes the vertex UVs from set 1
 		const std::string sets =
