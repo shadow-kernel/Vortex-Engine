@@ -568,7 +568,8 @@ namespace Editor.Core.Services.Terrain
             if (string.IsNullOrWhiteSpace(t.DataPath)) t.DataPath = DefaultDataPath(e);
             string abs = ResolvePath(t.DataPath);
             if (abs == null) return false;
-            try { rt.Data.Save(abs); rt.Unsaved = false; return true; }
+            bool created = !File.Exists(abs);
+            try { rt.Data.Save(abs); rt.Unsaved = false; PlaySession.NoteWrite(abs, created); return true; }   // a terrain made in play takes its file along (#423)
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Terrain] save failed: " + ex.Message); return false; }
         }
 

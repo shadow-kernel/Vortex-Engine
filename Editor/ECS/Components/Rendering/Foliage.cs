@@ -83,7 +83,7 @@ namespace Editor.ECS.Components.Rendering
         public List<FoliageType> Types
         {
             get => _types ?? (_types = new List<FoliageType>());
-            set => SetProperty(ref _types, value ?? new List<FoliageType>(), nameof(Types));
+            set { if (SetProperty(ref _types, value ?? new List<FoliageType>(), nameof(Types))) Touch(); }   // a new list: the renderer rebuilds (#478)
         }
 
         /// <summary>Wind strength multiplier for every type's sway (0 = calm, 1 = a breeze, 2 = a storm). Scripts drive it through Weather.</summary>

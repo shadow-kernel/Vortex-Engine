@@ -1000,6 +1000,17 @@ namespace Editor.Scripting
             Vortex.Time.DeltaTime = dt;
             Vortex.Input.PollGamepad();   // refresh controller state once per tick (scripts read Input.LeftStickX etc.)
             CompactBehaviours();          // drop what was destroyed since the last tick — never inside the loops below
+            if (_startPending.Count > 0)  // scripts attached while paused start before their first Update (#423)
+            {
+                var starting = _startPending.ToArray();
+                _startPending.Clear();
+                foreach (var b in starting)
+                {
+                    if (!IsLive(b)) continue;   // destroyed before it ever ran
+                    try { b.Start(); }
+                    catch (Exception ex) { LogScriptError("Start", b, ex); }
+                }
+            }
             for (int i = 0; i < _behaviours.Count; i++)
             {
                 var b = _behaviours[i];
@@ -1053,6 +1064,9 @@ namespace Editor.Scripting
             try { Editor.Core.Services.Physics.PhysicsService.SubmitDebugDraw(); } catch { }   // View ▸ Physics Debug (#106)
             try { Editor.Core.Services.AI.AiRuntime.SubmitDebugDraw(); } catch { }           // navmesh / agent paths / patrol routes / vision cones
             RenderDebugConsole();
+
+            // play stopped during this tick: no pose may land in the restored edit scene (#410)
+            if (!_active) return;
 
             // Skeletal animation: advance every Animator AFTER behaviours ran, so a same-frame
             // PlayAnimation() takes effect immediately. This is the one tick all three play drivers share.
@@ -1385,6 +1399,7 @@ namespace Editor.Scripting
             _uiActions.Clear();
             _behaviours.Clear();
             _compactPending = false;
+            _startPending.Clear();
             _entitiesById.Clear();
             _handlesByEntity.Clear();
             _scriptOf.Clear();
@@ -1560,7 +1575,7 @@ namespace Editor.Scripting
         public bool AttachAtRuntime(GameEntity e) => AttachAtRuntime(e, null);
 
         /// <summary>As <see cref="AttachAtRuntime(GameEntity)"/> for one Script component of the entity (null = every
-        /// one): true when it was started now.</summary>
+        /// one): true when it was started now — while paused, it starts on the next tick that plays (#423).</summary>
         public bool AttachAtRuntime(GameEntity e, Script script)
         {
             if (e == null || _scriptAsm == null) return false;
@@ -1572,14 +1587,19 @@ namespace Editor.Scripting
                 var b = InstantiateScript(e, sc, _scriptAsm);
                 if (b != null) started.Add(b);
             }
+            // paused: nothing of the game may run now — Start waits for the next tick that plays (#423)
+            bool paused = Editor.Core.Services.PlayModeService.Instance.State == Editor.Core.Services.PlayState.Paused;
             foreach (var b in started)
             {
                 if (!IsLive(b)) continue;   // an earlier Start() destroyed the entity
+                if (paused) { _startPending.Add(b); continue; }
                 try { b.Start(); }
                 catch (Exception ex) { LogScriptError("Start", b, ex); }
             }
             return started.Count > 0;
         }
+
+        private readonly List<Vortex.VortexBehaviour> _startPending = new List<Vortex.VortexBehaviour>();
 
         /// <summary>Every enabled Script component of the entity gets its own behaviour (#408) — the runtime used to take only
         /// the first one (GetComponent) and silently drop the rest.</summary>
@@ -2338,6 +2358,14 @@ namespace Editor.Scripting
         public string ConsumePendingScene() { var s = _pendingScene; _pendingScene = null; return s; }
         public string PendingScene { get { return _pendingScene; } } // diagnostic peek
 
+        // --- deferred quit of in-editor play (#410): Application.Quit() used to stop play right away, from inside the
+        // behaviour's Update — End() and the play-snapshot restore ran in the middle of the tick, and the rest of the tick
+        // (physics, LateUpdate, the animation and bone-socket pass) then wrote play-time poses into the restored edit
+        // scene. Now it only asks; the editor's viewport stops play after the whole tick, through the toolbar's Stop.
+        private bool _quitRequested;
+        /// <summary>True once after a script asked to quit in-editor play (Application.Quit); the caller stops play.</summary>
+        public bool ConsumeQuitRequest() { bool q = _quitRequested; _quitRequested = false; return q; }
+
         // --- mouse mode (game-controlled via Vortex.Cursor; the GameWindow enforces capture) ---
         private bool _cursorLocked; // default false: free cursor (menus/lobby) until a script locks it
         void Vortex.IScriptHost.SetCursorLocked(bool locked) { _cursorLocked = locked; }
@@ -2389,8 +2417,8 @@ namespace Editor.Scripting
                 // native loop (g_running=false); RunGameHost then returns and BootPlayer calls Shutdown() to exit.
                 if (Editor.Core.Services.PlayModeService.Instance.NativeGameHostRunning)
                     Editor.DllWrapper.VortexAPI.RequestGameHostExit();
-                else
-                    Editor.Core.Services.PlayModeService.Instance.Stop(); // in-editor play: just stop, don't kill the editor
+                else if (Editor.Core.Services.PlayModeService.Instance.IsPlaying)
+                    _quitRequested = true;   // in-editor play: stop after this tick (#410), don't kill the editor
             }
             catch { }
         }
