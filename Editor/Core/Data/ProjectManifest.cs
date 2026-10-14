@@ -7,6 +7,9 @@ namespace Editor.Core.Data
     /// <summary>
     /// Leichtgewichtiges Projekt-Manifest das nur Metadaten und Referenzen enth�lt.
     /// Die eigentlichen Szenen werden in separaten .vscene Dateien gespeichert.
+    /// Keys this class does not know survive an editor save because the save merges into the file at the JSON level
+    /// (ProjectManifestJson, #414) — not through IExtensibleDataObject, whose XML infoset cannot write JSON names such as
+    /// "$schema" or "release notes" back (every save then threw).
     /// </summary>
     [DataContract(Name = "ProjectManifest", Namespace = "")]
     public class ProjectManifest

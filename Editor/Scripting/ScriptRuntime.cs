@@ -1668,13 +1668,37 @@ namespace Editor.Scripting
 
         private Assembly ReflectAssembly()
         {
-            var newest = LatestScriptWrite();
-            if (_reflectAsm == null || newest > _reflectAsmTime)
+            // the same script files as last time: the same assembly — or the same failure, not compiled again (#405)
+            string key = ScriptSetFingerprint();
+            if (key == null || key != _reflectKey)
             {
                 _reflectAsm = Compile(out _);
-                _reflectAsmTime = newest;
+                _reflectKey = key;
+                ReflectCompiles++;
             }
             return _reflectAsm;
+        }
+
+        /// <summary>Every script's path, size and write time. An added, removed or renamed file changes it too (the newest
+        /// write time alone misses a file copied in with an older date, or a deletion), and a set of files that does not
+        /// compile is remembered as such: the Inspector and get_entity ask on every refresh, and a project whose scripts
+        /// do not compile was compiled again on each ask (#405: 0.7 s per call with 120 scripts, the UI frozen).
+        /// Null when the folder cannot be read (then it compiles, as before).</summary>
+        private static string ScriptSetFingerprint()
+        {
+            try
+            {
+                string dir = ScriptingService.ScriptsDir;
+                if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return "";
+                var sb = new System.Text.StringBuilder(dir);
+                foreach (var f in Directory.GetFiles(dir, "*.cs", SearchOption.AllDirectories).OrderBy(x => x, StringComparer.Ordinal))
+                {
+                    var fi = new FileInfo(f);
+                    sb.Append('\n').Append(f).Append('|').Append(fi.Length).Append('|').Append(fi.LastWriteTimeUtc.Ticks);
+                }
+                return sb.ToString();
+            }
+            catch { return null; }
         }
 
         private static Type FindBehaviourType(Assembly asm, string className)
@@ -1778,10 +1802,13 @@ namespace Editor.Scripting
             }
         }
 
-        // Edit-mode reflection assembly for the inspector (#47): compiled on demand, cached by the
-        // newest script write time. A running play session's assembly is the freshest truth.
+        // Edit-mode reflection assembly for the inspector (#47): compiled on demand, kept while the script files
+        // are the same (ScriptSetFingerprint). A running play session's assembly is the freshest truth.
         private Assembly _reflectAsm;
-        private DateTime _reflectAsmTime = DateTime.MinValue;
+        private string _reflectKey;
+
+        /// <summary>How often the edit-mode assembly was compiled (the cache test counts with it).</summary>
+        internal int ReflectCompiles { get; private set; }
 
         /// <summary>True when the behaviour class reacts to contact — it overrides OnTriggerEnter / OnTriggerStay /
         /// OnTriggerExit or OnCollisionEnter. The Collision Editor's script section is about such a script (#408: an entity
@@ -1806,13 +1833,8 @@ namespace Editor.Scripting
             try
             {
                 if (_scriptAsm != null) return FindBehaviourType(_scriptAsm, className);
-                var newest = LatestScriptWrite();
-                if (_reflectAsm == null || newest > _reflectAsmTime)
-                {
-                    _reflectAsm = Compile(out _);
-                    _reflectAsmTime = newest;
-                }
-                return _reflectAsm != null ? FindBehaviourType(_reflectAsm, className) : null;
+                var asm = ReflectAssembly();
+                return asm != null ? FindBehaviourType(asm, className) : null;
             }
             catch { return null; }
         }

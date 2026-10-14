@@ -84,6 +84,9 @@ namespace Editor.Core.Viewport
         public VuiCanvas PreviewCanvas { get; set; }
         public event Action<bool> FlyModeChanged;
         public event Action<bool> CursorCaptureChanged;
+        /// <summary>The camera the viewport looks through changed (null: the free editor camera) — the toolbar's camera
+        /// picker follows it, also when a tool switched back to the editor camera (#444).</summary>
+        public event Action<GameEntity> ViewThroughChanged;
 
         public bool IsInitialized => _initialized;
         public bool IsPlaying => PlayModeService.Instance.IsPlaying;
@@ -93,6 +96,50 @@ namespace Editor.Core.Viewport
         public bool IsMouseCaptured => _mouseCaptured;
         public EditorCameraController Camera => _camera;
         public int CurrentFps => VortexAPI.CurrentFPS;
+
+        /// <summary>What the viewport renders through (#444).</summary>
+        public enum ViewSource
+        {
+            /// <summary>The free editor camera (<see cref="Camera"/>).</summary>
+            EditorCamera,
+            /// <summary>Edit mode in the Game view: the scene's main camera, re-applied every frame.</summary>
+            GameView,
+            /// <summary>An engine camera chosen in <see cref="CameraService"/> (a scene camera looked through).</summary>
+            SceneCamera,
+            /// <summary>Play: the game drives the view.</summary>
+            Game,
+        }
+
+        /// <summary>The camera the next frame renders through — the same choice <see cref="Tick"/> makes, so a tool can say
+        /// what an image shows instead of assuming the editor camera (#444). The Game view of a scene without a main
+        /// camera leaves the editor camera's view in place.</summary>
+        public ViewSource CurrentView
+        {
+            get
+            {
+                if (PlayModeService.Instance.State == PlayState.Playing) return ViewSource.Game;
+                if (_gameViewMode) return PlayCameraHelper.FindMainCameraEntity(_currentScene ?? ProjectData.Current?.ActiveScene) != null ? ViewSource.GameView : ViewSource.EditorCamera;
+                return CameraService.Instance.IsGameCameraActive ? ViewSource.SceneCamera : ViewSource.EditorCamera;
+            }
+        }
+
+        /// <summary>Let the editor camera drive the edit-mode view (#444): leaves the Game view (the Scene tab) and stops
+        /// looking through a scene camera — otherwise every frame puts that camera back over a pose a tool just set.
+        /// Returns what drove the view before (<see cref="ViewSource.EditorCamera"/>: nothing changed). Not while playing.</summary>
+        public ViewSource UseEditorCamera()
+        {
+            var before = CurrentView;
+            if (PlayModeService.Instance.IsPlaying) return before;
+            if (PlayModeService.Instance.IsGameView) PlayModeService.Instance.SetGameView(false);   // → OnGameViewChanged
+            // a camera picked in the toolbar blocks the editor camera's input even where it does not drive the render
+            if (_viewingThroughGameCamera || CameraService.Instance.IsGameCameraActive) ViewThroughCamera(null);
+            ReapplyEditorCamera();
+            return before;
+        }
+
+        /// <summary>Push the editor camera's pose to the renderer again (the Game view left the main camera's there).</summary>
+        private void ReapplyEditorCamera() =>
+            _camera.SetFromEntityTransform(_camera.PositionX, _camera.PositionY, _camera.PositionZ, _camera.Pitch, _camera.Yaw, _camera.Roll);
 
         public Scene CurrentScene
         {
@@ -607,6 +654,7 @@ namespace Editor.Core.Viewport
                 _viewingThroughGameCamera = false;
                 CameraService.Instance.SwitchToEditorCamera();
                 SetCursorHidden(false);
+                ViewThroughChanged?.Invoke(null);
                 return;
             }
             var cam = cameraEntity.GetComponent<Editor.ECS.Components.Rendering.Camera>();
@@ -614,6 +662,7 @@ namespace Editor.Core.Viewport
             CameraService.Instance.SwitchToGameCamera(cameraEntity.Id);
             _viewingThroughGameCamera = true;
             _sceneDirty = true;
+            ViewThroughChanged?.Invoke(cameraEntity);
         }
 
         // ------------------------------------------------------------------------------------------ play mode
@@ -621,6 +670,9 @@ namespace Editor.Core.Viewport
         private void OnGameViewChanged(bool active)
         {
             _gameViewMode = active;
+            // back to the Scene view while editing: the renderer still holds the main camera's pose (the editor camera only
+            // pushes its own when it moves) — show the editor camera at once (#444)
+            if (!active && !PlayModeService.Instance.IsPlaying) ReapplyEditorCamera();
             PublishStatus();
         }
 

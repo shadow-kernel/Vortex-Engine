@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Editor.Core.Claude;
 using Editor.Core.Services;
 using Editor.Core.UndoRedo;
 using Editor.ECS;
@@ -25,18 +26,42 @@ namespace VortexEditor.Claude.Tools
 
         private static string ScriptsDir => Path.Combine(ProjectFiles.AssetsDir, "Scripts");
 
-        /// <summary>A script path inside Assets/Scripts: "Door", "Door.cs", "Scripts/AI/Guard.cs" or "Assets/Scripts/AI/Guard.cs".</summary>
-        private static string ScriptPath(string script, bool mustExist)
+        /// <summary>The script a tool means, as an absolute path inside Assets/Scripts: "Door", "Door.cs", "AI/Guard",
+        /// "Scripts/AI/Guard.cs" or "Assets/Scripts/AI/Guard.cs". A bare name is found in any subfolder (#456, #494) —
+        /// every script tool resolves through <see cref="ScriptLookup"/>.</summary>
+        private static string ScriptPath(string script, bool mustExist) => ScriptPath(script, mustExist, out _);
+
+        private static string ScriptPath(string script, bool mustExist, out List<string> sameName)
         {
             if (string.IsNullOrWhiteSpace(script)) throw new ToolError("A script name or path is required.");
-            string s = script.Trim().Replace('\\', '/');
-            if (!s.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)) s += ".cs";
-            if (!s.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase)) s = s.StartsWith("Scripts/", StringComparison.OrdinalIgnoreCase) ? "Assets/" + s : "Assets/Scripts/" + s;
-            string full = ProjectFiles.Resolve(s, new[] { ".cs" }, mustExist);
+            string s = script.Trim();
+            string name = Path.GetFileName(s.Replace('\\', '/'));
+            if (string.Equals(name, "VortexScripting", StringComparison.OrdinalIgnoreCase) || string.Equals(name, "VortexScripting.cs", StringComparison.OrdinalIgnoreCase))
+                throw new ToolError("VortexScripting.cs is the generated API stub for IDEs; it is not edited.");
+            if (Path.IsPathRooted(s)) s = ProjectFiles.Rel(ProjectFiles.Resolve(s));   // an absolute path into the project's Assets
+            var found = ScriptLookup.Resolve(s, ScriptingService.EnumerateScripts(), mustExist);
+            if (found.Error != null) throw new ToolError(found.Error + (found.Missing ? OutsideScripts(name) : ""));
+            sameName = found.SameName;
+            string full = ProjectFiles.Resolve(found.Path, new[] { ".cs" }, mustExist);
             string dir = Path.GetFullPath(ScriptsDir).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
             if (!full.StartsWith(dir, StringComparison.OrdinalIgnoreCase)) throw new ToolError("Scripts live in Assets/Scripts — '" + script + "' is outside it.");
-            if (string.Equals(Path.GetFileName(full), "VortexScripting.cs", StringComparison.OrdinalIgnoreCase)) throw new ToolError("VortexScripting.cs is the generated API stub for IDEs; it is not edited.");
             return full;
+        }
+
+        /// <summary>" Assets/Props/Door.cs exists, but …" — a file of that name outside Assets/Scripts, where the compiler
+        /// does not look (only searched when the name was not found).</summary>
+        private static string OutsideScripts(string name)
+        {
+            try
+            {
+                string file = name.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) ? name : name + ".cs";
+                string scripts = Path.GetFullPath(ScriptsDir).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                var hits = Directory.EnumerateFiles(ProjectFiles.AssetsDir, file, SearchOption.AllDirectories)
+                    .Where(f => !Path.GetFullPath(f).StartsWith(scripts, StringComparison.OrdinalIgnoreCase)).Take(3).Select(ProjectFiles.Rel).ToList();
+                return hits.Count == 0 ? "" : " " + string.Join(", ", hits) + (hits.Count == 1 ? " exists" : " exist") +
+                                              ", but only scripts in Assets/Scripts are compiled — move it there to use it.";
+            }
+            catch { return ""; }
         }
 
         [McpServerTool(Name = "list_scripts", ReadOnly = true, Idempotent = true)]
@@ -65,7 +90,7 @@ namespace VortexEditor.Claude.Tools
 
         [McpServerTool(Name = "read_script", ReadOnly = true, Idempotent = true)]
         [Description("The source of a project script.")]
-        public static object ReadScript([Description("Script name or path, e.g. Door or Assets/Scripts/Door.cs")] string script)
+        public static object ReadScript([Description("Script name or path, e.g. Door (found in any folder of Assets/Scripts) or Assets/Scripts/AI/Door.cs")] string script)
         {
             string full = ScriptPath(script, mustExist: true);
             string text = File.ReadAllText(full);
@@ -77,23 +102,27 @@ namespace VortexEditor.Claude.Tools
                      "errors (file, line, column). A behaviour derives from Vortex.VortexBehaviour (Start, Update(float dt), OnTriggerEnter … — see " +
                      "get_scripting_api). While the game runs, the change hot-reloads. One undo step (Undo restores the old file).")]
         public static object WriteScript(
-            [Description("Script name or path, e.g. FlickerLight or AI/Guard.cs")] string script,
+            [Description("Script name or path, e.g. FlickerLight or AI/Guard.cs — a name that exists in a subfolder replaces that script, a new name is created at the top of Assets/Scripts")] string script,
             [Description("The complete C# source")] string code)
         {
             if (string.IsNullOrWhiteSpace(code)) throw new ToolError("code is empty.");
-            string full = ScriptPath(script, mustExist: false);
+            string full = ScriptPath(script, mustExist: false, out var sameName);
             bool created = !File.Exists(full);
             ProjectFiles.Write(full, code.Replace("\r\n", "\n"));
             if (created) { try { ScriptingService.EnsureScriptsProject(); } catch { } }
             ToolContext.UndoLabel = (created ? "create script " : "edit script ") + Path.GetFileName(full);
-            return AfterWrite(full, created);
+            // a second file of the same name defines its class twice, and the bare name stops being unique (#494)
+            string note = created && sameName.Count > 0
+                ? string.Join(", ", sameName) + " has the same name — two classes " + Path.GetFileNameWithoutExtension(full) + " only compile in different namespaces, and the bare name now needs a path"
+                : null;
+            return AfterWrite(full, created, note: note);
         }
 
         [McpServerTool(Name = "edit_script")]
         [Description("Replaces an exact piece of text in a script (it must occur exactly once unless replace_all), then compiles and returns the " +
                      "errors. Cheaper than write_script for small fixes. One undo step.")]
         public static object EditScript(
-            [Description("Script name or path")] string script,
+            [Description("Script name (found in any folder of Assets/Scripts) or path")] string script,
             [Description("Exact text to replace (include enough context to be unique)")] string old_text,
             [Description("Replacement text")] string new_text,
             [Description("Replace every occurrence")] bool replace_all = false)
@@ -111,7 +140,7 @@ namespace VortexEditor.Claude.Tools
             return AfterWrite(full, false, count);
         }
 
-        private static object AfterWrite(string full, bool created, int replaced = 0)
+        private static object AfterWrite(string full, bool created, int replaced = 0, string note = null)
         {
             var diags = Check(false);
             string reload = null;
@@ -136,6 +165,7 @@ namespace VortexEditor.Claude.Tools
                 errors = diags.Count > 0 ? diags.Take(30).Select(Format).ToArray() : null,
                 behaviours = BehaviourClass.Matches(File.ReadAllText(full)).Select(m => m.Groups[1].Value).ToArray(),
                 play_mode = reload,
+                note,
             };
         }
 
@@ -177,10 +207,12 @@ namespace VortexEditor.Claude.Tools
 
         [McpServerTool(Name = "attach_script")]
         [Description("Adds a script to an entity (its behaviour runs in play mode) and sets public fields of the behaviour: " +
-                     "{\"Speed\": 2.5, \"Target\": \"Door\", \"Offset\": [0, 1, 0]} — numbers, bools, strings, enums by name, [x,y,z], arrays. One undo step.")]
+                     "{\"Speed\": 2.5, \"Target\": \"Door\", \"Offset\": [0, 1, 0]} — numbers, bools, strings, enums by name, [x,y,z], arrays; " +
+                     "null (or the code default's value) resets a field to its code default. On a script that is already attached it only sets the fields (as " +
+                     "set_component_properties on the Script does); get_entity shows them. One undo step.")]
         public static object AttachScript(
             [Description("Entity id, path or name")] string entity,
-            [Description("Script name or path")] string script,
+            [Description("Script name (found in any folder of Assets/Scripts) or path")] string script,
             [Description("Public field values {\"Field\": value}")] JsonElement? fields = null)
         {
             var e = SceneModel.Resolve(entity);
@@ -193,54 +225,26 @@ namespace VortexEditor.Claude.Tools
             var set = new List<string>();
             if (fields.HasValue && fields.Value.ValueKind == JsonValueKind.Object)
             {
-                var type = ScriptRuntime.Instance.GetScriptTypeForInspector(sc.ScriptClassName);
-                if (type == null) throw new ToolError("The script's class " + sc.ScriptClassName + " could not be compiled or found, so its fields are unknown — fix compile_scripts errors first (the class name must match the file name).");
-                foreach (var p in fields.Value.EnumerateObject())
-                {
-                    var f = type.GetField(p.Name, BindingFlags.Public | BindingFlags.Instance)
-                            ?? type.GetFields(BindingFlags.Public | BindingFlags.Instance).FirstOrDefault(x => ComponentProps.Norm(x.Name) == ComponentProps.Norm(p.Name))
-                            ?? throw new ToolError(type.Name + " has no public field '" + p.Name + "'. Fields: " + string.Join(", ", type.GetFields(BindingFlags.Public | BindingFlags.Instance).Where(x => ScriptRuntime.IsInspectableFieldType(x.FieldType)).Select(x => x.Name)));
-                    if (!ScriptRuntime.IsInspectableFieldType(f.FieldType)) throw new ToolError(f.Name + " (" + f.FieldType.Name + ") cannot be set from the editor.");
-                    string formatted = ScriptRuntime.FormatFieldValue(FieldValue(p.Value, f.FieldType, f.Name));
-                    string old = sc.GetFieldValue(f.Name);
-                    var target = sc; string fname = f.Name;
-                    UndoRedoManager.Instance.Execute(new Editor.Core.UndoRedo.Commands.ActionCommand("Set " + fname, () => target.SetFieldValue(fname, formatted), () => target.SetFieldValue(fname, old)));
-                    set.Add(f.Name);
-                }
+                // the one path for a behaviour's fields — set_component_properties on a Script takes it too (#405); the
+                // running behaviour gets them below, once every field was valid
+                foreach (var p in fields.Value.EnumerateObject()) set.Add(ScriptFields.Set(sc, p.Name, p.Value, live: false));
             }
-            else if (ScriptRuntime.Instance.GetScriptTypeForInspector(sc.ScriptClassName) == null)
+            else if (ScriptFields.TypeOf(sc) == null)
                 note = "the class " + sc.ScriptClassName + " is not compiled yet (or the file has errors) — check compile_scripts";
             ToolContext.UndoLabel = (added ? "attach " : "set fields of ") + Path.GetFileNameWithoutExtension(rel) + " on " + e.Name;
             // while playing THIS script's running behaviour takes the values now, and a new script starts now next to the
-            // ones the entity already runs (#345, #408); Stop reverts the scene to what it was before Play
+            // ones the entity already runs (#345, #408); Stop reverts the scene to what it was before Play. A dry run is
+            // taken back afterwards, so it leaves the running game alone (#405).
             bool playing = PlayModeService.Instance.State == PlayState.Playing;
-            bool live = playing && (ScriptRuntime.Instance.ApplyFieldsToLiveBehaviour(e, sc) || ScriptRuntime.Instance.AttachAtRuntime(e, sc));
+            bool dryRun = ToolContext.DryRun;
+            bool live = playing && !dryRun && (ScriptRuntime.Instance.ApplyFieldsToLiveBehaviour(e, sc) || ScriptRuntime.Instance.AttachAtRuntime(e, sc));
             if (!live && !sc.IsEnabled)   // a switched-off Script never starts (#408 review)
                 note = (note == null ? "" : note + "; ") + "the Script component is disabled (enabled: false), so it does not run — switch it on with "
                      + "set_component_properties (enabled: true)" + (playing ? ", then attach_script again to start it while playing" : "");
-            else if (playing && !live)
+            else if (playing && !live && !dryRun)
                 note = (note == null ? "" : note + "; ") + "play mode: the script did not start (its class does not compile, or is not a concrete VortexBehaviour named like the file) — the change applies on the next Play";
             return new { entity = SceneModel.ShortId(e), script = rel, behaviour = sc.ScriptClassName, added, fields_set = set.Count > 0 ? set : null,
                 runtime_only = playing ? true : (bool?)null, live = playing ? live : (bool?)null, note };
-        }
-
-        private static object FieldValue(JsonElement v, Type t, string name)
-        {
-            if (t == typeof(Vortex.Vector3))
-            {
-                var e = (Editor.ECS.Vector3)ComponentProps.Convert(v, typeof(Editor.ECS.Vector3), name);
-                return new Vortex.Vector3(e.X, e.Y, e.Z);
-            }
-            if (t.IsArray)
-            {
-                if (v.ValueKind != JsonValueKind.Array) throw new ToolError(name + " expects an array.");
-                var et = t.GetElementType();
-                var items = v.EnumerateArray().Select(x => FieldValue(x, et, name)).ToList();
-                var arr = Array.CreateInstance(et, items.Count);
-                for (int i = 0; i < items.Count; i++) arr.SetValue(items[i], i);
-                return arr;
-            }
-            return ComponentProps.Convert(v, t, name);
         }
 
         // ================================================================== API reference
