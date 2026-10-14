@@ -753,8 +753,10 @@ namespace vortex::graphics::dx12
 		UINT has_height_texture;              // 4 bytes @136 (parallax/displacement height map bound)
 		float height_scale;                   // 4 bytes @140 (parallax depth) -> row 8 full (128-143)
 		float alpha_cutoff;                   // 4 bytes @144 (AlphaTest cutoff, #329; 0 = off)
-		float _pad0, _pad1, _pad2;            // row 9 (144-159)
-		};  // Total: 160 bytes, aligned to 256
+		UINT has_emissive_texture;            // 4 bytes @148 (the emissive map at t16, #450)
+		DirectX::XMFLOAT2 uv_offset;          // 8 bytes @152 (uv * tiling + offset, #448) -> row 9 full (144-159)
+		DirectX::XMFLOAT4 emissive_color;     // 16 bytes @160 (a lit material's emission, colour x strength, #450)
+		};  // Total: 176 bytes, aligned to 256
 		
 		// Light constant buffer
 		ComPtr<ID3D12Resource> m_light_cb;

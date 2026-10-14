@@ -135,7 +135,9 @@ cbuffer PerObject : register(b1)
     uint HasHeightTexture;   // @136 — parallax/displacement height map bound
     float HeightScale;       // @140 — parallax depth
     float AlphaCutoff;       // @144 — AlphaTest cutoff (#329), 0 = off
-    float3 _Pad0;
+    uint HasEmissiveTexture; // @148 — #450: the emissive map at t16
+    float2 UVOffset;         // @152 — #448: every map is sampled at uv * tiling + offset
+    float4 EmissiveColor;    // @160 — #450: a lit material's emission, colour x strength (w unused)
 };
 
 struct PointLight
@@ -211,6 +213,7 @@ SamplerState ScreenSampler : register(s2);   // linear/clamp for screen-space te
 // so a surface reads the probes on its open side. The white texture (no cache) fails the magic: the sky light stands in.
 Texture2D GiVolA : register(t14);
 Texture2D GiVolB : register(t15);
+Texture2D EmissiveTexture : register(t16);   // a lit material's emissive map (#450)
 float3 GiVolume(float3 wp, float3 n, float3 fallback)
 {
     uint W, H; GiVolA.GetDimensions(W, H);
@@ -544,7 +547,7 @@ float4 PSMain(PS_IN input) : SV_TARGET
     // Texture repeat scale: multiply UVs so a small tiling texture repeats across a large surface instead of being
     // stretched once (the "blurry ground" bug). Guard against an unset/zero tiling (e.g. a non-material draw) -> 1x.
     float2 tiling = (UVTiling.x > 0.0 && UVTiling.y > 0.0) ? UVTiling : float2(1.0, 1.0);
-    float2 uv = input.uv * tiling;
+    float2 uv = input.uv * tiling + UVOffset;   // the material's UV offset (#448)
 
     // Tangent frame for parallax + normal mapping (computed outside any branch: it needs derivatives).
     float3 Ng = normalize(input.norm);
@@ -768,7 +771,11 @@ float4 PSMain(PS_IN input) : SV_TARGET
         if (GiStrength > 0.0) ambient += ss.rgb * ss.rgb * 4.0 * albedo * (1.0 - metallic) * ss.a * skyOpen;
     }
 
-    float3 color = ambient + Lo;
+    // Emission of a lit material (#450): its colour x strength (x the emissive map), on top of the shading and before
+    // the fog and the tonemap, so a lit window glows, keeps its highlights, fades into fog and feeds the bloom
+    float3 emission = EmissiveColor.rgb;
+    if (HasEmissiveTexture != 0) emission *= SRGBToLinear(EmissiveTexture.Sample(LinearSampler, uv).rgb);
+    float3 color = ambient + Lo + emission;
 
     // Fog before tonemap (linear space): the flashlight cone "cuts" into the mist because lit
     // fragments still carry their radiance; distant/unlit ones converge to FogColor.
@@ -789,6 +796,6 @@ void ShadowCutPS(PS_IN input)
 {
     float2 tiling = (UVTiling.x > 0.0 && UVTiling.y > 0.0) ? UVTiling : float2(1.0, 1.0);
     float a = BaseColor.a;
-    if (HasAlbedoTexture != 0) a *= AlbedoTexture.Sample(LinearSampler, input.uv * tiling).a;
+    if (HasAlbedoTexture != 0) a *= AlbedoTexture.Sample(LinearSampler, input.uv * tiling + UVOffset).a;
     if (AlphaCutoff > 0.0 && a < AlphaCutoff) clip(-1);
 }

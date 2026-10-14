@@ -371,6 +371,10 @@ namespace vortex::graphics::dx12
 					if (ao_tex && ao_tex->is_valid() && ao_tex->srv_gpu().ptr != 0) { obj_cb.has_ao_texture = props.has_ao_texture ? props.has_ao_texture : 1; m_command_list->SetGraphicsRootDescriptorTable(7, ao_tex->srv_gpu()); }
 					// UV tiling + height/parallax — so previews/thumbnails/game-window match the scene viewport.
 					obj_cb.uv_tiling = props.uv_tiling;
+					obj_cb.uv_offset = mat->uv_offset();   // #448
+					const auto& em = mat->emissive_color(); obj_cb.emissive_color = { em.x, em.y, em.z, 0.0f };   // lit emission (#450)
+					auto* emissive_tex = mat->emissive_texture();
+					if (emissive_tex && emissive_tex->is_valid() && emissive_tex->srv_gpu().ptr != 0) { obj_cb.has_emissive_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(19, emissive_tex->srv_gpu()); }
 					obj_cb.height_scale = props.height_scale;
 					auto* height_tex = mat->height_texture();
 					if (height_tex && height_tex->is_valid() && height_tex->srv_gpu().ptr != 0) { obj_cb.has_height_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(9, height_tex->srv_gpu()); }

@@ -30,6 +30,7 @@ layout(set = 2, binding = 9) uniform sampler2D       u_ssao;
 layout(set = 2, binding = 10) uniform sampler2D      u_env;    // the sky as a reflection (IBL step 2)
 layout(set = 2, binding = 13) uniform sampler2D      u_gi_a;   // the world radiance cache (Lumen step 1), probes A
 layout(set = 2, binding = 14) uniform sampler2D      u_gi_b;   // ... probes B
+layout(set = 2, binding = 15) uniform sampler2D      u_emissive;   // a lit material's emissive map (#450)
 
 // ---------------------------------------------------------------- BRDF
 float d_ggx(float NdotH, float roughness)
@@ -322,7 +323,7 @@ vec3 gi_volume(vec3 wp, vec3 n, vec3 fallback)
 void main()
 {
 	vec2 tiling = (obj.uv_tiling.x > 0.0 && obj.uv_tiling.y > 0.0) ? obj.uv_tiling : vec2(1.0, 1.0);
-	vec2 uv = v_uv * tiling;
+	vec2 uv = v_uv * tiling + obj.uv_offset;   // the material's UV offset (#448)
 
 	vec3 cam_pos = frame.camera_position;
 
@@ -509,7 +510,11 @@ void main()
 	vec3 specular_ambient = env_color * env_fresnel * ao * sky_open;
 	ambient += specular_ambient + rim_light;
 
-	vec3 color = ambient + Lo;
+	// Emission of a lit material (#450): its colour x strength (x the emissive map), on top of the shading and before
+	// the fog and the tonemap, so a lit window glows, keeps its highlights, fades into fog and feeds the bloom
+	vec3 emission = obj.emissive_color.rgb;
+	if (obj.has_emissive_texture != 0u) emission *= srgb_to_linear(texture(u_emissive, uv).rgb);
+	vec3 color = ambient + Lo + emission;
 	color = apply_fog(color, v_world_pos);
 
 	color = tonemap_scene(color, frame.scene_exposure, frame.tonemapper);

@@ -474,6 +474,10 @@ namespace vortex::graphics::dx12
 			if (height_tex && height_tex->is_valid() && height_tex->srv_gpu().ptr != 0) { obj.has_height_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(9, height_tex->srv_gpu()); }
 			obj.height_scale = props.height_scale;   // parallax depth (root param 9 = height map at t6)
 			obj.alpha_cutoff = props.alpha_cutoff;   // AlphaTest (#329)
+			obj.uv_offset = mat->uv_offset();        // #448
+			const auto& em = mat->emissive_color(); obj.emissive_color = { em.x, em.y, em.z, 0.0f };   // lit emission (#450)
+			auto* emissive_tex = mat->emissive_texture();
+			if (emissive_tex && emissive_tex->is_valid() && emissive_tex->srv_gpu().ptr != 0) { obj.has_emissive_texture = 1; m_command_list->SetGraphicsRootDescriptorTable(19, emissive_tex->srv_gpu()); }
 		};
 
 		// Record the draws single-threaded: one DrawIndexedInstanced per run with visible instances.

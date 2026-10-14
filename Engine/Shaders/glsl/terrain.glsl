@@ -102,7 +102,9 @@ layout(set = SET_UNIFORM, binding = 1, std140) uniform PerObjectBlock
 	uint  has_height_texture;
 	float height_scale;
 	float alpha_cutoff;
-	float _pad0; float _pad1; float _pad2;
+	uint  has_emissive_texture;   // @148 (same layout as standard_common.glsl; unused here)
+	vec2  uv_offset;              // @152
+	vec4  emissive_color;         // @160
 } obj;
 
 struct PointLight

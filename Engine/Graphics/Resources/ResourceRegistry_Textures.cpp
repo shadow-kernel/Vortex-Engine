@@ -66,6 +66,7 @@ namespace vortex::graphics
 			if (mat->roughness_texture() == from) mat->set_roughness_texture(to);
 			if (mat->ao_texture() == from) mat->set_ao_texture(to);
 			if (mat->height_texture() == from) mat->set_height_texture(to);
+			if (mat->emissive_texture() == from) mat->set_emissive_texture(to);
 		}
 	}
 

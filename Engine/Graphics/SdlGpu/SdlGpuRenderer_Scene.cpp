@@ -829,7 +829,7 @@ namespace vortex::graphics::sdlgpu
 		auto& reg = ResourceRegistry::instance();
 		Texture* white = reg.white_texture();
 		SDL_GPUTexture* white_tex = white ? white->texture() : nullptr;
-		SDL_GPUTextureSamplerBinding bindings[15];
+		SDL_GPUTextureSamplerBinding bindings[16];   // slot 15: a lit material's emissive map (#450)
 		for (auto& b : bindings) { b.texture = white_tex; b.sampler = m_sampler_linear_wrap; }
 		bindings[9] = { m_ssao_current ? m_ssao_current : white_tex, m_sampler_linear_clamp };   // blurred SSAO (slot 9)
 		{
@@ -883,6 +883,8 @@ namespace vortex::graphics::sdlgpu
 				obj.is_unlit = props.is_unlit; obj.emissive_strength = props.emissive_strength;
 				obj.uv_tiling = props.uv_tiling; obj.height_scale = props.height_scale;
 				obj.alpha_cutoff = props.alpha_cutoff;   // AlphaTest (#329)
+				obj.uv_offset = mat->uv_offset();        // #448
+				const auto& em = mat->emissive_color(); obj.emissive_color = { em.x, em.y, em.z, 0.0f };   // lit emission (#450)
 				// flag = 1 + the channel a packed map is read from (see Material::set_texture_channels)
 				auto bind = [&](Texture* t, int slot, u32& flag, u32 packed)
 				{
@@ -894,6 +896,7 @@ namespace vortex::graphics::sdlgpu
 				bind(mat->roughness_texture(), 3, obj.has_roughness_texture, props.has_roughness_texture);
 				bind(mat->ao_texture(), 4, obj.has_ao_texture, props.has_ao_texture);
 				bind(mat->height_texture(), 5, obj.has_height_texture, 1);
+				bind(mat->emissive_texture(), 15, obj.has_emissive_texture, 1);
 			}
 		}
 		SDL_PushGPUFragmentUniformData(cmd, 1, &obj, sizeof(PerObjectConstants));
@@ -902,7 +905,7 @@ namespace vortex::graphics::sdlgpu
 		// buffer and never see slot 1; custom material vertex shaders are created with two (get_or_compile_pipeline).
 		// Skinned draws push their SkinParams into vertex slot 1 after this call, so they stay unaffected.
 		SDL_PushGPUVertexUniformData(cmd, 1, &obj, sizeof(PerObjectConstants));
-		SDL_BindGPUFragmentSamplers(pass, 0, bindings, 15);
+		SDL_BindGPUFragmentSamplers(pass, 0, bindings, 16);
 	}
 
 	void SdlGpuRenderer::draw_mesh(SDL_GPURenderPass* pass, Mesh* mesh, u32 instance_base, u32 instance_count)

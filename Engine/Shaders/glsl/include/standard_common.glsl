@@ -66,8 +66,10 @@ layout(set = SET_UNIFORM, binding = 1, std140) uniform PerObjectBlock
 	uint  has_height_texture;     // @136
 	float height_scale;           // @140
 	float alpha_cutoff;           // @144 (#329: > 0 = AlphaTest cutoff)
-	float _pad0; float _pad1; float _pad2;
-} obj;                            // = 160
+	uint  has_emissive_texture;   // @148 (#450: the emissive map at binding 15)
+	vec2  uv_offset;              // @152 (#448: every map is sampled at uv * tiling + offset)
+	vec4  emissive_color;         // @160 (#450: a lit material's emission, colour x strength; w unused)
+} obj;                            // = 176
 #endif
 
 #ifdef VORTEX_NEED_LIGHTS

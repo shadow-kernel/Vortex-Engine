@@ -66,7 +66,9 @@ cbuffer PerObject : register(b1)
     uint HasHeightTexture;
     float HeightScale;
     float AlphaCutoff;
-    float3 _Pad0;
+    uint HasEmissiveTexture; // @148 — #450: the emissive map at t16
+    float2 UVOffset;         // @152 — #448: every map is sampled at uv * tiling + offset
+    float4 EmissiveColor;    // @160 — #450: a lit material's emission, colour x strength (w unused)
 };
 
 struct PointLight

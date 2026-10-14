@@ -63,7 +63,9 @@ struct PerObject
     uint has_height_texture;
     float height_scale;
     float alpha_cutoff;
-    float _pad0, _pad1, _pad2;
+    uint has_emissive_texture;         // @148 (#450: the emissive map at texture 15)
+    float2 uv_offset;                  // @152 (#448: every map is sampled at uv * tiling + offset)
+    float4 emissive_color;             // @160 (#450: a lit material's emission, colour x strength; w unused)
 };
 
 struct PointLight

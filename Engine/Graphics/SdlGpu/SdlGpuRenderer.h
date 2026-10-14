@@ -418,9 +418,12 @@ namespace vortex::graphics::sdlgpu
 			u32 has_albedo_texture, has_normal_texture, has_metallic_texture, has_roughness_texture;
 			u32 has_ao_texture, use_directx_normals, is_unlit; float emissive_strength;
 			DirectX::XMFLOAT2 uv_tiling; u32 has_height_texture; float height_scale;
-			float alpha_cutoff; float _pad0, _pad1, _pad2;   // @144: AlphaTest cutoff (#329), 0 = off
+			float alpha_cutoff;                     // @144: AlphaTest cutoff (#329), 0 = off
+			u32 has_emissive_texture;               // @148: the emissive map at sampler slot 15 (#450)
+			DirectX::XMFLOAT2 uv_offset;            // @152: every map is sampled at uv * tiling + offset (#448)
+			DirectX::XMFLOAT4 emissive_color;       // @160: a lit material's emission, colour x strength (#450); w unused
 		};
-		static_assert(sizeof(PerObjectConstants) == 160, "PerObjectConstants must byte-match standard.metal");
+		static_assert(sizeof(PerObjectConstants) == 176, "PerObjectConstants must byte-match standard.metal");
 
 		struct GPUPointLight { DirectX::XMFLOAT3 position; float range; DirectX::XMFLOAT3 color; float intensity; };
 		struct GPUSpotLight
