@@ -65,6 +65,40 @@ namespace Editor.Scripting
         }
         private bool _active;
 
+        // Whose code runs right now (#406) — null between callbacks: the behaviour whose callback (Start, Update, a coroutine
+        // step, a message, a UI action...) runs, or, when none does, the entity whose behaviour tree or area event runs.
+        private Vortex.VortexBehaviour _dispatching;
+        private GameEntity _dispatchingEntity;
+
+        /// <summary>The entity a script character moves (#406), from whose code is running: a characterId equal to the
+        /// EntityId of the behaviour whose callback runs names that behaviour's entity (all of an entity's behaviours share
+        /// one, #408); while an entity's behaviour tree ticks or its area event is raised, a characterId that is one of its
+        /// handles (the tree's Agent) names it. Any other id is a custom one and names no entity, even when it happens to
+        /// equal some other entity's handle (a characterId 1 used to resolve to whatever entity had handle 1). An id the
+        /// collision world already knows an owner for keeps that owner (CollisionService.KnownOwner).</summary>
+        internal GameEntity CharacterOwner(long characterId)
+        {
+            if (characterId == 0) return null;
+            if (_dispatching != null) return _dispatching.EntityId == characterId ? FindEntityByHandle(characterId) : null;
+            return _dispatchingEntity != null && ReferenceEquals(FindEntityByHandle(characterId), _dispatchingEntity) ? _dispatchingEntity : null;
+        }
+
+        /// <summary>Who ran before <see cref="EnterEntityCode"/> — handed back to <see cref="ExitEntityCode"/>.</summary>
+        internal struct CodeContext { internal Vortex.VortexBehaviour Behaviour; internal GameEntity Entity; }
+
+        /// <summary>Code that runs on behalf of <paramref name="e"/> without being one of its behaviours' callbacks — its
+        /// behaviour tree's tasks, the handlers of its area events (#406): until <see cref="ExitEntityCode"/>, a characterId
+        /// that is one of its handles names it.</summary>
+        internal CodeContext EnterEntityCode(GameEntity e)
+        {
+            var prev = new CodeContext { Behaviour = _dispatching, Entity = _dispatchingEntity };
+            _dispatching = null;
+            _dispatchingEntity = e;
+            return prev;
+        }
+
+        internal void ExitEntityCode(CodeContext prev) { _dispatching = prev.Behaviour; _dispatchingEntity = prev.Entity; }
+
         // ================= Scripting wave (#35-#40): handles, queries, coroutines, spawn/destroy =================
 
         // Handles for ARBITRARY entities (not just scripted ones), assigned on demand — the ids TriggerHit,
@@ -173,6 +207,9 @@ namespace Editor.Scripting
             if (!active)
             {
                 try { StopAudioRecursive(e); } catch { }
+                // #407: the subtree's characters stop blocking (managed capsule + Jolt character); MoveCharacter after
+                // re-activation registers them again
+                try { Editor.Core.Services.Physics.PhysicsService.RemoveCharactersIn(e); } catch { }
             }
             Editor.Core.Services.SceneRenderService.RuntimeDirty = Editor.Core.Services.SceneRenderService.StaticDirty = true;   // structural (#364 A)
             return true;
@@ -252,8 +289,10 @@ namespace Editor.Scripting
             {
                 var b = list[i];
                 if (!IsLive(b)) continue;
+                var prev = _dispatching; _dispatching = b;
                 try { b.OnMessage(message ?? "", arg); }
                 catch (Exception ex) { LogScriptError("OnMessage", b, ex); }
+                finally { _dispatching = prev; }
             }
         }
 
@@ -324,8 +363,10 @@ namespace Editor.Scripting
         private void AdvanceCoroutine(Co c)
         {
             bool more;
+            var prev = _dispatching; _dispatching = c.Owner;
             try { more = c.Routine.MoveNext(); }
             catch (Exception ex) { LogScriptError("Coroutine", c.Owner, ex); c.Handle.Done = true; return; }
+            finally { _dispatching = prev; }
             if (!more) { c.Handle.Done = true; return; }
             c.Wait = (c.Routine.Current as Vortex.WaitForSeconds)?.Seconds ?? 0f;   // yield return null = one frame
         }
@@ -352,8 +393,10 @@ namespace Editor.Scripting
                 if (v.Cancelled) continue;
                 v.Due -= dt;
                 if (v.Due > 0f) continue;
+                var prev = _dispatching; _dispatching = v.Owner;
                 try { v.Action(); }
                 catch (Exception ex) { LogScriptError("Invoke", v.Owner, ex); }
+                finally { _dispatching = prev; }
                 if (v.Interval > 0f) v.Due = v.Interval;   // fixed re-arm (no catch-up burst after a hitch)
                 else v.Cancelled = true;
             }
@@ -530,8 +573,10 @@ namespace Editor.Scripting
                 foreach (var b in _behaviours.GetRange(before, _behaviours.Count - before))
                 {
                     if (!IsLive(b)) continue;
+                    var prev = _dispatching; _dispatching = b;
                     try { b.Start(); }
                     catch (Exception ex) { LogScriptError("Start", b, ex); }
+                    finally { _dispatching = prev; }
                 }
             }
             return handle;
@@ -665,7 +710,9 @@ namespace Editor.Scripting
                     b.Destroyed = true;
                     _scriptOf.Remove(b);
                     _compactPending = true;
+                    var prev = _dispatching; _dispatching = b;
                     try { b.OnDestroy(); } catch (Exception ex) { LogScriptError("OnDestroy", b, ex); }
+                    finally { _dispatching = prev; }
                     StopAllCoroutines(b);
                     CancelInvokes(b);
                 }
@@ -676,6 +723,7 @@ namespace Editor.Scripting
 
             try { Editor.Core.Services.Physics.CollisionService.RemoveEntityShapes(e); } catch { }
             try { Editor.Core.Services.Physics.PhysicsService.RemoveEntity(e); } catch { }
+            try { Editor.Core.Services.Physics.PhysicsService.RemoveCharactersIn(e); } catch { }   // #407: no capsule left behind
             try { Editor.Core.Services.AudioPlaybackService.Instance.RemoveEntity(e); } catch { }   // its sounds stop with it
             try { e.SyncEngineStateRecursive(false); } catch { }
 
@@ -937,8 +985,10 @@ namespace Editor.Scripting
             {
                 if (!_active) break;          // a Start() stopped play (Application.Quit in the editor)
                 if (!IsLive(b)) continue;     // destroyed by an earlier Start(): no Start after its OnDestroy
+                var prev = _dispatching; _dispatching = b;
                 try { b.Start(); }
                 catch (Exception ex) { LogScriptError("Start", b, ex); }
+                finally { _dispatching = prev; }
             }
             CompactBehaviours();
         }
@@ -1021,16 +1071,20 @@ namespace Editor.Scripting
                 foreach (var b in starting)
                 {
                     if (!IsLive(b)) continue;   // destroyed before it ever ran
+                    var prev = _dispatching; _dispatching = b;
                     try { b.Start(); }
                     catch (Exception ex) { LogScriptError("Start", b, ex); }
+                    finally { _dispatching = prev; }
                 }
             }
             for (int i = 0; i < _behaviours.Count; i++)
             {
                 var b = _behaviours[i];
                 if (!IsLive(b)) continue;   // destroyed earlier this tick: skipped, the others keep their turn
+                var prev = _dispatching; _dispatching = b;
                 try { b.Update(dt); }
                 catch (Exception ex) { LogScriptError("Update", b, ex); }
+                finally { _dispatching = prev; }
             }
             // Auto-instantiated UI action controllers tick too, so a screen's class can drive its own widgets.
             foreach (var b in _uiActions.Values)
@@ -1059,8 +1113,10 @@ namespace Editor.Scripting
             {
                 var b = _behaviours[i];
                 if (!IsLive(b)) continue;
+                var prev = _dispatching; _dispatching = b;
                 try { b.LateUpdate(dt); }
                 catch (Exception ex) { LogScriptError("LateUpdate", b, ex); }
+                finally { _dispatching = prev; }
             }
             foreach (var b in _uiActions.Values)
             {
@@ -1107,8 +1163,10 @@ namespace Editor.Scripting
             {
                 var b = list[i];
                 if (!IsLive(b)) continue;
+                var prev = _dispatching; _dispatching = b;
                 try { b.OnAnimationEvent(name); }
                 catch (Exception ex) { LogScriptError("OnAnimationEvent", b, ex); }   // #322
+                finally { _dispatching = prev; }
             }
         }
 
@@ -1124,7 +1182,12 @@ namespace Editor.Scripting
         private void InvokeAll(List<Vortex.VortexBehaviour> list, EvKind kind, Vortex.TriggerHit hit)
         {
             for (int i = 0; i < list.Count; i++)
-                if (IsLive(list[i])) Invoke(list[i], kind, hit);
+            {
+                if (!IsLive(list[i])) continue;
+                var prev = _dispatching; _dispatching = list[i];
+                try { Invoke(list[i], kind, hit); }
+                finally { _dispatching = prev; }
+            }
         }
 
         private enum EvKind { Enter, Stay, Exit, Collision }
@@ -1192,16 +1255,27 @@ namespace Editor.Scripting
                 {
                     var b = list[i];
                     if (!IsLive(b)) continue;
+                    var prev = _dispatching; _dispatching = b;
                     try
                     {
                         if (kind == 0) b.OnAreaEnter(info); else if (kind == 1) b.OnAreaStay(info, dt); else b.OnAreaExit(info);
                     }
                     catch (Exception ex) { LogScriptError(kind == 0 ? "OnAreaEnter" : (kind == 1 ? "OnAreaStay" : "OnAreaExit"), b, ex); }
+                    finally { _dispatching = prev; }
                 }
             }
+            RaiseAreaEvent(e, kind, info);
+        }
+
+        /// <summary>Areas.Entered / Exited for <paramref name="e"/>: the handlers run on its behalf (#406) — one that moves
+        /// the entity's character with the id it is handed names the entity.</summary>
+        internal void RaiseAreaEvent(GameEntity e, int kind, Vortex.AreaInfo info)
+        {
             long id = HandleForEntity(e);
+            var ctx = EnterEntityCode(e);
             try { if (kind == 0) Vortex.Areas.RaiseEntered(id, info); else if (kind == 2) Vortex.Areas.RaiseExited(id, info); }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] area event handler: " + ex.Message); }
+            finally { ExitEntityCode(ctx); }
         }
 
         private Vortex.AreaInfo AreaInfoFor(Editor.Core.Services.Areas.AreaInstance a)
@@ -1300,8 +1374,10 @@ namespace Editor.Scripting
                     continue;
                 }
                 var m = GetParamlessMethod(target.GetType(), a.Action);
+                var prev = _dispatching; _dispatching = target;   // the action is that behaviour's code (#406)
                 try { m.Invoke(target, null); }
                 catch (Exception ex) { LogScriptError(target.GetType().Name, a.Action, ex); }   // #322
+                finally { _dispatching = prev; }
             }
         }
 
@@ -1392,7 +1468,9 @@ namespace Editor.Scripting
                 var b = _behaviours[i];
                 if (!IsLive(b)) continue;
                 b.Destroyed = true;
+                var prev = _dispatching; _dispatching = b;
                 try { b.OnDestroy(); } catch (Exception ex) { LogScriptError("OnDestroy", b, ex); }   // #322
+                finally { _dispatching = prev; }
             }
             foreach (var b in _uiActions.Values) { if (b != null) try { b.OnDestroy(); } catch (Exception ex) { LogScriptError("OnDestroy", b, ex); } }
             // Scripting-wave teardown (#36-#40): undo runtime scene mutations, stop timers/coroutines,
@@ -1419,6 +1497,7 @@ namespace Editor.Scripting
             _scriptOf.Clear();
             _behavioursByEntity.Clear();
             try { Editor.Core.Services.Physics.CollisionService.ResetEvents(); Editor.Core.Services.Physics.CollisionService.ClearCharacters(); } catch { }
+            _dispatching = null; _dispatchingEntity = null;
             try { Editor.Core.Services.Physics.PhysicsService.Clear(); Editor.Core.Services.Physics.PhysicsService.ContactHandler = null; } catch { }
             try { Editor.Core.Services.AI.AiRuntime.End(); } catch { }
             try { Editor.Core.Animation.AnimationService.Instance.ResetStates(); } catch { }
@@ -1607,8 +1686,10 @@ namespace Editor.Scripting
             {
                 if (!IsLive(b)) continue;   // an earlier Start() destroyed the entity
                 if (paused) { _startPending.Add(b); continue; }
+                var prev = _dispatching; _dispatching = b;
                 try { b.Start(); }
                 catch (Exception ex) { LogScriptError("Start", b, ex); }
+                finally { _dispatching = prev; }
             }
             return started.Count > 0;
         }
@@ -2504,6 +2585,13 @@ namespace Editor.Scripting
         }
 
         Vortex.Vector3 Vortex.IScriptHost.MoveCharacter(Vortex.Vector3 feet, float radius, float height, Vortex.Vector3 move, out bool grounded, long selfId)
+            => MoveCharacter(feet, radius, height, move, out grounded, selfId, null);
+
+        /// <summary>Physics.MoveCharacter: <paramref name="explicitOwner"/> is the entity a script named as the owner (#406, a
+        /// squad manager moving its guards' capsules); without one, the code that runs decides (<see cref="CharacterOwner"/>),
+        /// and an id the collision world already knows keeps its owner.</summary>
+        internal Vortex.Vector3 MoveCharacter(Vortex.Vector3 feet, float radius, float height, Vortex.Vector3 move, out bool grounded, long selfId,
+            GameEntity explicitOwner)
         {
             // a NaN or an infinity from the game's math must not reach the collision world or Jolt's native character (#455):
             // a non-finite move is no move this frame; a non-finite position or capsule skips the step (feet come back as given)
@@ -2517,12 +2605,13 @@ namespace Editor.Scripting
             }
             var f = new Editor.ECS.Vector3(feet.X, feet.Y, feet.Z);
             var m = new Editor.ECS.Vector3(move.X, move.Y, move.Z);
+            var owner = explicitOwner ?? CharacterOwner(selfId);   // null: the services keep the owner the id already has
             Editor.ECS.Vector3 r;
             if (Editor.Core.Services.Physics.PhysicsService.JoltCharacters)   // #187: the scene opted into Jolt's CharacterVirtual
                 r = Editor.Core.Services.Physics.PhysicsService.MoveCharacterJolt(f, radius, height, m, Vortex.Time.DeltaTime, out grounded, selfId,
-                    Editor.Core.Services.Physics.CollisionService.CharacterStepHeight, Editor.Core.Services.Physics.CollisionService.CharacterMaxSlopeDeg);
+                    Editor.Core.Services.Physics.CollisionService.CharacterStepHeight, Editor.Core.Services.Physics.CollisionService.CharacterMaxSlopeDeg, owner);
             else
-                r = Editor.Core.Services.Physics.CollisionService.MoveCharacter(f, radius, height, m, out grounded, selfId);
+                r = Editor.Core.Services.Physics.CollisionService.MoveCharacter(f, radius, height, m, out grounded, selfId, owner: owner);
             return new Vortex.Vector3(r.X, r.Y, r.Z);
         }
 
