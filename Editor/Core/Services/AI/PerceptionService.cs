@@ -206,35 +206,25 @@ namespace Editor.Core.Services.AI
             forward = SysVec.Normalize(forward);
         }
 
-        /// <summary>True when nothing solid is between the two points. Hits on <paramref name="ignoreA"/> /
-        /// <paramref name="ignoreB"/> (and their children) are skipped — a hit on the target itself counts as clear.</summary>
+        /// <summary>True when nothing solid is between the two points. <paramref name="ignoreA"/> (the looking agent) and
+        /// its children are left out of the cast — its colliders and, with the "jolt" character controller, its capsule,
+        /// which the eye sits inside (#406); a hit on <paramref name="ignoreB"/> (the target, its colliders or its capsule)
+        /// counts as clear.</summary>
         public static bool HasLineOfSight(Vector3 from, Vector3 to, GameEntity ignoreA, GameEntity ignoreB)
         {
             var dir = to - from;
             float dist = dir.Magnitude;
             if (dist < 1e-3f) return true;
             dir = dir / dist;
-            var origin = from;
-            float remaining = dist;
             const uint mask = (1u << PhysicsService.LayerStatic) | (1u << PhysicsService.LayerDynamic) | (1u << PhysicsService.LayerCharacter);
-            for (int i = 0; i < 6; i++)
-            {
-                bool hit;
-                GameEntity he;
-                float hd;
-                Vector3 hp;
-                if (PhysicsService.IsBuilt) hit = PhysicsService.Raycast(origin, dir, remaining, out hp, out _, out he, out hd, mask);
-                else if (CollisionService.IsBuilt) hit = CollisionService.Raycast(origin, dir, remaining, ~0, out hp, out _, out he, out hd);
-                else return true;   // no collision world: the cone alone decides
-                if (!hit) return true;
-                if (IsSelfOrChild(he, ignoreB)) return true;
-                if (!IsSelfOrChild(he, ignoreA)) return false;
-                float step = hd + 0.02f;
-                origin = origin + dir * step;
-                remaining -= step;
-                if (remaining <= 0f) return true;
-            }
-            return true;
+            bool hit;
+            GameEntity he;
+            // One cast: the agent is filtered inside it (stepping past its hits could not leave a capsule the eye starts
+            // in), and a collider that merely contains the eye is not hit (#418).
+            if (PhysicsService.IsBuilt) hit = PhysicsService.Raycast(from, dir, dist, out _, out _, out he, out _, mask, ignoreA);
+            else if (CollisionService.IsBuilt) hit = CollisionService.Raycast(from, dir, dist, ~0, out _, out _, out he, out _, ignoreA);
+            else return true;   // no collision world: the cone alone decides
+            return !hit || IsSelfOrChild(he, ignoreB);
         }
 
         private static bool IsSelfOrChild(GameEntity e, GameEntity root)

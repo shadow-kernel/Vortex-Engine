@@ -1,16 +1,24 @@
 #pragma once
 
 #include "../Engine/Navigation/NavigationWorld.h"
+#include "../Engine/Navigation/NavigationFormat.h"
 
 #include "Test.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <iostream>
 #include <string>
 #include <vector>
+
+#if VORTEX_HAS_RECAST
+#include <DetourNavMesh.h>   // the Detour tile layout, to write the .vnav of an engine from before #517
+#endif
 
 using namespace vortex;
 
@@ -42,6 +50,11 @@ public:
 				run_serialization_tests();
 				run_crowd_tests();
 				run_tall_level_tests();   // replaces the loaded navmesh
+				run_legacy_file_tests();
+				run_corrupt_file_tests();
+				run_large_level_tests();
+				run_failed_tile_report_tests();
+				run_tile_grid_tests();
 			}
 			run_error_tests();
 		}
@@ -523,6 +536,308 @@ private:
 		check("windowed test level: path up the ramp onto the platform", path_status(0.0f, 0.0f, -10.0f, 10.0f, 2.0f, 10.0f, &end_y) == navigation::path_complete
 			&& std::fabs(end_y - 2.0f) < 0.35f);
 		check("windowed test level: the high platform has navmesh", on_navmesh_at(40.0f, 1200.5f, 40.0f, 0.3f));
+	}
+
+	// ---- 64-bit poly refs, large levels, failed tiles (#517) ----------------------------------------------------------
+
+	static navigation::format::file_header header_of(const std::vector<u8>& blob)
+	{
+		navigation::format::file_header h{};
+		if (blob.size() >= sizeof(h)) std::memcpy(&h, blob.data(), sizeof(h));
+		return h;
+	}
+
+	// Before #517 the 32-bit poly ref split 22 bits between the tile index — the tile count of the whole bounds grid,
+	// rounded up to a power of two, at most 14 bits — and the polygon index: the polygons one tile could hold.
+	static int old_tile_bits(s32 grid_tiles)
+	{
+		int bits = 0;
+		while ((1 << bits) < grid_tiles) ++bits;
+		return std::min(bits, 14);
+	}
+	static s32 old_polys_per_tile(s32 grid_tiles) { return 1 << (22 - old_tile_bits(grid_tiles)); }
+
+	// Bakes and copies the blob out (nothing is loaded). The blob size, or the bake error.
+	static s32 bake_blob(const std::vector<f32>& verts, const std::vector<s32>& tris, const std::vector<f32>& boxes,
+		const navigation::bake_settings& s, navigation::bake_stats& st, std::vector<u8>& blob)
+	{
+		const s32 size = navigation::bake(verts.empty() ? nullptr : verts.data(), (s32)verts.size() / 3, tris.empty() ? nullptr : tris.data(),
+			(s32)tris.size() / 3, nullptr, boxes.empty() ? nullptr : boxes.data(), (s32)boxes.size() / navigation::box_floats, nullptr, &s, &st);
+		blob.clear();
+		if (size > 0)
+		{
+			blob.resize((size_t)size);
+			navigation::bake_result_copy(blob.data(), size);
+		}
+		return size;
+	}
+
+	static size_t count_of(const std::string& text, const char* what)
+	{
+		size_t n = 0;
+		for (size_t at = text.find(what); at != std::string::npos; at = text.find(what, at + 1)) ++n;
+		return n;
+	}
+
+#if VORTEX_HAS_RECAST
+	// The .vnav an engine from before #517 wrote for the same navmesh: Detour built with 32-bit poly refs reserves a
+	// 12-byte dtLink per link in every tile (zeroed, as dtCreateNavMeshData leaves it: Detour builds the links on load)
+	// where this build reserves sizeof(dtLink); version 1; max_tiles / max_polys the old split of the ref's 22 bits.
+	static std::vector<u8> as_version1(const std::vector<u8>& blob)
+	{
+		namespace format = navigation::format;
+		auto a4 = [](size_t n) { return (n + 3) & ~(size_t)3; };
+		format::file_header h = header_of(blob);
+		std::vector<u8> out(sizeof(h), 0);
+		size_t off = sizeof(h);
+		for (s32 i = 0; i < h.tile_count; ++i)
+		{
+			format::tile_header th{};
+			std::memcpy(&th, &blob[off], sizeof(th));
+			off += sizeof(th);
+			const u8* src = &blob[off];
+			dtMeshHeader mh{};
+			std::memcpy(&mh, src, sizeof(mh));
+			const size_t links_at = a4(sizeof(dtMeshHeader)) + a4(sizeof(f32) * 3 * (size_t)mh.vertCount) + a4(sizeof(dtPoly) * (size_t)mh.polyCount);
+			const size_t links_now = a4(sizeof(dtLink) * (size_t)mh.maxLinkCount), links_ref32 = a4(12 * (size_t)mh.maxLinkCount);
+			std::vector<u8> tile(src, src + links_at);
+			tile.resize(links_at + links_ref32, 0);
+			tile.insert(tile.end(), src + links_at + links_now, src + th.size);
+			off += (size_t)format::padded(th.size);
+			th.size = (s32)tile.size();
+			const u8* t = reinterpret_cast<const u8*>(&th);
+			out.insert(out.end(), t, t + sizeof(th));
+			out.insert(out.end(), tile.begin(), tile.end());
+			out.resize(out.size() + (size_t)(format::padded(th.size) - th.size), 0);
+		}
+		const s32 grid = h.stats.tiles_x * h.stats.tiles_z;
+		h.version = format::version_ref32;
+		h.max_tiles = 1 << old_tile_bits(grid);
+		h.max_polys = old_polys_per_tile(grid);
+		h.stats.data_size = (s32)out.size();
+		std::memcpy(out.data(), &h, sizeof(h));
+		return out;
+	}
+#endif
+
+	// Navmeshes baked before the switch to 64-bit poly refs — .vnav version 1, the templates ship them — still load
+	// (their tiles are re-laid out); a tile of the other ref width under either version number is refused, not misread.
+	void run_legacy_file_tests()
+	{
+#if VORTEX_HAS_RECAST
+		const auto h2 = header_of(_blob);
+		check("a bake writes .vnav version 2 with 64-bit poly refs", h2.version == navigation::data_version && navigation::data_version == 2 && sizeof(dtPolyRef) == 8);
+		check("version 2 sizes the tile pool by the tiles it stores", h2.max_tiles == h2.tile_count && h2.max_polys > 0);
+		std::vector<f32> pts(256 * 3);
+		s32 status = 0;
+		const f32 a[3] = { -5, 0, 0 }, b[3] = { 5, 0, 0 };
+		navigation::load(_blob.data(), (s32)_blob.size());
+		const s32 n2 = navigation::find_path(a, b, nullptr, pts.data(), 256, &status);
+		const std::vector<f32> path2(pts.begin(), pts.begin() + std::max(0, n2) * 3);
+
+		const std::vector<u8> v1 = as_version1(_blob);
+		std::printf("[info] the test level as .vnav version 1: %zu bytes, as version 2: %zu bytes\n", v1.size(), _blob.size());
+		navigation::bake_stats st{};
+		check("a version 1 .vnav (32-bit poly refs) still loads", navigation::load(v1.data(), (s32)v1.size())
+			&& navigation::get_info(nullptr, &st) && st.poly_count == h2.stats.poly_count && st.tile_count == h2.tile_count);
+		const s32 n1 = navigation::find_path(a, b, nullptr, pts.data(), 256, &status);
+		check("the version 1 navmesh finds the same path", n1 == n2 && n1 >= 3 && status == navigation::path_complete
+			&& std::equal(path2.begin(), path2.end(), pts.begin()));
+		std::vector<u8> copy((size_t)navigation::data_copy(nullptr, 0));
+		navigation::data_copy(copy.data(), (s32)copy.size());
+		check("data_copy hands back the version 1 file as loaded", copy == v1);
+		const auto p = params();
+		const u32 agent = navigation::agent_add(a, &p);
+		navigation::agent_set_target(agent, b);
+		for (int i = 0; i < 60 * 10; ++i) navigation::crowd_update(k_dt);
+		navigation::agent_state ast{};
+		check("an agent walks around the wall on the version 1 navmesh", navigation::agent_get_state(agent, &ast) && dist(ast.position, b) < 0.3f);
+		navigation::crowd_clear();
+
+		std::vector<u8> bad = v1;
+		s32 version = navigation::data_version;
+		std::memcpy(bad.data() + 4, &version, sizeof(version));
+		check("32-bit tile data marked version 2 is refused, not misread", !navigation::load(bad.data(), (s32)bad.size()) && !navigation::loaded());
+		bad = _blob;
+		version = navigation::format::version_ref32;
+		std::memcpy(bad.data() + 4, &version, sizeof(version));
+		check("64-bit tile data marked version 1 is refused, not misread", !navigation::load(bad.data(), (s32)bad.size()) && !navigation::loaded());
+		version = navigation::data_version + 1;
+		std::memcpy(bad.data() + 4, &version, sizeof(version));
+		check("an unknown .vnav version is refused", !navigation::load(bad.data(), (s32)bad.size()) && !navigation::loaded());
+#endif
+	}
+
+	// A corrupt header sizes nothing: tile_count sizes the tile pool, so it is held to what the file can hold — one flipped
+	// bit (25 -> 16,777,241) used to allocate gigabytes before the tile table was read — and max_tiles sizes nothing (a
+	// flipped bit there crashed Detour on main too). Tiles whose indices point outside them are refused, not read.
+	void run_corrupt_file_tests()
+	{
+#if VORTEX_HAS_RECAST
+		namespace format = navigation::format;
+		auto with = [](std::vector<u8> blob, size_t at, auto value) { std::memcpy(&blob[at], &value, sizeof(value)); return blob; };
+		auto loads = [](const std::vector<u8>& blob) { return navigation::load(blob.data(), (s32)blob.size()) && navigation::loaded(); };
+		const auto h = header_of(_blob);
+		const size_t tile_count_at = offsetof(format::file_header, tile_count), max_tiles_at = offsetof(format::file_header, max_tiles);
+
+		const auto t0 = std::chrono::steady_clock::now();
+		const bool flipped = loads(with(_blob, tile_count_at, (s32)(h.tile_count | (1 << 24))));
+		const d64 ms = std::chrono::duration<d64, std::milli>(std::chrono::steady_clock::now() - t0).count();
+		std::printf("[info] tile_count %d -> %d: refused in %.2f ms\n", h.tile_count, h.tile_count | (1 << 24), ms);
+		check("a tile_count with a flipped high bit is refused at once, nothing sized by it", !flipped && ms < 100.0);
+		check("version 2: a max_tiles other than tile_count is refused", !loads(with(_blob, max_tiles_at, (s32)(h.tile_count + 1))));
+		const std::vector<u8> v1 = as_version1(_blob);
+		check("version 1: max_tiles sizes nothing, a flipped high bit there still loads",
+			loads(with(v1, max_tiles_at, (s32)(header_of(v1).max_tiles | (1 << 25)))));
+
+		// the first polygon of the first tile: a vertex index past the tile's vertices, then a neighbour past its polygons
+		dtMeshHeader mh{};
+		const size_t tile_at = sizeof(format::file_header) + sizeof(format::tile_header);
+		std::memcpy(&mh, &_blob[tile_at], sizeof(mh));
+		const size_t poly_at = tile_at + ((sizeof(dtMeshHeader) + 3) & ~(size_t)3) + ((sizeof(f32) * 3 * (size_t)mh.vertCount + 3) & ~(size_t)3);
+		check("a polygon whose vertex index points past its tile is refused",
+			!loads(with(_blob, poly_at + offsetof(dtPoly, verts), (unsigned short)mh.vertCount)));
+		check("a polygon whose neighbour index points past its tile is refused",
+			!loads(with(_blob, poly_at + offsetof(dtPoly, neis), (unsigned short)(mh.polyCount + 1))));
+		// the first detail triangle (the first polygon's) and the first BV tree node, past what they may name
+		auto a4 = [](size_t n) { return (n + 3) & ~(size_t)3; };
+		const size_t details_at = poly_at + a4(sizeof(dtPoly) * (size_t)mh.polyCount) + a4(sizeof(dtLink) * (size_t)mh.maxLinkCount);
+		const size_t tris_at = details_at + a4(sizeof(dtPolyDetail) * (size_t)mh.detailMeshCount) + a4(sizeof(f32) * 3 * (size_t)mh.detailVertCount);
+		const size_t bv_at = tris_at + a4(4 * (size_t)mh.detailTriCount);
+		check("a detail triangle whose vertex is past its detail mesh is refused", mh.detailTriCount > 0 && !loads(with(_blob, tris_at, (u8)250)));
+		check("a BV tree leaf that names a polygon past the tile is refused",
+			mh.bvNodeCount > 0 && !loads(with(_blob, bv_at + offsetof(dtBVNode, i), (int)mh.detailMeshCount)));
+		check("the untouched file still loads", loads(_blob));
+#endif
+	}
+
+	// Paddi's level in #517: bake bounds of 1,550 x 16,050 m at Cell Size 0.15 and Tile Size 512 — 76.8 m tiles, a grid of
+	// 21 x 209 = 4,389. The 32-bit poly ref left each of its tiles 512 polygons (1,024 when the bounds were narrowed under
+	// 4,096 tiles) and dropped every denser tile. Here a forest clearing — 1,600 tree trunks on 72 x 72 m, inside one
+	// tile — needs a few thousand; a valley floor and a second region 15.8 km away make the grid real.
+	void run_large_level_tests()
+	{
+		navigation::bake_settings s{};
+		navigation::default_settings(&s);
+		s.cell_size = 0.15f;
+		s.cell_height = 0.25f;
+		s.tile_size = 512;
+		const f32 bmin[3] = { 500.0f, -70.0f, -15800.0f }, bmax[3] = { 2050.0f, 1900.0f, 250.0f };
+		std::copy(bmin, bmin + 3, s.bounds_min);
+		std::copy(bmax, bmax + 3, s.bounds_max);
+		const f32 tile = s.cell_size * (f32)s.tile_size;
+
+		std::vector<f32> boxes;
+		auto box = [&](f32 cx, f32 cy, f32 cz, f32 hx, f32 hy, f32 hz) { boxes.insert(boxes.end(), { cx, cy, cz, hx, hy, hz, 0, 0, 0, 1 }); };
+		const f32 cx = bmin[0] + 5.5f * tile, cz = bmin[2] + 100.5f * tile;   // the middle of tile (5, 100)
+		box(cx, -0.5f, cz, 36.0f, 0.5f, 36.0f);                               // the clearing, clear of the neighbours' borders
+		for (int i = 0; i < 40; ++i)
+			for (int k = 0; k < 40; ++k)
+				box(cx - 35.1f + 1.8f * (f32)i, 1.5f, cz - 35.1f + 1.8f * (f32)k, 0.25f, 1.5f, 0.25f);   // trunks, 1.3 m apart
+		box(1200.0f, 299.5f, -12000.0f, 30.0f, 0.5f, 30.0f);                 // a valley floor
+		box(1900.0f, 1199.5f, 100.0f, 20.0f, 0.5f, 20.0f);                   // the other region: 15.8 km away, 1.2 km up
+
+		std::vector<u8> blob;
+		navigation::bake_stats st{};
+		const s32 size = bake_blob({}, {}, boxes, s, st, blob);
+		const auto h = header_of(blob);
+		const s32 grid = st.tiles_x * st.tiles_z;
+		const std::string notes = bake_notes();
+		std::printf("[info] 1,550 x 16,050 m level: %d bytes in %.0f ms, %d x %d = %d tiles (%d with navmesh), %d polygons, the densest tile %d"
+			" (the 32-bit poly ref allowed %d); notes: \"%s\"\n", size, st.bake_ms, st.tiles_x, st.tiles_z, grid, st.tile_count, st.poly_count,
+			h.max_polys, old_polys_per_tile(grid), notes.c_str());
+		check("large level: bakes", size > 0);
+		check("large level: Paddi's grid (21 x 209 tiles of 76.8 m)", st.tiles_x == 21 && st.tiles_z == 209);
+		check("large level: no tile failed, no notes", notes.empty());
+		check("large level: the forest tile holds more polygons than the 32-bit poly ref allowed this grid (dropped before #517)",
+			h.max_polys > old_polys_per_tile(grid) && h.max_polys > 1024);
+		check("large level: loads", size > 0 && navigation::load(blob.data(), size));
+		check("large level: navmesh between the trunks, on the valley floor and in the far region", on_navmesh_at(cx - 34.2f, 0.0f, cz - 34.2f, 0.3f)
+			&& on_navmesh_at(1200.0f, 300.0f, -12000.0f, 0.3f) && on_navmesh_at(1900.0f, 1200.0f, 100.0f, 0.3f));
+		check("large level: a path through the forest", path_status(cx - 34.2f, 0.0f, cz - 34.2f, cx + 34.2f, 0.0f, cz + 34.2f) == navigation::path_complete);
+	}
+
+	// A bake reports every failed tile: how many, then per reason the count and the world-space rectangles of the first
+	// tiles (the rest counted) — not the first tile only. Platforms of 2 x 2 cells, one cell apart, are a region each
+	// with 4 contour vertices: 40 m tiles of them need ~70,000 vertices, more than the 65,533 a tile can hold. The
+	// 4 x 3 tiles of the field fail; the floor in the fifth tile column bakes.
+	void run_failed_tile_report_tests()
+	{
+		navigation::bake_settings s{};
+		navigation::default_settings(&s);
+		s.cell_size = 0.1f;
+		s.tile_size = 400;
+		s.agent_radius = 0.0f;        // no erosion: the platforms keep their 2 x 2 cells
+		s.region_min_size = 0.0f;     // and every one stays a region of its own
+		s.region_merge_size = 0.0f;
+		s.partition = navigation::partition_monotone;   // watershed seeds no region where every cell is an edge cell
+		s.filter_flags = 0;           // the ledge filter would take their edge cells
+		const f32 bmin[3] = { 0.0f, -1.0f, 0.0f }, bmax[3] = { 200.0f, 2.0f, 120.0f };
+		std::copy(bmin, bmin + 3, s.bounds_min);
+		std::copy(bmax, bmax + 3, s.bounds_max);
+
+		std::vector<f32> verts;
+		std::vector<s32> tris;
+		auto quad = [&](f32 x0, f32 z0, f32 x1, f32 z1)   // walkable side up: (v1 - v0) x (v2 - v0) points +y
+		{
+			const s32 base = (s32)verts.size() / 3;
+			verts.insert(verts.end(), { x0, 0.0f, z0, x0, 0.0f, z1, x1, 0.0f, z1, x1, 0.0f, z0 });
+			tris.insert(tris.end(), { base, base + 1, base + 2, base, base + 2, base + 3 });
+		};
+		for (int i = 0; i < 533; ++i)
+			for (int k = 0; k < 400; ++k)
+				quad(0.3f * (f32)i + 0.01f, 0.3f * (f32)k + 0.01f, 0.3f * (f32)i + 0.19f, 0.3f * (f32)k + 0.19f);
+		quad(161.0f, 1.0f, 199.0f, 119.0f);
+
+		std::vector<u8> blob;
+		navigation::bake_stats st{};
+		const s32 size = bake_blob(verts, tris, {}, s, st, blob);
+		const std::string notes = bake_notes();
+		std::printf("[info] platform field: %d bytes in %.0f ms, %d x %d tiles (%d with navmesh); notes:\n%s\n", size, st.bake_ms,
+			st.tiles_x, st.tiles_z, st.tile_count, notes.c_str());
+		check("failed tiles: the rest of the level still bakes", size > 0 && navigation::load(blob.data(), size) && on_navmesh_at(180.0f, 0.0f, 60.0f, 0.3f));
+		check("failed tiles: how many", notes.find("12 tile(s) failed to build and have no navmesh.") != std::string::npos);
+		check("failed tiles: the count per reason names the real limit",
+			notes.find("12 tile(s) - too many vertices in one tile (at most 65533 fit;") != std::string::npos);
+		check("failed tiles: each listed with its world-space rectangle", notes.find("tile (0, 0) at x 0.0..40.0, z 0.0..40.0 (") != std::string::npos
+			&& notes.find("tile (1, 2) at x 40.0..80.0, z 80.0..120.0 (") != std::string::npos);
+		check("failed tiles: the first 10 listed, the rest counted", count_of(notes, ") at x ") == 10 && notes.find("; ... and 2 more.") != std::string::npos);
+		check("failed tiles: the remedies lower what one tile holds (a coarser Cell Size alone makes the tile bigger)",
+			notes.find("lower the Tile Size or raise the Max Edge Error; raise the Cell Size only together with a lower Tile Size") != std::string::npos
+			&& notes.find("(lower the tile size)") == std::string::npos);
+	}
+
+	// The 16,384 tiles a bake used to allow came from the 32-bit poly ref as well. Paddi's next try in #517 — Tile Size
+	// 256 on the same bounds, 41 x 418 = 17,138 tiles — was refused outright; the grid now only bounds the bake's own
+	// bookkeeping (max_bake_tiles).
+	void run_tile_grid_tests()
+	{
+		navigation::bake_settings s{};
+		navigation::default_settings(&s);
+		s.cell_size = 0.15f;
+		s.cell_height = 0.25f;
+		s.tile_size = 256;
+		const f32 bmin[3] = { 500.0f, -70.0f, -15800.0f }, bmax[3] = { 2050.0f, 1900.0f, 250.0f };
+		std::copy(bmin, bmin + 3, s.bounds_min);
+		std::copy(bmax, bmax + 3, s.bounds_max);
+		const std::vector<f32> floor_box = { 1200.0f, 299.5f, -12000.0f, 30.0f, 0.5f, 30.0f, 0, 0, 0, 1 };
+		std::vector<u8> blob;
+		navigation::bake_stats st{};
+		const s32 size = bake_blob({}, {}, floor_box, s, st, blob);
+		std::printf("[info] Tile Size 256 over the same bounds: %d bytes, %d x %d tiles, %.0f ms\n", size, st.tiles_x, st.tiles_z, st.bake_ms);
+		check("17,138 tiles (more than the old 16,384) bake", size > 0 && st.tiles_x == 41 && st.tiles_z == 418);
+
+		const f32 huge_min[3] = { 0.0f, 0.0f, 0.0f }, huge_max[3] = { 100000.0f, 10.0f, 100000.0f };   // 100 x 100 km
+		std::copy(huge_min, huge_min + 3, s.bounds_min);
+		std::copy(huge_max, huge_max + 3, s.bounds_max);
+		s.cell_size = 0.2f;
+		s.tile_size = 16;
+		const auto t0 = std::chrono::steady_clock::now();
+		const s32 refused = bake_blob({}, {}, floor_box, s, st, blob);
+		const d64 refused_ms = std::chrono::duration<d64, std::milli>(std::chrono::steady_clock::now() - t0).count();
+		check("a grid beyond max_bake_tiles is refused up front", refused == navigation::bake_error_too_many_tiles && refused_ms < 1000.0);
+		s.bounds_max[0] = s.bounds_max[2] = 1.0e12f;
+		check("bounds whose cell count overflows an int are refused, not wrapped", bake_blob({}, {}, floor_box, s, st, blob) == navigation::bake_error_too_many_tiles);
 	}
 
 	void run_error_tests()

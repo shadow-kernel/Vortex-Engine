@@ -26,7 +26,14 @@ namespace Editor.Core.Input
         /// <summary>Caps Lock toggle state (debug freecam: hand input to the player while flying).</summary>
         public static Func<bool> CapsLock;
 
-        public static bool IsKeyDown(int vk) { var f = KeyDown; return f != null && f(vk); }
+        /// <summary>Input played in by a tool or an automated run (#457): the editor's send_input, the player's --input file.
+        /// Its keys and mouse buttons count as held next to the physical ones, and — unlike them — they reach the game while
+        /// another app has the focus (Input.GetKey and Input's mouse and wheel apply the focus gate per source). The host
+        /// advances it once per tick, before the scripts run.</summary>
+        public static readonly SimulatedInput Simulated = new SimulatedInput();
+
+        /// <summary>Held on the keyboard / mouse, or by <see cref="Simulated"/> input.</summary>
+        public static bool IsKeyDown(int vk) { var f = KeyDown; return (f != null && f(vk)) || Simulated.IsDown(vk); }
 
         // ---- per-tick press latch (#337): a key tapped and released BETWEEN two script ticks is still seen as down
         // for the following tick. Hosts call NotifyKeyDown from their key-down events; the script runtime calls

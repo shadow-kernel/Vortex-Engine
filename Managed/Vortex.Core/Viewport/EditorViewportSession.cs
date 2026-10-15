@@ -251,6 +251,10 @@ namespace Editor.Core.Viewport
             if (playing)
             {
                 bool external = PlayModeService.Instance.IsExternalWindow;
+                // send_input's commands of this tick, on the play clock (#457): its keys and mouse buttons count as held through
+                // HostInput, its mouse movement, wheel notches and UI cursor are added here — never the OS cursor
+                var sim = HostInput.Simulated.Tick(dt);
+                Vortex.Input.SetSimulated(sim.dx, sim.dy, sim.scroll);   // they reach the game with another app in front, too
                 if (!external)
                 {
                     UpdateGameMouseLook();
@@ -469,6 +473,7 @@ namespace Editor.Core.Viewport
             _pointerX = x; _pointerY = y;
             if (IsPlaying)
             {
+                HostInput.Simulated.ReleaseCursor();   // the real pointer moved: it is the UI cursor again (#457)
                 // Captured mouse-look: the delta comes from the pointer's offset to the centre before re-centering.
                 if (_mouseCaptured && _host != null) _lookAccumX += x - _host.Width * 0.5; 
                 if (_mouseCaptured && _host != null) _lookAccumY += y - _host.Height * 0.5;
@@ -787,9 +792,11 @@ namespace Editor.Core.Viewport
 
         private void FeedEditorUI()
         {
-            var f = UiFrame(_host, _pointerX, _pointerY);
+            // send_input's cursor and left button reach the game's UI like the real ones (#457)
+            var sim = HostInput.Simulated;
+            var f = UiFrame(_host, sim.HasCursor ? sim.CursorX : _pointerX, sim.HasCursor ? sim.CursorY : _pointerY);
             float mx = f.MouseX, my = f.MouseY;
-            bool down = _lmbDown;
+            bool down = _lmbDown || sim.IsDown(0x01);
             bool pressed = down && !_lmbPrevEd;
             _lmbPrevEd = down;
             _uiMx = mx; _uiMy = my; _uiDown = down; _uiPressed = pressed;
@@ -823,6 +830,7 @@ namespace Editor.Core.Viewport
                 foreach (var e in scene.Entities) RegisterPhysicsRecursive(e);
 
             EnsurePlayerControllerOnMainCamera(scene);
+            HostInput.Simulated.Clear();   // a session starts without simulated input, on its own play clock (#457)
             AudioPreviewService.Instance.Stop();
             AudioPlaybackService.Instance.BeginPlay(scene);
             VuiStack.Instance.Reset();   // a session starts without screens, like the standalone player (#477)
@@ -942,6 +950,8 @@ namespace Editor.Core.Viewport
             AudioPlaybackService.Instance.EndPlay();
             ScriptRuntime.Instance.End();
             ScriptRuntime.Instance.ConsumeQuitRequest();   // play is stopping anyway: no quit may carry over (#410)
+            HostInput.Simulated.Clear();                   // no simulated key stays held into editing (#457)
+            Vortex.Input.SetSimulated(0f, 0f, 0f);
             VuiStack.Instance.Reset();   // the session's screens go with its scripts, and its cached canvases (#477)
             PlaySession.End();
             VortexAPI.ClearAllRigidbodies();

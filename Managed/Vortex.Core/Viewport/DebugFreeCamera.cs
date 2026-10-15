@@ -76,6 +76,7 @@ namespace Editor.Core.Viewport
             _yaw += Vortex.Input.MouseDeltaX * 0.0035f;
             _pitch += Vortex.Input.MouseDeltaY * 0.0035f;
             Vortex.Input.MouseDeltaX = 0f; Vortex.Input.MouseDeltaY = 0f;
+            Vortex.Input.ClearSimulatedLook();   // the camera took the simulated look too (#457)
             if (_pitch > 1.5f) _pitch = 1.5f; else if (_pitch < -1.5f) _pitch = -1.5f;
         }
 

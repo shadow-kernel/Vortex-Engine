@@ -352,7 +352,8 @@ namespace Vortex
     {
         /// <summary>World-space hit point.</summary>
         public Vector3 Point;
-        /// <summary>Surface normal at the hit (unit length, faces the ray origin).</summary>
+        /// <summary>Surface normal at the hit (unit length, always faces the ray origin — a mesh hit from behind reports the
+        /// flipped triangle normal).</summary>
         public Vector3 Normal;
         /// <summary>Distance from the ray origin to the hit.</summary>
         public float Distance;
@@ -759,19 +760,28 @@ namespace Vortex
         /// <summary>Mouse movement since the last tick, in pixels (only non-zero while the game has
         /// captured the cursor — i.e. in play before ESC). Use it for mouse-look. Forced to 0 while a screen that
         /// opted into freezing gameplay (BlocksGameplay) is up, so mouse-look stops with movement.</summary>
-        public static float MouseDeltaX { get { return (Editor.UI.Vui.VuiStack.Instance.GameplayInputBlocked || !WindowFocused) ? 0f : _mouseDeltaX; } internal set { _mouseDeltaX = value; } }
-        public static float MouseDeltaY { get { return (Editor.UI.Vui.VuiStack.Instance.GameplayInputBlocked || !WindowFocused) ? 0f : _mouseDeltaY; } internal set { _mouseDeltaY = value; } }
+        public static float MouseDeltaX { get { return Editor.UI.Vui.VuiStack.Instance.GameplayInputBlocked ? 0f : (WindowFocused ? _mouseDeltaX : 0f) + _simDeltaX; } internal set { _mouseDeltaX = value; } }
+        public static float MouseDeltaY { get { return Editor.UI.Vui.VuiStack.Instance.GameplayInputBlocked ? 0f : (WindowFocused ? _mouseDeltaY : 0f) + _simDeltaY; } internal set { _mouseDeltaY = value; } }
         private static float _mouseDeltaX, _mouseDeltaY;
 
         /// <summary>Mouse-wheel movement since the last tick, in NOTCHES: +1 per notch up (away), -1 per notch down.
         /// 0 when not scrolling, unfocused, or a menu screen consumed the wheel. Use it for weapon switching etc.</summary>
-        public static float ScrollDelta { get { return (Editor.UI.Vui.VuiStack.Instance.GameplayInputBlocked || !WindowFocused) ? 0f : _scrollDelta; } internal set { _scrollDelta = value; } }
+        public static float ScrollDelta { get { return Editor.UI.Vui.VuiStack.Instance.GameplayInputBlocked ? 0f : (WindowFocused ? _scrollDelta : 0f) + _simScroll; } internal set { _scrollDelta = value; } }
         private static float _scrollDelta;
+
+        // This tick's simulated mouse movement and wheel (#457): the host sets them from HostInput.Simulated before the scripts
+        // run. Unlike the physical mouse they reach the game while another app has the focus — the editor's send_input is
+        // driven from a terminal in front.
+        private static float _simDeltaX, _simDeltaY, _simScroll;
+        internal static void SetSimulated(float dx, float dy, float scroll) { _simDeltaX = dx; _simDeltaY = dy; _simScroll = scroll; }
+        /// <summary>The debug free camera took this tick's mouse movement, the simulated one too.</summary>
+        internal static void ClearSimulatedLook() { _simDeltaX = 0f; _simDeltaY = 0f; }
 
         // ---- Window focus: ALL input (keyboard, mouse, controller) is dead unless OUR window is the foreground
         // window. Works everywhere — in-editor play, the external game window, and an exported debug/release build
         // (they're all in this process) — so an unfocused/alt-tabbed game can't be driven by stray global input. ----
-        /// <summary>True only while this app's window is the foreground window. Input is ignored otherwise.
+        /// <summary>True only while this app's window is the foreground window. Physical input is ignored otherwise;
+        /// simulated input (the editor's MCP tool send_input, the player's --input file) still reaches the game (#457).
         /// The host (native GameHost / editor shell) reports focus through Editor.Core.Input.HostInput.</summary>
         public static bool WindowFocused { get { return Editor.Core.Input.HostInput.IsWindowFocused(); } }
 
@@ -1079,8 +1089,12 @@ namespace Vortex
 
     /// <summary>
     /// Persistent save data (#40) — PlayerPrefs-style key/value storage plus save SLOTS, stored per game
-    /// under %APPDATA%\VortexGames\&lt;project&gt;. Works identically in editor play and shipped builds: every play
-    /// session starts from the file on disk with slot 0 active, like a game that was just launched (#452).
+    /// under %APPDATA%\VortexGames\&lt;project&gt; (macOS: ~/Library/Application Support/VortexGames/&lt;project&gt;). Works
+    /// identically in editor play and shipped builds: every play session starts from the file on disk with slot 0 active,
+    /// like a game that was just launched (#452). While the game is played from the editor (Play, and the standalone player
+    /// the editor starts), a project whose play-mode saves are Sandbox (Project Settings ▸ General ▸ Play testing ▸ Saves) —
+    /// the default for new projects — keeps its slots in VortexGames\&lt;project&gt;\editor instead, so play testing never
+    /// changes the exported game's saves (#458).
     /// Values auto-flush to disk on scene switch and play end; call <see cref="Flush"/> after a checkpoint
     /// to be crash-safe. Slots: <c>Save.UseSlot(2)</c> switches the active file (slot 0 is the default).
     /// </summary>
@@ -1089,6 +1103,11 @@ namespace Vortex
         private static Dictionary<string, string> _data;   // typed values as "i:", "f:", "s:" strings
         private static int _slot;
         private static bool _dirty;
+        private static bool _sandbox;   // where this play session's slots live, chosen when it began (#458)
+
+        /// <summary>The host plays the game from its project — the editor, and the player started with --project (#458): the
+        /// project's Play-mode saves setting decides where the slots live. False in an exported game: its own folder.</summary>
+        internal static bool PlaysFromProject;
 
         /// <summary>The active save slot (0 at the start of every play session).</summary>
         public static int CurrentSlot { get { return _slot; } }
@@ -1097,13 +1116,27 @@ namespace Vortex
         /// the session reads the file as it is on disk NOW (#452). The cache lives in the engine assembly and used to
         /// outlive editor play sessions: a save edited or deleted between two runs was ignored, and the next Flush wrote
         /// the stale data back over it. Nothing is written here: the last session flushed on Stop, and if that write
-        /// failed, its leftovers must not overwrite what the user put on disk since. Scene switches keep cache and slot.</summary>
+        /// failed, its leftovers must not overwrite what the user put on disk since. Scene switches keep cache and slot.
+        /// The session's folder is chosen here too (#458): a Play-mode saves setting changed while playing applies at the
+        /// next Play, so one session never reads one folder and writes the other.</summary>
         internal static void BeginSession()
         {
             _data = null;
             _dirty = false;
             _slot = 0;
+            _sandbox = SandboxForPlay();
         }
+
+        /// <summary>Would a play session started now use the sandbox (#458)? The host plays from the project and the project's
+        /// Play-mode saves setting is Sandbox.</summary>
+        internal static bool SandboxForPlay()
+        {
+            if (!PlaysFromProject) return false;
+            try { return Editor.Core.Data.ProjectData.Current?.Settings?.SandboxedPlaySaves == true; } catch { return false; }
+        }
+
+        /// <summary>The running (or last) session keeps its slots in the sandbox.</summary>
+        internal static bool SessionSandboxed => _sandbox;
 
         /// <summary>Switch the active save slot (loads that slot's file; creates it on first write).</summary>
         public static void UseSlot(int slot)
@@ -1113,77 +1146,163 @@ namespace Vortex
             _data = null;   // lazy-reload from the new slot's file
         }
 
+        /// <summary>Whether the slot's file exists — a game that was saved there ("Continue" instead of "New Game").</summary>
         public static bool SlotExists(int slot) { return System.IO.File.Exists(SlotPath(slot)); }
 
+        /// <summary>Delete a slot's file (a "new game" for that slot). Deleting the active slot also empties what this session
+        /// holds of it, unsaved changes included.</summary>
         public static void DeleteSlot(int slot)
         {
             try { System.IO.File.Delete(SlotPath(slot)); } catch { }
             if (slot == _slot) { _data = new Dictionary<string, string>(); _dirty = false; }
         }
 
+        /// <summary>Read the active slot from disk again, dropping the changes not flushed yet — "load the last save": what
+        /// <see cref="Flush"/> last wrote, or what a tool (the editor's MCP set_save / restore_save) put there meanwhile.</summary>
+        public static void Reload()
+        {
+            _data = null;
+            _dirty = false;
+        }
+
+        /// <summary>Every key of the active slot (sorted), unsaved changes included.</summary>
+        public static string[] Keys()
+        {
+            var d = Data();
+            var keys = new string[d.Count];
+            d.Keys.CopyTo(keys, 0);
+            Array.Sort(keys, StringComparer.Ordinal);
+            return keys;
+        }
+
+        /// <summary>Store a whole number under <paramref name="key"/> (read it back with <see cref="GetInt"/>).</summary>
         public static void SetInt(string key, int value)       { Data()[key] = "i:" + value.ToString(System.Globalization.CultureInfo.InvariantCulture); _dirty = true; }
+        /// <summary>Store a number with decimals under <paramref name="key"/> (read it back with <see cref="GetFloat"/>).</summary>
         public static void SetFloat(string key, float value)   { Data()[key] = "f:" + value.ToString("R", System.Globalization.CultureInfo.InvariantCulture); _dirty = true; }
+        /// <summary>Store text under <paramref name="key"/> (read it back with <see cref="GetString"/>).</summary>
         public static void SetString(string key, string value) { Data()[key] = "s:" + (value ?? ""); _dirty = true; }
+        /// <summary>Store a flag under <paramref name="key"/> (kept as the whole number 0 or 1; <see cref="GetBool"/>).</summary>
         public static void SetBool(string key, bool value)     { SetInt(key, value ? 1 : 0); }
 
+        /// <summary>The whole number stored under <paramref name="key"/>, or <paramref name="def"/> when there is none (or it
+        /// was stored as another type).</summary>
         public static int GetInt(string key, int def = 0)
         {
             return Data().TryGetValue(key, out var v) && v.StartsWith("i:")
                 && int.TryParse(v.Substring(2), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var i) ? i : def;
         }
+        /// <summary>The number stored with <see cref="SetFloat"/> under <paramref name="key"/>, or <paramref name="def"/>.</summary>
         public static float GetFloat(string key, float def = 0f)
         {
             return Data().TryGetValue(key, out var v) && v.StartsWith("f:")
                 && float.TryParse(v.Substring(2), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var f) ? f : def;
         }
+        /// <summary>The text stored under <paramref name="key"/>, or <paramref name="def"/>.</summary>
         public static string GetString(string key, string def = "")
         {
             return Data().TryGetValue(key, out var v) && v.StartsWith("s:") ? v.Substring(2) : def;
         }
+        /// <summary>The flag stored with <see cref="SetBool"/> under <paramref name="key"/>, or <paramref name="def"/>.</summary>
         public static bool GetBool(string key, bool def = false) { return GetInt(key, def ? 1 : 0) != 0; }
 
+        /// <summary>Whether the active slot holds <paramref name="key"/>.</summary>
         public static bool HasKey(string key) { return Data().ContainsKey(key); }
+        /// <summary>Remove <paramref name="key"/> from the active slot.</summary>
         public static void DeleteKey(string key) { if (Data().Remove(key)) _dirty = true; }
+        /// <summary>Remove every key of the active slot (the file stays — <see cref="DeleteSlot"/> removes it).</summary>
         public static void DeleteAll() { Data().Clear(); _dirty = true; }
 
         /// <summary>Write pending changes to disk now (checkpoint!). Auto-called on scene switch + play end.</summary>
         public static void Flush()
         {
             if (!_dirty || _data == null) return;
-            try
-            {
-                var path = SlotPath(_slot);
-                System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path));
-                var sb = new System.Text.StringBuilder();
-                foreach (var kv in _data)
-                    sb.Append(Escape(kv.Key)).Append('\t').Append(Escape(kv.Value)).Append('\n');
-                System.IO.File.WriteAllText(path, sb.ToString());
-                _dirty = false;
-            }
-            catch (Exception ex) { Debug.LogError("Save.Flush failed: " + ex.Message); }
+            string error = Write(SlotPath(_slot), _data);
+            if (error == null) _dirty = false;
+            else Debug.LogError("Save.Flush failed: " + error);
         }
 
         private static Dictionary<string, string> Data()
         {
             if (_data != null) return _data;
-            _data = new Dictionary<string, string>();
+            _data = ReadFile(SlotPath(_slot));
+            return _data;
+        }
+
+        // ---- the slot files, for the editor's MCP save tools (#458) ----
+
+        /// <summary>The active slot as the running game sees it now, unsaved changes included (a copy of the raw values).</summary>
+        internal static Dictionary<string, string> LiveValues() { return new Dictionary<string, string>(Data()); }
+
+        /// <summary>Change the active slot in the running game's cache — raw values, null removes the key; replace empties the
+        /// slot first — and write it, so the game reads the change at once and the file matches. Null on success, else why
+        /// the file could not be written.</summary>
+        internal static string ApplyLive(IDictionary<string, string> raw, bool replace)
+        {
+            var d = Data();
+            if (replace) d.Clear();
+            foreach (var kv in raw)
+            {
+                if (kv.Value == null) d.Remove(kv.Key);
+                else d[kv.Key] = kv.Value;
+            }
+            _dirty = true;
+            string error = Write(SlotPath(_slot), d);
+            if (error == null) _dirty = false;
+            return error;
+        }
+
+        /// <summary>Write the running game's unsaved changes of the active slot (null on success, else why not).</summary>
+        internal static string FlushLive()
+        {
+            if (!_dirty || _data == null) return null;
+            string error = Write(SlotPath(_slot), _data);
+            if (error == null) _dirty = false;
+            return error;
+        }
+
+        /// <summary>A slot file's raw values ("i:5", "f:1.5", "s:text"); empty when there is none or it cannot be read.</summary>
+        internal static Dictionary<string, string> ReadFile(string path)
+        {
+            var data = new Dictionary<string, string>();
             try
             {
-                var path = SlotPath(_slot);
                 if (System.IO.File.Exists(path))
                 {
                     foreach (var line in System.IO.File.ReadAllLines(path))
                     {
                         int t = line.IndexOf('\t');
-                        if (t > 0) _data[Unescape(line.Substring(0, t))] = Unescape(line.Substring(t + 1));
+                        if (t > 0) data[Unescape(line.Substring(0, t))] = Unescape(line.Substring(t + 1));
                     }
                 }
             }
             catch { }
-            return _data;
+            return data;
         }
 
-        internal static string SlotPath(int slot)
+        /// <summary>Write raw values as a slot file (its folder is created). Null on success, else the error's message.</summary>
+        internal static string Write(string path, IEnumerable<KeyValuePair<string, string>> data)
+        {
+            try
+            {
+                System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path));
+                var sb = new System.Text.StringBuilder();
+                foreach (var kv in data)
+                    sb.Append(Escape(kv.Key)).Append('\t').Append(Escape(kv.Value)).Append('\n');
+                System.IO.File.WriteAllText(path, sb.ToString());
+                return null;
+            }
+            catch (Exception ex) { return ex.Message; }
+        }
+
+        /// <summary>The file of a slot in the folder this session uses.</summary>
+        internal static string SlotPath(int slot) { return SlotPath(slot, _sandbox); }
+
+        /// <summary>The file of a slot: in the game's own folder, or in the play-mode sandbox.</summary>
+        internal static string SlotPath(int slot, bool sandbox) { return System.IO.Path.Combine(Folder(sandbox), "save_slot" + slot + ".dat"); }
+
+        /// <summary>VortexGames/&lt;project&gt; in the user's app-data folder — the exported game's saves — or its editor/
+        /// subfolder, the play-mode sandbox (#458), which the exported game never reads.</summary>
+        internal static string Folder(bool sandbox)
         {
             string game = "Game";
             try { game = Editor.Core.Data.ProjectData.Current?.Name ?? "Game"; } catch { }
@@ -1191,11 +1310,27 @@ namespace Vortex
             // the user's app-data folder — VORTEX_APPDATA_DIR moves it for automated runs (tests, smoke checks) the way it
             // moves the editor's own state, so they never touch a real save
             var root = Editor.Core.Services.EditorPaths.AppDataRoot();
-            return System.IO.Path.Combine(root, "VortexGames", game, "save_slot" + slot + ".dat");
+            var dir = System.IO.Path.Combine(root, "VortexGames", game);
+            return sandbox ? System.IO.Path.Combine(dir, "editor") : dir;
         }
 
-        private static string Escape(string s)   { return s.Replace("\\", "\\\\").Replace("\t", "\\t").Replace("\n", "\\n"); }
-        private static string Unescape(string s) { return s.Replace("\\n", "\n").Replace("\\t", "\t").Replace("\\\\", "\\"); }
+        private static string Escape(string s)   { return s.Replace("\\", "\\\\").Replace("\t", "\\t").Replace("\n", "\\n").Replace("\r", "\\r"); }
+
+        /// <summary>One pass, so an escaped backslash stays one: "C:\new" came back as "C:" + a line break + "ew" when the
+        /// sequences were replaced one after another (#458).</summary>
+        private static string Unescape(string s)
+        {
+            if (s.IndexOf('\\') < 0) return s;
+            var sb = new System.Text.StringBuilder(s.Length);
+            for (int i = 0; i < s.Length; i++)
+            {
+                char c = s[i];
+                if (c != '\\' || i + 1 >= s.Length) { sb.Append(c); continue; }
+                char n = s[++i];
+                sb.Append(n == 'n' ? '\n' : n == 't' ? '\t' : n == 'r' ? '\r' : n);
+            }
+            return sb.ToString();
+        }
     }
 
     /// <summary>Mouse mode. Locked = captured + hidden for mouse-look (gameplay). Unlocked = free cursor so
@@ -1242,7 +1377,9 @@ namespace Vortex
     /// can't walk through walls/props/models, and you can't clip through even up close. <see cref="Grounded"/> is
     /// true when the last move ended resting on a surface (use it to reset jumping/gravity). Add Colliders to your
     /// level objects in the editor; the character itself needs no collider — you pass its capsule to MoveCharacter
-    /// each frame. Props with a Collider AND a Rigidbody (Dynamic) are simulated by the physics engine (Jolt): they
+    /// each frame. A character that should be hit by rays (shooting, interaction) may carry a solid Collider: pass your
+    /// EntityId as the characterId and MoveCharacter ignores that entity's own colliders (and its children's). Props
+    /// with a Collider AND a Rigidbody (Dynamic) are simulated by the physics engine (Jolt): they
     /// fall, stack, roll, get pushed by the character and react to <see cref="AddForce"/> / <see cref="AddImpulse"/>.
     /// </summary>
     public static class Physics
@@ -1276,11 +1413,56 @@ namespace Vortex
         }
 
         /// <summary>As above, but <paramref name="characterId"/> (e.g. your entity's EntityId) registers this
-        /// character so OTHER characters can't walk through it — for multiplayer / multiple actors.</summary>
+        /// character so OTHER characters can't walk through it — for multiplayer / multiple actors. A character that
+        /// belongs to an entity ignores that entity's own colliders and its children's, in both controllers (#417): give a
+        /// guard a solid Collider so rays hit it, it still walks freely (other characters and rays still collide with that
+        /// collider; it raises no OnCollisionEnter against itself) — and rays that hit its capsule report that entity.
+        /// <para>Which entity a character belongs to (#406): the entity whose code moves it with its own EntityId — a
+        /// callback of one of its scripts (Start, Update, a coroutine, OnMessage, a UI action on it), a task of its
+        /// behaviour tree (passing <c>Agent</c>), a handler of its Areas.Entered / Exited event (passing the id it is
+        /// handed). Once a character belongs to an entity it keeps it for every later move of the id, from any code: a
+        /// shotgun's Update calling <c>guard.Step()</c> moves the guard's own capsule. A script that moves a character
+        /// none of whose own code ever moved it — a squad manager stepping its guards — names the entity with
+        /// <see cref="MoveCharacter(Vector3, float, float, Vector3, long, long)"/>. Any other id is a custom one: the
+        /// character belongs to no entity and every collider blocks it, even when the id equals some entity's
+        /// handle.</para>
+        /// <para>Lifetime (#407): the registered capsule stays where the last move left it until play stops — or until the
+        /// entity (or an ancestor) is destroyed or deactivated, it (or the model under it) becomes a ragdoll, or
+        /// <see cref="RemoveCharacter"/> is called. The next MoveCharacter with the id registers it again.</para></summary>
         public static Vector3 MoveCharacter(Vector3 feet, float radius, float height, Vector3 move, long characterId)
         {
             if (Host == null) return new Vector3(feet.X + move.X, feet.Y + move.Y, feet.Z + move.Z);
             bool g; var r = Host.MoveCharacter(feet, radius, height, move, out g, characterId); _grounded = g; return r;
+        }
+
+        /// <summary>As above, with the entity the character belongs to named outright (#406) — for a script that moves
+        /// OTHER entities' characters, such as a squad manager stepping its guards: <paramref name="ownerEntity"/> is that
+        /// entity (a behaviour's EntityId, a Scene.Find handle). Its own colliders are no obstacles for the capsule, rays
+        /// that hit the capsule report it, and the capsule goes when it is destroyed, deactivated or becomes a ragdoll. The
+        /// character keeps that owner for every later move of <paramref name="characterId"/>, from any code. 0 = no owner
+        /// named: the same as the overload without it.
+        /// <c>Physics.MoveCharacter(guardFeet, 0.35f, 1.8f, step, guardId, guardId);</c></summary>
+        public static Vector3 MoveCharacter(Vector3 feet, float radius, float height, Vector3 move, long characterId, long ownerEntity)
+        {
+            if (Host == null) return new Vector3(feet.X + move.X, feet.Y + move.Y, feet.Z + move.Z);
+            var rt = Host as Editor.Scripting.ScriptRuntime;
+            var owner = ownerEntity != 0 && rt != null ? rt.FindEntityByHandle(ownerEntity) : null;
+            bool g;
+            var r = owner != null ? rt.MoveCharacter(feet, radius, height, move, out g, characterId, owner)
+                                  : Host.MoveCharacter(feet, radius, height, move, out g, characterId);
+            _grounded = g; return r;
+        }
+
+        /// <summary>Unregister a character (#407): the capsule MoveCharacter registered under <paramref name="characterId"/>
+        /// stops blocking other characters, <see cref="CanStand"/> and trigger volumes — and with the "jolt" controller its
+        /// Jolt character leaves the physics world (rays, props and other characters no longer meet it). For actors that
+        /// stop moving without being destroyed: parked, in a cutscene, pooled, hidden. Destroying or deactivating the
+        /// entity and Ragdoll.Activate do this on their own. A later MoveCharacter with the same id creates it again.
+        /// Returns true when a character was registered under the id.
+        /// <c>Physics.RemoveCharacter(EntityId);</c></summary>
+        public static bool RemoveCharacter(long characterId)
+        {
+            return Editor.Core.Services.Physics.PhysicsService.RemoveCharacter(characterId);
         }
 
         /// <summary>Stair-step + slope tuning (#48) for every MoveCharacter call. <paramref name="stepHeight"/> is
@@ -1300,7 +1482,13 @@ namespace Vortex
         /// feet, capsule, this frame's displacement in, resolved feet and <see cref="Grounded"/> out; the step height
         /// and slope limit from <see cref="SetCharacterOptions"/> apply to both. Call once in Start() — like the
         /// options it resets to "managed" on every scene load. Without a physics world (an engine build without
-        /// Jolt) "jolt" silently keeps the managed controller.</summary>
+        /// Jolt) "jolt" silently keeps the managed controller.
+        /// <para>Rays and characters (#406): with "managed" a character is no physics body — rays and
+        /// <see cref="OverlapSphere"/> never hit it (give it a Collider to make it shootable). With "jolt" every character
+        /// is a capsule body: <see cref="Raycast(Vector3, Vector3, float, out RaycastHit, int)"/> (default mask),
+        /// OverlapSphere and <see cref="OverlapPoint"/> hit it and report the entity the character belongs to (see
+        /// <see cref="MoveCharacter(Vector3, float, float, Vector3, long)"/>; a custom id reports nothing), and a ray with
+        /// that entity as ignoreEntity passes through its capsule — even from inside it.</para></summary>
         public static void SetCharacterController(string controller)
         {
             bool jolt = controller != null && (controller.Trim().ToLowerInvariant() == "jolt" || controller.Trim().ToLowerInvariant() == "v2");
@@ -1326,14 +1514,16 @@ namespace Vortex
         /// stand-up ceiling check: before a crouched character rises, ask with the STANDING height — false means a
         /// ceiling, a table top or another character is in the way, so stay crouched this frame. Tests the level
         /// colliders, simulated props and other characters; <paramref name="characterId"/> excludes your own capsule
-        /// (pass what you pass to <see cref="MoveCharacter(Vector3, float, float, Vector3, long)"/>). Works with both
-        /// controllers. Without a collision world → true.</summary>
+        /// and, when the character belongs to an entity (your script's own EntityId, or see
+        /// <see cref="MoveCharacter(Vector3, float, float, Vector3, long)"/>), that entity's own colliders — pass what you
+        /// pass to MoveCharacter. Works with both controllers. Without a collision world → true.</summary>
         public static bool CanStand(Vector3 feet, float radius, float height, long characterId = 0)
         {
             // a 2 cm lift keeps the floor the character stands on out of the test — only what is ABOVE counts
             var probe = new Vector3(feet.X, feet.Y + 0.02f, feet.Z);
             return !Editor.Core.Services.Physics.CollisionService.CapsuleOverlaps(
-                new Editor.ECS.Vector3(probe.X, probe.Y, probe.Z), radius, height - 0.02f, characterId);
+                new Editor.ECS.Vector3(probe.X, probe.Y, probe.Z), radius, height - 0.02f, characterId,
+                owner: Editor.Scripting.ScriptRuntime.Instance?.CharacterOwner(characterId));
         }
 
         /// <summary>Ray straight DOWN from <paramref name="from"/> (up to <paramref name="maxDist"/>) against the world
@@ -1369,13 +1559,26 @@ namespace Vortex
         /// and fills <paramref name="hit"/> with point/normal/distance/entity on the closest hit.
         /// <paramref name="layerMask"/> filters by entity Layer bit (default: everything). The horror
         /// workhorse: line-of-sight checks, interaction rays, "what am I looking at".
-        /// <c>if (Physics.Raycast(eye, Forward, 3f, out var h) &amp;&amp; h.Tag == "Door") ...</c></summary>
+        /// <c>if (Physics.Raycast(eye, Forward, 3f, out var h) &amp;&amp; h.Tag == "Door") ...</c>
+        /// <para>What a ray hits: solid colliders (never triggers) and simulated props at their current pose. Characters
+        /// depend on the controller (<see cref="SetCharacterController"/>): with the default "managed" controller rays never
+        /// hit a character — give it a Collider to make it shootable (MoveCharacter ignores the mover's own colliders);
+        /// with "jolt" the character capsules are bodies and a hit reports the entity the character belongs to (EntityId,
+        /// Name, Tag; see MoveCharacter — none for a custom id). A ray with an explicit layer mask casts against the
+        /// engine's own collision world, where characters are never hit.</para>
+        /// <para>Rays that start inside something (#418), the same on every path: a box, sphere, capsule or convex collider
+        /// that contains the origin is not hit — the ray reports what lies beyond it. A ray that starts ON a surface (or
+        /// less than 1 mm inside it) and points into it hits it at distance 0 — a probe from the top of a crate finds the
+        /// crate. A mesh collider or terrain is a surface and is hit from either side. To ask "is this point inside a
+        /// collider?" use <see cref="OverlapPoint"/>.</para></summary>
         public static bool Raycast(Vector3 origin, Vector3 direction, float maxDist, out RaycastHit hit, int layerMask = ~0)
             => Raycast(origin, direction, maxDist, out hit, layerMask, 0);
 
         /// <summary>Raycast that passes THROUGH one entity (#341): <paramref name="ignoreEntity"/> — its handle, as
-        /// RaycastHit.EntityId / a behaviour's EntityId — and everything under it never count as the hit. The car's
-        /// ground probe ignores the car, the player's interaction ray ignores the player.
+        /// RaycastHit.EntityId / a behaviour's EntityId — and everything under it never count as the hit: its colliders,
+        /// its ragdoll and (with the "jolt" controller) its character capsule are left out of the cast, however deep
+        /// inside them the ray starts (#406 / #418). The car's ground probe ignores the car, the player's interaction ray
+        /// ignores the player, a guard's eye ray ignores the guard.
         /// <c>Physics.Raycast(wheel, Vector3.Down, 1f, out var h, ~0, EntityId)</c></summary>
         public static bool Raycast(Vector3 origin, Vector3 direction, float maxDist, out RaycastHit hit, int layerMask, long ignoreEntity)
         {
@@ -1386,41 +1589,43 @@ namespace Vortex
             if (dl < 1e-6f || maxDist <= 0f) return false;
             var unit = new Editor.ECS.Vector3(d.X / dl, d.Y / dl, d.Z / dl);
             var ignored = ignoreEntity != 0 ? Editor.Scripting.ScriptRuntime.Instance.FindEntityByHandle(ignoreEntity) : null;
-            float travelled = 0f;
-            // the ignored entity is stepped over: the cast resumes just past its hit, a few times at most
-            for (int attempt = 0; attempt < 4; attempt++)
-            {
-                Editor.ECS.Vector3 point, normal; Editor.ECS.GameEntity entity; float dist;
-                float remaining = maxDist - travelled;
-                if (remaining <= 0f) return false;
-                // Jolt casts against the live world (static level, simulated props at their CURRENT pose, triggers
-                // excluded). An explicit entity-layer mask keeps the managed cast (entity layers are not physics layers).
-                bool got = Editor.Core.Services.Physics.PhysicsService.IsBuilt && layerMask == ~0
-                    ? Editor.Core.Services.Physics.PhysicsService.Raycast(o, unit, remaining, out point, out normal, out entity, out dist)
-                    : Editor.Core.Services.Physics.CollisionService.Raycast(o, unit, remaining, layerMask, out point, out normal, out entity, out dist);
-                if (!got) return false;
-                if (ignored != null && entity != null && IsSelfOrUnder(entity, ignored))
-                {
-                    const float step = 0.01f;
-                    travelled += dist + step;
-                    o = new Editor.ECS.Vector3(point.X + unit.X * step, point.Y + unit.Y * step, point.Z + unit.Z * step);
-                    continue;
-                }
-                hit.Point = new Vector3(point.X, point.Y, point.Z);
-                hit.Normal = new Vector3(normal.X, normal.Y, normal.Z);
-                hit.Distance = travelled + dist;
-                hit.Name = entity != null ? (entity.Name ?? "") : "";
-                hit.Tag = entity != null ? (entity.Tag ?? "") : "";
-                hit.EntityId = entity != null ? Editor.Scripting.ScriptRuntime.Instance.HandleForEntity(entity) : 0;
-                return true;
-            }
-            return false;
+            Editor.ECS.Vector3 point, normal; Editor.ECS.GameEntity entity; float dist;
+            // Jolt casts against the live world (static level, simulated props at their CURRENT pose, triggers
+            // excluded). An explicit entity-layer mask keeps the managed cast (entity layers are not physics layers).
+            // The ignored entity is filtered INSIDE either cast (#406 / #418) — stepping past its hits could not leave a
+            // capsule or crate the ray started in.
+            bool got = Editor.Core.Services.Physics.PhysicsService.IsBuilt && layerMask == ~0
+                ? Editor.Core.Services.Physics.PhysicsService.Raycast(o, unit, maxDist, out point, out normal, out entity, out dist,
+                    Editor.Core.Services.Physics.PhysicsService.SolidLayerMask, ignored)
+                : Editor.Core.Services.Physics.CollisionService.Raycast(o, unit, maxDist, layerMask, out point, out normal, out entity, out dist, ignored);
+            if (!got) return false;
+            hit.Point = new Vector3(point.X, point.Y, point.Z);
+            hit.Normal = new Vector3(normal.X, normal.Y, normal.Z);
+            hit.Distance = dist;
+            hit.Name = entity != null ? (entity.Name ?? "") : "";
+            hit.Tag = entity != null ? (entity.Tag ?? "") : "";
+            hit.EntityId = entity != null ? Editor.Scripting.ScriptRuntime.Instance.HandleForEntity(entity) : 0;
+            return true;
         }
 
-        private static bool IsSelfOrUnder(Editor.ECS.GameEntity e, Editor.ECS.GameEntity root)
+        /// <summary>Every entity whose solid collider CONTAINS <paramref name="point"/> (#418) — "am I inside something?",
+        /// the question a ray no longer answers (a ray that starts inside a convex collider does not hit it). Box, sphere,
+        /// capsule and convex colliders are solid. A mesh collider contains a point that has an odd number of its triangles
+        /// straight above it AND straight below it — everything a closed mesh encloses; an open mesh (a roof, an awning, a
+        /// cave shell without a floor) contains nothing, so a point under it is not inside it. A terrain contains nothing.
+        /// With the "jolt" controller a point inside a character capsule reports that character. Triggers are not
+        /// included. Without a physics-enabled build the collision world answers (the same rules, no characters).
+        /// <c>bool buried = Physics.OverlapPoint(eye).Length &gt; 0;</c></summary>
+        public static long[] OverlapPoint(Vector3 point)
         {
-            for (var p = e; p != null; p = p.Parent) if (ReferenceEquals(p, root)) return true;
-            return false;
+            var p = new Editor.ECS.Vector3(point.X, point.Y, point.Z);
+            var hits = Editor.Core.Services.Physics.PhysicsService.IsBuilt
+                ? Editor.Core.Services.Physics.PhysicsService.OverlapPoint(p)
+                : Editor.Core.Services.Physics.CollisionService.OverlapPoint(p);
+            var result = new long[hits.Count];
+            var rt = Editor.Scripting.ScriptRuntime.Instance;
+            for (int i = 0; i < hits.Count; i++) result[i] = rt != null ? rt.HandleForEntity(hits[i]) : 0;
+            return result;
         }
 
         /// <summary>Raycast without hit details — "is something within maxDist in that direction?".</summary>
