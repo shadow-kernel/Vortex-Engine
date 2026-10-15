@@ -63,6 +63,18 @@ namespace VortexTests
         }
 
         [Test]
+        public static void CaptureNamesAreFilesOnWindowsToo(TestContext t)
+        {
+            foreach (var device in new[] { "CON.bmp", "nul.bmp", "COM1.bmp", "lpt9.bmp", "AUX", "prn.tar.bmp", "CON .bmp", "COM\u00B9.bmp", "CONIN$.bmp" })
+                t.False(PlayerRun.IsPlainFileName(device), "a Windows device is no file: " + device);
+            foreach (var odd in new[] { "x.bmp.", "x.bmp ", " x.bmp", "a<b.bmp", "a|b.bmp", "a?.bmp", "a*.bmp", "a\"b.bmp", "a.bmp:zone" })
+                t.False(PlayerRun.IsPlainFileName(odd), "Windows would write another file or none: " + odd);
+            foreach (var fine in new[] { "door.bmp", "console.bmp", "com10.bmp", "nul_hit.bmp", "COM.bmp", "auto_0001.bmp" })
+                t.True(PlayerRun.IsPlainFileName(fine), "an ordinary name: " + fine);
+            t.True(PlayerRun.CheckInputScript("1 capture CON.bmp", 10)?.Contains("without folders") == true, "the script check refuses it before the run");
+        }
+
+        [Test]
         public static void TheCommandLineCarriesTheRun(TestContext t)
         {
             var a = PlayerRun.Arguments(new PlayerRun.Options

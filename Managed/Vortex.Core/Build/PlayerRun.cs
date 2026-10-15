@@ -95,7 +95,7 @@ namespace Editor.Core.Services.Build
                     if (c.T > runSeconds) return at + "never runs: the run ends after " + runSeconds.ToString("0.###", CultureInfo.InvariantCulture) + " s (raise seconds).";
                     if (c.Op != "capture") continue;
                     if (!IsPlainFileName(c.Text))
-                        return at + "capture takes a file name without folders, e.g. \"capture door.bmp\": captures go to the run's capture folder.";
+                        return at + "capture takes a plain file name without folders, not a Windows device name (CON, NUL, COM1 …), e.g. \"capture door.bmp\": captures go to the run's capture folder.";
                     if (!c.Text.EndsWith(".bmp", StringComparison.OrdinalIgnoreCase)) return at + "a capture is a BMP: name it like \"door.bmp\".";
                     captures++;
                 }
@@ -125,11 +125,35 @@ namespace Editor.Core.Services.Build
             return m.Success && int.TryParse(m.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out fps);
         }
 
-        /// <summary>A capture name the player writes into its capture folder and nowhere else: no folder, no root, no "..", no
-        /// character a file name cannot hold.</summary>
+        /// <summary>A capture name the player writes into its capture folder and nowhere else, on every system: no folder, no root,
+        /// no "..", no character a file name cannot hold, no Windows device name (CON, NUL, COM1 … with any extension — writing to
+        /// one reaches the device, not a file) and no trailing dot or space (Windows drops them: another name than asked).</summary>
         public static bool IsPlainFileName(string name)
             => !string.IsNullOrWhiteSpace(name) && !Path.IsPathRooted(name) && !name.Contains("..") && name.IndexOfAny(new[] { '/', '\\', ':' }) < 0
-               && name.IndexOfAny(Path.GetInvalidFileNameChars()) < 0 && Path.GetFileName(name) == name;
+               && name.IndexOfAny(Path.GetInvalidFileNameChars()) < 0 && name.IndexOfAny(WindowsInvalid) < 0 && Path.GetFileName(name) == name
+               && name.Trim() == name && !name.EndsWith(".", StringComparison.Ordinal) && !IsWindowsDeviceName(name);
+
+        // what Windows refuses in a file name although macOS and Linux take it
+        private static readonly char[] WindowsInvalid = { '<', '>', '"', '|', '?', '*' };
+
+        /// <summary>Whether Windows reads <paramref name="name"/> as a device (CON, PRN, AUX, NUL, COM0–9, LPT0–9, COM¹²³, LPT¹²³,
+        /// CONIN$, CONOUT$ — before the first dot, trailing spaces ignored, any case).</summary>
+        public static bool IsWindowsDeviceName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return false;
+            int dot = name.IndexOf('.');
+            string stem = (dot >= 0 ? name.Substring(0, dot) : name).TrimEnd(' ').ToUpperInvariant();
+            switch (stem)
+            {
+                case "CON": case "PRN": case "AUX": case "NUL": case "CONIN$": case "CONOUT$": return true;
+            }
+            if (stem.Length == 4 && (stem.StartsWith("COM", StringComparison.Ordinal) || stem.StartsWith("LPT", StringComparison.Ordinal)))
+            {
+                char d = stem[3];
+                return (d >= '0' && d <= '9') || d == '\u00B9' || d == '\u00B2' || d == '\u00B3';
+            }
+            return false;
+        }
 
         private static readonly Regex EngineError = new Regex(@"\b(failed|fatal|crash(ed)?|abort(ed)?)\b|\berror\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
