@@ -160,8 +160,7 @@ namespace VortexEditor.Shell
                 if (!string.IsNullOrEmpty(proj)) psi.ArgumentList.Add("--project=" + proj);
                 psi.ArgumentList.Add(modeArg);
                 psi.ArgumentList.Add("--count=" + count.ToString(CultureInfo.InvariantCulture));
-                var native = Environment.GetEnvironmentVariable("VORTEX_NATIVE_DIR");
-                if (!string.IsNullOrEmpty(native)) psi.Environment["VORTEX_NATIVE_DIR"] = native;
+                Editor.Core.Services.Build.PlayerRun.PassNativeLocation(psi.Environment);   // the editor's engine, also in an installed layout
                 Process.Start(psi);
             }
             catch (Exception ex) { _ = Dialogs.Alert("Stress Test", "Could not launch the stress player:\n" + ex.Message); }

@@ -17,12 +17,22 @@ namespace VortexEditor.Panels.Inspector
 {
     /// <summary>
     /// The inspector's property-row vocabulary: label column + editor column, macOS-style (label right-aligned,
-    /// controls left-aligned). Every row edits the component through its property setter, so undo is automatic.
+    /// controls left-aligned). Every row edits the component through its property setter — directly, without an undo step;
+    /// <see cref="Changed"/> tells the inspector a row wrote a value (#411 review: its scene is unsaved now).
     /// Shared by the inspector cards and every editor window (collision / socket / material / …).
     /// </summary>
     public static class PropertyRows
     {
         public const double LabelWidth = 112;
+
+        /// <summary>Raised after a row wrote a value, with the control that wrote it — the inspector that hosts the control
+        /// marks its entity's scene unsaved (#411 review). UI thread.</summary>
+        public static event Action<Control> Changed;
+
+        private static void Wrote(Control origin)
+        {
+            try { Changed?.Invoke(origin); } catch { }
+        }
 
         public static Grid Row(string label, Control editor, string tooltip = null)
         {
@@ -88,6 +98,7 @@ namespace VortexEditor.Panels.Inspector
         public static TextBox FloatBox(Func<float> get, Action<float> set, double step = 0.1, float? min = null, float? max = null, string format = "0.###")
         {
             var box = new TextBox { Classes = { "number" }, MinHeight = 22, Text = Fmt(get(), format) };
+            void Apply(float v) { set(v); Wrote(box); }
             void Commit()
             {
                 // focusing a box and leaving it must not round the value to the displayed precision
@@ -96,7 +107,7 @@ namespace VortexEditor.Panels.Inspector
                 {
                     if (min.HasValue) v = Math.Max(min.Value, v);
                     if (max.HasValue) v = Math.Min(max.Value, v);
-                    if (v != get()) set(v);
+                    if (v != get()) Apply(v);
                 }
                 box.Text = Fmt(get(), format);
             }
@@ -107,7 +118,7 @@ namespace VortexEditor.Panels.Inspector
                 if (!box.IsFocused) return;
                 float v = get() + (float)(e.Delta.Y > 0 ? step : -step) * (e.KeyModifiers.HasFlag(KeyModifiers.Shift) ? 10 : 1);
                 if (min.HasValue) v = Math.Max(min.Value, v); if (max.HasValue) v = Math.Min(max.Value, v);
-                set(v); box.Text = Fmt(get(), format); e.Handled = true;
+                Apply(v); box.Text = Fmt(get(), format); e.Handled = true;
             };
             Refreshers[box] = () => { if (!box.IsFocused) box.Text = Fmt(get(), format); };
             return box;
@@ -116,9 +127,10 @@ namespace VortexEditor.Panels.Inspector
         public static TextBox IntBox(Func<int> get, Action<int> set, int? min = null, int? max = null)
         {
             var box = new TextBox { Classes = { "number" }, MinHeight = 22, Text = get().ToString(CultureInfo.InvariantCulture) };
+            void Apply(int v) { set(v); Wrote(box); }
             void Commit()
             {
-                if (int.TryParse(box.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var v)) { if (min.HasValue) v = Math.Max(min.Value, v); if (max.HasValue) v = Math.Min(max.Value, v); if (v != get()) set(v); }
+                if (int.TryParse(box.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var v)) { if (min.HasValue) v = Math.Max(min.Value, v); if (max.HasValue) v = Math.Min(max.Value, v); if (v != get()) Apply(v); }
                 box.Text = get().ToString(CultureInfo.InvariantCulture);
             }
             box.LostFocus += (s, e) => Commit();
@@ -128,7 +140,7 @@ namespace VortexEditor.Panels.Inspector
                 if (!box.IsFocused) return;
                 int v = get() + (e.Delta.Y > 0 ? 1 : -1) * (e.KeyModifiers.HasFlag(KeyModifiers.Shift) ? 10 : 1);
                 if (min.HasValue) v = Math.Max(min.Value, v); if (max.HasValue) v = Math.Min(max.Value, v);
-                set(v); box.Text = get().ToString(CultureInfo.InvariantCulture); e.Handled = true;
+                Apply(v); box.Text = get().ToString(CultureInfo.InvariantCulture); e.Handled = true;
             };
             Refreshers[box] = () => { if (!box.IsFocused) box.Text = get().ToString(CultureInfo.InvariantCulture); };
             return box;
@@ -146,7 +158,7 @@ namespace VortexEditor.Panels.Inspector
             bool guard = false;
             var box = FloatBox(get, v => { set(v); guard = true; slider.Value = Clamp(get(), min, max); guard = false; }, (max - min) / 100, typedMin, typedMax, format);
             box.VerticalAlignment = VerticalAlignment.Center;
-            slider.ValueChanged += (s, e) => { if (guard) return; guard = true; float v = (float)slider.Value; if (Math.Abs(v - get()) > 1e-6) set(v); box.Text = Fmt(get(), format); guard = false; };
+            slider.ValueChanged += (s, e) => { if (guard) return; guard = true; float v = (float)slider.Value; if (Math.Abs(v - get()) > 1e-6) { set(v); Wrote(slider); } box.Text = Fmt(get(), format); guard = false; };
             Grid.SetColumn(box, 1);
             g.Children.Add(slider); g.Children.Add(box);
             Refreshers[slider] = () => { guard = true; slider.Value = Clamp(get(), min, max); guard = false; };
@@ -191,7 +203,7 @@ namespace VortexEditor.Panels.Inspector
                 double dx = e.GetPosition(handle).X - x0;
                 double k = e.KeyModifiers.HasFlag(KeyModifiers.Shift) ? 10 : e.KeyModifiers.HasFlag(KeyModifiers.Alt) ? 0.1 : 1;
                 float v = (float)(v0 + Math.Round(dx / 4.0) * step * k);
-                if (Math.Abs(v - get()) > 1e-7) set(v);
+                if (Math.Abs(v - get()) > 1e-7) { set(v); Wrote(handle); }
             };
             handle.PointerReleased += (s, e) => { if (drag) { drag = false; e.Pointer.Capture(null); } };
             handle.PointerCaptureLost += (s, e) => drag = false;
@@ -201,7 +213,7 @@ namespace VortexEditor.Panels.Inspector
         public static Control Bool(Func<bool> get, Action<bool> set)
         {
             var cb = new CheckBox { IsChecked = get(), MinHeight = 22 };
-            cb.IsCheckedChanged += (s, e) => { bool v = cb.IsChecked == true; if (v != get()) set(v); };
+            cb.IsCheckedChanged += (s, e) => { bool v = cb.IsChecked == true; if (v != get()) { set(v); Wrote(cb); } };
             Refreshers[cb] = () => cb.IsChecked = get();
             return cb;
         }
@@ -211,7 +223,7 @@ namespace VortexEditor.Panels.Inspector
         {
             var cb = new CheckBox { IsChecked = get(), MinHeight = 22, Content = new TextBlock { Text = caption, TextWrapping = TextWrapping.Wrap } };
             if (tooltip != null) ToolTip.SetTip(cb, tooltip);
-            cb.IsCheckedChanged += (s, e) => { bool v = cb.IsChecked == true; if (v != get()) set(v); };
+            cb.IsCheckedChanged += (s, e) => { bool v = cb.IsChecked == true; if (v != get()) { set(v); Wrote(cb); } };
             Refreshers[cb] = () => cb.IsChecked = get();
             return cb;
         }
@@ -222,7 +234,7 @@ namespace VortexEditor.Panels.Inspector
             var combo = new ComboBox { MinHeight = 22, HorizontalAlignment = HorizontalAlignment.Left, MinWidth = 140 };
             for (int i = 0; i < values.Length; i++) combo.Items.Add(labels != null && i < labels.Count ? labels[i] : Pretty(values[i].ToString()));
             combo.SelectedIndex = Array.IndexOf(values, get());
-            combo.SelectionChanged += (s, e) => { if (combo.SelectedIndex >= 0) { var v = values[combo.SelectedIndex]; if (!v.Equals(get())) set(v); } };
+            combo.SelectionChanged += (s, e) => { if (combo.SelectedIndex >= 0) { var v = values[combo.SelectedIndex]; if (!v.Equals(get())) { set(v); Wrote(combo); } } };
             Refreshers[combo] = () => combo.SelectedIndex = Array.IndexOf(values, get());
             return combo;
         }
@@ -232,7 +244,7 @@ namespace VortexEditor.Panels.Inspector
             var combo = new ComboBox { MinHeight = 22, HorizontalAlignment = HorizontalAlignment.Left, MinWidth = 140 };
             foreach (var l in labels) combo.Items.Add(l);
             combo.SelectedIndex = Math.Max(0, Math.Min(labels.Length - 1, get()));
-            combo.SelectionChanged += (s, e) => { if (combo.SelectedIndex >= 0 && combo.SelectedIndex != get()) set(combo.SelectedIndex); };
+            combo.SelectionChanged += (s, e) => { if (combo.SelectedIndex >= 0 && combo.SelectedIndex != get()) { set(combo.SelectedIndex); Wrote(combo); } };
             Refreshers[combo] = () => combo.SelectedIndex = Math.Max(0, Math.Min(labels.Length - 1, get()));
             return combo;
         }
@@ -240,7 +252,7 @@ namespace VortexEditor.Panels.Inspector
         public static TextBox Text(Func<string> get, Action<string> set, string watermark = null)
         {
             var box = new TextBox { Text = get() ?? "", MinHeight = 22, Watermark = watermark };
-            void Commit() { var v = box.Text ?? ""; if (v != (get() ?? "")) set(v); }
+            void Commit() { var v = box.Text ?? ""; if (v != (get() ?? "")) { set(v); Wrote(box); } }
             box.LostFocus += (s, e) => Commit();
             box.KeyDown += (s, e) => { if (e.Key == Key.Return) { Commit(); e.Handled = true; } };
             Refreshers[box] = () => { if (!box.IsFocused) box.Text = get() ?? ""; };
@@ -304,7 +316,7 @@ namespace VortexEditor.Panels.Inspector
             void Commit(string v)
             {
                 flyout.Hide();
-                if (v != null && !string.Equals(v, get(), StringComparison.Ordinal)) set(v);
+                if (v != null && !string.Equals(v, get(), StringComparison.Ordinal)) { set(v); Wrote(button); }
                 Sync();
             }
             flyout.Opened += (s, e) =>
@@ -343,7 +355,7 @@ namespace VortexEditor.Panels.Inspector
             var (r, g, b) = get();
             var picker = new ColorPicker { Color = Avalonia.Media.Color.FromRgb(B(r), B(g), B(b)), Width = 110, Height = 22, IsAlphaEnabled = false, IsAlphaVisible = false, HorizontalAlignment = HorizontalAlignment.Left };
             bool guard = false;
-            picker.ColorChanged += (s, e) => { if (!guard) set(e.NewColor.R / 255f, e.NewColor.G / 255f, e.NewColor.B / 255f); };
+            picker.ColorChanged += (s, e) => { if (!guard) { set(e.NewColor.R / 255f, e.NewColor.G / 255f, e.NewColor.B / 255f); Wrote(picker); } };
             Refreshers[picker] = () => { var (rr, gg, bb) = get(); var c = Avalonia.Media.Color.FromRgb(B(rr), B(gg), B(bb)); if (picker.Color != c) { guard = true; picker.Color = c; guard = false; } };
             return picker;
         }
@@ -356,13 +368,13 @@ namespace VortexEditor.Panels.Inspector
             ToolTip.SetTip(box, "Drop a " + kind.ToLowerInvariant() + " here, or pick one");
             var browse = new Button { Classes = { "icon" }, Content = new VxIcon { Icon = "Folder" }, Margin = new Thickness(4, 0, 0, 0) };
             ToolTip.SetTip(browse, "Choose " + kind.ToLowerInvariant());
-            browse.Click += async (s, e) => { var p = await pick(); if (p != null) { set(p.Length == 0 ? p : ToProjectRelative(p)); box.Text = get() ?? ""; } };
+            browse.Click += async (s, e) => { var p = await pick(); if (p != null) { set(p.Length == 0 ? p : ToProjectRelative(p)); box.Text = get() ?? ""; Wrote(g); } };
             var clear = new Button { Classes = { "icon" }, Content = new VxIcon { Icon = "Close" } };
             ToolTip.SetTip(clear, "Clear");
-            clear.Click += (s, e) => { set(null); box.Text = get() ?? ""; };
+            clear.Click += (s, e) => { set(null); box.Text = get() ?? ""; Wrote(g); };
             DragDrop.SetAllowDrop(box, true);
             box.AddHandler(DragDrop.DragOverEvent, (s, e) => { e.DragEffects = Accepts(e, patterns, dropFormat) ? DragDropEffects.Link : DragDropEffects.None; e.Handled = true; });
-            box.AddHandler(DragDrop.DropEvent, (s, e) => { var p = DroppedPath(e, dropFormat); if (p != null && Matches(p, patterns)) { set(ToProjectRelative(p)); box.Text = get() ?? ""; e.Handled = true; } });
+            box.AddHandler(DragDrop.DropEvent, (s, e) => { var p = DroppedPath(e, dropFormat); if (p != null && Matches(p, patterns)) { set(ToProjectRelative(p)); box.Text = get() ?? ""; Wrote(g); e.Handled = true; } });
             Grid.SetColumn(browse, 1); Grid.SetColumn(clear, 2);
             g.Children.Add(box); g.Children.Add(browse); g.Children.Add(clear);
             Refreshers[box] = () => box.Text = get() ?? "";

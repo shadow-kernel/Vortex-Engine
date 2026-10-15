@@ -1032,6 +1032,7 @@ namespace VortexEditor.Shell
                 var psi = new ProcessStartInfo(exe) { UseShellExecute = false };
                 psi.ArgumentList.Add("--project=" + p.Path);
                 if (p.ActiveScene != null) psi.ArgumentList.Add("--scene=" + p.ActiveScene.Name);
+                Editor.Core.Services.Build.PlayerRun.PassNativeLocation(psi.Environment);   // the editor's engine, also in an installed layout
                 Process.Start(psi);
                 // a separate PROCESS: the editor itself is not playing, so it must not switch into its external-window
                 // play state (that disabled script hot-reload in the editor until Stop) (#346)
@@ -1040,11 +1041,21 @@ namespace VortexEditor.Shell
             catch (Exception ex) { EditorCommands.Fail("Could not start the player", ex); }
         }
 
-        private static string FindPlayerExecutable()
+        /// <summary>The engine's own player next to the editor (an app bundle's Resources/Player, a dev build's Vortex.Player bin) —
+        /// the only program Build and Run and run_player (#463) start.</summary>
+        internal static string FindPlayerExecutable()
         {
             string baseDir = AppContext.BaseDirectory;
             string[] names = OperatingSystem.IsWindows() ? new[] { "Vortex.Player.exe" } : new[] { "Vortex.Player" };
-            foreach (var dir in new[] { baseDir, Path.Combine(baseDir, "..", "Resources", "Player"), Path.Combine(baseDir, "player"), Path.Combine(baseDir, "..", "..", "..", "..", "Vortex.Player", "bin", "Debug", "net10.0"), Path.Combine(baseDir, "..", "..", "..", "..", "Vortex.Player", "bin", "Release", "net10.0") })
+            // a development tree: the player built in the editor's own configuration first — the other one may be days old (#463 review)
+#if DEBUG
+            string mine = "Debug", other = "Release";
+#else
+            string mine = "Release", other = "Debug";
+#endif
+            foreach (var dir in new[] { baseDir, Path.Combine(baseDir, "..", "Resources", "Player"), Path.Combine(baseDir, "player"),
+                                         Path.Combine(baseDir, "..", "..", "..", "..", "Vortex.Player", "bin", mine, "net10.0"),
+                                         Path.Combine(baseDir, "..", "..", "..", "..", "Vortex.Player", "bin", other, "net10.0") })
                 foreach (var n in names) { var f = Path.GetFullPath(Path.Combine(dir, n)); if (File.Exists(f)) return f; }
             return null;
         }

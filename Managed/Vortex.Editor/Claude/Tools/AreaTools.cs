@@ -90,30 +90,35 @@ namespace VortexEditor.Claude.Tools
         {
             var e = SceneModel.Resolve(entity);
             var a = AreaOf(entity);
-            if (!string.IsNullOrEmpty(shape)) a.Shape = ParseShape(shape);
-            if (size != null && size.Length >= 3) { a.SizeX = size[0]; a.SizeY = size[1]; a.SizeZ = size[2]; }
-            if (tags != null) a.Tags = string.Join(", ", tags);
-            if (properties != null)
+            int? shapeValue = string.IsNullOrEmpty(shape) ? (int?)null : ParseShape(shape);
+            if (!string.IsNullOrEmpty(file))
             {
-                var map = AreaDefinition.ParseProperties(a.Properties);
-                foreach (var kv in properties) { if (string.IsNullOrEmpty(kv.Value)) map.Remove(kv.Key); else map[kv.Key] = kv.Value; }
-                a.Properties = string.Join("\n", map.Select(kv => kv.Key + "=" + kv.Value));
+                string full = System.IO.Path.IsPathRooted(file) ? file : System.IO.Path.Combine(ProjectData.Current?.Path ?? "", file);
+                if (!System.IO.File.Exists(full)) throw new ToolError("No area file '" + file + "'.");
             }
-            if (color != null && color.Length >= 3) { a.ColorR = color[0]; a.ColorG = color[1]; a.ColorB = color[2]; }
-            if (priority.HasValue) a.Priority = priority.Value;
-            if (file != null)
+            // the values are set directly: one undo step records them (#411 review)
+            SceneModel.RecordEdit(a, "Area", () =>
             {
-                a.DataPath = file;
-                // a linked file wins at run time (AreaService resolves it): show its values here too, so the outline and the
-                // inspector match what the game will use
-                if (file.Length > 0)
+                if (shapeValue.HasValue) a.Shape = shapeValue.Value;
+                if (size != null && size.Length >= 3) { a.SizeX = size[0]; a.SizeY = size[1]; a.SizeZ = size[2]; }
+                if (tags != null) a.Tags = string.Join(", ", tags);
+                if (properties != null)
                 {
-                    string full = System.IO.Path.IsPathRooted(file) ? file : System.IO.Path.Combine(ProjectData.Current?.Path ?? "", file);
-                    if (!System.IO.File.Exists(full)) throw new ToolError("No area file '" + file + "'.");
-                    a.ApplyDefinition(a.Resolve(ProjectData.Current?.Path));
+                    var map = AreaDefinition.ParseProperties(a.Properties);
+                    foreach (var kv in properties) { if (string.IsNullOrEmpty(kv.Value)) map.Remove(kv.Key); else map[kv.Key] = kv.Value; }
+                    a.Properties = string.Join("\n", map.Select(kv => kv.Key + "=" + kv.Value));
                 }
-            }
-            if (track_all.HasValue) a.TrackAll = track_all.Value;
+                if (color != null && color.Length >= 3) { a.ColorR = color[0]; a.ColorG = color[1]; a.ColorB = color[2]; }
+                if (priority.HasValue) a.Priority = priority.Value;
+                if (file != null)
+                {
+                    a.DataPath = file;
+                    // a linked file wins at run time (AreaService resolves it): show its values here too, so the outline and the
+                    // inspector match what the game will use
+                    if (file.Length > 0) a.ApplyDefinition(a.Resolve(ProjectData.Current?.Path));
+                }
+                if (track_all.HasValue) a.TrackAll = track_all.Value;
+            });
             ToolContext.UndoLabel = "edit area " + e.Name;
             return Describe(e, a);
         }
@@ -156,8 +161,8 @@ namespace VortexEditor.Claude.Tools
             var d = new AreaDefinition { Name = e.Name, Shape = (AreaShape)a.Shape, SizeX = a.SizeX, SizeY = a.SizeY, SizeZ = a.SizeZ, ColorR = a.ColorR, ColorG = a.ColorG, ColorB = a.ColorB, Priority = a.Priority };
             foreach (var t in AreaDefinition.ParseTags(a.Tags)) d.Tags.Add(t);
             foreach (var kv in AreaDefinition.ParseProperties(a.Properties)) d.Properties[kv.Key] = kv.Value;
-            d.Save(Path.Combine(project.Path, rel));
-            a.DataPath = rel;
+            d.Save(Path.Combine(project.Path, rel), e.Scene);
+            SceneModel.RecordEdit(a, "Area file", () => a.DataPath = rel);
             ToolContext.UndoLabel = "save area " + e.Name;
             return new { file = rel, tags = d.Tags.ToArray() };
         }

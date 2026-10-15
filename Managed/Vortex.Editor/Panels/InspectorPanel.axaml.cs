@@ -61,6 +61,7 @@ namespace VortexEditor.Panels
         private Component _revealAfterBuild;
         private readonly List<Control> _refresherKeys = new List<Control>();
         private readonly List<Component> _hookedComponents = new List<Component>();
+        private readonly List<Component> _watched = new List<Component>();   // their saved values changing marks the scene unsaved
         private EntityTreeWatcher _overrideWatcher;
         private TextBlock _prefabSubtitle;
 
@@ -116,6 +117,7 @@ namespace VortexEditor.Panels
             SelectionService.Instance.SelectionChanged += OnSelectionChanged;
             SelectionService.Instance.TransformChanged += OnTransformChanged;
             UndoRedoManager.Instance.StateChanged += OnUndoStateChanged;
+            PropertyRows.Changed += OnRowChanged;
             var sel = SelectionService.Instance.SelectedEntity;
             if (!ReferenceEquals(sel, _entity) || Components.Children.Count == 0) Bind(sel);
         }
@@ -128,6 +130,25 @@ namespace VortexEditor.Panels
             SelectionService.Instance.SelectionChanged -= OnSelectionChanged;
             SelectionService.Instance.TransformChanged -= OnTransformChanged;
             UndoRedoManager.Instance.StateChanged -= OnUndoStateChanged;
+            PropertyRows.Changed -= OnRowChanged;
+        }
+
+        // A row writes its value straight into the component — no undo step marks the scene, so the inspector does (#411
+        // review): a row of this inspector that wrote a value, or a value the scene file holds changing on the entity shown
+        // (a card's own button or list, a gizmo, a tool). Values of the selection or the editor's own state do not count.
+        private void OnRowChanged(Control origin)
+        {
+            if (_entity == null || origin == null) return;
+            if (!ReferenceEquals(origin.FindAncestorOfType<InspectorPanel>(), this)) return;
+            ComponentEditors.MarkUnsaved(_entity);
+        }
+
+        private void OnWatchedPropertyChanged(object s, PropertyChangedEventArgs e)
+        {
+            var entity = _entity;
+            if (entity == null || PlayModeService.Instance.IsPlaying || !SceneDirtyTracker.IsPersisted(s, e?.PropertyName)) return;
+            if (Dispatcher.UIThread.CheckAccess()) ComponentEditors.MarkUnsaved(entity);
+            else Dispatcher.UIThread.Post(() => ComponentEditors.MarkUnsaved(entity));
         }
 
         private void OnSelectionChanged(object s, SelectionEventArgs e) => Dispatcher.UIThread.Post(() => { if (!IsolatedMode) Bind(e.SelectedEntity); });
@@ -187,6 +208,11 @@ namespace VortexEditor.Panels
             e.Components.CollectionChanged += OnComponentsChanged;
             foreach (var c in e.Components)
                 if (c is Script) { c.PropertyChanged += OnComponentPropertyChanged; _hookedComponents.Add(c); }
+            if (!IsolatedMode)
+            {
+                e.PropertyChanged += OnWatchedPropertyChanged;
+                foreach (var c in e.Components) if (c != null) { c.PropertyChanged += OnWatchedPropertyChanged; _watched.Add(c); }
+            }
             var root = PrefabWorkflow.FindInstanceRoot(e);
             if (root != null && !IsolatedMode)
             {
@@ -201,10 +227,13 @@ namespace VortexEditor.Panels
             if (e != null)
             {
                 e.PropertyChanged -= OnEntityPropertyChanged;
+                e.PropertyChanged -= OnWatchedPropertyChanged;
                 e.Components.CollectionChanged -= OnComponentsChanged;
             }
             foreach (var c in _hookedComponents) c.PropertyChanged -= OnComponentPropertyChanged;
             _hookedComponents.Clear();
+            foreach (var c in _watched) c.PropertyChanged -= OnWatchedPropertyChanged;
+            _watched.Clear();
             _overrideWatcher?.Dispose();
             _overrideWatcher = null;
         }
