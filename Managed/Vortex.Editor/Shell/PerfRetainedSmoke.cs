@@ -40,6 +40,9 @@ namespace VortexEditor.Shell
             SmokeRegistry.Add("perf retained submit: play edits draw what the full submit draws", PlayEdits);
             SmokeRegistry.Add("perf retained submit: edit mode, game view, second view, overlays, previews", EditViews);
             SmokeRegistry.Add("perf shared meshes: one GPU mesh per .vmesh, one draw run per mesh", SharedMeshes);
+            SmokeRegistry.Add("perf retained submit: a reloaded model keeps the rest of the scene", ReloadedModel);
+            SmokeRegistry.Add("perf retained submit: a mesh file that arrives later appears", LateMesh);
+            SmokeRegistry.Add("perf retained submit: a failed submit recovers", FailedSubmit);
         }
 
         // a pixel differs when a channel is off by more than this; a frame matches when at most MatchFraction of them do
@@ -378,6 +381,180 @@ namespace VortexEditor.Shell
             return null;
         }
 
+        // ------------------------------------------------------------------------------------------ reloads, late files, failures
+
+        /// <summary>A model file that changes on disk (the asset watcher), a reimport or the model editor's handedness toggle
+        /// call InvalidateModel, which frees the model's meshes. Only the model's own instances may leave — the renderer used to
+        /// drop the whole retained scene, and in edit mode nothing submitted again: the view stayed blank. Now the model is back
+        /// at the next frame, without any other change.</summary>
+        private static async Task<bool> ReloadedModel()
+        {
+            var log = ConsoleService.Instance;
+            var project = ProjectData.Current;
+            if (project?.ActiveScene == null || string.IsNullOrEmpty(project.Path)) { log.Log("perf reloaded model: no project / scene — skipped"); return true; }
+            string model = SmallestModel(project);
+            if (model == null) { log.Log("perf reloaded model: no model file in the project — skipped"); return true; }
+            string rel = Path.GetRelativePath(project.Path, model).Replace('\\', '/');
+            var state = new Restore(project);
+            try
+            {
+                var scene = new Scene(project, "PerfReloadedModel");
+                AddSunAndCamera(scene);
+                Add(scene, Mesh(scene, "Backdrop", "Primitive:Cube", new[] { 0.45f, 0.47f, 0.5f }, new Vector3(0f, 500f, 34f), new Vector3(120f, 80f, 2f)));
+                for (int i = 0; i < 6; i++)
+                    Add(scene, Mesh(scene, "Cube " + i, "Primitive:Cube", Palette[i], new Vector3(-7.5f + i * 3f, 494f, 20f), new Vector3(2f, 2f, 2f)));
+                Add(scene, Mesh(scene, "Model", rel, null, new Vector3(0f, 502f, 18f), new Vector3(6f, 6f, 6f)));
+                await state.Use(scene);
+                var before = await Capture("perf_reload_before.bmp");
+                await SmokeRegistry.Settle(2500);   // the view's resubmit frames run out: from here on it submits only on a change
+                SceneRenderService.InvalidateModel(rel);
+                var after = await Capture("perf_reload_after.bmp", resubmit: false);
+                double d = Diff(after, before);
+                log.Log("perf reloaded model: " + Path.GetFileName(model) + " invalidated — " + Pct(d) + " of the frame differ afterwards, "
+                    + Pct(Busy(after)) + " show objects (before " + Pct(Busy(before)) + ")");
+                if (d <= MatchFraction) return true;
+                log.LogError("perf reloaded model: after InvalidateModel the view is not the scene any more (" + Pct(d) + ") — the reload took more than the model's instances out, or nothing resubmitted");
+                return false;
+            }
+            finally { await state.Back(); }
+        }
+
+        /// <summary>An entity whose mesh file is not there (yet) draws nothing; when the file arrives it must appear — in edit
+        /// mode once the asset watcher reports the file (InvalidateModel), in play by itself within a moment. The retained
+        /// submit stamped the failed resolution as done and never tried again; the whole-scene submit tried every submit.</summary>
+        private static async Task<bool> LateMesh()
+        {
+            var log = ConsoleService.Instance;
+            var project = ProjectData.Current;
+            if (project?.ActiveScene == null || string.IsNullOrEmpty(project.Path)) { log.Log("perf late mesh: no project / scene — skipped"); return true; }
+            string source = CachedSubmesh(project);
+            if (source == null) { log.Log("perf late mesh: no static model to take a .vmesh from (or no Assimp) — skipped"); return true; }
+            bool ok = true;
+            foreach (bool play in new[] { false, true })
+            {
+                string tag = play ? "play" : "edit";
+                string rel = "Assets/SmokePerfLate/late_" + tag + ".vmesh";
+                string full = Path.Combine(project.Path, rel);
+                try { File.Delete(full); } catch { }
+                var state = new Restore(project);
+                try
+                {
+                    var scene = new Scene(project, "PerfLateMesh_" + tag);
+                    AddSunAndCamera(scene);
+                    Add(scene, Mesh(scene, "Backdrop", "Primitive:Cube", new[] { 0.45f, 0.47f, 0.5f }, new Vector3(0f, 500f, 34f), new Vector3(120f, 80f, 2f)));
+                    Add(scene, Mesh(scene, "Other", "Primitive:Cube", new[] { 0.9f, 0.2f, 0.2f }, new Vector3(7f, 497f, 20f), new Vector3(2f, 2f, 2f)));
+                    if (!play) Add(scene, Mesh(scene, "Late", rel, new[] { 1f, 1f, 1f }, new Vector3(-3f, 500f, 20f), new Vector3(8f, 8f, 8f)));
+                    await state.Use(scene);
+                    if (play)
+                    {
+                        EditorCommands.Play();
+                        if (PlayModeService.Instance.State != PlayState.Playing) { log.LogError("perf late mesh: play did not start"); return false; }
+                        await SmokeRegistry.Settle(1500);
+                        // a script spawns an entity whose mesh is not there yet
+                        scene.Entities.Add(Mesh(scene, "Late", rel, new[] { 1f, 1f, 1f }, new Vector3(-3f, 500f, 20f), new Vector3(8f, 8f, 8f)));
+                    }
+                    var missing = await Capture("perf_late_" + tag + "_missing.bmp", resubmit: !play);
+                    Directory.CreateDirectory(Path.GetDirectoryName(full));
+                    File.Copy(source, full, true);   // the file arrives: an import, a copy, a download
+                    if (!play) SceneRenderService.InvalidateModel(rel);   // what the asset watcher does for a model file that appeared
+                    else await SmokeRegistry.Settle(SceneRenderService.UnresolvedRetryMs + 700);   // play tries again by itself
+                    var arrived = await Capture("perf_late_" + tag + "_arrived.bmp", resubmit: false);
+                    SceneRenderService.RetainedSubmit = false;
+                    SceneRenderService.StaticDirty = true;
+                    var reference = await Capture("perf_late_" + tag + "_full.bmp");
+                    SceneRenderService.RetainedSubmit = true;
+                    double d = Diff(arrived, reference), shown = Diff(arrived, missing);
+                    log.Log("perf late mesh (" + tag + "): " + Pct(shown) + " of the frame changed when the file arrived; " + Pct(d) + " differ from the full submit");
+                    if (shown < ChangeFraction) { log.LogError("perf late mesh (" + tag + "): the mesh that arrived does not show"); ok = false; }
+                    else if (d > MatchFraction) { log.LogError("perf late mesh (" + tag + "): the frame differs from the full submit (" + Pct(d) + ")"); ok = false; }
+                }
+                finally
+                {
+                    if (PlayModeService.Instance.IsPlaying) EditorCommands.Stop();
+                    await state.Back();
+                    try { Directory.Delete(Path.GetDirectoryName(full), true); } catch { }
+                }
+            }
+            return ok;
+        }
+
+        /// <summary>One submit throws half-way (an entity's resolution, here injected through the test seam): the instance
+        /// changes it had gathered never reach the renderer. The next frames must still draw the scene as the full submit does
+        /// — the retained submit starts over instead of carrying the gap forever.</summary>
+        private static async Task<bool> FailedSubmit()
+        {
+            var log = ConsoleService.Instance;
+            var project = ProjectData.Current;
+            if (project?.ActiveScene == null || string.IsNullOrEmpty(project.Path)) { log.Log("perf failed submit: no project / scene — skipped"); return true; }
+            var svc = SceneRenderService.Instance;
+            var state = new Restore(project);
+            try
+            {
+                var scene = new Scene(project, "PerfFailedSubmit");
+                AddSunAndCamera(scene);
+                Add(scene, Mesh(scene, "Backdrop", "Primitive:Cube", new[] { 0.45f, 0.47f, 0.5f }, new Vector3(0f, 500f, 34f), new Vector3(120f, 80f, 2f)));
+                var a = Add(scene, Mesh(scene, "A", "Primitive:Cube", new[] { 0.9f, 0.2f, 0.2f }, new Vector3(-5f, 500f, 20f), new Vector3(4f, 4f, 4f)));
+                var b = Add(scene, Mesh(scene, "B", "Primitive:Cube", new[] { 0.2f, 0.9f, 0.2f }, new Vector3(5f, 500f, 20f), new Vector3(4f, 4f, 4f)));
+                var c = Add(scene, Mesh(scene, "C", "Primitive:Cube", new[] { 0.6f, 0.6f, 0.6f }, new Vector3(0f, 494f, 20f), new Vector3(2f, 2f, 2f)));
+                await state.Use(scene);
+                EditorCommands.Play();
+                if (PlayModeService.Instance.State != PlayState.Playing) { log.LogError("perf failed submit: play did not start"); return false; }
+                await SmokeRegistry.Settle(1500);
+                bool armed = true;
+                svc.Resolver = (e, mr) =>
+                {
+                    if (armed && ReferenceEquals(e, b)) { armed = false; throw new InvalidOperationException("perf smoke: an injected failure (expected)"); }
+                    svc.ResolveFromAssets(e, mr);
+                };
+                // one frame: A restyled, E spawned before B in the walk, B restyled — B's resolution throws once
+                var ma = a.GetComponent<MeshRenderer>(); ma.ColorR = 0.1f; ma.ColorG = 0.3f; ma.ColorB = 1f;
+                var spawned = Mesh(scene, "E", "Primitive:Sphere", new[] { 1f, 0.5f, 0f }, new Vector3(0f, 506f, 20f), new Vector3(4f, 4f, 4f));
+                scene.Entities.Insert(scene.Entities.IndexOf(b), spawned);
+                var mb = b.GetComponent<MeshRenderer>(); mb.ColorR = 1f; mb.ColorG = 1f; mb.ColorB = 0.1f;
+                await SmokeRegistry.Settle(400);
+                svc.Resolver = null;
+                c.Transform.LocalPosition = new Vector3(0f, 493f, 20f);   // later frames go on normally
+                await SmokeRegistry.Settle(600);
+                var retained = await Capture("perf_failed_retained.bmp", resubmit: false);
+                SceneRenderService.RetainedSubmit = false;
+                SceneRenderService.StaticDirty = true;
+                var reference = await Capture("perf_failed_full.bmp");
+                SceneRenderService.RetainedSubmit = true;
+                double d = Diff(retained, reference);
+                log.Log("perf failed submit: injected " + !armed + "; after the failed frame " + Pct(d) + " of the pixels differ from the full submit");
+                if (armed) { log.LogError("perf failed submit: the failure was never injected — the check proves nothing"); return false; }
+                if (d <= MatchFraction) return true;
+                log.LogError("perf failed submit: the retained scene stayed out of step after a failed submit (" + Pct(d) + ")");
+                return false;
+            }
+            finally
+            {
+                svc.Resolver = null;
+                if (PlayModeService.Instance.IsPlaying) EditorCommands.Stop();
+                await state.Back();
+            }
+        }
+
+        /// <summary>The smallest model file under Assets/ (a quick load).</summary>
+        private static string SmallestModel(ProjectData project)
+        {
+            string assets = Path.Combine(project.Path, "Assets");
+            if (!Directory.Exists(assets)) return null;
+            string best = null; long size = long.MaxValue;
+            try
+            {
+                foreach (var f in Directory.EnumerateFiles(assets, "*.*", SearchOption.AllDirectories))
+                {
+                    string ext = Path.GetExtension(f).ToLowerInvariant();
+                    if (ext != ".glb" && ext != ".gltf" && ext != ".fbx" && ext != ".obj") continue;
+                    long n = new FileInfo(f).Length;
+                    if (n < size) { size = n; best = f; }
+                }
+            }
+            catch { return null; }
+            return best;
+        }
+
         // ------------------------------------------------------------------------------------------ the test scene
 
         private sealed class Rig
@@ -505,14 +682,16 @@ namespace VortexEditor.Shell
         // ------------------------------------------------------------------------------------------ frames
 
         /// <summary>The next presented frame of the main view (CaptureFrame writes the back buffer as a 32-bit BMP).</summary>
-        private static async Task<Img> Capture(string file)
+        /// <param name="resubmit">Ask the main view to submit the scene first — off to see what the view shows when nothing
+        /// makes the editor submit (edit mode submits only on a change).</param>
+        private static async Task<Img> Capture(string file, bool resubmit = true)
         {
             string dir = SmokeRegistry.CaptureDir;
             if (string.IsNullOrEmpty(dir)) dir = Path.Combine(Path.GetTempPath(), "vortex-smoke-capture");
             Directory.CreateDirectory(dir);
             string path = Path.Combine(dir, file);
             try { File.Delete(path); } catch { }
-            EditorViewportSession.RequestResubmit();
+            if (resubmit) EditorViewportSession.RequestResubmit();
             await SmokeRegistry.Settle(500);   // the resubmit reaches the renderer, a light fading in settles
             VortexAPI.CaptureFrame(path);
             for (int i = 0; i < 100 && !File.Exists(path); i++) await Task.Delay(50);
