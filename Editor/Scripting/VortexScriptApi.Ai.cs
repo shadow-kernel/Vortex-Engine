@@ -216,6 +216,95 @@ namespace Vortex
             return blocked;
         }
 
+        // ---- dynamic obstacles (#435) ----
+
+        /// <summary>Switch an obstacle on or off for this play session: an entity's Nav Mesh Obstacle (the component is not
+        /// changed; play stays non-destructive) or a script obstacle from <see cref="AddObstacle"/>. A carving obstacle
+        /// blocks or frees its piece of the navmesh at once — no rebuild: shut a door with
+        /// <c>Navigation.SetObstacleEnabled(_door, true)</c> and the agents whose way led through it re-plan.</summary>
+        public static void SetObstacleEnabled(long obstacle, bool enabled)
+        {
+            AiRuntime.EnsureRunning();
+            NavigationService.SetObstacleEnabled(Entity(obstacle), ScriptObstacle(obstacle), enabled);
+        }
+
+        /// <summary>True while the obstacle is on (its runtime switch, else its component and entity).</summary>
+        public static bool IsObstacleEnabled(long obstacle)
+        {
+            return NavigationService.IsObstacleEnabled(Entity(obstacle), ScriptObstacle(obstacle));
+        }
+
+        /// <summary>True when the obstacle is in the navmesh as it stands: carved where it is (the tiles around it rebuilt —
+        /// a few milliseconds after it was added or moved) or, not carving, steered around.</summary>
+        public static bool IsObstacleReady(long obstacle)
+        {
+            return NavigationService.IsObstacleReady(Entity(obstacle), ScriptObstacle(obstacle));
+        }
+
+        /// <summary>An obstacle made by code — rubble that fell, a barricade that was built — without an entity: a box of
+        /// <paramref name="halfExtents"/> turned by <paramref name="rotation"/> (Euler degrees). <paramref name="carve"/>: cut
+        /// out of the navmesh (paths go around it; its tiles are rebuilt in the background); false: agents only steer around
+        /// it. Returns its id for <see cref="MoveObstacle"/> / <see cref="SetObstacleEnabled"/> / <see cref="RemoveObstacle"/>
+        /// (0 without a running navmesh). It goes when play stops.</summary>
+        public static long AddObstacle(Vector3 center, Vector3 halfExtents, Vector3 rotation = default(Vector3), bool carve = true)
+        {
+            AiRuntime.EnsureRunning();
+            return NavigationService.AddObstacle(S(center), S(halfExtents), Rot(rotation), false, carve);
+        }
+
+        /// <summary>An upright cylinder obstacle (a pillar, a barrel stack) — see <see cref="AddObstacle"/>.</summary>
+        public static long AddCylinderObstacle(Vector3 center, float radius, float height, bool carve = true)
+        {
+            AiRuntime.EnsureRunning();
+            return NavigationService.AddObstacle(S(center), new System.Numerics.Vector3(radius, height * 0.5f, radius), System.Numerics.Quaternion.Identity, true, carve);
+        }
+
+        /// <summary>Move an obstacle from <see cref="AddObstacle"/>. A carving one is carved again at its new place (its
+        /// tiles are rebuilt); something that keeps moving should not carve.</summary>
+        public static bool MoveObstacle(long obstacle, Vector3 center, Vector3 rotation = default(Vector3))
+        {
+            return NavigationService.MoveObstacle(obstacle, S(center), Rot(rotation));
+        }
+
+        /// <summary>Remove an obstacle from <see cref="AddObstacle"/>: its piece of the navmesh opens at once.</summary>
+        public static void RemoveObstacle(long obstacle) { NavigationService.RemoveObstacle(obstacle); }
+
+        /// <summary>Re-bake the navmesh inside a box from the scene as it is now — after a wall was blown away (destroy or
+        /// deactivate its entity first). The scene geometry is gathered again (call it once per event, not every frame) and
+        /// the tiles over the box are rebuilt in the background. False without a running navmesh.</summary>
+        public static bool Rebake(Vector3 center, Vector3 halfExtents)
+        {
+            AiRuntime.EnsureRunning();
+            return NavigationService.Rebake(S(center), S(halfExtents));
+        }
+
+        /// <summary>Navmesh tiles still being rebuilt (obstacles that just appeared or moved, <see cref="Rebake"/>).</summary>
+        public static int PendingRebuilds => NavigationService.PendingRebuilds;
+
+        /// <summary>Milliseconds per frame the game thread may spend putting rebuilt tiles into the navmesh (default 2; one
+        /// tile a frame at least — the building itself runs on a worker thread).</summary>
+        public static float RebuildBudgetMs
+        {
+            get { return NavigationService.RebuildBudgetMs; }
+            set { NavigationService.RebuildBudgetMs = value; }
+        }
+
+        private static Editor.ECS.GameEntity Entity(long obstacle)
+        {
+            return obstacle > 0 && obstacle < NavigationService.ScriptObstacleBase ? ScriptRuntime.Instance.FindEntityByHandle(obstacle) : null;
+        }
+
+        private static long ScriptObstacle(long obstacle) { return obstacle >= NavigationService.ScriptObstacleBase ? obstacle : 0; }
+
+        private static System.Numerics.Vector3 S(Vector3 v) { return new System.Numerics.Vector3(v.X, v.Y, v.Z); }
+
+        /// <summary>Engine Euler degrees (an entity's Rotation) as a quaternion.</summary>
+        private static System.Numerics.Quaternion Rot(Vector3 euler)
+        {
+            return System.Numerics.Quaternion.Normalize(System.Numerics.Quaternion.CreateFromRotationMatrix(
+                Editor.Core.Animation.BoneSocketService.EulerZXY(new System.Numerics.Vector3(euler.X, euler.Y, euler.Z))));
+        }
+
         /// <summary>Draw the navmesh + the agents' paths over the game (debug).</summary>
         public static bool ShowDebug
         {

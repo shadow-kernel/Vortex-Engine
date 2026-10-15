@@ -63,6 +63,11 @@ namespace vortex::navigation {
 	// 1..63 = walkable when the surface slope allows it. 63 is the default ground; it becomes Detour area 0.
 	inline constexpr u8 area_obstacle{ 0 };
 	inline constexpr u8 area_ground{ 63 };
+	// #435: the surface under a carving obstacle — rebuilt into polygons of their own, whose walk flag the runtime turns off
+	// while the obstacle is active. Obstacles that touch get different areas of the range, so no polygon spans two of them
+	// (one switched off would unblock the other's surface). Reserved: bake input should not use 55..62.
+	inline constexpr u8 area_carved_first{ 55 };
+	inline constexpr u8 area_carved{ 62 };   // the last of the range
 
 	// Path status (find_path)
 	inline constexpr s32 path_invalid{ 0 };    // no navmesh, or start / end not near the navmesh
@@ -230,4 +235,67 @@ namespace vortex::navigation {
 	s32  agent_count();
 	void crowd_update(f32 dt);
 	void crowd_clear();                                            // remove every agent
+
+	// ---- Dynamic obstacles and runtime tile rebuilds (#435) ---------------------------------------------------------------
+	// The loaded navmesh changes at runtime by re-baking the tiles an obstacle covers with the bake's own pipeline, from the
+	// geometry it was baked from (rebuild_set_source: the editor hands it over once, while obstacles are in use). A carving
+	// obstacle's surface becomes polygons of their own (area_carved); while the obstacle is active their walk flag is off
+	// — paths and agents go around, the boundary is a wall — and switching it off or on again flips that flag at once, with
+	// no rebuild (a door). Moving it rebuilds the tiles of its old and new place. Builds run on a worker thread; the game
+	// thread swaps finished tiles in (rebuild_update, within a time budget). Agents whose way crosses a changed area re-plan.
+	// An avoiding obstacle leaves the navmesh alone: the crowd steers around it like around an agent (circles along it,
+	// moving with its velocity). Obstacles live with the loaded navmesh: load / unload / crowd_clear drop them.
+	inline constexpr s32 obstacle_box{ 0 };             // half = half extents, quat = rotation (pitch and roll too)
+	inline constexpr s32 obstacle_cylinder{ 1 };        // half[0] = radius, half[1] = half height (upright)
+	inline constexpr u32 obstacle_carve{ 1u << 0 };     // cut out of the navmesh while active
+	inline constexpr u32 obstacle_avoid{ 1u << 1 };     // steered around by the crowd while active
+	inline constexpr u32 obstacle_active{ 1u << 2 };    // off: neither (a carved one unblocks its polygons at once)
+	inline constexpr s32 max_obstacles{ 4096 };
+
+	// What the rebuilds did — layout-identical to NavRebuildStats.
+	struct rebuild_stats
+	{
+		s32 tiles_built;          // tile builds finished on the worker
+		s32 tiles_swapped;        // tiles swapped into the navmesh
+		s32 tiles_failed;         // builds that failed (the old tile stays)
+		s32 pending;              // tiles waiting for a build, being built or waiting for the swap
+		f32 build_ms_last;        // worker time of the last tile build
+		f32 build_ms_max;
+		f32 swap_ms_last;         // game-thread time of the last rebuild_update that swapped
+		f32 swap_ms_max;
+		s32 obstacles;            // live obstacles
+		s32 source_triangles;     // the rebuild source (0 = none)
+		s32 source_boxes;
+		s32 source_kbytes;
+		s32 tiles_superseded;     // builds dropped because a newer one of the same tile was asked for first
+		s32 revision;             // changes with every tile swapped in and every polygon blocked / unblocked (redraw the debug mesh)
+	};
+
+	// The geometry the loaded navmesh was baked from (bake()'s input: world-space triangles + solid boxes); it is binned into
+	// the navmesh's own tile grid with its own settings. Replaces the previous source and marks every tile an obstacle covers
+	// for a rebuild. False without a navmesh or when nothing of it lies in the grid.
+	bool rebuild_set_source(const f32* verts, s32 vert_count, const s32* tris, s32 tri_count, const u8* tri_areas,
+		const f32* boxes, s32 box_count, const u8* box_areas);
+	bool rebuild_has_source();
+	void rebuild_clear_source();
+	// Re-bake the tiles over [bmin, bmax] from the source (after rebuild_set_source with the changed geometry: a wall blown
+	// up). False without a source.
+	bool rebuild_tiles(const f32* bmin, const f32* bmax);
+	// Game thread, every frame: queue builds for changed tiles and swap finished ones in until budget_ms is spent (at least
+	// one). Returns the tiles swapped.
+	s32  rebuild_update(f32 budget_ms);
+	// Tests and tools: wait (up to timeout_ms) for every pending build and swap it in. True when nothing is pending.
+	bool rebuild_flush(f32 timeout_ms);
+	s32  rebuild_pending();
+	void rebuild_get_stats(rebuild_stats* out);
+
+	u32  obstacle_add(s32 shape, const f32* center, const f32* half, const f32* quat, u32 flags);   // 0 = failed
+	// New pose / flags (null pose arguments keep the current ones); velocity (may be null) = how an avoiding obstacle moves.
+	bool obstacle_set(u32 obstacle, const f32* center, const f32* half, const f32* quat, u32 flags, const f32* velocity);
+	void obstacle_remove(u32 obstacle);
+	bool obstacle_valid(u32 obstacle);
+	// Is the obstacle in the navmesh as asked — carved where it is (its tiles rebuilt), polygons blocked while active?
+	bool obstacle_ready(u32 obstacle);
+	s32  obstacle_count();
+	void obstacle_clear();                                         // remove every obstacle (their tiles are rebuilt without them)
 }

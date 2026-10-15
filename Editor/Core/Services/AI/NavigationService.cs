@@ -80,7 +80,7 @@ namespace Editor.Core.Services.AI
     /// world space — box / sphere / capsule colliders and primitive meshes as SOLID oriented boxes, mesh colliders and
     /// model render meshes as triangles (the same model-triangle export the mesh colliders use) — skipping moving
     /// entities (dynamic / kinematic Rigidbody, joints), characters (Animator, NavAgent, tag "Player") and everything
-    /// tagged <see cref="IgnoreTag"/>. <see cref="Bake"/> runs Recast (tiled, multi-threaded; safe on a worker thread)
+    /// tagged <see cref="IgnoreTag"/> or carrying a <see cref="NavMeshObstacle"/> (#435). <see cref="Bake"/> runs Recast (tiled, multi-threaded; safe on a worker thread)
     /// and the result is saved as <c>&lt;Scene&gt;.vnav</c> next to the <c>.vscene</c> (it ships inside Assets.vpak).
     ///
     /// <b>Runtime</b> (play / standalone): <see cref="Begin"/> loads the scene's .vnav and registers every enabled
@@ -92,7 +92,7 @@ namespace Editor.Core.Services.AI
     ///
     /// Without a Recast-enabled engine (<see cref="NavigationNative.Available"/> false) every call is a harmless no-op.
     /// </summary>
-    public static class NavigationService
+    public static partial class NavigationService
     {
         public const string NavMeshExtension = ".vnav";
         /// <summary>Entities with this tag (and their children) are left out of the bake (doors a script moves, clutter).</summary>
@@ -496,6 +496,7 @@ namespace Editor.Core.Services.AI
         /// <summary>Play stop / scene switch: remove every agent from the crowd (the navmesh stays loaded).</summary>
         public static void End()
         {
+            EndObstacles();
             if (Available) { try { VortexAPI.NavCrowdClear(); } catch { } }
             foreach (var r in _agentList) if (r.Agent != null) r.Agent.PropertyChanged -= OnAgentChanged;
             _agents.Clear();
@@ -560,7 +561,9 @@ namespace Editor.Core.Services.AI
                 }
             }
 
-            // 2) the crowd: path requests, corridor following, avoidance
+            // 2) obstacles (#435): their poses and switches to the navmesh, rebuilt tiles in — then the crowd: path requests,
+            // corridor following, avoidance
+            UpdateObstacles(dt);
             VortexAPI.NavCrowdUpdate(dt);
 
             // 3) crowd -> entities
@@ -914,6 +917,7 @@ namespace Editor.Core.Services.AI
                 _agents.Remove(r.Entity);
                 _agentList.RemoveAt(i);
             }
+            RescanObstacles();
         }
 
         private static void Collect(GameEntity e, HashSet<GameEntity> seen)
@@ -952,6 +956,7 @@ namespace Editor.Core.Services.AI
         private static void DropAgentHandles()
         {
             foreach (var r in _agentList) { r.Handle = 0; r.StateValid = false; }
+            DropObstacleHandles();
         }
 
         /// <summary>An agent whose collider became a STATIC physics body (no Rigidbody) would leave that body at its spawn
@@ -1047,7 +1052,7 @@ namespace Editor.Core.Services.AI
         private static void SubmitNavMeshSurface()
         {
             if (!IsLoaded) return;
-            if (_debugMeshVersion != _version || _debugMesh == ID.INVALID_ID)
+            if (_debugMeshVersion != _version || _debugMesh == ID.INVALID_ID || DebugMeshStale())
             {
                 if (_debugMesh != ID.INVALID_ID) { try { VortexAPI.DeleteMesh(_debugMesh); } catch { } }
                 _debugMesh = VortexAPI.NavCreateDebugMesh(0.05f);
@@ -1207,6 +1212,7 @@ namespace Editor.Core.Services.AI
                 foreach (var c in e.Components)
                 {
                     if (c is NavAgent || c is Animator) return true;
+                    if (c is NavMeshObstacle) return true;   // #435: the obstacle decides at runtime (switched off: open)
                     if (c is Rigidbody rb && rb.IsEnabled && rb.BodyType != RigidbodyType.Static) return true;
                     if (c is PhysicsJoint j && j.IsEnabled) return true;
                 }

@@ -330,6 +330,7 @@ namespace VortexEditor.Shell
                     Item("Nav Agent", null, () => EditorCommands.AddComponentToSelection(e => new Editor.ECS.Components.AI.NavAgent(e), "Nav Agent")),
                     Item("AI Perception", null, () => EditorCommands.AddComponentToSelection(e => new Editor.ECS.Components.AI.AIPerception(e), "AI Perception")),
                     Item("Patrol Path", null, () => EditorCommands.AddComponentToSelection(e => new Editor.ECS.Components.AI.PatrolPath(e), "Patrol Path")),
+                    Item("Nav Mesh Obstacle", null, () => EditorCommands.AddComponentToSelection(e => new Editor.ECS.Components.AI.NavMeshObstacle(e), "Nav Mesh Obstacle")),
                     Item("Behavior Tree", null, () => EditorCommands.AddComponentToSelection(e => new Editor.ECS.Components.AI.BehaviorTreeAgent(e), "Behavior Tree")),
                     Sep(),
                     Item("Navigation (Bake NavMesh)…", null, EditorWindows.Navigation)),
