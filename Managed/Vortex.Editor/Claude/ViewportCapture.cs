@@ -30,6 +30,12 @@ namespace VortexEditor.Claude
                 throw new ToolError("The editor viewport is not running (no project open, or the editor is still starting).");
             string bmp = Path.Combine(Path.GetTempPath(), "vortex-capture-" + Guid.NewGuid().ToString("N") + ".bmp");
             bool gizmos = VortexAPI.AreGizmosVisible;
+            if (PlayModeService.Instance.IsPlaying)
+            {
+                // #361: the captured frame shows every character in its current pose, whatever the level of detail skipped
+                Editor.Core.Animation.AnimationService.FullDetailFor(1f);
+                if (!clean) await Task.Delay(50);   // a tick that poses them before the frame is taken (clean waits below)
+            }
             try
             {
                 if (clean)

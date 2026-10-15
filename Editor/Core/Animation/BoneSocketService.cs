@@ -136,6 +136,10 @@ namespace Editor.Core.Animation
         {
             var target = j.ExplicitTarget ?? FindAncestorAnimator(j.Entity);
             if (target == null) return false;
+            // #361: what the socket carries acts beyond its own pixels — a hitbox, a muzzle's script, a light, an effect, a
+            // sound: it follows this frame's pose even when the level of detail skipped the character's (AI-vs-AI hits must not
+            // depend on where the player looks). A purely visual attachment of an unseen character may wait with its pose.
+            if (CarriesGameplay(j.Entity)) AnimationService.Instance.EnsurePose(target);
             if (!TryGetBoneWorld(target, j.Bone, out var boneWorld))
             {
                 WarnOnce(j.Entity.Name + "/" + j.Bone, "[BoneSocket] bone '" + j.Bone + "' not found on target '" + target.Name + "' — attachment idles");
@@ -166,6 +170,37 @@ namespace Editor.Core.Animation
             boneFrame.Translation = boneWorld.Translation;
             WriteWorldToTransform(j.Entity, offset * boneFrame);
             return true;
+        }
+
+        // a socketed subtree's "acts beyond its pixels" answer, kept while the entity graph does not change (#361)
+        private readonly Dictionary<ECS.GameEntity, bool> _gameplay = new Dictionary<ECS.GameEntity, bool>(ReferenceEqualityComparer.Instance);
+        private int _gameplayHierarchy = -1, _gameplayComponents = -1;
+
+        /// <summary>Does the socketed entity or anything under it carry a collider or Rigidbody (a hitbox, a weapon's trigger), a
+        /// script (a muzzle, a pickup), a light, a particle system or an audio source (#361)?</summary>
+        internal bool CarriesGameplay(ECS.GameEntity e)
+        {
+            int h = ECS.GameEntity.HierarchyVersion, c = ECS.GameEntity.ComponentsVersion;
+            if (h != _gameplayHierarchy || c != _gameplayComponents) { _gameplay.Clear(); _gameplayHierarchy = h; _gameplayComponents = c; }
+            if (_gameplay.TryGetValue(e, out bool v)) return v;
+            v = CarriesGameplayRecursive(e);
+            _gameplay[e] = v;
+            return v;
+        }
+
+        private static bool CarriesGameplayRecursive(ECS.GameEntity e)
+        {
+            var comps = e.Components;
+            for (int i = 0; i < comps.Count; i++)
+            {
+                var k = comps[i];
+                if (k is ECS.Components.Physics.Collider || k is ECS.Components.Physics.Rigidbody || k is ECS.Components.Scripting.Script
+                    || k is ECS.Components.Lighting.Light || k is ECS.Components.Rendering.ParticleSystem || k is ECS.Components.Audio.AudioSource)
+                    return true;
+            }
+            var children = e.Children;
+            for (int i = 0; i < children.Count; i++) if (CarriesGameplayRecursive(children[i])) return true;
+            return false;
         }
 
         // ------------------------------------------------------------------ bone queries (script API + weapon raycasts)

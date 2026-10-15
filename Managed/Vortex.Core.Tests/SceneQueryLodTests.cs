@@ -316,6 +316,95 @@ public class Idle : VortexBehaviour { }
             t.Equal(-1f, R(new Vector3(0, 0, -40)), "the level of detail off: every frame");
         }
 
+        /// <summary>#361 review: an off-screen character whose sun shadow falls into the view keeps its pose (a low sun throws it
+        /// far; a frozen pose would slide along), one whose shadow falls away or ends beyond the shadow distance does not; through
+        /// a zoomed view (a scope) the far tiers count the character as nearer, a wide view never thins them out.</summary>
+        [Test]
+        public static void ASunShadowInViewAndAZoomKeepThePose(TestContext t)
+        {
+            var lod = new AnimationLod();
+            var behind = new Vector3(0, 0, -40);
+            AnimationView Sun(Vector3 dir, bool shadows = true, float distance = 80f) => new AnimationView(Vector3.Zero, Vector3.UnitZ, 60f, 16f / 9f, 60f, shadows, dir, distance);
+            t.Equal(-1f, AnimationService.PoseRate(lod, Sun(new Vector3(0, -0.2f, 1f)), behind, 2f), "a low sun behind the camera throws its shadow into the view: posed");
+            t.Equal(0f, AnimationService.PoseRate(lod, Sun(new Vector3(0, -0.2f, -1f)), behind, 2f), "its shadow falls away from the view: skipped");
+            t.Equal(0f, AnimationService.PoseRate(lod, Sun(new Vector3(0, -1f, 0.1f)), behind, 2f), "a high sun's short shadow stays behind the camera: skipped");
+            t.Equal(0f, AnimationService.PoseRate(lod, Sun(new Vector3(0, -0.2f, 1f), shadows: false), behind, 2f), "no sun shadows: skipped");
+            t.Equal(0f, AnimationService.PoseRate(lod, Sun(new Vector3(0, -0.2f, 1f), distance: 30f), behind, 2f), "beyond the shadow distance nothing casts: skipped");
+
+            var scope = new AnimationView(Vector3.Zero, Vector3.UnitZ, 60f, 16f / 9f, 10f, false, default, 0f);
+            var wide = new AnimationView(Vector3.Zero, Vector3.UnitZ, 90f, 16f / 9f, 90f, false, default, 0f);
+            t.Equal(15f, AnimationService.PoseRate(lod, Ahead, new Vector3(0, 0, 150), 2f), "150 m ahead, unzoomed: 15 poses a second");
+            t.Equal(-1f, AnimationService.PoseRate(lod, scope, new Vector3(0, 0, 150), 2f), "through a 10° scope it is as big as a near one: every frame");
+            t.Equal(30f, AnimationService.PoseRate(lod, wide, new Vector3(0, 0, 80), 2f), "a 90° view keeps the unzoomed tiers (30 per second at 80 m)");
+        }
+
+        /// <summary>#361 review: while another view renders the play world (split / quad views, a camera preview, a capture), the
+        /// level of detail does not know what is seen — the script runtime's view is unknown and every animator poses.</summary>
+        [Test]
+        public static void AnotherViewPosesEveryAnimator(TestContext t)
+        {
+            var asm = Compile(t);
+            var s = new Scene { Name = "Views" };
+            var cam = Add(s, null, "Cam");
+            cam.AddComponentDirect(new Editor.ECS.Components.Rendering.Camera(cam) { IsMainCamera = true });
+            cam.AddComponentDirect(new Script(cam, "Assets/Scripts/Idle.cs"));
+            var npc = TimeTests.Rigged(s, "Npc"); npc.Transform.LocalPosition = new Editor.ECS.Vector3(0, 0, -40);   // behind the camera
+            var rt = ScriptRuntime.Instance;
+            var svc = AnimationService.Instance;
+            try
+            {
+                rt.Begin(s, asm);
+                svc.PlayWithRig(npc, TimeTests.TestRig(), StepClip(withEvent: false));
+                for (int i = 0; i < 3; i++) rt.Update(1f / 60f);
+                t.True(svc.PosesSkipped == 1 && svc.PosesEvaluated == 0, "behind the game camera: skipped (" + svc.PosesEvaluated + " / " + svc.PosesSkipped + ")");
+                AnimationService.FullDetailFor(5f);
+                t.True(AnimationService.FullDetailRequested, "another view renders");
+                rt.Update(1f / 60f);
+                t.True(svc.PosesEvaluated == 1 && svc.PosesSkipped == 0, "… so it poses (" + svc.PosesEvaluated + " / " + svc.PosesSkipped + ")");
+            }
+            finally { ResetFullDetail(); rt.End(); }
+        }
+
+        private static void ResetFullDetail() => typeof(AnimationService).GetField("_fullDetailUntil", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, 0L);
+
+        /// <summary>#361 review: a socket that carries a collider (a hitbox), a script, a light, particles or sound follows the
+        /// current pose of an off-screen character — the level of detail's skipped pose is evaluated for it; a purely visual
+        /// attachment (a hat) waits with the character's pose.</summary>
+        [Test]
+        public static void ASocketThatActsTakesTheCurrentPose(TestContext t)
+        {
+            var s = new Scene { Name = "Sockets" };
+            GameEntity Socketed(GameEntity owner, string name, Func<GameEntity, Editor.ECS.Component> extra)
+            {
+                var e = new GameEntity(s, name);
+                e.Parent = owner; owner.Children.Add(e);
+                e.AddComponentDirect(new Editor.ECS.Components.Animation.BoneAttachment(e) { BoneName = "Hips" });
+                if (extra != null) e.AddComponentDirect(extra(e));
+                return e;
+            }
+            var armed = TimeTests.Rigged(s, "Armed"); armed.Transform.LocalPosition = new Editor.ECS.Vector3(0, 0, -40);
+            var dressed = TimeTests.Rigged(s, "Dressed"); dressed.Transform.LocalPosition = new Editor.ECS.Vector3(2, 0, -40);
+            Socketed(armed, "Hitbox", e => new Editor.ECS.Components.Physics.BoxCollider(e));
+            Socketed(dressed, "Hat", null);
+            var svc = AnimationService.Instance;
+            var sockets = BoneSocketService.Instance;
+            try
+            {
+                svc.ResetStates(); sockets.ResetRuntime();
+                var clip = StepClip(withEvent: false);
+                svc.PlayWithRig(armed, TimeTests.TestRig(), clip);
+                svc.PlayWithRig(dressed, TimeTests.TestRig(), clip);
+                for (int i = 0; i < 5; i++) { svc.Step(s, 1f / 60f, 1f / 60f, Ahead); sockets.Apply(s); }
+                var armedPose = svc.CurrentNodeWorlds(armed); var dressedPose = svc.CurrentNodeWorlds(dressed);
+                svc.Step(s, 1f / 60f, 1f / 60f, Ahead);
+                t.Equal(2, svc.PosesSkipped, "both behind the camera: skipped by the level of detail");
+                sockets.Apply(s);
+                t.False(ReferenceEquals(armedPose, svc.CurrentNodeWorlds(armed)), "the hitbox's socket took this frame's pose");
+                t.True(ReferenceEquals(dressedPose, svc.CurrentNodeWorlds(dressed)), "a hat alone waits with the pose");
+            }
+            finally { svc.ResetStates(); sockets.ResetRuntime(); }
+        }
+
         private static VortexAnimClip StepClip(bool withEvent)
         {
             var clip = new VortexAnimClip { Name = "loop", DurationSec = 4f, Loop = true };   // no wrap within a test

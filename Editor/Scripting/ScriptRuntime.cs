@@ -1828,15 +1828,16 @@ namespace Editor.Scripting
 
         private bool _animEventsHooked;
 
-        // the widest field of view a script asked for this session (Camera.SetFieldOfView) — the level of detail's view (#361)
-        private float _scriptFov;
-
         /// <summary>The camera this frame renders through, for the animators' level of detail (#361): the main camera where the
-        /// scripts left it this tick (the view is applied from it after the tick). Unknown — every animator poses — while the
-        /// debug camera flies (it may look anywhere) or the scene has no main camera.</summary>
+        /// scripts left it this tick (the view is applied from it after the tick), the field of view it renders with (a script's
+        /// zoom — the cone takes the wider of that and the component's), and the sun's shadows. Unknown — every animator poses —
+        /// while the debug camera flies (it may look anywhere), another view renders the play world (split / quad views, a
+        /// camera preview, a capture: <see cref="Editor.Core.Animation.AnimationService.FullDetailFor"/>) or the scene has no
+        /// main camera.</summary>
         private Editor.Core.Animation.AnimationView LodView()
         {
-            if (Editor.Core.Services.SceneRenderService.DebugThirdPersonView) return Editor.Core.Animation.AnimationView.Unknown;
+            if (Editor.Core.Services.SceneRenderService.DebugThirdPersonView || Editor.Core.Animation.AnimationService.FullDetailRequested)
+                return Editor.Core.Animation.AnimationView.Unknown;
             var cam = Editor.Core.Services.PlayCameraHelper.FindMainCameraEntity(_currentScene);
             if (cam?.Transform == null) return Editor.Core.Animation.AnimationView.Unknown;
             var w = Editor.Core.Animation.BoneSocketService.EntityWorld(cam);
@@ -1845,9 +1846,13 @@ namespace Editor.Scripting
             var comps = cam.Components;
             for (int i = 0; i < comps.Count; i++)
                 if (comps[i] is Editor.ECS.Components.Rendering.Camera c) { fov = c.FieldOfView; break; }
-            fov = Math.Max(fov, _scriptFov);   // the wider of the two: never a view narrower than what renders
+            float rendered = Editor.DllWrapper.VortexAPI.ViewFov;   // what the view got last: the component's, or a script's zoom
+            if (!(rendered > 0f)) rendered = fov;
             float aspect = _uiW > 1f && _uiH > 1f ? _uiW / _uiH : 16f / 9f;
-            return new Editor.Core.Animation.AnimationView(w.Translation, fwd, fov, aspect);
+            var sun = Editor.DllWrapper.VortexAPI.LastSun;
+            bool shadows = sun != null && sun.ShadowsVisible;
+            return new Editor.Core.Animation.AnimationView(w.Translation, fwd, Math.Max(fov, rendered), aspect, rendered,
+                shadows, shadows ? new System.Numerics.Vector3(sun.DirX, sun.DirY, sun.DirZ) : default, shadows ? sun.ShadowDistance : 0f);
         }
 
         /// <summary>Route an AnimEvent marker (footstep, attack hit, ...) to the entity's behaviours (#408: every one).</summary>
@@ -2211,7 +2216,6 @@ namespace Editor.Scripting
             _scriptOf.Clear();
             _behavioursByEntity.Clear();
             ClearIndex();   // #361: no references into the stopped session's scene
-            _scriptFov = 0f;
             try { Editor.Core.Services.Physics.CollisionService.ResetEvents(); Editor.Core.Services.Physics.CollisionService.ClearCharacters(); } catch { }
             _dispatching = null; _dispatchingEntity = null;
             try { Editor.Core.Services.Physics.PhysicsService.Clear(); Editor.Core.Services.Physics.PhysicsService.ContactHandler = null; } catch { }
@@ -3327,8 +3331,7 @@ namespace Editor.Scripting
 
         void Vortex.IScriptHost.SetCameraFov(float fovDegrees)
         {
-            if (fovDegrees > _scriptFov && float.IsFinite(fovDegrees)) _scriptFov = fovDegrees;   // #361: the level of detail's view
-            try { Editor.DllWrapper.VortexAPI.SetViewFOV(fovDegrees); }
+            try { Editor.DllWrapper.VortexAPI.SetViewFOV(fovDegrees); }   // remembered there: the level of detail's zoom (#361)
             catch { }
         }
 

@@ -418,9 +418,11 @@ namespace Editor.Core.Animation
             if (lod == null || !lod.Enabled || !view.Known) return -1f;
             var d = center - view.Eye;
             float dist = d.Length();
-            if (dist <= lod.NearRadius + radius) return -1f;          // close by: seen or not (shadows, a mirror, a turn)
-            if (!InView(view, d, dist, radius)) return 0f;           // off-screen: no pose until it is seen again
-            float far = dist - radius;
+            if (dist <= lod.NearRadius + radius) return -1f;          // close by: seen or not (a mirror, a turn, a local light's shadow)
+            // off-screen, and its sun shadow too: no pose until either is seen again
+            if (!InView(view, d, dist, radius) && !ShadowInView(view, center, dist, radius)) return 0f;
+            // the far tiers go by apparent size: through a zoomed view (a scope) a far character is as big as a near one
+            float far = (dist - radius) * view.ZoomFactor;
             if (far > lod.FarDistance * 2f) return lod.FarRate * 0.5f;
             if (far > lod.FarDistance) return lod.FarRate;
             return -1f;
@@ -428,18 +430,51 @@ namespace Editor.Core.Animation
 
         /// <summary>Does the sphere touch the view? The frustum as a cone around the view axis as wide as its diagonal, plus a
         /// margin: the pose decided this frame is drawn after the camera's last move of the frame.</summary>
-        private static bool InView(AnimationView v, Vector3 d, float dist, float radius)
+        private static bool InView(in AnimationView v, Vector3 d, float dist, float radius)
         {
-            var fwd = v.Forward.LengthSquared() > 1e-8f ? Vector3.Normalize(v.Forward) : Vector3.UnitZ;
-            double tanV = Math.Tan(Math.Clamp(v.VerticalFovDeg, 1f, 170f) * Math.PI / 360.0);
-            double aspect = v.Aspect > 0.05f && float.IsFinite(v.Aspect) ? v.Aspect : 16.0 / 9.0;
-            double half = Math.Atan(tanV * Math.Sqrt(1.0 + aspect * aspect)) + AnimationLod.ViewMarginDeg * Math.PI / 180.0;
-            if (half >= Math.PI) return true;
-            float along = Vector3.Dot(d, fwd);
-            float across = (float)Math.Sqrt(Math.Max(0f, dist * dist - along * along));
+            if (v.AllAround) return true;
+            float along = Vector3.Dot(d, v.Axis);
+            float across = MathF.Sqrt(MathF.Max(0f, dist * dist - along * along));
             // a sphere is outside the cone when it lies wholly beyond the cone's side
-            return across * Math.Cos(half) - along * Math.Sin(half) <= radius;
+            return across * v.ConeCos - along * v.ConeSin <= radius;
         }
+
+        /// <summary>Can the view see the character's sun shadow? Its bounds swept along the way the sunlight travels — as far
+        /// as the shadow can fall below it (<see cref="AnimationLod.ShadowDrop"/> metres down, longer the lower the sun, at
+        /// most the shadow distance) — touch the view, while it is within the shadow distance of the eye (beyond it nothing
+        /// casts). A low sun's long shadow of a character behind the camera keeps it posed: a frozen pose would slide along.</summary>
+        private static bool ShadowInView(in AnimationView v, Vector3 center, float dist, float radius)
+        {
+            if (!v.SunShadows || dist - radius > v.ShadowDistance) return false;
+            float down = Math.Max(0.02f, -v.SunDirection.Y);   // a sun at the horizon: as long as shadows get
+            float reach = Math.Min(v.ShadowDistance, (2f * radius + AnimationLod.ShadowDrop) / down);
+            float step = Math.Max(radius, 0.5f);               // spheres of the bounds' radius every radius metres cover the sweep
+            int n = Math.Min(64, (int)Math.Ceiling(reach / step));
+            for (int i = 1; i <= n; i++)
+            {
+                var p = center + v.SunDirection * (reach * i / n) - v.Eye;
+                if (InView(v, p, p.Length(), radius)) return true;
+            }
+            return false;
+        }
+
+        // ---- other views of the play world (#361 review): the level of detail only knows the game camera, so while a split
+        // or quad view, a camera preview or a capture renders, every animator poses every frame
+        private static long _fullDetailUntil;   // Stopwatch timestamp
+
+        /// <summary>Pose every animator every frame for the next <paramref name="seconds"/> (real time) — another view renders
+        /// the play world (split / quad views, a camera preview, an MCP capture). Called again while it keeps rendering.</summary>
+        public static void FullDetailFor(float seconds)
+        {
+            if (!(seconds > 0f)) return;
+            long until = System.Diagnostics.Stopwatch.GetTimestamp() + (long)(seconds * System.Diagnostics.Stopwatch.Frequency);
+            long cur;
+            do { cur = System.Threading.Interlocked.Read(ref _fullDetailUntil); if (until <= cur) return; }
+            while (System.Threading.Interlocked.CompareExchange(ref _fullDetailUntil, until, cur) != cur);
+        }
+
+        /// <summary>True while <see cref="FullDetailFor"/> holds: the view is unknown, every animator poses.</summary>
+        public static bool FullDetailRequested => System.Diagnostics.Stopwatch.GetTimestamp() < System.Threading.Interlocked.Read(ref _fullDetailUntil);
 
         /// <summary>Is this animator's pose skipped this frame (#361)? Its time since the last pose grows by <paramref name="dt"/>.</summary>
         private bool SkipPose(ECS.GameEntity entity, ECS.Components.Animation.Animator animator, AnimatorState state, float dt)
@@ -3320,25 +3355,58 @@ namespace Editor.Core.Animation
     }
 
     /// <summary>The camera a frame renders through, as the animators' level of detail sees it (#361). <see cref="Unknown"/> (the
-    /// debug camera flies, no main camera, a test without one): every animator poses every frame.</summary>
+    /// debug camera flies, another view renders, no main camera, a test without one): every animator poses every frame.</summary>
     public readonly struct AnimationView
     {
         public readonly bool Known;
         public readonly Vector3 Eye, Forward;
+        /// <summary>The widest vertical field of view the frame may render with (degrees) — the cone a character must be out of.</summary>
         public readonly float VerticalFovDeg, Aspect;
+        /// <summary>The field of view it renders with now (degrees) — narrower through a scope: the far tiers scale with it.</summary>
+        public readonly float ZoomFovDeg;
+        /// <summary>The sun throws visible shadows (<see cref="SunDirection"/>: the way its light travels, normalized; they reach
+        /// <see cref="ShadowDistance"/> metres from the eye).</summary>
+        public readonly bool SunShadows;
+        public readonly Vector3 SunDirection;
+        public readonly float ShadowDistance;
+
+        // the view cone, worked out once per frame
+        internal readonly Vector3 Axis;
+        internal readonly float ConeCos, ConeSin, ZoomFactor;
+        internal readonly bool AllAround;
 
         public AnimationView(Vector3 eye, Vector3 forward, float verticalFovDeg, float aspect)
+            : this(eye, forward, verticalFovDeg, aspect, verticalFovDeg, false, default, 0f) { }
+
+        public AnimationView(Vector3 eye, Vector3 forward, float verticalFovDeg, float aspect, float zoomFovDeg,
+                             bool sunShadows, Vector3 sunDirection, float shadowDistance)
         {
             Known = true; Eye = eye; Forward = forward; VerticalFovDeg = verticalFovDeg; Aspect = aspect;
+            Axis = forward.LengthSquared() > 1e-8f ? Vector3.Normalize(forward) : Vector3.UnitZ;
+            double tanV = Math.Tan(Math.Clamp(float.IsFinite(verticalFovDeg) ? verticalFovDeg : 60f, 1f, 170f) * Math.PI / 360.0);
+            double a = aspect > 0.05f && float.IsFinite(aspect) ? aspect : 16.0 / 9.0;
+            double half = Math.Atan(tanV * Math.Sqrt(1.0 + a * a)) + AnimationLod.ViewMarginDeg * Math.PI / 180.0;
+            AllAround = half >= Math.PI;
+            ConeCos = (float)Math.Cos(half); ConeSin = (float)Math.Sin(half);
+            // apparent size against the default 60° view; never below the unzoomed tiers (a wide view does not thin them out)
+            float zoom = zoomFovDeg > 0f && float.IsFinite(zoomFovDeg) ? Math.Clamp(zoomFovDeg, 1f, 170f) : 60f;
+            ZoomFovDeg = zoom;
+            ZoomFactor = (float)Math.Min(1.0, Math.Tan(zoom * Math.PI / 360.0) / Math.Tan(Math.PI / 6.0));
+            float sl = sunDirection.Length();
+            SunShadows = sunShadows && sl > 1e-6f && shadowDistance > 0f && float.IsFinite(shadowDistance);
+            SunDirection = SunShadows ? sunDirection / sl : default;
+            ShadowDistance = SunShadows ? shadowDistance : 0f;
         }
 
         public static AnimationView Unknown => default;
     }
 
     /// <summary>The animators' level of detail (#361, Animation.SetLod): within <see cref="NearRadius"/> of the camera every animator
-    /// poses every frame, seen or not; beyond it one outside the view gets no new pose until it is seen again, and one in view
-    /// beyond <see cref="FarDistance"/> poses <see cref="FarRate"/> times a second (half that beyond twice the distance). The
-    /// clock, its events and root motion always run. Defaults are chosen so nothing visible changes: 20 m, 50 m, 30 per second.</summary>
+    /// poses every frame, seen or not; beyond it one outside the view — itself and its sun shadow — gets no new pose until it is
+    /// seen again, and one in view beyond <see cref="FarDistance"/> (scaled by the zoom: through a scope it counts as nearer)
+    /// poses <see cref="FarRate"/> times a second (half that beyond twice the distance). The clock, its events and root motion
+    /// always run; sockets that carry colliders, scripts, lights, particles or sound, bone queries and ragdolls take the current
+    /// pose. Defaults are chosen so nothing visible changes: 20 m, 50 m, 30 per second.</summary>
     public sealed class AnimationLod
     {
         public const float DefaultNearRadius = 20f, DefaultFarDistance = 50f, DefaultFarRate = 30f;
@@ -3346,6 +3414,8 @@ namespace Editor.Core.Animation
         public const float ViewMarginDeg = 15f;
         /// <summary>Metres added to a rig's bind-pose reach: what it holds, its reach in motion.</summary>
         public const float BoundsMargin = 1f;
+        /// <summary>How far below a character its sun shadow is looked for (m, plus its height): stairs, a ledge, a slope.</summary>
+        public const float ShadowDrop = 8f;
 
         public bool Enabled = true;
         public float NearRadius = DefaultNearRadius;
