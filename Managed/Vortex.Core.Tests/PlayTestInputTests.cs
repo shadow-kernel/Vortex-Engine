@@ -45,6 +45,26 @@ public class InputProbe : VortexBehaviour
         }
 
         [Test]
+        public static void ATapPressedInALongLastFrameGoesUpInTheNextOne(TestContext t)
+        {
+            // the installed-editor smoke on WARP: ~12 fps with hitches. A frame from 2.05 s to 2.30 s presses the tap queued at
+            // 2.1 s and its 0.12 s run out in that same frame — the game must still see it down once, so it goes up a frame later.
+            var sim = new SimulatedInput();
+            double end = sim.Enqueue(Json("[{\"t\": 2.1, \"tap\": \"LButton\"}]"));
+            t.True(Math.Abs(end - (2.1 + InputScript.TapSeconds)) < 1e-9, "the sequence ends when the tap runs out: " + end);
+            sim.Advance(2.05);
+            t.False(sim.IsDown(0x01), "not yet pressed at 2.05 s");
+            sim.Advance(2.30);
+            t.True(sim.IsDown(0x01), "pressed in the long frame, so GetKeyDown sees it");
+            t.True(sim.Now > end, "the clock is past the sequence's end already");
+            t.True(sim.ReleasePending, "but its release is still pending — a waiting send_input keeps waiting");
+            sim.Advance(2.38);
+            t.False(sim.IsDown(0x01), "up in the next frame");
+            t.False(sim.ReleasePending, "nothing pending any more");
+            t.Equal(0, sim.HeldKeys().Length, "no key of the sequence is held when the wait ends");
+        }
+
+        [Test]
         public static void OneParserReadsThePlayerFileAndSendInputsJson(TestContext t)
         {
             var problems = new List<string>();

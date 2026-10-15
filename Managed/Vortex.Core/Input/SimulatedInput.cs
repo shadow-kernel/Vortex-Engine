@@ -45,6 +45,11 @@ namespace Editor.Core.Input
         public bool Active => _pending.Count > 0 || _held.Count > 0 || _looks.Count > 0 || _releaseNext.Count > 0 || _produced;
         private bool _produced;
 
+        /// <summary>A key pressed and run out within the same tick is still down for that tick and goes up in the next
+        /// <see cref="Advance"/>: true until then. A caller waiting for a sequence to finish waits for this too — after a long
+        /// frame the clock can be past the sequence's end while its last tap is still held (#457).</summary>
+        public bool ReleasePending => _releaseNext.Count > 0;
+
         /// <summary>Is this virtual key (keyboard key or mouse button) held by the simulation?</summary>
         public bool IsDown(int vk) => _held.Count != 0 && _held.ContainsKey(vk);
 
