@@ -44,21 +44,62 @@ namespace VortexEditor.Claude.Tools
             }).ToArray();
         }
 
-        [McpServerTool(Name = "open_scene"), NoDryRun]
-        [Description("Makes a scene the active (edited) scene — by name, or by .vscene path relative to the project (loaded into the project if needed).")]
-        public static object OpenScene([Description("Scene name or project-relative .vscene path")] string scene)
+        // ManagesUndo: a reload drops the scene's undo steps itself — no undo group may be open around it (#411)
+        [McpServerTool(Name = "open_scene"), ManagesUndo]
+        [Description("Makes a scene the active (edited) scene — by name, or by .vscene path relative to the project (loaded into the project if needed). " +
+                     "Every scene of the project is already in memory, so opening one does NOT read its file again: the result says already_open, and " +
+                     "unsaved_changes when the scene in memory no longer matches its .vscene (edits not saved, leftovers of a play session, or a file changed " +
+                     "on disk, e.g. by a git checkout). reload: true discards the scene's in-memory state and reads its .vscene again — entities, environment " +
+                     "and name come from the file, the selection is cleared and the undo steps of that scene are dropped (cannot be undone). Refused while playing.")]
+        public static object OpenScene(
+            [Description("Scene name or project-relative .vscene path (default: the active scene)")] string scene = null,
+            [Description("Discard the scene in memory and read its .vscene file again")] bool reload = false)
         {
             var p = SceneModel.Project;
-            var hit = p.Scenes.FirstOrDefault(s => s != null && string.Equals(s.Name, scene, StringComparison.OrdinalIgnoreCase));
+            var hit = string.IsNullOrEmpty(scene) ? SceneModel.ActiveScene
+                : p.Scenes.FirstOrDefault(s => s != null && string.Equals(s.Name, scene, StringComparison.OrdinalIgnoreCase));
+            string full = null;
             if (hit == null)
             {
-                string full = Path.GetFullPath(Path.Combine(p.Path, scene ?? ""));
+                full = Path.GetFullPath(Path.Combine(p.Path, scene ?? ""));
                 if (!full.StartsWith(Path.GetFullPath(p.Path), StringComparison.Ordinal) || !File.Exists(full) || !full.EndsWith(".vscene", StringComparison.OrdinalIgnoreCase))
                     throw new ToolError("No scene '" + scene + "'. Scenes: " + string.Join(", ", p.Scenes.Where(s => s != null).Select(s => s.Name)));
-                hit = EditorCommands.LoadSceneFile(full) ?? throw new ToolError("Could not load " + scene + ".");
+                // a path to a scene the project already holds is that scene (LoadSceneFile would only activate it)
+                hit = p.Scenes.FirstOrDefault(s => s != null && !string.IsNullOrEmpty(s.FilePath)
+                                                   && string.Equals(Path.GetFullPath(s.FilePath), full, StringComparison.OrdinalIgnoreCase));
             }
-            else EditorSession.Instance.ActivateScene(hit);
-            return new { active = hit.Name, entities = SceneModel.All(hit).Count() };
+            if (hit == null)
+            {
+                // not in the project yet: read from disk now
+                hit = EditorCommands.LoadSceneFile(full) ?? throw new ToolError("Could not load " + scene + ".");
+                return new { active = hit.Name, entities = SceneModel.All(hit).Count() };
+            }
+            if (reload)
+            {
+                if (SceneModel.Playing) throw new ToolError("Stop play mode first (exit_play_mode): Stop puts the scenes of Play back, over a scene read while playing.");
+                var r = EditorCommands.ReloadSceneFromDisk(hit);
+                if (!r.Reloaded) throw new ToolError(r.Error);
+                if (!ReferenceEquals(p.ActiveScene, hit)) EditorSession.Instance.ActivateScene(hit);
+                return new
+                {
+                    active = hit.Name,
+                    reloaded = true,
+                    entities = SceneModel.All(hit).Count(),
+                    discarded_unsaved_changes = r.DiscardedChanges,
+                    undo_steps_dropped = r.UndoStepsDropped,
+                };
+            }
+            // the scene was in memory all along: say so, and whether it still matches its file (#411)
+            bool unsaved = SceneService.Instance.HasUnsavedChanges(hit);
+            EditorSession.Instance.ActivateScene(hit);
+            return new
+            {
+                active = hit.Name,
+                entities = SceneModel.All(hit).Count(),
+                already_open = true,
+                unsaved_changes = unsaved ? (bool?)true : null,
+                note = unsaved ? "Nothing was read from disk: the scene in memory differs from its file. reload: true reads the file again (discarding the in-memory state); save_scene keeps the in-memory state." : null,
+            };
         }
 
         [McpServerTool(Name = "save_scene", Idempotent = true), NoDryRun]

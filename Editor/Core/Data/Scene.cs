@@ -243,6 +243,39 @@ namespace Editor.Core.Data
         }
 
         /// <summary>
+        /// Take over what a freshly read copy of this scene's file holds — entities, environment, name and the active-flag
+        /// marker — keeping this object (#411): the project, the hierarchy and every service that holds the scene go on
+        /// working with it. The old entities leave the engine and the renderer first; when the scene is active the new ones
+        /// are registered and the file's environment applies. Returns the old top-level entities.
+        /// </summary>
+        internal List<GameEntity> ReplaceContent(Scene file)
+        {
+            if (file == null)
+                throw new ArgumentNullException(nameof(file));
+
+            var old = _entities != null ? new List<GameEntity>(_entities) : new List<GameEntity>();
+            bool active = IsActive;
+            // the old entities' native twins and renderer resources go: the reloaded ones carry the same ids (#358)
+            if (active) DeactivateEntities();
+            else foreach (var entity in old) entity.SyncEngineStateRecursive(false);
+            foreach (var entity in old) { try { Services.SceneRenderService.Instance.RemoveEntityTree(entity); } catch { } }
+
+            _entities = file._entities ?? new ObservableCollection<GameEntity>();
+            _settings = file._settings;
+            ActiveFlagsVersion = file.ActiveFlagsVersion;
+            if (!string.IsNullOrEmpty(file._name)) SetProperty(ref _name, file._name, nameof(Name));
+            foreach (var entity in _entities)
+                SetEntityReferencesRecursive(entity);
+            SelectedEntity = null;
+            OnPropertyChanged(nameof(Entities));   // the hierarchy binds the list itself
+            OnPropertyChanged(nameof(Settings));
+
+            if (active) ActivateEntities();
+            IsDirty = false;
+            return old;
+        }
+
+        /// <summary>
         /// Speichert die Szene als Bin�rdatei
         /// </summary>
         public void Save()

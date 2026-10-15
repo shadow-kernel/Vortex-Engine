@@ -243,6 +243,47 @@ namespace VortexEditor.Shell
             catch (Exception ex) { Fail("Save scene", ex); }
         }
 
+        /// <summary>File ▸ Revert Scene (#411), like the Revert of the Material, VFX, Prefab and Behavior Tree editors: discard
+        /// the active scene's in-memory state and read its .vscene again. Asks first when the scene has unsaved changes.</summary>
+        public static async Task RevertScene(Scene scene = null)
+        {
+            scene = scene ?? ActiveScene;
+            if (scene == null) { Toast("Open a project first"); return; }
+            if (PlayModeService.Instance.IsPlaying) { Toast("Stop play mode first: Stop puts the scenes of Play back"); return; }
+            if (string.IsNullOrEmpty(scene.FilePath) || !File.Exists(scene.FilePath)) { Toast(scene.Name + " was never saved: there is no file to revert to"); return; }
+            if (SceneService.Instance.HasUnsavedChanges(scene)
+                && !await Dialogs.Confirm("Revert “" + scene.Name + "”?", "Discards every unsaved change of the scene and reloads it from disk. Its undo history goes too — this cannot be undone.", "Revert", "Cancel", destructive: true))
+                return;
+            var r = ReloadSceneFromDisk(scene);
+            Toast(r.Reloaded ? "Reverted " + scene.Name : r.Error);
+        }
+
+        /// <summary>Read a scene's .vscene again, discarding its in-memory state (#411) — File ▸ Revert Scene and the MCP
+        /// open_scene reload run this, without asking. Nothing stays selected that was replaced, the viewport re-submits the
+        /// scene and one Console line says what went.</summary>
+        public static SceneReloadResult ReloadSceneFromDisk(Scene scene)
+        {
+            var sel = Selected;
+            bool selectedHere = (sel != null && ReferenceEquals(sel.Scene, scene)) || (Vm.SelectedEntities?.Any(e => e != null && ReferenceEquals(e.Scene, scene)) ?? false);
+            var r = SceneService.Instance.ReloadScene(scene);
+            if (!r.Reloaded) return r;
+            if (selectedHere)
+            {
+                Vm.ClearSelection();
+                SelectionService.Instance.ClearSelection();
+            }
+            if (ReferenceEquals(scene, ActiveScene))
+            {
+                try { GameRuntime.MountSceneAssets(scene); } catch { }
+                try { SceneRenderService.Instance.PreloadSceneAssets(scene); } catch { }
+            }
+            SceneRenderService.StaticDirty = true;
+            AfterSceneEdit();
+            ConsoleService.Instance.LogSystem("Reverted '" + scene.Name + "' to its file" + (r.DiscardedChanges ? " — unsaved changes discarded" : "")
+                + (r.UndoStepsDropped > 0 ? ", " + r.UndoStepsDropped + (r.UndoStepsDropped == 1 ? " undo step" : " undo steps") + " dropped" : ""));
+            return r;
+        }
+
         // ============================================================ build
         public static void Build() => Window?.OpenBuildDialog(runAfter: false);
         public static void BuildAndRun() => Window?.OpenBuildDialog(runAfter: true);

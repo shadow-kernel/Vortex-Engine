@@ -167,12 +167,16 @@ namespace VortexEditor.Shell
         public static NativeMenu Build(MainWindow w)
         {
             var menu = new NativeMenu();
+            // #411: the scene's own Revert, like the asset editors have — not while playing (Stop puts the scenes back)
+            var revertScene = Item("Revert Scene", null, () => _ = EditorCommands.RevertScene());
+            Track(revertScene, enabled: () => ProjectData.Current?.ActiveScene != null && !PlayModeService.Instance.IsPlaying);
             menu.Items.Add(Sub("File",
                 Item("New Project…", null, EditorCommands.NewProject),
                 Item("Open Project…", "Cmd+O", EditorCommands.OpenProject),
                 Sep(),
                 Item("New Scene", "Cmd+N", EditorCommands.NewScene),
                 Item("Open Scene…", "Cmd+Shift+O", () => _ = EditorCommands.OpenScene()),
+                revertScene,
                 Sep(),
                 Item("Save", "Cmd+S", EditorCommands.SaveProject),
                 Item("Save All", "Cmd+Shift+S", EditorCommands.SaveAll),
