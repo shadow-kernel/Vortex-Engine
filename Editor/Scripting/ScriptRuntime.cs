@@ -186,33 +186,143 @@ namespace Editor.Scripting
         {
             var e = FindEntityByHandle(id);
             if (e == null) return false;
+            // an OnEnable / OnDisable of this very switch turning it again, either way (Unity refuses that too, #422)
+            if (_activating.Contains(e)) { WarnReentrantSetActive(e); return false; }
             if (e.IsActive == active) return true;   // no-op guard: a re-add would duplicate collision shapes
-            if (!_activeChanged.ContainsKey(e)) _activeChanged[e] = e.IsActive;   // restore on play end
-            e.IsActive = active;
-            try { e.SyncEngineState(); } catch { }   // under an inactive parent it stays out of the engine
-            // #51: collision + audio follow the active state (previously a documented limitation —
-            // a deactivated door/monster stayed solid and kept emitting).
+            _activating.Add(e);
             try
             {
-                if (active) Editor.Core.Services.Physics.CollisionService.AddEntityShapes(e);
-                else Editor.Core.Services.Physics.CollisionService.RemoveEntityShapes(e);
+                // #422: OnDisable for the subtree's active scripts first — their colliders and bodies are still there
+                if (!active && ActiveInHierarchy(e))
+                {
+                    NotifySubtree(e, enable: false);
+                    if (!ReferenceEquals(FindEntityByHandle(id), e) || e.IsActive == active) return true;   // an OnDisable destroyed it
+                }
+                if (!_activeChanged.ContainsKey(e)) _activeChanged[e] = e.IsActive;   // restore on play end
+                e.IsActive = active;
+                try { e.SyncEngineState(); } catch { }   // under an inactive parent it stays out of the engine
+                // #51: collision + audio follow the active state (previously a documented limitation —
+                // a deactivated door/monster stayed solid and kept emitting).
+                try
+                {
+                    if (active) Editor.Core.Services.Physics.CollisionService.AddEntityShapes(e);
+                    else Editor.Core.Services.Physics.CollisionService.RemoveEntityShapes(e);
+                }
+                catch { }
+                try
+                {
+                    if (active) Editor.Core.Services.Physics.PhysicsService.AddEntity(e);
+                    else Editor.Core.Services.Physics.PhysicsService.RemoveEntity(e);
+                }
+                catch { }
+                if (!active)
+                {
+                    try { StopAudioRecursive(e); } catch { }
+                    // #407: the subtree's characters stop blocking (managed capsule + Jolt character); MoveCharacter after
+                    // re-activation registers them again
+                    try { Editor.Core.Services.Physics.PhysicsService.RemoveCharactersIn(e); } catch { }
+                }
+                Editor.Core.Services.SceneRenderService.RuntimeDirty = Editor.Core.Services.SceneRenderService.StaticDirty = true;   // structural (#364 A)
+                // #422: OnEnable once the colliders, bodies and audio are back — for the scripts whose entity is now active in
+                // the hierarchy (a child switched off on its own stays out)
+                if (active && ActiveInHierarchy(e)) NotifySubtree(e, enable: true);
+                return true;
             }
-            catch { }
+            finally { _activating.Remove(e); }
+        }
+
+        // ---- the script lifecycle (#422): OnEnable / Start / OnDisable, each delivered once ----
+
+        private readonly HashSet<GameEntity> _activating = new HashSet<GameEntity>();   // a SetActive in progress
+        private readonly HashSet<GameEntity> _reentryWarned = new HashSet<GameEntity>();
+
+        private void WarnReentrantSetActive(GameEntity e)
+        {
+            if (!_reentryWarned.Add(e)) return;
             try
             {
-                if (active) Editor.Core.Services.Physics.PhysicsService.AddEntity(e);
-                else Editor.Core.Services.Physics.PhysicsService.RemoveEntity(e);
+                Editor.Core.Services.ConsoleService.Instance.LogWarning("Scene.SetActive: '" + e.Name + "' is being switched on or off right now — "
+                    + "a SetActive on it from its own OnEnable / OnDisable is ignored. (Shown once per entity.)");
             }
             catch { }
-            if (!active)
-            {
-                try { StopAudioRecursive(e); } catch { }
-                // #407: the subtree's characters stop blocking (managed capsule + Jolt character); MoveCharacter after
-                // re-activation registers them again
-                try { Editor.Core.Services.Physics.PhysicsService.RemoveCharactersIn(e); } catch { }
-            }
-            Editor.Core.Services.SceneRenderService.RuntimeDirty = Editor.Core.Services.SceneRenderService.StaticDirty = true;   // structural (#364 A)
+        }
+
+        /// <summary>The entity and every ancestor are active (the play world's rule; the scene's own flag is not consulted).</summary>
+        private static bool ActiveInHierarchy(GameEntity e)
+        {
+            if (e == null) return false;
+            for (var p = e; p != null; p = p.Parent) if (!p.IsActive) return false;
             return true;
+        }
+
+        /// <summary>The scene entity a behaviour runs on — null for a UI action class (EntityId 0) or after its entity left.</summary>
+        private GameEntity EntityOf(Vortex.VortexBehaviour b)
+            => b != null && b.EntityId != 0 && _entitiesById.TryGetValue(b.EntityId, out var e) ? e : null;
+
+        /// <summary>Would the behaviour be active now: live, its Script switched on, its entity active in the hierarchy (a UI
+        /// action class, which has no entity, always is).</summary>
+        private bool ShouldBeEnabled(Vortex.VortexBehaviour b)
+            => IsLive(b) && !b.ScriptDisabled && (b.EntityId == 0 || ActiveInHierarchy(EntityOf(b)));
+
+        private void CallOnEnable(Vortex.VortexBehaviour b)
+        {
+            if (b.LifecycleEnabled || !ShouldBeEnabled(b)) return;
+            b.LifecycleEnabled = true;   // first: a re-entrant path sees it delivered
+            var prev = _dispatching; _dispatching = b;   // its character moves are its entity's (#406)
+            try { b.OnEnable(); }
+            catch (Exception ex) { LogScriptError("OnEnable", b, ex); }
+            finally { _dispatching = prev; }
+        }
+
+        private void CallOnDisable(Vortex.VortexBehaviour b)
+        {
+            if (b == null || b.Destroyed || !b.LifecycleEnabled) return;
+            b.LifecycleEnabled = false;
+            var prev = _dispatching; _dispatching = b;
+            try { b.OnDisable(); }
+            catch (Exception ex) { LogScriptError("OnDisable", b, ex); }
+            finally { _dispatching = prev; }
+        }
+
+        private void CallStart(Vortex.VortexBehaviour b)
+        {
+            if (!IsLive(b) || b.Started) return;
+            b.Started = true;
+            var prev = _dispatching; _dispatching = b;
+            try { b.Start(); }
+            catch (Exception ex) { LogScriptError("Start", b, ex); }
+            finally { _dispatching = prev; }
+        }
+
+        /// <summary>New behaviours come alive: OnEnable for the ones that are active (all of them first), then Start for each —
+        /// the order of play start, a spawn and a script attached while playing (#422). <paramref name="list"/> is a snapshot:
+        /// what a callback spawns is started by its own spawn.</summary>
+        private void EnableAndStart(IReadOnlyList<Vortex.VortexBehaviour> list)
+        {
+            for (int i = 0; i < list.Count && _active; i++) CallOnEnable(list[i]);
+            for (int i = 0; i < list.Count && _active; i++) CallStart(list[i]);
+        }
+
+        /// <summary>OnEnable or OnDisable for the scripts of <paramref name="root"/>'s subtree that are reached through active
+        /// entities (#422) — the ones whose activeInHierarchy follows the root's; a child switched off on its own, and what
+        /// is under it, keeps its state. Each behaviour is asked again right before its call, so one switched off or
+        /// destroyed by an earlier callback of the same pass is skipped.</summary>
+        private void NotifySubtree(GameEntity root, bool enable)
+        {
+            List<Vortex.VortexBehaviour> list = null;
+            void Walk(GameEntity x)
+            {
+                if (x == null || !x.IsActive) return;
+                if (_behavioursByEntity.TryGetValue(x, out var own) && own.Count > 0) (list ??= new List<Vortex.VortexBehaviour>()).AddRange(own);
+                if (x.Children != null) foreach (var c in x.Children) Walk(c);
+            }
+            Walk(root);
+            if (list == null) return;
+            foreach (var b in list)
+            {
+                if (enable) CallOnEnable(b);
+                else CallOnDisable(b);
+            }
         }
 
         private static void StopAudioRecursive(Editor.ECS.GameEntity e)
@@ -574,21 +684,15 @@ namespace Editor.Scripting
             try { Editor.Core.Services.Physics.PhysicsService.AddEntity(ent); } catch { }   // spawned crates/barrels simulate at once
             try { Editor.Core.Services.AudioPlaybackService.Instance.AddEntity(ent); } catch { }   // its sounds play (Play On Awake next tick)
 
-            // Its Script components come alive immediately — a spawned monster thinks from THIS frame.
+            // Its Script components come alive immediately — a spawned monster thinks from THIS frame: OnEnable (its colliders
+            // and bodies exist already, #422), then Start.
             if (_scriptAsm != null)
             {
                 int before = _behaviours.Count;
                 InstantiateRecursive(ent, _scriptAsm);
                 // just this spawn's behaviours: one whose Start() spawns again starts its own, and one that destroys an
                 // entity only marks it (the list never shrinks under this loop)
-                foreach (var b in _behaviours.GetRange(before, _behaviours.Count - before))
-                {
-                    if (!IsLive(b)) continue;
-                    var prev = _dispatching; _dispatching = b;
-                    try { b.Start(); }
-                    catch (Exception ex) { LogScriptError("Start", b, ex); }
-                    finally { _dispatching = prev; }
-                }
+                EnableAndStart(_behaviours.GetRange(before, _behaviours.Count - before));
             }
             return handle;
         }
@@ -711,6 +815,10 @@ namespace Editor.Scripting
                 if (x.Children != null) foreach (var c in x.Children) Collect(c);
             }
             Collect(e);
+            // #422: OnDisable first, for every script of the subtree that is active — the colliders and bodies are still there
+            foreach (var kv in doomed)
+                foreach (var b in kv.Value) CallOnDisable(b);
+            if (!ReferenceEquals(FindEntityByHandle(id), e)) return true;   // an OnDisable destroyed it already
             foreach (var kv in doomed)
             {
                 foreach (var b in kv.Value)
@@ -997,15 +1105,11 @@ namespace Editor.Scripting
             // A snapshot: a Start() that calls Scene.Instantiate appends new behaviours which are ALREADY Start()ed by
             // InstantiatePrefabAt, and one that destroys an entity (or quits play) must not shift the walk — the old index
             // loop then re-read _behaviours[i] past the end in its catch and the exception escaped Begin.
-            foreach (var b in _behaviours.ToArray())
-            {
-                if (!_active) break;          // a Start() stopped play (Application.Quit in the editor)
-                if (!IsLive(b)) continue;     // destroyed by an earlier Start(): no Start after its OnDestroy
-                var prev = _dispatching; _dispatching = b;
-                try { b.Start(); }
-                catch (Exception ex) { LogScriptError("Start", b, ex); }
-                finally { _dispatching = prev; }
-            }
+            // #422: OnEnable first, for every script whose entity is active (the physics world is built: bodies exist), then
+            // Start for every script — under an inactive entity too, as before; its OnEnable comes when it is switched on.
+            // One destroyed by an earlier callback gets neither (no Start after its OnDestroy); a Start() that stopped play
+            // (Application.Quit in the editor) ends the walk.
+            EnableAndStart(_behaviours.ToArray());
             CompactBehaviours();
         }
 
@@ -1085,23 +1189,17 @@ namespace Editor.Scripting
             Vortex.Time.DeltaTime = dt;
             Vortex.Input.PollGamepad();   // refresh controller state once per tick (scripts read Input.LeftStickX etc.)
             CompactBehaviours();          // drop what was destroyed since the last tick — never inside the loops below
+            ApplyPendingEnableChanges();  // Script components switched on / off in the Inspector or by a tool (#422)
             if (_startPending.Count > 0)  // scripts attached while paused start before their first Update (#423)
             {
                 var starting = _startPending.ToArray();
                 _startPending.Clear();
-                foreach (var b in starting)
-                {
-                    if (!IsLive(b)) continue;   // destroyed before it ever ran
-                    var prev = _dispatching; _dispatching = b;
-                    try { b.Start(); }
-                    catch (Exception ex) { LogScriptError("Start", b, ex); }
-                    finally { _dispatching = prev; }
-                }
+                EnableAndStart(starting);   // one destroyed before it ever ran gets neither (#422: OnEnable before Start)
             }
             for (int i = 0; i < _behaviours.Count; i++)
             {
                 var b = _behaviours[i];
-                if (!IsLive(b)) continue;   // destroyed earlier this tick: skipped, the others keep their turn
+                if (!IsLive(b) || b.ScriptDisabled) continue;   // destroyed earlier this tick, or switched off (#422)
                 var prev = _dispatching; _dispatching = b;
                 try { b.Update(dt); }
                 catch (Exception ex) { LogScriptError("Update", b, ex); }
@@ -1111,7 +1209,7 @@ namespace Editor.Scripting
             // a pause menu (time scale 0) keeps animating (#425).
             foreach (var b in _uiActions.Values)
             {
-                if (b == null) continue;
+                if (b == null || b.ScriptDisabled) continue;
                 try { b.Update(realDt); }
                 catch (Exception ex) { LogScriptError("UI Update", b, ex); }
             }
@@ -1134,7 +1232,7 @@ namespace Editor.Scripting
             for (int i = 0; i < _behaviours.Count; i++)
             {
                 var b = _behaviours[i];
-                if (!IsLive(b)) continue;
+                if (!IsLive(b) || b.ScriptDisabled) continue;
                 var prev = _dispatching; _dispatching = b;
                 try { b.LateUpdate(dt); }
                 catch (Exception ex) { LogScriptError("LateUpdate", b, ex); }
@@ -1142,7 +1240,7 @@ namespace Editor.Scripting
             }
             foreach (var b in _uiActions.Values)
             {
-                if (b == null) continue;
+                if (b == null || b.ScriptDisabled) continue;
                 try { b.LateUpdate(realDt); }
                 catch (Exception ex) { LogScriptError("UI LateUpdate", b, ex); }
             }
@@ -1215,7 +1313,7 @@ namespace Editor.Scripting
                 for (int i = 0; i < n && i < _fixedBehaviours.Count; i++)
                 {
                     var b = _fixedBehaviours[i];
-                    if (!IsLive(b)) continue;
+                    if (!IsLive(b) || b.ScriptDisabled) continue;   // switched off (#422): no FixedUpdate
                     var prev = _dispatching; _dispatching = b;   // its character moves are its entity's (#406)
                     try { b.FixedUpdate(step); }
                     catch (Exception ex) { LogScriptError("FixedUpdate", b, ex); }
@@ -1500,8 +1598,8 @@ namespace Editor.Scripting
                     {
                         inst = (Vortex.VortexBehaviour)Activator.CreateInstance(type);
                         inst.EntityId = 0; // no scene entity -> Position/Rotation read as zero; UI action classes don't use them
-                        try { inst.Start(); }
-                        catch (Exception ex) { LogScriptError(cls, "Start", ex); }
+                        CallOnEnable(inst);   // #422: OnEnable, then Start (exceptions reach the Console)
+                        CallStart(inst);
                     }
                 }
             }
@@ -1534,18 +1632,25 @@ namespace Editor.Scripting
         public void End()
         {
             try { Editor.Core.Services.Areas.AreaService.Reset(); Vortex.Areas.ClearHandlers(); } catch { }
+            // #422: OnDisable for every active script first (the world is still there), then OnDestroy for every script.
+            for (int i = 0; i < _behaviours.Count; i++) CallOnDisable(_behaviours[i]);
+            foreach (var b in _uiActions.Values) if (b != null) CallOnDisable(b);
             // By index over the live list (an OnDestroy may spawn — appended — or destroy — only marked); each behaviour is
             // marked first, so one destroyed by another's OnDestroy gets exactly one OnDestroy and lookups skip it.
             for (int i = 0; i < _behaviours.Count; i++)
             {
                 var b = _behaviours[i];
                 if (!IsLive(b)) continue;
+                CallOnDisable(b);   // spawned by an OnDisable / OnDestroy of this pass
                 b.Destroyed = true;
                 var prev = _dispatching; _dispatching = b;
                 try { b.OnDestroy(); } catch (Exception ex) { LogScriptError("OnDestroy", b, ex); }   // #322
                 finally { _dispatching = prev; }
             }
             foreach (var b in _uiActions.Values) { if (b != null) try { b.OnDestroy(); } catch (Exception ex) { LogScriptError("OnDestroy", b, ex); } }
+            UnwatchScripts();
+            _activating.Clear();
+            _reentryWarned.Clear();
             // Scripting-wave teardown (#36-#40): undo runtime scene mutations, stop timers/coroutines,
             // drop event subscriptions, persist pending save data.
             try { RollbackRuntimeSceneChanges(); } catch { }
@@ -1753,32 +1858,107 @@ namespace Editor.Scripting
             foreach (var sc in e.GetComponents<Script>())
             {
                 if (script != null && !ReferenceEquals(sc, script)) continue;
+                WatchScript(sc);                                 // its enable switch counts from now on (#422)
                 if (LiveBehaviourOf(e, sc) != null) continue;   // already running — its fields go through ApplyFieldsToLiveBehaviour
                 var b = InstantiateScript(e, sc, _scriptAsm);
                 if (b != null) started.Add(b);
             }
-            // paused: nothing of the game may run now — Start waits for the next tick that plays (#423)
+            // paused: nothing of the game may run now — OnEnable and Start wait for the next tick that plays (#423)
             bool paused = Editor.Core.Services.PlayModeService.Instance.State == Editor.Core.Services.PlayState.Paused;
-            foreach (var b in started)
-            {
-                if (!IsLive(b)) continue;   // an earlier Start() destroyed the entity
-                if (paused) { _startPending.Add(b); continue; }
-                var prev = _dispatching; _dispatching = b;
-                try { b.Start(); }
-                catch (Exception ex) { LogScriptError("Start", b, ex); }
-                finally { _dispatching = prev; }
-            }
+            if (paused) _startPending.AddRange(started);
+            else EnableAndStart(started);   // one an earlier Start() destroyed gets neither
             return started.Count > 0;
         }
 
         private readonly List<Vortex.VortexBehaviour> _startPending = new List<Vortex.VortexBehaviour>();
 
         /// <summary>Every enabled Script component of the entity gets its own behaviour (#408) — the runtime used to take only
-        /// the first one (GetComponent) and silently drop the rest.</summary>
+        /// the first one (GetComponent) and silently drop the rest. A switched-off one gets its behaviour when it is switched
+        /// on (#422), so every Script component is watched.</summary>
         private void InstantiateOne(GameEntity e, Assembly asm)
         {
             foreach (var script in e.GetComponents<Script>())   // a copy: a constructor can't upset the iteration
+            {
+                WatchScript(script);
                 InstantiateScript(e, script, asm);
+            }
+        }
+
+        // ---- the Script component's enable switch while playing (#422) ----
+        // The Inspector's checkbox, set_component_properties and a script's own Enabled all end in Script.IsEnabled. A change
+        // that does not come through Enabled (another thread, the UI) is queued and applied at the start of the next tick.
+
+        private readonly HashSet<Script> _watched = new HashSet<Script>(ReferenceEqualityComparer.Instance);
+        private readonly List<Script> _enableQueue = new List<Script>();
+
+        private void WatchScript(Script sc)
+        {
+            if (sc == null || !_watched.Add(sc)) return;
+            sc.PropertyChanged += OnScriptPropertyChanged;
+        }
+
+        private void UnwatchScripts()
+        {
+            foreach (var sc in _watched) sc.PropertyChanged -= OnScriptPropertyChanged;
+            _watched.Clear();
+            lock (_enableQueue) _enableQueue.Clear();
+        }
+
+        private void OnScriptPropertyChanged(object sender, System.ComponentModel.PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName != nameof(Script.IsEnabled) || !(sender is Script sc)) return;
+            lock (_enableQueue) if (!_enableQueue.Contains(sc)) _enableQueue.Add(sc);
+        }
+
+        private void ApplyPendingEnableChanges()
+        {
+            Script[] pending;
+            lock (_enableQueue)
+            {
+                if (_enableQueue.Count == 0) return;
+                pending = _enableQueue.ToArray();
+                _enableQueue.Clear();
+            }
+            foreach (var sc in pending) ApplyScriptEnabled(sc);
+        }
+
+        /// <summary>Bring the behaviour of <paramref name="sc"/> in line with the component's switch: on — OnEnable (when its
+        /// entity is active), and for a script that never ran its behaviour is made and started now (paused: on the next tick
+        /// that plays, #423); off — OnDisable, no more Update / LateUpdate / FixedUpdate. Nothing happens when it already
+        /// matches, so a queued change that a script's Enabled applied already is a no-op.</summary>
+        private void ApplyScriptEnabled(Script sc)
+        {
+            var e = sc?.Entity;
+            if (e == null || !_active || !e.Components.Contains(sc)) return;
+            var b = LiveBehaviourOf(e, sc);
+            if (sc.IsEnabled)
+            {
+                if (b == null) { AttachAtRuntime(e, sc); return; }   // switched on for the first time: made, OnEnable, Start
+                b.ScriptDisabled = false;
+                CallOnEnable(b);
+                if (!b.Started && !_startPending.Contains(b)) CallStart(b);
+            }
+            else if (b != null)
+            {
+                b.ScriptDisabled = true;
+                CallOnDisable(b);
+            }
+        }
+
+        /// <summary>VortexBehaviour.Enabled (#422): switch the behaviour's Script component and apply it at once.</summary>
+        internal void SetBehaviourEnabled(Vortex.VortexBehaviour b, bool enabled)
+        {
+            if (b == null || b.Destroyed) return;
+            if (_scriptOf.TryGetValue(b, out var sc) && sc != null)
+            {
+                if (sc.IsEnabled != enabled) sc.IsEnabled = enabled;   // the Inspector shows it; play end puts it back (#318)
+                if (_active) ApplyScriptEnabled(sc);
+                else b.ScriptDisabled = !enabled;
+                return;
+            }
+            // a UI action class has no component: the switch is the behaviour's own
+            b.ScriptDisabled = !enabled;
+            if (enabled) { CallOnEnable(b); CallStart(b); } else CallOnDisable(b);
         }
 
         private Vortex.VortexBehaviour InstantiateScript(GameEntity e, Script script, Assembly asm)

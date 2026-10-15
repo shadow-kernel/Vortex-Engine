@@ -398,7 +398,8 @@ namespace Vortex
 
     /// <summary>
     /// Base class for all gameplay behaviours — like MonoBehaviour. Override Start (called once when
-    /// play begins) and Update (called every tick), FixedUpdate for physics at a fixed rate (#481). Move your entity via
+    /// play begins) and Update (called every tick), FixedUpdate for physics at a fixed rate (#481), OnEnable / OnDisable for
+    /// the moments the entity is switched on and off (#422). Move your entity via
     /// Position / Translate, read input via Input.GetKey, and timing via Time.DeltaTime (game time, scaled by
     /// Time.TimeScale). For collision zones, mark a Collider as a Trigger and override OnTriggerEnter/OnTriggerStay/OnTriggerExit
     /// (e.g. a no-fly zone, or "change color when touched"); for solid contacts override OnCollisionEnter.
@@ -412,6 +413,24 @@ namespace Vortex
         /// <summary>Set by the runtime when its OnDestroy is about to run (entity destroyed, play ended): from then on it
         /// gets no Start/Update/callback any more and lookups skip it; the tick list drops it between ticks.</summary>
         internal bool Destroyed;
+
+        // Lifecycle state (#422): Start ran; OnEnable was delivered and no OnDisable since; the Script component is switched off
+        // (no Update / LateUpdate / FixedUpdate while it is).
+        internal bool Started, LifecycleEnabled, ScriptDisabled;
+
+        /// <summary>The Script component's enable switch (#422, Unity's enabled): false stops Update, LateUpdate and FixedUpdate
+        /// and calls OnDisable (when the entity is active); true calls OnEnable — and Start, if this script never ran it.
+        /// Coroutines, messages, triggers and collisions keep reaching a disabled script. The Inspector's checkbox on the Script
+        /// component is the same switch. <c>Enabled = false;</c> — a turret that stops thinking.</summary>
+        public bool Enabled
+        {
+            get => !ScriptDisabled;
+            set { Editor.Scripting.ScriptRuntime.Instance.SetBehaviourEnabled(this, value); }
+        }
+
+        /// <summary>True while this script is enabled AND its entity is active in the hierarchy (itself and every ancestor) —
+        /// between OnEnable and OnDisable (Unity's isActiveAndEnabled).</summary>
+        public bool IsActiveAndEnabled => LifecycleEnabled && !Destroyed;
 
         /// <summary>The host the engine wires up so behaviours can affect the live game.</summary>
         internal static IScriptHost Host;
@@ -680,8 +699,30 @@ namespace Vortex
         /// <summary>Script handles of this entity's direct children.</summary>
         public long[] GetChildren() { return Scene.Children(EntityId); }
 
+        /// <summary>Called once before the script's first Update: at play start (after the OnEnable of every active script), or
+        /// when it is spawned, attached or first switched on while playing.</summary>
         public virtual void Start() { }
+        /// <summary>Called every tick while the script is <see cref="Enabled"/>; <paramref name="dt"/> = <see cref="Time.DeltaTime"/>,
+        /// game seconds (0 while <see cref="Time.TimeScale"/> is 0).</summary>
         public virtual void Update(float dt) { }
+
+        /// <summary>The script became active (#422): its entity is active in the hierarchy (itself and every ancestor) and the
+        /// script is <see cref="Enabled"/>. Called after the entity's colliders, physics bodies and audio were created, so
+        /// <c>Physics.HasRigidbody(EntityId)</c> is true here for a Rigidbody entity — apply the first impulse, register with a
+        /// manager, start a lane. When: at play start for an entity that is active then (before every Start); when
+        /// <see cref="Scene.SetActive"/> switches the entity or an ancestor on; for a spawned prefab inside
+        /// <see cref="Scene.Instantiate"/> (before its Start); when the script is enabled again. Once per activation: a child that
+        /// was switched off on its own gets none when its parent comes on.
+        /// <para>Lifecycle: OnEnable → Start (once) → Update / FixedUpdate / LateUpdate … → OnDisable → OnDestroy. A script on
+        /// an entity that is INACTIVE at play start still runs Start then and keeps getting Update (as before #422 — check
+        /// <see cref="IsActiveAndEnabled"/> to pause yourself); its OnEnable comes when the entity is switched on.</para></summary>
+        public virtual void OnEnable() { }
+
+        /// <summary>The script stops being active (#422): its entity or an ancestor is switched off (<see cref="Scene.SetActive"/>),
+        /// the script is disabled, or it is about to be destroyed (Scene.Destroy, play stops — then OnDestroy follows). Called
+        /// BEFORE the colliders and bodies go: they are still there inside it. Only after an OnEnable — never twice in a row,
+        /// never for a child that was already switched off on its own.</summary>
+        public virtual void OnDisable() { }
 
         /// <summary>Runs right before each physics step (#481), with <paramref name="fixedDt"/> = <see cref="Time.FixedDeltaTime"/>
         /// (1/60 s unless the project sets another rate): 0, 1 or several times per frame — as many times as the frame runs
@@ -703,6 +744,8 @@ namespace Vortex
         /// VIEWMODEL that follows the camera: positioning it here (not in Update) guarantees the camera script
         /// already moved this frame, so the weapon can't lag a frame behind and jitter (worst at uncapped FPS).</summary>
         public virtual void LateUpdate(float dt) { }
+        /// <summary>Called once when the entity is destroyed (Scene.Destroy) or play stops — after OnDisable when the script was
+        /// active. Unsubscribe from Events / Areas here.</summary>
         public virtual void OnDestroy() { }
 
         /// <summary>Called when another behaviour <see cref="SendMessage"/>s this entity.</summary>
@@ -1081,9 +1124,15 @@ namespace Vortex
 
         /// <summary>Activate/deactivate an entity and its children (#51) — the staple horror mechanic
         /// (monster appears behind you, prop swaps between glances, a door unlocks). Deactivating stops
-        /// rendering, REMOVES its colliders from the collision world and stops its audio sources;
+        /// rendering, REMOVES its colliders and physics bodies from the worlds and stops its audio sources;
         /// re-activating restores all of it. Behaviours keep their state. No allocation churn — far
-        /// cheaper than Instantiate/Destroy for on/off mechanics.</summary>
+        /// cheaper than Instantiate/Destroy for on/off mechanics.
+        /// <para>The scripts of the subtree hear it (#422): switching off calls OnDisable on every script whose entity was
+        /// active in the hierarchy, BEFORE its colliders and bodies go; switching on calls OnEnable once they exist again —
+        /// so a script that needs its live body (an impulse, Physics.SetKinematic, registering with a manager) does that in
+        /// OnEnable instead of polling Physics.HasRigidbody every Update. A child switched off on its own hears nothing.
+        /// Their Update keeps running while inactive, as before — <see cref="VortexBehaviour.IsActiveAndEnabled"/> tells.
+        /// A SetActive on the entity being switched from its own OnEnable / OnDisable is ignored (with a warning).</para></summary>
         public static void SetActive(long entity, bool active) { Editor.Scripting.ScriptRuntime.Instance.SetEntityActive(entity, active); }
 
         /// <summary>The entity's OWN active flag (Unity's activeSelf) — true even while hidden because
@@ -1105,14 +1154,16 @@ namespace Vortex
         // ---- Runtime prefab instantiation (#36) ----
 
         /// <summary>Spawn a prefab (.ventity asset, project-relative path like "Assets/Prefabs/Monster.ventity")
-        /// at a world position. Its Script components start immediately (Start() runs this frame), its colliders
-        /// join the collision world, and it renders the same frame. Returns the new entity's handle (0 = failed).
+        /// at a world position. Its colliders and bodies join the worlds, then its Script components start immediately:
+        /// OnEnable (#422 — the bodies exist), then Start, inside this call; it renders the same frame. Returns the new
+        /// entity's handle (0 = failed).
         /// THE jump-scare primitive: <c>Scene.Instantiate("Assets/Prefabs/Monster.ventity", pos, yaw);</c></summary>
         public static long Instantiate(string prefabPath, Vector3 position, float yawDegrees = 0f)
             { return Editor.Scripting.ScriptRuntime.Instance.InstantiatePrefabAt(prefabPath, position, yawDegrees); }
 
-        /// <summary>Remove an entity (spawned or authored) from the running game: behaviours get OnDestroy,
-        /// rendering + colliders are removed. The scene ASSET is untouched — this is runtime-only.</summary>
+        /// <summary>Remove an entity (spawned or authored) from the running game: its scripts and its children's get OnDisable
+        /// (the active ones, while the bodies are still there, #422) and then OnDestroy; rendering, colliders and bodies are
+        /// removed. The scene ASSET is untouched — this is runtime-only.</summary>
         public static void Destroy(long entity) { Editor.Scripting.ScriptRuntime.Instance.DestroyEntity(entity); }
     }
 
@@ -1798,10 +1849,14 @@ namespace Vortex
         /// Triggers are not included. Empty without a physics-enabled build.</summary>
         public static long[] OverlapSphere(Vector3 center, float radius) { return Host != null ? (Host.PhysicsOverlapSphere(center, radius) ?? new long[0]) : new long[0]; }
 
-        /// <summary>True when the entity is a moving physics body (a Dynamic or Kinematic Rigidbody).</summary>
+        /// <summary>True when the entity is a moving physics body (a Dynamic or Kinematic Rigidbody). Bodies exist only while
+        /// the entity is active in the hierarchy: false while it or an ancestor is switched off (Scene.SetActive) — in Start of
+        /// a script under an inactive area root too. The body is there in the script's OnEnable (#422), which runs once it was
+        /// created; it is gone after OnDisable.</summary>
         public static bool HasRigidbody(long entity) { return Host != null && Host.PhysicsHasRigidbody(entity); }
 
-        /// <summary>Mass (kg) of the entity's simulated body — 0 without one.</summary>
+        /// <summary>Mass (kg) of the entity's simulated body — 0 without one, and 0 while the entity or an ancestor is
+        /// switched off (no body then; it is back in OnEnable, #422).</summary>
         public static float GetMass(long entity) { return Host != null ? Host.PhysicsGetMass(entity) : 0f; }
     }
 

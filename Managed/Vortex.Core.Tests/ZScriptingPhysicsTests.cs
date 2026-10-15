@@ -26,6 +26,15 @@ public class Pusher : VortexBehaviour
 }
 
 public class Idle : VortexBehaviour { }
+
+public static class BodyLog { public static System.Collections.Generic.List<string> Log = new System.Collections.Generic.List<string>(); }
+
+public class BodyProbe : VortexBehaviour
+{
+    public override void OnEnable() { BodyLog.Log.Add(""OnEnable body="" + Physics.HasRigidbody(EntityId) + "" mass="" + Physics.GetMass(EntityId)); }
+    public override void Start() { BodyLog.Log.Add(""Start body="" + Physics.HasRigidbody(EntityId)); }
+    public override void OnDisable() { BodyLog.Log.Add(""OnDisable body="" + Physics.HasRigidbody(EntityId)); }
+}
 ";
 
         internal static bool Jolt()
@@ -85,6 +94,44 @@ public class Idle : VortexBehaviour { }
                 foreach (var (v, f) in new[] { (speeds[0], 30), (speeds[1], 60), (speeds[2], 144) })
                     t.True(Math.Abs(v - 2f) <= 0.02f, f + " fps: 2 m/s after 2 s (" + v.ToString("0.0000") + ")");
                 t.True(Math.Abs(speeds[0] - speeds[2]) <= 0.02f, "30 and 144 fps agree within 1 % (" + speeds[0] + " / " + speeds[2] + ")");
+            }
+            finally { rt.End(); GameTime.ResetSession(1f / 60f); PhysicsNative.Shutdown(); }
+        }
+
+        /// <summary>#422 acceptance: a Rigidbody child under an inactive area root has no body in Start; Scene.SetActive(root,
+        /// true) creates it before the child's OnEnable (HasRigidbody true, the mass is there); SetActive(root, false) calls
+        /// OnDisable while the body still exists, and removes it afterwards.</summary>
+        [Test]
+        public static void OnEnableSeesTheBodyAndOnDisableStillDoes(TestContext t)
+        {
+            if (!Jolt()) return;
+            var asm = Compile(t);
+            var rt = ScriptRuntime.Instance;
+            var log = (System.Collections.Generic.List<string>)asm.GetType("BodyLog").GetField("Log").GetValue(null);
+            try
+            {
+                var s = new Scene { Name = "Area" };
+                var area = new GameEntity(s, "Area");
+                s.Entities.Add(area);
+                area.SetActiveFlagOnly(false);
+                var car = new GameEntity(s, "Car");
+                car.Parent = area; area.Children.Add(car);
+                car.Transform.LocalPosition = new Vector3(0f, 100f, 0f);
+                car.AddComponentDirect(new BoxCollider(car));
+                car.AddComponentDirect(new Rigidbody(car) { Mass = 5f, UseGravity = false });
+                car.AddComponentDirect(new Script(car, "Assets/Scripts/BodyProbe.cs"));
+                PhysicsRaycastTests.AsLoaded(s);
+                log.Clear();
+                GameTime.ResetSession(1f / 60f);
+                rt.Begin(s, asm);
+                t.Equal("Start body=False", string.Join(" | ", log), "under the inactive root: Start, no body yet, no OnEnable");
+                log.Clear();
+                Vortex.Scene.SetActive(rt.HandleForEntity(area), true);
+                t.Equal("OnEnable body=True mass=5", string.Join(" | ", log), "SetActive(root, true): OnEnable with the body in place");
+                log.Clear();
+                Vortex.Scene.SetActive(rt.HandleForEntity(area), false);
+                t.Equal("OnDisable body=True", string.Join(" | ", log), "SetActive(root, false): OnDisable while the body still exists");
+                t.False(PhysicsService.HasRigidbody(car), "… and it is gone afterwards");
             }
             finally { rt.End(); GameTime.ResetSession(1f / 60f); PhysicsNative.Shutdown(); }
         }
