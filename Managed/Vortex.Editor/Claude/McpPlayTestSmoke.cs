@@ -35,9 +35,13 @@ namespace VortexEditor.Claude
             "public class McpInputProbe : VortexBehaviour\n{\n" +
             "    public int Marker = 1;\n" +
             "    public int WTicks, SpaceDowns, FireDowns;\n" +
-            "    public float Walked, LookX, LookY, Scroll, ClickX = -1, ClickY = -1;\n" +
+            "    public float Walked, LookX, LookY, Scroll, ClickX = -1, ClickY = -1, MaxDt;\n" +
+            "    private bool _wasW;\n" +
             "    public override void Start() { Cursor.Locked = false; Debug.Log(\"[MCP PROBE] started\"); }\n" +
             "    public override void Update(float dt)\n    {\n" +
+            "        bool w = Input.GetKey(\"W\");\n" +
+            "        if ((w || _wasW) && dt > MaxDt) MaxDt = dt;   // the frames the walk can gain or lose at its ends\n" +
+            "        _wasW = w;\n" +
             "        if (Input.GetKey(\"W\")) { WTicks++; Walked += 2f * dt; var p = Position; p.Z += 2f * dt; Position = p; }\n" +
             "        if (Input.GetKeyDown(\"Space\")) SpaceDowns++;\n" +
             "        if (Input.GetKeyDown(\"LButton\")) { FireDowns++; McpProbeState.Fired++; ClickX = UI.MouseX; ClickY = UI.MouseY; Debug.Log(\"[MCP PROBE] fired \" + McpProbeState.Fired); }\n" +
@@ -108,8 +112,10 @@ namespace VortexEditor.Claude
                     return Fail("a getter that calls itself must be listed, not run: " + st.ToJsonString());
                 double walked = D(s["Walked"]);
                 float z1 = SceneModel.Resolve(probe).Transform.LocalPosition.Z;
-                // ± one frame at either end: 0.3 m covers 10 fps
-                if (Math.Abs(walked - 4.0) > 0.3 || Math.Abs((z1 - z0) - walked) > 0.01) return Fail("W held for 2 s should walk 4 m at 2 m/s: walked " + walked + ", moved " + (z1 - z0) + " — " + s.ToJsonString());
+                // the press and the release each land on the first tick past their time, so each end can gain or lose up to
+                // one frame: 2 m/s × 2 frames — the longest frame of the run, since WARP's ~8 fps comes with hitches
+                double walkTolerance = Math.Max(0.1, 4.0 * D(s["MaxDt"]) + 0.05);
+                if (Math.Abs(walked - 4.0) > walkTolerance || Math.Abs((z1 - z0) - walked) > 0.01) return Fail("W held for 2 s should walk 4 m at 2 m/s (± " + walkTolerance.ToString("0.00") + " m for the longest frame): walked " + walked + ", moved " + (z1 - z0) + " — " + s.ToJsonString());
                 if ((int?)s["FireDowns"] != 1) return Fail("one LButton tap must be one GetKeyDown: " + s.ToJsonString());
                 if ((int?)s["SpaceDowns"] != 1) return Fail("a press and release inside one frame must be one GetKeyDown: " + s.ToJsonString());
                 if (Math.Abs(D(s["LookX"]) - 40) > 0.01 || Math.Abs(D(s["LookY"]) + 10) > 0.01) return Fail("look [40, -10] should add up exactly: " + s.ToJsonString());
