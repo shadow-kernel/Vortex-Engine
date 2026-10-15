@@ -176,6 +176,20 @@ namespace VortexTests
             t.True(jump > 0 && after.Count == 2 && after[0] == 3 && after[1] == 4, "after a jump back: beats 3, 4 (" + string.Join(",", back) + ")");
         }
 
+        /// <summary>#465 review: Time set while the source is stopped reads back where the next Play starts.</summary>
+        [Test]
+        public static void TimeSetWhileStoppedLandsInTheClip(TestContext t)
+        {
+            double P(double s, double len, bool loop) => Editor.Core.Services.AudioPlaybackService.PositionInClip(s, len, loop);
+            t.Equal(1.5, P(1.5, 4, false), "inside the clip: as set");
+            t.Equal(4.0, P(9, 4, false), "past a one-shot's end: its end (Play ends at once)");
+            t.Equal(1.0, P(9, 4, true), "past a looping clip's end: wrapped");
+            t.Equal(0.0, P(4, 4, true), "exactly a looping clip's length: its start");
+            t.Equal(9.0, P(9, 0, false), "unknown length (a sound container): as set — the clip it rolls decides at Play");
+            t.Equal(0.0, P(double.NaN, 4, true), "NaN: the start");
+            t.Equal(0.0, P(-2, 4, true), "negative: the start");
+        }
+
         [Test]
         public static void VmusicKeepsItsDefaultsAndRoundTrips(TestContext t)
         {

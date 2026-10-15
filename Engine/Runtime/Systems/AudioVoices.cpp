@@ -35,9 +35,16 @@ namespace vortex::runtime::audio {
 			bool		looping{ false };
 			f32			position[3]{};	// world position (steal tiebreak + spatializer)
 			voice_spatial spatial{};
-			// Set when streaming a registered in-memory blob: the sound reads through
-			// this decoder (decode-on-demand); released together with the sound.
+			// Set when the voice plays a registered in-memory blob through its own decoder
+			// (decode-on-demand): a streamed pak clip, or any pak MP3 (it seeks through a
+			// seek table, #465 review); released together with the sound.
 			ma_decoder*	stream_decoder{ nullptr };
+			// The clip's length and rate (#465 review), read ONCE in voice_play before
+			// ma_sound_start: afterwards the decoder belongs to the mixing thread, and a length
+			// query scans an MP3 from the start and moves the decoder the mixer reads. A file-streamed
+			// OGG cannot tell its own and is probed; 0 = nothing could tell.
+			u64			length{ 0 };
+			u32			rate{ 0 };
 			// Adaptive music (#437): the stem group this voice plays; destroyed after the sound.
 			music_group* music{ nullptr };
 			// Reverb send: sound -> splitter -> (bus 0: dry to the mixer group,
@@ -376,22 +383,26 @@ namespace vortex::runtime::audio {
 		ma_sound_group* group = (ma_sound_group*)mixer_group(mixer_bus_from_index(params.bus));
 		ma_result result;
 		ma_decoder* stream_decoder = nullptr;
+		ma_uint64 clip_length = 0;
+		ma_uint32 clip_rate = 0;
 		const bool registered = is_registered_clip(path);
-		if (registered && params.stream)
+		// miniaudio's STREAM flag only streams from files — a streamed registered blob (pak entry) plays through a
+		// ma_decoder over the bytes instead: decode-on-demand, no full PCM in memory. So does every pak MP3 (#465
+		// review): the resource manager would open it without a seek table, and then a seek decodes from the start
+		// of the file on the mixing thread.
+		if (registered && (params.stream || internal_is_mp3(path)))
 		{
-			// miniaudio's STREAM flag only streams from files — for registered
-			// in-memory blobs (pak entries), stream through a ma_decoder over the
-			// bytes instead: decode-on-demand, no full PCM in memory.
-			u64 size = 0;
-			const void* bytes = registered_clip_bytes(path, &size);
-			if (!bytes) return invalid_voice;
 			stream_decoder = new ma_decoder{};
-			result = ma_decoder_init_memory(bytes, (size_t)size, nullptr, stream_decoder);
+			result = internal_open_pak_decoder(path, false, stream_decoder) ? MA_SUCCESS : MA_INVALID_FILE;
 			if (result == MA_SUCCESS)
 			{
-				// this decoder keeps the clip's own rate (#465: the start position converts with it)
-				if (params.start_position > 0.0)
-					ma_decoder_seek_to_pcm_frame(stream_decoder, seconds_to_frames(params.start_position, stream_decoder->outputSampleRate));
+				// length and rate now, before any seek and before the mixer reads it: cheap with the MP3 seek table and
+				// for Vorbis in pull mode. This decoder keeps the clip's own rate (the start position converts with it).
+				ma_decoder_get_length_in_pcm_frames(stream_decoder, &clip_length);
+				clip_rate = stream_decoder->outputSampleRate;
+				u64 start = seconds_to_frames(params.start_position, clip_rate);
+				if (clip_length > 0 && start >= clip_length) start = params.loop ? start % clip_length : (u64)clip_length;
+				if (start > 0) ma_decoder_seek_to_pcm_frame(stream_decoder, start);
 				result = ma_sound_init_from_data_source(engine, stream_decoder, 0, group, &target->sound);
 				if (result != MA_SUCCESS) ma_decoder_uninit(stream_decoder);
 			}
@@ -404,8 +415,19 @@ namespace vortex::runtime::audio {
 		else
 		{
 			// the resource manager decodes and streams at the engine rate, so the start position converts with it
-			result = init_clip_sound(engine, path, registered, flags, group,
-				seconds_to_frames(params.start_position, ma_engine_get_sample_rate(engine)), &target->sound);
+			const u64 start = seconds_to_frames(params.start_position, ma_engine_get_sample_rate(engine));
+			result = init_clip_sound(engine, path, registered, flags, group, start, &target->sound);
+			if (result == MA_SUCCESS)
+			{
+				// cheap here: decoded clips and file streams keep their length, a pak WAV / FLAC reads its header, pak
+				// Vorbis opens in pull mode — only a file-streamed OGG cannot tell, and a probe reads it from the file
+				ma_sound_get_length_in_pcm_frames(&target->sound, &clip_length);
+				ma_sound_get_data_format(&target->sound, nullptr, nullptr, &clip_rate, nullptr, 0);
+				if (clip_length == 0 && params.stream) clip_length = internal_probe_length(path);
+				// miniaudio ignores an initial seek past the end — wrap it for a looping voice, end a one-shot (#465 review)
+				if (start > 0 && clip_length > 0 && start >= clip_length)
+					ma_sound_seek_to_pcm_frame(&target->sound, params.loop ? start % clip_length : (u64)clip_length);
+			}
 		}
 		if (result != MA_SUCCESS)
 		{
@@ -414,6 +436,8 @@ namespace vortex::runtime::audio {
 			return invalid_voice;
 		}
 		target->stream_decoder = stream_decoder;
+		target->length = (u64)clip_length;
+		target->rate = (u32)clip_rate;
 
 		// Reverb send plumbing: re-route sound -> splitter, splitter bus 0 (dry) to
 		// where the sound was headed, bus 1 (wet, at the caller's initial send until the
@@ -661,15 +685,16 @@ namespace vortex::runtime::audio {
 		voice_slot* slot = resolve(handle);
 		if (!slot) return false;
 		// The data source's cursor IS the mixer's position: it advances as the mixer reads (in device-period blocks, at
-		// the voice's pitch), stands still while the voice is paused, and reports a pending seek's target.
-		ma_uint64 c = 0, l = 0;
-		ma_uint32 rate = 0;
+		// the voice's pitch), stands still while the voice is paused, and reports a pending seek's target. Reading it
+		// leaves the decoder alone; the length and rate are the ones voice_play cached (#465 review).
+		ma_uint64 c = 0;
 		ma_sound_get_cursor_in_pcm_frames(&slot->sound, &c);
-		ma_sound_get_length_in_pcm_frames(&slot->sound, &l);
-		ma_sound_get_data_format(&slot->sound, nullptr, nullptr, &rate, nullptr, 0);
+		// a file-streamed OGG's cursor runs on past its end on every loop (its stream knows no length): wrap it here with
+		// the probed one; a one-shot never reads past its end. (A music group's position wraps in its own loop region.)
+		if (!slot->music && slot->length > 0 && c >= slot->length) c = slot->looping ? c % slot->length : slot->length;
 		if (cursor) *cursor = (u64)c;
-		if (length) *length = (u64)l;
-		if (sample_rate) *sample_rate = (u32)rate;
+		if (length) *length = slot->length;
+		if (sample_rate) *sample_rate = slot->rate;
 		return true;
 	}
 
@@ -677,14 +702,12 @@ namespace vortex::runtime::audio {
 	{
 		std::lock_guard<std::mutex> lock(g_voices_mutex);
 		voice_slot* slot = resolve(handle);
-		if (!slot) return;
-		ma_uint32 rate = 0;
-		ma_sound_get_data_format(&slot->sound, nullptr, nullptr, &rate, nullptr, 0);
-		if (rate == 0) return;
-		ma_uint64 length = 0;
-		ma_sound_get_length_in_pcm_frames(&slot->sound, &length);
-		u64 frame = seconds_to_frames(seconds, rate);
-		if (length > 0 && frame >= length) frame = slot->looping ? frame % length : (u64)length;
+		if (!slot || slot->rate == 0) return;
+		// the length voice_play cached (#465 review) — probed for a file-streamed OGG; 0 only when nothing could tell
+		const u64 length = slot->length;
+		u64 frame = seconds_to_frames(seconds, slot->rate);
+		// a music group wraps into its loop region / clamps to its end itself (its on_seek)
+		if (!slot->music && length > 0 && frame >= length) frame = slot->looping ? frame % length : length;
 		// miniaudio hands the target to the mixing thread, which seeks before its next read — no read/seek race; a
 		// streamed clip refills from the new spot on the resource manager's job thread meanwhile
 		ma_sound_seek_to_pcm_frame(&slot->sound, frame);
@@ -717,6 +740,10 @@ namespace vortex::runtime::audio {
 			return invalid_voice;
 		}
 		target->music = group;
+		music_clock clock{};
+		music_get_clock(group, &clock);		// the group's length and rate, for position reads (#465)
+		target->length = clock.length;
+		target->rate = clock.sample_rate;
 		target->splitter_alive = false;		// music stays dry: no reverb send
 		target->in_use = true;
 		target->paused = false;

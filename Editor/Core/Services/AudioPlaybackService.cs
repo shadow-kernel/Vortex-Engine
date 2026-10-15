@@ -463,8 +463,18 @@ namespace Editor.Core.Services
             var b = BindingFor(source);
             if (b == null) return;
             if (double.IsNaN(seconds) || seconds < 0) seconds = 0;
-            if (VortexAudio.IsVoiceValid(b.Handle)) VortexAudio.SeekVoice(b.Handle, seconds);
-            else b.StartAt = seconds;
+            if (VortexAudio.IsVoiceValid(b.Handle)) VortexAudio.SeekVoice(b.Handle, seconds);   // the mixer clamps / wraps it
+            else b.StartAt = PositionInClip(seconds, ClipFacts(source.AudioClipPath).Seconds, source.Loop);   // reads back as it will play (#465 review)
+        }
+
+        /// <summary>Where <paramref name="seconds"/> lands in a clip of <paramref name="length"/> seconds: wrapped for a
+        /// looping clip, clamped to its end for a one-shot (starting there, it ends at once); unchanged when the length is
+        /// unknown (0 — a sound container: the clip it rolls decides at Play).</summary>
+        internal static double PositionInClip(double seconds, double length, bool loop)
+        {
+            if (double.IsNaN(seconds) || seconds < 0) return 0;
+            if (!(length > 0) || seconds < length) return seconds;
+            return loop ? seconds % length : length;
         }
 
         /// <summary>Script Length: the clip's length in seconds (the playing clip's — a container's rolled clip — else the

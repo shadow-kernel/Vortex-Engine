@@ -432,6 +432,46 @@ private:
 		check("a scheduled start lands on its exact mixer frame (+-2)", quiet && clock > start && error >= -2 && error <= 2);
 		voice_stop(sch);
 		std::remove(clip.c_str());
+
+		// A shipped game's MP3 (pak bytes, streamed and not): reading the position every frame must leave the decoder the
+		// mixer reads alone (#465 review: each read queried the length — a whole-file scan, 27-43 ms at 2:30 of a 3-minute
+		// file — and moved the decoder under the mixer), and a seek goes through the MP3 seek table.
+		const std::vector<uint8_t> mp3 = silent_mp3(180.0);
+		check("pak MP3 registered", register_clip_data("vpak://music.mp3", mp3.data(), mp3.size()));
+		for (int stream = 1; stream >= 0; --stream)
+		{
+			voice_params mp{};
+			mp.volume = 0.05f;
+			mp.loop = true;
+			mp.priority = 0;
+			mp.stream = stream != 0;
+			voice_handle m = voice_play("vpak://music.mp3", mp);
+			tick_seconds(0.3f);
+			voice_seek(m, 150.0);
+			tick_seconds(0.3f);
+			double worst_ms = 0.0;
+			u64 prev = 0, len = 0;
+			u32 r = 0, backwards = 0, jumps = 0;
+			for (int i = 0; i < 60; ++i)
+			{
+				u64 cur = 0;
+				const auto t0 = std::chrono::steady_clock::now();
+				voice_get_position(m, &cur, &len, &r);
+				const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+				if (ms > worst_ms) worst_ms = ms;
+				if (i > 0 && cur < prev) ++backwards;
+				if (i > 0 && r && cur > prev + r / 5) ++jumps;   // more than 200 ms ahead between two reads ~16 ms apart
+				prev = cur;
+				tick_seconds(0.016f);
+			}
+			const double at = r ? (double)prev / r : -1.0, length_s = r ? (double)len / r : -1.0;
+			std::printf("[info] pak MP3 (%s): worst position read %.3f ms, cursor %.2f s after a seek to 150 s, length %.2f s, backwards %u, jumps %u\n",
+				stream ? "streamed" : "not streamed", worst_ms, at, length_s, backwards, jumps);
+			check(stream ? "a streamed pak MP3: position reads are free and leave playback alone; the seek lands"
+			             : "a pak MP3 played decoded: position reads are free and leave playback alone; the seek lands",
+				m != invalid_voice && worst_ms < 0.5 && backwards == 0 && jumps == 0 && std::fabs(length_s - 180.0) < 0.1 && at > 150.2 && at < 153.0);
+			voice_stop(m);
+		}
 	}
 
 	// Renders `frames` of a music group in mixer-sized blocks; returns the largest |sample| from frame `skip` on.
@@ -930,6 +970,22 @@ private:
 		fwrite(pcm.data(), 1, data_size, f);
 		fclose(f);
 		return path;
+	}
+
+	// A valid MPEG-1 Layer III stream of digital silence: 128 kbps, 44.1 kHz, mono, no CRC, side info and main data zero.
+	static std::vector<uint8_t> silent_mp3(double seconds)
+	{
+		const int frames = (int)(seconds * 44100 / 1152) + 1;
+		const int size = 144 * 128000 / 44100;   // 417 bytes
+		std::vector<uint8_t> out;
+		out.reserve((size_t)frames * size);
+		for (int i = 0; i < frames; ++i)
+		{
+			const uint8_t header[4] = { 0xFF, 0xFB, 0x90, 0xC0 };
+			out.insert(out.end(), header, header + 4);
+			out.insert(out.end(), (size_t)(size - 4), (uint8_t)0);
+		}
+		return out;
 	}
 
 	// 16-bit mono RIFF wav of the given samples (-1..1, kept inside +-32767 so a negated stem is the exact negation).
