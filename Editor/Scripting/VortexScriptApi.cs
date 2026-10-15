@@ -2616,7 +2616,8 @@ namespace Vortex
             }
 
             /// <summary>The current track's position in samples of its own sample rate (#465) — sample-exact where Time is
-            /// a float; set it to seek.</summary>
+            /// a float; set it to seek. For adaptive music (.vmusic) it counts samples of the mixer's rate, which all its
+            /// stems play at (<see cref="Audio.DspTime"/>'s rate).</summary>
             public static int TimeSamples
             {
                 get => (int)Math.Min(int.MaxValue, Editor.Core.Services.AudioPlaybackService.Instance.MusicTimeSamples);

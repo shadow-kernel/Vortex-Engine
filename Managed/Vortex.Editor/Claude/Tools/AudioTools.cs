@@ -189,8 +189,9 @@ namespace VortexEditor.Claude.Tools
             };
         }
 
-        [McpServerTool(Name = "create_adaptive_music", Destructive = false)]
-        [Description("Creates adaptive music (.vmusic, #437) — or, with path, rewrites one: stems of ONE tempo that play sample-locked as the " +
+        // Destructive: with path it replaces that .vmusic's whole content (undoable, but nothing of the old file is kept)
+        [McpServerTool(Name = "create_adaptive_music", Destructive = true)]
+        [Description("Creates adaptive music (.vmusic, #437) — or, with path, rewrites one (replacing all of it): stems of ONE tempo that play sample-locked as the " +
                      "music track, states that set a volume per stem, transition rules for when a state change lands, stingers, and parameters " +
                      "(0..1) that fade mapped stems in and out. Scripts play it with Audio.Music.Play(path) and drive it with " +
                      "Audio.Music.SetState(\"combat\"), Audio.Music.SetParameter(\"intensity\", x), Audio.Music.PlayStinger(\"hit\"); behaviours " +

@@ -103,7 +103,7 @@ namespace VortexEditor.Shell
 
             Rebuild();
             SetStatus(_m.Describe());
-            Closed += (s, e) => { StopPreview(); EditorSession.Instance.ProjectClosed -= OnProjectClosed; };
+            Closed += (s, e) => { StopPreview(); StopAudition(); EditorSession.Instance.ProjectClosed -= OnProjectClosed; };
             EditorSession.Instance.ProjectClosed += OnProjectClosed;
         }
 
@@ -519,8 +519,22 @@ namespace VortexEditor.Shell
         private ulong _audition = VortexAudio.InvalidVoice;
         private void EditorAudition(string full)
         {
-            if (_audition != VortexAudio.InvalidVoice) VortexAudio.StopVoice(_audition);
+            StopAudition();
             _audition = VortexAudio.PlayVoice(full, 1f, 1f, 0f, false, 0, true, VortexAudio.BusMusic);
+        }
+
+        /// <summary>Stops a stem audition — also when the window closes (#437 review: a 3-minute stem played on).</summary>
+        internal void StopAudition()
+        {
+            if (_audition != VortexAudio.InvalidVoice) { try { VortexAudio.StopVoice(_audition); } catch { } }
+            _audition = VortexAudio.InvalidVoice;
+        }
+
+        /// <summary>Smoke check: audition a stem (a project-relative clip) as its Play button does; the voice playing it.</summary>
+        internal ulong AuditionForSmoke(string rel)
+        {
+            AuditionClip(EditorKit.ToAbsolute(rel));
+            return _audition;
         }
 
         // ---------------------------------------------------------------- persistence

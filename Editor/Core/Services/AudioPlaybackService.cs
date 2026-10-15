@@ -743,7 +743,10 @@ namespace Editor.Core.Services
             get => VortexAudio.IsVoiceValid(_musicCurrent) ? VoiceSamples(_musicCurrent, _musicCurrentClip) : 0;
             set
             {
+                // a clip's own rate; a .vmusic has none of its own — its stems play at the mixer's rate, which the getter
+                // counts in, so the setter does too (#465 review: it did nothing for a .vmusic)
                 int rate = ClipFacts(_musicCurrentClip).Rate;
+                if (rate <= 0 && VortexAudio.GetVoicePosition(_musicCurrent, out _, out _, out int voiceRate)) rate = voiceRate;
                 if (rate > 0) MusicTime = (double)Math.Max(0, value) / rate;
             }
         }

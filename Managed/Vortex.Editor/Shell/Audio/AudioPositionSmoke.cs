@@ -34,6 +34,7 @@ namespace VortexEditor.Shell.Audio
             var scene = ProjectData.Current?.ActiveScene;
             if (root == null || scene == null) return false;
             string wav = Path.Combine(root, Clip.Replace('/', Path.DirectorySeparatorChar));
+            bool audioExisted = Directory.Exists(Path.GetDirectoryName(wav));
             GameEntity entity = null;
             bool started = false;
             var fails = new List<string>();
@@ -139,6 +140,7 @@ namespace VortexEditor.Shell.Audio
                 if (entity != null) EditorCommands.DeleteEntities(new List<GameEntity> { entity });
                 foreach (var f in new[] { wav, wav + ".vmeta" })
                     try { if (File.Exists(f)) File.Delete(f); } catch { }
+                SmokeRegistry.RemoveIfCreated(Path.GetDirectoryName(wav), audioExisted);
             }
         }
 

@@ -44,6 +44,7 @@ namespace VortexEditor.Shell.Audio
             var scene = ProjectData.Current?.ActiveScene;
             if (root == null || scene == null) return false;
             string folder = Path.Combine(root, Folder.Replace('/', Path.DirectorySeparatorChar));
+            bool audioExisted = Directory.Exists(Path.GetDirectoryName(folder));
             string script = Path.Combine(root, Script.Replace('/', Path.DirectorySeparatorChar));
             GameEntity conductor = null;
             bool started = false;
@@ -137,8 +138,7 @@ namespace VortexEditor.Shell.Audio
                 if (started) EditorCommands.Stop();
                 if (conductor != null) EditorCommands.DeleteEntities(new List<GameEntity> { conductor });
                 foreach (var f in new[] { script, script + ".vmeta" }) try { if (File.Exists(f)) File.Delete(f); } catch { }
-                try { if (Directory.Exists(folder)) Directory.Delete(folder, true); } catch { }
-                try { if (File.Exists(folder + ".vmeta")) File.Delete(folder + ".vmeta"); } catch { }
+                RemoveFolder(folder, audioExisted);
             }
         }
 
@@ -149,6 +149,7 @@ namespace VortexEditor.Shell.Audio
             var browser = AssetBrowserPanel.Current;
             if (root == null || browser == null) { log.LogError("audio music editor: no project / Asset Browser"); return false; }
             string folder = Path.Combine(root, Folder.Replace('/', Path.DirectorySeparatorChar));
+            bool audioExisted = Directory.Exists(Path.GetDirectoryName(folder));
             string created = null;
             AdaptiveMusicEditorWindow window = null;
             try
@@ -190,18 +191,35 @@ namespace VortexEditor.Shell.Audio
                 string api = VortexEditor.Claude.Tools.ScriptTools.GetScriptingApi("Music");
                 bool documented = api.Contains("SetState") && api.Contains("SetParameter") && api.Contains("PlayStinger") && api.Contains("next bar");
 
+                // a stem audition (the stem row's Play) stops when the window closes — a 3-minute stem used to play on
+                ulong audition = window.AuditionForSmoke(Folder + "/pads.wav");
+                await Task.Delay(150);
+                bool auditioned = VortexAudio.IsVoicePlaying(audition);
+                window.Close();
+                window = null;
+                await SmokeRegistry.Settle(200);
+                bool auditionStopped = auditioned && !VortexAudio.IsVoicePlaying(audition);
+
                 log.Log("audio music editor: created " + Path.GetFileName(created) + ", stems saved=" + stems + " (" + saved.Describe() + "), preview=" + preview + ", state change=" + switched +
-                        "; create_adaptive_music wrote " + toolRel + "=" + tool + ", refused a wrong stem=" + refused + " (" + refusal + "), undo removed it=" + undone + ", get_scripting_api Music documented=" + documented);
-                return stems && preview && switched && tool && refused && undone && documented;
+                        "; create_adaptive_music wrote " + toolRel + "=" + tool + ", refused a wrong stem=" + refused + " (" + refusal + "), undo removed it=" + undone + ", get_scripting_api Music documented=" + documented +
+                        "; a stem audition played=" + auditioned + " and stopped with the window=" + auditionStopped);
+                return stems && preview && switched && tool && refused && undone && documented && auditionStopped;
             }
             catch (Exception ex) { log.LogError("audio music editor: " + ex); return false; }
             finally
             {
                 try { window?.Close(); } catch { }
                 foreach (var f in new[] { created, created + ".vmeta" }) try { if (f != null && File.Exists(f)) File.Delete(f); } catch { }
-                try { if (Directory.Exists(folder)) Directory.Delete(folder, true); } catch { }
-                try { if (File.Exists(folder + ".vmeta")) File.Delete(folder + ".vmeta"); } catch { }
+                RemoveFolder(folder, audioExisted);
             }
+        }
+
+        /// <summary>Removes the smoke's folder — and Assets/Audio when the smoke created it and left it empty.</summary>
+        private static void RemoveFolder(string folder, bool parentExisted)
+        {
+            try { if (Directory.Exists(folder)) Directory.Delete(folder, true); } catch { }
+            try { if (File.Exists(folder + ".vmeta")) File.Delete(folder + ".vmeta"); } catch { }
+            SmokeRegistry.RemoveIfCreated(Path.GetDirectoryName(folder), parentExisted);
         }
 
         /// <summary>Four bars at 240 BPM (4 s): a pad tone, a click on every beat, a high tone for the parameter stem, and
