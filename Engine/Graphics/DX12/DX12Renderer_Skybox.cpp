@@ -8,7 +8,8 @@ namespace vortex::graphics::dx12
 
 		D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_UPLOAD;
 		D3D12_RESOURCE_DESC rd{}; rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-		rd.Width = 256; rd.Height = 1; rd.DepthOrArraySize = 1; rd.MipLevels = 1;
+		rd.Width = (m_skybox_pipeline.get_constants_size() + 255) & ~(size_t)255;   // 512 since the cross-fade (#464)
+		rd.Height = 1; rd.DepthOrArraySize = 1; rd.MipLevels = 1;
 		rd.SampleDesc.Count = 1; rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 
 		if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_skybox_cb))))
@@ -41,19 +42,7 @@ namespace vortex::graphics::dx12
 		XMMATRIX proj = XMMatrixPerspectiveFovLH(XMConvertToRadians(m_fov_degrees), aspect, m_near_clip, m_far_clip); // MUST match the scene projection (update_per_frame_constants) or grid/sky misalign vs objects
 		XMMATRIX vp = view * proj;
 
-		// the equirect map (#326) — or the white texture, so t0 always holds a valid descriptor
-		{
-			auto& reg = ResourceRegistry::instance();
-			Texture* sky = (m_skybox_mode == SkyboxMode::Texture && m_sky_texture != id::invalid_id) ? reg.get_texture(m_sky_texture) : nullptr;
-			m_skybox_pipeline.set_texture_params(sky ? 1.0f : 0.0f, m_sky_exposure, m_sky_rotation,
-				(sky && m_sky_hdr == 2) ? (m_frame_constants.scene_exposure > 0.0f ? m_frame_constants.scene_exposure : 0.5f) : ((sky && m_sky_hdr == 1) ? -1.0f : 0.0f),
-				(float)m_frame_constants.tonemapper);
-			m_skybox_pipeline.set_haze(m_frame_constants.fog_color, m_frame_constants.fog_density, m_frame_constants.light_direction,
-				m_frame_constants.light_color, m_frame_constants.fog_sun_glow);
-			if (!sky) sky = reg.get_texture(reg.default_white_texture());
-			if (auto* heap = reg.srv_heap()) { ID3D12DescriptorHeap* heaps[] = { heap }; m_command_list->SetDescriptorHeaps(1, heaps); }
-			if (sky && sky->srv_gpu().ptr != 0) m_command_list->SetGraphicsRootDescriptorTable(1, sky->srv_gpu());
-		}
+		prepare_skybox();
 
 		// Update skybox constants with inverse VP matrix
 		auto constants_ptr = reinterpret_cast<u8*>(m_skybox_cb_mapped);
@@ -75,6 +64,40 @@ namespace vortex::graphics::dx12
 		m_command_list->DrawInstanced(3, 1, 0, 0);
 	}
 
+
+	// The equirect map (#326) at t0 and the cross-fade pictures (#464) at t1 / t2 — or the white texture, so every table the
+	// sky shader may read holds a valid descriptor — and the constants that go with them. Expects the skybox root signature.
+	void DX12Renderer::prepare_skybox()
+	{
+		auto& reg = ResourceRegistry::instance();
+		const float scene_exposure = m_frame_constants.scene_exposure > 0.0f ? m_frame_constants.scene_exposure : 0.5f;
+		Texture* sky = (m_skybox_mode == SkyboxMode::Texture && m_sky_texture != id::invalid_id) ? reg.get_texture(m_sky_texture) : nullptr;
+		m_skybox_pipeline.set_texture_params(sky ? 1.0f : 0.0f, m_sky_exposure, m_sky_rotation,
+			(sky && m_sky_hdr == 2) ? scene_exposure : ((sky && m_sky_hdr == 1) ? -1.0f : 0.0f),
+			(float)m_frame_constants.tonemapper);
+		m_skybox_pipeline.set_haze(m_frame_constants.fog_color, m_frame_constants.fog_density, m_frame_constants.light_direction,
+			m_frame_constants.light_color, m_frame_constants.fog_sun_glow, m_frame_constants.directional_intensity);
+		// the sun's disc (#499), per layer: Auto draws it on the gradient sky, as before; a picture sky shows it when it is On
+		// (a picture may carry its own sun, and a project's sky must not change by itself); never on a solid colour
+		const bool sun_auto = !sky && m_skybox_mode != SkyboxMode::SolidColor;
+		u32 sun_layers = (m_sky_sun_mode == 1 || (m_sky_sun_mode == 0 && sun_auto)) ? 1u : 0u;
+		Texture* white = reg.get_texture(reg.default_white_texture());
+		Texture* blend[2] = { nullptr, nullptr };
+		for (int i = 0; i < 2; ++i)
+		{
+			const SkyBlendLayer& l = m_sky_blend[i];
+			blend[i] = (l.amount > 0.0f && l.texture != id::invalid_id) ? reg.get_texture(l.texture) : nullptr;
+			if (blend[i] && blend[i]->srv_gpu().ptr == 0) blend[i] = nullptr;
+			m_skybox_pipeline.set_blend(i, blend[i] ? l.amount : 0.0f, l.exposure, l.rotation, l.hdr == 2 ? scene_exposure : (l.hdr == 1 ? -1.0f : 0.0f));
+			if (blend[i] && m_sky_sun_mode == 1) sun_layers |= 2u << i;   // a cross-fade picture: On only, as the sky's
+		}
+		m_skybox_pipeline.set_sun_disc(m_sky_sun_radius, m_sky_sun_intensity, m_sky_sun_glow, sun_layers);
+		if (!sky) sky = white;
+		if (auto* heap = reg.srv_heap()) { ID3D12DescriptorHeap* heaps[] = { heap }; m_command_list->SetDescriptorHeaps(1, heaps); }
+		Texture* tables[3] = { sky, blend[0] ? blend[0] : white, blend[1] ? blend[1] : white };
+		for (UINT i = 0; i < 3; ++i)
+			if (tables[i] && tables[i]->srv_gpu().ptr != 0) m_command_list->SetGraphicsRootDescriptorTable(1 + i, tables[i]->srv_gpu());
+	}
 
 	void DX12Renderer::set_skybox_colors(
 		const DirectX::XMFLOAT3& sky_color,

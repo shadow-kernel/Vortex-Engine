@@ -219,6 +219,7 @@ namespace vortex::graphics::dx12
 		{
 		m_command_list->SetPipelineState(m_skybox_pipeline.pipeline_state());
 		m_command_list->SetGraphicsRootSignature(m_skybox_pipeline.root_signature());
+		prepare_skybox();   // the sky's pictures at t0..t2 (#326, #464): the shader may read any of them
 			
 		// Update skybox constants with THIS camera's inverse VP matrix
 		if (m_skybox_cb_mapped)

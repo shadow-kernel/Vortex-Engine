@@ -159,8 +159,10 @@ namespace VortexEditor.Shell
         internal static Task<(int r, int g, int b)> Centre(string file) => Sample(file, 0.5, 0.5);
 
         /// <summary>The average colour of a 9×9 block of the next presented frame at (fx, fy) in 0..1 — captured by the
-        /// renderer itself (CaptureFrame writes the real back buffer as a 32-bit BMP).</summary>
-        internal static async Task<(int r, int g, int b)> Sample(string file, double fx, double fy, bool capture = true)
+        /// renderer itself (CaptureFrame writes the real back buffer as a 32-bit BMP). <paramref name="half"/> sets the block's
+        /// half size in pixels (4: 9×9) — a small target needs a small block where the viewport has few pixels (the Windows
+        /// CI viewport is 460×286, a Retina Mac's four times as many per degree).</summary>
+        internal static async Task<(int r, int g, int b)> Sample(string file, double fx, double fy, bool capture = true, int half = 4)
         {
             string dir = SmokeRegistry.CaptureDir;
             if (string.IsNullOrEmpty(dir)) dir = Path.Combine(Path.GetTempPath(), "vortex-smoke-capture");
@@ -174,10 +176,10 @@ namespace VortexEditor.Shell
                 for (int i = 0; i < 60 && !File.Exists(path); i++) await Task.Delay(50);
                 await Task.Delay(150);
             }
-            return ReadBmp(path, fx, fy);
+            return ReadBmp(path, fx, fy, half);
         }
 
-        private static (int r, int g, int b) ReadBmp(string path, double fx, double fy)
+        private static (int r, int g, int b) ReadBmp(string path, double fx, double fy, int half = 4)
         {
             try
             {
@@ -190,8 +192,8 @@ namespace VortexEditor.Shell
                 int stride = ((w * bytes + 3) / 4) * 4;
                 int cx = (int)(w * fx), cy = (int)(h * fy);
                 long r = 0, g = 0, b = 0; int n = 0;
-                for (int dy = -4; dy <= 4; dy++)
-                    for (int dx = -4; dx <= 4; dx++)
+                for (int dy = -half; dy <= half; dy++)
+                    for (int dx = -half; dx <= half; dx++)
                     {
                         int x = cx + dx, y = cy + dy;
                         if (x < 0 || y < 0 || x >= w || y >= h) continue;

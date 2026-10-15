@@ -281,6 +281,16 @@ namespace vortex::graphics::sdlgpu
 		{
 			m_sky_texture = texture; m_sky_exposure = exposure; m_sky_rotation = rotation_radians; m_sky_hdr = hdr;
 		}
+		// The sky cross-fade (#464): up to two more equirect pictures blended over the sky (the picture above or the
+		// gradient), composited in order, each by its amount (0 = off: not sampled at all). exposure / rotation / hdr as in
+		// set_skybox_texture; the managed SkyFade turns a weighted list of skies into these amounts.
+		void set_skybox_blend_layer(int index, id::id_type texture, float exposure, float rotation_radians, int hdr, float amount)
+		{
+			if (index < 0 || index > 1) return;
+			SkyBlendLayer& l = m_sky_blend[index];
+			l.texture = texture; l.exposure = exposure; l.rotation = rotation_radians; l.hdr = hdr < 0 ? 0 : (hdr > 2 ? 2 : hdr);
+			l.amount = amount > 0.0f ? (amount < 1.0f ? amount : 1.0f) : 0.0f;
+		}
 		SkyboxMode get_skybox_mode() const { return m_skybox_mode; }
 		void set_skybox_colors(const DirectX::XMFLOAT3& sky, const DirectX::XMFLOAT3& horizon, const DirectX::XMFLOAT3& ground)
 		{
@@ -294,6 +304,18 @@ namespace vortex::graphics::sdlgpu
 		void set_skybox_sun(const DirectX::XMFLOAT3& direction, const DirectX::XMFLOAT3& color, float intensity)
 		{
 			m_sun_direction = direction; m_sun_color = color; m_sun_intensity = intensity;
+		}
+		// The sun's disc in the sky (#499), drawn at the scene's directional light on the gradient AND the texture sky. mode:
+		// 0 = auto (on the gradient sky; off on a picture — it may carry its own sun, and a project's sky must not change by
+		// itself — and on a solid colour), 1 = always, 2 = never. size = the angular diameter in degrees (the real sun: 0.53),
+		// intensity scales the disc, glow its corona + aureole; the light's colour and intensity tint and scale both.
+		void set_sky_sun(int mode, float size_degrees, float intensity, float glow)
+		{
+			m_sky_sun_mode = mode < 0 ? 0 : (mode > 2 ? 2 : mode);
+			const float d = size_degrees > 0.01f ? (size_degrees < 60.0f ? size_degrees : 60.0f) : 0.01f;
+			m_sky_sun_radius = d * 0.5f * 0.01745329252f;
+			m_sky_sun_intensity = intensity > 0.0f ? intensity : 0.0f;
+			m_sky_sun_glow = glow > 0.0f ? glow : 0.0f;
 		}
 
 		void set_projection(float fov_degrees, float aspect, float near_clip, float far_clip);
@@ -459,7 +481,7 @@ namespace vortex::graphics::sdlgpu
 			GPUSpotLight spot_lights[MAX_SPOT_LIGHTS];
 			DirectX::XMFLOAT4X4 shadow_vp[4];
 			DirectX::XMFLOAT4X4 cascade_vp[3];
-			DirectX::XMFLOAT4 cascade_splits;
+			DirectX::XMFLOAT4 cascade_bias;   // xyz: each cascade's scale of the classic depth bias, w: the slope term's texels (#466; 1, 1, 1, 0 up to 80 m)
 			DirectX::XMFLOAT4 dir_shadow_params;
 			DirectX::XMFLOAT4 point_shadows[2];
 			DirectX::XMFLOAT4X4 point_face_vp[12];
@@ -491,9 +513,12 @@ namespace vortex::graphics::sdlgpu
 			DirectX::XMFLOAT3 sun_direction; float sun_intensity;
 			DirectX::XMFLOAT3 sun_color; float tonemapper;   // the HDR path's curve: 0 = ACES fit, 1 = PBR Neutral
 			DirectX::XMFLOAT4 params;   // x: 1 = sample the equirect texture (#326), y: exposure, z: yaw offset (radians)
-			// aerial perspective on the HDR sky (@176): fog colour + density, the sun's direction + glow, the sun's colour
+			// aerial perspective on the HDR sky (@176): fog colour + density, the sun's direction + glow, the sun's colour + intensity
 			DirectX::XMFLOAT4 haze; DirectX::XMFLOAT4 glow_dir; DirectX::XMFLOAT4 glow_color;
+			DirectX::XMFLOAT4 sun_disc;   // @224 the sun's disc (#499): angular radius (radians), intensity, glow, the layers drawing it (bits)
+			DirectX::XMFLOAT4 blend[2];   // @240 the cross-fade pictures (#464): amount, exposure, yaw (radians), HDR mode
 		};
+		static_assert(sizeof(SkyboxConstants) == 272, "SkyboxConstants must byte-match skybox.metal / skybox_common.glsl");
 		struct PostFxCB
 		{
 			float texel[2]; float time; u32 flags;
@@ -934,6 +959,12 @@ namespace vortex::graphics::sdlgpu
 		DirectX::XMFLOAT3 m_sun_direction{ 0.3f, -1.0f, 0.5f };
 		DirectX::XMFLOAT3 m_sun_color{ 1.0f, 0.95f, 0.85f };
 		float m_sun_intensity{ 1.0f };
+		// the sun's disc in the sky (#499): auto, the real sun's 0.53°, intensity / glow 1
+		int m_sky_sun_mode{ 0 };
+		float m_sky_sun_radius{ 0.53f * 0.5f * 0.01745329252f }, m_sky_sun_intensity{ 1.0f }, m_sky_sun_glow{ 1.0f };
+		// the sky cross-fade (#464): pictures blended over the sky, off at amount 0
+		struct SkyBlendLayer { id::id_type texture{ id::invalid_id }; float exposure{ 1.0f }; float rotation{ 0.0f }; int hdr{ 0 }; float amount{ 0.0f }; };
+		SkyBlendLayer m_sky_blend[2];
 		float m_render_distance{ 0.0f };
 		// geometric LOD is on by default (#360): the thresholds are multiples of each mesh's radius (40 / 120 radii)
 		bool m_lod_enabled{ false }, m_geo_lod_enabled{ true };

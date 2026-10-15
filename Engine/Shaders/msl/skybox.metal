@@ -1,4 +1,6 @@
-// Procedural gradient skybox — Metal port of skybox.hlsl (sky/horizon/ground gradient + sun disc + glow).
+// Procedural gradient skybox — Metal port of skybox.hlsl (sky/horizon/ground gradient + sun disc + glow), the equirect
+// texture sky (#326) with the sun's disc at the scene's directional light (#499), and up to two more pictures cross-faded
+// over either (#464).
 #include <metal_stdlib>
 using namespace metal;
 
@@ -9,13 +11,51 @@ struct SkyboxConstants
     packed_float3 sky_color;       float padding1;
     packed_float3 horizon_color;   float padding2;
     packed_float3 ground_color;    float padding3;
-    packed_float3 sun_direction;   float sun_intensity;
+    packed_float3 sun_direction;   float sun_intensity;   // unused since #499: the disc follows the scene's light (glow_dir / glow_color)
     packed_float3 sun_color;       float tonemapper;   // the HDR path's curve: 0 = ACES fit, 1 = PBR Neutral
-    float4 params;
+    float4 params;        // @160  x: 1 = sample the equirect texture (#326), y: exposure, z: yaw offset (radians), w: the HDR mode
     float4 haze;          // @176  aerial perspective on the HDR sky: rgb fog colour, w density (0 = off)
-    float4 glow_dir;      // @192  xyz the direction the sun's light travels, w the fog's sun glow
-    float4 glow_color;    // @208  rgb the sun's colour   // x: 1 = sample the equirect texture (#326), y: exposure, z: yaw offset (radians)
+    float4 glow_dir;      // @192  xyz the direction the scene's sun light travels (normalised), w the fog's sun glow
+    float4 glow_color;    // @208  rgb the sun's colour, w its intensity (0 = no sun)
+    float4 sun_disc;      // @224  the sun's disc (#499): x angular radius (radians), y intensity, z glow, w the layers that
+                          //       draw it (bit 0 the sky, bits 1 / 2 the cross-fade pictures)
+    float4 blend1;        // @240  a picture cross-faded over the sky (#464): x amount (0 = off), y exposure, z yaw (radians),
+    float4 blend2;        // @256  w its HDR mode like params.w — composited in order: sky, then blend1, then blend2
 };
+
+// The sun's disc at the scene's directional light (#499), its corona and the wide aureole, as that light's: in its colour,
+// brightening with its intensity (the Light's default 2.5 is full brightness), cut off by the horizon. `hdr`: linear
+// radiance before the scene exposure + tonemapper (it blooms through them like a lamp); else display values, which
+// sun_over() lays over the sky without passing white, so the limb darkening shows on any sky. The disc is the light's:
+// rotating the picture or changing its exposure does not move or dim it. Occlusion is free — the sky pass runs first,
+// the world covers it.
+static inline float3 sun_light(float3 dir, constant SkyboxConstants& c, bool hdr)
+{
+    float3 to_sun = -c.glow_dir.xyz;
+    float d = length(dir - to_sun);                              // the chord to the sun ~ the angle (radians)
+    float t = d / max(c.sun_disc.x, 1e-5);                       // 0 at the centre, 1 at the rim
+    float aa = clamp(fwidth(t), 0.02, 0.5);                      // ~1 pixel of edge, before the branch below
+    // the aureole is gone 17° from the sun, the corona 9 radii out: the rest of the sky pays a length and a compare
+    if (d > max(0.3, 9.0 * c.sun_disc.x)) return float3(0.0);
+    float above = smoothstep(-0.01, 0.01, dir.y);               // the horizon hides what is below it
+    float disc = 1.0 - smoothstep(1.0 - aa, 1.0 + aa, t);
+    float limb = sqrt(saturate(1.0 - t * t));                    // limb darkening: 1 at the centre, 0 at the rim
+    float aureole = pow(saturate(1.0 - 0.5 * d * d), 256.0);    // cos of the angle, from the chord
+    float li = c.glow_color.w * 0.4;                             // the light's intensity against the default sun's 2.5
+    if (hdr)
+    {
+        float corona = exp(-max(t - 1.0, 0.0) * 0.8);
+        return float3(c.glow_color.rgb) * (li * above) * (disc * (0.6 + 0.4 * limb) * 40.0 * c.sun_disc.y + c.sun_disc.z * (1.5 * corona + 0.35 * aureole));
+    }
+    // display values: the light's hue at full brightness, the disc from 1 at its centre to 0.55 at the rim (its glow only
+    // around it, so the limb shows), a tight corona
+    float corona = exp(-max(t - 1.0, 0.0) * 2.5);
+    float3 hue = float3(c.glow_color.rgb) / max(max(c.glow_color.r, c.glow_color.g), max(c.glow_color.b, 1e-4));
+    return hue * (saturate(li) * above) * (disc * (0.55 + 0.45 * limb) * c.sun_disc.y + (1.0 - disc) * c.sun_disc.z * (0.18 * corona + 0.15 * aureole));
+}
+
+// Display values: the sun laid over the sky like a light (screen), never past white.
+static inline float3 sun_over(float3 sky, float3 sun) { return 1.0 - (1.0 - saturate(sky)) * (1.0 - saturate(sun)); }
 
 struct SkyOut
 {
@@ -36,62 +76,65 @@ vertex SkyOut SkyVS(uint id [[vertex_id]], constant SkyboxConstants& c [[buffer(
     return o;
 }
 
-fragment float4 SkyPS(SkyOut in [[stage_in]], constant SkyboxConstants& c [[buffer(0)]],
-                      texture2d<float> sky_tex [[texture(0)]], sampler sky_smp [[sampler(0)]])
+// One equirect picture of the sky (#326) as the display values the pass writes. Mip 0: the atan2 seam would otherwise
+// pull the smallest mip into a visible line. mode: > 0 a float picture through the haze, the scene exposure and the
+// tonemapper (the value is the exposure); < 0 a float picture the classic way (gamma-encoded, clamped); 0 an 8-bit one
+// as it is. The sun's disc goes in before the tonemapper where there is one, else onto the display values.
+// (u0, v): the view direction's equirect coordinates without a yaw, shared by the layers.
+static inline float3 sky_picture(float3 dir, float u0, float v, texture2d<float> tex, sampler smp, constant SkyboxConstants& c,
+                                 float exposure, float rotation, float mode, bool sun)
 {
-    float3 dir = normalize(in.world_dir);
     float y = dir.y;
-
-    // Equirect texture sky (#326): sampled at the far plane, no depth write, centred on the rendering camera.
-    // Mip 0 — the atan2 seam would otherwise pull the smallest mip into a visible line.
-    if (c.params.x > 0.5)
+    float3 sky = tex.sample(smp, float2(u0 + rotation / 6.28318530718, v), level(0)).rgb * exposure;
+    if (mode > 0.0 && c.haze.w > 0.0)
     {
-        const float two_pi = 6.28318530718;
-        float u = atan2(dir.x, dir.z) / two_pi + 0.5 + c.params.z / two_pi;
-        float v = acos(clamp(y, -1.0, 1.0)) / 3.14159265359;
-        float3 sky = sky_tex.sample(sky_smp, float2(u, v), level(0)).rgb * c.params.y;
-        if (c.params.w > 0.0 && c.haze.w > 0.0)
-        {
-            // aerial perspective on the sky: the horizon whitens into the scene's haze (the path through the air grows as
-            // 1 / sin(elevation)), the sun glows in it, the zenith keeps its blue
-            float h = max(y, 0.0);
-            float f = 1.0 - exp(-c.haze.w * 40.0 / (h + 0.04));
-            // below the horizon the picture holds a blurred ground that read as a blue sea once the world ended under a high
-            // camera: that half is the haze (it follows the sky's own horizon), blended in over the first few degrees
-            f = max(f, smoothstep(0.0, 0.08, -y));
-            float mu = saturate(dot(dir, normalize(-c.glow_dir.xyz)));
-            float3 hz = c.haze.rgb + c.glow_color.rgb * (c.glow_dir.w * (0.12 * mu * mu + 0.88 * pow(mu, 10.0)));
-            sky = mix(sky, hz, f);
-        }
-        if (c.params.w < 0.0) sky = pow(saturate(sky), 1.0 / 2.2);   // a float picture the classic way: gamma-encoded, clamped
-        else if (c.params.w > 0.0)
-        {
-            // an HDR picture: the scene exposure + ACES + gamma of the lit surfaces, so the sky and the world agree
-            float3 x = max(sky * c.params.w, 0.0);
-            if (c.tonemapper > 0.5)
-            {
-                // Khronos PBR Neutral, as in standard.metal
-                float mn = min(x.r, min(x.g, x.b));
-                x -= mn < 0.08 ? mn - 6.25 * mn * mn : 0.04;
-                float peak = max(x.r, max(x.g, x.b));
-                if (peak >= 0.76)
-                {
-                    float new_peak = 1.0 - 0.0576 / (peak + 0.24 - 0.76);
-                    x *= new_peak / peak;
-                    float g = 1.0 - 1.0 / (0.15 * (peak - new_peak) + 1.0);
-                    x = mix(x, float3(new_peak), g);
-                }
-                sky = pow(saturate(x), 1.0 / 2.2);
-            }
-            else
-            {
-                float3 a = x * (x + 0.0245786) - 0.000090537;
-                float3 b = x * (0.983729 * x + 0.4329510) + 0.238081;
-                sky = pow(max(saturate(a / b), 0.0), 1.0 / 2.2);
-            }
-        }
-        return float4(sky, 1.0);
+        // aerial perspective on the sky: the horizon whitens into the scene's haze (the path through the air grows as
+        // 1 / sin(elevation)), the sun glows in it, the zenith keeps its blue
+        float h = max(y, 0.0);
+        float f = 1.0 - exp(-c.haze.w * 40.0 / (h + 0.04));
+        // below the horizon the picture holds a blurred ground that read as a blue sea once the world ended under a high
+        // camera: that half is the haze (it follows the sky's own horizon), blended in over the first few degrees
+        f = max(f, smoothstep(0.0, 0.08, -y));
+        float mu = saturate(dot(dir, normalize(-c.glow_dir.xyz)));
+        float3 hz = c.haze.rgb + c.glow_color.rgb * (c.glow_dir.w * (0.12 * mu * mu + 0.88 * pow(mu, 10.0)));
+        sky = mix(sky, hz, f);
     }
+    if (sun && mode > 0.0) sky += sun_light(dir, c, true);   // on top of the haze: a setting sun stays a disc
+    if (mode < 0.0) sky = pow(saturate(sky), 1.0 / 2.2);   // a float picture the classic way: gamma-encoded, clamped
+    else if (mode > 0.0)
+    {
+        // an HDR picture: the scene exposure + ACES + gamma of the lit surfaces, so the sky and the world agree
+        float3 x = max(sky * mode, 0.0);
+        if (c.tonemapper > 0.5)
+        {
+            // Khronos PBR Neutral, as in standard.metal
+            float mn = min(x.r, min(x.g, x.b));
+            x -= mn < 0.08 ? mn - 6.25 * mn * mn : 0.04;
+            float peak = max(x.r, max(x.g, x.b));
+            if (peak >= 0.76)
+            {
+                float new_peak = 1.0 - 0.0576 / (peak + 0.24 - 0.76);
+                x *= new_peak / peak;
+                float g = 1.0 - 1.0 / (0.15 * (peak - new_peak) + 1.0);
+                x = mix(x, float3(new_peak), g);
+            }
+            sky = pow(saturate(x), 1.0 / 2.2);
+        }
+        else
+        {
+            float3 a = x * (x + 0.0245786) - 0.000090537;
+            float3 b = x * (0.983729 * x + 0.4329510) + 0.238081;
+            sky = pow(max(saturate(a / b), 0.0), 1.0 / 2.2);
+        }
+    }
+    if (sun && mode <= 0.0) sky = sun_over(sky, sun_light(dir, c, false));   // an 8-bit picture / the classic float one: display values
+    return sky;
+}
+
+// The three-colour gradient sky, its sun and a faint noise.
+static inline float3 sky_gradient(float3 dir, constant SkyboxConstants& c, bool sun)
+{
+    float y = dir.y;
     float3 color;
     if (y > 0.0)
     {
@@ -104,19 +147,39 @@ fragment float4 SkyPS(SkyOut in [[stage_in]], constant SkyboxConstants& c [[buff
         color = mix(float3(c.horizon_color), float3(c.ground_color), t);
     }
 
-    if (c.sun_intensity > 0.001)
+    // the sun at the scene's directional light (#499 — it used to sit at a fixed direction whatever the light did)
+    if (sun)
     {
-        float3 sun_dir = normalize(-float3(c.sun_direction));
-        float sun_dot = dot(dir, sun_dir);
-        float sun_disc = smoothstep(0.9995, 0.9999, sun_dot);
-        color += float3(c.sun_color) * sun_disc * c.sun_intensity * 10.0;
-        float sun_glow = pow(max(sun_dot, 0.0), 256.0);
-        color += float3(c.sun_color) * sun_glow * c.sun_intensity * 0.5;
-        float horizon_glow = pow(1.0 - abs(y), 4.0) * pow(max(sun_dot, 0.0), 2.0);
-        color += float3(c.sun_color) * horizon_glow * c.sun_intensity * 0.3;
+        float horizon_glow = pow(1.0 - abs(y), 4.0) * pow(max(dot(dir, normalize(-c.glow_dir.xyz)), 0.0), 2.0);
+        color += c.glow_color.rgb * horizon_glow * 0.3 * c.sun_disc.z * saturate(c.glow_color.w * 0.4);
+        color = sun_over(color, sun_light(dir, c, false));
     }
 
     float noise = fract(sin(dot(dir.xz, float2(12.9898, 78.233))) * 43758.5453);
     color += (noise - 0.5) * 0.01;
-    return float4(color, 1.0);
+    return color;
+}
+
+fragment float4 SkyPS(SkyOut in [[stage_in]], constant SkyboxConstants& c [[buffer(0)]],
+                      texture2d<float> sky_tex [[texture(0)]], sampler sky_smp [[sampler(0)]],
+                      texture2d<float> blend1_tex [[texture(1)]], sampler blend1_smp [[sampler(1)]],
+                      texture2d<float> blend2_tex [[texture(2)]], sampler blend2_smp [[sampler(2)]])
+{
+    float3 dir = normalize(in.world_dir);
+    // the layers that draw the sun's disc (#499): bit 0 the sky, bits 1 / 2 the cross-fade pictures
+    const uint sun = c.glow_color.w > 0.001 ? (uint)c.sun_disc.w : 0u;
+    // the equirect coordinates once for every picture layer (a gradient sky alone needs none)
+    float u0 = 0.0, v = 0.0;
+    if (c.params.x > 0.5 || c.blend1.x > 0.0 || c.blend2.x > 0.0)
+    {
+        u0 = atan2(dir.x, dir.z) / 6.28318530718 + 0.5;
+        v = acos(clamp(dir.y, -1.0, 1.0)) / 3.14159265359;
+    }
+    // the sky: an equirect picture sampled at the far plane, no depth write, centred on the rendering camera — or the gradient
+    float3 col = c.params.x > 0.5 ? sky_picture(dir, u0, v, sky_tex, sky_smp, c, c.params.y, c.params.z, c.params.w, (sun & 1u) != 0u)
+                                  : sky_gradient(dir, c, (sun & 1u) != 0u);
+    // the cross-fade (#464): up to two more pictures over it, each by its amount — one at 0 is not sampled at all
+    if (c.blend1.x > 0.0) col = mix(col, sky_picture(dir, u0, v, blend1_tex, blend1_smp, c, c.blend1.y, c.blend1.z, c.blend1.w, (sun & 2u) != 0u), c.blend1.x);
+    if (c.blend2.x > 0.0) col = mix(col, sky_picture(dir, u0, v, blend2_tex, blend2_smp, c, c.blend2.y, c.blend2.z, c.blend2.w, (sun & 4u) != 0u), c.blend2.x);
+    return float4(col, 1.0);
 }

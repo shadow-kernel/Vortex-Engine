@@ -4,6 +4,8 @@
 #include <d3d12.h>
 #include <wrl/client.h>
 #include <DirectXMath.h>
+#include <cmath>
+#include <cstddef>
 
 namespace vortex::graphics::dx12
 {
@@ -31,7 +33,8 @@ namespace vortex::graphics::dx12
 		// Set sun parameters
 		void set_sun(const DirectX::XMFLOAT3& direction, const DirectX::XMFLOAT3& color, float intensity);
 
-		// Equirect texture sky (#326): mode 1 samples the texture bound at root parameter 1 (t0).
+		// Equirect texture sky (#326): mode 1 samples the texture bound at root parameter 1 (t0); the cross-fade pictures (#464)
+		// sit at root parameters 2 / 3 (t1 / t2).
 		void set_texture_params(float mode, float exposure, float rotation_radians, float tonemap_exposure = 0.0f, float tonemapper = 0.0f)
 		{
 			m_constants.tonemapper = tonemapper;
@@ -39,12 +42,30 @@ namespace vortex::graphics::dx12
 			m_constants.params = { mode, exposure, rotation_radians, tonemap_exposure };
 		}
 		
-		// Aerial perspective for the HDR sky path: the scene fog and the sun's glow (texture mode only reads them).
-		void set_haze(const DirectX::XMFLOAT3& fog_color, float density, const DirectX::XMFLOAT3& light_dir, const DirectX::XMFLOAT3& light_color, float glow)
+		// Aerial perspective for the HDR sky path: the scene fog and the sun's glow (texture mode only reads them). The light's
+		// direction, colour and intensity also place and tint the sun's disc (#499) on both sky paths.
+		void set_haze(const DirectX::XMFLOAT3& fog_color, float density, const DirectX::XMFLOAT3& light_dir, const DirectX::XMFLOAT3& light_color, float glow, float light_intensity = 0.0f)
 		{
 			m_constants.haze = { fog_color.x, fog_color.y, fog_color.z, density };
-			m_constants.glow_dir = { light_dir.x, light_dir.y, light_dir.z, glow };
-			m_constants.glow_color = { light_color.x, light_color.y, light_color.z, 0.0f };
+			// normalised here, once, instead of per sky pixel (the sun's disc and the haze glow read it); without a light
+			// direction there is no sun: no disc and no glow (not a sun at the zenith)
+			const float n = std::sqrt(light_dir.x * light_dir.x + light_dir.y * light_dir.y + light_dir.z * light_dir.z);
+			const bool has_dir = n > 1e-6f;
+			m_constants.glow_dir = has_dir ? DirectX::XMFLOAT4{ light_dir.x / n, light_dir.y / n, light_dir.z / n, glow } : DirectX::XMFLOAT4{ 0.0f, -1.0f, 0.0f, 0.0f };
+			m_constants.glow_color = { light_color.x, light_color.y, light_color.z, has_dir ? light_intensity : 0.0f };
+		}
+
+		// The sun's disc (#499): its angular radius (radians), intensity, glow, and the layers of this frame's sky that draw it
+		// (bit 0 the sky, bits 1 / 2 the cross-fade pictures).
+		void set_sun_disc(float radius, float intensity, float glow, u32 layers)
+		{
+			m_constants.sun_disc = { radius, intensity, glow, (float)layers };
+		}
+
+		// A cross-fade picture over the sky (#464) at t1 / t2: amount (0 = off), exposure, yaw (radians), HDR mode as params.w.
+		void set_blend(int index, float amount, float exposure, float rotation_radians, float mode)
+		{
+			if (index >= 0 && index < 2) m_constants.blend[index] = { amount, exposure, rotation_radians, mode };
 		}
 
 		// Get constant buffer data
@@ -80,8 +101,11 @@ namespace vortex::graphics::dx12
 			// aerial perspective on the HDR sky (@176): the scene fog's colour + density, the sun's direction, colour and glow
 			DirectX::XMFLOAT4 haze;        // rgb fog colour, w density (0 = off)
 			DirectX::XMFLOAT4 glow_dir;    // xyz the direction the light travels, w the fog's sun glow
-			DirectX::XMFLOAT4 glow_color;  // rgb the light's colour
+			DirectX::XMFLOAT4 glow_color;  // rgb the light's colour, w its intensity (0 = no sun)
+			DirectX::XMFLOAT4 sun_disc;    // @224 the sun's disc (#499): angular radius (radians), intensity, glow, the layers drawing it (bits)
+			DirectX::XMFLOAT4 blend[2];    // @240 the cross-fade pictures at t1 / t2 (#464): amount, exposure, yaw (radians), HDR mode
 		};
+		static_assert(offsetof(SkyboxConstants, sun_disc) == 224 && offsetof(SkyboxConstants, blend) == 240, "SkyboxConstants must byte-match skybox.hlsl");
 
 		SkyboxConstants m_constants{};
 	};

@@ -362,6 +362,23 @@ namespace vortex::graphics::dx12
 		void set_skybox_solid_color(const DirectX::XMFLOAT3& color);
 		void set_sky_light(const float* sh27, bool on) { if (sh27) memcpy(m_sky_sh, sh27, sizeof(m_sky_sh)); m_sky_sh_on = on && sh27 != nullptr; }
 		void set_skybox_sun(const DirectX::XMFLOAT3& direction, const DirectX::XMFLOAT3& color, float intensity);
+		// The sky cross-fade (#464): pictures blended over the sky — see SdlGpuRenderer::set_skybox_blend_layer.
+		void set_skybox_blend_layer(int index, id::id_type texture, float exposure, float rotation_radians, int hdr, float amount)
+		{
+			if (index < 0 || index > 1) return;
+			SkyBlendLayer& l = m_sky_blend[index];
+			l.texture = texture; l.exposure = exposure; l.rotation = rotation_radians; l.hdr = hdr < 0 ? 0 : (hdr > 2 ? 2 : hdr);
+			l.amount = amount > 0.0f ? (amount < 1.0f ? amount : 1.0f) : 0.0f;
+		}
+		// The sun's disc in the sky (#499) at the scene's directional light — see SdlGpuRenderer::set_sky_sun.
+		void set_sky_sun(int mode, float size_degrees, float intensity, float glow)
+		{
+			m_sky_sun_mode = mode < 0 ? 0 : (mode > 2 ? 2 : mode);
+			const float d = size_degrees > 0.01f ? (size_degrees < 60.0f ? size_degrees : 60.0f) : 0.01f;
+			m_sky_sun_radius = d * 0.5f * 0.01745329252f;
+			m_sky_sun_intensity = intensity > 0.0f ? intensity : 0.0f;
+			m_sky_sun_glow = glow > 0.0f ? glow : 0.0f;
+		}
 
 		// Camera projection settings
 		void set_projection(float fov_degrees, float aspect, float near_clip, float far_clip);
@@ -569,6 +586,9 @@ namespace vortex::graphics::dx12
 		void render_fallback_triangle();
 		void render_grid();
 		void render_skybox();
+		// the sky pass's pictures at root parameters 1..3 (the sky, the two cross-fade pictures; white where unused) and the
+		// constants that go with them — the main view and the offscreen previews draw the sky alike
+		void prepare_skybox();
 
 		DX12CommandQueue m_command_queue;
 		DX12Swapchain m_swapchain;
@@ -916,6 +936,12 @@ namespace vortex::graphics::dx12
 		float m_sky_exposure{ 1.0f };
 		int m_sky_hdr{ 0 };   // 0 = 8-bit sky, 1 = float sky shown the classic way, 2 = float sky through exposure + tonemapper
 		float m_sky_rotation{ 0.0f };
+		// the sun's disc in the sky (#499): auto, the real sun's 0.53°, intensity / glow 1
+		int m_sky_sun_mode{ 0 };
+		float m_sky_sun_radius{ 0.53f * 0.5f * 0.01745329252f }, m_sky_sun_intensity{ 1.0f }, m_sky_sun_glow{ 1.0f };
+		// the sky cross-fade (#464): pictures blended over the sky, off at amount 0
+		struct SkyBlendLayer { id::id_type texture{ id::invalid_id }; float exposure{ 1.0f }; float rotation{ 0.0f }; int hdr{ 0 }; float amount{ 0.0f }; };
+		SkyBlendLayer m_sky_blend[2];
 		// last gradient colours (the skybox pipeline keeps its own copy) -> PerFrame env for metal reflections
 		DirectX::XMFLOAT3 m_env_sky{ 0.3f, 0.5f, 0.85f };
 		DirectX::XMFLOAT3 m_env_horizon{ 0.7f, 0.8f, 0.9f };
@@ -1016,6 +1042,7 @@ namespace vortex::graphics::dx12
 		DirectX::XMFLOAT4X4 m_csm_vp[CSM_CASCADES]{};
 		float m_csm_radius[CSM_CASCADES]{};                 // each cascade's half extent (m): the bounce gather needs metres per tile uv
 		float m_csm_splits[CSM_CASCADES]{};                 // far view-distance of each cascade
+		float m_csm_bias[4]{ 1.0f, 1.0f, 1.0f, 0.0f };      // the shaders' CascadeBias: xyz scale the classic depth bias per cascade, w = the slope term's texels (#466)
 		u32 m_csm_count{ 0 };                               // 0 = no directional shadows this frame
 		// Directional shadow authoring state (set_directional_light_full).
 		bool m_dir_cast_shadows{ false };

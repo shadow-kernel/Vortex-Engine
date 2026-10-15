@@ -37,7 +37,7 @@ layout(set = SET_UNIFORM, binding = 1, std140) uniform LightBufferBlock
 	SpotLight  spot_lights[MAX_SPOT_LIGHTS];    // @512
 	mat4       shadow_vp[4];                    // @1024
 	mat4       cascade_vp[3];                   // @1280
-	vec4       cascade_splits;                  // @1472
+	vec4       cascade_bias;                    // @1472 xyz: each cascade's scale of the classic bias, w: the slope term's texels (#466; 1,1,1,0 up to 80 m)
 	vec4       dir_shadow_params;               // @1488
 	vec4       point_shadows[2];                // @1504
 	mat4       point_face_vp[12];               // @1536
