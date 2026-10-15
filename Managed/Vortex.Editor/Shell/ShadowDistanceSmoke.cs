@@ -115,20 +115,22 @@ namespace VortexEditor.Shell
 
         /// <summary>The review of #466: a shadow distance of 300 m used to lose the shadows it should add. The shaders' depth
         /// bias was a fixed share of a cascade's depth range, and that range grows with the distance: about 7 m of bias in
-        /// the last cascade at 300 m (Soft), more than a crate or a person is thick. A 2 m cube stands 128 m from the camera
-        /// (the last cascade: the second ends at 65 m); a 30° sun from the side throws its shadow next to it. Soft and Hard,
-        /// the floor in that shadow must be dark against the floor beside it.</summary>
+        /// the last cascade at 300 m (Soft), more than a crate or a person is thick. A block 2 m high and 2 m thick (along the
+        /// light; 8 m long across it, so its shadow covers enough pixels in the Windows CI's 460×286 viewport) stands 128 m
+        /// from the camera (the last cascade: the second ends at 65 m); a 30° sun from the side throws its shadow next to it,
+        /// 2.3 – 4 m behind the block's lit faces along the light. Soft and Hard, the floor in that shadow must be dark against
+        /// the floor beside it (sampled 5×5 pixels: a 9×9 block reaches past a small shadow at 460×286).</summary>
         private static Task<bool> RunSmallCaster() => Staged("sun shadow distance small caster", async (log, cam, sun, made) =>
         {
             var cube = EditorCommands.CreatePrimitive(PrimitiveType.Cube);
             if (cube?.Transform == null) { log.LogError("sun shadow distance small caster: could not build the test scene"); return false; }
             made.Add(cube); cube.Name = "SmokeShadowCrate";
             cube.Transform.LocalPosition = new Vector3(0, 501.1f, 128);
-            cube.Transform.LocalScale = new Vector3(2, 2, 2);
+            cube.Transform.LocalScale = new Vector3(2, 2, 8);   // 2 m along the light and up: the depths a thin caster leaves
             sun.Entity.Transform.LocalRotation = new Vector3(30, 270, 0);   // the light travels towards -x, 30° down: the shadow lies 0 .. 3.5 m beside the cube
             sun.ShadowDistance = 300f;
             var shade = new Vector3(-2.7f, 500.1f, 128);   // the middle of the shadow
-            var lit = new Vector3(-2.7f, 500.1f, 134);     // the floor 5 m further on, beside it
+            var lit = new Vector3(-2.7f, 500.1f, 137);     // the floor 5 m past the shadow's end, beside it
             bool ok = true;
             var report = new List<string>();
             foreach (var type in new[] { ShadowType.Soft, ShadowType.Hard })
@@ -137,17 +139,17 @@ namespace VortexEditor.Shell
                 string t = type == ShadowType.Soft ? "soft" : "hard";
                 // looked at steeply from 128 m away (the view distance picks the cascade: the last one at 300 m)
                 Aim(cam, new Vector3(shade.X, shade.Y + 99.9f, shade.Z - 80), shade);
-                var inShade = await CameraSkySmoke.Sample("shadow_small_caster_" + t + ".bmp", 0.5, 0.5);
+                var inShade = await CameraSkySmoke.Sample("shadow_small_caster_" + t + ".bmp", 0.5, 0.5, half: 2);
                 Aim(cam, new Vector3(lit.X, lit.Y + 99.9f, lit.Z - 80), lit);
-                var beside = await CameraSkySmoke.Sample("shadow_small_caster_" + t + "_lit.bmp", 0.5, 0.5);
+                var beside = await CameraSkySmoke.Sample("shadow_small_caster_" + t + "_lit.bmp", 0.5, 0.5, half: 2);
                 report.Add(t + " " + CameraSkySmoke.Rgb(inShade) + " / " + CameraSkySmoke.Rgb(beside));
                 if (!(Lum(beside) > 40 && Lum(inShade) < Lum(beside) * 0.6))
                 {
-                    log.LogError("sun shadow distance small caster: at 300 m the 2 m cube 128 m away casts no shadow (" + t + "): the depth bias swallows it (#466)");
+                    log.LogError("sun shadow distance small caster: at 300 m the 2 m block 128 m away casts no shadow (" + t + "): the depth bias swallows it (#466)");
                     ok = false;
                 }
             }
-            log.Log("sun shadow distance small caster: the floor in the 2 m cube's shadow / beside it, 300 m, last cascade: " + string.Join(", ", report));
+            log.Log("sun shadow distance small caster: the floor in the 2 m block's shadow / beside it, 300 m, last cascade: " + string.Join(", ", report));
             return ok;
         });
 
