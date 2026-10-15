@@ -148,6 +148,55 @@ namespace VortexTests
             finally { CollisionService.Clear(); }
         }
 
+        /// <summary>#407 review: "is a ragdoll active at or under this entity?" (asked on every MoveCharacter and per nav agent
+        /// per frame) is a lookup, not a scan over every ragdoll — and stays right while ragdolls come and go.</summary>
+        [Test]
+        public static void LimpLookupFollowsRagdollsComingAndGoing(TestContext t)
+        {
+            var s = new Scene { Name = "Corpses" };
+            var squad = Add(s, null, "Squad", new Vector3(0, 0, 0), null);
+            var a = Add(s, squad, "A", new Vector3(0, 0, 0), null);
+            var aModel = Add(s, a, "AModel", new Vector3(0, 0, 0), null);
+            var b = Add(s, squad, "B", new Vector3(2f, 0, 0), null);
+            var bModel = Add(s, b, "BModel", new Vector3(0, 0, 0), null);
+            var other = Add(s, null, "Other", new Vector3(5f, 0, 0), null);
+            var corpses = new List<GameEntity>();
+            try
+            {
+                RagdollService.TestMarkActive(aModel, true);
+                RagdollService.TestMarkActive(bModel, true);
+                t.True(RagdollService.ActiveAtOrUnder(aModel) && RagdollService.ActiveAtOrUnder(a) && RagdollService.ActiveAtOrUnder(b)
+                       && RagdollService.ActiveAtOrUnder(squad), "both ragdolls count for their model, their root and the squad");
+                t.False(RagdollService.ActiveAtOrUnder(other), "an unrelated entity is not limp");
+                RagdollService.TestMarkActive(aModel, false);
+                t.True(!RagdollService.ActiveAtOrUnder(a) && RagdollService.ActiveAtOrUnder(b) && RagdollService.ActiveAtOrUnder(squad),
+                       "A's ragdoll ended: A is not limp, the squad still is (B)");
+                RagdollService.TestMarkActive(bModel, false);
+                t.False(RagdollService.ActiveAtOrUnder(squad) || RagdollService.ActiveAtOrUnder(b), "both ended: nothing is limp");
+
+                // a Battle Royale's pile of corpses elsewhere: asking about a living character stays cheap
+                for (int i = 0; i < 2000; i++)
+                {
+                    var corpse = Add(s, null, "Corpse" + i, new Vector3(10f + i, 0, 0), null);
+                    corpses.Add(corpse);
+                    RagdollService.TestMarkActive(Add(s, corpse, "Model", new Vector3(0, 0, 0), null), true);
+                }
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                bool any = false;
+                for (int i = 0; i < 100000; i++) any |= RagdollService.ActiveAtOrUnder(a);
+                watch.Stop();
+                t.False(any, "the living character is not limp");
+                t.True(watch.Elapsed.TotalMilliseconds < 100, "100 000 lookups among 2000 ragdolls take " + watch.Elapsed.TotalMilliseconds.ToString("0.0") + " ms");
+                t.True(RagdollService.ActiveAtOrUnder(corpses[1234]), "… a corpse's root is limp");
+            }
+            finally
+            {
+                RagdollService.TestMarkActive(aModel, false);
+                RagdollService.TestMarkActive(bModel, false);
+                foreach (var c in corpses) RagdollService.TestMarkActive(c.Children[0], false);
+            }
+        }
+
         /// <summary>#407: a behaviour keeps running (and calling MoveCharacter) while its entity is switched off, and the
         /// root of a ragdolled character keeps moving its capsule — neither may bring back the capsule that SetActive(false)
         /// / Ragdoll.Activate removed. The move itself is still resolved; characters without an owner are unaffected.</summary>
