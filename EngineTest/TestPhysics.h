@@ -367,7 +367,7 @@ private:
 
 	void run_query_contract_tests()
 	{
-		constexpr u64 k_floor = 8101, k_crate = 8102, k_wall = 8103, k_room = 8104, k_self = 8105;
+		constexpr u64 k_floor = 8101, k_crate = 8102, k_wall = 8103, k_room = 8104, k_self = 8105, k_pad = 8106;
 		const f32 floor_half[3] = { 6.0f, 0.5f, 6.0f };
 		const f32 floor_pos[3] = { -40.0f, -0.5f, 0.0f };
 		const u32 floor = physics::create_body(k_floor, physics::shape_box, floor_half, floor_pos, k_identity,
@@ -453,6 +453,19 @@ private:
 		check("a ray down from a mesh's top face hits the mesh at distance 0", hit && entity == k_room && d < 1e-4f && n[1] > 0.99f);
 		check("a ray up from a mesh's top face does not hit it (a surface behind the origin, seen from behind)",
 			!physics::raycast(on_roof, up, 10.0f, physics::layer_mask_all, p, n, &d, &entity, &body));
+		// 1 mm above a mesh surface at y 0 the cast starts exactly ON it (fraction 0): still the surface the origin lies on
+		const f32 pad_verts[4 * 3] = { -1.0f, 0.0f, -1.0f,   1.0f, 0.0f, -1.0f,   1.0f, 0.0f, 1.0f,   -1.0f, 0.0f, 1.0f };
+		const u32 pad_indices[2 * 3] = { 0, 2, 1,   0, 3, 2 };   // facing up
+		const f32 pad_pos[3] = { -30.0f, 0.0f, 0.0f };
+		const u32 pad = physics::create_mesh_body(k_pad, pad_verts, 4, pad_indices, 6, pad_pos, k_identity, one,
+			false, physics::motion_static, 0.0f, 0.5f, 0.0f, false, physics::layer_static);
+		check("mesh pad created", pad != 0);
+		physics::step(k_dt, 1);
+		const f32 mm_above_pad[3] = { -30.0f, 0.001f, 0.3f };
+		check("a ray up from 1 mm above a mesh surface does not hit it (the cast starts exactly on it)",
+			!physics::raycast(mm_above_pad, up, 10.0f, physics::layer_mask_all, p, n, &d, &entity, &body));
+		hit = physics::raycast(mm_above_pad, down, 10.0f, physics::layer_mask_all, p, n, &d, &entity, &body);
+		check("... a ray down from there hits it 1 mm away", hit && entity == k_pad && std::fabs(d - 0.001f) < 2e-4f && n[1] > 0.99f);
 
 		// (#418) overlap_point: the "is this point inside something?" query that rays no longer answer
 		u64 ents[8]{}; u32 bods[8]{};
@@ -520,6 +533,7 @@ private:
 		check("a destroyed character's capsule no longer blocks rays", !hit || entity != k_hero);
 
 		physics::destroy_body(self_box);
+		physics::destroy_body(pad);
 		physics::destroy_body(room);
 		physics::destroy_body(wall);
 		physics::destroy_body(crate);

@@ -187,13 +187,13 @@ namespace VortexTests
         public static void RaysStartingOnASurfaceAgreeOnBothPaths(TestContext t)
         {
             if (!Jolt()) return;
-            var scene = PhysicsRaycastTests.RaySceneOnAFloor(out var floor, out var crate, out var ball, out var pillar, out var room);
+            var scene = PhysicsRaycastTests.RaySceneOnAFloor(out var floor, out var crate, out var ball, out var pillar, out var room, out var pad);
             var oldProvider = CollisionService.MeshTriangleProvider;
             CollisionService.MeshTriangleProvider = PhysicsRaycastTests.RoomProvider;
             try
             {
                 BuildWorlds(scene);
-                foreach (var r in PhysicsRaycastTests.SurfaceRays(floor, crate, ball, pillar, room))
+                foreach (var r in PhysicsRaycastTests.SurfaceRays(floor, crate, ball, pillar, room, pad))
                 {
                     bool j = PhysicsService.Raycast(r.o, r.d, 50f, out var jp, out var jn, out var je, out float jd);
                     bool m = CollisionService.Raycast(r.o, r.d, 50f, ~0, out _, out var mn, out var me, out float md);
@@ -218,7 +218,7 @@ namespace VortexTests
         public static void OverlapPointFallbackAgreesWithJolt(TestContext t)
         {
             if (!Jolt()) return;
-            var scene = PhysicsRaycastTests.RaySceneOnAFloor(out var floor, out var crate, out var ball, out var pillar, out var room);
+            var scene = PhysicsRaycastTests.RaySceneOnAFloor(out var floor, out var crate, out var ball, out var pillar, out var room, out _);
             PhysicsRaycastTests.Add(scene, null, "Zone", new Vector3(0, 1f, -6f), e => e.AddComponentDirect(new BoxCollider(e) { IsTrigger = true, Size = new Vector3(2f, 2f, 2f) }));
             PhysicsRaycastTests.AsLoaded(scene);
             var oldProvider = CollisionService.MeshTriangleProvider;

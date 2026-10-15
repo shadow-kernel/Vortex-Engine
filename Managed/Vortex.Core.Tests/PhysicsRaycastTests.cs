@@ -67,7 +67,14 @@ namespace VortexTests
             foreach (var e in s.Entities) Walk(e);
         }
 
-        internal static Func<string, float[]> RoomProvider => p => p == "Assets/room.glb" ? RoomTris : null;
+        // A 2 x 2 m mesh "pad" at its local origin's height, facing up: a surface a ray can start exactly on.
+        internal static readonly float[] PadTris =
+        {
+            -1, 0, -1,   1, 0, 1,   1, 0, -1,
+            -1, 0, -1,  -1, 0, 1,   1, 0, 1,
+        };
+
+        internal static Func<string, float[]> RoomProvider => p => p == "Assets/room.glb" ? RoomTris : p == "Assets/pad.glb" ? PadTris : null;
 
         private static bool Cast(Vector3 o, Vector3 d, out Vector3 n, out GameEntity e, out float dist, GameEntity ignore = null)
             => CollisionService.Raycast(o, d, 50f, ~0, out _, out n, out e, out dist, ignore);
@@ -138,11 +145,18 @@ namespace VortexTests
             finally { CollisionService.Clear(); }
         }
 
-        /// <summary>RayScene on a 40 m floor (top at y 0) — the crate, the room and the pillar stand on it.</summary>
-        internal static Scene RaySceneOnAFloor(out GameEntity floor, out GameEntity crate, out GameEntity ball, out GameEntity pillar, out GameEntity room)
+        /// <summary>RayScene on a 40 m floor (top at y 0) — the crate, the room and the pillar stand on it — and a mesh pad
+        /// at y 0 beyond the floor's edge (nothing under it).</summary>
+        internal static Scene RaySceneOnAFloor(out GameEntity floor, out GameEntity crate, out GameEntity ball, out GameEntity pillar, out GameEntity room,
+            out GameEntity pad)
         {
             var s = RayScene(out crate, out _, out _, out ball, out pillar, out room);
             floor = Add(s, null, "Floor", new Vector3(0, -0.5f, 0), e => e.AddComponentDirect(new BoxCollider(e) { Size = new Vector3(40f, 1f, 40f) }));
+            pad = Add(s, null, "Pad", new Vector3(25f, 0, 0), e =>
+            {
+                e.AddComponentDirect(new MeshRenderer(e) { MeshPath = "Assets/pad.glb" });
+                e.AddComponentDirect(new MeshCollider(e));
+            });
             AsLoaded(s);
             return s;
         }
@@ -150,7 +164,7 @@ namespace VortexTests
         /// <summary>The rays of <see cref="RaysStartingOnASurfaceHitIt"/>: origin, direction, the entity hit (null = none)
         /// and its distance — the ZJolt test casts the same ones on the Jolt path.</summary>
         internal static (Vector3 o, Vector3 d, GameEntity expect, float dist, string what)[] SurfaceRays(GameEntity floor, GameEntity crate,
-            GameEntity ball, GameEntity pillar, GameEntity room)
+            GameEntity ball, GameEntity pillar, GameEntity room, GameEntity pad)
         {
             var down = new Vector3(0, -1, 0); var up = new Vector3(0, 1, 0);
             return new (Vector3, Vector3, GameEntity, float, string)[]
@@ -166,6 +180,9 @@ namespace VortexTests
                 (new Vector3(15f, 2f, 0.2f), down, room, 0f, "down from the mesh room's roof"),
                 (new Vector3(15f, 2f, 0.2f), up, null, 0f, "up from the mesh room's roof"),
                 (new Vector3(3f, 0f, 3f), down, floor, 0f, "down from the floor's top face"),
+                // 1 mm above a mesh at y 0 the cast starts exactly on it (fraction 0): still the surface the origin lies on
+                (new Vector3(25f, 0.001f, 0.3f), up, null, 0f, "up from 1 mm above the mesh pad"),
+                (new Vector3(25f, 0.001f, 0.3f), down, pad, 0.001f, "down from 1 mm above the mesh pad"),
             };
         }
 
@@ -175,13 +192,13 @@ namespace VortexTests
         [Test]
         public static void RaysStartingOnASurfaceHitIt(TestContext t)
         {
-            var scene = RaySceneOnAFloor(out var floor, out var crate, out var ball, out var pillar, out var room);
+            var scene = RaySceneOnAFloor(out var floor, out var crate, out var ball, out var pillar, out var room, out var pad);
             var oldProvider = CollisionService.MeshTriangleProvider;
             CollisionService.MeshTriangleProvider = RoomProvider;
             try
             {
                 CollisionService.Build(scene);
-                foreach (var r in SurfaceRays(floor, crate, ball, pillar, room))
+                foreach (var r in SurfaceRays(floor, crate, ball, pillar, room, pad))
                 {
                     bool got = CollisionService.Raycast(r.o, r.d, 50f, ~0, out var p, out var n, out var e, out float d);
                     t.Equal(r.expect != null, got, r.what + ": hit");
@@ -204,7 +221,7 @@ namespace VortexTests
         [Test]
         public static void OverlapPointWorksWithoutJolt(TestContext t)
         {
-            var scene = RaySceneOnAFloor(out var floor, out var crate, out var ball, out var pillar, out var room);
+            var scene = RaySceneOnAFloor(out var floor, out var crate, out var ball, out var pillar, out var room, out _);
             var zone = Add(scene, null, "Zone", new Vector3(0, 1f, -6f), e => e.AddComponentDirect(new BoxCollider(e) { IsTrigger = true, Size = new Vector3(2f, 2f, 2f) }));
             AsLoaded(scene);
             var oldProvider = CollisionService.MeshTriangleProvider;

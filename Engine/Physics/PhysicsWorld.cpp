@@ -230,10 +230,20 @@ namespace vortex::physics {
 		// How far behind its origin a ray starts (raycast_ex): a ray that starts ON a surface still hits it.
 		constexpr f32 ray_surface_skin{ 0.001f };
 
+		// Is the leaf the hit belongs to made of triangles (a mesh, a height field)? Convex leaves report entry hits only
+		// (and, with raycast_solid, a hit at fraction 0 for a start inside them, which has no face to test).
+		bool triangle_leaf(const JPH::TransformedShape& shape, const JPH::SubShapeID& sub_shape)
+		{
+			if (shape.mShape == nullptr) return false;
+			JPH::SubShapeID remainder;
+			const JPH::Shape* leaf = shape.mShape->GetLeafShape(sub_shape, remainder);
+			return leaf != nullptr && (leaf->GetType() == JPH::EShapeType::Mesh || leaf->GetType() == JPH::EShapeType::HeightField);
+		}
+
 		// Closest hit of a ray cast that starts ray_surface_skin behind the caller's origin. A triangle (mesh, height
-		// field) seen from behind within the skin of the origin (on either side) is the surface the origin lies on, the
-		// ray pointing away from its front — the floor under an upward ray — so it is no hit, as for a box the ray leaves.
-		// Convex shapes report entry hits only.
+		// field) seen from behind within the skin of the origin (on either side, the start of the cast included) is the
+		// surface the origin lies on, the ray pointing away from its front — the floor under an upward ray — so it is no
+		// hit, as for a box the ray leaves.
 		class skin_ray_collector final : public JPH::CastRayCollector
 		{
 		public:
@@ -243,10 +253,11 @@ namespace vortex::physics {
 			void AddHit(const JPH::RayCastResult& hit) override
 			{
 				if (had_hit && hit.mFraction >= closest.mFraction) return;
-				if (hit.mFraction > 0.0f && hit.mFraction < _back_fraction)
+				if (hit.mFraction < _back_fraction)
 				{
 					const JPH::TransformedShape* shape = GetContext();
-					if (shape && shape->GetWorldSpaceSurfaceNormal(hit.mSubShapeID2, _ray.GetPointOnRay(hit.mFraction)).Dot(_ray.mDirection) > 0.0f)
+					if (shape && triangle_leaf(*shape, hit.mSubShapeID2)
+						&& shape->GetWorldSpaceSurfaceNormal(hit.mSubShapeID2, _ray.GetPointOnRay(hit.mFraction)).Dot(_ray.mDirection) > 0.0f)
 						return;
 				}
 				UpdateEarlyOutFraction(hit.mFraction);
