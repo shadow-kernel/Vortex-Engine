@@ -66,6 +66,14 @@ namespace VortexTests
             t.False(cast, "the script's castShadows wins");
             t.Equal(0.5f, strength, "the script's strength wins");
             t.Equal(400f, distance, "the script's distance wins");
+
+            // a script's distance is clamped as the Light's is (the renderer only clamps the low end)
+            new SceneRenderService.SunOverride { ShadowDistance = 1e7f }.Resolve(true, true, 1f, 80f, out _, out _, out distance);
+            t.Equal(10000f, distance, "a script's distance is at most 10 km");
+            new SceneRenderService.SunOverride { ShadowDistance = 1f }.Resolve(true, true, 1f, 80f, out _, out _, out distance);
+            t.Equal(5f, distance, "at least 5 m");
+            new SceneRenderService.SunOverride { ShadowDistance = float.NaN }.Resolve(true, true, 1f, 80f, out _, out _, out distance);
+            t.Equal(80f, distance, "NaN: 80 m");
         }
 
         [Test]

@@ -256,7 +256,7 @@ namespace vortex::graphics::sdlgpu
 		for (auto& m : L.point_face_vp) m = ident;
 		L.point_shadows[0] = L.point_shadows[1] = { -1.0f, 0.0f, 0.0f, 0.0f };
 		L.dir_shadow_params = { m_dir_shadow_strength, m_dir_shadow_bias, 0.0f, m_dir_shadow_softness };
-		L.cascade_splits = { 0.0f, 0.0f, 0.0f, m_dir_shadow_distance };
+		L.cascade_bias = { 1.0f, 1.0f, 1.0f, 0.0f };
 		fill_sky_light(L);
 		for (u32 i = 0; i < MAX_SPOT_LIGHTS; ++i) { L.spot_lights[i].shadow_slot = -1.0f; L.spot_lights[i].shadow_strength = 0.0f; L.spot_lights[i].shadow_bias = 0.0f; }
 		if (!m_shadows_ready) return;
@@ -331,9 +331,9 @@ namespace vortex::graphics::sdlgpu
 						float cx = floorf(XMVectorGetX(cLS) / worldPerTexel) * worldPerTexel;
 						float cy = floorf(XMVectorGetY(cLS) / worldPerTexel) * worldPerTexel;
 						const float cz = XMVectorGetZ(cLS);
-						// the box reaches back towards the light for casters outside the slice — the distance up to 80 m, beyond it
-						// the cascade's own size (#466: the depth bias is a fraction of this range)
-						XMMATRIX proj = XMMatrixOrthographicOffCenterLH(cx - radius, cx + radius, cy - radius, cy + radius, cz - radius - lighting::cascade_pull_back(m_dir_shadow_distance, radius), cz + radius);
+						// the box reaches back towards the light by the whole shadow distance, for casters outside the slice (a
+						// tower off-screen throwing its shadow over the camera); the depth bias follows the texel, not this range (#466)
+						XMMATRIX proj = XMMatrixOrthographicOffCenterLH(cx - radius, cx + radius, cy - radius, cy + radius, cz - radius - m_dir_shadow_distance, cz + radius);
 						XMStoreFloat4x4(&m_csm_vp[c], lightView * proj);
 						m_csm_splits[c] = splitFar;
 						m_csm_radius[c] = radius;
@@ -341,7 +341,11 @@ namespace vortex::graphics::sdlgpu
 					}
 					m_csm_count = CSM_CASCADES;
 					for (u32 c = 0; c < CSM_CASCADES; ++c) L.cascade_vp[c] = m_csm_vp[c];
-					L.cascade_splits = { m_csm_splits[0], m_csm_splits[1], m_csm_splits[2], m_dir_shadow_distance };
+					// the depth bias beyond 80 m: per texel and slope instead of a fraction of the deeper boxes (#466, lighting/CascadeSplits.h)
+					float bias_scale[CSM_CASCADES], bias_slope = 0.0f;
+					lighting::cascade_bias(m_dir_shadow_distance, CSM_CASCADES, m_csm_radius, tanHalfX, tanHalfY, SHADOW_TILE_SIZE,
+						m_dir_shadow_bias, m_dir_shadow_softness, bias_scale, bias_slope);
+					L.cascade_bias = { bias_scale[0], bias_scale[1], bias_scale[2], bias_slope };
 					L.dir_shadow_params = { m_dir_shadow_strength, m_dir_shadow_bias, (float)m_csm_count, m_dir_shadow_softness };
 				}
 			}

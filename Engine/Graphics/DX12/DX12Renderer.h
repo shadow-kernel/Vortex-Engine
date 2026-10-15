@@ -1042,6 +1042,7 @@ namespace vortex::graphics::dx12
 		DirectX::XMFLOAT4X4 m_csm_vp[CSM_CASCADES]{};
 		float m_csm_radius[CSM_CASCADES]{};                 // each cascade's half extent (m): the bounce gather needs metres per tile uv
 		float m_csm_splits[CSM_CASCADES]{};                 // far view-distance of each cascade
+		float m_csm_bias[4]{ 1.0f, 1.0f, 1.0f, 0.0f };      // the shaders' CascadeBias: xyz scale the classic depth bias per cascade, w = the slope term's texels (#466)
 		u32 m_csm_count{ 0 };                               // 0 = no directional shadows this frame
 		// Directional shadow authoring state (set_directional_light_full).
 		bool m_dir_cast_shadows{ false };

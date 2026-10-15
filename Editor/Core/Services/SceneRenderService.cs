@@ -2539,7 +2539,7 @@ namespace Editor.Core.Services
             {
                 castShadows = CastShadows ?? (sceneHasSun && sceneCasts);
                 shadowStrength = ShadowStrength ?? (sceneHasSun ? sceneStrength : 1f);
-                shadowDistance = ShadowDistance ?? (sceneHasSun ? sceneDistance : 80f);
+                shadowDistance = ECS.Components.Lighting.Light.ClampShadowDistance(ShadowDistance ?? (sceneHasSun ? sceneDistance : 80f));   // 5 m .. 10 km, as the Light
             }
         }
         public static SunOverride ScriptSun;

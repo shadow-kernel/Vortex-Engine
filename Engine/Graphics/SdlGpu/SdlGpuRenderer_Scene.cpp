@@ -296,7 +296,7 @@ namespace vortex::graphics::sdlgpu
 		for (auto& m : L.point_face_vp) m = ident;
 		L.point_shadows[0] = L.point_shadows[1] = { -1.0f, 0.0f, 0.0f, 0.0f };
 		L.dir_shadow_params = { m_dir_shadow_strength, m_dir_shadow_bias, 0.0f, m_dir_shadow_softness };
-		L.cascade_splits = { 0.0f, 0.0f, 0.0f, m_dir_shadow_distance };
+		L.cascade_bias = { 1.0f, 1.0f, 1.0f, 0.0f };
 		fill_sky_light(L);
 	}
 

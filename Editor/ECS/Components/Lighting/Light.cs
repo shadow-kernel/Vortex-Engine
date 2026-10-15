@@ -202,8 +202,11 @@ namespace Editor.ECS.Components.Lighting
         public float ShadowDistance
         {
             get => _shadowDistance;
-            set => SetProperty(ref _shadowDistance, float.IsNaN(value) ? 80f : (value < 5f ? 5f : (value > 10000f ? 10000f : value)), nameof(ShadowDistance));
+            set => SetProperty(ref _shadowDistance, ClampShadowDistance(value), nameof(ShadowDistance));
         }
+
+        /// <summary>A shadow distance as the renderer takes it: 5 m .. 10 km (NaN: the default 80 m).</summary>
+        public static float ClampShadowDistance(float metres) => float.IsNaN(metres) ? 80f : (metres < 5f ? 5f : (metres > 10000f ? 10000f : metres));
 
         [OnDeserializing]
         private void OnDeserializingLight(StreamingContext context)

@@ -2017,7 +2017,7 @@ namespace Vortex
         /// intensity. It replaces the scene's Directional Light (and the default sun) until <see cref="ClearDirectional"/> or the
         /// end of play — scene re-submits no longer reset it (#466), so a day/night script can drive the sun every frame.
         /// castShadows (#24) renders cascaded shadow maps for the sun — moonlight through a window throws real moving shadows;
-        /// shadowDistance = how far from the camera they reach (m; 80 by default, 200–500 for roads, cities, flights). Shadow
+        /// shadowDistance = how far from the camera they reach (m, 5 .. 10 000; 80 by default, 200–500 for roads, cities, flights). Shadow
         /// values left out keep the scene Directional Light's settings (off / 1 / 80 m without one).
         /// <c>Lighting.SetDirectional(-0.3f, -0.8f, 0.5f, 1f, 0.95f, 0.85f, 5f, castShadows: true, shadowDistance: 300f);</c></summary>
         public static void SetDirectional(float dx, float dy, float dz, float r, float g, float b, float intensity,

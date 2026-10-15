@@ -481,7 +481,7 @@ namespace vortex::graphics::sdlgpu
 			GPUSpotLight spot_lights[MAX_SPOT_LIGHTS];
 			DirectX::XMFLOAT4X4 shadow_vp[4];
 			DirectX::XMFLOAT4X4 cascade_vp[3];
-			DirectX::XMFLOAT4 cascade_splits;
+			DirectX::XMFLOAT4 cascade_bias;   // xyz: each cascade's scale of the classic depth bias, w: the slope term's texels (#466; 1, 1, 1, 0 up to 80 m)
 			DirectX::XMFLOAT4 dir_shadow_params;
 			DirectX::XMFLOAT4 point_shadows[2];
 			DirectX::XMFLOAT4X4 point_face_vp[12];

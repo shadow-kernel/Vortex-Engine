@@ -48,7 +48,7 @@ struct LightBuffer
     SpotLight  spot_lights[MAX_SPOT_LIGHTS];     // @512
     float4x4   shadow_vp[4];                     // @1024
     float4x4   cascade_vp[3];                    // @1280
-    float4     cascade_splits;                   // @1472
+    float4     cascade_bias;                     // @1472 xyz: each cascade's scale of the classic bias, w: the slope term's texels (#466; 1,1,1,0 up to 80 m)
     float4     dir_shadow_params;                // @1488
     float4     point_shadows[2];                 // @1504
     float4x4   point_face_vp[12];                // @1536 .. 2304
@@ -144,7 +144,7 @@ static float cascade_shadow(constant VFrame& f, constant LightBuffer& L, depth2d
         float texel = f.params2.w;
         suv = clamp(suv, texel * 1.5, 1.0 - texel * 1.5) * 0.5;
         suv += float2((c & 1) != 0 ? 0.5 : 0.0, (c & 2) != 0 ? 0.5 : 0.0);
-        float bias = L.dir_shadow_params.y * (1.0 + (float)c);
+        float bias = L.dir_shadow_params.y * (1.0 + (float)c) * L.cascade_bias[c];   // the slope term needs a surface; fog has none (#466)
         float lit = atlas.sample_compare(smp, suv, ndc.z - bias);
         return mix(1.0, lit, saturate(L.dir_shadow_params.x));
     }

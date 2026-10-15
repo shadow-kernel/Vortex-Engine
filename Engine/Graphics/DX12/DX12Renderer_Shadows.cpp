@@ -387,6 +387,7 @@ namespace vortex::graphics::dx12
 		using namespace DirectX;
 
 		m_csm_count = 0;
+		m_csm_bias[0] = m_csm_bias[1] = m_csm_bias[2] = 1.0f; m_csm_bias[3] = 0.0f;
 		if (!m_pipeline_3d.shadow_pso() || !m_csm_map) return;
 		if (!m_dir_cast_shadows || m_dir_shadow_strength <= 0.0f || m_directional_intensity <= 0.001f) return;
 
@@ -457,12 +458,12 @@ namespace vortex::graphics::dx12
 			float cy = floorf(XMVectorGetY(cLS) / worldPerTexel) * worldPerTexel;
 			const float cz = XMVectorGetZ(cLS);
 
-			// Ortho crop; near pulled back toward the light so casters ABOVE/BEHIND the slice
-			// (a roof over the corridor, a tower off-screen) still land in the depth map — by the distance up
-			// to 80 m, beyond it by the cascade's own size (#466: the depth bias is a fraction of this range).
+			// Ortho crop; near pulled back toward the light by the whole shadow distance so casters ABOVE/BEHIND
+			// the slice (a roof over the corridor, a tower off-screen throwing its shadow over the camera) still land
+			// in the depth map. The depth bias follows the texel, not this range (#466, lighting/CascadeSplits.h).
 			XMMATRIX proj = XMMatrixOrthographicOffCenterLH(
 				cx - radius, cx + radius, cy - radius, cy + radius,
-				cz - radius - lighting::cascade_pull_back(m_dir_shadow_distance, radius), cz + radius);
+				cz - radius - m_dir_shadow_distance, cz + radius);
 			XMStoreFloat4x4(&m_csm_vp[c], lightView * proj);
 			m_csm_splits[c] = splitFar;
 			m_csm_radius[c] = radius;
@@ -477,6 +478,9 @@ namespace vortex::graphics::dx12
 			splitNear = splitFar;
 		}
 		m_csm_count = CSM_CASCADES;
+		// the depth bias beyond 80 m: per texel and slope instead of a fraction of the deeper boxes (#466; 1, 1, 1, 0 up to 80 m)
+		lighting::cascade_bias(m_dir_shadow_distance, CSM_CASCADES, m_csm_radius, tanHalfX, tanHalfY, SHADOW_TILE_SIZE,
+			m_dir_shadow_bias, m_dir_shadow_softness, m_csm_bias, m_csm_bias[3]);
 	}
 
 
