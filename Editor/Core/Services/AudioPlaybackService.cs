@@ -41,6 +41,16 @@ namespace Editor.Core.Services
             /// push must keep multiplying these in or the variation gets stomped.</summary>
             public float RolledVolumeScale = 1f;
             public float RolledPitchScale = 1f;
+            /// <summary>#465: seconds into the clip the next start begins at (AudioSource.Time set while stopped); -1 = the
+            /// beginning. Consumed by the start; Stop() forgets it, as Unity's Stop rewinds.</summary>
+            public double StartAt = -1;
+            /// <summary>#465: the mixer frame the next start is scheduled on (PlayScheduled); 0 = at once.</summary>
+            public ulong StartFrame;
+            /// <summary>#465: the current voice waits for this mixer frame (PlayScheduled) — IsPlaying is already true then,
+            /// like Unity's. 0 = it started at once.</summary>
+            public ulong ScheduledFrame;
+            /// <summary>The clip the current voice plays (a container's rolled clip) — Length and TimeSamples read its facts.</summary>
+            public string ClipPlaying;
             // Pre-play values of everything scripts can write through the handle —
             // play must stay non-destructive (mirrors the transform snapshot).
             public float OrigVolume;
@@ -78,6 +88,11 @@ namespace Editor.Core.Services
 
             _musicVolume = 1f;
             _musicCurrentClip = null;
+            _musicAdaptive = null;
+            _failedMusic.Clear();          // a .vmusic fixed between two runs plays in the next (#437)
+            _warnedMusicCalls.Clear();
+            _tickClock.Restart();
+            _lastTickSeconds = 0;
 
             // Project mixer state (bus volumes/mutes + duck rules) — identical in editor play mode and the shipped
             // game (the config ships packed in the .vpak and loads through AssetVfs there). Then, in a SHIPPED game
@@ -209,6 +224,9 @@ namespace Editor.Core.Services
             VortexAudio.ResumeVoice(_musicCurrent);
             VortexAudio.ResumeVoice(_musicPrevious);
             foreach (var s in _oneShots) VortexAudio.ResumeVoice(s.Handle);
+            // the pause is not a tick: the first tick after it must not count it (#437 review — the beat delivery would
+            // expect the next tick that far ahead and deliver the beats up to there early)
+            _lastTickSeconds = _tickClock.Elapsed.TotalSeconds;
         }
 
         /// <summary>Stop every component voice and forget the scene. Play is non-destructive:
@@ -221,6 +239,8 @@ namespace Editor.Core.Services
                 RestoreBinding(b); // play is non-destructive — undo script writes
             }
             _bindings.Clear();
+            _lastBinding = null;
+            _clipFacts.Clear();   // a clip regenerated between sessions reports its new length
             _listeners.Clear();
             _warnedMultipleListeners = false;
             _active = false;
@@ -230,6 +250,7 @@ namespace Editor.Core.Services
             _musicCurrent = VortexAudio.InvalidVoice;
             _musicPrevious = VortexAudio.InvalidVoice;
             _musicCurrentClip = null;
+            _musicAdaptive = null;
             foreach (var s in _oneShots) VortexAudio.StopVoice(s.Handle);
             _oneShots.Clear();
             _warnedInaudibleFades.Clear();
@@ -292,6 +313,7 @@ namespace Editor.Core.Services
                     RestoreBinding(b);
                     _bindings.RemoveAt(i);
                 }
+                _lastBinding = null;
                 _zones.RemoveAll(z => gone.Contains(z.Entity));
                 _listeners.RemoveAll(gone.Contains);
             }
@@ -300,27 +322,48 @@ namespace Editor.Core.Services
 
         // ---- script surface (Vortex.Audio, issue #11) --------------------------------
 
+        /// <summary>The last binding looked up: a script reading one source's Time every frame (dancers following the
+        /// band, #465) finds it without walking every binding.</summary>
+        private SourceBinding _lastBinding;
+
         private SourceBinding FindBinding(AudioSource source)
         {
+            var last = _lastBinding;
+            if (last != null && ReferenceEquals(last.Source, source)) return last;
             foreach (var b in _bindings)
-                if (ReferenceEquals(b.Source, source)) return b;
+                if (ReferenceEquals(b.Source, source)) { _lastBinding = b; return b; }
             return null;
         }
 
-        /// <summary>Script Play(): (re)start the source's voice from the beginning,
-        /// regardless of PlayOnAwake. Sources ADDED at runtime by scripts get a
-        /// binding lazily so they are controllable too.</summary>
-        public void ScriptPlay(AudioSource source)
+        /// <summary>The source's binding — created for a source a script ADDED at runtime, so it is controllable too.</summary>
+        private SourceBinding BindingFor(AudioSource source)
         {
-            if (!_active || source == null) return;
+            if (!_active || source == null) return null;
             var b = FindBinding(source);
             if (b == null)
             {
-                if (source.Entity == null) return;
+                if (source.Entity == null) return null;
                 b = new SourceBinding { Source = source, Entity = source.Entity };
                 SnapshotBinding(b);
                 _bindings.Add(b);
             }
+            return b;
+        }
+
+        /// <summary>Script Play(): (re)start the source's voice from the beginning — or from the Time set while it was
+        /// stopped (#465) — regardless of PlayOnAwake. Sources ADDED at runtime by scripts get a binding lazily so they
+        /// are controllable too.</summary>
+        public void ScriptPlay(AudioSource source) => PlayFrom(source, 0);
+
+        /// <summary>Script PlayScheduled(dspTime) (#465): (re)start the source so its first sample plays exactly when the
+        /// mixer clock (<see cref="DspSeconds"/>) reaches <paramref name="dspTime"/> — sample-accurate, the voice waits in
+        /// the mixer. A time already passed starts at once, like Play().</summary>
+        public void ScriptPlayScheduled(AudioSource source, double dspTime) => PlayFrom(source, DspFrameOf(dspTime));
+
+        private void PlayFrom(AudioSource source, ulong startFrame)
+        {
+            var b = BindingFor(source);
+            if (b == null) return;
             if (b.Handle != VortexAudio.InvalidVoice)
             {
                 VortexAudio.StopVoice(b.Handle);
@@ -329,6 +372,7 @@ namespace Editor.Core.Services
             b.WantsPlay = true;
             b.ScriptPaused = false;
             b.NextStartTick = 0;
+            b.StartFrame = startFrame;
             StartVoice(b); // immediate — stingers must not wait a frame
         }
 
@@ -337,6 +381,9 @@ namespace Editor.Core.Services
             var b = FindBinding(source);
             if (b == null) return;
             b.WantsPlay = false;
+            b.StartAt = -1;          // Stop rewinds (#465): the next Play starts from the beginning again
+            b.StartFrame = 0;
+            b.ScheduledFrame = 0;
             if (b.Handle != VortexAudio.InvalidVoice)
             {
                 VortexAudio.StopVoice(b.Handle);
@@ -368,10 +415,139 @@ namespace Editor.Core.Services
             return b != null;
         }
 
+        /// <summary>The voice plays now — or waits in the mixer for its PlayScheduled start (#465: Unity's isPlaying is true
+        /// from PlayScheduled on, so a "play if not playing" check does not schedule it again every frame).</summary>
         public bool ScriptIsPlaying(AudioSource source)
         {
             var b = FindBinding(source);
-            return b != null && VortexAudio.IsVoicePlaying(b.Handle);
+            if (b == null || b.Handle == VortexAudio.InvalidVoice) return false;
+            if (VortexAudio.IsVoicePlaying(b.Handle)) return true;
+            return b.ScheduledFrame > 0 && !b.ScriptPaused && VortexAudio.IsVoiceValid(b.Handle)
+                   && VortexAudio.GetDspTime(out _) < b.ScheduledFrame;
+        }
+
+        // ---- playback position (#465): the mixer's own cursor, so it stays exact through pauses, pitch changes and
+        // seeks — never a clock summed from frame times that drifts on hitches ---------------------------------------
+
+        /// <summary>The mixer clock in seconds (Unity's AudioSettings.dspTime): frames mixed since the audio engine
+        /// started over its rate. 0 without an audio engine.</summary>
+        public static double DspSeconds
+        {
+            get { ulong f = VortexAudio.GetDspTime(out int rate); return rate > 0 ? (double)f / rate : 0.0; }
+        }
+
+        /// <summary>The mixer frame of a DspTime in seconds; 0 (= at once) for a time already mixed, NaN or no engine.</summary>
+        private static ulong DspFrameOf(double dspTime)
+        {
+            ulong now = VortexAudio.GetDspTime(out int rate);
+            if (rate <= 0 || !(dspTime > 0)) return 0;
+            double f = Math.Round(dspTime * rate);
+            if (f >= ulong.MaxValue) return 0;
+            ulong frame = (ulong)f;
+            return frame > now ? frame : 0;
+        }
+
+        /// <summary>Script Time: seconds into the clip — the mixer's position while the source plays or is paused (it
+        /// advances in mixer blocks of ~10 ms, at the source's pitch); for a stopped source the position its next start
+        /// begins at.</summary>
+        public double ScriptGetTime(AudioSource source)
+        {
+            var b = FindBinding(source);
+            if (b == null) return 0;
+            double t = VoiceSeconds(b.Handle);
+            if (t >= 0) return t;
+            return b.StartAt > 0 ? b.StartAt : 0;
+        }
+
+        /// <summary>Script Time = seconds: seeks the playing (or paused) voice — decoded and streamed clips alike — or,
+        /// while the source is stopped, sets where its next Play() (or Play On Awake start) begins.</summary>
+        public void ScriptSetTime(AudioSource source, double seconds)
+        {
+            var b = BindingFor(source);
+            if (b == null) return;
+            if (double.IsNaN(seconds) || seconds < 0) seconds = 0;
+            if (VortexAudio.IsVoiceValid(b.Handle)) VortexAudio.SeekVoice(b.Handle, seconds);   // the mixer clamps / wraps it
+            else b.StartAt = PositionInClip(seconds, ClipFacts(source.AudioClipPath).Seconds, source.Loop);   // reads back as it will play (#465 review)
+        }
+
+        /// <summary>Where <paramref name="seconds"/> lands in a clip of <paramref name="length"/> seconds: wrapped for a
+        /// looping clip, clamped to its end for a one-shot (starting there, it ends at once); unchanged when the length is
+        /// unknown (0 — a sound container: the clip it rolls decides at Play).</summary>
+        internal static double PositionInClip(double seconds, double length, bool loop)
+        {
+            if (double.IsNaN(seconds) || seconds < 0) return 0;
+            if (!(length > 0) || seconds < length) return seconds;
+            return loop ? seconds % length : length;
+        }
+
+        /// <summary>Script Length: the clip's length in seconds (the playing clip's — a container's rolled clip — else the
+        /// assigned clip's); 0 when unknown (an empty slot, or a container that is not playing).</summary>
+        public double ScriptGetLength(AudioSource source)
+        {
+            var b = FindBinding(source);
+            if (b != null && VortexAudio.IsVoiceValid(b.Handle)) return VoiceLength(b.Handle, b.ClipPlaying);
+            return ClipFacts(source?.AudioClipPath).Seconds;
+        }
+
+        /// <summary>Script TimeSamples: the position in samples of the clip's own sample rate (Unity's timeSamples).</summary>
+        public long ScriptGetTimeSamples(AudioSource source)
+        {
+            var b = FindBinding(source);
+            if (b == null) return 0;
+            if (VortexAudio.IsVoiceValid(b.Handle)) return VoiceSamples(b.Handle, b.ClipPlaying);
+            int rate = ClipFacts(source.AudioClipPath).Rate;
+            return b.StartAt > 0 && rate > 0 ? (long)Math.Round(b.StartAt * rate) : 0;
+        }
+
+        public void ScriptSetTimeSamples(AudioSource source, long samples)
+        {
+            var b = FindBinding(source);
+            int rate = ClipFacts(b != null && VortexAudio.IsVoiceValid(b.Handle) ? b.ClipPlaying : source?.AudioClipPath).Rate;
+            if (rate > 0) ScriptSetTime(source, (double)Math.Max(0, samples) / rate);
+        }
+
+        /// <summary>Seconds into its clip a voice plays (-1 = no live voice).</summary>
+        private static double VoiceSeconds(ulong handle)
+            => VortexAudio.GetVoicePosition(handle, out ulong cursor, out _, out int rate) && rate > 0 ? (double)cursor / rate : -1.0;
+
+        /// <summary>A live voice's clip length in seconds; a stream that cannot tell falls back to the clip's header.</summary>
+        private double VoiceLength(ulong handle, string clip)
+        {
+            if (VortexAudio.GetVoicePosition(handle, out _, out ulong length, out int rate) && rate > 0 && length > 0) return (double)length / rate;
+            return ClipFacts(clip).Seconds;
+        }
+
+        /// <summary>A live voice's position in samples of its clip's own rate — the cursor itself when the voice runs at the
+        /// clip's rate, converted when the clip was resampled to the engine rate on load.</summary>
+        private long VoiceSamples(ulong handle, string clip)
+        {
+            if (!VortexAudio.GetVoicePosition(handle, out ulong cursor, out _, out int rate) || rate <= 0) return 0;
+            int clipRate = ClipFacts(clip).Rate;
+            return SamplesAtClipRate(cursor, rate, clipRate);
+        }
+
+        /// <summary>A cursor in frames at <paramref name="voiceRate"/> as samples of the clip's own rate (rounded); the
+        /// cursor itself when the rates match or the clip's rate is unknown.</summary>
+        internal static long SamplesAtClipRate(ulong cursor, int voiceRate, int clipRate)
+            => clipRate > 0 && voiceRate > 0 && clipRate != voiceRate ? (long)Math.Round((double)cursor * clipRate / voiceRate) : (long)cursor;
+
+        /// <summary>Length (seconds) and sample rate of a clip from its header, cached per clip for the play session —
+        /// a stopped source's Length and TimeSamples need them. (0, 0) for containers and unreadable clips.</summary>
+        private readonly Dictionary<string, (double Seconds, int Rate)> _clipFacts = new Dictionary<string, (double, int)>(StringComparer.OrdinalIgnoreCase);
+
+        private (double Seconds, int Rate) ClipFacts(string clip)
+        {
+            if (string.IsNullOrEmpty(clip) || Core.Audio.SoundContainerService.IsContainerPath(clip) || Core.Audio.AdaptiveMusic.IsMusicPath(clip)) return (0, 0);
+            if (_clipFacts.TryGetValue(clip, out var facts)) return facts;
+            facts = (0, 0);
+            try
+            {
+                var path = ResolveClipPath(clip);
+                if (path != null && VortexAudio.GetClipInfo(path, out float seconds, out int rate, out _)) facts = (seconds, rate);
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Audio] clip facts failed for '" + clip + "': " + ex.Message); }
+            _clipFacts[clip] = facts;
+            return facts;
         }
 
         /// <summary>FadeIn: (re)start the source silent and ramp the envelope to 1.</summary>
@@ -380,9 +556,10 @@ namespace Editor.Core.Services
             ScriptPlay(source);
             var b = FindBinding(source);
             if (b == null || b.Handle == VortexAudio.InvalidVoice) return;
-            VortexAudio.FadeVoice(b.Handle, 0f, 0f);          // snap envelope to 0
             BeginAudibleFade(b, 1f, "FadeIn");                // just (re)started: at Volume 0 it fades in to full volume (#404)
-            VortexAudio.FadeVoice(b.Handle, 1f, seconds);     // glide up
+            // one request from 0 up: a snap to 0 and a fade "from the current level" issued in the same frame collapsed into
+            // a fade from full volume (miniaudio keeps one pending fade per voice)
+            VortexAudio.FadeVoiceFrom(b.Handle, 0f, 1f, seconds);
         }
 
         /// <summary>FadeOut: ramp to silence, then stop and free the voice natively.</summary>
@@ -401,8 +578,9 @@ namespace Editor.Core.Services
         {
             var b = FindBinding(source);
             if (b == null || b.Handle == VortexAudio.InvalidVoice) return;
-            BeginAudibleFade(b, target, "FadeTo");            // the "start silent, then fade in" idiom takes the level over (#404)
-            VortexAudio.FadeVoice(b.Handle, target, seconds);
+            // the "start silent, then fade in" idiom takes the level over (#404) — and then fades up from silence
+            if (BeginAudibleFade(b, target, "FadeTo")) VortexAudio.FadeVoiceFrom(b.Handle, 0f, target, seconds);
+            else VortexAudio.FadeVoice(b.Handle, target, seconds);
         }
 
         /// <summary>What a fade towards <paramref name="target"/> does with the source's own level (#404). The envelope
@@ -425,23 +603,27 @@ namespace Editor.Core.Services
         /// <summary>Sources whose fade could not be heard (Volume 0 or Mute) — warned once per play session.</summary>
         private readonly HashSet<AudioSource> _warnedInaudibleFades = new HashSet<AudioSource>();
 
-        private void BeginAudibleFade(SourceBinding b, float target, string what)
+        /// <summary>True when the fade takes the level over: the envelope is at 0 and the caller's fade must start there.</summary>
+        private bool BeginAudibleFade(SourceBinding b, float target, string what)
         {
             var plan = PlanFade(b.Source, target, b.FreshStart);
             if (plan == FadeStart.TakesOverLevel)
             {
-                // silent first (the envelope at 0), so raising Volume can never click; Stop restores the authored Volume
+                // silent first (the envelope at 0), so raising Volume can never click; Stop restores the authored Volume.
+                // The caller's fade replaces this snap if the mixer has not taken it yet — so it starts from 0 itself.
                 VortexAudio.FadeVoice(b.Handle, 0f, 0f);
                 b.Source.Volume = 1f;
                 VortexAudio.SetVoiceVolume(b.Handle, b.RolledVolumeScale);
+                return true;
             }
-            else if ((plan == FadeStart.Muted || plan == FadeStart.SilentVolume) && _warnedInaudibleFades.Add(b.Source))
+            if ((plan == FadeStart.Muted || plan == FadeStart.SilentVolume) && _warnedInaudibleFades.Add(b.Source))
             {
                 ConsoleService.Instance.LogWarning("[Audio] " + what + " on '" + (b.Entity?.Name ?? "?") + "' cannot be heard: " +
                     (plan == FadeStart.Muted ? "its Audio Source is muted (Mute) — the fade envelope multiplies the source's level."
                                              : "its Volume is 0 — the fade envelope multiplies the source's level. (To start silent and fade in: " +
                                                "Volume = 0, Play() and the fade in the same frame.)"));
             }
+            return false;
         }
 
         /// <summary>An in-flight one-shot: its voice and its own reverb mix (#496) — the per-frame send is that mix x the
@@ -525,6 +707,11 @@ namespace Editor.Core.Services
         private ulong _musicPrevious = VortexAudio.InvalidVoice;
         private string _musicCurrentClip;     // same-clip guard: Play/CrossFade per frame must not restart
         private float _musicVolume = 1f;      // user target volume
+        /// <summary>The current track's driver when it is adaptive music (.vmusic, #437) — states, parameters, stingers,
+        /// beats; null for a plain clip.</summary>
+        private Core.Audio.AdaptiveMusicPlayer _musicAdaptive;
+        private readonly System.Diagnostics.Stopwatch _tickClock = new System.Diagnostics.Stopwatch();
+        private double _lastTickSeconds;
 
         public float MusicVolume
         {
@@ -532,11 +719,37 @@ namespace Editor.Core.Services
             set
             {
                 _musicVolume = value < 0f ? 0f : (value > 1f ? 1f : value);
-                VortexAudio.SetVoiceVolume(_musicCurrent, _musicVolume); // envelope multiplies on top
+                // envelope multiplies on top; a .vmusic keeps its own volume under the channel's (#437)
+                VortexAudio.SetVoiceVolume(_musicCurrent, _musicVolume * (_musicAdaptive != null ? Math.Max(0f, _musicAdaptive.Music.Volume) : 1f));
             }
         }
 
         public bool MusicIsPlaying => VortexAudio.IsVoicePlaying(_musicCurrent);
+
+        /// <summary>Seconds into the current music track (#465) — the mixer's position; 0 without a track. Setting it
+        /// seeks the track (a streamed one refills from there); without a track it does nothing.</summary>
+        public double MusicTime
+        {
+            get { double t = VoiceSeconds(_musicCurrent); return t > 0 ? t : 0; }
+            set { VortexAudio.SeekVoice(_musicCurrent, double.IsNaN(value) || value < 0 ? 0 : value); }
+        }
+
+        /// <summary>The current music track's length in seconds (#465); 0 without a track.</summary>
+        public double MusicLength => VortexAudio.IsVoiceValid(_musicCurrent) ? VoiceLength(_musicCurrent, _musicCurrentClip) : 0;
+
+        /// <summary>The current track's position in samples of the clip's own rate (#465).</summary>
+        public long MusicTimeSamples
+        {
+            get => VortexAudio.IsVoiceValid(_musicCurrent) ? VoiceSamples(_musicCurrent, _musicCurrentClip) : 0;
+            set
+            {
+                // a clip's own rate; a .vmusic has none of its own — its stems play at the mixer's rate, which the getter
+                // counts in, so the setter does too (#465 review: it did nothing for a .vmusic)
+                int rate = ClipFacts(_musicCurrentClip).Rate;
+                if (rate <= 0 && VortexAudio.GetVoicePosition(_musicCurrent, out _, out _, out int voiceRate)) rate = voiceRate;
+                if (rate > 0) MusicTime = (double)Math.Max(0, value) / rate;
+            }
+        }
 
         /// <summary>Start a music track (streamed, looping, priority 0 — never stolen),
         /// fading in over fadeInSeconds. Replaces the current track with a quick fade.
@@ -560,32 +773,44 @@ namespace Editor.Core.Services
             if (string.Equals(clip, _musicCurrentClip, StringComparison.OrdinalIgnoreCase) && MusicIsPlaying)
                 return; // already the current track — per-frame calls must not restart the stream
 
-            var path = ResolveClipPath(clip);
-            if (path == null) return;
-
             // Start the NEW track first — if it can't start (undecodable file), the
             // currently playing music keeps playing instead of fading into silence.
-            var h = VortexAudio.PlayVoice(path, _musicVolume, 1f, 0f, loop, 0, stream: true, bus: VortexAudio.BusMusic);
-            if (h == VortexAudio.InvalidVoice)
+            ulong h;
+            Core.Audio.AdaptiveMusicPlayer adaptive = null;
+            if (Core.Audio.AdaptiveMusic.IsMusicPath(clip))
             {
-                _failedPaths.Add(clip);
-                System.Diagnostics.Debug.WriteLine("[Audio] music failed to start: '" + clip + "'");
-                return;
+                // adaptive music (#437): the .vmusic's stems as one sample-locked voice, driven by Audio.Music.SetState …
+                if (_failedMusic.Contains(clip)) return;   // per frame Play calls must not reload a broken file every frame
+                adaptive = StartAdaptiveMusic(clip);
+                if (adaptive == null) return;
+                h = adaptive.Handle;
+            }
+            else
+            {
+                var path = ResolveClipPath(clip);
+                if (path == null) return;
+                h = VortexAudio.PlayVoice(path, _musicVolume, 1f, 0f, loop, 0, stream: true, bus: VortexAudio.BusMusic);
+                if (h == VortexAudio.InvalidVoice)
+                {
+                    _failedPaths.Add(clip);
+                    System.Diagnostics.Debug.WriteLine("[Audio] music failed to start: '" + clip + "'");
+                    return;
+                }
             }
 
             SwapMusicToPrevious(fadeOutSeconds);
             _musicCurrent = h;
             _musicCurrentClip = clip;
-            if (fadeInSeconds > 0f)
-            {
-                VortexAudio.FadeVoice(h, 0f, 0f);            // envelope starts silent
-                VortexAudio.FadeVoice(h, 1f, fadeInSeconds); // native sample-accurate ramp
-            }
+            _musicAdaptive = adaptive;
+            // native sample-accurate ramp from silence — one request with both ends (#465 review: a snap to 0 followed by a
+            // fade from the current level collapsed into one fade from full volume)
+            if (fadeInSeconds > 0f) VortexAudio.FadeVoiceFrom(h, 0f, 1f, fadeInSeconds);
         }
 
         public void MusicStop(float fadeOutSeconds = 0f)
         {
             _musicCurrentClip = null;
+            _musicAdaptive = null;   // a fading-out .vmusic delivers no more beats and takes no more states
             if (fadeOutSeconds <= 0f)
             {
                 // Immediate means IMMEDIATE — including an outgoing crossfade track.
@@ -619,7 +844,102 @@ namespace Editor.Core.Services
             // Reap the fading-out handle once the native envelope released it.
             if (_musicPrevious != VortexAudio.InvalidVoice && !VortexAudio.IsVoiceValid(_musicPrevious))
                 _musicPrevious = VortexAudio.InvalidVoice;
+
+            // adaptive music (#437): deliver the beats this tick is nearest to — OnBar / OnBeat of the scripts that have them
+            double nowSeconds = _tickClock.Elapsed.TotalSeconds;
+            double dt = nowSeconds - _lastTickSeconds;
+            _lastTickSeconds = nowSeconds;
+            if (_musicAdaptive == null) return;
+            if (!VortexAudio.IsVoiceValid(_musicAdaptive.Handle)) { _musicAdaptive = null; return; }   // a one-shot .vmusic ended
+            _musicAdaptive.Tick(dt, _dispatchBeat ??= (beat, bar, isBar) => Editor.Scripting.ScriptRuntime.Instance.DispatchMusicBeat(beat, bar, isBar));
         }
+
+        private Action<int, int, bool> _dispatchBeat;
+
+        /// <summary>The .vmusic of a music path: the project file, or — in a shipped game — its pak entry.</summary>
+        private Core.Audio.AdaptiveMusic LoadMusicDefinition(string clip)
+        {
+            try
+            {
+                if (Path.IsPathRooted(clip) && File.Exists(clip)) return Core.Audio.AdaptiveMusic.Load(clip);
+                var root = ProjectData.Current?.Path;
+                if (!string.IsNullOrEmpty(root))
+                {
+                    var full = Path.Combine(root, clip);
+                    if (File.Exists(full)) return Core.Audio.AdaptiveMusic.Load(full);
+                }
+                if (AssetVfs.TryGetBytes(clip, out var bytes)) return Core.Audio.AdaptiveMusic.FromJson(System.Text.Encoding.UTF8.GetString(bytes));
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Audio] music definition unreadable: '" + clip + "': " + ex.Message); }
+            return null;
+        }
+
+        /// <summary>Starts a .vmusic on the music bus (#437); null — and one Console warning saying why — when it cannot play.</summary>
+        private Core.Audio.AdaptiveMusicPlayer StartAdaptiveMusic(string clip)
+        {
+            var def = LoadMusicDefinition(clip);
+            string error = def == null ? "the file was not found or is not a .vmusic" : null;
+            var player = def != null ? Core.Audio.AdaptiveMusicPlayer.Start(def, ResolveClipPath, VortexAudio.BusMusic, _musicVolume, out error) : null;
+            if (player == null)
+            {
+                _failedMusic.Add(clip);
+                AudioFail("[Audio] music '" + clip + "' cannot play: " + error);
+                WarnMusicOnce(clip + "|play", "Audio.Music.Play: '" + clip + "' cannot play — " + error + ".");
+            }
+            return player;
+        }
+
+        /// <summary>.vmusic files that could not play this session (retried in the next one).</summary>
+        private readonly HashSet<string> _failedMusic = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // ---- adaptive music script surface (Vortex.Audio.Music, #437) ------------------------------------------------
+
+        private readonly HashSet<string> _warnedMusicCalls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        private void WarnMusicOnce(string key, string message)
+        {
+            if (_warnedMusicCalls.Add(key)) ConsoleService.Instance.LogWarning("[Audio] " + message);
+        }
+
+        public bool MusicSetState(string state)
+        {
+            var m = _musicAdaptive;
+            if (m == null)
+            {
+                WarnMusicOnce("nomusic:SetState", "Audio.Music.SetState(\"" + state + "\"): no adaptive music plays — start a .vmusic with Audio.Music.Play first.");
+                return false;
+            }
+            if (m.SetState(state)) return true;
+            var names = new List<string>();
+            foreach (var s in m.Music.States) names.Add(s.Name);
+            WarnMusicOnce(_musicCurrentClip + "|state|" + state, "Audio.Music.SetState(\"" + state + "\"): '" + Path.GetFileName(_musicCurrentClip) +
+                "' has no such state (states: " + (names.Count > 0 ? string.Join(", ", names) : "none") + ").");
+            return false;
+        }
+
+        public string MusicState => _musicAdaptive?.State ?? "";
+
+        public void MusicSetParameter(string name, float value) => _musicAdaptive?.SetParameter(name, value);
+
+        public float MusicGetParameter(string name) => _musicAdaptive?.GetParameter(name) ?? 0f;
+
+        public bool MusicPlayStinger(string name)
+        {
+            var m = _musicAdaptive;
+            if (m == null) return false;
+            if (m.PlayStinger(name)) return true;
+            if (m.Music.FindStinger(name) == null)
+                WarnMusicOnce(_musicCurrentClip + "|stinger|" + name, "Audio.Music.PlayStinger(\"" + name + "\"): '" + Path.GetFileName(_musicCurrentClip) + "' has no such stinger.");
+            return false;
+        }
+
+        public float MusicBpm => _musicAdaptive?.Music.Bpm ?? 0f;
+        public int MusicBeatsPerBar => _musicAdaptive?.Music.BeatsPerBar ?? 0;
+        public int MusicBeat => _musicAdaptive?.CurrentBeat ?? -1;
+        public int MusicBar => _musicAdaptive?.CurrentBar ?? -1;
+
+        /// <summary>Diagnostics (smoke checks, the editor): the adaptive music playing now, or null.</summary>
+        internal Core.Audio.AdaptiveMusicPlayer AdaptiveMusicForDiagnostics => _musicAdaptive;
 
         private void CollectRecursive(GameEntity e)
         {
@@ -701,7 +1021,9 @@ namespace Editor.Core.Services
                 // Steam Audio v2 (#21): only meaningful for 3D sources; ignored unless SA is enabled + available.
                 hrtf: b.Source.EnableHrtf && b.Source.SpatialBlend > 0f,
                 occlusion: b.Source.EnableOcclusion && b.Source.EnableHrtf && b.Source.SpatialBlend > 0f,
-                reverbSend: b.Source.ReverbZoneMix * _zoneWeight);   // from the first sample, as PushProperties keeps it (#496)
+                reverbSend: b.Source.ReverbZoneMix * _zoneWeight,    // from the first sample, as PushProperties keeps it (#496)
+                startTime: b.StartFrame,                             // PlayScheduled: waits in the mixer for that frame (#465)
+                startPosition: b.StartAt > 0 ? b.StartAt : 0);       // Time set while stopped (#465)
             b.RolledVolumeScale = volumeScale;
             b.RolledPitchScale = pitchScale;
 
@@ -709,6 +1031,10 @@ namespace Editor.Core.Services
             {
                 b.NextStartTick = 0;
                 b.FreshStart = true;
+                b.ScheduledFrame = b.StartFrame;
+                b.StartFrame = 0;
+                b.StartAt = -1;      // consumed: a restart after a steal begins at the top, as before
+                b.ClipPlaying = clip;
                 PushProperties(b);
             }
             else

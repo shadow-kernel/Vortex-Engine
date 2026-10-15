@@ -73341,8 +73341,16 @@ static ma_result ma_node_read_pcm_frames(ma_node* pNode, ma_uint32 outputBusInde
         return MA_INVALID_ARGS; /* Invalid output bus index. */
     }
 
-    /* Don't do anything if we're in a stopped state. */
-    if (ma_node_get_state_by_time_range(pNode, globalTime, globalTime + frameCount) != ma_node_state_started) {
+    /*
+    VORTEX PATCH (#465, sample-accurate scheduling): a start or stop time that falls INSIDE this period
+    plays the part of the period after the start / before the stop. Upstream asked
+    ma_node_get_state_by_time_range() about the whole period, which reports "stopped" whenever the start
+    time lies after the period's first frame, so every scheduled start slipped to the next device period
+    (measured: a start 1000 frames ahead, read in 480-frame periods, began at frame 1440), and the start
+    offset below was mirrored (globalTimeEnd - startTime instead of startTime - globalTimeBeg). Nodes
+    without start/stop times (every node before #465) take exactly the old path.
+    */
+    if (ma_node_get_state(pNode) == ma_node_state_stopped) {
         return MA_SUCCESS;  /* We're in a stopped state. This is not an error - we just need to not read anything. */
     }
 
@@ -73351,6 +73359,10 @@ static ma_result ma_node_read_pcm_frames(ma_node* pNode, ma_uint32 outputBusInde
     globalTimeEnd = globalTime + frameCount;
     startTime = ma_node_get_state_time(pNode, ma_node_state_started);
     stopTime  = ma_node_get_state_time(pNode, ma_node_state_stopped);
+
+    if (startTime >= globalTimeEnd || stopTime <= globalTimeBeg) {
+        return MA_SUCCESS;  /* Not started yet, or already stopped, anywhere in this period. */
+    }
 
     /*
     At this point we know that we are inside our start/stop times. However, we may need to adjust
@@ -73361,13 +73373,15 @@ static ma_result ma_node_read_pcm_frames(ma_node* pNode, ma_uint32 outputBusInde
     therefore need to offset it by a number of frames to accommodate. The same thing applies for
     the stop time.
     */
-    timeOffsetBeg = (globalTimeBeg < startTime) ? (ma_uint32)(globalTimeEnd - startTime) : 0;
+    timeOffsetBeg = (globalTimeBeg < startTime) ? (ma_uint32)(startTime - globalTimeBeg) : 0;    /* VORTEX PATCH (#465): was globalTimeEnd - startTime */
     timeOffsetEnd = (globalTimeEnd > stopTime)  ? (ma_uint32)(globalTimeEnd - stopTime)  : 0;
 
     /* Trim based on the start offset. We need to silence the start of the buffer. */
     if (timeOffsetBeg > 0) {
-        ma_silence_pcm_frames(pFramesOut, timeOffsetBeg, ma_format_f32, ma_node_get_output_channels(pNode, outputBusIndex));
-        pFramesOut += timeOffsetBeg * ma_node_get_output_channels(pNode, outputBusIndex);
+        if (pFramesOut != NULL) {   /* VORTEX PATCH (#465): a seek-only read passes no buffer */
+            ma_silence_pcm_frames(pFramesOut, timeOffsetBeg, ma_format_f32, ma_node_get_output_channels(pNode, outputBusIndex));
+            pFramesOut += timeOffsetBeg * ma_node_get_output_channels(pNode, outputBusIndex);
+        }
         frameCount -= timeOffsetBeg;
     }
 

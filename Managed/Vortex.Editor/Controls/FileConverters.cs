@@ -30,7 +30,7 @@ namespace VortexEditor.Controls
             {
                 case ".vmat": return "VxPurpleBrush";
                 case ".png": case ".jpg": case ".jpeg": case ".tga": case ".bmp": case ".hdr": case ".dds": return "VxTealBrush";
-                case ".wav": case ".mp3": case ".ogg": case ".flac": case ".vsndc": return "VxGreenBrush";
+                case ".wav": case ".mp3": case ".ogg": case ".flac": case ".vsndc": case ".vmusic": return "VxGreenBrush";
                 case ".cs": return "VxOrangeBrush";
                 case ".ventity": return "VxPinkBrush";
                 case ".vscene": return "VxYellowBrush";
