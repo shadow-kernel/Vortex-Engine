@@ -1040,7 +1040,9 @@ namespace VortexEditor.Shell
             catch (Exception ex) { EditorCommands.Fail("Could not start the player", ex); }
         }
 
-        private static string FindPlayerExecutable()
+        /// <summary>The engine's own player next to the editor (an app bundle's Resources/Player, a dev build's Vortex.Player bin) —
+        /// the only program Build and Run and run_player (#463) start.</summary>
+        internal static string FindPlayerExecutable()
         {
             string baseDir = AppContext.BaseDirectory;
             string[] names = OperatingSystem.IsWindows() ? new[] { "Vortex.Player.exe" } : new[] { "Vortex.Player" };

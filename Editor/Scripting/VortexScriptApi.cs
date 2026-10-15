@@ -1216,6 +1216,83 @@ namespace Vortex
         internal static IScriptHost Host;
         /// <summary>Quit the game (closes the standalone player / stops play).</summary>
         public static void Quit() { if (Host != null) Host.QuitGame(); }
+
+        private static IReadOnlyDictionary<string, string> _args = NoArgs();
+
+        private static IReadOnlyDictionary<string, string> NoArgs()
+            => new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
+
+        /// <summary>The game's own command-line arguments (#463): every <c>--arg:name=value</c> the standalone player was started with
+        /// (<c>--arg:name</c> alone means "true"), by name, case-insensitive — a test run picks an act, a level or a beat without
+        /// editing the game. Empty in editor play.
+        /// <code>
+        ///   Vortex.Player --project=MyGame --arg:act=3 --arg:skipIntro
+        ///   int act = Application.GetArg("act", 1);               // 3
+        ///   bool skipIntro = Application.GetArg("skipIntro", false); // true
+        /// </code></summary>
+        public static IReadOnlyDictionary<string, string> Args { get { return _args; } }
+
+        /// <summary>A command-line argument's value (see <see cref="Args"/>), or <paramref name="defaultValue"/> when the game was
+        /// started without it.</summary>
+        public static string GetArg(string name, string defaultValue = null)
+        {
+            string v;
+            return name != null && _args.TryGetValue(name, out v) ? v : defaultValue;
+        }
+
+        /// <summary>A command-line argument as a whole number; <paramref name="defaultValue"/> when it was not given or is no number.</summary>
+        public static int GetArg(string name, int defaultValue)
+        {
+            int v;
+            return int.TryParse(GetArg(name), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out v) ? v : defaultValue;
+        }
+
+        /// <summary>A command-line argument as a number (a dot as the decimal separator); <paramref name="defaultValue"/> when it was
+        /// not given or is no number.</summary>
+        public static float GetArg(string name, float defaultValue)
+        {
+            float v;
+            return float.TryParse(GetArg(name), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out v) ? v : defaultValue;
+        }
+
+        /// <summary>A command-line argument as true or false (also 1 / 0, yes / no, on / off); <paramref name="defaultValue"/> when it
+        /// was not given or is none of these.</summary>
+        public static bool GetArg(string name, bool defaultValue)
+        {
+            switch ((GetArg(name) ?? "").Trim().ToLowerInvariant())
+            {
+                case "true": case "1": case "yes": case "on": return true;
+                case "false": case "0": case "no": case "off": return false;
+                default: return defaultValue;
+            }
+        }
+
+        /// <summary>Whether the game was started with this argument (<c>--arg:name</c>, with or without a value).</summary>
+        public static bool HasArg(string name) { return name != null && _args.ContainsKey(name); }
+
+        /// <summary>The standalone player hands over its command line's arguments once, before the first script starts.</summary>
+        internal static void SetArgs(IEnumerable<KeyValuePair<string, string>> args)
+        {
+            var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (args != null) foreach (var kv in args) if (!string.IsNullOrEmpty(kv.Key)) d[kv.Key] = kv.Value ?? "";
+            _args = new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(d);
+        }
+
+        /// <summary>One command-line token: <c>--arg:name=value</c>, or <c>--arg:name</c> for "true". False for anything else.</summary>
+        internal static bool TryParseArg(string token, out string name, out string value)
+        {
+            name = null; value = null;
+            const string prefix = "--arg:";
+            if (token == null) return false;
+            string t = token.Trim();
+            if (!t.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return false;
+            string rest = t.Substring(prefix.Length);
+            int eq = rest.IndexOf('=');
+            name = (eq < 0 ? rest : rest.Substring(0, eq)).Trim();
+            value = eq < 0 ? "true" : rest.Substring(eq + 1).Trim().Trim('"');
+            if (name.Length == 0) { name = null; value = null; return false; }
+            return true;
+        }
     }
 
     /// <summary>Player view camera control (the live game/play view).</summary>

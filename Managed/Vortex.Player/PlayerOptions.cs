@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 
 namespace Vortex.Player
@@ -23,6 +24,11 @@ namespace Vortex.Player
         public string CaptureDir;
         /// <summary>Print the loaded scene's entity tree (components, render layers, scripts) to stdout.</summary>
         public bool DumpScene;
+        /// <summary>The game's own arguments, <c>--arg:name=value</c> (#463): scripts read them through Application.Args / GetArg.</summary>
+        public readonly Dictionary<string, string> Args = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        /// <summary>Automation (#463): write each frame's duration in ms to this file, one per line — run_player's frame-time
+        /// percentiles. Off unless given.</summary>
+        public string FrameTimesPath;
 
         public static PlayerOptions Parse(string[] args)
         {
@@ -43,6 +49,8 @@ namespace Vortex.Player
                 else if (a.StartsWith("--input=", StringComparison.OrdinalIgnoreCase)) o.InputScriptPath = a.Substring(8).Trim('"');
                 else if (a.StartsWith("--capture-dir=", StringComparison.OrdinalIgnoreCase)) o.CaptureDir = a.Substring(14).Trim('"');
                 else if (a.Equals("--dump-scene", StringComparison.OrdinalIgnoreCase)) o.DumpScene = true;
+                else if (a.StartsWith("--frame-times=", StringComparison.OrdinalIgnoreCase)) o.FrameTimesPath = a.Substring(14).Trim('"');
+                else if (Vortex.Application.TryParseArg(a, out string name, out string value)) o.Args[name] = value;
             }
             return o;
         }

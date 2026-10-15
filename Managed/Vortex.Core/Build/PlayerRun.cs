@@ -1,0 +1,198 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Text.RegularExpressions;
+using Editor.Core.Input;
+
+namespace Editor.Core.Services.Build
+{
+    /// <summary>
+    /// What an automated standalone-player run needs besides the process (#463, the run_player tool): the player's command line,
+    /// a check of an input script before the player sees it (the player skips a line it cannot read), and the numbers of a run —
+    /// FPS from the player's 2-second log lines, frame-time percentiles from its <c>--frame-times</c> file.
+    /// </summary>
+    public static class PlayerRun
+    {
+        /// <summary>One run of the player for a project.</summary>
+        public sealed class Options
+        {
+            public string Project, Scene;
+            public double Seconds = 10;
+            public int Width = 1280, Height = 720;
+            /// <summary>Below 1 the 3D view renders smaller and is scaled up.</summary>
+            public float RenderScale = 1f;
+            public string InputScript, CaptureDir, FinalCapture, FrameTimes;
+            public IEnumerable<KeyValuePair<string, string>> Args;
+        }
+
+        /// <summary>The player's command line, one element per argument (for ProcessStartInfo.ArgumentList: nothing is quoted).</summary>
+        public static List<string> Arguments(Options o)
+        {
+            var ci = CultureInfo.InvariantCulture;
+            var list = new List<string> { "--project=" + o.Project };
+            if (!string.IsNullOrEmpty(o.Scene)) list.Add("--scene=" + o.Scene);
+            list.Add("--width=" + o.Width.ToString(ci));
+            list.Add("--height=" + o.Height.ToString(ci));
+            if (o.RenderScale > 0f && o.RenderScale < 0.999f) list.Add("--renderscale=" + o.RenderScale.ToString("0.###", ci));
+            list.Add("--exit-after=" + o.Seconds.ToString("0.###", ci));
+            if (!string.IsNullOrEmpty(o.CaptureDir)) list.Add("--capture-dir=" + o.CaptureDir);
+            if (!string.IsNullOrEmpty(o.FinalCapture)) list.Add("--capture=" + o.FinalCapture);
+            if (!string.IsNullOrEmpty(o.InputScript)) list.Add("--input=" + o.InputScript);
+            if (!string.IsNullOrEmpty(o.FrameTimes)) list.Add("--frame-times=" + o.FrameTimes);
+            if (o.Args != null) foreach (var kv in o.Args) list.Add("--arg:" + kv.Key + "=" + kv.Value);
+            return list;
+        }
+
+        /// <summary>A name scripts can ask Application.GetArg for: letters, digits, '_', '-' and '.'.</summary>
+        public static bool IsArgName(string name) => !string.IsNullOrEmpty(name) && name.All(c => char.IsLetterOrDigit(c) || c == '_' || c == '-' || c == '.');
+
+        private static readonly string[] KeyOps = { "press", "release", "hold", "tap" };
+
+        /// <summary>
+        /// Check an input script against the player's grammar (Vortex.Player's InputScript: <c>&lt;seconds&gt; press|release|tap
+        /// &lt;key&gt;</c>, <c>hold &lt;key&gt; [seconds]</c>, <c>look &lt;dx&gt; &lt;dy&gt; [seconds]</c>, <c>capture &lt;name&gt;.bmp</c>,
+        /// <c>exit</c>; <c>#</c> starts a comment). Null when it is fine, else the first problem with its line number. A capture
+        /// takes a plain file name — captures land in the run's own folder; a command after <paramref name="runSeconds"/> would
+        /// never run.
+        /// </summary>
+        public static string CheckInputScript(string text, double runSeconds = double.MaxValue)
+        {
+            if (text == null) return null;
+            var lines = text.Replace("\r\n", "\n").Split('\n');
+            for (int i = 0; i < lines.Length; i++)
+            {
+                string line = lines[i];
+                int hash = line.IndexOf('#');
+                if (hash >= 0) line = line.Substring(0, hash);
+                line = line.Trim();
+                if (line.Length == 0) continue;
+                string at = "line " + (i + 1) + " (\"" + line + "\"): ";
+                var p = line.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                if (!double.TryParse(p[0], NumberStyles.Float, CultureInfo.InvariantCulture, out double t) || t < 0 || double.IsNaN(t))
+                    return at + "starts with the time in seconds since the start, e.g. \"1.5 press W\".";
+                if (p.Length < 2) return at + "a command follows the time: press, release, hold, tap, look, capture or exit.";
+                string op = p[1].ToLowerInvariant();
+                if (t > runSeconds) return at + "never runs: the run ends after " + runSeconds.ToString("0.###", CultureInfo.InvariantCulture) + " s (raise seconds).";
+                bool Num(int k) => p.Length > k && double.TryParse(p[k], NumberStyles.Float, CultureInfo.InvariantCulture, out double v) && !double.IsNaN(v) && !double.IsInfinity(v);
+                if (KeyOps.Contains(op))
+                {
+                    if (p.Length < 3 || KeyNames.VirtualKeyFromName(p[2]) == 0)
+                        return at + (p.Length < 3 ? "names a key" : "'" + p[2] + "' is no key") + " — key names as in Input.GetKey: W, A, S, D, Space, LeftShift, LeftCtrl, Escape, Return, LButton, RButton, R, F1 …";
+                    if (op == "hold" && p.Length > 3 && !Num(3)) return at + "hold takes the seconds to hold the key, e.g. \"2 hold LButton 0.5\".";
+                }
+                else if (op == "look")
+                {
+                    if (!Num(2) || !Num(3) || (p.Length > 4 && !Num(4)))
+                        return at + "look takes the mouse movement in pixels and optional seconds to spread it over, e.g. \"3 look 40 -10 0.5\".";
+                }
+                else if (op == "capture")
+                {
+                    string name = p.Length > 2 ? p[2] : "";
+                    if (name.Length == 0 || Path.IsPathRooted(name) || name.Contains("..") || name.IndexOfAny(new[] { '/', '\\' }) >= 0 || Path.GetFileName(name) != name)
+                        return at + "capture takes a file name without folders, e.g. \"capture door.bmp\": captures go to the run's capture folder.";
+                    if (!name.EndsWith(".bmp", StringComparison.OrdinalIgnoreCase)) return at + "a capture is a BMP: name it like \"door.bmp\".";
+                }
+                else if (op != "exit")
+                    return at + "'" + p[1] + "' is no command — press, release, hold, tap, look, capture or exit.";
+            }
+            return null;
+        }
+
+        /// <summary>Capture commands every <paramref name="every"/> seconds of a run of <paramref name="seconds"/> (auto_0001.bmp …).</summary>
+        public static string AutoCaptures(double seconds, double every)
+        {
+            var sb = new StringBuilder();
+            if (every <= 0) return "";
+            int n = 0;
+            for (double t = every; t < seconds - 0.25; t += every)
+                sb.Append(t.ToString("0.###", CultureInfo.InvariantCulture)).Append(" capture auto_").Append((++n).ToString("0000", CultureInfo.InvariantCulture)).Append(".bmp\n");
+            return sb.ToString();
+        }
+
+        private static readonly Regex FpsLine = new Regex(@"^(?:\d\d:\d\d:\d\d\.\d{3}\s+)?FPS=(\d+)\s", RegexOptions.CultureInvariant);
+
+        /// <summary>The player's FPS line, logged every 2 s: <c>FPS=58 scene=… draws=…</c> (with the log file's time stamp or without).</summary>
+        public static bool TryParseFps(string line, out int fps)
+        {
+            fps = 0;
+            if (line == null) return false;
+            var m = FpsLine.Match(line);
+            return m.Success && int.TryParse(m.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out fps);
+        }
+
+        /// <summary>A line of the player's output that reports an error: everything on stderr (Console errors, exceptions), an
+        /// error entry, an exception in a frame.</summary>
+        public static bool IsErrorLine(string line, bool fromStderr)
+        {
+            if (string.IsNullOrWhiteSpace(line)) return false;
+            if (fromStderr) return true;
+            return line.StartsWith("[ERROR]", StringComparison.Ordinal) || line.StartsWith("[Tick] ", StringComparison.Ordinal)
+                || line.IndexOf("Exception", StringComparison.Ordinal) >= 0 || line.IndexOf("FAILED", StringComparison.Ordinal) >= 0;
+        }
+
+        /// <summary>FPS over the run's 2-second windows.</summary>
+        public sealed class FpsStats
+        {
+            public int Min, Max, Samples;
+            public double Avg;
+            /// <summary>The first window (loading, first frames) was left out — there were later ones.</summary>
+            public bool FirstWindowExcluded;
+        }
+
+        public static FpsStats Fps(IReadOnlyList<int> windows)
+        {
+            if (windows == null || windows.Count == 0) return null;
+            var use = windows.Count >= 2 ? windows.Skip(1).ToList() : windows.ToList();
+            return new FpsStats { Min = use.Min(), Max = use.Max(), Avg = Math.Round(use.Average(), 1), Samples = use.Count, FirstWindowExcluded = windows.Count >= 2 };
+        }
+
+        /// <summary>Frame times of the run (ms): average and nearest-rank percentiles.</summary>
+        public sealed class FrameStats
+        {
+            public int Frames;
+            public double Avg, P50, P90, P95, P99, Max;
+            /// <summary>Milliseconds of the start left out (loading, shader compiles) — only when the run was long enough.</summary>
+            public double WarmupExcludedMs;
+        }
+
+        /// <summary>Statistics of per-frame times; the first <paramref name="warmupMs"/> of the run are left out when the run is
+        /// more than twice as long.</summary>
+        public static FrameStats Frames(IReadOnlyList<double> ms, double warmupMs = 2000)
+        {
+            if (ms == null || ms.Count == 0) return null;
+            double total = ms.Sum();
+            int skip = 0;
+            double skipped = 0;
+            if (total > 2 * warmupMs)
+                while (skip < ms.Count && skipped < warmupMs) skipped += ms[skip++];
+            var use = ms.Skip(skip).Where(v => v >= 0 && !double.IsNaN(v)).OrderBy(v => v).ToList();
+            if (use.Count == 0) return null;
+            double P(double pct) => use[Math.Clamp((int)Math.Ceiling(pct / 100.0 * use.Count) - 1, 0, use.Count - 1)];
+            return new FrameStats
+            {
+                Frames = use.Count,
+                Avg = Math.Round(use.Average(), 2),
+                P50 = Math.Round(P(50), 2), P90 = Math.Round(P(90), 2), P95 = Math.Round(P(95), 2), P99 = Math.Round(P(99), 2),
+                Max = Math.Round(use[use.Count - 1], 2),
+                WarmupExcludedMs = Math.Round(skipped, 1),
+            };
+        }
+
+        /// <summary>The frame times a player wrote with <c>--frame-times</c>, one number per line (missing file: none).</summary>
+        public static List<double> ReadFrameTimes(string path)
+        {
+            var list = new List<double>();
+            if (string.IsNullOrEmpty(path) || !File.Exists(path)) return list;
+            try
+            {
+                foreach (var line in File.ReadLines(path))
+                    if (double.TryParse(line, NumberStyles.Float, CultureInfo.InvariantCulture, out double v)) list.Add(v);
+            }
+            catch { }
+            return list;
+        }
+    }
+}

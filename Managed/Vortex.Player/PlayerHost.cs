@@ -41,6 +41,8 @@ namespace Vortex.Player
         private static Editor.Core.Data.Scene _sceneToStart;   // the scripts start in the first tick, once the window exists
 
         private static int _gc0Last, _gc2Last;   // GC counts at the last FPS line
+        private static StreamWriter _frameTimes;   // --frame-times (#463): each frame's duration in ms, one per line
+        private static long _lastTickStamp;
 
         public static int Run(PlayerOptions options)
         {
@@ -49,6 +51,14 @@ namespace Vortex.Player
             _logPath = Path.Combine(Path.GetTempPath(), "vortex_player.log");
             try { File.Delete(_logPath); } catch { }
             Console.WriteLine("log: " + _logPath);
+            // the game's own arguments reach the scripts (#463) — before anything can read them
+            Vortex.Application.SetArgs(options.Args);
+            if (options.Args.Count > 0)
+            {
+                var shown = new System.Collections.Generic.List<string>();
+                foreach (var kv in options.Args) shown.Add(kv.Key + "=" + kv.Value);
+                Log("args: " + string.Join(", ", shown));
+            }
 
             // Native engine + host input wiring before the first engine call.
             NativeLoader.Register();
@@ -185,8 +195,15 @@ namespace Vortex.Player
             }
             _fullscreenApplied = !(shipped && settings != null && settings.FullscreenByDefault);
             if (shipped && settings != null) { try { VortexAPI.SetVSyncEnabled(settings.VSync); } catch { } }
+            if (!string.IsNullOrEmpty(options.FrameTimesPath))
+            {
+                try { _frameTimes = new StreamWriter(options.FrameTimesPath, false); }
+                catch (Exception fx) { Log("frame times: " + fx.Message); }
+            }
             bool ok = VortexAPI.RunGameHost(winW, winH, title);   // blocks until the window closes
             PlayModeService.Instance.NativeGameHostRunning = false;
+            try { _frameTimes?.Dispose(); } catch { }
+            _frameTimes = null;
             Log("game host returned " + ok);
 
             // --dump-scene: a second dump with the FINAL transforms (physics-moved props, script-moved entities)
@@ -208,6 +225,14 @@ namespace Vortex.Player
         {
             try
             {
+                if (_frameTimes != null)
+                {
+                    // the time between two ticks, unclamped (the host clamps dt at 100 ms, which would hide a hitch)
+                    long stamp = System.Diagnostics.Stopwatch.GetTimestamp();
+                    if (_lastTickStamp != 0)
+                        _frameTimes.WriteLine(((stamp - _lastTickStamp) * 1000.0 / System.Diagnostics.Stopwatch.Frequency).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
+                    _lastTickStamp = stamp;
+                }
                 var sr = ScriptRuntime.Instance;
                 if (!_init)
                 {
@@ -331,6 +356,7 @@ namespace Vortex.Player
                         + " gc=" + (gc0 - _gc0Last) + "/" + (gc2 - _gc2Last));
                     _gc0Last = gc0; _gc2Last = gc2;
                     _frames = 0; _fpsT0 = now;
+                    try { _frameTimes?.Flush(); } catch { }   // a run killed later keeps what was measured
                 }
 
                 if (playing)
