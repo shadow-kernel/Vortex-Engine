@@ -79,24 +79,38 @@ namespace Editor.Core.Audio
             if (rate <= 0) { error = "there is no audio engine"; return null; }
             var timing = MusicTiming.For(music, rate);
 
-            // decoded stems loop whole bars from bar 1: LoopBars, or the longest stem rounded to bars (it is never cut short
-            // by a stem a few samples shorter — that one is silent for those samples)
+            // the stems loop whole bars from bar 1, streamed or decoded: LoopBars, or the longest stem rounded to bars (it is
+            // never cut short by a stem a few samples shorter — that one is silent for those samples)
             ulong loopStart = 0, loopEnd = 0;
-            if (music.Loop && !music.Stream)
+            if (music.Loop)
             {
                 double longest = 0;
                 if (music.LoopBars <= 0)
-                    foreach (var p in paths)
-                        if (VortexAudio.GetClipInfo(p, out float seconds, out _, out _)) longest = Math.Max(longest, seconds * (double)rate);
+                    foreach (var p in paths) longest = Math.Max(longest, StemSeconds(p) * rate);
                 (loopStart, loopEnd) = timing.LoopRegion(music.LoopBars, longest);
             }
 
             var start = music.StartState();
             var pars = new Dictionary<string, float>(music.Parameters, StringComparer.OrdinalIgnoreCase);
             ulong h = VortexAudio.PlayMusic(paths, music.States.Count > 0 ? music.StateGains(start) : null, music.ParameterGains(pars),
-                loopStart, loopEnd, 0, music.Loop, music.Stream, bus, Math.Max(0f, volume) * music.Volume);
+                loopStart, loopEnd, 0, music.Loop, music.Decode, bus, Math.Max(0f, volume) * music.Volume);
             if (h == VortexAudio.InvalidVoice) { error = "a stem could not be opened (unreadable file?)"; return null; }
             return new AdaptiveMusicPlayer(music, h, timing, start?.Name, pars, resolveClip);
+        }
+
+        /// <summary>Stem lengths, read once per file version: an MP3 stem's length is a scan of the whole file, which a
+        /// second Play (a scene switch, a retry) must not pay again.</summary>
+        private static readonly Dictionary<string, (long Stamp, double Seconds)> _stemSeconds = new Dictionary<string, (long, double)>(StringComparer.OrdinalIgnoreCase);
+
+        private static double StemSeconds(string path)
+        {
+            long stamp = 0;
+            try { var fi = new System.IO.FileInfo(path); if (fi.Exists) stamp = fi.LastWriteTimeUtc.Ticks ^ fi.Length; } catch { }   // a pak name: no file
+            lock (_stemSeconds)
+                if (_stemSeconds.TryGetValue(path, out var known) && known.Stamp == stamp) return known.Seconds;
+            double seconds = VortexAudio.GetClipInfo(path, out float s, out _, out _) ? s : 0;
+            lock (_stemSeconds) _stemSeconds[path] = (stamp, seconds);
+            return seconds;
         }
 
         /// <summary>The musical position now (frames since bar 1, rising through loops): the mixer's position at its last

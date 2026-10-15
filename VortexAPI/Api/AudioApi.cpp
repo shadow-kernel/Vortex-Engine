@@ -89,10 +89,10 @@ EDITOR_INTERFACE void AudioSeekVoice(u64 handle, d64 seconds)
 // ---- adaptive music (#437): a .vmusic's stems mixed sample-locked in one voice ------------
 
 // Plays `count` stems as one music voice (priority 0, never pitched). Frames are at the engine rate (AudioGetDspTime):
-// the loop region [loop_start, loop_end) (loop_end 0 = the longest stem), the start frame, and start_time — the
-// mixer frame the music begins on (0 = now). 0 = a stem could not be opened.
+// the loop region [loop_start, loop_end) (loop_end 0 = the longest stem), the start frame, and start_time — the mixer
+// frame the music begins on (0 = now). File stems stream unless `decode`. 0 = a stem could not be opened.
 EDITOR_INTERFACE u64 AudioPlayMusic(const char** stems, s32 count, const f32* state_gains, const f32* param_gains,
-	u64 loop_start, u64 loop_end, u64 start_frame, s32 loop, s32 stream, s32 out_bus, f32 volume, u64 start_time)
+	u64 loop_start, u64 loop_end, u64 start_frame, s32 loop, s32 decode, s32 out_bus, f32 volume, u64 start_time)
 {
 	if (!stems || count <= 0) return runtime::audio::invalid_voice;
 	runtime::audio::music_desc desc{};
@@ -104,7 +104,7 @@ EDITOR_INTERFACE u64 AudioPlayMusic(const char** stems, s32 count, const f32* st
 	desc.loop_end = loop_end;
 	desc.start_frame = start_frame;
 	desc.loop = loop != 0;
-	desc.stream = stream != 0;
+	desc.decode = decode != 0;
 	runtime::audio::voice_params params{};
 	params.volume = volume;
 	params.priority = 0;				// the music channel is never stolen

@@ -88,6 +88,9 @@ public:
 		// -- fade envelopes (issue #17) --------------------------------------------------
 		run_fade_tests(wav_path);
 
+		// -- optional: file-streamed OGGs know their length (#465 / #437 review) -----------
+		run_optional_ogg_tests();
+
 		// -- 3D spatialization measurement demo (issue #9) --------------------------
 		// Opt-in: VORTEX_AUDIO_SPATIAL_DEMO=<phase-file>. An external meter samples
 		// per-channel device peaks and correlates them against the phase timestamps.
@@ -520,6 +523,7 @@ private:
 		d.stem_count = 2;
 		d.state_gains = solo;
 		d.loop_end = loop;
+		d.decode = true;   // rendered faster than real time below: decoded stems never wait for a refill
 		music_group* g = music_create(d);
 		music_group* ref = music_create(d);   // the same music with B muted for good: the switch is measured against it
 		check("a music group opens its stems", g != nullptr && ref != nullptr);
@@ -576,40 +580,146 @@ private:
 		music_destroy(g);
 		music_destroy(ref);
 
-		// streamed stems (one length) stay together through page refills, rendered at ~4x real time
-		const std::string pb2 = write_wav_samples("vortex_music_b2.wav", rate, std::vector<float>(b.begin(), b.begin() + (std::ptrdiff_t)loop));
-		const char* streamed[] = { pa.c_str(), pb2.c_str() };
-		music_desc ds{};
-		ds.stems = streamed;
-		ds.stem_count = 2;
-		ds.state_gains = both;
-		ds.stream = true;
-		music_group* s = music_create(ds);
-		check("a streamed music group opens", s != nullptr);
-		if (s)
+		// pak stems (a shipped game): their own decoders over the registered bytes, looping a region inside the files
+		// (a 0.5 s pickup, then 3 s): A + (-A) still cancels to digital silence through every wrap
 		{
-			std::vector<f32> block(1024 * 2);
-			f32 peak = 0.0f;
-			u32 stalls = 0;
-			for (u64 played = 0; played < (u64)rate * 12;)
+			auto bytes_of = [](const std::string& p) {
+				std::vector<uint8_t> v;
+				FILE* f = nullptr;
+				if (fopen_s(&f, p.c_str(), "rb") == 0 && f)
+				{
+					fseek(f, 0, SEEK_END); v.resize((size_t)_ftelli64(f)); fseek(f, 0, SEEK_SET);
+					fread(v.data(), 1, v.size(), f); fclose(f);
+				}
+				return v;
+			};
+			const auto ba = bytes_of(pa), bb = bytes_of(pb);
+			register_clip_data("vpak://music_a.wav", ba.data(), ba.size());
+			register_clip_data("vpak://music_b.wav", bb.data(), bb.size());
+			const char* pak[] = { "vpak://music_a.wav", "vpak://music_b.wav" };
+			music_desc dp{};
+			dp.stems = pak;
+			dp.stem_count = 2;
+			dp.state_gains = both;
+			dp.loop_start = rate / 2;
+			dp.loop_end = rate / 2 + (u64)rate * 3;
+			music_group* p = music_create(dp);
+			check("a music group opens pak stems", p != nullptr);
+			if (p)
 			{
-				music_render(s, block.data(), 1024);
-				for (f32 v : block) peak = std::fabs(v) > peak ? std::fabs(v) : peak;
-				music_get_clock(s, &c);
-				if (c.stalled) ++stalls;
-				played = c.played;
-				std::this_thread::sleep_for(std::chrono::microseconds(5300));
+				const f32 pak_residue = render_peak(p, (u64)rate * 30);
+				music_get_clock(p, &c);
+				check("pak stems loop a region sample-aligned (A + -A = 0 over 30 s)", pak_residue == 0.0f && c.loops >= 9 && c.length == b.size());
+				music_destroy(p);
 			}
-			std::printf("[info] streamed stems: %llu passes, %u stalled mixes, largest residue %.9f\n", (unsigned long long)c.loops, stalls, peak);
-			check("streamed stems stay sample-aligned through refills and loops", peak == 0.0f && c.loops >= 2);
-			music_destroy(s);
 		}
 
-		// the group as one voice on the music bus: A alone is loud, A + (-A) is silent; the voice reports its position
+		// streamed stems (the default) loop a region too: each stem's next pass opens ahead of the wrap at the loop start
+		// and every stem switches to it on the wrap frame — rendered at ~4x real time, with music_update standing in for
+		// the game tick. Solo A must continue exactly at the loop start after every wrap; A + (-A) must stay silent.
+		{
+			const u64 l0 = rate / 2, l1 = rate / 2 + (u64)rate * 3;
+			auto paced = [&](music_desc& m, u64 seconds, std::vector<f32>* keep, u32* stalls, bool update = true) {
+				music_group* sg = music_create(m);
+				if (!sg) return (music_group*)nullptr;
+				std::vector<f32> block(1024 * 2);
+				music_clock k{};
+				for (u64 played = 0; played < (u64)rate * seconds;)
+				{
+					music_render(sg, block.data(), 1024);
+					if (keep) for (u32 f = 0; f < 1024; ++f) keep->push_back(block[f * 2]);
+					music_get_clock(sg, &k);
+					if (k.stalled && stalls) ++*stalls;
+					played = k.played;
+					if (update) music_update(sg);
+					std::this_thread::sleep_for(std::chrono::microseconds(5300));
+				}
+				return sg;
+			};
+			const char* streamed[] = { pa.c_str(), pb.c_str() };
+			music_desc ds{};
+			ds.stems = streamed;
+			ds.stem_count = 2;
+			ds.state_gains = solo;
+			ds.loop_start = l0;
+			ds.loop_end = l1;
+			std::vector<f32> out;
+			u32 stalls_solo = 0;
+			music_group* s = paced(ds, 10, &out, &stalls_solo);
+			check("a streamed music group opens", s != nullptr);
+			if (s)
+			{
+				music_get_clock(s, &c);
+				// output frame t plays a[t] until the loop end, then a[l0 + (t - l1) % (l1 - l0)] — as the 16-bit WAV holds it
+				u64 mismatches = 0;
+				for (u64 t = 0; t < out.size() && t < c.played; ++t)
+				{
+					const u64 src = t < l1 ? t : l0 + (t - l1) % (l1 - l0);
+					const f32 expected = (f32)std::lround(a[(size_t)src] * 32767.0f) / 32768.0f;
+					if (std::fabs(out[(size_t)t] - expected) > 1e-6f) ++mismatches;
+				}
+				std::printf("[info] streamed region loop: %llu passes, %u stalled mixes, %llu frames off the expected samples\n",
+					(unsigned long long)c.loops, stalls_solo, (unsigned long long)mismatches);
+				check("streamed stems wrap a loop region on the exact frame without waiting", c.loops >= 2 && stalls_solo == 0 && mismatches == 0);
+				music_destroy(s);
+			}
+			ds.state_gains = both;
+			u32 stalls_null = 0;
+			std::vector<f32> null_out;
+			music_group* n = paced(ds, 10, &null_out, &stalls_null);
+			f32 peak = 0.0f;
+			for (f32 v : null_out) peak = std::fabs(v) > peak ? std::fabs(v) : peak;
+			std::printf("[info] streamed stems A + (-A): largest residue %.9f over 10 s of region loops\n", peak);
+			check("streamed stems stay sample-aligned through refills and wraps", n != nullptr && peak == 0.0f);
+			music_destroy(n);
+
+			// without music_update no next pass is ready at the wrap: every stream seeks back and the stems wait for the
+			// refill together — a pause, never a drift
+			u32 stalls_seek = 0;
+			std::vector<f32> seek_out;
+			music_group* w = paced(ds, 10, &seek_out, &stalls_seek, false);
+			f32 seek_peak = 0.0f;
+			for (f32 v : seek_out) seek_peak = std::fabs(v) > seek_peak ? std::fabs(v) : seek_peak;
+			if (w) music_get_clock(w, &c);
+			std::printf("[info] streamed wrap without a prepared pass: %llu passes, %u stalled mixes, largest residue %.9f\n",
+				w ? (unsigned long long)c.loops : 0ull, stalls_seek, seek_peak);
+			check("a wrap without a prepared pass seeks every stream and they wait together", w != nullptr && c.loops >= 2 && seek_peak == 0.0f);
+			music_destroy(w);
+
+			// a streamed ONE-SHOT whose second stem is shorter: the short one falls silent, the music ends with the long one
+			std::vector<float> half(a.begin(), a.begin() + (std::ptrdiff_t)(loop / 2));
+			const std::string ph = write_wav_samples("vortex_music_half.wav", rate, half);
+			const char* uneven[] = { pa.c_str(), ph.c_str() };
+			music_desc du{};
+			du.stems = uneven;
+			du.stem_count = 2;
+			du.loop = false;
+			music_group* u = music_create(du);
+			u64 produced = 0;
+			bool ended = false;
+			std::vector<f32> block(1024 * 2);
+			for (int i = 0; u && i < 2000 && !ended; ++i)
+			{
+				const u64 got = music_render(u, block.data(), 1024);
+				produced += got;
+				ended = got < 1024;
+				std::this_thread::sleep_for(std::chrono::microseconds(5300));
+			}
+			if (u) music_get_clock(u, &c);
+			std::printf("[info] streamed one-shot with a stem half as long: ended=%d after %.3f s of music (the long stem is 4 s)\n", ended ? 1 : 0,
+				u ? (double)c.played / rate : -1.0);
+			check("a streamed one-shot ends with its longest stem, not stalled by a shorter one", u && ended && c.played == loop && produced == loop);
+			music_destroy(u);
+			std::remove(ph.c_str());
+		}
+
+		// the group as one voice on the music bus (streamed stems, the default; voices_update runs music_update): A alone
+		// is loud, A + (-A) is silent; the voice reports its position
 		voice_params vp{};
 		vp.bus = (s32)bus::music;
 		vp.priority = 0;
 		d.state_gains = solo;
+		d.decode = false;
 		voice_handle v = voice_play_music(d, vp);
 		tick_seconds(0.5f);
 		f32 rms_solo = 0;
@@ -632,7 +742,6 @@ private:
 
 		std::remove(pa.c_str());
 		std::remove(pb.c_str());
-		std::remove(pb2.c_str());
 		std::remove(pshot.c_str());
 	}
 
@@ -1046,6 +1155,67 @@ private:
 			auto handle = runtime::resource_manager::load_audio(file.c_str());
 			check(("decode " + entry.path().filename().string()).c_str(),
 				handle.is_valid() && runtime::audio::is_loaded(file.c_str()));
+		}
+	}
+
+	// miniaudio streams Vorbis files in push mode: the stream's length is 0 and its cursor never wraps at the loop. The
+	// voice probes the length (Time wraps, Length is known), and a one-shot music of OGG stems ends with them — checked
+	// on the short .ogg files in VORTEX_AUDIO_TEST_DIR (no OGG encoder here to generate one).
+	void run_optional_ogg_tests()
+	{
+		using namespace runtime::audio;
+		char* dir = nullptr;
+		size_t len = 0;
+		if (_dupenv_s(&dir, &len, "VORTEX_AUDIO_TEST_DIR") != 0 || !dir) return;
+		std::string test_dir(dir);
+		free(dir);
+		std::error_code ec;
+		for (const auto& entry : std::filesystem::directory_iterator(test_dir, ec))
+		{
+			std::string ext = entry.path().extension().string();
+			for (char& c : ext) c = (char)tolower((unsigned char)c);
+			if (!entry.is_regular_file() || ext != ".ogg") continue;
+			const std::string file = entry.path().string(), name = entry.path().filename().string();
+			f32 seconds = 0.0f;
+			u32 clip_rate = 0, channels = 0;
+			if (!clip_info(file.c_str(), &seconds, &clip_rate, &channels) || seconds <= 0.2f || seconds > 8.0f) continue;
+
+			voice_params p{};
+			p.volume = 0.05f;
+			p.loop = true;
+			p.stream = true;
+			voice_handle v = voice_play(file.c_str(), p);
+			tick_seconds(seconds * 1.5f);
+			u64 cursor = 0, length = 0;
+			u32 rate = 0;
+			voice_get_position(v, &cursor, &length, &rate);
+			const double length_s = rate ? (double)length / rate : 0.0;
+			std::printf("[info] streamed %s: length %.3f s (header %.3f s), cursor %.3f s after %.3f s of looping\n", name.c_str(),
+				length_s, seconds, rate ? (double)cursor / rate : -1.0, seconds * 1.5);
+			check(("a file-streamed OGG knows its length and its position wraps at the loop: " + name).c_str(),
+				v != invalid_voice && std::fabs(length_s - seconds) < 0.01 && cursor < length);
+			voice_stop(v);
+
+			const char* stems[] = { file.c_str() };
+			music_desc d{};
+			d.stems = stems;
+			d.stem_count = 1;
+			d.loop = false;
+			music_group* g = music_create(d);
+			bool ended = false;
+			std::vector<f32> block(1024 * 2);
+			for (int i = 0; g && i < 4000 && !ended; ++i)
+			{
+				ended = music_render(g, block.data(), 1024) < 1024;
+				std::this_thread::sleep_for(std::chrono::microseconds(5300));
+			}
+			music_clock c{};
+			if (g) music_get_clock(g, &c);
+			std::printf("[info] one-shot music of %s: ended=%d after %.3f s, length %.3f s\n", name.c_str(), ended ? 1 : 0,
+				c.sample_rate ? (double)c.played / c.sample_rate : -1.0, c.sample_rate ? (double)c.length / c.sample_rate : -1.0);
+			check(("a one-shot music of a streamed OGG ends with it: " + name).c_str(),
+				g && ended && c.length > 0 && c.played + 256 >= c.length && c.played <= c.length);
+			music_destroy(g);
 		}
 	}
 

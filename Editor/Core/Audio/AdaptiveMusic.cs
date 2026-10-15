@@ -39,9 +39,11 @@ namespace Editor.Core.Audio
         [DataMember(Name = "phraseBars", Order = 5)] public int PhraseBars { get; set; } = 4;
         /// <summary>Loop the music (false: it plays once and ends).</summary>
         [DataMember(Name = "loop", Order = 6)] public bool Loop { get; set; } = true;
-        /// <summary>Stream long stems from disk instead of decoding them into memory. Streamed stems loop their whole
-        /// files (LoopBars and Offset do not cut them), so give them one length.</summary>
-        [DataMember(Name = "stream", Order = 7)] public bool Stream { get; set; }
+        /// <summary>Decode the stems into memory at every Play instead of streaming them from disk. Off (the default) suits
+        /// stems of any length: they stream, open in about a millisecond and hold about a megabyte each. Decoding costs the
+        /// whole PCM (a 3-minute stereo stem is ~70 MB) and the time to decode it, on the frame Play is called — only for
+        /// short loops. Either way the stems stay sample-locked and loop LoopBars from bar 1.</summary>
+        [DataMember(Name = "decode", Order = 7)] public bool Decode { get; set; }
         /// <summary>Volume of the whole music (multiplies Audio.Music.Volume).</summary>
         [DataMember(Name = "volume", Order = 8)] public float Volume { get; set; } = 1f;
         [DataMember(Name = "stems", Order = 9)] public List<Stem> Stems { get; set; } = new List<Stem>();
@@ -121,7 +123,7 @@ namespace Editor.Core.Audio
         [OnDeserializing]
         private void Defaults(StreamingContext c)
         {
-            Bpm = 120f; BeatsPerBar = 4; BeatUnit = 4; OffsetSeconds = 0f; LoopBars = 0; PhraseBars = 4; Loop = true; Stream = false; Volume = 1f;
+            Bpm = 120f; BeatsPerBar = 4; BeatUnit = 4; OffsetSeconds = 0f; LoopBars = 0; PhraseBars = 4; Loop = true; Decode = false; Volume = 1f;
             Stems = new List<Stem>(); States = new List<State>(); InitialState = ""; DefaultTransition = new Transition();
             Transitions = new List<Transition>(); Stingers = new List<Stinger>();
             Parameters = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase); ParameterFadeSeconds = 0.5f;

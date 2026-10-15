@@ -150,8 +150,9 @@ namespace VortexEditor.Shell
             _body.Children.Add(PropertyRows.Row("Loop bars", Narrow(PropertyRows.IntBox(() => _m.LoopBars, v => { _m.LoopBars = v; Changed(); }, 0, 9999)), "Bars the music loops from bar 1; 0 = the stems' length rounded to whole bars"));
             _body.Children.Add(PropertyRows.Row("Phrase bars", Narrow(PropertyRows.IntBox(() => _m.PhraseBars, v => { _m.PhraseBars = v; Changed(); }, 1, 64)), "\"End of phrase\" changes wait for the next multiple of this many bars"));
             _body.Children.Add(PropertyRows.Row("", PropertyRows.Check("Loop", () => _m.Loop, v => { _m.Loop = v; Changed(); }, "Off: the music plays once and ends")));
-            _body.Children.Add(PropertyRows.Row("", PropertyRows.Check("Stream stems from disk (long stems)", () => _m.Stream, v => { _m.Stream = v; Changed(); },
-                "Decoded stems sit in memory and loop any bar range; streamed stems use little memory and loop their whole files — give them one length")));
+            _body.Children.Add(PropertyRows.Row("", PropertyRows.Check("Decode stems into memory (short loops)", () => _m.Decode, v => { _m.Decode = v; Changed(); },
+                "Off: the stems stream from disk — about a megabyte each, any length. On: every Play decodes every stem into memory first " +
+                "(a 3-minute stereo stem is ~70 MB and a moment of decoding). Both loop the bars above, sample-locked")));
             _body.Children.Add(PropertyRows.Row("Volume", PropertyRows.SliderRow(() => _m.Volume, v => { _m.Volume = v; Changed(); }, 0, 1, "0.##", 0f, 2f)));
             _body.Children.Add(PropertyRows.Row("Parameter fade", Narrow(PropertyRows.FloatBox(() => _m.ParameterFadeSeconds, v => { _m.ParameterFadeSeconds = v; Changed(); }, 0.05, 0, 30, "0.##")), "Seconds Audio.Music.SetParameter glides the mapped stems"));
         }

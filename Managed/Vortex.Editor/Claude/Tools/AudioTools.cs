@@ -214,7 +214,7 @@ namespace VortexEditor.Claude.Tools
             [Description("Bars per phrase (\"phrase\" transitions wait for the next multiple)")] int phrase_bars = 4,
             [Description("Seconds into the stems where bar 1 begins (a pickup before it)")] float offset = 0f,
             [Description("Loop the music (false: it plays once)")] bool loop = true,
-            [Description("Stream the stems from disk (long stems; streamed stems loop their whole files, so give them one length)")] bool stream = false,
+            [Description("Decode the stems into memory at every Play instead of streaming them (short loops only; streaming, the default, suits any length)")] bool decode = false,
             [Description("Volume of the whole music 0..2")] float volume = 1f,
             [Description("Seconds SetParameter glides the mapped stems")] float parameter_fade = 0.5f,
             [Description("Folder relative to the project")] string folder = "Assets/Audio/Music",
@@ -226,7 +226,7 @@ namespace VortexEditor.Claude.Tools
             var m = new AdaptiveMusic
             {
                 Bpm = bpm, BeatsPerBar = beats_per_bar, BeatUnit = beat_unit, LoopBars = loop_bars, PhraseBars = phrase_bars, OffsetSeconds = offset,
-                Loop = loop, Stream = stream, Volume = Math.Clamp(volume, 0f, 2f), ParameterFadeSeconds = Math.Max(0f, parameter_fade),
+                Loop = loop, Decode = decode, Volume = Math.Clamp(volume, 0f, 2f), ParameterFadeSeconds = Math.Max(0f, parameter_fade),
             };
             if (!(bpm >= 20f && bpm <= 400f)) throw new ToolError("bpm must be between 20 and 400.");
 
@@ -326,7 +326,8 @@ namespace VortexEditor.Claude.Tools
                 states = m.States.Select(x => x.Name).ToArray(),
                 initial_state = m.StartState()?.Name,
                 tempo = m.Bpm + " BPM " + m.BeatsPerBar + "/" + m.BeatUnit,
-                loops = !m.Loop ? "once" : m.Stream ? "whole stems (streamed)" : m.LoopBars > 0 ? m.LoopBars + " bars" : "the stems' length in whole bars",
+                loops = !m.Loop ? "once" : m.LoopBars > 0 ? m.LoopBars + " bars" : "the stems' length in whole bars",
+                stems_play = m.Decode ? "decoded into memory at Play" : "streamed",
                 stingers = m.Stingers.Count > 0 ? m.Stingers.Select(x => x.Name).ToArray() : null,
                 script = "Audio.Music.Play(\"" + rel0 + "\");" + (m.States.Count > 1 ? " Audio.Music.SetState(\"" + m.States[m.States.Count - 1].Name + "\");" : ""),
             };

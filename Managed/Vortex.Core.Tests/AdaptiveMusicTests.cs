@@ -54,8 +54,8 @@ namespace VortexTests
             t.Equal((0UL, 8UL * 96000), whole.LoopRegion(0, 8 * 96000 - 20), "20 samples short: eight bars (the stem is silent for them)");
             t.Equal((0UL, 0UL), whole.LoopRegion(0, 1000), "shorter than a bar: let the stems decide");
 
-            // a streamed music loops its whole file: a pass counts as its length rounded to bars
-            t.Equal(8 * 96000.0, whole.PassLength(0, 8 * 96000 + 12), "a stream 12 samples longer than eight bars counts eight bars a pass");
+            // a region a few samples off whole bars (the stems' own end, when no region was given) counts whole bars a pass
+            t.Equal(8 * 96000.0, whole.PassLength(0, 8 * 96000 + 12), "a pass 12 samples longer than eight bars counts eight bars");
         }
 
         [Test]
@@ -201,7 +201,8 @@ namespace VortexTests
             t.True(m.DefaultTransition != null && m.DefaultTransition.SyncMode == MusicSync.Bar && Math.Abs(m.DefaultTransition.FadeSeconds - 0.1f) < 1e-6f, "the default rule: next bar, 0.1 s");
             t.True(m.Stems[0].To == 1f && m.Stems[0].Parameter == "", "a stem's defaults");
 
-            var full = new AdaptiveMusic { Bpm = 96, BeatsPerBar = 3, OffsetSeconds = 0.25f, LoopBars = 16, InitialState = "calm", Stream = true };
+            t.False(m.Decode, "stems stream by default (#437 review: decoding long stems froze Play)");
+            var full = new AdaptiveMusic { Bpm = 96, BeatsPerBar = 3, OffsetSeconds = 0.25f, LoopBars = 16, InitialState = "calm", Decode = true };
             full.Stems.Add(new AdaptiveMusic.Stem { Name = "drums", ClipPath = "Assets/Audio/drums.ogg", Parameter = "intensity", From = 0.2f, To = 0.7f });
             var calm = new AdaptiveMusic.State { Name = "calm" }; calm.Volumes["drums"] = 0.25f; full.States.Add(calm);
             full.Transitions.Add(new AdaptiveMusic.Transition { From = "calm", To = "fight", Sync = "beat", FadeSeconds = 0.05f, Stinger = "hit" });
@@ -209,7 +210,7 @@ namespace VortexTests
             full.Parameters["intensity"] = 0.3f;
             string json = full.ToJson();
             var back = AdaptiveMusic.FromJson(json);
-            t.True(back.Bpm == 96 && back.BeatsPerBar == 3 && back.OffsetSeconds == 0.25f && back.LoopBars == 16 && back.Stream && back.InitialState == "calm", "settings survive: " + json);
+            t.True(back.Bpm == 96 && back.BeatsPerBar == 3 && back.OffsetSeconds == 0.25f && back.LoopBars == 16 && back.Decode && back.InitialState == "calm", "settings survive: " + json);
             t.True(back.Stems[0].Parameter == "intensity" && back.Stems[0].From == 0.2f && back.Stems[0].To == 0.7f, "the stem's mapping survives");
             t.Equal(0.25f, back.FindState("CALM").Volumes["Drums"], "state volumes survive, names ignore case");
             t.True(back.Transitions[0].Stinger == "hit" && back.Transitions[0].SyncMode == MusicSync.Beat, "the rule survives");

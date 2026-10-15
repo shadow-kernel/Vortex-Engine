@@ -9,6 +9,10 @@
 // that ramp per sample and can be scheduled to begin on an exact frame of the music: that is how a state switch
 // lands on the bar line without a click. Stingers mix into the same voice from an exact frame. (miniaudio's own
 // delayed fades cannot do this: a sound plays at full volume while its delayed fade waits.)
+// Stems stream by default (#437 review: decoding eight 3-minute stems froze the game for 0.7 s and took 0.5 GB at every
+// Play): a file stem through the resource manager's streams, a pak stem through its own decoder over the registered bytes.
+// A streamed stem cannot jump back to the loop start without refilling, so its next pass is opened ahead of the wrap at
+// the loop start, and at the wrap every stem switches on the same frame — the loop region is kept, the stems stay locked.
 namespace vortex::runtime::audio {
 
 	inline constexpr u32 music_max_stems{ 16 };
@@ -20,13 +24,13 @@ namespace vortex::runtime::audio {
 		u32 stem_count{ 0 };
 		const f32* state_gains{ nullptr };		// initial state-stage gain per stem (null = 1)
 		const f32* param_gains{ nullptr };		// initial parameter-stage gain per stem (null = 1)
-		// Decoded stems loop [loop_start, loop_end) in frames of the engine rate — loop_end 0 = the longest stem's
-		// end; a stem shorter than the region is silent for the rest of it. Streamed stems loop whole files.
+		// The loop region [loop_start, loop_end) in frames of the engine rate — loop_end 0 = the longest stem's end;
+		// a stem shorter than the region is silent for the rest of it.
 		u64 loop_start{ 0 };
 		u64 loop_end{ 0 };
 		u64 start_frame{ 0 };					// where in the stems playback begins
 		bool loop{ true };
-		bool stream{ false };					// stream the stems from disk instead of decoding them (long stems)
+		bool decode{ false };					// decode file stems into memory instead of streaming them (short loops)
 	};
 
 	enum class music_stage : u32 { state = 0, parameter = 1 };
@@ -62,7 +66,8 @@ namespace vortex::runtime::audio {
 	// Mix a clip once into the music from the frame `at_frame` of its clock (a stinger), at `volume`. False when
 	// the clip cannot be opened or every stinger slot is busy.
 	bool music_play_stinger(music_group* group, const char* path, f32 volume, u64 at_frame);
-	// Main thread, per tick: frees the stingers that finished.
+	// Main thread, per tick: frees the stingers that finished, and opens the next pass of streamed stems ahead of the
+	// loop wrap (on the resource manager's job thread) / frees the pass they left.
 	void music_update(music_group* group);
 
 	bool music_get_clock(music_group* group, music_clock* out);

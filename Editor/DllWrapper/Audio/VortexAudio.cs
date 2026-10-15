@@ -68,8 +68,8 @@ namespace Editor.DllWrapper
 
         // stems: UTF-8 path pointers (the classic marshaller has no UTF-8 string arrays — PlayMusic builds them)
         [DllImport(_dllName, CallingConvention = _cc)]
-        private static extern ulong AudioPlayMusic(IntPtr[] stems, int count,
-            float[] stateGains, float[] paramGains, ulong loopStart, ulong loopEnd, ulong startFrame, int loop, int stream, int outBus, float volume, ulong startTime);
+        private static extern ulong AudioPlayMusic(IntPtr[] stems, int count, float[] stateGains, float[] paramGains,
+            ulong loopStart, ulong loopEnd, ulong startFrame, int loop, int decode, int outBus, float volume, ulong startTime);
 
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void AudioMusicSchedule(ulong handle, int stage, float[] gains, int count, ulong atFrame, ulong rampFrames);
@@ -252,17 +252,19 @@ namespace Editor.DllWrapper
 
         /// <summary>Adaptive music (#437): plays stems (resolved clip paths) mixed sample-locked as ONE voice at priority 0,
         /// never pitched. Frames are at the engine rate (<see cref="GetDspTime"/>): the loop region (end 0 = the longest
-        /// stem), the start frame, and the mixer frame the music begins on (0 = now). InvalidVoice when a stem cannot be
-        /// opened.</summary>
-        public static ulong PlayMusic(string[] stems, float[] stateGains, float[] paramGains, ulong loopStart, ulong loopEnd, ulong startFrame,
-            bool loop, bool stream, int bus, float volume, ulong startTime = 0)
+        /// stem), the start frame, and the mixer frame the music begins on (0 = now). File stems stream unless
+        /// <paramref name="decode"/> (decoding suits short loops only: every Play decodes every stem). InvalidVoice when a
+        /// stem cannot be opened.</summary>
+        public static ulong PlayMusic(string[] stems, float[] stateGains, float[] paramGains, ulong loopStart, ulong loopEnd,
+            ulong startFrame, bool loop, bool decode, int bus, float volume, ulong startTime = 0)
         {
             if (stems == null || stems.Length == 0 || Array.Exists(stems, string.IsNullOrEmpty)) return InvalidVoice;
             var utf8 = new IntPtr[stems.Length];
             try
             {
                 for (int i = 0; i < stems.Length; i++) utf8[i] = Marshal.StringToCoTaskMemUTF8(stems[i]);
-                return AudioPlayMusic(utf8, stems.Length, stateGains, paramGains, loopStart, loopEnd, startFrame, loop ? 1 : 0, stream ? 1 : 0, bus, volume, startTime);
+                return AudioPlayMusic(utf8, stems.Length, stateGains, paramGains, loopStart, loopEnd, startFrame,
+                    loop ? 1 : 0, decode ? 1 : 0, bus, volume, startTime);
             }
             finally
             {

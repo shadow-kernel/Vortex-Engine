@@ -31,7 +31,7 @@ namespace Editor.Core.Audio
         public static MusicTiming For(AdaptiveMusic m, double sampleRate)
             => new MusicTiming(m.Bpm, m.BeatsPerBar, m.PhraseBars, m.OffsetSeconds, sampleRate);
 
-        /// <summary>The loop region the decoded stems play (frames of the stems): bar 1 up to <paramref name="loopBars"/>
+        /// <summary>The loop region the stems play (frames of the stems): bar 1 up to <paramref name="loopBars"/>
         /// bars later, or — 0 bars — the stems' length rounded to whole bars, so every pass is whole bars and the beat grid
         /// never drifts (a stem a few samples short is silent for those samples). End 0 = let the stems decide.</summary>
         public (ulong Start, ulong End) LoopRegion(int loopBars, double stemFrames)
@@ -88,7 +88,7 @@ namespace Editor.Core.Audio
             => sync == MusicSync.Immediate ? musicalNow + leadFrames : NextBoundary(musicalNow + leadFrames, sync);
 
         /// <summary>The music's own clock (frames it has played) at a musical frame, from one reading of both — exact while
-        /// nothing seeks in between (decoded stems loop whole bars, so passes add no gap).</summary>
+        /// nothing seeks in between (the stems loop whole bars, so passes add no gap).</summary>
         public static ulong PlayedFrameAt(double targetMusical, double musicalNow, ulong playedNow)
         {
             double d = Math.Round(targetMusical - musicalNow);
