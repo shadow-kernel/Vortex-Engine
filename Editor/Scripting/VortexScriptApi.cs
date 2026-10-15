@@ -1120,8 +1120,9 @@ namespace Vortex
         /// with only a collider plus a Rigidbody falls from this frame on; a Light lights the next frame (<see cref="GetLight"/>
         /// sets it up); an Audio Source can play now (<see cref="GetAudioSource"/>); a Mesh Renderer draws once it has a mesh
         /// (<see cref="SetMeshOf"/>). The new component has the Inspector's defaults. Runtime only: when play stops it is gone
-        /// again. False — with a Console warning saying why — for an unknown entity or type, a Transform or Script, or a second
-        /// Light, Camera, Rigidbody, Mesh Renderer, Audio Source or Audio Listener (one per entity).
+        /// again. False — with a Console warning saying why — for an unknown entity or type, a Transform or Script, a second
+        /// Light, Camera, Rigidbody, Mesh Renderer, Audio Source or Audio Listener (one per entity), or a (Dynamic) Rigidbody on
+        /// an entity that moves a character (<see cref="Physics.AddRigidbody"/> says why).
         /// <c>Scene.AddComponent(lamp, "Light"); Scene.GetLight(lamp).Intensity = 8f;</c></summary>
         public static bool AddComponent(long entity, string type)
             { return Editor.Scripting.ScriptRuntime.Instance.AddComponentAtRuntime(entity, type) != null; }
@@ -1918,8 +1919,10 @@ namespace Vortex
         /// rolls and gets pushed from this frame on, and Physics.AddImpulse works right away. Its children keep their own
         /// bodies. An entity that has a Rigidbody already takes the mass and kind given. Runtime only: play end takes the
         /// Rigidbody off again. False, with a Console warning, when the game has no physics world or the entity neither has an
-        /// enabled collider nor a mesh (it is left as it was). An entity that is switched off gets its body when it is switched
-        /// on. <c>if (Physics.AddRigidbody(hit.EntityId, 40f)) Physics.AddImpulse(hit.EntityId, dir * 200f);</c></summary>
+        /// enabled collider nor a mesh (it is left as it was), and for a Dynamic body on an entity that moves a character
+        /// (MoveCharacter with its id): the simulation would write over the character's moves every step — make it kinematic,
+        /// put the body on a child, or <see cref="RemoveCharacter"/> first. An entity that is switched off gets its body when it
+        /// is switched on. <c>if (Physics.AddRigidbody(hit.EntityId, 40f)) Physics.AddImpulse(hit.EntityId, dir * 200f);</c></summary>
         public static bool AddRigidbody(long entity, float mass = 1f, bool kinematic = false)
             { return Editor.Scripting.ScriptRuntime.Instance.AddRigidbodyAtRuntime(entity, mass, kinematic); }
 

@@ -1729,6 +1729,10 @@ namespace Editor.Core.Services.Physics
             return 0;
         }
 
+        /// <summary>Does <paramref name="e"/> itself own a character (a capsule moved by Physics.MoveCharacter, managed or Jolt,
+        /// #406 / #518)?</summary>
+        public static bool OwnsCharacter(GameEntity e) => e != null && CharacterIds(o => ReferenceEquals(o, e)).Count > 0;
+
         private static List<long> CharacterIds(Func<GameEntity, bool> ownerMatch)
         {
             var ids = new List<long>();

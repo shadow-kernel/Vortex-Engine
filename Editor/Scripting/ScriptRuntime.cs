@@ -671,6 +671,12 @@ namespace Editor.Scripting
             Editor.ECS.Component comp;
             try { comp = (Editor.ECS.Component)Activator.CreateInstance(t, e); configure?.Invoke(comp); }
             catch (Exception ex) { WarnComponent("AddComponent", typeName, e, ex.InnerException?.Message ?? ex.Message); return null; }
+            if (comp is Editor.ECS.Components.Physics.Rigidbody rb && rb.BodyType == Editor.ECS.Components.Physics.RigidbodyType.Dynamic
+                && Editor.Core.Services.Physics.PhysicsService.OwnsCharacter(e))
+            {
+                WarnComponent("AddComponent", typeName, e, CharacterOwnerWhy);
+                return null;
+            }
             e.AddComponentDirect(comp);   // no undo step: runtime only
             _componentsAdded.Add((e, comp));
             RegisterRuntimeComponent(e, comp, added: true);
@@ -737,6 +743,11 @@ namespace Editor.Scripting
             Editor.Core.Services.SceneRenderService.RuntimeDirty = Editor.Core.Services.SceneRenderService.StaticDirty = true;   // structural (#364 A)
         }
 
+        /// <summary>Why a dynamic Rigidbody is refused on an entity that moves a character (#421 review, #518).</summary>
+        private const string CharacterOwnerWhy = "it moves a character (Physics.MoveCharacter) — a dynamic body would write the "
+            + "simulated pose over the character's moves every step. Make it kinematic, put the body on a child, or remove the character first "
+            + "(Physics.RemoveCharacter; Ragdoll.Activate does that for a ragdoll)";
+
         private static void WarnComponent(string what, string typeName, GameEntity e, string why)
         {
             try
@@ -771,6 +782,12 @@ namespace Editor.Scripting
             }
             var rb = e.GetComponent<Editor.ECS.Components.Physics.Rigidbody>();
             bool made = rb == null;
+            if (!kinematic && Editor.Core.Services.Physics.PhysicsService.OwnsCharacter(e)
+                && (made || rb.BodyType != Editor.ECS.Components.Physics.RigidbodyType.Dynamic))
+            {
+                WarnComponent("AddComponent", "Rigidbody", e, CharacterOwnerWhy);
+                return false;
+            }
             if (made) { if (AddComponentAtRuntime(id, "Rigidbody", Setup) == null) return false; }   // one body build, with the mass
             else { Setup(rb); Editor.Core.Services.Physics.PhysicsService.RebuildEntity(e); }
             if (Editor.Core.Services.Physics.PhysicsService.HasRigidbody(e)) return true;

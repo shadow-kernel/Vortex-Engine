@@ -258,6 +258,40 @@ public class BodyProbe : VortexBehaviour
             finally { rt.End(); GameTime.ResetSession(1f / 60f); PhysicsNative.Shutdown(); }
         }
 
+        /// <summary>#421 review (#518): an entity that moves a character gets no Dynamic Rigidbody — the simulation would write
+        /// over the character's moves every step — through Physics.AddRigidbody or Scene.AddComponent, with a warning saying
+        /// why; a Kinematic one is fine, and once the character is removed a Dynamic one is too.</summary>
+        [Test]
+        public static void ACharacterOwnerGetsNoDynamicBody(TestContext t)
+        {
+            if (!Jolt()) return;
+            var asm = Compile(t);
+            var rt = ScriptRuntime.Instance;
+            try
+            {
+                var s = new Scene { Name = "Owner" };
+                var hero = new GameEntity(s, "Hero");
+                hero.Transform.LocalPosition = new Vector3(0f, 100f, 0f);
+                hero.AddComponentDirect(new BoxCollider(hero));
+                hero.AddComponentDirect(new Script(hero, "Assets/Scripts/Idle.cs"));
+                s.Entities.Add(hero);
+                PhysicsRaycastTests.AsLoaded(s);
+                GameTime.ResetSession(1f / 60f);
+                rt.Begin(s, asm);
+                long id = rt.HandleForEntity(hero);
+                Vortex.Physics.MoveCharacter(new Vortex.Vector3(0f, 100f, 0f), 0.35f, 1.8f, new Vortex.Vector3(0f, -0.01f, 0f), id, id);
+                t.True(PhysicsService.OwnsCharacter(hero), "the hero moves a character");
+                t.False(Vortex.Physics.AddRigidbody(id, 5f), "a Dynamic Rigidbody is refused");
+                t.True(ConsoleService.Instance.Entries.Any(x => x.Level == LogLevel.Warning && x.Message.Contains("'Hero'") && x.Message.Contains("moves a character")), "… with a warning saying why");
+                t.False(Vortex.Scene.AddComponent(id, "Rigidbody"), "… through Scene.AddComponent too");
+                t.True(hero.GetComponent<Rigidbody>() == null, "the entity is left as it was");
+                t.True(Vortex.Physics.AddRigidbody(id, 5f, kinematic: true), "a Kinematic one is fine (the entity drives it)");
+                t.True(Vortex.Physics.RemoveCharacter(id), "the character goes");
+                t.True(Vortex.Physics.AddRigidbody(id, 5f) && PhysicsService.HasRigidbody(hero), "now it may become a Dynamic body");
+            }
+            finally { rt.End(); GameTime.ResetSession(1f / 60f); PhysicsNative.Shutdown(); }
+        }
+
         /// <summary>#425: a falling body at time scale 0.5 falls half as fast per real second, and stands still at 0.</summary>
         [Test]
         public static void TheTimeScaleSlowsTheBodies(TestContext t)
