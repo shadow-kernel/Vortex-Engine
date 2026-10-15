@@ -448,6 +448,9 @@ namespace Editor.Core.Services.Physics
 
         private struct DebugQuery { public QueryShape Shape; public bool IsRay; public Vector3 Origin, Direction; public float Travel; public bool Hit; public Vector3 Point, Normal; }
         private static readonly List<DebugQuery> _dbgQueries = new List<DebugQuery>();
+
+        /// <summary>Script queries recorded for the next debug draw (smoke checks).</summary>
+        internal static int RecordedQueryCount => _dbgQueries.Count;
         private const int MaxDebugQueries = 16;
 
         /// <summary>True while the Queries debug layer draws (the script queries record themselves only then).</summary>
