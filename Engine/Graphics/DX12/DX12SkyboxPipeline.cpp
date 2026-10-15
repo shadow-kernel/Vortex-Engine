@@ -72,23 +72,30 @@ namespace vortex::graphics::dx12
 		auto serialize = get_serialize_root_signature();
 		if (!serialize) return false;
 
-		// b0: skybox constants; t0 (descriptor table) + static s0: the equirect sky texture (#326)
-		D3D12_DESCRIPTOR_RANGE range{};
-		range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-		range.NumDescriptors = 1;
-		range.BaseShaderRegister = 0;
-		range.RegisterSpace = 0;
-		range.OffsetInDescriptorsFromTableStart = 0;
+		// b0: skybox constants; t0 (descriptor table) + static s0: the equirect sky texture (#326); t1 / t2: the cross-fade
+		// pictures (#464), one table each — the registry's SRVs are not contiguous
+		D3D12_DESCRIPTOR_RANGE ranges[3]{};
+		for (UINT i = 0; i < 3; ++i)
+		{
+			ranges[i].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+			ranges[i].NumDescriptors = 1;
+			ranges[i].BaseShaderRegister = i;
+			ranges[i].RegisterSpace = 0;
+			ranges[i].OffsetInDescriptorsFromTableStart = 0;
+		}
 
-		D3D12_ROOT_PARAMETER params[2]{};
+		D3D12_ROOT_PARAMETER params[4]{};
 		params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
 		params[0].Descriptor.ShaderRegister = 0;
 		params[0].Descriptor.RegisterSpace = 0;
 		params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
-		params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-		params[1].DescriptorTable.NumDescriptorRanges = 1;
-		params[1].DescriptorTable.pDescriptorRanges = &range;
-		params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+		for (UINT i = 0; i < 3; ++i)
+		{
+			params[1 + i].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+			params[1 + i].DescriptorTable.NumDescriptorRanges = 1;
+			params[1 + i].DescriptorTable.pDescriptorRanges = &ranges[i];
+			params[1 + i].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+		}
 
 		D3D12_STATIC_SAMPLER_DESC sampler{};
 		sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
@@ -101,7 +108,7 @@ namespace vortex::graphics::dx12
 		sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
 		D3D12_ROOT_SIGNATURE_DESC desc{};
-		desc.NumParameters = 2;
+		desc.NumParameters = 4;
 		desc.pParameters = params;
 		desc.NumStaticSamplers = 1;
 		desc.pStaticSamplers = &sampler;

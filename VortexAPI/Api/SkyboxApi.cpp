@@ -61,6 +61,14 @@ EDITOR_INTERFACE void SetSkyboxTextureHdr(id::id_type texture_id, float exposure
 	graphics::Renderer::instance().set_skybox_texture(texture_id, exposure, rotation_degrees * 0.01745329252f, hdr < 0 ? 0 : (hdr > 2 ? 2 : hdr));
 }
 
+// The sky cross-fade (#464): a picture blended over the sky — index 0 / 1 in that order, over the texture or gradient sky
+// above; texture = a registry texture, exposure, a yaw in degrees and the HDR mode as in SetSkyboxTextureHdr; amount 0..1
+// (0 = off, the pass does not sample it). The managed SkyFade turns a weighted list of skies into these amounts.
+EDITOR_INTERFACE void SetSkyboxBlendLayer(int32_t index, id::id_type texture_id, float exposure, float rotation_degrees, int32_t hdr, float amount)
+{
+	graphics::Renderer::instance().set_skybox_blend_layer(index, texture_id, exposure, rotation_degrees * 0.01745329252f, hdr, amount);
+}
+
 // The sun's disc in the sky (#499), at the scene's directional light on the gradient and the texture sky: mode 0 = auto (a
 // gradient sky and an 8-bit picture draw it, a float .hdr picture — which carries its own sun — and a solid colour do not),
 // 1 = always, 2 = never; size = the angular diameter in degrees (the real sun: 0.53); intensity scales the disc, glow its

@@ -2482,6 +2482,9 @@ namespace Editor.Core.Services
         public static bool DebugShowViewmodel;
 
         private bool _hasSkybox = false;
+        // the Skybox component the last scene-light submit drew (null without one): the scene's own sky in a cross-fade (#464)
+        private Skybox _lastSkybox;
+        private bool _skyBlendOn;   // the sky pass has cross-fade pictures set (#464)
 
         /// <summary>Ambient strength a game SCRIPT set via Vortex.Lighting.SetAmbient during play. While set,
         /// scene re-submits must NOT stomp it with the editor defaults below — the shipped-game loop re-submits
@@ -2578,6 +2581,7 @@ namespace Editor.Core.Services
             _hasSceneLights = false;
             _hasDirectionalLight = false;
             _hasSkybox = false;
+            _lastSkybox = null;
 
             // Collect and submit all lights and skybox
             foreach (var entity in scene.Entities)
@@ -2611,7 +2615,9 @@ namespace Editor.Core.Services
             // the ambient right now (horror scenes crush it to ~0.01; the default would flood the dark).
             if (!_hasSkybox)
             {
-                if (ScriptSky != null) { ApplyScriptSky(ScriptSky); SubmitSkyLight(ScriptSky); PushSkySun(null); }   // a scripted sky needs no Skybox component (#349)
+                if (!SkyFade.Active) ClearSkyBlend();
+                if (SkyFade.Active) { ApplySkyFade(null); PushSkySun(null); }   // a cross-fade between scripted skies (#464)
+                else if (ScriptSky != null) { ApplyScriptSky(ScriptSky); SubmitSkyLight(ScriptSky); PushSkySun(null); }   // a scripted sky needs no Skybox component (#349)
                 else { VortexAPI.EnableSkybox(false); VortexAPI.SetSkyLight(null, false); PushEnvironmentMap(null); SkyHaze.SetHorizon(false, 0f, 0f, 0f); }
                 _lastAmbientStrength = ScriptAmbientOverride ?? 0.35f;
                 VortexAPI.SetAmbientLightStrength(_lastAmbientStrength);  // 0.35 matches the engine header default
@@ -2780,6 +2786,216 @@ namespace Editor.Core.Services
             }
             int mips = 1 + (int)Math.Floor(Math.Log(Math.Max(m.Width, m.Height), 2.0));
             VortexAPI.ApplyEnvironmentMap(id, id >= 0 ? mips : 0);
+            ReleaseBlendedEnvironmentMap();
+        }
+
+        // ---- the sky's cross-fade (#464): a weighted blend of skies drawn, lit and mirrored together ----
+
+        /// <summary>The scene's own sky as a script sky: the Skybox component's picture (no yaw) or its gradient (a solid colour
+        /// is a gradient of one colour); null without a visible component.</summary>
+        internal static SkyOverride ComponentSky(Skybox s)
+        {
+            if (s == null || !s.IsEnabled) return null;
+            if ((s.SkyboxType == SkyboxType.Texture || s.SkyboxType == SkyboxType.Cubemap) && !string.IsNullOrEmpty(s.TexturePath))
+                return new SkyOverride { TexturePath = s.TexturePath, Exposure = s.Exposure, RotationDeg = 0f };
+            if (s.SkyboxType == SkyboxType.SolidColor)
+                return new SkyOverride { Exposure = s.Exposure, Gradient = new[] { s.TopColorR, s.TopColorG, s.TopColorB, s.TopColorR, s.TopColorG, s.TopColorB, s.TopColorR, s.TopColorG, s.TopColorB } };
+            return new SkyOverride { Exposure = s.Exposure, Gradient = new[] { s.TopColorR, s.TopColorG, s.TopColorB, s.HorizonColorR, s.HorizonColorG, s.HorizonColorB, s.BottomColorR, s.BottomColorG, s.BottomColorB } };
+        }
+
+        /// <summary>The sky shown now as a weighted list (a running cross-fade included): what Vortex.Sky fades from. Empty without
+        /// any sky.</summary>
+        public static List<SkyFade.Layer> CurrentSkyLayers() => SkyFade.Current(ScriptSky ?? ComponentSky(Instance._lastSkybox));
+
+        /// <summary>True when the scene has a Skybox component to fade back to (Sky.Clear with a fade).</summary>
+        public static bool HasSceneSky => ComponentSky(Instance._lastSkybox) != null;
+
+        /// <summary>Advances the sky's cross-fade (#464) by a frame of game time and shows it at once (a shipped game re-submits a
+        /// static scene only when something changes). At the end the plain sky comes with the next submit. Called by the script
+        /// runtime every tick.</summary>
+        public static void TickSkyFade(float dt)
+        {
+            if (!SkyFade.Active) return;
+            if (SkyFade.Tick(dt)) { RuntimeDirty = true; return; }
+            if (!SkyFade.Manual) Instance.ApplySkyFade(Instance._lastSkybox);
+        }
+
+        /// <summary>Shows the sky's cross-fade now — after Sky.SetBlend, without waiting for a submit.</summary>
+        public static void ApplySkyFadeNow()
+        {
+            if (SkyFade.Active) Instance.ApplySkyFade(Instance._lastSkybox);
+        }
+
+        /// <summary>No cross-fade pictures in the sky pass (the plain sky draws alone).</summary>
+        private void ClearSkyBlend()
+        {
+            if (!_skyBlendOn) return;
+            _skyBlendOn = false;
+            VortexAPI.ApplySkyboxBlendLayer(0, -1, 1f, 0f, 0, 0f);
+            VortexAPI.ApplySkyboxBlendLayer(1, -1, 1f, 0f, 0, 0f);
+        }
+
+        /// <summary>The cross-fade's sky (#464): the base sky (the gradient, else the first picture) and up to two pictures over
+        /// it in the sky pass, with the SH9 sky light, the haze's horizon and the reflection map blended by the same weights —
+        /// so ambient light and reflections follow the sky without a pop.</summary>
+        private void ApplySkyFade(Skybox skybox)
+        {
+            var layers = SkyFade.Current(ScriptSky ?? ComponentSky(skybox));
+            if (layers.Count == 0) return;
+            var plan = SkyFade.Plan(layers);
+            var b = plan.Base.Sky;
+            float baseRot = 0f;
+            if (!string.IsNullOrEmpty(b.TexturePath) && SubmitSkyTexture(b.TexturePath, b.Exposure, b.RotationDeg)) baseRot = b.RotationDeg;
+            else
+            {
+                VortexAPI.EnableSkybox(true);
+                VortexAPI.SetSkyboxRenderMode(VortexAPI.SkyboxMode.Gradient);
+                var g = b.Gradient;
+                if (g != null && g.Length >= 9)
+                    VortexAPI.SetSkyboxGradient(g[0] * b.Exposure, g[1] * b.Exposure, g[2] * b.Exposure, g[3] * b.Exposure, g[4] * b.Exposure, g[5] * b.Exposure, g[6] * b.Exposure, g[7] * b.Exposure, g[8] * b.Exposure);
+            }
+            for (int i = 0; i < 2; i++)
+            {
+                if (i < plan.Over.Count)
+                {
+                    var o = plan.Over[i].Sky;
+                    string full = SkyFullPath(o.TexturePath);
+                    long id = SkyTextureId(full);
+                    VortexAPI.ApplySkyboxBlendLayer(i, id, o.Exposure, o.RotationDeg, SkyHdrMode(full), id >= 0 ? plan.Amount[i] : 0f);
+                }
+                else VortexAPI.ApplySkyboxBlendLayer(i, -1, 1f, 0f, 0, 0f);
+            }
+            _skyBlendOn = true;
+
+            // the sky light: SH projection is linear, so the blend's coefficients are the weighted sum of the skies' own
+            var c = new SkyLight.Coefficients();
+            var key = new System.Text.StringBuilder("fade");
+            float hr = 0f, hg = 0f, hb = 0f; bool horizon = false;
+            foreach (var l in layers)
+            {
+                var lc = SkyCoefficients(l.Sky);
+                if (lc != null)
+                {
+                    for (int k = 0; k < 27; k++) c.Sh[k] += lc.Sh[k] * l.Weight;
+                    key.Append('|').Append(lc.Key).Append('@').Append(l.Weight.ToString("0.0000", System.Globalization.CultureInfo.InvariantCulture));
+                }
+                float r, g, bl;
+                if (SkyHorizon(l.Sky, out r, out g, out bl)) { hr += r * l.Weight; hg += g * l.Weight; hb += bl * l.Weight; horizon = true; }
+            }
+            c.Key = key.ToString();
+            SkyHaze.SetHorizon(horizon, hr, hg, hb);
+            try
+            {
+                var st = Data.ProjectData.Current?.ActiveScene?.Settings;
+                if (st != null && st.BounceStrength > 0f)
+                    c = SkyLight.WithGroundBounce(c, st.BounceStrength, st.BounceR, st.BounceG, st.BounceB, _sunR, _sunG, _sunB, _sunIntensity, _sunDirY);
+            }
+            catch { }
+            PushSkyLight(c);
+            PushBlendedEnvironmentMap(layers, baseRot);
+        }
+
+        /// <summary>One sky's SH9 light (its picture's, turned by its yaw, or its gradient's), cached by SkyLight.</summary>
+        private static SkyLight.Coefficients SkyCoefficients(SkyOverride s)
+        {
+            try
+            {
+                if (!string.IsNullOrEmpty(s.TexturePath)) return SkyLight.FromTexture(SkyFullPath(s.TexturePath), s.Exposure, s.RotationDeg);
+                var g = s.Gradient;
+                if (g != null && g.Length >= 9)
+                    return SkyLight.FromGradient(g[0] * s.Exposure, g[1] * s.Exposure, g[2] * s.Exposure, g[3] * s.Exposure, g[4] * s.Exposure, g[5] * s.Exposure, g[6] * s.Exposure, g[7] * s.Exposure, g[8] * s.Exposure);
+            }
+            catch { }
+            return null;
+        }
+
+        /// <summary>One sky's radiance just above the horizon, as the haze that follows the sky uses it.</summary>
+        private static bool SkyHorizon(SkyOverride s, out float r, out float g, out float b)
+        {
+            r = g = b = 0f;
+            try
+            {
+                if (!string.IsNullOrEmpty(s.TexturePath)) return SkyLight.HorizonColor(SkyFullPath(s.TexturePath), s.Exposure, out r, out g, out b);
+                var c = s.Gradient;
+                if (c != null && c.Length >= 9) { r = c[3] * s.Exposure; g = c[4] * s.Exposure; b = c[5] * s.Exposure; return true; }
+            }
+            catch { }
+            return false;
+        }
+
+        /// <summary>One sky's reflection map at the blend's width (SkyLight caches it).</summary>
+        private static SkyLight.ReflectionMap SkyReflection(SkyOverride s, int width)
+        {
+            try
+            {
+                if (!string.IsNullOrEmpty(s.TexturePath)) return SkyLight.ReflectionFromTexture(SkyFullPath(s.TexturePath), s.Exposure, width);
+                var g = s.Gradient;
+                if (g != null && g.Length >= 9)
+                    return SkyLight.ReflectionFromGradient(g[0] * s.Exposure, g[1] * s.Exposure, g[2] * s.Exposure, g[3] * s.Exposure, g[4] * s.Exposure, g[5] * s.Exposure, g[6] * s.Exposure, g[7] * s.Exposure, g[8] * s.Exposure, width);
+            }
+            catch { }
+            return null;
+        }
+
+        // the blended reflection map: built on a worker (a 512 x 256 weighted sum), one at a time, uploaded when done
+        private System.Threading.Tasks.Task<SkyLight.ReflectionMap> _envBlendJob;
+        private string _envBlendJobKey;
+        private long _envBlendTexture = -1;
+        private const int ReflectionBlendWidth = 512;
+
+        /// <summary>The reflection map of a blend of skies. The lit shaders have one sampler slot for it (Metal allows 16 per
+        /// stage and the standard shader uses all of them), so the blend is baked on the CPU instead: each sky's own map turned to
+        /// the base sky's yaw (the shaders add that one via env_ground.w), weighted, summed — in steps of 1/32 of the weights (a
+        /// step changes a reflection by ~3 %; an 8 s fade re-bakes ~30 times, each a few ms on a worker thread).</summary>
+        private void PushBlendedEnvironmentMap(List<SkyFade.Layer> layers, float baseRot)
+        {
+            var key = new System.Text.StringBuilder("rblend|").Append(baseRot.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture));
+            foreach (var l in layers)
+                key.Append('|').Append(l.Sky.TexturePath ?? "grad:" + string.Join(",", l.Sky.Gradient ?? new float[0]))
+                   .Append('/').Append(l.Sky.Exposure.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture))
+                   .Append('/').Append(l.Sky.RotationDeg.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture))
+                   .Append('@').Append(Math.Round(l.Weight * 32f));
+            string k = key.ToString();
+            if (k == _envKey) return;
+            if (_envBlendJob != null)
+            {
+                if (!_envBlendJob.IsCompleted) return;   // one bake at a time: the newest weights follow when it is done
+                var done = _envBlendJob; string doneKey = _envBlendJobKey;
+                _envBlendJob = null;
+                if (done.Status == System.Threading.Tasks.TaskStatus.RanToCompletion && done.Result != null) ShowBlendedEnvironmentMap(done.Result, doneKey);
+                if (doneKey == k) return;
+            }
+            // the skies' own maps on this thread (cached; the first look at a picture decodes it, as a plain sky switch does)
+            var parts = new List<(SkyLight.ReflectionMap map, float weight, float shiftDeg)>();
+            foreach (var l in layers)
+            {
+                var m = SkyReflection(l.Sky, ReflectionBlendWidth);
+                if (m != null) parts.Add((m, l.Weight, string.IsNullOrEmpty(l.Sky.TexturePath) ? 0f : l.Sky.RotationDeg - baseRot));
+            }
+            if (parts.Count == 0) return;
+            _envBlendJobKey = k;
+            _envBlendJob = System.Threading.Tasks.Task.Run(() => SkyLight.BlendReflections(parts, ReflectionBlendWidth));
+        }
+
+        private void ShowBlendedEnvironmentMap(SkyLight.ReflectionMap m, string key)
+        {
+            long id = -1;
+            try { id = VortexAPI.CreateTextureFromPixels(m.Width, m.Height, m.Rgba, false, true); } catch { id = -1; }
+            if (id < 0) return;
+            int mips = 1 + (int)Math.Floor(Math.Log(Math.Max(m.Width, m.Height), 2.0));
+            VortexAPI.ApplyEnvironmentMap(id, mips);
+            if (_envBlendTexture >= 0) { try { VortexAPI.DeleteTexture(_envBlendTexture); } catch { } }   // after the new one is bound
+            _envBlendTexture = id;
+            _envKey = key;
+        }
+
+        /// <summary>A plain reflection map is bound again: the last blended one goes, and a bake still running is dropped.</summary>
+        private void ReleaseBlendedEnvironmentMap()
+        {
+            _envBlendJob = null;
+            if (_envBlendTexture < 0) return;
+            try { VortexAPI.DeleteTexture(_envBlendTexture); } catch { }
+            _envBlendTexture = -1;
         }
 
         private void SubmitEntityLightsRecursive(GameEntity entity)
@@ -2794,14 +3010,17 @@ namespace Editor.Core.Services
             if (skybox != null && skybox.IsEnabled)
             {
                 _hasSkybox = true;
+                if (_lastSkybox == null) _lastSkybox = skybox;
                 
                 // Enable skybox rendering
                 VortexAPI.EnableSkybox(true);
                 
                 // the sun's disc at the scene's light (#499): the component's settings, or a script's
                 PushSkySun(skybox);
-                // a script's sky (#349) wins over the component while it is set
-                if (ScriptSky != null) ApplyScriptSky(ScriptSky);
+                // a cross-fade (#464) draws a blend of skies; else a script's sky (#349) wins over the component while it is set
+                if (!SkyFade.Active) ClearSkyBlend();
+                if (SkyFade.Active) ApplySkyFade(skybox);
+                else if (ScriptSky != null) ApplyScriptSky(ScriptSky);
                 else switch (skybox.SkyboxType)
                 {
                     case SkyboxType.SolidColor:
@@ -2855,8 +3074,11 @@ namespace Editor.Core.Services
                 
                 // the sky as a LIGHT (IBL step 1): SH9 irradiance baked off the picture or the gradient — blue from above,
                 // the ground's bounce from below — replaces the shaders' fixed hemisphere ambient
-                if (ScriptSky != null) SubmitSkyLight(ScriptSky);
-                else SubmitSkyLight(skybox);
+                if (!SkyFade.Active)   // a cross-fade's light, haze and reflections came with ApplySkyFade (#464)
+                {
+                    if (ScriptSky != null) SubmitSkyLight(ScriptSky);
+                    else SubmitSkyLight(skybox);
+                }
 
                 // Also set ambient light based on skybox colors — unless a game script owns the ambient.
                 var (ambientR, ambientG, ambientB) = skybox.GetAmbientColor();
@@ -2960,9 +3182,43 @@ namespace Editor.Core.Services
             }
         }
 
-        // Cache for built-in skybox sphere
-        private long _skyboxTextureId = -1;
-        private string _cachedSkyboxTexturePath = null;
+        // the sky pictures loaded so far, by full path (-1 = missing: not retried every frame) — a cross-fade (#464) shows up
+        // to three at once, and switching back to a picture shown before reuses it
+        private readonly Dictionary<string, long> _skyTextureIds = new Dictionary<string, long>();
+
+        /// <summary>A sky picture's full path (project-relative or rooted).</summary>
+        private static string SkyFullPath(string texturePath)
+        {
+            var projectPath = Data.ProjectData.Current?.Path ?? "";
+            return System.IO.Path.IsPathRooted(texturePath) ? texturePath : System.IO.Path.Combine(projectPath, texturePath);
+        }
+
+        /// <summary>The registry texture of a sky picture, loaded once (-1 when it cannot be).</summary>
+        private long SkyTextureId(string fullTexturePath)
+        {
+            if (_skyTextureIds.TryGetValue(fullTexturePath, out long id)) return id;
+            id = -1;
+            if (!AssetVfs.Exists(fullTexturePath))
+                Log($"[SceneRenderService] Skybox texture not found: {fullTexturePath}");
+            else
+            {
+                Log($"[SceneRenderService] Loading skybox texture: {fullTexturePath}");
+                id = ImportTexturePath(fullTexturePath);
+                if (id < 0) Log("[SceneRenderService] Failed to load skybox texture");
+            }
+            _skyTextureIds[fullTexturePath] = id;
+            return id;
+        }
+
+        /// <summary>How the sky pass shows a picture: a Radiance .hdr keeps its range (RGBA16F) — where the scene uses the exposure
+        /// pipeline (a scene exposure or the neutral tonemapper) it is exposed + tonemapped like the lit surfaces (2), else shown
+        /// the classic way (1); an 8-bit picture as it is (0).</summary>
+        private static int SkyHdrMode(string fullTexturePath)
+        {
+            if (!fullTexturePath.EndsWith(".hdr", StringComparison.OrdinalIgnoreCase)) return 0;
+            var st = Data.ProjectData.Current?.ActiveScene?.Settings;
+            return st != null && (st.SceneExposure != 0f || st.Tonemapper != 0) ? 2 : 1;
+        }
 
         /// <summary>
         /// Submit a skybox with texture on a built-in inverted sphere.
@@ -2980,38 +3236,13 @@ namespace Editor.Core.Services
         /// cannot be loaded (the caller falls back to the gradient).</summary>
         private bool SubmitSkyTexture(string texturePath, float exposure, float rotationDeg)
         {
-            var projectPath = Data.ProjectData.Current?.Path ?? "";
-            var fullTexturePath = System.IO.Path.IsPathRooted(texturePath)
-                ? texturePath
-                : System.IO.Path.Combine(projectPath, texturePath);
-
-            if (_cachedSkyboxTexturePath != fullTexturePath)
-            {
-                // a new path: load it once; a missing file is remembered too, so the fallback does not retry every frame
-                _cachedSkyboxTexturePath = fullTexturePath;
-                _skyboxTextureId = -1;
-                if (!AssetVfs.Exists(fullTexturePath))
-                    Log($"[SceneRenderService] Skybox texture not found: {fullTexturePath}");
-                else
-                {
-                    Log($"[SceneRenderService] Loading skybox texture: {fullTexturePath}");
-                    _skyboxTextureId = ImportTexturePath(fullTexturePath);
-                    if (_skyboxTextureId < 0) Log("[SceneRenderService] Failed to load skybox texture");
-                }
-            }
-            if (_skyboxTextureId < 0) return false;
+            var fullTexturePath = SkyFullPath(texturePath);
+            long id = SkyTextureId(fullTexturePath);   // loaded once; a missing file is remembered too, so the fallback does not retry every frame
+            if (id < 0) return false;
 
             VortexAPI.EnableSkybox(true);
             VortexAPI.SetSkyboxRenderMode(VortexAPI.SkyboxMode.Texture);
-            // a Radiance .hdr keeps its range (RGBA16F): where the scene uses the exposure pipeline (a scene exposure or the
-            // neutral tonemapper) the sky pass exposes + tonemaps it like the lit surfaces; other scenes keep the classic look
-            int hdrMode = 0;
-            if (fullTexturePath.EndsWith(".hdr", StringComparison.OrdinalIgnoreCase))
-            {
-                var st = Data.ProjectData.Current?.ActiveScene?.Settings;
-                hdrMode = st != null && (st.SceneExposure != 0f || st.Tonemapper != 0) ? 2 : 1;
-            }
-            VortexAPI.ApplySkyboxTexture(_skyboxTextureId, exposure, rotationDeg, hdrMode);
+            VortexAPI.ApplySkyboxTexture(id, exposure, rotationDeg, SkyHdrMode(fullTexturePath));
             return true;
         }
 
@@ -3175,8 +3406,7 @@ namespace Editor.Core.Services
         public void ClearSkyboxMeshCache()
         {
             _skyboxMeshCache.Clear();
-            _cachedSkyboxTexturePath = null; // Force reload of texture
-            _skyboxTextureId = -1;
+            _skyTextureIds.Clear(); // Force reload of the sky pictures
             Log("[SceneRenderService] Skybox cache cleared");
         }
 

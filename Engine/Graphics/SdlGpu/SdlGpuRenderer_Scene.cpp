@@ -872,16 +872,31 @@ namespace vortex::graphics::sdlgpu
 		// the sun's disc (#499): auto draws it on a gradient and an 8-bit picture, not on a float picture (its own sun is in it)
 		// nor on a solid colour
 		const bool sun_auto = sky ? m_sky_hdr == 0 : m_skybox_mode != SkyboxMode::SolidColor;
-		const bool sun_drawn = m_sky_sun_mode == 1 || (m_sky_sun_mode == 0 && sun_auto);
-		c.sun_disc = { m_sky_sun_radius, m_sky_sun_intensity, m_sky_sun_glow, sun_drawn ? 1.0f : 0.0f };
-		if (!sky) sky = reg.white_texture();
+		u32 sun_layers = (m_sky_sun_mode == 1 || (m_sky_sun_mode == 0 && sun_auto)) ? 1u : 0u;
+		// the cross-fade pictures (#464) over the sky: each by its amount, the white texture in an unused slot
+		Texture* white = reg.white_texture();
+		Texture* blend[2] = { nullptr, nullptr };
+		for (int i = 0; i < 2; ++i)
+		{
+			const SkyBlendLayer& l = m_sky_blend[i];
+			blend[i] = (l.amount > 0.0f && l.texture != id::invalid_id) ? reg.get_texture(l.texture) : nullptr;
+			if (blend[i] && !blend[i]->texture()) blend[i] = nullptr;
+			const float mode = l.hdr == 2 ? (m_frame_constants.scene_exposure > 0.0f ? m_frame_constants.scene_exposure : 0.5f) : (l.hdr == 1 ? -1.0f : 0.0f);
+			c.blend[i] = blend[i] ? DirectX::XMFLOAT4{ l.amount, l.exposure, l.rotation, mode } : DirectX::XMFLOAT4{ 0.0f, 0.0f, 0.0f, 0.0f };
+			if (blend[i] && (m_sky_sun_mode == 1 || (m_sky_sun_mode == 0 && l.hdr == 0))) sun_layers |= 2u << i;   // the disc per picture (#499)
+		}
+		c.sun_disc = { m_sky_sun_radius, m_sky_sun_intensity, m_sky_sun_glow, (float)sun_layers };
+		if (!sky) sky = white;
 		SDL_BindGPUGraphicsPipeline(pass, m_pipeline_skybox);
 		SDL_PushGPUVertexUniformData(cmd, 0, &c, sizeof(c));
 		SDL_PushGPUFragmentUniformData(cmd, 0, &c, sizeof(c));
 		if (sky && sky->texture())
 		{
-			SDL_GPUTextureSamplerBinding tex{ sky->texture(), m_sampler_linear_wrap };
-			SDL_BindGPUFragmentSamplers(pass, 0, &tex, 1);
+			SDL_GPUTextureSamplerBinding tex[3] = {
+				{ sky->texture(), m_sampler_linear_wrap },
+				{ (blend[0] ? blend[0] : sky)->texture(), m_sampler_linear_wrap },
+				{ (blend[1] ? blend[1] : sky)->texture(), m_sampler_linear_wrap } };
+			SDL_BindGPUFragmentSamplers(pass, 0, tex, 3);
 		}
 		SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
 		++m_draw_call_count;

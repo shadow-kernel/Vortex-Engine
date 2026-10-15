@@ -258,6 +258,38 @@ namespace Editor.Core.Services
             return m;
         }
 
+        /// <summary>Several skies' reflection maps as one (#464): the weighted sum of the maps, each turned by its yaw relative to
+        /// the blend's (a whole number of texels around the equirect's u: the shaders add the blend's own yaw) and resampled to
+        /// width x width/2. Reads the maps only — safe on a worker thread.</summary>
+        public static ReflectionMap BlendReflections(IList<(ReflectionMap map, float weight, float shiftDeg)> parts, int width)
+        {
+            int w = Math.Max(2, width), h = Math.Max(1, w / 2);
+            var acc = new float[w * h * 3];
+            foreach (var (map, weight, shiftDeg) in parts)
+            {
+                if (map == null || map.Rgba == null || !(weight > 0f) || map.Width < 1 || map.Height < 1) continue;
+                int shift = (int)Math.Round(shiftDeg / 360.0 * map.Width) % map.Width;
+                for (int y = 0; y < h; y++)
+                {
+                    int my = Math.Min(map.Height - 1, y * map.Height / h);
+                    for (int x = 0; x < w; x++)
+                    {
+                        int mx = (x * map.Width / w + shift) % map.Width;
+                        if (mx < 0) mx += map.Width;
+                        int s = (my * map.Width + mx) * 4, d = (y * w + x) * 3;
+                        acc[d] += map.Rgba[s] * weight; acc[d + 1] += map.Rgba[s + 1] * weight; acc[d + 2] += map.Rgba[s + 2] * weight;
+                    }
+                }
+            }
+            var m = new ReflectionMap { Width = w, Height = h, Rgba = new byte[w * h * 4] };
+            for (int i = 0, o = 0; i < acc.Length; i += 3, o += 4)
+            {
+                m.Rgba[o] = (byte)Math.Min(255.0, Math.Round(acc[i])); m.Rgba[o + 1] = (byte)Math.Min(255.0, Math.Round(acc[i + 1]));
+                m.Rgba[o + 2] = (byte)Math.Min(255.0, Math.Round(acc[i + 2])); m.Rgba[o + 3] = 255;
+            }
+            return m;
+        }
+
         // linear radiance -> 8 bits: straight below 1, x / (1 + x) rescaled above (the shaders read it back as linear-ish)
         private static byte Compress(float v)
         {

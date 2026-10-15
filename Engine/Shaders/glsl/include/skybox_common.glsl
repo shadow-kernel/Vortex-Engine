@@ -16,7 +16,10 @@ layout(set = SET_UNIFORM, binding = 0, std140) uniform SkyboxConstants
 	vec4  haze;                                 // @176 aerial perspective on the HDR sky: rgb fog colour, w density (0 = off)
 	vec4  glow_dir;                             // @192 xyz the direction the scene's sun light travels (normalised), w the fog's sun glow
 	vec4  glow_color;                           // @208 rgb the sun's colour, w its intensity (0 = no sun)
-	vec4  sun_disc;                             // @224 the sun's disc (#499): x angular radius (radians), y intensity, z glow, w 1 = drawn
+	vec4  sun_disc;                             // @224 the sun's disc (#499): x angular radius (radians), y intensity, z glow, w the
+	                                            //      layers that draw it (bit 0 the sky, bits 1 / 2 the cross-fade pictures)
+	vec4  blend1;                               // @240 a picture cross-faded over the sky (#464): x amount, y exposure, z yaw, w HDR mode
+	vec4  blend2;                               // @256 the second one, composited after blend1
 } c;
 
 #endif

@@ -1302,6 +1302,16 @@ namespace Editor.DllWrapper
             catch (System.EntryPointNotFoundException) { ApplySkyboxTexture(textureId, exposure, rotationDegrees); }
         }
 
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SetSkyboxBlendLayer")]
+        private static extern void SetSkyboxBlendLayerNative(int index, long textureId, float exposure, float rotationDegrees, int hdr, float amount);
+
+        /// <summary>The sky cross-fade (#464): picture <paramref name="index"/> (0 / 1) blended over the sky by <paramref name="amount"/>
+        /// (0 = off: the sky pass does not sample it); exposure, yaw in degrees and HDR mode as for the sky's own picture.</summary>
+        public static void ApplySkyboxBlendLayer(int index, long textureId, float exposure, float rotationDegrees, int hdr, float amount)
+        {
+            try { SetSkyboxBlendLayerNative(index, textureId, exposure, rotationDegrees, hdr, amount); } catch { }
+        }
+
         [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SetSkySun")]
         private static extern void SetSkySunNative(int mode, float sizeDegrees, float intensity, float glow);
 

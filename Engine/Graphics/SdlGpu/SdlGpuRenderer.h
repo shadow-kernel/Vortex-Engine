@@ -281,6 +281,16 @@ namespace vortex::graphics::sdlgpu
 		{
 			m_sky_texture = texture; m_sky_exposure = exposure; m_sky_rotation = rotation_radians; m_sky_hdr = hdr;
 		}
+		// The sky cross-fade (#464): up to two more equirect pictures blended over the sky (the picture above or the
+		// gradient), composited in order, each by its amount (0 = off: not sampled at all). exposure / rotation / hdr as in
+		// set_skybox_texture; the managed SkyFade turns a weighted list of skies into these amounts.
+		void set_skybox_blend_layer(int index, id::id_type texture, float exposure, float rotation_radians, int hdr, float amount)
+		{
+			if (index < 0 || index > 1) return;
+			SkyBlendLayer& l = m_sky_blend[index];
+			l.texture = texture; l.exposure = exposure; l.rotation = rotation_radians; l.hdr = hdr < 0 ? 0 : (hdr > 2 ? 2 : hdr);
+			l.amount = amount > 0.0f ? (amount < 1.0f ? amount : 1.0f) : 0.0f;
+		}
 		SkyboxMode get_skybox_mode() const { return m_skybox_mode; }
 		void set_skybox_colors(const DirectX::XMFLOAT3& sky, const DirectX::XMFLOAT3& horizon, const DirectX::XMFLOAT3& ground)
 		{
@@ -505,9 +515,10 @@ namespace vortex::graphics::sdlgpu
 			DirectX::XMFLOAT4 params;   // x: 1 = sample the equirect texture (#326), y: exposure, z: yaw offset (radians)
 			// aerial perspective on the HDR sky (@176): fog colour + density, the sun's direction + glow, the sun's colour + intensity
 			DirectX::XMFLOAT4 haze; DirectX::XMFLOAT4 glow_dir; DirectX::XMFLOAT4 glow_color;
-			DirectX::XMFLOAT4 sun_disc;   // @224 the sun's disc (#499): angular radius (radians), intensity, glow, 1 = drawn
+			DirectX::XMFLOAT4 sun_disc;   // @224 the sun's disc (#499): angular radius (radians), intensity, glow, the layers drawing it (bits)
+			DirectX::XMFLOAT4 blend[2];   // @240 the cross-fade pictures (#464): amount, exposure, yaw (radians), HDR mode
 		};
-		static_assert(sizeof(SkyboxConstants) == 240, "SkyboxConstants must byte-match skybox.metal / skybox_common.glsl");
+		static_assert(sizeof(SkyboxConstants) == 272, "SkyboxConstants must byte-match skybox.metal / skybox_common.glsl");
 		struct PostFxCB
 		{
 			float texel[2]; float time; u32 flags;
@@ -951,6 +962,9 @@ namespace vortex::graphics::sdlgpu
 		// the sun's disc in the sky (#499): auto, the real sun's 0.53°, intensity / glow 1
 		int m_sky_sun_mode{ 0 };
 		float m_sky_sun_radius{ 0.53f * 0.5f * 0.01745329252f }, m_sky_sun_intensity{ 1.0f }, m_sky_sun_glow{ 1.0f };
+		// the sky cross-fade (#464): pictures blended over the sky, off at amount 0
+		struct SkyBlendLayer { id::id_type texture{ id::invalid_id }; float exposure{ 1.0f }; float rotation{ 0.0f }; int hdr{ 0 }; float amount{ 0.0f }; };
+		SkyBlendLayer m_sky_blend[2];
 		float m_render_distance{ 0.0f };
 		// geometric LOD is on by default (#360): the thresholds are multiples of each mesh's radius (40 / 120 radii)
 		bool m_lod_enabled{ false }, m_geo_lod_enabled{ true };

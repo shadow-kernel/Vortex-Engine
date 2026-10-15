@@ -875,6 +875,7 @@ namespace Editor.Scripting
             Editor.Core.Services.SceneRenderService.ScriptSky = null;
             Editor.Core.Services.SceneRenderService.ScriptSun = null;   // #466
             Editor.Core.Services.SceneRenderService.ScriptSkySun = null;   // #499
+            Editor.Core.Services.SkyFade.Cancel();   // #464
             // The authored per-scene environment (fog + post-FX) is the baseline every run starts from —
             // the End() above wiped ALL post-FX, including what ActivateEntities just applied on boot.
             // Scripts may override from Start() onwards.
@@ -1014,6 +1015,7 @@ namespace Editor.Scripting
             Editor.Core.Input.HostInput.BeginTick();
             if (!_active) return;
             Vortex.Time.DeltaTime = dt;
+            Editor.Core.Services.SceneRenderService.TickSkyFade(dt);   // the sky's cross-fade runs on game time (#464)
             Vortex.Input.PollGamepad();   // refresh controller state once per tick (scripts read Input.LeftStickX etc.)
             CompactBehaviours();          // drop what was destroyed since the last tick — never inside the loops below
             if (_startPending.Count > 0)  // scripts attached while paused start before their first Update (#423)
@@ -1433,6 +1435,7 @@ namespace Editor.Scripting
             Editor.Core.Services.SceneRenderService.ScriptSky = null;   // #349
             Editor.Core.Services.SceneRenderService.ScriptSun = null;   // #466: the scene's Directional Light again
             Editor.Core.Services.SceneRenderService.ScriptSkySun = null;   // #499: the Skybox's own sun disc
+            Editor.Core.Services.SkyFade.Cancel();   // #464: no fade left running into the editor
             try { Editor.DllWrapper.VortexAPI.SetFog(0f, 0f, 0f, 0f, 0f, 0f); } catch { }
             try { Editor.DllWrapper.VortexAPI.RenderDistance(0f); Editor.DllWrapper.VortexAPI.GeometricLod(true, 40f, 120f); } catch { }   // #360 defaults
             // Post-FX is persistent renderer state too — scripted grain/vignette must not stick to the

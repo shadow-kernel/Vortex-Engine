@@ -2140,29 +2140,58 @@ namespace Vortex
         public static void ClearVolumetricFog() { Editor.DllWrapper.VortexAPI.SetVolumetricFog(false, 0f, 0.55f, 60f, 0f, 6f, 0f, 1f, 1f, 0.35f, 24, true); }
     }
 
-    /// <summary>The sky from game scripts (#349): swap the equirect texture per area or time of day, or set a gradient.
-    /// The script's sky wins over the scene's Skybox component until <see cref="Clear"/> or the end of play; ambient
-    /// stays with <see cref="Lighting.SetAmbient"/>. The sky is drawn by the renderer's own pass — behind everything,
-    /// around whichever camera renders, never fogged.</summary>
+    /// <summary>The sky from game scripts (#349): swap the equirect texture per area or time of day, or set a gradient — at
+    /// once or cross-faded over a few seconds (#464): the sky, its ambient light and the reflections blend without a pop,
+    /// from whatever the sky shows at that moment (a fade still running included). The script's sky wins over the scene's
+    /// Skybox component until <see cref="Clear"/> or the end of play; ambient strength stays with
+    /// <see cref="Lighting.SetAmbient"/>. The sky is drawn by the renderer's own pass — behind everything, around whichever
+    /// camera renders, never fogged.
+    /// <code>
+    /// Sky.SetTexture("Assets/Skies/dusk.hdr", 1f, 0f, 8f);   // sunset to dusk over 8 s
+    /// Sky.SetBlend("Assets/Skies/clear.hdr", "Assets/Skies/storm.hdr", weather);   // a script-driven blend, 0..1
+    /// </code></summary>
     public static class Sky
     {
         /// <summary>An equirect texture (project-relative, e.g. "Assets/Skies/dusk.hdr"). <paramref name="exposure"/>
         /// scales it, <paramref name="rotationDeg"/> turns it around the up axis so the sun in the image lines up with
-        /// the directional light.</summary>
-        public static void SetTexture(string path, float exposure = 1f, float rotationDeg = 0f)
+        /// the directional light. <paramref name="fadeSeconds"/> &gt; 0 cross-fades to it from the sky shown now (#464) —
+        /// a picture or a gradient; the ambient light and the reflections follow. 0 = at once.</summary>
+        public static void SetTexture(string path, float exposure = 1f, float rotationDeg = 0f, float fadeSeconds = 0f)
         {
+            var from = fadeSeconds > 0f ? Editor.Core.Services.SceneRenderService.CurrentSkyLayers() : null;
             Editor.Core.Services.SceneRenderService.ScriptSky = new Editor.Core.Services.SceneRenderService.SkyOverride { TexturePath = path, Exposure = exposure, RotationDeg = rotationDeg };
+            Editor.Core.Services.SkyFade.Start(from, fadeSeconds);
             Editor.Core.Services.SceneRenderService.RuntimeDirty = true;
         }
 
-        /// <summary>A three-colour gradient sky (linear 0..1): top, horizon, bottom.</summary>
+        /// <summary>A three-colour gradient sky (linear 0..1): top, horizon, bottom. <paramref name="fadeSeconds"/> &gt; 0
+        /// cross-fades to it from the sky shown now (#464); 0 = at once.</summary>
         public static void SetGradient(float topR, float topG, float topB, float horizonR, float horizonG, float horizonB,
-                                       float bottomR, float bottomG, float bottomB, float exposure = 1f)
+                                       float bottomR, float bottomG, float bottomB, float exposure = 1f, float fadeSeconds = 0f)
         {
+            var from = fadeSeconds > 0f ? Editor.Core.Services.SceneRenderService.CurrentSkyLayers() : null;
             Editor.Core.Services.SceneRenderService.ScriptSky = new Editor.Core.Services.SceneRenderService.SkyOverride
                 { Exposure = exposure, Gradient = new[] { topR, topG, topB, horizonR, horizonG, horizonB, bottomR, bottomG, bottomB } };
+            Editor.Core.Services.SkyFade.Start(from, fadeSeconds);
             Editor.Core.Services.SceneRenderService.RuntimeDirty = true;
         }
+
+        /// <summary>A blend the script drives (#464) — weather intensity, a portal, a dream: <paramref name="pathA"/> at
+        /// <paramref name="t"/> = 0, <paramref name="pathB"/> at 1, both with the same exposure and yaw. Call it whenever t
+        /// changes; the ambient light and the reflections follow. A later SetTexture / SetGradient with a fade time starts
+        /// from the blend as it stands.</summary>
+        public static void SetBlend(string pathA, string pathB, float t, float exposure = 1f, float rotationDeg = 0f)
+        {
+            var a = new Editor.Core.Services.SceneRenderService.SkyOverride { TexturePath = pathA, Exposure = exposure, RotationDeg = rotationDeg };
+            Editor.Core.Services.SceneRenderService.ScriptSky = new Editor.Core.Services.SceneRenderService.SkyOverride { TexturePath = pathB, Exposure = exposure, RotationDeg = rotationDeg };
+            Editor.Core.Services.SkyFade.SetManual(a, t);
+            Editor.Core.Services.SceneRenderService.ApplySkyFadeNow();
+            Editor.Core.Services.SceneRenderService.RuntimeDirty = true;
+        }
+
+        /// <summary>How far the sky's cross-fade has come (#464): 0 at its start, 1 when it is done or none runs; the blend
+        /// factor while <see cref="SetBlend"/> drives the sky.</summary>
+        public static float FadeProgress => Editor.Core.Services.SkyFade.Progress;
 
         /// <summary>Global ambient strength — the same as <see cref="Lighting.SetAmbient"/>, here for symmetry.</summary>
         public static void SetAmbient(float strength) => Lighting.SetAmbient(strength);
@@ -2183,10 +2212,16 @@ namespace Vortex
         }
 
         /// <summary>Back to the scene's own Skybox component — its picture or gradient and its sun.</summary>
-        public static void Clear()
+        public static void Clear() => Clear(0f);
+
+        /// <summary>Back to the scene's own Skybox component, cross-faded over <paramref name="fadeSeconds"/> (#464) when the
+        /// scene has one; its picture or gradient and its sun.</summary>
+        public static void Clear(float fadeSeconds)
         {
+            var from = fadeSeconds > 0f && Editor.Core.Services.SceneRenderService.HasSceneSky ? Editor.Core.Services.SceneRenderService.CurrentSkyLayers() : null;
             Editor.Core.Services.SceneRenderService.ScriptSky = null;
             Editor.Core.Services.SceneRenderService.ScriptSkySun = null;
+            Editor.Core.Services.SkyFade.Start(from, fadeSeconds);
             Editor.Core.Services.SceneRenderService.RuntimeDirty = true;
         }
     }
