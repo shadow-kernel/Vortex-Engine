@@ -131,10 +131,11 @@ float csm_pcf(vec2 suv, float depth, float atlas_texel, float softness, float zs
 	return lit / 16.0;
 }
 
-float sample_cascade_shadow(vec3 wp)
+float sample_cascade_shadow(vec3 wp, float ndl)
 {
 	int count = int(lights.dir_shadow_params.z);
 	if (count <= 0) return 1.0;
+	float tan_l = sqrt(max(1.0 - ndl * ndl, 0.0)) / max(abs(ndl), 0.196);   // the receiver's slope to the sun (tan, at most 5): beyond 80 m the bias grows with it, not with the deeper boxes (#466)
 	for (int c = 0; c < 3; ++c)
 	{
 		if (c >= count) break;
@@ -147,11 +148,12 @@ float sample_cascade_shadow(vec3 wp)
 		float guard = t * (max(lights.dir_shadow_params.w, 1.0) + 0.5);   // the whole filter stays inside the tile
 		suv = clamp(suv, vec2(guard), vec2(1.0 - guard)) * 0.5;
 		suv += vec2((c & 1) != 0 ? 0.5 : 0.0, (c & 2) != 0 ? 0.5 : 0.0);
-		float bias = lights.dir_shadow_params.y * (1.0 + float(c)) * (0.75 + 0.25 * max(lights.dir_shadow_params.w, 1.0));
+		float bias = lights.dir_shadow_params.y * (1.0 + float(c)) * (0.75 + 0.25 * max(lights.dir_shadow_params.w, 1.0)) * lights.cascade_bias[c];
 		float atlas_texel = t * 0.5;
 		mat4 M = lights.cascade_vp[c];
 		float zscale = length(vec3(M[0][2], M[1][2], M[2][2]));                       // depth units per metre along the light
 		float mpt = 2.0 * t / max(length(vec3(M[0][0], M[1][0], M[2][0])), 1e-6);   // metres per shadow texel in this cascade
+		bias += lights.cascade_bias.w * mpt * zscale * tan_l;   // the slope term (#466): zero up to 80 m
 		return mix(1.0, csm_pcf(suv, ndc.z - bias, atlas_texel, lights.dir_shadow_params.w, zscale, mpt), saturate(lights.dir_shadow_params.x));
 	}
 	return 1.0;
@@ -284,7 +286,7 @@ void main()
 	vec3 sky_color = frame.env_sky.w > 0.5 ? frame.env_sky.rgb : vec3(0.5, 0.55, 0.7);
 	vec3 horizon = frame.env_sky.w > 0.5 ? frame.env_horizon.rgb : vec3(0.6, 0.62, 0.68);
 	vec3 L = normalize(-frame.light_direction);
-	float shadow = sample_cascade_shadow(v_world_pos);
+	float shadow = sample_cascade_shadow(v_world_pos, L.y);
 	vec3 sun = frame.light_color * frame.directional_intensity * shadow;
 	vec3 lit = water * (horizon * frame.ambient_strength * 1.2 + sun * (0.12 + 0.28 * saturate(dot(N, L))));
 

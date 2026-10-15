@@ -155,18 +155,15 @@ namespace vortex::graphics::dx12
 			}
 		}
 
-		// CSM tail (#24) @1280 (buffer grown to 1536): CascadeVP[3] + CascadeSplits + DirShadowParams —
+		// CSM tail (#24) @1280 (buffer grown to 1536): CascadeVP[3] + CascadeBias (#466) + DirShadowParams —
 		// byte-matched to standard.hlsl's LightBuffer. Cascade count 0 keeps the shader's sample a no-op.
 		u8* csm_ptr = vp_ptr + (size_t)MAX_SHADOW_SPOTS * 64;
 		DirectX::XMFLOAT4X4 ident; DirectX::XMStoreFloat4x4(&ident, DirectX::XMMatrixIdentity());
 		for (u32 c = 0; c < CSM_CASCADES; ++c)
 			memcpy(csm_ptr + (size_t)c * 64, (c < m_csm_count) ? &m_csm_vp[c] : &ident, 64);
-		float splits[4] = {
-			CSM_CASCADES > 0 ? m_csm_splits[0] : 0.0f,
-			CSM_CASCADES > 1 ? m_csm_splits[1] : 0.0f,
-			CSM_CASCADES > 2 ? m_csm_splits[2] : 0.0f,
-			m_dir_shadow_distance };
-		memcpy(csm_ptr + (size_t)CSM_CASCADES * 64, splits, 16);
+		// the depth bias per cascade (#466): xyz scale the classic bias, w = the slope term's texels — 1, 1, 1, 0 up to 80 m
+		const float bias[4] = { m_csm_bias[0], m_csm_bias[1], m_csm_bias[2], m_csm_count > 0 ? m_csm_bias[3] : 0.0f };
+		memcpy(csm_ptr + (size_t)CSM_CASCADES * 64, bias, 16);
 		float params[4] = { m_dir_shadow_strength, m_dir_shadow_bias, (float)m_csm_count, m_dir_shadow_softness };   // w = PCF radius (texels)
 		memcpy(csm_ptr + (size_t)CSM_CASCADES * 64 + 16, params, 16);
 

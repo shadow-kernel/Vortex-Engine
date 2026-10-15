@@ -83,7 +83,7 @@ cbuffer LightBuffer : register(b2)
     SpotLight SpotLights[MAX_SPOT_LIGHTS];
     row_major float4x4 ShadowVP[4];
     row_major float4x4 CascadeVP[3];
-    float4 CascadeSplits;
+    float4 CascadeBias;      // xyz: each cascade's scale of the classic bias, w: the slope term's texels (#466; 1,1,1,0 up to 80 m)
     float4 DirShadowParams;
     float4 PointShadows[2];
     row_major float4x4 PointFaceVP[12];
@@ -202,10 +202,11 @@ float CsmPcf(float2 suv, float depth, float atlasTexel, float softness, float zs
     return lit / 16.0;
 }
 
-float SampleCascadeShadow(float3 worldPos)
+float SampleCascadeShadow(float3 worldPos, float ndl)
 {
     int count = (int)DirShadowParams.z;
     if (count <= 0) return 1.0;
+    float tanL = sqrt(max(1.0 - ndl * ndl, 0.0)) / max(abs(ndl), 0.196);   // the receiver's slope to the sun (tan, at most 5): beyond 80 m the bias grows with it, not with the deeper boxes (#466)
     [unroll]
     for (int c = 0; c < 3; ++c)
     {
@@ -218,11 +219,12 @@ float SampleCascadeShadow(float3 worldPos)
         float guard = ShadowMapTexel * (max(DirShadowParams.w, 1.0) + 0.5);   // the whole filter stays inside the tile
         suv = clamp(suv, guard, 1.0 - guard) * 0.5;
         suv += float2((c & 1) != 0 ? 0.5 : 0.0, (c & 2) != 0 ? 0.5 : 0.0);
-        float bias = DirShadowParams.y * (1.0 + (float)c) * (0.75 + 0.25 * max(DirShadowParams.w, 1.0));   // a wider filter needs more bias on slopes
+        float bias = DirShadowParams.y * (1.0 + (float)c) * (0.75 + 0.25 * max(DirShadowParams.w, 1.0)) * CascadeBias[c];   // a wider filter needs more bias on slopes
         float atlasTexel = ShadowMapTexel * 0.5;
         float4x4 M = CascadeVP[c];
         float zscale = length(float3(M[0][2], M[1][2], M[2][2]));                       // depth units per metre along the light
         float mpt = 2.0 * ShadowMapTexel / max(length(float3(M[0][0], M[1][0], M[2][0])), 1e-6);   // metres per shadow texel in this cascade
+        bias += CascadeBias.w * mpt * zscale * tanL;   // the slope term (#466): zero up to 80 m
         return lerp(1.0, CsmPcf(suv, ndc.z - bias, atlasTexel, DirShadowParams.w, zscale, mpt), saturate(DirShadowParams.x));
     }
     return 1.0;
@@ -397,7 +399,7 @@ float4 PSMain(PS_IN input) : SV_TARGET
     float3 skyColor = EnvSky.w > 0.5 ? EnvSky.rgb : float3(0.5, 0.55, 0.7);
     float3 horizon = EnvSky.w > 0.5 ? EnvHorizon.rgb : float3(0.6, 0.62, 0.68);
     float3 L = normalize(-LightDirection);
-    float shadow = SampleCascadeShadow(input.worldPos);
+    float shadow = SampleCascadeShadow(input.worldPos, L.y);
     float3 sun = LightColor * DirectionalIntensity * shadow;
     float3 lit = water * (horizon * AmbientStrength * 1.2 + sun * (0.12 + 0.28 * saturate(dot(N, L))));
 

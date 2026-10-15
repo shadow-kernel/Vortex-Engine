@@ -258,6 +258,38 @@ namespace Editor.Core.Services
             return m;
         }
 
+        /// <summary>Several skies' reflection maps as one (#464): the weighted sum of the maps, each turned by its yaw relative to
+        /// the blend's (a whole number of texels around the equirect's u: the shaders add the blend's own yaw) and resampled to
+        /// width x width/2. Reads the maps only — safe on a worker thread.</summary>
+        public static ReflectionMap BlendReflections(IList<(ReflectionMap map, float weight, float shiftDeg)> parts, int width)
+        {
+            int w = Math.Max(2, width), h = Math.Max(1, w / 2);
+            var acc = new float[w * h * 3];
+            foreach (var (map, weight, shiftDeg) in parts)
+            {
+                if (map == null || map.Rgba == null || !(weight > 0f) || map.Width < 1 || map.Height < 1) continue;
+                int shift = (int)Math.Round(shiftDeg / 360.0 * map.Width) % map.Width;
+                for (int y = 0; y < h; y++)
+                {
+                    int my = Math.Min(map.Height - 1, y * map.Height / h);
+                    for (int x = 0; x < w; x++)
+                    {
+                        int mx = (x * map.Width / w + shift) % map.Width;
+                        if (mx < 0) mx += map.Width;
+                        int s = (my * map.Width + mx) * 4, d = (y * w + x) * 3;
+                        acc[d] += map.Rgba[s] * weight; acc[d + 1] += map.Rgba[s + 1] * weight; acc[d + 2] += map.Rgba[s + 2] * weight;
+                    }
+                }
+            }
+            var m = new ReflectionMap { Width = w, Height = h, Rgba = new byte[w * h * 4] };
+            for (int i = 0, o = 0; i < acc.Length; i += 3, o += 4)
+            {
+                m.Rgba[o] = (byte)Math.Min(255.0, Math.Round(acc[i])); m.Rgba[o + 1] = (byte)Math.Min(255.0, Math.Round(acc[i + 1]));
+                m.Rgba[o + 2] = (byte)Math.Min(255.0, Math.Round(acc[i + 2])); m.Rgba[o + 3] = 255;
+            }
+            return m;
+        }
+
         // linear radiance -> 8 bits: straight below 1, x / (1 + x) rescaled above (the shaders read it back as linear-ish)
         private static byte Compress(float v)
         {
@@ -268,8 +300,31 @@ namespace Editor.Core.Services
 
         // ---------------------------------------------------------------- pictures
 
-        /// <summary>A linear RGB equirect from a Radiance .hdr (RGBE, RLE) or, for other formats, from the 8-bit decode (sRGB → linear).</summary>
+        // the last picture decoded, held weakly: a new sky's light, haze and reflection ask for it one after the other and share
+        // one decode (a 4k .hdr takes a good part of a second), but it is not kept alive (~100 MB as floats)
+        private static readonly object _lastLock = new object();
+        private static string _lastKey;
+        private static WeakReference<float[]> _lastRgb;
+        private static int _lastW, _lastH;
+        /// <summary>Pictures decoded so far (diagnostics, tests).</summary>
+        internal static int Decodes;
+
+        /// <summary>A linear RGB equirect from a Radiance .hdr (RGBE, RLE) or, for other formats, from the 8-bit decode (sRGB → linear).
+        /// The array is shared with the other callers that ask for the same picture: read it, do not change it.</summary>
         public static bool LoadEquirect(string path, out float[] rgb, out int w, out int h)
+        {
+            string key = path + "|" + (File.Exists(path) ? File.GetLastWriteTimeUtc(path).Ticks : 0);
+            lock (_lastLock)
+            {
+                if (key == _lastKey && _lastRgb != null && _lastRgb.TryGetTarget(out var shared)) { rgb = shared; w = _lastW; h = _lastH; return true; }
+            }
+            if (!Decode(path, out rgb, out w, out h)) return false;
+            System.Threading.Interlocked.Increment(ref Decodes);
+            lock (_lastLock) { _lastKey = key; _lastRgb = new WeakReference<float[]>(rgb); _lastW = w; _lastH = h; }
+            return true;
+        }
+
+        private static bool Decode(string path, out float[] rgb, out int w, out int h)
         {
             rgb = null; w = h = 0;
             try

@@ -10,12 +10,16 @@ layout(set = SET_UNIFORM, binding = 0, std140) uniform SkyboxConstants
 	vec3  sky_color;       float padding1;      // @80
 	vec3  horizon_color;   float padding2;      // @96
 	vec3  ground_color;    float padding3;      // @112
-	vec3  sun_direction;   float sun_intensity; // @128
+	vec3  sun_direction;   float sun_intensity; // @128  unused since #499: the disc follows the scene's light (glow_dir / glow_color)
 	vec3  sun_color;       float tonemapper;    // @144  the HDR path's curve: 0 = ACES fit, 1 = PBR Neutral
 	vec4  params;                               // @160 x: 1 = sample the equirect texture (#326), y: exposure, z: yaw offset
 	vec4  haze;                                 // @176 aerial perspective on the HDR sky: rgb fog colour, w density (0 = off)
-	vec4  glow_dir;                             // @192 xyz the direction the sun's light travels, w the fog's sun glow
-	vec4  glow_color;                           // @208 rgb the sun's colour
+	vec4  glow_dir;                             // @192 xyz the direction the scene's sun light travels (normalised), w the fog's sun glow
+	vec4  glow_color;                           // @208 rgb the sun's colour, w its intensity (0 = no sun)
+	vec4  sun_disc;                             // @224 the sun's disc (#499): x angular radius (radians), y intensity, z glow, w the
+	                                            //      layers that draw it (bit 0 the sky, bits 1 / 2 the cross-fade pictures)
+	vec4  blend1;                               // @240 a picture cross-faded over the sky (#464): x amount, y exposure, z yaw, w HDR mode
+	vec4  blend2;                               // @256 the second one, composited after blend1
 } c;
 
 #endif

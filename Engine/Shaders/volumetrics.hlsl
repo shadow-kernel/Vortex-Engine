@@ -42,7 +42,7 @@ cbuffer LightBuffer : register(b2)
     SpotLight SpotLights[MAX_SPOT_LIGHTS];
     row_major float4x4 ShadowVP[4];
     row_major float4x4 CascadeVP[3];
-    float4 CascadeSplits;
+    float4 CascadeBias;      // xyz: each cascade's scale of the classic bias, w: the slope term's texels (#466; 1,1,1,0 up to 80 m)
     float4 DirShadowParams;      // x strength, y bias, z cascade count
     float4 PointShadows[2];      // x light index (-1 = none), y strength, z bias
     row_major float4x4 PointFaceVP[12];
@@ -150,7 +150,7 @@ float cascade_shadow(float3 wp)
         float texel = params2.w;
         suv = clamp(suv, texel * 1.5, 1.0 - texel * 1.5) * 0.5;
         suv += float2((c & 1) != 0 ? 0.5 : 0.0, (c & 2) != 0 ? 0.5 : 0.0);
-        float bias = DirShadowParams.y * (1.0 + (float)c);
+        float bias = DirShadowParams.y * (1.0 + (float)c) * CascadeBias[c];   // the slope term needs a surface; fog has none (#466)
         float lit = CsmShadowMap.SampleCmpLevelZero(ShadowSampler, suv, ndc.z - bias);
         return lerp(1.0, lit, saturate(DirShadowParams.x));
     }

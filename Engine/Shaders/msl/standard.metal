@@ -91,7 +91,7 @@ struct LightBuffer
     SpotLight  spot_lights[MAX_SPOT_LIGHTS];     // @512
     float4x4   shadow_vp[4];                     // @1024
     float4x4   cascade_vp[3];                    // @1280
-    float4     cascade_splits;                   // @1472
+    float4     cascade_bias;                     // @1472 xyz: each cascade's scale of the classic bias, w: the slope term's texels (#466; 1,1,1,0 up to 80 m)
     float4     dir_shadow_params;                // @1488
     float4     point_shadows[2];                 // @1504
     float4x4   point_face_vp[12];                // @1536 .. 2304
@@ -406,10 +406,11 @@ static inline float csm_pcf(depth2d<float> atlas, sampler smp, float2 suv, float
 }
 
 static inline float sample_cascade_shadow(constant PerFrame& frame, constant LightBuffer& lights,
-                                          depth2d<float> atlas, sampler smp, float3 wp)
+                                          depth2d<float> atlas, sampler smp, float3 wp, float ndl)
 {
     int count = (int)lights.dir_shadow_params.z;
     if (count <= 0) return 1.0;
+    float tan_l = sqrt(max(1.0 - ndl * ndl, 0.0)) / max(abs(ndl), 0.196);   // the receiver's slope to the sun (tan, at most 5): beyond 80 m the bias grows with it, not with the deeper boxes (#466)
     for (int c = 0; c < 3; ++c)
     {
         if (c >= count) break;
@@ -422,11 +423,12 @@ static inline float sample_cascade_shadow(constant PerFrame& frame, constant Lig
         float guard = t * (max(lights.dir_shadow_params.w, 1.0) + 0.5);   // the whole filter stays inside the tile
         suv = clamp(suv, guard, 1.0 - guard) * 0.5;
         suv += float2((c & 1) != 0 ? 0.5 : 0.0, (c & 2) != 0 ? 0.5 : 0.0);
-        float bias = lights.dir_shadow_params.y * (1.0 + (float)c) * (0.75 + 0.25 * max(lights.dir_shadow_params.w, 1.0));
+        float bias = lights.dir_shadow_params.y * (1.0 + (float)c) * (0.75 + 0.25 * max(lights.dir_shadow_params.w, 1.0)) * lights.cascade_bias[c];
         float atlas_texel = t * 0.5;
         float4x4 M = lights.cascade_vp[c];
         float zscale = length(float3(M[0][2], M[1][2], M[2][2]));                       // depth units per metre along the light
         float mpt = 2.0 * t / max(length(float3(M[0][0], M[1][0], M[2][0])), 1e-6);   // metres per shadow texel in this cascade
+        bias += lights.cascade_bias.w * mpt * zscale * tan_l;   // the slope term (#466): zero up to 80 m
         return mix(1.0, csm_pcf(atlas, smp, suv, ndc.z - bias, atlas_texel, lights.dir_shadow_params.w, zscale, mpt), saturate(lights.dir_shadow_params.x));
     }
     return 1.0;
@@ -663,7 +665,7 @@ fragment float4 PSMain(VSOut in [[stage_in]],
         float3 spec = (D * G * F) / (4.0 * NdotV * NdotL + 0.0001);
         float3 kD = (1.0 - F) * (1.0 - metallic);
         float3 radiance = float3(frame.light_color) * frame.directional_intensity;
-        float sun_shadow = sample_cascade_shadow(frame, lights, csm_shadow, csm_smp, in.world_pos);
+        float sun_shadow = sample_cascade_shadow(frame, lights, csm_shadow, csm_smp, in.world_pos, dot(Ng, L));
         Lo += (kD * albedo / PI + spec) * radiance * NdotL * sun_shadow;
     }
 
