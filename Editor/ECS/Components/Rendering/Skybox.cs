@@ -37,7 +37,6 @@ namespace Editor.ECS.Components.Rendering
     {
         private SkyboxType _skyboxType = SkyboxType.Gradient;
         private float _ambientIntensity = 0.8f;  // Higher default for visible effect
-        private bool _isEnabled = true;
 
         // Solid Color / Top Color für Gradient - brighter defaults
         private float _topColorR = 0.7f;
@@ -84,15 +83,10 @@ namespace Editor.ECS.Components.Rendering
             set => SetProperty(ref _ambientIntensity, value, nameof(AmbientIntensity));
         }
 
-        /// <summary>
-        /// Ob die Skybox aktiv ist
-        /// </summary>
-        [DataMember(Name = "isEnabled", Order = 12)]
-        public bool IsEnabled
-        {
-            get => _isEnabled;
-            set => SetProperty(ref _isEnabled, value, nameof(IsEnabled));
-        }
+        // NOTE: the sky's enabled flag is the base Component.IsEnabled ("isEnabled", Order 1). Skybox used to re-declare it as
+        // a second "isEnabled" data member, which the JSON serializer rejects as a duplicate in the type hierarchy: an entity
+        // with a Skybox could not be saved as a prefab or exported (as Light's once). Scenes saved before keep the base flag;
+        // the old second one (the Inspector's "Visible") is skipped when they load.
 
         /// <summary>
         /// Obere/Himmel-Farbe Rot

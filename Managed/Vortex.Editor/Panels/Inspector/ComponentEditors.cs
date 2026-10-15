@@ -323,8 +323,8 @@ namespace VortexEditor.Panels.Inspector
             void D() => Dirty();
             void Reload() { try { SceneRenderService.Instance.ClearSkyboxMeshCache(); } catch { } D(); }
             Action updateVis = null;
-            // Skybox hides Component.IsEnabled with its own flag (the renderer reads that one) — edit it here too
-            rows.Add(Row("Visible", Bool(() => s.IsEnabled, v => { s.IsEnabled = v; D(); }), "Draw this sky (the renderer's own switch)"));
+            // the component's own switch (Component.IsEnabled) — the renderer draws the sky while it is on
+            rows.Add(Row("Visible", Bool(() => s.IsEnabled, v => { s.IsEnabled = v; D(); }), "Draw this sky (the component's switch)"));
             rows.Add(Row("Type", Enum<SkyboxType>(() => s.SkyboxType, v => { s.SkyboxType = v; Reload(); updateVis?.Invoke(); }, new[] { "Solid Color", "Gradient", "Cubemap", "Texture (HDR)" })));
             rows.Add(Row("Ambient", SliderRow(() => s.AmbientIntensity, v => { s.AmbientIntensity = v; D(); }, 0, 2, "0.##", 0f, 2f), "Ambient light intensity"));
             rows.Add(Row("Exposure", SliderRow(() => s.Exposure, v => { s.Exposure = v; D(); }, 0.1, 4, "0.#", 0.1f, 4f)));

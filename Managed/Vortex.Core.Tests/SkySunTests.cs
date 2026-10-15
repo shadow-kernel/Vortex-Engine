@@ -42,8 +42,7 @@ namespace VortexTests
             t.Equal(0.5f, back.SunGlow, "the glow is saved");
 
             // a sky saved before #499 has no sun members: DataContract skips the field initialisers (the XML form of the same
-            // contract the binary scene files use — a Skybox cannot go through the JSON serializer, its own isEnabled duplicates
-            // the base member)
+            // contract the binary scene files use)
             var dcs = new System.Runtime.Serialization.DataContractSerializer(typeof(Skybox));
             var sw = new System.IO.StringWriter();
             using (var xw = System.Xml.XmlWriter.Create(sw)) dcs.WriteObject(xw, back);
@@ -58,6 +57,43 @@ namespace VortexTests
             t.Equal(0.53f, oldSky.SunSize, "an old sky: 0.53° (not 0, which would hide the disc)");
             t.Equal(1f, oldSky.SunIntensity, "an old sky: intensity 1");
             t.Equal(1f, oldSky.SunGlow, "an old sky: glow 1");
+        }
+
+        [Test]
+        public static void AnEntityWithASkyboxSerialises(TestContext t)
+        {
+            // Skybox re-declared the base "isEnabled" member: the JSON serializer threw "data member 'isEnabled' is duplicated"
+            // for every entity with a sky (Save as Prefab, entity export, the prefab editor)
+            var scene = new Scene { Name = "Night" };
+            var e = new GameEntity(scene, "Sky");
+            scene.Entities.Add(e);
+            var sky = new Skybox(e) { SkyboxType = SkyboxType.Gradient, SunDisc = SkySunDisc.On, SunSize = 2f };
+            e.AddComponentDirect(sky);
+            sky.IsEnabled = false;
+            string json = null;
+            try { json = DataSerializer.ToJson(e); } catch (System.Exception ex) { t.True(false, "an entity with a Skybox goes to JSON: " + ex.Message); return; }
+            t.Equal(1, Regex.Matches(json, "\"isEnabled\"\\s*:\\s*false").Count, "one isEnabled per component that is off: " + json.Substring(0, System.Math.Min(json.Length, 160)));
+            var back = DataSerializer.FromJson<GameEntity>(json)?.GetComponent<Skybox>();
+            t.NotNull(back, "and back");
+            t.False(back.IsEnabled, "a sky switched off stays off");
+            t.True(back.SunDisc == SkySunDisc.On && back.SunSize == 2f, "with its settings");
+            var fromScene = DataSerializer.FromBinary<Scene>(DataSerializer.ToBinary(scene)).Entities[0].GetComponent<Skybox>();
+            t.False(fromScene.IsEnabled, "a saved scene keeps it off");
+
+            // a scene saved before: the sky's second "isEnabled" (after ambientIntensity, in the Skybox contract) is skipped, the
+            // component's own one counts
+            var dcs = new System.Runtime.Serialization.DataContractSerializer(typeof(Skybox));
+            var sw = new System.IO.StringWriter();
+            sky.IsEnabled = true;
+            using (var xw = System.Xml.XmlWriter.Create(sw)) dcs.WriteObject(xw, sky);
+            string xml = sw.ToString();
+            int at = xml.IndexOf("</ambientIntensity>", System.StringComparison.Ordinal);
+            t.True(at > 0, "the XML form has ambientIntensity");
+            string old = xml.Insert(at + "</ambientIntensity>".Length, "<isEnabled>false</isEnabled>");
+            Skybox oldSky = null;
+            try { using (var xr = System.Xml.XmlReader.Create(new System.IO.StringReader(old))) oldSky = (Skybox)dcs.ReadObject(xr); }
+            catch (System.Exception ex) { t.True(false, "an old sky with the second isEnabled reads: " + ex.Message); return; }
+            t.True(oldSky.IsEnabled && oldSky.SunSize == 2f, "it reads, with the component's switch (on) and the rest of its settings");
         }
 
         [Test]
