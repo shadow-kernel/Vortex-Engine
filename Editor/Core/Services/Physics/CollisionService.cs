@@ -350,7 +350,7 @@ namespace Editor.Core.Services.Physics
         // collide against it — you can't walk through another player's character. Keyed by a caller id (e.g. entity id).
         // Owner (#417) = the entity the character moves, when the caller knows it (a script passing its own EntityId):
         // its own colliders never block or touch the character, and it goes with that entity (#407).
-        private struct CharCap { public V3 Feet; public float R, H; public GameEntity Owner; public long Seq; }
+        private struct CharCap { public V3 Feet; public float R, H; public GameEntity Owner; public long Seq; public long Stamp; }
         private static readonly Dictionary<long, CharCap> _chars = new Dictionary<long, CharCap>();
         private static long _charSeq;   // stamps every registration: the latest capsule of an owner wins (TryGetCharacterOf)
         /// <summary>Drop a character's capsule (#407: PhysicsService.RemoveCharacter also drops its Jolt character). True
@@ -367,20 +367,38 @@ namespace Editor.Core.Services.Physics
         public static bool HasCharacter(long id) => _chars.ContainsKey(id);
         /// <summary>The character capsule <paramref name="owner"/> moves — with either controller (#406 names its owner): the
         /// feet (the bottom of the capsule), radius and total height of the one it moved last. False when it moves none (or
-        /// is switched off / limp: its capsule is gone). For an entity whose position is not where it stands: a first-person
-        /// player's entity is its camera, at eye height — the AI aims its sight at the capsule and walks to its feet.</summary>
+        /// is switched off / limp: its capsule is gone), and when that capsule is not its body any more: not moved for
+        /// <see cref="CharacterFreshSeconds"/> (the owner got into a car, a cutscene or a ladder script took over) or away from
+        /// the entity (it was teleported by its Position) — then the entity's own position is where it is. For an entity whose
+        /// position is not where it stands: a first-person player's entity is its camera, at eye height — the AI aims its
+        /// sight at the capsule and walks to its feet.</summary>
         public static bool TryGetCharacterOf(GameEntity owner, out Vector3 feet, out float radius, out float height)
         {
             feet = default(Vector3); radius = 0f; height = 0f;
             if (owner == null || _chars.Count == 0) return false;
             long seq = -1;
+            CharCap best = default(CharCap);
             foreach (var c in _chars.Values)
             {
                 if (!ReferenceEquals(c.Owner, owner) || c.Seq <= seq) continue;
-                seq = c.Seq; feet = To(c.Feet); radius = c.R; height = c.H;
+                seq = c.Seq; best = c;
             }
-            return seq >= 0;
+            if (seq < 0) return false;
+            if (Now() - best.Stamp > (long)(CharacterFreshSeconds * System.Diagnostics.Stopwatch.Frequency)) return false;
+            // the entity: on the capsule's axis (a camera at eye height, a pivot at the feet or in the middle) — within a metre
+            // and a half of it, not further below its feet or above its head
+            var at = Editor.Core.Animation.BoneSocketService.EntityWorld(owner).Translation;
+            float dx = at.X - best.Feet.X, dz = at.Z - best.Feet.Z;
+            float reach = Math.Max(1.5f, best.R + 1f);
+            if (dx * dx + dz * dz > reach * reach || at.Y < best.Feet.Y - 1.5f || at.Y > best.Feet.Y + best.H + 1.5f) return false;
+            feet = To(best.Feet); radius = best.R; height = best.H;
+            return true;
         }
+
+        /// <summary>How long a character capsule stays its owner's body after the owner last moved it (s).</summary>
+        public const float CharacterFreshSeconds = 0.25f;
+
+        private static long Now() => System.Diagnostics.Stopwatch.GetTimestamp();
         /// <summary>#406: the owner the character <paramref name="id"/> is registered with (null = none, or anonymous). A move
         /// that names no owner keeps it — a capsule does not lose its entity because another script's code moved it.</summary>
         public static GameEntity KnownOwner(long id) => id != 0 && _chars.TryGetValue(id, out var c) ? c.Owner : null;
@@ -393,7 +411,7 @@ namespace Editor.Core.Services.Physics
             if (id == 0) return;
             owner ??= KnownOwner(id);
             if (!MayRegister(owner)) return;
-            _chars[id] = new CharCap { Feet = From(feet), R = Math.Max(0.05f, radius), H = height, Owner = owner, Seq = ++_charSeq };
+            _chars[id] = new CharCap { Feet = From(feet), R = Math.Max(0.05f, radius), H = height, Owner = owner, Seq = ++_charSeq, Stamp = Now() };
         }
         public static void ClearCharacters() { _chars.Clear(); }
 
@@ -1366,7 +1384,7 @@ namespace Editor.Core.Services.Physics
             if (!IsBuilt || (_world.Count == 0 && _chars.Count == 0 && _dynamic.Count == 0))
             {
                 var np = new Vector3(feet.X + displacement.X, feet.Y + displacement.Y, feet.Z + displacement.Z);
-                if (register) _chars[selfId] = new CharCap { Feet = From(np), R = radius, H = height, Owner = owner, Seq = ++_charSeq };
+                if (register) _chars[selfId] = new CharCap { Feet = From(np), R = radius, H = height, Owner = owner, Seq = ++_charSeq, Stamp = Now() };
                 return np;
             }
             if (maxSlopeDeg < 10f) maxSlopeDeg = 10f; else if (maxSlopeDeg > 85f) maxSlopeDeg = 85f;
@@ -1468,7 +1486,7 @@ namespace Editor.Core.Services.Physics
 
             grounded = g;
             _curOwner = null;
-            if (register) _chars[selfId] = new CharCap { Feet = p, R = radius, H = height, Owner = owner, Seq = ++_charSeq };
+            if (register) _chars[selfId] = new CharCap { Feet = p, R = radius, H = height, Owner = owner, Seq = ++_charSeq, Stamp = Now() };
             return To(p);
         }
 

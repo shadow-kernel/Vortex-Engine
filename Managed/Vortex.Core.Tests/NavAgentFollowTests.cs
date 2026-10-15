@@ -210,5 +210,56 @@ namespace VortexTests
             if (d > 180f) d -= 360f; else if (d < -180f) d += 360f;
             return d;
         }
+
+        /// <summary>#435 review: an agent that walked with Resolve Collisions (its capsule registered) and is then switched to
+        /// Update Position off leaves no capsule behind — the guard's body is where the game moves it, not where it switched.</summary>
+        [Test]
+        public static void SwitchingToFollowDropsTheCapsule(TestContext t)
+        {
+            if (!Native()) return;
+            GameEntity guard = null;
+            Level(s => new[] { guard = PhysicsRaycastTests.Add(s, null, "Guard", new Vector3(-10f, 0, 8f), e => e.AddComponentDirect(new NavAgent(e)
+                { ResolveCollisions = true, Speed = 3.5f, Radius = 0.4f })) }, out _);
+            try
+            {
+                NavigationService.SetDestination(guard, new Vector3(10f, 0, 8f));
+                for (int i = 0; i < 60; i++) NavigationService.Tick(Dt);
+                t.True(CollisionService.TryGetCharacterOf(guard, out var f0, out _, out _) && Math.Abs(f0.X - Feet(guard).X) < 0.05f, "walking, its capsule is its body");
+                NavigationService.SetUpdatePosition(guard, false);
+                for (int i = 0; i < 120; i++) { ScriptStep(guard); NavigationService.Tick(Dt); }
+                long id = Editor.Scripting.ScriptRuntime.Instance.HandleForEntity(guard);
+                t.False(CollisionService.TryGetCharacterOf(guard, out _, out _, out _), "following, its old capsule is gone");
+                t.False(CollisionService.CapsuleOverlaps(new Vector3(f0.X, 0.02f, f0.Z), 0.35f, 1.78f, 0), "… nothing blocks where it switched");
+            }
+            finally { End(); }
+        }
+
+        /// <summary>#435 review: a follower's position is never written by the ticks — under a turned, scaled parent 3 km from
+        /// the origin it used to creep (rewritten from its own world position every tick, 0.3 m in 20 s); its rotation still is.</summary>
+        [Test]
+        public static void AFollowerIsNeverMovedUnderATurnedParent(TestContext t)
+        {
+            if (!Native()) return;
+            var s = new Scene { Name = "Parent", IsActive = true };
+            PhysicsRaycastTests.Add(s, null, "Floor", new Vector3(3000f, -0.5f, 3000f), e => e.AddComponentDirect(new BoxCollider(e) { Size = new Vector3(40f, 1f, 40f) }));
+            var car = PhysicsRaycastTests.Add(s, null, "Car", new Vector3(3000f, 0f, 3000f), e => { e.Transform.LocalRotation = new Vector3(0f, 37.3f, 0f); e.Transform.LocalScale = new Vector3(1.3f, 1.3f, 1.3f); });
+            var passenger = PhysicsRaycastTests.Add(s, car, "Passenger", new Vector3(1.234f, 0f, 2.345f), e => e.AddComponentDirect(new NavAgent(e)
+                { UpdatePosition = false, UpdateRotation = true, ResolveCollisions = false }));
+            PhysicsRaycastTests.AsLoaded(s);
+            CollisionService.Build(s);
+            NavigationService.BakeScene(s, NavigationService.DefaultSettings(), save: false, load: true);
+            NavigationService.Begin(s);
+            try
+            {
+                var before = passenger.Transform.LocalPosition;
+                NavigationService.Tick(Dt);
+                NavigationService.SetDestination(passenger, new Vector3(3010f, 0f, 3010f));
+                for (int i = 0; i < 1200; i++) NavigationService.Tick(Dt);
+                var after = passenger.Transform.LocalPosition;
+                t.True(after.X == before.X && after.Y == before.Y && after.Z == before.Z, "20 s of ticks never moved it (" + before + " -> " + after + ")");
+                t.True(Math.Abs(DeltaAngle(passenger.Transform.LocalRotation.Y, 0f)) > 1f, "… but turned it toward its way (" + passenger.Transform.LocalRotation + ")");
+            }
+            finally { End(); }
+        }
     }
 }

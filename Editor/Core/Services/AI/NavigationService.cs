@@ -448,6 +448,7 @@ namespace Editor.Core.Services.AI
             public bool YawKnown;
             public bool Active = true;
             public bool? UpdatePosition, UpdateRotation;   // #434: runtime overrides of the component (null = the component's)
+            public bool HasCapsule;                       // its capsule is registered with the collision world (Resolve Collisions)
         }
 
         private static readonly Dictionary<GameEntity, AgentRec> _agents = new Dictionary<GameEntity, AgentRec>();
@@ -576,11 +577,14 @@ namespace Editor.Core.Services.AI
                 r.StateValid = true;
                 var nav = new SysVec(r.State.PosX, r.State.PosY, r.State.PosZ);
                 var feet = nav;
-                if (Follows(r))
+                bool follows = Follows(r);
+                if (follows)
                 {
                     // #434 / #113: never moved here — root motion, a script or a ragdoll moves the entity (through collision,
                     // by Navigation.DesiredVelocity: the script picks walk / run from it); the agent followed it before the crowd
                     // step, so its path corridor and desired velocity stay valid, and it only turns the body (Update Rotation).
+                    // The capsule it walked with (Resolve Collisions) is not its body any more: whatever moves it now registers its own.
+                    if (r.HasCapsule) { CollisionService.RemoveCharacter(r.SelfId); r.HasCapsule = false; }
                     feet = EntityFeet(r);
                 }
                 else if (r.Agent.ResolveCollisions && CollisionService.IsBuilt && r.HasLastFeet)
@@ -590,6 +594,7 @@ namespace Editor.Core.Services.AI
                     var from = new Vector3(r.LastFeet.X, r.LastFeet.Y, r.LastFeet.Z);
                     var res = CollisionService.MoveCharacter(from, r.Agent.Radius, r.Agent.Height, new Vector3(delta.X, delta.Y, delta.Z), out _, r.SelfId,
                         owner: r.Entity);
+                    r.HasCapsule = true;
                     var resolved = new SysVec(res.X, res.Y, res.Z);
                     if (Math.Abs(resolved.Y - nav.Y) > 1.0f) resolved = nav;   // off the navmesh vertically: trust the navmesh
                     float dx = resolved.X - nav.X, dz = resolved.Z - nav.Z;
@@ -612,9 +617,11 @@ namespace Editor.Core.Services.AI
                     float d = DeltaAngle(r.Yaw, target);
                     float step = r.Agent.AngularSpeed * dt;
                     r.Yaw = Math.Abs(d) <= step ? target : r.Yaw + Math.Sign(d) * step;
-                    WritePose(r.Entity, feet + new SysVec(0f, r.Agent.BaseOffset, 0f), r.Yaw);
+                    WritePose(r.Entity, feet + new SysVec(0f, r.Agent.BaseOffset, 0f), r.Yaw, writePosition: !follows);
                 }
-                else WritePose(r.Entity, feet + new SysVec(0f, r.Agent.BaseOffset, 0f), null);
+                else if (!follows) WritePose(r.Entity, feet + new SysVec(0f, r.Agent.BaseOffset, 0f), null);
+                // (a follower's position is never written: rewritten from its own world position every tick, it crept under a
+                // turned, scaled parent far from the origin)
                 if (r.HasColliders && PhysicsService.IsBuilt && (feet - r.LastFeet).LengthSquared() > 1e-6f) SyncStaticBodies(r.Entity);
                 r.LastFeet = feet;
                 r.HasLastFeet = true;
@@ -1003,7 +1010,7 @@ namespace Editor.Core.Services.AI
         }
 
         /// <summary>World position (+ optional world yaw, pitch / roll cleared) -> the entity's local transform.</summary>
-        internal static void WritePose(GameEntity e, SysVec worldPos, float? yawDeg)
+        internal static void WritePose(GameEntity e, SysVec worldPos, float? yawDeg, bool writePosition = true)
         {
             var t = e?.Transform;
             if (t == null) return;
@@ -1016,7 +1023,7 @@ namespace Editor.Core.Services.AI
             if (SysMat.Invert(parentWorld, out var inv)) local = desired * inv;
             var lp = local.Translation;
             var cp = t.LocalPosition;
-            if (Math.Abs(cp.X - lp.X) > 1e-5f || Math.Abs(cp.Y - lp.Y) > 1e-5f || Math.Abs(cp.Z - lp.Z) > 1e-5f)
+            if (writePosition && (Math.Abs(cp.X - lp.X) > 1e-5f || Math.Abs(cp.Y - lp.Y) > 1e-5f || Math.Abs(cp.Z - lp.Z) > 1e-5f))
                 t.LocalPosition = new Vector3(lp.X, lp.Y, lp.Z);
             if (yawDeg.HasValue)
             {

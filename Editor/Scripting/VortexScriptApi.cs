@@ -1476,8 +1476,10 @@ namespace Vortex
 
         /// <summary>The capsule of the character <paramref name="entity"/> moves (Physics.MoveCharacter with its EntityId, with
         /// either controller, or its Nav Agent): <paramref name="feet"/> = the bottom of the capsule, its radius and total height.
-        /// False — and the entity's position, 0, 0 — when it moves none. For entities whose position is not where they stand:
-        /// a first-person player's entity is its camera, at eye height. Aim at a character's chest:
+        /// False — and the entity's position, 0, 0 — when it moves none, and when its capsule is not its body any more: not moved
+        /// for a quarter of a second (it got into a car, a cutscene took over) or away from the entity (teleported by its
+        /// Position). For entities whose position is not where they stand: a first-person player's entity is its camera, at
+        /// eye height. Aim at a character's chest:
         /// <c>Vector3 feet; float r, h; if (Physics.CharacterCapsule(target, out feet, out r, out h)) aim = feet + Vector3.Up * (h * 0.7f);</c></summary>
         public static bool CharacterCapsule(long entity, out Vector3 feet, out float radius, out float height)
         {

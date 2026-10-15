@@ -137,5 +137,36 @@ namespace VortexTests
             }
             finally { rt.End(); CollisionService.Clear(); }
         }
+    
+        /// <summary>#435 review: a capsule is its owner's body only while the owner moves it — a player who stopped calling
+        /// MoveCharacter (got into a car, a cutscene) or was teleported by its Position is where its entity is: the guard does
+        /// not keep seeing it at the old capsule behind the wall.</summary>
+        [Test]
+        public static void AStaleCapsuleIsNoBody(TestContext t)
+        {
+            var s = Yard(out var guard, out var player, 0f);
+            PhysicsRaycastTests.Add(s, null, "Wall", new Vector3(10f, 2f, 14f), e => e.AddComponentDirect(new BoxCollider(e) { Size = new Vector3(6f, 4f, 0.3f) }));
+            PhysicsRaycastTests.AsLoaded(s);
+            try
+            {
+                t.True(Sees(s, guard, player, true), "standing 8 m ahead (its capsule moved just now) it is seen");
+                t.True(CollisionService.TryGetCharacterOf(player, out var f0, out _, out _) && Math.Abs(f0.Z - 8f) < 1e-4f, "its body is the capsule");
+                // it drives off behind the wall: its script no longer moves the capsule, the entity moves
+                player.Transform.LocalPosition = new Vector3(10f, 1.6f, 18f);
+                t.False(CollisionService.TryGetCharacterOf(player, out _, out _, out _), "away from its entity the old capsule is no body");
+                for (int i = 0; i < 4; i++) PerceptionService.Tick(Dt);
+                PerceptionService.TargetBody(player, out var body, out _);
+                t.True(Math.Abs(body.X - 10f) < 1e-3f && Math.Abs(body.Z - 18f) < 1e-3f, "perception looks where the entity is (" + body + ")");
+                t.False(PerceptionService.CanSee(guard, player), "… behind the wall: not seen");
+
+                // a capsule not moved for a quarter of a second is no body either (its owner stands where the capsule is)
+                player.Transform.LocalPosition = new Vector3(0, 1.6f, 8f);
+                CollisionService.RegisterCharacter(PlayerCharacter, new Vector3(0, 0, 8f), 0.35f, 1.85f, player);
+                t.True(CollisionService.TryGetCharacterOf(player, out _, out _, out _), "moved just now: its body");
+                System.Threading.Thread.Sleep((int)(CollisionService.CharacterFreshSeconds * 1000f) + 60);
+                t.False(CollisionService.TryGetCharacterOf(player, out _, out _, out _), "not moved for " + CollisionService.CharacterFreshSeconds + " s: no body");
+            }
+            finally { Done(); }
+        }
     }
 }
