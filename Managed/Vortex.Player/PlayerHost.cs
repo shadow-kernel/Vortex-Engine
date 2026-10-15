@@ -326,7 +326,9 @@ namespace Vortex.Player
 
                 // the window's client size and mouse are in points (SDL) / client units (Win32) — the UI's point space, as in
                 // the editor's play view; the pixel density turns them into pixels (UI.Scale, #454)
-                sr.SetUIFrame(cw, ch, mx, my, down, pressed, VortexAPI.GameHostPixelDensity());
+                float density = VortexAPI.GameHostPixelDensity();
+                sr.SetUIFrame(cw, ch, mx, my, down, pressed, density);
+                sr.SetScreenPixels((int)Math.Round(cw * density), (int)Math.Round(ch * density));   // the window's drawable (#462)
                 VortexAPI.UIBegin(cw, ch);
                 if (_sceneToStart != null)
                 {

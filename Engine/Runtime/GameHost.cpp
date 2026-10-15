@@ -199,6 +199,54 @@ namespace vortex::runtime
             SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     }
 
+    namespace
+    {
+        // The display device of the game window's monitor (#462); null = the primary display (the editor has no window).
+        const wchar_t* host_display_device(MONITORINFOEXW& mi)
+        {
+            if (!g_hwnd) return nullptr;
+            mi.cbSize = sizeof(mi);
+            HMONITOR mon = MonitorFromWindow(g_hwnd, MONITOR_DEFAULTTONEAREST);
+            return mon && GetMonitorInfoW(mon, &mi) ? mi.szDevice : nullptr;
+        }
+    }
+
+    int GameHost::display_modes(int* widths, int* heights, float* refresh_hz, float* densities, int max)
+    {
+        MONITORINFOEXW mi{};
+        const wchar_t* device = host_display_device(mi);
+        DEVMODEW dm{};
+        dm.dmSize = sizeof(dm);
+        int n = 0;
+        for (DWORD i = 0; EnumDisplaySettingsW(device, i, &dm); ++i)
+        {
+            if (dm.dmBitsPerPel != 0 && dm.dmBitsPerPel < 24) continue;   // 8 / 16-bit colour modes are no game resolutions
+            // the list repeats a resolution per colour depth and scaling mode: one entry per size and rate
+            bool seen = false;
+            for (int k = 0; k < n && k < max && widths && heights && refresh_hz; ++k)
+                if (widths[k] == (int)dm.dmPelsWidth && heights[k] == (int)dm.dmPelsHeight && refresh_hz[k] == (float)dm.dmDisplayFrequency) { seen = true; break; }
+            if (seen) continue;
+            if (n < max && widths && heights && refresh_hz && densities)
+            {
+                widths[n] = (int)dm.dmPelsWidth; heights[n] = (int)dm.dmPelsHeight;
+                refresh_hz[n] = (float)dm.dmDisplayFrequency; densities[n] = 1.0f;   // the Win32 host's client size is pixels
+            }
+            ++n;
+        }
+        return n;
+    }
+
+    bool GameHost::current_display_mode(int& width, int& height, float& refresh_hz, float& density)
+    {
+        MONITORINFOEXW mi{};
+        DEVMODEW dm{};
+        dm.dmSize = sizeof(dm);
+        if (!EnumDisplaySettingsW(host_display_device(mi), ENUM_CURRENT_SETTINGS, &dm)) return false;
+        width = (int)dm.dmPelsWidth; height = (int)dm.dmPelsHeight;
+        refresh_hz = (float)dm.dmDisplayFrequency; density = 1.0f;
+        return true;
+    }
+
     bool GameHost::run(uint32_t width, uint32_t height, const wchar_t* title)
     {
         HINSTANCE inst = GetModuleHandleW(nullptr);

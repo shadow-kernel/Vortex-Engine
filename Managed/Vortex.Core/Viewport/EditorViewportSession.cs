@@ -812,6 +812,7 @@ namespace Editor.Core.Viewport
                 _navPrev[i] = held;
             }
             ScriptRuntime.Instance.SetUIFrame(f.W, f.H, mx, my, down, pressed, f.Scale);
+            ScriptRuntime.Instance.SetScreenPixels((int)_pixelW, (int)_pixelH);   // the play view's drawable (#462)
         }
 
         private void BeginPlaySimulation()
@@ -842,6 +843,8 @@ namespace Editor.Core.Viewport
             // the per-tick feed comes one frame later, so Start() saw zeros (first play) or the last session's size (#454)
             var f = UiFrame(_host, _pointerX, _pointerY);
             ScriptRuntime.Instance.SetUIFrame(f.W, f.H, f.MouseX, f.MouseY, false, false, f.Scale);
+            ScriptRuntime.Instance.SetScreenPixels((int)_pixelW, (int)_pixelH);   // Screen.PixelWidth is real in Start too (#462)
+            _renderScaleAtPlay = VortexAPI.GetRenderScale();                      // a script's render resolution ends with play
             ScriptRuntime.Instance.BeginPlaySession(scene);   // a new session reads the saves from disk again (#452)
         }
 
@@ -946,12 +949,16 @@ namespace Editor.Core.Viewport
                 foreach (var c in e.Children) SnapshotTransformRecursive(c);
         }
 
+        private float _renderScaleAtPlay = 1f;
+
         private void EndPlaySimulation()
         {
             if (!_simActive) return;
             _simActive = false;
             AudioPlaybackService.Instance.EndPlay();
             ScriptRuntime.Instance.End();
+            // Settings.SetRenderScale / SetRenderResolution (#462) set the shared renderer's scale: the edit view gets its own back
+            if (Math.Abs(VortexAPI.GetRenderScale() - _renderScaleAtPlay) > 1e-4f) VortexAPI.SetRenderScale(_renderScaleAtPlay);
             ScriptRuntime.Instance.ConsumeQuitRequest();   // play is stopping anyway: no quit may carry over (#410)
             HostInput.Simulated.Clear();                   // no simulated key stays held into editing (#457)
             Vortex.Input.SetSimulated(0f, 0f, 0f);

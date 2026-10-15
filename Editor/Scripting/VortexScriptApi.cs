@@ -2341,6 +2341,19 @@ namespace Vortex
         public static void SetRenderScale(float scale) { Editor.DllWrapper.VortexAPI.SetRenderScale(scale); }
         public static float RenderScale { get { return Editor.DllWrapper.VortexAPI.GetRenderScale(); } }
 
+        /// <summary>Render the 3D scene at a resolution in pixels instead of a scale (#462) — the options menu's "1080p / 1440p /
+        /// 4K" presets: the render scale becomes the one that gives the drawable (<see cref="Screen.PixelWidth"/> ×
+        /// <see cref="Screen.PixelHeight"/>) about width × height pixels, 0.25..2 (the view keeps its own aspect; the UI stays
+        /// sharp at the drawable). <c>Settings.SetRenderResolution(3840, 2160)</c> on a 1920 × 1080 drawable renders at 2× and
+        /// supersamples; on a 3840 × 2160 one it is native. Returns the render scale it set (1 while the size of the view is
+        /// not known yet). <see cref="Screen.RenderWidth"/> / RenderHeight tell the result.</summary>
+        public static float SetRenderResolution(int width, int height)
+        {
+            float scale = Screen.RenderScaleFor(width, height, Screen.PixelWidth, Screen.PixelHeight);
+            SetRenderScale(scale);
+            return scale;
+        }
+
         /// <summary>DLSS quality: 0=Off, 1=Quality, 2=Balanced, 3=Performance, 4=Ultra Performance. A non-off mode
         /// renders the 3D at a lower resolution and AI-upscales it to native (big perf win on RTX). Only takes
         /// visible effect when <see cref="DlssSupported"/> is true; otherwise it falls back to a bilinear upscale.</summary>
@@ -2369,6 +2382,119 @@ namespace Vortex
         public static string GpuName { get { return Editor.DllWrapper.VortexAPI.GpuName(); } }
         /// <summary>True only on an NVIDIA RTX GPU — gate DLSS options on this (render-scale is the universal fallback).</summary>
         public static bool DlssSupported { get { return Editor.DllWrapper.VortexAPI.GpuSupportsDlss(); } }
+    }
+
+    /// <summary>A display mode (#462): a resolution in pixels, its refresh rate and its pixel density.</summary>
+    public struct DisplayMode
+    {
+        /// <summary>Width in pixels.</summary>
+        public int Width;
+        /// <summary>Height in pixels.</summary>
+        public int Height;
+        /// <summary>Refresh rate in Hz (0 when the display does not say).</summary>
+        public float RefreshRate;
+        /// <summary>Pixels per point of this mode: 2 for a Retina ("HiDPI") mode, 1 otherwise and on Windows.</summary>
+        public float Scale;
+        /// <summary>Make one.</summary>
+        public DisplayMode(int width, int height, float refreshRate, float scale = 1f) { Width = width; Height = height; RefreshRate = refreshRate; Scale = scale; }
+        /// <summary>"2560 × 1440 @ 144 Hz".</summary>
+        public override string ToString()
+            => Width + " × " + Height + (RefreshRate > 0f ? " @ " + RefreshRate.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + " Hz" : "");
+    }
+
+    /// <summary>The game's view on the screen (#462) — the editor's play viewport, the player's window — for an options menu
+    /// that works the same on Retina / HiDPI and standard displays. <see cref="Width"/> / <see cref="Height"/> are points (the
+    /// UI's unit, <see cref="UI.Width"/>), <see cref="PixelWidth"/> / <see cref="PixelHeight"/> the drawable's device pixels
+    /// (PixelWidth = Width × <see cref="ContentScale"/>: twice the points on a Retina window), <see cref="RenderWidth"/> /
+    /// <see cref="RenderHeight"/> the pixels the 3D scene renders at (× <see cref="Settings.RenderScale"/>; the UI is drawn
+    /// at the drawable). The window size is changed with <see cref="Settings.SetResolution"/> (pixels), the render resolution
+    /// with <see cref="Settings.SetRenderResolution"/> or SetRenderScale.
+    /// <code>
+    /// foreach (var m in Screen.DisplayModes()) menu.Add(m.ToString());       // "3024 × 1964 @ 120 Hz", …
+    /// Settings.SetRenderResolution(2560, 1440);                              // "1440p" whatever the window is
+    /// UI.Text("Rendering " + Screen.RenderWidth + " × " + Screen.RenderHeight, 20, 20, 400, 24, 14, Color.Rgb(255, 255, 255));
+    /// </code></summary>
+    public static class Screen
+    {
+        /// <summary>Width of the game view in points — the same as <see cref="UI.Width"/>.</summary>
+        public static float Width => UI.Width;
+        /// <summary>Height of the game view in points — the same as <see cref="UI.Height"/>.</summary>
+        public static float Height => UI.Height;
+
+        /// <summary>Width of the drawable in device pixels: 2 × <see cref="Width"/> on a Retina window, in editor play and in
+        /// the player.</summary>
+        public static int PixelWidth => Editor.Scripting.ScriptRuntime.Instance.ScreenPixelWidth;
+        /// <summary>Height of the drawable in device pixels.</summary>
+        public static int PixelHeight => Editor.Scripting.ScriptRuntime.Instance.ScreenPixelHeight;
+
+        /// <summary>Device pixels per point (the display's content scale): 2 on a Retina display, 1 on a standard one; the
+        /// standalone player on Windows draws in pixels and reports 1. The same as <see cref="UI.Scale"/>.</summary>
+        public static float ContentScale => UI.Scale;
+
+        /// <summary>Width the 3D scene renders at: <see cref="PixelWidth"/> × <see cref="Settings.RenderScale"/>.</summary>
+        public static int RenderWidth => RenderSize(PixelWidth);
+        /// <summary>Height the 3D scene renders at: <see cref="PixelHeight"/> × <see cref="Settings.RenderScale"/>.</summary>
+        public static int RenderHeight => RenderSize(PixelHeight);
+
+        /// <summary>The standalone player's borderless fullscreen (get / set; the same as Settings.IsFullscreen /
+        /// SetFullscreen). Always false in editor play, where the viewport is the view.</summary>
+        public static bool FullScreen
+        {
+            get => Settings.IsFullscreen;
+            set => Settings.SetFullscreen(value);
+        }
+
+        /// <summary>The modes of the display the game is on — the main display in editor play — in pixels, largest first, one
+        /// per resolution and refresh rate. Empty when the engine cannot tell (no display, an old engine library).</summary>
+        public static DisplayMode[] DisplayModes()
+        {
+            int cap = 256;
+            for (int attempt = 0; attempt < 2; attempt++)
+            {
+                var w = new int[cap]; var h = new int[cap]; var hz = new float[cap]; var d = new float[cap];
+                int n = Editor.DllWrapper.VortexAPI.GameHostDisplayModes(w, h, hz, d);
+                if (n > cap && attempt == 0) { cap = n; continue; }
+                var list = new List<DisplayMode>(Math.Min(n, cap));
+                for (int i = 0; i < n && i < cap; i++)
+                {
+                    if (w[i] <= 0 || h[i] <= 0) continue;
+                    bool seen = false;
+                    foreach (var m in list) if (m.Width == w[i] && m.Height == h[i] && Math.Abs(m.RefreshRate - hz[i]) < 0.01f) { seen = true; break; }
+                    if (!seen) list.Add(new DisplayMode(w[i], h[i], hz[i], d[i] > 0f ? d[i] : 1f));
+                }
+                list.Sort((a, b) => a.Width != b.Width ? b.Width.CompareTo(a.Width) : a.Height != b.Height ? b.Height.CompareTo(a.Height) : b.RefreshRate.CompareTo(a.RefreshRate));
+                return list.ToArray();
+            }
+            return new DisplayMode[0];
+        }
+
+        /// <summary>The display's current (desktop) mode in pixels — width and height 0 when the engine cannot tell.</summary>
+        public static DisplayMode CurrentDisplayMode
+        {
+            get
+            {
+                return Editor.DllWrapper.VortexAPI.GameHostCurrentDisplayMode(out int w, out int h, out float hz, out float d)
+                    ? new DisplayMode(w, h, hz, d > 0f ? d : 1f) : new DisplayMode(0, 0, 0f, 1f);
+            }
+        }
+
+        private static int RenderSize(int pixels)
+        {
+            float s = Settings.RenderScale;
+            if (!(s > 0f)) s = 1f;
+            int r = (int)(pixels * s + 0.5f);   // the renderer's own rounding
+            return pixels > 0 && r < 1 ? 1 : r;
+        }
+
+        /// <summary>The render scale that gives a <paramref name="drawW"/> × <paramref name="drawH"/> drawable about
+        /// <paramref name="width"/> × <paramref name="height"/> pixels — the pixel count's ratio, 0.25..2 (1 for unknown sizes).</summary>
+        internal static float RenderScaleFor(int width, int height, int drawW, int drawH)
+        {
+            if (width <= 0 || height <= 0 || drawW <= 0 || drawH <= 0) return 1f;
+            float s = (float)Math.Sqrt((double)width * height / ((double)drawW * drawH));
+            if (Math.Abs(s - 1f) < 1e-3f) s = 1f;
+            return s < 0.25f ? 0.25f : (s > 2f ? 2f : s);
+        }
     }
 
     /// <summary>A script handle to one entity's Light component (get it via GetLight() in a VortexBehaviour).

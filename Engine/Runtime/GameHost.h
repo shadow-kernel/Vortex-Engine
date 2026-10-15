@@ -64,5 +64,13 @@ namespace vortex::runtime
         // Resize the window so its CLIENT area is exactly w x h (a settings-menu "Resolution" change). No-op while
         // borderless-fullscreen. The WM_SIZE it triggers drives the existing deferred swapchain resize.
         static void set_resolution(uint32_t w, uint32_t h);
+
+        // The display modes of the game window's display — the main display without a window (the editor) — for an options
+        // menu (#462): width and height in PIXELS, the refresh rate in Hz and the pixel density (pixels per point: 2 for a
+        // Retina mode, 1 on Win32). Fills up to max entries and returns how many modes there are (possibly more than max;
+        // 0 when the video subsystem is not up).
+        static int display_modes(int* widths, int* heights, float* refresh_hz, float* densities, int max);
+        // That display's current (desktop) mode in pixels. False when it cannot be read.
+        static bool current_display_mode(int& width, int& height, float& refresh_hz, float& density);
     };
 }

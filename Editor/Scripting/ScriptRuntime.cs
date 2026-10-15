@@ -2962,6 +2962,20 @@ namespace Editor.Scripting
         public void SetUIFrame(float width, float height, float mouseX, float mouseY, bool mouseDown, bool mousePressed)
             => SetUIFrame(width, height, mouseX, mouseY, mouseDown, mousePressed, _uiScale);
 
+        // The game view's drawable in device pixels (#462), as the host renders it: the editor viewport's swapchain, the player
+        // window's drawable. 0 until a host says — Screen.PixelWidth is then UI size × scale.
+        private int _screenPixelW, _screenPixelH;
+
+        /// <summary>The game view's drawable size in device pixels (#462) — the host feeds it with the UI frame, every frame.</summary>
+        public void SetScreenPixels(int width, int height)
+        {
+            _screenPixelW = width > 0 ? width : 0;
+            _screenPixelH = height > 0 ? height : 0;
+        }
+
+        internal int ScreenPixelWidth => _screenPixelW > 0 ? _screenPixelW : (int)Math.Round(_uiW * _uiScale);
+        internal int ScreenPixelHeight => _screenPixelH > 0 ? _screenPixelH : (int)Math.Round(_uiH * _uiScale);
+
         void Vortex.IScriptHost.UIRect(float x, float y, float w, float h, float r, float g, float b, float a, float radius)
             => Editor.DllWrapper.VortexAPI.UIRect(x, y, w, h, r, g, b, a, radius);
         void Vortex.IScriptHost.UIText(float x, float y, float w, float h, string text, float size, float r, float g, float b, float a, int align, int weight)
