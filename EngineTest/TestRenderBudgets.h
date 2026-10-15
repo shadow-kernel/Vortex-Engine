@@ -2,8 +2,8 @@
 
 #include "../Engine/Graphics/Skinning/BonePalettes.h"
 #include "../Engine/Graphics/Lighting/LightSelection.h"
-#include "../Engine/Graphics/Lighting/CascadeSplits.h"
 #include "../Engine/Graphics/Instancing/RenderQueue.h"
+#include "../Engine/Graphics/Lighting/CascadeSplits.h"
 
 #include "Test.h"
 
@@ -24,12 +24,12 @@ using namespace vortex::graphics;
 //     they would show, a fast turn or a cut is lit right at once, a light the game switches on shows at once, the spot
 //     cone and the view frustum count, shadow maps stay put (within the budget: the first casters, as before) and a view
 //     rendered now and then never stops half-faded;
-//   * the sun's cascades (#466): the classic split scheme up to 80 m, beyond it the first cascade grows only slowly; the
-//     depth bias is the classic one up to 80 m and beyond it follows the texel and the receiver's slope instead of the
-//     deeper boxes (no shadows lost to a bias of metres).
 //   * the retained instances of the render queue (#361): created, moved, re-coloured and removed by handle, moved ones
 //     updated in place without a new layout, new keys merged into the sorted rest, a winding flip or another material
 //     moves an instance to another run, a cleared store says so through its epoch.
+//   * the sun's cascades (#466): the classic split scheme up to 80 m, beyond it the first cascade grows only slowly; the
+//     depth bias is the classic one up to 80 m and beyond it follows the texel and the receiver's slope instead of the
+//     deeper boxes (no shadows lost to a bias of metres).
 // Prints "ALL PASSED" or "FAILURES!" and exits non-zero on a failure.
 class engine_test : public test
 {
@@ -50,9 +50,6 @@ public:
 		lights_fast_turn();
 		lights_shadow_maps_stay();
 		lights_preview_settles();
-		cascades_classic_up_to_80m();
-		cascades_adapt_beyond_80m();
-		cascades_bias();
 		retained_moves_in_place();
 		retained_layout_changes();
 		retained_merge_and_distance();
@@ -60,6 +57,9 @@ public:
 		retained_queue_assembly();
 		frame_items_join_retained_runs();
 		capped_consumers_see_one_sorted_queue();
+		cascades_classic_up_to_80m();
+		cascades_adapt_beyond_80m();
+		cascades_bias();
 		std::printf(m_failures ? "FAILURES!\n" : "ALL PASSED\n");
 	}
 
@@ -712,139 +712,6 @@ private:
 		check(busy_again && full, "a render after more than 0.25 s finishes every fade at once: the view is settled");
 	}
 
-	// ---------------------------------------------------------------------------------------- the sun's cascades (#466)
-
-	// the scheme both renderers ran before #466: lambda 0.6 at any distance
-	static float classic_split(float far_z, unsigned c)
-	{
-		const float near_z = 0.1f, f = (float)(c + 1) / 3.0f;
-		const float log_split = near_z * powf(far_z / near_z, f);
-		const float uni_split = near_z + (far_z - near_z) * f;
-		return uni_split + 0.6f * (log_split - uni_split);
-	}
-
-	void cascades_classic_up_to_80m()
-	{
-		std::printf("sun cascades: the classic split scheme up to the default 80 m (#466)\n");
-		bool same = true;
-		for (float d : { 5.0f, 20.0f, 40.0f, 80.0f })
-		{
-			float s[3];
-			lighting::cascade_splits(d, 3, s);
-			for (unsigned c = 0; c < 3; ++c) same = same && s[c] == classic_split(d, c);
-		}
-		float s80[3];
-		lighting::cascade_splits(80.0f, 3, s80);
-		std::printf("    80 m: %.2f / %.2f / %.2f m\n", s80[0], s80[1], s80[2]);
-		check(same, "up to 80 m the splits are exactly the classic lambda-0.6 scheme");
-		check(s80[2] == 80.0f, "the last cascade ends at the shadow distance");
-	}
-
-	void cascades_adapt_beyond_80m()
-	{
-		std::printf("sun cascades: a longer distance keeps the near cascade small (#466)\n");
-		float s80[3], s300[3], s1000[3];
-		lighting::cascade_splits(80.0f, 3, s80);
-		lighting::cascade_splits(300.0f, 3, s300);
-		lighting::cascade_splits(1000.0f, 3, s1000);
-		std::printf("    300 m: %.2f / %.2f / %.2f m (lambda %.3f), the classic scheme would give %.2f / %.2f\n",
-			s300[0], s300[1], s300[2], lighting::cascade_lambda(300.0f, 3), classic_split(300.0f, 0), classic_split(300.0f, 1));
-		std::printf("    1000 m: %.2f / %.2f / %.2f m (lambda %.3f)\n", s1000[0], s1000[1], s1000[2], lighting::cascade_lambda(1000.0f, 3));
-		check(s300[0] > s80[0] && s300[0] < 1.5f * s80[0] && s300[0] < 0.5f * classic_split(300.0f, 0),
-			"300 m: the first cascade grows by less than half (the classic scheme: x3.6)");
-		check(s1000[0] < 2.0f * s80[0], "1000 m: the first cascade stays under twice its 80 m size");
-		bool ordered = true, lambda_ok = true;
-		float prev_first = 0.0f;
-		for (float d = 80.0f; d <= 5000.0f; d *= 1.25f)
-		{
-			float s[3];
-			lighting::cascade_splits(d, 3, s);
-			ordered = ordered && s[0] > lighting::CASCADE_NEAR_Z && s[0] < s[1] && s[1] < s[2] && s[2] == d && s[0] >= prev_first;
-			const float l = lighting::cascade_lambda(d, 3);
-			lambda_ok = lambda_ok && l >= lighting::CASCADE_CLASSIC_LAMBDA && l <= lighting::CASCADE_MAX_LAMBDA;
-			prev_first = s[0];
-		}
-		check(ordered, "80 m .. 5 km: the splits rise strictly, the last is the distance, the first never shrinks");
-		check(lambda_ok, "the blend stays between the classic 0.6 and 0.97");
-	}
-
-	// the renderers' cascade sphere: the circumsphere of the slice's eight corners around their centroid, rounded up to 1/16 m
-	static float corner_radius(float n, float f, float tx, float ty)
-	{
-		const float cz = 0.5f * (n + f);
-		float r = 0.0f;
-		for (float d : { n, f })
-			for (float sx : { -1.0f, 1.0f })
-				for (float sy : { -1.0f, 1.0f })
-				{
-					const float x = sx * d * tx, y = sy * d * ty, z = d - cz;
-					r = (std::max)(r, sqrtf(x * x + y * y + z * z));
-				}
-		return ceilf(r * 16.0f) / 16.0f;
-	}
-
-	void cascades_bias()
-	{
-		std::printf("sun cascades: the depth bias follows the texel beyond 80 m (#466)\n");
-		const float tx = tanf(0.5f * 1.0471976f) * (16.0f / 9.0f), ty = tanf(0.5f * 1.0471976f);   // 60 degrees, 16:9
-		const float y = lighting::CASCADE_DEFAULT_BIAS;
-		bool radius_ok = true;
-		for (float d : { 80.0f, 300.0f, 1000.0f })
-		{
-			float s[3]; lighting::cascade_splits(d, 3, s);
-			float n = lighting::CASCADE_NEAR_Z;
-			for (unsigned c = 0; c < 3; ++c) { radius_ok = radius_ok && fabsf(lighting::cascade_radius(n, s[c], tx, ty) - corner_radius(n, s[c], tx, ty)) <= 1.0f / 16.0f; n = s[c]; }
-		}
-		check(radius_ok, "cascade_radius is the renderers' circumsphere of the slice's corners");
-
-		auto radii = [&](float d, float* r) { float s[3]; lighting::cascade_splits(d, 3, s); float n = lighting::CASCADE_NEAR_Z; for (unsigned c = 0; c < 3; ++c) { r[c] = corner_radius(n, s[c], tx, ty); n = s[c]; } };
-		bool classic = true;
-		for (float d : { 5.0f, 40.0f, 80.0f })
-			for (float soft : { 1.0f, 8.0f })
-			{
-				float r[3], scale[3], slope = -1.0f;
-				radii(d, r);
-				lighting::cascade_bias(d, 3, r, tx, ty, 2048, y, soft, scale, slope);
-				classic = classic && scale[0] == 1.0f && scale[1] == 1.0f && scale[2] == 1.0f && slope == 0.0f;
-			}
-		check(classic, "up to 80 m: scale exactly 1 and no slope term - the classic bias, bit for bit");
-
-		// the world-space bias (m) of cascade c with the full pull-back: classic x scale x the box's depth, and the slope term per tan
-		auto world = [&](float d, float soft, unsigned c, float& constant_m, float& per_tan_m)
-		{
-			float r[3], scale[3], slope = 0.0f;
-			radii(d, r);
-			lighting::cascade_bias(d, 3, r, tx, ty, 2048, y, soft, scale, slope);
-			constant_m = y * (1.0f + (float)c) * (0.75f + 0.25f * soft) * scale[c] * (2.0f * r[c] + d);
-			per_tan_m = slope * 2.0f * r[c] / 2048.0f;
-		};
-		float k80, t80, k81, t81;
-		world(80.0f, 8.0f, 2, k80, t80);
-		world(80.5f, 8.0f, 2, k81, t81);
-		check(fabsf(k81 - k80) < 0.02f * k80 && t81 < 0.01f, "just past 80 m the bias is still the classic one (it blends over 80 .. 160 m)");
-
-		float k300h, t300h, k300s, t300s, k1000s, t1000s, k80h, t80h;
-		world(80.0f, 1.0f, 2, k80h, t80h);
-		world(300.0f, 1.0f, 2, k300h, t300h);
-		world(300.0f, 8.0f, 2, k300s, t300s);
-		world(1000.0f, 8.0f, 2, k1000s, t1000s);
-		const float tan45 = 1.0f, tan65 = 2.1445f;
-		std::printf("    last cascade, Soft: 80 m %.2f m; 300 m %.2f + %.2f x tan (sun 45 deg: %.2f m, 25 deg: %.2f m); 1 km %.2f + %.2f x tan (%.2f / %.2f m)\n",
-			k80, k300s, t300s, k300s + t300s * tan45, k300s + t300s * tan65, k1000s, t1000s, k1000s + t1000s * tan45, k1000s + t1000s * tan65);
-		std::printf("    last cascade, Hard: 80 m %.2f m; 300 m %.2f + %.2f x tan (%.2f / %.2f m)\n", k80h, k300h, t300h, k300h + t300h * tan45, k300h + t300h * tan65);
-		check(k300s + t300s * tan45 < k80 && k300h + t300h * tan45 < 2.0f * k80h,
-			"300 m: a receiver under a 45 degree sun gets less bias in the last cascade than at 80 m (Soft), at most twice (Hard)");
-		check(k1000s + t1000s * tan45 < 2.5f * k80, "1 km: the last cascade's bias stays within a few metres (as a share of the box: 23 m)");
-		float s300[3]; lighting::cascade_splits(300.0f, 3, s300);
-		const float texel300 = 2.0f * corner_radius(s300[1], 300.0f, tx, ty) / 2048.0f;
-		check(t300s > 1.5f * texel300 && k300s < 1.5f * texel300, "300 m: one texel of constant bias and two of slope");
-
-		float r[3], scale1[3], scale2[3], slope1 = 0.0f, slope2 = 0.0f;
-		radii(300.0f, r);
-		lighting::cascade_bias(300.0f, 3, r, tx, ty, 2048, y, 1.0f, scale1, slope1);
-		lighting::cascade_bias(300.0f, 3, r, tx, ty, 2048, 2.0f * y, 1.0f, scale2, slope2);
-		check(fabsf(slope2 - 2.0f * slope1) < 1e-5f && fabsf(scale2[0] - scale1[0]) < 1e-5f && fabsf(scale2[2] - scale1[2]) < 1e-5f,
-			"the Light's ShadowBias still scales the bias beyond 80 m (twice the bias: twice the slope term and the constant)");
 	// ---------------------------------------------------------------------------------------- retained instances (#361)
 
 	// the fields of the backends' RenderItem the queue reads
@@ -1112,5 +979,140 @@ private:
 		seen.clear();
 		instancing::visit_merged(queue, 4, eye, [&](const QueueItem& q) { seen.push_back(q); return seen.size() < 3; });
 		check(seen.size() == 3 && seen[2].mesh_id == whole[2].mesh_id, "it stops where the consumer's cap is reached");
+	}
+
+	// ---------------------------------------------------------------------------------------- the sun's cascades (#466)
+
+	// the scheme both renderers ran before #466: lambda 0.6 at any distance
+	static float classic_split(float far_z, unsigned c)
+	{
+		const float near_z = 0.1f, f = (float)(c + 1) / 3.0f;
+		const float log_split = near_z * powf(far_z / near_z, f);
+		const float uni_split = near_z + (far_z - near_z) * f;
+		return uni_split + 0.6f * (log_split - uni_split);
+	}
+
+	void cascades_classic_up_to_80m()
+	{
+		std::printf("sun cascades: the classic split scheme up to the default 80 m (#466)\n");
+		bool same = true;
+		for (float d : { 5.0f, 20.0f, 40.0f, 80.0f })
+		{
+			float s[3];
+			lighting::cascade_splits(d, 3, s);
+			for (unsigned c = 0; c < 3; ++c) same = same && s[c] == classic_split(d, c);
+		}
+		float s80[3];
+		lighting::cascade_splits(80.0f, 3, s80);
+		std::printf("    80 m: %.2f / %.2f / %.2f m\n", s80[0], s80[1], s80[2]);
+		check(same, "up to 80 m the splits are exactly the classic lambda-0.6 scheme");
+		check(s80[2] == 80.0f, "the last cascade ends at the shadow distance");
+	}
+
+	void cascades_adapt_beyond_80m()
+	{
+		std::printf("sun cascades: a longer distance keeps the near cascade small (#466)\n");
+		float s80[3], s300[3], s1000[3];
+		lighting::cascade_splits(80.0f, 3, s80);
+		lighting::cascade_splits(300.0f, 3, s300);
+		lighting::cascade_splits(1000.0f, 3, s1000);
+		std::printf("    300 m: %.2f / %.2f / %.2f m (lambda %.3f), the classic scheme would give %.2f / %.2f\n",
+			s300[0], s300[1], s300[2], lighting::cascade_lambda(300.0f, 3), classic_split(300.0f, 0), classic_split(300.0f, 1));
+		std::printf("    1000 m: %.2f / %.2f / %.2f m (lambda %.3f)\n", s1000[0], s1000[1], s1000[2], lighting::cascade_lambda(1000.0f, 3));
+		check(s300[0] > s80[0] && s300[0] < 1.5f * s80[0] && s300[0] < 0.5f * classic_split(300.0f, 0),
+			"300 m: the first cascade grows by less than half (the classic scheme: x3.6)");
+		check(s1000[0] < 2.0f * s80[0], "1000 m: the first cascade stays under twice its 80 m size");
+		bool ordered = true, lambda_ok = true;
+		float prev_first = 0.0f;
+		for (float d = 80.0f; d <= 5000.0f; d *= 1.25f)
+		{
+			float s[3];
+			lighting::cascade_splits(d, 3, s);
+			ordered = ordered && s[0] > lighting::CASCADE_NEAR_Z && s[0] < s[1] && s[1] < s[2] && s[2] == d && s[0] >= prev_first;
+			const float l = lighting::cascade_lambda(d, 3);
+			lambda_ok = lambda_ok && l >= lighting::CASCADE_CLASSIC_LAMBDA && l <= lighting::CASCADE_MAX_LAMBDA;
+			prev_first = s[0];
+		}
+		check(ordered, "80 m .. 5 km: the splits rise strictly, the last is the distance, the first never shrinks");
+		check(lambda_ok, "the blend stays between the classic 0.6 and 0.97");
+	}
+
+	// the renderers' cascade sphere: the circumsphere of the slice's eight corners around their centroid, rounded up to 1/16 m
+	static float corner_radius(float n, float f, float tx, float ty)
+	{
+		const float cz = 0.5f * (n + f);
+		float r = 0.0f;
+		for (float d : { n, f })
+			for (float sx : { -1.0f, 1.0f })
+				for (float sy : { -1.0f, 1.0f })
+				{
+					const float x = sx * d * tx, y = sy * d * ty, z = d - cz;
+					r = (std::max)(r, sqrtf(x * x + y * y + z * z));
+				}
+		return ceilf(r * 16.0f) / 16.0f;
+	}
+
+	void cascades_bias()
+	{
+		std::printf("sun cascades: the depth bias follows the texel beyond 80 m (#466)\n");
+		const float tx = tanf(0.5f * 1.0471976f) * (16.0f / 9.0f), ty = tanf(0.5f * 1.0471976f);   // 60 degrees, 16:9
+		const float y = lighting::CASCADE_DEFAULT_BIAS;
+		bool radius_ok = true;
+		for (float d : { 80.0f, 300.0f, 1000.0f })
+		{
+			float s[3]; lighting::cascade_splits(d, 3, s);
+			float n = lighting::CASCADE_NEAR_Z;
+			for (unsigned c = 0; c < 3; ++c) { radius_ok = radius_ok && fabsf(lighting::cascade_radius(n, s[c], tx, ty) - corner_radius(n, s[c], tx, ty)) <= 1.0f / 16.0f; n = s[c]; }
+		}
+		check(radius_ok, "cascade_radius is the renderers' circumsphere of the slice's corners");
+
+		auto radii = [&](float d, float* r) { float s[3]; lighting::cascade_splits(d, 3, s); float n = lighting::CASCADE_NEAR_Z; for (unsigned c = 0; c < 3; ++c) { r[c] = corner_radius(n, s[c], tx, ty); n = s[c]; } };
+		bool classic = true;
+		for (float d : { 5.0f, 40.0f, 80.0f })
+			for (float soft : { 1.0f, 8.0f })
+			{
+				float r[3], scale[3], slope = -1.0f;
+				radii(d, r);
+				lighting::cascade_bias(d, 3, r, tx, ty, 2048, y, soft, scale, slope);
+				classic = classic && scale[0] == 1.0f && scale[1] == 1.0f && scale[2] == 1.0f && slope == 0.0f;
+			}
+		check(classic, "up to 80 m: scale exactly 1 and no slope term - the classic bias, bit for bit");
+
+		// the world-space bias (m) of cascade c with the full pull-back: classic x scale x the box's depth, and the slope term per tan
+		auto world = [&](float d, float soft, unsigned c, float& constant_m, float& per_tan_m)
+		{
+			float r[3], scale[3], slope = 0.0f;
+			radii(d, r);
+			lighting::cascade_bias(d, 3, r, tx, ty, 2048, y, soft, scale, slope);
+			constant_m = y * (1.0f + (float)c) * (0.75f + 0.25f * soft) * scale[c] * (2.0f * r[c] + d);
+			per_tan_m = slope * 2.0f * r[c] / 2048.0f;
+		};
+		float k80, t80, k81, t81;
+		world(80.0f, 8.0f, 2, k80, t80);
+		world(80.5f, 8.0f, 2, k81, t81);
+		check(fabsf(k81 - k80) < 0.02f * k80 && t81 < 0.01f, "just past 80 m the bias is still the classic one (it blends over 80 .. 160 m)");
+
+		float k300h, t300h, k300s, t300s, k1000s, t1000s, k80h, t80h;
+		world(80.0f, 1.0f, 2, k80h, t80h);
+		world(300.0f, 1.0f, 2, k300h, t300h);
+		world(300.0f, 8.0f, 2, k300s, t300s);
+		world(1000.0f, 8.0f, 2, k1000s, t1000s);
+		const float tan45 = 1.0f, tan65 = 2.1445f;
+		std::printf("    last cascade, Soft: 80 m %.2f m; 300 m %.2f + %.2f x tan (sun 45 deg: %.2f m, 25 deg: %.2f m); 1 km %.2f + %.2f x tan (%.2f / %.2f m)\n",
+			k80, k300s, t300s, k300s + t300s * tan45, k300s + t300s * tan65, k1000s, t1000s, k1000s + t1000s * tan45, k1000s + t1000s * tan65);
+		std::printf("    last cascade, Hard: 80 m %.2f m; 300 m %.2f + %.2f x tan (%.2f / %.2f m)\n", k80h, k300h, t300h, k300h + t300h * tan45, k300h + t300h * tan65);
+		check(k300s + t300s * tan45 < k80 && k300h + t300h * tan45 < 2.0f * k80h,
+			"300 m: a receiver under a 45 degree sun gets less bias in the last cascade than at 80 m (Soft), at most twice (Hard)");
+		check(k1000s + t1000s * tan45 < 2.5f * k80, "1 km: the last cascade's bias stays within a few metres (as a share of the box: 23 m)");
+		float s300[3]; lighting::cascade_splits(300.0f, 3, s300);
+		const float texel300 = 2.0f * corner_radius(s300[1], 300.0f, tx, ty) / 2048.0f;
+		check(t300s > 1.5f * texel300 && k300s < 1.5f * texel300, "300 m: one texel of constant bias and two of slope");
+
+		float r[3], scale1[3], scale2[3], slope1 = 0.0f, slope2 = 0.0f;
+		radii(300.0f, r);
+		lighting::cascade_bias(300.0f, 3, r, tx, ty, 2048, y, 1.0f, scale1, slope1);
+		lighting::cascade_bias(300.0f, 3, r, tx, ty, 2048, 2.0f * y, 1.0f, scale2, slope2);
+		check(fabsf(slope2 - 2.0f * slope1) < 1e-5f && fabsf(scale2[0] - scale1[0]) < 1e-5f && fabsf(scale2[2] - scale1[2]) < 1e-5f,
+			"the Light's ShadowBias still scales the bias beyond 80 m (twice the bias: twice the slope term and the constant)");
 	}
 };
