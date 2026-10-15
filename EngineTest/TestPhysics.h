@@ -367,7 +367,7 @@ private:
 
 	void run_query_contract_tests()
 	{
-		constexpr u64 k_floor = 8101, k_crate = 8102, k_wall = 8103, k_room = 8104, k_self = 8105, k_pad = 8106;
+		constexpr u64 k_floor = 8101, k_crate = 8102, k_wall = 8103, k_room = 8104, k_self = 8105, k_pad = 8106, k_gazebo = 8107;
 		const f32 floor_half[3] = { 6.0f, 0.5f, 6.0f };
 		const f32 floor_pos[3] = { -40.0f, -0.5f, 0.0f };
 		const u32 floor = physics::create_body(k_floor, physics::shape_box, floor_half, floor_pos, k_identity,
@@ -475,6 +475,19 @@ private:
 		check("overlap_point finds the closed mesh around the point", found == 1 && ents[0] == k_room);
 		const f32 open_air[3] = { -38.0f, 1.5f, 0.0f };
 		check("overlap_point in open air finds nothing", physics::overlap_point(open_air, physics::layer_mask_all, ents, bods, 8) == 0);
+		// an open mesh overhead (the room without its floor) does not make a point under its roof "inside" (#418 review)
+		const u32 gazebo_indices[10 * 3] = {
+			4, 6, 5,  4, 7, 6,                    // ceiling (up)
+			0, 4, 5,  0, 5, 1,   2, 6, 7,  2, 7, 3,   // -Z, +Z
+			1, 5, 6,  1, 6, 2,   3, 7, 4,  3, 4, 0 }; // +X, -X
+		const f32 gazebo_pos[3] = { -30.0f, 0.0f, 4.0f };
+		const u32 gazebo = physics::create_mesh_body(k_gazebo, room_verts, 8, gazebo_indices, 30, gazebo_pos, k_identity, one,
+			false, physics::motion_static, 0.0f, 0.5f, 0.0f, false, physics::layer_static);
+		check("floorless gazebo mesh created", gazebo != 0);
+		physics::step(k_dt, 1);
+		const f32 under_roof[3] = { -30.0f, 1.0f, 4.2f };
+		check("overlap_point under an open mesh's roof finds nothing", physics::overlap_point(under_roof, physics::layer_mask_all, ents, bods, 8) == 0);
+		check("... while the closed room still encloses its inside", physics::overlap_point(in_room, physics::layer_mask_all, ents, bods, 8) == 1);
 
 		// (#406) the character's inner body names its character: rays report it, and a ray can skip the capsule
 		const f32 hero_feet[3] = { -42.0f, 0.0f, 0.0f };
@@ -534,6 +547,7 @@ private:
 
 		physics::destroy_body(self_box);
 		physics::destroy_body(pad);
+		physics::destroy_body(gazebo);
 		physics::destroy_body(room);
 		physics::destroy_body(wall);
 		physics::destroy_body(crate);

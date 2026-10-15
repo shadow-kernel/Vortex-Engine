@@ -1866,15 +1866,45 @@ namespace vortex::physics {
 		return written;
 	}
 
+	namespace
+	{
+		// Crossings of the vertical line through `point` with a body's shape above it (up) or below it, both faces counted.
+		s32 vertical_crossings(const JPH::TransformedShape& shape, JPH::Vec3Arg point, f32 reach, bool up)
+		{
+			if (!(reach > 0.0f)) return 0;
+			JPH::RayCastSettings settings;
+			settings.SetBackFaceMode(JPH::EBackFaceMode::CollideWithBackFaces);
+			JPH::AllHitCollisionCollector<JPH::CastRayCollector> collector;
+			shape.CastRay(JPH::RRayCast(JPH::RVec3(point), JPH::Vec3(0.0f, up ? reach : -reach, 0.0f)), settings, collector);
+			return static_cast<s32>(collector.mHits.size());
+		}
+
+		// A mesh's own point test counts its triangles above the point only, so any open mesh overhead (a roof, an
+		// awning, a cave shell) made a point under it "inside" (#418 review). A point hit on a triangle leaf counts as
+		// enclosed only with an odd number of crossings straight above AND straight below it; other leaves answer as before.
+		bool encloses_vertically(const world& w, const JPH::CollidePointResult& hit, JPH::Vec3Arg point)
+		{
+			JPH::BodyLockRead lock(w.system.GetBodyLockInterface(), hit.mBodyID);
+			if (!lock.Succeeded()) return true;
+			const JPH::Body& body = lock.GetBody();
+			const JPH::TransformedShape shape = body.GetTransformedShape();
+			if (!triangle_leaf(shape, hit.mSubShapeID2)) return true;
+			const JPH::AABox bounds = body.GetWorldSpaceBounds();
+			return (vertical_crossings(shape, point, bounds.mMax.GetY() - point.GetY() + 0.1f, true) & 1) == 1
+				&& (vertical_crossings(shape, point, point.GetY() - bounds.mMin.GetY() + 0.1f, false) & 1) == 1;
+		}
+	}
+
 	s32 overlap_point(const f32* point, u32 layer_mask, u64* out_entities, u32* out_bodies, s32 max_count)
 	{
 		const world* w = g_world;
 		if (!w || !point || max_count <= 0) return 0;
 
+		const JPH::Vec3 at = to_vec3(point);
 		JPH::AllHitCollisionCollector<JPH::CollidePointCollector> collector;
 		const mask_bp_filter bp_filter(layer_mask);
 		const mask_object_filter object_filter(layer_mask);
-		w->system.GetNarrowPhaseQuery().CollidePoint(JPH::RVec3(to_vec3(point)), collector, bp_filter, object_filter);
+		w->system.GetNarrowPhaseQuery().CollidePoint(JPH::RVec3(at), collector, bp_filter, object_filter);
 
 		// One entry per body (compound / mesh shapes report several hits per body).
 		std::vector<u32> seen;
@@ -1883,6 +1913,7 @@ namespace vortex::physics {
 		{
 			const u32 key = hit.mBodyID.GetIndexAndSequenceNumber();
 			if (std::find(seen.begin(), seen.end(), key) != seen.end()) continue;
+			if (!encloses_vertically(*w, hit, at)) continue;   // (another leaf of the same body may still enclose it)
 			seen.push_back(key);
 			if (written >= max_count) break;
 			if (out_entities) out_entities[written] = w->system.GetBodyInterface().GetUserData(hit.mBodyID);

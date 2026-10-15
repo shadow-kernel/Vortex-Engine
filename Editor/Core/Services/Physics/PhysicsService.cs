@@ -663,9 +663,10 @@ namespace Editor.Core.Services.Physics
         }
 
         /// <summary>#418: every entity whose body CONTAINS the point — the "am I inside something?" question rays no longer
-        /// answer (a ray that starts inside a convex collider does not hit it). Convex colliders are solid, a closed mesh
-        /// contains what it encloses, a terrain contains nothing. Solid layers by default; deduplicated. Empty without a
-        /// physics world.</summary>
+        /// answer (a ray that starts inside a convex collider does not hit it). Convex colliders are solid, a mesh contains a
+        /// point with an odd number of its triangles straight above AND below it (what a closed mesh encloses; an open one —
+        /// a roof, a cave shell — contains nothing), a terrain contains nothing. Solid layers by default; deduplicated. Empty
+        /// without a physics world.</summary>
         public static List<GameEntity> OverlapPoint(Vector3 point, uint layerMask = SolidLayerMask, int maxCount = 64)
         {
             var result = new List<GameEntity>();

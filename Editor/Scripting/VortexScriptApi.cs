@@ -1476,8 +1476,10 @@ namespace Vortex
 
         /// <summary>Every entity whose solid collider CONTAINS <paramref name="point"/> (#418) — "am I inside something?",
         /// the question a ray no longer answers (a ray that starts inside a convex collider does not hit it). Box, sphere,
-        /// capsule and convex colliders are solid; a closed mesh contains what it encloses; a terrain contains nothing;
-        /// with the "jolt" controller a point inside a character capsule reports that character. Triggers are not
+        /// capsule and convex colliders are solid. A mesh collider contains a point that has an odd number of its triangles
+        /// straight above it AND straight below it — everything a closed mesh encloses; an open mesh (a roof, an awning, a
+        /// cave shell without a floor) contains nothing, so a point under it is not inside it. A terrain contains nothing.
+        /// With the "jolt" controller a point inside a character capsule reports that character. Triggers are not
         /// included. Without a physics-enabled build the collision world answers (the same rules, no characters).
         /// <c>bool buried = Physics.OverlapPoint(eye).Length &gt; 0;</c></summary>
         public static long[] OverlapPoint(Vector3 point)

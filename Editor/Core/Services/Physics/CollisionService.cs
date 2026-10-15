@@ -653,9 +653,10 @@ namespace Editor.Core.Services.Physics
 
         /// <summary>#418: every entity whose solid collider contains <paramref name="point"/> — the collision world's answer
         /// to Physics.OverlapPoint when no Jolt world runs, with the Jolt query's contract: boxes, spheres and capsules
-        /// (foliage trunks too) contain their inside, a closed mesh contains what it encloses (an odd number of its
-        /// triangles straight above the point, as Jolt counts), a terrain contains nothing; triggers are left out. The
-        /// static colliders and the simulated bodies; one entry per entity. Characters are no part of this world.</summary>
+        /// (foliage trunks too) contain their inside, a mesh contains a point with an odd number of its triangles straight
+        /// above it and an odd number straight below (what a closed mesh encloses — an open one, a roof or a cave shell,
+        /// contains nothing), a terrain contains nothing; triggers are left out. The static colliders and the simulated
+        /// bodies; one entry per entity. Characters are no part of this world.</summary>
         public static List<GameEntity> OverlapPoint(Vector3 point)
         {
             var result = new List<GameEntity>();
@@ -688,30 +689,36 @@ namespace Editor.Core.Services.Physics
                 case Kind.Sphere: return (p - s.Center).Len() <= s.Radius;
                 case Kind.Capsule: return (p - ClosestOnSeg(s.A, s.B, p)).Len() <= s.Radius;
                 default:
-                {
+                    // enclosed: an odd number of the mesh's triangles straight above the point AND straight below it — one
+                    // direction alone counts any open mesh overhead (a roof, an awning, a cave ceiling) as "inside"
                     if (s.Surface || s.Tris == null) return false;
-                    // crossings of a ray straight up through the mesh, back faces included: odd = enclosed
-                    var up = new V3(0f, 1f, 0f);
-                    float len = s.Max.Y - p.Y + 0.01f;
-                    var tris = s.Tris; int crossings = 0;
-                    if (s.Grid != null)
-                    {
-                        var buf = s.QueryRay(p, up, len, out int cnt);
-                        for (int j = 0; j < cnt; j++)
-                        {
-                            int k = buf[j] * 3; float t = len; V3 n = up;
-                            if (TriRay(p, up, tris[k], tris[k + 1], tris[k + 2], ref t, ref n)) crossings++;
-                        }
-                    }
-                    else
-                        for (int k = 0; k + 2 < tris.Length; k += 3)
-                        {
-                            float t = len; V3 n = up;
-                            if (TriRay(p, up, tris[k], tris[k + 1], tris[k + 2], ref t, ref n)) crossings++;
-                        }
-                    return (crossings & 1) == 1;
+                    return (VerticalCrossings(s, p, true) & 1) == 1 && (VerticalCrossings(s, p, false) & 1) == 1;
+            }
+        }
+
+        // Crossings of the vertical line through p with the shape's triangles above (up) or below it, both faces counted.
+        private static int VerticalCrossings(Shape s, V3 p, bool up)
+        {
+            var dir = new V3(0f, up ? 1f : -1f, 0f);
+            float len = (up ? s.Max.Y - p.Y : p.Y - s.Min.Y) + 0.01f;
+            if (len <= 0f) return 0;
+            var tris = s.Tris; int crossings = 0;
+            if (s.Grid != null)
+            {
+                var buf = s.QueryRay(p, dir, len, out int cnt);
+                for (int j = 0; j < cnt; j++)
+                {
+                    int k = buf[j] * 3; float t = len; V3 n = dir;
+                    if (TriRay(p, dir, tris[k], tris[k + 1], tris[k + 2], ref t, ref n)) crossings++;
                 }
             }
+            else
+                for (int k = 0; k + 2 < tris.Length; k += 3)
+                {
+                    float t = len; V3 n = dir;
+                    if (TriRay(p, dir, tris[k], tris[k + 1], tris[k + 2], ref t, ref n)) crossings++;
+                }
+            return crossings;
         }
 
         // Ray vs triangle soup — Möller–Trumbore per triangle, closest hit + geometric normal flipped

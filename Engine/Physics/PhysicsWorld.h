@@ -178,7 +178,9 @@ namespace vortex::physics {
 	s32  overlap_sphere(const f32* center, f32 radius, u32 layer_mask,
 		u64* out_entities, u32* out_bodies, s32 max_count);
 	// Every body whose shape contains the point (#418: "is this point inside something?"), one entry per body. Convex
-	// shapes are solid; a closed triangle mesh contains the points it encloses; height fields contain nothing.
+	// shapes are solid; a triangle mesh contains a point with an odd number of its triangles straight above it AND
+	// straight below it — what a closed mesh encloses (an open one, a roof or a cave shell, contains nothing); height
+	// fields contain nothing.
 	s32  overlap_point(const f32* point, u32 layer_mask, u64* out_entities, u32* out_bodies, s32 max_count);
 
 	// Contact events since the previous drain (sensor and solid contacts). Writes up to max_count events, removes

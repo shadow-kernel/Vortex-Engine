@@ -16,7 +16,10 @@ namespace VortexTests
         // A closed 2 x 2 x 2 m box of triangles (outward winding) standing on its local origin: a "room" mesh collider.
         internal static readonly float[] RoomTris = BuildRoom();
 
-        private static float[] BuildRoom()
+        // The room without its floor (roof and four walls): an open mesh overhead — a point under its roof is not inside.
+        internal static readonly float[] GazeboTris = BuildRoom(skipFloor: true);
+
+        private static float[] BuildRoom(bool skipFloor = false)
         {
             var v = new[]
             {
@@ -24,6 +27,7 @@ namespace VortexTests
                 new Vector3(-1, 2, -1), new Vector3(1, 2, -1), new Vector3(1, 2, 1), new Vector3(-1, 2, 1),
             };
             int[] idx = { 0, 1, 2, 0, 2, 3, 4, 6, 5, 4, 7, 6, 0, 4, 5, 0, 5, 1, 2, 6, 7, 2, 7, 3, 1, 5, 6, 1, 6, 2, 3, 7, 4, 3, 4, 0 };
+            if (skipFloor) idx = idx[6..];
             var tris = new float[idx.Length * 3];
             for (int i = 0; i < idx.Length; i++) { tris[i * 3] = v[idx[i]].X; tris[i * 3 + 1] = v[idx[i]].Y; tris[i * 3 + 2] = v[idx[i]].Z; }
             return tris;
@@ -74,7 +78,8 @@ namespace VortexTests
             -1, 0, -1,  -1, 0, 1,   1, 0, 1,
         };
 
-        internal static Func<string, float[]> RoomProvider => p => p == "Assets/room.glb" ? RoomTris : p == "Assets/pad.glb" ? PadTris : null;
+        internal static Func<string, float[]> RoomProvider => p => p == "Assets/room.glb" ? RoomTris : p == "Assets/pad.glb" ? PadTris
+            : p == "Assets/gazebo.glb" ? GazeboTris : null;
 
         private static bool Cast(Vector3 o, Vector3 d, out Vector3 n, out GameEntity e, out float dist, GameEntity ignore = null)
             => CollisionService.Raycast(o, d, 50f, ~0, out _, out n, out e, out dist, ignore);
@@ -145,8 +150,8 @@ namespace VortexTests
             finally { CollisionService.Clear(); }
         }
 
-        /// <summary>RayScene on a 40 m floor (top at y 0) — the crate, the room and the pillar stand on it — and a mesh pad
-        /// at y 0 beyond the floor's edge (nothing under it).</summary>
+        /// <summary>RayScene on a 40 m floor (top at y 0) — the crate, the room and the pillar stand on it — and, beyond the
+        /// floor's edge (nothing under them), a mesh pad at y 0 and a floorless "gazebo" (the room without its floor).</summary>
         internal static Scene RaySceneOnAFloor(out GameEntity floor, out GameEntity crate, out GameEntity ball, out GameEntity pillar, out GameEntity room,
             out GameEntity pad)
         {
@@ -155,6 +160,11 @@ namespace VortexTests
             pad = Add(s, null, "Pad", new Vector3(25f, 0, 0), e =>
             {
                 e.AddComponentDirect(new MeshRenderer(e) { MeshPath = "Assets/pad.glb" });
+                e.AddComponentDirect(new MeshCollider(e));
+            });
+            Add(s, null, "Gazebo", new Vector3(25f, 0, 6f), e =>
+            {
+                e.AddComponentDirect(new MeshRenderer(e) { MeshPath = "Assets/gazebo.glb" });
                 e.AddComponentDirect(new MeshCollider(e));
             });
             AsLoaded(s);
@@ -217,7 +227,7 @@ namespace VortexTests
 
         /// <summary>#418 without a Jolt world (an engine build without physics): Physics.OverlapPoint is answered by the
         /// collision world with the Jolt query's rules — the inside of boxes, spheres, capsules and a closed mesh; not a
-        /// trigger, not open air, not above the mesh.</summary>
+        /// trigger, not open air, not above the mesh, not under an open mesh's roof.</summary>
         [Test]
         public static void OverlapPointWorksWithoutJolt(TestContext t)
         {
@@ -252,6 +262,7 @@ namespace VortexTests
                 (new Vector3(2f, 0.5f, 0f), null, "in open air"),
                 (new Vector3(15f, 2.5f, 0.2f), null, "above the mesh room"),
                 (new Vector3(0f, 1f, -6f), null, "in a trigger zone"),
+                (new Vector3(25f, 1f, 6.2f), null, "under the floorless gazebo's roof (an open mesh overhead)"),
             };
 
         /// <summary>#406 on the managed path: a perceiving guard carries a capsule collider (so it can be shot) and its eye
